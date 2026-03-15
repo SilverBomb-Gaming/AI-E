@@ -1,7 +1,9 @@
 """Input and microphone recording helpers for AI-E."""
 from __future__ import annotations
 
+import ctypes
 import json
+import os
 import threading
 import time
 import wave
@@ -19,17 +21,71 @@ try:
 except ImportError:  # pragma: no cover - handled at runtime
     sd = None  # type: ignore[assignment]
 
+try:
+    import psutil
+except ImportError:  # pragma: no cover - handled at runtime
+    psutil = None  # type: ignore[assignment]
+
+if os.name == "nt":  # pragma: no cover - Windows-only focus gating
+    import ctypes.wintypes as wintypes
+
+    _user32 = ctypes.windll.user32
+else:  # pragma: no cover - non-Windows fallback
+    wintypes = None  # type: ignore[assignment]
+    _user32 = None  # type: ignore[assignment]
+
+
+class InputFocusGate:
+    """Limit input capture to the BABYLON foreground window."""
+
+    def __init__(self) -> None:
+        self._supported = os.name == "nt" and _user32 is not None
+        self._target_pid: Optional[int] = None
+        self._target_exe: str = ""
+
+    def update_target(self, pid: Optional[int], exe_path: Optional[str]) -> None:
+        self._target_pid = pid
+        self._target_exe = Path(exe_path).name.lower() if exe_path else ""
+
+    def has_focus(self) -> bool:
+        if not self._supported:
+            return True
+        if not _user32:
+            return False
+        if not self._target_pid and not self._target_exe:
+            return False
+        hwnd = _user32.GetForegroundWindow()
+        if hwnd == 0:
+            return False
+        pid = wintypes.DWORD()  # type: ignore[call-arg]
+        _user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        if self._target_pid and pid.value == self._target_pid:
+            return True
+        if not self._target_exe or psutil is None:  # type: ignore[truthy-bool]
+            return False
+        try:
+            proc = psutil.Process(pid.value)
+            exe_name = Path(proc.exe() or "").name.lower()
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.Error):
+            return False
+        return exe_name == self._target_exe
+
 
 class InputRecorder:
     """Capture keyboard and mouse activity into a JSONL stream."""
 
-    def __init__(self) -> None:
+    def __init__(self, focus_gate: Optional[InputFocusGate] = None) -> None:
         self._file: Optional[TextIO] = None
         self._keyboard_listener: Optional[keyboard.Listener] = None  # type: ignore[name-defined]
         self._mouse_listener: Optional[mouse.Listener] = None  # type: ignore[name-defined]
         self._lock = threading.Lock()
         self._event_count = 0
+        self._focus_gate = focus_gate
+        self._suppressed_events = 0
         self.last_error: str = ""
+
+    def set_focus_gate(self, focus_gate: InputFocusGate) -> None:
+        self._focus_gate = focus_gate
 
     def start(self, run_dir: Path) -> bool:
         if keyboard is None or mouse is None:  # type: ignore[truthy-bool]
@@ -42,6 +98,7 @@ class InputRecorder:
             return False
 
         self._event_count = 0
+        self._suppressed_events = 0
         self._keyboard_listener = keyboard.Listener(on_press=self._on_key_press, on_release=self._on_key_release)
         self._mouse_listener = mouse.Listener(
             on_move=self._on_mouse_move,
@@ -65,6 +122,18 @@ class InputRecorder:
             self._mouse_listener.stop()
             self._mouse_listener = None
         if self._file:
+            if self._event_count == 0:
+                reason = "No input events captured; check window focus and elevation."
+                sentinel: Dict[str, object] = {
+                    "ts": time.time(),
+                    "status": "no_data",
+                    "reason": reason,
+                }
+                if self._focus_gate and self._suppressed_events:
+                    sentinel["focus_filtered_events"] = self._suppressed_events
+                    sentinel["reason"] = "Input focus filter blocked events; keep BABYLON foreground."
+                self._file.write(json.dumps(sentinel) + "\n")
+                self._file.flush()
             self._file.close()
             self._file = None
 
@@ -72,8 +141,15 @@ class InputRecorder:
     def event_count(self) -> int:
         return self._event_count
 
+    @property
+    def focus_filtered_events(self) -> int:
+        return self._suppressed_events
+
     def _record(self, event: str, payload: Dict[str, object]) -> None:
         if not self._file:
+            return
+        if self._focus_gate and not self._focus_gate.has_focus():
+            self._suppressed_events += 1
             return
         entry = {"ts": time.time(), "event": event, **payload}
         with self._lock:
@@ -133,6 +209,15 @@ class MicRecorder:
             return False
         if push_to_talk and keyboard is None:  # type: ignore[truthy-bool]
             self.last_error = "pynput (keyboard) is required for push-to-talk"
+            return False
+        try:
+            devices = sd.query_devices()
+        except Exception as exc:  # noqa: BLE001
+            self.last_error = f"audio_device_query_failed: {exc}"
+            return False
+        has_input_channel = any((device.get("max_input_channels", 0) or 0) >= self._channels for device in devices)
+        if not has_input_channel:
+            self.last_error = "no_input_devices"
             return False
         audio_path = run_dir / "mic.wav"
         try:
@@ -213,6 +298,8 @@ class MicRecorder:
             "started_at": self._start_time,
             "ended_at": end_time,
         }
+        if meta["recorded_seconds"] == 0.0:
+            meta["reason"] = "No audio frames captured; ensure mic permissions and push-to-talk state."
         if self._run_dir and (self._run_dir / "mic.wav").exists():
             (self._run_dir / "mic_meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
         return meta

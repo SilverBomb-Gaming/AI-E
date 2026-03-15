@@ -16,15 +16,18 @@ def ensure_artifacts_root() -> Path:
     return ARTIFACTS_ROOT
 
 
-def create_run_dir() -> Path:
-    """Create a timestamped run directory (YYYYMMDD_HHMMSS_run_XXXX)."""
+def create_run_dir(*, max_attempts: int = 500) -> Path:
+    """Create a timestamped, collision-resistant run directory."""
     ensure_artifacts_root()
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    counter = 1
-    while True:
+    for counter in range(1, max_attempts + 1):
         suffix = f"run_{counter:04d}"
         run_dir = ARTIFACTS_ROOT / f"{timestamp}_{suffix}"
-        if not run_dir.exists():
+        try:
             run_dir.mkdir(parents=True, exist_ok=False)
             return run_dir
-        counter += 1
+        except FileExistsError:
+            continue
+    raise RuntimeError(
+        f"Artifact collision detected: unable to allocate unique run directory for {timestamp} after {max_attempts} attempts.",
+    )

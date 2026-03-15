@@ -1,0 +1,13 @@
+{
+  "project": "BABYLON_VER_2",
+  "domain": "enemy_pipeline",
+  "type": "3d_asset_reference",
+  "tags": ["zombie", "meshy", "glb", "enemy"],
+  "intended_skill": "unity_prefab_authoring",
+  "source": {
+    "asset_path": "Assets/3D Assets/Characters/Zombies/Meshy_AI_biped (zombie 001)/Meshy_AI_biped/Meshy_AI_Character_output.glb",
+    "anim_path": "Assets/3D Assets/Characters/Zombies/Meshy_AI_biped (zombie 001)/Meshy_AI_biped/Meshy_AI_Meshy_Merged_Animations.glb"
+  },
+  "ingest_batch": "2026-03-07-meshy-zombie",
+  "status": "pending"
+}

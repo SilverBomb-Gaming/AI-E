@@ -1,3 +1,142 @@
+# AI-E Control Panel v5
+
+Operator-first perception and reporting layer for inspecting Unity windows (BABYLON today, engine-agnostic tomorrow). The control panel packages the guards, recorders, and artifact writers needed to observe a foreground window without turning into a bot or trainer.
+
+## Mission (Locked)
+
+AI-E:
+
+- Observes target windows (no desktop-wide capture)
+- Structures artifacts immutably per run
+- Reports clearly so operators can reason quickly
+- Never automates without explicit approval
+- Never trains on copyrighted content
+- Never fights human input
+
+AI-E **is not** a bot player, training framework, content generator, stealth automation tool, or monetization engine.
+
+## v5 Definition of Done
+
+| Pillar | Status | Notes |
+| --- | --- | --- |
+| Core Architecture | ✅ Locked | Engine-agnostic perception adapter (`UnityWindowPerception`), action interface abstraction (`DisabledActionInterface` by default), and clear separation of perception / processing / reporting / UI layers. |
+| Perception Layer | 🟡 Stable | Window-bound captures, hash-based delta detection, and focus-aware input gating via `InputFocusGate`. |
+| Artifact & Reporting | 🟡 Stable | Timestamped run directories, structured JSON outputs, and movement telemetry stored alongside screenshots. |
+| Operator UI | 🟡 Calm | Start/Stop, runtime diagnostics, action layer status indicator, and explicit messaging that automation stays locked. |
+| Stability & Guardrails | 🟡 Enforced | Zero background network calls, failure-aware recorders, and regression hooks for missing windows/devices/artifacts. |
+
+Nothing outside these pillars is part of v5.
+
+## Architecture Overview
+
+```
+app/
+  actions.py      # Action interface abstractions (locked by default)
+  artifacts.py    # Artifact builders, JSON writers, snapshot helpers
+  config.py       # Operator profiles + persisted state
+  dependencies.py # Optional dependency health checks
+  diagnostics.py  # Focus tracker + elevation snapshot
+  logger.py       # Append-only run event log
+  main.py         # Entry point (python -m app.main)
+  paths.py        # Project + artifact path helpers
+  perception.py   # Window-bound perception adapters + movement deltas
+  recorders.py    # Input + mic recorders (processing helpers)
+  runner.py       # RunSession orchestrator (processing layer)
+  ui.py           # PySide6 operator surface
+```
+
+- **Perception Layer** — `perception.py` exposes `UnityWindowPerception`, which captures screenshots, hashes them, and records `MovementDelta` entries to prove the window is alive without touching gameplay.
+- **Processing Layer** — `RunSession` (runner.py) coordinates focus tracking, recorders, and action/perception adapters. Input capture is gated by `InputFocusGate` (recorders.py) so only foreground BABYLON activity is stored.
+- **Reporting Layer** — `artifacts.py` (`build_run_summary`, `build_mapprobe_snapshot`) and `logger.py` guarantee immutable artifacts with explicit status blocks (OK, attention, no_data) instead of silent failures.
+- **UI Layer** — `ui.py` (PySide6) keeps Start/Stop within reach, surfaces artifact folders, and shows the action layer lock so operators stay informed.
+- **Action Layer** — `actions.py` defines `ActionInterface` but defaults to `DisabledActionInterface`. The UI’s Action Layer panel reiterates that automation stays off until an operator explicitly unlocks it.
+
+## Setup & Run
+
+## Python Environment Policy
+
+- Approved interpreter: `E:\AI projects 2025\AI-E\.venv\Scripts\python.exe`
+- For VS Code and Copilot work, pin this repo to `.venv\Scripts\python.exe`; do not create or select a different environment for this repo unless this README changes.
+- For shell automation, prefer explicit interpreter invocation (`.\.venv\Scripts\python.exe ...`) over bare `python`.
+- Run `powershell -ExecutionPolicy Bypass -File .\build_scripts\show_python_env.ps1` to print the expected interpreter path, version, and PASS/WARN status.
+
+### Prerequisites
+
+- Windows 10+
+- Python 3.11+
+- PowerShell 5.1+
+
+### One-command environment setup
+
+```powershell
+cd "E:\AI projects 2025\AI-E"
+. .\build_scripts\setup_env.ps1
+```
+
+Dot-source the script so your shell inherits the virtual environment. The script bootstraps `.venv`, upgrades `pip`, installs pinned requirements (PySide6, psutil, mss, pynput, sounddevice, pyinstaller), and activates the venv. Use `-SkipInstall` to reuse an existing environment.
+
+### Manual setup (fallback)
+
+```powershell
+cd "E:\AI projects 2025\AI-E"
+Set-ExecutionPolicy -Scope Process Bypass
+.\.venv\Scripts\Activate.ps1
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+```
+
+### Run from source
+
+```powershell
+.\.venv\Scripts\activate
+.\.venv\Scripts\python.exe -m app.main
+```
+
+The window title reads **AI-E Control Panel v5**. Browse to the latest BABYLON build, Attach, then Start/Stop runs as needed. The Action Layer panel will always show “Locked” unless future revisions explicitly enable automation.
+
+### Acceptance test (operator-facing)
+
+Use **Help → Acceptance Tests…** inside the app and walk through:
+
+1. Launch AI-E (exe or source) and confirm the UI loads.
+2. Browse for the BABYLON executable so the Target panel is populated.
+3. Use **Launch** (optional) then **Attach** until the status reads Connected.
+4. Click **Start Run** for ~30 seconds; expect two screenshots + focus telemetry.
+5. Click **Stop Run**; verify the latest run folder contains non-empty `run_meta.json`, `run_summary.json`, `events.log`, `mapprobe_snapshot.json`, and any opted-in telemetry (input/mic).
+
+## Artifact & Reporting Layer
+
+Every run creates a timestamped folder under `runner_artifacts/`:
+
+```
+runner_artifacts/
+  YYYYMMDD_HHMMSS_run_0001/
+    run_meta.json            # full operator config + diagnostics (start & stop)
+    run_summary.json         # perception, action layer descriptor, warnings
+    mapprobe_snapshot.json   # connection + focus heartbeat
+    events.log               # append-only timeline
+    screenshot_start.png
+    screenshot_end.png
+    input_events.jsonl       # only when Record Input is enabled
+    mic.wav + mic_meta.json  # only when Record Mic is enabled
+```
+
+- `run_summary.json` now includes `perception.adapter`, `perception.movement[]`, and `action_layer` sections so every run proves observation (not automation).
+- `events.log` logs attaches/detaches, screenshot successes/failures, and focus transitions; nothing fails silently.
+- Movement deltas are derived from SHA-256 hashes of captured frames to confirm window activity without saving raw comparisons.
+- When recorders are enabled but emit no data, artifacts include `{ "status": "no_data", "reason": "..." }` blocks so operators aren’t left guessing.
+
+## Stability & Guardrails
+
+- Window-bound focus gating prevents background capture.
+- No network calls run in the background; only local filesystem + OS APIs are used.
+- Missing dependencies (psutil, mss, pynput, sounddevice) surface in the System Warnings label.
+- Failure modes (window not found, device count zero, artifact write failure) log explicit warnings and bubble into `run_summary.json`.
+- Action interface stays disarmed. Requests for automation must be logged manually.
+
+## Frozen Backlog Rule
+
+All new ideas that stretch beyond the five pillars live in [`/FROZEN_BACKLOG.md`](FROZEN_BACKLOG.md). Log them; do not implement them in v5 without an explicit unlock. The Action Layer panel links back to this rule so future-you never wonders where an experimental toggle originated.
 # AI-E Control Panel v0.1
 
 Operator-first companion application for BABYLON diagnostics and run orchestration. This project intentionally lives outside the Unity repository to keep responsibilities separated.
@@ -10,23 +149,42 @@ Operator-first companion application for BABYLON diagnostics and run orchestrati
 
 ## Setup
 
+### One-command setup
+
 ```powershell
 cd "E:\AI projects 2025\AI-E"
-python -m venv .venv
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
-.\.venv\Scripts\activate
-pip install --upgrade pip
-pip install -r requirements.txt
+. .\build_scripts\setup_env.ps1
+```
+
+Dot-source the script (`. path\setup_env.ps1`) so the PowerShell session remains active inside the virtual environment after it finishes. The helper script creates `.venv` if needed, upgrades `pip`, installs the pinned requirements (PySide6, psutil, pyinstaller, etc.), and finally activates the venv for you. Pass `-SkipInstall` if you just want to reopen the environment without reinstalling packages.
+
+### Manual setup
+
+```powershell
+cd "E:\AI projects 2025\AI-E"
+Set-ExecutionPolicy -Scope Process Bypass
+\.\.venv\Scripts\Activate.ps1
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+```
+
+### Sanity install
+
+Use this anytime you need to verify the environment is intact (after pulling or before opening an issue):
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m app.main
 ```
 
 ## Running from Source
 
 ```powershell
 .\.venv\Scripts\activate
-python -m app.main
+.\.venv\Scripts\python.exe -m app.main
 ```
 
-The UI appears as **AI-E Control Panel v0.2**. Use the Target panel to browse to the latest BABYLON build, then use Run Controls to pick a map and toggle **Record Input**, **Record Mic**, and optional **Push-to-Talk (Space)** before starting a run.
+The UI appears as **AI-E Control Panel v0.3**. Use the Target panel to browse to the latest BABYLON build, then use Run Controls to pick a map and toggle **Record Input**, **Record Mic**, and optional **Push-to-Talk (Space)** before starting a run.
 
 ## Run Artifacts
 
@@ -45,13 +203,21 @@ runner_artifacts/
     mic.wav + mic_meta.json   # only when Record Mic is enabled
 ```
 
-- `run_meta.json` captures the operator selections and metadata.
-- `events.log` is structured so you can see when the run started, when BABYLON was launched, whether attach succeeded, and any recorded errors.
-- `run_summary.json` aggregates duration, attach status, artifact counts, and warnings for quick sharing.
-- `mapprobe_snapshot.json` now reports the attach probe results, connection status, and heartbeat timestamps.
+- `run_meta.json` captures operator selections, timestamps, duration, PID, and environment diagnostics so every folder stands alone.
+- `events.log` now always records start/stop plus launch/attach attempts and focus/elevation diagnostics; attach failures surface the exception text.
+- `run_summary.json` aggregates duration, attach status, artifact health, focus time, and warnings (including why input or screenshots might be missing).
+- `mapprobe_snapshot.json` includes connection + focus status with `data_status` fields (`no_data` + reason when BABYLON is unreachable).
 - Input and mic artifacts are omitted entirely if their toggles remain off, keeping the folders clean.
 
-Screenshots rely on Windows desktop capture permissions. Mic recording is mic-only (no system audio) and can optionally be gated by holding the space bar when Push-to-Talk is enabled.
+Guaranteed outputs every run:
+
+- `run_meta.json` is written when **Start Run** is pressed and updated on stop with diagnostics, so it never ships empty.
+- `events.log` always logs start/stop, launches, attaches, screenshot outcomes, and warnings (even if no input or mic data exists).
+- `run_summary.json` is emitted on **Stop Run** with explicit references to each screenshot (or the failure reason) plus the new input-focus statistics.
+
+Input capture is now clamped to the BABYLON foreground window. When **Record Input (BABYLON focus only)** is enabled, any keyboard/mouse events detected while another window is active are suppressed, counted, and surfaced as warnings so “empty” runs are still explainable.
+
+Screenshots rely on Windows desktop capture permissions; if a capture fails the folder now contains a `screenshot_*` reason entry plus an events.log warning. Mic recording is mic-only (no system audio) and can optionally be gated by holding the space bar when Push-to-Talk is enabled. When a recorder is enabled but produces no data, the artifacts include `{ "status": "no_data", "reason": "..." }` blocks so operators never see empty files.
 
 ## Building the Windows Executable
 
@@ -61,9 +227,9 @@ cd "E:\AI projects 2025\AI-E"
 ./build_scripts/build_windows.ps1
 ```
 
-The script installs pinned dependencies, runs PyInstaller with the updated settings, and produces `dist/AI-E.exe`. Double-clicking the executable shows the same UI with no console window, and assets (icons, future resources) are bundled automatically.
+The script installs pinned dependencies, runs PyInstaller with the updated settings, and produces `dist/AI-E.exe`. It also collects the required PySide6 binaries, writes a transcript to `build_artifacts\build_log.txt`, and returns a non-zero exit code if anything fails. Double-clicking the executable shows the same UI with no console window, and assets (icons, future resources) are bundled automatically.
 
-First-launch UX: if the BABYLON path is empty, the UI prompts you to browse. Once selected, the exe path persists via `app_state.json` so subsequent launches auto-fill it. The typical workflow is **Launch BABYLON** → **Attach** → **Start Run** → interact/gameplay → **Stop Run** → **Open Last Run Folder** to inspect the collected screenshots, logs, and summaries.
+First-launch UX: if the BABYLON path is empty, the UI prompts you to browse. Once selected, the exe path persists via `app_state.json` so subsequent launches auto-fill it. The Run Controls panel now keeps the operator-oriented signals front and center: Target EXE path, detected PID/state, a live duration timer, and the artifacts destination. The typical workflow is **Launch BABYLON** → **Attach** → **Start Run** → interact/gameplay → **Stop Run** → **Open Run Folder** / **Open Logs Folder** to inspect the collected screenshots, logs, and summaries.
 
 ## Usage Expectations
 
@@ -74,3 +240,15 @@ First-launch UX: if the BABYLON path is empty, the UI prompts you to browse. Onc
 - **Record Mic** captures mic-only audio to `mic.wav` (with optional push-to-talk gating) plus `mic_meta.json`.
 - **Open Last Run Folder** opens the most recent artifacts directory in Windows Explorer.
 - No gameplay logic or Unity assets live in this repository; integration happens through operator-selected paths and generated artifacts only.
+
+## Acceptance Test Checklist
+
+Use **Help → Acceptance Tests…** inside the Control Panel to run the 60-second operator checklist:
+
+1. **A.** Double-click `AI-E.exe` (or run from source) and confirm the UI opens.
+2. **B.** **Browse** for the BABYLON executable so the Target panel is populated.
+3. **C.** Use **Launch** (if necessary) and **Attach** until the status reads “Connected”.
+4. **D.** Click **Start Run** and wait ~30 seconds; two screenshots should land in the run folder.
+5. **E.** Click **Stop Run** and verify the latest run directory has non-empty `run_meta.json`, `run_summary.json`, and appended `events.log` entries.
+
+The dialog resets each time you open it, so operators can literally check the boxes before the next session.
