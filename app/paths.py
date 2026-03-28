@@ -7,7 +7,8 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 ARTIFACTS_ROOT = PROJECT_ROOT / "runner_artifacts"
-APP_STATE_PATH = PROJECT_ROOT / "app_state.json"
+APP_STATE_PATH = PROJECT_ROOT / "app_state.local.json"
+APP_STATE_EXAMPLE_PATH = PROJECT_ROOT / "app_state.example.json"
 
 
 def ensure_artifacts_root() -> Path:

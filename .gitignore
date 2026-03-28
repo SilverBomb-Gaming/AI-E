@@ -1,3 +1,57 @@
-﻿runner_artifacts/
+﻿# General Python caches
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+
+# Python environments
+.venv/
+.venv*/
+
+# Test caches and local sandboxes
+.pytest_cache/
+.pytest-*/
+
+# Build artifacts
+build/
+dist/
+build_artifacts/
+*.egg-info/
+
+# Existing AI-E runtime artifacts
+runner_artifacts/
+
+# General local logs and runtime indexes
+*.log
+*.jsonl
+
+# General local temp files
+.tmp/
+temp_*
+
+# Planned orchestrator lane runtime artifacts
+orchestrator_lane/runs/
+orchestrator_lane/workspaces/
+orchestrator_lane/reports/
+orchestrator_lane/logs/
+orchestrator_lane/scripts/logs/
+orchestrator_lane/.venv*
+orchestrator_lane/.pytest-*/
+orchestrator_lane/.tmp/
+orchestrator_lane/temp_*
+orchestrator_lane/*.log
+orchestrator_lane/*.jsonl
+orchestrator_lane/*.egg-info/
+
+# Planned orchestrator lane queue and intake residue
+orchestrator_lane/backlog/*.bak.*
+orchestrator_lane/contracts/intake/
+
+# Future local-only state split for AI-E root
+app_state.local.json
+project_registry/projects.local.json
+project_registry/*.local.json
+
+# Legacy tracked local-state filenames that should not return
+app_state.json
+project_registry/projects.json

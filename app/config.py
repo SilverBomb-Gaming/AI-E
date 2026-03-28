@@ -5,7 +5,7 @@ import json
 from dataclasses import dataclass, asdict, fields
 from typing import Any, Dict, List, Optional
 
-from .paths import APP_STATE_PATH, PROJECT_ROOT
+from .paths import APP_STATE_EXAMPLE_PATH, APP_STATE_PATH, PROJECT_ROOT
 
 
 @dataclass
@@ -39,21 +39,66 @@ def _new_profiles_blob() -> Dict[str, Any]:
     }
 
 
+def _default_profiles_blob() -> Dict[str, Any]:
+    if APP_STATE_EXAMPLE_PATH.exists():
+        try:
+            raw = json.loads(APP_STATE_EXAMPLE_PATH.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, TypeError, ValueError):
+            raw = None
+        if isinstance(raw, dict):
+            if "profiles" not in raw:
+                state = _state_from_payload(raw)
+                return {"active_profile": DEFAULT_PROFILE, "profiles": {DEFAULT_PROFILE: asdict(state)}}
+
+            profiles_section = raw.get("profiles") or {}
+            sanitized: Dict[str, Dict[str, Any]] = {}
+            for name, payload in profiles_section.items():
+                if isinstance(name, str) and isinstance(payload, dict):
+                    sanitized[name] = asdict(_state_from_payload(payload))
+
+            if sanitized:
+                active = raw.get("active_profile") or DEFAULT_PROFILE
+                if active not in sanitized:
+                    active = DEFAULT_PROFILE
+                return {"active_profile": active, "profiles": sanitized}
+
+    return _new_profiles_blob()
+
+
+def _ensure_local_profiles_blob() -> Dict[str, Any]:
+    if APP_STATE_PATH.exists():
+        return {}
+    blob = _default_profiles_blob()
+    APP_STATE_PATH.write_text(json.dumps(blob, indent=2), encoding="utf-8")
+    return blob
+
+
 def _load_profiles_blob() -> Dict[str, Any]:
+    created_blob = _ensure_local_profiles_blob()
+    if created_blob:
+        return created_blob
     if not APP_STATE_PATH.exists():
-        return _new_profiles_blob()
+        blob = _default_profiles_blob()
+        APP_STATE_PATH.write_text(json.dumps(blob, indent=2), encoding="utf-8")
+        return blob
     try:
         raw = json.loads(APP_STATE_PATH.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, TypeError, ValueError):
-        return _new_profiles_blob()
+        blob = _default_profiles_blob()
+        APP_STATE_PATH.write_text(json.dumps(blob, indent=2), encoding="utf-8")
+        return blob
 
     if not isinstance(raw, dict):
-        return _new_profiles_blob()
+        blob = _default_profiles_blob()
+        APP_STATE_PATH.write_text(json.dumps(blob, indent=2), encoding="utf-8")
+        return blob
 
     if "profiles" not in raw:
         # Legacy single-profile file: treat entire payload as default profile state.
         state = _state_from_payload(raw)
-        return {"active_profile": DEFAULT_PROFILE, "profiles": {DEFAULT_PROFILE: asdict(state)}}
+        blob = {"active_profile": DEFAULT_PROFILE, "profiles": {DEFAULT_PROFILE: asdict(state)}}
+        APP_STATE_PATH.write_text(json.dumps(blob, indent=2), encoding="utf-8")
+        return blob
 
     profiles_section = raw.get("profiles") or {}
     sanitized: Dict[str, Dict[str, Any]] = {}
@@ -68,7 +113,9 @@ def _load_profiles_blob() -> Dict[str, Any]:
     if active not in sanitized:
         active = DEFAULT_PROFILE
 
-    return {"active_profile": active, "profiles": sanitized}
+    blob = {"active_profile": active, "profiles": sanitized}
+    APP_STATE_PATH.write_text(json.dumps(blob, indent=2), encoding="utf-8")
+    return blob
 
 
 def _write_profiles_blob(blob: Dict[str, Any]) -> None:

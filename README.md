@@ -229,7 +229,14 @@ cd "E:\AI projects 2025\AI-E"
 
 The script installs pinned dependencies, runs PyInstaller with the updated settings, and produces `dist/AI-E.exe`. It also collects the required PySide6 binaries, writes a transcript to `build_artifacts\build_log.txt`, and returns a non-zero exit code if anything fails. Double-clicking the executable shows the same UI with no console window, and assets (icons, future resources) are bundled automatically.
 
-First-launch UX: if the BABYLON path is empty, the UI prompts you to browse. Once selected, the exe path persists via `app_state.json` so subsequent launches auto-fill it. The Run Controls panel now keeps the operator-oriented signals front and center: Target EXE path, detected PID/state, a live duration timer, and the artifacts destination. The typical workflow is **Launch BABYLON** → **Attach** → **Start Run** → interact/gameplay → **Stop Run** → **Open Run Folder** / **Open Logs Folder** to inspect the collected screenshots, logs, and summaries.
+First-launch UX: if the BABYLON path is empty, the UI prompts you to browse. Once selected, the exe path persists via the local runtime state file `app_state.local.json` so subsequent launches auto-fill it. The tracked `app_state.example.json` file is only a sanitized example and is not used for runtime writes. The Run Controls panel now keeps the operator-oriented signals front and center: Target EXE path, detected PID/state, a live duration timer, and the artifacts destination. The typical workflow is **Launch BABYLON** → **Attach** → **Start Run** → interact/gameplay → **Stop Run** → **Open Run Folder** / **Open Logs Folder** to inspect the collected screenshots, logs, and summaries.
+
+## Local State Files
+
+- `app_state.example.json` is the tracked, sanitized example for operator profile structure.
+- `app_state.local.json` is created and maintained locally at runtime; the app reads and writes this file only.
+- `project_registry/projects.example.json` is a tracked, sanitized example for optional multi-project registry data.
+- `project_registry/projects.local.json` is reserved for local-only registry data and is ignored by git.
 
 ## Usage Expectations
 

@@ -1,0 +1,10 @@
+{
+  "projects": [
+    {
+      "name": "PROJECT_NAME",
+      "path": "C:/path/to/project",
+      "type": "project_type",
+      "status": "active"
+    }
+  ]
+}
