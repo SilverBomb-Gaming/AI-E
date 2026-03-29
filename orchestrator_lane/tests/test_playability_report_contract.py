@@ -35,8 +35,13 @@ REQUIRED_REDESIGN_TASK_KEYS = {
     "domain",
     "subdomain",
     "intent",
+    "priority",
+    "reason",
+    "target_objects",
+    "proposed_actions",
     "constraints",
-    "evaluation",
+    "expected_outcome",
+    "source",
 }
 
 
@@ -51,6 +56,17 @@ def test_playability_report_contract_shape_is_stable():
     assert report["redesign"]["tasks"]
     for task in report["redesign"]["tasks"]:
         assert REQUIRED_REDESIGN_TASK_KEYS.issubset(task.keys())
+        assert task["domain"] == "game_design"
+        assert task["source"] == "playability_report.redesign"
+        assert isinstance(task["priority"], int)
+        assert isinstance(task["reason"], list)
+        assert isinstance(task["target_objects"], list)
+        assert isinstance(task["proposed_actions"], list)
+        assert isinstance(task["expected_outcome"], list)
+        assert task["proposed_actions"]
+        for action in task["proposed_actions"]:
+            assert isinstance(action, dict)
+            assert {"action_type", "instruction", "target_objects", "compare_group", "selection_required", "variant_index", "total_variations"}.issubset(action.keys())
 
 
 def test_playability_report_matches_golden_snapshot_except_timestamp():

@@ -38,6 +38,11 @@ def build_playability_report(
 
     redesign_required = bool(normalized_analysis.get("redesign_required", bool(normalized_redesign_tasks)))
     redesign_reason = _derive_redesign_reason(normalized_analysis, issues_found)
+    canonical_redesign_tasks = _normalize_redesign_tasks(
+        redesign_tasks=normalized_redesign_tasks,
+        analysis_result=normalized_analysis,
+        redesign_reason=redesign_reason,
+    )
     metrics = _build_metrics(normalized_analysis, jump_failures, unreachable_areas)
     blocking_issues = _derive_blocking_issues(playability_status, issues_found, progression_breaks)
     testable = _derive_testable(normalized_analysis)
@@ -62,11 +67,51 @@ def build_playability_report(
         "redesign": {
             "required": redesign_required,
             "reason": redesign_reason,
-            "tasks": normalized_redesign_tasks,
+            "tasks": canonical_redesign_tasks,
         },
         "metrics": metrics,
         "readiness": readiness,
         "recommendations": _string_list(normalized_analysis.get("recommendations")),
+    }
+
+
+def _normalize_redesign_tasks(redesign_tasks: list[dict], analysis_result: dict, redesign_reason: list[str]) -> list[dict]:
+    canonical_tasks: list[dict] = []
+
+    for task in redesign_tasks:
+        canonical_task = _normalize_redesign_task(task, analysis_result, redesign_reason)
+        if canonical_task:
+            canonical_tasks.append(canonical_task)
+
+    canonical_tasks.sort(key=lambda task: (int(task.get("priority", 0) or 0), str(task.get("task_id") or "")))
+    return canonical_tasks
+
+
+def _normalize_redesign_task(task: dict, analysis_result: dict, redesign_reason: list[str]) -> dict:
+    raw_subdomain = str(task.get("subdomain") or "").strip() or "unknown_subdomain"
+    raw_intent = str(task.get("intent") or "").strip() or "unknown_intent"
+    description = str(task.get("description") or "").strip()
+    title = str(task.get("title") or "").strip() or description or "Untitled redesign task"
+    target_objects = _target_objects(task, analysis_result)
+    variant_index = int(task.get("variation_index", 0) or 0)
+    total_variations = int(task.get("total_variations", 0) or 0)
+    priority = _priority_for_task(raw_subdomain, raw_intent)
+    task_id = _canonical_task_id(raw_subdomain, raw_intent, target_objects, variant_index)
+
+    return {
+        "task_id": task_id,
+        "title": title,
+        "description": description,
+        "domain": "game_design",
+        "subdomain": raw_subdomain,
+        "intent": raw_intent,
+        "priority": priority,
+        "reason": _task_reason(task, analysis_result, redesign_reason),
+        "target_objects": target_objects,
+        "proposed_actions": _proposed_actions(task, raw_subdomain, raw_intent, target_objects, description),
+        "constraints": dict(task.get("constraints") or {}),
+        "expected_outcome": _expected_outcome(raw_subdomain, raw_intent, analysis_result),
+        "source": "playability_report.redesign",
     }
 
 
@@ -118,6 +163,161 @@ def _derive_redesign_reason(analysis_result: dict, issues_found: list[str]) -> l
     if movement_mismatch:
         return movement_mismatch
     return issues_found
+
+
+def _target_objects(task: dict, analysis_result: dict) -> list[str]:
+    targets: list[str] = []
+    target_subject = str(task.get("target_subject") or "").strip()
+    if target_subject:
+        targets.append(target_subject)
+
+    subdomain = str(task.get("subdomain") or "").strip().lower()
+    intent = str(task.get("intent") or "").strip().lower()
+    if subdomain in {"traversal_design", "level_layout"} or intent in {"design_traversal", "extend_map"}:
+        for area in _dict_list(analysis_result.get("unreachable_areas")):
+            area_id = str(area.get("area_id") or "").strip()
+            if area_id:
+                targets.append(area_id)
+
+    return _deduplicate_preserve_order(targets) or ["level_layout"]
+
+
+def _task_reason(task: dict, analysis_result: dict, redesign_reason: list[str]) -> list[str]:
+    reasons = list(redesign_reason)
+    raw_subdomain = str(task.get("subdomain") or "").strip().lower()
+    raw_intent = str(task.get("intent") or "").strip().lower()
+
+    if raw_subdomain == "traversal_design" or raw_intent == "design_traversal":
+        reasons.extend(_string_list(analysis_result.get("progression_breaks")))
+    if raw_subdomain == "level_layout" or raw_intent == "extend_map":
+        unreachable_areas = _dict_list(analysis_result.get("unreachable_areas"))
+        reasons.extend(str(area.get("reason") or "").strip() for area in unreachable_areas if str(area.get("reason") or "").strip())
+    if raw_subdomain == "gameplay_flow" or raw_intent == "refine_flow":
+        reasons.extend(_string_list(analysis_result.get("movement_mismatch")))
+
+    return _deduplicate_preserve_order([reason for reason in reasons if str(reason).strip()])
+
+
+def _proposed_actions(
+    task: dict,
+    raw_subdomain: str,
+    raw_intent: str,
+    target_objects: list[str],
+    description: str,
+) -> list[dict]:
+    evaluation = dict(task.get("evaluation") or {})
+    compare_group = str(evaluation.get("compare_group") or _default_compare_group(raw_subdomain, raw_intent)).strip()
+    selection_required = bool(evaluation.get("selection_required", False))
+    variant_index = int(task.get("variation_index", 0) or 0)
+    total_variations = int(task.get("total_variations", 0) or 0)
+
+    return [
+        {
+            "action_type": _action_type(raw_subdomain, raw_intent),
+            "instruction": description,
+            "target_objects": list(target_objects),
+            "compare_group": compare_group,
+            "selection_required": selection_required,
+            "variant_index": variant_index,
+            "total_variations": total_variations,
+        }
+    ]
+
+
+def _expected_outcome(raw_subdomain: str, raw_intent: str, analysis_result: dict) -> list[str]:
+    if raw_subdomain == "traversal_design" or raw_intent == "design_traversal":
+        return [
+            "Restore continuous traversal across currently blocked progression paths.",
+            "Reduce or eliminate unreachable traversal targets in the analyzed layout.",
+        ]
+    if raw_subdomain == "level_layout" or raw_intent == "extend_map":
+        return [
+            "Bring required jump and layout demands closer to the current player movement envelope.",
+            "Preserve structurally valid play space while resolving unreachable surfaces.",
+        ]
+    if raw_subdomain == "gameplay_flow" or raw_intent == "refine_flow":
+        return [
+            "Clarify player-facing flow after structural traversal blockers are resolved.",
+            "Keep progression readable within the current analyzed space.",
+        ]
+    return [
+        "Produce a deterministic redesign task that can be consumed by downstream builder layers.",
+    ]
+
+
+def _priority_for_task(raw_subdomain: str, raw_intent: str) -> int:
+    if raw_subdomain == "traversal_design" or raw_intent == "design_traversal":
+        return 1
+    if raw_subdomain == "level_layout" or raw_intent == "extend_map":
+        return 2
+    if raw_subdomain == "gameplay_flow" or raw_intent == "refine_flow":
+        return 3
+    if raw_subdomain == "encounter_design" or raw_intent == "place_encounter":
+        return 4
+    if raw_subdomain == "theme_design" or raw_intent == "vary_theme":
+        return 5
+    return 6
+
+
+def _action_type(raw_subdomain: str, raw_intent: str) -> str:
+    if raw_subdomain == "traversal_design" or raw_intent == "design_traversal":
+        return "design_traversal_path"
+    if raw_subdomain == "level_layout" or raw_intent == "extend_map":
+        return "adjust_level_layout"
+    if raw_subdomain == "gameplay_flow" or raw_intent == "refine_flow":
+        return "refine_gameplay_flow"
+    return raw_intent or raw_subdomain or "formalized_redesign"
+
+
+def _default_compare_group(raw_subdomain: str, raw_intent: str) -> str:
+    if raw_subdomain == "traversal_design" or raw_intent == "design_traversal":
+        return "game_design_traversal_pathing"
+    if raw_subdomain == "level_layout" or raw_intent == "extend_map":
+        return "game_design_map_variations"
+    if raw_subdomain == "gameplay_flow" or raw_intent == "refine_flow":
+        return "game_design_gameplay_flow"
+    return f"game_design_{_slug_fragment(raw_subdomain or raw_intent or 'tasks')}"
+
+
+def _canonical_task_id(raw_subdomain: str, raw_intent: str, target_objects: list[str], variant_index: int) -> str:
+    base = "_".join(
+        part
+        for part in [
+            _slug_fragment(raw_subdomain),
+            _slug_fragment(raw_intent),
+            _slug_fragment(target_objects[0] if target_objects else "level_layout"),
+        ]
+        if part
+    )
+    if variant_index > 0:
+        return f"{base}_v{variant_index}"
+    return base
+
+
+def _slug_fragment(value: str) -> str:
+    slug = []
+    previous_was_separator = False
+    for character in str(value or "").lower():
+        if character.isalnum():
+            slug.append(character)
+            previous_was_separator = False
+            continue
+        if not previous_was_separator:
+            slug.append("_")
+            previous_was_separator = True
+    return "".join(slug).strip("_")
+
+
+def _deduplicate_preserve_order(items: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for item in items:
+        normalized = str(item).strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        result.append(normalized)
+    return result
 
 
 def _build_metrics(analysis_result: dict, jump_failures: list[dict], unreachable_areas: list[dict]) -> dict:

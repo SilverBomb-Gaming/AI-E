@@ -14,15 +14,12 @@ def group_tasks_for_selection(tasks: list[dict], playability_report: dict | None
     report_context = _report_context(playability_report)
 
     for task in tasks:
-        evaluation = task.get("evaluation")
-        if not isinstance(evaluation, dict):
+        selection_metadata = _selection_metadata(task)
+        if not selection_metadata["compare_group"]:
             continue
-        if evaluation.get("selection_required") is not True:
+        if selection_metadata["selection_required"] is not True:
             continue
-
-        compare_group = str(evaluation.get("compare_group") or "").strip()
-        if not compare_group:
-            continue
+        compare_group = selection_metadata["compare_group"]
 
         group = grouped.setdefault(
             compare_group,
@@ -40,11 +37,12 @@ def group_tasks_for_selection(tasks: list[dict], playability_report: dict | None
             {
                 "task_id": str(task.get("task_id") or ""),
                 "title": str(task.get("title") or ""),
-                "variation_index": int(task.get("variation_index", 0) or 0),
-                "total_variations": int(task.get("total_variations", 0) or 0),
+                "variation_index": int(selection_metadata["variation_index"] or 0),
+                "total_variations": int(selection_metadata["total_variations"] or 0),
                 "description": str(task.get("description") or ""),
                 "subdomain": str(task.get("subdomain") or ""),
                 "intent": str(task.get("intent") or ""),
+                "priority": int(task.get("priority", 0) or 0),
                 "report_task": _task_is_in_report(task, report_context["redesign_tasks"]),
             }
         )
@@ -77,6 +75,34 @@ def _task_is_in_report(task: dict, redesign_tasks: list[dict]) -> bool:
     if not task_id:
         return False
     return any(str(redesign_task.get("task_id") or "").strip() == task_id for redesign_task in redesign_tasks)
+
+
+def _selection_metadata(task: dict) -> dict:
+    proposed_actions = task.get("proposed_actions")
+    if not isinstance(proposed_actions, list):
+        return {
+            "compare_group": "",
+            "selection_required": False,
+            "variation_index": 0,
+            "total_variations": 0,
+        }
+
+    for action in proposed_actions:
+        if not isinstance(action, dict):
+            continue
+        return {
+            "compare_group": str(action.get("compare_group") or "").strip(),
+            "selection_required": bool(action.get("selection_required", False)),
+            "variation_index": int(action.get("variant_index", 0) or 0),
+            "total_variations": int(action.get("total_variations", 0) or 0),
+        }
+
+    return {
+        "compare_group": "",
+        "selection_required": False,
+        "variation_index": 0,
+        "total_variations": 0,
+    }
 
 
 if __name__ == "__main__":

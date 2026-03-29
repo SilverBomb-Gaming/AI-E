@@ -1,6 +1,6 @@
 {
   "level_id": "LEVEL_0001",
-  "timestamp": "2026-03-29 15:56:59 -04:00 (Eastern Time \u2014 New York)",
+  "timestamp": "2026-03-29 16:09:55 -04:00 (Eastern Time \u2014 New York)",
   "playability_status": "partially_broken",
   "analysis": {
     "playable": false,
@@ -65,180 +65,39 @@
     ],
     "tasks": [
       {
-        "task_id": "map_design_1",
-        "title": "Map extension variation 1 for broken arena",
-        "description": "generate map extension variation 1 for broken arena",
-        "domain": "game_design",
-        "subdomain": "level_layout",
-        "intent": "extend_map",
-        "constraints": {
-          "safety": "read_only",
-          "execution_mode": "local_only",
-          "runtime_changes": false,
-          "external_apis": false,
-          "engine_dependency": "none_in_task_pack_layer"
-        },
-        "evaluation": {
-          "compare_group": "game_design_map_variations",
-          "selection_required": true,
-          "playability_review_required": true,
-          "redesign_authorized_for_playability": true
-        },
-        "target_subject": "broken arena",
-        "variation_index": 1,
-        "total_variations": 3
-      },
-      {
-        "task_id": "map_design_2",
-        "title": "Map extension variation 2 for broken arena",
-        "description": "generate map extension variation 2 for broken arena",
-        "domain": "game_design",
-        "subdomain": "level_layout",
-        "intent": "extend_map",
-        "constraints": {
-          "safety": "read_only",
-          "execution_mode": "local_only",
-          "runtime_changes": false,
-          "external_apis": false,
-          "engine_dependency": "none_in_task_pack_layer"
-        },
-        "evaluation": {
-          "compare_group": "game_design_map_variations",
-          "selection_required": true,
-          "playability_review_required": true,
-          "redesign_authorized_for_playability": true
-        },
-        "target_subject": "broken arena",
-        "variation_index": 2,
-        "total_variations": 3
-      },
-      {
-        "task_id": "map_design_3",
-        "title": "Map extension variation 3 for broken arena",
-        "description": "generate map extension variation 3 for broken arena",
-        "domain": "game_design",
-        "subdomain": "level_layout",
-        "intent": "extend_map",
-        "constraints": {
-          "safety": "read_only",
-          "execution_mode": "local_only",
-          "runtime_changes": false,
-          "external_apis": false,
-          "engine_dependency": "none_in_task_pack_layer"
-        },
-        "evaluation": {
-          "compare_group": "game_design_map_variations",
-          "selection_required": true,
-          "playability_review_required": true,
-          "redesign_authorized_for_playability": true
-        },
-        "target_subject": "broken arena",
-        "variation_index": 3,
-        "total_variations": 3
-      },
-      {
-        "task_id": "traversal_1",
-        "title": "Traversal pathing concept 1 for broken arena",
-        "description": "design traversal and pathing concept 1 for broken arena",
-        "domain": "game_design",
-        "subdomain": "traversal_design",
-        "intent": "design_traversal",
-        "constraints": {
-          "safety": "read_only",
-          "execution_mode": "local_only",
-          "runtime_changes": false,
-          "external_apis": false,
-          "engine_dependency": "none_in_task_pack_layer"
-        },
-        "evaluation": {
-          "compare_group": "game_design_traversal_pathing",
-          "selection_required": true,
-          "playability_review_required": true,
-          "redesign_authorized_for_playability": true
-        },
-        "target_subject": "broken arena",
-        "variation_index": 1,
-        "total_variations": 3
-      },
-      {
-        "task_id": "traversal_2",
-        "title": "Traversal pathing concept 2 for broken arena",
-        "description": "design traversal and pathing concept 2 for broken arena",
-        "domain": "game_design",
-        "subdomain": "traversal_design",
-        "intent": "design_traversal",
-        "constraints": {
-          "safety": "read_only",
-          "execution_mode": "local_only",
-          "runtime_changes": false,
-          "external_apis": false,
-          "engine_dependency": "none_in_task_pack_layer"
-        },
-        "evaluation": {
-          "compare_group": "game_design_traversal_pathing",
-          "selection_required": true,
-          "playability_review_required": true,
-          "redesign_authorized_for_playability": true
-        },
-        "target_subject": "broken arena",
-        "variation_index": 2,
-        "total_variations": 3
-      },
-      {
-        "task_id": "traversal_3",
-        "title": "Traversal pathing concept 3 for broken arena",
-        "description": "design traversal and pathing concept 3 for broken arena",
-        "domain": "game_design",
-        "subdomain": "traversal_design",
-        "intent": "design_traversal",
-        "constraints": {
-          "safety": "read_only",
-          "execution_mode": "local_only",
-          "runtime_changes": false,
-          "external_apis": false,
-          "engine_dependency": "none_in_task_pack_layer"
-        },
-        "evaluation": {
-          "compare_group": "game_design_traversal_pathing",
-          "selection_required": true,
-          "playability_review_required": true,
-          "redesign_authorized_for_playability": true
-        },
-        "target_subject": "broken arena",
-        "variation_index": 3,
-        "total_variations": 3
-      },
-      {
-        "task_id": "gameplay_flow_1",
-        "title": "Gameplay flow refinement for broken arena",
-        "description": "refine gameplay flow for broken arena",
-        "domain": "game_design",
-        "subdomain": "gameplay_flow",
-        "intent": "refine_flow",
-        "constraints": {
-          "safety": "read_only",
-          "execution_mode": "local_only",
-          "runtime_changes": false,
-          "external_apis": false,
-          "engine_dependency": "none_in_task_pack_layer"
-        },
-        "evaluation": {
-          "compare_group": "game_design_gameplay_flow",
-          "selection_required": false,
-          "playability_review_required": true,
-          "redesign_authorized_for_playability": true
-        },
-        "target_subject": "broken arena",
-        "variation_index": 0,
-        "total_variations": 1
-      },
-      {
-        "task_id": "traversal_1",
+        "task_id": "traversal_design_design_traversal_broken_arena",
         "title": "Traversal pathing concept for broken arena",
         "description": "design traversal and pathing concept for broken arena",
         "domain": "game_design",
         "subdomain": "traversal_design",
         "intent": "design_traversal",
+        "priority": 1,
+        "reason": [
+          "Unreachable surfaces create traversal dead zones that will produce player-facing complaints.",
+          "Current jump or spacing demands exceed the character's movement envelope.",
+          "Layout geometry does not align cleanly with the available movement rules.",
+          "Required traversal chain is broken by unreachable layout elements."
+        ],
+        "target_objects": [
+          "broken arena",
+          "Arena_Cover_Block_A",
+          "Arena_Cover_Block_B"
+        ],
+        "proposed_actions": [
+          {
+            "action_type": "design_traversal_path",
+            "instruction": "design traversal and pathing concept for broken arena",
+            "target_objects": [
+              "broken arena",
+              "Arena_Cover_Block_A",
+              "Arena_Cover_Block_B"
+            ],
+            "compare_group": "game_design_traversal_pathing",
+            "selection_required": false,
+            "variant_index": 0,
+            "total_variations": 1
+          }
+        ],
         "constraints": {
           "safety": "read_only",
           "execution_mode": "local_only",
@@ -246,23 +105,187 @@
           "external_apis": false,
           "engine_dependency": "none_in_task_pack_layer"
         },
-        "evaluation": {
-          "compare_group": "game_design_traversal_pathing",
-          "selection_required": false,
-          "playability_review_required": true,
-          "redesign_authorized_for_playability": true
-        },
-        "target_subject": "broken arena",
-        "variation_index": 0,
-        "total_variations": 1
+        "expected_outcome": [
+          "Restore continuous traversal across currently blocked progression paths.",
+          "Reduce or eliminate unreachable traversal targets in the analyzed layout."
+        ],
+        "source": "playability_report.redesign"
       },
       {
-        "task_id": "traversal_1",
+        "task_id": "traversal_design_design_traversal_broken_arena_v1",
+        "title": "Traversal pathing concept 1 for broken arena",
+        "description": "design traversal and pathing concept 1 for broken arena",
+        "domain": "game_design",
+        "subdomain": "traversal_design",
+        "intent": "design_traversal",
+        "priority": 1,
+        "reason": [
+          "Unreachable surfaces create traversal dead zones that will produce player-facing complaints.",
+          "Current jump or spacing demands exceed the character's movement envelope.",
+          "Layout geometry does not align cleanly with the available movement rules.",
+          "Required traversal chain is broken by unreachable layout elements."
+        ],
+        "target_objects": [
+          "broken arena",
+          "Arena_Cover_Block_A",
+          "Arena_Cover_Block_B"
+        ],
+        "proposed_actions": [
+          {
+            "action_type": "design_traversal_path",
+            "instruction": "design traversal and pathing concept 1 for broken arena",
+            "target_objects": [
+              "broken arena",
+              "Arena_Cover_Block_A",
+              "Arena_Cover_Block_B"
+            ],
+            "compare_group": "game_design_traversal_pathing",
+            "selection_required": true,
+            "variant_index": 1,
+            "total_variations": 3
+          }
+        ],
+        "constraints": {
+          "safety": "read_only",
+          "execution_mode": "local_only",
+          "runtime_changes": false,
+          "external_apis": false,
+          "engine_dependency": "none_in_task_pack_layer"
+        },
+        "expected_outcome": [
+          "Restore continuous traversal across currently blocked progression paths.",
+          "Reduce or eliminate unreachable traversal targets in the analyzed layout."
+        ],
+        "source": "playability_report.redesign"
+      },
+      {
+        "task_id": "traversal_design_design_traversal_broken_arena_v2",
+        "title": "Traversal pathing concept 2 for broken arena",
+        "description": "design traversal and pathing concept 2 for broken arena",
+        "domain": "game_design",
+        "subdomain": "traversal_design",
+        "intent": "design_traversal",
+        "priority": 1,
+        "reason": [
+          "Unreachable surfaces create traversal dead zones that will produce player-facing complaints.",
+          "Current jump or spacing demands exceed the character's movement envelope.",
+          "Layout geometry does not align cleanly with the available movement rules.",
+          "Required traversal chain is broken by unreachable layout elements."
+        ],
+        "target_objects": [
+          "broken arena",
+          "Arena_Cover_Block_A",
+          "Arena_Cover_Block_B"
+        ],
+        "proposed_actions": [
+          {
+            "action_type": "design_traversal_path",
+            "instruction": "design traversal and pathing concept 2 for broken arena",
+            "target_objects": [
+              "broken arena",
+              "Arena_Cover_Block_A",
+              "Arena_Cover_Block_B"
+            ],
+            "compare_group": "game_design_traversal_pathing",
+            "selection_required": true,
+            "variant_index": 2,
+            "total_variations": 3
+          }
+        ],
+        "constraints": {
+          "safety": "read_only",
+          "execution_mode": "local_only",
+          "runtime_changes": false,
+          "external_apis": false,
+          "engine_dependency": "none_in_task_pack_layer"
+        },
+        "expected_outcome": [
+          "Restore continuous traversal across currently blocked progression paths.",
+          "Reduce or eliminate unreachable traversal targets in the analyzed layout."
+        ],
+        "source": "playability_report.redesign"
+      },
+      {
+        "task_id": "traversal_design_design_traversal_broken_arena_v3",
+        "title": "Traversal pathing concept 3 for broken arena",
+        "description": "design traversal and pathing concept 3 for broken arena",
+        "domain": "game_design",
+        "subdomain": "traversal_design",
+        "intent": "design_traversal",
+        "priority": 1,
+        "reason": [
+          "Unreachable surfaces create traversal dead zones that will produce player-facing complaints.",
+          "Current jump or spacing demands exceed the character's movement envelope.",
+          "Layout geometry does not align cleanly with the available movement rules.",
+          "Required traversal chain is broken by unreachable layout elements."
+        ],
+        "target_objects": [
+          "broken arena",
+          "Arena_Cover_Block_A",
+          "Arena_Cover_Block_B"
+        ],
+        "proposed_actions": [
+          {
+            "action_type": "design_traversal_path",
+            "instruction": "design traversal and pathing concept 3 for broken arena",
+            "target_objects": [
+              "broken arena",
+              "Arena_Cover_Block_A",
+              "Arena_Cover_Block_B"
+            ],
+            "compare_group": "game_design_traversal_pathing",
+            "selection_required": true,
+            "variant_index": 3,
+            "total_variations": 3
+          }
+        ],
+        "constraints": {
+          "safety": "read_only",
+          "execution_mode": "local_only",
+          "runtime_changes": false,
+          "external_apis": false,
+          "engine_dependency": "none_in_task_pack_layer"
+        },
+        "expected_outcome": [
+          "Restore continuous traversal across currently blocked progression paths.",
+          "Reduce or eliminate unreachable traversal targets in the analyzed layout."
+        ],
+        "source": "playability_report.redesign"
+      },
+      {
+        "task_id": "traversal_design_design_traversal_unreachable_arena_areas",
         "title": "Traversal pathing concept for unreachable arena areas",
         "description": "design traversal and pathing concept for unreachable arena areas",
         "domain": "game_design",
         "subdomain": "traversal_design",
         "intent": "design_traversal",
+        "priority": 1,
+        "reason": [
+          "Unreachable surfaces create traversal dead zones that will produce player-facing complaints.",
+          "Current jump or spacing demands exceed the character's movement envelope.",
+          "Layout geometry does not align cleanly with the available movement rules.",
+          "Required traversal chain is broken by unreachable layout elements."
+        ],
+        "target_objects": [
+          "unreachable arena areas",
+          "Arena_Cover_Block_A",
+          "Arena_Cover_Block_B"
+        ],
+        "proposed_actions": [
+          {
+            "action_type": "design_traversal_path",
+            "instruction": "design traversal and pathing concept for unreachable arena areas",
+            "target_objects": [
+              "unreachable arena areas",
+              "Arena_Cover_Block_A",
+              "Arena_Cover_Block_B"
+            ],
+            "compare_group": "game_design_traversal_pathing",
+            "selection_required": false,
+            "variant_index": 0,
+            "total_variations": 1
+          }
+        ],
         "constraints": {
           "safety": "read_only",
           "execution_mode": "local_only",
@@ -270,23 +293,187 @@
           "external_apis": false,
           "engine_dependency": "none_in_task_pack_layer"
         },
-        "evaluation": {
-          "compare_group": "game_design_traversal_pathing",
-          "selection_required": false,
-          "playability_review_required": true,
-          "redesign_authorized_for_playability": true
-        },
-        "target_subject": "unreachable arena areas",
-        "variation_index": 0,
-        "total_variations": 1
+        "expected_outcome": [
+          "Restore continuous traversal across currently blocked progression paths.",
+          "Reduce or eliminate unreachable traversal targets in the analyzed layout."
+        ],
+        "source": "playability_report.redesign"
       },
       {
-        "task_id": "map_design_1",
+        "task_id": "level_layout_extend_map_broken_arena_v1",
+        "title": "Map extension variation 1 for broken arena",
+        "description": "generate map extension variation 1 for broken arena",
+        "domain": "game_design",
+        "subdomain": "level_layout",
+        "intent": "extend_map",
+        "priority": 2,
+        "reason": [
+          "Unreachable surfaces create traversal dead zones that will produce player-facing complaints.",
+          "Current jump or spacing demands exceed the character's movement envelope.",
+          "Layout geometry does not align cleanly with the available movement rules.",
+          "platform top exceeds the current movement envelope."
+        ],
+        "target_objects": [
+          "broken arena",
+          "Arena_Cover_Block_A",
+          "Arena_Cover_Block_B"
+        ],
+        "proposed_actions": [
+          {
+            "action_type": "adjust_level_layout",
+            "instruction": "generate map extension variation 1 for broken arena",
+            "target_objects": [
+              "broken arena",
+              "Arena_Cover_Block_A",
+              "Arena_Cover_Block_B"
+            ],
+            "compare_group": "game_design_map_variations",
+            "selection_required": true,
+            "variant_index": 1,
+            "total_variations": 3
+          }
+        ],
+        "constraints": {
+          "safety": "read_only",
+          "execution_mode": "local_only",
+          "runtime_changes": false,
+          "external_apis": false,
+          "engine_dependency": "none_in_task_pack_layer"
+        },
+        "expected_outcome": [
+          "Bring required jump and layout demands closer to the current player movement envelope.",
+          "Preserve structurally valid play space while resolving unreachable surfaces."
+        ],
+        "source": "playability_report.redesign"
+      },
+      {
+        "task_id": "level_layout_extend_map_broken_arena_v2",
+        "title": "Map extension variation 2 for broken arena",
+        "description": "generate map extension variation 2 for broken arena",
+        "domain": "game_design",
+        "subdomain": "level_layout",
+        "intent": "extend_map",
+        "priority": 2,
+        "reason": [
+          "Unreachable surfaces create traversal dead zones that will produce player-facing complaints.",
+          "Current jump or spacing demands exceed the character's movement envelope.",
+          "Layout geometry does not align cleanly with the available movement rules.",
+          "platform top exceeds the current movement envelope."
+        ],
+        "target_objects": [
+          "broken arena",
+          "Arena_Cover_Block_A",
+          "Arena_Cover_Block_B"
+        ],
+        "proposed_actions": [
+          {
+            "action_type": "adjust_level_layout",
+            "instruction": "generate map extension variation 2 for broken arena",
+            "target_objects": [
+              "broken arena",
+              "Arena_Cover_Block_A",
+              "Arena_Cover_Block_B"
+            ],
+            "compare_group": "game_design_map_variations",
+            "selection_required": true,
+            "variant_index": 2,
+            "total_variations": 3
+          }
+        ],
+        "constraints": {
+          "safety": "read_only",
+          "execution_mode": "local_only",
+          "runtime_changes": false,
+          "external_apis": false,
+          "engine_dependency": "none_in_task_pack_layer"
+        },
+        "expected_outcome": [
+          "Bring required jump and layout demands closer to the current player movement envelope.",
+          "Preserve structurally valid play space while resolving unreachable surfaces."
+        ],
+        "source": "playability_report.redesign"
+      },
+      {
+        "task_id": "level_layout_extend_map_broken_arena_v3",
+        "title": "Map extension variation 3 for broken arena",
+        "description": "generate map extension variation 3 for broken arena",
+        "domain": "game_design",
+        "subdomain": "level_layout",
+        "intent": "extend_map",
+        "priority": 2,
+        "reason": [
+          "Unreachable surfaces create traversal dead zones that will produce player-facing complaints.",
+          "Current jump or spacing demands exceed the character's movement envelope.",
+          "Layout geometry does not align cleanly with the available movement rules.",
+          "platform top exceeds the current movement envelope."
+        ],
+        "target_objects": [
+          "broken arena",
+          "Arena_Cover_Block_A",
+          "Arena_Cover_Block_B"
+        ],
+        "proposed_actions": [
+          {
+            "action_type": "adjust_level_layout",
+            "instruction": "generate map extension variation 3 for broken arena",
+            "target_objects": [
+              "broken arena",
+              "Arena_Cover_Block_A",
+              "Arena_Cover_Block_B"
+            ],
+            "compare_group": "game_design_map_variations",
+            "selection_required": true,
+            "variant_index": 3,
+            "total_variations": 3
+          }
+        ],
+        "constraints": {
+          "safety": "read_only",
+          "execution_mode": "local_only",
+          "runtime_changes": false,
+          "external_apis": false,
+          "engine_dependency": "none_in_task_pack_layer"
+        },
+        "expected_outcome": [
+          "Bring required jump and layout demands closer to the current player movement envelope.",
+          "Preserve structurally valid play space while resolving unreachable surfaces."
+        ],
+        "source": "playability_report.redesign"
+      },
+      {
+        "task_id": "level_layout_extend_map_movement_mismatch_in_arena",
         "title": "Map extension variation for movement mismatch in arena",
         "description": "generate map extension variation for movement mismatch in arena",
         "domain": "game_design",
         "subdomain": "level_layout",
         "intent": "extend_map",
+        "priority": 2,
+        "reason": [
+          "Unreachable surfaces create traversal dead zones that will produce player-facing complaints.",
+          "Current jump or spacing demands exceed the character's movement envelope.",
+          "Layout geometry does not align cleanly with the available movement rules.",
+          "platform top exceeds the current movement envelope."
+        ],
+        "target_objects": [
+          "movement mismatch in arena",
+          "Arena_Cover_Block_A",
+          "Arena_Cover_Block_B"
+        ],
+        "proposed_actions": [
+          {
+            "action_type": "adjust_level_layout",
+            "instruction": "generate map extension variation for movement mismatch in arena",
+            "target_objects": [
+              "movement mismatch in arena",
+              "Arena_Cover_Block_A",
+              "Arena_Cover_Block_B"
+            ],
+            "compare_group": "game_design_map_variations",
+            "selection_required": false,
+            "variant_index": 0,
+            "total_variations": 1
+          }
+        ],
         "constraints": {
           "safety": "read_only",
           "execution_mode": "local_only",
@@ -294,23 +481,85 @@
           "external_apis": false,
           "engine_dependency": "none_in_task_pack_layer"
         },
-        "evaluation": {
-          "compare_group": "game_design_map_variations",
-          "selection_required": false,
-          "playability_review_required": true,
-          "redesign_authorized_for_playability": true
-        },
-        "target_subject": "movement mismatch in arena",
-        "variation_index": 0,
-        "total_variations": 1
+        "expected_outcome": [
+          "Bring required jump and layout demands closer to the current player movement envelope.",
+          "Preserve structurally valid play space while resolving unreachable surfaces."
+        ],
+        "source": "playability_report.redesign"
       },
       {
-        "task_id": "gameplay_flow_1",
+        "task_id": "gameplay_flow_refine_flow_broken_arena",
+        "title": "Gameplay flow refinement for broken arena",
+        "description": "refine gameplay flow for broken arena",
+        "domain": "game_design",
+        "subdomain": "gameplay_flow",
+        "intent": "refine_flow",
+        "priority": 3,
+        "reason": [
+          "Unreachable surfaces create traversal dead zones that will produce player-facing complaints.",
+          "Current jump or spacing demands exceed the character's movement envelope.",
+          "Layout geometry does not align cleanly with the available movement rules.",
+          "Layout demands exceed the current jump or traversal envelope."
+        ],
+        "target_objects": [
+          "broken arena"
+        ],
+        "proposed_actions": [
+          {
+            "action_type": "refine_gameplay_flow",
+            "instruction": "refine gameplay flow for broken arena",
+            "target_objects": [
+              "broken arena"
+            ],
+            "compare_group": "game_design_gameplay_flow",
+            "selection_required": false,
+            "variant_index": 0,
+            "total_variations": 1
+          }
+        ],
+        "constraints": {
+          "safety": "read_only",
+          "execution_mode": "local_only",
+          "runtime_changes": false,
+          "external_apis": false,
+          "engine_dependency": "none_in_task_pack_layer"
+        },
+        "expected_outcome": [
+          "Clarify player-facing flow after structural traversal blockers are resolved.",
+          "Keep progression readable within the current analyzed space."
+        ],
+        "source": "playability_report.redesign"
+      },
+      {
+        "task_id": "gameplay_flow_refine_flow_movement_mismatch_in_arena",
         "title": "Gameplay flow refinement for movement mismatch in arena",
         "description": "refine gameplay flow for movement mismatch in arena",
         "domain": "game_design",
         "subdomain": "gameplay_flow",
         "intent": "refine_flow",
+        "priority": 3,
+        "reason": [
+          "Unreachable surfaces create traversal dead zones that will produce player-facing complaints.",
+          "Current jump or spacing demands exceed the character's movement envelope.",
+          "Layout geometry does not align cleanly with the available movement rules.",
+          "Layout demands exceed the current jump or traversal envelope."
+        ],
+        "target_objects": [
+          "movement mismatch in arena"
+        ],
+        "proposed_actions": [
+          {
+            "action_type": "refine_gameplay_flow",
+            "instruction": "refine gameplay flow for movement mismatch in arena",
+            "target_objects": [
+              "movement mismatch in arena"
+            ],
+            "compare_group": "game_design_gameplay_flow",
+            "selection_required": false,
+            "variant_index": 0,
+            "total_variations": 1
+          }
+        ],
         "constraints": {
           "safety": "read_only",
           "execution_mode": "local_only",
@@ -318,15 +567,11 @@
           "external_apis": false,
           "engine_dependency": "none_in_task_pack_layer"
         },
-        "evaluation": {
-          "compare_group": "game_design_gameplay_flow",
-          "selection_required": false,
-          "playability_review_required": true,
-          "redesign_authorized_for_playability": true
-        },
-        "target_subject": "movement mismatch in arena",
-        "variation_index": 0,
-        "total_variations": 1
+        "expected_outcome": [
+          "Clarify player-facing flow after structural traversal blockers are resolved.",
+          "Keep progression readable within the current analyzed space."
+        ],
+        "source": "playability_report.redesign"
       }
     ]
   },
