@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from orchestrator.env_guard import enforce_python
+
+enforce_python()
+
 import json
 import math
 import re

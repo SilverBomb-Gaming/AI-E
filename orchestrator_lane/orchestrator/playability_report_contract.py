@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from orchestrator.env_guard import enforce_python
+
+enforce_python()
+
 import json
 
 from ai_e_runtime.time_utils import get_current_timestamp
