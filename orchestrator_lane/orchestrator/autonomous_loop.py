@@ -12,6 +12,8 @@ from .evaluation_feedback import apply_user_selection
 from .evaluation_ranker import rank_grouped_tasks
 from .evaluation_recommender import recommend_from_ranked
 from .evaluation_selector import group_tasks_for_selection
+from .level_playability_analyzer import analyze_first_validation_target
+from .playability_report_contract import build_playability_report
 from .utils import read_json, slugify, write_json
 
 
@@ -33,9 +35,11 @@ def run_autonomous_cycle(prompt: str, max_iterations: int = 3):
         iteration_input_entries = [dict(entry) for entry in current_entries]
         session_id = _build_session_id(normalized_prompt, iteration_index)
         session_result = _run_session_runner(session_id)
-        grouped = group_tasks_for_selection(_selection_tasks_for_iteration(iteration_index, normalized_prompt))
-        ranked = rank_grouped_tasks(grouped)
-        recommendations = recommend_from_ranked(ranked)
+        playability_report = _build_playability_report_for_iteration()
+        selection_tasks = _selection_tasks_for_iteration(iteration_index, normalized_prompt, playability_report)
+        grouped = group_tasks_for_selection(selection_tasks, playability_report=playability_report)
+        ranked = rank_grouped_tasks(grouped, playability_report=playability_report)
+        recommendations = recommend_from_ranked(ranked, playability_report=playability_report)
         selected_task_id = _top_recommended_task_id(recommendations)
 
         feedback = {}
@@ -57,6 +61,7 @@ def run_autonomous_cycle(prompt: str, max_iterations: int = 3):
                 "session_id": session_id,
                 "input_entries": iteration_input_entries,
                 "session_result": session_result,
+                "playability_report": playability_report,
                 "grouped": grouped,
                 "ranked": ranked,
                 "recommendations": recommendations,
@@ -79,10 +84,32 @@ def run_autonomous_cycle(prompt: str, max_iterations: int = 3):
     }
 
 
-def _selection_tasks_for_iteration(iteration_index: int, prompt: str) -> list[dict]:
+def _selection_tasks_for_iteration(iteration_index: int, prompt: str, playability_report: dict) -> list[dict]:
+    redesign = playability_report.get("redesign")
+    if isinstance(redesign, dict) and redesign.get("required"):
+        redesign_tasks = redesign.get("tasks")
+        if isinstance(redesign_tasks, list):
+            normalized_tasks = [dict(task) for task in redesign_tasks if isinstance(task, dict)]
+            if normalized_tasks:
+                return normalized_tasks
     if iteration_index == 1:
         return decompose_prompt(prompt)
     return []
+
+
+def _build_playability_report_for_iteration() -> dict:
+    validation = analyze_first_validation_target()
+    analysis = dict(validation.get("analysis") or {})
+    stabilization_report_summary = validation.get("stabilization_report_summary")
+    level_id = "LEVEL_0001"
+    if isinstance(stabilization_report_summary, dict):
+        level_id = str(stabilization_report_summary.get("level_id") or level_id)
+    redesign_tasks = [dict(task) for task in analysis.get("redesigned_layout_tasks", []) if isinstance(task, dict)]
+    return build_playability_report(
+        level_id=level_id,
+        analysis_result=analysis,
+        redesign_tasks=redesign_tasks,
+    )
 
 
 def _top_recommended_task_id(recommendations: dict) -> str:
