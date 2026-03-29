@@ -18,6 +18,7 @@ from .evaluation_recommender import recommend_from_ranked
 from .evaluation_selector import group_tasks_for_selection
 from .level_playability_analyzer import analyze_first_validation_target
 from .playability_report_contract import build_playability_report
+from .report_persistence import save_playability_report
 from .utils import read_json, slugify, write_json
 
 
@@ -40,6 +41,7 @@ def run_autonomous_cycle(prompt: str, max_iterations: int = 3):
         session_id = _build_session_id(normalized_prompt, iteration_index)
         session_result = _run_session_runner(session_id)
         playability_report = _build_playability_report_for_iteration()
+        playability_report_path = _persist_playability_report(session_id, playability_report)
         selection_tasks = _selection_tasks_for_iteration(iteration_index, normalized_prompt, playability_report)
         grouped = group_tasks_for_selection(selection_tasks, playability_report=playability_report)
         ranked = rank_grouped_tasks(grouped, playability_report=playability_report)
@@ -66,6 +68,7 @@ def run_autonomous_cycle(prompt: str, max_iterations: int = 3):
                 "input_entries": iteration_input_entries,
                 "session_result": session_result,
                 "playability_report": playability_report,
+                "playability_report_path": playability_report_path,
                 "grouped": grouped,
                 "ranked": ranked,
                 "recommendations": recommendations,
@@ -114,6 +117,13 @@ def _build_playability_report_for_iteration() -> dict:
         analysis_result=analysis,
         redesign_tasks=redesign_tasks,
     )
+
+
+def _persist_playability_report(session_id: str, playability_report: dict) -> str:
+    root_dir = Path(__file__).resolve().parents[1]
+    destination = root_dir / "runs" / session_id / "playability_report.json"
+    save_playability_report(playability_report, str(destination))
+    return str(destination)
 
 
 def _top_recommended_task_id(recommendations: dict) -> str:
