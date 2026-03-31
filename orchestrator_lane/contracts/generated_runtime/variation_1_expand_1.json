@@ -1,0 +1,13 @@
+{
+  "runtime_task": {
+    "task_id": "variation_1_expand_1",
+    "title": "Expand map variation 1 layout",
+    "agent_type": "read_only_inspector_agent",
+    "result_payload": {
+      "source": "continuation_engine_v1",
+      "description": "expand map variation 1 layout",
+      "selected_task_id": "variation_1",
+      "compare_group": "map_variations"
+    }
+  }
+}

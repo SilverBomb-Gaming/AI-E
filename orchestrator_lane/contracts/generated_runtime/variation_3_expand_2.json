@@ -1,0 +1,13 @@
+{
+  "runtime_task": {
+    "task_id": "variation_3_expand_2",
+    "title": "Refine gameplay flow for map variation 3",
+    "agent_type": "read_only_inspector_agent",
+    "result_payload": {
+      "source": "continuation_engine_v1",
+      "description": "refine gameplay flow for map variation 3",
+      "selected_task_id": "variation_3",
+      "compare_group": "map_variations"
+    }
+  }
+}

@@ -123,6 +123,8 @@ class ControlPanel(QtWidgets.QMainWindow):
         subtitle.setStyleSheet("color: #555;")
         layout.addWidget(subtitle)
 
+        layout.addWidget(self._build_onboarding_panel())
+
         badge_row = QtWidgets.QHBoxLayout()
         badge_row.setSpacing(8)
         badge_row.addWidget(self._build_guardrail_badge("Supported scope only", "#eff6ff", "#1d4ed8"))
@@ -130,7 +132,6 @@ class ControlPanel(QtWidgets.QMainWindow):
         badge_row.addWidget(self._build_guardrail_badge("Mutations reviewed", "#fef3c7", "#92400e"))
         badge_row.addStretch(1)
         layout.addLayout(badge_row)
-        layout.addWidget(self._build_onboarding_panel())
 
         project_layout = QtWidgets.QGridLayout()
         self.project_combo = QtWidgets.QComboBox()
@@ -147,7 +148,7 @@ class ControlPanel(QtWidgets.QMainWindow):
         prompt_group = QtWidgets.QGroupBox("Prompt Intake")
         prompt_layout = QtWidgets.QVBoxLayout(prompt_group)
         prompt_hint = QtWidgets.QLabel(
-            "Prepare a request here first. AI-E will show whether it is ready, needs approval, should run in sandbox first, or is blocked before anything runs."
+            "Start here after choosing a prompt. Click Prepare Request and AI-E will show whether it is ready, needs approval, should run in sandbox first, or is blocked before anything runs."
         )
         prompt_hint.setWordWrap(True)
         prompt_hint.setStyleSheet("color: #555;")
@@ -160,6 +161,10 @@ class ControlPanel(QtWidgets.QMainWindow):
         prompt_layout.addWidget(self.prompt_input)
 
         self.prepare_prompt_button = QtWidgets.QPushButton("Prepare Request")
+        self.prepare_prompt_button.setStyleSheet(
+            "background: #1d4ed8; color: white; border: 1px solid #1e40af; "
+            "border-radius: 6px; padding: 6px 14px; font-weight: 600;"
+        )
         self.prepare_prompt_button.clicked.connect(self._handle_prepare_prompt)
         prompt_layout.addWidget(self.prepare_prompt_button, alignment=QtCore.Qt.AlignmentFlag.AlignLeft)
 
@@ -199,7 +204,7 @@ class ControlPanel(QtWidgets.QMainWindow):
         decision_layout.addWidget(self.intake_feedback_label)
         prompt_layout.addWidget(decision_group)
 
-        review_group = QtWidgets.QGroupBox("Approval Review")
+        review_group = QtWidgets.QGroupBox("Approval Review (when needed)")
         review_layout = QtWidgets.QVBoxLayout(review_group)
         review_layout.setSpacing(8)
 
@@ -263,7 +268,7 @@ class ControlPanel(QtWidgets.QMainWindow):
         review_layout.addWidget(self.approval_review_feedback_label)
         prompt_layout.addWidget(review_group)
 
-        live_status_group = QtWidgets.QGroupBox("Live Run Status")
+        live_status_group = QtWidgets.QGroupBox("Live Run Status (after submit)")
         live_status_layout = QtWidgets.QVBoxLayout(live_status_group)
         live_status_layout.setSpacing(8)
 
@@ -319,7 +324,7 @@ class ControlPanel(QtWidgets.QMainWindow):
         live_status_layout.addWidget(self.live_status_feedback_label)
         prompt_layout.addWidget(live_status_group)
 
-        proof_group = QtWidgets.QGroupBox("Result Summary")
+        proof_group = QtWidgets.QGroupBox("Result Summary (after completion)")
         proof_layout = QtWidgets.QVBoxLayout(proof_group)
         proof_layout.setSpacing(8)
 
@@ -488,16 +493,35 @@ class ControlPanel(QtWidgets.QMainWindow):
 
         return group
 
-    def _build_onboarding_panel(self) -> QtWidgets.QGroupBox:
-        group = QtWidgets.QGroupBox("Getting Started")
+    def _build_onboarding_panel(self) -> QtWidgets.QFrame:
+        group = QtWidgets.QFrame()
+        group.setObjectName("onboardingPanel")
+        group.setFrameShape(QtWidgets.QFrame.Shape.StyledPanel)
+        group.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Expanding,
+            QtWidgets.QSizePolicy.Policy.Maximum,
+        )
+        group.setStyleSheet(
+            "QFrame#onboardingPanel { background: #eff6ff; border: 1px solid #93c5fd; border-radius: 8px; }"
+        )
         layout = QtWidgets.QVBoxLayout(group)
+        layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(8)
+
+        heading = QtWidgets.QLabel("Getting Started: Start Here")
+        heading.setStyleSheet("font-size: 16px; font-weight: 600; color: #1e3a8a;")
+        layout.addWidget(heading)
 
         self.onboarding_intro_label = QtWidgets.QLabel(
             "AI-E turns a supported request into a real result you can review."
         )
         self.onboarding_intro_label.setWordWrap(True)
         layout.addWidget(self.onboarding_intro_label)
+
+        self.onboarding_start_label = QtWidgets.QLabel("")
+        self.onboarding_start_label.setWordWrap(True)
+        self.onboarding_start_label.setStyleSheet("font-weight: 600; color: #1e3a8a;")
+        layout.addWidget(self.onboarding_start_label)
 
         self.onboarding_support_label = QtWidgets.QLabel("Start with a supported project like BABYLON VER 2.")
         self.onboarding_support_label.setWordWrap(True)
@@ -536,6 +560,10 @@ class ControlPanel(QtWidgets.QMainWindow):
         action_row = QtWidgets.QHBoxLayout()
         action_row.setSpacing(8)
         self.onboarding_use_first_prompt_button = QtWidgets.QPushButton("Use recommended first request")
+        self.onboarding_use_first_prompt_button.setStyleSheet(
+            "background: #dbeafe; color: #1d4ed8; border: 1px solid #60a5fa; "
+            "border-radius: 6px; padding: 6px 12px; font-weight: 600;"
+        )
         self.onboarding_use_first_prompt_button.clicked.connect(
             lambda: self._handle_use_onboarding_example(self._onboarding_example_prompts[0])
         )
@@ -681,7 +709,7 @@ class ControlPanel(QtWidgets.QMainWindow):
         self.duration_label = QtWidgets.QLabel("00:00")
         self.artifacts_label = QtWidgets.QLabel(str(self.session.artifacts_root))
         self.artifacts_label.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
-        self.dependency_label = QtWidgets.QLabel("Checking…")
+        self.dependency_label = QtWidgets.QLabel("Checking optional setup...")
         self.dependency_label.setWordWrap(True)
 
         layout.addRow("Connection:", self.connection_label)
@@ -690,7 +718,7 @@ class ControlPanel(QtWidgets.QMainWindow):
         layout.addRow("Last Action:", self.last_action_label)
         layout.addRow("Run Folder:", self.run_folder_label)
         layout.addRow("Artifacts:", self.artifacts_label)
-        layout.addRow("System Warnings:", self.dependency_label)
+        layout.addRow("Optional Setup:", self.dependency_label)
         return group
 
     def _build_review_panel(self) -> QtWidgets.QGroupBox:
@@ -826,15 +854,29 @@ class ControlPanel(QtWidgets.QMainWindow):
     def _recommended_first_prompt(self) -> str:
         return self._onboarding_example_prompts[0]
 
+    def _is_clean_profile_launch(self) -> bool:
+        return (
+            not self.state.onboarding_dismissed
+            and not self.state.babylon_exe_path.strip()
+            and not self.state.active_project_name.strip()
+            and not self.state.active_project_path.strip()
+            and not self.state.staged_prompt.strip()
+        )
+
     def _should_show_onboarding(self) -> bool:
         if self._onboarding_force_visible:
             return True
-        return (not self.state.onboarding_dismissed) and not self.history_entries
+        if self.state.onboarding_dismissed:
+            return False
+        return self._is_clean_profile_launch() or not self.history_entries
 
     def _refresh_onboarding_panel(self) -> None:
         if not hasattr(self, "onboarding_group"):
             return
         project_name = self._recommended_supported_project_name()
+        self.onboarding_start_label.setText(
+            f"Start here: choose \"{self._recommended_first_prompt()}\", then click Prepare Request."
+        )
         self.onboarding_support_label.setText(f"Start with a supported project like {project_name}.")
         self.onboarding_path_label.setText(
             "\n".join(
@@ -847,7 +889,10 @@ class ControlPanel(QtWidgets.QMainWindow):
                 ]
             )
         )
-        self.onboarding_group.setVisible(self._should_show_onboarding())
+        visible = self._should_show_onboarding()
+        self.onboarding_group.setVisible(visible)
+        if visible and not self.prompt_input.toPlainText().strip():
+            QtCore.QTimer.singleShot(0, self.onboarding_use_first_prompt_button.setFocus)
 
     def _startup_status_message(self) -> str:
         if not self.supported_projects:
@@ -1318,10 +1363,11 @@ class ControlPanel(QtWidgets.QMainWindow):
         summary = dependencies.dependency_summary_text()
         warnings = dependencies.dependency_warnings()
         if warnings:
-            self.dependency_label.setStyleSheet("color: #a94442;")
+            self.dependency_label.setStyleSheet("color: #92400e;")
+            self.dependency_label.setText(f"Optional setup for capture features:\n{summary}")
         else:
             self.dependency_label.setStyleSheet("color: #2f8f2f;")
-        self.dependency_label.setText(summary)
+            self.dependency_label.setText("Optional capture setup is complete.")
 
     def _update_session_review_panel(self) -> None:
         if self.session.is_running:
@@ -1923,8 +1969,23 @@ class ControlPanel(QtWidgets.QMainWindow):
         self.action_request_button.setEnabled(not self.session.is_running)
 
 
-def launch_ui() -> None:
-    app = QtWidgets.QApplication(sys.argv)
+def launch_ui() -> int:
+    app = QtWidgets.QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QtWidgets.QApplication(sys.argv)
     window = ControlPanel()
     window.show()
-    sys.exit(app.exec())
+    window.raise_()
+    window.activateWindow()
+    if owns_app:
+        return int(app.exec())
+    return 0
+
+
+def main() -> None:
+    raise SystemExit(launch_ui())
+
+
+if __name__ == "__main__":
+    main()

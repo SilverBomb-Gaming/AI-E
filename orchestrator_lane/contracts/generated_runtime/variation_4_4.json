@@ -1,0 +1,12 @@
+{
+  "runtime_task": {
+    "task_id": "variation_4_4",
+    "title": "Generate map variation 4",
+    "agent_type": "read_only_inspector_agent",
+    "result_payload": {
+      "source": "decomposer_v1",
+      "description": "generate map variation 4",
+      "created_from_prompt": "extend map with 4 variations"
+    }
+  }
+}

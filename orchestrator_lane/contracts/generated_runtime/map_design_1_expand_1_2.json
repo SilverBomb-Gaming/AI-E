@@ -1,0 +1,13 @@
+{
+  "runtime_task": {
+    "task_id": "map_design_1_expand_1_2",
+    "title": "Expand map_design_1 layout",
+    "agent_type": "read_only_inspector_agent",
+    "result_payload": {
+      "source": "continuation_engine_v1",
+      "description": "expand map_design_1 layout",
+      "selected_task_id": "map_design_1",
+      "compare_group": "game_design_map_variations"
+    }
+  }
+}
