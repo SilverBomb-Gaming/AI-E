@@ -2,6 +2,40 @@
 
 Operator-first perception and reporting layer for inspecting Unity windows (BABYLON today, engine-agnostic tomorrow). The control panel packages the guards, recorders, and artifact writers needed to observe a foreground window without turning into a bot or trainer.
 
+## AI-E v1 Product Surface Status
+
+These sections are the current source of truth for the public-facing AI-E product surface. Where they conflict with older control-panel wording below, use this product-surface status first.
+
+## Latest Completed Work
+
+Step 2 of the AI-E v1 Product Surface is now complete. Step 1 added the AI-E Home screen with supported-project selection, static guardrail badges, staged prompt entry, and recent runs pulled from existing artifacts. Step 2 added the prompt intake decision surface on top of the existing intake and routing logic, without changing backend execution or introducing a new architecture layer.
+
+## Current Product Surface Status
+
+AI-E now exposes a usable v1 front door over the existing system. A user can select a supported project, stage a bounded prompt, see a clean intake decision, and understand whether the request is ready, needs approval, should go to sandbox first, or is blocked. Recent run and session artifacts are visible from the home screen, and `Ready` requests can now enter the existing intake path through controlled submit. Approval handling, live run visibility, and other product surfaces remain intentionally out of scope at this stage.
+
+## What Step 2 Added
+
+- A visible intake decision surface that shows exactly one user-facing state: `Ready`, `Needs approval`, `Sandbox first`, or `Blocked`
+- A clean decision breakdown with normalized prompt, target workspace, detected action, decision state, and a simple explanation
+- State-specific next-action buttons that stay within the product surface layer
+- Controlled submit for `Ready` requests through the existing intake path (`accept_message()`), with no new execution pathway
+- Continued reuse of the existing intake classifier and routing logic, with no backend redesign
+
+## What Is Still Deferred
+
+- Approval workflow UI beyond showing the `Needs approval` state
+- Sandbox execution UI beyond showing the `Sandbox first` state
+- Live task/run status surface
+- Result and proof summary surface beyond the existing recent-runs list
+- Overnight session surface
+- Expanded project/session history surface
+- Any backend refactor, routing redesign, or new orchestration architecture
+
+## Next Recommended Step
+
+Implement Step 3 only: the approval and review surface. The next product task should expose the existing approval state cleanly so users can inspect a request, understand why approval is required, and choose the allowed next action without exposing raw contracts, queue payloads, or backend internals.
+
 ## Mission (Locked)
 
 AI-E:

@@ -21,6 +21,8 @@ class ControlPanel(QtWidgets.QMainWindow):
         self.session = RunSession()
         self.intake_preview_bridge = home_surface.IntakePreviewBridge()
         self.supported_projects: List[home_surface.SupportedProject] = []
+        self.current_prepared_prompt: home_surface.PreparedPromptPreview | None = None
+        self._submitted_prompt_key: tuple[str, str] | None = None
         self._profile_selection_busy = False
         self._build_ui()
         self._build_menu_bar()
@@ -34,9 +36,12 @@ class ControlPanel(QtWidgets.QMainWindow):
         self._update_status_panel("Ready")
         self._update_session_review_panel()
         self._refresh_recent_runs()
-        self._render_prepared_prompt(
-            self.intake_preview_bridge.prepare_prompt(self.state.staged_prompt, self._selected_project())
-        )
+        if self.state.staged_prompt.strip():
+            self._render_prepared_prompt(
+                self.intake_preview_bridge.prepare_prompt(self.state.staged_prompt, self._selected_project())
+            )
+        else:
+            self._reset_intake_decision()
         self._refresh_dependency_label()
         self._update_duration_label()
         self._refresh_buttons()
@@ -138,10 +143,41 @@ class ControlPanel(QtWidgets.QMainWindow):
         self.prepare_prompt_button.clicked.connect(self._handle_prepare_prompt)
         prompt_layout.addWidget(self.prepare_prompt_button, alignment=QtCore.Qt.AlignmentFlag.AlignLeft)
 
-        self.prompt_preview_label = QtWidgets.QLabel("Type a request and choose Prepare Request.")
-        self.prompt_preview_label.setWordWrap(True)
-        self.prompt_preview_label.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
-        prompt_layout.addWidget(self.prompt_preview_label)
+        decision_group = QtWidgets.QGroupBox("Intake Decision")
+        decision_layout = QtWidgets.QVBoxLayout(decision_group)
+        decision_layout.setSpacing(8)
+
+        self.intake_state_badge = QtWidgets.QLabel("Awaiting prompt")
+        self.intake_state_badge.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        decision_layout.addWidget(self.intake_state_badge, alignment=QtCore.Qt.AlignmentFlag.AlignLeft)
+
+        detail_layout = QtWidgets.QFormLayout()
+        self.intake_normalized_value = QtWidgets.QLabel("-")
+        self.intake_normalized_value.setWordWrap(True)
+        self.intake_target_value = QtWidgets.QLabel("-")
+        self.intake_target_value.setWordWrap(True)
+        self.intake_action_value = QtWidgets.QLabel("-")
+        self.intake_action_value.setWordWrap(True)
+        self.intake_decision_value = QtWidgets.QLabel("-")
+        self.intake_reason_value = QtWidgets.QLabel("Prepare a prompt to see the intake decision.")
+        self.intake_reason_value.setWordWrap(True)
+        detail_layout.addRow("Normalized Prompt:", self.intake_normalized_value)
+        detail_layout.addRow("Target Workspace:", self.intake_target_value)
+        detail_layout.addRow("Detected Action:", self.intake_action_value)
+        detail_layout.addRow("Decision State:", self.intake_decision_value)
+        detail_layout.addRow("Reason:", self.intake_reason_value)
+        decision_layout.addLayout(detail_layout)
+
+        self.intake_action_button = QtWidgets.QPushButton("Prepare a prompt")
+        self.intake_action_button.clicked.connect(self._handle_intake_next_action)
+        self.intake_action_button.setEnabled(False)
+        decision_layout.addWidget(self.intake_action_button, alignment=QtCore.Qt.AlignmentFlag.AlignLeft)
+
+        self.intake_feedback_label = QtWidgets.QLabel("Requests remain staged until you choose a next action.")
+        self.intake_feedback_label.setWordWrap(True)
+        self.intake_feedback_label.setStyleSheet("color: #555;")
+        decision_layout.addWidget(self.intake_feedback_label)
+        prompt_layout.addWidget(decision_group)
         layout.addWidget(prompt_group)
 
         runs_group = QtWidgets.QGroupBox("Recent Runs")
@@ -420,9 +456,9 @@ class ControlPanel(QtWidgets.QMainWindow):
     def _update_active_workspace_label(self) -> None:
         project = self._selected_project()
         if project is None:
-            self.workspace_value_label.setText("No supported project detected in project_registry or the BABYLON fallback path.")
+            self.workspace_value_label.setText("No supported project available.")
             return
-        self.workspace_value_label.setText(str(project.path))
+        self.workspace_value_label.setText(f"{project.name} ({project.project_type})")
 
     def _refresh_recent_runs(self) -> None:
         self.recent_runs_tree.clear()
@@ -441,32 +477,57 @@ class ControlPanel(QtWidgets.QMainWindow):
                     entry.updated_label,
                 ]
             )
-            item.setToolTip(0, str(entry.path))
-            item.setToolTip(1, entry.detail or str(entry.path))
+            item.setToolTip(0, entry.detail or entry.title)
+            item.setToolTip(1, entry.detail or entry.source)
             item.setToolTip(2, entry.detail or entry.status)
-            item.setToolTip(3, str(entry.path))
+            item.setToolTip(3, entry.detail or entry.updated_label)
             self.recent_runs_tree.addTopLevelItem(item)
 
     def _render_prepared_prompt(self, preview: home_surface.PreparedPromptPreview) -> None:
-        lines = [preview.status_message]
-        if preview.target_repo:
-            lines.append(f"Active workspace: {preview.target_repo}")
-        if preview.normalized_prompt:
-            lines.append(f"Normalized prompt: {preview.normalized_prompt}")
-        if preview.classification:
-            lines.append(f"Classification: {preview.classification}")
-        if preview.task_type:
-            lines.append(f"Task type: {preview.task_type}")
-        if preview.execution_lane:
-            lines.append(f"Execution lane: {preview.execution_lane}")
-        if preview.decision:
-            lines.append(f"Decision: {preview.decision}")
-        if preview.recommended_action:
-            lines.append(f"Recommended action: {preview.recommended_action}")
-        if preview.decision_summary:
-            lines.append(f"Routing summary: {preview.decision_summary}")
-        lines.append("Future flow: the next surface will submit this prompt through the existing intake accept_message() path.")
-        self.prompt_preview_label.setText("\n".join(lines))
+        self.current_prepared_prompt = preview
+        self.intake_normalized_value.setText(preview.normalized_prompt or "-")
+        self.intake_target_value.setText(preview.target_display or "-")
+        self.intake_action_value.setText(preview.detected_action or "-")
+        self.intake_decision_value.setText(preview.decision_state or "-")
+        self.intake_reason_value.setText(preview.decision_reason or preview.status_message)
+        self.intake_action_button.setText(preview.next_action_label)
+        self.intake_action_button.setEnabled(bool(preview.normalized_prompt))
+        self.intake_feedback_label.setText(preview.status_message)
+        self._apply_decision_state_style(preview.decision_state)
+
+        submitted_key = (preview.normalized_prompt, preview.target_repo)
+        if self._submitted_prompt_key == submitted_key and preview.decision_state == "Ready":
+            self.intake_action_button.setEnabled(False)
+
+    def _reset_intake_decision(self, message: str = "Prepare a prompt to see the intake decision.") -> None:
+        self.current_prepared_prompt = None
+        self.intake_state_badge.setText("Awaiting prompt")
+        self.intake_state_badge.setStyleSheet(
+            "background: #f3f4f6; color: #374151; border: 1px solid #9ca3af; "
+            "border-radius: 12px; padding: 4px 10px; font-weight: 600;"
+        )
+        self.intake_normalized_value.setText("-")
+        self.intake_target_value.setText(self._selected_project().name if self._selected_project() else "-")
+        self.intake_action_value.setText("-")
+        self.intake_decision_value.setText("-")
+        self.intake_reason_value.setText(message)
+        self.intake_action_button.setText("Prepare a prompt")
+        self.intake_action_button.setEnabled(False)
+        self.intake_feedback_label.setText("Requests remain staged until you choose a next action.")
+
+    def _apply_decision_state_style(self, decision_state: str) -> None:
+        styles = {
+            "Ready": ("#dcfce7", "#166534"),
+            "Needs approval": ("#fef3c7", "#92400e"),
+            "Sandbox first": ("#dbeafe", "#1d4ed8"),
+            "Blocked": ("#fee2e2", "#b91c1c"),
+        }
+        background, foreground = styles.get(decision_state, ("#f3f4f6", "#374151"))
+        self.intake_state_badge.setText(decision_state or "Awaiting prompt")
+        self.intake_state_badge.setStyleSheet(
+            f"background: {background}; color: {foreground}; border: 1px solid {foreground}; "
+            "border-radius: 12px; padding: 4px 10px; font-weight: 600;"
+        )
 
     def _refresh_dependency_label(self) -> None:
         summary = dependencies.dependency_summary_text()
@@ -546,9 +607,12 @@ class ControlPanel(QtWidgets.QMainWindow):
             config.set_active_profile(name)
             self.state = config.load_state(name)
             self._apply_state()
-            self._render_prepared_prompt(
-                self.intake_preview_bridge.prepare_prompt(self.state.staged_prompt, self._selected_project())
-            )
+            if self.state.staged_prompt.strip():
+                self._render_prepared_prompt(
+                    self.intake_preview_bridge.prepare_prompt(self.state.staged_prompt, self._selected_project())
+                )
+            else:
+                self._reset_intake_decision()
             self._reload_profiles()
             self._update_status_panel(f"Profile switched to {name}")
         finally:
@@ -574,9 +638,12 @@ class ControlPanel(QtWidgets.QMainWindow):
         self.profile_name = clean
         self._reload_profiles()
         self._apply_state()
-        self._render_prepared_prompt(
-            self.intake_preview_bridge.prepare_prompt(self.state.staged_prompt, self._selected_project())
-        )
+        if self.state.staged_prompt.strip():
+            self._render_prepared_prompt(
+                self.intake_preview_bridge.prepare_prompt(self.state.staged_prompt, self._selected_project())
+            )
+        else:
+            self._reset_intake_decision()
         self._update_status_panel(f"Profile created: {clean}")
 
     def _handle_project_changed(self, _: str) -> None:
@@ -584,27 +651,66 @@ class ControlPanel(QtWidgets.QMainWindow):
         self._persist_state()
         project = self._selected_project()
         if project is None:
+            self._reset_intake_decision("No supported project selected.")
             self._update_status_panel("No supported project selected")
             return
-        self._render_prepared_prompt(
-            self.intake_preview_bridge.prepare_prompt(self.prompt_input.toPlainText().strip(), project)
-        )
+        prompt_text = self.prompt_input.toPlainText().strip()
+        if prompt_text:
+            self._render_prepared_prompt(
+                self.intake_preview_bridge.prepare_prompt(prompt_text, project)
+            )
+        else:
+            self._reset_intake_decision()
         self._update_status_panel(f"Active workspace set: {project.name}")
 
     def _handle_prompt_changed(self) -> None:
+        self._submitted_prompt_key = None
         self._persist_state()
         if self.prompt_input.toPlainText().strip():
-            self.prompt_preview_label.setText(
-                "Prompt edited. Choose Prepare Request to stage it for the existing intake system without executing."
+            self._reset_intake_decision(
+                "Prompt edited. Choose Prepare Request to see the intake decision without executing."
             )
         else:
-            self.prompt_preview_label.setText("Type a request and choose Prepare Request.")
+            self._reset_intake_decision()
 
     def _handle_prepare_prompt(self) -> None:
         preview = self.intake_preview_bridge.prepare_prompt(self.prompt_input.toPlainText().strip(), self._selected_project())
         self._persist_state()
         self._render_prepared_prompt(preview)
         self._update_status_panel("Request prepared for intake preview")
+
+    def _handle_intake_next_action(self) -> None:
+        preview = self.current_prepared_prompt
+        if preview is None:
+            self.prompt_input.setFocus()
+            return
+
+        if preview.decision_state == "Ready":
+            result = self.intake_preview_bridge.submit_prompt(preview, self._selected_project())
+            self.intake_feedback_label.setText(result.message)
+            self._update_status_panel(result.message)
+            if result.ok:
+                self._submitted_prompt_key = (preview.normalized_prompt, preview.target_repo)
+                self.intake_action_button.setEnabled(False)
+            return
+
+        if preview.decision_state == "Needs approval":
+            message = "Review UI is deferred to Step 3+. This request remains staged and has not been submitted here."
+            self.intake_feedback_label.setText(message)
+            QtWidgets.QMessageBox.information(self, "AI-E", message)
+            return
+
+        if preview.decision_state == "Sandbox first":
+            message = "Sandbox UI is deferred to a later step. This request remains staged and nothing has executed."
+            self.intake_feedback_label.setText(message)
+            QtWidgets.QMessageBox.information(self, "AI-E", message)
+            return
+
+        self.intake_feedback_label.setText("Revise the prompt and prepare it again.")
+        self.prompt_input.setFocus()
+        cursor = self.prompt_input.textCursor()
+        cursor.select(QtGui.QTextCursor.SelectionType.Document)
+        self.prompt_input.setTextCursor(cursor)
 
     def _handle_browse(self) -> None:
         path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Select BABYLON executable", str(Path.home()))

@@ -16,6 +16,8 @@ PROJECTS_EXAMPLE_PATH = PROJECT_ROOT / "project_registry" / "projects.example.js
 ORCHESTRATOR_ROOT = PROJECT_ROOT / "orchestrator_lane"
 ORCHESTRATOR_RUNS_ROOT = ORCHESTRATOR_ROOT / "runs"
 DEFAULT_PREVIEW_SESSION_ID = "home_screen_preview"
+DEFAULT_SUBMIT_SESSION_ID = "product_surface_home"
+DEFAULT_SUBMIT_CHANNEL = "product_surface_home"
 
 
 @dataclass(frozen=True)
@@ -44,14 +46,29 @@ class PreparedPromptPreview:
     normalized_prompt: str
     classification: str
     target_repo: str
+    target_display: str
     task_type: str
+    detected_action: str
     execution_lane: str
     decision: str
+    decision_state: str
     recommended_action: str
+    decision_reason: str
     decision_summary: str
+    next_action_label: str
     ready_for_intake: bool
     available: bool
     status_message: str
+
+
+@dataclass(frozen=True)
+class SubmittedPromptResult:
+    ok: bool
+    message: str
+    decision_state: str
+    queue_status: str
+    request_id: str
+    task_id: str
 
 
 def load_supported_projects() -> List[SupportedProject]:
@@ -105,17 +122,23 @@ class IntakePreviewBridge:
     def prepare_prompt(self, prompt_text: str, project: SupportedProject | None) -> PreparedPromptPreview:
         normalized = " ".join(str(prompt_text or "").split())
         target_repo = str(project.path).replace("\\", "/") if project else ""
+        target_display = project.name if project else "No supported workspace selected"
         if not normalized:
             return PreparedPromptPreview(
                 prompt_text=str(prompt_text or ""),
                 normalized_prompt="",
                 classification="empty",
                 target_repo=target_repo,
+                target_display=target_display,
                 task_type="",
+                detected_action="Awaiting prompt",
                 execution_lane="",
                 decision="",
+                decision_state="Blocked",
                 recommended_action="",
+                decision_reason="Enter a prompt to see an intake decision.",
                 decision_summary="",
+                next_action_label="Revise request",
                 ready_for_intake=False,
                 available=True,
                 status_message="Enter a request to stage it for the existing intake flow. Execution has not started.",
@@ -129,11 +152,16 @@ class IntakePreviewBridge:
                 normalized_prompt=normalized,
                 classification="unavailable",
                 target_repo=target_repo,
+                target_display=target_display,
                 task_type="",
+                detected_action="Intake unavailable",
                 execution_lane="",
                 decision="",
+                decision_state="Blocked",
                 recommended_action="",
+                decision_reason=message,
                 decision_summary="",
+                next_action_label="Revise request",
                 ready_for_intake=False,
                 available=False,
                 status_message=f"{message} Prompt is staged locally only; execution has not started.",
@@ -149,11 +177,16 @@ class IntakePreviewBridge:
                 normalized_prompt=normalized,
                 classification=classification,
                 target_repo=target_repo,
+                target_display=target_display,
                 task_type="",
+                detected_action="Intake preview failed",
                 execution_lane="",
                 decision="",
+                decision_state="Blocked",
                 recommended_action="",
+                decision_reason=str(exc),
                 decision_summary="",
+                next_action_label="Revise request",
                 ready_for_intake=classification == "task_request",
                 available=False,
                 status_message=f"Intake preview failed: {exc}. Prompt is staged locally only; execution has not started.",
@@ -164,9 +197,17 @@ class IntakePreviewBridge:
         action = str(routing.recommended_action or "review")
         lane = str(routing.execution_lane or "")
         summary = str(routing.decision_summary or routing.intelligence_summary or "Prepared for existing intake.")
+        decision_state = self._decision_state(classification=classification, decision=decision)
+        detected_action = self._detected_action(routing=routing, task_type=task_type)
+        decision_reason = self._decision_reason(
+            classification=classification,
+            decision_state=decision_state,
+            routing=routing,
+        )
+        next_action_label = self._next_action_label(decision_state)
         status_message = (
             f"Prepared for the existing intake system. "
-            f"Current preview: {decision} via {lane or 'unresolved_lane'}. "
+            f"Current preview: {decision_state}. "
             f"Execution has not started."
         )
         if not ready_for_intake:
@@ -180,14 +221,85 @@ class IntakePreviewBridge:
             normalized_prompt=normalized,
             classification=classification,
             target_repo=target_repo,
+            target_display=target_display,
             task_type=task_type,
+            detected_action=detected_action,
             execution_lane=lane,
             decision=decision,
+            decision_state=decision_state,
             recommended_action=action,
+            decision_reason=decision_reason,
             decision_summary=summary,
-            ready_for_intake=ready_for_intake,
+            next_action_label=next_action_label,
+            ready_for_intake=decision_state == "Ready",
             available=True,
             status_message=status_message,
+        )
+
+    def submit_prompt(self, preview: PreparedPromptPreview, project: SupportedProject | None) -> SubmittedPromptResult:
+        if project is None:
+            return SubmittedPromptResult(
+                ok=False,
+                message="Select a supported project before submitting a request.",
+                decision_state="Blocked",
+                queue_status="",
+                request_id="",
+                task_id="",
+            )
+        if preview.decision_state != "Ready":
+            return SubmittedPromptResult(
+                ok=False,
+                message="Only Ready requests can be submitted from this surface.",
+                decision_state=preview.decision_state,
+                queue_status="",
+                request_id="",
+                task_id="",
+            )
+
+        intake = self._create_intake()
+        if intake is None:
+            return SubmittedPromptResult(
+                ok=False,
+                message=self._import_error or "Existing intake system is unavailable.",
+                decision_state="Blocked",
+                queue_status="",
+                request_id="",
+                task_id="",
+            )
+
+        try:
+            result = intake.accept_message(
+                preview.prompt_text,
+                session_id=DEFAULT_SUBMIT_SESSION_ID,
+                channel=DEFAULT_SUBMIT_CHANNEL,
+                target_repo=str(project.path).replace("\\", "/"),
+            )
+        except Exception as exc:  # noqa: BLE001
+            return SubmittedPromptResult(
+                ok=False,
+                message=f"Existing intake submission failed: {exc}",
+                decision_state="Blocked",
+                queue_status="",
+                request_id="",
+                task_id="",
+            )
+
+        queue_status = str(result.queue_entry.get("status") or "pending")
+        message = "Request submitted to the existing intake flow."
+        if queue_status == "needs_approval":
+            message = "Request submitted. AI-E marked it as awaiting approval."
+        elif queue_status == "blocked":
+            message = "Request submitted, but the existing intake logic blocked it."
+        elif not result.created:
+            message = "Request already exists in the existing intake flow."
+
+        return SubmittedPromptResult(
+            ok=True,
+            message=message,
+            decision_state="Ready",
+            queue_status=queue_status,
+            request_id=result.request_id,
+            task_id=result.task_id,
         )
 
     def _create_intake(self) -> Any | None:
@@ -209,6 +321,82 @@ class IntakePreviewBridge:
 
         self._intake_cls = ConversationalTaskIntake
         self._config_cls = OrchestratorConfig
+
+    @staticmethod
+    def _decision_state(*, classification: str, decision: str) -> str:
+        if classification != "task_request":
+            return "Blocked"
+        if decision == "auto_execute":
+            return "Ready"
+        if decision == "sandbox_first":
+            return "Sandbox first"
+        if decision in {"require_approval", "require_review"}:
+            return "Needs approval"
+        return "Blocked"
+
+    @staticmethod
+    def _next_action_label(decision_state: str) -> str:
+        if decision_state == "Ready":
+            return "Submit request"
+        if decision_state == "Needs approval":
+            return "Open review"
+        if decision_state == "Sandbox first":
+            return "Run in sandbox"
+        return "Revise request"
+
+    @staticmethod
+    def _detected_action(*, routing: Any, task_type: str) -> str:
+        capability_title = str(getattr(routing, "capability_title", "") or "").strip()
+        if capability_title:
+            return capability_title
+        resolved_intent = str(getattr(routing, "resolved_intent", "") or "").strip()
+        if resolved_intent == "inspect":
+            return "Read-only inspection"
+        if resolved_intent == "mutate":
+            return "Bounded mutation"
+        if resolved_intent == "plan":
+            return "Planning request"
+        return task_type.replace("_", " ").replace("request", "").strip().title() or "General request"
+
+    @staticmethod
+    def _decision_reason(*, classification: str, decision_state: str, routing: Any) -> str:
+        if classification != "task_request":
+            return "The existing intake classifier does not recognize this as a runnable task request yet."
+
+        summary_sources = []
+        if decision_state == "Blocked":
+            summary_sources = [
+                getattr(routing, "fail_closed_reason", ""),
+                getattr(routing, "decision_summary", ""),
+                getattr(routing, "content_policy_summary", ""),
+            ]
+        elif decision_state in {"Needs approval", "Sandbox first"}:
+            summary_sources = [
+                getattr(routing, "decision_summary", ""),
+                getattr(routing, "fail_closed_reason", ""),
+                getattr(routing, "content_policy_summary", ""),
+            ]
+        else:
+            summary_sources = [
+                getattr(routing, "decision_summary", ""),
+                getattr(routing, "content_policy_summary", ""),
+            ]
+
+        summary = ""
+        for source in summary_sources:
+            summary = _clean_decision_text(str(source or "").strip())
+            if summary:
+                break
+        if summary:
+            return summary
+
+        if decision_state == "Ready":
+            return "The existing intake logic can accept this request without an approval stop."
+        if decision_state == "Needs approval":
+            return "The existing intake logic requires operator approval before this request can proceed."
+        if decision_state == "Sandbox first":
+            return "The existing intake logic requires sandbox validation before real-target work."
+        return "The existing intake logic blocked this request before execution."
 
 
 def _load_registry_projects(path: Path, *, source: str) -> List[SupportedProject]:
@@ -349,3 +537,11 @@ def _parse_timestamp(raw_timestamp: str) -> datetime | None:
 def _format_timestamp(timestamp: datetime) -> str:
     return timestamp.strftime("%Y-%m-%d %H:%M")
 
+
+def _clean_decision_text(text: str) -> str:
+    clean = str(text or "").strip()
+    if clean.lower().startswith("decision:"):
+        parts = clean.split("-", 1)
+        if len(parts) == 2:
+            return parts[1].strip().rstrip(".") + "."
+    return clean
