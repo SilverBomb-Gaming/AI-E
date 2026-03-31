@@ -41,6 +41,21 @@ class RecentRunEntry:
 
 
 @dataclass(frozen=True)
+class HistoryEntry:
+    title: str
+    source: str
+    project_display: str
+    final_status: str
+    updated_at: datetime
+    updated_label: str
+    summary: str
+    path: Path
+    session_summary_path: Path | None
+    rerun_prompt: str
+    rerun_project_path: str
+
+
+@dataclass(frozen=True)
 class PreparedPromptPreview:
     prompt_text: str
     normalized_prompt: str
@@ -126,6 +141,37 @@ class LiveStatusSurface:
     result_path: Path | None
 
 
+@dataclass(frozen=True)
+class ProofArtifactLink:
+    label: str
+    kind: str
+    path: Path
+
+
+@dataclass(frozen=True)
+class ProofResultSurface:
+    available: bool
+    title: str
+    source: str
+    original_request: str
+    normalized_request: str
+    target_display: str
+    detected_action: str
+    final_verdict: str
+    before_after_summary: str
+    change_summary: str
+    validation_outcome: str
+    proof_status: str
+    timestamp_label: str
+    key_steps: List[str]
+    validation_checks: List[str]
+    raw_artifacts: List[ProofArtifactLink]
+    primary_artifact_path: Path | None
+    rerun_prompt: str
+    rerun_project_path: str
+    status_message: str
+
+
 def load_supported_projects() -> List[SupportedProject]:
     projects: List[SupportedProject] = []
     seen_paths: set[str] = set()
@@ -159,15 +205,89 @@ def load_supported_projects() -> List[SupportedProject]:
 
 
 def load_recent_runs(*, limit: int = 8) -> List[RecentRunEntry]:
-    entries: List[RecentRunEntry] = []
-    entries.extend(_iter_runner_artifact_entries())
-    entries.extend(_iter_session_entries())
+    return [
+        RecentRunEntry(
+            title=entry.title,
+            source=entry.source.lower(),
+            status=entry.final_status.lower(),
+            updated_at=entry.updated_at,
+            updated_label=entry.updated_label,
+            detail=entry.summary,
+            path=entry.path,
+        )
+        for entry in load_history_entries(limit=limit)
+    ]
+
+
+def load_history_entries(
+    *,
+    supported_projects: List[SupportedProject] | None = None,
+    limit: int | None = None,
+) -> List[HistoryEntry]:
+    entries: List[HistoryEntry] = []
+    projects = supported_projects or []
+    seen_paths: set[str] = set()
+    for run_dir in _history_candidate_dirs():
+        key = str(run_dir.resolve()).lower()
+        if key in seen_paths:
+            continue
+        seen_paths.add(key)
+        proof = load_proof_result_surface(run_dir, supported_projects=projects)
+        if not proof.available:
+            continue
+        entries.append(
+            HistoryEntry(
+                title=_history_title(proof),
+                source=_history_source_label(proof.source),
+                project_display=_history_project_display(proof.target_display),
+                final_status=_history_final_status(proof.proof_status),
+                updated_at=_entry_timestamp(run_dir, _history_timestamp_hint(run_dir)),
+                updated_label=_format_timestamp(_entry_timestamp(run_dir, _history_timestamp_hint(run_dir))),
+                summary=_history_summary(proof),
+                path=run_dir,
+                session_summary_path=_history_session_summary_path(run_dir),
+                rerun_prompt=proof.rerun_prompt,
+                rerun_project_path=proof.rerun_project_path,
+            )
+        )
+
     entries.sort(key=lambda item: item.updated_at, reverse=True)
-    return entries[:limit]
+    if isinstance(limit, int) and limit >= 0:
+        return entries[:limit]
+    return entries
+
+
+def load_proof_result_surface(
+    target: Path | str,
+    *,
+    supported_projects: List[SupportedProject] | None = None,
+) -> ProofResultSurface:
+    candidate = Path(str(target))
+    run_dir = candidate if candidate.is_dir() else candidate.parent
+    if not run_dir.exists():
+        return _unavailable_proof_result_surface(
+            "AI-E could not find saved result details for this item. Open a different finished run, or prepare a new request."
+        )
+
+    proof_summary = _load_json(run_dir / "proof_summary.json")
+    if isinstance(proof_summary, dict):
+        return _proof_result_from_proof_summary(run_dir, proof_summary, supported_projects=supported_projects or [])
+
+    session_summary = _load_json(run_dir / "session_summary.json")
+    if isinstance(session_summary, dict):
+        return _proof_result_from_session_summary(run_dir, session_summary)
+
+    run_summary = _load_json(run_dir / "run_summary.json")
+    if isinstance(run_summary, dict):
+        return _proof_result_from_run_summary(run_dir, run_summary, supported_projects=supported_projects or [])
+
+    return _unavailable_proof_result_surface(
+        "This item does not have a supported result summary yet. Open another saved run, or prepare a new request."
+    )
 
 
 class IntakePreviewBridge:
-    """Thin wrapper that reuses existing intake logic without queue mutation."""
+    """Thin wrapper that reuses the current intake logic without changing request state."""
 
     def __init__(self) -> None:
         self._intake_cls = None
@@ -182,7 +302,7 @@ class IntakePreviewBridge:
     def prepare_prompt(self, prompt_text: str, project: SupportedProject | None) -> PreparedPromptPreview:
         normalized = " ".join(str(prompt_text or "").split())
         target_repo = str(project.path).replace("\\", "/") if project else ""
-        target_display = project.name if project else "No supported workspace selected"
+        target_display = project.name if project else "Select a supported project to continue"
         if not normalized:
             return PreparedPromptPreview(
                 prompt_text=str(prompt_text or ""),
@@ -196,17 +316,17 @@ class IntakePreviewBridge:
                 decision="",
                 decision_state="Blocked",
                 recommended_action="",
-                decision_reason="Enter a prompt to see an intake decision.",
+                decision_reason="Enter a request, then choose Prepare Request to see what AI-E will do next.",
                 decision_summary="",
                 next_action_label="Revise request",
                 ready_for_intake=False,
                 available=True,
-                status_message="Enter a request to stage it for the existing intake flow. Execution has not started.",
+                status_message="Enter a request to prepare it. AI-E has not started any work. Then review the decision before submitting it.",
             )
 
         intake = self._create_intake()
         if intake is None:
-            message = self._import_error or "Intake preview is unavailable."
+            message = self._import_error or "Request preview is unavailable. Try again, or revise the request to stay within supported scope."
             return PreparedPromptPreview(
                 prompt_text=prompt_text,
                 normalized_prompt=normalized,
@@ -214,7 +334,7 @@ class IntakePreviewBridge:
                 target_repo=target_repo,
                 target_display=target_display,
                 task_type="",
-                detected_action="Intake unavailable",
+                detected_action="Request preview unavailable",
                 execution_lane="",
                 decision="",
                 decision_state="Blocked",
@@ -224,7 +344,7 @@ class IntakePreviewBridge:
                 next_action_label="Revise request",
                 ready_for_intake=False,
                 available=False,
-                status_message=f"{message} Prompt is staged locally only; execution has not started.",
+                status_message=f"{message} This request is prepared locally only. AI-E has not started any work.",
             )
 
         classification = intake.classify_message(normalized)
@@ -239,24 +359,24 @@ class IntakePreviewBridge:
                 target_repo=target_repo,
                 target_display=target_display,
                 task_type="",
-                detected_action="Intake preview failed",
+                detected_action="Request preview unavailable",
                 execution_lane="",
                 decision="",
                 decision_state="Blocked",
                 recommended_action="",
-                decision_reason=str(exc),
+                decision_reason=f"{exc}. Revise the request and prepare it again.",
                 decision_summary="",
                 next_action_label="Revise request",
                 ready_for_intake=classification == "task_request",
                 available=False,
-                status_message=f"Intake preview failed: {exc}. Prompt is staged locally only; execution has not started.",
+                status_message=f"Request preview failed: {exc}. Revise the request and prepare it again. AI-E has not started any work.",
             )
 
         ready_for_intake = classification == "task_request"
         decision = str(routing.decision or routing.execution_decision or "pending_preview")
         action = str(routing.recommended_action or "review")
         lane = str(routing.execution_lane or "")
-        summary = str(routing.decision_summary or routing.intelligence_summary or "Prepared for existing intake.")
+        summary = str(routing.decision_summary or routing.intelligence_summary or "Prepared for review.")
         decision_state = self._decision_state(classification=classification, decision=decision)
         detected_action = self._detected_action(routing=routing, task_type=task_type)
         decision_reason = self._decision_reason(
@@ -266,14 +386,14 @@ class IntakePreviewBridge:
         )
         next_action_label = self._next_action_label(decision_state)
         status_message = (
-            f"Prepared for the existing intake system. "
-            f"Current preview: {decision_state}. "
-            f"Execution has not started."
+            f"Prepared for AI-E review. "
+            f"Current decision: {decision_state}. "
+            f"AI-E has not started any work."
         )
         if not ready_for_intake:
             status_message = (
-                "Prompt staged, but the existing intake classifier does not currently treat it as a task request. "
-                "Execution has not started."
+                "This request is prepared, but AI-E does not recognize it as a supported request yet. "
+                "Revise the request to stay within supported scope. AI-E has not started any work."
             )
 
         return PreparedPromptPreview(
@@ -300,7 +420,7 @@ class IntakePreviewBridge:
         if project is None:
             return SubmittedPromptResult(
                 ok=False,
-                message="Select a supported project before submitting a request.",
+                message="Select a supported project before submitting a request, then prepare it again.",
                 decision_state="Blocked",
                 queue_status="",
                 request_id="",
@@ -309,7 +429,7 @@ class IntakePreviewBridge:
         if preview.decision_state != "Ready":
             return SubmittedPromptResult(
                 ok=False,
-                message="Only Ready requests can be submitted from this surface.",
+                message="Only Ready requests can be submitted here. Revise the request or open review based on the current decision.",
                 decision_state=preview.decision_state,
                 queue_status="",
                 request_id="",
@@ -320,7 +440,7 @@ class IntakePreviewBridge:
         if intake is None:
             return SubmittedPromptResult(
                 ok=False,
-                message=self._import_error or "Existing intake system is unavailable.",
+                message=self._import_error or "AI-E could not submit this request right now. Try again, or revise the request before retrying.",
                 decision_state="Blocked",
                 queue_status="",
                 request_id="",
@@ -337,7 +457,7 @@ class IntakePreviewBridge:
         except Exception as exc:  # noqa: BLE001
             return SubmittedPromptResult(
                 ok=False,
-                message=f"Existing intake submission failed: {exc}",
+                message=f"AI-E could not submit this request: {exc}. Try again, or revise the request before retrying.",
                 decision_state="Blocked",
                 queue_status="",
                 request_id="",
@@ -345,13 +465,13 @@ class IntakePreviewBridge:
             )
 
         queue_status = str(result.queue_entry.get("status") or "pending")
-        message = "Request submitted to the existing intake flow."
+        message = "Request submitted."
         if queue_status == "needs_approval":
-            message = "Request submitted. AI-E marked it as awaiting approval."
+            message = "Request submitted. AI-E is waiting for approval. Open review to confirm the safe next step."
         elif queue_status == "blocked":
-            message = "Request submitted, but the existing intake logic blocked it."
+            message = "Request submitted, but AI-E blocked it. Revise the request to stay within supported scope."
         elif not result.created:
-            message = "Request already exists in the existing intake flow."
+            message = "This request was already submitted. Refresh status or open History to follow it."
 
         return SubmittedPromptResult(
             ok=True,
@@ -369,10 +489,13 @@ class IntakePreviewBridge:
     ) -> ReviewSurface:
         unavailable = self._unavailable_review_surface(
             preview,
-            message="Approval review becomes available when a request lands in Needs approval.",
+            message="Review opens when a request needs approval. Prepare a request that needs approval to continue here.",
         )
         if project is None:
-            return self._unavailable_review_surface(preview, message="Select a supported project before opening review.")
+            return self._unavailable_review_surface(
+                preview,
+                message="Select a supported project before opening review, then prepare the request again.",
+            )
         if preview.decision_state != "Needs approval":
             return unavailable
 
@@ -380,7 +503,7 @@ class IntakePreviewBridge:
         if context is None:
             return self._unavailable_review_surface(
                 preview,
-                message=self._import_error or "Existing approval review details are unavailable.",
+                message=self._import_error or "Review details are unavailable. Try again, or revise the request before reopening review.",
             )
 
         existing_task = self._find_existing_review_task(context["request_id"])
@@ -432,7 +555,7 @@ class IntakePreviewBridge:
             return ReviewActionResult(
                 ok=False,
                 action=normalized_action,
-                message="Open a Needs approval request before taking a review action.",
+                message="Open a request that needs approval before taking a review action. Otherwise, revise the request or submit a Ready request.",
                 wired=False,
                 staged_only=True,
                 queue_status=review.queue_status,
@@ -443,7 +566,7 @@ class IntakePreviewBridge:
             return ReviewActionResult(
                 ok=False,
                 action=normalized_action,
-                message="Select a supported project before taking a review action.",
+                message="Select a supported project before taking a review action, then reopen review.",
                 wired=False,
                 staged_only=True,
                 queue_status=review.queue_status,
@@ -459,8 +582,7 @@ class IntakePreviewBridge:
                 action="reject",
                 notes="Rejected from the AI-E v1 review surface.",
                 staged_message=(
-                    "Rejected on the product surface. No queue state changed and nothing executed because "
-                    "a direct reject path is not exposed yet."
+                    "Rejected here. AI-E did not run anything, and a direct reject action is not available yet."
                 ),
             )
         if normalized_action == "sandbox_first":
@@ -470,14 +592,13 @@ class IntakePreviewBridge:
                 action="sandbox_first",
                 notes="Operator requested sandbox-first review from the AI-E v1 review surface.",
                 staged_message=(
-                    "Sandbox-first was recorded as the safe next decision on the product surface. "
-                    "No sandbox job was launched here and nothing executed."
+                    "Sandbox first was marked as the safe next step here. AI-E did not start a sandbox run from this surface."
                 ),
             )
         return ReviewActionResult(
             ok=False,
             action=normalized_action,
-            message="Unknown review action.",
+            message="This review action is not available here. Return to the request and choose one of the shown review options.",
             wired=False,
             staged_only=True,
             queue_status=review.queue_status,
@@ -500,7 +621,7 @@ class IntakePreviewBridge:
             try:
                 self._ensure_imports()
             except Exception as exc:  # noqa: BLE001
-                self._import_error = f"Existing runtime state could not load: {exc}"
+                self._import_error = f"Saved run details could not load: {exc}"
                 return self._unavailable_live_status(self._import_error)
 
         config = self._config_cls.load()
@@ -542,11 +663,11 @@ class IntakePreviewBridge:
 
         if normalized_request_id or normalized_task_id or normalized_session_id:
             return self._unavailable_live_status(
-                "No current run or queued task is visible for this request yet."
+                "No run is visible for this request yet. Refresh status after submitting it, or open History to review earlier results."
             )
 
         return self._unavailable_live_status(
-            "Submit or approve a request to start tracking live status."
+            "Submit or approve a request to start tracking it here. You can also open History to review earlier results."
         )
 
     def _create_intake(self) -> Any | None:
@@ -554,7 +675,7 @@ class IntakePreviewBridge:
             try:
                 self._ensure_imports()
             except Exception as exc:  # noqa: BLE001
-                self._import_error = f"Existing intake preview could not load: {exc}"
+                self._import_error = f"Request preview could not load: {exc}. Try again, or revise the request before preparing it."
                 return None
         config = self._config_cls.load()
         return self._intake_cls(config)
@@ -571,7 +692,7 @@ class IntakePreviewBridge:
             return ReviewActionResult(
                 ok=False,
                 action="approve_once",
-                message=self._import_error or "Existing approval plumbing is unavailable.",
+                message=self._import_error or "Approval is unavailable right now. Try again, or return to the request and revise it.",
                 wired=False,
                 staged_only=True,
                 queue_status=review.queue_status,
@@ -590,7 +711,7 @@ class IntakePreviewBridge:
             return ReviewActionResult(
                 ok=False,
                 action="approve_once",
-                message=f"Existing intake submission failed during approval: {exc}",
+                message=f"AI-E could not submit this request for approval: {exc}. Try again, or revise the request before retrying.",
                 wired=False,
                 staged_only=True,
                 queue_status=review.queue_status,
@@ -613,7 +734,7 @@ class IntakePreviewBridge:
                 return ReviewActionResult(
                     ok=False,
                     action="approve_once",
-                    message=f"Existing approval handoff failed: {exc}",
+                    message=f"AI-E could not finish approval handoff: {exc}. Try again, or return to the request and revise it.",
                     wired=False,
                     staged_only=True,
                     queue_status=queue_status,
@@ -624,10 +745,7 @@ class IntakePreviewBridge:
             return ReviewActionResult(
                 ok=True,
                 action="approve_once",
-                message=(
-                    "Approved once through the existing intake and approval path. "
-                    "The request is now pending in the existing queue, and nothing executed from this surface."
-                ),
+                message="Approved once. This request is now waiting to run, and AI-E did not start it from this surface. Refresh status to follow it.",
                 wired=True,
                 staged_only=False,
                 queue_status=approval.queue_status,
@@ -639,10 +757,7 @@ class IntakePreviewBridge:
             return ReviewActionResult(
                 ok=True,
                 action="approve_once",
-                message=(
-                    "This request is already queued without an approval hold. "
-                    "No execution was started from this surface."
-                ),
+                message="This request is already waiting to run and does not need more review here. Refresh status to follow it.",
                 wired=True,
                 staged_only=False,
                 queue_status=queue_status,
@@ -654,7 +769,7 @@ class IntakePreviewBridge:
             return ReviewActionResult(
                 ok=False,
                 action="approve_once",
-                message="The existing intake logic blocked this request before approval could be recorded.",
+                message="AI-E blocked this request before approval could be recorded. Revise the request to stay within supported scope.",
                 wired=True,
                 staged_only=False,
                 queue_status=queue_status,
@@ -665,7 +780,7 @@ class IntakePreviewBridge:
         return ReviewActionResult(
             ok=False,
             action="approve_once",
-            message="The existing intake path did not produce an approval-gated task for this request.",
+            message="This request did not return an approval-required item. Return to the request and review the current intake decision.",
             wired=True,
             staged_only=False,
             queue_status=queue_status,
@@ -685,7 +800,7 @@ class IntakePreviewBridge:
         queue_status = review.queue_status
         extra_note = ""
         if queue_status == "needs_approval":
-            extra_note = " An existing queue item is still awaiting approval because this action is staged only."
+            extra_note = " This request is still waiting for approval because this action is staged only. Open review again when you are ready to continue."
         if self._create_review_decision_fn is None or self._build_queue_preview_fn is None:
             return ReviewActionResult(
                 ok=True,
@@ -706,7 +821,7 @@ class IntakePreviewBridge:
             explanation = explanation.rstrip(".") + "."
         message = staged_message
         if explanation:
-            message = f"{message} Existing review preview: {explanation}"
+            message = f"{message} Review preview: {explanation}"
         if extra_note:
             message += extra_note
         return ReviewActionResult(
@@ -735,7 +850,7 @@ class IntakePreviewBridge:
             task_type = intake._derive_task_type(normalized_prompt, routing=routing)
             request_id = intake._derive_request_id(normalized_prompt, target_repo, task_type)
         except Exception as exc:  # noqa: BLE001
-            self._import_error = f"Existing approval review could not load: {exc}"
+            self._import_error = f"Review details could not load: {exc}. Try again, or revise the request before reopening review."
             return None
         review_request = self._build_review_request(
             preview=preview,
@@ -791,7 +906,7 @@ class IntakePreviewBridge:
             approval_reason=message,
             expected_change_scope="-",
             validation_intent="-",
-            risk_guardrail_status="Approval review is not active for this request yet.",
+            risk_guardrail_status="Review opens only for requests that need approval. Prepare a request that needs approval to continue here.",
             status_message=message,
             request_id="",
             task_type="",
@@ -854,69 +969,69 @@ class IntakePreviewBridge:
         reason = _clean_decision_text(str(getattr(routing, "decision_summary", "") or "").strip())
         if reason:
             return reason
-        return "The existing intake logic requires human approval before this request can proceed."
+        return "This request needs one-time approval before it can continue. Open review to confirm the safe next step."
 
     @staticmethod
     def _expected_change_scope(*, preview: PreparedPromptPreview, routing: Any, project: SupportedProject) -> str:
         target_level = str(getattr(routing, "target_level", "") or "").strip()
         target_scene = str(getattr(routing, "target_scene", "") or "").strip()
         if target_level:
-            return f"Limit the change to {target_level} in {project.name} through the matched bounded capability."
+            return f"Limit the change to {target_level} in {project.name}."
         if target_scene:
             scene_name = Path(target_scene).stem or "the supported scene"
-            return f"Limit the change to {scene_name} in {project.name} through the matched bounded capability."
+            return f"Limit the change to {scene_name} in {project.name}."
         if str(getattr(routing, "mutation_capable", False)).lower() == "true" or bool(getattr(routing, "mutation_capable", False)):
-            return f"Limit the change to the supported mutation scope in {project.name}."
-        return f"Limit the request to the supported project scope in {project.name}."
+            return f"Limit the change to the approved edit scope in {project.name}."
+        return f"Keep the request within the supported scope in {project.name}."
 
     @staticmethod
     def _validation_intent(*, routing: Any) -> str:
         missing_evidence = [str(item).strip() for item in getattr(routing, "missing_evidence", []) or [] if str(item).strip()]
         if bool(getattr(routing, "sandbox_first_required", False)):
-            return "Validate in sandbox first before any real-target execution is allowed."
+            return "Validate in sandbox first before real changes are allowed."
         if missing_evidence:
-            return f"Expected validation should close the remaining proof gaps: {', '.join(missing_evidence)}."
-        return "The existing runtime should validate the bounded change and write proof artifacts before completion."
+            return f"AI-E should confirm the remaining proof checks: {', '.join(missing_evidence)}."
+        return "AI-E should validate the change before marking it complete."
 
     @staticmethod
     def _risk_guardrail_status(*, routing: Any, queue_status: str, approval_state: str) -> str:
         parts: List[str] = []
         if queue_status == "needs_approval":
-            parts.append("An existing queue item is currently waiting for approval.")
+            parts.append("This request is waiting for approval.")
         elif queue_status == "pending":
-            parts.append("Approval was already recorded once and the request is queued.")
+            parts.append("Approval has already been recorded once. This request is waiting to run.")
         else:
-            parts.append("No execution has started; this request is still on the review surface.")
+            parts.append("No work has started yet. This request is still in review.")
 
         if bool(getattr(routing, "approval_required", False)):
-            parts.append("Approval gating is active.")
+            parts.append("One-time approval is required.")
         trust_band = str(getattr(routing, "trust_band", "") or "").strip()
         evidence_state = str(getattr(routing, "evidence_state", "") or getattr(routing, "maturity_stage", "") or "").strip()
         if evidence_state:
-            parts.append(f"Capability evidence is {evidence_state}.")
+            parts.append(f"Proof coverage is {evidence_state}.")
         elif trust_band:
-            parts.append(f"Capability trust is {trust_band}.")
+            parts.append(f"Confidence level is {trust_band}.")
         policy_state = str(getattr(routing, "policy_state", "") or "").strip()
         if policy_state:
-            parts.append(f"Policy state is {policy_state.replace('_', ' ')}.")
+            parts.append(f"Safety policy status is {policy_state.replace('_', ' ')}.")
         content_policy_decision = str(getattr(routing, "content_policy_decision", "") or "").strip()
         if content_policy_decision == "requires_review":
-            parts.append("Content policy requires owner review.")
+            parts.append("Safety review is required.")
         elif content_policy_decision == "allowed":
-            parts.append("Content policy did not block the request.")
+            parts.append("Safety review did not block this request.")
         if approval_state == "approved":
-            parts.append("The current queue copy is marked approved.")
+            parts.append("Approval has already been recorded once.")
         return " ".join(parts)
 
     @staticmethod
     def _review_status_message(*, queue_status: str, approval_state: str) -> str:
         if queue_status == "needs_approval":
-            return "This request is already awaiting approval in the existing queue. Nothing has executed yet."
+            return "This request is waiting for approval. AI-E has not started any work. Approve it once, reject it, or keep it staged for sandbox-first review."
         if queue_status == "pending" and approval_state in {"approved", "auto_approved", "not_required"}:
-            return "Approval was already recorded for this request. It is pending in the existing queue and has not executed from this surface."
+            return "Approval was already recorded for this request. It is waiting to run. Refresh status to follow it."
         if queue_status == "blocked":
-            return "The existing queue currently marks this request as blocked."
-        return "This review is staged on the product surface. No queue mutation or execution has happened yet."
+            return "AI-E has blocked this request. Revise it to stay within supported scope before preparing it again."
+        return "This review is prepared only. AI-E has not started any work. Choose a review action when you are ready."
 
     @staticmethod
     def _review_intent_type(*, task_type: str, routing: Any) -> str:
@@ -980,13 +1095,13 @@ class IntakePreviewBridge:
             status_message=self._runtime_status_message(snapshot=snapshot, final_state=final_state),
             session_id=session_id,
             current_phase=f"{snapshot.phase_label} ({snapshot.phase_index}/{snapshot.phase_total})",
-            current_task=active_task or "No active task reported.",
+            current_task=active_task or "No active task is reported yet. Refresh status after AI-E starts work.",
             queue_remaining=queue_remaining,
             heartbeat_status=heartbeat_status,
             waiting_reason=waiting_reason,
             approval_status=approval_status,
             final_state=final_state,
-            poll_mode="Polled from existing runtime and session state.",
+            poll_mode="Updated from saved run details.",
             request_id=request_id,
             task_id=task_id or str(snapshot.current_task_id or snapshot.last_started_task or ""),
             result_ready=result_path is not None and snapshot.status != "running",
@@ -1011,13 +1126,13 @@ class IntakePreviewBridge:
         ]
         queue_remaining = self._format_queue_remaining(len(visible_queue))
 
-        waiting_reason = "No active run session is visible for this request yet."
+        waiting_reason = "No live run is visible for this request yet. Refresh status after submitting it."
         if queue_status == "needs_approval" or approval_state == "awaiting_approval":
-            waiting_reason = "Waiting for approval before execution can begin."
+            waiting_reason = "Waiting for approval before execution can begin. Open review to confirm the safe next step."
         elif queue_status == "blocked":
             waiting_reason = self._queue_block_reason(queue_entry)
         elif queue_status == "completed":
-            waiting_reason = "Execution has already finished for this queued request."
+            waiting_reason = "This request has already finished. Open the result summary to review what happened."
 
         approval_status = self._queue_approval_status(queue_entry)
         final_state = self._queue_final_state(queue_entry)
@@ -1026,16 +1141,16 @@ class IntakePreviewBridge:
         return LiveStatusSurface(
             available=True,
             status_badge=self._queue_status_badge(queue_status=queue_status, approval_state=approval_state),
-            status_message="Polled from the existing queue because no active runtime session is currently visible.",
+            status_message="Updated from saved request details because no live run is visible yet. Refresh status after the request starts.",
             session_id="Not started yet",
             current_phase="Not started yet",
-            current_task=str(queue_entry.get("title") or queue_entry.get("task_id") or "Queued task"),
+            current_task=str(queue_entry.get("title") or queue_entry.get("task_id") or "Prepared request"),
             queue_remaining=queue_remaining,
-            heartbeat_status="No active heartbeat is visible yet.",
+            heartbeat_status="No active heartbeat yet. Refresh status if this request should already be running.",
             waiting_reason=waiting_reason,
             approval_status=approval_status,
             final_state=final_state,
-            poll_mode="Polled from existing queue state.",
+            poll_mode="Updated from saved request details.",
             request_id=request_id or str(queue_entry.get("request_id") or ""),
             task_id=task_id or str(queue_entry.get("task_id") or ""),
             result_ready=result_path is not None and queue_status in {"blocked", "completed"},
@@ -1150,14 +1265,14 @@ class IntakePreviewBridge:
         if snapshot.status == "running" and snapshot.current_task_id:
             return "AI-E is actively working on the current task."
         if snapshot.status == "running":
-            return "AI-E is running, but work is currently waiting on the next runtime condition."
+            return "AI-E is running, but it is waiting on the next step. Refresh status to check for progress."
         if final_state == "Completed":
-            return "AI-E finished this session and wrote result artifacts."
+            return "AI-E finished this run and saved the result. Open the result summary to review it."
         if final_state == "Blocked":
-            return "AI-E halted this session because the request could not continue safely."
+            return "AI-E halted this run because the request could not continue safely. Revise the request or open History to review earlier results."
         if final_state == "Failed":
-            return "AI-E stopped with a non-success outcome."
-        return "AI-E status is available from the most recent session artifacts."
+            return "AI-E stopped without a successful result. Refresh status, or open History to review earlier results."
+        return "AI-E status comes from the most recent saved run details. Refresh status to check again."
 
     @staticmethod
     def _runtime_final_state(snapshot: Any) -> str:
@@ -1191,8 +1306,8 @@ class IntakePreviewBridge:
             if queue_status == "needs_approval" or approval_state == "awaiting_approval":
                 return "Waiting for approval before execution can begin."
         if snapshot.status == "running" and not snapshot.current_task_id:
-            return "Waiting for the next runnable step."
-        return "No wait reason reported."
+            return "Waiting for the next runnable step. Refresh status to check for progress."
+        return "No pause reason was reported. Refresh status, or open History if you expect this run to be finished."
 
     @staticmethod
     def _live_approval_status(*, snapshot: Any, queue_entry: Dict[str, Any] | None) -> str:
@@ -1204,21 +1319,21 @@ class IntakePreviewBridge:
             if approval_state == "approved":
                 return "Approval recorded once."
             if approval_state == "auto_approved":
-                return "Approval was granted automatically by existing backend policy."
+                return "Approval was granted automatically."
         if str(snapshot.status or "").strip().lower() == "running":
             for task in getattr(snapshot, "queue_tasks", []) or []:
                 if str(task.get("status") or "").strip().lower() == "needs_approval":
-                    return "At least one queued task is waiting for approval."
+                    return "At least one request is waiting for approval."
         if str(snapshot.stop_reason or "").strip().lower() == "blocked_needs_approval":
             return "Approval wait stopped this session."
-        return "Approval is not currently holding this session."
+        return "Approval is not currently holding this run."
 
     @staticmethod
     def _queue_status_badge(*, queue_status: str, approval_state: str) -> str:
         if queue_status == "needs_approval" or approval_state == "awaiting_approval":
             return "Awaiting approval"
         if queue_status == "pending":
-            return "Queued"
+            return "Waiting to run"
         if queue_status == "blocked":
             return "Blocked"
         if queue_status == "completed":
@@ -1238,8 +1353,8 @@ class IntakePreviewBridge:
         if approval_state == "auto_approved":
             return "Approval was granted automatically."
         if approval_state == "blocked":
-            return "Approval cannot proceed because the task is blocked."
-        return "Approval is not currently blocking this task."
+            return "Approval cannot proceed because this request is blocked. Revise the request before preparing it again."
+        return "Approval is not holding this request."
 
     @staticmethod
     def _queue_final_state(queue_entry: Dict[str, Any]) -> str:
@@ -1263,18 +1378,18 @@ class IntakePreviewBridge:
             text = _clean_decision_text(str(candidate or "").strip())
             if text:
                 return text
-        return "Blocked before execution."
+        return "AI-E blocked this request before it started. Revise the request to stay within supported scope, then prepare it again."
 
     @staticmethod
     def _heartbeat_status_text(*, runtime_state: Any, snapshot: Any) -> str:
         age = runtime_state.heartbeat_age_seconds()
         if snapshot.status == "running":
             if age is None:
-                return "Running; no heartbeat has been recorded yet."
+                return "Running, but no heartbeat has been saved yet. Refresh status to check for progress."
             return f"Active heartbeat seen {int(age)}s ago."
         if snapshot.heartbeat_timestamp:
             return f"Last heartbeat at {snapshot.heartbeat_timestamp}."
-        return "No heartbeat has been recorded."
+        return "No heartbeat has been saved. Refresh status if you expect active work."
 
     @staticmethod
     def _result_path_for_session(*, session_dir: Path, last_artifact_path: str | None) -> Path | None:
@@ -1311,7 +1426,7 @@ class IntakePreviewBridge:
     def _unavailable_live_status(message: str) -> LiveStatusSurface:
         return LiveStatusSurface(
             available=False,
-            status_badge="Status unavailable",
+            status_badge="Status not available",
             status_message=message,
             session_id="-",
             current_phase="-",
@@ -1321,7 +1436,7 @@ class IntakePreviewBridge:
             waiting_reason=message,
             approval_status="-",
             final_state="-",
-            poll_mode="Polled from existing state when available.",
+            poll_mode="Updated from saved details when available. Refresh status to check again.",
             request_id="",
             task_id="",
             result_ready=False,
@@ -1387,7 +1502,7 @@ class IntakePreviewBridge:
     @staticmethod
     def _decision_reason(*, classification: str, decision_state: str, routing: Any) -> str:
         if classification != "task_request":
-            return "The existing intake classifier does not recognize this as a runnable task request yet."
+            return "AI-E does not recognize this as a supported request yet. Revise the request to stay within supported scope, then prepare it again."
 
         summary_sources = []
         if decision_state == "Blocked":
@@ -1417,12 +1532,12 @@ class IntakePreviewBridge:
             return summary
 
         if decision_state == "Ready":
-            return "The existing intake logic can accept this request without an approval stop."
+            return "AI-E can accept this request without extra review. Submit it when you are ready."
         if decision_state == "Needs approval":
-            return "The existing intake logic requires operator approval before this request can proceed."
+            return "This request needs one-time approval before it can continue. Open review to confirm the safe next step."
         if decision_state == "Sandbox first":
-            return "The existing intake logic requires sandbox validation before real-target work."
-        return "The existing intake logic blocked this request before execution."
+            return "This request should run in sandbox first before real changes are allowed. Keep it staged, or revise it to stay within supported scope."
+        return "AI-E blocked this request before it could continue. Revise the request to stay within supported scope, then prepare it again."
 
 
 def _load_registry_projects(path: Path, *, source: str) -> List[SupportedProject]:
@@ -1473,7 +1588,7 @@ def _iter_runner_artifact_entries() -> Iterable[RecentRunEntry]:
                     status=str(proof_summary.get("status") or "unknown"),
                     updated_at=_entry_timestamp(run_dir, proof_summary.get("timestamp")),
                     updated_label=_format_timestamp(_entry_timestamp(run_dir, proof_summary.get("timestamp"))),
-                    detail=str(proof_summary.get("message") or "Proof artifact"),
+                    detail=str(proof_summary.get("message") or "Saved result"),
                     path=run_dir,
                 )
             )
@@ -1532,13 +1647,636 @@ def _iter_session_entries() -> Iterable[RecentRunEntry]:
     return entries
 
 
+def _history_candidate_dirs() -> List[Path]:
+    candidates: List[Path] = []
+    for root in (ARTIFACTS_ROOT, ORCHESTRATOR_RUNS_ROOT):
+        if not root.exists():
+            continue
+        for run_dir in root.iterdir():
+            if run_dir.is_dir():
+                candidates.append(run_dir)
+    return candidates
+
+
+def _history_project_display(target_display: str) -> str:
+    text = str(target_display or "").strip()
+    if not text or text.lower().startswith("not recorded") or text.lower().startswith("not shown"):
+        return "Project not shown"
+    return text
+
+
+def _history_source_label(source: str) -> str:
+    normalized = str(source or "").strip().lower()
+    if normalized == "proof":
+        return "Result"
+    if normalized == "capture":
+        return "Observation"
+    if normalized == "session":
+        return "Session"
+    return "Saved"
+
+
+def _history_title(proof: ProofResultSurface) -> str:
+    source = str(proof.source or "").strip().lower()
+    if source == "proof":
+        return proof.original_request or proof.detected_action or proof.title or "Result"
+    if source == "capture":
+        title = proof.title.strip()
+        lowered = title.lower()
+        if lowered.startswith("run "):
+            title = title.replace("Run ", "", 1).strip()
+        elif lowered.startswith("observation run:"):
+            title = title.split(":", 1)[1].strip()
+        elif lowered == "observation run":
+            title = ""
+        title = title or proof.target_display or "Observation run"
+        if title == "Observation run":
+            return title
+        return f"Observation run: {title}"
+    if source == "session":
+        action = str(proof.detected_action or "").strip()
+        if action and action.lower() not in {"persistent session run", "session review"}:
+            return f"Session: {action}"
+        return "Session review"
+    return proof.title or "Saved result"
+
+
+def _history_final_status(proof_status: str) -> str:
+    normalized = str(proof_status or "").strip().lower()
+    if normalized in {"passed", "completed"}:
+        return "Passed"
+    if normalized == "blocked":
+        return "Blocked"
+    if normalized == "failed":
+        return "Failed"
+    return "Saved"
+
+
+def _history_summary(proof: ProofResultSurface) -> str:
+    summary_candidates: List[str] = []
+    if proof.source == "proof":
+        summary_candidates = [proof.change_summary, proof.validation_outcome, proof.final_verdict, proof.before_after_summary]
+    elif proof.source == "capture":
+        summary_candidates = [proof.final_verdict, proof.validation_outcome, proof.before_after_summary]
+    else:
+        summary_candidates = [proof.final_verdict, proof.change_summary, proof.validation_outcome]
+
+    for candidate in summary_candidates:
+        text = _history_sentence(candidate)
+        if text:
+            return text
+    if proof.key_steps:
+        return _history_sentence(proof.key_steps[0]) or str(proof.key_steps[0]).strip()
+    return "Open this result to review the saved details."
+
+
+def _history_sentence(text: str) -> str:
+    clean = str(text or "").strip()
+    if not clean:
+        return ""
+    lowered = clean.lower()
+    if (
+        lowered.startswith("not recorded")
+        or lowered.startswith("not shown")
+        or "does not include a clear change summary" in lowered
+        or "without a clear change summary" in lowered
+        or lowered.startswith("detailed validation checks are not available")
+    ):
+        return ""
+    sentence_break = clean.find(". ")
+    if sentence_break >= 0:
+        return clean[: sentence_break + 1].strip()
+    return clean
+
+
+def _history_timestamp_hint(run_dir: Path) -> Any:
+    for filename in ("proof_summary.json", "session_summary.json", "run_summary.json"):
+        payload = _load_json(run_dir / filename)
+        if isinstance(payload, dict) and payload.get("timestamp"):
+            return payload.get("timestamp")
+    return None
+
+
+def _history_session_summary_path(run_dir: Path) -> Path | None:
+    for candidate in (run_dir / "session_summary.md", run_dir / "session_summary.json"):
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _proof_result_from_proof_summary(
+    run_dir: Path,
+    proof_summary: dict[str, Any],
+    *,
+    supported_projects: List[SupportedProject],
+) -> ProofResultSurface:
+    original_request = str(proof_summary.get("prompt_text") or "").strip()
+    translated_request = str(
+        ((proof_summary.get("prompt") or {}) if isinstance(proof_summary.get("prompt"), dict) else {}).get(
+            "translated_command"
+        )
+        or ""
+    ).strip()
+    mutation = proof_summary.get("mutation") if isinstance(proof_summary.get("mutation"), dict) else {}
+    validations = proof_summary.get("validations") if isinstance(proof_summary.get("validations"), dict) else {}
+    playmode = proof_summary.get("playmode") if isinstance(proof_summary.get("playmode"), dict) else {}
+    prompt_info = proof_summary.get("prompt") if isinstance(proof_summary.get("prompt"), dict) else {}
+    router_info = proof_summary.get("router") if isinstance(proof_summary.get("router"), dict) else {}
+
+    key_steps: List[str] = []
+    if prompt_info:
+        key_steps.append(f"Prompt translation: {_humanize_status(prompt_info.get('status') or prompt_info.get('router_status'))}.")
+    if router_info:
+        route_kind = str(router_info.get("route_kind") or "").strip()
+        route_text = f" ({_humanize_text(route_kind)})" if route_kind else ""
+        key_steps.append(f"Routing: {_humanize_status(router_info.get('status'))}{route_text}.")
+    if mutation:
+        mutation_status = _humanize_status(mutation.get("status"))
+        step_name = _humanize_text(mutation.get("step_name") or mutation.get("action_type"))
+        object_name = str(mutation.get("object_name") or "").strip()
+        object_text = f" on {object_name}" if object_name else ""
+        key_steps.append(f"Mutation: {mutation_status} - {step_name}{object_text}.")
+    if playmode:
+        ticks = playmode.get("ticks_observed")
+        ticks_text = f" after {ticks} ticks" if isinstance(ticks, int) else ""
+        key_steps.append(f"Validation: {_humanize_status(playmode.get('status'))}{ticks_text}.")
+
+    proof_status = _proof_status_from_summary(proof_summary, validations=validations)
+    validation_checks = _validation_check_lines(validations)
+    validation_outcome = _proof_validation_outcome(proof_status=proof_status, validations=validations, playmode=playmode)
+    target_display = _project_display_from_path(
+        proof_summary.get("babylon_project_path"),
+        supported_projects=supported_projects,
+    )
+    before_after_summary = _proof_before_after_summary(mutation)
+    change_summary = _proof_change_summary(mutation)
+    raw_artifacts: List[ProofArtifactLink] = []
+    _append_artifact_link(raw_artifacts, label="Result summary", kind="summary", candidate=run_dir / "proof_summary.json")
+    _append_artifact_link(raw_artifacts, label="Request details", kind="prompt", candidate=_artifact_effective_path(prompt_info, "artifact"))
+    _append_artifact_link(raw_artifacts, label="Request log", kind="log", candidate=_artifact_effective_path(prompt_info, "log"))
+    _append_artifact_link(raw_artifacts, label="Routing details", kind="router", candidate=_artifact_effective_path(router_info, "artifact"))
+    _append_artifact_link(raw_artifacts, label="Routing log", kind="log", candidate=_artifact_effective_path(router_info, "log"))
+    _append_artifact_link(raw_artifacts, label="Change details", kind="mutation", candidate=_artifact_effective_path(mutation, "artifact"))
+    _append_artifact_link(raw_artifacts, label="Change log", kind="log", candidate=_artifact_effective_path(mutation, "log"))
+    _append_artifact_link(raw_artifacts, label="Validation details", kind="validation", candidate=_artifact_effective_path(playmode, "artifact"))
+    _append_artifact_link(raw_artifacts, label="Validation log", kind="log", candidate=_artifact_effective_path(playmode, "log"))
+
+    return ProofResultSurface(
+        available=True,
+        title=original_request or _proof_title_from_mutation(mutation) or "Verified result",
+        source="proof",
+        original_request=original_request or "The original request is not available in this saved result.",
+        normalized_request=translated_request if translated_request and translated_request != original_request else "",
+        target_display=target_display,
+        detected_action=_humanize_text(mutation.get("step_name") or mutation.get("action_type")) or "Verified change",
+        final_verdict=_proof_final_verdict(
+            proof_status=proof_status,
+            proof_summary=proof_summary,
+            mutation=mutation,
+            validations=validations,
+        ),
+        before_after_summary=before_after_summary,
+        change_summary=change_summary,
+        validation_outcome=validation_outcome,
+        proof_status=proof_status,
+        timestamp_label=_format_timestamp(_entry_timestamp(run_dir, proof_summary.get("timestamp"))),
+        key_steps=key_steps,
+        validation_checks=validation_checks,
+        raw_artifacts=raw_artifacts,
+        primary_artifact_path=raw_artifacts[0].path if raw_artifacts else None,
+        rerun_prompt=original_request,
+        rerun_project_path=str(proof_summary.get("babylon_project_path") or "").strip(),
+        status_message="Loaded from the saved result and supporting files.",
+    )
+
+
+def _proof_result_from_run_summary(
+    run_dir: Path,
+    run_summary: dict[str, Any],
+    *,
+    supported_projects: List[SupportedProject],
+) -> ProofResultSurface:
+    artifacts = run_summary.get("artifacts") if isinstance(run_summary.get("artifacts"), dict) else {}
+    screenshots = artifacts.get("screenshots") if isinstance(artifacts.get("screenshots"), dict) else {}
+    input_summary = artifacts.get("input") if isinstance(artifacts.get("input"), dict) else {}
+    audio_summary = artifacts.get("audio") if isinstance(artifacts.get("audio"), dict) else {}
+    focus = run_summary.get("focus") if isinstance(run_summary.get("focus"), dict) else {}
+    warnings = run_summary.get("warnings") if isinstance(run_summary.get("warnings"), list) else []
+    screenshot_count = int(screenshots.get("count", 0) or 0)
+    status = str(run_summary.get("status") or run_summary.get("attach_status") or "").strip().lower()
+
+    key_steps = [
+        f"Connection: {_humanize_status(run_summary.get('attach_status'))} via {_humanize_text(run_summary.get('attach_method')) or 'selected method'}.",
+        f"Screenshots available: {screenshot_count} ({_humanize_status(screenshots.get('status'))}).",
+        f"Input recording: {_humanize_status(input_summary.get('status'))}.",
+        f"Audio recording: {_humanize_status(audio_summary.get('status'))}.",
+    ]
+    validation_checks = [
+        f"Focus tracking: {'Supported' if bool(focus.get('supported')) else 'Not supported'}.",
+        f"Target focus time: {round(float(focus.get('target_focus_seconds', 0.0) or 0.0), 2)}s.",
+    ]
+    if warnings:
+        validation_checks.extend(f"Warning: {str(item).strip()}" for item in warnings if str(item).strip())
+    validation_outcome = _capture_validation_outcome(screenshot_count=screenshot_count, warnings=warnings)
+    raw_artifacts: List[ProofArtifactLink] = []
+    _append_artifact_link(raw_artifacts, label="Run summary", kind="summary", candidate=run_dir / "run_summary.json")
+    for item in screenshots.get("items", []):
+        if isinstance(item, dict):
+            _append_artifact_link(
+                raw_artifacts,
+                label=f"Screenshot {_humanize_text(item.get('label')) or 'capture'}",
+                kind="image",
+                candidate=item.get("path"),
+            )
+
+    return ProofResultSurface(
+        available=True,
+        title=_capture_result_title(run_summary, run_dir),
+        source="capture",
+        original_request="This saved observation does not include the original request.",
+        normalized_request="",
+        target_display=_project_display_from_path(run_summary.get("exe_path"), supported_projects=supported_projects),
+        detected_action="Observation run",
+        final_verdict=_run_summary_verdict(run_summary, warnings=warnings),
+        before_after_summary=(
+            "Before and after screenshots are available for this run."
+            if screenshot_count >= 2
+            else ("One screenshot is available for this run." if screenshot_count == 1 else "")
+        ),
+        change_summary="This run recorded observations and diagnostics only.",
+        validation_outcome=validation_outcome,
+        proof_status=_run_summary_status(status),
+        timestamp_label=_format_timestamp(_entry_timestamp(run_dir, run_summary.get("timestamp"))),
+        key_steps=key_steps,
+        validation_checks=validation_checks,
+        raw_artifacts=raw_artifacts,
+        primary_artifact_path=raw_artifacts[0].path if raw_artifacts else None,
+        rerun_prompt="",
+        rerun_project_path="",
+        status_message="Loaded from the saved observation and supporting files.",
+    )
+
+
+def _proof_result_from_session_summary(run_dir: Path, session_summary: dict[str, Any]) -> ProofResultSurface:
+    loop_visibility = session_summary.get("loop_visibility") if isinstance(session_summary.get("loop_visibility"), dict) else {}
+    selector_visibility = (
+        session_summary.get("selector_visibility") if isinstance(session_summary.get("selector_visibility"), dict) else {}
+    )
+    stop_reason = str(session_summary.get("stop_reason") or session_summary.get("status") or "").strip()
+    final_status = str(session_summary.get("final_status") or "").strip()
+    selected_task = str(selector_visibility.get("selected_task") or "").strip()
+    tasks_attempted = int(session_summary.get("tasks_attempted", 0) or 0)
+    tasks_completed = int(session_summary.get("tasks_completed", 0) or 0)
+    tasks_blocked = int(session_summary.get("tasks_blocked", 0) or 0)
+    integrity_issues = session_summary.get("integrity_issues") if isinstance(session_summary.get("integrity_issues"), list) else []
+
+    key_steps = [
+        f"Planned work attempted: {tasks_attempted} task(s).",
+        f"Completed: {tasks_completed} task(s).",
+        f"Blocked: {tasks_blocked} task(s).",
+    ]
+    if selected_task:
+        key_steps.insert(0, f"Selected task: {selected_task}.")
+    selector_reason = str(selector_visibility.get("reason") or "").strip()
+    if selector_reason:
+        key_steps.append(selector_reason.rstrip(".") + ".")
+
+    validation_checks = [
+        f"Last task result: {_humanize_status(loop_visibility.get('last_task_result_status') or stop_reason)}.",
+        f"Integrity issues: {len(integrity_issues)}.",
+    ]
+    validation_outcome = (
+        "No integrity issues were reported in this session."
+        if not integrity_issues
+        else f"{len(integrity_issues)} integrity issue(s) were reported in this session."
+    )
+    raw_artifacts: List[ProofArtifactLink] = []
+    _append_artifact_link(raw_artifacts, label="Session summary", kind="summary", candidate=run_dir / "session_summary.json")
+    _append_artifact_link(raw_artifacts, label="Session report", kind="report", candidate=run_dir / "session_summary.md")
+    _append_artifact_link(raw_artifacts, label="Support report", kind="report", candidate=run_dir / "operator_report.md")
+
+    return ProofResultSurface(
+        available=True,
+        title=_session_result_title(session_summary, selected_task=selected_task, run_dir=run_dir),
+        source="session",
+        original_request="This saved session does not include the original request.",
+        normalized_request="",
+        target_display="Project not shown in this saved session.",
+        detected_action=selected_task or "Session review",
+        final_verdict=_session_summary_verdict(
+            stop_reason,
+            final_status=final_status,
+            tasks_completed=tasks_completed,
+            tasks_blocked=tasks_blocked,
+        ),
+        before_after_summary="",
+        change_summary=_session_change_summary(tasks_completed=tasks_completed, tasks_blocked=tasks_blocked),
+        validation_outcome=validation_outcome,
+        proof_status=_session_summary_status(
+            stop_reason,
+            final_status=final_status,
+            tasks_completed=tasks_completed,
+            tasks_blocked=tasks_blocked,
+        ),
+        timestamp_label=_format_timestamp(_entry_timestamp(run_dir, session_summary.get("timestamp"))),
+        key_steps=key_steps,
+        validation_checks=validation_checks,
+        raw_artifacts=raw_artifacts,
+        primary_artifact_path=raw_artifacts[0].path if raw_artifacts else None,
+        rerun_prompt="",
+        rerun_project_path="",
+        status_message="Loaded from the saved session details and reports.",
+    )
+
+
+def _proof_before_after_summary(mutation: dict[str, Any]) -> str:
+    object_name = str(mutation.get("object_name") or "The target object").strip()
+    previous_position = mutation.get("previous_position")
+    new_position = mutation.get("new_position")
+    if isinstance(previous_position, list) and isinstance(new_position, list):
+        return f"{object_name} moved from {_format_vector(previous_position)} to {_format_vector(new_position)}."
+    if isinstance(new_position, list):
+        return f"{object_name} ended at {_format_vector(new_position)}. The starting position is not available in this result."
+    if isinstance(previous_position, list):
+        return f"{object_name} started at {_format_vector(previous_position)}. The ending position is not available in this result."
+    if mutation.get("position_changed") is True:
+        return f"{object_name} changed position, but full before-and-after details are not available in this result."
+    return ""
+
+
+def _proof_change_summary(mutation: dict[str, Any]) -> str:
+    if not mutation:
+        return "This result does not include a clear change summary."
+    object_name = str(mutation.get("object_name") or "target object").strip()
+    action_type = _humanize_text(mutation.get("action_type") or mutation.get("step_name")) or "mutation"
+    if mutation.get("position_changed") is True:
+        distance = mutation.get("movement_distance")
+        distance_text = f" Recorded movement: {distance} unit(s)." if isinstance(distance, (int, float)) else ""
+        return f"AI-E moved {object_name} using {action_type}.{distance_text}"
+    return f"AI-E applied {action_type} to {object_name}."
+
+
+def _proof_title_from_mutation(mutation: dict[str, Any]) -> str:
+    action_type = _humanize_text(mutation.get("action_type") or mutation.get("step_name"))
+    object_name = str(mutation.get("object_name") or "").strip()
+    if action_type and object_name:
+        return f"{action_type} - {object_name}"
+    return action_type or object_name
+
+
+def _proof_final_verdict(
+    *,
+    proof_status: str,
+    proof_summary: dict[str, Any],
+    mutation: dict[str, Any],
+    validations: dict[str, Any],
+) -> str:
+    raw_message = _clean_decision_text(str(proof_summary.get("message") or "").strip())
+    object_name = str(mutation.get("object_name") or "").strip()
+    if proof_status == "Passed":
+        if object_name:
+            return f"{object_name} changed successfully and the recorded checks passed."
+        return "Requested change completed successfully and the recorded checks passed."
+    if proof_status == "Failed":
+        if validations:
+            return "Requested change ran, but one or more recorded checks failed."
+        return "Requested change did not finish cleanly."
+    if proof_status == "Blocked":
+        return "Requested change was stopped before it could complete."
+    if raw_message:
+        return raw_message
+    return "Result saved with partial details."
+
+
+def _proof_validation_outcome(*, proof_status: str, validations: dict[str, Any], playmode: dict[str, Any]) -> str:
+    summary = _validation_summary(validations)
+    if summary:
+        return summary
+    playmode_status = str(playmode.get("status") or "").strip()
+    if proof_status == "Blocked":
+        return "Validation stopped before detailed checks were saved."
+    if playmode_status:
+        return f"Validation was {_humanize_status(playmode_status).lower()}, but detailed checks are not available in this result."
+    return "Detailed validation checks are not available in this result."
+
+
+def _proof_status_from_summary(proof_summary: dict[str, Any], *, validations: dict[str, Any]) -> str:
+    status = str(proof_summary.get("status") or "").strip().lower()
+    message = str(proof_summary.get("message") or "").strip().lower()
+    if "blocked" in message or status == "blocked":
+        return "Blocked"
+    if validations and any(value is False for value in validations.values()):
+        return "Failed"
+    if status in {"success", "ok", "passed"} or "passed" in message:
+        return "Passed"
+    if status in {"failed", "error"}:
+        return "Failed"
+    return _humanize_status(status) or "Saved"
+
+
+def _run_summary_status(status: str) -> str:
+    if status in {"ok", "connected", "success"}:
+        return "Completed"
+    if status == "blocked":
+        return "Blocked"
+    if status in {"failed", "error", "disconnected", "attention", "warning", "not_running"}:
+        return "Failed"
+    return _humanize_status(status) or "Saved"
+
+
+def _run_summary_verdict(run_summary: dict[str, Any], *, warnings: List[Any]) -> str:
+    status = str(run_summary.get("status") or run_summary.get("attach_status") or "").strip().lower()
+    if status in {"ok", "connected", "success"}:
+        if warnings:
+            return "Observation run completed, with warnings to review."
+        return "Observation run completed cleanly."
+    if status == "blocked":
+        return "Observation run was blocked before it could finish."
+    if status in {"failed", "error", "disconnected", "attention", "warning", "not_running"}:
+        return "Observation run ended without a clean result."
+    return "Observation run was saved with partial details."
+
+
+def _capture_validation_outcome(*, screenshot_count: int, warnings: List[Any]) -> str:
+    screenshot_text = (
+        "No screenshots are shown for this observation run."
+        if screenshot_count <= 0
+        else (f"{screenshot_count} screenshot was saved." if screenshot_count == 1 else f"{screenshot_count} screenshots were saved.")
+    )
+    if warnings:
+        warning_text = "1 warning was recorded." if len(warnings) == 1 else f"{len(warnings)} warnings were recorded."
+        return f"{screenshot_text} {warning_text}"
+    return f"{screenshot_text} No warnings were recorded."
+
+
+def _capture_result_title(run_summary: dict[str, Any], run_dir: Path) -> str:
+    map_id = str(run_summary.get("map_id") or "").strip()
+    if map_id:
+        return f"Observation run: {map_id}"
+    return "Observation run"
+
+
+def _session_summary_status(stop_reason: str, *, final_status: str, tasks_completed: int, tasks_blocked: int) -> str:
+    normalized_final = final_status.strip().lower()
+    normalized = stop_reason.strip().lower()
+    if normalized_final in {"playable", "passed", "success", "completed"}:
+        return "Completed"
+    if normalized_final in {"failed", "error"}:
+        return "Failed"
+    if normalized in {"queue_empty", "queue_empty_idle_timeout", "complete"} and tasks_completed > 0 and tasks_blocked == 0:
+        return "Completed"
+    if normalized in {"queue_empty_idle_timeout"} and tasks_completed == 0 and tasks_blocked == 0:
+        return "Failed"
+    if normalized in {"blocked_needs_approval", "all_remaining_tasks_blocked", "repeated_failure_threshold_exceeded"}:
+        return "Blocked"
+    if tasks_blocked > 0:
+        return "Blocked"
+    if tasks_completed > 0:
+        return "Completed"
+    return _humanize_status(normalized) or "Saved"
+
+
+def _session_summary_verdict(stop_reason: str, *, final_status: str, tasks_completed: int, tasks_blocked: int) -> str:
+    normalized_final = final_status.strip().lower()
+    normalized = stop_reason.strip().lower()
+    if normalized_final == "playable":
+        return "Session reached a playable outcome."
+    if normalized_final in {"passed", "success", "completed"}:
+        return "Session finished successfully."
+    if normalized_final in {"failed", "error"}:
+        return "Session ended without a successful outcome."
+    if normalized in {"queue_empty", "queue_empty_idle_timeout", "complete"}:
+        return f"Session finished after completing {tasks_completed} task(s)."
+    if normalized == "queue_empty_idle_timeout" and tasks_completed == 0 and tasks_blocked == 0:
+        return "Session ended after waiting without completing work."
+    if normalized == "blocked_needs_approval":
+        return "Session paused because more work needs approval."
+    if normalized == "repeated_failure_threshold_exceeded":
+        return "Session stopped after the repeated failure threshold was reached."
+    if normalized == "all_remaining_tasks_blocked":
+        return "Session stopped because the remaining work was blocked."
+    if tasks_blocked > 0:
+        return f"Session ended with {tasks_blocked} blocked task(s)."
+    return "Session ended with partial details."
+
+
+def _session_change_summary(*, tasks_completed: int, tasks_blocked: int) -> str:
+    if tasks_completed > 0:
+        blocked_text = f" {tasks_blocked} task(s) were blocked." if tasks_blocked else ""
+        return f"AI-E completed {tasks_completed} task(s) in this session.{blocked_text}"
+    if tasks_blocked > 0:
+        return f"This session recorded blocked work, but no completed change summary is available. {tasks_blocked} task(s) were blocked."
+    return "This session ended without a clear change summary."
+
+
+def _session_result_title(session_summary: dict[str, Any], *, selected_task: str, run_dir: Path) -> str:
+    if selected_task:
+        return f"Session: {selected_task}"
+    return "Session review"
+
+
+def _validation_check_lines(validations: dict[str, Any]) -> List[str]:
+    lines: List[str] = []
+    for key, value in validations.items():
+        lines.append(f"{_humanize_text(key)}: {'Passed' if bool(value) else 'Failed'}.")
+    return lines
+
+
+def _validation_summary(validations: dict[str, Any]) -> str:
+    if not validations:
+        return ""
+    total = len(validations)
+    passed = sum(1 for value in validations.values() if bool(value))
+    if passed == total:
+        return "All recorded checks passed."
+    if passed == 0:
+        return f"All {total} recorded check(s) failed."
+    return f"{passed} of {total} recorded check(s) passed."
+
+
+def _project_display_from_path(raw_path: Any, *, supported_projects: List[SupportedProject]) -> str:
+    text = str(raw_path or "").strip()
+    if not text:
+        return "Project not shown in this result."
+    try:
+        candidate = Path(text).resolve()
+    except OSError:
+        candidate = Path(text)
+    normalized = str(candidate).lower()
+    for project in supported_projects:
+        if str(project.path).lower() == normalized:
+            return project.name
+    if candidate.suffix:
+        return candidate.stem or candidate.name
+    return candidate.name or text
+
+
+def _artifact_effective_path(payload: dict[str, Any], key: str) -> str:
+    artifact = payload.get(key)
+    if not isinstance(artifact, dict):
+        return ""
+    return str(
+        artifact.get("effective_path")
+        or artifact.get("copied_path")
+        or artifact.get("original_path")
+        or ""
+    ).strip()
+
+
+def _append_artifact_link(
+    raw_artifacts: List[ProofArtifactLink],
+    *,
+    label: str,
+    kind: str,
+    candidate: Any,
+) -> None:
+    text = str(candidate or "").strip()
+    if not text:
+        return
+    path = Path(text)
+    if not path.exists():
+        return
+    if any(existing.path == path for existing in raw_artifacts):
+        return
+    raw_artifacts.append(ProofArtifactLink(label=label, kind=kind, path=path))
+
+
+def _unavailable_proof_result_surface(message: str) -> ProofResultSurface:
+    return ProofResultSurface(
+        available=False,
+        title="Result not available",
+        source="",
+        original_request="",
+        normalized_request="",
+        target_display="",
+        detected_action="",
+        final_verdict=message,
+        before_after_summary="",
+        change_summary="",
+        validation_outcome="",
+        proof_status="Unavailable",
+        timestamp_label="",
+        key_steps=[],
+        validation_checks=[],
+        raw_artifacts=[],
+        primary_artifact_path=None,
+        rerun_prompt="",
+        rerun_project_path="",
+        status_message=message,
+    )
+
+
 def _load_json(path: Path) -> dict[str, Any] | None:
     if not path.exists():
         return None
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError, TypeError, ValueError):
-        return None
+    payload: Any = None
+    for encoding in ("utf-8", "utf-8-sig"):
+        try:
+            payload = json.loads(path.read_text(encoding=encoding))
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            payload = None
+            continue
+        break
     return payload if isinstance(payload, dict) else None
 
 
@@ -1547,7 +2285,7 @@ def _entry_timestamp(path: Path, raw_timestamp: Any) -> datetime:
         parsed = _parse_timestamp(raw_timestamp)
         if parsed is not None:
             return parsed
-    return datetime.fromtimestamp(path.stat().st_mtime)
+    return datetime.fromtimestamp(path.stat().st_mtime).astimezone()
 
 
 def _parse_timestamp(raw_timestamp: str) -> datetime | None:
@@ -1562,6 +2300,25 @@ def _parse_timestamp(raw_timestamp: str) -> datetime | None:
 
 def _format_timestamp(timestamp: datetime) -> str:
     return timestamp.strftime("%Y-%m-%d %H:%M")
+
+
+def _humanize_text(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    return text.replace("_", " ").replace("-", " ").strip().capitalize()
+
+
+def _humanize_status(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return "Not shown"
+    return text.replace("_", " ").strip().capitalize()
+
+
+def _format_vector(values: List[Any]) -> str:
+    formatted = ", ".join(f"{float(value):g}" if isinstance(value, (int, float)) else str(value) for value in values)
+    return f"({formatted})"
 
 
 def _clean_decision_text(text: str) -> str:

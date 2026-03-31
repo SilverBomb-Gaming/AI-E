@@ -18,6 +18,7 @@ class AppState:
     active_project_name: str = ""
     active_project_path: str = ""
     staged_prompt: str = ""
+    onboarding_dismissed: bool = False
 
 
 DEFAULT_PROFILE = "default"

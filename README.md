@@ -1,40 +1,71 @@
-# AI-E Control Panel v5
+# AI-E v1
 
-Operator-first perception and reporting layer for inspecting Unity windows (BABYLON today, engine-agnostic tomorrow). The control panel packages the guards, recorders, and artifact writers needed to observe a foreground window without turning into a bot or trainer.
+Controlled execution surface for supported projects. AI-E turns a bounded request into a real, reviewable result with guardrails, live status, proof summaries, and saved history.
 
 ## AI-E v1 Product Surface Status
 
-These sections are the current source of truth for the public-facing AI-E product surface. Where they conflict with older control-panel wording below, use this product-surface status first.
+These sections are the current source of truth for the public-facing AI-E v1 experience. Where they conflict with older control-panel wording below, use this product-surface status first.
 
 ## Latest Completed Work
 
-Step 4 of the AI-E v1 Product Surface is now complete. Step 1 added the AI-E Home screen with supported-project selection, static guardrail badges, staged prompt entry, and recent runs pulled from existing artifacts. Step 2 added the prompt intake decision surface on top of the existing intake and routing logic. Step 3 added the approval and review surface for `Needs approval` requests. Step 4 added the live run and status surface that reads existing queue, session, and runtime artifacts without changing backend execution or introducing a new architecture layer.
+H5 packaging and demo readiness is now complete. The current surface includes the six v1 product surfaces: Home, Prompt Intake, Approval Review, Live Run Status, Result Summary, and Project / Session History. Hardening work has also landed: copy cleanup, empty/error guidance, first-run onboarding, proof/history polish, and launch/demo readiness cleanup.
 
 ## Current Product Surface Status
 
-AI-E now exposes a usable v1 front door over the existing system. A user can select a supported project, stage a bounded prompt, see a clean intake decision, open a review card when approval is required, and track submitted or approved work through a live status panel that polls existing queue, session, and runtime state. `Ready` requests can enter the existing intake path through controlled submit, `Approve once` can record approval through the existing approval plumbing, and finished work can open its existing proof or result artifact. Richer proof presentation, sandbox execution UI, and broader session surfaces remain intentionally deferred.
+AI-E now exposes a coherent v1 front door over the existing system. A user can select a supported project, prepare a bounded request, see a clear intake decision, open review when approval is required, track submitted work, open a readable result summary, and revisit saved sessions or results. All of this runs on top of the existing intake, approval, runtime, and artifact layers without adding a new backend architecture or changing execution logic.
 
-## What Step 4 Added
+## What H5 Added
 
-- A `Live Run Status` panel that shows run or session ID, current phase, current task, queue remaining, heartbeat state, waiting reason, approval state, and final state in product-facing language
-- Thin polling over existing runtime, session, and queue artifacts only, with no new execution engine and no fake live stream
-- Automatic status tracking after controlled submit and after `Approve once`, while keeping execution inside the existing backend flow
-- A minimal safe action set for this stage: `Refresh status` and `Open proof/result` when an existing finished artifact is available
-- Product-surface cleanup so completed sessions report their recorded session state instead of unrelated current queue totals
+- cleaner startup defaults, including preferred selection of a recommended supported project when one is available
+- clearer first-impression wording across Home, Intake, Live Status, Result Summary, and History for a confident demo walkthrough
+- updated in-app `Help > Demo Checklist...` guidance to match the current home -> intake -> review/status -> result flow
+- README alignment with the actual v1 surface, supported scope, first-run path, deferred scope, and lightweight readiness assessment
+
+## What AI-E Supports Today
+
+- supported-project selection from existing registry data plus the safe `BABYLON VER 2` fallback when present
+- staged request preparation using existing intake and routing logic
+- one-time approval review for requests that need approval
+- live status polling from existing queue, session, and runtime state
+- readable result summaries built from saved proof, run, and session artifacts
+- project/session history with reopen and re-stage paths when saved data supports them
+
+## What Users Can Do Today
+
+- choose a supported project like `BABYLON VER 2`
+- prepare a request such as `move zombie forward`
+- submit it when AI-E shows `Ready`, or open review and approve it once when needed
+- watch progress in `Live Run Status`
+- open `Result Summary` to see verdict, changes, and validations
+- reopen earlier results or prepare the same request again from `Project / Session History`
+
+## First-Run Path
+
+1. Launch AI-E and confirm a supported project is selected.
+2. Use the recommended first request: `move zombie forward`.
+3. Choose `Prepare Request`.
+4. Submit it when AI-E shows `Ready`, or open review and use `Approve once` if approval is required.
+5. Follow `Live Run Status`.
+6. Open `Result Summary` or `Project / Session History` to confirm the saved outcome.
+
+## Packaging Readiness Assessment
+
+- Demo ready: yes for supported-project walkthroughs, especially `BABYLON VER 2`, using the current first-run path and saved artifact-backed results.
+- Local-user ready: close, but it still needs a final clean-profile smoke test, packaged launch verification, and confirmation that supported-project detection behaves well on a fresh setup.
+- Early-customer ready: not yet; it still needs tighter install/update guidance, a locked supported-use statement for customer handoff, and final issue-recovery notes for local users.
 
 ## What Is Still Deferred
 
-- Full proof and result summary surface beyond opening the existing artifact directly
-- Sandbox execution UI beyond the current staged `Run in sandbox first` review action
-- Completion of staged review actions such as real reject handling from the public surface
-- Overnight session surface
-- Expanded project and session history surface beyond the current home-screen recent-runs list
-- Broader runtime controls beyond `Refresh status` and `Open proof/result`
-- Any backend refactor, routing redesign, or new orchestration architecture
+- messaging/chat
+- sandbox execution UI beyond the staged review action
+- overnight session launcher UI
+- multi-user and permissions work
+- new backend architecture or orchestration redesign
+- broader integrations, analytics, or comparison features
 
 ## Next Recommended Step
 
-Implement Step 5 only: the result and proof summary surface. The next product task should turn the existing proof and session artifacts into a clean public-facing summary so a user can understand what changed, what validation ran, and what final evidence AI-E produced without reading raw backend files.
+Run the final packaging/demo closeout: validate a clean-profile launch, the recommended first-request path, result opening, and history reopen flow end to end, then update workflow notes for handoff.
 
 ## Mission (Locked)
 
@@ -126,17 +157,17 @@ Set-ExecutionPolicy -Scope Process Bypass
 .\.venv\Scripts\python.exe -m app.main
 ```
 
-The window title reads **AI-E Control Panel v5**. Browse to the latest BABYLON build, Attach, then Start/Stop runs as needed. The Action Layer panel will always show “Locked” unless future revisions explicitly enable automation.
+The window title reads **AI-E v1**. On first launch, AI-E prefers a supported project such as `BABYLON VER 2` when one is available, keeps guardrails visible on the Home screen, and lets the user prepare a bounded request before anything runs. Use the Home screen to prepare a request, follow the intake decision, track progress, and open the saved result. The Action Layer panel remains locked unless future revisions explicitly enable automation.
 
-### Acceptance test (operator-facing)
+### Demo checklist
 
-Use **Help → Acceptance Tests…** inside the app and walk through:
+Use **Help > Demo Checklist...** inside the app and walk through:
 
-1. Launch AI-E (exe or source) and confirm the UI loads.
-2. Browse for the BABYLON executable so the Target panel is populated.
-3. Use **Launch** (optional) then **Attach** until the status reads Connected.
-4. Click **Start Run** for ~30 seconds; expect two screenshots + focus telemetry.
-5. Click **Stop Run**; verify the latest run folder contains non-empty `run_meta.json`, `run_summary.json`, `events.log`, `mapprobe_snapshot.json`, and any opted-in telemetry (input/mic).
+1. Launch AI-E (exe or source) and confirm the Home screen, guardrails, and a supported project are visible.
+2. Use the recommended first request `move zombie forward`.
+3. Choose `Prepare Request` and confirm AI-E shows a clear decision.
+4. Submit it when `Ready`, or open review and use `Approve once` if approval is needed.
+5. Open `Result Summary` or `Project / Session History` and confirm the saved outcome.
 
 ## Artifact & Reporting Layer
 
@@ -284,12 +315,12 @@ First-launch UX: if the BABYLON path is empty, the UI prompts you to browse. Onc
 
 ## Acceptance Test Checklist
 
-Use **Help → Acceptance Tests…** inside the Control Panel to run the 60-second operator checklist:
+Use **Help > Demo Checklist...** inside the app to run the current quick walkthrough:
 
-1. **A.** Double-click `AI-E.exe` (or run from source) and confirm the UI opens.
-2. **B.** **Browse** for the BABYLON executable so the Target panel is populated.
-3. **C.** Use **Launch** (if necessary) and **Attach** until the status reads “Connected”.
-4. **D.** Click **Start Run** and wait ~30 seconds; two screenshots should land in the run folder.
-5. **E.** Click **Stop Run** and verify the latest run directory has non-empty `run_meta.json`, `run_summary.json`, and appended `events.log` entries.
+1. **A.** Launch `AI-E.exe` (or run from source) and confirm the Home screen and guardrails are visible.
+2. **B.** Confirm a supported project is selected, such as `BABYLON VER 2`.
+3. **C.** Use `move zombie forward` and choose `Prepare Request`.
+4. **D.** Submit it when `Ready`, or open review and use `Approve once` if approval is needed.
+5. **E.** Open `Result Summary` or `Project / Session History` and confirm the saved outcome.
 
-The dialog resets each time you open it, so operators can literally check the boxes before the next session.
+The dialog resets each time you open it, so the same checklist can be reused before the next demo or local-user handoff.
