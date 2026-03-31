@@ -22,6 +22,11 @@ class ControlPanel(QtWidgets.QMainWindow):
         self.intake_preview_bridge = home_surface.IntakePreviewBridge()
         self.supported_projects: List[home_surface.SupportedProject] = []
         self.current_prepared_prompt: home_surface.PreparedPromptPreview | None = None
+        self.current_review_surface: home_surface.ReviewSurface | None = None
+        self.current_live_status: home_surface.LiveStatusSurface | None = None
+        self._tracked_status_request_id = ""
+        self._tracked_status_task_id = ""
+        self._tracked_status_session_id = ""
         self._submitted_prompt_key: tuple[str, str] | None = None
         self._profile_selection_busy = False
         self._build_ui()
@@ -30,6 +35,10 @@ class ControlPanel(QtWidgets.QMainWindow):
         self._duration_timer.setInterval(1000)
         self._duration_timer.timeout.connect(self._update_duration_label)
         self._duration_timer.start()
+        self._live_status_timer = QtCore.QTimer(self)
+        self._live_status_timer.setInterval(3000)
+        self._live_status_timer.timeout.connect(self._poll_live_status)
+        self._live_status_timer.start()
         self._reload_profiles()
         self._reload_supported_projects()
         self._apply_state()
@@ -42,6 +51,7 @@ class ControlPanel(QtWidgets.QMainWindow):
             )
         else:
             self._reset_intake_decision()
+        self._reset_live_status()
         self._refresh_dependency_label()
         self._update_duration_label()
         self._refresh_buttons()
@@ -178,6 +188,126 @@ class ControlPanel(QtWidgets.QMainWindow):
         self.intake_feedback_label.setStyleSheet("color: #555;")
         decision_layout.addWidget(self.intake_feedback_label)
         prompt_layout.addWidget(decision_group)
+
+        review_group = QtWidgets.QGroupBox("Approval Review")
+        review_layout = QtWidgets.QVBoxLayout(review_group)
+        review_layout.setSpacing(8)
+
+        review_hint = QtWidgets.QLabel(
+            "Approval review explains bounded approval-gated requests without exposing queue payloads or backend internals."
+        )
+        review_hint.setWordWrap(True)
+        review_hint.setStyleSheet("color: #555;")
+        review_layout.addWidget(review_hint)
+
+        self.approval_review_status_badge = QtWidgets.QLabel("Review unavailable")
+        self.approval_review_status_badge.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        review_layout.addWidget(self.approval_review_status_badge, alignment=QtCore.Qt.AlignmentFlag.AlignLeft)
+
+        review_detail_layout = QtWidgets.QFormLayout()
+        self.approval_review_summary_value = QtWidgets.QLabel("-")
+        self.approval_review_summary_value.setWordWrap(True)
+        self.approval_review_prompt_value = QtWidgets.QLabel("-")
+        self.approval_review_prompt_value.setWordWrap(True)
+        self.approval_review_target_value = QtWidgets.QLabel("-")
+        self.approval_review_target_value.setWordWrap(True)
+        self.approval_review_action_value = QtWidgets.QLabel("-")
+        self.approval_review_action_value.setWordWrap(True)
+        self.approval_review_reason_value = QtWidgets.QLabel("Open review from a Needs approval request.")
+        self.approval_review_reason_value.setWordWrap(True)
+        self.approval_review_scope_value = QtWidgets.QLabel("-")
+        self.approval_review_scope_value.setWordWrap(True)
+        self.approval_review_validation_value = QtWidgets.QLabel("-")
+        self.approval_review_validation_value.setWordWrap(True)
+        self.approval_review_risk_value = QtWidgets.QLabel("-")
+        self.approval_review_risk_value.setWordWrap(True)
+        review_detail_layout.addRow("Request Summary:", self.approval_review_summary_value)
+        review_detail_layout.addRow("Normalized Prompt:", self.approval_review_prompt_value)
+        review_detail_layout.addRow("Target Workspace:", self.approval_review_target_value)
+        review_detail_layout.addRow("Detected Action:", self.approval_review_action_value)
+        review_detail_layout.addRow("Why Approval Is Required:", self.approval_review_reason_value)
+        review_detail_layout.addRow("Expected Change Scope:", self.approval_review_scope_value)
+        review_detail_layout.addRow("Validation Intent:", self.approval_review_validation_value)
+        review_detail_layout.addRow("Risk / Guardrails:", self.approval_review_risk_value)
+        review_layout.addLayout(review_detail_layout)
+
+        review_action_row = QtWidgets.QHBoxLayout()
+        review_action_row.setSpacing(8)
+        self.approval_review_approve_button = QtWidgets.QPushButton("Approve once")
+        self.approval_review_approve_button.clicked.connect(lambda: self._handle_request_review_action("approve_once"))
+        self.approval_review_reject_button = QtWidgets.QPushButton("Reject")
+        self.approval_review_reject_button.clicked.connect(lambda: self._handle_request_review_action("reject"))
+        self.approval_review_sandbox_button = QtWidgets.QPushButton("Run in sandbox first")
+        self.approval_review_sandbox_button.clicked.connect(lambda: self._handle_request_review_action("sandbox_first"))
+        review_action_row.addWidget(self.approval_review_approve_button)
+        review_action_row.addWidget(self.approval_review_reject_button)
+        review_action_row.addWidget(self.approval_review_sandbox_button)
+        review_action_row.addStretch(1)
+        review_layout.addLayout(review_action_row)
+
+        self.approval_review_feedback_label = QtWidgets.QLabel(
+            "Approval actions stay inactive until a Needs approval request is opened."
+        )
+        self.approval_review_feedback_label.setWordWrap(True)
+        self.approval_review_feedback_label.setStyleSheet("color: #555;")
+        review_layout.addWidget(self.approval_review_feedback_label)
+        prompt_layout.addWidget(review_group)
+
+        live_status_group = QtWidgets.QGroupBox("Live Run Status")
+        live_status_layout = QtWidgets.QVBoxLayout(live_status_group)
+        live_status_layout.setSpacing(8)
+
+        live_status_hint = QtWidgets.QLabel(
+            "Status is polled from existing queue, session, and runtime artifacts only. No new execution controls are added here."
+        )
+        live_status_hint.setWordWrap(True)
+        live_status_hint.setStyleSheet("color: #555;")
+        live_status_layout.addWidget(live_status_hint)
+
+        self.live_status_badge = QtWidgets.QLabel("Status unavailable")
+        self.live_status_badge.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        live_status_layout.addWidget(self.live_status_badge, alignment=QtCore.Qt.AlignmentFlag.AlignLeft)
+
+        live_status_detail_layout = QtWidgets.QFormLayout()
+        self.live_status_session_value = QtWidgets.QLabel("-")
+        self.live_status_phase_value = QtWidgets.QLabel("-")
+        self.live_status_current_task_value = QtWidgets.QLabel("-")
+        self.live_status_current_task_value.setWordWrap(True)
+        self.live_status_queue_value = QtWidgets.QLabel("-")
+        self.live_status_heartbeat_value = QtWidgets.QLabel("-")
+        self.live_status_heartbeat_value.setWordWrap(True)
+        self.live_status_waiting_value = QtWidgets.QLabel("Submit or approve a request to start tracking live status.")
+        self.live_status_waiting_value.setWordWrap(True)
+        self.live_status_approval_value = QtWidgets.QLabel("-")
+        self.live_status_approval_value.setWordWrap(True)
+        self.live_status_final_value = QtWidgets.QLabel("-")
+        self.live_status_final_value.setWordWrap(True)
+        live_status_detail_layout.addRow("Run / Session ID:", self.live_status_session_value)
+        live_status_detail_layout.addRow("Current Phase:", self.live_status_phase_value)
+        live_status_detail_layout.addRow("Current Task:", self.live_status_current_task_value)
+        live_status_detail_layout.addRow("Queue Remaining:", self.live_status_queue_value)
+        live_status_detail_layout.addRow("Heartbeat / Active:", self.live_status_heartbeat_value)
+        live_status_detail_layout.addRow("Waiting / Pause Reason:", self.live_status_waiting_value)
+        live_status_detail_layout.addRow("Approval State:", self.live_status_approval_value)
+        live_status_detail_layout.addRow("Final State:", self.live_status_final_value)
+        live_status_layout.addLayout(live_status_detail_layout)
+
+        live_status_action_row = QtWidgets.QHBoxLayout()
+        live_status_action_row.setSpacing(8)
+        self.live_status_refresh_button = QtWidgets.QPushButton("Refresh status")
+        self.live_status_refresh_button.clicked.connect(self._handle_refresh_live_status)
+        self.live_status_open_result_button = QtWidgets.QPushButton("Open proof/result")
+        self.live_status_open_result_button.clicked.connect(self._handle_open_live_result)
+        live_status_action_row.addWidget(self.live_status_refresh_button)
+        live_status_action_row.addWidget(self.live_status_open_result_button)
+        live_status_action_row.addStretch(1)
+        live_status_layout.addLayout(live_status_action_row)
+
+        self.live_status_feedback_label = QtWidgets.QLabel("No tracked request yet.")
+        self.live_status_feedback_label.setWordWrap(True)
+        self.live_status_feedback_label.setStyleSheet("color: #555;")
+        live_status_layout.addWidget(self.live_status_feedback_label)
+        prompt_layout.addWidget(live_status_group)
         layout.addWidget(prompt_group)
 
         runs_group = QtWidgets.QGroupBox("Recent Runs")
@@ -499,6 +629,12 @@ class ControlPanel(QtWidgets.QMainWindow):
         if self._submitted_prompt_key == submitted_key and preview.decision_state == "Ready":
             self.intake_action_button.setEnabled(False)
 
+        if preview.decision_state == "Needs approval":
+            review = self.intake_preview_bridge.build_review_surface(preview, self._selected_project())
+            self._render_request_review(review)
+        else:
+            self._reset_request_review()
+
     def _reset_intake_decision(self, message: str = "Prepare a prompt to see the intake decision.") -> None:
         self.current_prepared_prompt = None
         self.intake_state_badge.setText("Awaiting prompt")
@@ -514,6 +650,7 @@ class ControlPanel(QtWidgets.QMainWindow):
         self.intake_action_button.setText("Prepare a prompt")
         self.intake_action_button.setEnabled(False)
         self.intake_feedback_label.setText("Requests remain staged until you choose a next action.")
+        self._reset_request_review()
 
     def _apply_decision_state_style(self, decision_state: str) -> None:
         styles = {
@@ -525,6 +662,145 @@ class ControlPanel(QtWidgets.QMainWindow):
         background, foreground = styles.get(decision_state, ("#f3f4f6", "#374151"))
         self.intake_state_badge.setText(decision_state or "Awaiting prompt")
         self.intake_state_badge.setStyleSheet(
+            f"background: {background}; color: {foreground}; border: 1px solid {foreground}; "
+            "border-radius: 12px; padding: 4px 10px; font-weight: 600;"
+        )
+
+    def _render_request_review(self, review: home_surface.ReviewSurface) -> None:
+        self.current_review_surface = review
+        self.approval_review_summary_value.setText(review.request_summary or "-")
+        self.approval_review_prompt_value.setText(review.normalized_prompt or "-")
+        self.approval_review_target_value.setText(review.target_display or "-")
+        self.approval_review_action_value.setText(review.detected_action or "-")
+        self.approval_review_reason_value.setText(review.approval_reason or "-")
+        self.approval_review_scope_value.setText(review.expected_change_scope or "-")
+        self.approval_review_validation_value.setText(review.validation_intent or "-")
+        self.approval_review_risk_value.setText(review.risk_guardrail_status or "-")
+        self.approval_review_feedback_label.setText(review.status_message)
+        self._apply_request_review_style(review)
+        self.approval_review_approve_button.setEnabled(review.approve_enabled and not self.session.is_running)
+        self.approval_review_reject_button.setEnabled(review.reject_enabled and not self.session.is_running)
+        self.approval_review_sandbox_button.setEnabled(review.sandbox_enabled and not self.session.is_running)
+
+    def _reset_request_review(self, message: str = "Open review from a Needs approval request.") -> None:
+        self.current_review_surface = None
+        self.approval_review_summary_value.setText("-")
+        self.approval_review_prompt_value.setText("-")
+        self.approval_review_target_value.setText(self._selected_project().name if self._selected_project() else "-")
+        self.approval_review_action_value.setText("-")
+        self.approval_review_reason_value.setText(message)
+        self.approval_review_scope_value.setText("-")
+        self.approval_review_validation_value.setText("-")
+        self.approval_review_risk_value.setText("Approval review is inactive until a request needs approval.")
+        self.approval_review_feedback_label.setText("Approval actions stay inactive until a Needs approval request is opened.")
+        self._set_request_review_badge("Review unavailable", "#f3f4f6", "#374151")
+        self.approval_review_approve_button.setEnabled(False)
+        self.approval_review_reject_button.setEnabled(False)
+        self.approval_review_sandbox_button.setEnabled(False)
+
+    def _apply_request_review_style(self, review: home_surface.ReviewSurface) -> None:
+        if not review.available:
+            self._set_request_review_badge("Review unavailable", "#f3f4f6", "#374151")
+            return
+        if review.queue_status == "pending" and not review.action_required:
+            self._set_request_review_badge("Approved once", "#dcfce7", "#166534")
+            return
+        if review.queue_status == "blocked":
+            self._set_request_review_badge("Blocked", "#fee2e2", "#b91c1c")
+            return
+        if review.queue_status == "needs_approval":
+            self._set_request_review_badge("Awaiting approval", "#fef3c7", "#92400e")
+            return
+        self._set_request_review_badge("Ready for review", "#fef3c7", "#92400e")
+
+    def _set_request_review_badge(self, text: str, background: str, foreground: str) -> None:
+        self.approval_review_status_badge.setText(text)
+        self.approval_review_status_badge.setStyleSheet(
+            f"background: {background}; color: {foreground}; border: 1px solid {foreground}; "
+            "border-radius: 12px; padding: 4px 10px; font-weight: 600;"
+        )
+
+    def _set_live_status_target(
+        self,
+        *,
+        request_id: str = "",
+        task_id: str = "",
+        session_id: str = "",
+    ) -> None:
+        if request_id:
+            self._tracked_status_request_id = request_id
+        if task_id:
+            self._tracked_status_task_id = task_id
+        if session_id:
+            self._tracked_status_session_id = session_id
+
+    def _refresh_live_status(self) -> None:
+        status = self.intake_preview_bridge.load_live_status(
+            request_id=self._tracked_status_request_id,
+            task_id=self._tracked_status_task_id,
+            session_id=self._tracked_status_session_id,
+        )
+        self._render_live_status(status)
+
+    def _poll_live_status(self) -> None:
+        if not any([self._tracked_status_request_id, self._tracked_status_task_id, self._tracked_status_session_id]):
+            return
+        self._refresh_live_status()
+
+    def _render_live_status(self, status: home_surface.LiveStatusSurface) -> None:
+        self.current_live_status = status
+        self.live_status_session_value.setText(status.session_id or "-")
+        self.live_status_phase_value.setText(status.current_phase or "-")
+        self.live_status_current_task_value.setText(status.current_task or "-")
+        self.live_status_queue_value.setText(status.queue_remaining or "-")
+        self.live_status_heartbeat_value.setText(status.heartbeat_status or "-")
+        self.live_status_waiting_value.setText(status.waiting_reason or "-")
+        self.live_status_approval_value.setText(status.approval_status or "-")
+        self.live_status_final_value.setText(status.final_state or "-")
+        self.live_status_feedback_label.setText(f"{status.status_message} {status.poll_mode}".strip())
+        self._apply_live_status_style(status)
+        self.live_status_open_result_button.setEnabled(bool(status.result_ready and status.result_path))
+        if status.request_id:
+            self._tracked_status_request_id = status.request_id
+        if status.task_id:
+            self._tracked_status_task_id = status.task_id
+        if status.available and status.session_id not in {"", "-", "Not started yet"}:
+            self._tracked_status_session_id = status.session_id
+
+    def _reset_live_status(self, message: str = "Submit or approve a request to start tracking live status.") -> None:
+        self.current_live_status = None
+        self.live_status_session_value.setText("-")
+        self.live_status_phase_value.setText("-")
+        self.live_status_current_task_value.setText("-")
+        self.live_status_queue_value.setText("-")
+        self.live_status_heartbeat_value.setText("-")
+        self.live_status_waiting_value.setText(message)
+        self.live_status_approval_value.setText("-")
+        self.live_status_final_value.setText("-")
+        self.live_status_feedback_label.setText("No tracked request yet.")
+        self.live_status_open_result_button.setEnabled(False)
+        self._set_live_status_badge("Status unavailable", "#f3f4f6", "#374151")
+
+    def _apply_live_status_style(self, status: home_surface.LiveStatusSurface) -> None:
+        if not status.available:
+            self._set_live_status_badge("Status unavailable", "#f3f4f6", "#374151")
+            return
+        badge_map = {
+            "Running": ("#dcfce7", "#166534"),
+            "Waiting": ("#dbeafe", "#1d4ed8"),
+            "Queued": ("#e0f2fe", "#0369a1"),
+            "Awaiting approval": ("#fef3c7", "#92400e"),
+            "Completed": ("#dcfce7", "#166534"),
+            "Blocked": ("#fee2e2", "#b91c1c"),
+            "Failed": ("#fee2e2", "#b91c1c"),
+            "Status available": ("#f3f4f6", "#374151"),
+        }
+        background, foreground = badge_map.get(status.status_badge, ("#f3f4f6", "#374151"))
+        self._set_live_status_badge(status.status_badge, background, foreground)
+
+    def _set_live_status_badge(self, text: str, background: str, foreground: str) -> None:
+        self.live_status_badge.setText(text)
+        self.live_status_badge.setStyleSheet(
             f"background: {background}; color: {foreground}; border: 1px solid {foreground}; "
             "border-radius: 12px; padding: 4px 10px; font-weight: 600;"
         )
@@ -692,12 +968,19 @@ class ControlPanel(QtWidgets.QMainWindow):
             if result.ok:
                 self._submitted_prompt_key = (preview.normalized_prompt, preview.target_repo)
                 self.intake_action_button.setEnabled(False)
+                self._set_live_status_target(request_id=result.request_id, task_id=result.task_id, session_id="")
+                self._refresh_live_status()
             return
 
         if preview.decision_state == "Needs approval":
-            message = "Review UI is deferred to Step 3+. This request remains staged and has not been submitted here."
+            review = self.intake_preview_bridge.build_review_surface(preview, self._selected_project())
+            self._render_request_review(review)
+            message = review.status_message if review.available else "Approval review is unavailable for this request."
             self.intake_feedback_label.setText(message)
-            QtWidgets.QMessageBox.information(self, "AI-E", message)
+            self._update_status_panel("Approval review loaded")
+            if review.available and review.queue_status:
+                self._set_live_status_target(request_id=review.request_id, session_id="")
+                self._refresh_live_status()
             return
 
         if preview.decision_state == "Sandbox first":
@@ -711,6 +994,58 @@ class ControlPanel(QtWidgets.QMainWindow):
         cursor = self.prompt_input.textCursor()
         cursor.select(QtGui.QTextCursor.SelectionType.Document)
         self.prompt_input.setTextCursor(cursor)
+
+    def _handle_request_review_action(self, action: str) -> None:
+        review = self.current_review_surface
+        if review is None:
+            self.prompt_input.setFocus()
+            return
+        result = self.intake_preview_bridge.apply_review_action(
+            review,
+            action=action,
+            project=self._selected_project(),
+            approved_by=self.profile_name,
+        )
+        self.approval_review_feedback_label.setText(result.message)
+        self.intake_feedback_label.setText(result.message)
+        self._update_status_panel(result.message)
+
+        if result.ok and result.action == "approve_once" and result.wired and not result.staged_only:
+            self._set_live_status_target(
+                request_id=result.request_id or review.request_id,
+                task_id=result.task_id,
+                session_id="",
+            )
+            if self.current_prepared_prompt is not None:
+                refreshed = self.intake_preview_bridge.build_review_surface(
+                    self.current_prepared_prompt,
+                    self._selected_project(),
+                )
+                self._render_request_review(refreshed)
+                self.approval_review_feedback_label.setText(result.message)
+            self._refresh_live_status()
+            return
+
+        if result.ok and result.staged_only:
+            if result.action == "reject":
+                self._set_request_review_badge("Rejected (staged)", "#fee2e2", "#b91c1c")
+            elif result.action == "sandbox_first":
+                self._set_request_review_badge("Sandbox first (staged)", "#dbeafe", "#1d4ed8")
+            if review.queue_status:
+                self._set_live_status_target(request_id=review.request_id, session_id="")
+                self._refresh_live_status()
+
+    def _handle_refresh_live_status(self) -> None:
+        self._refresh_live_status()
+        if self.current_live_status is not None:
+            self._update_status_panel("Live status refreshed")
+
+    def _handle_open_live_result(self) -> None:
+        status = self.current_live_status
+        if status is None or not status.result_ready or status.result_path is None:
+            return
+        QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(str(status.result_path)))
+        self._update_status_panel("Opened proof/result")
 
     def _handle_browse(self) -> None:
         path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Select BABYLON executable", str(Path.home()))
@@ -808,6 +1143,19 @@ class ControlPanel(QtWidgets.QMainWindow):
         self.project_combo.setEnabled(not running and bool(self.supported_projects))
         self.prepare_prompt_button.setEnabled(bool(self.supported_projects))
         self.open_run_button.setEnabled(self.session.last_run_dir is not None)
+        self.live_status_refresh_button.setEnabled(True)
+        self.live_status_open_result_button.setEnabled(
+            self.current_live_status is not None
+            and bool(self.current_live_status.result_ready and self.current_live_status.result_path)
+        )
+        if self.current_review_surface is None:
+            self.approval_review_approve_button.setEnabled(False)
+            self.approval_review_reject_button.setEnabled(False)
+            self.approval_review_sandbox_button.setEnabled(False)
+        else:
+            self.approval_review_approve_button.setEnabled(self.current_review_surface.approve_enabled and not running)
+            self.approval_review_reject_button.setEnabled(self.current_review_surface.reject_enabled and not running)
+            self.approval_review_sandbox_button.setEnabled(self.current_review_surface.sandbox_enabled and not running)
         self._update_action_panel()
 
     def _handle_mic_toggle(self, checked: bool) -> None:
