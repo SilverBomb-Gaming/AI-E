@@ -7,18 +7,20 @@ from typing import Any, Dict, List
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from . import config, dependencies
+from . import config, dependencies, home_surface
 from .runner import RunSession, update_saved_state
 
 
 class ControlPanel(QtWidgets.QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("AI-E Control Panel v5")
+        self.setWindowTitle("AI-E v1")
         self._configure_window_metrics()
         self.profile_name = config.get_active_profile_name()
         self.state = config.load_state(self.profile_name)
         self.session = RunSession()
+        self.intake_preview_bridge = home_surface.IntakePreviewBridge()
+        self.supported_projects: List[home_surface.SupportedProject] = []
         self._profile_selection_busy = False
         self._build_ui()
         self._build_menu_bar()
@@ -27,9 +29,14 @@ class ControlPanel(QtWidgets.QMainWindow):
         self._duration_timer.timeout.connect(self._update_duration_label)
         self._duration_timer.start()
         self._reload_profiles()
+        self._reload_supported_projects()
         self._apply_state()
         self._update_status_panel("Ready")
         self._update_session_review_panel()
+        self._refresh_recent_runs()
+        self._render_prepared_prompt(
+            self.intake_preview_bridge.prepare_prompt(self.state.staged_prompt, self._selected_project())
+        )
         self._refresh_dependency_label()
         self._update_duration_label()
         self._refresh_buttons()
@@ -53,6 +60,7 @@ class ControlPanel(QtWidgets.QMainWindow):
         content_layout = QtWidgets.QVBoxLayout(content)
         content_layout.setSpacing(12)
         content_layout.setContentsMargins(12, 12, 12, 12)
+        content_layout.addWidget(self._build_home_panel())
         content_layout.addWidget(self._build_header_widget())
         content_layout.addWidget(self._build_profile_panel())
         content_layout.addWidget(self._build_target_panel())
@@ -67,13 +75,108 @@ class ControlPanel(QtWidgets.QMainWindow):
         layout = QtWidgets.QVBoxLayout(container)
         layout.setSpacing(12)
 
-        header = QtWidgets.QLabel("AI-E Control Panel v5")
+        header = QtWidgets.QLabel("Operator Control Panel")
         header.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         header.setStyleSheet("font-size: 20px; font-weight: 600;")
         layout.addWidget(header)
         layout.addWidget(self._build_run_panel())
         layout.addWidget(self._build_status_panel())
         return container
+
+    def _build_home_panel(self) -> QtWidgets.QGroupBox:
+        group = QtWidgets.QGroupBox("AI-E Home")
+        layout = QtWidgets.QVBoxLayout(group)
+        layout.setSpacing(10)
+
+        title = QtWidgets.QLabel("Turn intent into verifiable results.")
+        title.setStyleSheet("font-size: 22px; font-weight: 600;")
+        layout.addWidget(title)
+
+        subtitle = QtWidgets.QLabel(
+            "Select a supported project, stage a request into the existing intake flow, and review recent proof and session artifacts."
+        )
+        subtitle.setWordWrap(True)
+        subtitle.setStyleSheet("color: #555;")
+        layout.addWidget(subtitle)
+
+        badge_row = QtWidgets.QHBoxLayout()
+        badge_row.setSpacing(8)
+        badge_row.addWidget(self._build_guardrail_badge("Supported scope only", "#eff6ff", "#1d4ed8"))
+        badge_row.addWidget(self._build_guardrail_badge("External access off", "#f3f4f6", "#374151"))
+        badge_row.addWidget(self._build_guardrail_badge("Mutations reviewed", "#fef3c7", "#92400e"))
+        badge_row.addStretch(1)
+        layout.addLayout(badge_row)
+
+        project_layout = QtWidgets.QGridLayout()
+        self.project_combo = QtWidgets.QComboBox()
+        self.project_combo.currentTextChanged.connect(self._handle_project_changed)
+        self.workspace_value_label = QtWidgets.QLabel("No supported workspace selected.")
+        self.workspace_value_label.setWordWrap(True)
+        self.workspace_value_label.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
+        project_layout.addWidget(QtWidgets.QLabel("Project"), 0, 0)
+        project_layout.addWidget(self.project_combo, 0, 1)
+        project_layout.addWidget(QtWidgets.QLabel("Active Workspace"), 1, 0)
+        project_layout.addWidget(self.workspace_value_label, 1, 1)
+        layout.addLayout(project_layout)
+
+        prompt_group = QtWidgets.QGroupBox("Prompt Intake")
+        prompt_layout = QtWidgets.QVBoxLayout(prompt_group)
+        prompt_hint = QtWidgets.QLabel(
+            "This stages a request for the existing intake system only. It does not execute, queue, or mutate anything yet."
+        )
+        prompt_hint.setWordWrap(True)
+        prompt_hint.setStyleSheet("color: #555;")
+        prompt_layout.addWidget(prompt_hint)
+
+        self.prompt_input = QtWidgets.QTextEdit()
+        self.prompt_input.setPlaceholderText("Describe the bounded result you want AI-E to prepare.")
+        self.prompt_input.setFixedHeight(88)
+        self.prompt_input.textChanged.connect(self._handle_prompt_changed)
+        prompt_layout.addWidget(self.prompt_input)
+
+        self.prepare_prompt_button = QtWidgets.QPushButton("Prepare Request")
+        self.prepare_prompt_button.clicked.connect(self._handle_prepare_prompt)
+        prompt_layout.addWidget(self.prepare_prompt_button, alignment=QtCore.Qt.AlignmentFlag.AlignLeft)
+
+        self.prompt_preview_label = QtWidgets.QLabel("Type a request and choose Prepare Request.")
+        self.prompt_preview_label.setWordWrap(True)
+        self.prompt_preview_label.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
+        prompt_layout.addWidget(self.prompt_preview_label)
+        layout.addWidget(prompt_group)
+
+        runs_group = QtWidgets.QGroupBox("Recent Runs")
+        runs_layout = QtWidgets.QVBoxLayout(runs_group)
+        runs_hint = QtWidgets.QLabel(
+            "Pulled from existing runner artifacts and persistent session artifacts already written by AI-E."
+        )
+        runs_hint.setWordWrap(True)
+        runs_hint.setStyleSheet("color: #555;")
+        runs_layout.addWidget(runs_hint)
+
+        self.recent_runs_tree = QtWidgets.QTreeWidget()
+        self.recent_runs_tree.setColumnCount(4)
+        self.recent_runs_tree.setHeaderLabels(["Name", "Source", "Status", "Updated"])
+        self.recent_runs_tree.setRootIsDecorated(False)
+        self.recent_runs_tree.setAlternatingRowColors(True)
+        self.recent_runs_tree.setUniformRowHeights(True)
+        self.recent_runs_tree.header().setStretchLastSection(False)
+        self.recent_runs_tree.header().setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Stretch)
+        self.recent_runs_tree.header().setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+        self.recent_runs_tree.header().setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+        self.recent_runs_tree.header().setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+        runs_layout.addWidget(self.recent_runs_tree)
+        layout.addWidget(runs_group)
+
+        return group
+
+    @staticmethod
+    def _build_guardrail_badge(text: str, background: str, foreground: str) -> QtWidgets.QLabel:
+        badge = QtWidgets.QLabel(text)
+        badge.setStyleSheet(
+            f"background: {background}; color: {foreground}; border: 1px solid {foreground}; "
+            "border-radius: 12px; padding: 4px 10px; font-weight: 600;"
+        )
+        return badge
 
     def _build_menu_bar(self) -> None:
         menu_bar = self.menuBar()
@@ -245,6 +348,11 @@ class ControlPanel(QtWidgets.QMainWindow):
         self.record_mic_checkbox.setChecked(self.state.record_mic)
         self.push_to_talk_checkbox.setChecked(self.state.push_to_talk)
         self.push_to_talk_checkbox.setEnabled(self.state.record_mic)
+        self.prompt_input.blockSignals(True)
+        self.prompt_input.setPlainText(self.state.staged_prompt)
+        self.prompt_input.blockSignals(False)
+        self._select_active_project()
+        self._update_active_workspace_label()
 
     def _persist_state(self) -> None:
         self.state.babylon_exe_path = self.exe_path_edit.text().strip()
@@ -252,6 +360,10 @@ class ControlPanel(QtWidgets.QMainWindow):
         self.state.record_input = self.record_input_checkbox.isChecked()
         self.state.record_mic = self.record_mic_checkbox.isChecked()
         self.state.push_to_talk = self.push_to_talk_checkbox.isChecked()
+        project = self._selected_project()
+        self.state.active_project_name = project.name if project else ""
+        self.state.active_project_path = str(project.path) if project else ""
+        self.state.staged_prompt = self.prompt_input.toPlainText().strip()
         update_saved_state(self.state, profile_name=self.profile_name)
 
     def _reload_profiles(self) -> None:
@@ -271,6 +383,90 @@ class ControlPanel(QtWidgets.QMainWindow):
 
     def _update_profile_status_label(self) -> None:
         self.profile_status_label.setText(f"Active profile: {self.profile_name}")
+
+    def _reload_supported_projects(self) -> None:
+        self.supported_projects = home_surface.load_supported_projects()
+        self.project_combo.blockSignals(True)
+        self.project_combo.clear()
+        for project in self.supported_projects:
+            self.project_combo.addItem(project.name)
+        self.project_combo.blockSignals(False)
+        self._select_active_project()
+        self._update_active_workspace_label()
+
+    def _select_active_project(self) -> None:
+        if not self.supported_projects:
+            return
+        desired_path = self.state.active_project_path.strip().lower()
+        desired_name = self.state.active_project_name.strip().lower()
+        selected_index = 0
+        for index, project in enumerate(self.supported_projects):
+            project_path = str(project.path).lower()
+            if desired_path and project_path == desired_path:
+                selected_index = index
+                break
+            if desired_name and project.name.lower() == desired_name:
+                selected_index = index
+        self.project_combo.blockSignals(True)
+        self.project_combo.setCurrentIndex(selected_index)
+        self.project_combo.blockSignals(False)
+
+    def _selected_project(self) -> home_surface.SupportedProject | None:
+        index = self.project_combo.currentIndex()
+        if index < 0 or index >= len(self.supported_projects):
+            return None
+        return self.supported_projects[index]
+
+    def _update_active_workspace_label(self) -> None:
+        project = self._selected_project()
+        if project is None:
+            self.workspace_value_label.setText("No supported project detected in project_registry or the BABYLON fallback path.")
+            return
+        self.workspace_value_label.setText(str(project.path))
+
+    def _refresh_recent_runs(self) -> None:
+        self.recent_runs_tree.clear()
+        entries = home_surface.load_recent_runs()
+        if not entries:
+            self.recent_runs_tree.addTopLevelItem(
+                QtWidgets.QTreeWidgetItem(["No runs found yet", "-", "-", "-"])
+            )
+            return
+        for entry in entries:
+            item = QtWidgets.QTreeWidgetItem(
+                [
+                    entry.title,
+                    entry.source,
+                    entry.status,
+                    entry.updated_label,
+                ]
+            )
+            item.setToolTip(0, str(entry.path))
+            item.setToolTip(1, entry.detail or str(entry.path))
+            item.setToolTip(2, entry.detail or entry.status)
+            item.setToolTip(3, str(entry.path))
+            self.recent_runs_tree.addTopLevelItem(item)
+
+    def _render_prepared_prompt(self, preview: home_surface.PreparedPromptPreview) -> None:
+        lines = [preview.status_message]
+        if preview.target_repo:
+            lines.append(f"Active workspace: {preview.target_repo}")
+        if preview.normalized_prompt:
+            lines.append(f"Normalized prompt: {preview.normalized_prompt}")
+        if preview.classification:
+            lines.append(f"Classification: {preview.classification}")
+        if preview.task_type:
+            lines.append(f"Task type: {preview.task_type}")
+        if preview.execution_lane:
+            lines.append(f"Execution lane: {preview.execution_lane}")
+        if preview.decision:
+            lines.append(f"Decision: {preview.decision}")
+        if preview.recommended_action:
+            lines.append(f"Recommended action: {preview.recommended_action}")
+        if preview.decision_summary:
+            lines.append(f"Routing summary: {preview.decision_summary}")
+        lines.append("Future flow: the next surface will submit this prompt through the existing intake accept_message() path.")
+        self.prompt_preview_label.setText("\n".join(lines))
 
     def _refresh_dependency_label(self) -> None:
         summary = dependencies.dependency_summary_text()
@@ -350,6 +546,9 @@ class ControlPanel(QtWidgets.QMainWindow):
             config.set_active_profile(name)
             self.state = config.load_state(name)
             self._apply_state()
+            self._render_prepared_prompt(
+                self.intake_preview_bridge.prepare_prompt(self.state.staged_prompt, self._selected_project())
+            )
             self._reload_profiles()
             self._update_status_panel(f"Profile switched to {name}")
         finally:
@@ -375,7 +574,37 @@ class ControlPanel(QtWidgets.QMainWindow):
         self.profile_name = clean
         self._reload_profiles()
         self._apply_state()
+        self._render_prepared_prompt(
+            self.intake_preview_bridge.prepare_prompt(self.state.staged_prompt, self._selected_project())
+        )
         self._update_status_panel(f"Profile created: {clean}")
+
+    def _handle_project_changed(self, _: str) -> None:
+        self._update_active_workspace_label()
+        self._persist_state()
+        project = self._selected_project()
+        if project is None:
+            self._update_status_panel("No supported project selected")
+            return
+        self._render_prepared_prompt(
+            self.intake_preview_bridge.prepare_prompt(self.prompt_input.toPlainText().strip(), project)
+        )
+        self._update_status_panel(f"Active workspace set: {project.name}")
+
+    def _handle_prompt_changed(self) -> None:
+        self._persist_state()
+        if self.prompt_input.toPlainText().strip():
+            self.prompt_preview_label.setText(
+                "Prompt edited. Choose Prepare Request to stage it for the existing intake system without executing."
+            )
+        else:
+            self.prompt_preview_label.setText("Type a request and choose Prepare Request.")
+
+    def _handle_prepare_prompt(self) -> None:
+        preview = self.intake_preview_bridge.prepare_prompt(self.prompt_input.toPlainText().strip(), self._selected_project())
+        self._persist_state()
+        self._render_prepared_prompt(preview)
+        self._update_status_panel("Request prepared for intake preview")
 
     def _handle_browse(self) -> None:
         path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Select BABYLON executable", str(Path.home()))
@@ -423,6 +652,7 @@ class ControlPanel(QtWidgets.QMainWindow):
         try:
             run_dir = self.session.stop_run()
             self._update_status_panel(f"Run stopped: {run_dir.name}")
+            self._refresh_recent_runs()
             self._refresh_buttons()
             self._update_session_review_panel()
         except Exception as exc:  # noqa: BLE001
@@ -469,6 +699,8 @@ class ControlPanel(QtWidgets.QMainWindow):
         self.push_to_talk_checkbox.setEnabled(self.record_mic_checkbox.isChecked() and not running)
         self.profile_combo.setEnabled(not running)
         self.profile_new_button.setEnabled(not running)
+        self.project_combo.setEnabled(not running and bool(self.supported_projects))
+        self.prepare_prompt_button.setEnabled(bool(self.supported_projects))
         self.open_run_button.setEnabled(self.session.last_run_dir is not None)
         self._update_action_panel()
 

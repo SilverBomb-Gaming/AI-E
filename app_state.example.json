@@ -6,7 +6,10 @@
       "last_selected_map": "001",
       "record_input": false,
       "record_mic": false,
-      "push_to_talk": false
+      "push_to_talk": false,
+      "active_project_name": "BABYLON VER 2",
+      "active_project_path": "E:/AI projects 2025/BABYLON VER 2",
+      "staged_prompt": "move zombie forward"
     }
   }
 }

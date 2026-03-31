@@ -15,6 +15,9 @@ class AppState:
     record_input: bool = False
     record_mic: bool = False
     push_to_talk: bool = False
+    active_project_name: str = ""
+    active_project_path: str = ""
+    staged_prompt: str = ""
 
 
 DEFAULT_PROFILE = "default"
