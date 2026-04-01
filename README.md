@@ -6,20 +6,38 @@ Controlled execution surface for supported projects. AI-E turns a bounded reques
 
 These sections are the current source of truth for the public-facing AI-E v1 experience. Where they conflict with older control-panel wording below, use this product-surface status first.
 
-## Latest Completed Work
+## Latest Validation Findings
 
-H5 packaging and demo readiness is now complete. The current surface includes the six v1 product surfaces: Home, Prompt Intake, Approval Review, Live Run Status, Result Summary, and Project / Session History. Hardening work has also landed: copy cleanup, empty/error guidance, first-run onboarding, proof/history polish, and launch/demo readiness cleanup.
+AI-E v1 validation is now complete for the current supported deterministic path. The validated surface includes Home, Prompt Intake, Approval Review, Live Run Status, Result Summary, and Project / Session History, plus the hardening pass for copy, empty/error guidance, onboarding, proof/history polish, launch reliability, sandbox handoff, and next-step guidance. Intent normalization is now included in the deterministic movement path, so light natural-language variations map cleanly to the canonical supported action instead of failing on strict string matching alone.
 
-## Current Product Surface Status
+## Current V1 Validated Status
 
-AI-E now exposes a coherent v1 front door over the existing system. A user can select a supported project, prepare a bounded request, see a clear intake decision, open review when approval is required, track submitted work, open a readable result summary, and revisit saved sessions or results. All of this runs on top of the existing intake, approval, runtime, and artifact layers without adding a new backend architecture or changing execution logic.
+AI-E now exposes a validated v1 front door over the existing system. A user can launch with `python -m app.ui`, land in a clean first-run flow, select a supported project, prepare a bounded request, see a clear intake decision, review approval when required, run the current sandbox-first mutation path, follow status updates, open a readable result summary, and revisit saved sessions or results. Supported prompts that stay within the current deterministic scope now execute cleanly, and unsupported deterministic requests fail honestly with clear guidance instead of pretending support.
 
-## What H5 Added
+## Intent Normalization Support
 
-- cleaner startup defaults, including preferred selection of a recommended supported project when one is available
-- clearer first-impression wording across Home, Intake, Live Status, Result Summary, and History for a confident demo walkthrough
-- updated in-app `Help > Demo Checklist...` guidance to match the current home -> intake -> review/status -> result flow
-- README alignment with the actual v1 surface, supported scope, first-run path, deferred scope, and lightweight readiness assessment
+- prompt normalization now removes light filler words such as `again`, `slightly`, `a bit`, `just`, and `please` before deterministic capability lookup
+- soft matching now maps known movement phrasing back to the canonical deterministic command when the user intent is still clearly the same
+- canonical prompt resolution feeds the existing deterministic intake, approval, runtime, and artifact flow without introducing a new execution path
+- explicit unsupported-direction handling now blocks unsupported deterministic requests honestly instead of silently downgrading them
+
+## Supported Prompt Variation Examples
+
+- `move zombie forward`
+- `move zombie forward again`
+- `move zombie slightly forward`
+- `please move zombie forward`
+
+All of these normalize to the canonical deterministic command `move zombie forward` and resolve to `level_0001_move_zombie_forward`.
+
+## Explicitly Unsupported Deterministic Examples
+
+- `move zombie backward`
+- `move zombie backwards`
+- `move zombie slightly backward`
+- `please move zombie backward`
+
+These requests remain intentionally blocked because backward zombie movement is not a supported deterministic action yet. AI-E now says so clearly and suggests the supported example `move zombie forward`.
 
 ## What AI-E Supports Today
 
@@ -27,14 +45,17 @@ AI-E now exposes a coherent v1 front door over the existing system. A user can s
 - staged request preparation using existing intake and routing logic
 - one-time approval review for requests that need approval
 - live status polling from existing queue, session, and runtime state
+- sandbox-first execution for the current bounded deterministic mutation path
 - readable result summaries built from saved proof, run, and session artifacts
 - project/session history with reopen and re-stage paths when saved data supports them
+- deterministic prompt normalization for currently supported forward-movement variants
 
 ## What Users Can Do Today
 
 - choose a supported project like `BABYLON VER 2`
-- prepare a request such as `move zombie forward`
+- prepare a request such as `move zombie forward`, `move zombie forward again`, or `please move zombie forward`
 - submit it when AI-E shows `Ready`, or open review and approve it once when needed
+- use `Run in sandbox` when AI-E says `Sandbox first`
 - watch progress in `Live Run Status`
 - open `Result Summary` to see verdict, changes, and validations
 - reopen earlier results or prepare the same request again from `Project / Session History`
@@ -44,28 +65,27 @@ AI-E now exposes a coherent v1 front door over the existing system. A user can s
 1. Launch AI-E and confirm a supported project is selected.
 2. Use the recommended first request: `move zombie forward`.
 3. Choose `Prepare Request`.
-4. Submit it when AI-E shows `Ready`, or open review and use `Approve once` if approval is required.
+4. Submit it when AI-E shows `Ready`, open review and use `Approve once` if approval is required, or choose `Run in sandbox` when AI-E says `Sandbox first`.
 5. Follow `Live Run Status`.
 6. Open `Result Summary` or `Project / Session History` to confirm the saved outcome.
 
-## Packaging Readiness Assessment
+## Validation Closeout Status
 
-- Demo ready: yes for supported-project walkthroughs, especially `BABYLON VER 2`, using the current first-run path and saved artifact-backed results.
-- Local-user ready: close, but it still needs a final clean-profile smoke test, packaged launch verification, and confirmation that supported-project detection behaves well on a fresh setup.
-- Early-customer ready: not yet; it still needs tighter install/update guidance, a locked supported-use statement for customer handoff, and final issue-recovery notes for local users.
+- Launch validated: `python -m app.ui` reliably creates the Qt application, shows the main window, and keeps the process running until the window closes.
+- First-run experience validated: onboarding appears on a true clean-profile launch, stays in normal layout flow, and points the user to the first action.
+- Core path validated: Home -> Intake -> Review -> Status -> Result -> History is working on the supported Babylon path.
+- Result guidance validated: result opening, next-step guidance, and supporting-file access are visible and usable after completion.
+- Honest failure boundary validated: unsupported deterministic requests now fail with explicit, trustworthy guidance instead of generic or misleading fallback behavior.
 
-## What Is Still Deferred
+## What Remains Deferred to V2
 
+- broader structured intent parsing beyond the minimal normalization layer
+- additional deterministic actions such as backward zombie movement
 - messaging/chat
-- sandbox execution UI beyond the staged review action
 - overnight session launcher UI
 - multi-user and permissions work
 - new backend architecture or orchestration redesign
 - broader integrations, analytics, or comparison features
-
-## Next Recommended Step
-
-Run the final packaging/demo closeout: validate a clean-profile launch, the recommended first-request path, result opening, and history reopen flow end to end, then update workflow notes for handoff.
 
 ## Mission (Locked)
 
@@ -154,7 +174,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 
 ```powershell
 .\.venv\Scripts\activate
-.\.venv\Scripts\python.exe -m app.main
+.\.venv\Scripts\python.exe -m app.ui
 ```
 
 The window title reads **AI-E v1**. On first launch, AI-E prefers a supported project such as `BABYLON VER 2` when one is available, keeps guardrails visible on the Home screen, and lets the user prepare a bounded request before anything runs. Use the Home screen to prepare a request, follow the intake decision, track progress, and open the saved result. The Action Layer panel remains locked unless future revisions explicitly enable automation.
@@ -239,17 +259,17 @@ Use this anytime you need to verify the environment is intact (after pulling or 
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe -m app.main
+.\.venv\Scripts\python.exe -m app.ui
 ```
 
 ## Running from Source
 
 ```powershell
 .\.venv\Scripts\activate
-.\.venv\Scripts\python.exe -m app.main
+.\.venv\Scripts\python.exe -m app.ui
 ```
 
-The UI appears as **AI-E Control Panel v0.3**. Use the Target panel to browse to the latest BABYLON build, then use Run Controls to pick a map and toggle **Record Input**, **Record Mic**, and optional **Push-to-Talk (Space)** before starting a run.
+The UI appears as **AI-E v1**. Use the Home screen to confirm a supported project, prepare a bounded request, review approval or sandbox guidance when needed, then follow status and open the saved result.
 
 ## Run Artifacts
 

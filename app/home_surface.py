@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import sys
+import threading
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -18,6 +19,14 @@ ORCHESTRATOR_RUNS_ROOT = ORCHESTRATOR_ROOT / "runs"
 DEFAULT_PREVIEW_SESSION_ID = "home_screen_preview"
 DEFAULT_SUBMIT_SESSION_ID = "product_surface_home"
 DEFAULT_SUBMIT_CHANNEL = "product_surface_home"
+DEFAULT_SANDBOX_SESSION_LIMIT_SECONDS = 10 * 60
+DEFAULT_SANDBOX_HEARTBEAT_INTERVAL_SECONDS = 1
+DEFAULT_SANDBOX_POLL_INTERVAL_SECONDS = 1
+DEFAULT_SANDBOX_IDLE_TIMEOUT_SECONDS = 2
+DEFAULT_SANDBOX_IDLE_TIMEOUT_POLL_LIMIT = 2
+
+_BACKGROUND_SUPERVISOR_THREADS: dict[str, threading.Thread] = {}
+_BACKGROUND_SUPERVISOR_LOCK = threading.Lock()
 
 
 @dataclass(frozen=True)
@@ -297,6 +306,8 @@ class IntakePreviewBridge:
         self._create_review_decision_fn = None
         self._build_queue_preview_fn = None
         self._runtime_state_cls = None
+        self._supervisor_cls = None
+        self._supervisor_config_cls = None
         self._import_error: str | None = None
 
     def prepare_prompt(self, prompt_text: str, project: SupportedProject | None) -> PreparedPromptPreview:
@@ -349,7 +360,11 @@ class IntakePreviewBridge:
 
         classification = intake.classify_message(normalized)
         try:
-            routing = intake._resolve_intake_routing(normalized, session_id=DEFAULT_PREVIEW_SESSION_ID)
+            routing = intake._resolve_intake_routing(
+                normalized,
+                session_id=DEFAULT_PREVIEW_SESSION_ID,
+                target_repo=target_repo,
+            )
             task_type = intake._derive_task_type(normalized, routing=routing)
         except Exception as exc:  # noqa: BLE001
             return PreparedPromptPreview(
@@ -482,6 +497,42 @@ class IntakePreviewBridge:
             task_id=result.task_id,
         )
 
+    def run_sandbox_prompt(
+        self,
+        preview: PreparedPromptPreview,
+        *,
+        project: SupportedProject | None,
+        approved_by: str,
+    ) -> ReviewActionResult:
+        if project is None:
+            return ReviewActionResult(
+                ok=False,
+                action="sandbox_first",
+                message="Select a supported project before running in sandbox, then prepare the request again.",
+                wired=False,
+                staged_only=True,
+                queue_status="",
+                request_id="",
+                task_id="",
+            )
+        if preview.decision_state != "Sandbox first":
+            return ReviewActionResult(
+                ok=False,
+                action="sandbox_first",
+                message="Only requests marked Sandbox first can run here. Prepare the request again to confirm the current decision.",
+                wired=False,
+                staged_only=True,
+                queue_status=preview.decision.lower().strip(),
+                request_id="",
+                task_id="",
+            )
+        return self._start_sandbox_execution(
+            prompt_text=preview.prompt_text,
+            project=project,
+            approved_by=approved_by,
+            approval_notes="Sandbox-first run started from the AI-E v1 intake surface.",
+        )
+
     def build_review_surface(
         self,
         preview: PreparedPromptPreview,
@@ -586,14 +637,11 @@ class IntakePreviewBridge:
                 ),
             )
         if normalized_action == "sandbox_first":
-            return self._stage_review_decision(
-                review,
-                decision="needs_changes",
-                action="sandbox_first",
-                notes="Operator requested sandbox-first review from the AI-E v1 review surface.",
-                staged_message=(
-                    "Sandbox first was marked as the safe next step here. AI-E did not start a sandbox run from this surface."
-                ),
+            return self._start_sandbox_execution(
+                prompt_text=review.prompt_text,
+                project=project,
+                approved_by=approved_by,
+                approval_notes="Sandbox-first run started from the AI-E v1 review surface.",
             )
         return ReviewActionResult(
             ok=False,
@@ -788,6 +836,145 @@ class IntakePreviewBridge:
             task_id=task_id,
         )
 
+    def _start_sandbox_execution(
+        self,
+        *,
+        prompt_text: str,
+        project: SupportedProject,
+        approved_by: str,
+        approval_notes: str,
+    ) -> ReviewActionResult:
+        intake = self._create_intake()
+        if (
+            intake is None
+            or self._approve_mutation_task_fn is None
+            or self._supervisor_cls is None
+            or self._supervisor_config_cls is None
+        ):
+            return ReviewActionResult(
+                ok=False,
+                action="sandbox_first",
+                message=self._import_error or "Sandbox run is unavailable right now. Try again, or revise the request before retrying.",
+                wired=False,
+                staged_only=True,
+                queue_status="",
+                request_id="",
+                task_id="",
+            )
+
+        try:
+            intake_result = intake.accept_message(
+                prompt_text,
+                session_id=DEFAULT_SUBMIT_SESSION_ID,
+                channel=DEFAULT_SUBMIT_CHANNEL,
+                target_repo=str(project.path).replace("\\", "/"),
+            )
+        except Exception as exc:  # noqa: BLE001
+            return ReviewActionResult(
+                ok=False,
+                action="sandbox_first",
+                message=f"AI-E could not start this sandbox run: {exc}. Try again, or revise the request before retrying.",
+                wired=False,
+                staged_only=True,
+                queue_status="",
+                request_id="",
+                task_id="",
+            )
+
+        queue_entry = dict(intake_result.queue_entry or {})
+        queue_status = str(queue_entry.get("status") or "").strip().lower()
+        approval_state = str(queue_entry.get("approval_state") or "").strip().lower()
+        request_id = intake_result.request_id
+        task_id = intake_result.task_id
+
+        if queue_status == "blocked":
+            return ReviewActionResult(
+                ok=False,
+                action="sandbox_first",
+                message="AI-E blocked this request before sandbox execution could begin. Revise the request to stay within supported scope.",
+                wired=True,
+                staged_only=False,
+                queue_status=queue_status,
+                request_id=request_id,
+                task_id=task_id,
+            )
+
+        if queue_status == "completed":
+            return ReviewActionResult(
+                ok=True,
+                action="sandbox_first",
+                message="This sandbox run is already complete. Open the result summary to review what changed.",
+                wired=True,
+                staged_only=False,
+                queue_status=queue_status,
+                request_id=request_id,
+                task_id=task_id,
+            )
+
+        if queue_status == "running":
+            return ReviewActionResult(
+                ok=True,
+                action="sandbox_first",
+                message="Sandbox run is already in progress. Live status is tracking it now.",
+                wired=True,
+                staged_only=False,
+                queue_status=queue_status,
+                request_id=request_id,
+                task_id=task_id,
+            )
+
+        if queue_status == "needs_approval":
+            try:
+                approval = self._approve_mutation_task_fn(
+                    intake.config,
+                    task_id=task_id,
+                    approved_by=self._approved_by_name(approved_by),
+                    notes=approval_notes,
+                )
+            except Exception as exc:  # noqa: BLE001
+                return ReviewActionResult(
+                    ok=False,
+                    action="sandbox_first",
+                    message=f"AI-E could not hand this request into sandbox execution: {exc}. Try again, or revise the request before retrying.",
+                    wired=False,
+                    staged_only=True,
+                    queue_status=queue_status,
+                    request_id=request_id,
+                    task_id=task_id,
+                )
+            queue_status = str(approval.queue_status or "").strip().lower()
+            approval_state = "approved"
+
+        if queue_status == "pending" and approval_state in {"approved", "auto_approved", "not_required"}:
+            session_id = self._sandbox_session_id(request_id)
+            launched = self._launch_supervisor_session(intake.config, session_id=session_id)
+            message = (
+                "Sandbox run started. Live status is now tracking it."
+                if launched
+                else "Sandbox run is already active. Live status is now tracking it."
+            )
+            return ReviewActionResult(
+                ok=True,
+                action="sandbox_first",
+                message=message,
+                wired=True,
+                staged_only=False,
+                queue_status=queue_status,
+                request_id=request_id,
+                task_id=task_id,
+            )
+
+        return ReviewActionResult(
+            ok=False,
+            action="sandbox_first",
+            message="AI-E could not hand this request into sandbox execution. Review the current status, then try again if needed.",
+            wired=True,
+            staged_only=False,
+            queue_status=queue_status,
+            request_id=request_id,
+            task_id=task_id,
+        )
+
     def _stage_review_decision(
         self,
         review: ReviewSurface,
@@ -846,7 +1033,11 @@ class IntakePreviewBridge:
         normalized_prompt = preview.normalized_prompt
         target_repo = str(project.path).replace("\\", "/")
         try:
-            routing = intake._resolve_intake_routing(normalized_prompt, session_id=DEFAULT_PREVIEW_SESSION_ID)
+            routing = intake._resolve_intake_routing(
+                normalized_prompt,
+                session_id=DEFAULT_PREVIEW_SESSION_ID,
+                target_repo=target_repo,
+            )
             task_type = intake._derive_task_type(normalized_prompt, routing=routing)
             request_id = intake._derive_request_id(normalized_prompt, target_repo, task_type)
         except Exception as exc:  # noqa: BLE001
@@ -1053,6 +1244,56 @@ class IntakePreviewBridge:
     def _approved_by_name(approved_by: str) -> str:
         clean = " ".join(str(approved_by or "").split())
         return clean or "product_surface_user"
+
+    @staticmethod
+    def _sandbox_session_id(request_id: str) -> str:
+        normalized = "".join(char.lower() if char.isalnum() else "_" for char in str(request_id or "").strip())
+        compact = "_".join(part for part in normalized.split("_") if part)
+        return f"product_surface_sandbox_{compact or 'request'}"
+
+    def _launch_supervisor_session(self, config: Any, *, session_id: str) -> bool:
+        if self._session_is_running(config, session_id=session_id):
+            return False
+
+        with _BACKGROUND_SUPERVISOR_LOCK:
+            existing = _BACKGROUND_SUPERVISOR_THREADS.get(session_id)
+            if existing is not None and existing.is_alive():
+                return False
+
+            def _run() -> None:
+                try:
+                    supervisor = self._supervisor_cls(
+                        config,
+                        self._supervisor_config_cls(
+                            session_limit_seconds=DEFAULT_SANDBOX_SESSION_LIMIT_SECONDS,
+                            heartbeat_interval_seconds=DEFAULT_SANDBOX_HEARTBEAT_INTERVAL_SECONDS,
+                            poll_interval_seconds=DEFAULT_SANDBOX_POLL_INTERVAL_SECONDS,
+                            idle_timeout_seconds=DEFAULT_SANDBOX_IDLE_TIMEOUT_SECONDS,
+                            idle_timeout_poll_limit=DEFAULT_SANDBOX_IDLE_TIMEOUT_POLL_LIMIT,
+                            session_id=session_id,
+                            stop_when_queue_empty=True,
+                        ),
+                    )
+                    supervisor.run()
+                finally:
+                    with _BACKGROUND_SUPERVISOR_LOCK:
+                        _BACKGROUND_SUPERVISOR_THREADS.pop(session_id, None)
+
+            worker = threading.Thread(
+                target=_run,
+                name=f"ai-e-sandbox-{session_id}",
+                daemon=True,
+            )
+            _BACKGROUND_SUPERVISOR_THREADS[session_id] = worker
+
+        worker.start()
+        return True
+
+    def _session_is_running(self, config: Any, *, session_id: str) -> bool:
+        if not session_id or self._runtime_state_cls is None:
+            return False
+        snapshot = self._runtime_state_cls(config, session_id).get_snapshot()
+        return str(snapshot.status or "").strip().lower() == "running"
 
     def _build_live_status_from_runtime(
         self,
@@ -1452,6 +1693,7 @@ class IntakePreviewBridge:
         from ai_e_runtime.request_review_bundle import build_review_bundle
         from ai_e_runtime.request_review_decision import create_review_decision
         from ai_e_runtime.runtime_state import RuntimeState
+        from ai_e_runtime.supervisor import Supervisor, SupervisorConfig
         from ai_e_runtime.task_intake import ConversationalTaskIntake
         from orchestrator.config import OrchestratorConfig
 
@@ -1460,6 +1702,8 @@ class IntakePreviewBridge:
         self._create_review_decision_fn = create_review_decision
         self._build_queue_preview_fn = build_queue_preview
         self._runtime_state_cls = RuntimeState
+        self._supervisor_cls = Supervisor
+        self._supervisor_config_cls = SupervisorConfig
         self._intake_cls = ConversationalTaskIntake
         self._config_cls = OrchestratorConfig
 

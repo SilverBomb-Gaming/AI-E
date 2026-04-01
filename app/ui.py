@@ -32,6 +32,9 @@ class ControlPanel(QtWidgets.QMainWindow):
         self._submitted_prompt_key: tuple[str, str] | None = None
         self._profile_selection_busy = False
         self._onboarding_force_visible = False
+        self._section_highlight_timers: Dict[str, QtCore.QTimer] = {}
+        self._next_step_highlight_timer: QtCore.QTimer | None = None
+        self._next_step_primary_button: QtWidgets.QPushButton | None = None
         self._onboarding_example_prompts = [
             "move zombie forward",
             "add enemy",
@@ -78,6 +81,7 @@ class ControlPanel(QtWidgets.QMainWindow):
         scroll_area.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
         scroll_area.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         scroll_area.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.main_scroll_area = scroll_area
         self.setCentralWidget(scroll_area)
 
         content = QtWidgets.QWidget()
@@ -146,6 +150,7 @@ class ControlPanel(QtWidgets.QMainWindow):
         layout.addLayout(project_layout)
 
         prompt_group = QtWidgets.QGroupBox("Prompt Intake")
+        self.prompt_group = prompt_group
         prompt_layout = QtWidgets.QVBoxLayout(prompt_group)
         prompt_hint = QtWidgets.QLabel(
             "Start here after choosing a prompt. Click Prepare Request and AI-E will show whether it is ready, needs approval, should run in sandbox first, or is blocked before anything runs."
@@ -205,6 +210,7 @@ class ControlPanel(QtWidgets.QMainWindow):
         prompt_layout.addWidget(decision_group)
 
         review_group = QtWidgets.QGroupBox("Approval Review (when needed)")
+        self.approval_review_group = review_group
         review_layout = QtWidgets.QVBoxLayout(review_group)
         review_layout.setSpacing(8)
 
@@ -269,6 +275,7 @@ class ControlPanel(QtWidgets.QMainWindow):
         prompt_layout.addWidget(review_group)
 
         live_status_group = QtWidgets.QGroupBox("Live Run Status (after submit)")
+        self.live_status_group = live_status_group
         live_status_layout = QtWidgets.QVBoxLayout(live_status_group)
         live_status_layout.setSpacing(8)
 
@@ -325,6 +332,7 @@ class ControlPanel(QtWidgets.QMainWindow):
         prompt_layout.addWidget(live_status_group)
 
         proof_group = QtWidgets.QGroupBox("Result Summary (after completion)")
+        self.proof_result_group = proof_group
         proof_layout = QtWidgets.QVBoxLayout(proof_group)
         proof_layout.setSpacing(8)
 
@@ -368,12 +376,59 @@ class ControlPanel(QtWidgets.QMainWindow):
         proof_detail_layout.addRow("Target Workspace:", self.proof_result_target_value)
         proof_detail_layout.addRow("Detected Action:", self.proof_result_action_value)
         proof_detail_layout.addRow("Final Verdict:", self.proof_result_verdict_value)
-        proof_detail_layout.addRow("What Changed:", self.proof_result_change_value)
-        proof_detail_layout.addRow("Before / After:", self.proof_result_before_after_value)
-        proof_detail_layout.addRow("Validation Outcome:", self.proof_result_validation_value)
-        proof_detail_layout.addRow("Result Status:", self.proof_result_status_value)
-        proof_detail_layout.addRow("Timestamp:", self.proof_result_timestamp_value)
         proof_layout.addLayout(proof_detail_layout)
+
+        self.proof_result_next_step_frame = QtWidgets.QFrame()
+        self.proof_result_next_step_frame.setFrameShape(QtWidgets.QFrame.Shape.StyledPanel)
+        self.proof_result_next_step_frame.setFrameShadow(QtWidgets.QFrame.Shadow.Plain)
+        next_step_layout = QtWidgets.QVBoxLayout(self.proof_result_next_step_frame)
+        next_step_layout.setContentsMargins(12, 12, 12, 12)
+        next_step_layout.setSpacing(10)
+
+        next_step_title = QtWidgets.QLabel("What would you like to do next?")
+        next_step_title.setStyleSheet("font-weight: 700; font-size: 14px; color: #1e3a8a;")
+        next_step_layout.addWidget(next_step_title)
+
+        self.proof_result_next_step_hint = QtWidgets.QLabel(
+            "Open a finished run to see the best next step here."
+        )
+        self.proof_result_next_step_hint.setWordWrap(True)
+        self.proof_result_next_step_hint.setStyleSheet("color: #334155;")
+        next_step_layout.addWidget(self.proof_result_next_step_hint)
+
+        self.proof_result_next_step_grid = QtWidgets.QGridLayout()
+        self.proof_result_next_step_grid.setHorizontalSpacing(10)
+        self.proof_result_next_step_grid.setVerticalSpacing(10)
+        self.proof_result_next_prepare_button = QtWidgets.QPushButton("Prepare similar request")
+        self.proof_result_next_prepare_button.clicked.connect(self._handle_next_step_prepare_similar)
+        self.proof_result_next_modify_button = QtWidgets.QPushButton("Modify and test again")
+        self.proof_result_next_modify_button.clicked.connect(self._handle_next_step_modify_again)
+        self.proof_result_next_supporting_button = QtWidgets.QPushButton("Open supporting files")
+        self.proof_result_next_supporting_button.clicked.connect(self._handle_open_proof_artifact)
+        self.proof_result_next_revise_button = QtWidgets.QPushButton("Revise request")
+        self.proof_result_next_revise_button.clicked.connect(self._handle_next_step_revise_request)
+        self.proof_result_next_review_button = QtWidgets.QPushButton("Open review")
+        self.proof_result_next_review_button.clicked.connect(self._handle_next_step_open_review)
+        for button in (
+            self.proof_result_next_prepare_button,
+            self.proof_result_next_modify_button,
+            self.proof_result_next_supporting_button,
+            self.proof_result_next_revise_button,
+            self.proof_result_next_review_button,
+        ):
+            button.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+            button.setVisible(False)
+            button.setEnabled(False)
+        next_step_layout.addLayout(self.proof_result_next_step_grid)
+        proof_layout.addWidget(self.proof_result_next_step_frame)
+
+        proof_secondary_detail_layout = QtWidgets.QFormLayout()
+        proof_secondary_detail_layout.addRow("What Changed:", self.proof_result_change_value)
+        proof_secondary_detail_layout.addRow("Before / After:", self.proof_result_before_after_value)
+        proof_secondary_detail_layout.addRow("Validation Outcome:", self.proof_result_validation_value)
+        proof_secondary_detail_layout.addRow("Result Status:", self.proof_result_status_value)
+        proof_secondary_detail_layout.addRow("Timestamp:", self.proof_result_timestamp_value)
+        proof_layout.addLayout(proof_secondary_detail_layout)
 
         proof_steps_label = QtWidgets.QLabel("Key Execution Steps")
         proof_steps_label.setStyleSheet("font-weight: 600;")
@@ -425,6 +480,9 @@ class ControlPanel(QtWidgets.QMainWindow):
         self.proof_result_feedback_label.setWordWrap(True)
         self.proof_result_feedback_label.setStyleSheet("color: #555;")
         proof_layout.addWidget(self.proof_result_feedback_label)
+
+        self._apply_next_step_frame_style()
+        self._apply_next_step_button_styles(primary_button=None)
         prompt_layout.addWidget(proof_group)
         layout.addWidget(prompt_group)
 
@@ -1239,6 +1297,7 @@ class ControlPanel(QtWidgets.QMainWindow):
             self._tracked_status_task_id = status.task_id
         if status.available and status.session_id not in {"", "-", "Not started yet"}:
             self._tracked_status_session_id = status.session_id
+        self._update_section_emphasis()
 
     def _reset_live_status(self, message: str = "Submit or approve a request to track it here. You can also open History to review earlier results.") -> None:
         self.current_live_status = None
@@ -1255,6 +1314,7 @@ class ControlPanel(QtWidgets.QMainWindow):
         )
         self.live_status_open_result_button.setEnabled(False)
         self._set_live_status_badge("Status not available", "#f3f4f6", "#374151")
+        self._update_section_emphasis()
 
     def _apply_live_status_style(self, status: home_surface.LiveStatusSurface) -> None:
         if not status.available:
@@ -1283,6 +1343,9 @@ class ControlPanel(QtWidgets.QMainWindow):
     def _open_proof_result_from_path(self, path: Path | str) -> None:
         proof = home_surface.load_proof_result_surface(path, supported_projects=self.supported_projects)
         self._render_proof_result(proof)
+        self._focus_proof_result_section()
+        self._highlight_section_temporarily("proof")
+        self._highlight_next_step_temporarily()
 
     def _render_proof_result(self, proof: home_surface.ProofResultSurface) -> None:
         self.current_proof_surface = proof
@@ -1313,6 +1376,8 @@ class ControlPanel(QtWidgets.QMainWindow):
         self.proof_result_open_artifacts_button.setEnabled(bool(proof.raw_artifacts or proof.primary_artifact_path))
         self.proof_result_rerun_button.setEnabled(bool(proof.rerun_prompt.strip()))
         self.proof_result_back_button.setEnabled(True)
+        self._update_proof_next_steps(proof)
+        self._update_section_emphasis()
 
     def _reset_proof_result(self, message: str = "No result is open yet. Open a finished run from Live Run Status or History, or prepare a new request.") -> None:
         self.current_proof_surface = None
@@ -1337,6 +1402,8 @@ class ControlPanel(QtWidgets.QMainWindow):
         self.proof_result_open_artifacts_button.setEnabled(False)
         self.proof_result_rerun_button.setEnabled(False)
         self.proof_result_back_button.setEnabled(False)
+        self._update_proof_next_steps(None)
+        self._update_section_emphasis()
 
     def _apply_proof_result_style(self, proof: home_surface.ProofResultSurface) -> None:
         if not proof.available:
@@ -1358,6 +1425,267 @@ class ControlPanel(QtWidgets.QMainWindow):
             f"background: {background}; color: {foreground}; border: 1px solid {foreground}; "
             "border-radius: 12px; padding: 4px 10px; font-weight: 600;"
         )
+
+    def _update_proof_next_steps(self, proof: home_surface.ProofResultSurface | None) -> None:
+        self._apply_next_step_frame_style()
+        self._next_step_primary_button = None
+        buttons = self._next_step_buttons()
+        for button in buttons:
+            button.setVisible(False)
+            button.setEnabled(False)
+
+        if proof is None or not proof.available:
+            self.proof_result_next_step_hint.setText(
+                "Open a finished run to see the best next step here."
+            )
+            self._rebuild_next_step_button_grid([])
+            self._apply_next_step_button_styles(primary_button=None)
+            return
+
+        if self._proof_result_needs_recovery(proof):
+            self.proof_result_next_step_hint.setText(
+                "This result needs follow-up. Revise the request, then open review if the updated request needs approval."
+            )
+            prompt_available = bool(self._proof_result_prompt_candidate(proof))
+            self.proof_result_next_revise_button.setVisible(True)
+            self.proof_result_next_revise_button.setEnabled(prompt_available)
+            self.proof_result_next_review_button.setVisible(True)
+            self.proof_result_next_review_button.setEnabled(prompt_available)
+            self._next_step_primary_button = self.proof_result_next_revise_button if prompt_available else None
+            self._rebuild_next_step_button_grid(
+                [
+                    self.proof_result_next_revise_button,
+                    self.proof_result_next_review_button,
+                ]
+            )
+            self._apply_next_step_button_styles(primary_button=self._next_step_primary_button)
+            return
+
+        self.proof_result_next_step_hint.setText(
+            "This run finished cleanly. Prepare a similar request, adjust it, or open supporting files for more detail."
+        )
+        modify_enabled = bool(self._proof_result_prompt_candidate(proof))
+        prepare_enabled = bool(proof.rerun_prompt.strip())
+        supporting_enabled = bool(proof.raw_artifacts or proof.primary_artifact_path)
+        self.proof_result_next_modify_button.setVisible(True)
+        self.proof_result_next_modify_button.setEnabled(modify_enabled)
+        self.proof_result_next_prepare_button.setVisible(True)
+        self.proof_result_next_prepare_button.setEnabled(prepare_enabled)
+        self.proof_result_next_supporting_button.setVisible(True)
+        self.proof_result_next_supporting_button.setEnabled(supporting_enabled)
+        if modify_enabled:
+            self._next_step_primary_button = self.proof_result_next_modify_button
+        self._rebuild_next_step_button_grid(
+            [
+                self.proof_result_next_modify_button,
+                self.proof_result_next_prepare_button,
+                self.proof_result_next_supporting_button,
+            ]
+        )
+        self._apply_next_step_button_styles(primary_button=self._next_step_primary_button)
+
+    def _next_step_buttons(self) -> tuple[QtWidgets.QPushButton, ...]:
+        return (
+            self.proof_result_next_prepare_button,
+            self.proof_result_next_modify_button,
+            self.proof_result_next_supporting_button,
+            self.proof_result_next_revise_button,
+            self.proof_result_next_review_button,
+        )
+
+    @staticmethod
+    def _proof_result_needs_recovery(proof: home_surface.ProofResultSurface) -> bool:
+        status = str(proof.proof_status or "").strip().lower()
+        verdict = str(proof.final_verdict or "").strip().lower()
+        return status in {"blocked", "failed"} or verdict.startswith("blocked") or verdict.startswith("failed")
+
+    @staticmethod
+    def _proof_result_prompt_candidate(proof: home_surface.ProofResultSurface) -> str:
+        for candidate in (proof.rerun_prompt, proof.normalized_request, proof.original_request):
+            text = str(candidate or "").strip()
+            if text:
+                return text
+        return ""
+
+    def _rebuild_next_step_button_grid(self, ordered_buttons: List[QtWidgets.QPushButton]) -> None:
+        while self.proof_result_next_step_grid.count():
+            item = self.proof_result_next_step_grid.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.setParent(self.proof_result_next_step_frame)
+        visible_buttons = [button for button in ordered_buttons if button.isVisible()]
+        for index, button in enumerate(visible_buttons):
+            row = index // 3
+            column = index % 3
+            self.proof_result_next_step_grid.addWidget(button, row, column)
+
+    def _apply_next_step_button_styles(self, *, primary_button: QtWidgets.QPushButton | None) -> None:
+        primary_style = (
+            "QPushButton {"
+            "background: #1d4ed8;"
+            "color: white;"
+            "border: 1px solid #1e40af;"
+            "border-radius: 6px;"
+            "padding: 8px 16px;"
+            "font-weight: 700;"
+            "}"
+            "QPushButton:hover { background: #1e40af; }"
+            "QPushButton:disabled { background: #93c5fd; color: #eff6ff; border: 1px solid #93c5fd; }"
+        )
+        secondary_style = (
+            "QPushButton {"
+            "background: #ffffff;"
+            "color: #1f2937;"
+            "border: 1px solid #94a3b8;"
+            "border-radius: 6px;"
+            "padding: 6px 12px;"
+            "font-weight: 600;"
+            "}"
+            "QPushButton:hover { background: #f8fafc; border: 1px solid #64748b; }"
+            "QPushButton:disabled { background: #f8fafc; color: #94a3b8; border: 1px solid #cbd5e1; }"
+        )
+        for button in self._next_step_buttons():
+            if button is primary_button:
+                button.setStyleSheet(primary_style)
+                button.setMinimumHeight(38)
+            else:
+                button.setStyleSheet(secondary_style)
+                button.setMinimumHeight(32)
+
+    def _apply_next_step_frame_style(self, *, emphasized: bool = False) -> None:
+        background = "#dbeafe" if emphasized else "#eff6ff"
+        border = "#1d4ed8" if emphasized else "#93c5fd"
+        self.proof_result_next_step_frame.setStyleSheet(
+            "QFrame {"
+            f"background: {background};"
+            f"border: 1px solid {border};"
+            "border-radius: 8px;"
+            "}"
+        )
+
+    def _highlight_next_step_temporarily(self, *, duration_ms: int = 2000) -> None:
+        self._apply_next_step_frame_style(emphasized=True)
+        if self._next_step_highlight_timer is not None:
+            self._next_step_highlight_timer.stop()
+        timer = QtCore.QTimer(self)
+        timer.setSingleShot(True)
+        timer.timeout.connect(self._apply_next_step_frame_style)
+        timer.start(duration_ms)
+        self._next_step_highlight_timer = timer
+
+    def _focus_proof_result_section(self) -> None:
+        self._scroll_to_widget_top(self.proof_result_group)
+        if hasattr(self, "main_scroll_area"):
+            QtCore.QTimer.singleShot(
+                0,
+                lambda: self.main_scroll_area.ensureWidgetVisible(self.proof_result_next_step_frame, 0, 32),
+            )
+        QtCore.QTimer.singleShot(0, self._focus_first_visible_next_step_button)
+
+    def _focus_first_visible_next_step_button(self) -> None:
+        if (
+            self._next_step_primary_button is not None
+            and self._next_step_primary_button.isVisible()
+            and self._next_step_primary_button.isEnabled()
+        ):
+            self._next_step_primary_button.setFocus(QtCore.Qt.FocusReason.OtherFocusReason)
+            return
+        for button in self._next_step_buttons():
+            if button.isVisible() and button.isEnabled():
+                button.setFocus(QtCore.Qt.FocusReason.OtherFocusReason)
+                return
+
+    def _update_section_emphasis(self) -> None:
+        self._apply_section_style(
+            self.live_status_group,
+            accent="#1d4ed8" if self._live_status_is_active() else "",
+            temporary=False,
+        )
+        self._apply_section_style(
+            self.proof_result_group,
+            accent="#166534" if self._proof_result_is_available() else "",
+            temporary=False,
+        )
+
+    def _live_status_is_active(self) -> bool:
+        status = self.current_live_status
+        if status is None or not status.available:
+            return False
+        return status.status_badge in {"Running", "Waiting", "Waiting to run", "Awaiting approval"}
+
+    def _proof_result_is_available(self) -> bool:
+        proof = self.current_proof_surface
+        return bool(proof is not None and proof.available)
+
+    def _apply_section_style(self, group: QtWidgets.QGroupBox, *, accent: str, temporary: bool) -> None:
+        if not accent:
+            group.setStyleSheet("")
+            return
+        border_width = "2px" if temporary else "1px"
+        background = "#eff6ff" if accent == "#1d4ed8" else "#f0fdf4"
+        if temporary:
+            background = "#dbeafe" if accent == "#1d4ed8" else "#dcfce7"
+        group.setStyleSheet(
+            "QGroupBox {"
+            f"border: {border_width} solid {accent};"
+            "border-radius: 8px;"
+            "margin-top: 10px;"
+            f"background: {background};"
+            "}"
+            "QGroupBox::title {"
+            "subcontrol-origin: margin;"
+            "left: 10px;"
+            "padding: 0 4px;"
+            "}"
+        )
+
+    def _highlight_section_temporarily(self, section: str, *, duration_ms: int = 2000) -> None:
+        group = self._group_for_section(section)
+        if group is None:
+            return
+        accent = self._accent_for_section(section)
+        self._apply_section_style(group, accent=accent, temporary=True)
+        existing_timer = self._section_highlight_timers.get(section)
+        if existing_timer is not None:
+            existing_timer.stop()
+        timer = QtCore.QTimer(self)
+        timer.setSingleShot(True)
+        timer.timeout.connect(self._update_section_emphasis)
+        timer.start(duration_ms)
+        self._section_highlight_timers[section] = timer
+
+    def _group_for_section(self, section: str) -> QtWidgets.QGroupBox | None:
+        if section == "live":
+            return getattr(self, "live_status_group", None)
+        if section == "proof":
+            return getattr(self, "proof_result_group", None)
+        return None
+
+    @staticmethod
+    def _accent_for_section(section: str) -> str:
+        if section == "live":
+            return "#1d4ed8"
+        if section == "proof":
+            return "#166534"
+        return "#1d4ed8"
+
+    def _scroll_to_widget(self, widget: QtWidgets.QWidget | None) -> None:
+        if widget is None or not hasattr(self, "main_scroll_area"):
+            return
+        QtCore.QTimer.singleShot(0, lambda: self.main_scroll_area.ensureWidgetVisible(widget, 0, 24))
+
+    def _scroll_to_widget_top(self, widget: QtWidgets.QWidget | None, *, margin: int = 12) -> None:
+        if widget is None or not hasattr(self, "main_scroll_area"):
+            return
+
+        def _scroll() -> None:
+            content = self.main_scroll_area.widget()
+            if content is None:
+                return
+            top = widget.mapTo(content, QtCore.QPoint(0, 0)).y()
+            self.main_scroll_area.verticalScrollBar().setValue(max(0, top - margin))
+
+        QtCore.QTimer.singleShot(0, _scroll)
 
     def _refresh_dependency_label(self) -> None:
         summary = dependencies.dependency_summary_text()
@@ -1548,12 +1876,18 @@ class ControlPanel(QtWidgets.QMainWindow):
             return
 
         if preview.decision_state == "Sandbox first":
-            message = (
-                "Sandbox is not available from this screen yet. Keep this request staged, or revise it to stay within supported scope."
+            result = self.intake_preview_bridge.run_sandbox_prompt(
+                preview,
+                project=self._selected_project(),
+                approved_by=self.profile_name,
             )
-            self.intake_feedback_label.setText(message)
-            self._update_status_panel(message)
-            QtWidgets.QMessageBox.information(self, "AI-E", message)
+            self.intake_feedback_label.setText(result.message)
+            self._update_status_panel(result.message)
+            if result.ok and result.wired and not result.staged_only:
+                self._submitted_prompt_key = (preview.normalized_prompt, preview.target_repo)
+                self.intake_action_button.setEnabled(False)
+                self._set_live_status_target(request_id=result.request_id, task_id=result.task_id, session_id="")
+                self._refresh_live_status()
             return
 
         message = "AI-E is not proceeding with this request. Revise it to stay within supported scope, then prepare it again."
@@ -1582,7 +1916,7 @@ class ControlPanel(QtWidgets.QMainWindow):
         self.intake_feedback_label.setText(result.message)
         self._update_status_panel(result.message)
 
-        if result.ok and result.action == "approve_once" and result.wired and not result.staged_only:
+        if result.ok and result.wired and not result.staged_only:
             self._set_live_status_target(
                 request_id=result.request_id or review.request_id,
                 task_id=result.task_id,
@@ -1595,6 +1929,12 @@ class ControlPanel(QtWidgets.QMainWindow):
                 )
                 self._render_request_review(refreshed)
                 self.approval_review_feedback_label.setText(result.message)
+                if result.action == "sandbox_first":
+                    self._submitted_prompt_key = (
+                        self.current_prepared_prompt.normalized_prompt,
+                        self.current_prepared_prompt.target_repo,
+                    )
+                    self.intake_action_button.setEnabled(False)
             self._refresh_live_status()
             return
 
@@ -1608,8 +1948,23 @@ class ControlPanel(QtWidgets.QMainWindow):
                 self._refresh_live_status()
 
     def _handle_refresh_live_status(self) -> None:
-        self._refresh_live_status()
+        request_id = ""
         if self.current_live_status is not None:
+            request_id = str(self.current_live_status.request_id or "").strip()
+        if not request_id:
+            request_id = str(getattr(self, "_tracked_status_request_id", "") or "").strip()
+        print(f"Refresh clicked -> request_id={request_id}", flush=True)
+        self.live_status_feedback_label.setText("Refreshing status...")
+        self.live_status_refresh_button.setEnabled(False)
+        QtCore.QTimer.singleShot(0, self._complete_live_status_refresh)
+
+    def _complete_live_status_refresh(self) -> None:
+        self._refresh_live_status()
+        self.live_status_feedback_label.setText("Status updated just now")
+        self.live_status_refresh_button.setEnabled(True)
+        if self.current_live_status is not None:
+            if self.current_live_status.available:
+                self._highlight_section_temporarily("live")
             self._update_status_panel("Live status refreshed")
 
     def _handle_open_live_result(self) -> None:
@@ -1619,7 +1974,10 @@ class ControlPanel(QtWidgets.QMainWindow):
             self.live_status_feedback_label.setText(message)
             self._update_status_panel(message)
             return
+        session_id = str(status.session_id or "").strip()
+        print(f"Open result clicked -> session_id={session_id}", flush=True)
         self._open_proof_result_from_path(status.result_path)
+        self.live_status_feedback_label.setText("Result opened below.")
         self._update_status_panel("Opened result summary")
 
     def _handle_recent_run_open(self, item: QtWidgets.QTreeWidgetItem, _column: int) -> None:
@@ -1672,6 +2030,77 @@ class ControlPanel(QtWidgets.QMainWindow):
             feedback_message="Prepared the same request from this result. Review the intake decision before submitting it again.",
             status_message="Prepared same request from result summary",
         )
+
+    def _handle_next_step_prepare_similar(self) -> None:
+        self._handle_rerun_same_request()
+
+    def _handle_next_step_modify_again(self) -> None:
+        proof = self.current_proof_surface
+        prompt_text = self._proof_result_prompt_candidate(proof) if proof is not None else ""
+        if not prompt_text:
+            message = "This result does not include a request to adjust. Open another saved result, or type a new request on the home screen."
+            self.proof_result_feedback_label.setText(message)
+            self._update_status_panel(message)
+            return
+        project_path = proof.rerun_project_path if proof is not None else ""
+        self._restage_existing_request(
+            prompt_text=prompt_text,
+            project_path=project_path,
+            feedback_message="Prepared this request for editing. Adjust it, then prepare it again to review the next decision.",
+            status_message="Prepared request for editing from result summary",
+        )
+        self.prompt_input.setFocus()
+        self.prompt_input.selectAll()
+        self._scroll_to_widget(self.prompt_group)
+
+    def _handle_next_step_revise_request(self) -> None:
+        proof = self.current_proof_surface
+        prompt_text = self._proof_result_prompt_candidate(proof) if proof is not None else ""
+        if not prompt_text:
+            message = "This result does not include a request to revise. Type a new request on the home screen."
+            self.proof_result_feedback_label.setText(message)
+            self._update_status_panel(message)
+            return
+        project_path = proof.rerun_project_path if proof is not None else ""
+        self._restage_existing_request(
+            prompt_text=prompt_text,
+            project_path=project_path,
+            feedback_message="Prepared this request so you can revise it. Update the wording, then prepare it again before AI-E runs anything.",
+            status_message="Prepared request for revision from result summary",
+        )
+        self.prompt_input.setFocus()
+        self.prompt_input.selectAll()
+        self._scroll_to_widget(self.prompt_group)
+
+    def _handle_next_step_open_review(self) -> None:
+        proof = self.current_proof_surface
+        prompt_text = self._proof_result_prompt_candidate(proof) if proof is not None else ""
+        if not prompt_text:
+            message = "This result does not include a request to review. Type a new request on the home screen."
+            self.proof_result_feedback_label.setText(message)
+            self._update_status_panel(message)
+            return
+        project_path = proof.rerun_project_path if proof is not None else ""
+        if project_path.strip():
+            self._select_project_by_path(project_path)
+        self.prompt_input.setPlainText(prompt_text)
+        preview = self.intake_preview_bridge.prepare_prompt(prompt_text, self._selected_project())
+        self._render_prepared_prompt(preview)
+        self._reset_proof_result(
+            "Prepared this request again. Check the intake decision and open review if approval is required."
+        )
+        if preview.decision_state == "Needs approval":
+            self.proof_result_feedback_label.setText(
+                "Review is ready below. Confirm the request details before you approve or reject it."
+            )
+            self._scroll_to_widget(self.approval_review_group)
+            self._update_status_panel("Opened review from result summary")
+            return
+        self.proof_result_feedback_label.setText(
+            "This updated request does not need review right now. Check the intake decision to continue."
+        )
+        self._scroll_to_widget(self.prompt_group)
+        self._update_status_panel("Prepared request from result summary")
 
     def _handle_open_history_result(self) -> None:
         payload = self._selected_history_payload()

@@ -11,6 +11,11 @@ from .autonomous_decision import DecisionRuntimeContext, evaluate_autonomous_dec
 from .capability_intelligence import assess_capability_intelligence, assess_mutation_without_capability
 from .capability_registry import CapabilityRegistry, RuntimeCapability
 from .content_policy import ensure_project_content_profile, evaluate_content_policy, load_project_content_profile
+from .intent_normalizer import normalize_prompt
+from .level_0001_entity_transform_mutation import (
+    resolve_entity_transform_route,
+    unsupported_entity_transform_prompt_message,
+)
 from .progress import phase_payload
 from orchestrator.architecture_blueprint import ConversationalRequest
 from orchestrator.config import OrchestratorConfig
@@ -58,6 +63,7 @@ class IntakeRouting:
     capability_id: str | None = None
     capability_title: str | None = None
     handler_name: str | None = None
+    agent_type: str | None = None
     target_level: str | None = None
     target_scene: str | None = None
     trust_score: int = 0
@@ -114,6 +120,7 @@ class IntakeRouting:
             "capability_id": self.capability_id,
             "capability_title": self.capability_title,
             "handler_name": self.handler_name,
+            "agent_type": self.agent_type,
             "target_level": self.target_level,
             "target_scene": self.target_scene,
             "trust_score": self.trust_score,
@@ -229,6 +236,35 @@ class ConversationalTaskIntake:
         "patch",
         "modify",
     )
+    _WORLD_MUTATION_ACTION_HINTS = (
+        "move",
+        "reposition",
+        "shift",
+        "nudge",
+        "translate",
+        "remove",
+        "delete",
+        "clear",
+    )
+    _WORLD_MUTATION_DOMAIN_HINTS = (
+        "level_0001",
+        "babylon",
+        "zombie",
+        "enemy",
+        "player",
+        "weapon",
+        "scene",
+        "arena",
+        "unity",
+    )
+    _WORLD_MUTATION_DIRECTION_HINTS = (
+        "forward",
+        "backward",
+        "left",
+        "right",
+        "up",
+        "down",
+    )
 
     def __init__(self, config: OrchestratorConfig) -> None:
         self.config = config
@@ -254,7 +290,7 @@ class ConversationalTaskIntake:
 
         self._record_session_progress(session_id, **phase_payload("intake"))
         resolved_target_repo = target_repo or self._derive_target_repo(normalized_prompt)
-        routing = self._resolve_intake_routing(normalized_prompt, session_id=session_id)
+        routing = self._resolve_intake_routing(normalized_prompt, session_id=session_id, target_repo=resolved_target_repo)
         self._record_session_progress(session_id, **phase_payload("policy_check"))
         task_type = self._derive_task_type(normalized_prompt, routing=routing)
         request_id = self._derive_request_id(normalized_prompt, resolved_target_repo, task_type)
@@ -332,7 +368,7 @@ class ConversationalTaskIntake:
                     "title": title if single_step else node.title,
                     "task_type": task_type if single_step else node.task_type,
                     "target_repo": resolved_target_repo,
-                    "agent_type": routing.handler_name and "level_0001_grass_mutation_agent" or "read_only_inspector_agent",
+                    "agent_type": routing.agent_type if routing.mutation_capable and routing.agent_type else "read_only_inspector_agent",
                     "execution_mode": routing.execution_lane if routing.requested_intent == "mutate" or routing.mutation_capable else node.execution_mode,
                     "requested_intent": routing.requested_intent,
                     "resolved_intent": routing.resolved_intent,
@@ -461,10 +497,13 @@ class ConversationalTaskIntake:
         )
 
     def classify_message(self, operator_message: str) -> str:
-        normalized = self._normalize_prompt(operator_message).lower()
-        if not normalized:
+        raw_message = str(operator_message or "").strip()
+        if not raw_message:
             return "empty"
-        if normalized.endswith("?"):
+        if raw_message.endswith("?"):
+            return "not_task_request"
+        normalized = self._normalize_prompt(raw_message).lower()
+        if not normalized:
             return "not_task_request"
         if normalized.startswith(self._TASK_REQUEST_VERBS):
             return "task_request"
@@ -533,9 +572,9 @@ class ConversationalTaskIntake:
             "status": status,
             "priority": priority,
             "target_repo": target_repo,
-            "agent_type": "level_0001_grass_mutation_agent" if routing.mutation_capable else "read_only_inspector_agent",
+            "agent_type": routing.agent_type if routing.mutation_capable and routing.agent_type else "read_only_inspector_agent",
             "agents": [
-                "level_0001_grass_mutation_agent" if routing.mutation_capable else "read_only_inspector_agent",
+                routing.agent_type if routing.mutation_capable and routing.agent_type else "read_only_inspector_agent",
                 "validator_agent",
                 "artifact_summarizer_agent",
             ],
@@ -655,16 +694,36 @@ class ConversationalTaskIntake:
             return "read_only_inspection_request"
         if any(token in lower for token in ("expand", "improve", "make", "enable")):
             return "bounded_activation_request"
+        if routing is not None and routing.requested_intent == "mutate" and routing.resolved_intent == "mutate":
+            return "mutation_request"
         return "general_request"
 
-    def _resolve_intake_routing(self, prompt: str, *, session_id: str) -> IntakeRouting:
+    def _resolve_intake_routing(self, prompt: str, *, session_id: str, target_repo: str | None = None) -> IntakeRouting:
         normalized = self._normalize_prompt(prompt).lower()
         requested_intent = self._classify_requested_intent(normalized)
         requested_execution_lane = self._requested_lane_for_intent(requested_intent)
         capability = self.capability_registry.match(normalized)
         if capability is not None:
+            preflight_issue = self._resolve_mutation_route_issue(
+                prompt=normalized,
+                capability=capability,
+                target_repo=target_repo,
+            )
+            if preflight_issue is not None:
+                return self._blocked_mutation_route_routing(
+                    requested_execution_lane=requested_execution_lane,
+                    session_id=session_id,
+                    route_issue=preflight_issue,
+                )
             return self._apply_content_policy(prompt=normalized, routing=self._routing_for_capability(capability), capability=capability, session_id=session_id)
         if requested_intent == "mutate":
+            unsupported_message = unsupported_entity_transform_prompt_message(normalized)
+            if unsupported_message is not None:
+                return self._blocked_mutation_route_routing(
+                    requested_execution_lane=requested_execution_lane,
+                    session_id=session_id,
+                    route_issue=unsupported_message,
+                )
             intelligence = assess_mutation_without_capability()
             return self._apply_content_policy(prompt=normalized, routing=IntakeRouting(
                 requested_intent="mutate",
@@ -738,6 +797,7 @@ class ConversationalTaskIntake:
             capability_id=capability.capability_id,
             capability_title=capability.title,
             handler_name=capability.handler_name,
+            agent_type=capability.agent_type,
             target_level=capability.target_level,
             target_scene=capability.target_scene,
             trust_score=intelligence.trust_score,
@@ -873,6 +933,62 @@ class ConversationalTaskIntake:
             fail_closed_reason=decision.fail_closed_reason,
         )
 
+    def _resolve_mutation_route_issue(
+        self,
+        *,
+        prompt: str,
+        capability: RuntimeCapability,
+        target_repo: str | None,
+    ) -> str | None:
+        if capability.agent_type != "level_0001_entity_transform_mutation_agent":
+            return None
+        resolved_target_repo = str(target_repo or self._derive_target_repo(prompt) or "").strip()
+        if not resolved_target_repo:
+            return "No deterministic entity-transform route matched the prompt because no supported project path was selected."
+        _, route_issue = resolve_entity_transform_route(Path(resolved_target_repo), prompt)
+        return route_issue
+
+    def _blocked_mutation_route_routing(
+        self,
+        *,
+        requested_execution_lane: str,
+        session_id: str,
+        route_issue: str,
+    ) -> IntakeRouting:
+        intelligence = assess_mutation_without_capability()
+        routing = self._apply_content_policy(
+            prompt="",
+            routing=IntakeRouting(
+                requested_intent="mutate",
+                resolved_intent="mutate",
+                requested_execution_lane=requested_execution_lane,
+                execution_lane=requested_execution_lane,
+                downgraded=False,
+                downgrade_reason=None,
+                approval_required=False,
+                mutation_capable=False,
+                trust_score=intelligence.trust_score,
+                trust_band=intelligence.trust_band,
+                policy_state=intelligence.policy_state,
+                execution_decision=intelligence.execution_decision,
+                recommended_action=intelligence.recommended_action,
+                sandbox_first_required=intelligence.sandbox_first_required,
+                auto_execution_enabled=intelligence.auto_execution_enabled,
+                auto_execution_reason=intelligence.auto_execution_reason,
+                missing_evidence=list(intelligence.missing_evidence),
+                intelligence_summary=route_issue,
+            ),
+            session_id=session_id,
+        )
+        return replace(
+            routing,
+            intelligence_summary=route_issue,
+            decision="block",
+            decision_reason="route_missing",
+            decision_summary=f"Decision: block - {route_issue}",
+            fail_closed_reason=route_issue,
+        )
+
     def _load_runtime_context(self, session_id: str) -> DecisionRuntimeContext:
         state_store = StateStore(self.config.runs_dir, session_id)
         if not state_store.state_path.exists():
@@ -899,9 +1015,19 @@ class ConversationalTaskIntake:
             return "plan"
         if any(self._contains_phrase(normalized_prompt, phrase) for phrase in self._MUTATION_REQUEST_VERBS):
             return "mutate"
+        if self._looks_like_world_mutation_request(normalized_prompt):
+            return "mutate"
         if any(self._contains_phrase(normalized_prompt, phrase) for phrase in ("inspect", "audit", "review", "report", "investigate", "analyze", "validate", "check")):
             return "inspect"
         return "ambiguous"
+
+    def _looks_like_world_mutation_request(self, normalized_prompt: str) -> bool:
+        has_action_hint = any(self._contains_phrase(normalized_prompt, phrase) for phrase in self._WORLD_MUTATION_ACTION_HINTS)
+        if not has_action_hint:
+            return False
+        has_domain_hint = any(hint in normalized_prompt for hint in self._WORLD_MUTATION_DOMAIN_HINTS)
+        has_direction_hint = any(self._contains_phrase(normalized_prompt, phrase) for phrase in self._WORLD_MUTATION_DIRECTION_HINTS)
+        return has_domain_hint or has_direction_hint
 
     def _requested_lane_for_intent(self, requested_intent: str) -> str:
         if requested_intent == "mutate":
@@ -934,7 +1060,7 @@ class ConversationalTaskIntake:
         return None
 
     def _normalize_prompt(self, operator_message: str) -> str:
-        return re.sub(r"\s+", " ", str(operator_message or "")).strip()
+        return normalize_prompt(operator_message)
 
     def _resolve_simulated_delay_seconds(self, simulated_delay_seconds: float | None) -> float:
         if simulated_delay_seconds is not None:

@@ -5,6 +5,7 @@ from pathlib import Path
 from time import sleep
 from typing import Any, Callable, Dict
 
+from .level_0001_entity_transform_mutation import run_level_0001_entity_transform_mutation
 from .level_0001_grass_mutation import run_level_0001_grass_mutation
 from orchestrator.entity_runner import run_monitored_powershell_step
 
@@ -23,6 +24,7 @@ class AgentRouter:
             "read_only_inspector_agent": self._run_read_only_inspector_agent,
             "external_process_agent": self._run_external_process_agent,
             "level_0001_grass_mutation_agent": run_level_0001_grass_mutation,
+            "level_0001_entity_transform_mutation_agent": run_level_0001_entity_transform_mutation,
             "validator_agent": self._run_validator_agent,
             "unity_control_agent": self._run_unity_control_agent,
             "artifact_summarizer_agent": self._run_artifact_summarizer_agent,

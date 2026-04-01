@@ -5939,6 +5939,146 @@ def test_supervisor_executes_approved_level0001_grass_mutation_and_records_evide
     assert artifact["result"]["details"]["approval_state"] == "approved"
 
 
+def test_supervisor_executes_normalized_move_zombie_forward_mutation_and_records_evidence(tmp_path, monkeypatch):
+    config = _make_config(tmp_path / "move_zombie_forward")
+    _write_move_zombie_capability_contract(config)
+    target_repo = _create_entity_transform_prompt_repo(config, target_repo_name="BABYLON_TEST")
+    intake = ConversationalTaskIntake(config)
+
+    def fake_run(command, cwd, capture_output, text, check):
+        assert command[command.index("-PromptText") + 1] == "move zombie forward"
+        assert command[command.index("-ProjectPath") + 1] == target_repo
+        translator_artifact_path = Path(command[command.index("-ArtifactPath") + 1])
+        translator_log_path = Path(command[command.index("-LogPath") + 1])
+        translator_artifact_path.parent.mkdir(parents=True, exist_ok=True)
+        translator_log_path.parent.mkdir(parents=True, exist_ok=True)
+
+        router_artifact_path = translator_artifact_path.with_name(f"{translator_artifact_path.stem}.router_result.json")
+        router_log_path = translator_log_path.with_name(f"{translator_log_path.stem}.router.log")
+        probe_artifact_path = translator_artifact_path.parent / "intent_move_zombie_forward_probe_result.json"
+        probe_log_path = translator_artifact_path.parent / "intent_move_zombie_forward_probe.log"
+
+        translator_log_path.write_text("translator log", encoding="utf-8")
+        router_log_path.write_text("router log", encoding="utf-8")
+        probe_log_path.write_text("probe log", encoding="utf-8")
+        probe_artifact_path.write_text(
+            json.dumps(
+                {
+                    "status": "success",
+                    "scene": "entity_test",
+                    "scene_name": "entity_test",
+                    "action_type": "mutate_entity_transform",
+                    "object_name": "AIE_Zombie_001_Instance",
+                    "previous_position": [0.0, 0.0, 0.0],
+                    "new_position": [0.0, 0.0, 3.0],
+                    "observed_position_before_reset": [0.0, 0.0, 0.0],
+                    "scene_path": "Assets/AI_E_TestScenes/entity_test.unity",
+                    "timestamp": "2026-04-01T00:00:00Z",
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        router_artifact_path.write_text(
+            json.dumps(
+                {
+                    "status": "success",
+                    "action_name": "move_entity_forward",
+                    "route_kind": "single",
+                    "executed_probe": "MutateEntityTransform",
+                    "delegated_probe_artifact_path": str(probe_artifact_path),
+                    "delegated_probe_log_path": str(probe_log_path),
+                    "delegated_probe_action_type": "mutate_entity_transform",
+                    "final_state_summary": {
+                        "scene_name": "entity_test",
+                        "action_name": "move_entity_forward",
+                        "object_name": "AIE_Zombie_001_Instance",
+                        "position": [0.0, 0.0, 3.0],
+                        "final_action_type": "mutate_entity_transform",
+                    },
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        translator_artifact_path.write_text(
+            json.dumps(
+                {
+                    "status": "success",
+                    "raw_prompt": "move zombie forward",
+                    "normalized_prompt": "move zombie forward",
+                    "translated_command": "move zombie forward",
+                    "matched_prompt_pattern": "move zombie forward",
+                    "action_name": "move_entity_forward",
+                    "router_artifact_path": str(router_artifact_path),
+                    "router_log_path": str(router_log_path),
+                    "router_status": "success",
+                    "timestamp": "2026-04-01T00:00:00Z",
+                    "message": "",
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        return subprocess.CompletedProcess(command, 0, stdout="translator ok", stderr="")
+
+    monkeypatch.setattr("ai_e_runtime.level_0001_entity_transform_mutation.subprocess.run", fake_run)
+
+    result = intake.accept_message(
+        "move zombie forward again",
+        session_id="move-zombie-session",
+        target_repo=target_repo,
+    )
+
+    assert result.queue_entry["status"] == "needs_approval"
+
+    approval = approve_mutation_task(
+        config,
+        task_id=result.task_id,
+        approved_by="operator-test",
+        notes="Approve bounded move zombie forward mutation.",
+    )
+    assert approval.queue_status == "pending"
+
+    supervisor = Supervisor(
+        config,
+        SupervisorConfig(
+            session_limit_seconds=10,
+            heartbeat_interval_seconds=1,
+            poll_interval_seconds=1,
+            idle_timeout_seconds=2,
+            idle_timeout_poll_limit=99,
+            session_id="move-zombie-session",
+            stop_when_queue_empty=False,
+        ),
+    )
+
+    run_result = supervisor.run()
+
+    assert run_result.tasks_completed == 1
+    assert run_result.stop_reason == "queue_empty_idle_timeout"
+
+    queue = json.loads(config.queue_path.read_text(encoding="utf-8"))["tasks"]
+    assert queue[0]["status"] == "completed"
+    assert queue[0]["approved_by"] == "operator-test"
+
+    evidence_store = CapabilityEvidenceStore(config.contracts_dir / "capabilities" / "evidence.json")
+    evidence = evidence_store.get("level_0001_move_zombie_forward")
+    assert evidence is not None
+    assert evidence["times_attempted"] == 1
+    assert evidence["times_passed"] == 1
+    assert evidence["last_validation_result"] == "passed"
+
+    artifact_path = config.runs_dir / "move-zombie-session" / "artifacts" / f"{result.task_id}_attempt_01.json"
+    artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
+    assert artifact["result"]["details"]["action_type"] == "mutate_entity_transform"
+    assert artifact["result"]["details"]["translated_command"] == "move zombie forward"
+    assert artifact["result"]["details"]["executed_probe"] == "MutateEntityTransform"
+    assert artifact["result"]["details"]["new_position"] == [0.0, 0.0, 3.0]
+    assert artifact["result"]["details"]["validation"]["status"] == "passed"
+    assert artifact["result"]["details"]["approval_state"] == "approved"
+
+
 def test_supervisor_executes_auto_promoted_level0001_grass_mutation_without_manual_approval(tmp_path):
     config = _make_config(tmp_path / "grass_mutation_auto")
     _write_grass_capability_contracts(config)
@@ -6742,6 +6882,85 @@ def _write_grass_capability_contracts(config: OrchestratorConfig) -> None:
         ),
         encoding="utf-8",
     )
+
+
+def _write_move_zombie_capability_contract(config: OrchestratorConfig) -> None:
+    capabilities_dir = config.contracts_dir / "capabilities"
+    capabilities_dir.mkdir(parents=True, exist_ok=True)
+    (capabilities_dir / "level_0001_move_zombie_forward.json").write_text(
+        json.dumps(
+            {
+                "capability_id": "level_0001_move_zombie_forward",
+                "title": "LEVEL_0001 move zombie forward",
+                "intent": "mutate",
+                "target_level": "LEVEL_0001",
+                "target_scene": "Assets/AI_E_TestScenes/entity_test.unity",
+                "requested_execution_lane": "approval_required_mutation",
+                "handler_name": "level_0001_entity_transform_handler",
+                "agent_type": "level_0001_entity_transform_mutation_agent",
+                "approval_required": True,
+                "eligible_for_auto": False,
+                "evidence_state": "experimental",
+                "safety_class": "approval_gated_automation",
+                "match_terms": ["zombie", "forward"],
+                "match_verbs": ["move", "translate", "shift", "reposition"],
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+
+def _create_entity_transform_prompt_repo(config: OrchestratorConfig, *, target_repo_name: str = "BABYLON_TEST") -> str:
+    target_repo = config.root_dir / target_repo_name
+    tools_dir = target_repo / "Tools"
+    scripts_logs_dir = target_repo / "scripts" / "logs"
+    tools_dir.mkdir(parents=True, exist_ok=True)
+    scripts_logs_dir.mkdir(parents=True, exist_ok=True)
+    (tools_dir / "run_aie_prompt.ps1").write_text("placeholder", encoding="utf-8")
+    (tools_dir / "run_unity_mutate_entity_transform.ps1").write_text("placeholder", encoding="utf-8")
+    (tools_dir / "aie_prompt_aliases.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "aliases": [
+                    {
+                        "normalized_prompt": "move zombie forward",
+                        "translated_command": "move zombie forward",
+                    }
+                ],
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    (tools_dir / "intent_layer_v1_routes.json").write_text(
+        json.dumps(
+            {
+                "scene_name": "entity_test",
+                "routes": [
+                    {
+                        "normalized_command": "move zombie forward",
+                        "action_name": "move_entity_forward",
+                        "entity_type": "zombie",
+                        "direction": "forward",
+                        "probe_name": "MutateEntityTransform",
+                        "wrapper_path": "Tools/run_unity_mutate_entity_transform.ps1",
+                        "probe_artifact_file": "intent_move_zombie_forward_probe_result.json",
+                        "probe_log_file": "intent_move_zombie_forward_probe.log",
+                        "wrapper_arguments": {
+                            "ProjectPath": ".",
+                            "SceneName": "entity_test",
+                            "TargetObjectName": "AIE_Zombie_001_Instance",
+                        },
+                    }
+                ],
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    return str(target_repo.resolve())
 
 
 def _seed_auto_promoted_reference_capability_proof(config: OrchestratorConfig) -> None:

@@ -15,6 +15,7 @@ from .queue_insertion_gate import DEFAULT_GATE_ID, evaluate_queue_insertion
 from .sandbox_execution_dispatcher import DEFAULT_SANDBOX_DISPATCH_ID, dispatch_sandbox_queue, simulate_expansion, simulate_optimization, simulate_repair
 from .queue_sandbox_executor import DEFAULT_SANDBOX_QUEUE_ID, DEFAULT_SANDBOX_QUEUE_PATH, DEFAULT_SANDBOX_STAGE_ID, write_to_sandbox_queue
 from .unity_action_executor import DEFAULT_UNITY_ACTION_TYPE, DEFAULT_UNITY_EXECUTION_ROOT, DEFAULT_UNITY_OBJECT_NAME, DEFAULT_UNITY_SCENE_NAME, DEFAULT_UNITY_TIMEOUT_SECONDS, execute_unity_action
+from .level_0001_entity_transform_mutation import EntityTransformRouteResolution, resolve_entity_transform_route, run_level_0001_entity_transform_mutation
 from .level_0001_grass_mutation import run_level_0001_grass_mutation
 from .mutation_approval import MutationApprovalResult, approve_mutation_task
 from .planner import PlanResult, PlanStep, RuleBasedPlanner
@@ -65,6 +66,7 @@ __all__ = [
     "DEFAULT_UNITY_TIMEOUT_SECONDS",
     "DEFAULT_STATUS",
     "DecisionRuntimeContext",
+    "EntityTransformRouteResolution",
     "EvolvedFollowupTask",
     "ExcludedTask",
     "FollowupTaskEvolver",
@@ -118,6 +120,8 @@ __all__ = [
     "load_project_content_profile",
     "package_intents_to_requests",
     "resolve_artifact_dir",
+    "resolve_entity_transform_route",
+    "run_level_0001_entity_transform_mutation",
     "run_level_0001_grass_mutation",
     "save_profile",
     "select_next_task",
