@@ -68,6 +68,7 @@ class HistoryEntry:
 class PreparedPromptPreview:
     prompt_text: str
     normalized_prompt: str
+    mapped_prompt: str
     classification: str
     target_repo: str
     target_display: str
@@ -81,6 +82,8 @@ class PreparedPromptPreview:
     decision_summary: str
     next_action_label: str
     ready_for_intake: bool
+    confirmation_required: bool
+    confirmation_prompt: str
     available: bool
     status_message: str
 
@@ -318,6 +321,7 @@ class IntakePreviewBridge:
             return PreparedPromptPreview(
                 prompt_text=str(prompt_text or ""),
                 normalized_prompt="",
+                mapped_prompt="",
                 classification="empty",
                 target_repo=target_repo,
                 target_display=target_display,
@@ -331,6 +335,8 @@ class IntakePreviewBridge:
                 decision_summary="",
                 next_action_label="Revise request",
                 ready_for_intake=False,
+                confirmation_required=False,
+                confirmation_prompt="",
                 available=True,
                 status_message="Enter a request to prepare it. AI-E has not started any work. Then review the decision before submitting it.",
             )
@@ -341,6 +347,7 @@ class IntakePreviewBridge:
             return PreparedPromptPreview(
                 prompt_text=prompt_text,
                 normalized_prompt=normalized,
+                mapped_prompt=normalized,
                 classification="unavailable",
                 target_repo=target_repo,
                 target_display=target_display,
@@ -354,6 +361,8 @@ class IntakePreviewBridge:
                 decision_summary="",
                 next_action_label="Revise request",
                 ready_for_intake=False,
+                confirmation_required=False,
+                confirmation_prompt="",
                 available=False,
                 status_message=f"{message} This request is prepared locally only. AI-E has not started any work.",
             )
@@ -370,6 +379,7 @@ class IntakePreviewBridge:
             return PreparedPromptPreview(
                 prompt_text=prompt_text,
                 normalized_prompt=normalized,
+                mapped_prompt=normalized,
                 classification=classification,
                 target_repo=target_repo,
                 target_display=target_display,
@@ -383,6 +393,8 @@ class IntakePreviewBridge:
                 decision_summary="",
                 next_action_label="Revise request",
                 ready_for_intake=classification == "task_request",
+                confirmation_required=False,
+                confirmation_prompt="",
                 available=False,
                 status_message=f"Request preview failed: {exc}. Revise the request and prepare it again. AI-E has not started any work.",
             )
@@ -392,7 +404,13 @@ class IntakePreviewBridge:
         action = str(routing.recommended_action or "review")
         lane = str(routing.execution_lane or "")
         summary = str(routing.decision_summary or routing.intelligence_summary or "Prepared for review.")
-        decision_state = self._decision_state(classification=classification, decision=decision)
+        confirmation_required = bool(getattr(routing, "confirmation_required", False))
+        confirmation_prompt = str(getattr(routing, "mapped_prompt", "") or "").strip()
+        decision_state = self._decision_state(
+            classification=classification,
+            decision=decision,
+            confirmation_required=confirmation_required,
+        )
         detected_action = self._detected_action(routing=routing, task_type=task_type)
         decision_reason = self._decision_reason(
             classification=classification,
@@ -405,15 +423,24 @@ class IntakePreviewBridge:
             f"Current decision: {decision_state}. "
             f"AI-E has not started any work."
         )
+        if confirmation_required:
+            status_message = (
+                "AI-E understood this request, but it needs your confirmation on the supported target before anything can continue."
+            )
         if not ready_for_intake:
             status_message = (
                 "This request is prepared, but AI-E does not recognize it as a supported request yet. "
                 "Revise the request to stay within supported scope. AI-E has not started any work."
             )
+        if confirmation_required:
+            status_message = (
+                "AI-E understood this request and found a supported target match. Confirm that target before AI-E continues."
+            )
 
         return PreparedPromptPreview(
             prompt_text=prompt_text,
             normalized_prompt=normalized,
+            mapped_prompt=confirmation_prompt or normalized,
             classification=classification,
             target_repo=target_repo,
             target_display=target_display,
@@ -427,6 +454,8 @@ class IntakePreviewBridge:
             decision_summary=summary,
             next_action_label=next_action_label,
             ready_for_intake=decision_state == "Ready",
+            confirmation_required=confirmation_required,
+            confirmation_prompt=confirmation_prompt,
             available=True,
             status_message=status_message,
         )
@@ -1708,7 +1737,9 @@ class IntakePreviewBridge:
         self._config_cls = OrchestratorConfig
 
     @staticmethod
-    def _decision_state(*, classification: str, decision: str) -> str:
+    def _decision_state(*, classification: str, decision: str, confirmation_required: bool = False) -> str:
+        if confirmation_required:
+            return "Needs confirmation"
         if classification != "task_request":
             return "Blocked"
         if decision == "auto_execute":
@@ -1723,6 +1754,8 @@ class IntakePreviewBridge:
     def _next_action_label(decision_state: str) -> str:
         if decision_state == "Ready":
             return "Submit request"
+        if decision_state == "Needs confirmation":
+            return "Use supported target"
         if decision_state == "Needs approval":
             return "Open review"
         if decision_state == "Sandbox first":
@@ -1747,6 +1780,10 @@ class IntakePreviewBridge:
     def _decision_reason(*, classification: str, decision_state: str, routing: Any) -> str:
         if classification != "task_request":
             return "AI-E does not recognize this as a supported request yet. Revise the request to stay within supported scope, then prepare it again."
+
+        confirmation_message = _clean_decision_text(str(getattr(routing, "confirmation_message", "") or "").strip())
+        if confirmation_message:
+            return confirmation_message
 
         summary_sources = []
         if decision_state == "Blocked":

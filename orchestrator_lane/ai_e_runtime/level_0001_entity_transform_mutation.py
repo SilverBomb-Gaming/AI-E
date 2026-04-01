@@ -9,7 +9,7 @@ from typing import Any, Dict, Tuple
 from orchestrator.utils import ensure_dir, read_json_with_status
 
 from .capability_registry import CapabilityEvidenceStore, RuntimeCapability
-from .intent_normalizer import fuzzy_match, normalize_prompt
+from .intent_normalizer import fuzzy_match, normalize_prompt, resolve_prompt
 
 
 _POWERSHELL_PREFIX = [
@@ -62,8 +62,9 @@ def resolve_entity_transform_route(
     if route_issue is not None or not isinstance(route_table, dict):
         return None, f"Entity-transform route table is unavailable at {route_table_path}"
 
-    normalized_prompt = normalize_prompt(prompt)
-    lookup_prompt = normalized_prompt
+    resolution = resolve_prompt(prompt)
+    normalized_prompt = resolution.normalized_prompt
+    lookup_prompt = resolution.lookup_prompt
     translated_command = _resolve_translated_command(alias_table, lookup_prompt)
     if not translated_command:
         fallback_prompt = fuzzy_match(lookup_prompt)
@@ -343,6 +344,11 @@ def unsupported_entity_transform_prompt_message(prompt: str) -> str | None:
     if {"move", "zombie", "backward"}.issubset(tokens):
         return (
             "Backward zombie movement is not a supported deterministic action yet. "
+            "Try something like: 'move zombie forward'."
+        )
+    if {"move", "forward"}.issubset(tokens) and "zombie" not in tokens:
+        return (
+            "AI-E currently supports this deterministic movement request only for the zombie system in BABYLON. "
             "Try something like: 'move zombie forward'."
         )
     return None

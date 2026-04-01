@@ -1,7 +1,9 @@
 import json
+from pathlib import Path
 
 import pytest
 
+from app import home_surface
 from ai_e_runtime.task_intake import ConversationalTaskIntake
 from orchestrator.config import OrchestratorConfig
 
@@ -276,6 +278,42 @@ def test_task_intake_normalizes_move_zombie_prompt_variants(tmp_path, prompt_tex
 
 
 @pytest.mark.parametrize(
+    ("prompt_text", "mapped_source"),
+    [
+        ("move enemy forward", "enemy"),
+        ("move character forward", "character"),
+    ],
+)
+def test_task_intake_requires_confirmation_for_generalized_entity_terms(tmp_path, prompt_text, mapped_source):
+    config = _make_config(tmp_path / "generalized_entity_confirmation")
+    _write_move_zombie_capability_contract(config)
+    target_repo = _create_entity_transform_prompt_repo(config)
+    intake = ConversationalTaskIntake(config)
+
+    result = intake.accept_message(
+        prompt_text,
+        session_id="operator-session-generalized-entity",
+        target_repo=target_repo,
+    )
+
+    runtime_payload = json.loads(result.artifacts.runtime_task_payload_path.read_text(encoding="utf-8"))
+
+    assert intake.classify_message(prompt_text) == "task_request"
+    assert result.task_type == "mutation_request"
+    assert result.queue_entry["status"] == "blocked"
+    assert result.queue_entry["agent_type"] == "read_only_inspector_agent"
+    assert result.routing.capability_id == "level_0001_move_zombie_forward"
+    assert result.routing.capability_supported is True
+    assert result.routing.entity_mapping_applied is True
+    assert result.routing.entity_mapping_sources == [mapped_source]
+    assert result.routing.confirmation_required is True
+    assert result.routing.mapped_prompt == "move zombie forward"
+    assert 'supported zombie system in BABYLON' in str(result.routing.confirmation_message)
+    assert runtime_payload["runtime_task"]["decision"] == "block"
+    assert runtime_payload["runtime_task"]["operator_prompt"] == prompt_text
+
+
+@pytest.mark.parametrize(
     "prompt_text",
     [
         "move zombie backward",
@@ -311,6 +349,28 @@ def test_task_intake_blocks_backward_move_zombie_variants_with_supported_example
     assert runtime_payload["runtime_task"]["decision"] == "block"
 
 
+def test_task_intake_blocks_unsupported_forward_entity_with_supported_example(tmp_path):
+    config = _make_config(tmp_path / "unsupported_forward_entity")
+    _write_move_zombie_capability_contract(config)
+    target_repo = _create_entity_transform_prompt_repo(config)
+    intake = ConversationalTaskIntake(config)
+
+    result = intake.accept_message(
+        "move boss forward",
+        session_id="operator-session-unsupported-entity",
+        target_repo=target_repo,
+    )
+
+    assert result.task_type == "mutation_request"
+    assert result.queue_entry["status"] == "blocked"
+    assert result.routing.confirmation_required is False
+    assert result.routing.entity_mapping_applied is False
+    assert (
+        str(result.routing.fail_closed_reason)
+        == "AI-E currently supports this deterministic movement request only for the zombie system in BABYLON. Try something like: 'move zombie forward'."
+    )
+
+
 def test_task_intake_blocks_translate_zombie_forward_when_no_deterministic_route_exists(tmp_path):
     config = _make_config(tmp_path / "translate_zombie_mutation_request")
     _write_move_zombie_capability_contract(config)
@@ -337,6 +397,33 @@ def test_task_intake_blocks_translate_zombie_forward_when_no_deterministic_route
     assert "I understood part of your request" in str(result.routing.fail_closed_reason)
     assert "move zombie forward" in str(result.routing.fail_closed_reason)
     assert runtime_payload["runtime_task"]["decision"] == "block"
+
+
+def test_home_surface_prepare_prompt_prompts_for_confirmation_when_entity_mapping_is_applied(tmp_path):
+    config = _make_config(tmp_path / "home_surface_entity_confirmation")
+    _write_move_zombie_capability_contract(config)
+    target_repo = _create_entity_transform_prompt_repo(config)
+    intake = ConversationalTaskIntake(config)
+    bridge = home_surface.IntakePreviewBridge()
+    bridge._create_intake = lambda: intake
+    project = home_surface.SupportedProject(
+        name="BABYLON TEST",
+        path=Path(target_repo),
+        project_type="unity_project",
+        source="test",
+        status="supported",
+    )
+
+    preview = bridge.prepare_prompt("move enemy forward", project)
+
+    assert preview.available is True
+    assert preview.decision_state == "Needs confirmation"
+    assert preview.confirmation_required is True
+    assert preview.confirmation_prompt == "move zombie forward"
+    assert preview.next_action_label == "Use supported target"
+    assert preview.detected_action == "LEVEL_0001 move zombie forward"
+    assert 'I understood "enemy" as the supported zombie system in BABYLON.' in preview.decision_reason
+    assert "Confirm that target" in preview.status_message or "Confirm the zombie target" in preview.decision_reason
 
 
 def test_task_intake_auto_promotes_reference_grass_capability_when_reference_evidence_is_present(tmp_path):

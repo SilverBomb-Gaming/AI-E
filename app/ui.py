@@ -1181,6 +1181,7 @@ class ControlPanel(QtWidgets.QMainWindow):
     def _apply_decision_state_style(self, decision_state: str) -> None:
         styles = {
             "Ready": ("#dcfce7", "#166534"),
+            "Needs confirmation": ("#dbeafe", "#1d4ed8"),
             "Needs approval": ("#fef3c7", "#92400e"),
             "Sandbox first": ("#dbeafe", "#1d4ed8"),
             "Blocked": ("#fee2e2", "#b91c1c"),
@@ -1847,6 +1848,18 @@ class ControlPanel(QtWidgets.QMainWindow):
         preview = self.current_prepared_prompt
         if preview is None:
             self.prompt_input.setFocus()
+            return
+
+        if preview.confirmation_required and preview.confirmation_prompt:
+            self.prompt_input.setPlainText(preview.confirmation_prompt)
+            refreshed = self.intake_preview_bridge.prepare_prompt(preview.confirmation_prompt, self._selected_project())
+            self._persist_state()
+            self._render_prepared_prompt(refreshed)
+            message = (
+                "AI-E updated the request to the supported zombie target. Review the updated decision before continuing."
+            )
+            self.intake_feedback_label.setText(message)
+            self._update_status_panel(message)
             return
 
         if preview.decision_state == "Ready":

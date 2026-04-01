@@ -11,7 +11,7 @@ from .autonomous_decision import DecisionRuntimeContext, evaluate_autonomous_dec
 from .capability_intelligence import assess_capability_intelligence, assess_mutation_without_capability
 from .capability_registry import CapabilityRegistry, RuntimeCapability
 from .content_policy import ensure_project_content_profile, evaluate_content_policy, load_project_content_profile
-from .intent_normalizer import normalize_prompt
+from .intent_normalizer import entity_confirmation_message, normalize_prompt, resolve_prompt
 from .level_0001_entity_transform_mutation import (
     resolve_entity_transform_route,
     unsupported_entity_transform_prompt_message,
@@ -106,6 +106,11 @@ class IntakeRouting:
     capability_supported: bool = False
     promotion_basis: str | None = None
     fail_closed_reason: str | None = None
+    mapped_prompt: str | None = None
+    entity_mapping_applied: bool = False
+    entity_mapping_sources: List[str] | None = None
+    confirmation_required: bool = False
+    confirmation_message: str | None = None
 
     def to_payload(self) -> Dict[str, Any]:
         return {
@@ -163,6 +168,11 @@ class IntakeRouting:
             "capability_supported": self.capability_supported,
             "promotion_basis": self.promotion_basis,
             "fail_closed_reason": self.fail_closed_reason,
+            "mapped_prompt": self.mapped_prompt,
+            "entity_mapping_applied": self.entity_mapping_applied,
+            "entity_mapping_sources": list(self.entity_mapping_sources or []),
+            "confirmation_required": self.confirmation_required,
+            "confirmation_message": self.confirmation_message,
         }
 
 
@@ -251,6 +261,7 @@ class ConversationalTaskIntake:
         "babylon",
         "zombie",
         "enemy",
+        "character",
         "player",
         "weapon",
         "scene",
@@ -507,7 +518,10 @@ class ConversationalTaskIntake:
             return "not_task_request"
         if normalized.startswith(self._TASK_REQUEST_VERBS):
             return "task_request"
-        if any(token in normalized for token in ("level_0001", "zombie", "kbm", "weapon", "babylon", "unity")):
+        lookup_prompt = resolve_prompt(normalized).lookup_prompt
+        if self._looks_like_world_mutation_request(lookup_prompt):
+            return "task_request"
+        if any(token in lookup_prompt for token in ("level_0001", "zombie", "enemy", "character", "kbm", "weapon", "babylon", "unity")):
             return "task_request"
         return "not_task_request"
 
@@ -529,7 +543,7 @@ class ConversationalTaskIntake:
             "operator_prompt": normalized_prompt,
             "created_at": get_current_timestamp(),
             "intent": task_type,
-            "clarification_needed": False,
+            "clarification_needed": routing.confirmation_required,
             "context": {
                 "target_repo": target_repo,
                 "execution_mode": routing.execution_lane if routing.requested_intent == "mutate" or routing.mutation_capable else "bounded_read_only",
@@ -678,8 +692,8 @@ class ConversationalTaskIntake:
         return text[:85].rstrip() + "..."
 
     def _derive_target_repo(self, prompt: str) -> str:
-        lower = prompt.lower()
-        babylon_markers = ("level_0001", "babylon", "zombie", "kbm", "weapon", "unity")
+        lower = resolve_prompt(prompt).lookup_prompt.lower()
+        babylon_markers = ("level_0001", "babylon", "zombie", "enemy", "character", "kbm", "weapon", "unity")
         if any(token in lower for token in babylon_markers):
             return resolve_default_target_repo(self.config, prompt=prompt)
         return str(self.config.root_dir).replace("\\", "/")
@@ -699,13 +713,16 @@ class ConversationalTaskIntake:
         return "general_request"
 
     def _resolve_intake_routing(self, prompt: str, *, session_id: str, target_repo: str | None = None) -> IntakeRouting:
-        normalized = self._normalize_prompt(prompt).lower()
-        requested_intent = self._classify_requested_intent(normalized)
+        resolution = resolve_prompt(prompt)
+        normalized = resolution.normalized_prompt.lower()
+        lookup_prompt = resolution.lookup_prompt.lower()
+        mapping_sources = [mapping.source_term for mapping in resolution.applied_entity_mappings]
+        requested_intent = self._classify_requested_intent(lookup_prompt)
         requested_execution_lane = self._requested_lane_for_intent(requested_intent)
-        capability = self.capability_registry.match(normalized)
+        capability = self.capability_registry.match(lookup_prompt)
         if capability is not None:
             preflight_issue = self._resolve_mutation_route_issue(
-                prompt=normalized,
+                prompt=lookup_prompt,
                 capability=capability,
                 target_repo=target_repo,
             )
@@ -714,18 +731,50 @@ class ConversationalTaskIntake:
                     requested_execution_lane=requested_execution_lane,
                     session_id=session_id,
                     route_issue=preflight_issue,
+                    mapped_prompt=lookup_prompt,
+                    entity_mapping_applied=resolution.entity_mapping_applied,
+                    entity_mapping_sources=mapping_sources,
                 )
-            return self._apply_content_policy(prompt=normalized, routing=self._routing_for_capability(capability), capability=capability, session_id=session_id)
+            routing = replace(
+                self._routing_for_capability(capability),
+                mapped_prompt=lookup_prompt,
+                entity_mapping_applied=resolution.entity_mapping_applied,
+                entity_mapping_sources=mapping_sources,
+            )
+            confirmation_message = entity_confirmation_message(resolution)
+            if confirmation_message:
+                return replace(
+                    routing,
+                    execution_decision="blocked",
+                    recommended_action="confirm_supported_target",
+                    decision="block",
+                    decision_reason="confirmation_required",
+                    decision_summary=confirmation_message,
+                    decision_blocked=True,
+                    fail_closed_reason=confirmation_message,
+                    mutation_capable=False,
+                    approval_required=False,
+                    sandbox_first_required=False,
+                    auto_execution_enabled=False,
+                    auto_execution_reason=None,
+                    capability_supported=True,
+                    confirmation_required=True,
+                    confirmation_message=confirmation_message,
+                )
+            return self._apply_content_policy(prompt=lookup_prompt, routing=routing, capability=capability, session_id=session_id)
         if requested_intent == "mutate":
-            unsupported_message = unsupported_entity_transform_prompt_message(normalized)
+            unsupported_message = unsupported_entity_transform_prompt_message(lookup_prompt)
             if unsupported_message is not None:
                 return self._blocked_mutation_route_routing(
                     requested_execution_lane=requested_execution_lane,
                     session_id=session_id,
                     route_issue=unsupported_message,
+                    mapped_prompt=lookup_prompt,
+                    entity_mapping_applied=resolution.entity_mapping_applied,
+                    entity_mapping_sources=mapping_sources,
                 )
             intelligence = assess_mutation_without_capability()
-            return self._apply_content_policy(prompt=normalized, routing=IntakeRouting(
+            return self._apply_content_policy(prompt=lookup_prompt, routing=IntakeRouting(
                 requested_intent="mutate",
                 resolved_intent="mutate",
                 requested_execution_lane=requested_execution_lane,
@@ -744,9 +793,12 @@ class ConversationalTaskIntake:
                 auto_execution_reason=intelligence.auto_execution_reason,
                 missing_evidence=list(intelligence.missing_evidence),
                 intelligence_summary=intelligence.summary,
+                mapped_prompt=lookup_prompt,
+                entity_mapping_applied=resolution.entity_mapping_applied,
+                entity_mapping_sources=mapping_sources,
             ), session_id=session_id)
         if requested_intent == "plan":
-            return self._apply_content_policy(prompt=normalized, routing=IntakeRouting(
+            return self._apply_content_policy(prompt=lookup_prompt, routing=IntakeRouting(
                 requested_intent="plan",
                 resolved_intent="inspect",
                 requested_execution_lane=requested_execution_lane,
@@ -755,9 +807,12 @@ class ConversationalTaskIntake:
                 downgrade_reason="No dedicated plan-only execution lane is available in the current runtime; routing to bounded read-only inspection.",
                 approval_required=False,
                 mutation_capable=False,
+                mapped_prompt=lookup_prompt,
+                entity_mapping_applied=resolution.entity_mapping_applied,
+                entity_mapping_sources=mapping_sources,
             ), session_id=session_id)
         if requested_intent == "inspect":
-            return self._apply_content_policy(prompt=normalized, routing=IntakeRouting(
+            return self._apply_content_policy(prompt=lookup_prompt, routing=IntakeRouting(
                 requested_intent="inspect",
                 resolved_intent="inspect",
                 requested_execution_lane="read_only_inspection",
@@ -766,8 +821,11 @@ class ConversationalTaskIntake:
                 downgrade_reason=None,
                 approval_required=False,
                 mutation_capable=False,
+                mapped_prompt=lookup_prompt,
+                entity_mapping_applied=resolution.entity_mapping_applied,
+                entity_mapping_sources=mapping_sources,
             ), session_id=session_id)
-        return self._apply_content_policy(prompt=normalized, routing=IntakeRouting(
+        return self._apply_content_policy(prompt=lookup_prompt, routing=IntakeRouting(
             requested_intent="ambiguous",
             resolved_intent="inspect",
             requested_execution_lane="read_only_inspection",
@@ -776,6 +834,9 @@ class ConversationalTaskIntake:
             downgrade_reason=None,
             approval_required=False,
             mutation_capable=False,
+            mapped_prompt=lookup_prompt,
+            entity_mapping_applied=resolution.entity_mapping_applied,
+            entity_mapping_sources=mapping_sources,
         ), session_id=session_id)
 
     def _routing_for_capability(self, capability: RuntimeCapability) -> IntakeRouting:
@@ -954,10 +1015,13 @@ class ConversationalTaskIntake:
         requested_execution_lane: str,
         session_id: str,
         route_issue: str,
+        mapped_prompt: str | None = None,
+        entity_mapping_applied: bool = False,
+        entity_mapping_sources: List[str] | None = None,
     ) -> IntakeRouting:
         intelligence = assess_mutation_without_capability()
         routing = self._apply_content_policy(
-            prompt="",
+            prompt=mapped_prompt or "",
             routing=IntakeRouting(
                 requested_intent="mutate",
                 resolved_intent="mutate",
@@ -977,6 +1041,9 @@ class ConversationalTaskIntake:
                 auto_execution_reason=intelligence.auto_execution_reason,
                 missing_evidence=list(intelligence.missing_evidence),
                 intelligence_summary=route_issue,
+                mapped_prompt=mapped_prompt,
+                entity_mapping_applied=entity_mapping_applied,
+                entity_mapping_sources=entity_mapping_sources,
             ),
             session_id=session_id,
         )

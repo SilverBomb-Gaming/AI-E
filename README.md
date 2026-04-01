@@ -21,6 +21,15 @@ AI-E now exposes a validated v1 front door over the existing system. A user can 
 - canonical prompt resolution feeds the existing deterministic intake, approval, runtime, and artifact flow without introducing a new execution path
 - explicit unsupported-direction handling now blocks unsupported deterministic requests honestly instead of silently downgrading them
 
+## Conversational Mapping Support
+
+- generalized conversational terms can map to the supported deterministic target only through explicit controlled mappings
+- current supported conversational mappings:
+  - `enemy` -> `zombie`
+  - `character` -> `zombie`
+- mapped requests do not execute directly; AI-E first shows a confirmation-required step and asks the user to continue with the supported zombie target
+- unsupported generalized terms such as `boss` remain blocked with a clear supported example instead of being guessed or executed blindly
+
 ## Supported Prompt Variation Examples
 
 - `move zombie forward`
@@ -36,8 +45,9 @@ All of these normalize to the canonical deterministic command `move zombie forwa
 - `move zombie backwards`
 - `move zombie slightly backward`
 - `please move zombie backward`
+- `move boss forward`
 
-These requests remain intentionally blocked because backward zombie movement is not a supported deterministic action yet. AI-E now says so clearly and suggests the supported example `move zombie forward`.
+These requests remain intentionally blocked because backward zombie movement is not a supported deterministic action yet, and unsupported generalized targets such as `boss` do not have a safe deterministic mapping. AI-E now says so clearly and suggests the supported example `move zombie forward`.
 
 ## What AI-E Supports Today
 
@@ -49,11 +59,13 @@ These requests remain intentionally blocked because backward zombie movement is 
 - readable result summaries built from saved proof, run, and session artifacts
 - project/session history with reopen and re-stage paths when saved data supports them
 - deterministic prompt normalization for currently supported forward-movement variants
+- controlled conversational mapping from `enemy` and `character` onto the supported zombie target with explicit confirmation before execution
 
 ## What Users Can Do Today
 
 - choose a supported project like `BABYLON VER 2`
 - prepare a request such as `move zombie forward`, `move zombie forward again`, or `please move zombie forward`
+- use generalized terms such as `enemy` or `character`, then confirm the supported zombie target before continuing
 - submit it when AI-E shows `Ready`, or open review and approve it once when needed
 - use `Run in sandbox` when AI-E says `Sandbox first`
 - watch progress in `Live Run Status`
