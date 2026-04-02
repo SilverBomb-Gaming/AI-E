@@ -478,17 +478,17 @@ class StateStore:
             normalized_issue = normalized_issue or "invalid_shape"
             mark_invalid("session_tuning_history")
 
-        if not isinstance(state.get("session_tuning_state"), dict):
+        if "session_tuning_state" in state and not isinstance(state.get("session_tuning_state"), dict):
             state["session_tuning_state"] = {}
             normalized_issue = normalized_issue or "invalid_shape"
             mark_invalid("session_tuning_state")
 
-        if not isinstance(state.get("experiment_tracking"), dict):
+        if "experiment_tracking" in state and not isinstance(state.get("experiment_tracking"), dict):
             state["experiment_tracking"] = {}
             normalized_issue = normalized_issue or "invalid_shape"
             mark_invalid("experiment_tracking")
 
-        if not isinstance(state.get("latest_experiment_variant"), dict):
+        if "latest_experiment_variant" in state and not isinstance(state.get("latest_experiment_variant"), dict):
             state["latest_experiment_variant"] = {}
             normalized_issue = normalized_issue or "invalid_shape"
             mark_invalid("latest_experiment_variant")
@@ -503,7 +503,7 @@ class StateStore:
             normalized_issue = normalized_issue or "invalid_shape"
             mark_invalid("result_evaluation_history")
 
-        if not isinstance(state.get("latest_result_evaluation"), dict):
+        if "latest_result_evaluation" in state and not isinstance(state.get("latest_result_evaluation"), dict):
             state["latest_result_evaluation"] = {}
             normalized_issue = normalized_issue or "invalid_shape"
             mark_invalid("latest_result_evaluation")

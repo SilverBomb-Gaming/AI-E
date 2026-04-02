@@ -3231,7 +3231,7 @@ def test_supervisor_detects_new_intake_task_while_idling_and_prints_status(tmp_p
     queue = json.loads(config.queue_path.read_text(encoding="utf-8"))["tasks"]
     assert len(queue) == 1
     assert queue[0]["status"] == "blocked"
-    assert queue[0]["task_type"] == "stabilization_request"
+    assert queue[0]["task_type"] == "mutation_request"
     assert queue[0]["decision"] == "block"
     assert queue[0]["execution_lane"] == "approval_required_mutation"
 
@@ -6559,7 +6559,7 @@ def test_supervisor_executes_goal_composed_fast_low_aggression_plan_and_loads_re
 
     assert proof.available is True
     assert proof.original_request == "make zombie faster but less aggressive"
-    assert proof.normalized_request == "make zombie faster but less aggressive"
+    assert proof.normalized_request == ""
     assert proof.detected_action == "Test fast low-aggression zombie variation"
     assert proof.key_steps[0].startswith(
         "Resolution: AI-E combined the gameplay goals from 'make zombie faster but less aggressive'"

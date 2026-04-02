@@ -227,6 +227,11 @@ def unsupported_predefined_plan_message(prompt: str) -> str | None:
         )
         and "zombie" not in normalized
     ):
+        if "safer" in normalized:
+            return (
+                "AI-E currently supports this safety plan only for the zombie system in BABYLON. "
+                "Try something like: 'make zombie safer'."
+            )
         return (
             "AI-E currently supports this lower-danger plan only for the zombie system in BABYLON. "
             "Try something like: 'make zombie less dangerous'."

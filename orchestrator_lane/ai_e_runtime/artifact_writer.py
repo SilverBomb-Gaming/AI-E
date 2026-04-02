@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from itertools import count
 from pathlib import Path
 from typing import Any, Dict, List
@@ -24,9 +25,11 @@ class ArtifactWriter:
         result: Dict[str, Any],
         validation: Dict[str, Any],
     ) -> List[str]:
+        ensure_dir(self.session_dir)
+        ensure_dir(self.artifacts_dir)
         task_id = self._task_id(task)
         attempt = int(task.get("retry_count", 0)) + 1
-        stem = f"{task_id}_attempt_{attempt:02d}"
+        stem = self._attempt_stem(task_id, attempt)
         artifact_path = self.artifacts_dir / f"{stem}.json"
         summary_path = self.artifacts_dir / f"{stem}.md"
 
@@ -42,6 +45,7 @@ class ArtifactWriter:
         return [self._relative(artifact_path), self._relative(summary_path)]
 
     def write_session_summary(self, payload: Dict[str, Any]) -> List[str]:
+        ensure_dir(self.session_dir)
         json_path = self.session_dir / "session_summary.json"
         markdown_path = self.session_dir / "session_summary.md"
         operator_report_path = self.session_dir / "operator_report.md"
@@ -63,18 +67,29 @@ class ArtifactWriter:
         ]
 
     def write_autonomous_selection(self, selection: AutonomousSelectionResult) -> List[str]:
+        ensure_dir(self.session_dir)
+        ensure_dir(self.artifacts_dir)
         index = self._next_selection_index()
-        stem = f"selector_{index:02d}_{selection.selected_task_id or 'none'}"
-        json_path = self.artifacts_dir / f"{stem}.json"
-        text_path = self.artifacts_dir / f"{stem}.txt"
-        write_json(json_path, selection.to_payload())
-        safe_write_text(text_path, format_selection_report(selection))
+        short_stem = f"sel_{index:02d}_{self._selection_label(selection.selected_task_id)}"
+        json_path = self.artifacts_dir / f"{short_stem}.json"
+        text_path = self.artifacts_dir / f"{short_stem}.txt"
+        payload = selection.to_payload()
+        report = format_selection_report(selection)
+        write_json(json_path, payload)
+        safe_write_text(text_path, report)
+
+        legacy_paths = self._legacy_selection_paths(index, selection.selected_task_id)
+        if legacy_paths is not None:
+            legacy_json_path, legacy_text_path = legacy_paths
+            write_json(legacy_json_path, payload)
+            safe_write_text(legacy_text_path, report)
+
         return [self._relative(json_path), self._relative(text_path)]
 
     def expected_attempt_artifacts(self, task: Dict[str, Any]) -> List[str]:
         task_id = self._task_id(task)
         attempt = int(task.get("retry_count", 0)) + 1
-        stem = f"{task_id}_attempt_{attempt:02d}"
+        stem = self._attempt_stem(task_id, attempt)
         return [
             self._relative(self.artifacts_dir / f"{stem}.json"),
             self._relative(self.artifacts_dir / f"{stem}.md"),
@@ -274,7 +289,29 @@ class ArtifactWriter:
         return str(path.relative_to(self.session_dir)).replace("\\", "/")
 
     def _next_selection_index(self) -> int:
+        ensure_dir(self.artifacts_dir)
         for index in count(1):
-            prefix = f"selector_{index:02d}_"
-            if not any(path.name.startswith(prefix) for path in self.artifacts_dir.iterdir()):
+            prefix = f"sel_{index:02d}_"
+            legacy_prefix = f"selector_{index:02d}_"
+            if not any(
+                path.name.startswith(prefix) or path.name.startswith(legacy_prefix)
+                for path in self.artifacts_dir.iterdir()
+            ):
                 return index
+
+    def _selection_label(self, selected_task_id: str | None) -> str:
+        label = str(selected_task_id or "none").strip() or "none"
+        return hashlib.sha1(label.encode("utf-8")).hexdigest()[:8]
+
+    def _legacy_selection_paths(self, index: int, selected_task_id: str | None) -> tuple[Path, Path] | None:
+        task_label = str(selected_task_id or "none").strip() or "none"
+        legacy_stem = f"selector_{index:02d}_{task_label}"
+        json_path = self.artifacts_dir / f"{legacy_stem}.json"
+        text_path = self.artifacts_dir / f"{legacy_stem}.txt"
+        max_path_chars = 240
+        if max(len(str(json_path)), len(str(text_path))) >= max_path_chars:
+            return None
+        return json_path, text_path
+
+    def _attempt_stem(self, task_id: str, attempt: int) -> str:
+        return f"{task_id}_attempt_{attempt:02d}"

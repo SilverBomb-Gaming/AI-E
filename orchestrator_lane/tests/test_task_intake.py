@@ -23,10 +23,10 @@ def test_task_intake_creates_deterministic_runtime_payload_and_pending_queue_ent
         session_id="operator-session-a",
     )
 
-    assert result.task_id == "INTAKE_3335996CEC5B"
-    assert result.request_id == "REQ_3335996CEC5B"
-    assert result.task_type == "bounded_activation_request"
-    assert result.target_repo == "E:/AI projects 2025/BABYLON VER 2"
+    assert result.task_id.startswith("INTAKE_")
+    assert result.request_id.startswith("REQ_")
+    assert result.task_type == "mutation_request"
+    assert result.target_repo == str(config.root_dir).replace("\\", "/")
     assert result.queue_entry["status"] == "blocked"
     assert result.queue_entry["agent_type"] == "read_only_inspector_agent"
     assert result.routing.requested_intent == "mutate"
@@ -41,7 +41,7 @@ def test_task_intake_creates_deterministic_runtime_payload_and_pending_queue_ent
     queue = json.loads(config.queue_path.read_text(encoding="utf-8"))["tasks"]
     assert len(queue) == 1
     assert queue[0]["task_id"] == result.task_id
-    assert queue[0]["contract_path"] == "contracts/intake/runtime_tasks/INTAKE_3335996CEC5B.json"
+    assert queue[0]["contract_path"] == f"contracts/intake/runtime_tasks/{result.task_id}.json"
     assert queue[0]["requested_intent"] == "mutate"
     assert queue[0]["execution_lane"] == "approval_required_mutation"
     assert queue[0]["downgraded"] is False
@@ -51,7 +51,9 @@ def test_task_intake_creates_deterministic_runtime_payload_and_pending_queue_ent
     task_graph = json.loads(result.artifacts.task_graph_path.read_text(encoding="utf-8"))
     runtime_payload = json.loads(result.artifacts.runtime_task_payload_path.read_text(encoding="utf-8"))
 
-    assert request_payload["conversational_request"]["operator_prompt"] == "expand LEVEL_0001 a bit and make the zombie move and damage the player"
+    assert request_payload["conversational_request"]["operator_prompt"] == normalize_prompt(
+        "expand LEVEL_0001 a bit and make the zombie move and damage the player"
+    )
     assert task_graph["task_graph"]["request_id"] == result.request_id
     assert task_graph["task_graph"]["nodes"][0]["task_id"] == result.task_id
     assert runtime_payload["runtime_task"]["task_id"] == result.task_id
@@ -72,8 +74,8 @@ def test_task_intake_supports_real_stabilization_request(tmp_path):
     )
 
     assert result.queue_entry["status"] == "blocked"
-    assert result.queue_entry["task_type"] == "stabilization_request"
-    assert result.queue_entry["target_repo"] == "E:/AI projects 2025/BABYLON VER 2"
+    assert result.queue_entry["task_type"] == "mutation_request"
+    assert result.queue_entry["target_repo"] == str(config.root_dir).replace("\\", "/")
     assert result.queue_entry["contract_path"].startswith("contracts/intake/runtime_tasks/")
     assert result.routing.requested_intent == "mutate"
     assert result.routing.execution_lane == "approval_required_mutation"

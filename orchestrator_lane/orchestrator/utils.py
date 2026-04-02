@@ -32,7 +32,7 @@ def slugify(value: str) -> str:
 
 def write_json(path: Path, payload: Dict[str, Any]) -> None:
     ensure_dir(path.parent)
-    temp_path = path.with_suffix(f"{path.suffix}.{uuid4().hex}.tmp")
+    temp_path = path.parent / f".tmp_{uuid4().hex[:8]}.tmp"
     temp_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     for attempt in range(10):
         try:
