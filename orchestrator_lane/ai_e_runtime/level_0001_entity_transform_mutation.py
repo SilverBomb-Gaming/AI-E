@@ -10,6 +10,8 @@ from orchestrator.utils import ensure_dir, read_json_with_status
 
 from .capability_registry import CapabilityEvidenceStore, RuntimeCapability
 from .intent_normalizer import fuzzy_match, normalize_prompt, resolve_prompt
+from .session_tuning import build_result_session_metadata
+from .time_utils import get_current_timestamp
 
 
 _POWERSHELL_PREFIX = [
@@ -22,11 +24,15 @@ _POWERSHELL_PREFIX = [
 _TRANSLATOR_SCRIPT_RELATIVE_PATH = Path("Tools") / "run_aie_prompt.ps1"
 _ALIAS_TABLE_RELATIVE_PATH = Path("Tools") / "aie_prompt_aliases.json"
 _ROUTE_TABLE_RELATIVE_PATH = Path("Tools") / "intent_layer_v1_routes.json"
-_EXPECTED_ROUTE_COMMAND = "move zombie forward"
-_EXPECTED_PROBE_NAME = "MutateEntityTransform"
-_EXPECTED_ACTION_TYPE = "mutate_entity_transform"
 _DEFAULT_TARGET_OBJECT_NAME = "AIE_Zombie_001_Instance"
 _DEFAULT_ROUTE_SCENE = "entity_test"
+
+
+@dataclass(frozen=True)
+class EntityMutationRouteProfile:
+    probe_name: str
+    probe_action_type: str
+    result_kind: str
 
 
 @dataclass(frozen=True)
@@ -36,8 +42,29 @@ class EntityTransformRouteResolution:
     action_name: str
     scene_name: str
     probe_name: str
+    probe_action_type: str
+    result_kind: str
     wrapper_path: Path
     target_object_name: str
+
+
+_ROUTE_PROFILES = {
+    "MutateEntityTransform": EntityMutationRouteProfile(
+        probe_name="MutateEntityTransform",
+        probe_action_type="mutate_entity_transform",
+        result_kind="transform",
+    ),
+    "MutateEnemyMoveSpeed": EntityMutationRouteProfile(
+        probe_name="MutateEnemyMoveSpeed",
+        probe_action_type="mutate_enemy_move_speed",
+        result_kind="speed",
+    ),
+    "MutateEnemyAggression": EntityMutationRouteProfile(
+        probe_name="MutateEnemyAggression",
+        probe_action_type="mutate_enemy_aggression",
+        result_kind="aggression",
+    ),
+}
 
 
 def resolve_entity_transform_route(
@@ -89,7 +116,8 @@ def resolve_entity_transform_route(
         )
 
     probe_name = str(route.get("probe_name") or "").strip()
-    if probe_name != _EXPECTED_PROBE_NAME:
+    profile = _ROUTE_PROFILES.get(probe_name)
+    if profile is None:
         return (
             None,
             f"Deterministic route '{translated_command}' resolved to unexpected probe '{probe_name or 'unknown'}'.",
@@ -116,6 +144,8 @@ def resolve_entity_transform_route(
         action_name=action_name,
         scene_name=scene_name,
         probe_name=probe_name,
+        probe_action_type=profile.probe_action_type,
+        result_kind=profile.result_kind,
         wrapper_path=wrapper_path,
         target_object_name=target_object_name,
     ), None
@@ -246,6 +276,8 @@ def run_level_0001_entity_transform_mutation(task: Dict[str, Any]) -> Dict[str, 
         probe_issue=probe_issue,
         expected_command=route_resolution.translated_command,
         expected_probe=route_resolution.probe_name,
+        expected_action_type=route_resolution.probe_action_type,
+        result_kind=route_resolution.result_kind,
     )
     if failure_reason is not None:
         evidence_store.record_result(
@@ -295,25 +327,66 @@ def run_level_0001_entity_transform_mutation(task: Dict[str, Any]) -> Dict[str, 
         "matched_prompt_pattern": str(translator_payload.get("matched_prompt_pattern") or route_resolution.normalized_prompt),
         "action_name": str(router_payload.get("action_name") or route_resolution.action_name),
         "executed_probe": str(router_payload.get("executed_probe") or route_resolution.probe_name),
-        "action_type": str(probe_payload.get("action_type") or _EXPECTED_ACTION_TYPE),
+        "action_type": str(probe_payload.get("action_type") or route_resolution.probe_action_type),
         "object_name": str(probe_payload.get("object_name") or route_resolution.target_object_name),
-        "previous_position": list(probe_payload.get("previous_position") or []),
-        "new_position": list(probe_payload.get("new_position") or []),
-        "observed_position_before_reset": list(probe_payload.get("observed_position_before_reset") or []),
         "scene_name": str(probe_payload.get("scene_name") or route_resolution.scene_name),
         "scene_path": scene_path,
         "files_changed": [scene_path] if scene_path else [],
+        "executed": _probe_execution_applied(probe_payload),
+        "result_reason": _probe_result_reason(probe_payload),
+        "timestamp": str(probe_payload.get("timestamp") or get_current_timestamp()),
         "validation": {
             "status": "passed",
-            "check": "mutate_entity_transform_artifact_confirmed",
+            "check": _validation_check_name(route_resolution.result_kind),
         },
         "evidence": evidence_snapshot,
     }
+    if route_resolution.result_kind == "transform":
+        result_details.update(
+            {
+                "previous_position": list(probe_payload.get("previous_position") or []),
+                "new_position": list(probe_payload.get("new_position") or []),
+                "observed_position_before_reset": list(probe_payload.get("observed_position_before_reset") or []),
+            }
+        )
+    elif route_resolution.result_kind == "speed":
+        result_details.update(
+            {
+                "previous_speed": _float_or_none(probe_payload.get("previous_speed")),
+                "new_speed": _float_or_none(probe_payload.get("new_speed")),
+                "observed_speed_before_reset": _float_or_none(probe_payload.get("observed_speed_before_reset")),
+                "baseline_speed": _float_or_none(probe_payload.get("baseline_speed")),
+                "requested_speed": _float_or_none(probe_payload.get("requested_speed")),
+                "minimum_speed": _float_or_none(probe_payload.get("minimum_speed")),
+                "maximum_speed": _float_or_none(probe_payload.get("maximum_speed")),
+                "speed_changed": bool(probe_payload.get("speed_changed", False)),
+            }
+        )
+    elif route_resolution.result_kind == "aggression":
+        result_details.update(
+            {
+                "previous_attack_cooldown": _float_or_none(probe_payload.get("previous_attack_cooldown")),
+                "new_attack_cooldown": _float_or_none(probe_payload.get("new_attack_cooldown")),
+                "observed_attack_cooldown_before_reset": _float_or_none(probe_payload.get("observed_attack_cooldown_before_reset")),
+                "baseline_attack_cooldown": _float_or_none(probe_payload.get("baseline_attack_cooldown")),
+                "requested_attack_cooldown": _float_or_none(probe_payload.get("requested_attack_cooldown")),
+                "minimum_attack_cooldown": _float_or_none(probe_payload.get("minimum_attack_cooldown")),
+                "maximum_attack_cooldown": _float_or_none(probe_payload.get("maximum_attack_cooldown")),
+                "aggression_changed": bool(probe_payload.get("aggression_changed", False)),
+            }
+        )
+    result_details.update(
+        build_result_session_metadata(
+            task=task,
+            details=result_details,
+            result_kind=route_resolution.result_kind,
+        )
+    )
     return {
         "status": "completed",
         "summary": (
             f"{capability.handler_name} executed {route_resolution.translated_command} "
-            f"via {_EXPECTED_ACTION_TYPE}"
+            f"via {route_resolution.probe_action_type}"
         ),
         "details": result_details,
         "artifacts": _supporting_artifacts(translator_payload, router_payload),
@@ -334,7 +407,7 @@ def _resolve_translated_command(alias_table: Dict[str, Any], normalized_prompt: 
 def _unmatched_prompt_message() -> str:
     return (
         "I understood part of your request, but couldn't match it to a known action. "
-        "Try something like: 'move zombie forward'."
+        "Try something like: 'move zombie forward', 'make zombie faster', or 'make zombie more aggressive'."
     )
 
 
@@ -350,6 +423,21 @@ def unsupported_entity_transform_prompt_message(prompt: str) -> str | None:
         return (
             "AI-E currently supports this deterministic movement request only for the zombie system in BABYLON. "
             "Try something like: 'move zombie forward'."
+        )
+    if {"make", "faster"}.issubset(tokens) and "zombie" not in tokens:
+        return (
+            "AI-E currently supports this deterministic speed adjustment only for the zombie system in BABYLON. "
+            "Try something like: 'make zombie faster'."
+        )
+    if {"make", "slower"}.issubset(tokens) and "zombie" not in tokens:
+        return (
+            "AI-E currently supports this deterministic speed adjustment only for the zombie system in BABYLON. "
+            "Try something like: 'make zombie slower'."
+        )
+    if {"make", "aggressive"}.issubset(tokens) and "zombie" not in tokens:
+        return (
+            "AI-E currently supports this deterministic aggression adjustment only for the zombie system in BABYLON. "
+            "Try something like: 'make zombie more aggressive'."
         )
     return None
 
@@ -406,6 +494,8 @@ def _validate_execution_artifacts(
     probe_issue: str | None,
     expected_command: str,
     expected_probe: str,
+    expected_action_type: str,
+    result_kind: str,
 ) -> str | None:
     if translator_issue is not None or not isinstance(translator_payload, dict):
         return translator_issue or "Translator artifact is missing or unreadable."
@@ -424,7 +514,7 @@ def _validate_execution_artifacts(
         return str(router_payload.get("message") or "Intent router did not report success.")
     if str(router_payload.get("executed_probe") or "") != expected_probe:
         return f"Intent router resolved unexpected probe '{router_payload.get('executed_probe') or 'unknown'}'."
-    if str(router_payload.get("delegated_probe_action_type") or "") != _EXPECTED_ACTION_TYPE:
+    if str(router_payload.get("delegated_probe_action_type") or "") != expected_action_type:
         return (
             f"Intent router resolved unexpected action type "
             f"'{router_payload.get('delegated_probe_action_type') or 'unknown'}'."
@@ -433,15 +523,133 @@ def _validate_execution_artifacts(
         return probe_issue
     if str(probe_payload.get("status") or "") != "success":
         return str(probe_payload.get("message") or "Delegated probe did not report success.")
-    if str(probe_payload.get("action_type") or "") != _EXPECTED_ACTION_TYPE:
+    if str(probe_payload.get("action_type") or "") != expected_action_type:
         return f"Delegated probe reported unexpected action type '{probe_payload.get('action_type') or 'unknown'}'."
-    previous_position = probe_payload.get("previous_position")
-    new_position = probe_payload.get("new_position")
-    if not isinstance(previous_position, list) or len(previous_position) != 3:
-        return "Delegated probe did not report a valid previous_position."
-    if not isinstance(new_position, list) or len(new_position) != 3:
-        return "Delegated probe did not report a valid new_position."
+    execution_applied = _probe_execution_applied(probe_payload)
+    result_reason = _probe_result_reason(probe_payload)
+    action_name = str(router_payload.get("action_name") or probe_payload.get("action_name") or "").strip().lower()
+    if result_kind == "transform":
+        previous_position = probe_payload.get("previous_position")
+        new_position = probe_payload.get("new_position")
+        if not isinstance(previous_position, list) or len(previous_position) != 3:
+            return "Delegated probe did not report a valid previous_position."
+        if not isinstance(new_position, list) or len(new_position) != 3:
+            return "Delegated probe did not report a valid new_position."
+    elif result_kind == "speed":
+        previous_speed = _float_or_none(probe_payload.get("previous_speed"))
+        new_speed = _float_or_none(probe_payload.get("new_speed"))
+        baseline_speed = _float_or_none(probe_payload.get("baseline_speed"))
+        minimum_speed = _float_or_none(probe_payload.get("minimum_speed"))
+        maximum_speed = _float_or_none(probe_payload.get("maximum_speed"))
+        requested_speed = _float_or_none(probe_payload.get("requested_speed"))
+        if previous_speed is None:
+            return "Delegated probe did not report a valid previous_speed."
+        if new_speed is None:
+            return "Delegated probe did not report a valid new_speed."
+        if minimum_speed is not None and new_speed < minimum_speed:
+            return "Delegated probe reported a new_speed below the approved minimum bound."
+        if maximum_speed is not None and new_speed > maximum_speed:
+            return "Delegated probe reported a new_speed above the approved maximum bound."
+        if not execution_applied and result_reason == "skipped_already_satisfied":
+            if requested_speed is not None and not _speed_skip_satisfies_request(
+                action_name=action_name,
+                baseline_speed=baseline_speed,
+                requested_speed=requested_speed,
+                current_speed=new_speed,
+            ):
+                return "Delegated probe skipped the speed change before the requested deterministic state was satisfied."
+        elif requested_speed is not None and abs(new_speed - requested_speed) > 0.0001:
+            return "Delegated probe did not apply the requested deterministic speed value."
+    elif result_kind == "aggression":
+        previous_attack_cooldown = _float_or_none(probe_payload.get("previous_attack_cooldown"))
+        new_attack_cooldown = _float_or_none(probe_payload.get("new_attack_cooldown"))
+        baseline_attack_cooldown = _float_or_none(probe_payload.get("baseline_attack_cooldown"))
+        minimum_attack_cooldown = _float_or_none(probe_payload.get("minimum_attack_cooldown"))
+        maximum_attack_cooldown = _float_or_none(probe_payload.get("maximum_attack_cooldown"))
+        requested_attack_cooldown = _float_or_none(probe_payload.get("requested_attack_cooldown"))
+        if previous_attack_cooldown is None:
+            return "Delegated probe did not report a valid previous_attack_cooldown."
+        if new_attack_cooldown is None:
+            return "Delegated probe did not report a valid new_attack_cooldown."
+        if minimum_attack_cooldown is not None and new_attack_cooldown < minimum_attack_cooldown:
+            return "Delegated probe reported a new_attack_cooldown below the approved minimum bound."
+        if maximum_attack_cooldown is not None and new_attack_cooldown > maximum_attack_cooldown:
+            return "Delegated probe reported a new_attack_cooldown above the approved maximum bound."
+        if not execution_applied and result_reason == "skipped_already_satisfied":
+            if requested_attack_cooldown is not None and not _aggression_skip_satisfies_request(
+                action_name=action_name,
+                baseline_attack_cooldown=baseline_attack_cooldown,
+                requested_attack_cooldown=requested_attack_cooldown,
+                current_attack_cooldown=new_attack_cooldown,
+            ):
+                return "Delegated probe skipped the aggression change before the requested deterministic state was satisfied."
+        elif requested_attack_cooldown is not None and abs(new_attack_cooldown - requested_attack_cooldown) > 0.0001:
+            return "Delegated probe did not apply the requested deterministic aggression value."
     return None
+
+
+def _validation_check_name(result_kind: str) -> str:
+    if result_kind == "speed":
+        return "mutate_enemy_move_speed_artifact_confirmed"
+    if result_kind == "aggression":
+        return "mutate_enemy_aggression_artifact_confirmed"
+    return "mutate_entity_transform_artifact_confirmed"
+
+
+def _float_or_none(value: Any) -> float | None:
+    if isinstance(value, (int, float)):
+        return float(value)
+    return None
+
+
+def _probe_execution_applied(probe_payload: Dict[str, Any]) -> bool:
+    executed = probe_payload.get("executed")
+    if isinstance(executed, bool):
+        return executed
+    return True
+
+
+def _probe_result_reason(probe_payload: Dict[str, Any]) -> str:
+    raw_reason = str(probe_payload.get("result_reason") or "").strip().lower()
+    if raw_reason:
+        return raw_reason
+    return "applied" if _probe_execution_applied(probe_payload) else "skipped_already_satisfied"
+
+
+def _speed_skip_satisfies_request(
+    *,
+    action_name: str,
+    baseline_speed: float | None,
+    requested_speed: float,
+    current_speed: float,
+) -> bool:
+    if "increase" in action_name:
+        return current_speed >= requested_speed - 0.0001
+    if "decrease" in action_name:
+        return current_speed <= requested_speed + 0.0001
+    if baseline_speed is not None:
+        if requested_speed >= baseline_speed:
+            return current_speed >= requested_speed - 0.0001
+        return current_speed <= requested_speed + 0.0001
+    return abs(current_speed - requested_speed) <= 0.0001
+
+
+def _aggression_skip_satisfies_request(
+    *,
+    action_name: str,
+    baseline_attack_cooldown: float | None,
+    requested_attack_cooldown: float,
+    current_attack_cooldown: float,
+) -> bool:
+    if "increase" in action_name:
+        return current_attack_cooldown <= requested_attack_cooldown + 0.0001
+    if "decrease" in action_name:
+        return current_attack_cooldown >= requested_attack_cooldown - 0.0001
+    if baseline_attack_cooldown is not None:
+        if requested_attack_cooldown <= baseline_attack_cooldown:
+            return current_attack_cooldown <= requested_attack_cooldown + 0.0001
+        return current_attack_cooldown >= requested_attack_cooldown - 0.0001
+    return abs(current_attack_cooldown - requested_attack_cooldown) <= 0.0001
 
 
 def _supporting_artifacts(translator_payload: Any, router_payload: Dict[str, Any]) -> list[str]:

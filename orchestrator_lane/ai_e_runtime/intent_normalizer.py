@@ -14,6 +14,10 @@ _REPLACEMENTS = (
     (re.compile(r"\bjust\b"), " "),
     (re.compile(r"\bplease\b"), " "),
 )
+_CANONICAL_PATTERNS = (
+    (re.compile(r"\bspeed\s+up\s+(?:the\s+)?([a-z0-9_]+)\b"), r"make \1 faster"),
+    (re.compile(r"\bslow\s+(?:the\s+)?([a-z0-9_]+)\s+down\b"), r"make \1 slower"),
+)
 _ENTITY_MAPPINGS = (
     ("enemy", "zombie"),
     ("character", "zombie"),
@@ -41,6 +45,8 @@ def normalize_prompt(prompt: str) -> str:
     normalized = str(prompt or "").lower().strip()
     normalized = _PUNCTUATION_PATTERN.sub(" ", normalized)
     for pattern, replacement in _REPLACEMENTS:
+        normalized = pattern.sub(replacement, normalized)
+    for pattern, replacement in _CANONICAL_PATTERNS:
         normalized = pattern.sub(replacement, normalized)
     return _WHITESPACE_PATTERN.sub(" ", normalized).strip()
 
@@ -82,4 +88,8 @@ def fuzzy_match(prompt: str) -> str | None:
     tokens = set(resolution.lookup_prompt.split())
     if {"move", "zombie", "forward"}.issubset(tokens):
         return "move zombie forward"
+    if {"make", "zombie", "faster"}.issubset(tokens):
+        return "make zombie faster"
+    if {"make", "zombie", "slower"}.issubset(tokens):
+        return "make zombie slower"
     return None
