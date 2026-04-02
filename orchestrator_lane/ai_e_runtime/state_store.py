@@ -82,6 +82,13 @@ class StateStore:
             "top_candidates": [],
             "excluded_tasks": [],
             "selection_timestamp": None,
+            "session_tuning_history": [],
+            "session_tuning_state": {},
+            "experiment_tracking": {},
+            "latest_experiment_variant": {},
+            "result_state_history": [],
+            "result_evaluation_history": [],
+            "latest_result_evaluation": {},
         }
         state.update(phase_payload("intake", waiting_reason="Waiting for new task intake."))
         self.save(state)
@@ -128,6 +135,13 @@ class StateStore:
         state.setdefault("top_candidates", [])
         state.setdefault("excluded_tasks", [])
         state.setdefault("selection_timestamp", None)
+        state.setdefault("session_tuning_history", [])
+        state.setdefault("session_tuning_state", {})
+        state.setdefault("experiment_tracking", {})
+        state.setdefault("latest_experiment_variant", {})
+        state.setdefault("result_state_history", [])
+        state.setdefault("result_evaluation_history", [])
+        state.setdefault("latest_result_evaluation", {})
         state.setdefault("session_phase", "intake")
         state.setdefault("phase_index", 1)
         state.setdefault("phase_total", 7)
@@ -458,6 +472,41 @@ class StateStore:
         if changed:
             normalized_issue = normalized_issue or "invalid_shape"
             mark_invalid("excluded_tasks")
+
+        state["session_tuning_history"], changed = self._normalize_mapping_list(state.get("session_tuning_history"))
+        if changed:
+            normalized_issue = normalized_issue or "invalid_shape"
+            mark_invalid("session_tuning_history")
+
+        if not isinstance(state.get("session_tuning_state"), dict):
+            state["session_tuning_state"] = {}
+            normalized_issue = normalized_issue or "invalid_shape"
+            mark_invalid("session_tuning_state")
+
+        if not isinstance(state.get("experiment_tracking"), dict):
+            state["experiment_tracking"] = {}
+            normalized_issue = normalized_issue or "invalid_shape"
+            mark_invalid("experiment_tracking")
+
+        if not isinstance(state.get("latest_experiment_variant"), dict):
+            state["latest_experiment_variant"] = {}
+            normalized_issue = normalized_issue or "invalid_shape"
+            mark_invalid("latest_experiment_variant")
+
+        state["result_state_history"], changed = self._normalize_mapping_list(state.get("result_state_history"))
+        if changed:
+            normalized_issue = normalized_issue or "invalid_shape"
+            mark_invalid("result_state_history")
+
+        state["result_evaluation_history"], changed = self._normalize_mapping_list(state.get("result_evaluation_history"))
+        if changed:
+            normalized_issue = normalized_issue or "invalid_shape"
+            mark_invalid("result_evaluation_history")
+
+        if not isinstance(state.get("latest_result_evaluation"), dict):
+            state["latest_result_evaluation"] = {}
+            normalized_issue = normalized_issue or "invalid_shape"
+            mark_invalid("latest_result_evaluation")
 
         state["tasks_completed"], changed = self._normalize_string_list(state.get("tasks_completed"))
         if changed:

@@ -14,10 +14,13 @@ from orchestrator.utils import ensure_dir, read_json_with_status
 from .agent_router import AgentRouter
 from .autonomous_selector import select_next_task
 from .artifact_writer import ArtifactWriter
+from .experiment_tracking import apply_experiment_tracking
 from .heartbeat import HeartbeatEmitter
+from .outcome_evaluation import apply_result_evaluation
 from .progress import format_progress_line
 from .runtime_state import RuntimeState, RuntimeStateSnapshot, selector_visibility_payload
 from .scheduler import Scheduler
+from .session_tuning import apply_session_tuning_record
 from .state_store import StateStore
 from .time_utils import get_current_timestamp
 
@@ -415,6 +418,12 @@ class Supervisor:
                 current_task=None,
                 queue_remaining=self.scheduler.remaining_count(),
             )
+            state = self._record_session_tuning(
+                state,
+                task=running_task,
+                result=result,
+                final_status=final_status,
+            )
 
             state = self.state_store.record_task_result(
                 state,
@@ -736,3 +745,60 @@ class Supervisor:
         if any(str(task.get("status", "pending")).lower() == "running" for task in remaining_tasks):
             return False
         return all(str(task.get("status", "pending")).lower() == "pending" for task in remaining_tasks)
+
+    def _record_session_tuning(
+        self,
+        state: Dict[str, Any],
+        *,
+        task: Dict[str, Any],
+        result: Dict[str, Any],
+        final_status: str,
+    ) -> Dict[str, Any]:
+        if str(final_status or "").strip().lower() != "completed":
+            return state
+        details = result.get("details")
+        if not isinstance(details, dict):
+            return state
+
+        timestamp = str(details.get("timestamp") or get_current_timestamp(self.time_source()))
+        state = apply_session_tuning_record(
+            state,
+            task=task,
+            details=details,
+            timestamp=timestamp,
+        )
+        state = apply_experiment_tracking(
+            state,
+            task=task,
+            details=details,
+            timestamp=timestamp,
+        )
+        state = apply_result_evaluation(
+            state,
+            task=task,
+            timestamp=timestamp,
+        )
+
+        session_context_id = str(task.get("session_context_id") or "").strip()
+        if session_context_id and session_context_id != self.session_id:
+            context_store = StateStore(self.orchestrator_config.runs_dir, session_context_id)
+            context_state = context_store.load()
+            context_state = apply_session_tuning_record(
+                context_state,
+                task=task,
+                details=details,
+                timestamp=timestamp,
+            )
+            context_state = apply_experiment_tracking(
+                context_state,
+                task=task,
+                details=details,
+                timestamp=timestamp,
+            )
+            context_state = apply_result_evaluation(
+                context_state,
+                task=task,
+                timestamp=timestamp,
+            )
+            context_store.save(context_state)
+        return state
