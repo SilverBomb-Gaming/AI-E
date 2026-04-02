@@ -37,8 +37,8 @@ class ControlPanel(QtWidgets.QMainWindow):
         self._next_step_primary_button: QtWidgets.QPushButton | None = None
         self._onboarding_example_prompts = [
             "move zombie forward",
-            "add enemy",
-            "improve movement",
+            "move enemy forward",
+            "move zombie forward again",
         ]
         self._build_ui()
         self._build_menu_bar()
@@ -121,7 +121,7 @@ class ControlPanel(QtWidgets.QMainWindow):
         layout.addWidget(title)
 
         subtitle = QtWidgets.QLabel(
-            "Select a supported project, prepare a request, follow AI-E's decision, and open the result."
+            "Select a supported project, prepare a request, confirm the supported target if needed, run it safely, and iterate from the result."
         )
         subtitle.setWordWrap(True)
         subtitle.setStyleSheet("color: #555;")
@@ -153,7 +153,7 @@ class ControlPanel(QtWidgets.QMainWindow):
         self.prompt_group = prompt_group
         prompt_layout = QtWidgets.QVBoxLayout(prompt_group)
         prompt_hint = QtWidgets.QLabel(
-            "Start here after choosing a prompt. Click Prepare Request and AI-E will show whether it is ready, needs approval, should run in sandbox first, or is blocked before anything runs."
+            "Start here after choosing a prompt. Try a direct request like \"move zombie forward\" or a conversational one like \"move enemy forward\". Click Prepare Request to review the decision before anything runs."
         )
         prompt_hint.setWordWrap(True)
         prompt_hint.setStyleSheet("color: #555;")
@@ -191,11 +191,25 @@ class ControlPanel(QtWidgets.QMainWindow):
         self.intake_decision_value = QtWidgets.QLabel("-")
         self.intake_reason_value = QtWidgets.QLabel("Prepare a prompt to see the intake decision.")
         self.intake_reason_value.setWordWrap(True)
+        self.intake_plan_title_value = QtWidgets.QLabel("No predefined plan for this request.")
+        self.intake_plan_title_value.setWordWrap(True)
+        self.intake_plan_steps_list = QtWidgets.QListWidget()
+        self.intake_plan_steps_list.setAlternatingRowColors(True)
+        self.intake_plan_steps_list.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.NoSelection)
+        self.intake_plan_steps_list.setMaximumHeight(90)
+        self.intake_plan_expected_value = QtWidgets.QLabel("-")
+        self.intake_plan_expected_value.setWordWrap(True)
+        self.intake_plan_mode_value = QtWidgets.QLabel("-")
+        self.intake_plan_mode_value.setWordWrap(True)
         detail_layout.addRow("Normalized Prompt:", self.intake_normalized_value)
         detail_layout.addRow("Target Workspace:", self.intake_target_value)
         detail_layout.addRow("Detected Action:", self.intake_action_value)
         detail_layout.addRow("Decision State:", self.intake_decision_value)
         detail_layout.addRow("Reason:", self.intake_reason_value)
+        detail_layout.addRow("Plan:", self.intake_plan_title_value)
+        detail_layout.addRow("Plan Steps:", self.intake_plan_steps_list)
+        detail_layout.addRow("Expected Outcome:", self.intake_plan_expected_value)
+        detail_layout.addRow("Execution Mode:", self.intake_plan_mode_value)
         decision_layout.addLayout(detail_layout)
 
         self.intake_action_button = QtWidgets.QPushButton("Prepare a prompt")
@@ -390,7 +404,7 @@ class ControlPanel(QtWidgets.QMainWindow):
         next_step_layout.addWidget(next_step_title)
 
         self.proof_result_next_step_hint = QtWidgets.QLabel(
-            "Open a finished run to see the best next step here."
+            "Open a finished run to refine it, try a variation, or review the proof here."
         )
         self.proof_result_next_step_hint.setWordWrap(True)
         self.proof_result_next_step_hint.setStyleSheet("color: #334155;")
@@ -399,7 +413,7 @@ class ControlPanel(QtWidgets.QMainWindow):
         self.proof_result_next_step_grid = QtWidgets.QGridLayout()
         self.proof_result_next_step_grid.setHorizontalSpacing(10)
         self.proof_result_next_step_grid.setVerticalSpacing(10)
-        self.proof_result_next_prepare_button = QtWidgets.QPushButton("Prepare similar request")
+        self.proof_result_next_prepare_button = QtWidgets.QPushButton("Try a variation")
         self.proof_result_next_prepare_button.clicked.connect(self._handle_next_step_prepare_similar)
         self.proof_result_next_modify_button = QtWidgets.QPushButton("Modify and test again")
         self.proof_result_next_modify_button.clicked.connect(self._handle_next_step_modify_again)
@@ -421,6 +435,86 @@ class ControlPanel(QtWidgets.QMainWindow):
             button.setEnabled(False)
         next_step_layout.addLayout(self.proof_result_next_step_grid)
         proof_layout.addWidget(self.proof_result_next_step_frame)
+
+        self.proof_result_evaluation_frame = QtWidgets.QFrame()
+        self.proof_result_evaluation_frame.setFrameShape(QtWidgets.QFrame.Shape.StyledPanel)
+        self.proof_result_evaluation_frame.setFrameShadow(QtWidgets.QFrame.Shadow.Plain)
+        proof_evaluation_layout = QtWidgets.QVBoxLayout(self.proof_result_evaluation_frame)
+        proof_evaluation_layout.setContentsMargins(12, 12, 12, 12)
+        proof_evaluation_layout.setSpacing(8)
+
+        proof_evaluation_title = QtWidgets.QLabel("Evaluation Summary")
+        proof_evaluation_title.setStyleSheet("font-weight: 700; color: #1f2937;")
+        proof_evaluation_layout.addWidget(proof_evaluation_title)
+
+        self.proof_result_evaluation_summary_value = QtWidgets.QLabel("-")
+        self.proof_result_evaluation_summary_value.setWordWrap(True)
+        proof_evaluation_layout.addWidget(self.proof_result_evaluation_summary_value)
+
+        self.proof_result_evaluation_list = QtWidgets.QListWidget()
+        self.proof_result_evaluation_list.setAlternatingRowColors(True)
+        self.proof_result_evaluation_list.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.NoSelection)
+        self.proof_result_evaluation_list.setMaximumHeight(96)
+        proof_evaluation_layout.addWidget(self.proof_result_evaluation_list)
+
+        self.proof_result_evaluation_suggestion_value = QtWidgets.QLabel("")
+        self.proof_result_evaluation_suggestion_value.setWordWrap(True)
+        self.proof_result_evaluation_suggestion_value.setStyleSheet("color: #1d4ed8;")
+        proof_evaluation_layout.addWidget(self.proof_result_evaluation_suggestion_value)
+        self.proof_result_evaluation_frame.setVisible(False)
+        proof_layout.addWidget(self.proof_result_evaluation_frame)
+
+        self.proof_result_experiment_frame = QtWidgets.QFrame()
+        self.proof_result_experiment_frame.setFrameShape(QtWidgets.QFrame.Shape.StyledPanel)
+        self.proof_result_experiment_frame.setFrameShadow(QtWidgets.QFrame.Shadow.Plain)
+        proof_experiment_layout = QtWidgets.QVBoxLayout(self.proof_result_experiment_frame)
+        proof_experiment_layout.setContentsMargins(12, 12, 12, 12)
+        proof_experiment_layout.setSpacing(8)
+
+        proof_experiment_title = QtWidgets.QLabel("Experiment Variant")
+        proof_experiment_title.setStyleSheet("font-weight: 700; color: #1f2937;")
+        proof_experiment_layout.addWidget(proof_experiment_title)
+
+        proof_experiment_detail_layout = QtWidgets.QFormLayout()
+        self.proof_result_experiment_id_value = QtWidgets.QLabel("-")
+        self.proof_result_variant_id_value = QtWidgets.QLabel("-")
+        self.proof_result_compared_variant_value = QtWidgets.QLabel("-")
+        self.proof_result_baseline_variant_value = QtWidgets.QLabel("-")
+        self.proof_result_variant_kind_value = QtWidgets.QLabel("-")
+        self.proof_result_experiment_summary_value = QtWidgets.QLabel("-")
+        self.proof_result_experiment_summary_value.setWordWrap(True)
+        proof_experiment_detail_layout.addRow("Experiment ID:", self.proof_result_experiment_id_value)
+        proof_experiment_detail_layout.addRow("Current Variant:", self.proof_result_variant_id_value)
+        proof_experiment_detail_layout.addRow("Compared Against:", self.proof_result_compared_variant_value)
+        proof_experiment_detail_layout.addRow("Baseline Variant:", self.proof_result_baseline_variant_value)
+        proof_experiment_detail_layout.addRow("Variant Type:", self.proof_result_variant_kind_value)
+        proof_experiment_detail_layout.addRow("Summary:", self.proof_result_experiment_summary_value)
+        proof_experiment_layout.addLayout(proof_experiment_detail_layout)
+        self.proof_result_experiment_frame.setVisible(False)
+        proof_layout.addWidget(self.proof_result_experiment_frame)
+
+        self.proof_result_decision_frame = QtWidgets.QFrame()
+        self.proof_result_decision_frame.setFrameShape(QtWidgets.QFrame.Shape.StyledPanel)
+        self.proof_result_decision_frame.setFrameShadow(QtWidgets.QFrame.Shadow.Plain)
+        proof_decision_layout = QtWidgets.QVBoxLayout(self.proof_result_decision_frame)
+        proof_decision_layout.setContentsMargins(12, 12, 12, 12)
+        proof_decision_layout.setSpacing(8)
+
+        proof_decision_title = QtWidgets.QLabel("Experiment Decisions")
+        proof_decision_title.setStyleSheet("font-weight: 700; color: #1f2937;")
+        proof_decision_layout.addWidget(proof_decision_title)
+
+        proof_decision_detail_layout = QtWidgets.QFormLayout()
+        self.proof_result_decision_status_value = QtWidgets.QLabel("-")
+        self.proof_result_decision_preferred_baseline_value = QtWidgets.QLabel("-")
+        self.proof_result_decision_latest_value = QtWidgets.QLabel("-")
+        self.proof_result_decision_latest_value.setWordWrap(True)
+        proof_decision_detail_layout.addRow("Current Decision:", self.proof_result_decision_status_value)
+        proof_decision_detail_layout.addRow("Preferred Baseline:", self.proof_result_decision_preferred_baseline_value)
+        proof_decision_detail_layout.addRow("Latest Explicit Decision:", self.proof_result_decision_latest_value)
+        proof_decision_layout.addLayout(proof_decision_detail_layout)
+        self.proof_result_decision_frame.setVisible(False)
+        proof_layout.addWidget(self.proof_result_decision_frame)
 
         proof_secondary_detail_layout = QtWidgets.QFormLayout()
         proof_secondary_detail_layout.addRow("What Changed:", self.proof_result_change_value)
@@ -1143,6 +1237,12 @@ class ControlPanel(QtWidgets.QMainWindow):
         self.intake_action_value.setText(preview.detected_action or "-")
         self.intake_decision_value.setText(preview.decision_state or "-")
         self.intake_reason_value.setText(preview.decision_reason or preview.status_message)
+        self.intake_plan_title_value.setText(preview.plan_title or "No predefined plan for this request.")
+        self.intake_plan_steps_list.clear()
+        for step in preview.plan_steps or ["No multi-step plan is attached to this request."]:
+            self.intake_plan_steps_list.addItem(step)
+        self.intake_plan_expected_value.setText(preview.plan_expected_outcome or "-")
+        self.intake_plan_mode_value.setText(preview.plan_execution_mode or "-")
         self.intake_action_button.setText(preview.next_action_label)
         self.intake_action_button.setEnabled(bool(preview.normalized_prompt))
         self.intake_feedback_label.setText(preview.status_message)
@@ -1170,6 +1270,11 @@ class ControlPanel(QtWidgets.QMainWindow):
         self.intake_action_value.setText("-")
         self.intake_decision_value.setText("-")
         self.intake_reason_value.setText(message)
+        self.intake_plan_title_value.setText("No predefined plan for this request.")
+        self.intake_plan_steps_list.clear()
+        self.intake_plan_steps_list.addItem("Prepare a supported request to see any multi-step plan details here.")
+        self.intake_plan_expected_value.setText("-")
+        self.intake_plan_mode_value.setText("-")
         self.intake_action_button.setText("Prepare a prompt")
         self.intake_action_button.setEnabled(False)
         if self._selected_project() is None:
@@ -1184,6 +1289,7 @@ class ControlPanel(QtWidgets.QMainWindow):
             "Needs confirmation": ("#dbeafe", "#1d4ed8"),
             "Needs approval": ("#fef3c7", "#92400e"),
             "Sandbox first": ("#dbeafe", "#1d4ed8"),
+            "Review only": ("#e0f2fe", "#0f766e"),
             "Blocked": ("#fee2e2", "#b91c1c"),
         }
         background, foreground = styles.get(decision_state, ("#f3f4f6", "#374151"))
@@ -1361,6 +1467,31 @@ class ControlPanel(QtWidgets.QMainWindow):
         self.proof_result_validation_value.setText(proof.validation_outcome or "-")
         self.proof_result_status_value.setText(proof.proof_status or "-")
         self.proof_result_timestamp_value.setText(proof.timestamp_label or "-")
+        self.proof_result_evaluation_summary_value.setText(proof.evaluation_summary or "-")
+        self.proof_result_evaluation_list.clear()
+        for item in proof.evaluation_differences or ["No comparison details are shown for this result."]:
+            self.proof_result_evaluation_list.addItem(item)
+        self.proof_result_evaluation_suggestion_value.setText(
+            f"Suggestion: {proof.evaluation_suggestion}" if proof.evaluation_suggestion else ""
+        )
+        self.proof_result_evaluation_frame.setVisible(proof.evaluation_available)
+        self.proof_result_experiment_id_value.setText(proof.experiment_id or "-")
+        self.proof_result_variant_id_value.setText(proof.variant_id or "-")
+        self.proof_result_compared_variant_value.setText(proof.compared_variant_id or "-")
+        self.proof_result_baseline_variant_value.setText(proof.baseline_variant_id or "-")
+        self.proof_result_decision_preferred_baseline_value.setText(proof.preferred_baseline_variant_id or "-")
+        variant_kind = proof.variant_kind.replace("_", " ") if proof.variant_kind else ""
+        if proof.baseline_marker and variant_kind:
+            variant_kind = f"{variant_kind} (baseline)"
+        elif proof.baseline_marker:
+            variant_kind = "baseline"
+        self.proof_result_variant_kind_value.setText(variant_kind or "-")
+        self.proof_result_experiment_summary_value.setText(proof.experiment_summary or "-")
+        self.proof_result_experiment_frame.setVisible(proof.experiment_available)
+        decision_status = proof.decision_status.replace("_", " ") if proof.decision_status else ""
+        self.proof_result_decision_status_value.setText(decision_status or "undecided")
+        self.proof_result_decision_latest_value.setText(proof.latest_decision_summary or "-")
+        self.proof_result_decision_frame.setVisible(proof.experiment_available)
         self.proof_result_steps_list.clear()
         for step in proof.key_steps or ["No step summary is shown for this result."]:
             self.proof_result_steps_list.addItem(step)
@@ -1393,6 +1524,22 @@ class ControlPanel(QtWidgets.QMainWindow):
         self.proof_result_validation_value.setText("-")
         self.proof_result_status_value.setText("-")
         self.proof_result_timestamp_value.setText("-")
+        self.proof_result_evaluation_summary_value.setText("-")
+        self.proof_result_evaluation_list.clear()
+        self.proof_result_evaluation_list.addItem("Evaluation details appear here after AI-E can compare this result with a previous supported result.")
+        self.proof_result_evaluation_suggestion_value.setText("")
+        self.proof_result_evaluation_frame.setVisible(False)
+        self.proof_result_experiment_id_value.setText("-")
+        self.proof_result_variant_id_value.setText("-")
+        self.proof_result_compared_variant_value.setText("-")
+        self.proof_result_baseline_variant_value.setText("-")
+        self.proof_result_decision_preferred_baseline_value.setText("-")
+        self.proof_result_variant_kind_value.setText("-")
+        self.proof_result_experiment_summary_value.setText("-")
+        self.proof_result_experiment_frame.setVisible(False)
+        self.proof_result_decision_status_value.setText("-")
+        self.proof_result_decision_latest_value.setText("-")
+        self.proof_result_decision_frame.setVisible(False)
         self.proof_result_steps_list.clear()
         self.proof_result_steps_list.addItem("Open a finished run to see its result summary, or prepare a new request.")
         self.proof_result_validations_list.clear()
@@ -1437,7 +1584,7 @@ class ControlPanel(QtWidgets.QMainWindow):
 
         if proof is None or not proof.available:
             self.proof_result_next_step_hint.setText(
-                "Open a finished run to see the best next step here."
+                "Open a finished run to refine it, try a variation, or review the proof here."
             )
             self._rebuild_next_step_button_grid([])
             self._apply_next_step_button_styles(primary_button=None)
@@ -1445,7 +1592,7 @@ class ControlPanel(QtWidgets.QMainWindow):
 
         if self._proof_result_needs_recovery(proof):
             self.proof_result_next_step_hint.setText(
-                "This result needs follow-up. Revise the request, then open review if the updated request needs approval."
+                "This result needs follow-up. Revise the request, adjust it, then open review if the updated request needs approval."
             )
             prompt_available = bool(self._proof_result_prompt_candidate(proof))
             self.proof_result_next_revise_button.setVisible(True)
@@ -1463,7 +1610,7 @@ class ControlPanel(QtWidgets.QMainWindow):
             return
 
         self.proof_result_next_step_hint.setText(
-            "This run finished cleanly. Prepare a similar request, adjust it, or open supporting files for more detail."
+            "This run finished cleanly. Refine it, try a variation, or open supporting files for proof."
         )
         modify_enabled = bool(self._proof_result_prompt_candidate(proof))
         prepare_enabled = bool(proof.rerun_prompt.strip())
@@ -1855,9 +2002,10 @@ class ControlPanel(QtWidgets.QMainWindow):
             refreshed = self.intake_preview_bridge.prepare_prompt(preview.confirmation_prompt, self._selected_project())
             self._persist_state()
             self._render_prepared_prompt(refreshed)
-            message = (
-                "AI-E updated the request to the supported zombie target. Review the updated decision before continuing."
-            )
+            if preview.plan_steps:
+                message = "AI-E confirmed the supported multi-step plan. Review the staged plan before continuing."
+            else:
+                message = "AI-E updated the request to the supported zombie target. Review the updated decision before continuing."
             self.intake_feedback_label.setText(message)
             self._update_status_panel(message)
             return
@@ -1901,6 +2049,26 @@ class ControlPanel(QtWidgets.QMainWindow):
                 self.intake_action_button.setEnabled(False)
                 self._set_live_status_target(request_id=result.request_id, task_id=result.task_id, session_id="")
                 self._refresh_live_status()
+            return
+
+        if preview.decision_state == "Review only":
+            if preview.recommended_action == "record_experiment_decision":
+                result = self.intake_preview_bridge.apply_experiment_review_prompt(preview)
+                self.intake_feedback_label.setText(result.message)
+                self._update_status_panel(result.message)
+                if result.ok:
+                    summary_prompt = "show current experiment decisions"
+                    refreshed = self.intake_preview_bridge.prepare_prompt(summary_prompt, self._selected_project())
+                    self.prompt_input.setPlainText(summary_prompt)
+                    self._persist_state()
+                    self._render_prepared_prompt(refreshed)
+                return
+            refreshed = self.intake_preview_bridge.prepare_prompt(preview.prompt_text, self._selected_project())
+            self._persist_state()
+            self._render_prepared_prompt(refreshed)
+            message = "Experiment summary refreshed. No execution started."
+            self.intake_feedback_label.setText(message)
+            self._update_status_panel(message)
             return
 
         message = "AI-E is not proceeding with this request. Revise it to stay within supported scope, then prepare it again."
@@ -2325,7 +2493,7 @@ class ControlPanel(QtWidgets.QMainWindow):
         dialog = QtWidgets.QDialog(self)
         dialog.setWindowTitle("AI-E Demo Checklist")
         layout = QtWidgets.QVBoxLayout(dialog)
-        intro = QtWidgets.QLabel("Run this quick checklist before a demo or first local-user handoff:")
+        intro = QtWidgets.QLabel("Run this quick checklist to show the AI-E loop: conversational request, confirmation, safe execution, proof, and fast iteration.")
         intro.setWordWrap(True)
         layout.addWidget(intro)
 
@@ -2334,9 +2502,10 @@ class ControlPanel(QtWidgets.QMainWindow):
         steps = [
             ("A", "Launch AI-E and confirm the Home screen and guardrails are visible"),
             ("B", "Confirm a supported project is selected, such as BABYLON VER 2"),
-            ("C", "Use \"move zombie forward\" and choose Prepare Request"),
-            ("D", "Submit when Ready, or open review and Approve once if approval is needed"),
-            ("E", "Open the result summary or History and confirm the saved outcome"),
+            ("C", "Use \"move enemy forward\" and choose Prepare Request"),
+            ("D", "Choose \"Use supported target\", then run the supported request in sandbox"),
+            ("E", "Open Result Summary and point out the proof-backed outcome"),
+            ("F", "Choose \"Modify and test again\" or \"Try a variation\" to show the next quick iteration"),
         ]
         for label, text in steps:
             item = QtWidgets.QListWidgetItem(f"{label}. {text}")

@@ -10,6 +10,31 @@ These sections are the current source of truth for the public-facing AI-E v1 exp
 
 AI-E v1 validation is now complete for the current supported deterministic path. The validated surface includes Home, Prompt Intake, Approval Review, Live Run Status, Result Summary, and Project / Session History, plus the hardening pass for copy, empty/error guidance, onboarding, proof/history polish, launch reliability, sandbox handoff, and next-step guidance. Intent normalization is now included in the deterministic movement path, so light natural-language variations map cleanly to the canonical supported action instead of failing on strict string matching alone.
 
+## AI-E System Evolution (Latest)
+
+AI-E now layers bounded interpretation and review tools on top of the original deterministic mutation path without introducing autonomous execution. Supported requests can move through explicit goal-intent mapping, bounded goal composition, deterministic outcome evaluation, current-session experiment tracking, and explicit experiment decision tracking while still resolving into known capabilities, known predefined plans, or safe review-only summaries.
+
+- Goal-intent mapping:
+  - explicit gameplay goals such as `make zombie more dangerous` and `make zombie easier` now resolve to supported bounded plans instead of requiring only literal plan phrasing
+- Goal composition:
+  - supported multi-goal requests such as `make zombie faster but less aggressive` resolve into bounded composed plans with conflict blocking for unsupported combinations like `make zombie faster and slower`
+- Outcome evaluation:
+  - AI-E now compares the latest supported result against the previous related result and can emit deterministic summaries such as `Current zombie is faster but less aggressive than previous version.`
+- Experiment tracking:
+  - AI-E now records current-session variants under deterministic ids such as `experiment_0001`, `variant_0001`, and `variant_0002`
+  - review-only prompts such as `show current experiment variants` surface variant lineage without starting execution
+- Decision tracking:
+  - users can now mark the active variant as kept or rejected, set a preferred baseline, and review those decisions through bounded review-only prompts
+
+Example flows:
+
+- `make zombie faster but less aggressive`
+  - resolves through bounded goal composition into a supported multi-step plan
+- `show current experiment variants`
+  - returns a review-only current-session variant summary
+- `keep current variant`
+  - records an explicit user decision on the active variant without executing any mutation
+
 ## Current V1 Validated Status
 
 AI-E now exposes a validated v1 front door over the existing system. A user can launch with `python -m app.ui`, land in a clean first-run flow, select a supported project, prepare a bounded request, see a clear intake decision, review approval when required, run the current sandbox-first mutation path, follow status updates, open a readable result summary, and revisit saved sessions or results. Supported prompts that stay within the current deterministic scope now execute cleanly, and unsupported deterministic requests fail honestly with clear guidance instead of pretending support.
@@ -196,10 +221,11 @@ The window title reads **AI-E v1**. On first launch, AI-E prefers a supported pr
 Use **Help > Demo Checklist...** inside the app and walk through:
 
 1. Launch AI-E (exe or source) and confirm the Home screen, guardrails, and a supported project are visible.
-2. Use the recommended first request `move zombie forward`.
-3. Choose `Prepare Request` and confirm AI-E shows a clear decision.
-4. Submit it when `Ready`, or open review and use `Approve once` if approval is needed.
-5. Open `Result Summary` or `Project / Session History` and confirm the saved outcome.
+2. Use the conversational demo prompt `move enemy forward`.
+3. Choose `Prepare Request` and show that AI-E asks for confirmation on the supported zombie target instead of running immediately.
+4. Choose `Use supported target`, then run the supported request in sandbox.
+5. Open `Result Summary` and show the proof-backed outcome.
+6. Use the next-step actions to show the fast iteration path: modify the request again or try a variation.
 
 ## Artifact & Reporting Layer
 
@@ -351,8 +377,9 @@ Use **Help > Demo Checklist...** inside the app to run the current quick walkthr
 
 1. **A.** Launch `AI-E.exe` (or run from source) and confirm the Home screen and guardrails are visible.
 2. **B.** Confirm a supported project is selected, such as `BABYLON VER 2`.
-3. **C.** Use `move zombie forward` and choose `Prepare Request`.
-4. **D.** Submit it when `Ready`, or open review and use `Approve once` if approval is needed.
-5. **E.** Open `Result Summary` or `Project / Session History` and confirm the saved outcome.
+3. **C.** Use `move enemy forward` and choose `Prepare Request`.
+4. **D.** Choose `Use supported target`, then run the supported request in sandbox.
+5. **E.** Open `Result Summary` and point out the proof-backed outcome.
+6. **F.** Use `Modify and test again` or `Try a variation` to show the next quick iteration.
 
 The dialog resets each time you open it, so the same checklist can be reused before the next demo or local-user handoff.

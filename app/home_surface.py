@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import sys
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable, List
@@ -84,6 +84,10 @@ class PreparedPromptPreview:
     ready_for_intake: bool
     confirmation_required: bool
     confirmation_prompt: str
+    plan_title: str
+    plan_steps: List[str]
+    plan_expected_outcome: str
+    plan_execution_mode: str
     available: bool
     status_message: str
 
@@ -182,6 +186,23 @@ class ProofResultSurface:
     rerun_prompt: str
     rerun_project_path: str
     status_message: str
+    evaluation_available: bool = False
+    evaluation_summary: str = ""
+    evaluation_differences: List[str] = field(default_factory=list)
+    evaluation_suggestion: str = ""
+    evaluation_source: str = ""
+    experiment_available: bool = False
+    experiment_id: str = ""
+    variant_id: str = ""
+    parent_variant_id: str = ""
+    compared_variant_id: str = ""
+    baseline_variant_id: str = ""
+    preferred_baseline_variant_id: str = ""
+    baseline_marker: bool = False
+    variant_kind: str = ""
+    experiment_summary: str = ""
+    decision_status: str = ""
+    latest_decision_summary: str = ""
 
 
 def load_supported_projects() -> List[SupportedProject]:
@@ -275,6 +296,15 @@ def load_proof_result_surface(
     supported_projects: List[SupportedProject] | None = None,
 ) -> ProofResultSurface:
     candidate = Path(str(target))
+    if candidate.is_file() and candidate.name.endswith(".json"):
+        attempt_artifact = _load_json(candidate)
+        if isinstance(attempt_artifact, dict) and {"task", "result"}.issubset(attempt_artifact.keys()):
+            return _proof_result_from_attempt_artifact(
+                candidate.parent.parent if candidate.parent.name == "artifacts" else candidate.parent,
+                attempt_artifact,
+                artifact_path=candidate,
+                supported_projects=supported_projects or [],
+            )
     run_dir = candidate if candidate.is_dir() else candidate.parent
     if not run_dir.exists():
         return _unavailable_proof_result_surface(
@@ -284,6 +314,31 @@ def load_proof_result_surface(
     proof_summary = _load_json(run_dir / "proof_summary.json")
     if isinstance(proof_summary, dict):
         return _proof_result_from_proof_summary(run_dir, proof_summary, supported_projects=supported_projects or [])
+
+    session_state = _load_json(run_dir / "session_state.json")
+    plan_attempt_artifacts = _plan_attempt_artifacts(run_dir)
+    if _is_multi_step_plan_run(
+        run_dir,
+        session_state=session_state,
+        attempt_artifacts=plan_attempt_artifacts,
+    ):
+        return _proof_result_from_plan_session(
+            run_dir,
+            session_state=session_state,
+            attempt_artifacts=plan_attempt_artifacts,
+            supported_projects=supported_projects or [],
+        )
+
+    attempt_artifact_path = _latest_attempt_artifact_path(run_dir)
+    if attempt_artifact_path is not None:
+        attempt_artifact = _load_json(attempt_artifact_path)
+        if isinstance(attempt_artifact, dict):
+            return _proof_result_from_attempt_artifact(
+                run_dir,
+                attempt_artifact,
+                artifact_path=attempt_artifact_path,
+                supported_projects=supported_projects or [],
+            )
 
     session_summary = _load_json(run_dir / "session_summary.json")
     if isinstance(session_summary, dict):
@@ -311,6 +366,9 @@ class IntakePreviewBridge:
         self._runtime_state_cls = None
         self._supervisor_cls = None
         self._supervisor_config_cls = None
+        self._state_store_cls = None
+        self._apply_experiment_decision_fn = None
+        self._get_current_timestamp_fn = None
         self._import_error: str | None = None
 
     def prepare_prompt(self, prompt_text: str, project: SupportedProject | None) -> PreparedPromptPreview:
@@ -337,6 +395,10 @@ class IntakePreviewBridge:
                 ready_for_intake=False,
                 confirmation_required=False,
                 confirmation_prompt="",
+                plan_title="",
+                plan_steps=[],
+                plan_expected_outcome="",
+                plan_execution_mode="",
                 available=True,
                 status_message="Enter a request to prepare it. AI-E has not started any work. Then review the decision before submitting it.",
             )
@@ -363,6 +425,10 @@ class IntakePreviewBridge:
                 ready_for_intake=False,
                 confirmation_required=False,
                 confirmation_prompt="",
+                plan_title="",
+                plan_steps=[],
+                plan_expected_outcome="",
+                plan_execution_mode="",
                 available=False,
                 status_message=f"{message} This request is prepared locally only. AI-E has not started any work.",
             )
@@ -371,7 +437,7 @@ class IntakePreviewBridge:
         try:
             routing = intake._resolve_intake_routing(
                 normalized,
-                session_id=DEFAULT_PREVIEW_SESSION_ID,
+                session_id=DEFAULT_SUBMIT_SESSION_ID,
                 target_repo=target_repo,
             )
             task_type = intake._derive_task_type(normalized, routing=routing)
@@ -395,6 +461,10 @@ class IntakePreviewBridge:
                 ready_for_intake=classification == "task_request",
                 confirmation_required=False,
                 confirmation_prompt="",
+                plan_title="",
+                plan_steps=[],
+                plan_expected_outcome="",
+                plan_execution_mode="",
                 available=False,
                 status_message=f"Request preview failed: {exc}. Revise the request and prepare it again. AI-E has not started any work.",
             )
@@ -406,10 +476,15 @@ class IntakePreviewBridge:
         summary = str(routing.decision_summary or routing.intelligence_summary or "Prepared for review.")
         confirmation_required = bool(getattr(routing, "confirmation_required", False))
         confirmation_prompt = str(getattr(routing, "mapped_prompt", "") or "").strip()
+        plan_title = str(getattr(routing, "plan_title", "") or "").strip()
+        plan_steps = [str(item).strip() for item in getattr(routing, "plan_step_titles", []) or [] if str(item).strip()]
+        plan_expected_outcome = str(getattr(routing, "plan_expected_outcome", "") or "").strip()
+        plan_execution_mode = str(getattr(routing, "plan_execution_mode", "") or "").strip()
         decision_state = self._decision_state(
             classification=classification,
             decision=decision,
             confirmation_required=confirmation_required,
+            routing=routing,
         )
         detected_action = self._detected_action(routing=routing, task_type=task_type)
         decision_reason = self._decision_reason(
@@ -417,7 +492,11 @@ class IntakePreviewBridge:
             decision_state=decision_state,
             routing=routing,
         )
-        next_action_label = self._next_action_label(decision_state)
+        next_action_label = self._next_action_label(
+            decision_state,
+            recommended_action=action,
+            has_plan=bool(plan_steps),
+        )
         status_message = (
             f"Prepared for AI-E review. "
             f"Current decision: {decision_state}. "
@@ -436,6 +515,18 @@ class IntakePreviewBridge:
             status_message = (
                 "AI-E understood this request and found a supported target match. Confirm that target before AI-E continues."
             )
+        if confirmation_required and plan_steps:
+            status_message = "AI-E found a supported multi-step plan. Confirm the plan before AI-E continues."
+        if plan_steps and not confirmation_required and decision_state == "Sandbox first":
+            status_message = "AI-E prepared a bounded multi-step plan for sandbox execution. Review the steps before running it."
+        if decision_state == "Review only":
+            if action == "record_experiment_decision":
+                status_message = (
+                    "AI-E prepared a current-session experiment decision update locally. "
+                    "Record it to update experiment state. No execution will start."
+                )
+            else:
+                status_message = "AI-E prepared a current-session experiment summary locally. No execution will start."
 
         return PreparedPromptPreview(
             prompt_text=prompt_text,
@@ -456,6 +547,10 @@ class IntakePreviewBridge:
             ready_for_intake=decision_state == "Ready",
             confirmation_required=confirmation_required,
             confirmation_prompt=confirmation_prompt,
+            plan_title=plan_title,
+            plan_steps=plan_steps,
+            plan_expected_outcome=plan_expected_outcome,
+            plan_execution_mode=plan_execution_mode,
             available=True,
             status_message=status_message,
         )
@@ -560,6 +655,70 @@ class IntakePreviewBridge:
             project=project,
             approved_by=approved_by,
             approval_notes="Sandbox-first run started from the AI-E v1 intake surface.",
+        )
+
+    def apply_experiment_review_prompt(self, preview: PreparedPromptPreview) -> ReviewActionResult:
+        if preview.decision_state != "Review only" or preview.recommended_action != "record_experiment_decision":
+            return ReviewActionResult(
+                ok=False,
+                action="record_experiment_decision",
+                message="Only experiment review prompts marked for decision recording can update experiment state here.",
+                wired=False,
+                staged_only=True,
+                queue_status="",
+                request_id="",
+                task_id="",
+            )
+        if (
+            self._config_cls is None
+            or self._state_store_cls is None
+            or self._apply_experiment_decision_fn is None
+            or self._get_current_timestamp_fn is None
+        ):
+            try:
+                self._ensure_imports()
+            except Exception as exc:  # noqa: BLE001
+                self._import_error = f"Experiment review update could not load: {exc}"
+                return ReviewActionResult(
+                    ok=False,
+                    action="record_experiment_decision",
+                    message=self._import_error,
+                    wired=False,
+                    staged_only=True,
+                    queue_status="",
+                    request_id="",
+                    task_id="",
+                )
+        config = self._config_cls.load()
+        state_store = self._state_store_cls(config.runs_dir, DEFAULT_SUBMIT_SESSION_ID)
+        state, _ = state_store.load_with_status()
+        updated_state, decision_result, block_message = self._apply_experiment_decision_fn(
+            state,
+            prompt=preview.normalized_prompt,
+            timestamp=self._get_current_timestamp_fn(),
+        )
+        if block_message:
+            return ReviewActionResult(
+                ok=False,
+                action="record_experiment_decision",
+                message=block_message,
+                wired=True,
+                staged_only=True,
+                queue_status="",
+                request_id="",
+                task_id="",
+            )
+        state_store.save(updated_state)
+        decision_result = decision_result or {}
+        return ReviewActionResult(
+            ok=True,
+            action="record_experiment_decision",
+            message=str(decision_result.get("message") or "Experiment decision recorded.").strip(),
+            wired=True,
+            staged_only=False,
+            queue_status="review_only",
+            request_id="",
+            task_id="",
         )
 
     def build_review_surface(
@@ -954,12 +1113,34 @@ class IntakePreviewBridge:
 
         if queue_status == "needs_approval":
             try:
-                approval = self._approve_mutation_task_fn(
-                    intake.config,
-                    task_id=task_id,
-                    approved_by=self._approved_by_name(approved_by),
-                    notes=approval_notes,
-                )
+                for pending_task_id in intake_result.task_ids:
+                    queue_task = next(
+                        (
+                            task
+                            for task in self._all_queue_tasks(intake.config)
+                            if str(task.get("task_id") or task.get("id") or "").strip() == pending_task_id
+                        ),
+                        None,
+                    )
+                    task_status = str((queue_task or {}).get("status") or "").strip().lower()
+                    if task_status == "blocked":
+                        return ReviewActionResult(
+                            ok=False,
+                            action="sandbox_first",
+                            message="AI-E blocked one of the planned sandbox steps before execution could begin. Revise the request to stay within supported scope.",
+                            wired=True,
+                            staged_only=False,
+                            queue_status=task_status,
+                            request_id=request_id,
+                            task_id=pending_task_id,
+                        )
+                    if task_status == "needs_approval":
+                        self._approve_mutation_task_fn(
+                            intake.config,
+                            task_id=pending_task_id,
+                            approved_by=self._approved_by_name(approved_by),
+                            notes=approval_notes,
+                        )
             except Exception as exc:  # noqa: BLE001
                 return ReviewActionResult(
                     ok=False,
@@ -971,7 +1152,31 @@ class IntakePreviewBridge:
                     request_id=request_id,
                     task_id=task_id,
                 )
-            queue_status = str(approval.queue_status or "").strip().lower()
+
+            relevant_tasks = [
+                task
+                for task in self._all_queue_tasks(intake.config)
+                if str(task.get("task_id") or task.get("id") or "").strip() in set(intake_result.task_ids)
+            ]
+            statuses = [str(task.get("status") or "").strip().lower() for task in relevant_tasks if str(task.get("status") or "").strip()]
+            if "blocked" in statuses:
+                return ReviewActionResult(
+                    ok=False,
+                    action="sandbox_first",
+                    message="AI-E blocked one of the planned sandbox steps before execution could begin. Revise the request to stay within supported scope.",
+                    wired=True,
+                    staged_only=False,
+                    queue_status="blocked",
+                    request_id=request_id,
+                    task_id=task_id,
+                )
+            if statuses and all(status in {"pending", "running", "completed"} for status in statuses):
+                if "pending" in statuses:
+                    queue_status = "pending"
+                elif "running" in statuses:
+                    queue_status = "running"
+                else:
+                    queue_status = "completed"
             approval_state = "approved"
 
         if queue_status == "pending" and approval_state in {"approved", "auto_approved", "not_required"}:
@@ -1663,6 +1868,11 @@ class IntakePreviewBridge:
 
     @staticmethod
     def _result_path_for_session(*, session_dir: Path, last_artifact_path: str | None) -> Path | None:
+        if _is_multi_step_plan_run(session_dir):
+            return session_dir
+        attempt_artifact = _latest_attempt_artifact_path(session_dir)
+        if attempt_artifact is not None:
+            return attempt_artifact
         for candidate in (
             session_dir / "session_summary.md",
             session_dir / "session_summary.json",
@@ -1722,8 +1932,11 @@ class IntakePreviewBridge:
         from ai_e_runtime.request_review_bundle import build_review_bundle
         from ai_e_runtime.request_review_decision import create_review_decision
         from ai_e_runtime.runtime_state import RuntimeState
+        from ai_e_runtime.experiment_tracking import apply_experiment_decision
+        from ai_e_runtime.state_store import StateStore
         from ai_e_runtime.supervisor import Supervisor, SupervisorConfig
         from ai_e_runtime.task_intake import ConversationalTaskIntake
+        from ai_e_runtime.time_utils import get_current_timestamp
         from orchestrator.config import OrchestratorConfig
 
         self._approve_mutation_task_fn = approve_mutation_task
@@ -1733,13 +1946,21 @@ class IntakePreviewBridge:
         self._runtime_state_cls = RuntimeState
         self._supervisor_cls = Supervisor
         self._supervisor_config_cls = SupervisorConfig
+        self._state_store_cls = StateStore
+        self._apply_experiment_decision_fn = apply_experiment_decision
+        self._get_current_timestamp_fn = get_current_timestamp
         self._intake_cls = ConversationalTaskIntake
         self._config_cls = OrchestratorConfig
 
     @staticmethod
-    def _decision_state(*, classification: str, decision: str, confirmation_required: bool = False) -> str:
+    def _decision_state(*, classification: str, decision: str, confirmation_required: bool = False, routing: Any | None = None) -> str:
         if confirmation_required:
             return "Needs confirmation"
+        if (
+            str(getattr(routing, "resolution_source", "") or "") in {"experiment_review", "experiment_decision_review"}
+            and str(getattr(routing, "decision_reason", "") or "").startswith("experiment_")
+        ):
+            return "Review only"
         if classification != "task_request":
             return "Blocked"
         if decision == "auto_execute":
@@ -1751,10 +1972,16 @@ class IntakePreviewBridge:
         return "Blocked"
 
     @staticmethod
-    def _next_action_label(decision_state: str) -> str:
+    def _next_action_label(decision_state: str, *, recommended_action: str = "", has_plan: bool = False) -> str:
         if decision_state == "Ready":
             return "Submit request"
+        if decision_state == "Review only":
+            if recommended_action == "record_experiment_decision":
+                return "Record decision"
+            return "Refresh summary"
         if decision_state == "Needs confirmation":
+            if recommended_action == "confirm_plan" or has_plan:
+                return "Confirm plan"
             return "Use supported target"
         if decision_state == "Needs approval":
             return "Open review"
@@ -1764,6 +1991,9 @@ class IntakePreviewBridge:
 
     @staticmethod
     def _detected_action(*, routing: Any, task_type: str) -> str:
+        plan_title = str(getattr(routing, "plan_title", "") or "").strip()
+        if plan_title:
+            return plan_title
         capability_title = str(getattr(routing, "capability_title", "") or "").strip()
         if capability_title:
             return capability_title
@@ -1792,7 +2022,7 @@ class IntakePreviewBridge:
                 getattr(routing, "decision_summary", ""),
                 getattr(routing, "content_policy_summary", ""),
             ]
-        elif decision_state in {"Needs approval", "Sandbox first"}:
+        elif decision_state in {"Needs approval", "Sandbox first", "Review only"}:
             summary_sources = [
                 getattr(routing, "decision_summary", ""),
                 getattr(routing, "fail_closed_reason", ""),
@@ -1814,6 +2044,10 @@ class IntakePreviewBridge:
 
         if decision_state == "Ready":
             return "AI-E can accept this request without extra review. Submit it when you are ready."
+        if decision_state == "Review only":
+            if str(getattr(routing, "recommended_action", "") or "").strip() == "record_experiment_decision":
+                return "AI-E prepared a current-session experiment decision update. Record it to update experiment state; no execution will start."
+            return "AI-E prepared a current-session experiment summary. Refresh it any time; no execution will start from this action."
         if decision_state == "Needs approval":
             return "This request needs one-time approval before it can continue. Open review to confirm the safe next step."
         if decision_state == "Sandbox first":
@@ -2045,6 +2279,361 @@ def _history_session_summary_path(run_dir: Path) -> Path | None:
     return None
 
 
+def _latest_attempt_artifact_path(run_dir: Path) -> Path | None:
+    artifacts_dir = run_dir / "artifacts"
+    if not artifacts_dir.exists():
+        return None
+    candidates = sorted(
+        (path for path in artifacts_dir.glob("*_attempt_*.json") if path.is_file()),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    if candidates:
+        return candidates[0]
+    return None
+
+
+def _plan_attempt_artifacts(run_dir: Path) -> List[tuple[Path, dict[str, Any]]]:
+    artifacts_dir = run_dir / "artifacts"
+    if not artifacts_dir.exists():
+        return []
+
+    latest_by_task: dict[str, tuple[float, Path, dict[str, Any]]] = {}
+    for path in artifacts_dir.glob("*_attempt_*.json"):
+        if not path.is_file():
+            continue
+        payload = _load_json(path)
+        if not isinstance(payload, dict) or not {"task", "result"}.issubset(payload.keys()):
+            continue
+        task = payload.get("task") if isinstance(payload.get("task"), dict) else {}
+        task_id = str(task.get("task_id") or task.get("id") or path.stem).strip() or path.stem
+        candidate = (path.stat().st_mtime, path, payload)
+        existing = latest_by_task.get(task_id)
+        if existing is None or candidate[0] >= existing[0]:
+            latest_by_task[task_id] = candidate
+
+    attempts = [(item[1], item[2]) for item in latest_by_task.values()]
+    attempts.sort(
+        key=lambda item: (
+            int(((item[1].get("task") or {}) if isinstance(item[1].get("task"), dict) else {}).get("plan_step_index", 0) or 0),
+            str(((item[1].get("task") or {}) if isinstance(item[1].get("task"), dict) else {}).get("task_id") or item[0].name),
+        )
+    )
+    return attempts
+
+
+def _is_multi_step_plan_run(
+    run_dir: Path,
+    *,
+    session_state: dict[str, Any] | None = None,
+    attempt_artifacts: List[tuple[Path, dict[str, Any]]] | None = None,
+) -> bool:
+    attempts = attempt_artifacts if attempt_artifacts is not None else _plan_attempt_artifacts(run_dir)
+    if len(attempts) >= 2:
+        plan_ids = {
+            str(((payload.get("task") or {}) if isinstance(payload.get("task"), dict) else {}).get("plan_id") or "").strip()
+            for _, payload in attempts
+        }
+        if any(plan_ids):
+            return True
+        step_titles = [
+            str(((payload.get("task") or {}) if isinstance(payload.get("task"), dict) else {}).get("plan_step_title") or "").strip()
+            for _, payload in attempts
+        ]
+        if len([title for title in step_titles if title]) >= 2:
+            return True
+    state = session_state if session_state is not None else _load_json(run_dir / "session_state.json")
+    if isinstance(state, dict):
+        plan_steps = [str(item).strip() for item in state.get("last_generated_plan_steps", []) if str(item).strip()]
+        if len(plan_steps) >= 2 and len(attempts) >= 1:
+            return True
+    return False
+
+
+def _proof_result_from_plan_session(
+    run_dir: Path,
+    *,
+    session_state: dict[str, Any] | None,
+    attempt_artifacts: List[tuple[Path, dict[str, Any]]],
+    supported_projects: List[SupportedProject],
+) -> ProofResultSurface:
+    first_payload = attempt_artifacts[0][1] if attempt_artifacts else {}
+    first_task = first_payload.get("task") if isinstance(first_payload.get("task"), dict) else {}
+    request_payload = _load_request_payload_from_attempt(run_dir, first_payload)
+    request_context = request_payload.get("context") if isinstance(request_payload.get("context"), dict) else {}
+    request_routing = request_context.get("routing") if isinstance(request_context.get("routing"), dict) else {}
+
+    original_request = str(request_payload.get("operator_prompt") or "").strip()
+    normalized_request = str(request_routing.get("mapped_prompt") or "").strip()
+    if normalized_request == original_request:
+        normalized_request = ""
+
+    plan_title = str(first_task.get("plan_title") or request_routing.get("plan_title") or "Verified plan").strip()
+    target_display = _project_display_from_path(first_task.get("target_repo"), supported_projects=supported_projects)
+    timestamp_hint = None
+    if attempt_artifacts:
+        timestamp_hint = attempt_artifacts[-1][1].get("timestamp")
+
+    proof_statuses: List[str] = []
+    key_steps: List[str] = []
+    change_parts: List[str] = []
+    before_after_parts: List[str] = []
+    validation_checks: List[str] = []
+    raw_artifacts: List[ProofArtifactLink] = []
+    skipped_steps = 0
+
+    resolution_steps, resolution_checks = _session_resolution_lines(
+        routing=request_routing,
+        details={},
+    )
+    key_steps.extend(resolution_steps)
+    validation_checks.extend(resolution_checks)
+
+    for candidate in (run_dir / "session_summary.json", run_dir / "session_summary.md", run_dir / "operator_report.md"):
+        label = "Plan session summary" if candidate.name.endswith(".json") else "Plan session report"
+        kind = "summary" if candidate.name.endswith(".json") else "report"
+        _append_artifact_link(raw_artifacts, label=label, kind=kind, candidate=candidate)
+
+    for index, (artifact_path, attempt_artifact) in enumerate(attempt_artifacts, start=1):
+        task = attempt_artifact.get("task") if isinstance(attempt_artifact.get("task"), dict) else {}
+        result = attempt_artifact.get("result") if isinstance(attempt_artifact.get("result"), dict) else {}
+        validation = attempt_artifact.get("validation") if isinstance(attempt_artifact.get("validation"), dict) else {}
+        details = result.get("details") if isinstance(result.get("details"), dict) else {}
+        step_title = str(task.get("plan_step_title") or task.get("title") or f"Step {index}").strip()
+        if _attempt_was_skipped(details):
+            skipped_steps += 1
+        step_status = _attempt_proof_status(result=result, validation=validation)
+        proof_statuses.append(step_status)
+        step_verdict = _attempt_final_verdict(
+            proof_status=step_status,
+            result=result,
+            details=details,
+            validation=validation,
+        )
+        key_steps.append(f"{index}. {step_title}: {step_verdict}")
+
+        change_summary = _proof_change_summary(details)
+        if change_summary and "does not include a clear change summary" not in change_summary.lower():
+            change_parts.append(f"{step_title}: {change_summary}")
+        before_after_summary = _proof_before_after_summary(details)
+        if before_after_summary:
+            before_after_parts.append(f"{step_title}: {before_after_summary}")
+        for check in _attempt_validation_checks(validation=validation, details=details):
+            validation_checks.append(f"{step_title}: {check}")
+
+        _append_artifact_link(raw_artifacts, label=f"Step {index} details", kind="summary", candidate=artifact_path)
+        for artifact_index, candidate in enumerate(result.get("artifacts") or [], start=1):
+            _append_artifact_link(
+                raw_artifacts,
+                label=f"Step {index} supporting file {artifact_index}",
+                kind="artifact",
+                candidate=candidate,
+            )
+
+    proof_status = _aggregate_plan_proof_status(proof_statuses)
+    total_steps = len(attempt_artifacts)
+    executed_steps = max(total_steps - skipped_steps, 0)
+    if proof_status == "Passed":
+        if skipped_steps:
+            final_verdict = (
+                f"AI-E finished all {total_steps} planned step(s). "
+                f"{executed_steps} step(s) executed and {skipped_steps} step(s) were already satisfied."
+            )
+            validation_outcome = (
+                f"All recorded validation checks passed across {total_steps} planned step(s). "
+                f"{skipped_steps} step(s) were skipped because the requested state was already satisfied."
+            )
+        else:
+            final_verdict = f"AI-E completed all {total_steps} planned step(s) and the recorded checks passed."
+            validation_outcome = f"All recorded validation checks passed across {total_steps} planned step(s)."
+    elif proof_status == "Completed":
+        final_verdict = f"AI-E completed all {total_steps} planned step(s) with partial validation details."
+        validation_outcome = f"AI-E finished {total_steps} planned step(s), but some validation details were only partially recorded."
+    elif proof_status == "Blocked":
+        final_verdict = "AI-E stopped during the planned run before every step could complete safely."
+        validation_outcome = "At least one planned step was blocked before the plan could finish."
+    elif proof_status == "Failed":
+        final_verdict = "AI-E did not finish the full planned run cleanly."
+        validation_outcome = "At least one planned step did not finish cleanly."
+    else:
+        final_verdict = "AI-E saved this planned run with partial details."
+        validation_outcome = "AI-E saved the planned run, but the full validation picture is not available."
+
+    if not validation_checks:
+        validation_checks = [f"Planned steps recorded: {total_steps}."]
+
+    final_task = {}
+    if attempt_artifacts:
+        final_payload = attempt_artifacts[-1][1]
+        final_task = final_payload.get("task") if isinstance(final_payload.get("task"), dict) else {}
+    evaluation_payload = _result_evaluation_payload(
+        run_dir,
+        session_state=session_state,
+        final_task=final_task,
+    )
+    evaluation_fields = _evaluation_surface_fields(evaluation_payload)
+    experiment_fields = _experiment_surface_fields(
+        _result_experiment_payload(
+            run_dir,
+            session_state=session_state,
+            final_task=final_task,
+            evaluation=evaluation_payload,
+        )
+    )
+
+    return ProofResultSurface(
+        available=True,
+        title=original_request or plan_title or "Verified plan",
+        source="proof",
+        original_request=original_request or "The original request is not available in this saved plan result.",
+        normalized_request=normalized_request,
+        target_display=target_display,
+        detected_action=plan_title or "Verified plan",
+        final_verdict=final_verdict,
+        before_after_summary=" ".join(before_after_parts).strip(),
+        change_summary=" ".join(change_parts).strip() or "AI-E completed the recorded plan steps for this request.",
+        validation_outcome=validation_outcome,
+        proof_status=proof_status,
+        timestamp_label=_format_timestamp(_entry_timestamp(run_dir, timestamp_hint)),
+        key_steps=key_steps,
+        validation_checks=validation_checks,
+        raw_artifacts=raw_artifacts,
+        primary_artifact_path=raw_artifacts[0].path if raw_artifacts else None,
+        rerun_prompt=original_request,
+        rerun_project_path=str(first_task.get("target_repo") or "").strip(),
+        status_message="Loaded from the saved multi-step plan and supporting files.",
+        **evaluation_fields,
+        **experiment_fields,
+    )
+
+
+def _aggregate_plan_proof_status(statuses: List[str]) -> str:
+    normalized = [str(status or "").strip().lower() for status in statuses if str(status or "").strip()]
+    if not normalized:
+        return "Saved"
+    if any(status == "blocked" for status in normalized):
+        return "Blocked"
+    if any(status == "failed" for status in normalized):
+        return "Failed"
+    if all(status == "passed" for status in normalized):
+        return "Passed"
+    if all(status in {"passed", "completed"} for status in normalized):
+        return "Completed"
+    return "Saved"
+
+
+def _load_request_payload_from_attempt(run_dir: Path, attempt_artifact: dict[str, Any]) -> dict[str, Any]:
+    task = attempt_artifact.get("task") if isinstance(attempt_artifact.get("task"), dict) else {}
+    raw_request_path = str(task.get("request_payload_path") or "").strip()
+    if not raw_request_path:
+        return {}
+    request_path = _resolve_saved_path(run_dir, raw_request_path)
+    payload = _load_json(request_path) if request_path is not None else None
+    if not isinstance(payload, dict):
+        return {}
+    request = payload.get("conversational_request")
+    if isinstance(request, dict):
+        return request
+    return {}
+
+
+def _resolve_saved_path(run_dir: Path, raw_path: str) -> Path | None:
+    text = str(raw_path or "").strip()
+    if not text:
+        return None
+    candidate = Path(text)
+    if candidate.is_absolute():
+        return candidate if candidate.exists() else None
+    for base in (
+        run_dir,
+        run_dir.parent,
+        run_dir.parent.parent if run_dir.parent.parent != run_dir.parent else run_dir.parent,
+        ORCHESTRATOR_ROOT,
+        PROJECT_ROOT,
+    ):
+        resolved = (base / candidate).resolve()
+        if resolved.exists():
+            return resolved
+    return None
+
+
+def _proof_result_from_attempt_artifact(
+    run_dir: Path,
+    attempt_artifact: dict[str, Any],
+    *,
+    artifact_path: Path,
+    supported_projects: List[SupportedProject],
+) -> ProofResultSurface:
+    task = attempt_artifact.get("task") if isinstance(attempt_artifact.get("task"), dict) else {}
+    request_payload = _load_request_payload_from_attempt(run_dir, attempt_artifact)
+    request_context = request_payload.get("context") if isinstance(request_payload.get("context"), dict) else {}
+    request_routing = request_context.get("routing") if isinstance(request_context.get("routing"), dict) else {}
+    result = attempt_artifact.get("result") if isinstance(attempt_artifact.get("result"), dict) else {}
+    validation = attempt_artifact.get("validation") if isinstance(attempt_artifact.get("validation"), dict) else {}
+    details = result.get("details") if isinstance(result.get("details"), dict) else {}
+    original_request = str(request_payload.get("operator_prompt") or task.get("source_prompt") or task.get("operator_prompt") or "").strip()
+    translated_request = str(details.get("translated_command") or "").strip()
+    target_display = _project_display_from_path(task.get("target_repo"), supported_projects=supported_projects)
+    proof_status = _attempt_proof_status(result=result, validation=validation)
+    validation_checks = _attempt_validation_checks(validation=validation, details=details)
+    raw_artifacts: List[ProofArtifactLink] = []
+    _append_artifact_link(raw_artifacts, label="Run details", kind="summary", candidate=artifact_path)
+    for index, candidate in enumerate(result.get("artifacts") or [], start=1):
+        _append_artifact_link(raw_artifacts, label=f"Supporting file {index}", kind="artifact", candidate=candidate)
+
+    resolution_steps, resolution_checks = _session_resolution_lines(
+        routing=request_routing,
+        details=details,
+    )
+    key_steps = [
+        f"Request: {original_request or 'Saved request details only'}.",
+        f"Action: {_humanize_text(details.get('action_name') or details.get('action_type')) or 'Verified change'}.",
+        f"Execution: {_attempt_execution_label(result=result, details=details)}.",
+    ]
+    key_steps = resolution_steps + key_steps
+    executed_probe = str(details.get("executed_probe") or "").strip()
+    if executed_probe:
+        key_steps.append(f"Probe: {executed_probe}.")
+    validation_checks = resolution_checks + validation_checks
+    evaluation_payload = _result_evaluation_payload(
+        run_dir,
+        task=task,
+    )
+    evaluation_fields = _evaluation_surface_fields(evaluation_payload)
+    experiment_fields = _experiment_surface_fields(
+        _result_experiment_payload(
+            run_dir,
+            task=task,
+            evaluation=evaluation_payload,
+        )
+    )
+
+    return ProofResultSurface(
+        available=True,
+        title=original_request or _proof_title_from_mutation(details) or "Verified result",
+        source="proof",
+        original_request=original_request or "The original request is not available in this saved result.",
+        normalized_request=translated_request if translated_request and translated_request != original_request else "",
+        target_display=target_display,
+        detected_action=_humanize_text(details.get("action_name") or details.get("action_type")) or "Verified change",
+        final_verdict=_attempt_final_verdict(proof_status=proof_status, result=result, details=details, validation=validation),
+        before_after_summary=_proof_before_after_summary(details),
+        change_summary=_proof_change_summary(details),
+        validation_outcome=_attempt_validation_outcome(proof_status=proof_status, validation=validation, details=details),
+        proof_status=proof_status,
+        timestamp_label=_format_timestamp(_entry_timestamp(run_dir, attempt_artifact.get("timestamp"))),
+        key_steps=key_steps,
+        validation_checks=validation_checks,
+        raw_artifacts=raw_artifacts,
+        primary_artifact_path=raw_artifacts[0].path if raw_artifacts else None,
+        rerun_prompt=original_request,
+        rerun_project_path=str(task.get("target_repo") or "").strip(),
+        status_message="Loaded from the saved run details and supporting files.",
+        **evaluation_fields,
+        **experiment_fields,
+    )
+
+
 def _proof_result_from_proof_summary(
     run_dir: Path,
     proof_summary: dict[str, Any],
@@ -2270,8 +2859,121 @@ def _proof_result_from_session_summary(run_dir: Path, session_summary: dict[str,
     )
 
 
+def _attempt_proof_status(*, result: dict[str, Any], validation: dict[str, Any]) -> str:
+    result_status = str(result.get("status") or "").strip().lower()
+    validation_state = str(validation.get("validation_state") or "").strip().lower()
+    if result_status == "completed" and validation_state in {"passed", "completed"}:
+        return "Passed"
+    if result_status in {"blocked", "retryable_failure"} or validation_state == "blocked":
+        return "Blocked"
+    if result_status in {"failed", "error"} or validation_state in {"failed", "error"}:
+        return "Failed"
+    if result_status == "completed":
+        return "Completed"
+    return _humanize_status(result_status) or "Saved"
+
+
+def _attempt_validation_checks(*, validation: dict[str, Any], details: dict[str, Any]) -> List[str]:
+    checks: List[str] = []
+    execution_label = _attempt_execution_check(details)
+    if execution_label:
+        checks.append(execution_label)
+    validation_status = str(validation.get("validation_state") or validation.get("status") or "").strip()
+    if validation_status:
+        checks.append(f"Validation state: {_humanize_status(validation_status)}.")
+    validation_check = str(((details.get("validation") or {}) if isinstance(details.get("validation"), dict) else {}).get("check") or "").strip()
+    if validation_check:
+        checks.append(f"Validation check: {_humanize_text(validation_check)}.")
+    note = str(validation.get("note") or "").strip()
+    if note:
+        checks.append(note.rstrip(".") + ".")
+    return checks
+
+
+def _attempt_validation_outcome(*, proof_status: str, validation: dict[str, Any], details: dict[str, Any]) -> str:
+    if _attempt_was_skipped(details):
+        return "Recorded validation passed. AI-E skipped the change because the requested state was already satisfied."
+    validation_payload = details.get("validation") if isinstance(details.get("validation"), dict) else {}
+    validation_status = str(validation_payload.get("status") or validation.get("validation_state") or "").strip().lower()
+    if validation_status in {"passed", "completed"} or proof_status == "Passed":
+        return "Recorded validation passed."
+    if validation_status in {"blocked"} or proof_status == "Blocked":
+        return "Validation stopped before this request could continue."
+    if validation_status in {"failed", "error"} or proof_status == "Failed":
+        return "Recorded validation did not pass."
+    return "Detailed validation checks are not available in this result."
+
+
+def _attempt_final_verdict(
+    *,
+    proof_status: str,
+    result: dict[str, Any],
+    details: dict[str, Any],
+    validation: dict[str, Any],
+) -> str:
+    object_name = str(details.get("object_name") or "").strip()
+    if _attempt_was_skipped(details):
+        skip_reason = _attempt_skip_reason(details)
+        if skip_reason:
+            return skip_reason
+        return f"{object_name or 'Target'} already satisfied this request, so AI-E left it unchanged."
+    if proof_status == "Passed":
+        if isinstance(details.get("previous_speed"), (int, float)) and isinstance(details.get("new_speed"), (int, float)):
+            return f"{object_name or 'Target'} speed changed successfully and the recorded checks passed."
+        if isinstance(details.get("previous_attack_cooldown"), (int, float)) and isinstance(details.get("new_attack_cooldown"), (int, float)):
+            return f"{object_name or 'Target'} aggression changed successfully and the recorded checks passed."
+        if object_name:
+            return f"{object_name} changed successfully and the recorded checks passed."
+        return "Requested change completed successfully and the recorded checks passed."
+    if proof_status == "Blocked":
+        return "Requested change was stopped before it could complete."
+    if proof_status == "Failed":
+        return "Requested change did not finish cleanly."
+    raw_message = _clean_decision_text(str(result.get("summary") or validation.get("note") or "").strip())
+    if raw_message:
+        return raw_message
+    return "Result saved with partial details."
+
+
 def _proof_before_after_summary(mutation: dict[str, Any]) -> str:
     object_name = str(mutation.get("object_name") or "The target object").strip()
+    if _attempt_was_skipped(mutation):
+        if isinstance(mutation.get("new_speed"), (int, float)):
+            return (
+                f"{object_name} stayed at movement speed {float(mutation.get('new_speed')):g} "
+                "because it already satisfied this request."
+            )
+        if isinstance(mutation.get("new_attack_cooldown"), (int, float)):
+            return (
+                f"{object_name} stayed at attack cooldown {float(mutation.get('new_attack_cooldown')):g} "
+                "because it already satisfied this request."
+            )
+        return f"{object_name} already satisfied this request, so no mutation was needed."
+    previous_speed = mutation.get("previous_speed")
+    new_speed = mutation.get("new_speed")
+    if isinstance(previous_speed, (int, float)) and isinstance(new_speed, (int, float)):
+        return f"{object_name} speed changed from {float(previous_speed):g} to {float(new_speed):g}."
+    if isinstance(new_speed, (int, float)):
+        return f"{object_name} now uses movement speed {float(new_speed):g}. The starting speed is not available in this result."
+    if isinstance(previous_speed, (int, float)):
+        return f"{object_name} started at movement speed {float(previous_speed):g}. The ending speed is not available in this result."
+    previous_attack_cooldown = mutation.get("previous_attack_cooldown")
+    new_attack_cooldown = mutation.get("new_attack_cooldown")
+    if isinstance(previous_attack_cooldown, (int, float)) and isinstance(new_attack_cooldown, (int, float)):
+        return (
+            f"{object_name} attack cooldown changed from {float(previous_attack_cooldown):g} "
+            f"to {float(new_attack_cooldown):g}."
+        )
+    if isinstance(new_attack_cooldown, (int, float)):
+        return (
+            f"{object_name} now uses attack cooldown {float(new_attack_cooldown):g}. "
+            "The starting aggression value is not available in this result."
+        )
+    if isinstance(previous_attack_cooldown, (int, float)):
+        return (
+            f"{object_name} started at attack cooldown {float(previous_attack_cooldown):g}. "
+            "The ending aggression value is not available in this result."
+        )
     previous_position = mutation.get("previous_position")
     new_position = mutation.get("new_position")
     if isinstance(previous_position, list) and isinstance(new_position, list):
@@ -2290,6 +2992,24 @@ def _proof_change_summary(mutation: dict[str, Any]) -> str:
         return "This result does not include a clear change summary."
     object_name = str(mutation.get("object_name") or "target object").strip()
     action_type = _humanize_text(mutation.get("action_type") or mutation.get("step_name")) or "mutation"
+    if _attempt_was_skipped(mutation):
+        skip_reason = _attempt_skip_reason(mutation)
+        if skip_reason:
+            return f"AI-E checked {object_name} and skipped the change because {skip_reason.rstrip('.')}."
+        return f"AI-E checked {object_name} and skipped {action_type} because the requested state was already satisfied."
+    previous_speed = mutation.get("previous_speed")
+    new_speed = mutation.get("new_speed")
+    if isinstance(previous_speed, (int, float)) and isinstance(new_speed, (int, float)):
+        return (
+            f"AI-E changed movement speed for {object_name} from {float(previous_speed):g} to {float(new_speed):g}."
+        )
+    previous_attack_cooldown = mutation.get("previous_attack_cooldown")
+    new_attack_cooldown = mutation.get("new_attack_cooldown")
+    if isinstance(previous_attack_cooldown, (int, float)) and isinstance(new_attack_cooldown, (int, float)):
+        return (
+            f"AI-E changed aggression for {object_name} by lowering attack cooldown "
+            f"from {float(previous_attack_cooldown):g} to {float(new_attack_cooldown):g}."
+        )
     if mutation.get("position_changed") is True:
         distance = mutation.get("movement_distance")
         distance_text = f" Recorded movement: {distance} unit(s)." if isinstance(distance, (int, float)) else ""
@@ -2303,6 +3023,318 @@ def _proof_title_from_mutation(mutation: dict[str, Any]) -> str:
     if action_type and object_name:
         return f"{action_type} - {object_name}"
     return action_type or object_name
+
+
+def _attempt_execution_label(*, result: dict[str, Any], details: dict[str, Any]) -> str:
+    if _attempt_was_skipped(details):
+        return "Skipped because the requested state was already satisfied"
+    return _humanize_status(result.get("status")) or "Completed"
+
+
+def _attempt_execution_check(details: dict[str, Any]) -> str:
+    if _attempt_was_skipped(details):
+        return "Execution: Skipped because the requested state was already satisfied."
+    if _attempt_executed(details):
+        return "Execution: Applied."
+    return ""
+
+
+def _attempt_was_skipped(details: dict[str, Any]) -> bool:
+    if not isinstance(details, dict):
+        return False
+    executed = details.get("executed")
+    if isinstance(executed, bool):
+        return not executed and str(details.get("result_reason") or "").strip().lower() == "skipped_already_satisfied"
+    return False
+
+
+def _attempt_executed(details: dict[str, Any]) -> bool:
+    if not isinstance(details, dict):
+        return True
+    executed = details.get("executed")
+    if isinstance(executed, bool):
+        return executed
+    return True
+
+
+def _attempt_skip_reason(details: dict[str, Any]) -> str:
+    object_name = str(details.get("object_name") or "Target").strip()
+    action_name = str(details.get("action_name") or "").strip().lower()
+    new_speed = details.get("new_speed")
+    requested_speed = details.get("requested_speed")
+    if isinstance(new_speed, (int, float)):
+        comparator = "at or above" if "increase" in action_name or "faster" in action_name else "at or below"
+        if isinstance(requested_speed, (int, float)):
+            return (
+                f"{object_name} was already {comparator} the desired speed "
+                f"({float(new_speed):g} vs requested {float(requested_speed):g})."
+            )
+        return f"{object_name} was already {comparator} the desired speed."
+    new_attack_cooldown = details.get("new_attack_cooldown")
+    requested_attack_cooldown = details.get("requested_attack_cooldown")
+    if isinstance(new_attack_cooldown, (int, float)):
+        comparator = "at or below" if "increase" in action_name or "aggressive" in action_name else "at or above"
+        if isinstance(requested_attack_cooldown, (int, float)):
+            return (
+                f"{object_name} was already {comparator} the desired aggression threshold "
+                f"({float(new_attack_cooldown):g} vs requested {float(requested_attack_cooldown):g} cooldown)."
+            )
+        return f"{object_name} was already {comparator} the desired aggression threshold."
+    return ""
+
+
+def _result_evaluation_payload(
+    run_dir: Path,
+    *,
+    session_state: dict[str, Any] | None = None,
+    task: dict[str, Any] | None = None,
+    final_task: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    state = session_state if isinstance(session_state, dict) else _load_json(run_dir / "session_state.json")
+    if not isinstance(state, dict):
+        return {}
+
+    history = state.get("result_evaluation_history")
+    if not isinstance(history, list):
+        history = []
+    latest = state.get("latest_result_evaluation")
+    if isinstance(latest, dict) and latest:
+        history = [*history, latest]
+
+    match_task = final_task if isinstance(final_task, dict) else (task if isinstance(task, dict) else {})
+    task_id = str(match_task.get("task_id") or "").strip()
+    request_id = str(match_task.get("request_id") or "").strip()
+    plan_id = str(match_task.get("plan_id") or "").strip()
+
+    for entry in reversed(history):
+        if not isinstance(entry, dict):
+            continue
+        if task_id and str(entry.get("task_id") or "").strip() == task_id:
+            return entry
+        if request_id and str(entry.get("request_id") or "").strip() == request_id:
+            if not plan_id or str(entry.get("plan_id") or "").strip() == plan_id:
+                return entry
+        if plan_id and str(entry.get("plan_id") or "").strip() == plan_id:
+            return entry
+    return {}
+
+
+def _evaluation_surface_fields(evaluation: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(evaluation, dict) or not evaluation:
+        return {
+            "evaluation_available": False,
+            "evaluation_summary": "",
+            "evaluation_differences": [],
+            "evaluation_suggestion": "",
+            "evaluation_source": "",
+        }
+
+    summary = str(evaluation.get("comparison_description") or "").strip()
+    differences = [
+        str(item).strip()
+        for item in (evaluation.get("detected_differences") or [])
+        if str(item).strip()
+    ]
+    suggestion = str(evaluation.get("suggestion") or "").strip()
+    source = str(evaluation.get("evaluation_source") or "").strip()
+    available = bool(summary or differences or suggestion)
+    return {
+        "evaluation_available": available,
+        "evaluation_summary": summary,
+        "evaluation_differences": differences,
+        "evaluation_suggestion": suggestion,
+        "evaluation_source": source,
+    }
+
+
+def _result_experiment_payload(
+    run_dir: Path,
+    *,
+    session_state: dict[str, Any] | None = None,
+    task: dict[str, Any] | None = None,
+    final_task: dict[str, Any] | None = None,
+    evaluation: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    state = session_state if isinstance(session_state, dict) else _load_json(run_dir / "session_state.json")
+    if not isinstance(state, dict):
+        return {}
+
+    tracking = state.get("experiment_tracking")
+    if not isinstance(tracking, dict):
+        return {}
+    experiments = tracking.get("experiments")
+    if not isinstance(experiments, list):
+        return {}
+
+    match_task = final_task if isinstance(final_task, dict) else (task if isinstance(task, dict) else {})
+    task_id = str(match_task.get("task_id") or "").strip()
+    request_id = str(match_task.get("request_id") or "").strip()
+    plan_id = str(match_task.get("plan_id") or "").strip()
+
+    matched_variant: dict[str, Any] = {}
+    for experiment in experiments:
+        if not isinstance(experiment, dict):
+            continue
+        variants = experiment.get("variants")
+        if not isinstance(variants, list):
+            continue
+        for variant in reversed(variants):
+            if not isinstance(variant, dict):
+                continue
+            if task_id and str(variant.get("task_id") or "").strip() == task_id:
+                matched_variant = {**variant, "_experiment": experiment}
+                break
+            if request_id and str(variant.get("request_id") or "").strip() == request_id:
+                if not plan_id or str(variant.get("plan_id") or "").strip() == plan_id:
+                    matched_variant = {**variant, "_experiment": experiment}
+                    break
+            if plan_id and str(variant.get("plan_id") or "").strip() == plan_id:
+                matched_variant = {**variant, "_experiment": experiment}
+                break
+        if matched_variant:
+            break
+
+    if not matched_variant:
+        return {}
+
+    experiment = matched_variant.get("_experiment") if isinstance(matched_variant.get("_experiment"), dict) else {}
+    evaluation_payload = evaluation if isinstance(evaluation, dict) else {}
+    compared_variant_id = str(
+        evaluation_payload.get("compared_against_variant_id")
+        or evaluation_payload.get("previous_variant_id")
+        or ""
+    ).strip()
+    summary = str(evaluation_payload.get("experiment_comparison_description") or "").strip()
+    if not summary:
+        variant_id = str(matched_variant.get("variant_id") or "").strip()
+        experiment_id = str(matched_variant.get("experiment_id") or "").strip()
+        summary = f"{variant_id or 'Current variant'} is part of {experiment_id or 'the active experiment'}."
+        if bool(matched_variant.get("baseline_marker")):
+            summary += " This variant is marked as a baseline."
+    preferred_baseline_variant_id = str(
+        experiment.get("preferred_baseline_variant_id")
+        or matched_variant.get("preferred_baseline_variant_id")
+        or evaluation_payload.get("preferred_baseline_variant_id")
+        or ""
+    ).strip()
+    latest_decision = experiment.get("latest_decision") if isinstance(experiment.get("latest_decision"), dict) else {}
+    latest_decision_summary = str(latest_decision.get("summary") or "").strip()
+    decision_status = str(matched_variant.get("decision_status") or "undecided").strip().lower() or "undecided"
+
+    return {
+        "experiment_available": True,
+        "experiment_id": str(matched_variant.get("experiment_id") or experiment.get("experiment_id") or "").strip(),
+        "variant_id": str(matched_variant.get("variant_id") or "").strip(),
+        "parent_variant_id": str(matched_variant.get("parent_variant_id") or "").strip(),
+        "compared_variant_id": compared_variant_id,
+        "baseline_variant_id": str(matched_variant.get("baseline_variant_id") or experiment.get("baseline_variant_id") or "").strip(),
+        "preferred_baseline_variant_id": preferred_baseline_variant_id,
+        "baseline_marker": bool(matched_variant.get("baseline_marker")),
+        "variant_kind": str(matched_variant.get("variant_kind") or "").strip(),
+        "experiment_summary": summary,
+        "decision_status": decision_status,
+        "latest_decision_summary": latest_decision_summary,
+    }
+
+
+def _experiment_surface_fields(experiment: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(experiment, dict) or not experiment:
+        return {
+            "experiment_available": False,
+            "experiment_id": "",
+            "variant_id": "",
+            "parent_variant_id": "",
+            "compared_variant_id": "",
+            "baseline_variant_id": "",
+            "preferred_baseline_variant_id": "",
+            "baseline_marker": False,
+            "variant_kind": "",
+            "experiment_summary": "",
+            "decision_status": "",
+            "latest_decision_summary": "",
+        }
+
+    return {
+        "experiment_available": bool(experiment.get("experiment_available", False)),
+        "experiment_id": str(experiment.get("experiment_id") or "").strip(),
+        "variant_id": str(experiment.get("variant_id") or "").strip(),
+        "parent_variant_id": str(experiment.get("parent_variant_id") or "").strip(),
+        "compared_variant_id": str(experiment.get("compared_variant_id") or "").strip(),
+        "baseline_variant_id": str(experiment.get("baseline_variant_id") or "").strip(),
+        "preferred_baseline_variant_id": str(experiment.get("preferred_baseline_variant_id") or "").strip(),
+        "baseline_marker": bool(experiment.get("baseline_marker", False)),
+        "variant_kind": str(experiment.get("variant_kind") or "").strip(),
+        "experiment_summary": str(experiment.get("experiment_summary") or "").strip(),
+        "decision_status": str(experiment.get("decision_status") or "").strip(),
+        "latest_decision_summary": str(experiment.get("latest_decision_summary") or "").strip(),
+    }
+
+
+def _session_resolution_lines(*, routing: dict[str, Any], details: dict[str, Any]) -> tuple[list[str], list[str]]:
+    resolution_source = str(details.get("resolution_source") or routing.get("resolution_source") or "").strip().lower()
+    if resolution_source not in {"session_followup_resolution", "goal_intent_mapping", "goal_composition"}:
+        return [], []
+
+    resolved_from_prompt = str(details.get("resolved_from_prompt") or routing.get("resolved_from_prompt") or "").strip()
+    mapped_prompt = str(
+        details.get("translated_command")
+        or routing.get("mapped_prompt")
+        or ""
+    ).strip()
+    goal_components = [
+        str(item).strip()
+        for item in (details.get("goal_components") or routing.get("goal_components") or [])
+        if str(item).strip()
+    ]
+    state_family = str(details.get("state_family") or routing.get("state_family") or "").strip()
+    previous_tier = str(details.get("previous_tier") or routing.get("previous_tier") or "").strip()
+    requested_tier = str(details.get("requested_tier") or routing.get("requested_tier") or "").strip()
+    resulting_tier = str(details.get("resulting_tier") or "").strip()
+    revert_summary = str(details.get("revert_summary") or routing.get("revert_summary") or "").strip()
+    resolution_note = str(details.get("resolution_note") or routing.get("session_resolution_note") or "").strip()
+
+    key_steps: list[str] = []
+    validation_checks: list[str] = []
+    if resolution_source == "goal_intent_mapping":
+        if resolved_from_prompt and mapped_prompt:
+            key_steps.append(
+                f"Resolution: AI-E mapped the gameplay goal '{resolved_from_prompt}' to the bounded supported plan '{mapped_prompt}'."
+            )
+        elif mapped_prompt:
+            key_steps.append(f"Resolution: AI-E mapped this gameplay goal to the bounded supported plan '{mapped_prompt}'.")
+        else:
+            key_steps.append("Resolution: AI-E mapped this gameplay goal to a bounded supported plan.")
+    elif resolution_source == "goal_composition":
+        if resolved_from_prompt and mapped_prompt:
+            key_steps.append(
+                f"Resolution: AI-E combined the gameplay goals from '{resolved_from_prompt}' into the bounded supported plan '{mapped_prompt}'."
+            )
+        elif mapped_prompt:
+            key_steps.append(f"Resolution: AI-E combined this gameplay request into the bounded supported plan '{mapped_prompt}'.")
+        else:
+            key_steps.append("Resolution: AI-E combined this gameplay request into a bounded supported plan.")
+    else:
+        if resolved_from_prompt:
+            key_steps.append(f"Resolution: AI-E resolved the follow-up prompt '{resolved_from_prompt}' from the current session state.")
+        else:
+            key_steps.append("Resolution: AI-E resolved this request from the current session state.")
+    if resolution_note:
+        key_steps.append(resolution_note.rstrip(".") + ".")
+    if goal_components:
+        validation_checks.append(
+            "Goal components: " + "; ".join(_humanize_text(component) for component in goal_components) + "."
+        )
+
+    if state_family and previous_tier and requested_tier:
+        prefix = "Session tier path" if resolution_source == "session_followup_resolution" else "Requested tier path"
+        validation_checks.append(f"{prefix}: {_humanize_text(state_family)} {previous_tier} -> {requested_tier}.")
+    if state_family and resulting_tier:
+        validation_checks.append(
+            f"Resulting tier: {_humanize_text(state_family)} {resulting_tier}."
+        )
+    if revert_summary:
+        validation_checks.append(revert_summary.rstrip(".") + ".")
+    return key_steps, validation_checks
 
 
 def _proof_final_verdict(
