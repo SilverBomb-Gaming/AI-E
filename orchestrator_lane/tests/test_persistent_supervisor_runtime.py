@@ -8,8 +8,10 @@ from threading import Thread
 
 import pytest
 
+from app import home_surface
 from ai_e_runtime.agent_router import AgentRouter
 from ai_e_runtime.capability_registry import CapabilityEvidenceStore, CapabilityRegistry
+from ai_e_runtime.level_0001_entity_transform_mutation import run_level_0001_entity_transform_mutation
 from ai_e_runtime.mutation_approval import approve_mutation_task
 from ai_e_runtime.scheduler import Scheduler
 from ai_e_runtime.supervisor import Supervisor, SupervisorConfig
@@ -6079,6 +6081,1915 @@ def test_supervisor_executes_normalized_move_zombie_forward_mutation_and_records
     assert artifact["result"]["details"]["approval_state"] == "approved"
 
 
+def test_supervisor_executes_make_zombie_faster_mutation_and_records_speed_change(tmp_path, monkeypatch):
+    config = _make_config(tmp_path / "make_zombie_faster")
+    _write_move_zombie_capability_contract(config)
+    _write_zombie_speed_capability_contracts(config)
+    target_repo = _create_entity_transform_prompt_repo(config, target_repo_name="BABYLON_TEST")
+    intake = ConversationalTaskIntake(config)
+
+    def fake_run(command, cwd, capture_output, text, check):
+        assert command[command.index("-PromptText") + 1] == "make zombie faster"
+        assert command[command.index("-ProjectPath") + 1] == target_repo
+        translator_artifact_path = Path(command[command.index("-ArtifactPath") + 1])
+        translator_log_path = Path(command[command.index("-LogPath") + 1])
+        translator_artifact_path.parent.mkdir(parents=True, exist_ok=True)
+        translator_log_path.parent.mkdir(parents=True, exist_ok=True)
+
+        router_artifact_path = translator_artifact_path.with_name(f"{translator_artifact_path.stem}.router_result.json")
+        router_log_path = translator_log_path.with_name(f"{translator_log_path.stem}.router.log")
+        probe_artifact_path = translator_artifact_path.parent / "intent_make_zombie_faster_probe_result.json"
+        probe_log_path = translator_artifact_path.parent / "intent_make_zombie_faster_probe.log"
+
+        translator_log_path.write_text("translator log", encoding="utf-8")
+        router_log_path.write_text("router log", encoding="utf-8")
+        probe_log_path.write_text("probe log", encoding="utf-8")
+        probe_artifact_path.write_text(
+            json.dumps(
+                {
+                    "status": "success",
+                    "scene": "entity_test",
+                    "scene_name": "entity_test",
+                    "action_type": "mutate_enemy_move_speed",
+                    "object_name": "AIE_Zombie_001_Instance",
+                    "previous_speed": 3.5,
+                    "new_speed": 4.5,
+                    "observed_speed_before_reset": 3.5,
+                    "baseline_speed": 3.5,
+                    "requested_speed": 4.5,
+                    "minimum_speed": 2.0,
+                    "maximum_speed": 5.0,
+                    "speed_changed": True,
+                    "scene_path": "Assets/AI_E_TestScenes/entity_test.unity",
+                    "timestamp": "2026-04-01T00:00:00Z",
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        router_artifact_path.write_text(
+            json.dumps(
+                {
+                    "status": "success",
+                    "action_name": "increase_enemy_move_speed",
+                    "route_kind": "single",
+                    "executed_probe": "MutateEnemyMoveSpeed",
+                    "delegated_probe_artifact_path": str(probe_artifact_path),
+                    "delegated_probe_log_path": str(probe_log_path),
+                    "delegated_probe_action_type": "mutate_enemy_move_speed",
+                    "final_state_summary": {
+                        "scene_name": "entity_test",
+                        "action_name": "increase_enemy_move_speed",
+                        "object_name": "AIE_Zombie_001_Instance",
+                        "final_action_type": "mutate_enemy_move_speed",
+                    },
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        translator_artifact_path.write_text(
+            json.dumps(
+                {
+                    "status": "success",
+                    "raw_prompt": "make zombie faster",
+                    "normalized_prompt": "make zombie faster",
+                    "translated_command": "make zombie faster",
+                    "matched_prompt_pattern": "make zombie faster",
+                    "action_name": "increase_enemy_move_speed",
+                    "router_artifact_path": str(router_artifact_path),
+                    "router_log_path": str(router_log_path),
+                    "router_status": "success",
+                    "timestamp": "2026-04-01T00:00:00Z",
+                    "message": "",
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        return subprocess.CompletedProcess(command, 0, stdout="translator ok", stderr="")
+
+    monkeypatch.setattr("ai_e_runtime.level_0001_entity_transform_mutation.subprocess.run", fake_run)
+
+    result = intake.accept_message(
+        "speed up the zombie",
+        session_id="make-zombie-faster-session",
+        target_repo=target_repo,
+    )
+
+    assert result.queue_entry["status"] == "needs_approval"
+    assert result.routing.capability_id == "level_0001_increase_zombie_speed"
+
+    approval = approve_mutation_task(
+        config,
+        task_id=result.task_id,
+        approved_by="operator-test",
+        notes="Approve bounded zombie speed increase mutation.",
+    )
+    assert approval.queue_status == "pending"
+
+    supervisor = Supervisor(
+        config,
+        SupervisorConfig(
+            session_limit_seconds=10,
+            heartbeat_interval_seconds=1,
+            poll_interval_seconds=1,
+            idle_timeout_seconds=2,
+            idle_timeout_poll_limit=99,
+            session_id="make-zombie-faster-session",
+            stop_when_queue_empty=False,
+        ),
+    )
+
+    run_result = supervisor.run()
+
+    assert run_result.tasks_completed == 1
+    assert run_result.stop_reason == "queue_empty_idle_timeout"
+
+    artifact_path = config.runs_dir / "make-zombie-faster-session" / "artifacts" / f"{result.task_id}_attempt_01.json"
+    artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
+    details = artifact["result"]["details"]
+    assert details["action_type"] == "mutate_enemy_move_speed"
+    assert details["translated_command"] == "make zombie faster"
+    assert details["executed_probe"] == "MutateEnemyMoveSpeed"
+    assert details["previous_speed"] == 3.5
+    assert details["new_speed"] == 4.5
+    assert details["minimum_speed"] == 2.0
+    assert details["maximum_speed"] == 5.0
+    assert details["minimum_speed"] <= details["new_speed"] <= details["maximum_speed"]
+    assert details["validation"]["status"] == "passed"
+
+
+def test_supervisor_executes_predefined_combat_variation_plan_sequentially_and_loads_combined_result(tmp_path, monkeypatch):
+    config = _make_config(tmp_path / "combat_plan")
+    _write_move_zombie_capability_contract(config)
+    _write_zombie_speed_capability_contracts(config)
+    _write_zombie_aggression_capability_contract(config)
+    target_repo = _create_entity_transform_prompt_repo(config, target_repo_name="BABYLON_TEST")
+    intake = ConversationalTaskIntake(config)
+
+    def fake_run(command, cwd, capture_output, text, check):
+        prompt_text = command[command.index("-PromptText") + 1]
+        assert command[command.index("-ProjectPath") + 1] == target_repo
+        translator_artifact_path = Path(command[command.index("-ArtifactPath") + 1])
+        translator_log_path = Path(command[command.index("-LogPath") + 1])
+        translator_artifact_path.parent.mkdir(parents=True, exist_ok=True)
+        translator_log_path.parent.mkdir(parents=True, exist_ok=True)
+
+        router_artifact_path = translator_artifact_path.with_name(f"{translator_artifact_path.stem}.router_result.json")
+        router_log_path = translator_log_path.with_name(f"{translator_log_path.stem}.router.log")
+        probe_log_path = translator_artifact_path.parent / f"{translator_artifact_path.stem}.probe.log"
+
+        translator_log_path.write_text("translator log", encoding="utf-8")
+        router_log_path.write_text("router log", encoding="utf-8")
+        probe_log_path.write_text("probe log", encoding="utf-8")
+
+        if prompt_text == "make zombie faster":
+            probe_artifact_path = translator_artifact_path.parent / "intent_make_zombie_faster_probe_result.json"
+            probe_artifact_path.write_text(
+                json.dumps(
+                    {
+                        "status": "success",
+                        "scene": "entity_test",
+                        "scene_name": "entity_test",
+                        "action_type": "mutate_enemy_move_speed",
+                        "object_name": "AIE_Zombie_001_Instance",
+                        "previous_speed": 3.5,
+                        "new_speed": 4.5,
+                        "observed_speed_before_reset": 3.5,
+                        "baseline_speed": 3.5,
+                        "requested_speed": 4.5,
+                        "minimum_speed": 2.0,
+                        "maximum_speed": 5.0,
+                        "speed_changed": True,
+                        "scene_path": "Assets/AI_E_TestScenes/entity_test.unity",
+                        "timestamp": "2026-04-01T00:00:00Z",
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            router_artifact_path.write_text(
+                json.dumps(
+                    {
+                        "status": "success",
+                        "action_name": "increase_enemy_move_speed",
+                        "route_kind": "single",
+                        "executed_probe": "MutateEnemyMoveSpeed",
+                        "delegated_probe_artifact_path": str(probe_artifact_path),
+                        "delegated_probe_log_path": str(probe_log_path),
+                        "delegated_probe_action_type": "mutate_enemy_move_speed",
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            translator_artifact_path.write_text(
+                json.dumps(
+                    {
+                        "status": "success",
+                        "raw_prompt": "make zombie faster",
+                        "normalized_prompt": "make zombie faster",
+                        "translated_command": "make zombie faster",
+                        "matched_prompt_pattern": "make zombie faster",
+                        "action_name": "increase_enemy_move_speed",
+                        "router_artifact_path": str(router_artifact_path),
+                        "router_log_path": str(router_log_path),
+                        "router_status": "success",
+                        "timestamp": "2026-04-01T00:00:00Z",
+                        "message": "",
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+        elif prompt_text == "make zombie more aggressive":
+            probe_artifact_path = translator_artifact_path.parent / "intent_make_zombie_more_aggressive_probe_result.json"
+            probe_artifact_path.write_text(
+                json.dumps(
+                    {
+                        "status": "success",
+                        "scene": "entity_test",
+                        "scene_name": "entity_test",
+                        "action_type": "mutate_enemy_aggression",
+                        "object_name": "AIE_Zombie_001_Instance",
+                        "previous_attack_cooldown": 1.0,
+                        "new_attack_cooldown": 0.6,
+                        "observed_attack_cooldown_before_reset": 1.0,
+                        "baseline_attack_cooldown": 1.0,
+                        "requested_attack_cooldown": 0.6,
+                        "minimum_attack_cooldown": 0.25,
+                        "maximum_attack_cooldown": 2.0,
+                        "aggression_changed": True,
+                        "scene_path": "Assets/AI_E_TestScenes/entity_test.unity",
+                        "timestamp": "2026-04-01T00:00:01Z",
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            router_artifact_path.write_text(
+                json.dumps(
+                    {
+                        "status": "success",
+                        "action_name": "increase_enemy_aggression",
+                        "route_kind": "single",
+                        "executed_probe": "MutateEnemyAggression",
+                        "delegated_probe_artifact_path": str(probe_artifact_path),
+                        "delegated_probe_log_path": str(probe_log_path),
+                        "delegated_probe_action_type": "mutate_enemy_aggression",
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            translator_artifact_path.write_text(
+                json.dumps(
+                    {
+                        "status": "success",
+                        "raw_prompt": "make zombie more aggressive",
+                        "normalized_prompt": "make zombie more aggressive",
+                        "translated_command": "make zombie more aggressive",
+                        "matched_prompt_pattern": "make zombie more aggressive",
+                        "action_name": "increase_enemy_aggression",
+                        "router_artifact_path": str(router_artifact_path),
+                        "router_log_path": str(router_log_path),
+                        "router_status": "success",
+                        "timestamp": "2026-04-01T00:00:01Z",
+                        "message": "",
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+        else:
+            raise AssertionError(f"Unexpected prompt routed to translator: {prompt_text}")
+        return subprocess.CompletedProcess(command, 0, stdout="translator ok", stderr="")
+
+    monkeypatch.setattr("ai_e_runtime.level_0001_entity_transform_mutation.subprocess.run", fake_run)
+
+    result = intake.accept_message(
+        "test combat variation",
+        session_id="combat-variation-session",
+        target_repo=target_repo,
+    )
+
+    assert result.task_type == "mutation_plan_request"
+    assert result.plan_step_titles == [
+        "Increase zombie speed",
+        "Increase zombie aggression",
+    ]
+    assert len(result.task_ids) == 2
+
+    for task_id in result.task_ids:
+        approval = approve_mutation_task(
+            config,
+            task_id=task_id,
+            approved_by="operator-test",
+            notes="Approve bounded zombie combat variation plan.",
+        )
+        assert approval.queue_status == "pending"
+
+    supervisor = Supervisor(
+        config,
+        SupervisorConfig(
+            session_limit_seconds=10,
+            heartbeat_interval_seconds=1,
+            poll_interval_seconds=1,
+            idle_timeout_seconds=2,
+            idle_timeout_poll_limit=99,
+            session_id="combat-variation-session",
+            stop_when_queue_empty=False,
+        ),
+    )
+
+    run_result = supervisor.run()
+
+    assert run_result.tasks_completed == 2
+    assert run_result.stop_reason == "queue_empty_idle_timeout"
+
+    queue = json.loads(config.queue_path.read_text(encoding="utf-8"))["tasks"]
+    assert [task["status"] for task in queue] == ["completed", "completed"]
+    assert queue[0]["capability_id"] == "level_0001_increase_zombie_speed"
+    assert queue[1]["capability_id"] == "level_0001_increase_zombie_aggression"
+    assert queue[1]["dependencies"] == [queue[0]["task_id"]]
+
+    speed_evidence = CapabilityEvidenceStore(config.contracts_dir / "capabilities" / "evidence.json").get(
+        "level_0001_increase_zombie_speed"
+    )
+    aggression_evidence = CapabilityEvidenceStore(config.contracts_dir / "capabilities" / "evidence.json").get(
+        "level_0001_increase_zombie_aggression"
+    )
+    assert speed_evidence is not None
+    assert aggression_evidence is not None
+    assert speed_evidence["times_passed"] == 1
+    assert aggression_evidence["times_passed"] == 1
+
+    proof = home_surface.load_proof_result_surface(config.runs_dir / "combat-variation-session")
+
+    assert proof.available is True
+    assert proof.detected_action == "Test zombie combat variation"
+    assert proof.proof_status == "Passed"
+    assert len(proof.key_steps) == 2
+    assert "Increase zombie speed" in proof.key_steps[0]
+    assert "Increase zombie aggression" in proof.key_steps[1]
+    assert "movement speed" in proof.change_summary.lower()
+    assert "attack cooldown" in proof.change_summary.lower()
+    assert "attack cooldown" in proof.before_after_summary.lower()
+    assert proof.validation_outcome == "All recorded validation checks passed across 2 planned step(s)."
+
+
+def test_supervisor_executes_goal_intent_mapped_combat_variation_plan_and_loads_resolution_metadata(tmp_path, monkeypatch):
+    config = _make_config(tmp_path / "goal_intent_combat_plan")
+    _write_move_zombie_capability_contract(config)
+    _write_zombie_speed_capability_contracts(config)
+    _write_zombie_aggression_capability_contract(config)
+    target_repo = _create_entity_transform_prompt_repo(config, target_repo_name="BABYLON_TEST")
+    intake = ConversationalTaskIntake(config)
+    fake_run, runtime_state = _make_stateful_zombie_mutation_fake_run(target_repo)
+
+    monkeypatch.setattr("ai_e_runtime.level_0001_entity_transform_mutation.subprocess.run", fake_run)
+
+    result = intake.accept_message(
+        "make zombie more dangerous",
+        session_id="goal-intent-combat-session",
+        target_repo=target_repo,
+    )
+
+    request_payload = json.loads(result.artifacts.request_payload_path.read_text(encoding="utf-8"))
+
+    assert result.task_type == "mutation_plan_request"
+    assert result.routing.resolution_source == "goal_intent_mapping"
+    assert result.routing.mapped_prompt == "make zombie faster and more aggressive"
+    assert request_payload["conversational_request"]["context"]["routing"]["resolution_source"] == "goal_intent_mapping"
+
+    for task_id in result.task_ids:
+        approval = approve_mutation_task(
+            config,
+            task_id=task_id,
+            approved_by="operator-test",
+            notes="Approve bounded goal-intent combat variation plan.",
+        )
+        assert approval.queue_status == "pending"
+
+    run_result = Supervisor(
+        config,
+        SupervisorConfig(
+            session_limit_seconds=10,
+            heartbeat_interval_seconds=1,
+            poll_interval_seconds=1,
+            idle_timeout_seconds=2,
+            idle_timeout_poll_limit=99,
+            session_id="goal-intent-combat-session",
+            stop_when_queue_empty=False,
+        ),
+    ).run()
+
+    assert run_result.tasks_completed == 2
+    assert runtime_state["speed"] == pytest.approx(4.5)
+    assert runtime_state["attack_cooldown"] == pytest.approx(0.6)
+
+    proof = home_surface.load_proof_result_surface(config.runs_dir / "goal-intent-combat-session")
+
+    assert proof.available is True
+    assert proof.original_request == "make zombie more dangerous"
+    assert proof.normalized_request == "make zombie faster and more aggressive"
+    assert proof.detected_action == "Test zombie combat variation"
+    assert proof.key_steps[0].startswith("Resolution: AI-E mapped the gameplay goal 'make zombie more dangerous'")
+    assert "bounded plan \"make zombie faster and more aggressive\"" in proof.key_steps[1]
+    assert "Increase zombie speed" in proof.key_steps[2]
+    assert "Increase zombie aggression" in proof.key_steps[3]
+
+
+def test_supervisor_executes_goal_composed_fast_low_aggression_plan_and_loads_resolution_metadata(tmp_path, monkeypatch):
+    config = _make_config(tmp_path / "goal_composition_fast_low_aggression_plan")
+    _write_zombie_speed_capability_contracts(config)
+    _write_zombie_aggression_capability_contract(config)
+    target_repo = _create_entity_transform_prompt_repo(config, target_repo_name="BABYLON_TEST")
+    intake = ConversationalTaskIntake(config)
+    fake_run, runtime_state = _make_stateful_zombie_mutation_fake_run(target_repo)
+    runtime_state["attack_cooldown"] = 0.6
+
+    monkeypatch.setattr("ai_e_runtime.level_0001_entity_transform_mutation.subprocess.run", fake_run)
+
+    result = intake.accept_message(
+        "make zombie faster but less aggressive",
+        session_id="goal-composition-fast-low-aggression-session",
+        target_repo=target_repo,
+    )
+
+    request_payload = json.loads(result.artifacts.request_payload_path.read_text(encoding="utf-8"))
+
+    assert result.task_type == "mutation_plan_request"
+    assert result.routing.resolution_source == "goal_composition"
+    assert result.routing.mapped_prompt == "make zombie faster but less aggressive"
+    assert result.routing.goal_components == [
+        "increase zombie speed",
+        "decrease zombie aggression",
+    ]
+    assert request_payload["conversational_request"]["context"]["routing"]["resolution_source"] == "goal_composition"
+
+    for task_id in result.task_ids:
+        approval = approve_mutation_task(
+            config,
+            task_id=task_id,
+            approved_by="operator-test",
+            notes="Approve bounded composed speed/aggression plan.",
+        )
+        assert approval.queue_status == "pending"
+
+    run_result = Supervisor(
+        config,
+        SupervisorConfig(
+            session_limit_seconds=10,
+            heartbeat_interval_seconds=1,
+            poll_interval_seconds=1,
+            idle_timeout_seconds=2,
+            idle_timeout_poll_limit=99,
+            session_id="goal-composition-fast-low-aggression-session",
+            stop_when_queue_empty=False,
+        ),
+    ).run()
+
+    assert run_result.tasks_completed == 2
+    assert runtime_state["speed"] == pytest.approx(4.5)
+    assert runtime_state["attack_cooldown"] == pytest.approx(1.0)
+
+    proof = home_surface.load_proof_result_surface(config.runs_dir / "goal-composition-fast-low-aggression-session")
+
+    assert proof.available is True
+    assert proof.original_request == "make zombie faster but less aggressive"
+    assert proof.normalized_request == "make zombie faster but less aggressive"
+    assert proof.detected_action == "Test fast low-aggression zombie variation"
+    assert proof.key_steps[0].startswith(
+        "Resolution: AI-E combined the gameplay goals from 'make zombie faster but less aggressive'"
+    )
+    assert "bounded plan \"make zombie faster but less aggressive\"" in proof.key_steps[1]
+    assert "Increase zombie speed" in proof.key_steps[2]
+    assert "Restore zombie aggression to standard" in proof.key_steps[3]
+    assert "Goal components: Increase zombie speed; Decrease zombie aggression." in proof.validation_checks
+
+
+@pytest.mark.parametrize(
+    (
+        "capability_id",
+        "capability_title",
+        "operator_prompt",
+        "action_name",
+        "probe_name",
+        "probe_action_type",
+        "probe_payload",
+    ),
+    [
+        (
+            "level_0001_increase_zombie_speed",
+            "LEVEL_0001 increase zombie speed",
+            "make zombie faster",
+            "increase_enemy_move_speed",
+            "MutateEnemyMoveSpeed",
+            "mutate_enemy_move_speed",
+            {
+                "previous_speed": 4.8,
+                "new_speed": 4.8,
+                "observed_speed_before_reset": 4.8,
+                "baseline_speed": 3.5,
+                "requested_speed": 4.5,
+                "minimum_speed": 2.0,
+                "maximum_speed": 5.0,
+                "speed_changed": False,
+            },
+        ),
+        (
+            "level_0001_decrease_zombie_speed",
+            "LEVEL_0001 decrease zombie speed",
+            "make zombie slower",
+            "decrease_enemy_move_speed",
+            "MutateEnemyMoveSpeed",
+            "mutate_enemy_move_speed",
+            {
+                "previous_speed": 2.0,
+                "new_speed": 2.0,
+                "observed_speed_before_reset": 2.0,
+                "baseline_speed": 3.5,
+                "requested_speed": 2.5,
+                "minimum_speed": 2.0,
+                "maximum_speed": 5.0,
+                "speed_changed": False,
+            },
+        ),
+        (
+            "level_0001_increase_zombie_aggression",
+            "LEVEL_0001 increase zombie aggression",
+            "make zombie more aggressive",
+            "increase_enemy_aggression",
+            "MutateEnemyAggression",
+            "mutate_enemy_aggression",
+            {
+                "previous_attack_cooldown": 0.5,
+                "new_attack_cooldown": 0.5,
+                "observed_attack_cooldown_before_reset": 0.5,
+                "baseline_attack_cooldown": 1.0,
+                "requested_attack_cooldown": 0.6,
+                "minimum_attack_cooldown": 0.25,
+                "maximum_attack_cooldown": 2.0,
+                "aggression_changed": False,
+            },
+        ),
+    ],
+)
+def test_state_aware_mutation_skips_when_requested_state_is_already_satisfied(
+    tmp_path,
+    monkeypatch,
+    capability_id,
+    capability_title,
+    operator_prompt,
+    action_name,
+    probe_name,
+    probe_action_type,
+    probe_payload,
+):
+    config = _make_config(tmp_path / capability_id)
+    _write_zombie_speed_capability_contracts(config)
+    _write_zombie_aggression_capability_contract(config)
+    target_repo = _create_entity_transform_prompt_repo(config, target_repo_name="BABYLON_TEST")
+
+    def fake_run(command, cwd, capture_output, text, check):
+        assert command[command.index("-PromptText") + 1] == operator_prompt
+        translator_artifact_path = Path(command[command.index("-ArtifactPath") + 1])
+        translator_log_path = Path(command[command.index("-LogPath") + 1])
+        translator_artifact_path.parent.mkdir(parents=True, exist_ok=True)
+        translator_log_path.parent.mkdir(parents=True, exist_ok=True)
+
+        router_artifact_path = translator_artifact_path.with_name(f"{translator_artifact_path.stem}.router_result.json")
+        router_log_path = translator_log_path.with_name(f"{translator_log_path.stem}.router.log")
+        probe_artifact_path = translator_artifact_path.parent / f"{translator_artifact_path.stem}.probe_result.json"
+        probe_log_path = translator_artifact_path.parent / f"{translator_artifact_path.stem}.probe.log"
+
+        translator_log_path.write_text("translator log", encoding="utf-8")
+        router_log_path.write_text("router log", encoding="utf-8")
+        probe_log_path.write_text("probe log", encoding="utf-8")
+        probe_artifact_path.write_text(
+            json.dumps(
+                {
+                    "status": "success",
+                    "scene": "entity_test",
+                    "scene_name": "entity_test",
+                    "action_type": probe_action_type,
+                    "object_name": "AIE_Zombie_001_Instance",
+                    "action_name": action_name,
+                    "executed": False,
+                    "result_reason": "skipped_already_satisfied",
+                    "scene_path": "Assets/AI_E_TestScenes/entity_test.unity",
+                    "timestamp": "2026-04-02T00:30:00Z",
+                    **probe_payload,
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        router_artifact_path.write_text(
+            json.dumps(
+                {
+                    "status": "success",
+                    "action_name": action_name,
+                    "route_kind": "single",
+                    "executed_probe": probe_name,
+                    "delegated_probe_artifact_path": str(probe_artifact_path),
+                    "delegated_probe_log_path": str(probe_log_path),
+                    "delegated_probe_action_type": probe_action_type,
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        translator_artifact_path.write_text(
+            json.dumps(
+                {
+                    "status": "success",
+                    "raw_prompt": operator_prompt,
+                    "normalized_prompt": operator_prompt,
+                    "translated_command": operator_prompt,
+                    "matched_prompt_pattern": operator_prompt,
+                    "action_name": action_name,
+                    "router_artifact_path": str(router_artifact_path),
+                    "router_log_path": str(router_log_path),
+                    "router_status": "success",
+                    "timestamp": "2026-04-02T00:30:00Z",
+                    "message": "",
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        return subprocess.CompletedProcess(command, 0, stdout="translator ok", stderr="")
+
+    monkeypatch.setattr("ai_e_runtime.level_0001_entity_transform_mutation.subprocess.run", fake_run)
+
+    task = {
+        "capability_id": capability_id,
+        "capability_title": capability_title,
+        "requested_execution_lane": "approval_required_mutation",
+        "handler_name": "level_0001_entity_transform_handler",
+        "agent_type": "level_0001_entity_transform_mutation_agent",
+        "approval_required": True,
+        "approval_state": "approved",
+        "execution_decision": "sandbox_first",
+        "target_level": "LEVEL_0001",
+        "target_scene": "Assets/AI_E_TestScenes/entity_test.unity",
+        "capability_evidence_path": str(config.contracts_dir / "capabilities" / "evidence.json"),
+        "target_repo": target_repo,
+        "operator_prompt": operator_prompt,
+        "task_id": f"{capability_id.upper()}_SKIP_001",
+    }
+
+    outcome = run_level_0001_entity_transform_mutation(task)
+
+    assert outcome["status"] == "completed"
+    assert outcome["details"]["executed"] is False
+    assert outcome["details"]["result_reason"] == "skipped_already_satisfied"
+    assert outcome["details"]["validation"]["status"] == "passed"
+
+
+def test_supervisor_executes_predefined_combat_variation_plan_with_skipped_step_and_loads_combined_result(tmp_path, monkeypatch):
+    config = _make_config(tmp_path / "combat_plan_with_skip")
+    _write_move_zombie_capability_contract(config)
+    _write_zombie_speed_capability_contracts(config)
+    _write_zombie_aggression_capability_contract(config)
+    target_repo = _create_entity_transform_prompt_repo(config, target_repo_name="BABYLON_TEST")
+    intake = ConversationalTaskIntake(config)
+
+    def fake_run(command, cwd, capture_output, text, check):
+        prompt_text = command[command.index("-PromptText") + 1]
+        assert command[command.index("-ProjectPath") + 1] == target_repo
+        translator_artifact_path = Path(command[command.index("-ArtifactPath") + 1])
+        translator_log_path = Path(command[command.index("-LogPath") + 1])
+        translator_artifact_path.parent.mkdir(parents=True, exist_ok=True)
+        translator_log_path.parent.mkdir(parents=True, exist_ok=True)
+
+        router_artifact_path = translator_artifact_path.with_name(f"{translator_artifact_path.stem}.router_result.json")
+        router_log_path = translator_log_path.with_name(f"{translator_log_path.stem}.router.log")
+        probe_log_path = translator_artifact_path.parent / f"{translator_artifact_path.stem}.probe.log"
+
+        translator_log_path.write_text("translator log", encoding="utf-8")
+        router_log_path.write_text("router log", encoding="utf-8")
+        probe_log_path.write_text("probe log", encoding="utf-8")
+
+        if prompt_text == "make zombie faster":
+            probe_artifact_path = translator_artifact_path.parent / "intent_make_zombie_faster_probe_result.json"
+            probe_artifact_path.write_text(
+                json.dumps(
+                    {
+                        "status": "success",
+                        "scene": "entity_test",
+                        "scene_name": "entity_test",
+                        "action_type": "mutate_enemy_move_speed",
+                        "object_name": "AIE_Zombie_001_Instance",
+                        "previous_speed": 3.5,
+                        "new_speed": 4.5,
+                        "observed_speed_before_reset": 3.5,
+                        "baseline_speed": 3.5,
+                        "requested_speed": 4.5,
+                        "minimum_speed": 2.0,
+                        "maximum_speed": 5.0,
+                        "speed_changed": True,
+                        "executed": True,
+                        "result_reason": "applied",
+                        "scene_path": "Assets/AI_E_TestScenes/entity_test.unity",
+                        "timestamp": "2026-04-02T00:31:00Z",
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            router_artifact_path.write_text(
+                json.dumps(
+                    {
+                        "status": "success",
+                        "action_name": "increase_enemy_move_speed",
+                        "route_kind": "single",
+                        "executed_probe": "MutateEnemyMoveSpeed",
+                        "delegated_probe_artifact_path": str(probe_artifact_path),
+                        "delegated_probe_log_path": str(probe_log_path),
+                        "delegated_probe_action_type": "mutate_enemy_move_speed",
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            translator_artifact_path.write_text(
+                json.dumps(
+                    {
+                        "status": "success",
+                        "raw_prompt": "make zombie faster",
+                        "normalized_prompt": "make zombie faster",
+                        "translated_command": "make zombie faster",
+                        "matched_prompt_pattern": "make zombie faster",
+                        "action_name": "increase_enemy_move_speed",
+                        "router_artifact_path": str(router_artifact_path),
+                        "router_log_path": str(router_log_path),
+                        "router_status": "success",
+                        "timestamp": "2026-04-02T00:31:00Z",
+                        "message": "",
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+        elif prompt_text == "make zombie more aggressive":
+            probe_artifact_path = translator_artifact_path.parent / "intent_make_zombie_more_aggressive_probe_result.json"
+            probe_artifact_path.write_text(
+                json.dumps(
+                    {
+                        "status": "success",
+                        "scene": "entity_test",
+                        "scene_name": "entity_test",
+                        "action_type": "mutate_enemy_aggression",
+                        "object_name": "AIE_Zombie_001_Instance",
+                        "previous_attack_cooldown": 0.5,
+                        "new_attack_cooldown": 0.5,
+                        "observed_attack_cooldown_before_reset": 0.5,
+                        "baseline_attack_cooldown": 1.0,
+                        "requested_attack_cooldown": 0.6,
+                        "minimum_attack_cooldown": 0.25,
+                        "maximum_attack_cooldown": 2.0,
+                        "aggression_changed": False,
+                        "executed": False,
+                        "result_reason": "skipped_already_satisfied",
+                        "scene_path": "Assets/AI_E_TestScenes/entity_test.unity",
+                        "timestamp": "2026-04-02T00:31:01Z",
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            router_artifact_path.write_text(
+                json.dumps(
+                    {
+                        "status": "success",
+                        "action_name": "increase_enemy_aggression",
+                        "route_kind": "single",
+                        "executed_probe": "MutateEnemyAggression",
+                        "delegated_probe_artifact_path": str(probe_artifact_path),
+                        "delegated_probe_log_path": str(probe_log_path),
+                        "delegated_probe_action_type": "mutate_enemy_aggression",
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            translator_artifact_path.write_text(
+                json.dumps(
+                    {
+                        "status": "success",
+                        "raw_prompt": "make zombie more aggressive",
+                        "normalized_prompt": "make zombie more aggressive",
+                        "translated_command": "make zombie more aggressive",
+                        "matched_prompt_pattern": "make zombie more aggressive",
+                        "action_name": "increase_enemy_aggression",
+                        "router_artifact_path": str(router_artifact_path),
+                        "router_log_path": str(router_log_path),
+                        "router_status": "success",
+                        "timestamp": "2026-04-02T00:31:01Z",
+                        "message": "",
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+        else:
+            raise AssertionError(f"Unexpected prompt routed to translator: {prompt_text}")
+        return subprocess.CompletedProcess(command, 0, stdout="translator ok", stderr="")
+
+    monkeypatch.setattr("ai_e_runtime.level_0001_entity_transform_mutation.subprocess.run", fake_run)
+
+    result = intake.accept_message(
+        "test combat variation",
+        session_id="combat-variation-skip-session",
+        target_repo=target_repo,
+    )
+
+    for task_id in result.task_ids:
+        approval = approve_mutation_task(
+            config,
+            task_id=task_id,
+            approved_by="operator-test",
+            notes="Approve bounded zombie combat variation plan with skip coverage.",
+        )
+        assert approval.queue_status == "pending"
+
+    supervisor = Supervisor(
+        config,
+        SupervisorConfig(
+            session_limit_seconds=10,
+            heartbeat_interval_seconds=1,
+            poll_interval_seconds=1,
+            idle_timeout_seconds=2,
+            idle_timeout_poll_limit=99,
+            session_id="combat-variation-skip-session",
+            stop_when_queue_empty=False,
+        ),
+    )
+
+    run_result = supervisor.run()
+
+    assert run_result.tasks_completed == 2
+    proof = home_surface.load_proof_result_surface(config.runs_dir / "combat-variation-skip-session")
+
+    assert proof.available is True
+    assert proof.detected_action == "Test zombie combat variation"
+    assert proof.proof_status == "Passed"
+    assert "desired aggression threshold" in proof.key_steps[1].lower()
+    assert "skipped the change" in proof.change_summary.lower()
+    assert "1 step(s) were skipped" in proof.validation_outcome
+
+    skipped_artifact_path = (
+        config.runs_dir
+        / "combat-variation-skip-session"
+        / "artifacts"
+        / f"{result.task_ids[1]}_attempt_01.json"
+    )
+    skipped_artifact = json.loads(skipped_artifact_path.read_text(encoding="utf-8"))
+    assert skipped_artifact["result"]["details"]["executed"] is False
+    assert skipped_artifact["result"]["details"]["result_reason"] == "skipped_already_satisfied"
+
+
+def test_supervisor_executes_predefined_safety_plan_sequentially_and_loads_combined_result(tmp_path, monkeypatch):
+    config = _make_config(tmp_path / "zombie_safety_plan")
+    _write_move_zombie_capability_contract(config)
+    _write_zombie_speed_capability_contracts(config)
+    target_repo = _create_entity_transform_prompt_repo(config, target_repo_name="BABYLON_TEST")
+    intake = ConversationalTaskIntake(config)
+
+    def fake_run(command, cwd, capture_output, text, check):
+        prompt_text = command[command.index("-PromptText") + 1]
+        assert command[command.index("-ProjectPath") + 1] == target_repo
+        translator_artifact_path = Path(command[command.index("-ArtifactPath") + 1])
+        translator_log_path = Path(command[command.index("-LogPath") + 1])
+        translator_artifact_path.parent.mkdir(parents=True, exist_ok=True)
+        translator_log_path.parent.mkdir(parents=True, exist_ok=True)
+
+        router_artifact_path = translator_artifact_path.with_name(f"{translator_artifact_path.stem}.router_result.json")
+        router_log_path = translator_log_path.with_name(f"{translator_log_path.stem}.router.log")
+        probe_log_path = translator_artifact_path.parent / f"{translator_artifact_path.stem}.probe.log"
+
+        translator_log_path.write_text("translator log", encoding="utf-8")
+        router_log_path.write_text("router log", encoding="utf-8")
+        probe_log_path.write_text("probe log", encoding="utf-8")
+
+        if prompt_text == "make zombie slower":
+            probe_artifact_path = translator_artifact_path.parent / "intent_make_zombie_slower_probe_result.json"
+            probe_artifact_path.write_text(
+                json.dumps(
+                    {
+                        "status": "success",
+                        "scene": "entity_test",
+                        "scene_name": "entity_test",
+                        "action_type": "mutate_enemy_move_speed",
+                        "object_name": "AIE_Zombie_001_Instance",
+                        "previous_speed": 3.5,
+                        "new_speed": 2.5,
+                        "observed_speed_before_reset": 3.5,
+                        "baseline_speed": 3.5,
+                        "requested_speed": 2.5,
+                        "minimum_speed": 2.0,
+                        "maximum_speed": 5.0,
+                        "speed_changed": True,
+                        "scene_path": "Assets/AI_E_TestScenes/entity_test.unity",
+                        "timestamp": "2026-04-01T00:10:00Z",
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            router_artifact_path.write_text(
+                json.dumps(
+                    {
+                        "status": "success",
+                        "action_name": "decrease_enemy_move_speed",
+                        "route_kind": "single",
+                        "executed_probe": "MutateEnemyMoveSpeed",
+                        "delegated_probe_artifact_path": str(probe_artifact_path),
+                        "delegated_probe_log_path": str(probe_log_path),
+                        "delegated_probe_action_type": "mutate_enemy_move_speed",
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            translator_artifact_path.write_text(
+                json.dumps(
+                    {
+                        "status": "success",
+                        "raw_prompt": "make zombie slower",
+                        "normalized_prompt": "make zombie slower",
+                        "translated_command": "make zombie slower",
+                        "matched_prompt_pattern": "make zombie slower",
+                        "action_name": "decrease_enemy_move_speed",
+                        "router_artifact_path": str(router_artifact_path),
+                        "router_log_path": str(router_log_path),
+                        "router_status": "success",
+                        "timestamp": "2026-04-01T00:10:00Z",
+                        "message": "",
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+        elif prompt_text == "move zombie forward":
+            probe_artifact_path = translator_artifact_path.parent / "intent_move_zombie_forward_probe_result.json"
+            probe_artifact_path.write_text(
+                json.dumps(
+                    {
+                        "status": "success",
+                        "scene": "entity_test",
+                        "scene_name": "entity_test",
+                        "action_type": "mutate_entity_transform",
+                        "object_name": "AIE_Zombie_001_Instance",
+                        "previous_position": [0.0, 0.0, 0.0],
+                        "new_position": [0.0, 0.0, 3.0],
+                        "movement_distance": 3.0,
+                        "position_changed": True,
+                        "scene_path": "Assets/AI_E_TestScenes/entity_test.unity",
+                        "timestamp": "2026-04-01T00:10:01Z",
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            router_artifact_path.write_text(
+                json.dumps(
+                    {
+                        "status": "success",
+                        "action_name": "move_entity_forward",
+                        "route_kind": "single",
+                        "executed_probe": "MutateEntityTransform",
+                        "delegated_probe_artifact_path": str(probe_artifact_path),
+                        "delegated_probe_log_path": str(probe_log_path),
+                        "delegated_probe_action_type": "mutate_entity_transform",
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            translator_artifact_path.write_text(
+                json.dumps(
+                    {
+                        "status": "success",
+                        "raw_prompt": "move zombie forward",
+                        "normalized_prompt": "move zombie forward",
+                        "translated_command": "move zombie forward",
+                        "matched_prompt_pattern": "move zombie forward",
+                        "action_name": "move_entity_forward",
+                        "router_artifact_path": str(router_artifact_path),
+                        "router_log_path": str(router_log_path),
+                        "router_status": "success",
+                        "timestamp": "2026-04-01T00:10:01Z",
+                        "message": "",
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+        else:
+            raise AssertionError(f"Unexpected prompt routed to translator: {prompt_text}")
+        return subprocess.CompletedProcess(command, 0, stdout="translator ok", stderr="")
+
+    monkeypatch.setattr("ai_e_runtime.level_0001_entity_transform_mutation.subprocess.run", fake_run)
+
+    result = intake.accept_message(
+        "make zombie safer",
+        session_id="zombie-safety-session",
+        target_repo=target_repo,
+    )
+
+    assert result.task_type == "mutation_plan_request"
+    assert result.plan_step_titles == [
+        "Decrease zombie movement speed",
+        "Move zombie forward to validate the calmer behavior",
+    ]
+    assert len(result.task_ids) == 2
+
+    for task_id in result.task_ids:
+        approval = approve_mutation_task(
+            config,
+            task_id=task_id,
+            approved_by="operator-test",
+            notes="Approve bounded zombie safety plan.",
+        )
+        assert approval.queue_status == "pending"
+
+    supervisor = Supervisor(
+        config,
+        SupervisorConfig(
+            session_limit_seconds=10,
+            heartbeat_interval_seconds=1,
+            poll_interval_seconds=1,
+            idle_timeout_seconds=2,
+            idle_timeout_poll_limit=99,
+            session_id="zombie-safety-session",
+            stop_when_queue_empty=False,
+        ),
+    )
+
+    run_result = supervisor.run()
+
+    assert run_result.tasks_completed == 2
+    assert run_result.stop_reason == "queue_empty_idle_timeout"
+
+    queue = json.loads(config.queue_path.read_text(encoding="utf-8"))["tasks"]
+    assert [task["status"] for task in queue] == ["completed", "completed"]
+    assert queue[1]["dependencies"] == [queue[0]["task_id"]]
+
+    speed_evidence = CapabilityEvidenceStore(config.contracts_dir / "capabilities" / "evidence.json").get(
+        "level_0001_decrease_zombie_speed"
+    )
+    move_evidence = CapabilityEvidenceStore(config.contracts_dir / "capabilities" / "evidence.json").get(
+        "level_0001_move_zombie_forward"
+    )
+    assert speed_evidence is not None
+    assert move_evidence is not None
+    assert speed_evidence["times_passed"] == 1
+    assert move_evidence["times_passed"] == 1
+
+    proof = home_surface.load_proof_result_surface(config.runs_dir / "zombie-safety-session")
+
+    assert proof.available is True
+    assert proof.detected_action == "Reduce zombie aggression"
+    assert proof.proof_status == "Passed"
+    assert len(proof.key_steps) == 2
+    assert "Decrease zombie movement speed" in proof.key_steps[0]
+    assert "Move zombie forward to validate the calmer behavior" in proof.key_steps[1]
+    assert "from 3.5 to 2.5" in proof.change_summary
+    assert "moved from" in proof.before_after_summary.lower()
+    assert proof.validation_outcome == "All recorded validation checks passed across 2 planned step(s)."
+
+
+def test_supervisor_executes_predefined_variation_plan_sequentially_and_loads_combined_result(tmp_path, monkeypatch):
+    config = _make_config(tmp_path / "zombie_variation_plan")
+    _write_move_zombie_capability_contract(config)
+    target_repo = _create_entity_transform_prompt_repo(config, target_repo_name="BABYLON_TEST")
+    intake = ConversationalTaskIntake(config)
+
+    def fake_run(command, cwd, capture_output, text, check):
+        prompt_text = command[command.index("-PromptText") + 1]
+        assert command[command.index("-ProjectPath") + 1] == target_repo
+        translator_artifact_path = Path(command[command.index("-ArtifactPath") + 1])
+        translator_log_path = Path(command[command.index("-LogPath") + 1])
+        translator_artifact_path.parent.mkdir(parents=True, exist_ok=True)
+        translator_log_path.parent.mkdir(parents=True, exist_ok=True)
+
+        router_artifact_path = translator_artifact_path.with_name(f"{translator_artifact_path.stem}.router_result.json")
+        router_log_path = translator_log_path.with_name(f"{translator_artifact_path.stem}.router.log")
+        probe_log_path = translator_artifact_path.parent / f"{translator_artifact_path.stem}.probe.log"
+
+        translator_log_path.write_text("translator log", encoding="utf-8")
+        router_log_path.write_text("router log", encoding="utf-8")
+        probe_log_path.write_text("probe log", encoding="utf-8")
+
+        if prompt_text == "move zombie farther forward":
+            probe_artifact_path = translator_artifact_path.parent / "intent_move_zombie_farther_forward_probe_result.json"
+            probe_artifact_path.write_text(
+                json.dumps(
+                    {
+                        "status": "success",
+                        "scene": "entity_test",
+                        "scene_name": "entity_test",
+                        "action_type": "mutate_entity_transform",
+                        "object_name": "AIE_Zombie_001_Instance",
+                        "previous_position": [0.0, 0.0, 0.0],
+                        "new_position": [0.0, 0.0, 6.0],
+                        "movement_distance": 6.0,
+                        "position_changed": True,
+                        "scene_path": "Assets/AI_E_TestScenes/entity_test.unity",
+                        "timestamp": "2026-04-02T00:20:00Z",
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            router_artifact_path.write_text(
+                json.dumps(
+                    {
+                        "status": "success",
+                        "action_name": "move_entity_farther_forward",
+                        "route_kind": "single",
+                        "executed_probe": "MutateEntityTransform",
+                        "delegated_probe_artifact_path": str(probe_artifact_path),
+                        "delegated_probe_log_path": str(probe_log_path),
+                        "delegated_probe_action_type": "mutate_entity_transform",
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            translator_artifact_path.write_text(
+                json.dumps(
+                    {
+                        "status": "success",
+                        "raw_prompt": "move zombie farther forward",
+                        "normalized_prompt": "move zombie farther forward",
+                        "translated_command": "move zombie farther forward",
+                        "matched_prompt_pattern": "move zombie farther forward",
+                        "action_name": "move_entity_farther_forward",
+                        "router_artifact_path": str(router_artifact_path),
+                        "router_log_path": str(router_log_path),
+                        "router_status": "success",
+                        "timestamp": "2026-04-02T00:20:00Z",
+                        "message": "",
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+        elif prompt_text == "move zombie forward":
+            probe_artifact_path = translator_artifact_path.parent / "intent_move_zombie_forward_probe_result.json"
+            probe_artifact_path.write_text(
+                json.dumps(
+                    {
+                        "status": "success",
+                        "scene": "entity_test",
+                        "scene_name": "entity_test",
+                        "action_type": "mutate_entity_transform",
+                        "object_name": "AIE_Zombie_001_Instance",
+                        "previous_position": [0.0, 0.0, 0.0],
+                        "new_position": [0.0, 0.0, 3.0],
+                        "movement_distance": 3.0,
+                        "position_changed": True,
+                        "scene_path": "Assets/AI_E_TestScenes/entity_test.unity",
+                        "timestamp": "2026-04-02T00:20:01Z",
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            router_artifact_path.write_text(
+                json.dumps(
+                    {
+                        "status": "success",
+                        "action_name": "move_entity_forward",
+                        "route_kind": "single",
+                        "executed_probe": "MutateEntityTransform",
+                        "delegated_probe_artifact_path": str(probe_artifact_path),
+                        "delegated_probe_log_path": str(probe_log_path),
+                        "delegated_probe_action_type": "mutate_entity_transform",
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            translator_artifact_path.write_text(
+                json.dumps(
+                    {
+                        "status": "success",
+                        "raw_prompt": "move zombie forward",
+                        "normalized_prompt": "move zombie forward",
+                        "translated_command": "move zombie forward",
+                        "matched_prompt_pattern": "move zombie forward",
+                        "action_name": "move_entity_forward",
+                        "router_artifact_path": str(router_artifact_path),
+                        "router_log_path": str(router_log_path),
+                        "router_status": "success",
+                        "timestamp": "2026-04-02T00:20:01Z",
+                        "message": "",
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+        else:
+            raise AssertionError(f"Unexpected prompt routed to translator: {prompt_text}")
+        return subprocess.CompletedProcess(command, 0, stdout="translator ok", stderr="")
+
+    monkeypatch.setattr("ai_e_runtime.level_0001_entity_transform_mutation.subprocess.run", fake_run)
+
+    result = intake.accept_message(
+        "try a variation",
+        session_id="zombie-variation-session",
+        target_repo=target_repo,
+    )
+
+    assert result.task_type == "mutation_plan_request"
+    assert result.plan_step_titles == [
+        "Move zombie farther forward for variation testing",
+        "Move zombie forward to compare against the standard path",
+    ]
+    assert len(result.task_ids) == 2
+
+    for task_id in result.task_ids:
+        approval = approve_mutation_task(
+            config,
+            task_id=task_id,
+            approved_by="operator-test",
+            notes="Approve bounded zombie variation plan.",
+        )
+        assert approval.queue_status == "pending"
+
+    supervisor = Supervisor(
+        config,
+        SupervisorConfig(
+            session_limit_seconds=10,
+            heartbeat_interval_seconds=1,
+            poll_interval_seconds=1,
+            idle_timeout_seconds=2,
+            idle_timeout_poll_limit=99,
+            session_id="zombie-variation-session",
+            stop_when_queue_empty=False,
+        ),
+    )
+
+    run_result = supervisor.run()
+
+    assert run_result.tasks_completed == 2
+    assert run_result.stop_reason == "queue_empty_idle_timeout"
+
+    queue = json.loads(config.queue_path.read_text(encoding="utf-8"))["tasks"]
+    assert [task["status"] for task in queue] == ["completed", "completed"]
+    assert queue[0]["capability_id"] == "level_0001_move_zombie_farther_forward"
+    assert queue[1]["capability_id"] == "level_0001_move_zombie_forward"
+    assert queue[1]["dependencies"] == [queue[0]["task_id"]]
+
+    farther_evidence = CapabilityEvidenceStore(config.contracts_dir / "capabilities" / "evidence.json").get(
+        "level_0001_move_zombie_farther_forward"
+    )
+    move_evidence = CapabilityEvidenceStore(config.contracts_dir / "capabilities" / "evidence.json").get(
+        "level_0001_move_zombie_forward"
+    )
+    assert farther_evidence is not None
+    assert move_evidence is not None
+    assert farther_evidence["times_passed"] == 1
+    assert move_evidence["times_passed"] == 1
+
+    proof = home_surface.load_proof_result_surface(config.runs_dir / "zombie-variation-session")
+
+    assert proof.available is True
+    assert proof.detected_action == "Try zombie movement variation"
+    assert proof.proof_status == "Passed"
+    assert len(proof.key_steps) == 2
+    assert "Move zombie farther forward for variation testing" in proof.key_steps[0]
+    assert "Move zombie forward to compare against the standard path" in proof.key_steps[1]
+    assert "to (0, 0, 6)" in proof.before_after_summary
+    assert "to (0, 0, 3)" in proof.before_after_summary
+    assert proof.validation_outcome == "All recorded validation checks passed across 2 planned step(s)."
+
+
+def test_speed_mutation_blocks_when_probe_reports_out_of_bounds_speed(tmp_path, monkeypatch):
+    config = _make_config(tmp_path / "out_of_bounds_speed")
+    _write_zombie_speed_capability_contracts(config)
+    target_repo = _create_entity_transform_prompt_repo(config, target_repo_name="BABYLON_TEST")
+
+    def fake_run(command, cwd, capture_output, text, check):
+        translator_artifact_path = Path(command[command.index("-ArtifactPath") + 1])
+        translator_log_path = Path(command[command.index("-LogPath") + 1])
+        translator_artifact_path.parent.mkdir(parents=True, exist_ok=True)
+        translator_log_path.parent.mkdir(parents=True, exist_ok=True)
+
+        router_artifact_path = translator_artifact_path.with_name(f"{translator_artifact_path.stem}.router_result.json")
+        router_log_path = translator_log_path.with_name(f"{translator_log_path.stem}.router.log")
+        probe_artifact_path = translator_artifact_path.parent / "intent_make_zombie_faster_probe_result.json"
+        probe_log_path = translator_artifact_path.parent / "intent_make_zombie_faster_probe.log"
+
+        translator_log_path.write_text("translator log", encoding="utf-8")
+        router_log_path.write_text("router log", encoding="utf-8")
+        probe_log_path.write_text("probe log", encoding="utf-8")
+        probe_artifact_path.write_text(
+            json.dumps(
+                {
+                    "status": "success",
+                    "scene": "entity_test",
+                    "scene_name": "entity_test",
+                    "action_type": "mutate_enemy_move_speed",
+                    "object_name": "AIE_Zombie_001_Instance",
+                    "previous_speed": 3.5,
+                    "new_speed": 7.5,
+                    "observed_speed_before_reset": 3.5,
+                    "baseline_speed": 3.5,
+                    "requested_speed": 7.5,
+                    "minimum_speed": 2.0,
+                    "maximum_speed": 5.0,
+                    "speed_changed": True,
+                    "scene_path": "Assets/AI_E_TestScenes/entity_test.unity",
+                    "timestamp": "2026-04-01T00:00:00Z",
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        router_artifact_path.write_text(
+            json.dumps(
+                {
+                    "status": "success",
+                    "action_name": "increase_enemy_move_speed",
+                    "route_kind": "single",
+                    "executed_probe": "MutateEnemyMoveSpeed",
+                    "delegated_probe_artifact_path": str(probe_artifact_path),
+                    "delegated_probe_log_path": str(probe_log_path),
+                    "delegated_probe_action_type": "mutate_enemy_move_speed",
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        translator_artifact_path.write_text(
+            json.dumps(
+                {
+                    "status": "success",
+                    "raw_prompt": "make zombie faster",
+                    "normalized_prompt": "make zombie faster",
+                    "translated_command": "make zombie faster",
+                    "matched_prompt_pattern": "make zombie faster",
+                    "action_name": "increase_enemy_move_speed",
+                    "router_artifact_path": str(router_artifact_path),
+                    "router_log_path": str(router_log_path),
+                    "router_status": "success",
+                    "timestamp": "2026-04-01T00:00:00Z",
+                    "message": "",
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        return subprocess.CompletedProcess(command, 0, stdout="translator ok", stderr="")
+
+    monkeypatch.setattr("ai_e_runtime.level_0001_entity_transform_mutation.subprocess.run", fake_run)
+
+    task = {
+        "capability_id": "level_0001_increase_zombie_speed",
+        "capability_title": "LEVEL_0001 increase zombie speed",
+        "requested_execution_lane": "approval_required_mutation",
+        "handler_name": "level_0001_entity_transform_handler",
+        "agent_type": "level_0001_entity_transform_mutation_agent",
+        "approval_required": True,
+        "approval_state": "approved",
+        "execution_decision": "sandbox_first",
+        "target_level": "LEVEL_0001",
+        "target_scene": "Assets/AI_E_TestScenes/entity_test.unity",
+        "capability_evidence_path": str(config.contracts_dir / "capabilities" / "evidence.json"),
+        "target_repo": target_repo,
+        "operator_prompt": "make zombie faster",
+        "task_id": "INTAKE_SPEED_BOUNDS_001",
+    }
+
+    outcome = run_level_0001_entity_transform_mutation(task)
+
+    assert outcome["status"] == "blocked"
+    assert "maximum bound" in outcome["error"]
+
+
+def test_supervisor_creates_experiment_and_first_variant_for_initial_supported_run(tmp_path, monkeypatch):
+    config = _make_config(tmp_path / "exp")
+    _write_zombie_speed_capability_contracts(config)
+    target_repo = _create_entity_transform_prompt_repo(config, target_repo_name="BABYLON_TEST")
+    intake = ConversationalTaskIntake(config)
+    fake_run, runtime_state = _make_stateful_zombie_mutation_fake_run(target_repo)
+
+    monkeypatch.setattr("ai_e_runtime.level_0001_entity_transform_mutation.subprocess.run", fake_run)
+
+    result = intake.accept_message(
+        "make zombie faster",
+        session_id="ex",
+        target_repo=target_repo,
+    )
+    approval = approve_mutation_task(
+        config,
+        task_id=result.task_id,
+        approved_by="operator-test",
+        notes="Approve baseline experiment run.",
+    )
+    assert approval.queue_status == "pending"
+
+    run_result = Supervisor(
+        config,
+        SupervisorConfig(
+            session_limit_seconds=10,
+            heartbeat_interval_seconds=1,
+            poll_interval_seconds=1,
+            idle_timeout_seconds=2,
+            idle_timeout_poll_limit=99,
+            session_id="ex",
+            stop_when_queue_empty=False,
+        ),
+    ).run()
+
+    assert run_result.tasks_completed == 1
+    assert runtime_state["speed"] == pytest.approx(4.5)
+
+    state = json.loads((config.runs_dir / "ex" / "session_state.json").read_text(encoding="utf-8"))
+    tracking = state["experiment_tracking"]
+    assert tracking["active_experiment_id"] == "experiment_0001"
+    assert state["latest_experiment_variant"]["variant_id"] == "variant_0001"
+    variant = tracking["experiments"][0]["variants"][0]
+    assert variant["variant_id"] == "variant_0001"
+    assert variant["baseline_marker"] is True
+    assert variant["variant_kind"] == "baseline"
+
+    proof = home_surface.load_proof_result_surface(
+        config.runs_dir / "ex" / "artifacts" / f"{result.task_id}_attempt_01.json"
+    )
+    assert proof.experiment_available is True
+    assert proof.experiment_id == "experiment_0001"
+    assert proof.variant_id == "variant_0001"
+    assert proof.baseline_variant_id == "variant_0001"
+
+
+def test_supervisor_resolves_session_speed_followup_and_revert_from_recorded_state(tmp_path, monkeypatch):
+    config = _make_config(tmp_path / "session_speed_followup_revert")
+    _write_zombie_speed_capability_contracts(config)
+    target_repo = _create_entity_transform_prompt_repo(config, target_repo_name="BABYLON_TEST")
+    intake = ConversationalTaskIntake(config)
+    fake_run, runtime_state = _make_stateful_zombie_mutation_fake_run(target_repo)
+
+    monkeypatch.setattr("ai_e_runtime.level_0001_entity_transform_mutation.subprocess.run", fake_run)
+
+    initial = intake.accept_message(
+        "make zombie faster",
+        session_id="session-speed-followup",
+        target_repo=target_repo,
+    )
+    approval = approve_mutation_task(
+        config,
+        task_id=initial.task_id,
+        approved_by="operator-test",
+        notes="Approve initial bounded speed increase.",
+    )
+    assert approval.queue_status == "pending"
+
+    first_run = Supervisor(
+        config,
+        SupervisorConfig(
+            session_limit_seconds=10,
+            heartbeat_interval_seconds=1,
+            poll_interval_seconds=1,
+            idle_timeout_seconds=2,
+            idle_timeout_poll_limit=99,
+            session_id="session-speed-followup",
+            stop_when_queue_empty=False,
+        ),
+    ).run()
+    assert first_run.tasks_completed == 1
+    assert runtime_state["speed"] == pytest.approx(4.5)
+
+    initial_proof = home_surface.load_proof_result_surface(
+        config.runs_dir / "session-speed-followup" / "artifacts" / f"{initial.task_id}_attempt_01.json"
+    )
+    assert initial_proof.available is True
+    assert initial_proof.evaluation_available is False
+
+    slower = intake.accept_message(
+        "make it slower",
+        session_id="session-speed-followup",
+        target_repo=target_repo,
+    )
+    assert slower.routing.mapped_prompt == "restore zombie speed to standard"
+    assert slower.routing.resolution_source == "session_followup_resolution"
+    slower_payload = json.loads(slower.artifacts.runtime_task_payload_path.read_text(encoding="utf-8"))
+    assert slower_payload["runtime_task"]["operator_prompt"] == "restore zombie speed to standard"
+    assert slower_payload["runtime_task"]["source_prompt"] == "make it slower"
+    approval = approve_mutation_task(
+        config,
+        task_id=slower.task_id,
+        approved_by="operator-test",
+        notes="Approve bounded speed follow-up.",
+    )
+    assert approval.queue_status == "pending"
+
+    second_run = Supervisor(
+        config,
+        SupervisorConfig(
+            session_limit_seconds=10,
+            heartbeat_interval_seconds=1,
+            poll_interval_seconds=1,
+            idle_timeout_seconds=2,
+            idle_timeout_poll_limit=99,
+            session_id="session-speed-followup",
+            resume=True,
+            stop_when_queue_empty=False,
+        ),
+    ).run()
+    assert second_run.tasks_completed == 2
+    assert runtime_state["speed"] == pytest.approx(3.5)
+
+    revert = intake.accept_message(
+        "revert last change",
+        session_id="session-speed-followup",
+        target_repo=target_repo,
+    )
+    assert revert.routing.mapped_prompt == "make zombie faster"
+    assert revert.routing.revert_requested is True
+    revert_payload = json.loads(revert.artifacts.runtime_task_payload_path.read_text(encoding="utf-8"))
+    assert revert_payload["runtime_task"]["operator_prompt"] == "make zombie faster"
+    assert revert_payload["runtime_task"]["source_prompt"] == "revert last change"
+    approval = approve_mutation_task(
+        config,
+        task_id=revert.task_id,
+        approved_by="operator-test",
+        notes="Approve bounded revert to previous speed tier.",
+    )
+    assert approval.queue_status == "pending"
+
+    third_run = Supervisor(
+        config,
+        SupervisorConfig(
+            session_limit_seconds=10,
+            heartbeat_interval_seconds=1,
+            poll_interval_seconds=1,
+            idle_timeout_seconds=2,
+            idle_timeout_poll_limit=99,
+            session_id="session-speed-followup",
+            resume=True,
+            stop_when_queue_empty=False,
+        ),
+    ).run()
+    assert third_run.tasks_completed == 3
+    assert runtime_state["speed"] == pytest.approx(4.5)
+
+    state = json.loads((config.runs_dir / "session-speed-followup" / "session_state.json").read_text(encoding="utf-8"))
+    history = state["session_tuning_history"]
+    assert [item["canonical_prompt"] for item in history] == [
+        "make zombie faster",
+        "restore zombie speed to standard",
+        "make zombie faster",
+    ]
+    assert [item["resulting_tier"] for item in history] == ["fast", "standard", "fast"]
+    assert state["session_tuning_state"]["last_mutation"]["resulting_tier"] == "fast"
+
+    revert_artifact = json.loads(
+        (
+            config.runs_dir
+            / "session-speed-followup"
+            / "artifacts"
+            / f"{revert.task_id}_attempt_01.json"
+        ).read_text(encoding="utf-8")
+    )
+    revert_details = revert_artifact["result"]["details"]
+    assert revert_details["resolution_source"] == "session_followup_resolution"
+    assert revert_details["resolved_from_prompt"] == "revert last change"
+    assert revert_details["revert_requested"] is True
+    assert revert_details["previous_tier"] == "standard"
+    assert revert_details["requested_tier"] == "fast"
+    assert revert_details["resulting_tier"] == "fast"
+
+    proof = home_surface.load_proof_result_surface(
+        config.runs_dir / "session-speed-followup" / "artifacts" / f"{revert.task_id}_attempt_01.json"
+    )
+    assert proof.available is True
+    assert proof.key_steps[0].startswith("Resolution: AI-E resolved the follow-up prompt 'revert last change'")
+    assert "Session tier path: Speed standard -> fast." in proof.validation_checks
+    assert "Resulting tier: Speed fast." in proof.validation_checks
+    assert any("Revert the last zombie speed change from standard back to fast." == check for check in proof.validation_checks)
+
+    slower_proof = home_surface.load_proof_result_surface(
+        config.runs_dir / "session-speed-followup" / "artifacts" / f"{slower.task_id}_attempt_01.json"
+    )
+    assert slower_proof.available is True
+    assert slower_proof.evaluation_available is True
+    assert slower_proof.evaluation_summary == "Current zombie is slower than previous version."
+    assert slower_proof.evaluation_differences == ["Speed tier changed from fast to standard."]
+    assert slower_proof.evaluation_suggestion == ""
+    assert slower_proof.experiment_available is True
+    assert slower_proof.experiment_id == "experiment_0001"
+    assert slower_proof.variant_id == "variant_0002"
+    assert slower_proof.compared_variant_id == "variant_0001"
+    assert slower_proof.baseline_variant_id == "variant_0001"
+    assert slower_proof.experiment_summary == "Variant 2 is slower than Variant 1."
+
+    assert len(state["result_state_history"]) == 3
+    assert len(state["result_evaluation_history"]) == 2
+    assert state["latest_result_evaluation"]["comparison_description"] == "Current zombie is faster than previous version."
+    assert state["latest_result_evaluation"]["evaluation_source"] == "deterministic_rules"
+    assert state["latest_result_evaluation"]["experiment_comparison_description"] == "Variant 3 matches the baseline across the supported deterministic checks."
+    tracking = state["experiment_tracking"]
+    assert tracking["active_experiment_id"] == "experiment_0001"
+    variants = tracking["experiments"][0]["variants"]
+    assert [item["variant_id"] for item in variants] == ["variant_0001", "variant_0002", "variant_0003"]
+    assert [item["parent_variant_id"] for item in variants] == ["", "variant_0001", "variant_0002"]
+    assert variants[0]["baseline_marker"] is True
+    assert variants[2]["variant_kind"] == "reverted_variant"
+    assert state["latest_experiment_variant"]["variant_id"] == "variant_0003"
+
+    revert_proof = home_surface.load_proof_result_surface(
+        config.runs_dir / "session-speed-followup" / "artifacts" / f"{revert.task_id}_attempt_01.json"
+    )
+    assert revert_proof.experiment_available is True
+    assert revert_proof.variant_id == "variant_0003"
+    assert revert_proof.compared_variant_id == "variant_0001"
+    assert revert_proof.experiment_summary == "Variant 3 matches the baseline across the supported deterministic checks."
+
+
+def test_supervisor_resolves_session_aggression_followup_from_recorded_state(tmp_path, monkeypatch):
+    config = _make_config(tmp_path / "session_aggression_followup")
+    _write_zombie_aggression_capability_contract(config)
+    target_repo = _create_entity_transform_prompt_repo(config, target_repo_name="BABYLON_TEST")
+    intake = ConversationalTaskIntake(config)
+    fake_run, runtime_state = _make_stateful_zombie_mutation_fake_run(target_repo)
+
+    monkeypatch.setattr("ai_e_runtime.level_0001_entity_transform_mutation.subprocess.run", fake_run)
+
+    initial = intake.accept_message(
+        "make zombie more aggressive",
+        session_id="session-aggression-followup",
+        target_repo=target_repo,
+    )
+    approval = approve_mutation_task(
+        config,
+        task_id=initial.task_id,
+        approved_by="operator-test",
+        notes="Approve initial bounded aggression increase.",
+    )
+    assert approval.queue_status == "pending"
+
+    first_run = Supervisor(
+        config,
+        SupervisorConfig(
+            session_limit_seconds=10,
+            heartbeat_interval_seconds=1,
+            poll_interval_seconds=1,
+            idle_timeout_seconds=2,
+            idle_timeout_poll_limit=99,
+            session_id="session-aggression-followup",
+            stop_when_queue_empty=False,
+        ),
+    ).run()
+    assert first_run.tasks_completed == 1
+    assert runtime_state["attack_cooldown"] == pytest.approx(0.6)
+
+    followup = intake.accept_message(
+        "make it less aggressive",
+        session_id="session-aggression-followup",
+        target_repo=target_repo,
+    )
+    assert followup.routing.mapped_prompt == "restore zombie aggression to standard"
+    assert followup.routing.resolution_source == "session_followup_resolution"
+    followup_payload = json.loads(followup.artifacts.runtime_task_payload_path.read_text(encoding="utf-8"))
+    assert followup_payload["runtime_task"]["operator_prompt"] == "restore zombie aggression to standard"
+    assert followup_payload["runtime_task"]["source_prompt"] == "make it less aggressive"
+    approval = approve_mutation_task(
+        config,
+        task_id=followup.task_id,
+        approved_by="operator-test",
+        notes="Approve bounded aggression follow-up.",
+    )
+    assert approval.queue_status == "pending"
+
+    second_run = Supervisor(
+        config,
+        SupervisorConfig(
+            session_limit_seconds=10,
+            heartbeat_interval_seconds=1,
+            poll_interval_seconds=1,
+            idle_timeout_seconds=2,
+            idle_timeout_poll_limit=99,
+            session_id="session-aggression-followup",
+            resume=True,
+            stop_when_queue_empty=False,
+        ),
+    ).run()
+    assert second_run.tasks_completed == 2
+    assert runtime_state["attack_cooldown"] == pytest.approx(1.0)
+
+    state = json.loads((config.runs_dir / "session-aggression-followup" / "session_state.json").read_text(encoding="utf-8"))
+    history = state["session_tuning_history"]
+    assert [item["canonical_prompt"] for item in history] == [
+        "make zombie more aggressive",
+        "restore zombie aggression to standard",
+    ]
+    assert [item["resulting_tier"] for item in history] == ["aggressive", "standard"]
+    assert state["session_tuning_state"]["aggression"]["resulting_tier"] == "standard"
+
+    followup_artifact = json.loads(
+        (
+            config.runs_dir
+            / "session-aggression-followup"
+            / "artifacts"
+            / f"{followup.task_id}_attempt_01.json"
+        ).read_text(encoding="utf-8")
+    )
+    followup_details = followup_artifact["result"]["details"]
+    assert followup_details["resolution_source"] == "session_followup_resolution"
+    assert followup_details["resolved_from_prompt"] == "make it less aggressive"
+    assert followup_details["previous_tier"] == "aggressive"
+    assert followup_details["requested_tier"] == "standard"
+    assert followup_details["resulting_tier"] == "standard"
+
+    proof = home_surface.load_proof_result_surface(
+        config.runs_dir / "session-aggression-followup" / "artifacts" / f"{followup.task_id}_attempt_01.json"
+    )
+    assert proof.available is True
+    assert proof.key_steps[0].startswith("Resolution: AI-E resolved the follow-up prompt 'make it less aggressive'")
+    assert "Session tier path: Aggression aggressive -> standard." in proof.validation_checks
+    assert "Resulting tier: Aggression standard." in proof.validation_checks
+    assert proof.evaluation_available is True
+    assert proof.evaluation_summary == "Current zombie is less aggressive than previous version."
+    assert proof.evaluation_differences == ["Aggression tier changed from aggressive to standard."]
+    assert proof.evaluation_suggestion == ""
+    assert proof.experiment_available is True
+    assert proof.variant_id == "variant_0002"
+    assert proof.compared_variant_id == "variant_0001"
+    assert proof.experiment_summary == "Variant 2 is less aggressive than Variant 1."
+
+
+def test_supervisor_generates_evaluation_for_mixed_speed_and_aggression_plan(tmp_path, monkeypatch):
+    config = _make_config(tmp_path / "m")
+    _write_zombie_speed_capability_contracts(config)
+    _write_zombie_aggression_capability_contract(config)
+    target_repo = _create_entity_transform_prompt_repo(config, target_repo_name="BABYLON_TEST")
+    intake = ConversationalTaskIntake(config)
+    fake_run, runtime_state = _make_stateful_zombie_mutation_fake_run(target_repo)
+
+    monkeypatch.setattr("ai_e_runtime.level_0001_entity_transform_mutation.subprocess.run", fake_run)
+
+    initial = intake.accept_message(
+        "make zombie more aggressive",
+        session_id="mx",
+        target_repo=target_repo,
+    )
+    approval = approve_mutation_task(
+        config,
+        task_id=initial.task_id,
+        approved_by="operator-test",
+        notes="Approve baseline aggression change for evaluation.",
+    )
+    assert approval.queue_status == "pending"
+
+    first_run = Supervisor(
+        config,
+        SupervisorConfig(
+            session_limit_seconds=10,
+            heartbeat_interval_seconds=1,
+            poll_interval_seconds=1,
+            idle_timeout_seconds=2,
+            idle_timeout_poll_limit=99,
+            session_id="mx",
+            stop_when_queue_empty=False,
+        ),
+    ).run()
+    assert first_run.tasks_completed == 1
+    assert runtime_state["attack_cooldown"] == pytest.approx(0.6)
+
+    plan = intake.accept_message(
+        "make zombie faster but less aggressive",
+        session_id="mx",
+        target_repo=target_repo,
+    )
+    assert plan.routing.resolution_source == "goal_composition"
+    for task_id in plan.task_ids:
+        approval = approve_mutation_task(
+            config,
+            task_id=task_id,
+            approved_by="operator-test",
+            notes="Approve bounded mixed evaluation plan.",
+        )
+        assert approval.queue_status == "pending"
+
+    second_run = Supervisor(
+        config,
+        SupervisorConfig(
+            session_limit_seconds=10,
+            heartbeat_interval_seconds=1,
+            poll_interval_seconds=1,
+            idle_timeout_seconds=2,
+            idle_timeout_poll_limit=99,
+            session_id="mx",
+            resume=True,
+            stop_when_queue_empty=False,
+        ),
+    ).run()
+    assert second_run.tasks_completed == 3
+    assert runtime_state["speed"] == pytest.approx(4.5)
+    assert runtime_state["attack_cooldown"] == pytest.approx(1.0)
+
+    proof = home_surface.load_proof_result_surface(
+        config.runs_dir / "mx" / "artifacts" / f"{plan.task_ids[-1]}_attempt_01.json"
+    )
+    assert proof.available is True
+    assert proof.evaluation_available is True
+    assert proof.evaluation_summary == "Current zombie is faster but less aggressive than previous version."
+    assert proof.evaluation_differences == [
+        "Speed tier changed from standard to fast.",
+        "Aggression tier changed from aggressive to standard.",
+    ]
+    assert proof.evaluation_suggestion == "Try increasing aggression again for a more dangerous zombie."
+
+
+def test_supervisor_generates_evaluation_for_movement_variation_comparison(tmp_path, monkeypatch):
+    config = _make_config(tmp_path / "variation_evaluation")
+    _write_move_zombie_capability_contract(config)
+    target_repo = _create_entity_transform_prompt_repo(config, target_repo_name="BABYLON_TEST")
+    intake = ConversationalTaskIntake(config)
+    fake_run, runtime_state = _make_stateful_zombie_mutation_fake_run(target_repo)
+
+    monkeypatch.setattr("ai_e_runtime.level_0001_entity_transform_mutation.subprocess.run", fake_run)
+
+    initial = intake.accept_message(
+        "move zombie forward",
+        session_id="variation-evaluation-session",
+        target_repo=target_repo,
+    )
+    approval = approve_mutation_task(
+        config,
+        task_id=initial.task_id,
+        approved_by="operator-test",
+        notes="Approve baseline movement change for evaluation.",
+    )
+    assert approval.queue_status == "pending"
+
+    first_run = Supervisor(
+        config,
+        SupervisorConfig(
+            session_limit_seconds=10,
+            heartbeat_interval_seconds=1,
+            poll_interval_seconds=1,
+            idle_timeout_seconds=2,
+            idle_timeout_poll_limit=99,
+            session_id="variation-evaluation-session",
+            stop_when_queue_empty=False,
+        ),
+    ).run()
+    assert first_run.tasks_completed == 1
+    assert runtime_state["position"] == pytest.approx([0.0, 0.0, 3.0])
+
+    followup = intake.accept_message(
+        "move zombie farther forward",
+        session_id="variation-evaluation-session",
+        target_repo=target_repo,
+    )
+    approval = approve_mutation_task(
+        config,
+        task_id=followup.task_id,
+        approved_by="operator-test",
+        notes="Approve bounded movement variation comparison.",
+    )
+    assert approval.queue_status == "pending"
+
+    second_run = Supervisor(
+        config,
+        SupervisorConfig(
+            session_limit_seconds=10,
+            heartbeat_interval_seconds=1,
+            poll_interval_seconds=1,
+            idle_timeout_seconds=2,
+            idle_timeout_poll_limit=99,
+            session_id="variation-evaluation-session",
+            resume=True,
+            stop_when_queue_empty=False,
+        ),
+    ).run()
+    assert second_run.tasks_completed == 2
+    assert runtime_state["position"] == pytest.approx([0.0, 0.0, 6.0])
+
+    proof = home_surface.load_proof_result_surface(
+        config.runs_dir / "variation-evaluation-session" / "artifacts" / f"{followup.task_id}_attempt_01.json"
+    )
+    assert proof.available is True
+    assert proof.evaluation_available is True
+    assert proof.evaluation_summary == "Current zombie moves farther forward than previous version."
+    assert proof.evaluation_differences == ["Movement target changed from Z=3 to Z=6."]
+    assert proof.evaluation_suggestion == "Choose between standard and variation path."
+    assert proof.experiment_available is True
+    assert proof.variant_id == "variant_0002"
+    assert proof.compared_variant_id == "variant_0001"
+    assert proof.experiment_summary == "Variant 2 moves farther forward than Variant 1."
+
+
 def test_supervisor_executes_auto_promoted_level0001_grass_mutation_without_manual_approval(tmp_path):
     config = _make_config(tmp_path / "grass_mutation_auto")
     _write_grass_capability_contracts(config)
@@ -6884,6 +8795,359 @@ def _write_grass_capability_contracts(config: OrchestratorConfig) -> None:
     )
 
 
+def _make_stateful_zombie_mutation_fake_run(target_repo: str):
+    state = {
+        "speed": 3.5,
+        "attack_cooldown": 1.0,
+        "position": [0.0, 0.0, 0.0],
+        "tick": 0,
+    }
+
+    def _timestamp() -> str:
+        state["tick"] += 1
+        return f"2026-04-02T03:00:{state['tick']:02d}Z"
+
+    def _write_transform_artifacts(
+        *,
+        prompt_text: str,
+        action_name: str,
+        translator_artifact_path: Path,
+        translator_log_path: Path,
+        router_artifact_path: Path,
+        router_log_path: Path,
+        probe_log_path: Path,
+        probe_artifact_name: str,
+        new_position: list[float],
+    ) -> None:
+        previous_position = list(state["position"])
+        executed = previous_position != list(new_position)
+        state["position"] = list(new_position)
+        timestamp = _timestamp()
+        probe_artifact_path = translator_artifact_path.parent / probe_artifact_name
+        translator_log_path.write_text("translator log", encoding="utf-8")
+        router_log_path.write_text("router log", encoding="utf-8")
+        probe_log_path.write_text("probe log", encoding="utf-8")
+        probe_artifact_path.write_text(
+            json.dumps(
+                {
+                    "status": "success",
+                    "scene": "entity_test",
+                    "scene_name": "entity_test",
+                    "action_type": "mutate_entity_transform",
+                    "object_name": "AIE_Zombie_001_Instance",
+                    "previous_position": previous_position,
+                    "new_position": list(new_position),
+                    "movement_distance": abs(float(new_position[2]) - float(previous_position[2])),
+                    "position_changed": executed,
+                    "executed": executed,
+                    "result_reason": "applied" if executed else "skipped_already_satisfied",
+                    "scene_path": "Assets/AI_E_TestScenes/entity_test.unity",
+                    "timestamp": timestamp,
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        router_artifact_path.write_text(
+            json.dumps(
+                {
+                    "status": "success",
+                    "action_name": action_name,
+                    "route_kind": "single",
+                    "executed_probe": "MutateEntityTransform",
+                    "delegated_probe_artifact_path": str(probe_artifact_path),
+                    "delegated_probe_log_path": str(probe_log_path),
+                    "delegated_probe_action_type": "mutate_entity_transform",
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        translator_artifact_path.write_text(
+            json.dumps(
+                {
+                    "status": "success",
+                    "raw_prompt": prompt_text,
+                    "normalized_prompt": prompt_text,
+                    "translated_command": prompt_text,
+                    "matched_prompt_pattern": prompt_text,
+                    "action_name": action_name,
+                    "router_artifact_path": str(router_artifact_path),
+                    "router_log_path": str(router_log_path),
+                    "router_status": "success",
+                    "timestamp": timestamp,
+                    "message": "",
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+    def _write_speed_artifacts(
+        *,
+        prompt_text: str,
+        action_name: str,
+        requested_speed: float,
+        translator_artifact_path: Path,
+        translator_log_path: Path,
+        router_artifact_path: Path,
+        router_log_path: Path,
+        probe_log_path: Path,
+        probe_artifact_name: str,
+    ) -> None:
+        previous_speed = float(state["speed"])
+        executed = abs(previous_speed - requested_speed) > 0.0001
+        new_speed = requested_speed if executed else previous_speed
+        state["speed"] = new_speed
+        timestamp = _timestamp()
+        probe_artifact_path = translator_artifact_path.parent / probe_artifact_name
+        translator_log_path.write_text("translator log", encoding="utf-8")
+        router_log_path.write_text("router log", encoding="utf-8")
+        probe_log_path.write_text("probe log", encoding="utf-8")
+        probe_artifact_path.write_text(
+            json.dumps(
+                {
+                    "status": "success",
+                    "scene": "entity_test",
+                    "scene_name": "entity_test",
+                    "action_type": "mutate_enemy_move_speed",
+                    "object_name": "AIE_Zombie_001_Instance",
+                    "previous_speed": previous_speed,
+                    "new_speed": new_speed,
+                    "observed_speed_before_reset": previous_speed,
+                    "baseline_speed": 3.5,
+                    "requested_speed": requested_speed,
+                    "minimum_speed": 2.0,
+                    "maximum_speed": 5.0,
+                    "speed_changed": executed,
+                    "executed": executed,
+                    "result_reason": "applied" if executed else "skipped_already_satisfied",
+                    "scene_path": "Assets/AI_E_TestScenes/entity_test.unity",
+                    "timestamp": timestamp,
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        router_artifact_path.write_text(
+            json.dumps(
+                {
+                    "status": "success",
+                    "action_name": action_name,
+                    "route_kind": "single",
+                    "executed_probe": "MutateEnemyMoveSpeed",
+                    "delegated_probe_artifact_path": str(probe_artifact_path),
+                    "delegated_probe_log_path": str(probe_log_path),
+                    "delegated_probe_action_type": "mutate_enemy_move_speed",
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        translator_artifact_path.write_text(
+            json.dumps(
+                {
+                    "status": "success",
+                    "raw_prompt": prompt_text,
+                    "normalized_prompt": prompt_text,
+                    "translated_command": prompt_text,
+                    "matched_prompt_pattern": prompt_text,
+                    "action_name": action_name,
+                    "router_artifact_path": str(router_artifact_path),
+                    "router_log_path": str(router_log_path),
+                    "router_status": "success",
+                    "timestamp": timestamp,
+                    "message": "",
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+    def _write_aggression_artifacts(
+        *,
+        prompt_text: str,
+        action_name: str,
+        requested_attack_cooldown: float,
+        translator_artifact_path: Path,
+        translator_log_path: Path,
+        router_artifact_path: Path,
+        router_log_path: Path,
+        probe_log_path: Path,
+        probe_artifact_name: str,
+    ) -> None:
+        previous_attack_cooldown = float(state["attack_cooldown"])
+        executed = abs(previous_attack_cooldown - requested_attack_cooldown) > 0.0001
+        new_attack_cooldown = requested_attack_cooldown if executed else previous_attack_cooldown
+        state["attack_cooldown"] = new_attack_cooldown
+        timestamp = _timestamp()
+        probe_artifact_path = translator_artifact_path.parent / probe_artifact_name
+        translator_log_path.write_text("translator log", encoding="utf-8")
+        router_log_path.write_text("router log", encoding="utf-8")
+        probe_log_path.write_text("probe log", encoding="utf-8")
+        probe_artifact_path.write_text(
+            json.dumps(
+                {
+                    "status": "success",
+                    "scene": "entity_test",
+                    "scene_name": "entity_test",
+                    "action_type": "mutate_enemy_aggression",
+                    "object_name": "AIE_Zombie_001_Instance",
+                    "previous_attack_cooldown": previous_attack_cooldown,
+                    "new_attack_cooldown": new_attack_cooldown,
+                    "observed_attack_cooldown_before_reset": previous_attack_cooldown,
+                    "baseline_attack_cooldown": 1.0,
+                    "requested_attack_cooldown": requested_attack_cooldown,
+                    "minimum_attack_cooldown": 0.25,
+                    "maximum_attack_cooldown": 2.0,
+                    "aggression_changed": executed,
+                    "executed": executed,
+                    "result_reason": "applied" if executed else "skipped_already_satisfied",
+                    "scene_path": "Assets/AI_E_TestScenes/entity_test.unity",
+                    "timestamp": timestamp,
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        router_artifact_path.write_text(
+            json.dumps(
+                {
+                    "status": "success",
+                    "action_name": action_name,
+                    "route_kind": "single",
+                    "executed_probe": "MutateEnemyAggression",
+                    "delegated_probe_artifact_path": str(probe_artifact_path),
+                    "delegated_probe_log_path": str(probe_log_path),
+                    "delegated_probe_action_type": "mutate_enemy_aggression",
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        translator_artifact_path.write_text(
+            json.dumps(
+                {
+                    "status": "success",
+                    "raw_prompt": prompt_text,
+                    "normalized_prompt": prompt_text,
+                    "translated_command": prompt_text,
+                    "matched_prompt_pattern": prompt_text,
+                    "action_name": action_name,
+                    "router_artifact_path": str(router_artifact_path),
+                    "router_log_path": str(router_log_path),
+                    "router_status": "success",
+                    "timestamp": timestamp,
+                    "message": "",
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+    def fake_run(command, cwd, capture_output, text, check):
+        prompt_text = command[command.index("-PromptText") + 1]
+        assert command[command.index("-ProjectPath") + 1] == target_repo
+        translator_artifact_path = Path(command[command.index("-ArtifactPath") + 1])
+        translator_log_path = Path(command[command.index("-LogPath") + 1])
+        translator_artifact_path.parent.mkdir(parents=True, exist_ok=True)
+        translator_log_path.parent.mkdir(parents=True, exist_ok=True)
+
+        router_artifact_path = translator_artifact_path.with_name(f"{translator_artifact_path.stem}.router_result.json")
+        router_log_path = translator_log_path.with_name(f"{translator_log_path.stem}.router.log")
+        probe_log_path = translator_artifact_path.parent / f"{translator_artifact_path.stem}.probe.log"
+
+        if prompt_text == "make zombie faster":
+            _write_speed_artifacts(
+                prompt_text=prompt_text,
+                action_name="increase_enemy_move_speed",
+                requested_speed=4.5,
+                translator_artifact_path=translator_artifact_path,
+                translator_log_path=translator_log_path,
+                router_artifact_path=router_artifact_path,
+                router_log_path=router_log_path,
+                probe_log_path=probe_log_path,
+                probe_artifact_name="intent_make_zombie_faster_probe_result.json",
+            )
+        elif prompt_text == "make zombie slower":
+            _write_speed_artifacts(
+                prompt_text=prompt_text,
+                action_name="decrease_enemy_move_speed",
+                requested_speed=2.5,
+                translator_artifact_path=translator_artifact_path,
+                translator_log_path=translator_log_path,
+                router_artifact_path=router_artifact_path,
+                router_log_path=router_log_path,
+                probe_log_path=probe_log_path,
+                probe_artifact_name="intent_make_zombie_slower_probe_result.json",
+            )
+        elif prompt_text == "restore zombie speed to standard":
+            _write_speed_artifacts(
+                prompt_text=prompt_text,
+                action_name="set_enemy_move_speed",
+                requested_speed=3.5,
+                translator_artifact_path=translator_artifact_path,
+                translator_log_path=translator_log_path,
+                router_artifact_path=router_artifact_path,
+                router_log_path=router_log_path,
+                probe_log_path=probe_log_path,
+                probe_artifact_name="intent_restore_zombie_speed_to_standard_probe_result.json",
+            )
+        elif prompt_text == "make zombie more aggressive":
+            _write_aggression_artifacts(
+                prompt_text=prompt_text,
+                action_name="increase_enemy_aggression",
+                requested_attack_cooldown=0.6,
+                translator_artifact_path=translator_artifact_path,
+                translator_log_path=translator_log_path,
+                router_artifact_path=router_artifact_path,
+                router_log_path=router_log_path,
+                probe_log_path=probe_log_path,
+                probe_artifact_name="intent_make_zombie_more_aggressive_probe_result.json",
+            )
+        elif prompt_text == "restore zombie aggression to standard":
+            _write_aggression_artifacts(
+                prompt_text=prompt_text,
+                action_name="set_enemy_aggression",
+                requested_attack_cooldown=1.0,
+                translator_artifact_path=translator_artifact_path,
+                translator_log_path=translator_log_path,
+                router_artifact_path=router_artifact_path,
+                router_log_path=router_log_path,
+                probe_log_path=probe_log_path,
+                probe_artifact_name="intent_restore_zombie_aggression_to_standard_probe_result.json",
+            )
+        elif prompt_text == "move zombie forward":
+            _write_transform_artifacts(
+                prompt_text=prompt_text,
+                action_name="move_entity_forward",
+                translator_artifact_path=translator_artifact_path,
+                translator_log_path=translator_log_path,
+                router_artifact_path=router_artifact_path,
+                router_log_path=router_log_path,
+                probe_log_path=probe_log_path,
+                probe_artifact_name="intent_move_zombie_forward_probe_result.json",
+                new_position=[0.0, 0.0, 3.0],
+            )
+        elif prompt_text == "move zombie farther forward":
+            _write_transform_artifacts(
+                prompt_text=prompt_text,
+                action_name="move_entity_farther_forward",
+                translator_artifact_path=translator_artifact_path,
+                translator_log_path=translator_log_path,
+                router_artifact_path=router_artifact_path,
+                router_log_path=router_log_path,
+                probe_log_path=probe_log_path,
+                probe_artifact_name="intent_move_zombie_farther_forward_probe_result.json",
+                new_position=[0.0, 0.0, 6.0],
+            )
+        else:
+            raise AssertionError(f"Unexpected prompt routed to translator: {prompt_text}")
+        return subprocess.CompletedProcess(command, 0, stdout="translator ok", stderr="")
+
+    return fake_run, state
+
+
 def _write_move_zombie_capability_contract(config: OrchestratorConfig) -> None:
     capabilities_dir = config.contracts_dir / "capabilities"
     capabilities_dir.mkdir(parents=True, exist_ok=True)
@@ -6909,6 +9173,103 @@ def _write_move_zombie_capability_contract(config: OrchestratorConfig) -> None:
         ),
         encoding="utf-8",
     )
+    (capabilities_dir / "level_0001_move_zombie_farther_forward.json").write_text(
+        json.dumps(
+            {
+                "capability_id": "level_0001_move_zombie_farther_forward",
+                "title": "LEVEL_0001 move zombie farther forward",
+                "intent": "mutate",
+                "target_level": "LEVEL_0001",
+                "target_scene": "Assets/AI_E_TestScenes/entity_test.unity",
+                "requested_execution_lane": "approval_required_mutation",
+                "handler_name": "level_0001_entity_transform_handler",
+                "agent_type": "level_0001_entity_transform_mutation_agent",
+                "approval_required": True,
+                "eligible_for_auto": False,
+                "evidence_state": "experimental",
+                "safety_class": "approval_gated_automation",
+                "content_tags": {
+                    "violence_level": "none",
+                    "blood_level": "none",
+                    "gore_level": "none",
+                    "dismemberment": False,
+                    "horror_intensity": "none",
+                    "language_level": "none",
+                    "sexual_content_level": "none",
+                    "nudity_level": "none",
+                    "substance_reference_level": "none",
+                    "gambling_reference_level": "none"
+                },
+                "match_terms": ["zombie", "farther", "forward"],
+                "match_verbs": ["move", "translate", "shift", "reposition"],
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+
+def _write_zombie_speed_capability_contracts(config: OrchestratorConfig) -> None:
+    capabilities_dir = config.contracts_dir / "capabilities"
+    capabilities_dir.mkdir(parents=True, exist_ok=True)
+    for capability_id, title, match_terms, match_verbs in (
+        ("level_0001_increase_zombie_speed", "LEVEL_0001 increase zombie speed", ("faster",), ("make",)),
+        ("level_0001_decrease_zombie_speed", "LEVEL_0001 decrease zombie speed", ("slower",), ("make",)),
+        ("level_0001_restore_zombie_speed_standard", "LEVEL_0001 restore zombie speed to standard", ("speed", "standard"), ("restore",)),
+    ):
+        (capabilities_dir / f"{capability_id}.json").write_text(
+            json.dumps(
+                {
+                    "capability_id": capability_id,
+                    "title": title,
+                    "intent": "mutate",
+                    "target_level": "LEVEL_0001",
+                    "target_scene": "Assets/AI_E_TestScenes/entity_test.unity",
+                    "requested_execution_lane": "approval_required_mutation",
+                    "handler_name": "level_0001_entity_transform_handler",
+                    "agent_type": "level_0001_entity_transform_mutation_agent",
+                    "approval_required": True,
+                    "eligible_for_auto": False,
+                    "evidence_state": "experimental",
+                    "safety_class": "approval_gated_automation",
+                    "match_terms": ["zombie", *list(match_terms)],
+                    "match_verbs": list(match_verbs),
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+
+def _write_zombie_aggression_capability_contract(config: OrchestratorConfig) -> None:
+    capabilities_dir = config.contracts_dir / "capabilities"
+    capabilities_dir.mkdir(parents=True, exist_ok=True)
+    for capability_id, title, match_terms, match_verbs in (
+        ("level_0001_increase_zombie_aggression", "LEVEL_0001 increase zombie aggression", ("aggressive",), ("make",)),
+        ("level_0001_restore_zombie_aggression_standard", "LEVEL_0001 restore zombie aggression to standard", ("aggression", "standard"), ("restore",)),
+    ):
+        (capabilities_dir / f"{capability_id}.json").write_text(
+            json.dumps(
+                {
+                    "capability_id": capability_id,
+                    "title": title,
+                    "intent": "mutate",
+                    "target_level": "LEVEL_0001",
+                    "target_scene": "Assets/AI_E_TestScenes/entity_test.unity",
+                    "requested_execution_lane": "approval_required_mutation",
+                    "handler_name": "level_0001_entity_transform_handler",
+                    "agent_type": "level_0001_entity_transform_mutation_agent",
+                    "approval_required": True,
+                    "eligible_for_auto": False,
+                    "evidence_state": "experimental",
+                    "safety_class": "approval_gated_automation",
+                    "match_terms": ["zombie", *list(match_terms)],
+                    "match_verbs": list(match_verbs),
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
 
 
 def _create_entity_transform_prompt_repo(config: OrchestratorConfig, *, target_repo_name: str = "BABYLON_TEST") -> str:
@@ -6919,6 +9280,8 @@ def _create_entity_transform_prompt_repo(config: OrchestratorConfig, *, target_r
     scripts_logs_dir.mkdir(parents=True, exist_ok=True)
     (tools_dir / "run_aie_prompt.ps1").write_text("placeholder", encoding="utf-8")
     (tools_dir / "run_unity_mutate_entity_transform.ps1").write_text("placeholder", encoding="utf-8")
+    (tools_dir / "run_unity_mutate_enemy_move_speed.ps1").write_text("placeholder", encoding="utf-8")
+    (tools_dir / "run_unity_mutate_enemy_aggression.ps1").write_text("placeholder", encoding="utf-8")
     (tools_dir / "aie_prompt_aliases.json").write_text(
         json.dumps(
             {
@@ -6927,6 +9290,30 @@ def _create_entity_transform_prompt_repo(config: OrchestratorConfig, *, target_r
                     {
                         "normalized_prompt": "move zombie forward",
                         "translated_command": "move zombie forward",
+                    },
+                    {
+                        "normalized_prompt": "move zombie farther forward",
+                        "translated_command": "move zombie farther forward",
+                    },
+                    {
+                        "normalized_prompt": "make zombie faster",
+                        "translated_command": "make zombie faster",
+                    },
+                    {
+                        "normalized_prompt": "make zombie slower",
+                        "translated_command": "make zombie slower",
+                    },
+                    {
+                        "normalized_prompt": "restore zombie speed to standard",
+                        "translated_command": "restore zombie speed to standard",
+                    },
+                    {
+                        "normalized_prompt": "make zombie more aggressive",
+                        "translated_command": "make zombie more aggressive",
+                    },
+                    {
+                        "normalized_prompt": "restore zombie aggression to standard",
+                        "translated_command": "restore zombie aggression to standard",
                     }
                 ],
             },
@@ -6953,6 +9340,114 @@ def _create_entity_transform_prompt_repo(config: OrchestratorConfig, *, target_r
                             "SceneName": "entity_test",
                             "TargetObjectName": "AIE_Zombie_001_Instance",
                         },
+                    },
+                    {
+                        "normalized_command": "move zombie farther forward",
+                        "action_name": "move_entity_farther_forward",
+                        "entity_type": "zombie",
+                        "direction": "forward_farther",
+                        "probe_name": "MutateEntityTransform",
+                        "wrapper_path": "Tools/run_unity_mutate_entity_transform.ps1",
+                        "probe_artifact_file": "intent_move_zombie_farther_forward_probe_result.json",
+                        "probe_log_file": "intent_move_zombie_farther_forward_probe.log",
+                        "wrapper_arguments": {
+                            "ProjectPath": ".",
+                            "SceneName": "entity_test",
+                            "TargetObjectName": "AIE_Zombie_001_Instance",
+                            "TargetPositionX": 0.0,
+                            "TargetPositionY": 0.0,
+                            "TargetPositionZ": 6.0
+                        },
+                    },
+                    {
+                        "normalized_command": "make zombie faster",
+                        "action_name": "increase_enemy_move_speed",
+                        "entity_type": "zombie",
+                        "probe_name": "MutateEnemyMoveSpeed",
+                        "wrapper_path": "Tools/run_unity_mutate_enemy_move_speed.ps1",
+                        "probe_artifact_file": "intent_make_zombie_faster_probe_result.json",
+                        "probe_log_file": "intent_make_zombie_faster_probe.log",
+                        "wrapper_arguments": {
+                            "ProjectPath": ".",
+                            "SceneName": "entity_test",
+                            "TargetObjectName": "AIE_Zombie_001_Instance",
+                            "RequestedSpeed": 4.5,
+                            "BaselineSpeed": 3.5,
+                            "MinSpeed": 2.0,
+                            "MaxSpeed": 5.0
+                        }
+                    },
+                    {
+                        "normalized_command": "make zombie slower",
+                        "action_name": "decrease_enemy_move_speed",
+                        "entity_type": "zombie",
+                        "probe_name": "MutateEnemyMoveSpeed",
+                        "wrapper_path": "Tools/run_unity_mutate_enemy_move_speed.ps1",
+                        "probe_artifact_file": "intent_make_zombie_slower_probe_result.json",
+                        "probe_log_file": "intent_make_zombie_slower_probe.log",
+                        "wrapper_arguments": {
+                            "ProjectPath": ".",
+                            "SceneName": "entity_test",
+                            "TargetObjectName": "AIE_Zombie_001_Instance",
+                            "RequestedSpeed": 2.5,
+                            "BaselineSpeed": 3.5,
+                            "MinSpeed": 2.0,
+                            "MaxSpeed": 5.0
+                        }
+                    },
+                    {
+                        "normalized_command": "make zombie more aggressive",
+                        "action_name": "increase_enemy_aggression",
+                        "entity_type": "zombie",
+                        "probe_name": "MutateEnemyAggression",
+                        "wrapper_path": "Tools/run_unity_mutate_enemy_aggression.ps1",
+                        "probe_artifact_file": "intent_make_zombie_more_aggressive_probe_result.json",
+                        "probe_log_file": "intent_make_zombie_more_aggressive_probe.log",
+                        "wrapper_arguments": {
+                            "ProjectPath": ".",
+                            "SceneName": "entity_test",
+                            "TargetObjectName": "AIE_Zombie_001_Instance",
+                            "RequestedAttackCooldown": 0.6,
+                            "BaselineAttackCooldown": 1.0,
+                            "MinAttackCooldown": 0.25,
+                            "MaxAttackCooldown": 2.0
+                        }
+                    },
+                    {
+                        "normalized_command": "restore zombie speed to standard",
+                        "action_name": "set_enemy_move_speed",
+                        "entity_type": "zombie",
+                        "probe_name": "MutateEnemyMoveSpeed",
+                        "wrapper_path": "Tools/run_unity_mutate_enemy_move_speed.ps1",
+                        "probe_artifact_file": "intent_restore_zombie_speed_to_standard_probe_result.json",
+                        "probe_log_file": "intent_restore_zombie_speed_to_standard_probe.log",
+                        "wrapper_arguments": {
+                            "ProjectPath": ".",
+                            "SceneName": "entity_test",
+                            "TargetObjectName": "AIE_Zombie_001_Instance",
+                            "RequestedSpeed": 3.5,
+                            "BaselineSpeed": 3.5,
+                            "MinSpeed": 2.0,
+                            "MaxSpeed": 5.0
+                        }
+                    },
+                    {
+                        "normalized_command": "restore zombie aggression to standard",
+                        "action_name": "set_enemy_aggression",
+                        "entity_type": "zombie",
+                        "probe_name": "MutateEnemyAggression",
+                        "wrapper_path": "Tools/run_unity_mutate_enemy_aggression.ps1",
+                        "probe_artifact_file": "intent_restore_zombie_aggression_to_standard_probe_result.json",
+                        "probe_log_file": "intent_restore_zombie_aggression_to_standard_probe.log",
+                        "wrapper_arguments": {
+                            "ProjectPath": ".",
+                            "SceneName": "entity_test",
+                            "TargetObjectName": "AIE_Zombie_001_Instance",
+                            "RequestedAttackCooldown": 1.0,
+                            "BaselineAttackCooldown": 1.0,
+                            "MinAttackCooldown": 0.25,
+                            "MaxAttackCooldown": 2.0
+                        }
                     }
                 ],
             },
