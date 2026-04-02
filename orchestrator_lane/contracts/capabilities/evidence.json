@@ -21,6 +21,205 @@
       "validation_history_summary": "attempts=0; passed=0; last_validation_result=none; sandbox_verified=no; real_target_verified=no",
       "rollback_history_summary": "last_rollback_result=none; rollback_verified=no",
       "notes": "Initial evidence state created for bounded grass mutation capability."
+    },
+    "level_0001_move_zombie_forward": {
+      "capability_id": "level_0001_move_zombie_forward",
+      "handler_name": "level_0001_entity_transform_handler",
+      "safety_class": "approval_gated_automation",
+      "times_attempted": 6,
+      "times_passed": 6,
+      "last_validation_result": "passed",
+      "last_rollback_result": "none",
+      "artifact_requirements_met": true,
+      "eligible_for_auto": false,
+      "requires_approval": true,
+      "evidence_state": "sandbox_verified",
+      "sandbox_verified": true,
+      "real_target_verified": false,
+      "rollback_verified": false,
+      "evidence_progression": [
+        "experimental",
+        "sandbox_verified"
+      ],
+      "validation_history_summary": "attempts=6; passed=6; last_validation_result=passed; sandbox_verified=yes; real_target_verified=no",
+      "rollback_history_summary": "last_rollback_result=none; rollback_verified=no",
+      "notes": "Deterministic entity transform mutation validated through translated command 'move zombie forward'."
+    },
+    "level_0001_make_zombie_faster": {
+      "capability_id": "level_0001_make_zombie_faster",
+      "handler_name": "level_0001_entity_transform_handler",
+      "safety_class": "approval_gated_automation",
+      "times_attempted": 0,
+      "times_passed": 0,
+      "last_validation_result": "none",
+      "last_rollback_result": "none",
+      "artifact_requirements_met": false,
+      "eligible_for_auto": false,
+      "requires_approval": true,
+      "evidence_state": "experimental",
+      "sandbox_verified": false,
+      "real_target_verified": false,
+      "rollback_verified": false,
+      "evidence_progression": [
+        "experimental"
+      ],
+      "validation_history_summary": "attempts=0; passed=0; last_validation_result=none; sandbox_verified=no; real_target_verified=no",
+      "rollback_history_summary": "last_rollback_result=none; rollback_verified=no",
+      "notes": "Initial evidence state created for bounded grass mutation capability."
+    },
+    "level_0001_make_zombie_slower": {
+      "capability_id": "level_0001_make_zombie_slower",
+      "handler_name": "level_0001_entity_transform_handler",
+      "safety_class": "approval_gated_automation",
+      "times_attempted": 0,
+      "times_passed": 0,
+      "last_validation_result": "none",
+      "last_rollback_result": "none",
+      "artifact_requirements_met": false,
+      "eligible_for_auto": false,
+      "requires_approval": true,
+      "evidence_state": "experimental",
+      "sandbox_verified": false,
+      "real_target_verified": false,
+      "rollback_verified": false,
+      "evidence_progression": [
+        "experimental"
+      ],
+      "validation_history_summary": "attempts=0; passed=0; last_validation_result=none; sandbox_verified=no; real_target_verified=no",
+      "rollback_history_summary": "last_rollback_result=none; rollback_verified=no",
+      "notes": "Initial evidence state created for bounded grass mutation capability."
+    },
+    "level_0001_move_zombie_farther_forward": {
+      "capability_id": "level_0001_move_zombie_farther_forward",
+      "handler_name": "level_0001_entity_transform_handler",
+      "safety_class": "approval_gated_automation",
+      "times_attempted": 0,
+      "times_passed": 0,
+      "last_validation_result": "none",
+      "last_rollback_result": "none",
+      "artifact_requirements_met": false,
+      "eligible_for_auto": false,
+      "requires_approval": true,
+      "evidence_state": "experimental",
+      "sandbox_verified": false,
+      "real_target_verified": false,
+      "rollback_verified": false,
+      "evidence_progression": [
+        "experimental"
+      ],
+      "validation_history_summary": "attempts=0; passed=0; last_validation_result=none; sandbox_verified=no; real_target_verified=no",
+      "rollback_history_summary": "last_rollback_result=none; rollback_verified=no",
+      "notes": "Initial evidence state created for bounded grass mutation capability."
+    },
+    "level_0001_decrease_zombie_speed": {
+      "capability_id": "level_0001_decrease_zombie_speed",
+      "handler_name": "level_0001_entity_transform_handler",
+      "safety_class": "approval_gated_automation",
+      "times_attempted": 0,
+      "times_passed": 0,
+      "last_validation_result": "none",
+      "last_rollback_result": "none",
+      "artifact_requirements_met": false,
+      "eligible_for_auto": false,
+      "requires_approval": true,
+      "evidence_state": "experimental",
+      "sandbox_verified": false,
+      "real_target_verified": false,
+      "rollback_verified": false,
+      "evidence_progression": [
+        "experimental"
+      ],
+      "validation_history_summary": "attempts=0; passed=0; last_validation_result=none; sandbox_verified=no; real_target_verified=no",
+      "rollback_history_summary": "last_rollback_result=none; rollback_verified=no",
+      "notes": "Initial evidence state created for bounded grass mutation capability."
+    },
+    "level_0001_increase_zombie_aggression": {
+      "capability_id": "level_0001_increase_zombie_aggression",
+      "handler_name": "level_0001_entity_transform_handler",
+      "safety_class": "approval_gated_automation",
+      "times_attempted": 0,
+      "times_passed": 0,
+      "last_validation_result": "none",
+      "last_rollback_result": "none",
+      "artifact_requirements_met": false,
+      "eligible_for_auto": false,
+      "requires_approval": true,
+      "evidence_state": "experimental",
+      "sandbox_verified": false,
+      "real_target_verified": false,
+      "rollback_verified": false,
+      "evidence_progression": [
+        "experimental"
+      ],
+      "validation_history_summary": "attempts=0; passed=0; last_validation_result=none; sandbox_verified=no; real_target_verified=no",
+      "rollback_history_summary": "last_rollback_result=none; rollback_verified=no",
+      "notes": "Initial evidence state created for bounded grass mutation capability."
+    },
+    "level_0001_increase_zombie_speed": {
+      "capability_id": "level_0001_increase_zombie_speed",
+      "handler_name": "level_0001_entity_transform_handler",
+      "safety_class": "approval_gated_automation",
+      "times_attempted": 0,
+      "times_passed": 0,
+      "last_validation_result": "none",
+      "last_rollback_result": "none",
+      "artifact_requirements_met": false,
+      "eligible_for_auto": false,
+      "requires_approval": true,
+      "evidence_state": "experimental",
+      "sandbox_verified": false,
+      "real_target_verified": false,
+      "rollback_verified": false,
+      "evidence_progression": [
+        "experimental"
+      ],
+      "validation_history_summary": "attempts=0; passed=0; last_validation_result=none; sandbox_verified=no; real_target_verified=no",
+      "rollback_history_summary": "last_rollback_result=none; rollback_verified=no",
+      "notes": "Initial evidence state created for bounded grass mutation capability."
+    },
+    "level_0001_restore_zombie_aggression_standard": {
+      "capability_id": "level_0001_restore_zombie_aggression_standard",
+      "handler_name": "level_0001_entity_transform_handler",
+      "safety_class": "approval_gated_automation",
+      "times_attempted": 0,
+      "times_passed": 0,
+      "last_validation_result": "none",
+      "last_rollback_result": "none",
+      "artifact_requirements_met": false,
+      "eligible_for_auto": false,
+      "requires_approval": true,
+      "evidence_state": "experimental",
+      "sandbox_verified": false,
+      "real_target_verified": false,
+      "rollback_verified": false,
+      "evidence_progression": [
+        "experimental"
+      ],
+      "validation_history_summary": "attempts=0; passed=0; last_validation_result=none; sandbox_verified=no; real_target_verified=no",
+      "rollback_history_summary": "last_rollback_result=none; rollback_verified=no",
+      "notes": "Initial evidence state created for bounded grass mutation capability."
+    },
+    "level_0001_restore_zombie_speed_standard": {
+      "capability_id": "level_0001_restore_zombie_speed_standard",
+      "handler_name": "level_0001_entity_transform_handler",
+      "safety_class": "approval_gated_automation",
+      "times_attempted": 0,
+      "times_passed": 0,
+      "last_validation_result": "none",
+      "last_rollback_result": "none",
+      "artifact_requirements_met": false,
+      "eligible_for_auto": false,
+      "requires_approval": true,
+      "evidence_state": "experimental",
+      "sandbox_verified": false,
+      "real_target_verified": false,
+      "rollback_verified": false,
+      "evidence_progression": [
+        "experimental"
+      ],
+      "validation_history_summary": "attempts=0; passed=0; last_validation_result=none; sandbox_verified=no; real_target_verified=no",
+      "rollback_history_summary": "last_rollback_result=none; rollback_verified=no",
+      "notes": "Initial evidence state created for bounded grass mutation capability."
     }
   }
 }
