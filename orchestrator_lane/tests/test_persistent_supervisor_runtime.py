@@ -7683,21 +7683,57 @@ def test_supervisor_resolves_session_speed_followup_and_revert_from_recorded_sta
     )
     assert slower_proof.available is True
     assert slower_proof.evaluation_available is True
-    assert slower_proof.evaluation_summary == "Current zombie is slower than previous version."
-    assert slower_proof.evaluation_differences == ["Speed tier changed from fast to standard."]
+    assert slower_proof.evaluation_summary == (
+        "What changed\n"
+        "Speed changed.\n\n"
+        "Current state vs previous version\n"
+        "Speed: standard vs fast\n\n"
+        "Key differences\n"
+        "See explicit deltas below.\n\n"
+        "Expected gameplay impact\n"
+        "Lower movement speed."
+    )
+    assert slower_proof.evaluation_differences == ["Speed: fast -> standard"]
     assert slower_proof.evaluation_suggestion == ""
     assert slower_proof.experiment_available is True
     assert slower_proof.experiment_id == "experiment_0001"
     assert slower_proof.variant_id == "variant_0002"
     assert slower_proof.compared_variant_id == "variant_0001"
     assert slower_proof.baseline_variant_id == "variant_0001"
-    assert slower_proof.experiment_summary == "Variant 2 is slower than Variant 1."
+    assert slower_proof.experiment_summary == (
+        "What changed\n"
+        "Speed changed.\n\n"
+        "Current variant vs Variant 1\n"
+        "Speed: standard vs fast\n\n"
+        "Key differences\n"
+        "Speed: fast -> standard\n\n"
+        "Expected gameplay impact\n"
+        "Lower movement speed."
+    )
 
     assert len(state["result_state_history"]) == 3
     assert len(state["result_evaluation_history"]) == 2
-    assert state["latest_result_evaluation"]["comparison_description"] == "Current zombie is faster than previous version."
+    assert state["latest_result_evaluation"]["comparison_description"] == (
+        "What changed\n"
+        "Speed changed.\n\n"
+        "Current state vs previous version\n"
+        "Speed: fast vs standard\n\n"
+        "Key differences\n"
+        "See explicit deltas below.\n\n"
+        "Expected gameplay impact\n"
+        "Higher movement speed."
+    )
     assert state["latest_result_evaluation"]["evaluation_source"] == "deterministic_rules"
-    assert state["latest_result_evaluation"]["experiment_comparison_description"] == "Variant 3 matches the baseline across the supported deterministic checks."
+    assert state["latest_result_evaluation"]["experiment_comparison_description"] == (
+        "What changed\n"
+        "No supported deterministic differences were detected.\n\n"
+        "Current variant vs baseline\n"
+        "Supported deterministic checks match the baseline.\n\n"
+        "Key differences\n"
+        "No explicit deltas were recorded.\n\n"
+        "Expected gameplay impact\n"
+        "No deterministic gameplay-impact change detected."
+    )
     tracking = state["experiment_tracking"]
     assert tracking["active_experiment_id"] == "experiment_0001"
     variants = tracking["experiments"][0]["variants"]
@@ -7713,7 +7749,16 @@ def test_supervisor_resolves_session_speed_followup_and_revert_from_recorded_sta
     assert revert_proof.experiment_available is True
     assert revert_proof.variant_id == "variant_0003"
     assert revert_proof.compared_variant_id == "variant_0001"
-    assert revert_proof.experiment_summary == "Variant 3 matches the baseline across the supported deterministic checks."
+    assert revert_proof.experiment_summary == (
+        "What changed\n"
+        "No supported deterministic differences were detected.\n\n"
+        "Current variant vs baseline\n"
+        "Supported deterministic checks match the baseline.\n\n"
+        "Key differences\n"
+        "No explicit deltas were recorded.\n\n"
+        "Expected gameplay impact\n"
+        "No deterministic gameplay-impact change detected."
+    )
 
 
 def test_supervisor_resolves_session_aggression_followup_from_recorded_state(tmp_path, monkeypatch):
@@ -7819,13 +7864,31 @@ def test_supervisor_resolves_session_aggression_followup_from_recorded_state(tmp
     assert "Session tier path: Aggression aggressive -> standard." in proof.validation_checks
     assert "Resulting tier: Aggression standard." in proof.validation_checks
     assert proof.evaluation_available is True
-    assert proof.evaluation_summary == "Current zombie is less aggressive than previous version."
-    assert proof.evaluation_differences == ["Aggression tier changed from aggressive to standard."]
+    assert proof.evaluation_summary == (
+        "What changed\n"
+        "Aggression changed.\n\n"
+        "Current state vs previous version\n"
+        "Aggression: standard vs aggressive\n\n"
+        "Key differences\n"
+        "See explicit deltas below.\n\n"
+        "Expected gameplay impact\n"
+        "Longer attack cooldown."
+    )
+    assert proof.evaluation_differences == ["Aggression: aggressive -> standard"]
     assert proof.evaluation_suggestion == ""
     assert proof.experiment_available is True
     assert proof.variant_id == "variant_0002"
     assert proof.compared_variant_id == "variant_0001"
-    assert proof.experiment_summary == "Variant 2 is less aggressive than Variant 1."
+    assert proof.experiment_summary == (
+        "What changed\n"
+        "Aggression changed.\n\n"
+        "Current variant vs Variant 1\n"
+        "Aggression: standard vs aggressive\n\n"
+        "Key differences\n"
+        "Aggression: aggressive -> standard\n\n"
+        "Expected gameplay impact\n"
+        "Longer attack cooldown."
+    )
 
 
 def test_supervisor_generates_evaluation_for_mixed_speed_and_aggression_plan(tmp_path, monkeypatch):
@@ -7903,12 +7966,22 @@ def test_supervisor_generates_evaluation_for_mixed_speed_and_aggression_plan(tmp
     )
     assert proof.available is True
     assert proof.evaluation_available is True
-    assert proof.evaluation_summary == "Current zombie is faster but less aggressive than previous version."
+    assert proof.evaluation_summary == (
+        "What changed\n"
+        "Aggression changed.\n\n"
+        "Current state vs previous version\n"
+        "Aggression: standard vs aggressive\n\n"
+        "Key differences\n"
+        "See explicit deltas below.\n\n"
+        "Expected gameplay impact\n"
+        "Longer attack cooldown."
+    )
     assert proof.evaluation_differences == [
-        "Speed tier changed from standard to fast.",
-        "Aggression tier changed from aggressive to standard.",
+        "Aggression: aggressive -> standard",
     ]
-    assert proof.evaluation_suggestion == "Try increasing aggression again for a more dangerous zombie."
+    assert proof.evaluation_suggestion == ""
+    assert "better" not in proof.evaluation_summary.lower()
+    assert "best" not in proof.evaluation_summary.lower()
 
 
 def test_supervisor_generates_evaluation_for_movement_variation_comparison(tmp_path, monkeypatch):
@@ -7982,13 +8055,31 @@ def test_supervisor_generates_evaluation_for_movement_variation_comparison(tmp_p
     )
     assert proof.available is True
     assert proof.evaluation_available is True
-    assert proof.evaluation_summary == "Current zombie moves farther forward than previous version."
-    assert proof.evaluation_differences == ["Movement target changed from Z=3 to Z=6."]
-    assert proof.evaluation_suggestion == "Choose between standard and variation path."
+    assert proof.evaluation_summary == (
+        "What changed\n"
+        "Movement target changed.\n\n"
+        "Current state vs previous version\n"
+        "Movement target: Z=6 vs Z=3\n\n"
+        "Key differences\n"
+        "See explicit deltas below.\n\n"
+        "Expected gameplay impact\n"
+        "Moves farther forward along the same path."
+    )
+    assert proof.evaluation_differences == ["Movement target: Z=3 -> Z=6"]
+    assert proof.evaluation_suggestion == ""
     assert proof.experiment_available is True
     assert proof.variant_id == "variant_0002"
     assert proof.compared_variant_id == "variant_0001"
-    assert proof.experiment_summary == "Variant 2 moves farther forward than Variant 1."
+    assert proof.experiment_summary == (
+        "What changed\n"
+        "Movement target changed.\n\n"
+        "Current variant vs Variant 1\n"
+        "Movement target: Z=6 vs Z=3\n\n"
+        "Key differences\n"
+        "Movement target: Z=3 -> Z=6\n\n"
+        "Expected gameplay impact\n"
+        "Moves farther forward along the same path."
+    )
 
 
 def test_supervisor_executes_auto_promoted_level0001_grass_mutation_without_manual_approval(tmp_path):
@@ -8939,7 +9030,17 @@ def test_supervisor_runner_session_followup_and_revert_work_with_active_entity(t
 
     proof = home_surface.load_proof_result_surface(config.runs_dir / "runner-followup-session")
     assert proof.available is True
-    assert "runner" in proof.evaluation_summary.lower()
+    assert proof.evaluation_summary == (
+        "What changed\n"
+        "Speed changed.\n\n"
+        "Current state vs previous version\n"
+        "Speed: fast vs standard\n\n"
+        "Key differences\n"
+        "See explicit deltas below.\n\n"
+        "Expected gameplay impact\n"
+        "Higher movement speed."
+    )
+    assert proof.evaluation_differences == ["Speed: standard -> fast"]
     assert any("runner" in check.lower() for check in proof.validation_checks)
 
 
@@ -9004,8 +9105,246 @@ def test_supervisor_runner_state_aware_skip_records_noop_and_evaluation(tmp_path
 
     proof = home_surface.load_proof_result_surface(config.runs_dir / "runner-skip-session")
     assert proof.available is True
-    assert "current runner matches the previous version" in proof.evaluation_summary.lower()
+    assert proof.evaluation_summary == (
+        "What changed\n"
+        "No supported deterministic differences were detected.\n\n"
+        "Current state vs previous version\n"
+        "Supported deterministic checks match previous version.\n\n"
+        "Key differences\n"
+        "No explicit deltas were recorded.\n\n"
+        "Expected gameplay impact\n"
+        "No deterministic gameplay-impact change detected."
+    )
     assert proof.experiment_available is True
+
+
+def test_supervisor_encounter_count_state_aware_skip_records_noop_and_evaluation(tmp_path, monkeypatch):
+    config = _make_config(tmp_path / "encounter_count_skip")
+    _write_encounter_capability_contracts(config)
+    target_repo = _create_entity_transform_prompt_repo(config, target_repo_name="BABYLON_TEST")
+    intake = ConversationalTaskIntake(config)
+    fake_run, runtime_state = _make_stateful_zombie_mutation_fake_run(target_repo)
+
+    monkeypatch.setattr("ai_e_runtime.level_0001_entity_transform_mutation.subprocess.run", fake_run)
+
+    first = intake.accept_message(
+        "increase encounter count",
+        session_id="encounter-skip-session",
+        target_repo=target_repo,
+    )
+    approval = approve_mutation_task(
+        config,
+        task_id=first.task_id,
+        approved_by="operator-test",
+        notes="Approve encounter count increase.",
+    )
+    assert approval.queue_status == "pending"
+    Supervisor(
+        config,
+        SupervisorConfig(
+            session_limit_seconds=30,
+            stop_when_queue_empty=True,
+            session_id="encounter-skip-session",
+        ),
+    ).run()
+
+    second = intake.accept_message(
+        "increase encounter count",
+        session_id="encounter-skip-session",
+        target_repo=target_repo,
+    )
+    approval = approve_mutation_task(
+        config,
+        task_id=second.task_id,
+        approved_by="operator-test",
+        notes="Approve repeated encounter count increase.",
+    )
+    assert approval.queue_status == "pending"
+    Supervisor(
+        config,
+        SupervisorConfig(
+            session_limit_seconds=30,
+            stop_when_queue_empty=True,
+            session_id="encounter-skip-session",
+            resume=True,
+        ),
+    ).run()
+
+    artifact = json.loads((config.runs_dir / "encounter-skip-session" / "artifacts" / f"{second.task_id}_attempt_01.json").read_text(encoding="utf-8"))
+    details = artifact["result"]["details"]
+    assert details["entity_type"] == "encounter"
+    assert details["executed"] is False
+    assert details["result_reason"] == "skipped_already_satisfied"
+    assert runtime_state["encounter"]["count"] == 7
+
+    proof = home_surface.load_proof_result_surface(config.runs_dir / "encounter-skip-session")
+    assert proof.available is True
+    assert proof.evaluation_summary == (
+        "What changed\n"
+        "No supported deterministic differences were detected.\n\n"
+        "Current state vs previous version\n"
+        "Supported deterministic checks match previous version.\n\n"
+        "Key differences\n"
+        "No explicit deltas were recorded.\n\n"
+        "Expected gameplay impact\n"
+        "No deterministic gameplay-impact change detected."
+    )
+    assert proof.experiment_available is True
+
+
+def test_supervisor_executes_goal_intent_mapped_encounter_plan_and_revert(tmp_path, monkeypatch):
+    config = _make_config(tmp_path / "encounter_plan")
+    _write_encounter_capability_contracts(config)
+    target_repo = _create_entity_transform_prompt_repo(config, target_repo_name="BABYLON_TEST")
+    intake = ConversationalTaskIntake(config)
+    fake_run, runtime_state = _make_stateful_zombie_mutation_fake_run(target_repo)
+
+    monkeypatch.setattr("ai_e_runtime.level_0001_entity_transform_mutation.subprocess.run", fake_run)
+
+    result = intake.accept_message(
+        "make encounter more intense",
+        session_id="encounter-plan-session",
+        target_repo=target_repo,
+    )
+    assert result.task_type == "mutation_plan_request"
+    assert result.routing.resolution_source == "goal_intent_mapping"
+    assert result.routing.mapped_prompt == "increase encounter intensity"
+
+    for task_id in result.task_ids:
+        approval = approve_mutation_task(
+            config,
+            task_id=task_id,
+            approved_by="operator-test",
+            notes="Approve bounded encounter intensity plan.",
+        )
+        assert approval.queue_status == "pending"
+
+    Supervisor(
+        config,
+        SupervisorConfig(
+            session_limit_seconds=30,
+            stop_when_queue_empty=True,
+            session_id="encounter-plan-session",
+        ),
+    ).run()
+
+    assert runtime_state["encounter"]["count"] == 7
+    assert runtime_state["encounter"]["spawn_interval"] == 4.0
+
+    proof = home_surface.load_proof_result_surface(config.runs_dir / "encounter-plan-session")
+    assert proof.available is True
+    assert proof.detected_action == "Increase encounter intensity"
+    assert proof.experiment_available is True
+    assert "encounter count" in proof.change_summary.lower()
+    assert "spawn interval" in proof.before_after_summary.lower()
+
+    followup = intake.accept_message(
+        "revert last change",
+        session_id="encounter-plan-session",
+        target_repo=target_repo,
+    )
+    assert followup.routing.mapped_prompt == "restore spawn pressure to standard"
+    approval = approve_mutation_task(
+        config,
+        task_id=followup.task_id,
+        approved_by="operator-test",
+        notes="Approve encounter revert.",
+    )
+    assert approval.queue_status == "pending"
+
+    Supervisor(
+        config,
+        SupervisorConfig(
+            session_limit_seconds=30,
+            stop_when_queue_empty=True,
+            session_id="encounter-plan-session",
+            resume=True,
+        ),
+    ).run()
+
+    assert runtime_state["encounter"]["spawn_interval"] == 6.0
+
+
+def test_supervisor_generates_structured_evaluation_for_encounter_plan_comparison(tmp_path, monkeypatch):
+    config = _make_config(tmp_path / "encounter_evaluation")
+    _write_encounter_capability_contracts(config)
+    target_repo = _create_entity_transform_prompt_repo(config, target_repo_name="BABYLON_TEST")
+    intake = ConversationalTaskIntake(config)
+    fake_run, runtime_state = _make_stateful_zombie_mutation_fake_run(target_repo)
+
+    monkeypatch.setattr("ai_e_runtime.level_0001_entity_transform_mutation.subprocess.run", fake_run)
+
+    baseline = intake.accept_message(
+        "restore encounter count to standard",
+        session_id="encounter-evaluation-session",
+        target_repo=target_repo,
+    )
+    approval = approve_mutation_task(
+        config,
+        task_id=baseline.task_id,
+        approved_by="operator-test",
+        notes="Approve encounter baseline capture.",
+    )
+    assert approval.queue_status == "pending"
+
+    Supervisor(
+        config,
+        SupervisorConfig(
+            session_limit_seconds=30,
+            stop_when_queue_empty=True,
+            session_id="encounter-evaluation-session",
+        ),
+    ).run()
+
+    result = intake.accept_message(
+        "make encounter more intense",
+        session_id="encounter-evaluation-session",
+        target_repo=target_repo,
+    )
+    for task_id in result.task_ids:
+        approval = approve_mutation_task(
+            config,
+            task_id=task_id,
+            approved_by="operator-test",
+            notes="Approve encounter comparison plan.",
+        )
+        assert approval.queue_status == "pending"
+
+    Supervisor(
+        config,
+        SupervisorConfig(
+            session_limit_seconds=30,
+            stop_when_queue_empty=True,
+            session_id="encounter-evaluation-session",
+            resume=True,
+        ),
+    ).run()
+
+    assert runtime_state["encounter"]["count"] == 7
+    assert runtime_state["encounter"]["spawn_interval"] == 4.0
+
+    proof = home_surface.load_proof_result_surface(
+        config.runs_dir / "encounter-evaluation-session" / "artifacts" / f"{result.task_ids[-1]}_attempt_01.json"
+    )
+    assert proof.available is True
+    assert proof.evaluation_available is True
+    assert proof.evaluation_summary == (
+        "What changed\n"
+        "Spawn count changed.\n\n"
+        "Current state vs previous version\n"
+        "Spawn count: 7 vs 5\n"
+        "\nKey differences\n"
+        "See explicit deltas below.\n\n"
+        "Expected gameplay impact\n"
+        "More enemies per encounter."
+    )
+    assert proof.evaluation_differences == [
+        "Spawn count: 5 -> 7",
+    ]
+    assert proof.evaluation_suggestion == ""
+    assert proof.experiment_available is True
+    assert "better" not in proof.evaluation_summary.lower()
+    assert "best" not in proof.evaluation_summary.lower()
 
 
 def _make_stateful_zombie_mutation_fake_run(target_repo: str):
@@ -9014,6 +9353,13 @@ def _make_stateful_zombie_mutation_fake_run(target_repo: str):
         "attack_cooldown": 1.0,
         "position": [0.0, 0.0, 0.0],
         "tick": 0,
+        "encounter": {
+            "count": 5,
+            "spawn_interval": 6.0,
+            "baseline_count": 5,
+            "baseline_spawn_interval": 6.0,
+            "spawner_name": "EncounterSpawner_Main",
+        },
         "entities": {
             "zombie": {
                 "speed": 3.5,
@@ -9300,6 +9646,170 @@ def _make_stateful_zombie_mutation_fake_run(target_repo: str):
             encoding="utf-8",
         )
 
+    def _write_encounter_count_artifacts(
+        *,
+        prompt_text: str,
+        action_name: str,
+        requested_encounter_count: float,
+        translator_artifact_path: Path,
+        translator_log_path: Path,
+        router_artifact_path: Path,
+        router_log_path: Path,
+        probe_log_path: Path,
+        probe_artifact_name: str,
+    ) -> None:
+        encounter_state = state["encounter"]
+        previous_encounter_count = float(encounter_state["count"])
+        executed = abs(previous_encounter_count - requested_encounter_count) > 0.0001
+        new_encounter_count = requested_encounter_count if executed else previous_encounter_count
+        encounter_state["count"] = new_encounter_count
+        timestamp = _timestamp()
+        probe_artifact_path = translator_artifact_path.parent / probe_artifact_name
+        translator_log_path.write_text("translator log", encoding="utf-8")
+        router_log_path.write_text("router log", encoding="utf-8")
+        probe_log_path.write_text("probe log", encoding="utf-8")
+        probe_artifact_path.write_text(
+            json.dumps(
+                {
+                    "status": "success",
+                    "scene": "entity_test",
+                    "scene_name": "entity_test",
+                    "action_type": "mutate_encounter_count",
+                    "entity_type": "encounter",
+                    "spawner_name": encounter_state["spawner_name"],
+                    "previous_encounter_count": previous_encounter_count,
+                    "new_encounter_count": new_encounter_count,
+                    "baseline_encounter_count": encounter_state["baseline_count"],
+                    "requested_encounter_count": requested_encounter_count,
+                    "minimum_encounter_count": 3,
+                    "maximum_encounter_count": 7,
+                    "encounter_count_changed": executed,
+                    "executed": executed,
+                    "result_reason": "applied" if executed else "skipped_already_satisfied",
+                    "scene_path": "Assets/AI_E_TestScenes/entity_test.unity",
+                    "timestamp": timestamp,
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        router_artifact_path.write_text(
+            json.dumps(
+                {
+                    "status": "success",
+                    "action_name": action_name,
+                    "route_kind": "single",
+                    "executed_probe": "MutateEncounterCount",
+                    "delegated_probe_artifact_path": str(probe_artifact_path),
+                    "delegated_probe_log_path": str(probe_log_path),
+                    "delegated_probe_action_type": "mutate_encounter_count",
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        translator_artifact_path.write_text(
+            json.dumps(
+                {
+                    "status": "success",
+                    "raw_prompt": prompt_text,
+                    "normalized_prompt": prompt_text,
+                    "translated_command": prompt_text,
+                    "matched_prompt_pattern": prompt_text,
+                    "action_name": action_name,
+                    "router_artifact_path": str(router_artifact_path),
+                    "router_log_path": str(router_log_path),
+                    "router_status": "success",
+                    "timestamp": timestamp,
+                    "message": "",
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+    def _write_spawn_pressure_artifacts(
+        *,
+        prompt_text: str,
+        action_name: str,
+        requested_spawn_interval: float,
+        translator_artifact_path: Path,
+        translator_log_path: Path,
+        router_artifact_path: Path,
+        router_log_path: Path,
+        probe_log_path: Path,
+        probe_artifact_name: str,
+    ) -> None:
+        encounter_state = state["encounter"]
+        previous_spawn_interval = float(encounter_state["spawn_interval"])
+        executed = abs(previous_spawn_interval - requested_spawn_interval) > 0.0001
+        new_spawn_interval = requested_spawn_interval if executed else previous_spawn_interval
+        encounter_state["spawn_interval"] = new_spawn_interval
+        timestamp = _timestamp()
+        probe_artifact_path = translator_artifact_path.parent / probe_artifact_name
+        translator_log_path.write_text("translator log", encoding="utf-8")
+        router_log_path.write_text("router log", encoding="utf-8")
+        probe_log_path.write_text("probe log", encoding="utf-8")
+        probe_artifact_path.write_text(
+            json.dumps(
+                {
+                    "status": "success",
+                    "scene": "entity_test",
+                    "scene_name": "entity_test",
+                    "action_type": "mutate_spawn_pressure",
+                    "entity_type": "encounter",
+                    "spawner_name": encounter_state["spawner_name"],
+                    "previous_spawn_interval": previous_spawn_interval,
+                    "new_spawn_interval": new_spawn_interval,
+                    "baseline_spawn_interval": encounter_state["baseline_spawn_interval"],
+                    "requested_spawn_interval": requested_spawn_interval,
+                    "minimum_spawn_interval": 4.0,
+                    "maximum_spawn_interval": 8.0,
+                    "spawn_pressure_changed": executed,
+                    "executed": executed,
+                    "result_reason": "applied" if executed else "skipped_already_satisfied",
+                    "scene_path": "Assets/AI_E_TestScenes/entity_test.unity",
+                    "timestamp": timestamp,
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        router_artifact_path.write_text(
+            json.dumps(
+                {
+                    "status": "success",
+                    "action_name": action_name,
+                    "route_kind": "single",
+                    "executed_probe": "MutateSpawnPressure",
+                    "delegated_probe_artifact_path": str(probe_artifact_path),
+                    "delegated_probe_log_path": str(probe_log_path),
+                    "delegated_probe_action_type": "mutate_spawn_pressure",
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        translator_artifact_path.write_text(
+            json.dumps(
+                {
+                    "status": "success",
+                    "raw_prompt": prompt_text,
+                    "normalized_prompt": prompt_text,
+                    "translated_command": prompt_text,
+                    "matched_prompt_pattern": prompt_text,
+                    "action_name": action_name,
+                    "router_artifact_path": str(router_artifact_path),
+                    "router_log_path": str(router_log_path),
+                    "router_status": "success",
+                    "timestamp": timestamp,
+                    "message": "",
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
     def fake_run(command, cwd, capture_output, text, check):
         prompt_text = command[command.index("-PromptText") + 1]
         assert command[command.index("-ProjectPath") + 1] == target_repo
@@ -9468,6 +9978,78 @@ def _make_stateful_zombie_mutation_fake_run(target_repo: str):
                 probe_log_path=probe_log_path,
                 probe_artifact_name="intent_restore_runner_aggression_to_standard_probe_result.json",
             )
+        elif prompt_text == "increase encounter count":
+            _write_encounter_count_artifacts(
+                prompt_text=prompt_text,
+                action_name="increase_encounter_count",
+                requested_encounter_count=7,
+                translator_artifact_path=translator_artifact_path,
+                translator_log_path=translator_log_path,
+                router_artifact_path=router_artifact_path,
+                router_log_path=router_log_path,
+                probe_log_path=probe_log_path,
+                probe_artifact_name="intent_increase_encounter_count_probe_result.json",
+            )
+        elif prompt_text == "decrease encounter count":
+            _write_encounter_count_artifacts(
+                prompt_text=prompt_text,
+                action_name="decrease_encounter_count",
+                requested_encounter_count=3,
+                translator_artifact_path=translator_artifact_path,
+                translator_log_path=translator_log_path,
+                router_artifact_path=router_artifact_path,
+                router_log_path=router_log_path,
+                probe_log_path=probe_log_path,
+                probe_artifact_name="intent_decrease_encounter_count_probe_result.json",
+            )
+        elif prompt_text == "restore encounter count to standard":
+            _write_encounter_count_artifacts(
+                prompt_text=prompt_text,
+                action_name="set_encounter_count",
+                requested_encounter_count=5,
+                translator_artifact_path=translator_artifact_path,
+                translator_log_path=translator_log_path,
+                router_artifact_path=router_artifact_path,
+                router_log_path=router_log_path,
+                probe_log_path=probe_log_path,
+                probe_artifact_name="intent_restore_encounter_count_to_standard_probe_result.json",
+            )
+        elif prompt_text == "increase spawn pressure":
+            _write_spawn_pressure_artifacts(
+                prompt_text=prompt_text,
+                action_name="increase_spawn_pressure",
+                requested_spawn_interval=4.0,
+                translator_artifact_path=translator_artifact_path,
+                translator_log_path=translator_log_path,
+                router_artifact_path=router_artifact_path,
+                router_log_path=router_log_path,
+                probe_log_path=probe_log_path,
+                probe_artifact_name="intent_increase_spawn_pressure_probe_result.json",
+            )
+        elif prompt_text == "decrease spawn pressure":
+            _write_spawn_pressure_artifacts(
+                prompt_text=prompt_text,
+                action_name="decrease_spawn_pressure",
+                requested_spawn_interval=8.0,
+                translator_artifact_path=translator_artifact_path,
+                translator_log_path=translator_log_path,
+                router_artifact_path=router_artifact_path,
+                router_log_path=router_log_path,
+                probe_log_path=probe_log_path,
+                probe_artifact_name="intent_decrease_spawn_pressure_probe_result.json",
+            )
+        elif prompt_text == "restore spawn pressure to standard":
+            _write_spawn_pressure_artifacts(
+                prompt_text=prompt_text,
+                action_name="set_spawn_pressure",
+                requested_spawn_interval=6.0,
+                translator_artifact_path=translator_artifact_path,
+                translator_log_path=translator_log_path,
+                router_artifact_path=router_artifact_path,
+                router_log_path=router_log_path,
+                probe_log_path=probe_log_path,
+                probe_artifact_name="intent_restore_spawn_pressure_to_standard_probe_result.json",
+            )
         else:
             raise AssertionError(f"Unexpected prompt routed to translator: {prompt_text}")
         return subprocess.CompletedProcess(command, 0, stdout="translator ok", stderr="")
@@ -9630,6 +10212,51 @@ def _write_runner_aggression_capability_contract(config: OrchestratorConfig) -> 
     _write_enemy_aggression_capability_contract(config, entity="runner")
 
 
+def _write_encounter_capability_contracts(config: OrchestratorConfig) -> None:
+    capabilities_dir = config.contracts_dir / "capabilities"
+    capabilities_dir.mkdir(parents=True, exist_ok=True)
+    for capability_id, title, match_terms, match_verbs in (
+        ("level_0001_increase_encounter_count", "LEVEL_0001 increase encounter count", ("encounter", "count"), ("increase",)),
+        ("level_0001_decrease_encounter_count", "LEVEL_0001 decrease encounter count", ("encounter", "count"), ("decrease",)),
+        (
+            "level_0001_restore_encounter_count_standard",
+            "LEVEL_0001 restore encounter count to standard",
+            ("encounter", "count", "standard"),
+            ("restore",),
+        ),
+        ("level_0001_increase_spawn_pressure", "LEVEL_0001 increase spawn pressure", ("spawn", "pressure"), ("increase",)),
+        ("level_0001_decrease_spawn_pressure", "LEVEL_0001 decrease spawn pressure", ("spawn", "pressure"), ("decrease",)),
+        (
+            "level_0001_restore_spawn_pressure_standard",
+            "LEVEL_0001 restore spawn pressure to standard",
+            ("spawn", "pressure", "standard"),
+            ("restore",),
+        ),
+    ):
+        (capabilities_dir / f"{capability_id}.json").write_text(
+            json.dumps(
+                {
+                    "capability_id": capability_id,
+                    "title": title,
+                    "intent": "mutate",
+                    "target_level": "LEVEL_0001",
+                    "target_scene": "Assets/AI_E_TestScenes/entity_test.unity",
+                    "requested_execution_lane": "approval_required_mutation",
+                    "handler_name": "level_0001_entity_transform_handler",
+                    "agent_type": "level_0001_entity_transform_mutation_agent",
+                    "approval_required": True,
+                    "eligible_for_auto": False,
+                    "evidence_state": "experimental",
+                    "safety_class": "approval_gated_automation",
+                    "match_terms": list(match_terms),
+                    "match_verbs": list(match_verbs),
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+
 def _create_entity_transform_prompt_repo(config: OrchestratorConfig, *, target_repo_name: str = "BABYLON_TEST") -> str:
     target_repo = config.root_dir / target_repo_name
     tools_dir = target_repo / "Tools"
@@ -9640,6 +10267,8 @@ def _create_entity_transform_prompt_repo(config: OrchestratorConfig, *, target_r
     (tools_dir / "run_unity_mutate_entity_transform.ps1").write_text("placeholder", encoding="utf-8")
     (tools_dir / "run_unity_mutate_enemy_move_speed.ps1").write_text("placeholder", encoding="utf-8")
     (tools_dir / "run_unity_mutate_enemy_aggression.ps1").write_text("placeholder", encoding="utf-8")
+    (tools_dir / "run_unity_mutate_encounter_count.ps1").write_text("placeholder", encoding="utf-8")
+    (tools_dir / "run_unity_mutate_spawn_pressure.ps1").write_text("placeholder", encoding="utf-8")
     (tools_dir / "aie_prompt_aliases.json").write_text(
         json.dumps(
             {
@@ -9692,6 +10321,30 @@ def _create_entity_transform_prompt_repo(config: OrchestratorConfig, *, target_r
                     {
                         "normalized_prompt": "restore runner aggression to standard",
                         "translated_command": "restore runner aggression to standard",
+                    },
+                    {
+                        "normalized_prompt": "increase encounter count",
+                        "translated_command": "increase encounter count",
+                    },
+                    {
+                        "normalized_prompt": "decrease encounter count",
+                        "translated_command": "decrease encounter count",
+                    },
+                    {
+                        "normalized_prompt": "restore encounter count to standard",
+                        "translated_command": "restore encounter count to standard",
+                    },
+                    {
+                        "normalized_prompt": "increase spawn pressure",
+                        "translated_command": "increase spawn pressure",
+                    },
+                    {
+                        "normalized_prompt": "decrease spawn pressure",
+                        "translated_command": "decrease spawn pressure",
+                    },
+                    {
+                        "normalized_prompt": "restore spawn pressure to standard",
+                        "translated_command": "restore spawn pressure to standard",
                     }
                 ],
             },
@@ -9915,6 +10568,114 @@ def _create_entity_transform_prompt_repo(config: OrchestratorConfig, *, target_r
                             "BaselineAttackCooldown": 0.8,
                             "MinAttackCooldown": 0.25,
                             "MaxAttackCooldown": 2.0
+                        }
+                    },
+                    {
+                        "normalized_command": "increase encounter count",
+                        "action_name": "increase_encounter_count",
+                        "entity_type": "encounter",
+                        "probe_name": "MutateEncounterCount",
+                        "wrapper_path": "Tools/run_unity_mutate_encounter_count.ps1",
+                        "probe_artifact_file": "intent_increase_encounter_count_probe_result.json",
+                        "probe_log_file": "intent_increase_encounter_count_probe.log",
+                        "wrapper_arguments": {
+                            "ProjectPath": ".",
+                            "SceneName": "entity_test",
+                            "SpawnerName": "EncounterSpawner_Main",
+                            "RequestedEncounterCount": 7,
+                            "BaselineEncounterCount": 5,
+                            "MinEncounterCount": 3,
+                            "MaxEncounterCount": 7
+                        }
+                    },
+                    {
+                        "normalized_command": "decrease encounter count",
+                        "action_name": "decrease_encounter_count",
+                        "entity_type": "encounter",
+                        "probe_name": "MutateEncounterCount",
+                        "wrapper_path": "Tools/run_unity_mutate_encounter_count.ps1",
+                        "probe_artifact_file": "intent_decrease_encounter_count_probe_result.json",
+                        "probe_log_file": "intent_decrease_encounter_count_probe.log",
+                        "wrapper_arguments": {
+                            "ProjectPath": ".",
+                            "SceneName": "entity_test",
+                            "SpawnerName": "EncounterSpawner_Main",
+                            "RequestedEncounterCount": 3,
+                            "BaselineEncounterCount": 5,
+                            "MinEncounterCount": 3,
+                            "MaxEncounterCount": 7
+                        }
+                    },
+                    {
+                        "normalized_command": "restore encounter count to standard",
+                        "action_name": "set_encounter_count",
+                        "entity_type": "encounter",
+                        "probe_name": "MutateEncounterCount",
+                        "wrapper_path": "Tools/run_unity_mutate_encounter_count.ps1",
+                        "probe_artifact_file": "intent_restore_encounter_count_to_standard_probe_result.json",
+                        "probe_log_file": "intent_restore_encounter_count_to_standard_probe.log",
+                        "wrapper_arguments": {
+                            "ProjectPath": ".",
+                            "SceneName": "entity_test",
+                            "SpawnerName": "EncounterSpawner_Main",
+                            "RequestedEncounterCount": 5,
+                            "BaselineEncounterCount": 5,
+                            "MinEncounterCount": 3,
+                            "MaxEncounterCount": 7
+                        }
+                    },
+                    {
+                        "normalized_command": "increase spawn pressure",
+                        "action_name": "increase_spawn_pressure",
+                        "entity_type": "encounter",
+                        "probe_name": "MutateSpawnPressure",
+                        "wrapper_path": "Tools/run_unity_mutate_spawn_pressure.ps1",
+                        "probe_artifact_file": "intent_increase_spawn_pressure_probe_result.json",
+                        "probe_log_file": "intent_increase_spawn_pressure_probe.log",
+                        "wrapper_arguments": {
+                            "ProjectPath": ".",
+                            "SceneName": "entity_test",
+                            "SpawnerName": "EncounterSpawner_Main",
+                            "RequestedSpawnInterval": 4.0,
+                            "BaselineSpawnInterval": 6.0,
+                            "MinSpawnInterval": 4.0,
+                            "MaxSpawnInterval": 8.0
+                        }
+                    },
+                    {
+                        "normalized_command": "decrease spawn pressure",
+                        "action_name": "decrease_spawn_pressure",
+                        "entity_type": "encounter",
+                        "probe_name": "MutateSpawnPressure",
+                        "wrapper_path": "Tools/run_unity_mutate_spawn_pressure.ps1",
+                        "probe_artifact_file": "intent_decrease_spawn_pressure_probe_result.json",
+                        "probe_log_file": "intent_decrease_spawn_pressure_probe.log",
+                        "wrapper_arguments": {
+                            "ProjectPath": ".",
+                            "SceneName": "entity_test",
+                            "SpawnerName": "EncounterSpawner_Main",
+                            "RequestedSpawnInterval": 8.0,
+                            "BaselineSpawnInterval": 6.0,
+                            "MinSpawnInterval": 4.0,
+                            "MaxSpawnInterval": 8.0
+                        }
+                    },
+                    {
+                        "normalized_command": "restore spawn pressure to standard",
+                        "action_name": "set_spawn_pressure",
+                        "entity_type": "encounter",
+                        "probe_name": "MutateSpawnPressure",
+                        "wrapper_path": "Tools/run_unity_mutate_spawn_pressure.ps1",
+                        "probe_artifact_file": "intent_restore_spawn_pressure_to_standard_probe_result.json",
+                        "probe_log_file": "intent_restore_spawn_pressure_to_standard_probe.log",
+                        "wrapper_arguments": {
+                            "ProjectPath": ".",
+                            "SceneName": "entity_test",
+                            "SpawnerName": "EncounterSpawner_Main",
+                            "RequestedSpawnInterval": 6.0,
+                            "BaselineSpawnInterval": 6.0,
+                            "MinSpawnInterval": 4.0,
+                            "MaxSpawnInterval": 8.0
                         }
                     }
                 ],

@@ -329,7 +329,7 @@ def load_proof_result_surface(
             supported_projects=supported_projects or [],
         )
 
-    attempt_artifact_path = _latest_attempt_artifact_path(run_dir)
+    attempt_artifact_path = _latest_attempt_artifact_path(run_dir, session_state=session_state)
     if attempt_artifact_path is not None:
         attempt_artifact = _load_json(attempt_artifact_path)
         if isinstance(attempt_artifact, dict):
@@ -523,6 +523,11 @@ class IntakePreviewBridge:
             status_message = "AI-E found a supported multi-step plan. Confirm the plan before AI-E continues."
         if plan_steps and not confirmation_required and decision_state == "Sandbox first":
             status_message = "AI-E prepared a bounded multi-step plan for sandbox execution. Review the steps before running it."
+        if decision_state == "Blocked" and plan_steps and plan_title == "Clarify target":
+            status_message = (
+                "AI-E needs a clearer bounded target before it can continue. Review the explicit supported rephrases below. "
+                "No execution will start."
+            )
         if decision_state == "Review only":
             if action == "record_experiment_decision":
                 status_message = (
@@ -2283,15 +2288,52 @@ def _history_session_summary_path(run_dir: Path) -> Path | None:
     return None
 
 
-def _latest_attempt_artifact_path(run_dir: Path) -> Path | None:
+def _latest_attempt_artifact_path(run_dir: Path, *, session_state: dict[str, Any] | None = None) -> Path | None:
     artifacts_dir = run_dir / "artifacts"
     if not artifacts_dir.exists():
         return None
+
+    preferred_task_id = ""
+    preferred_request_id = ""
+    preferred_plan_id = ""
+    state = session_state if isinstance(session_state, dict) else _load_json(run_dir / "session_state.json")
+    if isinstance(state, dict):
+        history = state.get("result_evaluation_history")
+        if not isinstance(history, list):
+            history = []
+        latest = state.get("latest_result_evaluation")
+        if isinstance(latest, dict) and latest:
+            history = [*history, latest]
+        for entry in reversed(history):
+            if not isinstance(entry, dict):
+                continue
+            preferred_task_id = str(entry.get("task_id") or "").strip()
+            preferred_request_id = str(entry.get("request_id") or "").strip()
+            preferred_plan_id = str(entry.get("plan_id") or "").strip()
+            if preferred_task_id or preferred_request_id or preferred_plan_id:
+                break
+
     candidates = sorted(
         (path for path in artifacts_dir.glob("*_attempt_*.json") if path.is_file()),
-        key=lambda path: path.stat().st_mtime,
+        key=lambda path: (path.stat().st_mtime, path.name),
         reverse=True,
     )
+    if preferred_task_id or preferred_request_id or preferred_plan_id:
+        for path in candidates:
+            payload = _load_json(path)
+            if not isinstance(payload, dict):
+                continue
+            task = payload.get("task") if isinstance(payload.get("task"), dict) else {}
+            task_id = str(task.get("task_id") or task.get("id") or "").strip()
+            request_id = str(task.get("request_id") or "").strip()
+            plan_id = str(task.get("plan_id") or "").strip()
+            if preferred_task_id and task_id == preferred_task_id:
+                return path
+            if preferred_request_id and request_id == preferred_request_id:
+                if not preferred_plan_id or plan_id == preferred_plan_id:
+                    return path
+            if preferred_plan_id and plan_id == preferred_plan_id:
+                return path
     if candidates:
         return candidates[0]
     return None
@@ -2915,7 +2957,7 @@ def _attempt_final_verdict(
     details: dict[str, Any],
     validation: dict[str, Any],
 ) -> str:
-    object_name = str(details.get("object_name") or "").strip()
+    object_name = str(details.get("object_name") or details.get("spawner_name") or "").strip()
     if _attempt_was_skipped(details):
         skip_reason = _attempt_skip_reason(details)
         if skip_reason:
@@ -2926,6 +2968,10 @@ def _attempt_final_verdict(
             return f"{object_name or 'Target'} speed changed successfully and the recorded checks passed."
         if isinstance(details.get("previous_attack_cooldown"), (int, float)) and isinstance(details.get("new_attack_cooldown"), (int, float)):
             return f"{object_name or 'Target'} aggression changed successfully and the recorded checks passed."
+        if isinstance(details.get("previous_encounter_count"), (int, float)) and isinstance(details.get("new_encounter_count"), (int, float)):
+            return f"{object_name or 'Target'} encounter count changed successfully and the recorded checks passed."
+        if isinstance(details.get("previous_spawn_interval"), (int, float)) and isinstance(details.get("new_spawn_interval"), (int, float)):
+            return f"{object_name or 'Target'} spawn pressure changed successfully and the recorded checks passed."
         if object_name:
             return f"{object_name} changed successfully and the recorded checks passed."
         return "Requested change completed successfully and the recorded checks passed."
@@ -2940,7 +2986,7 @@ def _attempt_final_verdict(
 
 
 def _proof_before_after_summary(mutation: dict[str, Any]) -> str:
-    object_name = str(mutation.get("object_name") or "The target object").strip()
+    object_name = str(mutation.get("object_name") or mutation.get("spawner_name") or "The target object").strip()
     if _attempt_was_skipped(mutation):
         if isinstance(mutation.get("new_speed"), (int, float)):
             return (
@@ -2950,6 +2996,16 @@ def _proof_before_after_summary(mutation: dict[str, Any]) -> str:
         if isinstance(mutation.get("new_attack_cooldown"), (int, float)):
             return (
                 f"{object_name} stayed at attack cooldown {float(mutation.get('new_attack_cooldown')):g} "
+                "because it already satisfied this request."
+            )
+        if isinstance(mutation.get("new_encounter_count"), (int, float)):
+            return (
+                f"{object_name} stayed at encounter count {float(mutation.get('new_encounter_count')):g} "
+                "because it already satisfied this request."
+            )
+        if isinstance(mutation.get("new_spawn_interval"), (int, float)):
+            return (
+                f"{object_name} stayed at spawn interval {float(mutation.get('new_spawn_interval')):g} "
                 "because it already satisfied this request."
             )
         return f"{object_name} already satisfied this request, so no mutation was needed."
@@ -2978,6 +3034,22 @@ def _proof_before_after_summary(mutation: dict[str, Any]) -> str:
             f"{object_name} started at attack cooldown {float(previous_attack_cooldown):g}. "
             "The ending aggression value is not available in this result."
         )
+    previous_encounter_count = mutation.get("previous_encounter_count")
+    new_encounter_count = mutation.get("new_encounter_count")
+    if isinstance(previous_encounter_count, (int, float)) and isinstance(new_encounter_count, (int, float)):
+        return f"{object_name} encounter count changed from {float(previous_encounter_count):g} to {float(new_encounter_count):g}."
+    if isinstance(new_encounter_count, (int, float)):
+        return f"{object_name} now uses encounter count {float(new_encounter_count):g}. The starting count is not available in this result."
+    if isinstance(previous_encounter_count, (int, float)):
+        return f"{object_name} started at encounter count {float(previous_encounter_count):g}. The ending count is not available in this result."
+    previous_spawn_interval = mutation.get("previous_spawn_interval")
+    new_spawn_interval = mutation.get("new_spawn_interval")
+    if isinstance(previous_spawn_interval, (int, float)) and isinstance(new_spawn_interval, (int, float)):
+        return f"{object_name} spawn interval changed from {float(previous_spawn_interval):g} to {float(new_spawn_interval):g}."
+    if isinstance(new_spawn_interval, (int, float)):
+        return f"{object_name} now uses spawn interval {float(new_spawn_interval):g}. The starting spawn interval is not available in this result."
+    if isinstance(previous_spawn_interval, (int, float)):
+        return f"{object_name} started at spawn interval {float(previous_spawn_interval):g}. The ending spawn interval is not available in this result."
     previous_position = mutation.get("previous_position")
     new_position = mutation.get("new_position")
     if isinstance(previous_position, list) and isinstance(new_position, list):
@@ -2994,7 +3066,7 @@ def _proof_before_after_summary(mutation: dict[str, Any]) -> str:
 def _proof_change_summary(mutation: dict[str, Any]) -> str:
     if not mutation:
         return "This result does not include a clear change summary."
-    object_name = str(mutation.get("object_name") or "target object").strip()
+    object_name = str(mutation.get("object_name") or mutation.get("spawner_name") or "target object").strip()
     action_type = _humanize_text(mutation.get("action_type") or mutation.get("step_name")) or "mutation"
     if _attempt_was_skipped(mutation):
         skip_reason = _attempt_skip_reason(mutation)
@@ -3013,6 +3085,20 @@ def _proof_change_summary(mutation: dict[str, Any]) -> str:
         return (
             f"AI-E changed aggression for {object_name} by lowering attack cooldown "
             f"from {float(previous_attack_cooldown):g} to {float(new_attack_cooldown):g}."
+        )
+    previous_encounter_count = mutation.get("previous_encounter_count")
+    new_encounter_count = mutation.get("new_encounter_count")
+    if isinstance(previous_encounter_count, (int, float)) and isinstance(new_encounter_count, (int, float)):
+        return (
+            f"AI-E changed encounter count for {object_name} from {float(previous_encounter_count):g} "
+            f"to {float(new_encounter_count):g}."
+        )
+    previous_spawn_interval = mutation.get("previous_spawn_interval")
+    new_spawn_interval = mutation.get("new_spawn_interval")
+    if isinstance(previous_spawn_interval, (int, float)) and isinstance(new_spawn_interval, (int, float)):
+        return (
+            f"AI-E changed spawn pressure for {object_name} by adjusting spawn interval "
+            f"from {float(previous_spawn_interval):g} to {float(new_spawn_interval):g}."
         )
     if mutation.get("position_changed") is True:
         distance = mutation.get("movement_distance")
@@ -3062,7 +3148,7 @@ def _attempt_executed(details: dict[str, Any]) -> bool:
 
 
 def _attempt_skip_reason(details: dict[str, Any]) -> str:
-    object_name = str(details.get("object_name") or "Target").strip()
+    object_name = str(details.get("object_name") or details.get("spawner_name") or "Target").strip()
     action_name = str(details.get("action_name") or "").strip().lower()
     new_speed = details.get("new_speed")
     requested_speed = details.get("requested_speed")
@@ -3084,6 +3170,26 @@ def _attempt_skip_reason(details: dict[str, Any]) -> str:
                 f"({float(new_attack_cooldown):g} vs requested {float(requested_attack_cooldown):g} cooldown)."
             )
         return f"{object_name} was already {comparator} the desired aggression threshold."
+    new_encounter_count = details.get("new_encounter_count")
+    requested_encounter_count = details.get("requested_encounter_count")
+    if isinstance(new_encounter_count, (int, float)):
+        comparator = "at or above" if "increase" in action_name else "at or below"
+        if isinstance(requested_encounter_count, (int, float)):
+            return (
+                f"{object_name} was already {comparator} the desired encounter count "
+                f"({float(new_encounter_count):g} vs requested {float(requested_encounter_count):g})."
+            )
+        return f"{object_name} was already {comparator} the desired encounter count."
+    new_spawn_interval = details.get("new_spawn_interval")
+    requested_spawn_interval = details.get("requested_spawn_interval")
+    if isinstance(new_spawn_interval, (int, float)):
+        comparator = "at or below" if "increase" in action_name or "pressure" in action_name else "at or above"
+        if isinstance(requested_spawn_interval, (int, float)):
+            return (
+                f"{object_name} was already {comparator} the desired spawn pressure "
+                f"({float(new_spawn_interval):g} vs requested {float(requested_spawn_interval):g} interval)."
+            )
+        return f"{object_name} was already {comparator} the desired spawn pressure."
     return ""
 
 
