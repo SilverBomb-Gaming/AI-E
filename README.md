@@ -35,6 +35,11 @@ Example flows:
 - `keep current variant`
   - records an explicit user decision on the active variant without executing any mutation
 
+## Design References
+
+- Milestone summary: [docs/milestones/ai_e_bounded_experimentation.md](docs/milestones/ai_e_bounded_experimentation.md)
+- Design doctrine: [docs/doctrine/ai_e_design_doctrine.md](docs/doctrine/ai_e_design_doctrine.md)
+
 ## Current V1 Validated Status
 
 AI-E now exposes a validated v1 front door over the existing system. A user can launch with `python -m app.ui`, land in a clean first-run flow, select a supported project, prepare a bounded request, see a clear intake decision, review approval when required, run the current sandbox-first mutation path, follow status updates, open a readable result summary, and revisit saved sessions or results. Supported prompts that stay within the current deterministic scope now execute cleanly, and unsupported deterministic requests fail honestly with clear guidance instead of pretending support.
