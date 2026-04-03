@@ -475,7 +475,11 @@ class IntakePreviewBridge:
         lane = str(routing.execution_lane or "")
         summary = str(routing.decision_summary or routing.intelligence_summary or "Prepared for review.")
         confirmation_required = bool(getattr(routing, "confirmation_required", False))
-        confirmation_prompt = str(getattr(routing, "mapped_prompt", "") or "").strip()
+        confirmation_prompt = (
+            str(getattr(routing, "mapped_prompt", "") or "").strip()
+            if confirmation_required
+            else ""
+        )
         plan_title = str(getattr(routing, "plan_title", "") or "").strip()
         plan_steps = [str(item).strip() for item in getattr(routing, "plan_step_titles", []) or [] if str(item).strip()]
         plan_expected_outcome = str(getattr(routing, "plan_expected_outcome", "") or "").strip()
@@ -531,7 +535,7 @@ class IntakePreviewBridge:
         return PreparedPromptPreview(
             prompt_text=prompt_text,
             normalized_prompt=normalized,
-            mapped_prompt=confirmation_prompt or normalized,
+            mapped_prompt=str(getattr(routing, "mapped_prompt", "") or "").strip() or normalized,
             classification=classification,
             target_repo=target_repo,
             target_display=target_display,

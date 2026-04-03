@@ -36,9 +36,9 @@ class ControlPanel(QtWidgets.QMainWindow):
         self._next_step_highlight_timer: QtCore.QTimer | None = None
         self._next_step_primary_button: QtWidgets.QPushButton | None = None
         self._onboarding_example_prompts = [
-            "move zombie forward",
-            "move enemy forward",
-            "move zombie forward again",
+            "make zombie faster",
+            "make runner faster",
+            "make zombie more dangerous",
         ]
         self._build_ui()
         self._build_menu_bar()
@@ -153,7 +153,7 @@ class ControlPanel(QtWidgets.QMainWindow):
         self.prompt_group = prompt_group
         prompt_layout = QtWidgets.QVBoxLayout(prompt_group)
         prompt_hint = QtWidgets.QLabel(
-            "Start here after choosing a prompt. Try a direct request like \"move zombie forward\" or a conversational one like \"move enemy forward\". Click Prepare Request to review the decision before anything runs."
+            "Start here after choosing a prompt. Try a direct request like \"make zombie faster\" or \"make runner faster\". If you use a generalized term like \"enemy\" or \"character\", AI-E will stop and ask you to name the supported target explicitly instead of guessing."
         )
         prompt_hint.setWordWrap(True)
         prompt_hint.setStyleSheet("color: #555;")
@@ -2005,7 +2005,7 @@ class ControlPanel(QtWidgets.QMainWindow):
             if preview.plan_steps:
                 message = "AI-E confirmed the supported multi-step plan. Review the staged plan before continuing."
             else:
-                message = "AI-E updated the request to the supported zombie target. Review the updated decision before continuing."
+                message = "AI-E updated the request to the supported target. Review the updated decision before continuing."
             self.intake_feedback_label.setText(message)
             self._update_status_panel(message)
             return
@@ -2502,8 +2502,8 @@ class ControlPanel(QtWidgets.QMainWindow):
         steps = [
             ("A", "Launch AI-E and confirm the Home screen and guardrails are visible"),
             ("B", "Confirm a supported project is selected, such as BABYLON VER 2"),
-            ("C", "Use \"move enemy forward\" and choose Prepare Request"),
-            ("D", "Choose \"Use supported target\", then run the supported request in sandbox"),
+            ("C", "Use a direct bounded prompt like \"make zombie more dangerous\" and choose Prepare Request"),
+            ("D", "Run the supported request in sandbox and show the result summary"),
             ("E", "Open Result Summary and point out the proof-backed outcome"),
             ("F", "Choose \"Modify and test again\" or \"Try a variation\" to show the next quick iteration"),
         ]

@@ -14,10 +14,19 @@ AI-E v1 validation is now complete for the current supported deterministic path.
 
 AI-E now layers bounded interpretation and review tools on top of the original deterministic mutation path without introducing autonomous execution. Supported requests can move through explicit goal-intent mapping, bounded goal composition, deterministic outcome evaluation, current-session experiment tracking, and explicit experiment decision tracking while still resolving into known capabilities, known predefined plans, or safe review-only summaries.
 
+AI-E now supports two bounded enemy profiles in BABYLON:
+
+- `zombie`
+- `runner`
+
+Runner is the selected second archetype because BABYLON already provides a deterministic runner bootstrap path on top of the existing enemy AI surface, which keeps the expansion low-friction, explainable, and compatible with the current bounded experimentation architecture.
+
 - Goal-intent mapping:
-  - explicit gameplay goals such as `make zombie more dangerous` and `make zombie easier` now resolve to supported bounded plans instead of requiring only literal plan phrasing
+  - explicit gameplay goals such as `make zombie more dangerous`, `make zombie easier`, `make runner more dangerous`, and `make runner easier` now resolve to supported bounded plans instead of requiring only literal plan phrasing
 - Goal composition:
   - supported multi-goal requests such as `make zombie faster but less aggressive` resolve into bounded composed plans with conflict blocking for unsupported combinations like `make zombie faster and slower`
+- Multi-entity ambiguity handling:
+  - now that both `zombie` and `runner` are supported, generalized prompts such as `make enemy more dangerous` or `make character faster` are blocked until the user names the supported target explicitly
 - Outcome evaluation:
   - AI-E now compares the latest supported result against the previous related result and can emit deterministic summaries such as `Current zombie is faster but less aggressive than previous version.`
 - Experiment tracking:
@@ -30,6 +39,8 @@ Example flows:
 
 - `make zombie faster but less aggressive`
   - resolves through bounded goal composition into a supported multi-step plan
+- `make runner more dangerous`
+  - resolves through bounded goal-intent mapping into the supported runner combat-variation plan
 - `show current experiment variants`
   - returns a review-only current-session variant summary
 - `keep current variant`
@@ -38,6 +49,7 @@ Example flows:
 ## Design References
 
 - Milestone summary: [docs/milestones/ai_e_bounded_experimentation.md](docs/milestones/ai_e_bounded_experimentation.md)
+- Second supported enemy: [docs/milestones/ai_e_second_enemy_runner.md](docs/milestones/ai_e_second_enemy_runner.md)
 - Design doctrine: [docs/doctrine/ai_e_design_doctrine.md](docs/doctrine/ai_e_design_doctrine.md)
 
 ## Current V1 Validated Status
@@ -53,11 +65,12 @@ AI-E now exposes a validated v1 front door over the existing system. A user can 
 
 ## Conversational Mapping Support
 
-- generalized conversational terms can map to the supported deterministic target only through explicit controlled mappings
-- current supported conversational mappings:
-  - `enemy` -> `zombie`
-  - `character` -> `zombie`
-- mapped requests do not execute directly; AI-E first shows a confirmation-required step and asks the user to continue with the supported zombie target
+- generalized conversational terms stay bounded and explicit; AI-E will not guess between multiple supported enemy archetypes
+- once more than one bounded enemy archetype is supported, generalized terms such as `enemy` and `character` are blocked until the user names the supported target explicitly
+- direct named enemy support is broader than generalized mapping:
+  - `zombie` and `runner` are both supported named archetypes for bounded speed/aggression/danger flows
+  - generic `enemy` and `character` no longer auto-map because AI-E must not guess between multiple bounded archetypes
+  - supported rephrases are explicit, for example `make zombie more dangerous` or `make runner more dangerous`
 - unsupported generalized terms such as `boss` remain blocked with a clear supported example instead of being guessed or executed blindly
 
 ## Supported Prompt Variation Examples
@@ -90,12 +103,17 @@ These requests remain intentionally blocked because backward zombie movement is 
 - project/session history with reopen and re-stage paths when saved data supports them
 - deterministic prompt normalization for currently supported forward-movement variants
 - controlled conversational mapping from `enemy` and `character` onto the supported zombie target with explicit confirmation before execution
+- direct bounded enemy tuning for the supported `zombie` and `runner` profiles in BABYLON
+- bounded goal-intent prompts such as `make runner more dangerous` and `make runner easier`
+- current-session experiment and decision review flows for both supported enemy profiles
 
 ## What Users Can Do Today
 
 - choose a supported project like `BABYLON VER 2`
 - prepare a request such as `move zombie forward`, `move zombie forward again`, or `please move zombie forward`
-- use generalized terms such as `enemy` or `character`, then confirm the supported zombie target before continuing
+- prepare a direct bounded tuning request such as `make zombie faster`, `make runner faster`, `make runner more dangerous`, or `make runner easier`
+- name the supported enemy target explicitly when tuning archetypes, for example `zombie` or `runner`
+- generalized terms such as `enemy` or `character` are intentionally blocked once multiple bounded enemy archetypes are supported, so AI-E does not guess the target for you
 - submit it when AI-E shows `Ready`, or open review and approve it once when needed
 - use `Run in sandbox` when AI-E says `Sandbox first`
 - watch progress in `Live Run Status`
@@ -226,9 +244,9 @@ The window title reads **AI-E v1**. On first launch, AI-E prefers a supported pr
 Use **Help > Demo Checklist...** inside the app and walk through:
 
 1. Launch AI-E (exe or source) and confirm the Home screen, guardrails, and a supported project are visible.
-2. Use the conversational demo prompt `move enemy forward`.
-3. Choose `Prepare Request` and show that AI-E asks for confirmation on the supported zombie target instead of running immediately.
-4. Choose `Use supported target`, then run the supported request in sandbox.
+2. Use a direct bounded demo prompt such as `make zombie more dangerous` or `make runner more dangerous`.
+3. Choose `Prepare Request` and show the bounded plan preview.
+4. Run the supported request in sandbox.
 5. Open `Result Summary` and show the proof-backed outcome.
 6. Use the next-step actions to show the fast iteration path: modify the request again or try a variation.
 
@@ -382,8 +400,8 @@ Use **Help > Demo Checklist...** inside the app to run the current quick walkthr
 
 1. **A.** Launch `AI-E.exe` (or run from source) and confirm the Home screen and guardrails are visible.
 2. **B.** Confirm a supported project is selected, such as `BABYLON VER 2`.
-3. **C.** Use `move enemy forward` and choose `Prepare Request`.
-4. **D.** Choose `Use supported target`, then run the supported request in sandbox.
+3. **C.** Use a direct bounded prompt such as `make zombie more dangerous` and choose `Prepare Request`.
+4. **D.** Run the supported request in sandbox.
 5. **E.** Open `Result Summary` and point out the proof-backed outcome.
 6. **F.** Use `Modify and test again` or `Try a variation` to show the next quick iteration.
 
