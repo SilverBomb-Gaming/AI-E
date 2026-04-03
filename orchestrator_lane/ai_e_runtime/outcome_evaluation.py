@@ -2,8 +2,15 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
-from .enemy_profiles import aggression_tier_values, detect_supported_enemy_entity, enemy_display_name, speed_tier_values
+from .encounter_profiles import encounter_count_tier_values, spawn_pressure_tier_values
+from .enemy_profiles import aggression_tier_values, speed_tier_values
 from .experiment_tracking import find_experiment_by_id, find_variant_for_task
+from .tuning_contexts import (
+    detect_supported_tuning_context,
+    is_supported_encounter_context,
+    is_supported_enemy_context,
+    tuning_context_display_name,
+)
 
 
 EVALUATION_SOURCE = "deterministic_rules"
@@ -16,6 +23,16 @@ _SPEED_ORDER = {
 _AGGRESSION_ORDER = {
     "standard": 0,
     "aggressive": 1,
+}
+_ENCOUNTER_COUNT_ORDER = {
+    "low": 0,
+    "standard": 1,
+    "high": 2,
+}
+_SPAWN_PRESSURE_ORDER = {
+    "low": 0,
+    "standard": 1,
+    "high": 2,
 }
 
 
@@ -84,14 +101,6 @@ def _build_result_snapshot(
     if not isinstance(tuning_state, dict):
         tuning_state = {}
 
-    speed_record = _family_record(tuning_state, family="speed")
-    aggression_record = _family_record(tuning_state, family="aggression")
-    movement_record = _family_record(tuning_state, family="movement")
-
-    speed_tier = str(speed_record.get("resulting_tier") or "standard").strip() or "standard"
-    aggression_tier = str(aggression_record.get("resulting_tier") or "standard").strip() or "standard"
-    movement_tier = str(movement_record.get("resulting_tier") or "").strip() or None
-    movement_target_z = _movement_target_z(movement_record)
     experiment_variant = find_variant_for_task(
         state,
         task_id=str(task.get("task_id") or "").strip(),
@@ -102,16 +111,29 @@ def _build_result_snapshot(
         state,
         experiment_id=str(experiment_variant.get("experiment_id") or "").strip(),
     )
-    target_entity = detect_supported_enemy_entity(
+    target_context = detect_supported_tuning_context(
+        experiment_variant.get("target_context"),
         experiment_variant.get("target_entity"),
-        speed_record.get("target_entity"),
-        aggression_record.get("target_entity"),
-        movement_record.get("target_entity"),
         task.get("operator_prompt"),
         task.get("source_prompt"),
     )
-    speed_defaults = speed_tier_values(target_entity)
-    aggression_defaults = aggression_tier_values(target_entity)
+    speed_record = _family_record(tuning_state, family="speed", target_context=target_context)
+    aggression_record = _family_record(tuning_state, family="aggression", target_context=target_context)
+    movement_record = _family_record(tuning_state, family="movement", target_context=target_context)
+    count_record = _family_record(tuning_state, family="encounter_count", target_context=target_context)
+    pressure_record = _family_record(tuning_state, family="spawn_pressure", target_context=target_context)
+
+    speed_tier = str(speed_record.get("resulting_tier") or "").strip()
+    aggression_tier = str(aggression_record.get("resulting_tier") or "").strip()
+    movement_tier = str(movement_record.get("resulting_tier") or "").strip() or None
+    movement_target_z = _movement_target_z(movement_record)
+    encounter_count_tier = str(count_record.get("resulting_tier") or "").strip()
+    spawn_pressure_tier = str(pressure_record.get("resulting_tier") or "").strip()
+
+    speed_defaults = speed_tier_values(target_context) if is_supported_enemy_context(target_context) else {}
+    aggression_defaults = aggression_tier_values(target_context) if is_supported_enemy_context(target_context) else {}
+    encounter_count_defaults = encounter_count_tier_values() if is_supported_encounter_context(target_context) else {}
+    spawn_pressure_defaults = spawn_pressure_tier_values() if is_supported_encounter_context(target_context) else {}
 
     return {
         "order": int(order),
@@ -124,7 +146,8 @@ def _build_result_snapshot(
         "canonical_prompt": str(task.get("operator_prompt") or "").strip(),
         "resolution_source": str(task.get("resolution_source") or "").strip(),
         "resolved_from_prompt": str(task.get("resolved_from_prompt") or "").strip(),
-        "target_entity": target_entity,
+        "target_entity": target_context,
+        "target_context": target_context,
         "speed_tier": speed_tier,
         "speed_value": _float_or_default(speed_record.get("observed_value"), speed_defaults.get(speed_tier)),
         "aggression_tier": aggression_tier,
@@ -134,6 +157,16 @@ def _build_result_snapshot(
         ),
         "movement_tier": movement_tier,
         "movement_target_z": movement_target_z,
+        "encounter_count_tier": encounter_count_tier,
+        "encounter_count_value": _float_or_default(
+            count_record.get("observed_value"),
+            encounter_count_defaults.get(encounter_count_tier),
+        ),
+        "spawn_pressure_tier": spawn_pressure_tier,
+        "spawn_pressure_value": _float_or_default(
+            pressure_record.get("observed_value"),
+            spawn_pressure_defaults.get(spawn_pressure_tier),
+        ),
         "experiment_id": str(experiment_variant.get("experiment_id") or "").strip(),
         "variant_id": str(experiment_variant.get("variant_id") or "").strip(),
         "parent_variant_id": str(experiment_variant.get("parent_variant_id") or "").strip(),
@@ -167,40 +200,12 @@ def _evaluate_snapshots(
     if not isinstance(comparison_snapshot, dict):
         return None
 
-    summary_terms: List[str] = []
-    summary_signs: List[int] = []
-    differences: List[str] = []
-    target_entity = enemy_display_name(current_snapshot.get("target_entity"))
-
-    speed_term = _compare_speed(comparison_snapshot, current_snapshot)
-    if speed_term is not None:
-        summary_terms.append(speed_term["summary"])
-        summary_signs.append(speed_term["sign"])
-        differences.append(speed_term["detail"])
-
-    aggression_term = _compare_aggression(comparison_snapshot, current_snapshot)
-    if aggression_term is not None:
-        summary_terms.append(aggression_term["summary"])
-        summary_signs.append(aggression_term["sign"])
-        differences.append(aggression_term["detail"])
-
-    movement_term = _compare_movement(comparison_snapshot, current_snapshot)
-    if movement_term is not None:
-        summary_terms.append(movement_term["summary"])
-        summary_signs.append(movement_term["sign"])
-        differences.append(movement_term["detail"])
-
-    if not summary_terms:
-        summary = (
-            f"Current {target_entity} matches the previous version across the supported deterministic state checks."
-        )
-    else:
-        summary = _build_comparison_summary(summary_terms, summary_signs, target_entity=target_entity)
-
-    suggestion = _deterministic_suggestion(
-        summary_terms=summary_terms,
-        differences=differences,
-        target_entity=target_entity,
+    comparison_entries = _comparison_entries(comparison_snapshot, current_snapshot)
+    summary = _build_structured_comparison_summary(
+        comparison_entries,
+        reference_label="previous version",
+        state_section_label="Current state vs previous version",
+        inline_key_differences=False,
     )
     experiment_fields = _experiment_comparison_fields(
         previous_snapshot=comparison_snapshot,
@@ -211,8 +216,8 @@ def _evaluate_snapshots(
     return {
         "evaluation_source": EVALUATION_SOURCE,
         "comparison_description": summary,
-        "detected_differences": differences,
-        "suggestion": suggestion,
+        "detected_differences": [entry["delta"] for entry in comparison_entries],
+        "suggestion": "",
         **experiment_fields,
     }
 
@@ -268,13 +273,11 @@ def _experiment_comparison_fields(
             variant_id=preferred_baseline_variant_id,
         )
         if isinstance(preferred_baseline_snapshot, dict) and preferred_baseline_snapshot:
-            comparison_snapshot = {
-                **current_snapshot,
-                "speed_tier": str(preferred_baseline_snapshot.get("speed_tier") or current_snapshot.get("speed_tier") or "").strip(),
-                "aggression_tier": str(preferred_baseline_snapshot.get("aggression_tier") or current_snapshot.get("aggression_tier") or "").strip(),
-                "movement_tier": str(preferred_baseline_snapshot.get("movement_tier") or current_snapshot.get("movement_tier") or "").strip(),
-                "movement_target_z": _baseline_movement_target(preferred_baseline_snapshot, current_snapshot=current_snapshot),
-            }
+            comparison_snapshot = {**current_snapshot, **preferred_baseline_snapshot}
+            comparison_snapshot["movement_target_z"] = _baseline_movement_target(
+                preferred_baseline_snapshot,
+                current_snapshot=current_snapshot,
+            )
             compared_against_variant_id = preferred_baseline_variant_id
             compared_label = "the preferred baseline"
     if (
@@ -289,44 +292,29 @@ def _experiment_comparison_fields(
             variant_id=baseline_variant_id,
         )
         if isinstance(baseline_snapshot, dict) and baseline_snapshot:
-            comparison_snapshot = {
-                **current_snapshot,
-                "speed_tier": str(baseline_snapshot.get("speed_tier") or current_snapshot.get("speed_tier") or "").strip(),
-                "aggression_tier": str(baseline_snapshot.get("aggression_tier") or current_snapshot.get("aggression_tier") or "").strip(),
-                "movement_tier": str(baseline_snapshot.get("movement_tier") or current_snapshot.get("movement_tier") or "").strip(),
-                "movement_target_z": _baseline_movement_target(baseline_snapshot, current_snapshot=current_snapshot),
-            }
+            comparison_snapshot = {**current_snapshot, **baseline_snapshot}
+            comparison_snapshot["movement_target_z"] = _baseline_movement_target(
+                baseline_snapshot,
+                current_snapshot=current_snapshot,
+            )
             compared_against_variant_id = baseline_variant_id
             compared_label = "the baseline"
 
     if comparison_snapshot is None:
         return fields
 
-    summary_terms: List[str] = []
-    summary_signs: List[int] = []
-    speed_term = _compare_speed(comparison_snapshot, current_snapshot)
-    if speed_term is not None:
-        summary_terms.append(speed_term["summary"])
-        summary_signs.append(speed_term["sign"])
-    aggression_term = _compare_aggression(comparison_snapshot, current_snapshot)
-    if aggression_term is not None:
-        summary_terms.append(aggression_term["summary"])
-        summary_signs.append(aggression_term["sign"])
-    movement_term = _compare_movement(comparison_snapshot, current_snapshot)
-    if movement_term is not None:
-        summary_terms.append(movement_term["summary"])
-        summary_signs.append(movement_term["sign"])
-
-    current_label = f"Variant {current_variant_id.split('_')[-1].lstrip('0') or '0'}"
-    if not summary_terms:
-        description = f"{current_label} matches {compared_label} across the supported deterministic checks."
+    comparison_entries = _comparison_entries(comparison_snapshot, current_snapshot)
+    if compared_label in {"the baseline", "the preferred baseline"}:
+        state_section_label = "Current variant vs baseline"
     else:
-        description = _build_experiment_summary(
-            current_label=current_label,
-            compared_label=compared_label,
-            summary_terms=summary_terms,
-            summary_signs=summary_signs,
-        )
+        state_section_label = f"Current variant vs {_normalize_reference_label(compared_label)}"
+
+    description = _build_structured_comparison_summary(
+        comparison_entries,
+        reference_label=compared_label,
+        state_section_label=state_section_label,
+        inline_key_differences=True,
+    )
     fields["compared_against_variant_id"] = compared_against_variant_id
     fields["experiment_comparison_description"] = description
     return fields
@@ -338,15 +326,18 @@ def _compare_speed(previous_snapshot: Dict[str, Any], current_snapshot: Dict[str
     if previous_tier not in _SPEED_ORDER or current_tier not in _SPEED_ORDER or previous_tier == current_tier:
         return None
     if _SPEED_ORDER[current_tier] > _SPEED_ORDER[previous_tier]:
-        return {
-            "summary": "faster",
-            "detail": f"Speed tier changed from {previous_tier} to {current_tier}.",
-            "sign": 1,
-        }
+        impact = "Higher movement speed."
+        sign = 1
+    else:
+        impact = "Lower movement speed."
+        sign = -1
     return {
-        "summary": "slower",
-        "detail": f"Speed tier changed from {previous_tier} to {current_tier}.",
-        "sign": -1,
+        "attribute": "Speed",
+        "current_display": current_tier,
+        "previous_display": previous_tier,
+        "delta": f"Speed: {previous_tier} -> {current_tier}",
+        "impact": impact,
+        "sign": sign,
     }
 
 
@@ -360,15 +351,18 @@ def _compare_aggression(previous_snapshot: Dict[str, Any], current_snapshot: Dic
     ):
         return None
     if _AGGRESSION_ORDER[current_tier] > _AGGRESSION_ORDER[previous_tier]:
-        return {
-            "summary": "more aggressive",
-            "detail": f"Aggression tier changed from {previous_tier} to {current_tier}.",
-            "sign": 1,
-        }
+        impact = "Shorter attack cooldown."
+        sign = 1
+    else:
+        impact = "Longer attack cooldown."
+        sign = -1
     return {
-        "summary": "less aggressive",
-        "detail": f"Aggression tier changed from {previous_tier} to {current_tier}.",
-        "sign": -1,
+        "attribute": "Aggression",
+        "current_display": current_tier,
+        "previous_display": previous_tier,
+        "delta": f"Aggression: {previous_tier} -> {current_tier}",
+        "impact": impact,
+        "sign": sign,
     }
 
 
@@ -380,99 +374,230 @@ def _compare_movement(previous_snapshot: Dict[str, Any], current_snapshot: Dict[
 
     if previous_target is not None and current_target is not None and abs(previous_target - current_target) > 0.0001:
         if current_target > previous_target:
-            summary = "moves farther forward"
+            impact = "Moves farther forward along the same path."
         else:
-            summary = "moves less far forward"
+            impact = "Moves a shorter forward distance."
         return {
-            "summary": summary,
-            "detail": f"Movement target changed from Z={previous_target:g} to Z={current_target:g}.",
+            "attribute": "Movement target",
+            "current_display": f"Z={current_target:g}",
+            "previous_display": f"Z={previous_target:g}",
+            "delta": f"Movement target: Z={previous_target:g} -> Z={current_target:g}",
+            "impact": impact,
             "sign": 0,
         }
 
     if previous_tier and current_tier and previous_tier != current_tier:
         if current_tier == "movement_variation":
             return {
-                "summary": "uses the movement variation path",
-                "detail": f"Movement path changed from {previous_tier} to {current_tier}.",
+                "attribute": "Movement path",
+                "current_display": _movement_path_label(current_tier),
+                "previous_display": _movement_path_label(previous_tier),
+                "delta": f"Movement path: {_movement_path_label(previous_tier)} -> {_movement_path_label(current_tier)}",
+                "impact": "Uses the movement variation path.",
                 "sign": 0,
             }
         return {
-            "summary": "uses the standard forward path",
-            "detail": f"Movement path changed from {previous_tier} to {current_tier}.",
+            "attribute": "Movement path",
+            "current_display": _movement_path_label(current_tier),
+            "previous_display": _movement_path_label(previous_tier),
+            "delta": f"Movement path: {_movement_path_label(previous_tier)} -> {_movement_path_label(current_tier)}",
+            "impact": "Uses the standard forward path.",
             "sign": 0,
         }
 
     return None
 
 
-def _build_comparison_summary(summary_terms: List[str], summary_signs: List[int], *, target_entity: str) -> str:
-    if len(summary_terms) == 1:
-        term = summary_terms[0]
-        if term.startswith("moves ") or term.startswith("uses "):
-            return f"Current {target_entity} {term} than previous version."
-        return f"Current {target_entity} is {term} than previous version."
-
-    connector = " and "
-    non_zero_signs = {sign for sign in summary_signs if sign != 0}
-    if len(non_zero_signs) > 1:
-        connector = " but "
-
-    if len(summary_terms) == 2:
-        first, second = summary_terms
-        if first.startswith("moves ") or first.startswith("uses "):
-            first_text = first
-        else:
-            first_text = f"is {first}"
-        if second.startswith("moves ") or second.startswith("uses "):
-            second_text = second
-        else:
-            second_text = second
-        return f"Current {target_entity} {first_text}{connector}{second_text} than previous version."
-
-    joined = ", ".join(summary_terms[:-1]) + f", and {summary_terms[-1]}"
-    return f"Current {target_entity} is {joined} than previous version."
-
-
-def _deterministic_suggestion(*, summary_terms: List[str], differences: List[str], target_entity: str) -> str:
-    terms = set(summary_terms)
-    if "faster" in terms and "less aggressive" in terms:
-        return f"Try increasing aggression again for a more dangerous {target_entity}."
-    if any("Movement target changed" in difference or "Movement path changed" in difference for difference in differences):
-        return "Choose between standard and variation path."
-    return ""
+def _compare_encounter_count(previous_snapshot: Dict[str, Any], current_snapshot: Dict[str, Any]) -> Dict[str, Any] | None:
+    previous_tier = str(previous_snapshot.get("encounter_count_tier") or "").strip()
+    current_tier = str(current_snapshot.get("encounter_count_tier") or "").strip()
+    if (
+        previous_tier not in _ENCOUNTER_COUNT_ORDER
+        or current_tier not in _ENCOUNTER_COUNT_ORDER
+        or previous_tier == current_tier
+    ):
+        return None
+    previous_count = _float_or_none(previous_snapshot.get("encounter_count_value"))
+    current_count = _float_or_none(current_snapshot.get("encounter_count_value"))
+    previous_display = _format_count_display(previous_count, fallback=previous_tier)
+    current_display = _format_count_display(current_count, fallback=current_tier)
+    if _ENCOUNTER_COUNT_ORDER[current_tier] > _ENCOUNTER_COUNT_ORDER[previous_tier]:
+        impact = "More enemies per encounter."
+        sign = 1
+    else:
+        impact = "Fewer enemies per encounter."
+        sign = -1
+    return {
+        "attribute": "Spawn count",
+        "current_display": current_display,
+        "previous_display": previous_display,
+        "delta": f"Spawn count: {previous_display} -> {current_display}",
+        "impact": impact,
+        "sign": sign,
+    }
 
 
-def _build_experiment_summary(
+def _compare_spawn_pressure(previous_snapshot: Dict[str, Any], current_snapshot: Dict[str, Any]) -> Dict[str, Any] | None:
+    previous_tier = str(previous_snapshot.get("spawn_pressure_tier") or "").strip()
+    current_tier = str(current_snapshot.get("spawn_pressure_tier") or "").strip()
+    if (
+        previous_tier not in _SPAWN_PRESSURE_ORDER
+        or current_tier not in _SPAWN_PRESSURE_ORDER
+        or previous_tier == current_tier
+    ):
+        return None
+    previous_interval = _float_or_none(previous_snapshot.get("spawn_pressure_value"))
+    current_interval = _float_or_none(current_snapshot.get("spawn_pressure_value"))
+    previous_display = _format_seconds_display(previous_interval, fallback=previous_tier)
+    current_display = _format_seconds_display(current_interval, fallback=current_tier)
+    if _SPAWN_PRESSURE_ORDER[current_tier] > _SPAWN_PRESSURE_ORDER[previous_tier]:
+        delta = f"Spawn interval: {previous_display} -> {current_display} (higher pressure)"
+        impact = "Spawn interval is shorter, which increases pressure."
+        sign = 1
+    else:
+        delta = f"Spawn interval: {previous_display} -> {current_display} (lower pressure)"
+        impact = "Spawn interval is longer, which reduces pressure."
+        sign = -1
+    return {
+        "attribute": "Spawn interval",
+        "current_display": current_display,
+        "previous_display": previous_display,
+        "delta": delta,
+        "impact": impact,
+        "sign": sign,
+    }
+
+
+def _comparison_entries(
+    previous_snapshot: Dict[str, Any],
+    current_snapshot: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    entries: List[Dict[str, Any]] = []
+    for comparator in (
+        _compare_speed,
+        _compare_aggression,
+        _compare_movement,
+        _compare_encounter_count,
+        _compare_spawn_pressure,
+    ):
+        entry = comparator(previous_snapshot, current_snapshot)
+        if isinstance(entry, dict):
+            entries.append(entry)
+    return entries
+
+
+def _build_structured_comparison_summary(
+    comparison_entries: List[Dict[str, Any]],
     *,
-    current_label: str,
-    compared_label: str,
-    summary_terms: List[str],
-    summary_signs: List[int],
+    reference_label: str,
+    state_section_label: str,
+    inline_key_differences: bool,
 ) -> str:
-    if len(summary_terms) == 1:
-        term = summary_terms[0]
-        if term.startswith("moves ") or term.startswith("uses "):
-            return f"{current_label} {term} than {compared_label}."
-        return f"{current_label} is {term} than {compared_label}."
+    if comparison_entries:
+        what_changed = f"{_join_attribute_labels(entry['attribute'] for entry in comparison_entries)} changed."
+        state_lines = [
+            f"{entry['attribute']}: {entry['current_display']} vs {entry['previous_display']}"
+            for entry in comparison_entries
+        ]
+        difference_lines = [entry["delta"] for entry in comparison_entries]
+        impact_lines = _dedupe_lines(entry["impact"] for entry in comparison_entries)
+    else:
+        normalized_reference = _normalize_reference_label(reference_label)
+        what_changed = "No supported deterministic differences were detected."
+        state_lines = [f"Supported deterministic checks match {normalized_reference}."]
+        difference_lines = ["No explicit deltas were recorded."]
+        impact_lines = ["No deterministic gameplay-impact change detected."]
 
-    connector = " and "
-    non_zero_signs = {sign for sign in summary_signs if sign != 0}
-    if len(non_zero_signs) > 1:
-        connector = " but "
+    if inline_key_differences:
+        key_difference_text = "\n".join(difference_lines)
+    else:
+        key_difference_text = "See explicit deltas below." if comparison_entries else difference_lines[0]
 
-    if len(summary_terms) == 2:
-        first, second = summary_terms
-        first_text = first if first.startswith("moves ") or first.startswith("uses ") else f"is {first}"
-        second_text = second if second.startswith("moves ") or second.startswith("uses ") else second
-        return f"{current_label} {first_text}{connector}{second_text} than {compared_label}."
+    return "\n\n".join(
+        [
+            f"What changed\n{what_changed}",
+            f"{state_section_label}\n" + "\n".join(state_lines),
+            f"Key differences\n{key_difference_text}",
+            "Expected gameplay impact\n" + "\n".join(impact_lines),
+        ]
+    )
 
-    joined = ", ".join(summary_terms[:-1]) + f", and {summary_terms[-1]}"
-    return f"{current_label} is {joined} than {compared_label}."
+
+def _join_attribute_labels(labels: Any) -> str:
+    values = [str(label).strip() for label in labels if str(label).strip()]
+    if not values:
+        return "Supported deterministic state"
+    if len(values) == 1:
+        return values[0]
+    if len(values) == 2:
+        return f"{values[0]} and {values[1].lower()}"
+    return f"{', '.join(values[:-1])}, and {values[-1].lower()}"
 
 
-def _family_record(tuning_state: Dict[str, Any], *, family: str) -> Dict[str, Any]:
+def _dedupe_lines(lines: Any) -> List[str]:
+    ordered: List[str] = []
+    seen: set[str] = set()
+    for line in lines:
+        text = str(line).strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        ordered.append(text)
+    return ordered
+
+
+def _normalize_reference_label(reference_label: str) -> str:
+    text = str(reference_label or "").strip()
+    if not text:
+        return "the compared state"
+    if text.startswith("the "):
+        return text
+    return text
+
+
+def _movement_path_label(tier: str) -> str:
+    text = str(tier or "").strip()
+    if text == "movement_variation":
+        return "movement variation"
+    if text == "standard_forward":
+        return "standard forward"
+    return text.replace("_", " ")
+
+
+def _format_count_display(value: float | None, *, fallback: str) -> str:
+    if value is None:
+        return str(fallback or "").strip()
+    rounded = round(value)
+    if abs(value - rounded) < 0.0001:
+        return str(int(rounded))
+    return f"{value:g}"
+
+
+def _format_seconds_display(value: float | None, *, fallback: str) -> str:
+    if value is None:
+        return str(fallback or "").strip()
+    return f"{value:.1f}s"
+
+
+def _family_record(tuning_state: Dict[str, Any], *, family: str, target_context: str) -> Dict[str, Any]:
+    contexts = tuning_state.get("contexts")
+    if isinstance(contexts, dict):
+        context_state = contexts.get(target_context)
+        if isinstance(context_state, dict):
+            record = context_state.get(family)
+            if isinstance(record, dict):
+                return dict(record)
+    entities = tuning_state.get("entities")
+    if isinstance(entities, dict):
+        entity_state = entities.get(target_context)
+        if isinstance(entity_state, dict):
+            record = entity_state.get(family)
+            if isinstance(record, dict):
+                return dict(record)
     record = tuning_state.get(family)
-    return dict(record) if isinstance(record, dict) else {}
+    if isinstance(record, dict) and str(record.get("target_context") or record.get("target_entity") or "").strip() == target_context:
+        return dict(record)
+    return {}
 
 
 def _movement_target_z(record: Dict[str, Any]) -> float | None:
@@ -486,6 +611,9 @@ def _baseline_movement_target(baseline_variant: Dict[str, Any], *, current_snaps
     observed_value = baseline_variant.get("movement_value")
     if isinstance(observed_value, list) and len(observed_value) >= 3:
         return _float_or_none(observed_value[2])
+    target = _float_or_none(baseline_variant.get("movement_target_z"))
+    if target is not None:
+        return target
     return _float_or_none(current_snapshot.get("movement_target_z"))
 
 
