@@ -10,6 +10,10 @@ from typing import Any, Dict, List
 from .autonomous_decision import DecisionRuntimeContext, evaluate_autonomous_decision
 from .capability_intelligence import assess_capability_intelligence, assess_mutation_without_capability
 from .capability_registry import CapabilityRegistry, RuntimeCapability
+from .clarification_guidance import (
+    clarification_options_for_prompt,
+    clarification_options_for_session_followup,
+)
 from .content_policy import ensure_project_content_profile, evaluate_content_policy, load_project_content_profile
 from .experiment_tracking import (
     EXPERIMENT_DECISION_RESOLUTION,
@@ -141,6 +145,7 @@ class IntakeRouting:
     entity_mapping_sources: List[str] | None = None
     confirmation_required: bool = False
     confirmation_message: str | None = None
+    clarification_options: List[str] | None = None
     plan_key: str | None = None
     plan_title: str | None = None
     plan_step_titles: List[str] | None = None
@@ -218,6 +223,7 @@ class IntakeRouting:
             "entity_mapping_sources": list(self.entity_mapping_sources or []),
             "confirmation_required": self.confirmation_required,
             "confirmation_message": self.confirmation_message,
+            "clarification_options": list(self.clarification_options or []),
             "plan_key": self.plan_key,
             "plan_title": self.plan_title,
             "plan_step_titles": list(self.plan_step_titles or []),
@@ -323,6 +329,9 @@ class ConversationalTaskIntake:
         "babylon",
         "zombie",
         "runner",
+        "encounter",
+        "spawn",
+        "spawner",
         "enemy",
         "character",
         "player",
@@ -555,6 +564,7 @@ class ConversationalTaskIntake:
                     "capability_supported": step_routing.capability_supported,
                     "promotion_basis": step_routing.promotion_basis,
                     "fail_closed_reason": step_routing.fail_closed_reason,
+                    "clarification_options": list(step_routing.clarification_options or []),
                     "approval_state": approval_state,
                     "approved_by": approved_by,
                     "approved_at": approved_at,
@@ -661,7 +671,23 @@ class ConversationalTaskIntake:
             return "task_request"
         if self._looks_like_world_mutation_request(lookup_prompt):
             return "task_request"
-        if any(token in lookup_prompt for token in ("level_0001", "zombie", "runner", "enemy", "character", "kbm", "weapon", "babylon", "unity")):
+        if any(
+            token in lookup_prompt
+            for token in (
+                "level_0001",
+                "zombie",
+                "runner",
+                "encounter",
+                "spawn",
+                "spawner",
+                "enemy",
+                "character",
+                "kbm",
+                "weapon",
+                "babylon",
+                "unity",
+            )
+        ):
             return "task_request"
         return "not_task_request"
 
@@ -791,6 +817,7 @@ class ConversationalTaskIntake:
             "capability_supported": routing.capability_supported,
             "promotion_basis": routing.promotion_basis,
             "fail_closed_reason": routing.fail_closed_reason,
+            "clarification_options": list(routing.clarification_options or []),
             "approval_state": "blocked" if status == "blocked" else ("awaiting_approval" if status == "needs_approval" else ("auto_approved" if routing.auto_execution_enabled and routing.decision == "auto_execute" else "not_required")),
             "approved_by": "system_intelligence_v1" if routing.auto_execution_enabled and routing.decision == "auto_execute" else None,
             "approved_at": get_current_timestamp() if routing.auto_execution_enabled and routing.decision == "auto_execute" else None,
@@ -835,7 +862,20 @@ class ConversationalTaskIntake:
 
     def _derive_target_repo(self, prompt: str) -> str:
         lower = resolve_prompt(prompt).lookup_prompt.lower()
-        babylon_markers = ("level_0001", "babylon", "zombie", "runner", "enemy", "character", "kbm", "weapon", "unity")
+        babylon_markers = (
+            "level_0001",
+            "babylon",
+            "zombie",
+            "runner",
+            "encounter",
+            "spawn",
+            "spawner",
+            "enemy",
+            "character",
+            "kbm",
+            "weapon",
+            "unity",
+        )
         if any(token in lower for token in babylon_markers):
             return resolve_default_target_repo(self.config, prompt=prompt)
         return str(self.config.root_dir).replace("\\", "/")
@@ -1057,6 +1097,10 @@ class ConversationalTaskIntake:
                 mapped_prompt=lookup_prompt,
                 entity_mapping_applied=resolution.entity_mapping_applied,
                 entity_mapping_sources=mapping_sources,
+                clarification_options=clarification_options_for_session_followup(
+                    normalized,
+                    session_state=session_state,
+                ),
             )
         effective_lookup_prompt = (
             followup_resolution.canonical_prompt.lower().strip()
@@ -1084,6 +1128,7 @@ class ConversationalTaskIntake:
                 mapped_prompt=effective_lookup_prompt,
                 entity_mapping_applied=resolution.entity_mapping_applied,
                 entity_mapping_sources=mapping_sources,
+                clarification_options=clarification_options_for_prompt(lookup_prompt),
             )
         predefined_plan = match_predefined_plan(effective_lookup_prompt)
         if predefined_plan is not None:
@@ -1103,6 +1148,7 @@ class ConversationalTaskIntake:
                         mapped_prompt=predefined_plan.canonical_prompt,
                         entity_mapping_applied=resolution.entity_mapping_applied,
                         entity_mapping_sources=mapping_sources,
+                        clarification_options=clarification_options_for_prompt(lookup_prompt),
                     )
                 preflight_issue = self._resolve_mutation_route_issue(
                     prompt=step.operator_prompt,
@@ -1120,6 +1166,7 @@ class ConversationalTaskIntake:
                         mapped_prompt=predefined_plan.canonical_prompt,
                         entity_mapping_applied=resolution.entity_mapping_applied,
                         entity_mapping_sources=mapping_sources,
+                        clarification_options=clarification_options_for_prompt(lookup_prompt),
                     )
                 step_capabilities.append(capability)
 
@@ -1206,6 +1253,7 @@ class ConversationalTaskIntake:
                     mapped_prompt=effective_lookup_prompt,
                     entity_mapping_applied=resolution.entity_mapping_applied,
                     entity_mapping_sources=mapping_sources,
+                    clarification_options=clarification_options_for_prompt(lookup_prompt),
                 )
             routing = replace(
                 self._routing_for_capability(capability),
@@ -1268,6 +1316,7 @@ class ConversationalTaskIntake:
                     mapped_prompt=effective_lookup_prompt,
                     entity_mapping_applied=resolution.entity_mapping_applied,
                     entity_mapping_sources=mapping_sources,
+                    clarification_options=clarification_options_for_prompt(lookup_prompt),
                 )
             goal_block_message = unsupported_goal_intent_message(lookup_prompt)
             if goal_block_message is not None:
@@ -1278,6 +1327,7 @@ class ConversationalTaskIntake:
                     mapped_prompt=effective_lookup_prompt,
                     entity_mapping_applied=resolution.entity_mapping_applied,
                     entity_mapping_sources=mapping_sources,
+                    clarification_options=clarification_options_for_prompt(lookup_prompt),
                 )
             unsupported_plan_message = unsupported_predefined_plan_message(effective_lookup_prompt)
             if unsupported_plan_message is not None:
@@ -1288,6 +1338,7 @@ class ConversationalTaskIntake:
                     mapped_prompt=effective_lookup_prompt,
                     entity_mapping_applied=resolution.entity_mapping_applied,
                     entity_mapping_sources=mapping_sources,
+                    clarification_options=clarification_options_for_prompt(lookup_prompt),
                 )
             unsupported_message = unsupported_entity_transform_prompt_message(effective_lookup_prompt)
             if unsupported_message is not None:
@@ -1298,6 +1349,7 @@ class ConversationalTaskIntake:
                     mapped_prompt=effective_lookup_prompt,
                     entity_mapping_applied=resolution.entity_mapping_applied,
                     entity_mapping_sources=mapping_sources,
+                    clarification_options=clarification_options_for_prompt(lookup_prompt),
                 )
             intelligence = assess_mutation_without_capability()
             routing = self._apply_content_policy(prompt=effective_lookup_prompt, routing=IntakeRouting(
@@ -1565,8 +1617,10 @@ class ConversationalTaskIntake:
         mapped_prompt: str | None = None,
         entity_mapping_applied: bool = False,
         entity_mapping_sources: List[str] | None = None,
+        clarification_options: List[str] | None = None,
     ) -> IntakeRouting:
         intelligence = assess_mutation_without_capability()
+        normalized_options = [str(option).strip() for option in (clarification_options or []) if str(option).strip()]
         routing = self._apply_content_policy(
             prompt=mapped_prompt or "",
             routing=IntakeRouting(
@@ -1591,6 +1645,7 @@ class ConversationalTaskIntake:
                 mapped_prompt=mapped_prompt,
                 entity_mapping_applied=entity_mapping_applied,
                 entity_mapping_sources=entity_mapping_sources,
+                clarification_options=normalized_options,
             ),
             session_id=session_id,
         )
@@ -1598,9 +1653,19 @@ class ConversationalTaskIntake:
             routing,
             intelligence_summary=route_issue,
             decision="block",
-            decision_reason="route_missing",
+            decision_reason="clarification_required" if normalized_options else "route_missing",
             decision_summary=f"Decision: block - {route_issue}",
             fail_closed_reason=route_issue,
+            clarification_options=normalized_options,
+            recommended_action="clarify_request" if normalized_options else routing.recommended_action,
+            plan_title="Clarify target" if normalized_options else routing.plan_title,
+            plan_step_titles=normalized_options if normalized_options else routing.plan_step_titles,
+            plan_expected_outcome=(
+                "Clarification only. No execution will start until you choose one explicit supported request."
+                if normalized_options
+                else routing.plan_expected_outcome
+            ),
+            plan_execution_mode="Clarification required" if normalized_options else routing.plan_execution_mode,
         )
 
     def _load_runtime_context(self, session_id: str) -> DecisionRuntimeContext:

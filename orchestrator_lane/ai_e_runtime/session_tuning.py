@@ -3,11 +3,19 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List
 
+from .encounter_profiles import (
+    easier_encounter_prompt,
+    encounter_count_tier_prompt,
+    encounter_count_tier_values,
+    encounter_count_tiers,
+    spawn_pressure_tier_prompt,
+    spawn_pressure_tier_values,
+    spawn_pressure_tiers,
+)
 from .enemy_profiles import (
     aggression_tier_prompt,
     aggression_tier_values,
     aggression_tiers,
-    detect_supported_enemy_entity,
     easier_prompt,
     movement_variation_prompt,
     normalize_supported_enemy_entity,
@@ -17,6 +25,12 @@ from .enemy_profiles import (
     supports_movement_variation,
 )
 from .intent_normalizer import normalize_prompt
+from .tuning_contexts import (
+    detect_supported_tuning_context,
+    is_supported_encounter_context,
+    is_supported_enemy_context,
+    normalize_supported_tuning_context,
+)
 
 
 DIRECT_PROMPT_RESOLUTION = "direct_prompt"
@@ -27,6 +41,7 @@ _FOLLOW_UP_PROMPTS = {
     "make it slower",
     "make it more aggressive",
     "make it less aggressive",
+    "make it easier",
     "try another version",
     "revert last change",
 }
@@ -36,7 +51,7 @@ _FOLLOW_UP_PROMPTS = {
 class SessionFollowUpResolution:
     original_prompt: str
     canonical_prompt: str
-    state_family: str
+    state_family: str | None
     previous_tier: str | None
     requested_tier: str | None
     resolution_note: str
@@ -66,6 +81,8 @@ def resolve_session_followup_prompt(
         return _resolve_aggression_followup(normalized, session_state=session_state, direction="more_aggressive")
     if normalized == "make it less aggressive":
         return _resolve_aggression_followup(normalized, session_state=session_state, direction="less_aggressive")
+    if normalized == "make it easier":
+        return _resolve_easier_followup(normalized, session_state=session_state)
     if normalized == "try another version":
         return _resolve_variation_followup(normalized, session_state=session_state)
     if normalized == "revert last change":
@@ -80,24 +97,25 @@ def build_result_session_metadata(
     result_kind: str,
 ) -> Dict[str, Any]:
     family = _state_family_for_result_kind(result_kind)
-    target_entity = _target_entity_for_task(task, details=details)
-    resulting_tier = _resulting_tier_for_details(details, family=family, target_entity=target_entity)
+    target_context = _target_context_for_task(task, details=details)
+    resulting_tier = _resulting_tier_for_details(details, family=family, target_context=target_context)
     previous_tier = _value_or_none(task.get("previous_tier")) or _previous_tier_for_details(
         details,
         family=family,
-        target_entity=target_entity,
+        target_context=target_context,
     )
     requested_tier = _value_or_none(task.get("requested_tier")) or _requested_tier_for_details(
         details,
         family=family,
-        target_entity=target_entity,
+        target_context=target_context,
     )
 
     metadata: Dict[str, Any] = {
         "resolution_source": str(task.get("resolution_source") or DIRECT_PROMPT_RESOLUTION),
         "resolved_from_prompt": str(task.get("resolved_from_prompt") or "").strip(),
         "goal_components": [str(item).strip() for item in (task.get("goal_components") or []) if str(item).strip()],
-        "target_entity": target_entity,
+        "target_entity": target_context,
+        "target_context": target_context,
         "state_family": family,
         "previous_tier": previous_tier,
         "requested_tier": requested_tier,
@@ -118,26 +136,26 @@ def build_session_tuning_record(
     order: int,
 ) -> Dict[str, Any] | None:
     family = _value_or_none(details.get("state_family")) or _state_family_for_task(task, details=details)
-    if family not in {"speed", "aggression", "movement"}:
+    if family not in {"speed", "aggression", "movement", "encounter_count", "spawn_pressure"}:
         return None
-    target_entity = _target_entity_for_task(task, details=details)
+    target_context = _target_context_for_task(task, details=details)
 
     requested_value, observed_value = _state_values_for_details(details, family=family)
     previous_value = _previous_value_for_details(details, family=family)
     previous_tier = _value_or_none(details.get("previous_tier")) or _tier_for_value(
         previous_value,
         family=family,
-        target_entity=target_entity,
+        target_context=target_context,
     )
     requested_tier = _value_or_none(details.get("requested_tier")) or _tier_for_value(
         requested_value,
         family=family,
-        target_entity=target_entity,
+        target_context=target_context,
     )
     resulting_tier = _value_or_none(details.get("resulting_tier")) or _tier_for_value(
         observed_value,
         family=family,
-        target_entity=target_entity,
+        target_context=target_context,
     )
     if family == "movement" and resulting_tier is None:
         resulting_tier = _movement_variant_for_task(task, details=details)
@@ -158,7 +176,8 @@ def build_session_tuning_record(
         "plan_step_title": str(task.get("plan_step_title") or task.get("title") or "").strip(),
         "capability_id": str(task.get("capability_id") or "").strip(),
         "family": family,
-        "target_entity": target_entity,
+        "target_entity": target_context,
+        "target_context": target_context,
         "source_prompt": source_prompt,
         "canonical_prompt": canonical_prompt,
         "requested_target_value": requested_value,
@@ -193,18 +212,27 @@ def apply_session_tuning_record(
     state["session_tuning_history"] = history
 
     tuning_state = dict(state.get("session_tuning_state") or {})
-    target_entity = str(record.get("target_entity") or "").strip() or detect_supported_enemy_entity(record)
-    entity_states = dict(tuning_state.get("entities") or {})
-    current_entity_state = dict(entity_states.get(target_entity) or {})
-    current_entity_state["last_mutation"] = dict(record)
+    target_context = str(record.get("target_context") or record.get("target_entity") or "").strip() or detect_supported_tuning_context(record)
+    context_states = dict(tuning_state.get("contexts") or {})
+    current_context_state = dict(context_states.get(target_context) or {})
     tuning_state["last_mutation"] = dict(record)
     family = str(record.get("family") or "").strip()
     if family:
-        current_entity_state[family] = dict(record)
+        current_context_state[family] = dict(record)
         tuning_state[family] = dict(record)
-    entity_states[target_entity] = current_entity_state
-    tuning_state["entities"] = entity_states
-    tuning_state["target_entity"] = target_entity
+    current_context_state["last_mutation"] = dict(record)
+    context_states[target_context] = current_context_state
+    tuning_state["contexts"] = context_states
+    tuning_state["target_context"] = target_context
+    tuning_state["target_entity"] = target_context
+    if is_supported_enemy_context(target_context):
+        entity_states = dict(tuning_state.get("entities") or {})
+        current_entity_state = dict(entity_states.get(target_context) or {})
+        current_entity_state["last_mutation"] = dict(record)
+        if family:
+            current_entity_state[family] = dict(record)
+        entity_states[target_context] = current_entity_state
+        tuning_state["entities"] = entity_states
     state["session_tuning_state"] = tuning_state
     return state
 
@@ -215,6 +243,19 @@ def _resolve_speed_followup(
     session_state: Dict[str, Any],
     direction: str,
 ) -> tuple[SessionFollowUpResolution | None, str | None]:
+    if _session_has_mixed_target_context_kinds(session_state):
+        return None, (
+            f'This request is ambiguous between entity tuning and encounter tuning in the current session. AI-E will not guess whether "{prompt}" should continue enemy tuning or encounter tuning because the current session contains both. '
+            "Name the supported target explicitly. Try something like: 'make zombie faster', 'make runner faster', "
+            "or 'increase spawn pressure'."
+        )
+    active_context = _active_target_context(session_state)
+    if active_context and is_supported_encounter_context(active_context):
+        return None, (
+            f'AI-E will not guess whether "{prompt}" should change an enemy speed tier or encounter spawn tuning. '
+            "Name the supported target explicitly. Try something like: 'make zombie faster', 'make runner faster', "
+            "or 'decrease spawn pressure'."
+        )
     target_entity = _active_target_entity(session_state)
     if target_entity is None:
         return None, (
@@ -262,6 +303,19 @@ def _resolve_aggression_followup(
     session_state: Dict[str, Any],
     direction: str,
 ) -> tuple[SessionFollowUpResolution | None, str | None]:
+    if _session_has_mixed_target_context_kinds(session_state):
+        return None, (
+            f'This request is ambiguous between entity tuning and encounter tuning in the current session. AI-E will not guess whether "{prompt}" should continue enemy aggression tuning or encounter tuning because the current session contains both. '
+            "Name the supported target explicitly. Try something like: 'make zombie more aggressive', "
+            "'make runner more aggressive', or 'make encounter easier'."
+        )
+    active_context = _active_target_context(session_state)
+    if active_context and is_supported_encounter_context(active_context):
+        return None, (
+            f'AI-E will not guess whether "{prompt}" should change enemy aggression or encounter spawn tuning. '
+            "Name the supported target explicitly. Try something like: 'make zombie more aggressive', "
+            "'make runner more aggressive', or 'make encounter easier'."
+        )
     target_entity = _active_target_entity(session_state)
     if target_entity is None:
         return None, (
@@ -320,16 +374,70 @@ def _resolve_aggression_followup(
     )
 
 
+def _resolve_easier_followup(
+    prompt: str,
+    *,
+    session_state: Dict[str, Any],
+) -> tuple[SessionFollowUpResolution | None, str | None]:
+    if _session_has_mixed_target_context_kinds(session_state):
+        return None, (
+            f'This request is ambiguous between entity tuning and encounter tuning in the current session. AI-E will not guess whether "{prompt}" should lower danger for an enemy or reduce encounter intensity because the current session contains both. '
+            "Name the supported target explicitly. Try something like: 'make zombie easier', 'make runner easier', "
+            "or 'make encounter easier'."
+        )
+    target_context = _active_target_context(session_state)
+    if target_context is None:
+        return None, (
+            f'AI-E can use "{prompt}" only after a supported enemy or encounter tuning change in the current session. '
+            "Start with something like: 'make zombie easier', 'make runner easier', or 'make encounter easier'."
+        )
+
+    if is_supported_encounter_context(target_context):
+        return SessionFollowUpResolution(
+            original_prompt=prompt,
+            canonical_prompt="decrease encounter intensity",
+            state_family="encounter",
+            previous_tier=None,
+            requested_tier=None,
+            resolution_note=(
+                f'AI-E resolved "{prompt}" from the current encounter session into the bounded lower-intensity encounter plan.'
+            ),
+        ), None
+
+    return SessionFollowUpResolution(
+        original_prompt=prompt,
+        canonical_prompt=easier_prompt(target_context),
+        state_family="danger",
+        previous_tier=None,
+        requested_tier=None,
+        resolution_note=(
+            f'AI-E resolved "{prompt}" from the current {target_context} session into the bounded lower-danger plan.'
+        ),
+    ), None
+
+
 def _resolve_variation_followup(
     prompt: str,
     *,
     session_state: Dict[str, Any],
 ) -> tuple[SessionFollowUpResolution | None, str | None]:
+    if _session_has_mixed_target_context_kinds(session_state):
+        return None, (
+            f'This request is ambiguous between entity tuning and encounter tuning in the current session. AI-E will not guess whether "{prompt}" should continue enemy variation testing or encounter tuning because the current session contains both. '
+            "Name the supported target explicitly. Try something like: 'make zombie move differently' or 'increase encounter count'."
+        )
     history = _normalized_history(session_state)
     if not history:
         return None, (
             f'AI-E can use "{prompt}" only after a supported enemy session is active. '
             "Start with something like: 'make zombie move differently'."
+        )
+    active_context = _active_target_context(session_state)
+    if active_context and is_supported_encounter_context(active_context):
+        return None, (
+            f'AI-E can use "{prompt}" only when a supported movement-variation route is active in the current enemy session. '
+            "The current session is encounter tuning, so name the next step explicitly. Try something like: "
+            "'increase encounter count' or 'make encounter more intense'."
         )
     target_entity = _active_target_entity(session_state)
     if target_entity is None:
@@ -368,8 +476,8 @@ def _resolve_revert_followup(
     history = _normalized_history(session_state)
     if not history:
         return None, (
-            "AI-E can revert only the most recent supported enemy mutation in the current session. "
-            "Start with a supported zombie or runner change first."
+            "AI-E can revert only the most recent supported tuning mutation in the current session. "
+            "Start with a supported zombie, runner, or encounter change first."
         )
 
     last_mutation = dict(history[-1])
@@ -386,13 +494,17 @@ def _resolve_revert_followup(
         canonical_prompt = speed_tier_prompt(target_entity, previous_tier)
     elif family == "aggression" and previous_tier in aggression_tiers(target_entity):
         canonical_prompt = aggression_tier_prompt(target_entity, previous_tier)
+    elif family == "encounter_count" and previous_tier in encounter_count_tiers():
+        canonical_prompt = encounter_count_tier_prompt(previous_tier)
+    elif family == "spawn_pressure" and previous_tier in spawn_pressure_tiers():
+        canonical_prompt = spawn_pressure_tier_prompt(previous_tier)
     else:
         return None, (
-            f"AI-E can only revert the latest supported {target_entity or 'enemy'} speed or aggression tier in the current session."
+            f"AI-E can only revert the latest supported {target_entity or 'tuning'} speed, aggression, encounter count, or spawn pressure tier in the current session."
         )
 
     revert_summary = (
-        f"Revert the last {target_entity or 'enemy'} {family} change from {current_tier or 'current'} back to {previous_tier}."
+        f"Revert the last {target_entity or 'tuning'} {family} change from {current_tier or 'current'} back to {previous_tier}."
     )
     return SessionFollowUpResolution(
         original_prompt=prompt,
@@ -422,6 +534,14 @@ def _latest_family_state(
     tuning_state = session_state.get("session_tuning_state")
     if isinstance(tuning_state, dict):
         if target_entity:
+            contexts = tuning_state.get("contexts")
+            if isinstance(contexts, dict):
+                context_state = contexts.get(target_entity)
+                if isinstance(context_state, dict):
+                    current = context_state.get(family)
+                    if isinstance(current, dict):
+                        return dict(current)
+        if target_entity:
             entities = tuning_state.get("entities")
             if isinstance(entities, dict):
                 entity_state = entities.get(target_entity)
@@ -444,26 +564,77 @@ def _latest_family_state(
     return None
 
 
-def _active_target_entity(session_state: Dict[str, Any]) -> str | None:
+def _active_target_context(session_state: Dict[str, Any]) -> str | None:
     tuning_state = session_state.get("session_tuning_state")
     if isinstance(tuning_state, dict):
-        target_entity = normalize_supported_enemy_entity(
-            tuning_state.get("target_entity"),
+        target_context = normalize_supported_tuning_context(
+            tuning_state.get("target_context") or tuning_state.get("target_entity"),
             default="",
         )
-        if target_entity:
-            return target_entity
+        if target_context:
+            return target_context
         last_mutation = tuning_state.get("last_mutation")
         if isinstance(last_mutation, dict):
-            detected = normalize_supported_enemy_entity(last_mutation.get("target_entity"), default="")
+            detected = normalize_supported_tuning_context(
+                last_mutation.get("target_context") or last_mutation.get("target_entity"),
+                default="",
+            )
             if detected:
                 return detected
     history = _normalized_history(session_state)
     if history:
-        detected = normalize_supported_enemy_entity(history[-1].get("target_entity"), default="")
+        detected = normalize_supported_tuning_context(
+            history[-1].get("target_context") or history[-1].get("target_entity"),
+            default="",
+        )
         if detected:
             return detected
     return None
+
+
+def _session_has_mixed_target_context_kinds(session_state: Dict[str, Any]) -> bool:
+    has_enemy = False
+    has_encounter = False
+    for target_context in _iter_known_target_contexts(session_state):
+        if is_supported_enemy_context(target_context):
+            has_enemy = True
+        elif is_supported_encounter_context(target_context):
+            has_encounter = True
+        if has_enemy and has_encounter:
+            return True
+    return False
+
+
+def _iter_known_target_contexts(session_state: Dict[str, Any]) -> List[str]:
+    contexts: List[str] = []
+
+    def _append(raw_context: Any) -> None:
+        normalized = normalize_supported_tuning_context(raw_context, default="")
+        if normalized and normalized not in contexts:
+            contexts.append(normalized)
+
+    for item in _normalized_history(session_state):
+        _append(item.get("target_context") or item.get("target_entity"))
+
+    tuning_state = session_state.get("session_tuning_state")
+    if isinstance(tuning_state, dict):
+        _append(tuning_state.get("target_context") or tuning_state.get("target_entity"))
+        last_mutation = tuning_state.get("last_mutation")
+        if isinstance(last_mutation, dict):
+            _append(last_mutation.get("target_context") or last_mutation.get("target_entity"))
+        raw_contexts = tuning_state.get("contexts")
+        if isinstance(raw_contexts, dict):
+            for raw_context in raw_contexts.keys():
+                _append(raw_context)
+
+    return contexts
+
+
+def _active_target_entity(session_state: Dict[str, Any]) -> str | None:
+    target_context = _active_target_context(session_state)
+    if not is_supported_enemy_context(target_context):
+        return None
+    return normalize_supported_enemy_entity(target_context, default="")
 
 
 def _state_family_for_result_kind(result_kind: str) -> str:
@@ -471,6 +642,10 @@ def _state_family_for_result_kind(result_kind: str) -> str:
         return "speed"
     if result_kind == "aggression":
         return "aggression"
+    if result_kind == "encounter_count":
+        return "encounter_count"
+    if result_kind == "spawn_pressure":
+        return "spawn_pressure"
     return "movement"
 
 
@@ -483,6 +658,10 @@ def _state_family_for_task(task: Dict[str, Any], *, details: Dict[str, Any]) -> 
         return "speed"
     if "aggression" in capability_id:
         return "aggression"
+    if "encounter_count" in capability_id:
+        return "encounter_count"
+    if "spawn_pressure" in capability_id:
+        return "spawn_pressure"
     if ("move_zombie" in capability_id or "move_runner" in capability_id) or "transform" in str(
         details.get("action_type") or ""
     ).strip().lower():
@@ -490,25 +669,25 @@ def _state_family_for_task(task: Dict[str, Any], *, details: Dict[str, Any]) -> 
     return ""
 
 
-def _requested_tier_for_details(details: Dict[str, Any], *, family: str, target_entity: str | None) -> str | None:
+def _requested_tier_for_details(details: Dict[str, Any], *, family: str, target_context: str | None) -> str | None:
     requested_value, _ = _state_values_for_details(details, family=family)
     if family == "movement":
         return _movement_variant_for_task({}, details=details)
-    return _tier_for_value(requested_value, family=family, target_entity=target_entity)
+    return _tier_for_value(requested_value, family=family, target_context=target_context)
 
 
-def _previous_tier_for_details(details: Dict[str, Any], *, family: str, target_entity: str | None) -> str | None:
+def _previous_tier_for_details(details: Dict[str, Any], *, family: str, target_context: str | None) -> str | None:
     previous_value = _previous_value_for_details(details, family=family)
     if family == "movement":
         return None
-    return _tier_for_value(previous_value, family=family, target_entity=target_entity)
+    return _tier_for_value(previous_value, family=family, target_context=target_context)
 
 
-def _resulting_tier_for_details(details: Dict[str, Any], *, family: str, target_entity: str | None) -> str | None:
+def _resulting_tier_for_details(details: Dict[str, Any], *, family: str, target_context: str | None) -> str | None:
     _, observed_value = _state_values_for_details(details, family=family)
     if family == "movement":
         return _movement_variant_for_task({}, details=details)
-    return _tier_for_value(observed_value, family=family, target_entity=target_entity)
+    return _tier_for_value(observed_value, family=family, target_context=target_context)
 
 
 def _state_values_for_details(details: Dict[str, Any], *, family: str) -> tuple[Any, Any]:
@@ -516,6 +695,10 @@ def _state_values_for_details(details: Dict[str, Any], *, family: str) -> tuple[
         return details.get("requested_speed"), details.get("new_speed")
     if family == "aggression":
         return details.get("requested_attack_cooldown"), details.get("new_attack_cooldown")
+    if family == "encounter_count":
+        return details.get("requested_encounter_count"), details.get("new_encounter_count")
+    if family == "spawn_pressure":
+        return details.get("requested_spawn_interval"), details.get("new_spawn_interval")
     return details.get("new_position"), details.get("new_position")
 
 
@@ -524,14 +707,25 @@ def _previous_value_for_details(details: Dict[str, Any], *, family: str) -> Any:
         return details.get("previous_speed")
     if family == "aggression":
         return details.get("previous_attack_cooldown")
+    if family == "encounter_count":
+        return details.get("previous_encounter_count")
+    if family == "spawn_pressure":
+        return details.get("previous_spawn_interval")
     return details.get("previous_position")
 
 
-def _tier_for_value(value: Any, *, family: str, target_entity: str | None) -> str | None:
+def _tier_for_value(value: Any, *, family: str, target_context: str | None) -> str | None:
     numeric = _float_or_none(value)
     if numeric is None:
         return None
-    tier_values = speed_tier_values(target_entity) if family == "speed" else aggression_tier_values(target_entity)
+    if family == "speed":
+        tier_values = speed_tier_values(target_context)
+    elif family == "aggression":
+        tier_values = aggression_tier_values(target_context)
+    elif family == "encounter_count":
+        tier_values = encounter_count_tier_values()
+    else:
+        tier_values = spawn_pressure_tier_values()
     for tier, expected in tier_values.items():
         if abs(numeric - expected) <= 0.0001:
             return tier
@@ -551,13 +745,15 @@ def _movement_variant_for_task(task: Dict[str, Any], *, details: Dict[str, Any])
     return None
 
 
-def _target_entity_for_task(task: Dict[str, Any], *, details: Dict[str, Any]) -> str:
-    return detect_supported_enemy_entity(
+def _target_context_for_task(task: Dict[str, Any], *, details: Dict[str, Any]) -> str:
+    return detect_supported_tuning_context(
+        details.get("target_context"),
         details.get("target_entity"),
         details.get("entity_type"),
         details.get("translated_command"),
         details.get("matched_prompt_pattern"),
         details.get("object_name"),
+        details.get("spawner_name"),
         task.get("target_entity"),
         task.get("source_prompt"),
         task.get("operator_prompt"),

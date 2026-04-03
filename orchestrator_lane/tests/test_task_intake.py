@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from app import home_surface
+from ai_e_runtime.outcome_evaluation import apply_result_evaluation
 from ai_e_runtime.experiment_tracking import apply_experiment_decision
 from ai_e_runtime.intent_normalizer import normalize_prompt
 from ai_e_runtime.state_store import StateStore
@@ -513,6 +514,8 @@ def test_task_intake_resolves_lower_danger_goal_intents_to_restore_standard_plan
     assert result.routing.session_resolution_note == expected_note
     assert result.routing.mapped_prompt == "restore zombie danger to standard"
     assert result.routing.decision == "sandbox_first"
+    assert result.routing.plan_title != "Clarify target"
+    assert result.routing.clarification_options in (None, [])
     assert result.plan_step_titles == [
         "Restore zombie movement speed to standard",
         "Restore zombie aggression to standard",
@@ -745,6 +748,16 @@ def test_task_intake_blocks_ambiguous_generalized_speed_terms(
     assert result.routing.entity_mapping_sources == []
     assert result.routing.confirmation_required is False
     assert result.routing.mapped_prompt == normalize_prompt(prompt_text)
+    if "faster" in normalize_prompt(prompt_text):
+        assert result.routing.clarification_options == [
+            "make zombie faster",
+            "make runner faster",
+        ]
+    else:
+        assert result.routing.clarification_options == [
+            "make zombie slower",
+            "make runner slower",
+        ]
     assert str(result.routing.fail_closed_reason) == expected_reason
     assert runtime_payload["runtime_task"]["decision"] == "block"
     assert runtime_payload["runtime_task"]["operator_prompt"] == normalize_prompt(prompt_text)
@@ -990,6 +1003,36 @@ def test_home_surface_prepare_prompt_blocks_ambiguous_generalized_entity_prompt(
     )
 
 
+def test_home_surface_prepare_prompt_blocks_ambiguous_generalized_speed_with_clarification_options(tmp_path):
+    config = _make_config(tmp_path / "home_surface_speed_clarification")
+    _write_move_zombie_capability_contract(config)
+    _write_zombie_speed_capability_contracts(config)
+    _write_runner_speed_capability_contracts(config)
+    target_repo = _create_entity_transform_prompt_repo(config)
+    intake = ConversationalTaskIntake(config)
+    bridge = home_surface.IntakePreviewBridge()
+    bridge._create_intake = lambda: intake
+    project = home_surface.SupportedProject(
+        name="BABYLON TEST",
+        path=Path(target_repo),
+        project_type="unity_project",
+        source="test",
+        status="supported",
+    )
+
+    preview = bridge.prepare_prompt("make enemy faster", project)
+
+    assert preview.available is True
+    assert preview.decision_state == "Blocked"
+    assert preview.plan_title == "Clarify target"
+    assert preview.plan_steps == [
+        "make zombie faster",
+        "make runner faster",
+    ]
+    assert preview.plan_execution_mode == "Clarification required"
+    assert "No execution will start" in preview.status_message
+
+
 def test_home_surface_prepare_prompt_blocks_ambiguous_generalized_aggression_capability(tmp_path):
     config = _make_config(tmp_path / "home_surface_aggression_capability_confirmation")
     _write_move_zombie_capability_contract(config)
@@ -1014,9 +1057,14 @@ def test_home_surface_prepare_prompt_blocks_ambiguous_generalized_aggression_cap
     assert preview.confirmation_required is False
     assert preview.confirmation_prompt == ""
     assert preview.next_action_label == "Revise request"
-    assert preview.plan_title == ""
-    assert preview.plan_steps == []
-    assert preview.detected_action == "Bounded mutation"
+    assert preview.plan_title == "Clarify target"
+    assert preview.plan_steps == [
+        "make zombie more aggressive",
+        "make runner more aggressive",
+    ]
+    assert preview.plan_execution_mode == "Clarification required"
+    assert "No execution will start" in preview.status_message
+    assert preview.detected_action == "Clarify target"
     assert preview.decision_reason == (
         'AI-E supports multiple bounded enemy archetypes in BABYLON and will not guess what "enemy" means here. '
         "Name the supported target explicitly. Try something like: "
@@ -1047,9 +1095,12 @@ def test_home_surface_prepare_prompt_blocks_ambiguous_generalized_safety_plan(tm
     assert preview.confirmation_required is False
     assert preview.confirmation_prompt == ""
     assert preview.next_action_label == "Revise request"
-    assert preview.plan_title == ""
-    assert preview.plan_steps == []
-    assert preview.plan_execution_mode == ""
+    assert preview.plan_title == "Clarify target"
+    assert preview.plan_steps == [
+        "restore zombie aggression to standard",
+        "restore runner aggression to standard",
+    ]
+    assert preview.plan_execution_mode == "Clarification required"
     assert preview.decision_reason == (
         'AI-E supports multiple bounded enemy archetypes in BABYLON and will not guess what "enemy" means here. '
         "Name the supported target explicitly. Try something like: "
@@ -1171,9 +1222,12 @@ def test_home_surface_prepare_prompt_blocks_ambiguous_generalized_combat_variati
     assert preview.confirmation_required is False
     assert preview.confirmation_prompt == ""
     assert preview.next_action_label == "Revise request"
-    assert preview.plan_title == ""
-    assert preview.plan_steps == []
-    assert preview.plan_execution_mode == ""
+    assert preview.plan_title == "Clarify target"
+    assert preview.plan_steps == [
+        "make zombie more dangerous",
+        "make runner more dangerous",
+    ]
+    assert preview.plan_execution_mode == "Clarification required"
     assert preview.decision_reason == (
         'AI-E supports multiple bounded enemy archetypes in BABYLON and will not guess what "enemy" means here. '
         "Name the supported target explicitly. Try something like: "
@@ -1201,9 +1255,13 @@ def test_task_intake_blocks_ambiguous_generalized_goal_intent_plan(tmp_path):
     assert result.queue_entry["status"] == "blocked"
     assert result.routing.confirmation_required is False
     assert result.routing.mapped_prompt == "make enemy more dangerous"
-    assert result.routing.plan_title is None
+    assert result.routing.plan_title == "Clarify target"
     assert result.routing.entity_mapping_applied is False
     assert result.routing.entity_mapping_sources == []
+    assert result.routing.clarification_options == [
+        "make zombie more dangerous",
+        "make runner more dangerous",
+    ]
     assert result.routing.fail_closed_reason == (
         'AI-E supports multiple bounded enemy archetypes in BABYLON and will not guess what "enemy" means here. '
         "Name the supported target explicitly. Try something like: "
@@ -1256,6 +1314,14 @@ def test_task_intake_blocks_ambiguous_generalized_goal_prompts_with_supported_re
     assert result.routing.confirmation_required is False
     assert result.routing.entity_mapping_applied is False
     assert result.routing.entity_mapping_sources == []
+    normalized = normalize_prompt(prompt_text)
+    expected_options = []
+    if "easier" in normalized or ("dangerous" in normalized and "less" in normalized):
+        expected_options = ["make zombie easier", "make runner easier"]
+    elif "dangerous" in normalized:
+        expected_options = ["make zombie more dangerous", "make runner more dangerous"]
+    if expected_options:
+        assert result.routing.clarification_options == expected_options
     assert result.routing.fail_closed_reason == expected_reason
 
 
@@ -1588,6 +1654,7 @@ def test_home_surface_prepare_prompt_shows_review_only_current_experiment_summar
         movement_tier="movement_variation",
         baseline_variant_id="variant_0001",
         outcome_summary="movement variation",
+        decision_status="rejected",
         task_id="TASK_VARIANT_0002",
         request_id="REQ_VARIANT_0002",
         plan_id="PLAN_VARIATION",
@@ -1616,10 +1683,27 @@ def test_home_surface_prepare_prompt_shows_review_only_current_experiment_summar
                         "created_at": "2026-04-02T01:00:00Z",
                         "active_variant_id": "variant_0002",
                         "baseline_variant_id": "variant_0001",
+                        "preferred_baseline_variant_id": "variant_0001",
                         "variants": [variant_one, variant_two],
                     }
                 ],
-            }
+            },
+            "result_evaluation_history": [
+                {
+                    "experiment_id": experiment_id,
+                    "variant_id": "variant_0002",
+                    "experiment_comparison_description": (
+                        "What changed\n"
+                        "Speed changed.\n\n"
+                        "Current variant vs baseline\n"
+                        "Speed: standard vs fast\n\n"
+                        "Key differences\n"
+                        "Speed: fast -> standard\n\n"
+                        "Expected gameplay impact\n"
+                        "Lower movement speed."
+                    ),
+                }
+            ],
         },
     )
     intake = ConversationalTaskIntake(config)
@@ -1640,11 +1724,13 @@ def test_home_surface_prepare_prompt_shows_review_only_current_experiment_summar
     assert preview.next_action_label == "Refresh summary"
     assert preview.plan_title == "Current experiment variants"
     assert preview.plan_steps == [
-        "variant_0001: move zombie forward -> standard forward movement (baseline).",
-        "variant_0002: try another version -> movement variation (followup variant).",
+        "variant_0001: move zombie forward -> standard forward movement (baseline, preferred baseline).",
+        "variant_0002: try another version -> movement variation (current variant, rejected, followup variant).",
     ]
     assert preview.plan_execution_mode == "Current session summary"
     assert preview.decision_reason.startswith("AI-E is tracking 2 recorded variant(s) in experiment_0001.")
+    assert "Preferred baseline: variant_0001." in preview.decision_reason
+    assert "Rejected variants: variant_0002." in preview.decision_reason
     assert preview.status_message == "AI-E prepared a current-session experiment summary locally. No execution will start."
 
 
@@ -1670,7 +1756,7 @@ def test_home_surface_blocks_experiment_review_without_active_experiment(tmp_pat
     assert preview.next_action_label == "Revise request"
     assert (
         preview.decision_reason
-        == "AI-E can show current experiment variants only after a supported enemy result exists in the current session. Start with something like: 'make zombie faster' or 'make runner faster'."
+        == "AI-E can show current experiment variants only after a supported tuning result exists in the current session. Start with something like: 'make zombie faster', 'make runner faster', or 'increase encounter count'."
     )
 
 
@@ -1734,7 +1820,23 @@ def test_home_surface_prepare_prompt_shows_review_only_experiment_decision_updat
                         "variants": [variant_one, variant_two],
                     }
                 ],
-            }
+            },
+            "result_evaluation_history": [
+                {
+                    "experiment_id": experiment_id,
+                    "variant_id": "variant_0002",
+                    "experiment_comparison_description": (
+                        "What changed\n"
+                        "Speed changed.\n\n"
+                        "Current variant vs baseline\n"
+                        "Speed: standard vs fast\n\n"
+                        "Key differences\n"
+                        "Speed: fast -> standard\n\n"
+                        "Expected gameplay impact\n"
+                        "Lower movement speed."
+                    ),
+                }
+            ],
         },
     )
     intake = ConversationalTaskIntake(config)
@@ -1757,11 +1859,25 @@ def test_home_surface_prepare_prompt_shows_review_only_experiment_decision_updat
     assert preview.plan_steps == [
         "Current variant: variant_0002.",
         "Current decision status: undecided.",
+        "Rejected variants: none.",
         "Original baseline: variant_0001.",
         "Decision to record: kept.",
+        "Decision outcome: variant_0002 stays available for comparison. Original baseline remains variant_0001.",
+        "Changes relative to baseline:",
+        "What changed",
+        "Speed changed.",
+        "Current variant vs baseline",
+        "Speed: standard vs fast",
+        "Key differences",
+        "Speed: fast -> standard",
+        "Expected gameplay impact",
+        "Lower movement speed.",
     ]
     assert preview.plan_execution_mode == "Current session decision update"
-    assert preview.decision_reason == "AI-E will mark variant_0002 as kept in experiment_0001. No execution will start."
+    assert preview.decision_reason == (
+        "AI-E will record variant_0002 as kept in experiment_0001. "
+        "Original baseline remains variant_0001. No execution will start."
+    )
     assert preview.status_message == (
         "AI-E prepared a current-session experiment decision update locally. "
         "Record it to update experiment state. No execution will start."
@@ -1825,7 +1941,23 @@ def test_home_surface_apply_experiment_decision_records_keep_and_reject_status(t
                         "variants": [variant_one, variant_two],
                     }
                 ],
-            }
+            },
+            "result_evaluation_history": [
+                {
+                    "experiment_id": experiment_id,
+                    "variant_id": "variant_0002",
+                    "experiment_comparison_description": (
+                        "What changed\n"
+                        "Speed changed.\n\n"
+                        "Current variant vs baseline\n"
+                        "Speed: standard vs fast\n\n"
+                        "Key differences\n"
+                        "Speed: fast -> standard\n\n"
+                        "Expected gameplay impact\n"
+                        "Lower movement speed."
+                    ),
+                }
+            ],
         },
     )
     intake = ConversationalTaskIntake(config)
@@ -1846,7 +1978,7 @@ def test_home_surface_apply_experiment_decision_records_keep_and_reject_status(t
     keep_preview = bridge.prepare_prompt("keep current variant", project)
     keep_result = bridge.apply_experiment_review_prompt(keep_preview)
     assert keep_result.ok is True
-    assert keep_result.message == "Recorded: variant_0002 is kept in experiment_0001."
+    assert keep_result.message == "Recorded: variant_0002 was kept in experiment_0001. Original baseline remains variant_0001."
 
     state = json.loads((config.runs_dir / home_surface.DEFAULT_SUBMIT_SESSION_ID / "session_state.json").read_text(encoding="utf-8"))
     experiment = state["experiment_tracking"]["experiments"][0]
@@ -1860,7 +1992,7 @@ def test_home_surface_apply_experiment_decision_records_keep_and_reject_status(t
     reject_preview = bridge.prepare_prompt("reject current variant", project)
     reject_result = bridge.apply_experiment_review_prompt(reject_preview)
     assert reject_result.ok is True
-    assert reject_result.message == "Recorded: variant_0002 is rejected in experiment_0001."
+    assert reject_result.message == "Recorded: variant_0002 was rejected in experiment_0001 and will not be used."
 
     updated_state = json.loads((config.runs_dir / home_surface.DEFAULT_SUBMIT_SESSION_ID / "session_state.json").read_text(encoding="utf-8"))
     updated_experiment = updated_state["experiment_tracking"]["experiments"][0]
@@ -1927,7 +2059,23 @@ def test_home_surface_apply_experiment_decision_sets_preferred_baseline_without_
                         "variants": [variant_one, variant_two],
                     }
                 ],
-            }
+            },
+            "result_evaluation_history": [
+                {
+                    "experiment_id": experiment_id,
+                    "variant_id": "variant_0002",
+                    "experiment_comparison_description": (
+                        "What changed\n"
+                        "Speed changed.\n\n"
+                        "Current variant vs baseline\n"
+                        "Speed: standard vs fast\n\n"
+                        "Key differences\n"
+                        "Speed: fast -> standard\n\n"
+                        "Expected gameplay impact\n"
+                        "Lower movement speed."
+                    ),
+                }
+            ],
         },
     )
     intake = ConversationalTaskIntake(config)
@@ -1946,10 +2094,31 @@ def test_home_surface_apply_experiment_decision_sets_preferred_baseline_without_
     )
 
     preview = bridge.prepare_prompt("set current variant as baseline", project)
+    assert preview.plan_steps == [
+        "Current variant: variant_0002.",
+        "Current decision status: undecided.",
+        "Rejected variants: none.",
+        "Original baseline: variant_0001.",
+        "Decision to record: preferred baseline.",
+        "Decision outcome: variant_0002 becomes the preferred baseline for later comparisons. Original baseline remains variant_0001.",
+        "Changes relative to baseline:",
+        "What changed",
+        "Speed changed.",
+        "Current variant vs baseline",
+        "Speed: standard vs fast",
+        "Key differences",
+        "Speed: fast -> standard",
+        "Expected gameplay impact",
+        "Lower movement speed.",
+    ]
+    assert preview.decision_reason == (
+        "AI-E will set variant_0002 as the preferred baseline in experiment_0001. "
+        "Original baseline remains variant_0001. No execution will start."
+    )
     result = bridge.apply_experiment_review_prompt(preview)
 
     assert result.ok is True
-    assert result.message == "Recorded: variant_0002 is now the preferred baseline in experiment_0001."
+    assert result.message == "Recorded: variant_0002 is now the preferred baseline in experiment_0001. Original baseline remains variant_0001."
 
     state = json.loads((config.runs_dir / home_surface.DEFAULT_SUBMIT_SESSION_ID / "session_state.json").read_text(encoding="utf-8"))
     experiment = state["experiment_tracking"]["experiments"][0]
@@ -2027,7 +2196,7 @@ def test_home_surface_prepare_prompt_shows_current_experiment_decisions_summary(
                             "timestamp": "2026-04-02T07:10:00Z",
                             "order": 3,
                             "source": "explicit_user_review",
-                            "summary": "Latest explicit user decision: set variant_0002 as the preferred baseline.",
+                                    "summary": "Latest explicit user decision: set variant_0002 as the preferred baseline. Original baseline remains variant_0001.",
                         },
                         "variants": [variant_one, variant_two],
                     }
@@ -2054,10 +2223,11 @@ def test_home_surface_prepare_prompt_shows_current_experiment_decisions_summary(
     assert preview.plan_title == "Current experiment decisions"
     assert preview.plan_steps == [
         "variant_0001: make zombie faster -> speed fast (decision: kept, original baseline).",
-        "variant_0002: make it slower -> speed standard (decision: rejected, preferred baseline).",
+        "variant_0002: make it slower -> speed standard (decision: rejected, current variant, preferred baseline).",
     ]
     assert preview.decision_reason.startswith("AI-E is tracking explicit decisions for 2 recorded variant(s) in experiment_0001.")
     assert "Preferred baseline: variant_0002." in preview.decision_reason
+    assert "Rejected variants: variant_0002." in preview.decision_reason
 
 
 def test_home_surface_blocks_experiment_decisions_without_active_experiment(tmp_path):
@@ -2082,7 +2252,7 @@ def test_home_surface_blocks_experiment_decisions_without_active_experiment(tmp_
     assert preview.next_action_label == "Revise request"
     assert (
         preview.decision_reason
-        == "AI-E can show current experiment decisions only after a supported enemy result exists in the current session. Start with something like: 'make zombie faster' or 'make runner faster'."
+        == "AI-E can show current experiment decisions only after a supported tuning result exists in the current session. Start with something like: 'make zombie faster', 'make runner faster', or 'increase encounter count'."
     )
 
 
@@ -2277,8 +2447,8 @@ def test_home_surface_loads_attempt_result_evaluation_from_session_state(tmp_pat
                         "request_id": "REQ_SPEED_002",
                         "plan_id": "",
                         "evaluation_source": "deterministic_rules",
-                        "comparison_description": "Current zombie is slower than previous version.",
-                        "detected_differences": ["Speed tier changed from fast to slow."],
+                        "comparison_description": "What changed\nSpeed changed.\n\nCurrent state vs previous version\nSpeed: slow vs fast\n\nKey differences\nSee explicit deltas below.\n\nExpected gameplay impact\nLower movement speed.",
+                        "detected_differences": ["Speed: fast -> slow"],
                         "suggestion": "",
                     }
                 ],
@@ -2287,8 +2457,8 @@ def test_home_surface_loads_attempt_result_evaluation_from_session_state(tmp_pat
                     "request_id": "REQ_SPEED_002",
                     "plan_id": "",
                     "evaluation_source": "deterministic_rules",
-                    "comparison_description": "Current zombie is slower than previous version.",
-                    "detected_differences": ["Speed tier changed from fast to slow."],
+                    "comparison_description": "What changed\nSpeed changed.\n\nCurrent state vs previous version\nSpeed: slow vs fast\n\nKey differences\nSee explicit deltas below.\n\nExpected gameplay impact\nLower movement speed.",
+                    "detected_differences": ["Speed: fast -> slow"],
                     "suggestion": "",
                 },
             },
@@ -2301,8 +2471,17 @@ def test_home_surface_loads_attempt_result_evaluation_from_session_state(tmp_pat
 
     assert proof.available is True
     assert proof.evaluation_available is True
-    assert proof.evaluation_summary == "Current zombie is slower than previous version."
-    assert proof.evaluation_differences == ["Speed tier changed from fast to slow."]
+    assert proof.evaluation_summary == (
+        "What changed\n"
+        "Speed changed.\n\n"
+        "Current state vs previous version\n"
+        "Speed: slow vs fast\n\n"
+        "Key differences\n"
+        "See explicit deltas below.\n\n"
+        "Expected gameplay impact\n"
+        "Lower movement speed."
+    )
+    assert proof.evaluation_differences == ["Speed: fast -> slow"]
     assert proof.evaluation_suggestion == ""
     assert proof.evaluation_source == "deterministic_rules"
 
@@ -2355,8 +2534,8 @@ def test_home_surface_loads_attempt_result_experiment_metadata_from_session_stat
                     {
                         "task_id": "INTAKE_SPEED_004",
                         "request_id": "REQ_SPEED_004",
-                        "comparison_description": "Current zombie is slower than previous version.",
-                        "detected_differences": ["Speed tier changed from fast to standard."],
+                        "comparison_description": "What changed\nSpeed changed.\n\nCurrent state vs previous version\nSpeed: standard vs fast\n\nKey differences\nSee explicit deltas below.\n\nExpected gameplay impact\nLower movement speed.",
+                        "detected_differences": ["Speed: fast -> standard"],
                         "suggestion": "",
                         "evaluation_source": "deterministic_rules",
                         "experiment_id": "experiment_0001",
@@ -2365,7 +2544,7 @@ def test_home_surface_loads_attempt_result_experiment_metadata_from_session_stat
                         "baseline_variant_id": "variant_0001",
                         "preferred_baseline_variant_id": "variant_0002",
                         "compared_against_variant_id": "variant_0001",
-                        "experiment_comparison_description": "Variant 2 is slower than Variant 1.",
+                        "experiment_comparison_description": "What changed\nSpeed changed.\n\nCurrent variant vs Variant 1\nSpeed: standard vs fast\n\nKey differences\nSpeed: fast -> standard\n\nExpected gameplay impact\nLower movement speed.",
                     }
                 ],
                 "latest_result_evaluation": {},
@@ -2385,7 +2564,7 @@ def test_home_surface_loads_attempt_result_experiment_metadata_from_session_stat
                                 "timestamp": "2026-04-02T06:09:00Z",
                                 "order": 3,
                                 "source": "explicit_user_review",
-                                "summary": "Latest explicit user decision: set variant_0002 as the preferred baseline.",
+                                "summary": "Latest explicit user decision: set variant_0002 as the preferred baseline. Original baseline remains variant_0001.",
                             },
                             "variants": [
                                 _experiment_variant(
@@ -2440,9 +2619,21 @@ def test_home_surface_loads_attempt_result_experiment_metadata_from_session_stat
     assert proof.baseline_variant_id == "variant_0001"
     assert proof.preferred_baseline_variant_id == "variant_0002"
     assert proof.variant_kind == "followup_variant"
-    assert proof.experiment_summary == "Variant 2 is slower than Variant 1."
+    assert proof.experiment_summary == (
+        "What changed\n"
+        "Speed changed.\n\n"
+        "Current variant vs Variant 1\n"
+        "Speed: standard vs fast\n\n"
+        "Key differences\n"
+        "Speed: fast -> standard\n\n"
+        "Expected gameplay impact\n"
+        "Lower movement speed."
+    )
     assert proof.decision_status == "kept"
-    assert proof.latest_decision_summary == "Latest explicit user decision: set variant_0002 as the preferred baseline."
+    assert proof.latest_decision_summary == (
+        "Latest explicit user decision: set variant_0002 as the preferred baseline. "
+        "Original baseline remains variant_0001."
+    )
 
 
 def test_home_surface_omits_evaluation_when_insufficient_history(tmp_path):
@@ -2561,10 +2752,10 @@ def test_home_surface_loads_combined_combat_variation_result_from_session_artifa
                         "request_id": "REQ_PLAN",
                         "plan_id": "PLAN_PLAN",
                         "evaluation_source": "deterministic_rules",
-                        "comparison_description": "Current zombie is faster and more aggressive than previous version.",
+                        "comparison_description": "What changed\nSpeed and aggression changed.\n\nCurrent state vs previous version\nSpeed: fast vs standard\nAggression: aggressive vs standard\n\nKey differences\nSee explicit deltas below.\n\nExpected gameplay impact\nHigher movement speed.\nShorter attack cooldown.",
                         "detected_differences": [
-                            "Speed tier changed from standard to fast.",
-                            "Aggression tier changed from standard to aggressive.",
+                            "Speed: standard -> fast",
+                            "Aggression: standard -> aggressive",
                         ],
                         "suggestion": "",
                     }
@@ -2574,10 +2765,10 @@ def test_home_surface_loads_combined_combat_variation_result_from_session_artifa
                     "request_id": "REQ_PLAN",
                     "plan_id": "PLAN_PLAN",
                     "evaluation_source": "deterministic_rules",
-                    "comparison_description": "Current zombie is faster and more aggressive than previous version.",
+                    "comparison_description": "What changed\nSpeed and aggression changed.\n\nCurrent state vs previous version\nSpeed: fast vs standard\nAggression: aggressive vs standard\n\nKey differences\nSee explicit deltas below.\n\nExpected gameplay impact\nHigher movement speed.\nShorter attack cooldown.",
                     "detected_differences": [
-                        "Speed tier changed from standard to fast.",
-                        "Aggression tier changed from standard to aggressive.",
+                        "Speed: standard -> fast",
+                        "Aggression: standard -> aggressive",
                     ],
                     "suggestion": "",
                 },
@@ -2681,10 +2872,21 @@ def test_home_surface_loads_combined_combat_variation_result_from_session_artifa
     assert "attack cooldown" in proof.before_after_summary.lower()
     assert proof.validation_outcome == "All recorded validation checks passed across 2 planned step(s)."
     assert proof.evaluation_available is True
-    assert proof.evaluation_summary == "Current zombie is faster and more aggressive than previous version."
+    assert proof.evaluation_summary == (
+        "What changed\n"
+        "Speed and aggression changed.\n\n"
+        "Current state vs previous version\n"
+        "Speed: fast vs standard\n"
+        "Aggression: aggressive vs standard\n\n"
+        "Key differences\n"
+        "See explicit deltas below.\n\n"
+        "Expected gameplay impact\n"
+        "Higher movement speed.\n"
+        "Shorter attack cooldown."
+    )
     assert proof.evaluation_differences == [
-        "Speed tier changed from standard to fast.",
-        "Aggression tier changed from standard to aggressive.",
+        "Speed: standard -> fast",
+        "Aggression: standard -> aggressive",
     ]
     assert proof.evaluation_suggestion == ""
     assert proof.evaluation_source == "deterministic_rules"
@@ -3578,6 +3780,490 @@ def test_task_intake_blocks_mutation_that_exceeds_locked_project_rating(tmp_path
     assert runtime_payload["runtime_task"]["requested_content_dimensions"]["dismemberment"] is True
 
 
+def test_task_intake_routes_direct_encounter_count_prompt(tmp_path):
+    config = _make_config(tmp_path / "encounter_count_mutation_request")
+    _write_encounter_capability_contracts(config)
+    target_repo = _create_entity_transform_prompt_repo(config)
+    intake = ConversationalTaskIntake(config)
+
+    result = intake.accept_message(
+        "increase encounter count",
+        session_id="operator-session-encounter-count",
+        target_repo=target_repo,
+    )
+
+    runtime_payload = json.loads(result.artifacts.runtime_task_payload_path.read_text(encoding="utf-8"))
+
+    assert result.task_type == "mutation_request"
+    assert result.queue_entry["status"] == "needs_approval"
+    assert result.routing.capability_id == "level_0001_increase_encounter_count"
+    assert result.routing.decision == "sandbox_first"
+    assert result.routing.plan_title is None
+    assert runtime_payload["runtime_task"]["operator_prompt"] == "increase encounter count"
+
+
+def test_task_intake_routes_direct_spawn_pressure_prompt(tmp_path):
+    config = _make_config(tmp_path / "spawn_pressure_mutation_request")
+    _write_encounter_capability_contracts(config)
+    target_repo = _create_entity_transform_prompt_repo(config)
+    intake = ConversationalTaskIntake(config)
+
+    result = intake.accept_message(
+        "decrease spawn pressure",
+        session_id="operator-session-spawn-pressure",
+        target_repo=target_repo,
+    )
+
+    runtime_payload = json.loads(result.artifacts.runtime_task_payload_path.read_text(encoding="utf-8"))
+
+    assert result.task_type == "mutation_request"
+    assert result.queue_entry["status"] == "needs_approval"
+    assert result.routing.capability_id == "level_0001_decrease_spawn_pressure"
+    assert result.routing.decision == "sandbox_first"
+    assert runtime_payload["runtime_task"]["operator_prompt"] == "decrease spawn pressure"
+
+
+def test_task_intake_resolves_goal_intent_prompt_to_predefined_encounter_plan(tmp_path):
+    config = _make_config(tmp_path / "goal_intent_encounter_intensity_plan")
+    _write_encounter_capability_contracts(config)
+    target_repo = _create_entity_transform_prompt_repo(config)
+    intake = ConversationalTaskIntake(config)
+
+    result = intake.accept_message(
+        "make encounter more intense",
+        session_id="operator-session-goal-intent-encounter",
+        target_repo=target_repo,
+    )
+
+    request_payload = json.loads(result.artifacts.request_payload_path.read_text(encoding="utf-8"))
+    runtime_payloads = [
+        json.loads(path.read_text(encoding="utf-8"))["runtime_task"]
+        for path in result.artifacts.runtime_task_payload_paths
+    ]
+
+    assert result.task_type == "mutation_plan_request"
+    assert result.routing.resolution_source == "goal_intent_mapping"
+    assert result.routing.mapped_prompt == "increase encounter intensity"
+    assert result.routing.plan_title == "Increase encounter intensity"
+    assert result.routing.decision == "sandbox_first"
+    assert result.plan_step_titles == [
+        "Increase encounter count",
+        "Increase spawn pressure",
+    ]
+    assert result.routing.session_resolution_note == (
+        'AI-E mapped the gameplay goal "make encounter more intense" to the bounded plan "increase encounter intensity".'
+    )
+    assert request_payload["conversational_request"]["context"]["resolved_execution_prompt"] == "increase encounter intensity"
+    assert [payload["operator_prompt"] for payload in runtime_payloads] == [
+        "increase encounter count",
+        "increase spawn pressure",
+    ]
+
+
+def test_task_intake_resolves_restore_encounter_goal_intent_prompt_to_standard_plan(tmp_path):
+    config = _make_config(tmp_path / "goal_intent_encounter_restore_plan")
+    _write_encounter_capability_contracts(config)
+    target_repo = _create_entity_transform_prompt_repo(config)
+    intake = ConversationalTaskIntake(config)
+
+    result = intake.accept_message(
+        "restore encounter to standard",
+        session_id="operator-session-goal-intent-encounter-restore",
+        target_repo=target_repo,
+    )
+
+    runtime_payloads = [
+        json.loads(path.read_text(encoding="utf-8"))["runtime_task"]
+        for path in result.artifacts.runtime_task_payload_paths
+    ]
+
+    assert result.task_type == "mutation_plan_request"
+    assert result.routing.resolution_source == "goal_intent_mapping"
+    assert result.routing.mapped_prompt == "restore encounter to standard"
+    assert result.routing.plan_title == "Restore encounter to standard"
+    assert [payload["operator_prompt"] for payload in runtime_payloads] == [
+        "restore encounter count to standard",
+        "restore spawn pressure to standard",
+    ]
+
+
+def test_home_surface_prepare_prompt_resolves_encounter_followup_when_unambiguous(tmp_path):
+    config = _make_config(tmp_path / "home_surface_encounter_followup")
+    _write_encounter_capability_contracts(config)
+    target_repo = _create_entity_transform_prompt_repo(config)
+    intake = ConversationalTaskIntake(config)
+    bridge = home_surface.IntakePreviewBridge()
+    bridge._create_intake = lambda: intake
+    project = home_surface.SupportedProject(
+        name="BABYLON TEST",
+        path=Path(target_repo),
+        project_type="unity_project",
+        source="test",
+        status="supported",
+    )
+
+    state_store = StateStore(config.runs_dir, home_surface.DEFAULT_SUBMIT_SESSION_ID)
+    state_store.save(
+        {
+            "session_id": home_surface.DEFAULT_SUBMIT_SESSION_ID,
+            "session_tuning_history": [
+                {
+                    "family": "encounter_count",
+                    "target_context": "encounter",
+                    "target_entity": "encounter",
+                    "source_prompt": "increase encounter count",
+                    "canonical_prompt": "increase encounter count",
+                    "previous_tier": "standard",
+                    "requested_tier": "high",
+                    "resulting_tier": "high",
+                    "executed": True,
+                    "result_reason": "applied",
+                }
+            ],
+            "session_tuning_state": {
+                "target_context": "encounter",
+                "target_entity": "encounter",
+                "last_mutation": {
+                    "family": "encounter_count",
+                    "target_context": "encounter",
+                    "target_entity": "encounter",
+                    "resulting_tier": "high",
+                },
+                "contexts": {
+                    "encounter": {
+                        "encounter_count": {
+                            "family": "encounter_count",
+                            "target_context": "encounter",
+                            "target_entity": "encounter",
+                            "resulting_tier": "high",
+                        },
+                        "last_mutation": {
+                            "family": "encounter_count",
+                            "target_context": "encounter",
+                            "target_entity": "encounter",
+                            "resulting_tier": "high",
+                        },
+                    }
+                },
+            },
+            "experiment_tracking": {},
+            "latest_experiment_variant": {},
+            "result_state_history": [],
+            "result_evaluation_history": [],
+            "latest_result_evaluation": {},
+        }
+    )
+
+    preview = bridge.prepare_prompt("make it easier", project)
+
+    assert preview.available is True
+    assert preview.decision_state == "Sandbox first"
+    assert preview.confirmation_required is False
+    assert preview.plan_title == "Reduce encounter intensity"
+    assert preview.mapped_prompt == "decrease encounter intensity"
+    assert preview.plan_steps == [
+        "Decrease encounter count",
+        "Decrease spawn pressure",
+    ]
+    assert preview.decision_reason.startswith('AI-E resolved "make it easier" from the current encounter session')
+
+
+def test_home_surface_blocks_followup_when_enemy_and_encounter_contexts_are_mixed(tmp_path):
+    config = _make_config(tmp_path / "home_surface_mixed_followup_blocked")
+    _write_zombie_speed_capability_contracts(config)
+    _write_runner_speed_capability_contracts(config)
+    _write_encounter_capability_contracts(config)
+    target_repo = _create_entity_transform_prompt_repo(config)
+    intake = ConversationalTaskIntake(config)
+    bridge = home_surface.IntakePreviewBridge()
+    bridge._create_intake = lambda: intake
+    project = home_surface.SupportedProject(
+        name="BABYLON TEST",
+        path=Path(target_repo),
+        project_type="unity_project",
+        source="test",
+        status="supported",
+    )
+
+    state_store = StateStore(config.runs_dir, home_surface.DEFAULT_SUBMIT_SESSION_ID)
+    state_store.save(
+        {
+            "session_id": home_surface.DEFAULT_SUBMIT_SESSION_ID,
+            "session_tuning_history": [
+                {
+                    "family": "speed",
+                    "target_context": "zombie",
+                    "target_entity": "zombie",
+                    "source_prompt": "make zombie faster",
+                    "canonical_prompt": "make zombie faster",
+                    "previous_tier": "standard",
+                    "requested_tier": "fast",
+                    "resulting_tier": "fast",
+                    "executed": True,
+                    "result_reason": "applied",
+                },
+                {
+                    "family": "encounter_count",
+                    "target_context": "encounter",
+                    "target_entity": "encounter",
+                    "source_prompt": "increase encounter count",
+                    "canonical_prompt": "increase encounter count",
+                    "previous_tier": "standard",
+                    "requested_tier": "high",
+                    "resulting_tier": "high",
+                    "executed": True,
+                    "result_reason": "applied",
+                },
+            ],
+            "session_tuning_state": {
+                "target_context": "encounter",
+                "target_entity": "encounter",
+                "last_mutation": {
+                    "family": "encounter_count",
+                    "target_context": "encounter",
+                    "target_entity": "encounter",
+                    "resulting_tier": "high",
+                },
+                "contexts": {
+                    "zombie": {
+                        "speed": {
+                            "family": "speed",
+                            "target_context": "zombie",
+                            "target_entity": "zombie",
+                            "resulting_tier": "fast",
+                        }
+                    },
+                    "encounter": {
+                        "encounter_count": {
+                            "family": "encounter_count",
+                            "target_context": "encounter",
+                            "target_entity": "encounter",
+                            "resulting_tier": "high",
+                        },
+                        "last_mutation": {
+                            "family": "encounter_count",
+                            "target_context": "encounter",
+                            "target_entity": "encounter",
+                            "resulting_tier": "high",
+                        },
+                    },
+                },
+            },
+            "experiment_tracking": {},
+            "latest_experiment_variant": {},
+            "result_state_history": [],
+            "result_evaluation_history": [],
+            "latest_result_evaluation": {},
+        }
+    )
+
+    preview = bridge.prepare_prompt("make it easier", project)
+
+    assert preview.available is True
+    assert preview.decision_state == "Blocked"
+    assert preview.confirmation_required is False
+    assert preview.next_action_label == "Revise request"
+    assert preview.plan_title == "Clarify target"
+    assert preview.plan_steps == [
+        "make zombie easier",
+        "make runner easier",
+        "make encounter easier",
+    ]
+    assert preview.plan_execution_mode == "Clarification required"
+    assert "contains both" in preview.decision_reason
+    assert "ambiguous between entity tuning and encounter tuning" in preview.decision_reason
+    assert "make encounter easier" in preview.decision_reason
+
+
+def test_task_intake_blocks_mixed_followup_with_clarification_options_and_no_execution(tmp_path):
+    config = _make_config(tmp_path / "task_intake_mixed_followup_blocked")
+    _write_zombie_speed_capability_contracts(config)
+    _write_runner_speed_capability_contracts(config)
+    _write_encounter_capability_contracts(config)
+    target_repo = _create_entity_transform_prompt_repo(config)
+    state_store = StateStore(config.runs_dir, "mixed-followup-intake-session")
+    state_store.save(
+        {
+            "session_id": "mixed-followup-intake-session",
+            "session_tuning_history": [
+                {
+                    "family": "speed",
+                    "target_context": "zombie",
+                    "target_entity": "zombie",
+                    "source_prompt": "make zombie faster",
+                    "canonical_prompt": "make zombie faster",
+                    "previous_tier": "standard",
+                    "requested_tier": "fast",
+                    "resulting_tier": "fast",
+                    "executed": True,
+                    "result_reason": "applied",
+                },
+                {
+                    "family": "encounter_count",
+                    "target_context": "encounter",
+                    "target_entity": "encounter",
+                    "source_prompt": "increase encounter count",
+                    "canonical_prompt": "increase encounter count",
+                    "previous_tier": "standard",
+                    "requested_tier": "high",
+                    "resulting_tier": "high",
+                    "executed": True,
+                    "result_reason": "applied",
+                },
+            ],
+            "session_tuning_state": {
+                "target_context": "encounter",
+                "target_entity": "encounter",
+                "contexts": {
+                    "zombie": {
+                        "speed": {
+                            "family": "speed",
+                            "target_context": "zombie",
+                            "target_entity": "zombie",
+                            "resulting_tier": "fast",
+                        }
+                    },
+                    "encounter": {
+                        "encounter_count": {
+                            "family": "encounter_count",
+                            "target_context": "encounter",
+                            "target_entity": "encounter",
+                            "resulting_tier": "high",
+                        }
+                    },
+                },
+            },
+            "experiment_tracking": {},
+            "latest_experiment_variant": {},
+            "result_state_history": [],
+            "result_evaluation_history": [],
+            "latest_result_evaluation": {},
+        }
+    )
+    intake = ConversationalTaskIntake(config)
+
+    result = intake.accept_message(
+        "make it easier",
+        session_id="mixed-followup-intake-session",
+        target_repo=target_repo,
+    )
+
+    runtime_payload = json.loads(result.artifacts.runtime_task_payload_path.read_text(encoding="utf-8"))["runtime_task"]
+
+    assert result.queue_entry["status"] == "blocked"
+    assert result.routing.decision == "block"
+    assert result.routing.clarification_options == [
+        "make zombie easier",
+        "make runner easier",
+        "make encounter easier",
+    ]
+    assert result.routing.plan_expected_outcome == (
+        "Clarification only. No execution will start until you choose one explicit supported request."
+    )
+    assert runtime_payload["decision"] == "block"
+    assert runtime_payload["clarification_options"] == [
+        "make zombie easier",
+        "make runner easier",
+        "make encounter easier",
+    ]
+
+
+def test_home_surface_prepare_prompt_shows_current_encounter_experiment_decisions(tmp_path):
+    config = _make_config(tmp_path / "home_surface_encounter_experiment_decisions")
+    _write_encounter_capability_contracts(config)
+    target_repo = _create_entity_transform_prompt_repo(config)
+    intake = ConversationalTaskIntake(config)
+    bridge = home_surface.IntakePreviewBridge()
+    bridge._create_intake = lambda: intake
+    project = home_surface.SupportedProject(
+        name="BABYLON TEST",
+        path=Path(target_repo),
+        project_type="unity_project",
+        source="test",
+        status="supported",
+    )
+
+    state_store = StateStore(config.runs_dir, home_surface.DEFAULT_SUBMIT_SESSION_ID)
+    state_store.save(
+        {
+            "session_id": home_surface.DEFAULT_SUBMIT_SESSION_ID,
+            "experiment_tracking": {
+                "active_experiment_id": "experiment_0001",
+                "experiments": [
+                    {
+                        "experiment_id": "experiment_0001",
+                        "target_context": "encounter",
+                        "target_entity": "encounter",
+                        "active_variant_id": "variant_0001",
+                        "baseline_variant_id": "variant_0001",
+                        "preferred_baseline_variant_id": "",
+                        "latest_decision": {},
+                        "variants": [
+                            {
+                                "experiment_id": "experiment_0001",
+                                "variant_id": "variant_0001",
+                                "baseline_variant_id": "variant_0001",
+                                "baseline_marker": True,
+                                "variant_kind": "baseline",
+                                "source_prompt": "increase encounter count",
+                                "canonical_prompt": "increase encounter count",
+                                "encounter_count_tier": "high",
+                                "spawn_pressure_tier": "standard",
+                                "outcome_summary": "encounter count high, spawn pressure standard",
+                                "decision_status": "undecided",
+                                "target_context": "encounter",
+                                "target_entity": "encounter",
+                            }
+                        ],
+                    }
+                ],
+            },
+            "session_tuning_history": [],
+            "session_tuning_state": {},
+            "latest_experiment_variant": {},
+            "result_state_history": [],
+            "result_evaluation_history": [],
+            "latest_result_evaluation": {},
+        }
+    )
+
+    preview = bridge.prepare_prompt("show current experiment decisions", project)
+
+    assert preview.available is True
+    assert preview.decision_state == "Review only"
+    assert preview.plan_execution_mode == "Current session summary"
+    assert "Target context: encounter." in preview.decision_reason
+    assert "encounter count high" in " ".join(preview.plan_steps).lower()
+
+
+def test_home_surface_prepare_prompt_allows_explicit_encounter_goal_without_clarification(tmp_path):
+    config = _make_config(tmp_path / "home_surface_explicit_encounter_goal")
+    _write_encounter_capability_contracts(config)
+    target_repo = _create_entity_transform_prompt_repo(config)
+    intake = ConversationalTaskIntake(config)
+    bridge = home_surface.IntakePreviewBridge()
+    bridge._create_intake = lambda: intake
+    project = home_surface.SupportedProject(
+        name="BABYLON TEST",
+        path=Path(target_repo),
+        project_type="unity_project",
+        source="test",
+        status="supported",
+    )
+
+    preview = bridge.prepare_prompt("make encounter easier", project)
+
+    assert preview.available is True
+    assert preview.decision_state == "Sandbox first"
+    assert preview.confirmation_required is False
+    assert preview.plan_title == "Reduce encounter intensity"
+    assert preview.plan_steps == [
+        "Decrease encounter count",
+        "Decrease spawn pressure",
+    ]
+    assert preview.plan_title != "Clarify target"
+
+
 def _write_grass_capability_contracts(config: OrchestratorConfig) -> None:
     capabilities_dir = config.contracts_dir / "capabilities"
     capabilities_dir.mkdir(parents=True, exist_ok=True)
@@ -3988,6 +4674,75 @@ def test_task_intake_resolves_runner_session_followup_when_unambiguous(tmp_path)
     assert result.routing.decision == "sandbox_first"
 
 
+def test_task_intake_resolves_runner_session_make_it_easier_when_unambiguous(tmp_path):
+    config = _make_config(tmp_path / "runner_followup_easier")
+    _write_runner_speed_capability_contracts(config)
+    _write_runner_aggression_capability_contract(config)
+    target_repo = _create_entity_transform_prompt_repo(config)
+    intake = ConversationalTaskIntake(config)
+    state_store = StateStore(config.runs_dir, "runner-followup-easier-session")
+    state_store.save(
+        {
+            "session_id": "runner-followup-easier-session",
+            "session_tuning_history": [
+                {
+                    "order": 1,
+                    "family": "speed",
+                    "target_context": "runner",
+                    "target_entity": "runner",
+                    "source_prompt": "make runner faster",
+                    "canonical_prompt": "make runner faster",
+                    "requested_tier": "fast",
+                    "resulting_tier": "fast",
+                    "executed": True,
+                    "result_reason": "applied",
+                }
+            ],
+            "session_tuning_state": {
+                "target_context": "runner",
+                "target_entity": "runner",
+                "last_mutation": {
+                    "family": "speed",
+                    "target_context": "runner",
+                    "target_entity": "runner",
+                    "resulting_tier": "fast",
+                    "canonical_prompt": "make runner faster",
+                },
+                "contexts": {
+                    "runner": {
+                        "last_mutation": {
+                            "family": "speed",
+                            "target_context": "runner",
+                            "target_entity": "runner",
+                            "resulting_tier": "fast",
+                            "canonical_prompt": "make runner faster",
+                        },
+                        "speed": {
+                            "family": "speed",
+                            "target_context": "runner",
+                            "target_entity": "runner",
+                            "resulting_tier": "fast",
+                            "canonical_prompt": "make runner faster",
+                        },
+                    }
+                },
+            },
+        }
+    )
+
+    result = intake.accept_message(
+        "make it easier",
+        session_id="runner-followup-easier-session",
+        target_repo=target_repo,
+    )
+
+    assert result.queue_entry["status"] != "blocked"
+    assert result.routing.resolution_source == "session_followup_resolution"
+    assert result.routing.mapped_prompt == "restore runner danger to standard"
+    assert result.routing.clarification_options in (None, [])
+    assert result.routing.decision == "sandbox_first"
+
+
 def test_task_intake_shows_runner_experiment_decision_review_summary(tmp_path):
     config = _make_config(tmp_path / "runner_experiment_review")
     intake = ConversationalTaskIntake(config)
@@ -4033,7 +4788,7 @@ def test_task_intake_shows_runner_experiment_decision_review_summary(tmp_path):
 
     assert result.task_type == "experiment_review_request"
     assert result.routing.plan_title == "Current experiment decisions"
-    assert "Target entity: runner." in result.routing.decision_summary
+    assert "Target context: runner." in result.routing.decision_summary
     assert any(
         "variant_0002: make runner more dangerous" in line
         for line in result.routing.plan_step_titles or []
@@ -4085,7 +4840,7 @@ def test_task_intake_shows_runner_experiment_variant_review_summary(tmp_path):
 
     assert result.task_type == "experiment_review_request"
     assert result.routing.plan_title == "Current experiment variants"
-    assert "Target entity: runner." in result.routing.decision_summary
+    assert "Target context: runner." in result.routing.decision_summary
     assert any(
         "variant_0001: make runner faster" in line
         for line in result.routing.plan_step_titles or []
@@ -4161,13 +4916,13 @@ def test_home_surface_apply_runner_experiment_decision_updates_keep_and_preferre
     keep_preview = bridge.prepare_prompt("keep current variant", project)
     keep_result = bridge.apply_experiment_review_prompt(keep_preview)
     assert keep_result.ok is True
-    assert keep_result.message == "Recorded: variant_0002 is kept in experiment_0004."
+    assert keep_result.message == "Recorded: variant_0002 was kept in experiment_0004. Original baseline remains variant_0001."
 
     bridge._get_current_timestamp_fn = lambda: "2026-04-02T08:05:00Z"
     baseline_preview = bridge.prepare_prompt("set current variant as baseline", project)
     baseline_result = bridge.apply_experiment_review_prompt(baseline_preview)
     assert baseline_result.ok is True
-    assert baseline_result.message == "Recorded: variant_0002 is now the preferred baseline in experiment_0004."
+    assert baseline_result.message == "Recorded: variant_0002 is now the preferred baseline in experiment_0004. Original baseline remains variant_0001."
 
     updated_state = json.loads(
         (config.runs_dir / home_surface.DEFAULT_SUBMIT_SESSION_ID / "session_state.json").read_text(encoding="utf-8")
@@ -4231,8 +4986,8 @@ def test_home_surface_loads_runner_result_with_evaluation_and_decision_metadata(
                         "task_id": "INTAKE_RUNNER_SPEED_001",
                         "request_id": "REQ_RUNNER_SPEED_001",
                         "evaluation_source": "deterministic_rules",
-                        "comparison_description": "Current runner is faster than previous version.",
-                        "detected_differences": ["Runner speed tier changed from standard to fast."],
+                        "comparison_description": "What changed\nSpeed changed.\n\nCurrent state vs previous version\nSpeed: fast vs standard\n\nKey differences\nSee explicit deltas below.\n\nExpected gameplay impact\nHigher movement speed.",
+                        "detected_differences": ["Speed: standard -> fast"],
                         "suggestion": "",
                         "experiment_id": "experiment_0004",
                         "variant_id": "variant_0002",
@@ -4245,8 +5000,8 @@ def test_home_surface_loads_runner_result_with_evaluation_and_decision_metadata(
                     "task_id": "INTAKE_RUNNER_SPEED_001",
                     "request_id": "REQ_RUNNER_SPEED_001",
                     "evaluation_source": "deterministic_rules",
-                    "comparison_description": "Current runner is faster than previous version.",
-                    "detected_differences": ["Runner speed tier changed from standard to fast."],
+                    "comparison_description": "What changed\nSpeed changed.\n\nCurrent state vs previous version\nSpeed: fast vs standard\n\nKey differences\nSee explicit deltas below.\n\nExpected gameplay impact\nHigher movement speed.",
+                    "detected_differences": ["Speed: standard -> fast"],
                     "suggestion": "",
                     "experiment_id": "experiment_0004",
                     "variant_id": "variant_0002",
@@ -4269,7 +5024,7 @@ def test_home_surface_loads_runner_result_with_evaluation_and_decision_metadata(
                                 "timestamp": "2026-04-02T08:05:00Z",
                                 "order": 2,
                                 "source": "explicit_user_review",
-                                "summary": "Latest explicit user decision: set variant_0002 as the preferred baseline.",
+                                "summary": "Latest explicit user decision: set variant_0002 as the preferred baseline. Original baseline remains variant_0001.",
                             },
                             "variants": [
                                 {
@@ -4307,13 +5062,108 @@ def test_home_surface_loads_runner_result_with_evaluation_and_decision_metadata(
     assert proof.available is True
     assert proof.original_request == "make runner faster"
     assert proof.evaluation_available is True
-    assert proof.evaluation_summary == "Current runner is faster than previous version."
+    assert proof.evaluation_summary == (
+        "What changed\n"
+        "Speed changed.\n\n"
+        "Current state vs previous version\n"
+        "Speed: fast vs standard\n\n"
+        "Key differences\n"
+        "See explicit deltas below.\n\n"
+        "Expected gameplay impact\n"
+        "Higher movement speed."
+    )
+    assert proof.evaluation_differences == ["Speed: standard -> fast"]
     assert proof.experiment_available is True
     assert proof.experiment_id == "experiment_0004"
     assert proof.variant_id == "variant_0002"
     assert proof.preferred_baseline_variant_id == "variant_0002"
     assert proof.decision_status == "kept"
     assert "runner" in proof.before_after_summary.lower()
+
+
+def test_result_evaluation_formats_combined_encounter_deltas_deterministically():
+    state = {
+        "session_tuning_state": {
+            "target_context": "encounter",
+            "target_entity": "encounter",
+            "contexts": {
+                "encounter": {
+                    "encounter_count": {
+                        "resulting_tier": "standard",
+                        "observed_value": 5,
+                        "target_context": "encounter",
+                    },
+                    "spawn_pressure": {
+                        "resulting_tier": "standard",
+                        "observed_value": 6.0,
+                        "target_context": "encounter",
+                    },
+                }
+            },
+        },
+        "result_state_history": [],
+        "result_evaluation_history": [],
+        "latest_result_evaluation": {},
+    }
+
+    state = apply_result_evaluation(
+        state,
+        task={
+            "task_id": "TASK_ENCOUNTER_BASELINE",
+            "request_id": "REQ_ENCOUNTER_BASELINE",
+            "plan_id": "",
+            "plan_total_steps": 1,
+            "plan_step_index": 1,
+            "operator_prompt": "restore encounter count to standard",
+        },
+        timestamp="2026-04-03T12:00:00Z",
+    )
+
+    state["session_tuning_state"]["contexts"]["encounter"]["encounter_count"] = {
+        "resulting_tier": "high",
+        "observed_value": 7,
+        "target_context": "encounter",
+    }
+    state["session_tuning_state"]["contexts"]["encounter"]["spawn_pressure"] = {
+        "resulting_tier": "high",
+        "observed_value": 4.0,
+        "target_context": "encounter",
+    }
+
+    state = apply_result_evaluation(
+        state,
+        task={
+            "task_id": "TASK_ENCOUNTER_VARIANT",
+            "request_id": "REQ_ENCOUNTER_VARIANT",
+            "plan_id": "",
+            "plan_total_steps": 1,
+            "plan_step_index": 1,
+            "operator_prompt": "increase spawn pressure",
+        },
+        timestamp="2026-04-03T12:01:00Z",
+    )
+
+    evaluation = state["latest_result_evaluation"]
+
+    assert evaluation["comparison_description"] == (
+        "What changed\n"
+        "Spawn count and spawn interval changed.\n\n"
+        "Current state vs previous version\n"
+        "Spawn count: 7 vs 5\n"
+        "Spawn interval: 4.0s vs 6.0s\n\n"
+        "Key differences\n"
+        "See explicit deltas below.\n\n"
+        "Expected gameplay impact\n"
+        "More enemies per encounter.\n"
+        "Spawn interval is shorter, which increases pressure."
+    )
+    assert evaluation["detected_differences"] == [
+        "Spawn count: 5 -> 7",
+        "Spawn interval: 6.0s -> 4.0s (higher pressure)",
+    ]
+    combined_text = "\n".join([evaluation["comparison_description"], *evaluation["detected_differences"]]).lower()
+    assert "better" not in combined_text
+    assert "best" not in combined_text
 
 
 def _write_move_zombie_capability_contract(config: OrchestratorConfig) -> None:
@@ -4507,6 +5357,51 @@ def _write_runner_aggression_capability_contract(config: OrchestratorConfig) -> 
     _write_enemy_aggression_capability_contract(config, entity="runner")
 
 
+def _write_encounter_capability_contracts(config: OrchestratorConfig) -> None:
+    capabilities_dir = config.contracts_dir / "capabilities"
+    capabilities_dir.mkdir(parents=True, exist_ok=True)
+    for capability_id, title, match_terms, match_verbs in (
+        ("level_0001_increase_encounter_count", "LEVEL_0001 increase encounter count", ("encounter", "count"), ("increase",)),
+        ("level_0001_decrease_encounter_count", "LEVEL_0001 decrease encounter count", ("encounter", "count"), ("decrease",)),
+        (
+            "level_0001_restore_encounter_count_standard",
+            "LEVEL_0001 restore encounter count to standard",
+            ("encounter", "count", "standard"),
+            ("restore",),
+        ),
+        ("level_0001_increase_spawn_pressure", "LEVEL_0001 increase spawn pressure", ("spawn", "pressure"), ("increase",)),
+        ("level_0001_decrease_spawn_pressure", "LEVEL_0001 decrease spawn pressure", ("spawn", "pressure"), ("decrease",)),
+        (
+            "level_0001_restore_spawn_pressure_standard",
+            "LEVEL_0001 restore spawn pressure to standard",
+            ("spawn", "pressure", "standard"),
+            ("restore",),
+        ),
+    ):
+        (capabilities_dir / f"{capability_id}.json").write_text(
+            json.dumps(
+                {
+                    "capability_id": capability_id,
+                    "title": title,
+                    "intent": "mutate",
+                    "target_level": "LEVEL_0001",
+                    "target_scene": "Assets/AI_E_TestScenes/entity_test.unity",
+                    "requested_execution_lane": "approval_required_mutation",
+                    "handler_name": "level_0001_entity_transform_handler",
+                    "agent_type": "level_0001_entity_transform_mutation_agent",
+                    "approval_required": True,
+                    "eligible_for_auto": False,
+                    "evidence_state": "experimental",
+                    "safety_class": "approval_gated_automation",
+                    "match_terms": list(match_terms),
+                    "match_verbs": list(match_verbs),
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+
 def _create_entity_transform_prompt_repo(config: OrchestratorConfig, *, target_repo_name: str = "BABYLON_TEST") -> str:
     target_repo = config.root_dir / target_repo_name
     tools_dir = target_repo / "Tools"
@@ -4517,6 +5412,8 @@ def _create_entity_transform_prompt_repo(config: OrchestratorConfig, *, target_r
     (tools_dir / "run_unity_mutate_entity_transform.ps1").write_text("placeholder", encoding="utf-8")
     (tools_dir / "run_unity_mutate_enemy_move_speed.ps1").write_text("placeholder", encoding="utf-8")
     (tools_dir / "run_unity_mutate_enemy_aggression.ps1").write_text("placeholder", encoding="utf-8")
+    (tools_dir / "run_unity_mutate_encounter_count.ps1").write_text("placeholder", encoding="utf-8")
+    (tools_dir / "run_unity_mutate_spawn_pressure.ps1").write_text("placeholder", encoding="utf-8")
     (tools_dir / "aie_prompt_aliases.json").write_text(
         json.dumps(
             {
@@ -4569,6 +5466,30 @@ def _create_entity_transform_prompt_repo(config: OrchestratorConfig, *, target_r
                     {
                         "normalized_prompt": "restore runner aggression to standard",
                         "translated_command": "restore runner aggression to standard",
+                    },
+                    {
+                        "normalized_prompt": "increase encounter count",
+                        "translated_command": "increase encounter count",
+                    },
+                    {
+                        "normalized_prompt": "decrease encounter count",
+                        "translated_command": "decrease encounter count",
+                    },
+                    {
+                        "normalized_prompt": "restore encounter count to standard",
+                        "translated_command": "restore encounter count to standard",
+                    },
+                    {
+                        "normalized_prompt": "increase spawn pressure",
+                        "translated_command": "increase spawn pressure",
+                    },
+                    {
+                        "normalized_prompt": "decrease spawn pressure",
+                        "translated_command": "decrease spawn pressure",
+                    },
+                    {
+                        "normalized_prompt": "restore spawn pressure to standard",
+                        "translated_command": "restore spawn pressure to standard",
                     }
                 ],
             },
@@ -4792,6 +5713,114 @@ def _create_entity_transform_prompt_repo(config: OrchestratorConfig, *, target_r
                             "BaselineAttackCooldown": 0.8,
                             "MinAttackCooldown": 0.25,
                             "MaxAttackCooldown": 2.0
+                        }
+                    },
+                    {
+                        "normalized_command": "increase encounter count",
+                        "action_name": "increase_encounter_count",
+                        "entity_type": "encounter",
+                        "probe_name": "MutateEncounterCount",
+                        "wrapper_path": "Tools/run_unity_mutate_encounter_count.ps1",
+                        "probe_artifact_file": "intent_increase_encounter_count_probe_result.json",
+                        "probe_log_file": "intent_increase_encounter_count_probe.log",
+                        "wrapper_arguments": {
+                            "ProjectPath": ".",
+                            "SceneName": "entity_test",
+                            "SpawnerName": "EncounterSpawner_Main",
+                            "RequestedEncounterCount": 7,
+                            "BaselineEncounterCount": 5,
+                            "MinEncounterCount": 3,
+                            "MaxEncounterCount": 7
+                        }
+                    },
+                    {
+                        "normalized_command": "decrease encounter count",
+                        "action_name": "decrease_encounter_count",
+                        "entity_type": "encounter",
+                        "probe_name": "MutateEncounterCount",
+                        "wrapper_path": "Tools/run_unity_mutate_encounter_count.ps1",
+                        "probe_artifact_file": "intent_decrease_encounter_count_probe_result.json",
+                        "probe_log_file": "intent_decrease_encounter_count_probe.log",
+                        "wrapper_arguments": {
+                            "ProjectPath": ".",
+                            "SceneName": "entity_test",
+                            "SpawnerName": "EncounterSpawner_Main",
+                            "RequestedEncounterCount": 3,
+                            "BaselineEncounterCount": 5,
+                            "MinEncounterCount": 3,
+                            "MaxEncounterCount": 7
+                        }
+                    },
+                    {
+                        "normalized_command": "restore encounter count to standard",
+                        "action_name": "set_encounter_count",
+                        "entity_type": "encounter",
+                        "probe_name": "MutateEncounterCount",
+                        "wrapper_path": "Tools/run_unity_mutate_encounter_count.ps1",
+                        "probe_artifact_file": "intent_restore_encounter_count_to_standard_probe_result.json",
+                        "probe_log_file": "intent_restore_encounter_count_to_standard_probe.log",
+                        "wrapper_arguments": {
+                            "ProjectPath": ".",
+                            "SceneName": "entity_test",
+                            "SpawnerName": "EncounterSpawner_Main",
+                            "RequestedEncounterCount": 5,
+                            "BaselineEncounterCount": 5,
+                            "MinEncounterCount": 3,
+                            "MaxEncounterCount": 7
+                        }
+                    },
+                    {
+                        "normalized_command": "increase spawn pressure",
+                        "action_name": "increase_spawn_pressure",
+                        "entity_type": "encounter",
+                        "probe_name": "MutateSpawnPressure",
+                        "wrapper_path": "Tools/run_unity_mutate_spawn_pressure.ps1",
+                        "probe_artifact_file": "intent_increase_spawn_pressure_probe_result.json",
+                        "probe_log_file": "intent_increase_spawn_pressure_probe.log",
+                        "wrapper_arguments": {
+                            "ProjectPath": ".",
+                            "SceneName": "entity_test",
+                            "SpawnerName": "EncounterSpawner_Main",
+                            "RequestedSpawnInterval": 4.0,
+                            "BaselineSpawnInterval": 6.0,
+                            "MinSpawnInterval": 4.0,
+                            "MaxSpawnInterval": 8.0
+                        }
+                    },
+                    {
+                        "normalized_command": "decrease spawn pressure",
+                        "action_name": "decrease_spawn_pressure",
+                        "entity_type": "encounter",
+                        "probe_name": "MutateSpawnPressure",
+                        "wrapper_path": "Tools/run_unity_mutate_spawn_pressure.ps1",
+                        "probe_artifact_file": "intent_decrease_spawn_pressure_probe_result.json",
+                        "probe_log_file": "intent_decrease_spawn_pressure_probe.log",
+                        "wrapper_arguments": {
+                            "ProjectPath": ".",
+                            "SceneName": "entity_test",
+                            "SpawnerName": "EncounterSpawner_Main",
+                            "RequestedSpawnInterval": 8.0,
+                            "BaselineSpawnInterval": 6.0,
+                            "MinSpawnInterval": 4.0,
+                            "MaxSpawnInterval": 8.0
+                        }
+                    },
+                    {
+                        "normalized_command": "restore spawn pressure to standard",
+                        "action_name": "set_spawn_pressure",
+                        "entity_type": "encounter",
+                        "probe_name": "MutateSpawnPressure",
+                        "wrapper_path": "Tools/run_unity_mutate_spawn_pressure.ps1",
+                        "probe_artifact_file": "intent_restore_spawn_pressure_to_standard_probe_result.json",
+                        "probe_log_file": "intent_restore_spawn_pressure_to_standard_probe.log",
+                        "wrapper_arguments": {
+                            "ProjectPath": ".",
+                            "SceneName": "entity_test",
+                            "SpawnerName": "EncounterSpawner_Main",
+                            "RequestedSpawnInterval": 6.0,
+                            "BaselineSpawnInterval": 6.0,
+                            "MinSpawnInterval": 4.0,
+                            "MaxSpawnInterval": 8.0
                         }
                     }
                 ],
