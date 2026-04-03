@@ -9,6 +9,7 @@ from typing import Any, Dict, Tuple
 from orchestrator.utils import ensure_dir, read_json_with_status
 
 from .capability_registry import CapabilityEvidenceStore, RuntimeCapability
+from .encounter_profiles import supported_encounter_examples_for_family
 from .enemy_profiles import supported_entity_examples_for_family
 from .intent_normalizer import fuzzy_match, normalize_prompt, resolve_prompt
 from .session_tuning import build_result_session_metadata
@@ -65,6 +66,16 @@ _ROUTE_PROFILES = {
         probe_name="MutateEnemyAggression",
         probe_action_type="mutate_enemy_aggression",
         result_kind="aggression",
+    ),
+    "MutateEncounterCount": EntityMutationRouteProfile(
+        probe_name="MutateEncounterCount",
+        probe_action_type="mutate_encounter_count",
+        result_kind="encounter_count",
+    ),
+    "MutateSpawnPressure": EntityMutationRouteProfile(
+        probe_name="MutateSpawnPressure",
+        probe_action_type="mutate_spawn_pressure",
+        result_kind="spawn_pressure",
     ),
 }
 
@@ -380,6 +391,34 @@ def run_level_0001_entity_transform_mutation(task: Dict[str, Any]) -> Dict[str, 
                 "aggression_changed": bool(probe_payload.get("aggression_changed", False)),
             }
         )
+    elif route_resolution.result_kind == "encounter_count":
+        result_details.update(
+            {
+                "spawner_name": str(probe_payload.get("spawner_name") or "EncounterSpawner"),
+                "previous_encounter_count": _float_or_none(probe_payload.get("previous_encounter_count")),
+                "new_encounter_count": _float_or_none(probe_payload.get("new_encounter_count")),
+                "baseline_encounter_count": _float_or_none(probe_payload.get("baseline_encounter_count")),
+                "requested_encounter_count": _float_or_none(probe_payload.get("requested_encounter_count")),
+                "minimum_encounter_count": _float_or_none(probe_payload.get("minimum_encounter_count")),
+                "maximum_encounter_count": _float_or_none(probe_payload.get("maximum_encounter_count")),
+                "encounter_count_changed": bool(probe_payload.get("encounter_count_changed", False)),
+                "target_context": "encounter",
+            }
+        )
+    elif route_resolution.result_kind == "spawn_pressure":
+        result_details.update(
+            {
+                "spawner_name": str(probe_payload.get("spawner_name") or "EncounterSpawner"),
+                "previous_spawn_interval": _float_or_none(probe_payload.get("previous_spawn_interval")),
+                "new_spawn_interval": _float_or_none(probe_payload.get("new_spawn_interval")),
+                "baseline_spawn_interval": _float_or_none(probe_payload.get("baseline_spawn_interval")),
+                "requested_spawn_interval": _float_or_none(probe_payload.get("requested_spawn_interval")),
+                "minimum_spawn_interval": _float_or_none(probe_payload.get("minimum_spawn_interval")),
+                "maximum_spawn_interval": _float_or_none(probe_payload.get("maximum_spawn_interval")),
+                "spawn_pressure_changed": bool(probe_payload.get("spawn_pressure_changed", False)),
+                "target_context": "encounter",
+            }
+        )
     result_details.update(
         build_result_session_metadata(
             task=task,
@@ -413,7 +452,7 @@ def _unmatched_prompt_message() -> str:
     return (
         "I understood part of your request, but couldn't match it to a known action. "
         "Try something like: 'move zombie forward', 'make zombie faster', 'make runner faster', "
-        "or 'make runner more aggressive'."
+        "'make runner more aggressive', or 'increase encounter count'."
     )
 
 
@@ -464,6 +503,38 @@ def unsupported_entity_transform_prompt_message(prompt: str) -> str | None:
             "AI-E currently supports this deterministic aggression adjustment only for the zombie or runner systems in BABYLON. "
             f"Try something like: {supported_entity_examples_for_family('aggression')}."
         )
+    if {"encounter", "count"}.issubset(tokens):
+        if "increase" in tokens:
+            return (
+                "AI-E currently supports deterministic encounter count tuning only through the supported encounter profile in BABYLON. "
+                f"Try something like: {supported_encounter_examples_for_family('count_high')}."
+            )
+        if "decrease" in tokens:
+            return (
+                "AI-E currently supports deterministic encounter count tuning only through the supported encounter profile in BABYLON. "
+                f"Try something like: {supported_encounter_examples_for_family('count_low')}."
+            )
+        if "restore" in tokens or "standard" in tokens:
+            return (
+                "AI-E currently supports restoring the bounded encounter count profile only through the supported encounter route in BABYLON. "
+                f"Try something like: {supported_encounter_examples_for_family('restore_plan')}."
+            )
+    if {"spawn", "pressure"}.issubset(tokens):
+        if "increase" in tokens:
+            return (
+                "AI-E currently supports deterministic spawn pressure tuning only through the supported encounter profile in BABYLON. "
+                f"Try something like: {supported_encounter_examples_for_family('pressure_high')}."
+            )
+        if "decrease" in tokens:
+            return (
+                "AI-E currently supports deterministic spawn pressure tuning only through the supported encounter profile in BABYLON. "
+                f"Try something like: {supported_encounter_examples_for_family('pressure_low')}."
+            )
+        if "restore" in tokens or "standard" in tokens:
+            return (
+                "AI-E currently supports restoring the bounded spawn pressure profile only through the supported encounter route in BABYLON. "
+                f"Try something like: {supported_encounter_examples_for_family('restore_plan')}."
+            )
     return None
 
 
@@ -617,6 +688,56 @@ def _validate_execution_artifacts(
                 return "Delegated probe skipped the aggression change before the requested deterministic state was satisfied."
         elif requested_attack_cooldown is not None and abs(new_attack_cooldown - requested_attack_cooldown) > 0.0001:
             return "Delegated probe did not apply the requested deterministic aggression value."
+    elif result_kind == "encounter_count":
+        previous_encounter_count = _float_or_none(probe_payload.get("previous_encounter_count"))
+        new_encounter_count = _float_or_none(probe_payload.get("new_encounter_count"))
+        baseline_encounter_count = _float_or_none(probe_payload.get("baseline_encounter_count"))
+        minimum_encounter_count = _float_or_none(probe_payload.get("minimum_encounter_count"))
+        maximum_encounter_count = _float_or_none(probe_payload.get("maximum_encounter_count"))
+        requested_encounter_count = _float_or_none(probe_payload.get("requested_encounter_count"))
+        if previous_encounter_count is None:
+            return "Delegated probe did not report a valid previous_encounter_count."
+        if new_encounter_count is None:
+            return "Delegated probe did not report a valid new_encounter_count."
+        if minimum_encounter_count is not None and new_encounter_count < minimum_encounter_count:
+            return "Delegated probe reported a new_encounter_count below the approved minimum bound."
+        if maximum_encounter_count is not None and new_encounter_count > maximum_encounter_count:
+            return "Delegated probe reported a new_encounter_count above the approved maximum bound."
+        if not execution_applied and result_reason == "skipped_already_satisfied":
+            if requested_encounter_count is not None and not _encounter_count_skip_satisfies_request(
+                action_name=action_name,
+                baseline_encounter_count=baseline_encounter_count,
+                requested_encounter_count=requested_encounter_count,
+                current_encounter_count=new_encounter_count,
+            ):
+                return "Delegated probe skipped the encounter count change before the requested deterministic state was satisfied."
+        elif requested_encounter_count is not None and abs(new_encounter_count - requested_encounter_count) > 0.0001:
+            return "Delegated probe did not apply the requested deterministic encounter count value."
+    elif result_kind == "spawn_pressure":
+        previous_spawn_interval = _float_or_none(probe_payload.get("previous_spawn_interval"))
+        new_spawn_interval = _float_or_none(probe_payload.get("new_spawn_interval"))
+        baseline_spawn_interval = _float_or_none(probe_payload.get("baseline_spawn_interval"))
+        minimum_spawn_interval = _float_or_none(probe_payload.get("minimum_spawn_interval"))
+        maximum_spawn_interval = _float_or_none(probe_payload.get("maximum_spawn_interval"))
+        requested_spawn_interval = _float_or_none(probe_payload.get("requested_spawn_interval"))
+        if previous_spawn_interval is None:
+            return "Delegated probe did not report a valid previous_spawn_interval."
+        if new_spawn_interval is None:
+            return "Delegated probe did not report a valid new_spawn_interval."
+        if minimum_spawn_interval is not None and new_spawn_interval < minimum_spawn_interval:
+            return "Delegated probe reported a new_spawn_interval below the approved minimum bound."
+        if maximum_spawn_interval is not None and new_spawn_interval > maximum_spawn_interval:
+            return "Delegated probe reported a new_spawn_interval above the approved maximum bound."
+        if not execution_applied and result_reason == "skipped_already_satisfied":
+            if requested_spawn_interval is not None and not _spawn_pressure_skip_satisfies_request(
+                action_name=action_name,
+                baseline_spawn_interval=baseline_spawn_interval,
+                requested_spawn_interval=requested_spawn_interval,
+                current_spawn_interval=new_spawn_interval,
+            ):
+                return "Delegated probe skipped the spawn pressure change before the requested deterministic state was satisfied."
+        elif requested_spawn_interval is not None and abs(new_spawn_interval - requested_spawn_interval) > 0.0001:
+            return "Delegated probe did not apply the requested deterministic spawn pressure value."
     return None
 
 
@@ -625,6 +746,10 @@ def _validation_check_name(result_kind: str) -> str:
         return "mutate_enemy_move_speed_artifact_confirmed"
     if result_kind == "aggression":
         return "mutate_enemy_aggression_artifact_confirmed"
+    if result_kind == "encounter_count":
+        return "mutate_encounter_count_artifact_confirmed"
+    if result_kind == "spawn_pressure":
+        return "mutate_spawn_pressure_artifact_confirmed"
     return "mutate_entity_transform_artifact_confirmed"
 
 
@@ -682,6 +807,42 @@ def _aggression_skip_satisfies_request(
             return current_attack_cooldown <= requested_attack_cooldown + 0.0001
         return current_attack_cooldown >= requested_attack_cooldown - 0.0001
     return abs(current_attack_cooldown - requested_attack_cooldown) <= 0.0001
+
+
+def _encounter_count_skip_satisfies_request(
+    *,
+    action_name: str,
+    baseline_encounter_count: float | None,
+    requested_encounter_count: float,
+    current_encounter_count: float,
+) -> bool:
+    if "increase" in action_name:
+        return current_encounter_count >= requested_encounter_count - 0.0001
+    if "decrease" in action_name:
+        return current_encounter_count <= requested_encounter_count + 0.0001
+    if baseline_encounter_count is not None:
+        if requested_encounter_count >= baseline_encounter_count:
+            return current_encounter_count >= requested_encounter_count - 0.0001
+        return current_encounter_count <= requested_encounter_count + 0.0001
+    return abs(current_encounter_count - requested_encounter_count) <= 0.0001
+
+
+def _spawn_pressure_skip_satisfies_request(
+    *,
+    action_name: str,
+    baseline_spawn_interval: float | None,
+    requested_spawn_interval: float,
+    current_spawn_interval: float,
+) -> bool:
+    if "increase" in action_name:
+        return current_spawn_interval <= requested_spawn_interval + 0.0001
+    if "decrease" in action_name:
+        return current_spawn_interval >= requested_spawn_interval - 0.0001
+    if baseline_spawn_interval is not None:
+        if requested_spawn_interval <= baseline_spawn_interval:
+            return current_spawn_interval <= requested_spawn_interval + 0.0001
+        return current_spawn_interval >= requested_spawn_interval - 0.0001
+    return abs(current_spawn_interval - requested_spawn_interval) <= 0.0001
 
 
 def _supporting_artifacts(translator_payload: Any, router_payload: Dict[str, Any]) -> list[str]:

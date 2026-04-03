@@ -2,6 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .encounter_profiles import (
+    easier_encounter_prompt,
+    restore_standard_encounter_prompt,
+    supported_encounter_examples_for_family,
+)
 from .enemy_profiles import (
     less_dangerous_prompt,
     restore_standard_danger_prompt,
@@ -31,6 +36,81 @@ class PredefinedPlan:
 
 
 _PREDEFINED_PLANS = (
+    PredefinedPlan(
+        plan_key="encounter_increase_intensity_v1",
+        title="Increase encounter intensity",
+        canonical_prompt="increase encounter intensity",
+        expected_outcome=(
+            "AI-E increases the supported encounter count tier, then increases spawn pressure so "
+            "the encounter becomes denser and faster to respawn with proof for both bounded steps."
+        ),
+        execution_mode_label="Sandbox first",
+        trigger_prompts=("increase encounter intensity",),
+        steps=(
+            PredefinedPlanStep(
+                step_index=1,
+                title="Increase encounter count",
+                operator_prompt="increase encounter count",
+                priority=20,
+            ),
+            PredefinedPlanStep(
+                step_index=2,
+                title="Increase spawn pressure",
+                operator_prompt="increase spawn pressure",
+                priority=25,
+            ),
+        ),
+    ),
+    PredefinedPlan(
+        plan_key="encounter_decrease_intensity_v1",
+        title="Reduce encounter intensity",
+        canonical_prompt="decrease encounter intensity",
+        expected_outcome=(
+            "AI-E decreases the supported encounter count tier, then decreases spawn pressure so "
+            "the encounter becomes lighter and slower to respawn with proof for both bounded steps."
+        ),
+        execution_mode_label="Sandbox first",
+        trigger_prompts=("decrease encounter intensity",),
+        steps=(
+            PredefinedPlanStep(
+                step_index=1,
+                title="Decrease encounter count",
+                operator_prompt="decrease encounter count",
+                priority=20,
+            ),
+            PredefinedPlanStep(
+                step_index=2,
+                title="Decrease spawn pressure",
+                operator_prompt="decrease spawn pressure",
+                priority=25,
+            ),
+        ),
+    ),
+    PredefinedPlan(
+        plan_key="encounter_restore_standard_v1",
+        title="Restore encounter to standard",
+        canonical_prompt="restore encounter to standard",
+        expected_outcome=(
+            "AI-E restores encounter count and spawn pressure to their supported standard tiers so "
+            "the encounter returns to the baseline bounded spawn profile with proof for both steps."
+        ),
+        execution_mode_label="Sandbox first",
+        trigger_prompts=("restore encounter to standard",),
+        steps=(
+            PredefinedPlanStep(
+                step_index=1,
+                title="Restore encounter count to standard",
+                operator_prompt="restore encounter count to standard",
+                priority=20,
+            ),
+            PredefinedPlanStep(
+                step_index=2,
+                title="Restore spawn pressure to standard",
+                operator_prompt="restore spawn pressure to standard",
+                priority=25,
+            ),
+        ),
+    ),
     PredefinedPlan(
         plan_key="zombie_fast_low_aggression_v1",
         title="Test fast low-aggression zombie variation",
@@ -266,6 +346,29 @@ def unsupported_predefined_plan_message(prompt: str) -> str | None:
         return None
     generalized_entity = _generalized_entity_label(normalized)
     if (
+        "encounter" in normalized
+        and (
+            "intensity" in normalized
+            or "restore encounter to standard" in normalized
+            or "easier" in normalized
+        )
+        and match_predefined_plan(normalized) is None
+    ):
+        if "restore" in normalized or "standard" in normalized:
+            return (
+                "AI-E currently supports this bounded encounter restore plan only through the deterministic encounter routes. "
+                f"Try something like: {supported_encounter_examples_for_family('restore_plan')}."
+            )
+        if "easier" in normalized:
+            return (
+                "AI-E currently supports this bounded encounter easing plan only through the deterministic encounter routes. "
+                f"Try something like: {supported_encounter_examples_for_family('easier_plan')}."
+            )
+        return (
+            "AI-E currently supports this bounded encounter intensity plan only through the deterministic encounter routes. "
+            f"Try something like: {supported_encounter_examples_for_family('intensity_plan')}."
+        )
+    if (
         "zombie" not in normalized
         and "runner" not in normalized
         and (
@@ -315,6 +418,38 @@ def unsupported_predefined_plan_message(prompt: str) -> str | None:
             f"Try something like: '{less_dangerous_prompt('zombie')}', '{less_dangerous_prompt('runner')}', "
             f"or '{restore_standard_danger_prompt('runner')}'."
         )
+    if "spawn pressure" in normalized and match_predefined_plan(normalized) is None:
+        if "increase" in normalized:
+            return (
+                "AI-E currently supports bounded spawn pressure tuning only through the encounter routes in BABYLON. "
+                f"Try something like: {supported_encounter_examples_for_family('pressure_high')}."
+            )
+        if "decrease" in normalized or "reduce" in normalized:
+            return (
+                "AI-E currently supports bounded spawn pressure tuning only through the encounter routes in BABYLON. "
+                f"Try something like: {supported_encounter_examples_for_family('pressure_low')}."
+            )
+        if "restore" in normalized or "standard" in normalized:
+            return (
+                "AI-E currently supports bounded spawn pressure restoration only through the encounter routes in BABYLON. "
+                "Try something like: 'restore spawn pressure to standard'."
+            )
+    if "encounter count" in normalized and match_predefined_plan(normalized) is None:
+        if "increase" in normalized:
+            return (
+                "AI-E currently supports bounded encounter count tuning only through the encounter routes in BABYLON. "
+                f"Try something like: {supported_encounter_examples_for_family('count_high')}."
+            )
+        if "decrease" in normalized:
+            return (
+                "AI-E currently supports bounded encounter count tuning only through the encounter routes in BABYLON. "
+                f"Try something like: {supported_encounter_examples_for_family('count_low')}."
+            )
+        if "restore" in normalized or "standard" in normalized:
+            return (
+                "AI-E currently supports bounded encounter count restoration only through the encounter routes in BABYLON. "
+                "Try something like: 'restore encounter count to standard'."
+            )
     if "move differently" in normalized and "zombie" not in normalized:
         return (
             "AI-E currently supports this movement variation plan only for the zombie system in BABYLON. "

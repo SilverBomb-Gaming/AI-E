@@ -17,6 +17,7 @@ _REPLACEMENTS = (
 _CANONICAL_PATTERNS = (
     (re.compile(r"\bspeed\s+up\s+(?:the\s+)?([a-z0-9_]+)\b"), r"make \1 faster"),
     (re.compile(r"\bslow\s+(?:the\s+)?([a-z0-9_]+)\s+down\b"), r"make \1 slower"),
+    (re.compile(r"\breduce\s+spawn\s+pressure\b"), "decrease spawn pressure"),
 )
 _ENTITY_MAPPINGS = (
     ("enemy", "zombie"),

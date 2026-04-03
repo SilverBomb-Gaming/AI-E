@@ -2,6 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .encounter_profiles import (
+    easier_encounter_prompt,
+    intense_encounter_prompt,
+    restore_standard_encounter_prompt,
+)
 from .enemy_profiles import (
     combat_variation_prompt,
     dangerous_prompt,
@@ -87,6 +92,34 @@ _GOAL_INTENT_MAPPINGS = {
             '"restore runner danger to standard".'
         ),
     ),
+    intense_encounter_prompt(): GoalIntentDefinition(
+        canonical_prompt="increase encounter intensity",
+        resolution_note=(
+            'AI-E mapped the gameplay goal "make encounter more intense" to the bounded plan '
+            '"increase encounter intensity".'
+        ),
+    ),
+    easier_encounter_prompt(): GoalIntentDefinition(
+        canonical_prompt="decrease encounter intensity",
+        resolution_note=(
+            'AI-E mapped the gameplay goal "make encounter easier" to the bounded plan '
+            '"decrease encounter intensity".'
+        ),
+    ),
+    restore_standard_encounter_prompt(): GoalIntentDefinition(
+        canonical_prompt="restore encounter to standard",
+        resolution_note=(
+            'AI-E mapped the gameplay goal "restore encounter to standard" to the bounded plan '
+            '"restore encounter to standard".'
+        ),
+    ),
+    "reduce spawn pressure": GoalIntentDefinition(
+        canonical_prompt="decrease spawn pressure",
+        resolution_note=(
+            'AI-E mapped the gameplay goal "reduce spawn pressure" to the bounded deterministic request '
+            '"decrease spawn pressure".'
+        ),
+    ),
 }
 
 
@@ -108,11 +141,34 @@ def unsupported_goal_intent_message(prompt: str) -> str | None:
     generalized_entity = _generalized_entity_label(tokens)
 
     if "smarter" in tokens:
+        if "encounter" in tokens:
+            return (
+                "AI-E does not have a supported deterministic encounter intelligence goal yet. "
+                "Try something like: 'make encounter more intense', 'make encounter easier', "
+                "or 'restore encounter to standard'."
+            )
         return (
             "AI-E does not have a supported deterministic enemy intelligence goal yet. "
             "Try something like: 'make zombie more dangerous', 'make runner more dangerous', "
             "or 'make runner easier'."
         )
+
+    if "encounter" in tokens:
+        if "intense" in tokens:
+            return (
+                "AI-E currently supports bounded encounter goals only through the predefined encounter intensity routes. "
+                "Try something like: 'make encounter more intense'."
+            )
+        if "easier" in tokens:
+            return (
+                "AI-E currently supports bounded encounter easing only through the predefined encounter intensity routes. "
+                "Try something like: 'make encounter easier'."
+            )
+        if "standard" in tokens:
+            return (
+                "AI-E currently supports bounded encounter restoration through the predefined standard restore route. "
+                "Try something like: 'restore encounter to standard'."
+            )
 
     if ("dangerous" in tokens and "less" not in tokens) or "intense" in tokens:
         if "zombie" not in tokens and "runner" not in tokens:
