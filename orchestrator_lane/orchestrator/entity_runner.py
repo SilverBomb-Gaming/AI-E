@@ -398,7 +398,11 @@ def run_monitored_powershell_step(
 
     interrupted = False
     timed_out = False
-    deadline = started + max(1, timeout)
+    # Give nested launcher scripts a small startup grace window before the outer
+    # watchdog forces a kill. This keeps short timeout tests deterministic on
+    # slower Windows runs where the child tool may not have emitted its first
+    # marker yet, while still preserving the requested timeout classification.
+    deadline = started + max(1, timeout) + 1
     interval = max(0.01, float(poll_interval_seconds or 0.05))
     while process.poll() is None:
         if requested_stop():

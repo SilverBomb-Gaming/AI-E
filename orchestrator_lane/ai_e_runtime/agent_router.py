@@ -252,6 +252,16 @@ class AgentRouter:
                 "error": f"Unity/tool runner timed out after {timeout_seconds} seconds.",
                 "details": details,
             }
+        if self._unity_launcher_timed_out(command_result):
+            timeout_seconds = int(task.get("unity_timeout_seconds", task.get("timeout_seconds", 900)) or 900)
+            details["timed_out"] = True
+            details["returncode"] = -1
+            return {
+                "status": "timed_out_unity_process",
+                "summary": f"unity_control_agent timed out {title}",
+                "error": f"Unity/tool runner timed out after {timeout_seconds} seconds.",
+                "details": details,
+            }
         unity_exit_code = str(command_result.get("unity_exit_code") or "")
         retry_on_failure = bool(task.get("unity_retry_on_failure") or task.get("unity_retry_on_unexpected_exit"))
         if returncode not in {0, None} or unity_exit_code not in {"0", ""}:
@@ -279,6 +289,26 @@ class AgentRouter:
             "summary": f"unity_control_agent completed {title}",
             "details": details,
         }
+
+    def _unity_launcher_timed_out(self, command_result: Dict[str, Any]) -> bool:
+        timeout_markers = (
+            "unity process exceeded timeout",
+            "unity/tool runner timed out after",
+        )
+        for key in ("stdout_log", "stderr_log"):
+            path_value = command_result.get(key)
+            if not path_value:
+                continue
+            path = Path(str(path_value))
+            if not path.exists():
+                continue
+            try:
+                text = path.read_text(encoding="utf-8", errors="replace").lower()
+            except OSError:
+                continue
+            if any(marker in text for marker in timeout_markers):
+                return True
+        return False
 
     def _run_artifact_summarizer_agent(self, task: Dict[str, Any]) -> Dict[str, Any]:
         artifacts = list(task.get("artifacts") or [])
