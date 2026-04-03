@@ -2,14 +2,16 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
-from .enemy_profiles import (
-    baseline_restore_prompts,
-    detect_supported_enemy_entity,
-    enemy_display_name,
-    supported_enemy_entities,
-)
+from .encounter_profiles import encounter_display_name
 from .intent_normalizer import normalize_prompt
 from .session_tuning import SESSION_FOLLOWUP_RESOLUTION
+from .tuning_contexts import (
+    baseline_restore_prompts_for_context,
+    detect_supported_tuning_context,
+    is_supported_encounter_context,
+    supported_tuning_contexts,
+    tuning_context_display_name,
+)
 
 
 EXPERIMENT_REVIEW_RESOLUTION = "experiment_review"
@@ -25,8 +27,8 @@ _EXPERIMENT_DECISION_PROMPTS = {
 }
 _BASELINE_RESTORE_PROMPTS = {
     prompt
-    for entity in supported_enemy_entities()
-    for prompt in baseline_restore_prompts(entity)
+    for context in supported_tuning_contexts()
+    for prompt in baseline_restore_prompts_for_context(context)
 }
 
 
@@ -47,32 +49,39 @@ def build_current_experiment_review(session_state: Dict[str, Any]) -> tuple[Dict
     if experiment is None:
         return None, _no_active_experiment_message(
             "show current experiment variants",
-            detail="show current experiment variants only after a supported enemy result exists in the current session",
+            detail="show current experiment variants only after a supported tuning result exists in the current session",
         )
 
     variants = _normalized_variants(experiment)
     if not variants:
         return None, _no_active_experiment_message(
             "show current experiment variants",
-            detail="show current experiment variants only after a supported enemy result exists in the current session",
+            detail="show current experiment variants only after a supported tuning result exists in the current session",
         )
 
     experiment_id = str(experiment.get("experiment_id") or "").strip()
     current_variant_id = str(experiment.get("active_variant_id") or variants[-1].get("variant_id") or "").strip()
     baseline_variant_id = str(experiment.get("baseline_variant_id") or "").strip()
-    target_entity = _experiment_target_entity(experiment, variants=variants)
+    preferred_baseline_variant_id = str(experiment.get("preferred_baseline_variant_id") or "").strip()
+    target_context = _experiment_target_context(experiment, variants=variants)
     variant_lines: List[str] = []
     for variant in variants:
         variant_id = str(variant.get("variant_id") or "").strip()
         prompt = str(
             variant.get("source_prompt")
             or variant.get("canonical_prompt")
-            or f"Supported {target_entity} change"
+            or f"Supported {target_context or 'tuning'} change"
         ).strip()
         outcome = str(variant.get("outcome_summary") or "Outcome summary not available").strip()
         suffixes: List[str] = []
+        if current_variant_id and variant_id == current_variant_id:
+            suffixes.append("current variant")
         if bool(variant.get("baseline_marker")):
             suffixes.append("baseline")
+        if preferred_baseline_variant_id and variant_id == preferred_baseline_variant_id:
+            suffixes.append("preferred baseline")
+        if _decision_status(variant) == "rejected":
+            suffixes.append("rejected")
         variant_kind = str(variant.get("variant_kind") or "").strip()
         if variant_kind and variant_kind not in suffixes:
             suffixes.append(variant_kind.replace("_", " "))
@@ -83,14 +92,18 @@ def build_current_experiment_review(session_state: Dict[str, Any]) -> tuple[Dict
         f"AI-E is tracking {len(variants)} recorded variant(s) in {experiment_id}. "
         f"Current variant: {current_variant_id or 'not available'}."
     )
-    if target_entity:
-        overview += f" Target entity: {target_entity}."
+    if target_context:
+        overview += f" Target context: {tuning_context_display_name(target_context)}."
     if baseline_variant_id:
         overview += f" Baseline: {baseline_variant_id}."
+    if preferred_baseline_variant_id:
+        overview += f" Preferred baseline: {preferred_baseline_variant_id}."
+    overview += f" Rejected variants: {_rejected_variants_text(variants)}."
     return {
         "experiment_id": experiment_id,
         "current_variant_id": current_variant_id,
         "baseline_variant_id": baseline_variant_id,
+        "preferred_baseline_variant_id": preferred_baseline_variant_id,
         "variant_lines": variant_lines,
         "overview": overview,
     }, None
@@ -101,14 +114,14 @@ def build_current_experiment_decisions(session_state: Dict[str, Any]) -> tuple[D
     if experiment is None:
         return None, _no_active_experiment_message(
             "show current experiment decisions",
-            detail="show current experiment decisions only after a supported enemy result exists in the current session",
+            detail="show current experiment decisions only after a supported tuning result exists in the current session",
         )
 
     variants = _normalized_variants(experiment)
     if not variants:
         return None, _no_active_experiment_message(
             "show current experiment decisions",
-            detail="show current experiment decisions only after a supported enemy result exists in the current session",
+            detail="show current experiment decisions only after a supported tuning result exists in the current session",
         )
 
     current_variant = _active_variant(experiment, variants=variants)
@@ -122,12 +135,13 @@ def build_current_experiment_decisions(session_state: Dict[str, Any]) -> tuple[D
     current_variant_id = str(current_variant.get("variant_id") or "").strip()
     baseline_variant_id = str(experiment.get("baseline_variant_id") or "").strip()
     preferred_baseline_variant_id = str(experiment.get("preferred_baseline_variant_id") or "").strip()
-    target_entity = _experiment_target_entity(experiment, variants=variants)
+    target_context = _experiment_target_context(experiment, variants=variants)
     variant_lines = [
         _decision_variant_line(
             variant,
             preferred_baseline_variant_id=preferred_baseline_variant_id,
-            target_entity=target_entity,
+            target_context=target_context,
+            current_variant_id=current_variant_id,
         )
         for variant in variants
     ]
@@ -135,12 +149,13 @@ def build_current_experiment_decisions(session_state: Dict[str, Any]) -> tuple[D
         f"AI-E is tracking explicit decisions for {len(variants)} recorded variant(s) in {experiment_id}. "
         f"Current variant: {current_variant_id or 'not available'}."
     )
-    if target_entity:
-        overview += f" Target entity: {target_entity}."
+    if target_context:
+        overview += f" Target context: {tuning_context_display_name(target_context)}."
     if baseline_variant_id:
         overview += f" Original baseline: {baseline_variant_id}."
     if preferred_baseline_variant_id:
         overview += f" Preferred baseline: {preferred_baseline_variant_id}."
+    overview += f" Rejected variants: {_rejected_variants_text(variants)}."
     latest_decision = _latest_decision_summary(experiment)
     if latest_decision:
         overview += f" {latest_decision}"
@@ -167,7 +182,7 @@ def build_experiment_decision_preview(
     if experiment is None:
         return None, _no_active_experiment_message(
             prompt,
-            detail="record an experiment decision only after a supported enemy result exists in the current session",
+            detail="record an experiment decision only after a supported tuning result exists in the current session",
         )
 
     variants = _normalized_variants(experiment)
@@ -182,30 +197,56 @@ def build_experiment_decision_preview(
     current_variant_id = str(current_variant.get("variant_id") or "").strip()
     baseline_variant_id = str(experiment.get("baseline_variant_id") or "").strip()
     preferred_baseline_variant_id = str(experiment.get("preferred_baseline_variant_id") or "").strip()
+    comparison_lines = _decision_comparison_lines(
+        session_state,
+        experiment_id=experiment_id,
+        current_variant_id=current_variant_id,
+    )
     current_status = _decision_status(current_variant)
     lines = [
         f"Current variant: {current_variant_id}.",
         f"Current decision status: {current_status}.",
+        f"Rejected variants: {_rejected_variants_text(variants)}.",
     ]
     if baseline_variant_id:
         lines.append(f"Original baseline: {baseline_variant_id}.")
     if preferred_baseline_variant_id:
         lines.append(f"Preferred baseline: {preferred_baseline_variant_id}.")
     if decision_action == "keep_current_variant":
-        overview = f"AI-E will mark {current_variant_id} as kept in {experiment_id}. No execution will start."
+        overview = (
+            f"AI-E will record {current_variant_id} as kept in {experiment_id}. "
+            f"{_baseline_consequence_text(baseline_variant_id, preferred_baseline_variant_id=preferred_baseline_variant_id, action=decision_action, current_variant_id=current_variant_id)} "
+            "No execution will start."
+        )
         lines.append("Decision to record: kept.")
+        lines.append(
+            f"Decision outcome: {current_variant_id} stays available for comparison. "
+            f"{_baseline_consequence_text(baseline_variant_id, preferred_baseline_variant_id=preferred_baseline_variant_id, action=decision_action, current_variant_id=current_variant_id)}"
+        )
         title = "Keep current variant"
     elif decision_action == "reject_current_variant":
-        overview = f"AI-E will mark {current_variant_id} as rejected in {experiment_id}. No execution will start."
+        overview = (
+            f"AI-E will record {current_variant_id} as rejected in {experiment_id}. "
+            f"{current_variant_id} will remain in history but will not be used. No execution will start."
+        )
         lines.append("Decision to record: rejected.")
+        lines.append(f"Decision outcome: {current_variant_id} will remain in history but will not be used.")
         title = "Reject current variant"
     else:
         overview = (
             f"AI-E will set {current_variant_id} as the preferred baseline in {experiment_id}. "
+            f"{_baseline_consequence_text(baseline_variant_id, preferred_baseline_variant_id=preferred_baseline_variant_id, action=decision_action, current_variant_id=current_variant_id)} "
             "No execution will start."
         )
         lines.append("Decision to record: preferred baseline.")
+        lines.append(
+            f"Decision outcome: {current_variant_id} becomes the preferred baseline for later comparisons. "
+            f"{_baseline_consequence_text(baseline_variant_id, preferred_baseline_variant_id=preferred_baseline_variant_id, action=decision_action, current_variant_id=current_variant_id)}"
+        )
         title = "Set current variant as baseline"
+    if comparison_lines:
+        lines.append("Changes relative to baseline:")
+        lines.extend(comparison_lines)
     return {
         "experiment_id": experiment_id,
         "current_variant_id": current_variant_id,
@@ -239,7 +280,7 @@ def apply_experiment_decision(
     if experiment is None:
         return state, None, _no_active_experiment_message(
             prompt,
-            detail="record an experiment decision only after a supported enemy result exists in the current session",
+            detail="record an experiment decision only after a supported tuning result exists in the current session",
         )
 
     variants = _normalized_variants(experiment)
@@ -276,8 +317,14 @@ def apply_experiment_decision(
             decision_timestamp=str(timestamp or "").strip(),
             decision_source=EXPERIMENT_DECISION_SOURCE,
         )
-        message = f"Recorded: {current_variant_id} is kept in {experiment.get('experiment_id') or 'the active experiment'}."
-        summary = f"Latest explicit user decision: kept {current_variant_id}."
+        message = (
+            f"Recorded: {current_variant_id} was kept in {experiment.get('experiment_id') or 'the active experiment'}. "
+            f"{_baseline_consequence_text(str(experiment.get('baseline_variant_id') or '').strip(), preferred_baseline_variant_id=str(experiment.get('preferred_baseline_variant_id') or '').strip(), action=decision_action, current_variant_id=current_variant_id)}"
+        )
+        summary = (
+            f"Latest explicit user decision: kept {current_variant_id}. "
+            f"{_baseline_consequence_text(str(experiment.get('baseline_variant_id') or '').strip(), preferred_baseline_variant_id=str(experiment.get('preferred_baseline_variant_id') or '').strip(), action=decision_action, current_variant_id=current_variant_id)}"
+        )
     elif decision_action == "reject_current_variant":
         updated_variant.update(
             decision_status="rejected",
@@ -285,8 +332,8 @@ def apply_experiment_decision(
             decision_timestamp=str(timestamp or "").strip(),
             decision_source=EXPERIMENT_DECISION_SOURCE,
         )
-        message = f"Recorded: {current_variant_id} is rejected in {experiment.get('experiment_id') or 'the active experiment'}."
-        summary = f"Latest explicit user decision: rejected {current_variant_id}."
+        message = f"Recorded: {current_variant_id} was rejected in {experiment.get('experiment_id') or 'the active experiment'} and will not be used."
+        summary = f"Latest explicit user decision: rejected {current_variant_id}; it will not be used."
     else:
         experiment["preferred_baseline_variant_id"] = current_variant_id
         updated_variant.setdefault("decision_status", _decision_status(updated_variant))
@@ -295,9 +342,13 @@ def apply_experiment_decision(
         updated_variant["decision_source"] = EXPERIMENT_DECISION_SOURCE
         message = (
             f"Recorded: {current_variant_id} is now the preferred baseline in "
-            f"{experiment.get('experiment_id') or 'the active experiment'}."
+            f"{experiment.get('experiment_id') or 'the active experiment'}. "
+            f"{_baseline_consequence_text(str(experiment.get('baseline_variant_id') or '').strip(), preferred_baseline_variant_id=current_variant_id, action=decision_action, current_variant_id=current_variant_id)}"
         )
-        summary = f"Latest explicit user decision: set {current_variant_id} as the preferred baseline."
+        summary = (
+            f"Latest explicit user decision: set {current_variant_id} as the preferred baseline. "
+            f"{_baseline_consequence_text(str(experiment.get('baseline_variant_id') or '').strip(), preferred_baseline_variant_id=current_variant_id, action=decision_action, current_variant_id=current_variant_id)}"
+        )
 
     variants[variant_index] = updated_variant
     experiment["variants"] = variants
@@ -335,10 +386,12 @@ def apply_experiment_tracking(
     if not _is_result_boundary(task):
         return state
 
-    target_entity = detect_supported_enemy_entity(
+    target_context = detect_supported_tuning_context(
+        details.get("target_context"),
         details.get("target_entity"),
         details.get("entity_type"),
         details.get("translated_command"),
+        details.get("spawner_name"),
         task.get("target_entity"),
         task.get("source_prompt"),
         task.get("operator_prompt"),
@@ -352,13 +405,14 @@ def apply_experiment_tracking(
         if str(item.get("experiment_id") or "").strip() == active_experiment_id:
             experiment = item
             break
-    if experiment is not None and _experiment_target_entity(experiment) != target_entity:
+    if experiment is not None and _experiment_target_context(experiment) != target_context:
         experiment = None
     if experiment is None:
         next_experiment_index = max(_int_or_default(tracking.get("next_experiment_index"), default=1), 1)
         experiment = {
             "experiment_id": f"experiment_{next_experiment_index:04d}",
-            "target_entity": target_entity,
+            "target_entity": target_context,
+            "target_context": target_context,
             "created_at": timestamp,
             "active_variant_id": "",
             "baseline_variant_id": "",
@@ -378,9 +432,11 @@ def apply_experiment_tracking(
     if not baseline_variant_id or baseline_marker:
         baseline_variant_id = variant_id
 
-    speed_record = _family_record(state, family="speed")
-    aggression_record = _family_record(state, family="aggression")
-    movement_record = _family_record(state, family="movement")
+    speed_record = _family_record(state, family="speed", target_context=target_context)
+    aggression_record = _family_record(state, family="aggression", target_context=target_context)
+    movement_record = _family_record(state, family="movement", target_context=target_context)
+    count_record = _family_record(state, family="encounter_count", target_context=target_context)
+    pressure_record = _family_record(state, family="spawn_pressure", target_context=target_context)
 
     record = {
         "experiment_id": str(experiment.get("experiment_id") or "").strip(),
@@ -406,9 +462,14 @@ def apply_experiment_tracking(
         "aggression_value": aggression_record.get("observed_value"),
         "movement_tier": str(movement_record.get("resulting_tier") or "").strip(),
         "movement_value": movement_record.get("observed_value"),
+        "encounter_count_tier": str(count_record.get("resulting_tier") or "").strip(),
+        "encounter_count_value": count_record.get("observed_value"),
+        "spawn_pressure_tier": str(pressure_record.get("resulting_tier") or "").strip(),
+        "spawn_pressure_value": pressure_record.get("observed_value"),
         "executed": _bool_or_default(details.get("executed"), default=True),
         "result_reason": str(details.get("result_reason") or "applied").strip().lower() or "applied",
-        "target_entity": target_entity,
+        "target_entity": target_context,
+        "target_context": target_context,
         "decision_status": "undecided",
         "decision_order": None,
         "decision_timestamp": "",
@@ -417,6 +478,8 @@ def apply_experiment_tracking(
             speed_tier=str(speed_record.get("resulting_tier") or "").strip(),
             aggression_tier=str(aggression_record.get("resulting_tier") or "").strip(),
             movement_tier=str(movement_record.get("resulting_tier") or "").strip(),
+            encounter_count_tier=str(count_record.get("resulting_tier") or "").strip(),
+            spawn_pressure_tier=str(pressure_record.get("resulting_tier") or "").strip(),
             details=details,
         ),
     }
@@ -424,7 +487,8 @@ def apply_experiment_tracking(
     experiment["variants"] = variants
     experiment["active_variant_id"] = variant_id
     experiment["baseline_variant_id"] = baseline_variant_id
-    experiment["target_entity"] = target_entity
+    experiment["target_entity"] = target_context
+    experiment["target_context"] = target_context
 
     tracking["active_experiment_id"] = str(experiment.get("experiment_id") or "").strip()
     tracking["next_experiment_index"] = max(
@@ -553,12 +617,28 @@ def _is_result_boundary(task: Dict[str, Any]) -> bool:
     return step_index == total_steps
 
 
-def _family_record(state: Dict[str, Any], *, family: str) -> Dict[str, Any]:
+def _family_record(state: Dict[str, Any], *, family: str, target_context: str) -> Dict[str, Any]:
     tuning_state = state.get("session_tuning_state")
     if not isinstance(tuning_state, dict):
         return {}
+    contexts = tuning_state.get("contexts")
+    if isinstance(contexts, dict):
+        context_state = contexts.get(target_context)
+        if isinstance(context_state, dict):
+            record = context_state.get(family)
+            if isinstance(record, dict):
+                return dict(record)
+    entities = tuning_state.get("entities")
+    if isinstance(entities, dict):
+        entity_state = entities.get(target_context)
+        if isinstance(entity_state, dict):
+            record = entity_state.get(family)
+            if isinstance(record, dict):
+                return dict(record)
     record = tuning_state.get(family)
-    return dict(record) if isinstance(record, dict) else {}
+    if isinstance(record, dict) and str(record.get("target_context") or record.get("target_entity") or "").strip() == target_context:
+        return dict(record)
+    return {}
 
 
 def _variant_kind(*, task: Dict[str, Any], details: Dict[str, Any], existing_variants: List[Dict[str, Any]]) -> str:
@@ -590,22 +670,86 @@ def _decision_variant_line(
     variant: Dict[str, Any],
     *,
     preferred_baseline_variant_id: str,
-    target_entity: str,
+    target_context: str,
+    current_variant_id: str = "",
 ) -> str:
     variant_id = str(variant.get("variant_id") or "").strip()
     prompt = str(
         variant.get("source_prompt")
         or variant.get("canonical_prompt")
-        or f"Supported {target_entity} change"
+        or f"Supported {target_context or 'tuning'} change"
     ).strip()
     decision_status = _decision_status(variant)
     outcome = str(variant.get("outcome_summary") or "Outcome summary not available").strip()
     suffixes: List[str] = [f"decision: {decision_status}"]
+    if current_variant_id and variant_id == current_variant_id:
+        suffixes.append("current variant")
     if bool(variant.get("baseline_marker")):
         suffixes.append("original baseline")
     if preferred_baseline_variant_id and variant_id == preferred_baseline_variant_id:
         suffixes.append("preferred baseline")
     return f"{variant_id}: {prompt} -> {outcome} ({', '.join(suffixes)})."
+
+
+def _rejected_variants_text(variants: List[Dict[str, Any]]) -> str:
+    rejected = [
+        str(variant.get("variant_id") or "").strip()
+        for variant in variants
+        if _decision_status(variant) == "rejected"
+    ]
+    rejected = [variant_id for variant_id in rejected if variant_id]
+    if not rejected:
+        return "none"
+    return ", ".join(rejected)
+
+
+def _decision_comparison_lines(
+    session_state: Dict[str, Any],
+    *,
+    experiment_id: str,
+    current_variant_id: str,
+) -> List[str]:
+    if not experiment_id or not current_variant_id:
+        return []
+
+    candidates: List[Dict[str, Any]] = []
+    latest = session_state.get("latest_result_evaluation")
+    if isinstance(latest, dict):
+        candidates.append(latest)
+    history = session_state.get("result_evaluation_history")
+    if isinstance(history, list):
+        for item in history:
+            if isinstance(item, dict):
+                candidates.append(item)
+
+    for item in reversed(candidates):
+        if str(item.get("experiment_id") or "").strip() != experiment_id:
+            continue
+        if str(item.get("variant_id") or "").strip() != current_variant_id:
+            continue
+        summary = str(item.get("experiment_comparison_description") or "").strip()
+        if summary:
+            return [line.strip() for line in summary.splitlines() if line.strip()]
+
+    return ["Structured baseline comparison is not available for this variant yet."]
+
+
+def _baseline_consequence_text(
+    baseline_variant_id: str,
+    *,
+    preferred_baseline_variant_id: str,
+    action: str,
+    current_variant_id: str,
+) -> str:
+    if action == "set_current_variant_as_baseline":
+        if baseline_variant_id:
+            return f"Original baseline remains {baseline_variant_id}."
+        return f"{current_variant_id} becomes the baseline used for future comparisons."
+    if preferred_baseline_variant_id:
+        return f"Preferred baseline remains {preferred_baseline_variant_id}."
+    if baseline_variant_id:
+        return f"Original baseline remains {baseline_variant_id}."
+    return "The current baseline does not change."
 
 
 def _latest_decision_summary(experiment: Dict[str, Any]) -> str:
@@ -619,7 +763,7 @@ def _latest_decision_summary(experiment: Dict[str, Any]) -> str:
 def _no_active_experiment_message(prompt: str, *, detail: str) -> str:
     _ = prompt
     return (
-        f"AI-E can {detail}. Start with something like: 'make zombie faster' or 'make runner faster'."
+        f"AI-E can {detail}. Start with something like: 'make zombie faster', 'make runner faster', or 'increase encounter count'."
     )
 
 
@@ -628,6 +772,8 @@ def _outcome_summary(
     speed_tier: str,
     aggression_tier: str,
     movement_tier: str,
+    encounter_count_tier: str,
+    spawn_pressure_tier: str,
     details: Dict[str, Any],
 ) -> str:
     parts: List[str] = []
@@ -642,26 +788,39 @@ def _outcome_summary(
             parts.append("standard forward movement")
         else:
             parts.append(f"movement {movement_tier}")
+    if encounter_count_tier:
+        parts.append(f"encounter count {encounter_count_tier}")
+    if spawn_pressure_tier:
+        if spawn_pressure_tier == "high":
+            parts.append("spawn pressure high")
+        elif spawn_pressure_tier == "low":
+            parts.append("spawn pressure low")
+        else:
+            parts.append(f"spawn pressure {spawn_pressure_tier}")
     if not parts:
         action_name = str(details.get("action_name") or details.get("action_type") or "supported change").strip()
         return action_name.replace("_", " ")
     return ", ".join(parts)
 
 
-def _experiment_target_entity(experiment: Dict[str, Any], *, variants: List[Dict[str, Any]] | None = None) -> str:
-    target_entity = normalize_prompt(str(experiment.get("target_entity") or "")).strip()
-    if target_entity:
-        return target_entity
+def _experiment_target_context(experiment: Dict[str, Any], *, variants: List[Dict[str, Any]] | None = None) -> str:
+    target_context = detect_supported_tuning_context(
+        experiment.get("target_context"),
+        experiment.get("target_entity"),
+    )
+    if target_context:
+        return target_context
     resolved_variants = list(variants) if isinstance(variants, list) else _normalized_variants(experiment)
     for variant in reversed(resolved_variants):
-        detected = detect_supported_enemy_entity(
+        detected = detect_supported_tuning_context(
+            variant.get("target_context"),
             variant.get("target_entity"),
             variant.get("source_prompt"),
             variant.get("canonical_prompt"),
         )
         if detected:
             return detected
-    return enemy_display_name(None)
+    return encounter_display_name(None)
 
 
 def _int_or_default(value: Any, *, default: int) -> int:
