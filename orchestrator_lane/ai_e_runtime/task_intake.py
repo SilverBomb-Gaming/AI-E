@@ -322,6 +322,7 @@ class ConversationalTaskIntake:
         "level_0001",
         "babylon",
         "zombie",
+        "runner",
         "enemy",
         "character",
         "player",
@@ -660,7 +661,7 @@ class ConversationalTaskIntake:
             return "task_request"
         if self._looks_like_world_mutation_request(lookup_prompt):
             return "task_request"
-        if any(token in lookup_prompt for token in ("level_0001", "zombie", "enemy", "character", "kbm", "weapon", "babylon", "unity")):
+        if any(token in lookup_prompt for token in ("level_0001", "zombie", "runner", "enemy", "character", "kbm", "weapon", "babylon", "unity")):
             return "task_request"
         return "not_task_request"
 
@@ -834,7 +835,7 @@ class ConversationalTaskIntake:
 
     def _derive_target_repo(self, prompt: str) -> str:
         lower = resolve_prompt(prompt).lookup_prompt.lower()
-        babylon_markers = ("level_0001", "babylon", "zombie", "enemy", "character", "kbm", "weapon", "unity")
+        babylon_markers = ("level_0001", "babylon", "zombie", "runner", "enemy", "character", "kbm", "weapon", "unity")
         if any(token in lower for token in babylon_markers):
             return resolve_default_target_repo(self.config, prompt=prompt)
         return str(self.config.root_dir).replace("\\", "/")

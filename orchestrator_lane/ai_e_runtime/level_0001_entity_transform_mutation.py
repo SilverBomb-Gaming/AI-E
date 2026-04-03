@@ -9,6 +9,7 @@ from typing import Any, Dict, Tuple
 from orchestrator.utils import ensure_dir, read_json_with_status
 
 from .capability_registry import CapabilityEvidenceStore, RuntimeCapability
+from .enemy_profiles import supported_entity_examples_for_family
 from .intent_normalizer import fuzzy_match, normalize_prompt, resolve_prompt
 from .session_tuning import build_result_session_metadata
 from .time_utils import get_current_timestamp
@@ -40,6 +41,7 @@ class EntityTransformRouteResolution:
     normalized_prompt: str
     translated_command: str
     action_name: str
+    entity_type: str
     scene_name: str
     probe_name: str
     probe_action_type: str
@@ -137,11 +139,13 @@ def resolve_entity_transform_route(
     action_name = str(route.get("action_name") or "").strip()
     if not action_name:
         return None, f"Deterministic route '{translated_command}' does not define an action_name."
+    entity_type = str(route.get("entity_type") or "").strip().lower()
 
     return EntityTransformRouteResolution(
         normalized_prompt=lookup_prompt,
         translated_command=translated_command,
         action_name=action_name,
+        entity_type=entity_type,
         scene_name=scene_name,
         probe_name=probe_name,
         probe_action_type=profile.probe_action_type,
@@ -328,6 +332,7 @@ def run_level_0001_entity_transform_mutation(task: Dict[str, Any]) -> Dict[str, 
         "action_name": str(router_payload.get("action_name") or route_resolution.action_name),
         "executed_probe": str(router_payload.get("executed_probe") or route_resolution.probe_name),
         "action_type": str(probe_payload.get("action_type") or route_resolution.probe_action_type),
+        "entity_type": str(probe_payload.get("entity_type") or route_resolution.entity_type),
         "object_name": str(probe_payload.get("object_name") or route_resolution.target_object_name),
         "scene_name": str(probe_payload.get("scene_name") or route_resolution.scene_name),
         "scene_path": scene_path,
@@ -407,13 +412,15 @@ def _resolve_translated_command(alias_table: Dict[str, Any], normalized_prompt: 
 def _unmatched_prompt_message() -> str:
     return (
         "I understood part of your request, but couldn't match it to a known action. "
-        "Try something like: 'move zombie forward', 'make zombie faster', or 'make zombie more aggressive'."
+        "Try something like: 'move zombie forward', 'make zombie faster', 'make runner faster', "
+        "or 'make runner more aggressive'."
     )
 
 
 def unsupported_entity_transform_prompt_message(prompt: str) -> str | None:
     normalized = normalize_prompt(prompt)
     tokens = set(normalized.split())
+    generalized_entity = _generalized_entity_label(tokens)
     if {"move", "zombie", "backward"}.issubset(tokens):
         return (
             "Backward zombie movement is not a supported deterministic action yet. "
@@ -424,22 +431,47 @@ def unsupported_entity_transform_prompt_message(prompt: str) -> str | None:
             "AI-E currently supports this deterministic movement request only for the zombie system in BABYLON. "
             "Try something like: 'move zombie forward'."
         )
-    if {"make", "faster"}.issubset(tokens) and "zombie" not in tokens:
+    if {"make", "faster"}.issubset(tokens) and "zombie" not in tokens and "runner" not in tokens:
+        if generalized_entity:
+            return (
+                f'AI-E supports multiple bounded enemy archetypes in BABYLON and will not guess what "{generalized_entity}" means here. '
+                "Name the supported target explicitly. Try something like: "
+                f"{supported_entity_examples_for_family('speed_fast')}."
+            )
         return (
-            "AI-E currently supports this deterministic speed adjustment only for the zombie system in BABYLON. "
-            "Try something like: 'make zombie faster'."
+            "AI-E currently supports this deterministic speed adjustment only for the zombie or runner systems in BABYLON. "
+            f"Try something like: {supported_entity_examples_for_family('speed_fast')}."
         )
-    if {"make", "slower"}.issubset(tokens) and "zombie" not in tokens:
+    if {"make", "slower"}.issubset(tokens) and "zombie" not in tokens and "runner" not in tokens:
+        if generalized_entity:
+            return (
+                f'AI-E supports multiple bounded enemy archetypes in BABYLON and will not guess what "{generalized_entity}" means here. '
+                "Name the supported target explicitly. Try something like: "
+                f"{supported_entity_examples_for_family('speed_slow')}."
+            )
         return (
-            "AI-E currently supports this deterministic speed adjustment only for the zombie system in BABYLON. "
-            "Try something like: 'make zombie slower'."
+            "AI-E currently supports this deterministic speed adjustment only for the zombie or runner systems in BABYLON. "
+            f"Try something like: {supported_entity_examples_for_family('speed_slow')}."
         )
-    if {"make", "aggressive"}.issubset(tokens) and "zombie" not in tokens:
+    if {"make", "aggressive"}.issubset(tokens) and "zombie" not in tokens and "runner" not in tokens:
+        if generalized_entity:
+            return (
+                f'AI-E supports multiple bounded enemy archetypes in BABYLON and will not guess what "{generalized_entity}" means here. '
+                "Name the supported target explicitly. Try something like: "
+                f"{supported_entity_examples_for_family('aggression')}."
+            )
         return (
-            "AI-E currently supports this deterministic aggression adjustment only for the zombie system in BABYLON. "
-            "Try something like: 'make zombie more aggressive'."
+            "AI-E currently supports this deterministic aggression adjustment only for the zombie or runner systems in BABYLON. "
+            f"Try something like: {supported_entity_examples_for_family('aggression')}."
         )
     return None
+
+
+def _generalized_entity_label(tokens: set[str]) -> str:
+    for candidate in ("enemy", "character"):
+        if candidate in tokens:
+            return candidate
+    return ""
 
 
 def _resolve_route(route_table: Dict[str, Any], translated_command: str) -> Dict[str, Any] | None:

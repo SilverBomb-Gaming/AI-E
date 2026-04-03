@@ -2,6 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .enemy_profiles import (
+    less_dangerous_prompt,
+    restore_standard_danger_prompt,
+    supported_entity_examples_for_family,
+)
+
 
 @dataclass(frozen=True)
 class PredefinedPlanStep:
@@ -71,6 +77,61 @@ _PREDEFINED_PLANS = (
                 step_index=2,
                 title="Decrease zombie movement speed",
                 operator_prompt="make zombie slower",
+                priority=25,
+            ),
+        ),
+    ),
+    PredefinedPlan(
+        plan_key="runner_restore_standard_danger_v1",
+        title="Restore standard runner danger",
+        canonical_prompt="restore runner danger to standard",
+        expected_outcome=(
+            "AI-E restores runner speed and aggression to their supported standard tiers so "
+            "the runner returns to the baseline fast-chase combat profile with proof for both bounded steps."
+        ),
+        execution_mode_label="Sandbox first",
+        trigger_prompts=(
+            "restore runner danger to standard",
+        ),
+        steps=(
+            PredefinedPlanStep(
+                step_index=1,
+                title="Restore runner movement speed to standard",
+                operator_prompt="restore runner speed to standard",
+                priority=20,
+            ),
+            PredefinedPlanStep(
+                step_index=2,
+                title="Restore runner aggression to standard",
+                operator_prompt="restore runner aggression to standard",
+                priority=25,
+            ),
+        ),
+    ),
+    PredefinedPlan(
+        plan_key="runner_combat_variation_v1",
+        title="Test runner combat variation",
+        canonical_prompt="make runner faster and more aggressive",
+        expected_outcome=(
+            "AI-E increases runner speed, then increases runner aggression, so the supported "
+            "test scene records a faster chase-oriented combat variation with proof for both bounded steps."
+        ),
+        execution_mode_label="Sandbox first",
+        trigger_prompts=(
+            "make runner faster and more aggressive",
+            "try a more aggressive runner",
+        ),
+        steps=(
+            PredefinedPlanStep(
+                step_index=1,
+                title="Increase runner speed",
+                operator_prompt="make runner faster",
+                priority=20,
+            ),
+            PredefinedPlanStep(
+                step_index=2,
+                title="Increase runner aggression",
+                operator_prompt="make runner more aggressive",
                 priority=25,
             ),
         ),
@@ -203,19 +264,28 @@ def unsupported_predefined_plan_message(prompt: str) -> str | None:
     normalized = " ".join(str(prompt or "").strip().lower().split())
     if not normalized:
         return None
+    generalized_entity = _generalized_entity_label(normalized)
     if (
         "zombie" not in normalized
+        and "runner" not in normalized
         and (
             "dangerous" in normalized
             or "combat variation" in normalized
             or "faster and more aggressive" in normalized
             or "intense" in normalized
             or "more aggressive zombie" in normalized
+            or "more aggressive runner" in normalized
         )
     ):
+        if generalized_entity:
+            return (
+                f'AI-E supports multiple bounded enemy archetypes in BABYLON and will not guess what "{generalized_entity}" means here. '
+                "Name the supported target explicitly. Try something like: "
+                f"{supported_entity_examples_for_family('combat_plan')}."
+            )
         return (
-            "AI-E currently supports this combat variation plan only for the zombie system in BABYLON. "
-            "Try something like: 'make zombie faster and more aggressive'."
+            "AI-E currently supports this combat variation plan only for the zombie or runner systems in BABYLON. "
+            f"Try something like: {supported_entity_examples_for_family('combat_plan')}."
         )
     if (
         (
@@ -224,17 +294,26 @@ def unsupported_predefined_plan_message(prompt: str) -> str | None:
             or "less dangerous" in normalized
             or "easier" in normalized
             or "restore zombie danger to standard" in normalized
+            or "restore runner danger to standard" in normalized
         )
         and "zombie" not in normalized
+        and "runner" not in normalized
     ):
+        if generalized_entity:
+            return (
+                f'AI-E supports multiple bounded enemy archetypes in BABYLON and will not guess what "{generalized_entity}" means here. '
+                "Name the supported target explicitly. Try something like: "
+                "'make zombie easier', 'make runner easier', or 'restore runner danger to standard'."
+            )
         if "safer" in normalized:
             return (
                 "AI-E currently supports this safety plan only for the zombie system in BABYLON. "
                 "Try something like: 'make zombie safer'."
             )
         return (
-            "AI-E currently supports this lower-danger plan only for the zombie system in BABYLON. "
-            "Try something like: 'make zombie less dangerous'."
+            "AI-E currently supports this lower-danger plan only for the zombie or runner systems in BABYLON. "
+            f"Try something like: '{less_dangerous_prompt('zombie')}', '{less_dangerous_prompt('runner')}', "
+            f"or '{restore_standard_danger_prompt('runner')}'."
         )
     if "move differently" in normalized and "zombie" not in normalized:
         return (
@@ -242,6 +321,13 @@ def unsupported_predefined_plan_message(prompt: str) -> str | None:
             "Try something like: 'make zombie move differently'."
         )
     return None
+
+
+def _generalized_entity_label(normalized_prompt: str) -> str:
+    for candidate in ("enemy", "character"):
+        if candidate in normalized_prompt:
+            return candidate
+    return ""
 
 
 __all__ = [

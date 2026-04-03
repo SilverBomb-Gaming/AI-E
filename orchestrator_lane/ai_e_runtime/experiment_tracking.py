@@ -2,6 +2,12 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
+from .enemy_profiles import (
+    baseline_restore_prompts,
+    detect_supported_enemy_entity,
+    enemy_display_name,
+    supported_enemy_entities,
+)
 from .intent_normalizer import normalize_prompt
 from .session_tuning import SESSION_FOLLOWUP_RESOLUTION
 
@@ -18,11 +24,9 @@ _EXPERIMENT_DECISION_PROMPTS = {
     "set current variant as baseline": "set_current_variant_as_baseline",
 }
 _BASELINE_RESTORE_PROMPTS = {
-    "restore zombie speed to standard",
-    "restore zombie aggression to standard",
-    "restore zombie danger to standard",
-    "make zombie safer",
-    "make zombie less dangerous",
+    prompt
+    for entity in supported_enemy_entities()
+    for prompt in baseline_restore_prompts(entity)
 }
 
 
@@ -43,23 +47,28 @@ def build_current_experiment_review(session_state: Dict[str, Any]) -> tuple[Dict
     if experiment is None:
         return None, _no_active_experiment_message(
             "show current experiment variants",
-            detail="show current experiment variants only after a supported zombie result exists in the current session",
+            detail="show current experiment variants only after a supported enemy result exists in the current session",
         )
 
     variants = _normalized_variants(experiment)
     if not variants:
         return None, _no_active_experiment_message(
             "show current experiment variants",
-            detail="show current experiment variants only after a supported zombie result exists in the current session",
+            detail="show current experiment variants only after a supported enemy result exists in the current session",
         )
 
     experiment_id = str(experiment.get("experiment_id") or "").strip()
     current_variant_id = str(experiment.get("active_variant_id") or variants[-1].get("variant_id") or "").strip()
     baseline_variant_id = str(experiment.get("baseline_variant_id") or "").strip()
+    target_entity = _experiment_target_entity(experiment, variants=variants)
     variant_lines: List[str] = []
     for variant in variants:
         variant_id = str(variant.get("variant_id") or "").strip()
-        prompt = str(variant.get("source_prompt") or variant.get("canonical_prompt") or "Supported zombie change").strip()
+        prompt = str(
+            variant.get("source_prompt")
+            or variant.get("canonical_prompt")
+            or f"Supported {target_entity} change"
+        ).strip()
         outcome = str(variant.get("outcome_summary") or "Outcome summary not available").strip()
         suffixes: List[str] = []
         if bool(variant.get("baseline_marker")):
@@ -74,6 +83,8 @@ def build_current_experiment_review(session_state: Dict[str, Any]) -> tuple[Dict
         f"AI-E is tracking {len(variants)} recorded variant(s) in {experiment_id}. "
         f"Current variant: {current_variant_id or 'not available'}."
     )
+    if target_entity:
+        overview += f" Target entity: {target_entity}."
     if baseline_variant_id:
         overview += f" Baseline: {baseline_variant_id}."
     return {
@@ -90,14 +101,14 @@ def build_current_experiment_decisions(session_state: Dict[str, Any]) -> tuple[D
     if experiment is None:
         return None, _no_active_experiment_message(
             "show current experiment decisions",
-            detail="show current experiment decisions only after a supported zombie result exists in the current session",
+            detail="show current experiment decisions only after a supported enemy result exists in the current session",
         )
 
     variants = _normalized_variants(experiment)
     if not variants:
         return None, _no_active_experiment_message(
             "show current experiment decisions",
-            detail="show current experiment decisions only after a supported zombie result exists in the current session",
+            detail="show current experiment decisions only after a supported enemy result exists in the current session",
         )
 
     current_variant = _active_variant(experiment, variants=variants)
@@ -111,10 +122,12 @@ def build_current_experiment_decisions(session_state: Dict[str, Any]) -> tuple[D
     current_variant_id = str(current_variant.get("variant_id") or "").strip()
     baseline_variant_id = str(experiment.get("baseline_variant_id") or "").strip()
     preferred_baseline_variant_id = str(experiment.get("preferred_baseline_variant_id") or "").strip()
+    target_entity = _experiment_target_entity(experiment, variants=variants)
     variant_lines = [
         _decision_variant_line(
             variant,
             preferred_baseline_variant_id=preferred_baseline_variant_id,
+            target_entity=target_entity,
         )
         for variant in variants
     ]
@@ -122,6 +135,8 @@ def build_current_experiment_decisions(session_state: Dict[str, Any]) -> tuple[D
         f"AI-E is tracking explicit decisions for {len(variants)} recorded variant(s) in {experiment_id}. "
         f"Current variant: {current_variant_id or 'not available'}."
     )
+    if target_entity:
+        overview += f" Target entity: {target_entity}."
     if baseline_variant_id:
         overview += f" Original baseline: {baseline_variant_id}."
     if preferred_baseline_variant_id:
@@ -152,7 +167,7 @@ def build_experiment_decision_preview(
     if experiment is None:
         return None, _no_active_experiment_message(
             prompt,
-            detail="record an experiment decision only after a supported zombie result exists in the current session",
+            detail="record an experiment decision only after a supported enemy result exists in the current session",
         )
 
     variants = _normalized_variants(experiment)
@@ -224,7 +239,7 @@ def apply_experiment_decision(
     if experiment is None:
         return state, None, _no_active_experiment_message(
             prompt,
-            detail="record an experiment decision only after a supported zombie result exists in the current session",
+            detail="record an experiment decision only after a supported enemy result exists in the current session",
         )
 
     variants = _normalized_variants(experiment)
@@ -320,6 +335,15 @@ def apply_experiment_tracking(
     if not _is_result_boundary(task):
         return state
 
+    target_entity = detect_supported_enemy_entity(
+        details.get("target_entity"),
+        details.get("entity_type"),
+        details.get("translated_command"),
+        task.get("target_entity"),
+        task.get("source_prompt"),
+        task.get("operator_prompt"),
+        task.get("capability_id"),
+    )
     tracking = dict(state.get("experiment_tracking") or {})
     experiments = [dict(item) for item in tracking.get("experiments", []) if isinstance(item, dict)]
     active_experiment_id = str(tracking.get("active_experiment_id") or "").strip()
@@ -328,10 +352,13 @@ def apply_experiment_tracking(
         if str(item.get("experiment_id") or "").strip() == active_experiment_id:
             experiment = item
             break
+    if experiment is not None and _experiment_target_entity(experiment) != target_entity:
+        experiment = None
     if experiment is None:
+        next_experiment_index = max(_int_or_default(tracking.get("next_experiment_index"), default=1), 1)
         experiment = {
-            "experiment_id": active_experiment_id or "experiment_0001",
-            "target_entity": "zombie",
+            "experiment_id": f"experiment_{next_experiment_index:04d}",
+            "target_entity": target_entity,
             "created_at": timestamp,
             "active_variant_id": "",
             "baseline_variant_id": "",
@@ -340,6 +367,7 @@ def apply_experiment_tracking(
             "variants": [],
         }
         experiments.append(experiment)
+        tracking["next_experiment_index"] = next_experiment_index + 1
 
     variants = _normalized_variants(experiment)
     variant_id = f"variant_{len(variants) + 1:04d}"
@@ -380,6 +408,7 @@ def apply_experiment_tracking(
         "movement_value": movement_record.get("observed_value"),
         "executed": _bool_or_default(details.get("executed"), default=True),
         "result_reason": str(details.get("result_reason") or "applied").strip().lower() or "applied",
+        "target_entity": target_entity,
         "decision_status": "undecided",
         "decision_order": None,
         "decision_timestamp": "",
@@ -395,9 +424,13 @@ def apply_experiment_tracking(
     experiment["variants"] = variants
     experiment["active_variant_id"] = variant_id
     experiment["baseline_variant_id"] = baseline_variant_id
+    experiment["target_entity"] = target_entity
 
     tracking["active_experiment_id"] = str(experiment.get("experiment_id") or "").strip()
-    tracking["next_experiment_index"] = max(_int_or_default(tracking.get("next_experiment_index"), default=2), 2)
+    tracking["next_experiment_index"] = max(
+        _int_or_default(tracking.get("next_experiment_index"), default=2),
+        len(experiments) + 1,
+    )
     tracking["experiments"] = experiments
     state["experiment_tracking"] = tracking
     state["latest_experiment_variant"] = dict(record)
@@ -553,9 +586,18 @@ def _decision_status(variant: Dict[str, Any]) -> str:
     return "undecided"
 
 
-def _decision_variant_line(variant: Dict[str, Any], *, preferred_baseline_variant_id: str) -> str:
+def _decision_variant_line(
+    variant: Dict[str, Any],
+    *,
+    preferred_baseline_variant_id: str,
+    target_entity: str,
+) -> str:
     variant_id = str(variant.get("variant_id") or "").strip()
-    prompt = str(variant.get("source_prompt") or variant.get("canonical_prompt") or "Supported zombie change").strip()
+    prompt = str(
+        variant.get("source_prompt")
+        or variant.get("canonical_prompt")
+        or f"Supported {target_entity} change"
+    ).strip()
     decision_status = _decision_status(variant)
     outcome = str(variant.get("outcome_summary") or "Outcome summary not available").strip()
     suffixes: List[str] = [f"decision: {decision_status}"]
@@ -577,7 +619,7 @@ def _latest_decision_summary(experiment: Dict[str, Any]) -> str:
 def _no_active_experiment_message(prompt: str, *, detail: str) -> str:
     _ = prompt
     return (
-        f"AI-E can {detail}. Start with something like: 'make zombie faster'."
+        f"AI-E can {detail}. Start with something like: 'make zombie faster' or 'make runner faster'."
     )
 
 
@@ -604,6 +646,22 @@ def _outcome_summary(
         action_name = str(details.get("action_name") or details.get("action_type") or "supported change").strip()
         return action_name.replace("_", " ")
     return ", ".join(parts)
+
+
+def _experiment_target_entity(experiment: Dict[str, Any], *, variants: List[Dict[str, Any]] | None = None) -> str:
+    target_entity = normalize_prompt(str(experiment.get("target_entity") or "")).strip()
+    if target_entity:
+        return target_entity
+    resolved_variants = list(variants) if isinstance(variants, list) else _normalized_variants(experiment)
+    for variant in reversed(resolved_variants):
+        detected = detect_supported_enemy_entity(
+            variant.get("target_entity"),
+            variant.get("source_prompt"),
+            variant.get("canonical_prompt"),
+        )
+        if detected:
+            return detected
+    return enemy_display_name(None)
 
 
 def _int_or_default(value: Any, *, default: int) -> int:

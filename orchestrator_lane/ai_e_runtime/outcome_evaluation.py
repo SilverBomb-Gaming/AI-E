@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
+from .enemy_profiles import aggression_tier_values, detect_supported_enemy_entity, enemy_display_name, speed_tier_values
 from .experiment_tracking import find_experiment_by_id, find_variant_for_task
 
 
@@ -12,18 +13,9 @@ _SPEED_ORDER = {
     "standard": 1,
     "fast": 2,
 }
-_SPEED_BASELINE_VALUE = {
-    "slow": 2.5,
-    "standard": 3.5,
-    "fast": 4.5,
-}
 _AGGRESSION_ORDER = {
     "standard": 0,
     "aggressive": 1,
-}
-_AGGRESSION_BASELINE_VALUE = {
-    "standard": 1.0,
-    "aggressive": 0.6,
 }
 
 
@@ -110,6 +102,16 @@ def _build_result_snapshot(
         state,
         experiment_id=str(experiment_variant.get("experiment_id") or "").strip(),
     )
+    target_entity = detect_supported_enemy_entity(
+        experiment_variant.get("target_entity"),
+        speed_record.get("target_entity"),
+        aggression_record.get("target_entity"),
+        movement_record.get("target_entity"),
+        task.get("operator_prompt"),
+        task.get("source_prompt"),
+    )
+    speed_defaults = speed_tier_values(target_entity)
+    aggression_defaults = aggression_tier_values(target_entity)
 
     return {
         "order": int(order),
@@ -122,12 +124,13 @@ def _build_result_snapshot(
         "canonical_prompt": str(task.get("operator_prompt") or "").strip(),
         "resolution_source": str(task.get("resolution_source") or "").strip(),
         "resolved_from_prompt": str(task.get("resolved_from_prompt") or "").strip(),
+        "target_entity": target_entity,
         "speed_tier": speed_tier,
-        "speed_value": _float_or_default(speed_record.get("observed_value"), _SPEED_BASELINE_VALUE.get(speed_tier)),
+        "speed_value": _float_or_default(speed_record.get("observed_value"), speed_defaults.get(speed_tier)),
         "aggression_tier": aggression_tier,
         "aggression_value": _float_or_default(
             aggression_record.get("observed_value"),
-            _AGGRESSION_BASELINE_VALUE.get(aggression_tier),
+            aggression_defaults.get(aggression_tier),
         ),
         "movement_tier": movement_tier,
         "movement_target_z": movement_target_z,
@@ -151,39 +154,56 @@ def _evaluate_snapshots(
     current_snapshot: Dict[str, Any],
     history: List[Dict[str, Any]],
 ) -> Dict[str, Any] | None:
-    if not isinstance(previous_snapshot, dict):
+    comparison_snapshot = previous_snapshot if isinstance(previous_snapshot, dict) else None
+    current_experiment_id = str(current_snapshot.get("experiment_id") or "").strip()
+    if comparison_snapshot is not None and current_experiment_id:
+        if str(comparison_snapshot.get("experiment_id") or "").strip() != current_experiment_id:
+            comparison_snapshot = _previous_snapshot_for_experiment(
+                history,
+                experiment_id=current_experiment_id,
+                current_order=_int_or_default(current_snapshot.get("order"), 0),
+            )
+
+    if not isinstance(comparison_snapshot, dict):
         return None
 
     summary_terms: List[str] = []
     summary_signs: List[int] = []
     differences: List[str] = []
+    target_entity = enemy_display_name(current_snapshot.get("target_entity"))
 
-    speed_term = _compare_speed(previous_snapshot, current_snapshot)
+    speed_term = _compare_speed(comparison_snapshot, current_snapshot)
     if speed_term is not None:
         summary_terms.append(speed_term["summary"])
         summary_signs.append(speed_term["sign"])
         differences.append(speed_term["detail"])
 
-    aggression_term = _compare_aggression(previous_snapshot, current_snapshot)
+    aggression_term = _compare_aggression(comparison_snapshot, current_snapshot)
     if aggression_term is not None:
         summary_terms.append(aggression_term["summary"])
         summary_signs.append(aggression_term["sign"])
         differences.append(aggression_term["detail"])
 
-    movement_term = _compare_movement(previous_snapshot, current_snapshot)
+    movement_term = _compare_movement(comparison_snapshot, current_snapshot)
     if movement_term is not None:
         summary_terms.append(movement_term["summary"])
         summary_signs.append(movement_term["sign"])
         differences.append(movement_term["detail"])
 
     if not summary_terms:
-        summary = "Current zombie matches the previous version across the supported deterministic state checks."
+        summary = (
+            f"Current {target_entity} matches the previous version across the supported deterministic state checks."
+        )
     else:
-        summary = _build_comparison_summary(summary_terms, summary_signs)
+        summary = _build_comparison_summary(summary_terms, summary_signs, target_entity=target_entity)
 
-    suggestion = _deterministic_suggestion(summary_terms=summary_terms, differences=differences)
+    suggestion = _deterministic_suggestion(
+        summary_terms=summary_terms,
+        differences=differences,
+        target_entity=target_entity,
+    )
     experiment_fields = _experiment_comparison_fields(
-        previous_snapshot=previous_snapshot,
+        previous_snapshot=comparison_snapshot,
         current_snapshot=current_snapshot,
         history=history,
     )
@@ -385,12 +405,12 @@ def _compare_movement(previous_snapshot: Dict[str, Any], current_snapshot: Dict[
     return None
 
 
-def _build_comparison_summary(summary_terms: List[str], summary_signs: List[int]) -> str:
+def _build_comparison_summary(summary_terms: List[str], summary_signs: List[int], *, target_entity: str) -> str:
     if len(summary_terms) == 1:
         term = summary_terms[0]
         if term.startswith("moves ") or term.startswith("uses "):
-            return f"Current zombie {term} than previous version."
-        return f"Current zombie is {term} than previous version."
+            return f"Current {target_entity} {term} than previous version."
+        return f"Current {target_entity} is {term} than previous version."
 
     connector = " and "
     non_zero_signs = {sign for sign in summary_signs if sign != 0}
@@ -407,16 +427,16 @@ def _build_comparison_summary(summary_terms: List[str], summary_signs: List[int]
             second_text = second
         else:
             second_text = second
-        return f"Current zombie {first_text}{connector}{second_text} than previous version."
+        return f"Current {target_entity} {first_text}{connector}{second_text} than previous version."
 
     joined = ", ".join(summary_terms[:-1]) + f", and {summary_terms[-1]}"
-    return f"Current zombie is {joined} than previous version."
+    return f"Current {target_entity} is {joined} than previous version."
 
 
-def _deterministic_suggestion(*, summary_terms: List[str], differences: List[str]) -> str:
+def _deterministic_suggestion(*, summary_terms: List[str], differences: List[str], target_entity: str) -> str:
     terms = set(summary_terms)
     if "faster" in terms and "less aggressive" in terms:
-        return "Try increasing aggression again for a more dangerous zombie."
+        return f"Try increasing aggression again for a more dangerous {target_entity}."
     if any("Movement target changed" in difference or "Movement path changed" in difference for difference in differences):
         return "Choose between standard and variation path."
     return ""
@@ -467,6 +487,23 @@ def _baseline_movement_target(baseline_variant: Dict[str, Any], *, current_snaps
     if isinstance(observed_value, list) and len(observed_value) >= 3:
         return _float_or_none(observed_value[2])
     return _float_or_none(current_snapshot.get("movement_target_z"))
+
+
+def _previous_snapshot_for_experiment(
+    history: List[Dict[str, Any]],
+    *,
+    experiment_id: str,
+    current_order: int,
+) -> Dict[str, Any]:
+    for snapshot in reversed(history):
+        if not isinstance(snapshot, dict):
+            continue
+        if str(snapshot.get("experiment_id") or "").strip() != experiment_id:
+            continue
+        if _int_or_default(snapshot.get("order"), 0) >= current_order:
+            continue
+        return snapshot
+    return {}
 
 
 def _snapshot_by_variant_id(

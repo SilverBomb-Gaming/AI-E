@@ -4,6 +4,8 @@ import re
 from dataclasses import dataclass
 from typing import Iterable, List
 
+from .goal_composition import resolve_goal_composition_prompt
+from .goal_intent_mapping import resolve_goal_intent_prompt
 from .predefined_plans import match_predefined_plan
 
 @dataclass(frozen=True)
@@ -154,7 +156,16 @@ class RuleBasedPlanner:
         normalized_prompt = self._normalize(operator_prompt)
         if not normalized_prompt:
             raise ValueError("operator prompt must not be empty")
-        predefined_plan = match_predefined_plan(normalized_prompt)
+
+        planning_prompt = normalized_prompt
+        goal_intent_resolution = resolve_goal_intent_prompt(planning_prompt)
+        if goal_intent_resolution is not None:
+            planning_prompt = goal_intent_resolution.canonical_prompt
+        goal_composition_resolution = resolve_goal_composition_prompt(planning_prompt)
+        if goal_composition_resolution is not None:
+            planning_prompt = goal_composition_resolution.canonical_prompt
+
+        predefined_plan = match_predefined_plan(planning_prompt)
         if predefined_plan is not None:
             steps = [
                 PlanStep(
@@ -172,19 +183,19 @@ class RuleBasedPlanner:
                 plan_id=f"PLAN_{request_id.split('_', 1)[1]}",
                 request_type="PREDEFINED_MUTATION_PLAN",
                 target_repo=target_repo,
-                operator_prompt=normalized_prompt,
+                operator_prompt=planning_prompt,
                 steps=steps,
                 title=predefined_plan.title,
                 expected_outcome=predefined_plan.expected_outcome,
             )
-        request_type = self.classify_request(normalized_prompt)
-        components = self.extract_components(normalized_prompt)
-        steps = self._build_steps(normalized_prompt, request_type, components)
+        request_type = self.classify_request(planning_prompt)
+        components = self.extract_components(planning_prompt)
+        steps = self._build_steps(planning_prompt, request_type, components)
         return PlanResult(
             plan_id=f"PLAN_{request_id.split('_', 1)[1]}",
             request_type=request_type,
             target_repo=target_repo,
-            operator_prompt=normalized_prompt,
+            operator_prompt=planning_prompt,
             steps=steps,
             title="Plan",
             expected_outcome="",
