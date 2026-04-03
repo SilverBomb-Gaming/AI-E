@@ -184,3 +184,24 @@ def test_plan_task_graph_preserves_operator_prompts_for_predefined_variation_pla
         "move zombie forward",
     ]
     assert graph.nodes[1].dependencies == ["INTAKE_GRAPH_VARIATION__STEP_01"]
+
+
+def test_plan_task_graph_preserves_operator_prompts_for_predefined_encounter_intensity_plan() -> None:
+    planner = RuleBasedPlanner()
+    plan = planner.plan(
+        "make encounter more intense",
+        target_repo="E:/AI projects 2025/BABYLON VER 2",
+        request_id="REQ_GRAPH_ENCOUNTER_INTENSE",
+    )
+
+    graph = build_plan_task_graph(
+        plan,
+        request_id="REQ_GRAPH_ENCOUNTER_INTENSE",
+        task_id_prefix="INTAKE_GRAPH_ENCOUNTER_INTENSE",
+    )
+
+    assert [node.operator_prompt for node in graph.nodes] == [
+        "increase encounter count",
+        "increase spawn pressure",
+    ]
+    assert graph.nodes[1].dependencies == ["INTAKE_GRAPH_ENCOUNTER_INTENSE__STEP_01"]

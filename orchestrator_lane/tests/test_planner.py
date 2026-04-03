@@ -233,3 +233,45 @@ def test_planner_returns_predefined_zombie_variation_plan() -> None:
         "move zombie farther forward",
         "move zombie forward",
     ]
+
+
+def test_planner_returns_predefined_encounter_intensity_plan() -> None:
+    planner = RuleBasedPlanner()
+
+    plan = planner.plan(
+        "make encounter more intense",
+        target_repo="E:/AI projects 2025/BABYLON VER 2",
+        request_id="REQ_ENCOUNTER_INTENSE123",
+    )
+
+    assert plan.request_type == "PREDEFINED_MUTATION_PLAN"
+    assert plan.title == "Increase encounter intensity"
+    assert plan.plan_step_titles() == [
+        "Increase encounter count",
+        "Increase spawn pressure",
+    ]
+    assert [step.operator_prompt for step in plan.steps] == [
+        "increase encounter count",
+        "increase spawn pressure",
+    ]
+
+
+def test_planner_returns_predefined_restore_standard_encounter_plan() -> None:
+    planner = RuleBasedPlanner()
+
+    plan = planner.plan(
+        "restore encounter to standard",
+        target_repo="E:/AI projects 2025/BABYLON VER 2",
+        request_id="REQ_ENCOUNTER_STANDARD123",
+    )
+
+    assert plan.request_type == "PREDEFINED_MUTATION_PLAN"
+    assert plan.title == "Restore encounter to standard"
+    assert plan.plan_step_titles() == [
+        "Restore encounter count to standard",
+        "Restore spawn pressure to standard",
+    ]
+    assert [step.operator_prompt for step in plan.steps] == [
+        "restore encounter count to standard",
+        "restore spawn pressure to standard",
+    ]
