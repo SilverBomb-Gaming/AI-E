@@ -127,6 +127,48 @@ def test_planner_returns_predefined_restore_standard_zombie_danger_plan() -> Non
     ]
 
 
+def test_planner_returns_predefined_runner_combat_variation_plan() -> None:
+    planner = RuleBasedPlanner()
+
+    plan = planner.plan(
+        "make runner more dangerous",
+        target_repo="E:/AI projects 2025/BABYLON VER 2",
+        request_id="REQ_RUNNER_COMBAT123",
+    )
+
+    assert plan.request_type == "PREDEFINED_MUTATION_PLAN"
+    assert plan.title == "Test runner combat variation"
+    assert plan.plan_step_titles() == [
+        "Increase runner speed",
+        "Increase runner aggression",
+    ]
+    assert [step.operator_prompt for step in plan.steps] == [
+        "make runner faster",
+        "make runner more aggressive",
+    ]
+
+
+def test_planner_returns_predefined_restore_standard_runner_danger_plan() -> None:
+    planner = RuleBasedPlanner()
+
+    plan = planner.plan(
+        "make runner easier",
+        target_repo="E:/AI projects 2025/BABYLON VER 2",
+        request_id="REQ_RUNNER_EASIER123",
+    )
+
+    assert plan.request_type == "PREDEFINED_MUTATION_PLAN"
+    assert plan.title == "Restore standard runner danger"
+    assert plan.plan_step_titles() == [
+        "Restore runner movement speed to standard",
+        "Restore runner aggression to standard",
+    ]
+    assert [step.operator_prompt for step in plan.steps] == [
+        "restore runner speed to standard",
+        "restore runner aggression to standard",
+    ]
+
+
 def test_planner_returns_predefined_fast_low_aggression_zombie_variation_plan() -> None:
     planner = RuleBasedPlanner()
 

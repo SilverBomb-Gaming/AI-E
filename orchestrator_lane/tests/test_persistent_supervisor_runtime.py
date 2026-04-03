@@ -14,6 +14,7 @@ from ai_e_runtime.capability_registry import CapabilityEvidenceStore, Capability
 from ai_e_runtime.level_0001_entity_transform_mutation import run_level_0001_entity_transform_mutation
 from ai_e_runtime.mutation_approval import approve_mutation_task
 from ai_e_runtime.scheduler import Scheduler
+from ai_e_runtime.state_store import StateStore
 from ai_e_runtime.supervisor import Supervisor, SupervisorConfig
 from ai_e_runtime.task_intake import ConversationalTaskIntake
 from orchestrator.config import OrchestratorConfig
@@ -8795,20 +8796,260 @@ def _write_grass_capability_contracts(config: OrchestratorConfig) -> None:
     )
 
 
+def test_supervisor_executes_runner_goal_intent_plan_and_tracks_experiment_metadata(tmp_path, monkeypatch):
+    config = _make_config(tmp_path / "runner_goal_intent_combat_plan")
+    _write_runner_speed_capability_contracts(config)
+    _write_runner_aggression_capability_contract(config)
+    target_repo = _create_entity_transform_prompt_repo(config, target_repo_name="BABYLON_TEST")
+    intake = ConversationalTaskIntake(config)
+    fake_run, runtime_state = _make_stateful_zombie_mutation_fake_run(target_repo)
+
+    monkeypatch.setattr("ai_e_runtime.level_0001_entity_transform_mutation.subprocess.run", fake_run)
+
+    result = intake.accept_message(
+        "make runner more dangerous",
+        session_id="runner-goal-intent-session",
+        target_repo=target_repo,
+    )
+
+    assert result.task_type == "mutation_plan_request"
+    assert result.routing.plan_title == "Test runner combat variation"
+    for task_id in result.task_ids:
+        approval = approve_mutation_task(
+            config,
+            task_id=task_id,
+            approved_by="operator-test",
+            notes="Approve bounded runner combat variation.",
+        )
+        assert approval.queue_status == "pending"
+
+    run_result = Supervisor(
+        config,
+        SupervisorConfig(
+            session_limit_seconds=30,
+            stop_when_queue_empty=True,
+            session_id="runner-goal-intent-session",
+        ),
+    ).run()
+    assert run_result is not None
+
+    state = StateStore(config.runs_dir, "runner-goal-intent-session").load()
+    experiment_tracking = state["experiment_tracking"]
+    assert experiment_tracking["active_experiment_id"] == "experiment_0001"
+    assert experiment_tracking["experiments"][0]["target_entity"] == "runner"
+    assert experiment_tracking["experiments"][0]["variants"][0]["target_entity"] == "runner"
+    assert runtime_state["entities"]["runner"]["speed"] == 5.0
+    assert runtime_state["entities"]["runner"]["attack_cooldown"] == 0.5
+
+    proof = home_surface.load_proof_result_surface(config.runs_dir / "runner-goal-intent-session")
+    assert proof.available is True
+    assert proof.detected_action == "Test runner combat variation"
+    assert proof.experiment_available is True
+    assert proof.experiment_id == "experiment_0001"
+    assert proof.variant_id == "variant_0001"
+
+
+def test_supervisor_runner_session_followup_and_revert_work_with_active_entity(tmp_path, monkeypatch):
+    config = _make_config(tmp_path / "runner_followup_revert")
+    _write_runner_speed_capability_contracts(config)
+    target_repo = _create_entity_transform_prompt_repo(config, target_repo_name="BABYLON_TEST")
+    intake = ConversationalTaskIntake(config)
+    fake_run, runtime_state = _make_stateful_zombie_mutation_fake_run(target_repo)
+
+    monkeypatch.setattr("ai_e_runtime.level_0001_entity_transform_mutation.subprocess.run", fake_run)
+
+    initial = intake.accept_message(
+        "make runner faster",
+        session_id="runner-followup-session",
+        target_repo=target_repo,
+    )
+    approval = approve_mutation_task(
+        config,
+        task_id=initial.task_id,
+        approved_by="operator-test",
+        notes="Approve runner speed increase.",
+    )
+    assert approval.queue_status == "pending"
+    Supervisor(
+        config,
+        SupervisorConfig(
+            session_limit_seconds=30,
+            stop_when_queue_empty=True,
+            session_id="runner-followup-session",
+        ),
+    ).run()
+
+    followup = intake.accept_message(
+        "make it slower",
+        session_id="runner-followup-session",
+        target_repo=target_repo,
+    )
+    assert followup.routing.mapped_prompt == "restore runner speed to standard"
+    approval = approve_mutation_task(
+        config,
+        task_id=followup.task_id,
+        approved_by="operator-test",
+        notes="Approve runner speed follow-up.",
+    )
+    assert approval.queue_status == "pending"
+    Supervisor(
+        config,
+        SupervisorConfig(
+            session_limit_seconds=30,
+            stop_when_queue_empty=True,
+            session_id="runner-followup-session",
+            resume=True,
+        ),
+    ).run()
+
+    revert = intake.accept_message(
+        "revert last change",
+        session_id="runner-followup-session",
+        target_repo=target_repo,
+    )
+    assert revert.routing.mapped_prompt == "make runner faster"
+    assert revert.routing.revert_requested is True
+    approval = approve_mutation_task(
+        config,
+        task_id=revert.task_id,
+        approved_by="operator-test",
+        notes="Approve runner revert.",
+    )
+    assert approval.queue_status == "pending"
+    Supervisor(
+        config,
+        SupervisorConfig(
+            session_limit_seconds=30,
+            stop_when_queue_empty=True,
+            session_id="runner-followup-session",
+            resume=True,
+        ),
+    ).run()
+
+    state = StateStore(config.runs_dir, "runner-followup-session").load()
+    history = state["session_tuning_history"]
+    assert [item["canonical_prompt"] for item in history] == [
+        "make runner faster",
+        "restore runner speed to standard",
+        "make runner faster",
+    ]
+    assert [item["target_entity"] for item in history] == ["runner", "runner", "runner"]
+    assert state["session_tuning_state"]["target_entity"] == "runner"
+    assert runtime_state["entities"]["runner"]["speed"] == 5.0
+
+    proof = home_surface.load_proof_result_surface(config.runs_dir / "runner-followup-session")
+    assert proof.available is True
+    assert "runner" in proof.evaluation_summary.lower()
+    assert any("runner" in check.lower() for check in proof.validation_checks)
+
+
+def test_supervisor_runner_state_aware_skip_records_noop_and_evaluation(tmp_path, monkeypatch):
+    config = _make_config(tmp_path / "runner_state_aware_skip")
+    _write_runner_aggression_capability_contract(config)
+    target_repo = _create_entity_transform_prompt_repo(config, target_repo_name="BABYLON_TEST")
+    intake = ConversationalTaskIntake(config)
+    fake_run, runtime_state = _make_stateful_zombie_mutation_fake_run(target_repo)
+
+    monkeypatch.setattr("ai_e_runtime.level_0001_entity_transform_mutation.subprocess.run", fake_run)
+
+    first = intake.accept_message(
+        "make runner more aggressive",
+        session_id="runner-skip-session",
+        target_repo=target_repo,
+    )
+    approval = approve_mutation_task(
+        config,
+        task_id=first.task_id,
+        approved_by="operator-test",
+        notes="Approve runner aggression increase.",
+    )
+    assert approval.queue_status == "pending"
+    Supervisor(
+        config,
+        SupervisorConfig(
+            session_limit_seconds=30,
+            stop_when_queue_empty=True,
+            session_id="runner-skip-session",
+        ),
+    ).run()
+
+    second = intake.accept_message(
+        "make runner more aggressive",
+        session_id="runner-skip-session",
+        target_repo=target_repo,
+    )
+    approval = approve_mutation_task(
+        config,
+        task_id=second.task_id,
+        approved_by="operator-test",
+        notes="Approve repeated runner aggression increase.",
+    )
+    assert approval.queue_status == "pending"
+    Supervisor(
+        config,
+        SupervisorConfig(
+            session_limit_seconds=30,
+            stop_when_queue_empty=True,
+            session_id="runner-skip-session",
+            resume=True,
+        ),
+    ).run()
+
+    artifact = json.loads((config.runs_dir / "runner-skip-session" / "artifacts" / f"{second.task_id}_attempt_01.json").read_text(encoding="utf-8"))
+    details = artifact["result"]["details"]
+    assert details["entity_type"] == "runner"
+    assert details["executed"] is False
+    assert details["result_reason"] == "skipped_already_satisfied"
+    assert runtime_state["entities"]["runner"]["attack_cooldown"] == 0.5
+
+    proof = home_surface.load_proof_result_surface(config.runs_dir / "runner-skip-session")
+    assert proof.available is True
+    assert "current runner matches the previous version" in proof.evaluation_summary.lower()
+    assert proof.experiment_available is True
+
+
 def _make_stateful_zombie_mutation_fake_run(target_repo: str):
     state = {
         "speed": 3.5,
         "attack_cooldown": 1.0,
         "position": [0.0, 0.0, 0.0],
         "tick": 0,
+        "entities": {
+            "zombie": {
+                "speed": 3.5,
+                "attack_cooldown": 1.0,
+                "position": [0.0, 0.0, 0.0],
+                "baseline_speed": 3.5,
+                "baseline_attack_cooldown": 1.0,
+                "object_name": "AIE_Zombie_001_Instance",
+            },
+            "runner": {
+                "speed": 4.5,
+                "attack_cooldown": 0.8,
+                "position": [0.0, 0.0, 0.0],
+                "baseline_speed": 4.5,
+                "baseline_attack_cooldown": 0.8,
+                "object_name": "AIE_Runner_Profile_Instance",
+            },
+        },
     }
 
     def _timestamp() -> str:
         state["tick"] += 1
         return f"2026-04-02T03:00:{state['tick']:02d}Z"
 
+    def _entity_state(entity: str) -> dict:
+        return state["entities"][entity]
+
+    def _sync_legacy_zombie_state() -> None:
+        zombie_state = _entity_state("zombie")
+        state["speed"] = zombie_state["speed"]
+        state["attack_cooldown"] = zombie_state["attack_cooldown"]
+        state["position"] = list(zombie_state["position"])
+
     def _write_transform_artifacts(
         *,
+        entity: str,
         prompt_text: str,
         action_name: str,
         translator_artifact_path: Path,
@@ -8819,9 +9060,12 @@ def _make_stateful_zombie_mutation_fake_run(target_repo: str):
         probe_artifact_name: str,
         new_position: list[float],
     ) -> None:
-        previous_position = list(state["position"])
+        entity_state = _entity_state(entity)
+        previous_position = list(entity_state["position"])
         executed = previous_position != list(new_position)
-        state["position"] = list(new_position)
+        entity_state["position"] = list(new_position)
+        if entity == "zombie":
+            _sync_legacy_zombie_state()
         timestamp = _timestamp()
         probe_artifact_path = translator_artifact_path.parent / probe_artifact_name
         translator_log_path.write_text("translator log", encoding="utf-8")
@@ -8834,7 +9078,8 @@ def _make_stateful_zombie_mutation_fake_run(target_repo: str):
                     "scene": "entity_test",
                     "scene_name": "entity_test",
                     "action_type": "mutate_entity_transform",
-                    "object_name": "AIE_Zombie_001_Instance",
+                    "entity_type": entity,
+                    "object_name": entity_state["object_name"],
                     "previous_position": previous_position,
                     "new_position": list(new_position),
                     "movement_distance": abs(float(new_position[2]) - float(previous_position[2])),
@@ -8885,6 +9130,7 @@ def _make_stateful_zombie_mutation_fake_run(target_repo: str):
 
     def _write_speed_artifacts(
         *,
+        entity: str,
         prompt_text: str,
         action_name: str,
         requested_speed: float,
@@ -8895,10 +9141,13 @@ def _make_stateful_zombie_mutation_fake_run(target_repo: str):
         probe_log_path: Path,
         probe_artifact_name: str,
     ) -> None:
-        previous_speed = float(state["speed"])
+        entity_state = _entity_state(entity)
+        previous_speed = float(entity_state["speed"])
         executed = abs(previous_speed - requested_speed) > 0.0001
         new_speed = requested_speed if executed else previous_speed
-        state["speed"] = new_speed
+        entity_state["speed"] = new_speed
+        if entity == "zombie":
+            _sync_legacy_zombie_state()
         timestamp = _timestamp()
         probe_artifact_path = translator_artifact_path.parent / probe_artifact_name
         translator_log_path.write_text("translator log", encoding="utf-8")
@@ -8911,11 +9160,12 @@ def _make_stateful_zombie_mutation_fake_run(target_repo: str):
                     "scene": "entity_test",
                     "scene_name": "entity_test",
                     "action_type": "mutate_enemy_move_speed",
-                    "object_name": "AIE_Zombie_001_Instance",
+                    "entity_type": entity,
+                    "object_name": entity_state["object_name"],
                     "previous_speed": previous_speed,
                     "new_speed": new_speed,
                     "observed_speed_before_reset": previous_speed,
-                    "baseline_speed": 3.5,
+                    "baseline_speed": entity_state["baseline_speed"],
                     "requested_speed": requested_speed,
                     "minimum_speed": 2.0,
                     "maximum_speed": 5.0,
@@ -8966,6 +9216,7 @@ def _make_stateful_zombie_mutation_fake_run(target_repo: str):
 
     def _write_aggression_artifacts(
         *,
+        entity: str,
         prompt_text: str,
         action_name: str,
         requested_attack_cooldown: float,
@@ -8976,10 +9227,13 @@ def _make_stateful_zombie_mutation_fake_run(target_repo: str):
         probe_log_path: Path,
         probe_artifact_name: str,
     ) -> None:
-        previous_attack_cooldown = float(state["attack_cooldown"])
+        entity_state = _entity_state(entity)
+        previous_attack_cooldown = float(entity_state["attack_cooldown"])
         executed = abs(previous_attack_cooldown - requested_attack_cooldown) > 0.0001
         new_attack_cooldown = requested_attack_cooldown if executed else previous_attack_cooldown
-        state["attack_cooldown"] = new_attack_cooldown
+        entity_state["attack_cooldown"] = new_attack_cooldown
+        if entity == "zombie":
+            _sync_legacy_zombie_state()
         timestamp = _timestamp()
         probe_artifact_path = translator_artifact_path.parent / probe_artifact_name
         translator_log_path.write_text("translator log", encoding="utf-8")
@@ -8992,11 +9246,12 @@ def _make_stateful_zombie_mutation_fake_run(target_repo: str):
                     "scene": "entity_test",
                     "scene_name": "entity_test",
                     "action_type": "mutate_enemy_aggression",
-                    "object_name": "AIE_Zombie_001_Instance",
+                    "entity_type": entity,
+                    "object_name": entity_state["object_name"],
                     "previous_attack_cooldown": previous_attack_cooldown,
                     "new_attack_cooldown": new_attack_cooldown,
                     "observed_attack_cooldown_before_reset": previous_attack_cooldown,
-                    "baseline_attack_cooldown": 1.0,
+                    "baseline_attack_cooldown": entity_state["baseline_attack_cooldown"],
                     "requested_attack_cooldown": requested_attack_cooldown,
                     "minimum_attack_cooldown": 0.25,
                     "maximum_attack_cooldown": 2.0,
@@ -9059,6 +9314,7 @@ def _make_stateful_zombie_mutation_fake_run(target_repo: str):
 
         if prompt_text == "make zombie faster":
             _write_speed_artifacts(
+                entity="zombie",
                 prompt_text=prompt_text,
                 action_name="increase_enemy_move_speed",
                 requested_speed=4.5,
@@ -9071,6 +9327,7 @@ def _make_stateful_zombie_mutation_fake_run(target_repo: str):
             )
         elif prompt_text == "make zombie slower":
             _write_speed_artifacts(
+                entity="zombie",
                 prompt_text=prompt_text,
                 action_name="decrease_enemy_move_speed",
                 requested_speed=2.5,
@@ -9083,6 +9340,7 @@ def _make_stateful_zombie_mutation_fake_run(target_repo: str):
             )
         elif prompt_text == "restore zombie speed to standard":
             _write_speed_artifacts(
+                entity="zombie",
                 prompt_text=prompt_text,
                 action_name="set_enemy_move_speed",
                 requested_speed=3.5,
@@ -9095,6 +9353,7 @@ def _make_stateful_zombie_mutation_fake_run(target_repo: str):
             )
         elif prompt_text == "make zombie more aggressive":
             _write_aggression_artifacts(
+                entity="zombie",
                 prompt_text=prompt_text,
                 action_name="increase_enemy_aggression",
                 requested_attack_cooldown=0.6,
@@ -9107,6 +9366,7 @@ def _make_stateful_zombie_mutation_fake_run(target_repo: str):
             )
         elif prompt_text == "restore zombie aggression to standard":
             _write_aggression_artifacts(
+                entity="zombie",
                 prompt_text=prompt_text,
                 action_name="set_enemy_aggression",
                 requested_attack_cooldown=1.0,
@@ -9119,6 +9379,7 @@ def _make_stateful_zombie_mutation_fake_run(target_repo: str):
             )
         elif prompt_text == "move zombie forward":
             _write_transform_artifacts(
+                entity="zombie",
                 prompt_text=prompt_text,
                 action_name="move_entity_forward",
                 translator_artifact_path=translator_artifact_path,
@@ -9131,6 +9392,7 @@ def _make_stateful_zombie_mutation_fake_run(target_repo: str):
             )
         elif prompt_text == "move zombie farther forward":
             _write_transform_artifacts(
+                entity="zombie",
                 prompt_text=prompt_text,
                 action_name="move_entity_farther_forward",
                 translator_artifact_path=translator_artifact_path,
@@ -9140,6 +9402,71 @@ def _make_stateful_zombie_mutation_fake_run(target_repo: str):
                 probe_log_path=probe_log_path,
                 probe_artifact_name="intent_move_zombie_farther_forward_probe_result.json",
                 new_position=[0.0, 0.0, 6.0],
+            )
+        elif prompt_text == "make runner faster":
+            _write_speed_artifacts(
+                entity="runner",
+                prompt_text=prompt_text,
+                action_name="increase_enemy_move_speed",
+                requested_speed=5.0,
+                translator_artifact_path=translator_artifact_path,
+                translator_log_path=translator_log_path,
+                router_artifact_path=router_artifact_path,
+                router_log_path=router_log_path,
+                probe_log_path=probe_log_path,
+                probe_artifact_name="intent_make_runner_faster_probe_result.json",
+            )
+        elif prompt_text == "make runner slower":
+            _write_speed_artifacts(
+                entity="runner",
+                prompt_text=prompt_text,
+                action_name="decrease_enemy_move_speed",
+                requested_speed=3.5,
+                translator_artifact_path=translator_artifact_path,
+                translator_log_path=translator_log_path,
+                router_artifact_path=router_artifact_path,
+                router_log_path=router_log_path,
+                probe_log_path=probe_log_path,
+                probe_artifact_name="intent_make_runner_slower_probe_result.json",
+            )
+        elif prompt_text == "restore runner speed to standard":
+            _write_speed_artifacts(
+                entity="runner",
+                prompt_text=prompt_text,
+                action_name="set_enemy_move_speed",
+                requested_speed=4.5,
+                translator_artifact_path=translator_artifact_path,
+                translator_log_path=translator_log_path,
+                router_artifact_path=router_artifact_path,
+                router_log_path=router_log_path,
+                probe_log_path=probe_log_path,
+                probe_artifact_name="intent_restore_runner_speed_to_standard_probe_result.json",
+            )
+        elif prompt_text == "make runner more aggressive":
+            _write_aggression_artifacts(
+                entity="runner",
+                prompt_text=prompt_text,
+                action_name="increase_enemy_aggression",
+                requested_attack_cooldown=0.5,
+                translator_artifact_path=translator_artifact_path,
+                translator_log_path=translator_log_path,
+                router_artifact_path=router_artifact_path,
+                router_log_path=router_log_path,
+                probe_log_path=probe_log_path,
+                probe_artifact_name="intent_make_runner_more_aggressive_probe_result.json",
+            )
+        elif prompt_text == "restore runner aggression to standard":
+            _write_aggression_artifacts(
+                entity="runner",
+                prompt_text=prompt_text,
+                action_name="set_enemy_aggression",
+                requested_attack_cooldown=0.8,
+                translator_artifact_path=translator_artifact_path,
+                translator_log_path=translator_log_path,
+                router_artifact_path=router_artifact_path,
+                router_log_path=router_log_path,
+                probe_log_path=probe_log_path,
+                probe_artifact_name="intent_restore_runner_aggression_to_standard_probe_result.json",
             )
         else:
             raise AssertionError(f"Unexpected prompt routed to translator: {prompt_text}")
@@ -9209,13 +9536,18 @@ def _write_move_zombie_capability_contract(config: OrchestratorConfig) -> None:
     )
 
 
-def _write_zombie_speed_capability_contracts(config: OrchestratorConfig) -> None:
+def _write_enemy_speed_capability_contracts(config: OrchestratorConfig, *, entity: str) -> None:
     capabilities_dir = config.contracts_dir / "capabilities"
     capabilities_dir.mkdir(parents=True, exist_ok=True)
     for capability_id, title, match_terms, match_verbs in (
-        ("level_0001_increase_zombie_speed", "LEVEL_0001 increase zombie speed", ("faster",), ("make",)),
-        ("level_0001_decrease_zombie_speed", "LEVEL_0001 decrease zombie speed", ("slower",), ("make",)),
-        ("level_0001_restore_zombie_speed_standard", "LEVEL_0001 restore zombie speed to standard", ("speed", "standard"), ("restore",)),
+        (f"level_0001_increase_{entity}_speed", f"LEVEL_0001 increase {entity} speed", ("faster",), ("make",)),
+        (f"level_0001_decrease_{entity}_speed", f"LEVEL_0001 decrease {entity} speed", ("slower",), ("make",)),
+        (
+            f"level_0001_restore_{entity}_speed_standard",
+            f"LEVEL_0001 restore {entity} speed to standard",
+            ("speed", "standard"),
+            ("restore",),
+        ),
     ):
         (capabilities_dir / f"{capability_id}.json").write_text(
             json.dumps(
@@ -9232,7 +9564,56 @@ def _write_zombie_speed_capability_contracts(config: OrchestratorConfig) -> None
                     "eligible_for_auto": False,
                     "evidence_state": "experimental",
                     "safety_class": "approval_gated_automation",
-                    "match_terms": ["zombie", *list(match_terms)],
+                    "match_terms": [entity, *list(match_terms)],
+                    "match_verbs": list(match_verbs),
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+
+def _write_zombie_speed_capability_contracts(config: OrchestratorConfig) -> None:
+    _write_enemy_speed_capability_contracts(config, entity="zombie")
+
+
+def _write_runner_speed_capability_contracts(config: OrchestratorConfig) -> None:
+    _write_enemy_speed_capability_contracts(config, entity="runner")
+
+
+def _write_enemy_aggression_capability_contract(config: OrchestratorConfig, *, entity: str) -> None:
+    capabilities_dir = config.contracts_dir / "capabilities"
+    capabilities_dir.mkdir(parents=True, exist_ok=True)
+    for capability_id, title, match_terms, match_verbs in (
+        (
+            f"level_0001_increase_{entity}_aggression",
+            f"LEVEL_0001 increase {entity} aggression",
+            ("aggressive",),
+            ("make",),
+        ),
+        (
+            f"level_0001_restore_{entity}_aggression_standard",
+            f"LEVEL_0001 restore {entity} aggression to standard",
+            ("aggression", "standard"),
+            ("restore",),
+        ),
+    ):
+        (capabilities_dir / f"{capability_id}.json").write_text(
+            json.dumps(
+                {
+                    "capability_id": capability_id,
+                    "title": title,
+                    "intent": "mutate",
+                    "target_level": "LEVEL_0001",
+                    "target_scene": "Assets/AI_E_TestScenes/entity_test.unity",
+                    "requested_execution_lane": "approval_required_mutation",
+                    "handler_name": "level_0001_entity_transform_handler",
+                    "agent_type": "level_0001_entity_transform_mutation_agent",
+                    "approval_required": True,
+                    "eligible_for_auto": False,
+                    "evidence_state": "experimental",
+                    "safety_class": "approval_gated_automation",
+                    "match_terms": [entity, *list(match_terms)],
                     "match_verbs": list(match_verbs),
                 },
                 indent=2,
@@ -9242,34 +9623,11 @@ def _write_zombie_speed_capability_contracts(config: OrchestratorConfig) -> None
 
 
 def _write_zombie_aggression_capability_contract(config: OrchestratorConfig) -> None:
-    capabilities_dir = config.contracts_dir / "capabilities"
-    capabilities_dir.mkdir(parents=True, exist_ok=True)
-    for capability_id, title, match_terms, match_verbs in (
-        ("level_0001_increase_zombie_aggression", "LEVEL_0001 increase zombie aggression", ("aggressive",), ("make",)),
-        ("level_0001_restore_zombie_aggression_standard", "LEVEL_0001 restore zombie aggression to standard", ("aggression", "standard"), ("restore",)),
-    ):
-        (capabilities_dir / f"{capability_id}.json").write_text(
-            json.dumps(
-                {
-                    "capability_id": capability_id,
-                    "title": title,
-                    "intent": "mutate",
-                    "target_level": "LEVEL_0001",
-                    "target_scene": "Assets/AI_E_TestScenes/entity_test.unity",
-                    "requested_execution_lane": "approval_required_mutation",
-                    "handler_name": "level_0001_entity_transform_handler",
-                    "agent_type": "level_0001_entity_transform_mutation_agent",
-                    "approval_required": True,
-                    "eligible_for_auto": False,
-                    "evidence_state": "experimental",
-                    "safety_class": "approval_gated_automation",
-                    "match_terms": ["zombie", *list(match_terms)],
-                    "match_verbs": list(match_verbs),
-                },
-                indent=2,
-            ),
-            encoding="utf-8",
-        )
+    _write_enemy_aggression_capability_contract(config, entity="zombie")
+
+
+def _write_runner_aggression_capability_contract(config: OrchestratorConfig) -> None:
+    _write_enemy_aggression_capability_contract(config, entity="runner")
 
 
 def _create_entity_transform_prompt_repo(config: OrchestratorConfig, *, target_repo_name: str = "BABYLON_TEST") -> str:
@@ -9314,6 +9672,26 @@ def _create_entity_transform_prompt_repo(config: OrchestratorConfig, *, target_r
                     {
                         "normalized_prompt": "restore zombie aggression to standard",
                         "translated_command": "restore zombie aggression to standard",
+                    },
+                    {
+                        "normalized_prompt": "make runner faster",
+                        "translated_command": "make runner faster",
+                    },
+                    {
+                        "normalized_prompt": "make runner slower",
+                        "translated_command": "make runner slower",
+                    },
+                    {
+                        "normalized_prompt": "restore runner speed to standard",
+                        "translated_command": "restore runner speed to standard",
+                    },
+                    {
+                        "normalized_prompt": "make runner more aggressive",
+                        "translated_command": "make runner more aggressive",
+                    },
+                    {
+                        "normalized_prompt": "restore runner aggression to standard",
+                        "translated_command": "restore runner aggression to standard",
                     }
                 ],
             },
@@ -9445,6 +9823,96 @@ def _create_entity_transform_prompt_repo(config: OrchestratorConfig, *, target_r
                             "TargetObjectName": "AIE_Zombie_001_Instance",
                             "RequestedAttackCooldown": 1.0,
                             "BaselineAttackCooldown": 1.0,
+                            "MinAttackCooldown": 0.25,
+                            "MaxAttackCooldown": 2.0
+                        }
+                    },
+                    {
+                        "normalized_command": "make runner faster",
+                        "action_name": "increase_enemy_move_speed",
+                        "entity_type": "runner",
+                        "probe_name": "MutateEnemyMoveSpeed",
+                        "wrapper_path": "Tools/run_unity_mutate_enemy_move_speed.ps1",
+                        "probe_artifact_file": "intent_make_runner_faster_probe_result.json",
+                        "probe_log_file": "intent_make_runner_faster_probe.log",
+                        "wrapper_arguments": {
+                            "ProjectPath": ".",
+                            "SceneName": "entity_test",
+                            "TargetObjectName": "AIE_Runner_Profile_Instance",
+                            "RequestedSpeed": 5.0,
+                            "BaselineSpeed": 4.5,
+                            "MinSpeed": 2.0,
+                            "MaxSpeed": 5.0
+                        }
+                    },
+                    {
+                        "normalized_command": "make runner slower",
+                        "action_name": "decrease_enemy_move_speed",
+                        "entity_type": "runner",
+                        "probe_name": "MutateEnemyMoveSpeed",
+                        "wrapper_path": "Tools/run_unity_mutate_enemy_move_speed.ps1",
+                        "probe_artifact_file": "intent_make_runner_slower_probe_result.json",
+                        "probe_log_file": "intent_make_runner_slower_probe.log",
+                        "wrapper_arguments": {
+                            "ProjectPath": ".",
+                            "SceneName": "entity_test",
+                            "TargetObjectName": "AIE_Runner_Profile_Instance",
+                            "RequestedSpeed": 3.5,
+                            "BaselineSpeed": 4.5,
+                            "MinSpeed": 2.0,
+                            "MaxSpeed": 5.0
+                        }
+                    },
+                    {
+                        "normalized_command": "restore runner speed to standard",
+                        "action_name": "set_enemy_move_speed",
+                        "entity_type": "runner",
+                        "probe_name": "MutateEnemyMoveSpeed",
+                        "wrapper_path": "Tools/run_unity_mutate_enemy_move_speed.ps1",
+                        "probe_artifact_file": "intent_restore_runner_speed_to_standard_probe_result.json",
+                        "probe_log_file": "intent_restore_runner_speed_to_standard_probe.log",
+                        "wrapper_arguments": {
+                            "ProjectPath": ".",
+                            "SceneName": "entity_test",
+                            "TargetObjectName": "AIE_Runner_Profile_Instance",
+                            "RequestedSpeed": 4.5,
+                            "BaselineSpeed": 4.5,
+                            "MinSpeed": 2.0,
+                            "MaxSpeed": 5.0
+                        }
+                    },
+                    {
+                        "normalized_command": "make runner more aggressive",
+                        "action_name": "increase_enemy_aggression",
+                        "entity_type": "runner",
+                        "probe_name": "MutateEnemyAggression",
+                        "wrapper_path": "Tools/run_unity_mutate_enemy_aggression.ps1",
+                        "probe_artifact_file": "intent_make_runner_more_aggressive_probe_result.json",
+                        "probe_log_file": "intent_make_runner_more_aggressive_probe.log",
+                        "wrapper_arguments": {
+                            "ProjectPath": ".",
+                            "SceneName": "entity_test",
+                            "TargetObjectName": "AIE_Runner_Profile_Instance",
+                            "RequestedAttackCooldown": 0.5,
+                            "BaselineAttackCooldown": 0.8,
+                            "MinAttackCooldown": 0.25,
+                            "MaxAttackCooldown": 2.0
+                        }
+                    },
+                    {
+                        "normalized_command": "restore runner aggression to standard",
+                        "action_name": "set_enemy_aggression",
+                        "entity_type": "runner",
+                        "probe_name": "MutateEnemyAggression",
+                        "wrapper_path": "Tools/run_unity_mutate_enemy_aggression.ps1",
+                        "probe_artifact_file": "intent_restore_runner_aggression_to_standard_probe_result.json",
+                        "probe_log_file": "intent_restore_runner_aggression_to_standard_probe.log",
+                        "wrapper_arguments": {
+                            "ProjectPath": ".",
+                            "SceneName": "entity_test",
+                            "TargetObjectName": "AIE_Runner_Profile_Instance",
+                            "RequestedAttackCooldown": 0.8,
+                            "BaselineAttackCooldown": 0.8,
                             "MinAttackCooldown": 0.25,
                             "MaxAttackCooldown": 2.0
                         }

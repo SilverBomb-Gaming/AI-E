@@ -85,6 +85,48 @@ def test_plan_task_graph_preserves_operator_prompts_for_restore_standard_zombie_
     assert graph.nodes[1].dependencies == ["INTAKE_GRAPH_RESTORE_DANGER__STEP_01"]
 
 
+def test_plan_task_graph_preserves_operator_prompts_for_runner_combat_variation_plan() -> None:
+    planner = RuleBasedPlanner()
+    plan = planner.plan(
+        "make runner more dangerous",
+        target_repo="E:/AI projects 2025/BABYLON VER 2",
+        request_id="REQ_GRAPH_RUNNER_COMBAT",
+    )
+
+    graph = build_plan_task_graph(
+        plan,
+        request_id="REQ_GRAPH_RUNNER_COMBAT",
+        task_id_prefix="INTAKE_GRAPH_RUNNER_COMBAT",
+    )
+
+    assert [node.operator_prompt for node in graph.nodes] == [
+        "make runner faster",
+        "make runner more aggressive",
+    ]
+    assert graph.nodes[1].dependencies == ["INTAKE_GRAPH_RUNNER_COMBAT__STEP_01"]
+
+
+def test_plan_task_graph_preserves_operator_prompts_for_restore_standard_runner_danger_plan() -> None:
+    planner = RuleBasedPlanner()
+    plan = planner.plan(
+        "make runner easier",
+        target_repo="E:/AI projects 2025/BABYLON VER 2",
+        request_id="REQ_GRAPH_RUNNER_EASIER",
+    )
+
+    graph = build_plan_task_graph(
+        plan,
+        request_id="REQ_GRAPH_RUNNER_EASIER",
+        task_id_prefix="INTAKE_GRAPH_RUNNER_EASIER",
+    )
+
+    assert [node.operator_prompt for node in graph.nodes] == [
+        "restore runner speed to standard",
+        "restore runner aggression to standard",
+    ]
+    assert graph.nodes[1].dependencies == ["INTAKE_GRAPH_RUNNER_EASIER__STEP_01"]
+
+
 def test_plan_task_graph_preserves_operator_prompts_for_fast_low_aggression_plan() -> None:
     planner = RuleBasedPlanner()
     plan = planner.plan(

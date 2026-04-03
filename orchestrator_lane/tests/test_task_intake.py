@@ -668,13 +668,13 @@ def test_task_intake_builds_predefined_zombie_variation_plan_into_multiple_queue
 
 
 @pytest.mark.parametrize(
-    ("prompt_text", "mapped_source"),
+    "prompt_text",
     [
-        ("move enemy forward", "enemy"),
-        ("move character forward", "character"),
+        "move enemy forward",
+        "move character forward",
     ],
 )
-def test_task_intake_requires_confirmation_for_generalized_entity_terms(tmp_path, prompt_text, mapped_source):
+def test_task_intake_blocks_ambiguous_generalized_entity_terms_without_guessing(tmp_path, prompt_text):
     config = _make_config(tmp_path / "generalized_entity_confirmation")
     _write_move_zombie_capability_contract(config)
     target_repo = _create_entity_transform_prompt_repo(config)
@@ -692,30 +692,36 @@ def test_task_intake_requires_confirmation_for_generalized_entity_terms(tmp_path
     assert result.task_type == "mutation_request"
     assert result.queue_entry["status"] == "blocked"
     assert result.queue_entry["agent_type"] == "read_only_inspector_agent"
-    assert result.routing.capability_id == "level_0001_move_zombie_forward"
-    assert result.routing.capability_supported is True
-    assert result.routing.entity_mapping_applied is True
-    assert result.routing.entity_mapping_sources == [mapped_source]
-    assert result.routing.confirmation_required is True
-    assert result.routing.mapped_prompt == "move zombie forward"
-    assert 'supported zombie system in BABYLON' in str(result.routing.confirmation_message)
+    assert result.routing.capability_supported is False
+    assert result.routing.entity_mapping_applied is False
+    assert result.routing.entity_mapping_sources == []
+    assert result.routing.confirmation_required is False
+    assert result.routing.mapped_prompt == normalize_prompt(prompt_text)
+    assert (
+        str(result.routing.fail_closed_reason)
+        == "AI-E currently supports this deterministic movement request only for the zombie system in BABYLON. Try something like: 'move zombie forward'."
+    )
     assert runtime_payload["runtime_task"]["decision"] == "block"
     assert runtime_payload["runtime_task"]["operator_prompt"] == normalize_prompt(prompt_text)
 
 
 @pytest.mark.parametrize(
-    ("prompt_text", "mapped_source", "expected_capability", "expected_mapped_prompt"),
+    ("prompt_text", "expected_reason"),
     [
-        ("make enemy faster", "enemy", "level_0001_increase_zombie_speed", "make zombie faster"),
-        ("slow the enemy down", "enemy", "level_0001_decrease_zombie_speed", "make zombie slower"),
+        (
+            "make enemy faster",
+            'AI-E supports multiple bounded enemy archetypes in BABYLON and will not guess what "enemy" means here. Name the supported target explicitly. Try something like: \'make zombie faster\' or \'make runner faster\'.',
+        ),
+        (
+            "slow the enemy down",
+            'AI-E supports multiple bounded enemy archetypes in BABYLON and will not guess what "enemy" means here. Name the supported target explicitly. Try something like: \'make zombie slower\' or \'make runner slower\'.',
+        ),
     ],
 )
-def test_task_intake_requires_confirmation_for_generalized_speed_terms(
+def test_task_intake_blocks_ambiguous_generalized_speed_terms(
     tmp_path,
     prompt_text,
-    mapped_source,
-    expected_capability,
-    expected_mapped_prompt,
+    expected_reason,
 ):
     config = _make_config(tmp_path / "generalized_speed_confirmation")
     _write_move_zombie_capability_contract(config)
@@ -735,12 +741,11 @@ def test_task_intake_requires_confirmation_for_generalized_speed_terms(
     assert result.task_type == "mutation_request"
     assert result.queue_entry["status"] == "blocked"
     assert result.queue_entry["agent_type"] == "read_only_inspector_agent"
-    assert result.routing.capability_id == expected_capability
-    assert result.routing.entity_mapping_applied is True
-    assert result.routing.entity_mapping_sources == [mapped_source]
-    assert result.routing.confirmation_required is True
-    assert result.routing.mapped_prompt == expected_mapped_prompt
-    assert 'supported zombie system in BABYLON' in str(result.routing.confirmation_message)
+    assert result.routing.entity_mapping_applied is False
+    assert result.routing.entity_mapping_sources == []
+    assert result.routing.confirmation_required is False
+    assert result.routing.mapped_prompt == normalize_prompt(prompt_text)
+    assert str(result.routing.fail_closed_reason) == expected_reason
     assert runtime_payload["runtime_task"]["decision"] == "block"
     assert runtime_payload["runtime_task"]["operator_prompt"] == normalize_prompt(prompt_text)
 
@@ -956,7 +961,7 @@ def test_task_intake_resolves_revert_last_change_to_previous_supported_speed_tie
     assert runtime_payload["runtime_task"]["revert_summary"] == "Revert the last zombie speed change from standard back to fast."
 
 
-def test_home_surface_prepare_prompt_prompts_for_confirmation_when_entity_mapping_is_applied(tmp_path):
+def test_home_surface_prepare_prompt_blocks_ambiguous_generalized_entity_prompt(tmp_path):
     config = _make_config(tmp_path / "home_surface_entity_confirmation")
     _write_move_zombie_capability_contract(config)
     target_repo = _create_entity_transform_prompt_repo(config)
@@ -974,16 +979,18 @@ def test_home_surface_prepare_prompt_prompts_for_confirmation_when_entity_mappin
     preview = bridge.prepare_prompt("move enemy forward", project)
 
     assert preview.available is True
-    assert preview.decision_state == "Needs confirmation"
-    assert preview.confirmation_required is True
-    assert preview.confirmation_prompt == "move zombie forward"
-    assert preview.next_action_label == "Use supported target"
-    assert preview.detected_action == "LEVEL_0001 move zombie forward"
-    assert 'I understood "enemy" as the supported zombie system in BABYLON.' in preview.decision_reason
-    assert "Confirm that target" in preview.status_message or "Confirm the zombie target" in preview.decision_reason
+    assert preview.decision_state == "Blocked"
+    assert preview.confirmation_required is False
+    assert preview.confirmation_prompt == ""
+    assert preview.next_action_label == "Revise request"
+    assert preview.detected_action == "Bounded mutation"
+    assert preview.decision_reason == (
+        "AI-E currently supports this deterministic movement request only for the zombie system in BABYLON. "
+        "Try something like: 'move zombie forward'."
+    )
 
 
-def test_home_surface_prepare_prompt_shows_confirmation_for_generalized_aggression_capability(tmp_path):
+def test_home_surface_prepare_prompt_blocks_ambiguous_generalized_aggression_capability(tmp_path):
     config = _make_config(tmp_path / "home_surface_aggression_capability_confirmation")
     _write_move_zombie_capability_contract(config)
     _write_zombie_speed_capability_contracts(config)
@@ -1003,17 +1010,21 @@ def test_home_surface_prepare_prompt_shows_confirmation_for_generalized_aggressi
     preview = bridge.prepare_prompt("make enemy more aggressive", project)
 
     assert preview.available is True
-    assert preview.decision_state == "Needs confirmation"
-    assert preview.confirmation_required is True
-    assert preview.confirmation_prompt == "make zombie more aggressive"
-    assert preview.next_action_label == "Use supported target"
+    assert preview.decision_state == "Blocked"
+    assert preview.confirmation_required is False
+    assert preview.confirmation_prompt == ""
+    assert preview.next_action_label == "Revise request"
     assert preview.plan_title == ""
     assert preview.plan_steps == []
-    assert preview.detected_action == "LEVEL_0001 increase zombie aggression"
-    assert 'supported zombie system in BABYLON' in preview.decision_reason
+    assert preview.detected_action == "Bounded mutation"
+    assert preview.decision_reason == (
+        'AI-E supports multiple bounded enemy archetypes in BABYLON and will not guess what "enemy" means here. '
+        "Name the supported target explicitly. Try something like: "
+        "'make zombie more aggressive' or 'make runner more aggressive'."
+    )
 
 
-def test_home_surface_prepare_prompt_shows_confirmation_for_generalized_safety_plan(tmp_path):
+def test_home_surface_prepare_prompt_blocks_ambiguous_generalized_safety_plan(tmp_path):
     config = _make_config(tmp_path / "home_surface_safety_plan_confirmation")
     _write_move_zombie_capability_contract(config)
     _write_zombie_speed_capability_contracts(config)
@@ -1032,17 +1043,18 @@ def test_home_surface_prepare_prompt_shows_confirmation_for_generalized_safety_p
     preview = bridge.prepare_prompt("make enemy less aggressive", project)
 
     assert preview.available is True
-    assert preview.decision_state == "Needs confirmation"
-    assert preview.confirmation_required is True
-    assert preview.confirmation_prompt == "make zombie less aggressive"
-    assert preview.next_action_label == "Confirm plan"
-    assert preview.plan_title == "Reduce zombie aggression"
-    assert preview.plan_steps == [
-        "Decrease zombie movement speed",
-        "Move zombie forward to validate the calmer behavior",
-    ]
-    assert preview.plan_execution_mode == "Sandbox first"
-    assert 'supported zombie system in BABYLON' in preview.decision_reason
+    assert preview.decision_state == "Blocked"
+    assert preview.confirmation_required is False
+    assert preview.confirmation_prompt == ""
+    assert preview.next_action_label == "Revise request"
+    assert preview.plan_title == ""
+    assert preview.plan_steps == []
+    assert preview.plan_execution_mode == ""
+    assert preview.decision_reason == (
+        'AI-E supports multiple bounded enemy archetypes in BABYLON and will not guess what "enemy" means here. '
+        "Name the supported target explicitly. Try something like: "
+        "'make zombie easier', 'make runner easier', or 'restore runner danger to standard'."
+    )
 
 
 def test_home_surface_prepare_prompt_shows_variation_plan_for_direct_prompt(tmp_path):
@@ -1075,7 +1087,7 @@ def test_home_surface_prepare_prompt_shows_variation_plan_for_direct_prompt(tmp_
     assert preview.plan_expected_outcome.startswith("AI-E tests a visibly different zombie movement path")
 
 
-def test_home_surface_prepare_prompt_shows_confirmation_for_generalized_variation_plan(tmp_path):
+def test_home_surface_prepare_prompt_blocks_ambiguous_generalized_variation_plan(tmp_path):
     config = _make_config(tmp_path / "home_surface_variation_plan_confirmation")
     _write_move_zombie_capability_contract(config)
     target_repo = _create_entity_transform_prompt_repo(config)
@@ -1093,17 +1105,17 @@ def test_home_surface_prepare_prompt_shows_confirmation_for_generalized_variatio
     preview = bridge.prepare_prompt("make enemy move differently", project)
 
     assert preview.available is True
-    assert preview.decision_state == "Needs confirmation"
-    assert preview.confirmation_required is True
-    assert preview.confirmation_prompt == "make zombie move differently"
-    assert preview.next_action_label == "Confirm plan"
-    assert preview.plan_title == "Try zombie movement variation"
-    assert preview.plan_steps == [
-        "Move zombie farther forward for variation testing",
-        "Move zombie forward to compare against the standard path",
-    ]
-    assert preview.plan_execution_mode == "Sandbox first"
-    assert 'supported zombie system in BABYLON' in preview.decision_reason
+    assert preview.decision_state == "Blocked"
+    assert preview.confirmation_required is False
+    assert preview.confirmation_prompt == ""
+    assert preview.next_action_label == "Revise request"
+    assert preview.plan_title == ""
+    assert preview.plan_steps == []
+    assert preview.plan_execution_mode == ""
+    assert preview.decision_reason == (
+        "AI-E currently supports this movement variation plan only for the zombie system in BABYLON. "
+        "Try something like: 'make zombie move differently'."
+    )
 
 
 def test_home_surface_blocks_unsupported_aggression_capability_with_supported_example(tmp_path):
@@ -1131,11 +1143,11 @@ def test_home_surface_blocks_unsupported_aggression_capability_with_supported_ex
     assert preview.next_action_label == "Revise request"
     assert (
         preview.decision_reason
-        == "AI-E currently supports this deterministic aggression adjustment only for the zombie system in BABYLON. Try something like: 'make zombie more aggressive'."
+        == "AI-E currently supports this deterministic aggression adjustment only for the zombie or runner systems in BABYLON. Try something like: 'make zombie more aggressive' or 'make runner more aggressive'."
     )
 
 
-def test_home_surface_prepare_prompt_shows_confirmation_for_generalized_combat_variation_plan(tmp_path):
+def test_home_surface_prepare_prompt_blocks_ambiguous_generalized_combat_variation_plan(tmp_path):
     config = _make_config(tmp_path / "home_surface_combat_variation_confirmation")
     _write_move_zombie_capability_contract(config)
     _write_zombie_speed_capability_contracts(config)
@@ -1155,20 +1167,21 @@ def test_home_surface_prepare_prompt_shows_confirmation_for_generalized_combat_v
     preview = bridge.prepare_prompt("make enemy more dangerous", project)
 
     assert preview.available is True
-    assert preview.decision_state == "Needs confirmation"
-    assert preview.confirmation_required is True
-    assert preview.confirmation_prompt == "make zombie faster and more aggressive"
-    assert preview.next_action_label == "Confirm plan"
-    assert preview.plan_title == "Test zombie combat variation"
-    assert preview.plan_steps == [
-        "Increase zombie speed",
-        "Increase zombie aggression",
-    ]
-    assert preview.plan_execution_mode == "Sandbox first"
-    assert 'supported zombie system in BABYLON' in preview.decision_reason
+    assert preview.decision_state == "Blocked"
+    assert preview.confirmation_required is False
+    assert preview.confirmation_prompt == ""
+    assert preview.next_action_label == "Revise request"
+    assert preview.plan_title == ""
+    assert preview.plan_steps == []
+    assert preview.plan_execution_mode == ""
+    assert preview.decision_reason == (
+        'AI-E supports multiple bounded enemy archetypes in BABYLON and will not guess what "enemy" means here. '
+        "Name the supported target explicitly. Try something like: "
+        "'make zombie more dangerous' or 'make runner more dangerous'."
+    )
 
 
-def test_task_intake_requires_confirmation_for_generalized_goal_intent_plan(tmp_path):
+def test_task_intake_blocks_ambiguous_generalized_goal_intent_plan(tmp_path):
     config = _make_config(tmp_path / "generalized_goal_intent_confirmation")
     _write_move_zombie_capability_contract(config)
     _write_zombie_speed_capability_contracts(config)
@@ -1184,20 +1197,69 @@ def test_task_intake_requires_confirmation_for_generalized_goal_intent_plan(tmp_
 
     runtime_payload = json.loads(result.artifacts.runtime_task_payload_path.read_text(encoding="utf-8"))["runtime_task"]
 
-    assert result.task_type == "mutation_plan_request"
+    assert result.task_type == "mutation_request"
     assert result.queue_entry["status"] == "blocked"
-    assert result.routing.confirmation_required is True
-    assert result.routing.resolution_source == "goal_intent_mapping"
-    assert result.routing.mapped_prompt == "make zombie faster and more aggressive"
-    assert result.routing.plan_title == "Test zombie combat variation"
-    assert result.routing.entity_mapping_applied is True
-    assert result.routing.entity_mapping_sources == ["enemy"]
+    assert result.routing.confirmation_required is False
+    assert result.routing.mapped_prompt == "make enemy more dangerous"
+    assert result.routing.plan_title is None
+    assert result.routing.entity_mapping_applied is False
+    assert result.routing.entity_mapping_sources == []
+    assert result.routing.fail_closed_reason == (
+        'AI-E supports multiple bounded enemy archetypes in BABYLON and will not guess what "enemy" means here. '
+        "Name the supported target explicitly. Try something like: "
+        "'make zombie more dangerous' or 'make runner more dangerous'."
+    )
     assert runtime_payload["decision"] == "block"
     assert runtime_payload["source_prompt"] == "make enemy more dangerous"
-    assert runtime_payload["operator_prompt"] == "make zombie faster"
+    assert runtime_payload["operator_prompt"] == "make enemy more dangerous"
 
 
-def test_home_surface_prepare_prompt_shows_confirmation_for_generalized_goal_composition_plan(tmp_path):
+@pytest.mark.parametrize(
+    ("prompt_text", "expected_reason"),
+    [
+        (
+            "make enemy easier",
+            'AI-E supports multiple bounded enemy archetypes in BABYLON and will not guess what "enemy" means here. '
+            "Name the supported target explicitly. Try something like: "
+            "'make zombie easier' or 'make runner easier'.",
+        ),
+        (
+            "make character more dangerous",
+            'AI-E supports multiple bounded enemy archetypes in BABYLON and will not guess what "character" means here. '
+            "Name the supported target explicitly. Try something like: "
+            "'make zombie more dangerous' or 'make runner more dangerous'.",
+        ),
+    ],
+)
+def test_task_intake_blocks_ambiguous_generalized_goal_prompts_with_supported_rephrases(
+    tmp_path,
+    prompt_text,
+    expected_reason,
+):
+    config = _make_config(tmp_path / "generalized_goal_prompt_ambiguity")
+    _write_move_zombie_capability_contract(config)
+    _write_zombie_speed_capability_contracts(config)
+    _write_zombie_aggression_capability_contract(config)
+    _write_runner_speed_capability_contracts(config)
+    _write_runner_aggression_capability_contract(config)
+    target_repo = _create_entity_transform_prompt_repo(config)
+    intake = ConversationalTaskIntake(config)
+
+    result = intake.accept_message(
+        prompt_text,
+        session_id="operator-session-generalized-goal-ambiguity",
+        target_repo=target_repo,
+    )
+
+    assert result.task_type == "mutation_request"
+    assert result.queue_entry["status"] == "blocked"
+    assert result.routing.confirmation_required is False
+    assert result.routing.entity_mapping_applied is False
+    assert result.routing.entity_mapping_sources == []
+    assert result.routing.fail_closed_reason == expected_reason
+
+
+def test_home_surface_prepare_prompt_blocks_ambiguous_generalized_goal_composition_plan(tmp_path):
     config = _make_config(tmp_path / "home_surface_goal_composition_confirmation")
     _write_zombie_speed_capability_contracts(config)
     _write_zombie_aggression_capability_contract(config)
@@ -1216,16 +1278,18 @@ def test_home_surface_prepare_prompt_shows_confirmation_for_generalized_goal_com
     preview = bridge.prepare_prompt("make enemy faster but less aggressive", project)
 
     assert preview.available is True
-    assert preview.decision_state == "Needs confirmation"
-    assert preview.confirmation_required is True
-    assert preview.confirmation_prompt == "make zombie faster but less aggressive"
-    assert preview.next_action_label == "Confirm plan"
-    assert preview.plan_title == "Test fast low-aggression zombie variation"
-    assert preview.plan_steps == [
-        "Increase zombie speed",
-        "Restore zombie aggression to standard",
-    ]
-    assert 'supported zombie system in BABYLON' in preview.decision_reason
+    assert preview.decision_state == "Blocked"
+    assert preview.confirmation_required is False
+    assert preview.confirmation_prompt == ""
+    assert preview.next_action_label == "Revise request"
+    assert preview.plan_title == ""
+    assert preview.plan_steps == []
+    assert preview.decision_reason == (
+        'AI-E supports multiple bounded enemy archetypes in BABYLON and will not guess what "enemy" means here. '
+        "Name the supported target explicitly. Try something like: "
+        "'make zombie faster but less aggressive', 'make zombie faster and more aggressive', "
+        "or 'make runner faster and more aggressive'."
+    )
 
 
 def test_home_surface_prepare_prompt_shows_supported_combat_variation_plan(tmp_path):
@@ -1282,7 +1346,7 @@ def test_home_surface_prepare_prompt_shows_supported_goal_intent_mapping_for_com
     assert preview.available is True
     assert preview.decision_state == "Sandbox first"
     assert preview.confirmation_required is False
-    assert preview.confirmation_prompt == "make zombie faster and more aggressive"
+    assert preview.confirmation_prompt == ""
     assert preview.plan_title == "Test zombie combat variation"
     assert preview.mapped_prompt == "make zombie faster and more aggressive"
     assert 'mapped the gameplay goal "make zombie more dangerous"' in preview.decision_reason.lower()
@@ -1307,7 +1371,7 @@ def test_task_intake_blocks_unsupported_goal_intent_with_explicit_guidance(tmp_p
     assert result.routing.confirmation_required is False
     assert (
         str(result.routing.fail_closed_reason)
-        == "AI-E does not have a supported deterministic zombie intelligence goal yet. Try something like: 'make zombie more dangerous' or 'make zombie less dangerous'."
+        == "AI-E does not have a supported deterministic enemy intelligence goal yet. Try something like: 'make zombie more dangerous', 'make runner more dangerous', or 'make runner easier'."
     )
 
 
@@ -1378,7 +1442,7 @@ def test_home_surface_blocks_speed_followup_without_active_session(tmp_path):
     assert preview.next_action_label == "Revise request"
     assert (
         preview.decision_reason
-        == 'AI-E can use "make it faster" only after a supported zombie speed change in the current session. Start with something like: \'make zombie faster\'.'
+        == 'AI-E can use "make it faster" only after a supported enemy speed change in the current session. Start with something like: \'make zombie faster\' or \'make runner faster\'.'
     )
 
 
@@ -1446,7 +1510,7 @@ def test_home_surface_blocks_try_another_version_without_active_session(tmp_path
     assert preview.next_action_label == "Revise request"
     assert (
         preview.decision_reason
-        == 'AI-E can use "try another version" only after a supported zombie session is active. Start with something like: \'make zombie move differently\'.'
+        == 'AI-E can use "try another version" only after a supported enemy session is active. Start with something like: \'make zombie move differently\'.'
     )
 
 
@@ -1606,7 +1670,7 @@ def test_home_surface_blocks_experiment_review_without_active_experiment(tmp_pat
     assert preview.next_action_label == "Revise request"
     assert (
         preview.decision_reason
-        == "AI-E can show current experiment variants only after a supported zombie result exists in the current session. Start with something like: 'make zombie faster'."
+        == "AI-E can show current experiment variants only after a supported enemy result exists in the current session. Start with something like: 'make zombie faster' or 'make runner faster'."
     )
 
 
@@ -2018,7 +2082,7 @@ def test_home_surface_blocks_experiment_decisions_without_active_experiment(tmp_
     assert preview.next_action_label == "Revise request"
     assert (
         preview.decision_reason
-        == "AI-E can show current experiment decisions only after a supported zombie result exists in the current session. Start with something like: 'make zombie faster'."
+        == "AI-E can show current experiment decisions only after a supported enemy result exists in the current session. Start with something like: 'make zombie faster' or 'make runner faster'."
     )
 
 
@@ -2047,7 +2111,7 @@ def test_home_surface_blocks_unsupported_combat_variation_plan_with_supported_ex
     assert preview.next_action_label == "Revise request"
     assert (
         preview.decision_reason
-        == "AI-E currently supports this combat variation plan only for the zombie system in BABYLON. Try something like: 'make zombie faster and more aggressive'."
+        == "AI-E currently supports this combat variation plan only for the zombie or runner systems in BABYLON. Try something like: 'make zombie faster and more aggressive' or 'make runner faster and more aggressive'."
     )
 
 
@@ -3722,6 +3786,535 @@ def _experiment_variant(
         ),
     }
 
+@pytest.mark.parametrize(
+    ("prompt_text", "expected_capability", "expected_canonical_prompt"),
+    [
+        ("make runner faster", "level_0001_increase_runner_speed", "make runner faster"),
+        ("make runner slower", "level_0001_decrease_runner_speed", "make runner slower"),
+        ("restore runner speed to standard", "level_0001_restore_runner_speed_standard", "restore runner speed to standard"),
+        ("make runner more aggressive", "level_0001_increase_runner_aggression", "make runner more aggressive"),
+        (
+            "restore runner aggression to standard",
+            "level_0001_restore_runner_aggression_standard",
+            "restore runner aggression to standard",
+        ),
+    ],
+)
+def test_task_intake_supports_direct_runner_deterministic_capabilities(
+    tmp_path,
+    prompt_text,
+    expected_capability,
+    expected_canonical_prompt,
+):
+    config = _make_config(tmp_path / "runner_direct_capabilities")
+    _write_runner_speed_capability_contracts(config)
+    _write_runner_aggression_capability_contract(config)
+    target_repo = _create_entity_transform_prompt_repo(config)
+    intake = ConversationalTaskIntake(config)
+
+    result = intake.accept_message(
+        prompt_text,
+        session_id="operator-session-runner-direct",
+        target_repo=target_repo,
+    )
+
+    runtime_payload = json.loads(result.artifacts.runtime_task_payload_path.read_text(encoding="utf-8"))["runtime_task"]
+
+    assert result.task_type == "mutation_request"
+    assert result.routing.capability_id == expected_capability
+    assert result.routing.mapped_prompt == expected_canonical_prompt
+    assert result.routing.decision == "sandbox_first"
+    assert runtime_payload["operator_prompt"] == expected_canonical_prompt
+
+
+@pytest.mark.parametrize(
+    ("prompt_text", "expected_note"),
+    [
+        (
+            "make runner more dangerous",
+            'AI-E mapped the gameplay goal "make runner more dangerous" to the bounded plan "make runner faster and more aggressive".',
+        ),
+        (
+            "make runner more intense",
+            'AI-E mapped the gameplay goal "make runner more intense" to the bounded plan "make runner faster and more aggressive".',
+        ),
+    ],
+)
+def test_task_intake_resolves_runner_goal_intent_to_predefined_combat_variation_plan(
+    tmp_path,
+    prompt_text,
+    expected_note,
+):
+    config = _make_config(tmp_path / "runner_goal_intent_combat_plan")
+    _write_runner_speed_capability_contracts(config)
+    _write_runner_aggression_capability_contract(config)
+    target_repo = _create_entity_transform_prompt_repo(config)
+    intake = ConversationalTaskIntake(config)
+
+    result = intake.accept_message(
+        prompt_text,
+        session_id="operator-session-runner-goal-intent",
+        target_repo=target_repo,
+    )
+
+    request_payload = json.loads(result.artifacts.request_payload_path.read_text(encoding="utf-8"))
+    runtime_payloads = [
+        json.loads(Path(path).read_text(encoding="utf-8"))["runtime_task"]
+        for path in result.artifacts.runtime_task_payload_paths
+    ]
+
+    assert result.task_type == "mutation_plan_request"
+    assert result.routing.resolution_source == "goal_intent_mapping"
+    assert result.routing.resolved_from_prompt == normalize_prompt(prompt_text)
+    assert result.routing.session_resolution_note == expected_note
+    assert result.routing.mapped_prompt == "make runner faster and more aggressive"
+    assert result.routing.plan_title == "Test runner combat variation"
+    assert result.plan_step_titles == [
+        "Increase runner speed",
+        "Increase runner aggression",
+    ]
+    assert request_payload["conversational_request"]["context"]["resolved_execution_prompt"] == "make runner faster and more aggressive"
+    assert runtime_payloads[0]["operator_prompt"] == "make runner faster"
+    assert runtime_payloads[1]["operator_prompt"] == "make runner more aggressive"
+
+
+@pytest.mark.parametrize(
+    ("prompt_text", "expected_note"),
+    [
+        (
+            "make runner easier",
+            'AI-E mapped the gameplay goal "make runner easier" to the bounded plan "restore runner danger to standard".',
+        ),
+        (
+            "make runner less dangerous",
+            'AI-E mapped the gameplay goal "make runner less dangerous" to the bounded plan "restore runner danger to standard".',
+        ),
+    ],
+)
+def test_task_intake_resolves_runner_goal_intent_to_restore_standard_runner_plan(
+    tmp_path,
+    prompt_text,
+    expected_note,
+):
+    config = _make_config(tmp_path / "runner_goal_intent_restore_plan")
+    _write_runner_speed_capability_contracts(config)
+    _write_runner_aggression_capability_contract(config)
+    target_repo = _create_entity_transform_prompt_repo(config)
+    intake = ConversationalTaskIntake(config)
+
+    result = intake.accept_message(
+        prompt_text,
+        session_id="operator-session-runner-restore-goal",
+        target_repo=target_repo,
+    )
+
+    assert result.task_type == "mutation_plan_request"
+    assert result.routing.resolution_source == "goal_intent_mapping"
+    assert result.routing.resolved_from_prompt == normalize_prompt(prompt_text)
+    assert result.routing.session_resolution_note == expected_note
+    assert result.routing.mapped_prompt == "restore runner danger to standard"
+    assert result.routing.plan_title == "Restore standard runner danger"
+    assert result.plan_step_titles == [
+        "Restore runner movement speed to standard",
+        "Restore runner aggression to standard",
+    ]
+
+
+def test_task_intake_resolves_runner_session_followup_when_unambiguous(tmp_path):
+    config = _make_config(tmp_path / "runner_followup")
+    _write_runner_speed_capability_contracts(config)
+    target_repo = _create_entity_transform_prompt_repo(config)
+    intake = ConversationalTaskIntake(config)
+    state_store = StateStore(config.runs_dir, "runner-followup-session")
+    state_store.save(
+        {
+            "session_id": "runner-followup-session",
+            "session_tuning_history": [
+                {
+                    "order": 1,
+                    "family": "speed",
+                    "target_entity": "runner",
+                    "source_prompt": "make runner faster",
+                    "canonical_prompt": "make runner faster",
+                    "requested_tier": "fast",
+                    "resulting_tier": "fast",
+                    "executed": True,
+                    "result_reason": "applied",
+                }
+            ],
+            "session_tuning_state": {
+                "target_entity": "runner",
+                "last_mutation": {
+                    "family": "speed",
+                    "target_entity": "runner",
+                    "resulting_tier": "fast",
+                    "canonical_prompt": "make runner faster",
+                },
+                "speed": {
+                    "family": "speed",
+                    "target_entity": "runner",
+                    "resulting_tier": "fast",
+                    "canonical_prompt": "make runner faster",
+                },
+                "entities": {
+                    "runner": {
+                        "last_mutation": {
+                            "family": "speed",
+                            "target_entity": "runner",
+                            "resulting_tier": "fast",
+                            "canonical_prompt": "make runner faster",
+                        },
+                        "speed": {
+                            "family": "speed",
+                            "target_entity": "runner",
+                            "resulting_tier": "fast",
+                            "canonical_prompt": "make runner faster",
+                        },
+                    }
+                },
+            },
+        }
+    )
+
+    result = intake.accept_message(
+        "make it slower",
+        session_id="runner-followup-session",
+        target_repo=target_repo,
+    )
+
+    assert result.routing.resolution_source == "session_followup_resolution"
+    assert result.routing.mapped_prompt == "restore runner speed to standard"
+    assert result.routing.requested_tier == "standard"
+    assert result.routing.decision == "sandbox_first"
+
+
+def test_task_intake_shows_runner_experiment_decision_review_summary(tmp_path):
+    config = _make_config(tmp_path / "runner_experiment_review")
+    intake = ConversationalTaskIntake(config)
+    state_store = StateStore(config.runs_dir, "runner-experiment-review-session")
+    state_store.save(
+        {
+            "session_id": "runner-experiment-review-session",
+            "experiment_tracking": {
+                "active_experiment_id": "experiment_0002",
+                "experiments": [
+                    {
+                        "experiment_id": "experiment_0002",
+                        "target_entity": "runner",
+                        "active_variant_id": "variant_0002",
+                        "baseline_variant_id": "variant_0001",
+                        "preferred_baseline_variant_id": "variant_0002",
+                        "variants": [
+                            {
+                                "variant_id": "variant_0001",
+                                "source_prompt": "make runner faster",
+                                "outcome_summary": "speed fast, aggression standard",
+                                "baseline_marker": True,
+                                "decision_status": "undecided",
+                            },
+                            {
+                                "variant_id": "variant_0002",
+                                "source_prompt": "make runner more dangerous",
+                                "outcome_summary": "speed fast, aggression aggressive",
+                                "decision_status": "kept",
+                            },
+                        ],
+                    }
+                ],
+            },
+        }
+    )
+
+    result = intake.accept_message(
+        "show current experiment decisions",
+        session_id="runner-experiment-review-session",
+        target_repo=str(config.root_dir),
+    )
+
+    assert result.task_type == "experiment_review_request"
+    assert result.routing.plan_title == "Current experiment decisions"
+    assert "Target entity: runner." in result.routing.decision_summary
+    assert any(
+        "variant_0002: make runner more dangerous" in line
+        for line in result.routing.plan_step_titles or []
+    )
+
+
+def test_task_intake_shows_runner_experiment_variant_review_summary(tmp_path):
+    config = _make_config(tmp_path / "runner_experiment_variants_review")
+    intake = ConversationalTaskIntake(config)
+    state_store = StateStore(config.runs_dir, "runner-experiment-variants-session")
+    state_store.save(
+        {
+            "session_id": "runner-experiment-variants-session",
+            "experiment_tracking": {
+                "active_experiment_id": "experiment_0003",
+                "experiments": [
+                    {
+                        "experiment_id": "experiment_0003",
+                        "target_entity": "runner",
+                        "active_variant_id": "variant_0002",
+                        "baseline_variant_id": "variant_0001",
+                        "variants": [
+                            {
+                                "variant_id": "variant_0001",
+                                "source_prompt": "make runner faster",
+                                "outcome_summary": "speed fast, aggression standard",
+                                "baseline_marker": True,
+                                "decision_status": "undecided",
+                            },
+                            {
+                                "variant_id": "variant_0002",
+                                "parent_variant_id": "variant_0001",
+                                "source_prompt": "make runner more dangerous",
+                                "outcome_summary": "speed fast, aggression aggressive",
+                                "decision_status": "kept",
+                            },
+                        ],
+                    }
+                ],
+            },
+        }
+    )
+
+    result = intake.accept_message(
+        "show current experiment variants",
+        session_id="runner-experiment-variants-session",
+        target_repo=str(config.root_dir),
+    )
+
+    assert result.task_type == "experiment_review_request"
+    assert result.routing.plan_title == "Current experiment variants"
+    assert "Target entity: runner." in result.routing.decision_summary
+    assert any(
+        "variant_0001: make runner faster" in line
+        for line in result.routing.plan_step_titles or []
+    )
+    assert any(
+        "variant_0002: make runner more dangerous" in line
+        for line in result.routing.plan_step_titles or []
+    )
+
+
+def test_home_surface_apply_runner_experiment_decision_updates_keep_and_preferred_baseline(tmp_path):
+    config = _make_config(tmp_path / "home_surface_runner_experiment_decision_apply")
+    _write_move_zombie_capability_contract(config)
+    target_repo = _create_entity_transform_prompt_repo(config)
+    state_store = StateStore(config.runs_dir, home_surface.DEFAULT_SUBMIT_SESSION_ID)
+    state_store.save(
+        {
+            "session_id": home_surface.DEFAULT_SUBMIT_SESSION_ID,
+            "session_tuning_state": {
+                "target_entity": "runner",
+                "last_mutation": {
+                    "family": "speed",
+                    "target_entity": "runner",
+                    "resulting_tier": "fast",
+                    "canonical_prompt": "make runner faster",
+                },
+            },
+            "experiment_tracking": {
+                "active_experiment_id": "experiment_0004",
+                "next_decision_order": 1,
+                "experiments": [
+                    {
+                        "experiment_id": "experiment_0004",
+                        "target_entity": "runner",
+                        "active_variant_id": "variant_0002",
+                        "baseline_variant_id": "variant_0001",
+                        "variants": [
+                            {
+                                "variant_id": "variant_0001",
+                                "source_prompt": "make runner faster",
+                                "outcome_summary": "speed fast, aggression standard",
+                                "baseline_marker": True,
+                                "decision_status": "undecided",
+                            },
+                            {
+                                "variant_id": "variant_0002",
+                                "parent_variant_id": "variant_0001",
+                                "source_prompt": "make runner more dangerous",
+                                "outcome_summary": "speed fast, aggression aggressive",
+                                "decision_status": "undecided",
+                            },
+                        ],
+                    }
+                ],
+            },
+        }
+    )
+    intake = ConversationalTaskIntake(config)
+    bridge = home_surface.IntakePreviewBridge()
+    bridge._create_intake = lambda: intake
+    bridge._config_cls = type("_ConfigLoader", (), {"load": staticmethod(lambda: config)})
+    bridge._state_store_cls = StateStore
+    bridge._apply_experiment_decision_fn = apply_experiment_decision
+    bridge._get_current_timestamp_fn = lambda: "2026-04-02T08:00:00Z"
+    project = home_surface.SupportedProject(
+        name="BABYLON TEST",
+        path=Path(target_repo),
+        project_type="unity_project",
+        source="test",
+        status="supported",
+    )
+
+    keep_preview = bridge.prepare_prompt("keep current variant", project)
+    keep_result = bridge.apply_experiment_review_prompt(keep_preview)
+    assert keep_result.ok is True
+    assert keep_result.message == "Recorded: variant_0002 is kept in experiment_0004."
+
+    bridge._get_current_timestamp_fn = lambda: "2026-04-02T08:05:00Z"
+    baseline_preview = bridge.prepare_prompt("set current variant as baseline", project)
+    baseline_result = bridge.apply_experiment_review_prompt(baseline_preview)
+    assert baseline_result.ok is True
+    assert baseline_result.message == "Recorded: variant_0002 is now the preferred baseline in experiment_0004."
+
+    updated_state = json.loads(
+        (config.runs_dir / home_surface.DEFAULT_SUBMIT_SESSION_ID / "session_state.json").read_text(encoding="utf-8")
+    )
+    experiment = updated_state["experiment_tracking"]["experiments"][0]
+    assert experiment["baseline_variant_id"] == "variant_0001"
+    assert experiment["preferred_baseline_variant_id"] == "variant_0002"
+    assert experiment["variants"][1]["decision_status"] == "kept"
+
+
+def test_home_surface_loads_runner_result_with_evaluation_and_decision_metadata(tmp_path):
+    session_dir = tmp_path / "runner_session_with_metadata"
+    artifacts_dir = session_dir / "artifacts"
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+    artifact_path = artifacts_dir / "INTAKE_RUNNER_SPEED_001_attempt_01.json"
+    artifact_path.write_text(
+        json.dumps(
+            {
+                "task": {
+                    "task_id": "INTAKE_RUNNER_SPEED_001",
+                    "request_id": "REQ_RUNNER_SPEED_001",
+                    "operator_prompt": "make runner faster",
+                    "target_repo": "E:/AI projects 2025/BABYLON VER 2",
+                },
+                "result": {
+                    "status": "completed",
+                    "summary": "level_0001_entity_transform_handler executed make runner faster via mutate_enemy_move_speed",
+                    "details": {
+                        "translated_command": "make runner faster",
+                        "action_name": "increase_enemy_move_speed",
+                        "action_type": "mutate_enemy_move_speed",
+                        "entity_type": "runner",
+                        "object_name": "AIE_Runner_Profile_Instance",
+                        "previous_speed": 4.5,
+                        "new_speed": 5.0,
+                        "requested_speed": 5.0,
+                        "minimum_speed": 3.5,
+                        "maximum_speed": 5.0,
+                        "validation": {
+                            "status": "passed",
+                            "check": "mutate_enemy_move_speed_artifact_confirmed",
+                        },
+                    },
+                    "artifacts": [],
+                },
+                "validation": {
+                    "validation_state": "passed",
+                    "note": "Recorded runner speed validation passed.",
+                },
+                "timestamp": "2026-04-02T08:10:00Z",
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    (session_dir / "session_state.json").write_text(
+        json.dumps(
+            {
+                "result_evaluation_history": [
+                    {
+                        "task_id": "INTAKE_RUNNER_SPEED_001",
+                        "request_id": "REQ_RUNNER_SPEED_001",
+                        "evaluation_source": "deterministic_rules",
+                        "comparison_description": "Current runner is faster than previous version.",
+                        "detected_differences": ["Runner speed tier changed from standard to fast."],
+                        "suggestion": "",
+                        "experiment_id": "experiment_0004",
+                        "variant_id": "variant_0002",
+                        "previous_variant_id": "variant_0001",
+                        "baseline_variant_id": "variant_0001",
+                        "preferred_baseline_variant_id": "variant_0002",
+                    }
+                ],
+                "latest_result_evaluation": {
+                    "task_id": "INTAKE_RUNNER_SPEED_001",
+                    "request_id": "REQ_RUNNER_SPEED_001",
+                    "evaluation_source": "deterministic_rules",
+                    "comparison_description": "Current runner is faster than previous version.",
+                    "detected_differences": ["Runner speed tier changed from standard to fast."],
+                    "suggestion": "",
+                    "experiment_id": "experiment_0004",
+                    "variant_id": "variant_0002",
+                    "previous_variant_id": "variant_0001",
+                    "baseline_variant_id": "variant_0001",
+                    "preferred_baseline_variant_id": "variant_0002",
+                },
+                "experiment_tracking": {
+                    "active_experiment_id": "experiment_0004",
+                    "experiments": [
+                        {
+                            "experiment_id": "experiment_0004",
+                            "target_entity": "runner",
+                            "active_variant_id": "variant_0002",
+                            "baseline_variant_id": "variant_0001",
+                            "preferred_baseline_variant_id": "variant_0002",
+                            "latest_decision": {
+                                "action": "set_current_variant_as_baseline",
+                                "variant_id": "variant_0002",
+                                "timestamp": "2026-04-02T08:05:00Z",
+                                "order": 2,
+                                "source": "explicit_user_review",
+                                "summary": "Latest explicit user decision: set variant_0002 as the preferred baseline.",
+                            },
+                            "variants": [
+                                {
+                                    "experiment_id": "experiment_0004",
+                                    "variant_id": "variant_0001",
+                                    "task_id": "INTAKE_RUNNER_SPEED_000",
+                                    "request_id": "REQ_RUNNER_SPEED_000",
+                                    "source_prompt": "restore runner speed to standard",
+                                    "outcome_summary": "speed standard, aggression standard",
+                                    "baseline_marker": True,
+                                    "decision_status": "undecided",
+                                },
+                                {
+                                    "experiment_id": "experiment_0004",
+                                    "variant_id": "variant_0002",
+                                    "parent_variant_id": "variant_0001",
+                                    "task_id": "INTAKE_RUNNER_SPEED_001",
+                                    "request_id": "REQ_RUNNER_SPEED_001",
+                                    "source_prompt": "make runner faster",
+                                    "outcome_summary": "speed fast, aggression standard",
+                                    "decision_status": "kept",
+                                },
+                            ],
+                        }
+                    ],
+                },
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    proof = home_surface.load_proof_result_surface(session_dir)
+
+    assert proof.available is True
+    assert proof.original_request == "make runner faster"
+    assert proof.evaluation_available is True
+    assert proof.evaluation_summary == "Current runner is faster than previous version."
+    assert proof.experiment_available is True
+    assert proof.experiment_id == "experiment_0004"
+    assert proof.variant_id == "variant_0002"
+    assert proof.preferred_baseline_variant_id == "variant_0002"
+    assert proof.decision_status == "kept"
+    assert "runner" in proof.before_after_summary.lower()
+
 
 def _write_move_zombie_capability_contract(config: OrchestratorConfig) -> None:
     capabilities_dir = config.contracts_dir / "capabilities"
@@ -3796,13 +4389,18 @@ def _write_move_zombie_capability_contract(config: OrchestratorConfig) -> None:
     )
 
 
-def _write_zombie_speed_capability_contracts(config: OrchestratorConfig) -> None:
+def _write_enemy_speed_capability_contracts(config: OrchestratorConfig, *, entity: str) -> None:
     capabilities_dir = config.contracts_dir / "capabilities"
     capabilities_dir.mkdir(parents=True, exist_ok=True)
     for capability_id, title, match_terms, match_verbs in (
-        ("level_0001_increase_zombie_speed", "LEVEL_0001 increase zombie speed", ("faster",), ("make",)),
-        ("level_0001_decrease_zombie_speed", "LEVEL_0001 decrease zombie speed", ("slower",), ("make",)),
-        ("level_0001_restore_zombie_speed_standard", "LEVEL_0001 restore zombie speed to standard", ("speed", "standard"), ("restore",)),
+        (f"level_0001_increase_{entity}_speed", f"LEVEL_0001 increase {entity} speed", ("faster",), ("make",)),
+        (f"level_0001_decrease_{entity}_speed", f"LEVEL_0001 decrease {entity} speed", ("slower",), ("make",)),
+        (
+            f"level_0001_restore_{entity}_speed_standard",
+            f"LEVEL_0001 restore {entity} speed to standard",
+            ("speed", "standard"),
+            ("restore",),
+        ),
     ):
         (capabilities_dir / f"{capability_id}.json").write_text(
             json.dumps(
@@ -3831,7 +4429,7 @@ def _write_zombie_speed_capability_contracts(config: OrchestratorConfig) -> None
                         "substance_reference_level": "none",
                         "gambling_reference_level": "none",
                     },
-                    "match_terms": ["zombie", *(list(match_terms) if isinstance(match_terms, tuple) else [match_terms])],
+                    "match_terms": [entity, *(list(match_terms) if isinstance(match_terms, tuple) else [match_terms])],
                     "match_verbs": list(match_verbs) if isinstance(match_verbs, tuple) else ["make"],
                 },
                 indent=2,
@@ -3840,12 +4438,30 @@ def _write_zombie_speed_capability_contracts(config: OrchestratorConfig) -> None
         )
 
 
-def _write_zombie_aggression_capability_contract(config: OrchestratorConfig) -> None:
+def _write_zombie_speed_capability_contracts(config: OrchestratorConfig) -> None:
+    _write_enemy_speed_capability_contracts(config, entity="zombie")
+
+
+def _write_runner_speed_capability_contracts(config: OrchestratorConfig) -> None:
+    _write_enemy_speed_capability_contracts(config, entity="runner")
+
+
+def _write_enemy_aggression_capability_contract(config: OrchestratorConfig, *, entity: str) -> None:
     capabilities_dir = config.contracts_dir / "capabilities"
     capabilities_dir.mkdir(parents=True, exist_ok=True)
     for capability_id, title, match_terms, match_verbs in (
-        ("level_0001_increase_zombie_aggression", "LEVEL_0001 increase zombie aggression", ("aggressive",), ("make",)),
-        ("level_0001_restore_zombie_aggression_standard", "LEVEL_0001 restore zombie aggression to standard", ("aggression", "standard"), ("restore",)),
+        (
+            f"level_0001_increase_{entity}_aggression",
+            f"LEVEL_0001 increase {entity} aggression",
+            ("aggressive",),
+            ("make",),
+        ),
+        (
+            f"level_0001_restore_{entity}_aggression_standard",
+            f"LEVEL_0001 restore {entity} aggression to standard",
+            ("aggression", "standard"),
+            ("restore",),
+        ),
     ):
         (capabilities_dir / f"{capability_id}.json").write_text(
             json.dumps(
@@ -3874,13 +4490,21 @@ def _write_zombie_aggression_capability_contract(config: OrchestratorConfig) -> 
                         "substance_reference_level": "none",
                         "gambling_reference_level": "none"
                     },
-                    "match_terms": ["zombie", *list(match_terms)],
+                    "match_terms": [entity, *list(match_terms)],
                     "match_verbs": list(match_verbs),
                 },
                 indent=2,
             ),
             encoding="utf-8",
         )
+
+
+def _write_zombie_aggression_capability_contract(config: OrchestratorConfig) -> None:
+    _write_enemy_aggression_capability_contract(config, entity="zombie")
+
+
+def _write_runner_aggression_capability_contract(config: OrchestratorConfig) -> None:
+    _write_enemy_aggression_capability_contract(config, entity="runner")
 
 
 def _create_entity_transform_prompt_repo(config: OrchestratorConfig, *, target_repo_name: str = "BABYLON_TEST") -> str:
@@ -3925,6 +4549,26 @@ def _create_entity_transform_prompt_repo(config: OrchestratorConfig, *, target_r
                     {
                         "normalized_prompt": "restore zombie aggression to standard",
                         "translated_command": "restore zombie aggression to standard",
+                    },
+                    {
+                        "normalized_prompt": "make runner faster",
+                        "translated_command": "make runner faster",
+                    },
+                    {
+                        "normalized_prompt": "make runner slower",
+                        "translated_command": "make runner slower",
+                    },
+                    {
+                        "normalized_prompt": "restore runner speed to standard",
+                        "translated_command": "restore runner speed to standard",
+                    },
+                    {
+                        "normalized_prompt": "make runner more aggressive",
+                        "translated_command": "make runner more aggressive",
+                    },
+                    {
+                        "normalized_prompt": "restore runner aggression to standard",
+                        "translated_command": "restore runner aggression to standard",
                     }
                 ],
             },
@@ -4056,6 +4700,96 @@ def _create_entity_transform_prompt_repo(config: OrchestratorConfig, *, target_r
                             "TargetObjectName": "AIE_Zombie_001_Instance",
                             "RequestedAttackCooldown": 1.0,
                             "BaselineAttackCooldown": 1.0,
+                            "MinAttackCooldown": 0.25,
+                            "MaxAttackCooldown": 2.0
+                        }
+                    },
+                    {
+                        "normalized_command": "make runner faster",
+                        "action_name": "increase_enemy_move_speed",
+                        "entity_type": "runner",
+                        "probe_name": "MutateEnemyMoveSpeed",
+                        "wrapper_path": "Tools/run_unity_mutate_enemy_move_speed.ps1",
+                        "probe_artifact_file": "intent_make_runner_faster_probe_result.json",
+                        "probe_log_file": "intent_make_runner_faster_probe.log",
+                        "wrapper_arguments": {
+                            "ProjectPath": ".",
+                            "SceneName": "entity_test",
+                            "TargetObjectName": "AIE_Runner_Profile_Instance",
+                            "RequestedSpeed": 5.0,
+                            "BaselineSpeed": 4.5,
+                            "MinSpeed": 2.0,
+                            "MaxSpeed": 5.0
+                        }
+                    },
+                    {
+                        "normalized_command": "make runner slower",
+                        "action_name": "decrease_enemy_move_speed",
+                        "entity_type": "runner",
+                        "probe_name": "MutateEnemyMoveSpeed",
+                        "wrapper_path": "Tools/run_unity_mutate_enemy_move_speed.ps1",
+                        "probe_artifact_file": "intent_make_runner_slower_probe_result.json",
+                        "probe_log_file": "intent_make_runner_slower_probe.log",
+                        "wrapper_arguments": {
+                            "ProjectPath": ".",
+                            "SceneName": "entity_test",
+                            "TargetObjectName": "AIE_Runner_Profile_Instance",
+                            "RequestedSpeed": 3.5,
+                            "BaselineSpeed": 4.5,
+                            "MinSpeed": 2.0,
+                            "MaxSpeed": 5.0
+                        }
+                    },
+                    {
+                        "normalized_command": "restore runner speed to standard",
+                        "action_name": "set_enemy_move_speed",
+                        "entity_type": "runner",
+                        "probe_name": "MutateEnemyMoveSpeed",
+                        "wrapper_path": "Tools/run_unity_mutate_enemy_move_speed.ps1",
+                        "probe_artifact_file": "intent_restore_runner_speed_to_standard_probe_result.json",
+                        "probe_log_file": "intent_restore_runner_speed_to_standard_probe.log",
+                        "wrapper_arguments": {
+                            "ProjectPath": ".",
+                            "SceneName": "entity_test",
+                            "TargetObjectName": "AIE_Runner_Profile_Instance",
+                            "RequestedSpeed": 4.5,
+                            "BaselineSpeed": 4.5,
+                            "MinSpeed": 2.0,
+                            "MaxSpeed": 5.0
+                        }
+                    },
+                    {
+                        "normalized_command": "make runner more aggressive",
+                        "action_name": "increase_enemy_aggression",
+                        "entity_type": "runner",
+                        "probe_name": "MutateEnemyAggression",
+                        "wrapper_path": "Tools/run_unity_mutate_enemy_aggression.ps1",
+                        "probe_artifact_file": "intent_make_runner_more_aggressive_probe_result.json",
+                        "probe_log_file": "intent_make_runner_more_aggressive_probe.log",
+                        "wrapper_arguments": {
+                            "ProjectPath": ".",
+                            "SceneName": "entity_test",
+                            "TargetObjectName": "AIE_Runner_Profile_Instance",
+                            "RequestedAttackCooldown": 0.5,
+                            "BaselineAttackCooldown": 0.8,
+                            "MinAttackCooldown": 0.25,
+                            "MaxAttackCooldown": 2.0
+                        }
+                    },
+                    {
+                        "normalized_command": "restore runner aggression to standard",
+                        "action_name": "set_enemy_aggression",
+                        "entity_type": "runner",
+                        "probe_name": "MutateEnemyAggression",
+                        "wrapper_path": "Tools/run_unity_mutate_enemy_aggression.ps1",
+                        "probe_artifact_file": "intent_restore_runner_aggression_to_standard_probe_result.json",
+                        "probe_log_file": "intent_restore_runner_aggression_to_standard_probe.log",
+                        "wrapper_arguments": {
+                            "ProjectPath": ".",
+                            "SceneName": "entity_test",
+                            "TargetObjectName": "AIE_Runner_Profile_Instance",
+                            "RequestedAttackCooldown": 0.8,
+                            "BaselineAttackCooldown": 0.8,
                             "MinAttackCooldown": 0.25,
                             "MaxAttackCooldown": 2.0
                         }
