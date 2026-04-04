@@ -169,9 +169,15 @@ class ProofArtifactLink:
 
 @dataclass(frozen=True)
 class AutonomousBuildCandidateSurface:
+    candidate_id: str
     label: str
+    summary: str
     validation_status: str
     evaluation_summary: str
+    validation_summary: str = ""
+    validation_highlights: List[str] = field(default_factory=list)
+    evaluation_notes: List[str] = field(default_factory=list)
+    artifact_refs: List[str] = field(default_factory=list)
     issue_count: int = 0
     derived_from_corrected_layout: bool = False
     source_profile: str = ""
@@ -222,9 +228,13 @@ class ProofResultSurface:
     manual_correction_count: int = 0
     derived_from_corrected_layout: bool = False
     autonomous_build_available: bool = False
+    autonomous_build_phase: str = ""
+    autonomous_build_banner: str = ""
+    autonomous_build_status_line: str = ""
     autonomous_build_summary: str = ""
     autonomous_build_requested_directive: str = ""
     autonomous_build_bounded_mapping: str = ""
+    autonomous_build_constraints: List[str] = field(default_factory=list)
     autonomous_build_parameter_families: List[str] = field(default_factory=list)
     autonomous_build_candidate_count: int = 0
     autonomous_build_candidates: List[AutonomousBuildCandidateSurface] = field(default_factory=list)
@@ -232,6 +242,9 @@ class ProofResultSurface:
     autonomous_build_user_controls: List[str] = field(default_factory=list)
     autonomous_build_requires_approval: bool = False
     autonomous_build_approval_summary: str = ""
+    autonomous_build_selected_candidate_id: str = ""
+    autonomous_build_selected_candidate_label: str = ""
+    autonomous_build_completion_summary: str = ""
 
 
 def load_supported_projects() -> List[SupportedProject]:
@@ -2616,7 +2629,11 @@ def _proof_result_from_plan_session(
     if autonomous_fields["autonomous_build_available"]:
         change_summary = str(autonomous_fields["autonomous_build_summary"] or "").strip() or change_summary
         validation_summary = str(autonomous_fields["autonomous_build_approval_summary"] or "").strip() or validation_summary
-        final_summary = "AUTONOMOUS BUILD COMPLETE. Awaiting user approval."
+        final_summary = (
+            "AUTONOMOUS REVIEW READY. Awaiting user decision."
+            if autonomous_fields.get("autonomous_build_phase") == "review"
+            else "AUTONOMOUS BUILD COMPLETE. User-approved variation applied."
+        )
 
     return ProofResultSurface(
         available=True,
@@ -2764,7 +2781,11 @@ def _proof_result_from_attempt_artifact(
     if autonomous_fields["autonomous_build_available"]:
         change_summary = str(autonomous_fields["autonomous_build_summary"] or "").strip() or change_summary
         validation_summary = str(autonomous_fields["autonomous_build_approval_summary"] or "").strip() or validation_summary
-        final_summary = "AUTONOMOUS BUILD COMPLETE. Awaiting user approval."
+        final_summary = (
+            "AUTONOMOUS REVIEW READY. Awaiting user decision."
+            if autonomous_fields.get("autonomous_build_phase") == "review"
+            else "AUTONOMOUS BUILD COMPLETE. User-approved variation applied."
+        )
 
     return ProofResultSurface(
         available=True,
@@ -3586,6 +3607,272 @@ def _manual_correction_surface_fields(
     }
 
 
+def _empty_autonomous_build_surface_fields() -> dict[str, Any]:
+    return {
+        "autonomous_build_available": False,
+        "autonomous_build_phase": "",
+        "autonomous_build_banner": "",
+        "autonomous_build_status_line": "",
+        "autonomous_build_summary": "",
+        "autonomous_build_requested_directive": "",
+        "autonomous_build_bounded_mapping": "",
+        "autonomous_build_constraints": [],
+        "autonomous_build_parameter_families": [],
+        "autonomous_build_candidate_count": 0,
+        "autonomous_build_candidates": [],
+        "autonomous_build_attempt_log": [],
+        "autonomous_build_user_controls": [],
+        "autonomous_build_requires_approval": False,
+        "autonomous_build_approval_summary": "",
+        "autonomous_build_selected_candidate_id": "",
+        "autonomous_build_selected_candidate_label": "",
+        "autonomous_build_completion_summary": "",
+    }
+
+
+def _autonomous_build_intent_family(*, task: dict[str, Any], details: dict[str, Any], mapped_prompt: str) -> str:
+    target_context = str(details.get("target_context") or task.get("target_context") or "").strip().lower()
+    mapped = mapped_prompt.lower()
+    if target_context == "platformer":
+        if any(token in mapped for token in {"traversal", "challenge", "intense"}):
+            return "platformer traversal adjustment"
+        return "platformer intensity adjustment"
+    return "bounded deterministic adjustment"
+
+
+def _autonomous_build_constraints() -> List[str]:
+    return [
+        "validation required",
+        "no automatic selection",
+        "user approval required",
+    ]
+
+
+def _autonomous_build_candidate_surface(candidate: dict[str, Any], *, index: int) -> AutonomousBuildCandidateSurface:
+    validation_metadata = dict(candidate.get("validation_metadata") or {})
+    result_payload = candidate.get("result_payload") if isinstance(candidate.get("result_payload"), dict) else {}
+    result_details = result_payload.get("details") if isinstance(result_payload.get("details"), dict) else {}
+    candidate_id = str(candidate.get("candidate_id") or f"candidate_{index}").strip()
+    label = str(candidate.get("candidate_label") or f"Candidate {chr(ord('A') + index - 1)}").strip()
+    evaluation_summary = str(candidate.get("evaluation_summary") or "No evaluation summary available.").strip() or "No evaluation summary available."
+    validation_summary = str(
+        validation_metadata.get("layout_validation_summary")
+        or result_details.get("layout_validation_summary")
+        or ""
+    ).strip()
+    validation_highlights = [
+        str(item).strip()
+        for item in (
+            validation_metadata.get("layout_validation_highlights")
+            or result_details.get("layout_validation_highlights")
+            or []
+        )
+        if str(item).strip()
+    ]
+    evaluation_notes = [fragment.strip() for fragment in evaluation_summary.split(";") if fragment.strip()]
+    artifact_refs = [str(item).strip() for item in (result_payload.get("artifacts") or []) if str(item).strip()]
+    summary = evaluation_summary if evaluation_summary else (validation_summary or "No candidate summary available.")
+    return AutonomousBuildCandidateSurface(
+        candidate_id=candidate_id,
+        label=label,
+        summary=summary,
+        validation_status=str(validation_metadata.get("layout_validation_status_label") or "unknown").strip() or "unknown",
+        evaluation_summary=evaluation_summary,
+        validation_summary=validation_summary,
+        validation_highlights=validation_highlights,
+        evaluation_notes=evaluation_notes,
+        artifact_refs=artifact_refs,
+        issue_count=int(validation_metadata.get("layout_validation_issue_count") or 0),
+        derived_from_corrected_layout=bool(result_details.get("derived_from_corrected_layout")),
+        source_profile=str(result_details.get("level_profile_name") or "").strip(),
+        source_level_set=str(result_details.get("level_set_name") or "").strip(),
+    )
+
+
+def _autonomous_build_attempt_log(attempts: List[dict[str, Any]]) -> List[str]:
+    lines: List[str] = []
+    for entry in attempts:
+        decision = str(entry.get("decision") or "unknown").strip().lower() or "unknown"
+        outcome = {
+            "accepted": "accepted into candidate set",
+            "rejected": "rejected",
+            "retried": "retried",
+            "retry": "retried",
+        }.get(decision, decision)
+        candidate_label = str(entry.get("candidate_label") or "").strip()
+        validation = str(entry.get("layout_validation_status") or "unknown").strip() or "unknown"
+        reason = str(entry.get("reason") or "unknown").strip() or "unknown"
+        label_suffix = f" | candidate: {candidate_label}" if candidate_label else ""
+        lines.append(
+            f"Attempt {int(entry.get('attempt_number') or 0)}: {outcome}{label_suffix} | validation: {validation} | reason: {reason}"
+        )
+    return lines
+
+
+def _autonomous_build_selected_candidate(
+    *,
+    details: dict[str, Any],
+    candidates: List[AutonomousBuildCandidateSurface],
+) -> tuple[str, str]:
+    selected_id = ""
+    for key in (
+        "platformer_autonomous_selected_candidate_id",
+        "platformer_auto_iteration_selected_candidate_id",
+        "platformer_selected_candidate_id",
+    ):
+        selected_id = str(details.get(key) or "").strip()
+        if selected_id:
+            break
+
+    selected_label = ""
+    for key in (
+        "platformer_autonomous_selected_candidate_label",
+        "platformer_auto_iteration_selected_candidate_label",
+        "platformer_selected_candidate_label",
+    ):
+        selected_label = str(details.get(key) or "").strip()
+        if selected_label:
+            break
+
+    if selected_id and not selected_label:
+        for candidate in candidates:
+            if candidate.candidate_id == selected_id:
+                selected_label = candidate.label
+                break
+    if selected_label and not selected_id:
+        for candidate in candidates:
+            if candidate.label == selected_label:
+                selected_id = candidate.candidate_id
+                break
+    return selected_id, selected_label
+
+
+def _autonomous_build_review_summary(
+    *,
+    requested_directive: str,
+    bounded_mapping: str,
+    intent_family: str,
+    constraints: List[str],
+    parameter_families: List[str],
+    candidates: List[AutonomousBuildCandidateSurface],
+    attempt_log: List[str],
+) -> str:
+    lines = [
+        "AUTONOMOUS REVIEW READY",
+        "Bounded autonomous variations have been generated and validated. No variation has been selected. Awaiting user decision.",
+        "",
+        "Requested directive",
+        f"- {requested_directive or 'not available'}",
+        "",
+        "Bounded mapping",
+        f"- Intent family: {intent_family}",
+        f"- Mapped scope: {bounded_mapping or 'not available'}",
+        "- Constraints:",
+        *[f"  - {item}" for item in constraints],
+        "",
+        "Capability families used",
+        *([f"- {family}" for family in parameter_families] or ["- not available"]),
+        "",
+        "Candidate set",
+    ]
+    if not candidates:
+        lines.append("- No valid candidates available")
+    for candidate in candidates:
+        lines.extend(
+            [
+                f"- {candidate.label} ({candidate.candidate_id})",
+                f"  - Summary: {candidate.summary}",
+                f"  - Validation: {candidate.validation_status}",
+            ]
+        )
+        if candidate.validation_summary:
+            lines.append(f"  - Validation summary: {candidate.validation_summary}")
+        for highlight in candidate.validation_highlights:
+            lines.append(f"  - Validation detail: {highlight}")
+        if candidate.issue_count > 0:
+            lines.append(f"  - Validation issue count: {candidate.issue_count}")
+        if candidate.derived_from_corrected_layout:
+            lines.append("  - Derived from corrected layout: yes")
+        if candidate.source_profile:
+            lines.append(f"  - Source profile: {candidate.source_profile}")
+        if candidate.source_level_set:
+            lines.append(f"  - Source level set: {candidate.source_level_set}")
+        if candidate.evaluation_notes:
+            lines.append("  - Evaluation notes:")
+            lines.extend(f"    - {note}" for note in candidate.evaluation_notes)
+        if candidate.artifact_refs:
+            lines.append("  - Artifact references:")
+            lines.extend(f"    - {ref}" for ref in candidate.artifact_refs)
+    lines.extend(
+        [
+            "",
+            "Attempt log",
+            *([f"- {entry}" for entry in attempt_log] or ["- No attempt log available"]),
+            "",
+            "User control",
+            "No candidate has been selected automatically. Choose a candidate to approve, reject all candidates, or request changes.",
+            "Actions:",
+            "- Approve candidate",
+            "- Reject all candidates",
+            "- Request changes",
+        ]
+    )
+    return "\n".join(lines).strip()
+
+
+def _autonomous_build_completion_summary(
+    *,
+    requested_directive: str,
+    bounded_mapping: str,
+    intent_family: str,
+    constraints: List[str],
+    parameter_families: List[str],
+    selected_candidate: AutonomousBuildCandidateSurface | None,
+    selected_candidate_id: str,
+    selected_candidate_label: str,
+    details: dict[str, Any],
+) -> tuple[str, str]:
+    completion_summary = str(details.get("platformer_autonomous_completion_summary") or "").strip()
+    if not completion_summary and selected_candidate is not None:
+        completion_summary = selected_candidate.validation_summary or selected_candidate.summary
+    if not completion_summary:
+        applied_level_set = str(details.get("applied_level_set_name") or details.get("level_set_name") or "").strip()
+        applied_profile = str(details.get("applied_profile_name") or details.get("level_profile_name") or "").strip()
+        fragments = []
+        if applied_level_set:
+            fragments.append(f"Applied level set: {applied_level_set}.")
+        if applied_profile:
+            fragments.append(f"Applied profile: {applied_profile}.")
+        completion_summary = " ".join(fragments).strip() or "Validation-confirmed result details were recorded for the user-approved variation."
+    lines = [
+        "AUTONOMOUS BUILD COMPLETE",
+        "The user-approved variation has been applied within bounded platformer constraints. Validation remained in scope and no autonomous final selection occurred outside user approval.",
+        "",
+        "Selected variation",
+        f"- {selected_candidate_label or 'Selected variation'} ({selected_candidate_id or 'not available'})",
+        "",
+        "Requested directive",
+        f"- {requested_directive or 'not available'}",
+        "",
+        "Bounded mapping",
+        f"- Intent family: {intent_family}",
+        f"- Mapped scope: {bounded_mapping or 'not available'}",
+        "- Constraints:",
+        *[f"  - {item}" for item in constraints],
+        "",
+        "Capability families used",
+        *([f"- {family}" for family in parameter_families] or ["- not available"]),
+        "",
+        "Validation-confirmed result",
+        f"- {completion_summary}",
+        "",
+        "Approval boundary",
+        "- Final selection was made through explicit user approval",
+        "- No autonomous final selection occurred outside user approval",
+    ]
+    return "\n".join(lines).strip(), completion_summary
+
+
 def _autonomous_build_surface_fields(
     *,
     task: dict[str, Any] | None,
@@ -3611,19 +3898,7 @@ def _autonomous_build_surface_fields(
         or attempts
     )
     if not presentation_available:
-        return {
-            "autonomous_build_available": False,
-            "autonomous_build_summary": "",
-            "autonomous_build_requested_directive": "",
-            "autonomous_build_bounded_mapping": "",
-            "autonomous_build_parameter_families": [],
-            "autonomous_build_candidate_count": 0,
-            "autonomous_build_candidates": [],
-            "autonomous_build_attempt_log": [],
-            "autonomous_build_user_controls": [],
-            "autonomous_build_requires_approval": False,
-            "autonomous_build_approval_summary": "",
-        }
+        return _empty_autonomous_build_surface_fields()
 
     requested_directive = str(
         task_payload.get("source_prompt")
@@ -3638,6 +3913,7 @@ def _autonomous_build_surface_fields(
         or task_payload.get("operator_prompt")
         or ""
     ).strip()
+    constraints = _autonomous_build_constraints()
     parameter_families = [
         str(item).strip()
         for item in (details_payload.get("platformer_autonomous_build_parameter_families") or [])
@@ -3653,101 +3929,83 @@ def _autonomous_build_surface_fields(
                 if family and family not in parameter_families:
                     parameter_families.append(family)
 
-    candidate_surfaces: List[AutonomousBuildCandidateSurface] = []
-    for index, candidate in enumerate(valid_candidates, start=1):
-        validation_metadata = dict(candidate.get("validation_metadata") or {})
-        result_payload = candidate.get("result_payload") if isinstance(candidate.get("result_payload"), dict) else {}
-        result_details = result_payload.get("details") if isinstance(result_payload.get("details"), dict) else {}
-        label = str(candidate.get("candidate_label") or f"Candidate {chr(ord('A') + index - 1)}").strip()
-        candidate_surfaces.append(
-            AutonomousBuildCandidateSurface(
-                label=label,
-                validation_status=str(validation_metadata.get("layout_validation_status_label") or "unknown").strip() or "unknown",
-                evaluation_summary=str(candidate.get("evaluation_summary") or "No evaluation summary available.").strip() or "No evaluation summary available.",
-                issue_count=int(validation_metadata.get("layout_validation_issue_count") or 0),
-                derived_from_corrected_layout=bool(result_details.get("derived_from_corrected_layout")),
-                source_profile=str(result_details.get("level_profile_name") or "").strip(),
-                source_level_set=str(result_details.get("level_set_name") or "").strip(),
-            )
-        )
-
-    attempt_log = []
-    for entry in attempts:
-        attempt_log.append(
-            (
-                f"attempt {int(entry.get('attempt_number') or 0)}: {str(entry.get('decision') or 'unknown')}"
-                f" | validation={str(entry.get('layout_validation_status') or 'unknown')}"
-                f" | reason={str(entry.get('reason') or 'unknown')}"
-            )
-        )
-
-    user_controls = ["approve", "reject", "request changes"]
-    approval_summary = (
-        "Awaiting user approval. No candidate selected automatically. "
-        "User must approve, reject, or request changes."
-    )
-    count = len(candidate_surfaces)
-    count_label = "candidate" if count == 1 else "candidates"
-    lines = [
-        "AUTONOMOUS BUILD COMPLETE",
-        "",
-        "Requested directive:",
-        f"- {requested_directive or 'not available'}",
-        "",
-        "Bounded mapping:",
-        f"- {bounded_mapping or 'not available'}",
-        "",
-        "Known capability families:",
-        *([f"- {family}" for family in parameter_families] or ["- not available"]),
-        "",
-        "AUTONOMOUS RESULT SET",
-        "",
-        f"{count} valid {count_label} generated",
-        "",
+    candidate_surfaces = [
+        _autonomous_build_candidate_surface(candidate, index=index)
+        for index, candidate in enumerate(valid_candidates, start=1)
     ]
-    for candidate in candidate_surfaces:
-        lines.extend(
-            [
-                f"{candidate.label}:",
-                f"- Validation: {candidate.validation_status}",
-                f"- Evaluation: {candidate.evaluation_summary}",
-            ]
-        )
-        if candidate.issue_count > 0:
-            lines.append(f"- Issue count: {candidate.issue_count}")
-        if candidate.derived_from_corrected_layout:
-            lines.append("- Derived from corrected layout: yes")
-        if candidate.source_profile:
-            lines.append(f"- Profile: {candidate.source_profile}")
-        if candidate.source_level_set:
-            lines.append(f"- Level set: {candidate.source_level_set}")
-        lines.append("")
-    lines.extend(
-        [
-            "ATTEMPT LOG",
-            *([f"- {entry}" for entry in attempt_log] or ["- No attempt log available"]),
-            "",
-            "USER CONTROL",
-            *[f"- {action}" for action in user_controls],
-            "",
-            "APPROVAL STATUS",
-            "- Awaiting user approval",
-            "- No candidate selected automatically",
-            "- User must approve, reject, or request changes",
-        ]
+    attempt_log = _autonomous_build_attempt_log(attempts)
+    intent_family = _autonomous_build_intent_family(task=task_payload, details=details_payload, mapped_prompt=bounded_mapping)
+    selected_candidate_id, selected_candidate_label = _autonomous_build_selected_candidate(
+        details=details_payload,
+        candidates=candidate_surfaces,
     )
+    selected_candidate = next(
+        (candidate for candidate in candidate_surfaces if candidate.candidate_id == selected_candidate_id),
+        None,
+    )
+
+    banner = "AUTONOMOUS REVIEW READY"
+    status_line = "Bounded autonomous variations have been generated and validated. No variation has been selected. Awaiting user decision."
+    summary = _autonomous_build_review_summary(
+        requested_directive=requested_directive,
+        bounded_mapping=bounded_mapping,
+        intent_family=intent_family,
+        constraints=constraints,
+        parameter_families=parameter_families,
+        candidates=candidate_surfaces,
+        attempt_log=attempt_log,
+    )
+    phase = "review"
+    requires_approval = True
+    approval_summary = (
+        "No candidate has been selected automatically. Choose a candidate to approve, reject all candidates, or request changes."
+    )
+    user_controls = ["Approve candidate", "Reject all candidates", "Request changes"]
+    completion_summary = ""
+
+    if selected_candidate_id or selected_candidate_label:
+        banner = "AUTONOMOUS BUILD COMPLETE"
+        status_line = (
+            "The user-approved variation has been applied within bounded platformer constraints. "
+            "Validation remained in scope and no autonomous final selection occurred outside user approval."
+        )
+        summary, completion_summary = _autonomous_build_completion_summary(
+            requested_directive=requested_directive,
+            bounded_mapping=bounded_mapping,
+            intent_family=intent_family,
+            constraints=constraints,
+            parameter_families=parameter_families,
+            selected_candidate=selected_candidate,
+            selected_candidate_id=selected_candidate_id,
+            selected_candidate_label=selected_candidate_label,
+            details=details_payload,
+        )
+        phase = "completion"
+        requires_approval = False
+        approval_summary = (
+            "User-approved variation applied. No autonomous final selection occurred outside user approval."
+        )
+        user_controls = []
+
     return {
         "autonomous_build_available": True,
-        "autonomous_build_summary": "\n".join(lines).strip(),
+        "autonomous_build_phase": phase,
+        "autonomous_build_banner": banner,
+        "autonomous_build_status_line": status_line,
+        "autonomous_build_summary": summary,
         "autonomous_build_requested_directive": requested_directive,
         "autonomous_build_bounded_mapping": bounded_mapping,
+        "autonomous_build_constraints": constraints,
         "autonomous_build_parameter_families": parameter_families,
-        "autonomous_build_candidate_count": count,
+        "autonomous_build_candidate_count": len(candidate_surfaces),
         "autonomous_build_candidates": candidate_surfaces,
         "autonomous_build_attempt_log": attempt_log,
         "autonomous_build_user_controls": user_controls,
-        "autonomous_build_requires_approval": True,
+        "autonomous_build_requires_approval": requires_approval,
         "autonomous_build_approval_summary": approval_summary,
+        "autonomous_build_selected_candidate_id": selected_candidate_id,
+        "autonomous_build_selected_candidate_label": selected_candidate_label,
+        "autonomous_build_completion_summary": completion_summary,
     }
 
 
@@ -4058,9 +4316,13 @@ def _unavailable_proof_result_surface(message: str) -> ProofResultSurface:
         rerun_project_path="",
         status_message=message,
         autonomous_build_available=False,
+        autonomous_build_phase="",
+        autonomous_build_banner="",
+        autonomous_build_status_line="",
         autonomous_build_summary="",
         autonomous_build_requested_directive="",
         autonomous_build_bounded_mapping="",
+        autonomous_build_constraints=[],
         autonomous_build_parameter_families=[],
         autonomous_build_candidate_count=0,
         autonomous_build_candidates=[],
@@ -4068,6 +4330,9 @@ def _unavailable_proof_result_surface(message: str) -> ProofResultSurface:
         autonomous_build_user_controls=[],
         autonomous_build_requires_approval=False,
         autonomous_build_approval_summary="",
+        autonomous_build_selected_candidate_id="",
+        autonomous_build_selected_candidate_label="",
+        autonomous_build_completion_summary="",
     )
 
 

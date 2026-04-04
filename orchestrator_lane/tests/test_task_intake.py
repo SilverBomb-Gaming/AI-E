@@ -8387,7 +8387,7 @@ def test_home_surface_surfaces_platformer_layout_validation_findings(tmp_path):
     assert proof.final_verdict == "Requested change completed, but spatial validation found 1 layout issue(s)."
 
 
-def test_home_surface_surfaces_platformer_autonomous_build_summary_and_approval_boundary(tmp_path):
+def test_home_surface_surfaces_platformer_autonomous_review_summary_and_approval_boundary(tmp_path):
     config = _make_config(tmp_path / "home_surface_platformer_autonomous_build")
     target_repo = config.root_dir / "BABYLON_TEST"
     target_repo.mkdir(parents=True, exist_ok=True)
@@ -8507,13 +8507,22 @@ def test_home_surface_surfaces_platformer_autonomous_build_summary_and_approval_
 
     assert proof.available is True
     assert proof.autonomous_build_available is True
-    assert proof.final_verdict == "AUTONOMOUS BUILD COMPLETE. Awaiting user approval."
+    assert proof.autonomous_build_phase == "review"
+    assert proof.autonomous_build_banner == "AUTONOMOUS REVIEW READY"
+    assert proof.autonomous_build_status_line == (
+        "Bounded autonomous variations have been generated and validated. No variation has been selected. Awaiting user decision."
+    )
+    assert proof.final_verdict == "AUTONOMOUS REVIEW READY. Awaiting user decision."
     assert proof.validation_outcome == (
-        "Awaiting user approval. No candidate selected automatically. "
-        "User must approve, reject, or request changes."
+        "No candidate has been selected automatically. Choose a candidate to approve, reject all candidates, or request changes."
     )
     assert proof.autonomous_build_requested_directive == "make traversal more challenging but fair"
     assert proof.autonomous_build_bounded_mapping == "use challenge traversal"
+    assert proof.autonomous_build_constraints == [
+        "validation required",
+        "no automatic selection",
+        "user approval required",
+    ]
     assert proof.autonomous_build_parameter_families == [
         "gap_size",
         "obstacle_density",
@@ -8522,20 +8531,189 @@ def test_home_surface_surfaces_platformer_autonomous_build_summary_and_approval_
     ]
     assert proof.autonomous_build_candidate_count == 2
     assert [candidate.label for candidate in proof.autonomous_build_candidates] == ["Candidate A", "Candidate B"]
+    assert [candidate.candidate_id for candidate in proof.autonomous_build_candidates] == ["candidate_1", "candidate_2"]
+    assert proof.autonomous_build_candidates[0].summary == (
+        "Gap size: large; Obstacle density: dense; Enemy density: high; Segment count: long"
+    )
+    assert proof.autonomous_build_candidates[0].evaluation_notes == [
+        "Gap size: large",
+        "Obstacle density: dense",
+        "Enemy density: high",
+        "Segment count: long",
+    ]
     assert proof.autonomous_build_candidates[0].validation_status == "clean"
     assert proof.autonomous_build_candidates[0].derived_from_corrected_layout is True
     assert proof.autonomous_build_candidates[1].issue_count == 1
     assert proof.autonomous_build_attempt_log == [
-        "attempt 1: rejected | validation=issues_found | reason=Unreachable platform at P9.",
-        "attempt 2: accepted | validation=passed | reason=no blocking issues",
+        "Attempt 1: rejected | validation: issues_found | reason: Unreachable platform at P9.",
+        "Attempt 2: accepted into candidate set | validation: passed | reason: no blocking issues",
     ]
-    assert proof.autonomous_build_user_controls == ["approve", "reject", "request changes"]
+    assert proof.autonomous_build_user_controls == ["Approve candidate", "Reject all candidates", "Request changes"]
     assert proof.autonomous_build_requires_approval is True
+    assert proof.autonomous_build_selected_candidate_id == ""
+    assert proof.autonomous_build_selected_candidate_label == ""
+    assert proof.autonomous_build_completion_summary == ""
+    assert "AUTONOMOUS REVIEW READY" in proof.change_summary
+    assert "AUTONOMOUS BUILD COMPLETE" not in proof.change_summary
+    assert "Candidate A (candidate_1)" in proof.change_summary
+    assert "Attempt log" in proof.change_summary
+    assert "User control" in proof.change_summary
+    assert "No candidate has been selected automatically" in proof.change_summary
+    assert "recommend" not in proof.change_summary.lower()
+
+
+def test_review_surface_does_not_claim_autonomous_build_complete_before_user_selection(tmp_path):
+    config = _make_config(tmp_path / "hs_auto_guard")
+    target_repo = config.root_dir / "BABYLON_TEST"
+    target_repo.mkdir(parents=True, exist_ok=True)
+    run_dir = config.runs_dir / "auto-guard"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    artifacts_dir = run_dir / "artifacts"
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+
+    artifact_path = artifacts_dir / "AUTO_GUARD.json"
+    artifact_path.write_text(
+        json.dumps(
+            {
+                "task": {
+                    "task_id": "TASK_PLATFORMER_AUTONOMOUS_REVIEW_GUARD",
+                    "request_id": "REQ_PLATFORMER_AUTONOMOUS_REVIEW_GUARD",
+                    "target_repo": str(target_repo),
+                    "operator_prompt": "make this level more intense",
+                    "source_prompt": "make this level more intense",
+                },
+                "result": {
+                    "status": "completed",
+                    "details": {
+                        "target_context": "platformer",
+                        "platformer_autonomous_build_complete": "AUTONOMOUS BUILD COMPLETE",
+                        "platformer_auto_iteration_valid_candidates": [
+                            {
+                                "candidate_id": "candidate_1",
+                                "candidate_label": "Candidate A",
+                                "evaluation_summary": "Gap size: large; Obstacle density: dense",
+                                "validation_metadata": {
+                                    "layout_validation_status_label": "clean",
+                                },
+                            }
+                        ],
+                        "platformer_auto_iteration_attempts": [
+                            {
+                                "attempt_number": 1,
+                                "decision": "accepted",
+                                "layout_validation_status": "passed",
+                                "reason": "no blocking issues",
+                            }
+                        ],
+                    },
+                    "artifacts": [],
+                },
+                "validation": {"validation_state": "passed", "queue_action": "complete"},
+                "timestamp": "2026-04-04T12:15:00Z",
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "session_state.json").write_text(json.dumps({}, indent=2), encoding="utf-8")
+
+    proof = home_surface.load_proof_result_surface(artifact_path)
+
+    assert proof.autonomous_build_phase == "review"
+    assert proof.autonomous_build_banner == "AUTONOMOUS REVIEW READY"
+    assert "AUTONOMOUS BUILD COMPLETE" not in proof.change_summary
+    assert proof.final_verdict != "AUTONOMOUS BUILD COMPLETE. User-approved variation applied."
+
+
+def test_home_surface_surfaces_platformer_autonomous_build_completion_after_explicit_selection(tmp_path):
+    config = _make_config(tmp_path / "home_surface_platformer_autonomous_completion")
+    target_repo = config.root_dir / "BABYLON_TEST"
+    target_repo.mkdir(parents=True, exist_ok=True)
+    run_dir = config.runs_dir / "platformer-autonomous-completion-session"
+    artifacts_dir = run_dir / "artifacts"
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+
+    artifact_path = artifacts_dir / "TASK_PLATFORMER_AUTONOMOUS_COMPLETION_attempt_01.json"
+    artifact_path.write_text(
+        json.dumps(
+            {
+                "task": {
+                    "task_id": "TASK_PLATFORMER_AUTONOMOUS_COMPLETION",
+                    "request_id": "REQ_PLATFORMER_AUTONOMOUS_COMPLETION",
+                    "target_repo": str(target_repo),
+                    "operator_prompt": "make this level more intense",
+                    "source_prompt": "make this level more intense",
+                },
+                "result": {
+                    "status": "completed",
+                    "details": {
+                        "target_context": "platformer",
+                        "platformer_autonomous_build_complete": "AUTONOMOUS BUILD COMPLETE",
+                        "platformer_autonomous_selected_candidate_id": "candidate_1",
+                        "platformer_autonomous_selected_candidate_label": "Candidate A",
+                        "platformer_autonomous_completion_summary": "Applied ChallengeTraversalSet with validation-confirmed traversal coverage.",
+                        "platformer_autonomous_build_parameter_families": [
+                            "gap_size",
+                            "obstacle_density",
+                        ],
+                        "platformer_auto_iteration_valid_candidates": [
+                            {
+                                "candidate_id": "candidate_1",
+                                "candidate_label": "Candidate A",
+                                "evaluation_summary": "Gap size: large; Obstacle density: dense",
+                                "validation_metadata": {
+                                    "layout_validation_status_label": "clean",
+                                    "layout_validation_summary": "Spatial validation clean for platformer layout: 0 issues detected.",
+                                },
+                                "result_payload": {
+                                    "details": {
+                                        "level_profile_name": "ChallengeTraversalProfile",
+                                        "level_set_name": "ChallengeTraversalSet",
+                                    }
+                                },
+                            }
+                        ],
+                        "platformer_auto_iteration_attempts": [
+                            {
+                                "attempt_number": 1,
+                                "decision": "accepted",
+                                "candidate_label": "Candidate A",
+                                "layout_validation_status": "passed",
+                                "reason": "no blocking issues",
+                            }
+                        ],
+                    },
+                    "artifacts": [],
+                },
+                "validation": {"validation_state": "passed", "queue_action": "complete"},
+                "timestamp": "2026-04-04T12:30:00Z",
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "session_state.json").write_text(json.dumps({}, indent=2), encoding="utf-8")
+
+    proof = home_surface.load_proof_result_surface(artifact_path)
+
+    assert proof.autonomous_build_phase == "completion"
+    assert proof.autonomous_build_banner == "AUTONOMOUS BUILD COMPLETE"
+    assert proof.final_verdict == "AUTONOMOUS BUILD COMPLETE. User-approved variation applied."
+    assert proof.autonomous_build_selected_candidate_id == "candidate_1"
+    assert proof.autonomous_build_selected_candidate_label == "Candidate A"
+    assert proof.autonomous_build_requires_approval is False
+    assert proof.autonomous_build_user_controls == []
+    assert proof.autonomous_build_completion_summary == (
+        "Applied ChallengeTraversalSet with validation-confirmed traversal coverage."
+    )
+    assert proof.validation_outcome == (
+        "User-approved variation applied. No autonomous final selection occurred outside user approval."
+    )
     assert "AUTONOMOUS BUILD COMPLETE" in proof.change_summary
-    assert "Candidate A:" in proof.change_summary
-    assert "ATTEMPT LOG" in proof.change_summary
-    assert "APPROVAL STATUS" in proof.change_summary
-    assert "No candidate selected automatically" in proof.change_summary
+    assert "Selected variation" in proof.change_summary
+    assert "Candidate A (candidate_1)" in proof.change_summary
+    assert "Final selection was made through explicit user approval" in proof.change_summary
+    assert "Approve candidate" not in proof.change_summary
     assert "recommend" not in proof.change_summary.lower()
 
 
