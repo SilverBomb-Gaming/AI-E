@@ -102,6 +102,12 @@ class ArtifactWriter:
         validation: Dict[str, Any],
     ) -> str:
         task_id = self._task_id(task)
+        details = result.get("details") if isinstance(result.get("details"), dict) else {}
+        auto_iteration_summary = str(details.get("platformer_auto_iteration_summary") or "").strip()
+        auto_iteration_attempt_count = int(details.get("platformer_auto_iteration_attempt_count") or 0)
+        auto_iteration_valid_candidate_count = int(details.get("platformer_auto_iteration_valid_candidate_count") or 0)
+        auto_iteration_result_set = str(details.get("platformer_auto_iteration_result_set") or "").strip()
+        autonomous_build_complete = str(details.get("platformer_autonomous_build_complete") or "").strip()
         lines = [
             "SUMMARY",
             f"Task {task_id} executed in the persistent supervisor loop.",
@@ -110,6 +116,10 @@ class ArtifactWriter:
             f"- result_status: {result.get('status', 'unknown')}",
             f"- validation_state: {validation.get('validation_state', validation.get('status', 'unknown'))}",
             f"- agent_type: {result.get('agent_type', task.get('agent_type', 'copilot_coder_agent'))}",
+            *([f"- internal_attempt_count: {auto_iteration_attempt_count}"] if auto_iteration_summary else []),
+            *([f"- valid_candidate_count: {auto_iteration_valid_candidate_count}"] if auto_iteration_summary else []),
+            *([f"- internal_attempt_summary: {auto_iteration_summary}"] if auto_iteration_summary else []),
+            *([f"- result_set_available: yes"] if auto_iteration_result_set else []),
             "",
             "ASSUMPTIONS",
             "- This artifact captures one task attempt only.",
@@ -117,6 +127,9 @@ class ArtifactWriter:
             "RECOMMENDATIONS",
             f"- queue_action: {validation.get('queue_action', 'complete')}",
             "",
+            *([*autonomous_build_complete.splitlines(), ""] if autonomous_build_complete else []),
+            *([*auto_iteration_result_set.splitlines(), ""] if auto_iteration_result_set else []),
+            *(["NO RANKING / NO RECOMMENDATION", "- This result set is deterministic and unranked.", ""] if auto_iteration_result_set else []),
             "TIMESTAMP",
             task.get("last_attempt_timestamp") or task.get("completed_timestamp") or get_current_timestamp(),
             "",

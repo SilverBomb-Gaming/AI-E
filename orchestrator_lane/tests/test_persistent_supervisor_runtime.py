@@ -427,6 +427,492 @@ def test_supervisor_handles_retry_scheduled_mix_without_breaking_loop_semantics(
     assert "Result: blocked" in output
 
 
+def test_supervisor_platformer_auto_iteration_rejects_invalid_variant_then_accepts_valid_candidate(tmp_path, capsys):
+    config = _make_config(tmp_path / "platformer_auto_iteration_accept")
+    invalid_payload = {
+        "target_context": "platformer",
+        "layout_validation_available": True,
+        "layout_validation_status": "issues_found",
+        "layout_validation_summary": "1 spatial issue(s) detected for platformer layout: 1 unreachable platform.",
+        "layout_validation_issue_count": 1,
+        "layout_validation_blocking_issue_count": 1,
+        "layout_validation_issue_messages": ["Unreachable platform at P2."],
+        "layout_validation_issue_codes": ["unreachable_platform"],
+        "layout_validation_issues": [
+            {
+                "code": "unreachable_platform",
+                "severity": "error",
+                "message": "Unreachable platform at P2.",
+            }
+        ],
+    }
+    valid_payload = {
+        "target_context": "platformer",
+        "layout_validation_available": True,
+        "layout_validation_status": "passed",
+        "layout_validation_summary": "Spatial validation clean for platformer layout: 0 issues detected.",
+        "layout_validation_issue_count": 0,
+        "layout_validation_blocking_issue_count": 0,
+        "layout_validation_issue_messages": [],
+        "layout_validation_issue_codes": [],
+        "layout_validation_issues": [],
+    }
+    _write_queue(
+        config.queue_path,
+        {
+            "tasks": [
+                _task(
+                    config,
+                    "PLAT_AUTO_ACCEPT_001",
+                    priority=1,
+                    execution_seconds=1,
+                    result_payload_sequence=[invalid_payload, valid_payload],
+                ),
+            ]
+        },
+    )
+    clock = FakeClock()
+    router = _make_router(clock)
+
+    supervisor = Supervisor(
+        config,
+        SupervisorConfig(
+            session_limit_seconds=20,
+            heartbeat_interval_seconds=1,
+            poll_interval_seconds=1,
+            platformer_auto_iteration_max_attempts=3,
+            session_id="platformer-auto-iteration-accept",
+            stop_when_queue_empty=True,
+        ),
+        agent_router=router,
+        time_source=clock.now,
+        monotonic_source=clock.monotonic,
+        sleep_fn=clock.sleep,
+    )
+
+    result = supervisor.run()
+    output = capsys.readouterr().out
+
+    assert result.stop_reason == "queue_empty"
+    assert result.tasks_completed == 1
+    queue = json.loads(config.queue_path.read_text(encoding="utf-8"))["tasks"]
+    assert queue[0]["status"] == "completed"
+    runtime_status = json.loads((config.runs_dir / "platformer-auto-iteration-accept" / "runtime_status.json").read_text(encoding="utf-8"))
+    assert runtime_status["tasks_executed_count"] == 1
+    artifact = json.loads(
+        (config.runs_dir / "platformer-auto-iteration-accept" / "artifacts" / "PLAT_AUTO_ACCEPT_001_attempt_01.json").read_text(encoding="utf-8")
+    )
+    details = artifact["result"]["details"]
+    assert details["platformer_auto_iteration_attempt_count"] == 3
+    assert details["platformer_auto_iteration_accepted_attempt"] == 2
+    assert details["platformer_auto_iteration_exhausted"] is False
+    assert details["platformer_auto_iteration_valid_candidate_count"] == 2
+    assert details["platformer_auto_iteration_valid_candidate_ids"] == ["candidate_1", "candidate_2"]
+    assert details["platformer_auto_iteration_summary"] == (
+        "3 attempts made: attempt 1 rejected (Unreachable platform at P2.); attempt 2 accepted (no blocking issues); attempt 3 accepted (no blocking issues). 2 valid candidates generated."
+    )
+    assert len(details["platformer_auto_iteration_attempts"]) == 3
+    assert details["platformer_auto_iteration_attempts"][0]["decision"] == "rejected"
+    assert details["platformer_auto_iteration_attempts"][1]["decision"] == "accepted"
+    assert details["platformer_auto_iteration_attempts"][1]["candidate_id"] == "candidate_1"
+    assert details["platformer_auto_iteration_attempts"][2]["decision"] == "accepted"
+    assert details["platformer_auto_iteration_attempts"][2]["candidate_id"] == "candidate_2"
+    assert set(details["platformer_auto_iteration_candidate_set"].keys()) == {"candidate_1", "candidate_2"}
+    assert details["platformer_auto_iteration_valid_candidates"][0]["candidate_id"] == "candidate_1"
+    assert details["platformer_auto_iteration_valid_candidates"][1]["candidate_id"] == "candidate_2"
+    assert details["platformer_auto_iteration_valid_candidates"][0]["candidate_label"] == "Candidate A"
+    assert details["platformer_auto_iteration_valid_candidates"][1]["candidate_label"] == "Candidate B"
+    assert details["platformer_auto_iteration_valid_candidates"][0]["validation_metadata"]["layout_validation_status_label"] == "clean"
+    assert details["platformer_auto_iteration_valid_candidates"][0]["evaluation_summary"] == "Spatial validation clean for platformer layout: 0 issues detected."
+    assert details["platformer_auto_iteration_result_set"] == (
+        "AUTONOMOUS RESULT SET\n\n"
+        "2 valid candidates generated\n\n"
+        "Candidate A:\n"
+        "- Validation: clean\n"
+        "- Evaluation: Spatial validation clean for platformer layout: 0 issues detected.\n\n"
+        "Candidate B:\n"
+        "- Validation: clean\n"
+        "- Evaluation: Spatial validation clean for platformer layout: 0 issues detected."
+    )
+    assert "rank" not in details["platformer_auto_iteration_result_set"].lower()
+    assert "recommend" not in details["platformer_auto_iteration_result_set"].lower()
+    assert artifact["validation"]["queue_action"] == "complete"
+    assert artifact["validation"]["note"] == details["platformer_auto_iteration_summary"]
+
+    state = json.loads(result.state_path.read_text(encoding="utf-8"))
+    attempted_entry = state["tasks_attempted"][0]
+    assert attempted_entry["auto_iteration_attempt_count"] == 3
+    assert attempted_entry["auto_iteration_accepted_attempt"] == 2
+    assert attempted_entry["auto_iteration_exhausted"] is False
+    assert attempted_entry["auto_iteration_valid_candidate_count"] == 2
+    assert attempted_entry["auto_iteration_valid_candidate_ids"] == ["candidate_1", "candidate_2"]
+    assert attempted_entry["auto_iteration_summary"] == details["platformer_auto_iteration_summary"]
+    assert attempted_entry["auto_iteration_result_set"] == details["platformer_auto_iteration_result_set"]
+    assert "PLATFORMER AUTO-ITERATION task_id=PLAT_AUTO_ACCEPT_001 attempt=1/3" in output
+    assert "decision=rejected reason=Unreachable platform at P2." in output
+    assert "PLATFORMER AUTO-ITERATION task_id=PLAT_AUTO_ACCEPT_001 attempt=2/3" in output
+    assert "decision=accepted reason=no blocking issues" in output
+    assert "PLATFORMER AUTO-ITERATION task_id=PLAT_AUTO_ACCEPT_001 attempt=3/3" in output
+
+
+def test_supervisor_platformer_auto_iteration_formats_multi_candidate_layout_parameters_without_ranking(tmp_path):
+    config = _make_config(tmp_path / "platformer_auto_iteration_result_set_format")
+    clock = FakeClock()
+    router = _make_router(clock)
+    first_valid_payload = {
+        "target_context": "platformer",
+        "layout_validation_available": True,
+        "layout_validation_status": "passed",
+        "layout_validation_status_label": "clean",
+        "layout_validation_summary": "Spatial validation clean for candidate one: 0 issues detected.",
+        "layout_validation_issue_count": 0,
+        "layout_validation_blocking_issue_count": 0,
+        "gap_size_tier": "large",
+        "obstacle_density_tier": "dense",
+    }
+    second_valid_payload = {
+        "target_context": "platformer",
+        "layout_validation_available": True,
+        "layout_validation_status": "passed",
+        "layout_validation_status_label": "clean",
+        "layout_validation_summary": "Spatial validation clean for candidate two: 0 issues detected.",
+        "layout_validation_issue_count": 0,
+        "layout_validation_blocking_issue_count": 0,
+        "gap_size_tier": "standard",
+        "obstacle_density_tier": "sparse",
+    }
+    _write_queue(
+        config.queue_path,
+        {
+            "tasks": [
+                _task(
+                    config,
+                    "PLAT_AUTO_FORMAT_001",
+                    priority=1,
+                    execution_seconds=0,
+                    result_payload_sequence=[first_valid_payload, second_valid_payload, second_valid_payload],
+                ),
+            ]
+        },
+    )
+
+    supervisor = Supervisor(
+        config,
+        SupervisorConfig(
+            session_limit_seconds=10,
+            heartbeat_interval_seconds=1,
+            poll_interval_seconds=1,
+            platformer_auto_iteration_max_attempts=2,
+            session_id="platformer-auto-iteration-format",
+            stop_when_queue_empty=True,
+        ),
+        agent_router=router,
+        time_source=clock.now,
+        monotonic_source=clock.monotonic,
+        sleep_fn=clock.sleep,
+    )
+
+    result = supervisor.run()
+
+    artifact = json.loads(
+        (config.runs_dir / "platformer-auto-iteration-format" / "artifacts" / "PLAT_AUTO_FORMAT_001_attempt_01.json").read_text(encoding="utf-8")
+    )
+    details = artifact["result"]["details"]
+    candidate_one = details["platformer_auto_iteration_candidate_set"]["candidate_1"]
+    candidate_two = details["platformer_auto_iteration_candidate_set"]["candidate_2"]
+    assert result.tasks_completed == 1
+    assert candidate_one["layout_parameters"]["gap_size_tier"] == "large"
+    assert candidate_one["layout_parameters"]["obstacle_density_tier"] == "dense"
+    assert candidate_two["layout_parameters"]["gap_size_tier"] == "standard"
+    assert candidate_two["layout_parameters"]["obstacle_density_tier"] == "sparse"
+    assert details["platformer_auto_iteration_result_set"] == (
+        "AUTONOMOUS RESULT SET\n\n"
+        "2 valid candidates generated\n\n"
+        "Candidate A:\n"
+        "- Validation: clean\n"
+        "- Evaluation: Gap size: large; Obstacle density: dense\n"
+        "- Gap size: large\n"
+        "- Obstacle density: dense\n\n"
+        "Candidate B:\n"
+        "- Validation: clean\n"
+        "- Evaluation: Gap size: standard; Obstacle density: sparse\n"
+        "- Gap size: standard\n"
+        "- Obstacle density: sparse"
+    )
+    assert "best" not in details["platformer_auto_iteration_result_set"].lower()
+    assert "recommended" not in details["platformer_auto_iteration_result_set"].lower()
+    assert "score" not in details["platformer_auto_iteration_result_set"].lower()
+
+
+def test_supervisor_platformer_auto_iteration_candidate_storage_is_deterministic_and_unranked(tmp_path):
+    config = _make_config(tmp_path / "platformer_auto_iteration_deterministic_storage")
+    clock = FakeClock()
+    router = _make_router(clock)
+    valid_payloads = [
+        {
+            "target_context": "platformer",
+            "layout_validation_available": True,
+            "layout_validation_status": "passed",
+            "layout_validation_status_label": "clean",
+            "layout_validation_summary": f"Spatial validation clean for candidate {index}: 0 issues detected.",
+            "layout_validation_issue_count": 0,
+            "layout_validation_blocking_issue_count": 0,
+            "gap_size_tier": tier,
+        }
+        for index, tier in enumerate(("small", "standard", "large"), start=1)
+    ]
+    _write_queue(
+        config.queue_path,
+        {"tasks": [_task(config, "PLAT_AUTO_DETERMINISTIC_001", priority=1, execution_seconds=0, result_payload_sequence=valid_payloads)]},
+    )
+
+    supervisor = Supervisor(
+        config,
+        SupervisorConfig(
+            session_limit_seconds=10,
+            heartbeat_interval_seconds=1,
+            poll_interval_seconds=1,
+            platformer_auto_iteration_max_attempts=3,
+            session_id="platformer-auto-iteration-deterministic",
+            stop_when_queue_empty=True,
+        ),
+        agent_router=router,
+        time_source=clock.now,
+        monotonic_source=clock.monotonic,
+        sleep_fn=clock.sleep,
+    )
+
+    supervisor.run()
+
+    artifact = json.loads(
+        (config.runs_dir / "platformer-auto-iteration-deterministic" / "artifacts" / "PLAT_AUTO_DETERMINISTIC_001_attempt_01.json").read_text(encoding="utf-8")
+    )
+    details = artifact["result"]["details"]
+    assert details["platformer_auto_iteration_valid_candidate_ids"] == ["candidate_1", "candidate_2", "candidate_3"]
+    assert list(details["platformer_auto_iteration_candidate_set"].keys()) == ["candidate_1", "candidate_2", "candidate_3"]
+    assert [entry["candidate_label"] for entry in details["platformer_auto_iteration_valid_candidates"]] == ["Candidate A", "Candidate B", "Candidate C"]
+    for entry in details["platformer_auto_iteration_valid_candidates"]:
+        assert "rank" not in entry
+        assert "score" not in entry
+        assert "recommendation" not in entry
+        assert "recommended" not in entry
+
+
+def test_supervisor_platformer_autonomous_build_complete_presents_intent_candidate_set_and_attempt_log(tmp_path):
+    config = _make_config(tmp_path / "platformer_autonomous_build_complete")
+    invalid_payload = {
+        "target_context": "platformer",
+        "layout_validation_available": True,
+        "layout_validation_status": "issues_found",
+        "layout_validation_summary": "1 spatial issue(s) detected for platformer layout: 1 unreachable platform.",
+        "layout_validation_issue_count": 1,
+        "layout_validation_blocking_issue_count": 1,
+        "layout_validation_issue_messages": ["Unreachable platform at P9."],
+        "layout_validation_issue_codes": ["unreachable_platform"],
+        "layout_validation_issues": [
+            {
+                "code": "unreachable_platform",
+                "severity": "error",
+                "message": "Unreachable platform at P9.",
+            }
+        ],
+    }
+    valid_payload = {
+        "target_context": "platformer",
+        "layout_validation_available": True,
+        "layout_validation_status": "passed",
+        "layout_validation_status_label": "clean",
+        "layout_validation_summary": "Spatial validation clean for bounded challenge traversal candidate: 0 issues detected.",
+        "layout_validation_issue_count": 0,
+        "layout_validation_blocking_issue_count": 0,
+        "gap_size_tier": "large",
+        "obstacle_density_tier": "dense",
+        "enemy_density_tier": "high",
+        "segment_count_tier": "long",
+    }
+    _write_queue(
+        config.queue_path,
+        {
+            "tasks": [
+                _task(
+                    config,
+                    "PLAT_AUTO_BUILD_001",
+                    priority=1,
+                    execution_seconds=0,
+                    source_prompt="make traversal more challenging but fair",
+                    operator_prompt="make gaps larger",
+                    mapped_prompt="use challenge traversal",
+                    plan_key="platformer_challenge_traversal_v1",
+                    plan_title="Use challenge traversal",
+                    resolution_source="goal_intent_mapping",
+                    goal_components=[
+                        "increase gap size",
+                        "increase obstacle density",
+                        "increase enemy density",
+                        "increase segment count",
+                    ],
+                    result_payload_sequence=[invalid_payload, valid_payload],
+                ),
+            ]
+        },
+    )
+    clock = FakeClock()
+    router = _make_router(clock)
+
+    supervisor = Supervisor(
+        config,
+        SupervisorConfig(
+            session_limit_seconds=10,
+            heartbeat_interval_seconds=1,
+            poll_interval_seconds=1,
+            platformer_auto_iteration_max_attempts=2,
+            session_id="platformer-autonomous-build-complete",
+            stop_when_queue_empty=True,
+        ),
+        agent_router=router,
+        time_source=clock.now,
+        monotonic_source=clock.monotonic,
+        sleep_fn=clock.sleep,
+    )
+
+    result = supervisor.run()
+
+    artifact = json.loads(
+        (config.runs_dir / "platformer-autonomous-build-complete" / "artifacts" / "PLAT_AUTO_BUILD_001_attempt_01.json").read_text(encoding="utf-8")
+    )
+    artifact_markdown = (
+        config.runs_dir / "platformer-autonomous-build-complete" / "artifacts" / "PLAT_AUTO_BUILD_001_attempt_01.md"
+    ).read_text(encoding="utf-8")
+    details = artifact["result"]["details"]
+    assert result.tasks_completed == 1
+    assert details["platformer_autonomous_build_parameter_families"] == [
+        "gap_size",
+        "obstacle_density",
+        "enemy_density",
+        "segment_count",
+    ]
+    assert details["platformer_autonomous_build_complete"] == (
+        "AUTONOMOUS BUILD COMPLETE\n\n"
+        "Requested directive: make traversal more challenging but fair\n"
+        "Bounded mapping: use challenge traversal\n"
+        "Known capability families: gap_size, obstacle_density, enemy_density, segment_count\n\n"
+        "AUTONOMOUS RESULT SET\n\n"
+        "1 valid candidate generated\n\n"
+        "Candidate A:\n"
+        "- Validation: clean\n"
+        "- Evaluation: Gap size: large; Obstacle density: dense; Enemy density: high; Segment count: long\n"
+        "- Gap size: large\n"
+        "- Obstacle density: dense\n"
+        "- Enemy density: high\n"
+        "- Segment count: long\n\n"
+        "ATTEMPT LOG\n"
+        "- attempt 1: rejected | validation=issues_found | reason=Unreachable platform at P9.\n"
+        "- attempt 2: accepted | validation=passed | reason=no blocking issues\n\n"
+        "USER CONTROL\n"
+        "- approve\n"
+        "- reject\n"
+        "- request changes"
+    )
+    assert "AUTONOMOUS BUILD COMPLETE" in artifact_markdown
+    assert "request changes" in details["platformer_autonomous_build_complete"].lower()
+    assert "recommend" not in details["platformer_autonomous_build_complete"].lower()
+    state = json.loads(result.state_path.read_text(encoding="utf-8"))
+    attempted_entry = state["tasks_attempted"][0]
+    assert attempted_entry["auto_iteration_build_parameter_families"] == details["platformer_autonomous_build_parameter_families"]
+    assert attempted_entry["auto_iteration_build_complete"] == details["platformer_autonomous_build_complete"]
+
+
+def test_supervisor_platformer_auto_iteration_blocks_after_bounded_attempt_exhaustion(tmp_path, capsys):
+    config = _make_config(tmp_path / "platformer_auto_iteration_exhausted")
+    invalid_payload_sequence = [
+        {
+            "target_context": "platformer",
+            "layout_validation_available": True,
+            "layout_validation_status": "issues_found",
+            "layout_validation_summary": "1 spatial issue(s) detected for platformer layout: 1 unreachable platform.",
+            "layout_validation_issue_count": 1,
+            "layout_validation_blocking_issue_count": 1,
+            "layout_validation_issue_messages": [f"Unreachable platform on attempt {index}."],
+            "layout_validation_issue_codes": ["unreachable_platform"],
+            "layout_validation_issues": [
+                {
+                    "code": "unreachable_platform",
+                    "severity": "error",
+                    "message": f"Unreachable platform on attempt {index}.",
+                }
+            ],
+        }
+        for index in range(1, 5)
+    ]
+    _write_queue(
+        config.queue_path,
+        {
+            "tasks": [
+                _task(
+                    config,
+                    "PLAT_AUTO_BLOCK_001",
+                    priority=1,
+                    execution_seconds=1,
+                    result_payload_sequence=invalid_payload_sequence,
+                ),
+            ]
+        },
+    )
+    clock = FakeClock()
+    router = _make_router(clock)
+
+    supervisor = Supervisor(
+        config,
+        SupervisorConfig(
+            session_limit_seconds=20,
+            heartbeat_interval_seconds=1,
+            poll_interval_seconds=1,
+            platformer_auto_iteration_max_attempts=3,
+            session_id="platformer-auto-iteration-block",
+            stop_when_queue_empty=True,
+        ),
+        agent_router=router,
+        time_source=clock.now,
+        monotonic_source=clock.monotonic,
+        sleep_fn=clock.sleep,
+    )
+
+    result = supervisor.run()
+    output = capsys.readouterr().out
+
+    assert result.stop_reason == "queue_empty"
+    assert result.tasks_completed == 0
+    queue = json.loads(config.queue_path.read_text(encoding="utf-8"))["tasks"]
+    assert queue[0]["status"] == "blocked"
+    assert int(queue[0].get("retry_count", 0)) == 0
+    runtime_status = json.loads((config.runs_dir / "platformer-auto-iteration-block" / "runtime_status.json").read_text(encoding="utf-8"))
+    assert runtime_status["tasks_executed_count"] == 1
+    assert runtime_status["last_task_result_status"] == "blocked"
+    artifact = json.loads(
+        (config.runs_dir / "platformer-auto-iteration-block" / "artifacts" / "PLAT_AUTO_BLOCK_001_attempt_01.json").read_text(encoding="utf-8")
+    )
+    details = artifact["result"]["details"]
+    assert details["platformer_auto_iteration_attempt_count"] == 3
+    assert details["platformer_auto_iteration_accepted_attempt"] is None
+    assert details["platformer_auto_iteration_exhausted"] is True
+    assert len(details["platformer_auto_iteration_attempts"]) == 3
+    assert artifact["validation"]["queue_action"] == "block"
+    assert artifact["validation"]["reason"] == "platformer_auto_iteration_exhausted"
+    assert "No acceptable platformer variant found within bounded internal iteration." in artifact["validation"]["note"]
+
+    state = json.loads(result.state_path.read_text(encoding="utf-8"))
+    attempted_entry = state["tasks_attempted"][0]
+    assert attempted_entry["auto_iteration_attempt_count"] == 3
+    assert attempted_entry["auto_iteration_exhausted"] is True
+    assert attempted_entry["auto_iteration_accepted_attempt"] is None
+    assert "attempt 3 rejected (Unreachable platform on attempt 3.)" in attempted_entry["auto_iteration_summary"]
+    assert "attempt=1/3" in output
+    assert "attempt=2/3" in output
+
+    assert "attempt=3/3" in output
+    assert "attempt=4/3" not in output
+
+
 def test_supervisor_extended_stress_moderate_run_preserves_truthful_artifacts(tmp_path, capsys):
     config = _make_config(tmp_path / "stress_moderate")
     tasks = [
@@ -1256,7 +1742,7 @@ def test_supervisor_resume_mixed_queue_preserves_retry_and_exclusion_truthfulnes
                         "task_id": "RESUME_RETRY_001",
                         "final_status": "retry_scheduled",
                         "note": "retry before restart",
-                        "timestamp": "2026-03-19 10:00:00 -04:00 (Eastern Time — New York)",
+                        "timestamp": "2026-03-19 10:00:00 -04:00 (Eastern Time â€” New York)",
                     }
                 ],
                 "tasks_completed": [],
@@ -1264,7 +1750,7 @@ def test_supervisor_resume_mixed_queue_preserves_retry_and_exclusion_truthfulnes
                     {
                         "task_id": "RESUME_RETRY_001",
                         "note": "retry before restart",
-                        "timestamp": "2026-03-19 10:00:00 -04:00 (Eastern Time — New York)",
+                        "timestamp": "2026-03-19 10:00:00 -04:00 (Eastern Time â€” New York)",
                     }
                 ],
                 "artifacts_generated": [],
@@ -3770,6 +4256,7 @@ def test_supervisor_resumes_unity_wrapper_interruption_and_preserves_partial_out
     assert "recovered_interrupted_running_tasks" in session_summary_markdown
     assert "interrupted_task_missing_attempt_artifacts" in session_summary_markdown
     assert "artifact:artifacts/UNITY_IFI_001_attempt_01.json" in operator_report
+
 
 
 def test_supervisor_resumes_real_unity_tool_surface_interruption_and_preserves_partial_output_truth(tmp_path):
@@ -8298,24 +8785,39 @@ def _make_router(clock: FakeClock) -> AgentRouter:
 
     def run_task(task):
         clock.advance(float(task.get("execution_seconds", 0)))
-        outcome = str(task.get("simulated_outcome", "completed"))
+        attempt_index = max(int(task.get("platformer_auto_iteration_attempt", 1) or 1) - 1, 0)
+        outcome_sequence = task.get("simulated_outcome_sequence")
+        if isinstance(outcome_sequence, list) and outcome_sequence:
+            sequence_index = min(attempt_index, len(outcome_sequence) - 1)
+            outcome = str(outcome_sequence[sequence_index])
+        else:
+            outcome = str(task.get("simulated_outcome", "completed"))
+        payload = dict(task.get("result_payload") or {})
+        payload_sequence = task.get("result_payload_sequence")
+        if isinstance(payload_sequence, list) and payload_sequence:
+            sequence_index = min(attempt_index, len(payload_sequence) - 1)
+            selected_payload = payload_sequence[sequence_index]
+            if isinstance(selected_payload, dict):
+                payload = dict(selected_payload)
         if outcome == "blocked":
             return {
                 "status": "blocked",
                 "summary": f"blocked {task['task_id']}",
+                "details": payload,
                 "error": "blocked by test",
             }
         if outcome == "retryable_failure":
             return {
                 "status": "retryable_failure",
                 "summary": f"retry {task['task_id']}",
+                "details": payload,
                 "error": "retry requested by test",
                 "retryable": True,
             }
         return {
             "status": "completed",
             "summary": f"completed {task['task_id']}",
-            "details": {"task_id": task["task_id"]},
+            "details": payload or {"task_id": task["task_id"]},
         }
 
     router.register("copilot_coder_agent", run_task)

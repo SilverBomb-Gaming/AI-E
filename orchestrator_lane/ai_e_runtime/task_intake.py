@@ -466,6 +466,21 @@ class ConversationalTaskIntake:
             else:
                 step_routing = routing
                 step_task_type = task_type
+            if preserve_request_resolution and step_routing is not routing:
+                step_routing = replace(
+                    step_routing,
+                    mapped_prompt=routing.mapped_prompt,
+                    resolution_source=routing.resolution_source,
+                    resolved_from_prompt=routing.resolved_from_prompt,
+                    session_resolution_note=routing.session_resolution_note,
+                    goal_components=list(routing.goal_components or []),
+                    plan_key=routing.plan_key,
+                    plan_title=routing.plan_title,
+                    plan_step_titles=list(routing.plan_step_titles or []),
+                    plan_step_prompts=list(routing.plan_step_prompts or []),
+                    plan_expected_outcome=routing.plan_expected_outcome,
+                    plan_execution_mode=routing.plan_execution_mode,
+                )
             if routing.confirmation_required:
                 confirmation_message = routing.confirmation_message or routing.decision_summary or "Confirmation is required before AI-E can continue."
                 step_routing = replace(
@@ -512,6 +527,7 @@ class ConversationalTaskIntake:
                     "task_id": node.task_id,
                     "request_id": request_id,
                     "plan_id": plan.plan_id,
+                    "plan_key": routing.plan_key,
                     "plan_step_index": node.step_index,
                     "plan_step_title": node.title,
                     "plan_total_steps": len(plan.steps),
@@ -593,6 +609,7 @@ class ConversationalTaskIntake:
                     "requested_tier": step_routing.requested_tier,
                     "revert_requested": step_routing.revert_requested,
                     "revert_summary": step_routing.revert_summary,
+                    "mapped_prompt": step_routing.mapped_prompt,
                     "capability_evidence_path": str(self.capability_registry.evidence_path),
                     "operator_prompt": step_prompt,
                     "created_at": get_current_timestamp(),
@@ -1863,7 +1880,7 @@ class ConversationalTaskIntake:
                 resolution_source=goal_intent_resolution.resolution_source,
                 resolved_from_prompt=goal_intent_resolution.original_prompt,
                 session_resolution_note=goal_intent_resolution.resolution_note,
-                goal_components=None,
+                goal_components=list(goal_intent_resolution.goal_components),
                 state_family=None,
                 previous_tier=None,
                 requested_tier=None,

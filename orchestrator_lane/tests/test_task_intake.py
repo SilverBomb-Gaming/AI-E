@@ -8627,3 +8627,97 @@ def _make_config(tmp_path) -> OrchestratorConfig:
         approvals_path=approvals_path,
         command_allowlist_path=command_allowlist_path,
     )
+@pytest.mark.parametrize(
+    ("prompt_text", "expected_note"),
+    [
+        (
+            "make level more intense",
+            'AI-E mapped the gameplay goal "make level more intense" to the bounded platformer plan "use challenge traversal" across the known gap size, obstacle density, enemy density, and segment count families.',
+        ),
+        (
+            "make traversal more challenging but fair",
+            'AI-E mapped the gameplay goal "make traversal more challenging but fair" to the bounded platformer plan "use challenge traversal" across the known gap size, obstacle density, enemy density, and segment count families while preserving fairness through mandatory validation and evaluation.',
+        ),
+    ],
+)
+def test_task_intake_resolves_platformer_goal_intents_to_bounded_traversal_plan(
+    tmp_path,
+    prompt_text,
+    expected_note,
+):
+    config = _make_config(tmp_path / "platformer_goal_intent_plan")
+    _write_platformer_capability_contracts(config)
+    target_repo = _create_entity_transform_prompt_repo(config)
+    intake = ConversationalTaskIntake(config)
+
+    result = intake.accept_message(
+        prompt_text,
+        session_id="platformer-goal-intent-session",
+        target_repo=target_repo,
+    )
+
+    request_payload = json.loads(result.artifacts.request_payload_path.read_text(encoding="utf-8"))
+    runtime_payloads = [
+        json.loads(path.read_text(encoding="utf-8"))["runtime_task"]
+        for path in result.artifacts.runtime_task_payload_paths
+    ]
+
+    assert result.task_type == "mutation_plan_request"
+    assert result.routing.resolution_source == "goal_intent_mapping"
+    assert result.routing.resolved_from_prompt == normalize_prompt(prompt_text)
+    assert result.routing.session_resolution_note == expected_note
+    assert result.routing.mapped_prompt == "use challenge traversal"
+    assert result.routing.goal_components == [
+        "increase gap size",
+        "increase obstacle density",
+        "increase enemy density",
+        "increase segment count",
+    ]
+    assert result.routing.plan_key == "platformer_challenge_traversal_v1"
+    assert result.routing.plan_title == "Use challenge traversal"
+    assert result.routing.decision == "sandbox_first"
+    assert result.plan_step_titles == [
+        "Set gap size to large",
+        "Set obstacle density to dense",
+        "Set enemy density to high",
+        "Set segment count to long",
+    ]
+    assert request_payload["conversational_request"]["context"]["resolved_execution_prompt"] == "use challenge traversal"
+    assert request_payload["conversational_request"]["context"]["routing"]["goal_components"] == [
+        "increase gap size",
+        "increase obstacle density",
+        "increase enemy density",
+        "increase segment count",
+    ]
+    assert [payload["operator_prompt"] for payload in runtime_payloads] == [
+        "make gaps larger",
+        "increase obstacle density",
+        "increase enemy density",
+        "make level longer",
+    ]
+    assert all(payload["source_prompt"] == normalize_prompt(prompt_text) for payload in runtime_payloads)
+    assert all(payload["mapped_prompt"] == "use challenge traversal" for payload in runtime_payloads)
+
+
+def test_task_intake_blocks_out_of_scope_platformer_goal_intent_with_explicit_guidance(tmp_path):
+    config = _make_config(tmp_path / "unsupported_platformer_goal_intent")
+    _write_platformer_capability_contracts(config)
+    target_repo = _create_entity_transform_prompt_repo(config)
+    intake = ConversationalTaskIntake(config)
+
+    result = intake.accept_message(
+        "make traversal more challenging but fair and add lava",
+        session_id="platformer-goal-intent-blocked-session",
+        target_repo=target_repo,
+    )
+
+    queue = json.loads(config.queue_path.read_text(encoding="utf-8"))["tasks"]
+
+    assert result.queue_entry["status"] == "blocked"
+    assert queue[0]["status"] == "blocked"
+    assert result.routing.decision == "block"
+    assert result.routing.decision_reason == "route_missing"
+    assert result.routing.capability_supported is False
+    assert result.routing.mutation_capable is False
+    assert result.routing.mapped_prompt == "make traversal more challenging but fair and add lava"
+    assert "bounded platformer gameplay directives only through deterministic traversal profiles and level sets" in (result.routing.intelligence_summary or "")

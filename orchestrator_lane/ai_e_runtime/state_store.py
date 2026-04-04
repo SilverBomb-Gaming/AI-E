@@ -227,16 +227,47 @@ class StateStore:
         final_status: str,
         artifact_paths: List[str],
         note: str,
+        attempt_metadata: Dict[str, Any] | None = None,
     ) -> Dict[str, Any]:
         attempted = list(state.get("tasks_attempted", []))
-        attempted.append(
-            {
-                "task_id": task_id,
-                "final_status": final_status,
-                "note": note,
-                "timestamp": self._iso_now(),
-            }
-        )
+        attempted_entry = {
+            "task_id": task_id,
+            "final_status": final_status,
+            "note": note,
+            "timestamp": self._iso_now(),
+        }
+        if isinstance(attempt_metadata, dict) and attempt_metadata:
+            attempted_entry.update(
+                {
+                    "auto_iteration_enabled": bool(attempt_metadata.get("enabled", False)),
+                    "auto_iteration_max_attempts": int(attempt_metadata.get("max_attempts") or 0),
+                    "auto_iteration_attempt_count": int(attempt_metadata.get("attempt_count") or 0),
+                    "auto_iteration_accepted_attempt": attempt_metadata.get("accepted_attempt"),
+                    "auto_iteration_exhausted": bool(attempt_metadata.get("exhausted", False)),
+                    "auto_iteration_summary": str(attempt_metadata.get("summary") or ""),
+                    "auto_iteration_valid_candidate_count": int(attempt_metadata.get("valid_candidate_count") or 0),
+                    "auto_iteration_valid_candidate_ids": [
+                        str(item) for item in attempt_metadata.get("valid_candidate_ids", []) if str(item).strip()
+                    ],
+                    "auto_iteration_result_set": str(attempt_metadata.get("result_set_presentation") or ""),
+                    "auto_iteration_build_parameter_families": [
+                        str(item) for item in attempt_metadata.get("autonomous_build_parameter_families", []) if str(item).strip()
+                    ],
+                    "auto_iteration_build_complete": str(attempt_metadata.get("autonomous_build_complete") or ""),
+                    "auto_iteration_valid_candidates": [
+                        dict(entry) for entry in attempt_metadata.get("valid_candidates", []) if isinstance(entry, dict)
+                    ],
+                    "auto_iteration_candidate_set": {
+                        str(key): dict(value)
+                        for key, value in dict(attempt_metadata.get("candidate_set") or {}).items()
+                        if str(key).strip() and isinstance(value, dict)
+                    },
+                    "auto_iteration_attempts": [
+                        dict(entry) for entry in attempt_metadata.get("attempts", []) if isinstance(entry, dict)
+                    ],
+                }
+            )
+        attempted.append(attempted_entry)
         state["tasks_attempted"] = attempted
         state["current_task"] = None
         state["current_plan_step"] = None
@@ -492,6 +523,7 @@ class StateStore:
             state["latest_experiment_variant"] = {}
             normalized_issue = normalized_issue or "invalid_shape"
             mark_invalid("latest_experiment_variant")
+
 
         state["result_state_history"], changed = self._normalize_mapping_list(state.get("result_state_history"))
         if changed:

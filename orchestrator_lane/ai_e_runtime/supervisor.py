@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from threading import Lock
 from time import monotonic, sleep
-from typing import Any, Callable, Dict
+from typing import Any, Callable, Dict, List, Tuple
 
 from orchestrator.config import OrchestratorConfig
 from orchestrator.utils import ensure_dir, read_json_with_status
@@ -30,6 +30,7 @@ class SupervisorConfig:
     session_limit_seconds: int
     heartbeat_interval_seconds: int = 300
     max_retries: int = 3
+    platformer_auto_iteration_max_attempts: int = 3
     max_task_executions: int | None = None
     repeated_failure_threshold: int = 3
     poll_interval_seconds: int = 5
@@ -358,7 +359,10 @@ class Supervisor:
 
             self._status(f"TASK STARTED task_id={task_id} agent_type={running_task.get('agent_type', 'copilot_coder_agent')}")
 
-            result = self.agent_router.run(running_task)
+            result, validation, auto_iteration = self._run_with_platformer_auto_iteration(
+                state=state,
+                task=running_task,
+            )
             if self.is_stop_requested():
                 stop_reason = self.get_requested_stop_reason() or "operator_interrupt"
                 state = self._sync_control_state(state)
@@ -379,11 +383,6 @@ class Supervisor:
                 break
             state = self.state_store.update_progress(state, session_phase="validation")
             self._status(self._progress_status_line(state, task_id=task_id))
-            validation = self.agent_router.validate(result, task=running_task)
-            artifact_paths = self.artifact_writer.store(task=running_task, result=result, validation=validation)
-            state = self.state_store.update_progress(state, session_phase="rollback_finalization")
-            self._status(self._progress_status_line(state, task_id=task_id))
-
             queue_action = validation.get("queue_action", "complete")
             note = str(validation.get("note") or result.get("summary") or "Supervisor processed task.")
             if queue_action == "complete":
@@ -400,6 +399,10 @@ class Supervisor:
             else:
                 self.scheduler.mark_blocked(task_id, session_id=self.session_id, reason=note, result=result)
                 final_status = "blocked"
+
+            artifact_paths = self.artifact_writer.store(task=running_task, result=result, validation=validation)
+            state = self.state_store.update_progress(state, session_phase="rollback_finalization")
+            self._status(self._progress_status_line(state, task_id=task_id))
 
             if final_status == "completed":
                 state = self.state_store.update_progress(state, session_phase="complete")
@@ -431,6 +434,7 @@ class Supervisor:
                 final_status=final_status,
                 artifact_paths=artifact_paths,
                 note=note,
+                attempt_metadata=auto_iteration,
             )
             self.runtime_state.write_snapshot()
             terminal_status = "TASK RETRY" if final_status == "retry_scheduled" else f"TASK {final_status.upper()}"
@@ -500,6 +504,476 @@ class Supervisor:
 
     def get_runtime_state(self) -> RuntimeStateSnapshot:
         return self.runtime_state.get_snapshot()
+
+    def _run_with_platformer_auto_iteration(
+        self,
+        *,
+        state: Dict[str, Any],
+        task: Dict[str, Any],
+    ) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any] | None]:
+        max_attempts = self._platformer_auto_iteration_limit()
+        auto_iteration_attempts: List[Dict[str, Any]] = []
+        valid_candidates: List[Dict[str, Any]] = []
+        latest_result: Dict[str, Any] = {}
+        latest_validation: Dict[str, Any] = {}
+
+        for attempt_number in range(1, max_attempts + 1):
+            attempt_task = dict(task)
+            attempt_task["platformer_auto_iteration_attempt"] = attempt_number
+            attempt_task["platformer_auto_iteration_max_attempts"] = max_attempts
+            latest_result = self.agent_router.run(attempt_task)
+            if self.is_stop_requested():
+                return latest_result, {}, None
+
+            latest_validation = self.agent_router.validate(latest_result, task=attempt_task)
+
+            if not self._is_platformer_auto_iteration_candidate(attempt_task, latest_result, latest_validation):
+                return latest_result, latest_validation, None
+
+            attempt_entry = self._build_platformer_auto_iteration_attempt_entry(
+                result=latest_result,
+                validation=latest_validation,
+                attempt_number=attempt_number,
+                max_attempts=max_attempts,
+            )
+            auto_iteration_attempts.append(attempt_entry)
+            self._status(
+                "PLATFORMER AUTO-ITERATION "
+                f"task_id={self._task_id(task)} "
+                f"attempt={attempt_number}/{max_attempts} "
+                f"validation={attempt_entry['layout_validation_status']} "
+                f"blocking_issues={attempt_entry['blocking_issue_count']} "
+                f"decision={attempt_entry['decision']} "
+                f"reason={attempt_entry['reason']}"
+            )
+
+            if attempt_entry["decision"] == "accepted":
+                candidate_payload = self._build_platformer_valid_candidate_payload(
+                    result=latest_result,
+                    attempt_number=attempt_number,
+                    candidate_index=len(valid_candidates) + 1,
+                )
+                valid_candidates.append(candidate_payload)
+                auto_iteration_attempts[-1]["candidate_id"] = candidate_payload["candidate_id"]
+                auto_iteration_attempts[-1]["candidate_label"] = candidate_payload["candidate_label"]
+
+        if valid_candidates:
+            auto_iteration = self._build_platformer_auto_iteration_metadata(
+                attempts=auto_iteration_attempts,
+                valid_candidates=valid_candidates,
+                max_attempts=max_attempts,
+                exhausted=False,
+            )
+            auto_iteration = self._attach_platformer_autonomous_build_metadata(task=task, auto_iteration=auto_iteration)
+            primary_result = dict(valid_candidates[0]["result_payload"])
+            latest_result = self._attach_platformer_auto_iteration_metadata(primary_result, auto_iteration)
+            latest_validation = self._attach_platformer_auto_iteration_metadata(dict(latest_validation), auto_iteration)
+            latest_result = self._append_platformer_auto_iteration_summary(latest_result, auto_iteration)
+            latest_validation["note"] = auto_iteration["summary"]
+            return latest_result, latest_validation, auto_iteration
+
+        auto_iteration = self._build_platformer_auto_iteration_metadata(
+            attempts=auto_iteration_attempts,
+            valid_candidates=[],
+            max_attempts=max_attempts,
+            exhausted=True,
+        )
+        auto_iteration = self._attach_platformer_autonomous_build_metadata(task=task, auto_iteration=auto_iteration)
+        exhausted_note = (
+            f"{auto_iteration['summary']} No acceptable platformer variant found within bounded internal iteration."
+        )
+        latest_result = dict(latest_result)
+        latest_result["status"] = "blocked"
+        latest_result["error"] = exhausted_note
+        latest_result = self._attach_platformer_auto_iteration_metadata(latest_result, auto_iteration)
+        latest_result = self._append_platformer_auto_iteration_summary(latest_result, auto_iteration, suffix=exhausted_note)
+
+        latest_validation = dict(latest_validation)
+        latest_validation["validation_state"] = "blocked"
+        latest_validation["queue_action"] = "block"
+        latest_validation["note"] = exhausted_note
+        latest_validation["reason"] = "platformer_auto_iteration_exhausted"
+        latest_validation = self._attach_platformer_auto_iteration_metadata(latest_validation, auto_iteration)
+        return latest_result, latest_validation, auto_iteration
+
+    def _platformer_auto_iteration_limit(self) -> int:
+        configured = int(self.supervisor_config.platformer_auto_iteration_max_attempts or 1)
+        return max(1, min(configured, 3))
+
+    def _is_platformer_auto_iteration_candidate(
+        self,
+        task: Dict[str, Any],
+        result: Dict[str, Any],
+        validation: Dict[str, Any],
+    ) -> bool:
+        if not isinstance(result, dict) or not isinstance(validation, dict):
+            return False
+        if str(result.get("status") or "").strip().lower() != "completed":
+            return False
+        if str(validation.get("queue_action") or "").strip().lower() != "complete":
+            return False
+        details = result.get("details") if isinstance(result.get("details"), dict) else {}
+        target_context = str(
+            details.get("target_context")
+            or details.get("target_entity")
+            or task.get("target_context")
+            or task.get("target_entity")
+            or ""
+        ).strip().lower()
+        if target_context != "platformer":
+            return False
+        return bool(details.get("layout_validation_available"))
+
+    def _build_platformer_auto_iteration_attempt_entry(
+        self,
+        *,
+        result: Dict[str, Any],
+        validation: Dict[str, Any],
+        attempt_number: int,
+        max_attempts: int,
+    ) -> Dict[str, Any]:
+        details = result.get("details") if isinstance(result.get("details"), dict) else {}
+        blocking_issue_count = int(details.get("layout_validation_blocking_issue_count") or 0)
+        accepted = blocking_issue_count <= 0
+        return {
+            "attempt_number": attempt_number,
+            "max_attempts": max_attempts,
+            "result_status": str(result.get("status") or "unknown"),
+            "validation_state": str(validation.get("validation_state") or validation.get("status") or "unknown"),
+            "queue_action": str(validation.get("queue_action") or "complete"),
+            "layout_validation_status": str(details.get("layout_validation_status") or "unknown"),
+            "blocking_issue_count": blocking_issue_count,
+            "decision": "accepted" if accepted else "rejected",
+            "reason": "no blocking issues" if accepted else self._platformer_rejection_reason(details),
+            "layout_validation_summary": str(details.get("layout_validation_summary") or "").strip(),
+        }
+
+    def _platformer_rejection_reason(self, details: Dict[str, Any]) -> str:
+        issue_messages = [
+            str(item).strip()
+            for item in (details.get("layout_validation_issue_messages") or [])
+            if str(item).strip()
+        ]
+        if issue_messages:
+            return issue_messages[0]
+        issues = [item for item in (details.get("layout_validation_issues") or []) if isinstance(item, dict)]
+        for issue in issues:
+            message = str(issue.get("message") or "").strip()
+            if message:
+                return message
+        summary = str(details.get("layout_validation_summary") or "").strip()
+        if summary:
+            return summary
+        return "blocking spatial issue detected"
+
+    def _build_platformer_auto_iteration_metadata(
+        self,
+        *,
+        attempts: List[Dict[str, Any]],
+        valid_candidates: List[Dict[str, Any]],
+        max_attempts: int,
+        exhausted: bool,
+    ) -> Dict[str, Any]:
+        accepted_attempt = next(
+            (int(entry["attempt_number"]) for entry in attempts if str(entry.get("decision")) == "accepted"),
+            None,
+        )
+        attempt_count = len(attempts)
+        attempt_label = "attempt" if attempt_count == 1 else "attempts"
+        valid_candidate_count = len(valid_candidates)
+        valid_candidate_label = "candidate" if valid_candidate_count == 1 else "candidates"
+        summary_parts = [
+            f"attempt {int(entry['attempt_number'])} {str(entry['decision'])} ({str(entry['reason'])})"
+            for entry in attempts
+        ]
+        candidate_ids = [
+            str(entry.get("candidate_id") or "").strip()
+            for entry in valid_candidates
+            if str(entry.get("candidate_id") or "").strip()
+        ]
+        candidate_map = {
+            str(entry.get("candidate_id") or "").strip(): dict(entry)
+            for entry in valid_candidates
+            if str(entry.get("candidate_id") or "").strip()
+        }
+        result_set_presentation = self._format_platformer_result_set(valid_candidates)
+        return {
+            "enabled": True,
+            "max_attempts": max_attempts,
+            "attempt_count": attempt_count,
+            "accepted_attempt": accepted_attempt,
+            "valid_candidate_count": valid_candidate_count,
+            "valid_candidate_ids": candidate_ids,
+            "valid_candidates": [dict(entry) for entry in valid_candidates],
+            "candidate_set": candidate_map,
+            "exhausted": exhausted,
+            "summary": (
+                f"{attempt_count} {attempt_label} made: {'; '.join(summary_parts)}. "
+                f"{valid_candidate_count} valid {valid_candidate_label} generated."
+            ).strip(),
+            "result_set_presentation": result_set_presentation,
+            "attempts": [dict(entry) for entry in attempts],
+        }
+
+    def _build_platformer_valid_candidate_payload(
+        self,
+        *,
+        result: Dict[str, Any],
+        attempt_number: int,
+        candidate_index: int,
+    ) -> Dict[str, Any]:
+        details = result.get("details") if isinstance(result.get("details"), dict) else {}
+        candidate_id = f"candidate_{candidate_index}"
+        return {
+            "candidate_id": candidate_id,
+            "candidate_label": f"Candidate {chr(ord('A') + candidate_index - 1)}",
+            "candidate_index": candidate_index,
+            "attempt_number": attempt_number,
+            "validation_metadata": {
+                "layout_validation_available": bool(details.get("layout_validation_available", False)),
+                "layout_validation_status": str(details.get("layout_validation_status") or ""),
+                "layout_validation_status_label": str(details.get("layout_validation_status_label") or ""),
+                "layout_validation_summary": str(details.get("layout_validation_summary") or ""),
+                "layout_validation_issue_count": int(details.get("layout_validation_issue_count") or 0),
+                "layout_validation_blocking_issue_count": int(details.get("layout_validation_blocking_issue_count") or 0),
+                "layout_validation_issue_codes": list(details.get("layout_validation_issue_codes") or []),
+                "layout_validation_highlights": list(details.get("layout_validation_highlights") or []),
+            },
+            "evaluation_summary": self._platformer_candidate_evaluation_summary(details),
+            "layout_parameters": self._platformer_candidate_layout_parameters(details),
+            "result_payload": dict(result),
+        }
+
+    def _platformer_candidate_evaluation_summary(self, details: Dict[str, Any]) -> str:
+        fragments = []
+        for label, key in (
+            ("Speed", "speed_tier"),
+            ("Jump height", "jump_height_tier"),
+            ("Gravity", "gravity_tier"),
+            ("Gap size", "gap_size_tier"),
+            ("Obstacle density", "obstacle_density_tier"),
+            ("Enemy density", "enemy_density_tier"),
+            ("Segment count", "segment_count_tier"),
+        ):
+            value = str(details.get(key) or "").strip()
+            if value:
+                fragments.append(f"{label}: {value}")
+        summary = "; ".join(fragments).strip()
+        if summary:
+            return summary
+        return str(details.get("layout_validation_summary") or "No deterministic layout parameter summary available.").strip()
+
+    def _platformer_candidate_layout_parameters(self, details: Dict[str, Any]) -> Dict[str, Any]:
+        parameters: Dict[str, Any] = {}
+        for key in (
+            "speed_tier",
+            "speed_value",
+            "jump_height_tier",
+            "jump_height_value",
+            "gravity_tier",
+            "gravity_value",
+            "gap_size_tier",
+            "gap_size_value",
+            "obstacle_density_tier",
+            "obstacle_density_value",
+            "enemy_density_tier",
+            "enemy_density_value",
+            "segment_count_tier",
+            "segment_count_value",
+        ):
+            if key in details and details.get(key) not in {None, ""}:
+                parameters[key] = details.get(key)
+        return parameters
+
+    def _format_platformer_result_set(self, valid_candidates: List[Dict[str, Any]]) -> str:
+        lines = [
+            "AUTONOMOUS RESULT SET",
+            "",
+            f"{len(valid_candidates)} valid {'candidate' if len(valid_candidates) == 1 else 'candidates'} generated",
+            "",
+        ]
+        for candidate in valid_candidates:
+            layout_parameters = dict(candidate.get("layout_parameters") or {})
+            validation_metadata = dict(candidate.get("validation_metadata") or {})
+            lines.append(f"{str(candidate.get('candidate_label') or 'Candidate')}:" )
+            lines.append(f"- Validation: {str(validation_metadata.get('layout_validation_status_label') or 'unknown').strip() or 'unknown'}")
+            lines.append(f"- Evaluation: {str(candidate.get('evaluation_summary') or '').strip() or 'No evaluation summary available.'}")
+            for display_label, key in (
+                ("Speed", "speed_tier"),
+                ("Jump height", "jump_height_tier"),
+                ("Gravity", "gravity_tier"),
+                ("Gap size", "gap_size_tier"),
+                ("Obstacle density", "obstacle_density_tier"),
+                ("Enemy density", "enemy_density_tier"),
+                ("Segment count", "segment_count_tier"),
+            ):
+                value = str(layout_parameters.get(key) or "").strip()
+                if value:
+                    lines.append(f"- {display_label}: {value}")
+            lines.append("")
+        return "\n".join(lines).strip()
+
+    def _attach_platformer_autonomous_build_metadata(
+        self,
+        *,
+        task: Dict[str, Any],
+        auto_iteration: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        updated = dict(auto_iteration)
+        parameter_families = self._platformer_autonomous_build_parameter_families(task=task, auto_iteration=auto_iteration)
+        presentation = self._format_platformer_autonomous_build_complete(
+            task=task,
+            auto_iteration=auto_iteration,
+            parameter_families=parameter_families,
+        )
+        updated["autonomous_build_parameter_families"] = list(parameter_families)
+        updated["autonomous_build_complete"] = presentation
+        return updated
+
+    def _platformer_autonomous_build_parameter_families(
+        self,
+        *,
+        task: Dict[str, Any],
+        auto_iteration: Dict[str, Any],
+    ) -> List[str]:
+        families: List[str] = []
+        for component in task.get("goal_components", []) or []:
+            normalized = str(component or "").strip().lower()
+            family = ""
+            if "gap" in normalized:
+                family = "gap_size"
+            elif "obstacle" in normalized:
+                family = "obstacle_density"
+            elif "enemy density" in normalized:
+                family = "enemy_density"
+            elif "segment" in normalized or "level longer" in normalized or "level shorter" in normalized:
+                family = "segment_count"
+            elif "jump" in normalized:
+                family = "jump_height"
+            elif "gravity" in normalized:
+                family = "gravity"
+            elif "speed" in normalized or "movement" in normalized:
+                family = "speed"
+            if family and family not in families:
+                families.append(family)
+        if families:
+            return families
+
+        for candidate in auto_iteration.get("valid_candidates", []) or []:
+            layout_parameters = dict(candidate.get("layout_parameters") or {})
+            for key in layout_parameters.keys():
+                if not str(key).endswith("_tier"):
+                    continue
+                family = str(key[:-5]).strip()
+                if family and family not in families:
+                    families.append(family)
+        return families
+
+    def _format_platformer_autonomous_build_complete(
+        self,
+        *,
+        task: Dict[str, Any],
+        auto_iteration: Dict[str, Any],
+        parameter_families: List[str],
+    ) -> str:
+        source_prompt = str(task.get("source_prompt") or task.get("operator_prompt") or "").strip()
+        mapped_prompt = str(task.get("mapped_prompt") or task.get("plan_title") or task.get("operator_prompt") or "").strip()
+        lines = [
+            "AUTONOMOUS BUILD COMPLETE",
+            "",
+            f"Requested directive: {source_prompt or 'not available'}",
+            f"Bounded mapping: {mapped_prompt or 'not available'}",
+            f"Known capability families: {', '.join(parameter_families) if parameter_families else 'not available'}",
+            "",
+            str(auto_iteration.get("result_set_presentation") or "AUTONOMOUS RESULT SET").strip(),
+            "",
+            "ATTEMPT LOG",
+            *[
+                (
+                    f"- attempt {int(entry.get('attempt_number') or 0)}: {str(entry.get('decision') or 'unknown')}"
+                    f" | validation={str(entry.get('layout_validation_status') or 'unknown')}"
+                    f" | reason={str(entry.get('reason') or 'unknown')}"
+                )
+                for entry in auto_iteration.get("attempts", [])
+                if isinstance(entry, dict)
+            ],
+            "",
+            "USER CONTROL",
+            "- approve",
+            "- reject",
+            "- request changes",
+        ]
+        return "\n".join(lines).strip()
+
+    def _attach_platformer_auto_iteration_metadata(
+        self,
+        payload: Dict[str, Any],
+        auto_iteration: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        updated_payload = dict(payload)
+        details = dict(updated_payload.get("details") or {})
+        details.update(
+            {
+                "platformer_auto_iteration_enabled": True,
+                "platformer_auto_iteration_max_attempts": int(auto_iteration.get("max_attempts") or 0),
+                "platformer_auto_iteration_attempt_count": int(auto_iteration.get("attempt_count") or 0),
+                "platformer_auto_iteration_accepted_attempt": auto_iteration.get("accepted_attempt"),
+                "platformer_auto_iteration_exhausted": bool(auto_iteration.get("exhausted", False)),
+                "platformer_auto_iteration_summary": str(auto_iteration.get("summary") or ""),
+                "platformer_auto_iteration_valid_candidate_count": int(auto_iteration.get("valid_candidate_count") or 0),
+                "platformer_auto_iteration_valid_candidate_ids": [
+                    str(item) for item in auto_iteration.get("valid_candidate_ids", []) if str(item).strip()
+                ],
+                "platformer_auto_iteration_valid_candidates": [
+                    dict(entry) for entry in auto_iteration.get("valid_candidates", []) if isinstance(entry, dict)
+                ],
+                "platformer_auto_iteration_candidate_set": {
+                    str(key): dict(value)
+                    for key, value in dict(auto_iteration.get("candidate_set") or {}).items()
+                    if str(key).strip() and isinstance(value, dict)
+                },
+                "platformer_auto_iteration_result_set": str(auto_iteration.get("result_set_presentation") or ""),
+                "platformer_autonomous_build_parameter_families": [
+                    str(item) for item in auto_iteration.get("autonomous_build_parameter_families", []) if str(item).strip()
+                ],
+                "platformer_autonomous_build_complete": str(auto_iteration.get("autonomous_build_complete") or ""),
+                "platformer_auto_iteration_attempts": [
+                    dict(entry) for entry in auto_iteration.get("attempts", []) if isinstance(entry, dict)
+                ],
+            }
+        )
+        updated_payload["details"] = details
+        return updated_payload
+
+    def _append_platformer_auto_iteration_summary(
+        self,
+        payload: Dict[str, Any],
+        auto_iteration: Dict[str, Any],
+        *,
+        suffix: str | None = None,
+    ) -> Dict[str, Any]:
+        updated_payload = dict(payload)
+        summary = str(updated_payload.get("summary") or "").strip()
+        auto_iteration_summary = str(auto_iteration.get("summary") or "").strip()
+        result_set_presentation = str(auto_iteration.get("result_set_presentation") or "").strip()
+        autonomous_build_complete = str(auto_iteration.get("autonomous_build_complete") or "").strip()
+        if auto_iteration_summary:
+            summary = (
+                f"{summary} Internal iteration summary: {auto_iteration_summary}"
+                if summary
+                else auto_iteration_summary
+            )
+        if result_set_presentation:
+            summary = f"{summary}\n\n{result_set_presentation}".strip()
+        if autonomous_build_complete:
+            summary = f"{summary}\n\n{autonomous_build_complete}".strip()
+        if suffix and suffix != auto_iteration_summary and suffix not in summary:
+            summary = f"{summary} {suffix}".strip()
+        updated_payload["summary"] = summary.strip()
+        return updated_payload
+
+    def _task_id(self, task: Dict[str, Any]) -> str:
+        return str(task.get("task_id") or task.get("id") or "unknown_task")
 
     def pause_polling(self) -> bool:
         with self._control_lock:

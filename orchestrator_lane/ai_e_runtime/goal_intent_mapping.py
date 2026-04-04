@@ -25,6 +25,7 @@ GOAL_INTENT_MAPPING_RESOLUTION = "goal_intent_mapping"
 class GoalIntentResolution:
     original_prompt: str
     canonical_prompt: str
+    goal_components: tuple[str, ...]
     resolution_note: str
     resolution_source: str = GOAL_INTENT_MAPPING_RESOLUTION
 
@@ -32,12 +33,14 @@ class GoalIntentResolution:
 @dataclass(frozen=True)
 class GoalIntentDefinition:
     canonical_prompt: str
+    goal_components: tuple[str, ...]
     resolution_note: str
 
 
 _GOAL_INTENT_MAPPINGS = {
     dangerous_prompt("zombie"): GoalIntentDefinition(
         canonical_prompt=combat_variation_prompt("zombie"),
+        goal_components=("increase zombie speed", "increase zombie aggression"),
         resolution_note=(
             'AI-E mapped the gameplay goal "make zombie more dangerous" to the bounded plan '
             '"make zombie faster and more aggressive".'
@@ -45,6 +48,7 @@ _GOAL_INTENT_MAPPINGS = {
     ),
     intense_prompt("zombie"): GoalIntentDefinition(
         canonical_prompt=combat_variation_prompt("zombie"),
+        goal_components=("increase zombie speed", "increase zombie aggression"),
         resolution_note=(
             'AI-E mapped the gameplay goal "make zombie more intense" to the bounded plan '
             '"make zombie faster and more aggressive".'
@@ -52,6 +56,7 @@ _GOAL_INTENT_MAPPINGS = {
     ),
     less_dangerous_prompt("zombie"): GoalIntentDefinition(
         canonical_prompt=restore_standard_danger_prompt("zombie"),
+        goal_components=("restore zombie aggression to standard", "restore zombie speed to standard"),
         resolution_note=(
             'AI-E mapped the gameplay goal "make zombie less dangerous" to the bounded plan '
             '"restore zombie danger to standard".'
@@ -59,6 +64,7 @@ _GOAL_INTENT_MAPPINGS = {
     ),
     easier_prompt("zombie"): GoalIntentDefinition(
         canonical_prompt=restore_standard_danger_prompt("zombie"),
+        goal_components=("restore zombie aggression to standard", "restore zombie speed to standard"),
         resolution_note=(
             'AI-E mapped the gameplay goal "make zombie easier" to the bounded plan '
             '"restore zombie danger to standard".'
@@ -66,6 +72,7 @@ _GOAL_INTENT_MAPPINGS = {
     ),
     dangerous_prompt("runner"): GoalIntentDefinition(
         canonical_prompt=combat_variation_prompt("runner"),
+        goal_components=("increase runner speed", "increase runner aggression"),
         resolution_note=(
             'AI-E mapped the gameplay goal "make runner more dangerous" to the bounded plan '
             '"make runner faster and more aggressive".'
@@ -73,6 +80,7 @@ _GOAL_INTENT_MAPPINGS = {
     ),
     intense_prompt("runner"): GoalIntentDefinition(
         canonical_prompt=combat_variation_prompt("runner"),
+        goal_components=("increase runner speed", "increase runner aggression"),
         resolution_note=(
             'AI-E mapped the gameplay goal "make runner more intense" to the bounded plan '
             '"make runner faster and more aggressive".'
@@ -80,6 +88,7 @@ _GOAL_INTENT_MAPPINGS = {
     ),
     less_dangerous_prompt("runner"): GoalIntentDefinition(
         canonical_prompt=restore_standard_danger_prompt("runner"),
+        goal_components=("restore runner aggression to standard", "restore runner speed to standard"),
         resolution_note=(
             'AI-E mapped the gameplay goal "make runner less dangerous" to the bounded plan '
             '"restore runner danger to standard".'
@@ -87,6 +96,7 @@ _GOAL_INTENT_MAPPINGS = {
     ),
     easier_prompt("runner"): GoalIntentDefinition(
         canonical_prompt=restore_standard_danger_prompt("runner"),
+        goal_components=("restore runner aggression to standard", "restore runner speed to standard"),
         resolution_note=(
             'AI-E mapped the gameplay goal "make runner easier" to the bounded plan '
             '"restore runner danger to standard".'
@@ -94,6 +104,7 @@ _GOAL_INTENT_MAPPINGS = {
     ),
     intense_encounter_prompt(): GoalIntentDefinition(
         canonical_prompt="increase encounter intensity",
+        goal_components=("increase encounter count", "increase spawn pressure"),
         resolution_note=(
             'AI-E mapped the gameplay goal "make encounter more intense" to the bounded plan '
             '"increase encounter intensity".'
@@ -101,6 +112,7 @@ _GOAL_INTENT_MAPPINGS = {
     ),
     easier_encounter_prompt(): GoalIntentDefinition(
         canonical_prompt="decrease encounter intensity",
+        goal_components=("decrease encounter count", "decrease spawn pressure"),
         resolution_note=(
             'AI-E mapped the gameplay goal "make encounter easier" to the bounded plan '
             '"decrease encounter intensity".'
@@ -108,6 +120,7 @@ _GOAL_INTENT_MAPPINGS = {
     ),
     restore_standard_encounter_prompt(): GoalIntentDefinition(
         canonical_prompt="restore encounter to standard",
+        goal_components=("restore encounter count to standard", "restore spawn pressure to standard"),
         resolution_note=(
             'AI-E mapped the gameplay goal "restore encounter to standard" to the bounded plan '
             '"restore encounter to standard".'
@@ -115,9 +128,49 @@ _GOAL_INTENT_MAPPINGS = {
     ),
     "reduce spawn pressure": GoalIntentDefinition(
         canonical_prompt="decrease spawn pressure",
+        goal_components=("decrease spawn pressure",),
         resolution_note=(
             'AI-E mapped the gameplay goal "reduce spawn pressure" to the bounded deterministic request '
             '"decrease spawn pressure".'
+        ),
+    ),
+    "make level more intense": GoalIntentDefinition(
+        canonical_prompt="use challenge traversal",
+        goal_components=(
+            "increase gap size",
+            "increase obstacle density",
+            "increase enemy density",
+            "increase segment count",
+        ),
+        resolution_note=(
+            'AI-E mapped the gameplay goal "make level more intense" to the bounded platformer plan '
+            '"use challenge traversal" across the known gap size, obstacle density, enemy density, and segment count families.'
+        ),
+    ),
+    "make traversal more intense": GoalIntentDefinition(
+        canonical_prompt="use challenge traversal",
+        goal_components=(
+            "increase gap size",
+            "increase obstacle density",
+            "increase enemy density",
+            "increase segment count",
+        ),
+        resolution_note=(
+            'AI-E mapped the gameplay goal "make traversal more intense" to the bounded platformer plan '
+            '"use challenge traversal" across the known gap size, obstacle density, enemy density, and segment count families.'
+        ),
+    ),
+    "make traversal more challenging but fair": GoalIntentDefinition(
+        canonical_prompt="use challenge traversal",
+        goal_components=(
+            "increase gap size",
+            "increase obstacle density",
+            "increase enemy density",
+            "increase segment count",
+        ),
+        resolution_note=(
+            'AI-E mapped the gameplay goal "make traversal more challenging but fair" to the bounded platformer plan '
+            '"use challenge traversal" across the known gap size, obstacle density, enemy density, and segment count families while preserving fairness through mandatory validation and evaluation.'
         ),
     ),
 }
@@ -131,6 +184,7 @@ def resolve_goal_intent_prompt(prompt: str) -> GoalIntentResolution | None:
     return GoalIntentResolution(
         original_prompt=normalized,
         canonical_prompt=definition.canonical_prompt,
+        goal_components=definition.goal_components,
         resolution_note=definition.resolution_note,
     )
 
@@ -170,6 +224,13 @@ def unsupported_goal_intent_message(prompt: str) -> str | None:
                 "Try something like: 'restore encounter to standard'."
             )
 
+    if _mentions_platformer_goal_terms(normalized):
+        return (
+            "AI-E currently supports bounded platformer gameplay directives only through deterministic traversal profiles and level sets. "
+            "Try something like: 'make level more intense', 'make traversal more challenging but fair', "
+            "'make the level easier', 'use challenge traversal', or 'restore level to standard'."
+        )
+
     if ("dangerous" in tokens and "less" not in tokens) or "intense" in tokens:
         if "zombie" not in tokens and "runner" not in tokens:
             if generalized_entity:
@@ -204,6 +265,12 @@ def _generalized_entity_label(tokens: set[str]) -> str:
         if candidate in tokens:
             return candidate
     return ""
+
+
+def _mentions_platformer_goal_terms(prompt: str) -> bool:
+    platformer_terms = ("level", "traversal", "platformer", "gap", "jump", "gravity", "movement")
+    goal_terms = ("intense", "challenging", "fair", "easier")
+    return any(term in prompt for term in platformer_terms) and any(term in prompt for term in goal_terms)
 
 
 __all__ = [
