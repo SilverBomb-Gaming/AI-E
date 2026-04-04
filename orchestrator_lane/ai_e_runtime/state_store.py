@@ -86,6 +86,8 @@ class StateStore:
             "session_tuning_state": {},
             "experiment_tracking": {},
             "latest_experiment_variant": {},
+            "platformer_layout_correction_history": [],
+            "latest_platformer_layout_correction": {},
             "result_state_history": [],
             "result_evaluation_history": [],
             "latest_result_evaluation": {},
@@ -139,6 +141,8 @@ class StateStore:
         state.setdefault("session_tuning_state", {})
         state.setdefault("experiment_tracking", {})
         state.setdefault("latest_experiment_variant", {})
+        state.setdefault("platformer_layout_correction_history", [])
+        state.setdefault("latest_platformer_layout_correction", {})
         state.setdefault("result_state_history", [])
         state.setdefault("result_evaluation_history", [])
         state.setdefault("latest_result_evaluation", {})
@@ -524,6 +528,17 @@ class StateStore:
             normalized_issue = normalized_issue or "invalid_shape"
             mark_invalid("latest_experiment_variant")
 
+        state["platformer_layout_correction_history"], changed = self._normalize_mapping_list(
+            state.get("platformer_layout_correction_history")
+        )
+        if changed:
+            normalized_issue = normalized_issue or "invalid_shape"
+            mark_invalid("platformer_layout_correction_history")
+
+        if "latest_platformer_layout_correction" in state and not isinstance(state.get("latest_platformer_layout_correction"), dict):
+            state["latest_platformer_layout_correction"] = {}
+            normalized_issue = normalized_issue or "invalid_shape"
+            mark_invalid("latest_platformer_layout_correction")
 
         state["result_state_history"], changed = self._normalize_mapping_list(state.get("result_state_history"))
         if changed:
