@@ -10,7 +10,7 @@ These sections are the current source of truth for the public-facing AI-E v1 exp
 
 AI-E v1 validation is now complete for the current supported deterministic path. The validated surface includes Home, Prompt Intake, Approval Review, Live Run Status, Result Summary, and Project / Session History, plus the hardening pass for copy, empty/error guidance, onboarding, proof/history polish, launch reliability, sandbox handoff, and next-step guidance. Intent normalization is now included in the deterministic movement path, so light natural-language variations map cleanly to the canonical supported action instead of failing on strict string matching alone.
 
-The latest bounded autonomy milestone is also validated for supported platformer intent flows. AI-E can now map approved gameplay directives such as `make level more intense` into a bounded traversal plan, run an internal capped attempt loop, retain only valid deterministic candidates, and stop at an explicit `AUTONOMOUS BUILD COMPLETE` summary without ranking, auto-approving, or bypassing user review.
+The latest bounded autonomy milestone is also validated for supported platformer intent flows. AI-E can now map approved gameplay directives such as `make level more intense` into a bounded traversal plan, run an internal capped attempt loop, retain only valid deterministic candidates, and surface them through an explicit review state before any completion wording appears, without ranking, auto-approving, or bypassing user review.
 
 AI-E also now supports bounded platformer manual correction and layout-quality review flows. Designers can capture explicit keyboard/mouse platformer layout edits through a Unity-side correction tool, persist project-local correction artifacts, and surface deterministic spatial validation findings through the existing experiment, evaluation, and proof outputs.
 
@@ -18,7 +18,7 @@ AI-E also now supports bounded platformer manual correction and layout-quality r
 
 AI-E now layers bounded interpretation and review tools on top of the original deterministic mutation path without introducing autonomous execution. Supported requests can move through explicit goal-intent mapping, bounded goal composition, deterministic outcome evaluation, current-session experiment tracking, and explicit experiment decision tracking while still resolving into known capabilities, known predefined plans, or safe review-only summaries.
 
-AI-E now also supports bounded platformer autonomy for a narrow set of approved traversal intents. Supported directives are translated into known platformer plans, executed through a capped internal attempt loop, persisted as an unranked deterministic candidate set, and reported back through an explicit `AUTONOMOUS BUILD COMPLETE` surface that shows candidate sets, attempt logs, and approval actions directly while preserving user approval, rejection, and follow-up control.
+AI-E now also supports bounded platformer autonomy for a narrow set of approved traversal intents. Supported directives are translated into known platformer plans, executed through a capped internal attempt loop, persisted as an unranked deterministic candidate set, and reported back through an explicit review surface that shows candidate sets, attempt logs, and approval actions directly while preserving user approval, rejection, and follow-up control. `AUTONOMOUS BUILD COMPLETE` is reserved for the post-approval completion state after a user-selected variation has been applied.
 
 AI-E now also records platformer manual correction sessions and validation-aware review metadata without expanding into open-ended generation. The correction path is explicit and project-local, the Unity bridge emits a deterministic payload, and the validation layer reports reachability, ladder, elevator, gap, and overlap findings directly into comparison and proof summaries instead of silently changing geometry.
 
@@ -56,7 +56,7 @@ Example flows:
 - `make level more intense`
   - resolves through bounded platformer goal-intent mapping into the supported challenge traversal plan
 - `make traversal more challenging but fair`
-  - runs the bounded platformer autonomy loop, stores valid deterministic candidates, and returns an `AUTONOMOUS BUILD COMPLETE` review surface instead of a ranked recommendation
+  - runs the bounded platformer autonomy loop, stores valid deterministic candidates, and returns an autonomy review surface first; `AUTONOMOUS BUILD COMPLETE` appears only after a user-approved variation is applied
 - `save manual platformer correction`
   - persists explicit keyboard/mouse correction artifacts under project-local storage and exposes the saved correction summary through review surfaces
 - `compare level set a and level set b`
