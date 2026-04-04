@@ -77,6 +77,16 @@ _ROUTE_PROFILES = {
         probe_action_type="mutate_spawn_pressure",
         result_kind="spawn_pressure",
     ),
+    "MutatePlatformerJumpHeight": EntityMutationRouteProfile(
+        probe_name="MutatePlatformerJumpHeight",
+        probe_action_type="mutate_platformer_jump_height",
+        result_kind="jump_height",
+    ),
+    "MutatePlatformerGravity": EntityMutationRouteProfile(
+        probe_name="MutatePlatformerGravity",
+        probe_action_type="mutate_platformer_gravity",
+        result_kind="gravity",
+    ),
 }
 
 
@@ -419,6 +429,32 @@ def run_level_0001_entity_transform_mutation(task: Dict[str, Any]) -> Dict[str, 
                 "target_context": "encounter",
             }
         )
+    elif route_resolution.result_kind == "jump_height":
+        result_details.update(
+            {
+                "previous_jump_height": _float_or_none(probe_payload.get("previous_jump_height")),
+                "new_jump_height": _float_or_none(probe_payload.get("new_jump_height")),
+                "baseline_jump_height": _float_or_none(probe_payload.get("baseline_jump_height")),
+                "requested_jump_height": _float_or_none(probe_payload.get("requested_jump_height")),
+                "minimum_jump_height": _float_or_none(probe_payload.get("minimum_jump_height")),
+                "maximum_jump_height": _float_or_none(probe_payload.get("maximum_jump_height")),
+                "jump_height_changed": bool(probe_payload.get("jump_height_changed", False)),
+                "target_context": "platformer",
+            }
+        )
+    elif route_resolution.result_kind == "gravity":
+        result_details.update(
+            {
+                "previous_gravity": _float_or_none(probe_payload.get("previous_gravity")),
+                "new_gravity": _float_or_none(probe_payload.get("new_gravity")),
+                "baseline_gravity": _float_or_none(probe_payload.get("baseline_gravity")),
+                "requested_gravity": _float_or_none(probe_payload.get("requested_gravity")),
+                "minimum_gravity": _float_or_none(probe_payload.get("minimum_gravity")),
+                "maximum_gravity": _float_or_none(probe_payload.get("maximum_gravity")),
+                "gravity_changed": bool(probe_payload.get("gravity_changed", False)),
+                "target_context": "platformer",
+            }
+        )
     result_details.update(
         build_result_session_metadata(
             task=task,
@@ -738,6 +774,56 @@ def _validate_execution_artifacts(
                 return "Delegated probe skipped the spawn pressure change before the requested deterministic state was satisfied."
         elif requested_spawn_interval is not None and abs(new_spawn_interval - requested_spawn_interval) > 0.0001:
             return "Delegated probe did not apply the requested deterministic spawn pressure value."
+    elif result_kind == "jump_height":
+        previous_jump_height = _float_or_none(probe_payload.get("previous_jump_height"))
+        new_jump_height = _float_or_none(probe_payload.get("new_jump_height"))
+        baseline_jump_height = _float_or_none(probe_payload.get("baseline_jump_height"))
+        minimum_jump_height = _float_or_none(probe_payload.get("minimum_jump_height"))
+        maximum_jump_height = _float_or_none(probe_payload.get("maximum_jump_height"))
+        requested_jump_height = _float_or_none(probe_payload.get("requested_jump_height"))
+        if previous_jump_height is None:
+            return "Delegated probe did not report a valid previous_jump_height."
+        if new_jump_height is None:
+            return "Delegated probe did not report a valid new_jump_height."
+        if minimum_jump_height is not None and new_jump_height < minimum_jump_height:
+            return "Delegated probe reported a new_jump_height below the approved minimum bound."
+        if maximum_jump_height is not None and new_jump_height > maximum_jump_height:
+            return "Delegated probe reported a new_jump_height above the approved maximum bound."
+        if not execution_applied and result_reason == "skipped_already_satisfied":
+            if requested_jump_height is not None and not _numeric_skip_satisfies_request(
+                action_name=action_name,
+                baseline_value=baseline_jump_height,
+                requested_value=requested_jump_height,
+                current_value=new_jump_height,
+            ):
+                return "Delegated probe skipped the jump-height change before the requested deterministic state was satisfied."
+        elif requested_jump_height is not None and abs(new_jump_height - requested_jump_height) > 0.0001:
+            return "Delegated probe did not apply the requested deterministic jump-height value."
+    elif result_kind == "gravity":
+        previous_gravity = _float_or_none(probe_payload.get("previous_gravity"))
+        new_gravity = _float_or_none(probe_payload.get("new_gravity"))
+        baseline_gravity = _float_or_none(probe_payload.get("baseline_gravity"))
+        minimum_gravity = _float_or_none(probe_payload.get("minimum_gravity"))
+        maximum_gravity = _float_or_none(probe_payload.get("maximum_gravity"))
+        requested_gravity = _float_or_none(probe_payload.get("requested_gravity"))
+        if previous_gravity is None:
+            return "Delegated probe did not report a valid previous_gravity."
+        if new_gravity is None:
+            return "Delegated probe did not report a valid new_gravity."
+        if minimum_gravity is not None and new_gravity < minimum_gravity:
+            return "Delegated probe reported a new_gravity below the approved minimum bound."
+        if maximum_gravity is not None and new_gravity > maximum_gravity:
+            return "Delegated probe reported a new_gravity above the approved maximum bound."
+        if not execution_applied and result_reason == "skipped_already_satisfied":
+            if requested_gravity is not None and not _numeric_skip_satisfies_request(
+                action_name=action_name,
+                baseline_value=baseline_gravity,
+                requested_value=requested_gravity,
+                current_value=new_gravity,
+            ):
+                return "Delegated probe skipped the gravity change before the requested deterministic state was satisfied."
+        elif requested_gravity is not None and abs(new_gravity - requested_gravity) > 0.0001:
+            return "Delegated probe did not apply the requested deterministic gravity value."
     return None
 
 
@@ -750,6 +836,10 @@ def _validation_check_name(result_kind: str) -> str:
         return "mutate_encounter_count_artifact_confirmed"
     if result_kind == "spawn_pressure":
         return "mutate_spawn_pressure_artifact_confirmed"
+    if result_kind == "jump_height":
+        return "mutate_platformer_jump_height_artifact_confirmed"
+    if result_kind == "gravity":
+        return "mutate_platformer_gravity_artifact_confirmed"
     return "mutate_entity_transform_artifact_confirmed"
 
 
@@ -843,6 +933,24 @@ def _spawn_pressure_skip_satisfies_request(
             return current_spawn_interval <= requested_spawn_interval + 0.0001
         return current_spawn_interval >= requested_spawn_interval - 0.0001
     return abs(current_spawn_interval - requested_spawn_interval) <= 0.0001
+
+
+def _numeric_skip_satisfies_request(
+    *,
+    action_name: str,
+    baseline_value: float | None,
+    requested_value: float,
+    current_value: float,
+) -> bool:
+    if any(token in action_name for token in ("increase", "higher", "raise")):
+        return current_value >= requested_value - 0.0001
+    if any(token in action_name for token in ("decrease", "lower", "reduce")):
+        return current_value <= requested_value + 0.0001
+    if baseline_value is not None:
+        if requested_value >= baseline_value:
+            return current_value >= requested_value - 0.0001
+        return current_value <= requested_value + 0.0001
+    return abs(current_value - requested_value) <= 0.0001
 
 
 def _supporting_artifacts(translator_payload: Any, router_payload: Dict[str, Any]) -> list[str]:
