@@ -17,6 +17,11 @@ from .artifact_writer import ArtifactWriter
 from .experiment_tracking import apply_experiment_tracking
 from .heartbeat import HeartbeatEmitter
 from .outcome_evaluation import apply_result_evaluation
+from .platformer_layout_corrections import (
+    apply_platformer_layout_correction_record,
+    persist_platformer_layout_correction_result,
+)
+from .platformer_layout_validation import enrich_platformer_layout_validation_result
 from .progress import format_progress_line
 from .runtime_state import RuntimeState, RuntimeStateSnapshot, selector_visibility_payload
 from .scheduler import Scheduler
@@ -386,6 +391,11 @@ class Supervisor:
             queue_action = validation.get("queue_action", "complete")
             note = str(validation.get("note") or result.get("summary") or "Supervisor processed task.")
             if queue_action == "complete":
+                result = persist_platformer_layout_correction_result(
+                    task=running_task,
+                    result=result,
+                    timestamp=get_current_timestamp(self.time_source()),
+                )
                 self.scheduler.mark_completed(task_id, session_id=self.session_id, result=result)
                 final_status = "completed"
             elif queue_action == "retry":
@@ -526,6 +536,11 @@ class Supervisor:
                 return latest_result, {}, None
 
             latest_validation = self.agent_router.validate(latest_result, task=attempt_task)
+            latest_result = enrich_platformer_layout_validation_result(
+                state=state,
+                task=attempt_task,
+                result=latest_result,
+            )
 
             if not self._is_platformer_auto_iteration_candidate(attempt_task, latest_result, latest_validation):
                 return latest_result, latest_validation, None
@@ -1241,6 +1256,12 @@ class Supervisor:
             details=details,
             timestamp=timestamp,
         )
+        state = apply_platformer_layout_correction_record(
+            state,
+            task=task,
+            details=details,
+            timestamp=timestamp,
+        )
         state = apply_experiment_tracking(
             state,
             task=task,
@@ -1258,6 +1279,12 @@ class Supervisor:
             context_store = StateStore(self.orchestrator_config.runs_dir, session_context_id)
             context_state = context_store.load()
             context_state = apply_session_tuning_record(
+                context_state,
+                task=task,
+                details=details,
+                timestamp=timestamp,
+            )
+            context_state = apply_platformer_layout_correction_record(
                 context_state,
                 task=task,
                 details=details,

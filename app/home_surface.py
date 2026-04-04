@@ -9,6 +9,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable, List
 
+from ai_e_runtime.platformer_layout_corrections import extract_platformer_layout_correction_metadata
+from ai_e_runtime.platformer_layout_validation import extract_platformer_layout_validation_metadata
+
 from .paths import ARTIFACTS_ROOT, PROJECT_ROOT
 
 
@@ -203,6 +206,10 @@ class ProofResultSurface:
     experiment_summary: str = ""
     decision_status: str = ""
     latest_decision_summary: str = ""
+    manual_correction_available: bool = False
+    manual_correction_summary: str = ""
+    manual_correction_count: int = 0
+    derived_from_corrected_layout: bool = False
 
 
 def load_supported_projects() -> List[SupportedProject]:
@@ -2570,6 +2577,10 @@ def _proof_result_from_plan_session(
             evaluation=evaluation_payload,
         )
     )
+    experiment_fields = {
+        **experiment_fields,
+        **_manual_correction_surface_fields(experiment_fields),
+    }
 
     return ProofResultSurface(
         available=True,
@@ -2697,6 +2708,13 @@ def _proof_result_from_attempt_artifact(
             evaluation=evaluation_payload,
         )
     )
+    experiment_fields = {
+        **experiment_fields,
+        **_manual_correction_surface_fields(details, experiment=experiment_fields),
+    }
+    _append_artifact_link(raw_artifacts, label="Manual correction record", kind="artifact", candidate=details.get("layout_correction_artifact_path"))
+    _append_artifact_link(raw_artifacts, label="Manual correction history", kind="artifact", candidate=details.get("layout_correction_history_path"))
+    _append_artifact_link(raw_artifacts, label="Corrected layout", kind="artifact", candidate=details.get("corrected_layout_artifact_path"))
 
     return ProofResultSurface(
         available=True,
@@ -2977,12 +2995,32 @@ def _attempt_validation_checks(*, validation: dict[str, Any], details: dict[str,
     note = str(validation.get("note") or "").strip()
     if note:
         checks.append(note.rstrip(".") + ".")
+    layout_validation = extract_platformer_layout_validation_metadata(details)
+    if layout_validation:
+        status_label = str(layout_validation.get("layout_validation_status_label") or "").strip()
+        if status_label:
+            checks.append(f"Spatial validation status: {status_label}.")
+        summary = str(layout_validation.get("layout_validation_summary") or "").strip()
+        if summary:
+            checks.append(summary)
+        issue_type_summary = str(layout_validation.get("layout_validation_issue_type_summary") or "").strip()
+        if issue_type_summary and issue_type_summary != "none":
+            checks.append(f"Spatial validation highlights: {issue_type_summary}.")
+        for message in list(layout_validation.get("layout_validation_issue_messages") or [])[:3]:
+            if str(message).strip():
+                checks.append(str(message).strip())
     return checks
 
 
 def _attempt_validation_outcome(*, proof_status: str, validation: dict[str, Any], details: dict[str, Any]) -> str:
     if _attempt_was_skipped(details):
         return "Recorded validation passed. AI-E skipped the change because the requested state was already satisfied."
+    layout_validation = extract_platformer_layout_validation_metadata(details)
+    if layout_validation and int(layout_validation.get("layout_validation_issue_count") or 0) > 0:
+        return (
+            f"Recorded spatial validation status: {str(layout_validation.get('layout_validation_status_label') or 'issues detected').strip()}; "
+            f"{int(layout_validation.get('layout_validation_issue_count') or 0)} layout issue(s) detected."
+        )
     validation_payload = details.get("validation") if isinstance(details.get("validation"), dict) else {}
     validation_status = str(validation_payload.get("status") or validation.get("validation_state") or "").strip().lower()
     if validation_status in {"passed", "completed"} or proof_status == "Passed":
@@ -3001,6 +3039,15 @@ def _attempt_final_verdict(
     details: dict[str, Any],
     validation: dict[str, Any],
 ) -> str:
+    correction_metadata = extract_platformer_layout_correction_metadata(details)
+    layout_validation = extract_platformer_layout_validation_metadata(details)
+    if layout_validation and int(layout_validation.get("layout_validation_issue_count") or 0) > 0:
+        return (
+            f"Requested change completed, but spatial validation found "
+            f"{int(layout_validation.get('layout_validation_issue_count') or 0)} layout issue(s)."
+        )
+    if correction_metadata and proof_status == "Passed":
+        return "Manual platformer layout corrections were saved as project-local artifacts and the recorded checks passed."
     object_name = str(details.get("object_name") or details.get("spawner_name") or "").strip()
     if _attempt_was_skipped(details):
         skip_reason = _attempt_skip_reason(details)
@@ -3030,6 +3077,20 @@ def _attempt_final_verdict(
 
 
 def _proof_before_after_summary(mutation: dict[str, Any]) -> str:
+    correction_metadata = extract_platformer_layout_correction_metadata(mutation)
+    if correction_metadata:
+        corrections = correction_metadata.get("layout_corrections") if isinstance(correction_metadata.get("layout_corrections"), list) else []
+        if corrections:
+            samples = []
+            for entry in corrections[:2]:
+                if not isinstance(entry, dict):
+                    continue
+                samples.append(
+                    f"{str(entry.get('object_id') or '').strip()} moved from {_format_vector(entry.get('original_position') or [])} to {_format_vector(entry.get('corrected_position') or [])}"
+                )
+            if samples:
+                return " ".join(samples) + "."
+        return str(correction_metadata.get("layout_correction_summary") or "").strip()
     object_name = str(mutation.get("object_name") or mutation.get("spawner_name") or "The target object").strip()
     if _attempt_was_skipped(mutation):
         if isinstance(mutation.get("new_speed"), (int, float)):
@@ -3110,6 +3171,11 @@ def _proof_before_after_summary(mutation: dict[str, Any]) -> str:
 def _proof_change_summary(mutation: dict[str, Any]) -> str:
     if not mutation:
         return "This result does not include a clear change summary."
+    correction_metadata = extract_platformer_layout_correction_metadata(mutation)
+    if correction_metadata:
+        summary = str(correction_metadata.get("layout_correction_summary") or "").strip()
+        if summary:
+            return f"AI-E saved the manual platformer layout correction session. {summary}"
     object_name = str(mutation.get("object_name") or mutation.get("spawner_name") or "target object").strip()
     action_type = _humanize_text(mutation.get("action_type") or mutation.get("step_name")) or "mutation"
     if _attempt_was_skipped(mutation):
@@ -3152,6 +3218,9 @@ def _proof_change_summary(mutation: dict[str, Any]) -> str:
 
 
 def _proof_title_from_mutation(mutation: dict[str, Any]) -> str:
+    correction_metadata = extract_platformer_layout_correction_metadata(mutation)
+    if correction_metadata:
+        return f"Manual correction - {str(correction_metadata.get('layout_name') or 'platformer layout').strip()}"
     action_type = _humanize_text(mutation.get("action_type") or mutation.get("step_name"))
     object_name = str(mutation.get("object_name") or "").strip()
     if action_type and object_name:
@@ -3388,6 +3457,10 @@ def _result_experiment_payload(
         "experiment_summary": summary,
         "decision_status": decision_status,
         "latest_decision_summary": latest_decision_summary,
+        "manual_correction_available": bool(matched_variant.get("layout_correction_count") or matched_variant.get("derived_from_corrected_layout")),
+        "manual_correction_summary": str(matched_variant.get("layout_correction_summary") or "").strip(),
+        "manual_correction_count": int(matched_variant.get("layout_correction_count") or 0),
+        "derived_from_corrected_layout": bool(matched_variant.get("derived_from_corrected_layout")),
     }
 
 
@@ -3406,6 +3479,10 @@ def _experiment_surface_fields(experiment: dict[str, Any]) -> dict[str, Any]:
             "experiment_summary": "",
             "decision_status": "",
             "latest_decision_summary": "",
+            "manual_correction_available": False,
+            "manual_correction_summary": "",
+            "manual_correction_count": 0,
+            "derived_from_corrected_layout": False,
         }
 
     return {
@@ -3421,6 +3498,40 @@ def _experiment_surface_fields(experiment: dict[str, Any]) -> dict[str, Any]:
         "experiment_summary": str(experiment.get("experiment_summary") or "").strip(),
         "decision_status": str(experiment.get("decision_status") or "").strip(),
         "latest_decision_summary": str(experiment.get("latest_decision_summary") or "").strip(),
+        "manual_correction_available": bool(experiment.get("manual_correction_available", False)),
+        "manual_correction_summary": str(experiment.get("manual_correction_summary") or "").strip(),
+        "manual_correction_count": int(experiment.get("manual_correction_count") or 0),
+        "derived_from_corrected_layout": bool(experiment.get("derived_from_corrected_layout", False)),
+    }
+
+
+def _manual_correction_surface_fields(
+    details: dict[str, Any] | None,
+    *,
+    experiment: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    metadata = extract_platformer_layout_correction_metadata(details if isinstance(details, dict) else {})
+    experiment_payload = experiment if isinstance(experiment, dict) else {}
+    summary = str(
+        metadata.get("layout_correction_summary")
+        or experiment_payload.get("manual_correction_summary")
+        or ""
+    ).strip()
+    count = int(
+        metadata.get("layout_correction_count")
+        or experiment_payload.get("manual_correction_count")
+        or 0
+    )
+    derived = bool(
+        metadata.get("derived_from_corrected_layout")
+        or experiment_payload.get("derived_from_corrected_layout")
+    )
+    available = bool(summary or count or derived)
+    return {
+        "manual_correction_available": available,
+        "manual_correction_summary": summary,
+        "manual_correction_count": count,
+        "derived_from_corrected_layout": derived,
     }
 
 

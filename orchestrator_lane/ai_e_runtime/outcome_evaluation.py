@@ -7,6 +7,15 @@ from .enemy_profiles import aggression_tier_values, speed_tier_values
 from .experiment_tracking import find_experiment_by_id, find_variant_for_task
 from .generic_capabilities import build_generic_capability_state
 from .platformer_profiles import gravity_tier_values, jump_height_tier_values, platformer_speed_tier_values
+from .platformer_profiles import (
+    enemy_density_tier_values,
+    gap_size_tier_values,
+    obstacle_density_tier_values,
+    resolve_platformer_level_set,
+    resolve_platformer_level_profile,
+    segment_count_tier_values,
+)
+from .platformer_layout_validation import build_platformer_layout_validation_delta, validation_status_label
 from .racing_profiles import acceleration_tier_values, max_speed_tier_values
 from .tuning_contexts import (
     detect_supported_tuning_context,
@@ -40,6 +49,10 @@ _SPAWN_PRESSURE_ORDER = {
 _GENERIC_PARAMETER_LABELS = {
     "jump_height": "Jump height",
     "gravity": "Gravity",
+    "gap_size": "Gap size",
+    "obstacle_density": "Obstacle density",
+    "enemy_density": "Enemy density",
+    "segment_count": "Segment count",
     "acceleration": "Acceleration",
     "max_speed": "Max speed",
 }
@@ -74,7 +87,33 @@ def apply_result_evaluation(
             "task_id": snapshot["task_id"],
             "request_id": snapshot["request_id"],
             "plan_id": snapshot["plan_id"],
+            "plan_key": snapshot.get("plan_key") or "",
             "plan_title": snapshot["plan_title"],
+            "level_set_id": snapshot.get("level_set_id") or "",
+            "level_set_name": snapshot.get("level_set_name") or "",
+            "level_profile_id": snapshot.get("level_profile_id") or "",
+            "level_profile_name": snapshot.get("level_profile_name") or "",
+            "layout_id": snapshot.get("layout_id") or "",
+            "layout_name": snapshot.get("layout_name") or "",
+            "manual_edit_mode": snapshot.get("manual_edit_mode") or "",
+            "layout_correction_count": snapshot.get("layout_correction_count") or 0,
+            "layout_correction_summary": snapshot.get("layout_correction_summary") or "",
+            "derived_from_corrected_layout": bool(snapshot.get("derived_from_corrected_layout")),
+            "layout_correction_artifact_path": snapshot.get("layout_correction_artifact_path") or "",
+            "corrected_layout_artifact_path": snapshot.get("corrected_layout_artifact_path") or "",
+            "layout_validation_available": bool(snapshot.get("layout_validation_available")),
+            "layout_validation_status": snapshot.get("layout_validation_status") or "",
+            "layout_validation_status_label": snapshot.get("layout_validation_status_label") or "",
+            "layout_validation_summary": snapshot.get("layout_validation_summary") or "",
+            "layout_validation_issue_count": snapshot.get("layout_validation_issue_count") or 0,
+            "layout_validation_blocking_issue_count": snapshot.get("layout_validation_blocking_issue_count") or 0,
+            "layout_validation_severity_counts": dict(snapshot.get("layout_validation_severity_counts") or {}),
+            "layout_validation_severity_summary": snapshot.get("layout_validation_severity_summary") or "",
+            "layout_validation_category_counts": dict(snapshot.get("layout_validation_category_counts") or {}),
+            "layout_validation_category_summary": snapshot.get("layout_validation_category_summary") or "",
+            "layout_validation_issue_type_counts": dict(snapshot.get("layout_validation_issue_type_counts") or {}),
+            "layout_validation_issue_type_summary": snapshot.get("layout_validation_issue_type_summary") or "",
+            "layout_validation_highlights": list(snapshot.get("layout_validation_highlights") or []),
             "generic_capability_state": list(snapshot.get("generic_capability_state") or []),
             **evaluation,
         }
@@ -134,6 +173,10 @@ def _build_result_snapshot(
     pressure_record = _family_record(tuning_state, family="spawn_pressure", target_context=target_context)
     jump_height_record = _family_record(tuning_state, family="jump_height", target_context=target_context)
     gravity_record = _family_record(tuning_state, family="gravity", target_context=target_context)
+    gap_size_record = _family_record(tuning_state, family="gap_size", target_context=target_context)
+    obstacle_density_record = _family_record(tuning_state, family="obstacle_density", target_context=target_context)
+    enemy_density_record = _family_record(tuning_state, family="enemy_density", target_context=target_context)
+    segment_count_record = _family_record(tuning_state, family="segment_count", target_context=target_context)
     acceleration_record = _family_record(tuning_state, family="acceleration", target_context=target_context)
     max_speed_record = _family_record(tuning_state, family="max_speed", target_context=target_context)
 
@@ -145,6 +188,10 @@ def _build_result_snapshot(
     spawn_pressure_tier = str(pressure_record.get("resulting_tier") or "").strip()
     jump_height_tier = str(jump_height_record.get("resulting_tier") or "").strip()
     gravity_tier = str(gravity_record.get("resulting_tier") or "").strip()
+    gap_size_tier = str(gap_size_record.get("resulting_tier") or "").strip()
+    obstacle_density_tier = str(obstacle_density_record.get("resulting_tier") or "").strip()
+    enemy_density_tier = str(enemy_density_record.get("resulting_tier") or "").strip()
+    segment_count_tier = str(segment_count_record.get("resulting_tier") or "").strip()
     acceleration_tier = str(acceleration_record.get("resulting_tier") or "").strip()
     max_speed_tier = str(max_speed_record.get("resulting_tier") or "").strip()
 
@@ -154,6 +201,10 @@ def _build_result_snapshot(
     spawn_pressure_defaults = spawn_pressure_tier_values() if is_supported_encounter_context(target_context) else {}
     jump_height_defaults = jump_height_tier_values() if target_context == "platformer" else {}
     gravity_defaults = gravity_tier_values() if target_context == "platformer" else {}
+    gap_size_defaults = gap_size_tier_values() if target_context == "platformer" else {}
+    obstacle_density_defaults = obstacle_density_tier_values() if target_context == "platformer" else {}
+    enemy_density_defaults = enemy_density_tier_values() if target_context == "platformer" else {}
+    segment_count_defaults = segment_count_tier_values() if target_context == "platformer" else {}
     acceleration_defaults = acceleration_tier_values() if target_context == "racer" else {}
     max_speed_defaults = max_speed_tier_values() if target_context == "racer" else {}
     speed_value = _float_or_default(speed_record.get("observed_value"), speed_defaults.get(speed_tier))
@@ -177,6 +228,22 @@ def _build_result_snapshot(
         gravity_record.get("observed_value"),
         gravity_defaults.get(gravity_tier),
     )
+    gap_size_value = _float_or_default(
+        gap_size_record.get("observed_value"),
+        gap_size_defaults.get(gap_size_tier),
+    )
+    obstacle_density_value = _float_or_default(
+        obstacle_density_record.get("observed_value"),
+        obstacle_density_defaults.get(obstacle_density_tier),
+    )
+    enemy_density_value = _float_or_default(
+        enemy_density_record.get("observed_value"),
+        enemy_density_defaults.get(enemy_density_tier),
+    )
+    segment_count_value = _float_or_default(
+        segment_count_record.get("observed_value"),
+        segment_count_defaults.get(segment_count_tier),
+    )
     acceleration_value = _float_or_default(
         acceleration_record.get("observed_value"),
         acceleration_defaults.get(acceleration_tier),
@@ -185,6 +252,16 @@ def _build_result_snapshot(
         max_speed_record.get("observed_value"),
         max_speed_defaults.get(max_speed_tier),
     )
+    level_profile = resolve_platformer_level_profile(
+        plan_key=str(task.get("plan_key") or "").strip(),
+        plan_title=str(task.get("plan_title") or "").strip(),
+        prompt=str(task.get("source_prompt") or task.get("operator_prompt") or "").strip(),
+    ) if target_context == "platformer" else {}
+    level_set = resolve_platformer_level_set(
+        plan_key=str(task.get("plan_key") or "").strip(),
+        plan_title=str(task.get("plan_title") or "").strip(),
+        prompt=str(task.get("source_prompt") or task.get("operator_prompt") or "").strip(),
+    ) if target_context == "platformer" else {}
 
     return {
         "order": int(order),
@@ -192,11 +269,38 @@ def _build_result_snapshot(
         "task_id": str(task.get("task_id") or "").strip(),
         "request_id": str(task.get("request_id") or "").strip(),
         "plan_id": str(task.get("plan_id") or "").strip(),
+        "plan_key": str(task.get("plan_key") or "").strip(),
         "plan_title": str(task.get("plan_title") or "").strip(),
         "source_prompt": str(task.get("source_prompt") or task.get("operator_prompt") or "").strip(),
         "canonical_prompt": str(task.get("operator_prompt") or "").strip(),
         "resolution_source": str(task.get("resolution_source") or "").strip(),
         "resolved_from_prompt": str(task.get("resolved_from_prompt") or "").strip(),
+        "level_set_id": str(level_set.get("level_set_id") or experiment_variant.get("level_set_id") or "").strip(),
+        "level_set_name": str(level_set.get("display_name") or experiment_variant.get("level_set_name") or "").strip(),
+        "level_profile_id": str(level_set.get("profile_id") or level_profile.get("profile_id") or experiment_variant.get("level_profile_id") or "").strip(),
+        "level_profile_name": str(level_set.get("profile_display_name") or level_profile.get("display_name") or experiment_variant.get("level_profile_name") or "").strip(),
+        "layout_id": str(experiment_variant.get("layout_id") or "").strip(),
+        "layout_name": str(experiment_variant.get("layout_name") or "").strip(),
+        "manual_edit_mode": str(experiment_variant.get("manual_edit_mode") or "").strip(),
+        "layout_correction_count": int(experiment_variant.get("layout_correction_count") or 0),
+        "layout_correction_summary": str(experiment_variant.get("layout_correction_summary") or "").strip(),
+        "derived_from_corrected_layout": bool(experiment_variant.get("derived_from_corrected_layout")),
+        "layout_correction_artifact_path": str(experiment_variant.get("layout_correction_artifact_path") or "").strip(),
+        "layout_correction_history_path": str(experiment_variant.get("layout_correction_history_path") or "").strip(),
+        "corrected_layout_artifact_path": str(experiment_variant.get("corrected_layout_artifact_path") or "").strip(),
+        "layout_validation_available": bool(experiment_variant.get("layout_validation_available")),
+        "layout_validation_status": str(experiment_variant.get("layout_validation_status") or "").strip(),
+        "layout_validation_status_label": str(experiment_variant.get("layout_validation_status_label") or "").strip(),
+        "layout_validation_summary": str(experiment_variant.get("layout_validation_summary") or "").strip(),
+        "layout_validation_issue_count": int(experiment_variant.get("layout_validation_issue_count") or 0),
+        "layout_validation_blocking_issue_count": int(experiment_variant.get("layout_validation_blocking_issue_count") or 0),
+        "layout_validation_severity_counts": dict(experiment_variant.get("layout_validation_severity_counts") or {}),
+        "layout_validation_severity_summary": str(experiment_variant.get("layout_validation_severity_summary") or "").strip(),
+        "layout_validation_category_counts": dict(experiment_variant.get("layout_validation_category_counts") or {}),
+        "layout_validation_category_summary": str(experiment_variant.get("layout_validation_category_summary") or "").strip(),
+        "layout_validation_issue_type_counts": dict(experiment_variant.get("layout_validation_issue_type_counts") or {}),
+        "layout_validation_issue_type_summary": str(experiment_variant.get("layout_validation_issue_type_summary") or "").strip(),
+        "layout_validation_highlights": list(experiment_variant.get("layout_validation_highlights") or []),
         "target_entity": target_context,
         "target_context": target_context,
         "speed_tier": speed_tier,
@@ -213,6 +317,14 @@ def _build_result_snapshot(
         "jump_height_value": jump_height_value,
         "gravity_tier": gravity_tier,
         "gravity_value": gravity_value,
+        "gap_size_tier": gap_size_tier,
+        "gap_size_value": gap_size_value,
+        "obstacle_density_tier": obstacle_density_tier,
+        "obstacle_density_value": obstacle_density_value,
+        "enemy_density_tier": enemy_density_tier,
+        "enemy_density_value": enemy_density_value,
+        "segment_count_tier": segment_count_tier,
+        "segment_count_value": segment_count_value,
         "acceleration_tier": acceleration_tier,
         "acceleration_value": acceleration_value,
         "max_speed_tier": max_speed_tier,
@@ -231,6 +343,14 @@ def _build_result_snapshot(
             jump_height_value=jump_height_value,
             gravity_tier=gravity_tier,
             gravity_value=gravity_value,
+            gap_size_tier=gap_size_tier,
+            gap_size_value=gap_size_value,
+            obstacle_density_tier=obstacle_density_tier,
+            obstacle_density_value=obstacle_density_value,
+            enemy_density_tier=enemy_density_tier,
+            enemy_density_value=enemy_density_value,
+            segment_count_tier=segment_count_tier,
+            segment_count_value=segment_count_value,
             acceleration_tier=acceleration_tier,
             acceleration_value=acceleration_value,
             max_speed_tier=max_speed_tier,
@@ -270,12 +390,16 @@ def _evaluate_snapshots(
         return None
 
     comparison_entries = _comparison_entries(comparison_snapshot, current_snapshot)
+    layout_validation_delta = build_platformer_layout_validation_delta(comparison_snapshot, current_snapshot)
     summary = _build_structured_comparison_summary(
         comparison_entries,
         reference_label="previous version",
         state_section_label="Current state vs previous version",
         inline_key_differences=False,
     )
+    profile_prefix = _profile_summary_prefix(comparison_snapshot, current_snapshot)
+    if profile_prefix:
+        summary = f"{profile_prefix}\n{summary}"
     experiment_fields = _experiment_comparison_fields(
         previous_snapshot=comparison_snapshot,
         current_snapshot=current_snapshot,
@@ -284,6 +408,29 @@ def _evaluate_snapshots(
 
     return {
         "evaluation_source": EVALUATION_SOURCE,
+        "applied_level_set_id": str(current_snapshot.get("level_set_id") or "").strip(),
+        "applied_level_set_name": str(current_snapshot.get("level_set_name") or "").strip(),
+        "applied_profile_id": str(current_snapshot.get("level_profile_id") or "").strip(),
+        "applied_profile_name": str(current_snapshot.get("level_profile_name") or "").strip(),
+        "layout_correction_count": int(current_snapshot.get("layout_correction_count") or 0),
+        "layout_correction_summary": str(current_snapshot.get("layout_correction_summary") or "").strip(),
+        "derived_from_corrected_layout": bool(current_snapshot.get("derived_from_corrected_layout")),
+        "layout_correction_artifact_path": str(current_snapshot.get("layout_correction_artifact_path") or "").strip(),
+        "corrected_layout_artifact_path": str(current_snapshot.get("corrected_layout_artifact_path") or "").strip(),
+        "layout_validation_available": bool(current_snapshot.get("layout_validation_available")),
+        "layout_validation_status": str(current_snapshot.get("layout_validation_status") or "").strip(),
+        "layout_validation_status_label": str(current_snapshot.get("layout_validation_status_label") or "").strip(),
+        "layout_validation_summary": str(current_snapshot.get("layout_validation_summary") or "").strip(),
+        "layout_validation_issue_count": int(current_snapshot.get("layout_validation_issue_count") or 0),
+        "layout_validation_blocking_issue_count": int(current_snapshot.get("layout_validation_blocking_issue_count") or 0),
+        "layout_validation_severity_counts": dict(current_snapshot.get("layout_validation_severity_counts") or {}),
+        "layout_validation_severity_summary": str(current_snapshot.get("layout_validation_severity_summary") or "").strip(),
+        "layout_validation_category_counts": dict(current_snapshot.get("layout_validation_category_counts") or {}),
+        "layout_validation_category_summary": str(current_snapshot.get("layout_validation_category_summary") or "").strip(),
+        "layout_validation_issue_type_counts": dict(current_snapshot.get("layout_validation_issue_type_counts") or {}),
+        "layout_validation_issue_type_summary": str(current_snapshot.get("layout_validation_issue_type_summary") or "").strip(),
+        "layout_validation_highlights": list(current_snapshot.get("layout_validation_highlights") or []),
+        "layout_validation_delta": layout_validation_delta if bool(layout_validation_delta.get("available")) else {},
         "comparison_description": summary,
         "detected_differences": [entry["delta"] for entry in comparison_entries],
         "suggestion": "",
@@ -384,6 +531,9 @@ def _experiment_comparison_fields(
         state_section_label=state_section_label,
         inline_key_differences=True,
     )
+    profile_prefix = _profile_summary_prefix(comparison_snapshot, current_snapshot)
+    if profile_prefix:
+        description = f"{profile_prefix}\n{description}"
     fields["compared_against_variant_id"] = compared_against_variant_id
     fields["experiment_comparison_description"] = description
     return fields
@@ -398,15 +548,40 @@ def build_structured_state_comparison(
     inline_key_differences: bool = True,
 ) -> Dict[str, Any]:
     comparison_entries = _comparison_entries(previous_snapshot, current_snapshot)
+    comparison_description = _build_structured_comparison_summary(
+        comparison_entries,
+        reference_label=reference_label,
+        state_section_label=state_section_label,
+        inline_key_differences=inline_key_differences,
+    )
+    profile_prefix = _profile_summary_prefix(previous_snapshot, current_snapshot)
+    if profile_prefix:
+        comparison_description = f"{profile_prefix}\n{comparison_description}"
     return {
-        "comparison_description": _build_structured_comparison_summary(
-            comparison_entries,
-            reference_label=reference_label,
-            state_section_label=state_section_label,
-            inline_key_differences=inline_key_differences,
-        ),
+        "comparison_description": comparison_description,
         "detected_differences": [entry["delta"] for entry in comparison_entries],
         "expected_impacts": _dedupe_lines(entry["impact"] for entry in comparison_entries),
+        "applied_level_set_id": str(current_snapshot.get("level_set_id") or "").strip(),
+        "applied_level_set_name": str(current_snapshot.get("level_set_name") or "").strip(),
+        "applied_profile_id": str(current_snapshot.get("level_profile_id") or "").strip(),
+        "applied_profile_name": str(current_snapshot.get("level_profile_name") or "").strip(),
+        "layout_correction_count": int(current_snapshot.get("layout_correction_count") or 0),
+        "layout_correction_summary": str(current_snapshot.get("layout_correction_summary") or "").strip(),
+        "derived_from_corrected_layout": bool(current_snapshot.get("derived_from_corrected_layout")),
+        "layout_validation_available": bool(current_snapshot.get("layout_validation_available")),
+        "layout_validation_status": str(current_snapshot.get("layout_validation_status") or "").strip(),
+        "layout_validation_status_label": str(current_snapshot.get("layout_validation_status_label") or "").strip(),
+        "layout_validation_summary": str(current_snapshot.get("layout_validation_summary") or "").strip(),
+        "layout_validation_issue_count": int(current_snapshot.get("layout_validation_issue_count") or 0),
+        "layout_validation_blocking_issue_count": int(current_snapshot.get("layout_validation_blocking_issue_count") or 0),
+        "layout_validation_severity_counts": dict(current_snapshot.get("layout_validation_severity_counts") or {}),
+        "layout_validation_severity_summary": str(current_snapshot.get("layout_validation_severity_summary") or "").strip(),
+        "layout_validation_category_counts": dict(current_snapshot.get("layout_validation_category_counts") or {}),
+        "layout_validation_category_summary": str(current_snapshot.get("layout_validation_category_summary") or "").strip(),
+        "layout_validation_issue_type_counts": dict(current_snapshot.get("layout_validation_issue_type_counts") or {}),
+        "layout_validation_issue_type_summary": str(current_snapshot.get("layout_validation_issue_type_summary") or "").strip(),
+        "layout_validation_highlights": list(current_snapshot.get("layout_validation_highlights") or []),
+        "layout_validation_delta": build_platformer_layout_validation_delta(previous_snapshot, current_snapshot),
     }
 
 
@@ -599,12 +774,114 @@ def _comparison_entries(
         _compare_movement,
         _compare_encounter_count,
         _compare_spawn_pressure,
+        _compare_layout_validation,
     ):
         entry = comparator(previous_snapshot, current_snapshot)
         if isinstance(entry, dict):
             entries.append(entry)
     entries.extend(_compare_generic_capability_state(previous_snapshot, current_snapshot, existing_entries=entries))
     return entries
+
+
+def _profile_summary_prefix(previous_snapshot: Dict[str, Any], current_snapshot: Dict[str, Any]) -> str:
+    current_level_set = str(current_snapshot.get("level_set_name") or "").strip()
+    previous_level_set = str(previous_snapshot.get("level_set_name") or "").strip()
+    current_profile = str(current_snapshot.get("level_profile_name") or "").strip()
+    previous_profile = str(previous_snapshot.get("level_profile_name") or "").strip()
+    current_correction_summary = str(current_snapshot.get("layout_correction_summary") or "").strip()
+    previous_correction_summary = str(previous_snapshot.get("layout_correction_summary") or "").strip()
+    current_validation_summary = str(current_snapshot.get("layout_validation_summary") or "").strip()
+    previous_validation_summary = str(previous_snapshot.get("layout_validation_summary") or "").strip()
+    current_validation_status_label = _layout_validation_status_label(current_snapshot)
+    previous_validation_status_label = _layout_validation_status_label(previous_snapshot)
+    current_validation_severity_summary = str(current_snapshot.get("layout_validation_severity_summary") or "").strip()
+    previous_validation_severity_summary = str(previous_snapshot.get("layout_validation_severity_summary") or "").strip()
+    current_validation_category_summary = str(current_snapshot.get("layout_validation_category_summary") or "").strip()
+    previous_validation_category_summary = str(previous_snapshot.get("layout_validation_category_summary") or "").strip()
+    lines: List[str] = []
+    if current_level_set:
+        lines.append(f"Applied level set: {current_level_set}.")
+    if current_level_set and previous_level_set and current_level_set != previous_level_set:
+        lines.append(f"Previous level set: {previous_level_set}.")
+    if current_profile:
+        lines.append(f"Applied profile: {current_profile}.")
+    if current_profile and previous_profile and current_profile != previous_profile:
+        lines.append(f"Previous profile: {previous_profile}.")
+    if current_correction_summary:
+        lines.append(f"Manual correction capture: {current_correction_summary}")
+    if previous_correction_summary and previous_correction_summary != current_correction_summary:
+        lines.append(f"Previous manual correction capture: {previous_correction_summary}")
+    if bool(current_snapshot.get("derived_from_corrected_layout")):
+        lines.append("Derived from corrected layout: yes.")
+    if current_validation_summary:
+        lines.append(f"Spatial validation status: {current_validation_status_label}.")
+        lines.append(f"Spatial validation summary: {current_validation_summary}")
+    elif bool(current_snapshot.get("layout_validation_available")):
+        lines.append(f"Spatial validation status: {current_validation_status_label}.")
+    if current_validation_severity_summary and current_validation_severity_summary != "none":
+        lines.append(f"Spatial validation severity: {current_validation_severity_summary}.")
+    if current_validation_category_summary and current_validation_category_summary != "none":
+        lines.append(f"Spatial validation categories: {current_validation_category_summary}.")
+    if previous_validation_summary and previous_validation_summary != current_validation_summary:
+        lines.append(f"Previous spatial validation summary: {previous_validation_summary}")
+    if previous_validation_status_label and previous_validation_status_label != current_validation_status_label:
+        lines.append(f"Previous spatial validation status: {previous_validation_status_label}.")
+    if previous_validation_severity_summary and previous_validation_severity_summary != current_validation_severity_summary:
+        lines.append(f"Previous spatial validation severity: {previous_validation_severity_summary}.")
+    if previous_validation_category_summary and previous_validation_category_summary != current_validation_category_summary:
+        lines.append(f"Previous spatial validation categories: {previous_validation_category_summary}.")
+    return "\n".join(lines)
+
+
+def _compare_layout_validation(previous_snapshot: Dict[str, Any], current_snapshot: Dict[str, Any]) -> Dict[str, Any] | None:
+    delta = build_platformer_layout_validation_delta(previous_snapshot, current_snapshot)
+    if not bool(delta.get("available")):
+        return None
+    if (
+        int(delta.get("issue_count_delta") or 0) == 0
+        and int(delta.get("blocking_issue_count_delta") or 0) == 0
+        and not list(delta.get("changed_categories") or [])
+        and not list(delta.get("changed_issue_types") or [])
+        and str(delta.get("previous_status") or "") == str(delta.get("current_status") or "")
+    ):
+        return None
+    if int(delta.get("issue_count_delta") or 0) > 0:
+        impact = "More spatial validation issues are recorded in this result."
+        sign = 1
+    elif int(delta.get("issue_count_delta") or 0) < 0:
+        impact = "Fewer spatial validation issues are recorded in this result."
+        sign = -1
+    else:
+        impact = "Spatial validation findings changed by issue type."
+        sign = 0
+    return {
+        "attribute": "Spatial validation",
+        "current_display": _layout_validation_state_text(current_snapshot),
+        "previous_display": _layout_validation_state_text(previous_snapshot),
+        "delta": str(delta.get("summary") or "Spatial validation changed.").strip(),
+        "impact": impact,
+        "sign": sign,
+    }
+
+
+def _layout_validation_state_text(snapshot: Dict[str, Any]) -> str:
+    issue_count = int(snapshot.get("layout_validation_issue_count") or 0)
+    status_label = _layout_validation_status_label(snapshot)
+    severity_summary = str(snapshot.get("layout_validation_severity_summary") or "").strip()
+    category_summary = str(snapshot.get("layout_validation_category_summary") or "").strip()
+    parts = [status_label, f"{issue_count} issue(s)"]
+    if severity_summary and severity_summary != "none":
+        parts.append(f"severity {severity_summary}")
+    if category_summary and category_summary != "none":
+        parts.append(f"categories {category_summary}")
+    return " | ".join(parts)
+
+
+def _layout_validation_status_label(snapshot: Dict[str, Any]) -> str:
+    text = str(snapshot.get("layout_validation_status_label") or "").strip()
+    if text:
+        return text
+    return validation_status_label(str(snapshot.get("layout_validation_status") or "passed"))
 
 
 def _compare_generic_capability_state(
@@ -712,6 +989,30 @@ def _generic_capability_impact(parameter_name: str, *, sign: int) -> str:
         if sign < 0:
             return "Slower fall speed."
         return "No deterministic gravity change detected."
+    if parameter_name == "gap_size":
+        if sign > 0:
+            return "Wider jumps required."
+        if sign < 0:
+            return "Shorter jumps required."
+        return "No deterministic gap-size change detected."
+    if parameter_name == "obstacle_density":
+        if sign > 0:
+            return "More obstacles per segment."
+        if sign < 0:
+            return "Fewer obstacles."
+        return "No deterministic obstacle-density change detected."
+    if parameter_name == "enemy_density":
+        if sign > 0:
+            return "More enemies per segment."
+        if sign < 0:
+            return "Fewer enemies per segment."
+        return "No deterministic enemy-density change detected."
+    if parameter_name == "segment_count":
+        if sign > 0:
+            return "Longer level traversal."
+        if sign < 0:
+            return "Shorter level traversal."
+        return "No deterministic segment-count change detected."
     if parameter_name == "acceleration":
         if sign > 0:
             return "Quicker speed buildup."

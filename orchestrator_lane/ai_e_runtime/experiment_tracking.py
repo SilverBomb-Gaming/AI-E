@@ -5,8 +5,15 @@ from typing import Any, Dict, List
 
 from .encounter_profiles import encounter_display_name
 from .generic_capabilities import build_generic_capability_state
+from .platformer_layout_corrections import extract_platformer_layout_correction_metadata
+from .platformer_layout_validation import extract_platformer_layout_validation_metadata
 from .intent_normalizer import normalize_prompt
-from .platformer_profiles import platformer_display_name
+from .platformer_profiles import (
+    platformer_display_name,
+    resolve_platformer_level_profile,
+    resolve_platformer_level_set,
+    resolve_platformer_level_set_by_name,
+)
 from .racing_profiles import racing_display_name
 from .session_tuning import SESSION_FOLLOWUP_RESOLUTION
 from .tuning_contexts import (
@@ -21,6 +28,7 @@ from .tuning_contexts import (
 EXPERIMENT_REVIEW_RESOLUTION = "experiment_review"
 EXPERIMENT_DECISION_RESOLUTION = "experiment_decision_review"
 EXPERIMENT_NAVIGATION_RESOLUTION = "experiment_navigation_review"
+PLATFORMER_LEVEL_SET_REVIEW_RESOLUTION = "platformer_level_set_review"
 EXPERIMENT_DECISION_SOURCE = "explicit_user_review"
 EXPERIMENT_NAVIGATION_SOURCE = "explicit_user_navigation"
 
@@ -41,6 +49,7 @@ _VARIANT_COMPARE_PROMPT = re.compile(
 _EXPERIMENT_COMPARE_PROMPT = re.compile(r"^compare\s+(experiment_\d{4})\s+and\s+(experiment_\d{4})$")
 _BASELINE_COMPARE_PROMPT = re.compile(r"^compare\s+baselines\s+of\s+(experiment_\d{4})\s+and\s+(experiment_\d{4})$")
 _VARIANT_COMPARE_AMBIGUOUS_PROMPT = re.compile(r"^compare\s+(variant_\d{4})$")
+_PLATFORMER_LEVEL_SET_COMPARE_PROMPT = re.compile(r"^compare\s+(level\s+set\s+[abc])\s+and\s+(level\s+set\s+[abc])$")
 _BASELINE_RESTORE_PROMPTS = {
     prompt
     for context in supported_tuning_contexts()
@@ -67,6 +76,7 @@ def is_experiment_navigation_prompt(prompt: str) -> bool:
     return any(
         pattern.fullmatch(normalized)
         for pattern in (
+            _PLATFORMER_LEVEL_SET_COMPARE_PROMPT,
             _EXPERIMENT_OPEN_PROMPT,
             _EXPERIMENT_SUMMARY_PROMPT,
             _VARIANT_INSPECT_PROMPT,
@@ -80,6 +90,13 @@ def is_experiment_navigation_prompt(prompt: str) -> bool:
 
 def build_experiment_navigation_preview(prompt: str, session_state: Dict[str, Any]) -> Dict[str, Any] | None:
     normalized = normalize_prompt(prompt)
+    level_set_compare_match = _PLATFORMER_LEVEL_SET_COMPARE_PROMPT.fullmatch(normalized)
+    if level_set_compare_match is not None:
+        return _build_platformer_level_set_comparison_preview(
+            left_level_set_name=level_set_compare_match.group(1),
+            right_level_set_name=level_set_compare_match.group(2),
+        )
+
     if normalized in _EXPERIMENT_LIST_PROMPTS:
         return _build_experiment_list_preview(session_state)
 
@@ -573,8 +590,26 @@ def apply_experiment_tracking(
     pressure_record = _family_record(state, family="spawn_pressure", target_context=target_context)
     jump_height_record = _family_record(state, family="jump_height", target_context=target_context)
     gravity_record = _family_record(state, family="gravity", target_context=target_context)
+    gap_size_record = _family_record(state, family="gap_size", target_context=target_context)
+    obstacle_density_record = _family_record(state, family="obstacle_density", target_context=target_context)
+    enemy_density_record = _family_record(state, family="enemy_density", target_context=target_context)
+    segment_count_record = _family_record(state, family="segment_count", target_context=target_context)
     acceleration_record = _family_record(state, family="acceleration", target_context=target_context)
     max_speed_record = _family_record(state, family="max_speed", target_context=target_context)
+    level_profile = _platformer_level_profile_metadata(
+        target_context=target_context,
+        plan_key=str(task.get("plan_key") or "").strip(),
+        plan_title=str(task.get("plan_title") or "").strip(),
+        prompt=str(details.get("translated_command") or task.get("source_prompt") or task.get("operator_prompt") or "").strip(),
+    )
+    level_set = _platformer_level_set_metadata(
+        target_context=target_context,
+        plan_key=str(task.get("plan_key") or "").strip(),
+        plan_title=str(task.get("plan_title") or "").strip(),
+        prompt=str(details.get("translated_command") or task.get("source_prompt") or task.get("operator_prompt") or "").strip(),
+    )
+    layout_correction = extract_platformer_layout_correction_metadata(details)
+    layout_validation = extract_platformer_layout_validation_metadata(details)
 
     record = {
         "experiment_id": str(experiment.get("experiment_id") or "").strip(),
@@ -589,11 +624,41 @@ def apply_experiment_tracking(
         "task_id": str(task.get("task_id") or "").strip(),
         "request_id": str(task.get("request_id") or "").strip(),
         "plan_id": str(task.get("plan_id") or "").strip(),
+        "plan_key": str(task.get("plan_key") or "").strip(),
         "plan_title": str(task.get("plan_title") or "").strip(),
         "source_prompt": str(task.get("source_prompt") or task.get("operator_prompt") or "").strip(),
         "canonical_prompt": str(details.get("translated_command") or task.get("operator_prompt") or "").strip(),
         "resolution_source": str(details.get("resolution_source") or task.get("resolution_source") or "").strip(),
         "resolved_from_prompt": str(details.get("resolved_from_prompt") or task.get("resolved_from_prompt") or "").strip(),
+        "level_set_id": str(level_set.get("level_set_id") or "").strip(),
+        "level_set_name": str(level_set.get("display_name") or "").strip(),
+        "level_profile_id": str(level_set.get("profile_id") or level_profile.get("profile_id") or "").strip(),
+        "level_profile_name": str(level_set.get("profile_display_name") or level_profile.get("display_name") or "").strip(),
+        "layout_id": str(layout_correction.get("layout_id") or "").strip(),
+        "layout_name": str(layout_correction.get("layout_name") or "").strip(),
+        "manual_edit_mode": str(layout_correction.get("manual_edit_mode") or "").strip(),
+        "layout_correction_count": int(layout_correction.get("layout_correction_count") or 0),
+        "layout_correction_summary": str(layout_correction.get("layout_correction_summary") or "").strip(),
+        "editable_object_types": list(layout_correction.get("editable_object_types") or []),
+        "derived_from_corrected_layout": bool(layout_correction.get("derived_from_corrected_layout")),
+        "layout_correction_artifact_path": str(layout_correction.get("layout_correction_artifact_path") or "").strip(),
+        "layout_correction_history_path": str(layout_correction.get("layout_correction_history_path") or "").strip(),
+        "corrected_layout_artifact_path": str(layout_correction.get("corrected_layout_artifact_path") or "").strip(),
+        "derived_from_correction_artifact_path": str(layout_correction.get("derived_from_correction_artifact_path") or "").strip(),
+        "layout_validation_available": bool(layout_validation.get("layout_validation_available", False)),
+        "layout_validation_status": str(layout_validation.get("layout_validation_status") or "").strip(),
+        "layout_validation_status_label": str(layout_validation.get("layout_validation_status_label") or "").strip(),
+        "layout_validation_summary": str(layout_validation.get("layout_validation_summary") or "").strip(),
+        "layout_validation_issue_count": int(layout_validation.get("layout_validation_issue_count") or 0),
+        "layout_validation_blocking_issue_count": int(layout_validation.get("layout_validation_blocking_issue_count") or 0),
+        "layout_validation_issue_codes": list(layout_validation.get("layout_validation_issue_codes") or []),
+        "layout_validation_severity_counts": dict(layout_validation.get("layout_validation_severity_counts") or {}),
+        "layout_validation_severity_summary": str(layout_validation.get("layout_validation_severity_summary") or "").strip(),
+        "layout_validation_category_counts": dict(layout_validation.get("layout_validation_category_counts") or {}),
+        "layout_validation_category_summary": str(layout_validation.get("layout_validation_category_summary") or "").strip(),
+        "layout_validation_issue_type_counts": dict(layout_validation.get("layout_validation_issue_type_counts") or {}),
+        "layout_validation_issue_type_summary": str(layout_validation.get("layout_validation_issue_type_summary") or "").strip(),
+        "layout_validation_highlights": list(layout_validation.get("layout_validation_highlights") or []),
         "speed_tier": str(speed_record.get("resulting_tier") or "").strip(),
         "speed_value": speed_record.get("observed_value"),
         "aggression_tier": str(aggression_record.get("resulting_tier") or "").strip(),
@@ -608,6 +673,14 @@ def apply_experiment_tracking(
         "jump_height_value": jump_height_record.get("observed_value"),
         "gravity_tier": str(gravity_record.get("resulting_tier") or "").strip(),
         "gravity_value": gravity_record.get("observed_value"),
+        "gap_size_tier": str(gap_size_record.get("resulting_tier") or "").strip(),
+        "gap_size_value": gap_size_record.get("observed_value"),
+        "obstacle_density_tier": str(obstacle_density_record.get("resulting_tier") or "").strip(),
+        "obstacle_density_value": obstacle_density_record.get("observed_value"),
+        "enemy_density_tier": str(enemy_density_record.get("resulting_tier") or "").strip(),
+        "enemy_density_value": enemy_density_record.get("observed_value"),
+        "segment_count_tier": str(segment_count_record.get("resulting_tier") or "").strip(),
+        "segment_count_value": segment_count_record.get("observed_value"),
         "acceleration_tier": str(acceleration_record.get("resulting_tier") or "").strip(),
         "acceleration_value": acceleration_record.get("observed_value"),
         "max_speed_tier": str(max_speed_record.get("resulting_tier") or "").strip(),
@@ -626,6 +699,14 @@ def apply_experiment_tracking(
             jump_height_value=jump_height_record.get("observed_value"),
             gravity_tier=str(gravity_record.get("resulting_tier") or "").strip(),
             gravity_value=gravity_record.get("observed_value"),
+            gap_size_tier=str(gap_size_record.get("resulting_tier") or "").strip(),
+            gap_size_value=gap_size_record.get("observed_value"),
+            obstacle_density_tier=str(obstacle_density_record.get("resulting_tier") or "").strip(),
+            obstacle_density_value=obstacle_density_record.get("observed_value"),
+            enemy_density_tier=str(enemy_density_record.get("resulting_tier") or "").strip(),
+            enemy_density_value=enemy_density_record.get("observed_value"),
+            segment_count_tier=str(segment_count_record.get("resulting_tier") or "").strip(),
+            segment_count_value=segment_count_record.get("observed_value"),
             acceleration_tier=str(acceleration_record.get("resulting_tier") or "").strip(),
             acceleration_value=acceleration_record.get("observed_value"),
             max_speed_tier=str(max_speed_record.get("resulting_tier") or "").strip(),
@@ -647,6 +728,10 @@ def apply_experiment_tracking(
             spawn_pressure_tier=str(pressure_record.get("resulting_tier") or "").strip(),
             jump_height_tier=str(jump_height_record.get("resulting_tier") or "").strip(),
             gravity_tier=str(gravity_record.get("resulting_tier") or "").strip(),
+            gap_size_tier=str(gap_size_record.get("resulting_tier") or "").strip(),
+            obstacle_density_tier=str(obstacle_density_record.get("resulting_tier") or "").strip(),
+            enemy_density_tier=str(enemy_density_record.get("resulting_tier") or "").strip(),
+            segment_count_tier=str(segment_count_record.get("resulting_tier") or "").strip(),
             acceleration_tier=str(acceleration_record.get("resulting_tier") or "").strip(),
             max_speed_tier=str(max_speed_record.get("resulting_tier") or "").strip(),
             details=details,
@@ -835,6 +920,110 @@ def _decision_status(variant: Dict[str, Any]) -> str:
     return "undecided"
 
 
+def _platformer_level_profile_metadata(
+    *,
+    target_context: str,
+    plan_key: str,
+    plan_title: str,
+    prompt: str,
+) -> Dict[str, Any]:
+    if target_context != "platformer":
+        return {}
+    return resolve_platformer_level_profile(
+        plan_key=plan_key,
+        plan_title=plan_title,
+        prompt=prompt,
+    )
+
+
+def _platformer_level_set_metadata(
+    *,
+    target_context: str,
+    plan_key: str,
+    plan_title: str,
+    prompt: str,
+) -> Dict[str, Any]:
+    if target_context != "platformer":
+        return {}
+    return resolve_platformer_level_set(
+        plan_key=plan_key,
+        plan_title=plan_title,
+        prompt=prompt,
+    )
+
+
+def _variant_level_set_text(variant: Dict[str, Any]) -> str:
+    level_set_name = str(variant.get("level_set_name") or "").strip()
+    if level_set_name:
+        return level_set_name
+    level_set = _platformer_level_set_metadata(
+        target_context=str(variant.get("target_context") or variant.get("target_entity") or "").strip(),
+        plan_key=str(variant.get("plan_key") or "").strip(),
+        plan_title=str(variant.get("plan_title") or "").strip(),
+        prompt=str(variant.get("canonical_prompt") or variant.get("source_prompt") or "").strip(),
+    )
+    return str(level_set.get("display_name") or "").strip()
+
+
+def _variant_level_profile_text(variant: Dict[str, Any]) -> str:
+    profile_name = str(variant.get("level_profile_name") or "").strip()
+    if profile_name:
+        return profile_name
+    level_set = _platformer_level_set_metadata(
+        target_context=str(variant.get("target_context") or variant.get("target_entity") or "").strip(),
+        plan_key=str(variant.get("plan_key") or "").strip(),
+        plan_title=str(variant.get("plan_title") or "").strip(),
+        prompt=str(variant.get("canonical_prompt") or variant.get("source_prompt") or "").strip(),
+    )
+    set_profile_name = str(level_set.get("profile_display_name") or "").strip()
+    if set_profile_name:
+        return set_profile_name
+    profile = _platformer_level_profile_metadata(
+        target_context=str(variant.get("target_context") or variant.get("target_entity") or "").strip(),
+        plan_key=str(variant.get("plan_key") or "").strip(),
+        plan_title=str(variant.get("plan_title") or "").strip(),
+        prompt=str(variant.get("canonical_prompt") or variant.get("source_prompt") or "").strip(),
+    )
+    return str(profile.get("display_name") or "").strip()
+
+
+def _variant_layout_correction_text(variant: Dict[str, Any]) -> str:
+    summary = str(variant.get("layout_correction_summary") or "").strip()
+    if summary:
+        return summary
+    correction_count = int(variant.get("layout_correction_count") or 0)
+    if correction_count <= 0 and not bool(variant.get("derived_from_corrected_layout")):
+        return ""
+    layout_name = str(variant.get("layout_name") or variant.get("plan_title") or "platformer layout").strip()
+    if correction_count > 0:
+        return f"{correction_count} manual correction(s) saved for {layout_name}."
+    return f"{layout_name} remains derived from a corrected layout."
+
+
+def _variant_layout_validation_text(variant: Dict[str, Any]) -> str:
+    status_label = str(variant.get("layout_validation_status_label") or "").strip()
+    summary = str(variant.get("layout_validation_summary") or "").strip()
+    issue_count = int(variant.get("layout_validation_issue_count") or 0)
+    issue_type_summary = str(variant.get("layout_validation_issue_type_summary") or "").strip()
+    category_summary = str(variant.get("layout_validation_category_summary") or "").strip()
+    severity_summary = str(variant.get("layout_validation_severity_summary") or "").strip()
+    if summary:
+        parts = [summary]
+        if severity_summary and severity_summary != "none":
+            parts.append(f"severity {severity_summary}")
+        if category_summary and category_summary != "none":
+            parts.append(f"categories {category_summary}")
+        return " | ".join(parts)
+    if issue_count > 0:
+        parts = [status_label or "issues detected", f"{issue_count} issue(s)"]
+        if issue_type_summary and issue_type_summary != "none":
+            parts.append(issue_type_summary)
+        return " | ".join(parts)
+    if bool(variant.get("layout_validation_available")):
+        return f"{status_label or 'clean'} | 0 issue(s)"
+    return ""
+
+
 def _review_variant_line(
     variant: Dict[str, Any],
     *,
@@ -852,6 +1041,10 @@ def _review_variant_line(
     ).strip()
     outcome = str(variant.get("outcome_summary") or "Outcome summary not available").strip()
     target_context = _variant_target_context(variant, experiment_target_context=experiment_target_context)
+    level_set_text = _variant_level_set_text(variant)
+    profile_text = _variant_level_profile_text(variant)
+    correction_text = _variant_layout_correction_text(variant)
+    validation_text = _variant_layout_validation_text(variant)
     status_text = ", ".join(
         _variant_status_labels(
             variant,
@@ -862,7 +1055,12 @@ def _review_variant_line(
     )
     return (
         f"{variant_id} | target context: {tuning_context_display_name(target_context)} | "
-        f"status: {status_text} | prompt: {prompt} | outcome: {outcome} | "
+        f"status: {status_text} | prompt: {prompt}"
+        + (f" | level set: {level_set_text}" if level_set_text else "")
+        + (f" | profile: {profile_text}" if profile_text else "")
+        + (f" | manual correction: {correction_text}" if correction_text else "")
+        + (f" | layout validation: {validation_text}" if validation_text else "")
+        + f" | outcome: {outcome} | "
         f"deltas from baseline: {_baseline_delta_text(variant, baseline_variant=baseline_variant)}."
     )
 
@@ -1051,6 +1249,11 @@ def _build_variant_inspection_preview(session_state: Dict[str, Any], *, variant_
         f"Target context: {tuning_context_display_name(target_context)}.",
         f"Status: {', '.join(_variant_status_labels(variant, baseline_variant_id=baseline_variant_id, preferred_baseline_variant_id=preferred_baseline_variant_id, current_variant_id=str(experiment.get('active_variant_id') or '').strip()))}.",
         f"Prompt: {str(variant.get('source_prompt') or variant.get('canonical_prompt') or 'not available').strip() or 'not available'}.",
+        *([f"Applied level set: {_variant_level_set_text(variant)}."] if _variant_level_set_text(variant) else []),
+        *([f"Applied profile: {_variant_level_profile_text(variant)}."] if _variant_level_profile_text(variant) else []),
+        *([f"Manual correction: {_variant_layout_correction_text(variant)}"] if _variant_layout_correction_text(variant) else []),
+        *([f"Spatial validation: {_variant_layout_validation_text(variant)}"] if _variant_layout_validation_text(variant) else []),
+        *(["Derived from corrected layout: yes."] if bool(variant.get("derived_from_corrected_layout")) else []),
         f"Outcome: {str(variant.get('outcome_summary') or 'Outcome summary not available').strip()}.",
         f"Deltas from baseline: {_baseline_delta_text(variant, baseline_variant=baseline_variant)}.",
         f"Decision status: {_decision_status(variant)}.",
@@ -1349,9 +1552,17 @@ def _comparison_lines(
         f"Left experiment: {str(left_experiment.get('experiment_id') or '').strip()}.",
         f"Left variant: {str(left_variant.get('variant_id') or '').strip()}.",
         f"Left target context: {tuning_context_display_name(str(left_snapshot.get('target_context') or '').strip())}.",
+        *([f"Left level set: {str(left_snapshot.get('level_set_name') or '').strip()}." ] if str(left_snapshot.get('level_set_name') or '').strip() else []),
+        *([f"Left profile: {str(left_snapshot.get('level_profile_name') or '').strip()}." ] if str(left_snapshot.get('level_profile_name') or '').strip() else []),
+        *([f"Left manual correction: {str(left_snapshot.get('layout_correction_summary') or '').strip()}" ] if str(left_snapshot.get('layout_correction_summary') or '').strip() else []),
+        *([f"Left layout validation: {str(left_snapshot.get('layout_validation_summary') or '').strip()}" ] if str(left_snapshot.get('layout_validation_summary') or '').strip() else []),
         f"Right experiment: {str(right_experiment.get('experiment_id') or '').strip()}.",
         f"Right variant: {str(right_variant.get('variant_id') or '').strip()}.",
         f"Right target context: {tuning_context_display_name(str(right_snapshot.get('target_context') or '').strip())}.",
+        *([f"Right level set: {str(right_snapshot.get('level_set_name') or '').strip()}." ] if str(right_snapshot.get('level_set_name') or '').strip() else []),
+        *([f"Right profile: {str(right_snapshot.get('level_profile_name') or '').strip()}." ] if str(right_snapshot.get('level_profile_name') or '').strip() else []),
+        *([f"Right manual correction: {str(right_snapshot.get('layout_correction_summary') or '').strip()}" ] if str(right_snapshot.get('layout_correction_summary') or '').strip() else []),
+        *([f"Right layout validation: {str(right_snapshot.get('layout_validation_summary') or '').strip()}" ] if str(right_snapshot.get('layout_validation_summary') or '').strip() else []),
     ]
     lines.extend(
         [line.strip() for line in str(comparison.get("comparison_description") or "").splitlines() if line.strip()]
@@ -1399,6 +1610,30 @@ def _variant_snapshot_for_comparison(experiment: Dict[str, Any], variant: Dict[s
         "variant_id": str(variant.get("variant_id") or "").strip(),
         "target_context": target_context,
         "target_entity": target_context,
+        "plan_key": str(variant.get("plan_key") or "").strip(),
+        "level_set_id": str(variant.get("level_set_id") or "").strip(),
+        "level_set_name": str(variant.get("level_set_name") or "").strip(),
+        "level_profile_id": str(variant.get("level_profile_id") or "").strip(),
+        "level_profile_name": str(variant.get("level_profile_name") or "").strip(),
+        "layout_id": str(variant.get("layout_id") or "").strip(),
+        "layout_name": str(variant.get("layout_name") or "").strip(),
+        "manual_edit_mode": str(variant.get("manual_edit_mode") or "").strip(),
+        "layout_correction_count": int(variant.get("layout_correction_count") or 0),
+        "layout_correction_summary": str(variant.get("layout_correction_summary") or "").strip(),
+        "derived_from_corrected_layout": bool(variant.get("derived_from_corrected_layout")),
+        "layout_validation_available": bool(variant.get("layout_validation_available")),
+        "layout_validation_status": str(variant.get("layout_validation_status") or "").strip(),
+        "layout_validation_status_label": str(variant.get("layout_validation_status_label") or "").strip(),
+        "layout_validation_summary": str(variant.get("layout_validation_summary") or "").strip(),
+        "layout_validation_issue_count": int(variant.get("layout_validation_issue_count") or 0),
+        "layout_validation_blocking_issue_count": int(variant.get("layout_validation_blocking_issue_count") or 0),
+        "layout_validation_severity_counts": dict(variant.get("layout_validation_severity_counts") or {}),
+        "layout_validation_severity_summary": str(variant.get("layout_validation_severity_summary") or "").strip(),
+        "layout_validation_category_counts": dict(variant.get("layout_validation_category_counts") or {}),
+        "layout_validation_category_summary": str(variant.get("layout_validation_category_summary") or "").strip(),
+        "layout_validation_issue_type_counts": dict(variant.get("layout_validation_issue_type_counts") or {}),
+        "layout_validation_issue_type_summary": str(variant.get("layout_validation_issue_type_summary") or "").strip(),
+        "layout_validation_highlights": list(variant.get("layout_validation_highlights") or []),
         "speed_tier": str(variant.get("speed_tier") or "").strip(),
         "aggression_tier": str(variant.get("aggression_tier") or "").strip(),
         "movement_tier": str(variant.get("movement_tier") or "").strip(),
@@ -1411,6 +1646,14 @@ def _variant_snapshot_for_comparison(experiment: Dict[str, Any], variant: Dict[s
         "jump_height_value": _float_or_none(variant.get("jump_height_value")),
         "gravity_tier": str(variant.get("gravity_tier") or "").strip(),
         "gravity_value": _float_or_none(variant.get("gravity_value")),
+        "gap_size_tier": str(variant.get("gap_size_tier") or "").strip(),
+        "gap_size_value": _float_or_none(variant.get("gap_size_value")),
+        "obstacle_density_tier": str(variant.get("obstacle_density_tier") or "").strip(),
+        "obstacle_density_value": _float_or_none(variant.get("obstacle_density_value")),
+        "enemy_density_tier": str(variant.get("enemy_density_tier") or "").strip(),
+        "enemy_density_value": _float_or_none(variant.get("enemy_density_value")),
+        "segment_count_tier": str(variant.get("segment_count_tier") or "").strip(),
+        "segment_count_value": _float_or_none(variant.get("segment_count_value")),
         "acceleration_tier": str(variant.get("acceleration_tier") or "").strip(),
         "acceleration_value": _float_or_none(variant.get("acceleration_value")),
         "max_speed_tier": str(variant.get("max_speed_tier") or "").strip(),
@@ -1786,6 +2029,18 @@ def _baseline_delta_text(variant: Dict[str, Any], *, baseline_variant: Dict[str,
     gravity_delta = _tier_delta_text(variant, baseline_variant=baseline_variant, key="gravity_tier", label="Gravity")
     if gravity_delta:
         deltas.append(gravity_delta)
+    gap_size_delta = _tier_delta_text(variant, baseline_variant=baseline_variant, key="gap_size_tier", label="Gap size")
+    if gap_size_delta:
+        deltas.append(gap_size_delta)
+    obstacle_density_delta = _tier_delta_text(variant, baseline_variant=baseline_variant, key="obstacle_density_tier", label="Obstacle density")
+    if obstacle_density_delta:
+        deltas.append(obstacle_density_delta)
+    enemy_density_delta = _tier_delta_text(variant, baseline_variant=baseline_variant, key="enemy_density_tier", label="Enemy density")
+    if enemy_density_delta:
+        deltas.append(enemy_density_delta)
+    segment_count_delta = _tier_delta_text(variant, baseline_variant=baseline_variant, key="segment_count_tier", label="Segment count")
+    if segment_count_delta:
+        deltas.append(segment_count_delta)
     acceleration_delta = _tier_delta_text(variant, baseline_variant=baseline_variant, key="acceleration_tier", label="Acceleration")
     if acceleration_delta:
         deltas.append(acceleration_delta)
@@ -1886,6 +2141,10 @@ def _outcome_summary(
     spawn_pressure_tier: str,
     jump_height_tier: str,
     gravity_tier: str,
+    gap_size_tier: str,
+    obstacle_density_tier: str,
+    enemy_density_tier: str,
+    segment_count_tier: str,
     acceleration_tier: str,
     max_speed_tier: str,
     details: Dict[str, Any],
@@ -1915,6 +2174,14 @@ def _outcome_summary(
         parts.append(f"jump height {jump_height_tier}")
     if gravity_tier:
         parts.append(f"gravity {gravity_tier.replace('_', ' ')}")
+    if gap_size_tier:
+        parts.append(f"gap size {gap_size_tier}")
+    if obstacle_density_tier:
+        parts.append(f"obstacle density {obstacle_density_tier}")
+    if enemy_density_tier:
+        parts.append(f"enemy density {enemy_density_tier}")
+    if segment_count_tier:
+        parts.append(f"segment count {segment_count_tier}")
     if acceleration_tier:
         parts.append(f"acceleration {acceleration_tier}")
     if max_speed_tier:
@@ -1923,6 +2190,120 @@ def _outcome_summary(
         action_name = str(details.get("action_name") or details.get("action_type") or "supported change").strip()
         return action_name.replace("_", " ")
     return ", ".join(parts)
+
+
+def _build_platformer_level_set_comparison_preview(
+    *,
+    left_level_set_name: str,
+    right_level_set_name: str,
+) -> Dict[str, Any]:
+    left_level_set = resolve_platformer_level_set_by_name(left_level_set_name)
+    right_level_set = resolve_platformer_level_set_by_name(right_level_set_name)
+    if not left_level_set or not right_level_set:
+        return _navigation_block(
+            title="Level set comparison",
+            overview="AI-E could not resolve one or both named platformer level sets.",
+            reason="level_set_not_found",
+            expected_outcome="Clarification only. No execution will start.",
+        )
+
+    left_snapshot = _platformer_level_set_snapshot(left_level_set)
+    right_snapshot = _platformer_level_set_snapshot(right_level_set)
+    comparison = _build_cross_experiment_comparison(
+        left_snapshot,
+        right_snapshot,
+        reference_label=str(right_level_set.get("display_name") or "reference level set").strip(),
+        state_section_label="Compared level set vs reference level set",
+    )
+
+    lines = [
+        f"Left level set: {str(left_level_set.get('display_name') or '').strip()}.",
+        f"Left profile: {str(left_level_set.get('profile_display_name') or '').strip()}.",
+        f"Left composition: {_platformer_level_set_composition_text(left_level_set)}.",
+        f"Right level set: {str(right_level_set.get('display_name') or '').strip()}.",
+        f"Right profile: {str(right_level_set.get('profile_display_name') or '').strip()}.",
+        f"Right composition: {_platformer_level_set_composition_text(right_level_set)}.",
+    ]
+    lines.extend(
+        [line.strip() for line in str(comparison.get("comparison_description") or "").splitlines() if line.strip()]
+    )
+    differences = [
+        str(item).strip()
+        for item in (comparison.get("detected_differences") or [])
+        if str(item).strip()
+    ]
+    if differences:
+        lines.append("Explicit deltas:")
+        lines.extend(differences)
+
+    return {
+        "blocked": False,
+        "title": "Level set comparison",
+        "overview": "\n".join(
+            [
+                "Platformer level set comparison.",
+                f"Left level set: {str(left_level_set.get('display_name') or '').strip()}.",
+                f"Right level set: {str(right_level_set.get('display_name') or '').strip()}.",
+                "Execution: none.",
+            ]
+        ),
+        "lines": lines,
+        "recommended_action": "refresh_summary",
+        "decision_reason": "platformer_level_set_comparison",
+        "plan_execution_mode": "Explicit level set review",
+        "expected_outcome": "Review only. No execution will start.",
+    }
+
+
+def _platformer_level_set_composition_text(level_set: Dict[str, Any]) -> str:
+    tiers = dict(level_set.get("tiers") or {})
+    return ", ".join(
+        [
+            f"jump height {str(tiers.get('jump_height') or '').strip()}",
+            f"gravity {str(tiers.get('gravity') or '').strip()}",
+            f"speed {str(tiers.get('speed') or '').strip()}",
+            f"gap size {str(tiers.get('gap_size') or '').strip()}",
+            f"obstacle density {str(tiers.get('obstacle_density') or '').strip()}",
+            f"enemy density {str(tiers.get('enemy_density') or '').strip()}",
+            f"segment count {str(tiers.get('segment_count') or '').strip()}",
+        ]
+    )
+
+
+def _platformer_level_set_snapshot(level_set: Dict[str, Any]) -> Dict[str, Any]:
+    tiers = dict(level_set.get("tiers") or {})
+    return {
+        "target_context": "platformer",
+        "target_entity": "platformer",
+        "level_set_id": str(level_set.get("level_set_id") or "").strip(),
+        "level_set_name": str(level_set.get("display_name") or "").strip(),
+        "level_profile_id": str(level_set.get("profile_id") or "").strip(),
+        "level_profile_name": str(level_set.get("profile_display_name") or "").strip(),
+        "jump_height_tier": str(tiers.get("jump_height") or "").strip(),
+        "gravity_tier": str(tiers.get("gravity") or "").strip(),
+        "speed_tier": str(tiers.get("speed") or "").strip(),
+        "gap_size_tier": str(tiers.get("gap_size") or "").strip(),
+        "obstacle_density_tier": str(tiers.get("obstacle_density") or "").strip(),
+        "enemy_density_tier": str(tiers.get("enemy_density") or "").strip(),
+        "segment_count_tier": str(tiers.get("segment_count") or "").strip(),
+        "generic_capability_state": build_generic_capability_state(
+            target_context="platformer",
+            speed_tier=str(tiers.get("speed") or "").strip(),
+            speed_value=None,
+            jump_height_tier=str(tiers.get("jump_height") or "").strip(),
+            jump_height_value=None,
+            gravity_tier=str(tiers.get("gravity") or "").strip(),
+            gravity_value=None,
+            gap_size_tier=str(tiers.get("gap_size") or "").strip(),
+            gap_size_value=None,
+            obstacle_density_tier=str(tiers.get("obstacle_density") or "").strip(),
+            obstacle_density_value=None,
+            enemy_density_tier=str(tiers.get("enemy_density") or "").strip(),
+            enemy_density_value=None,
+            segment_count_tier=str(tiers.get("segment_count") or "").strip(),
+            segment_count_value=None,
+        ),
+    }
 
 
 def _experiment_target_context(experiment: Dict[str, Any], *, variants: List[Dict[str, Any]] | None = None) -> str:
@@ -1977,6 +2358,7 @@ __all__ = [
     "EXPERIMENT_DECISION_RESOLUTION",
     "EXPERIMENT_DECISION_SOURCE",
     "EXPERIMENT_REVIEW_RESOLUTION",
+    "PLATFORMER_LEVEL_SET_REVIEW_RESOLUTION",
     "apply_experiment_navigation",
     "apply_experiment_decision",
     "apply_experiment_tracking",
