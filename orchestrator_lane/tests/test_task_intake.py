@@ -14,6 +14,12 @@ from ai_e_runtime.generic_capabilities import (
     supported_generic_capability_mappings,
 )
 from ai_e_runtime.intent_normalizer import normalize_prompt
+from ai_e_runtime.platformer_layout_corrections import (
+    apply_platformer_layout_correction_record,
+    merge_platformer_layout_correction_payload,
+    persist_platformer_layout_correction_result,
+)
+from ai_e_runtime.platformer_layout_validation import extract_platformer_layout_validation_metadata
 from ai_e_runtime.state_store import StateStore
 from ai_e_runtime.task_intake import ConversationalTaskIntake
 from orchestrator.config import OrchestratorConfig
@@ -3074,6 +3080,34 @@ def test_task_intake_compares_current_variants_across_mixed_context_experiments(
     assert "Target context: encounter -> zombie" in result.routing.plan_step_titles
 
 
+def test_task_intake_compares_named_platformer_level_sets_without_session_history(tmp_path):
+    config = _make_config(tmp_path / "platformer_level_set_direct_comparison")
+    intake = ConversationalTaskIntake(config)
+
+    result = intake.accept_message(
+        "compare level set a and level set b",
+        session_id="platformer-level-set-compare-session",
+        target_repo=str(config.root_dir),
+    )
+
+    combined_text = "\n".join(result.routing.plan_step_titles or [])
+    assert result.task_type == "experiment_review_request"
+    assert result.routing.plan_title == "Level set comparison"
+    assert result.routing.decision_reason == "platformer_level_set_comparison"
+    assert result.routing.decision_summary.startswith("Platformer level set comparison.")
+    assert "Left level set: level set a." in combined_text
+    assert "Left profile: easy traversal." in combined_text
+    assert "Right level set: level set b." in combined_text
+    assert "Right profile: long sparse run." in combined_text
+    assert "Applied level set: level set a." in combined_text
+    assert "Applied profile: easy traversal." in combined_text
+    assert "Previous level set: level set b." in combined_text
+    assert "Previous profile: long sparse run." in combined_text
+    assert "Jump height: standard -> high" in combined_text
+    assert "Gravity: standard_gravity -> low_gravity" in combined_text
+    assert "Speed: fast -> standard" in combined_text
+
+
 def test_home_surface_prepares_cross_experiment_comparison_as_review_only(tmp_path):
     config = _make_config(tmp_path / "home_surface_cross_experiment_comparison")
     _write_move_zombie_capability_contract(config)
@@ -5339,6 +5373,10 @@ def _experiment_variant(
     spawn_pressure_tier: str = "",
     jump_height_tier: str = "",
     gravity_tier: str = "",
+    gap_size_tier: str = "",
+    obstacle_density_tier: str = "",
+    enemy_density_tier: str = "",
+    segment_count_tier: str = "",
     acceleration_tier: str = "",
     max_speed_tier: str = "",
     baseline_marker: bool = False,
@@ -5348,6 +5386,31 @@ def _experiment_variant(
     task_id: str | None = None,
     request_id: str | None = None,
     plan_id: str = "",
+    plan_key: str = "",
+    plan_title: str = "",
+    level_set_id: str = "",
+    level_set_name: str = "",
+    level_profile_id: str = "",
+    level_profile_name: str = "",
+    layout_id: str = "",
+    layout_name: str = "",
+    manual_edit_mode: str = "",
+    layout_correction_count: int = 0,
+    layout_correction_summary: str = "",
+    derived_from_corrected_layout: bool = False,
+    layout_validation_available: bool = False,
+    layout_validation_status: str = "",
+    layout_validation_status_label: str = "",
+    layout_validation_summary: str = "",
+    layout_validation_issue_count: int = 0,
+    layout_validation_blocking_issue_count: int = 0,
+    layout_validation_severity_counts: dict | None = None,
+    layout_validation_severity_summary: str = "",
+    layout_validation_category_counts: dict | None = None,
+    layout_validation_category_summary: str = "",
+    layout_validation_issue_type_counts: dict | None = None,
+    layout_validation_issue_type_summary: str = "",
+    layout_validation_highlights: list[str] | None = None,
     decision_status: str = "undecided",
     decision_order: int | None = None,
     decision_timestamp: str = "",
@@ -5365,11 +5428,35 @@ def _experiment_variant(
         "task_id": task_id or f"TASK_{variant_id}",
         "request_id": request_id or f"REQ_{variant_id}",
         "plan_id": plan_id,
-        "plan_title": "",
+        "plan_key": plan_key,
+        "plan_title": plan_title,
+        "level_set_id": level_set_id,
+        "level_set_name": level_set_name,
         "source_prompt": source_prompt,
         "canonical_prompt": canonical_prompt,
         "resolution_source": "direct_prompt",
         "resolved_from_prompt": "",
+        "level_profile_id": level_profile_id,
+        "level_profile_name": level_profile_name,
+        "layout_id": layout_id,
+        "layout_name": layout_name,
+        "manual_edit_mode": manual_edit_mode,
+        "layout_correction_count": int(layout_correction_count),
+        "layout_correction_summary": layout_correction_summary,
+        "derived_from_corrected_layout": derived_from_corrected_layout,
+        "layout_validation_available": layout_validation_available,
+        "layout_validation_status": layout_validation_status,
+        "layout_validation_status_label": layout_validation_status_label,
+        "layout_validation_summary": layout_validation_summary,
+        "layout_validation_issue_count": int(layout_validation_issue_count),
+        "layout_validation_blocking_issue_count": int(layout_validation_blocking_issue_count),
+        "layout_validation_severity_counts": dict(layout_validation_severity_counts or {}),
+        "layout_validation_severity_summary": layout_validation_severity_summary,
+        "layout_validation_category_counts": dict(layout_validation_category_counts or {}),
+        "layout_validation_category_summary": layout_validation_category_summary,
+        "layout_validation_issue_type_counts": dict(layout_validation_issue_type_counts or {}),
+        "layout_validation_issue_type_summary": layout_validation_issue_type_summary,
+        "layout_validation_highlights": list(layout_validation_highlights or []),
         "speed_tier": speed_tier,
         "speed_value": 4.5 if speed_tier == "fast" else (2.5 if speed_tier == "slow" else 3.5 if speed_tier else None),
         "aggression_tier": aggression_tier,
@@ -5384,12 +5471,20 @@ def _experiment_variant(
         "jump_height_value": 1.6 if jump_height_tier == "high" else (0.9 if jump_height_tier == "low" else 1.2 if jump_height_tier == "standard" else None),
         "gravity_tier": gravity_tier,
         "gravity_value": 6.0 if gravity_tier == "low_gravity" else (13.0 if gravity_tier == "high_gravity" else 9.81 if gravity_tier == "standard_gravity" else None),
+        "gap_size_tier": gap_size_tier,
+        "gap_size_value": 4.5 if gap_size_tier == "large" else (2.0 if gap_size_tier == "small" else 3.0 if gap_size_tier == "standard" else None),
+        "obstacle_density_tier": obstacle_density_tier,
+        "obstacle_density_value": 1.5 if obstacle_density_tier == "dense" else (0.5 if obstacle_density_tier == "sparse" else 1.0 if obstacle_density_tier == "standard" else None),
+        "enemy_density_tier": enemy_density_tier,
+        "enemy_density_value": 3.0 if enemy_density_tier == "high" else (1.0 if enemy_density_tier == "low" else 2.0 if enemy_density_tier == "standard" else None),
+        "segment_count_tier": segment_count_tier,
+        "segment_count_value": 12.0 if segment_count_tier == "long" else (5.0 if segment_count_tier == "short" else 8.0 if segment_count_tier == "standard" else None),
         "acceleration_tier": acceleration_tier,
         "acceleration_value": 6.5 if acceleration_tier == "fast" else (3.5 if acceleration_tier == "slow" else 5.0 if acceleration_tier == "standard" else None),
         "max_speed_tier": max_speed_tier,
         "max_speed_value": 15.0 if max_speed_tier == "fast" else (10.0 if max_speed_tier == "slow" else 12.5 if max_speed_tier == "standard" else None),
         "generic_capability_state": build_generic_capability_state(
-            target_context="encounter" if encounter_count_tier or spawn_pressure_tier else "platformer" if jump_height_tier or gravity_tier or "jump" in canonical_prompt or "gravity" in canonical_prompt or "movement" in canonical_prompt else "racer" if acceleration_tier or max_speed_tier else "runner" if "runner" in canonical_prompt else "zombie",
+            target_context="encounter" if encounter_count_tier or spawn_pressure_tier else "platformer" if gap_size_tier or obstacle_density_tier or enemy_density_tier or segment_count_tier or jump_height_tier or gravity_tier or "jump" in canonical_prompt or "gravity" in canonical_prompt or "movement" in canonical_prompt or "gap" in canonical_prompt or "obstacle" in canonical_prompt or "segment" in canonical_prompt or "level" in canonical_prompt else "racer" if acceleration_tier or max_speed_tier else "runner" if "runner" in canonical_prompt else "zombie",
             speed_tier=speed_tier,
             speed_value=4.5 if speed_tier == "standard" else (5.0 if speed_tier == "fast" else 3.5 if speed_tier == "slow" else None),
             aggression_tier=aggression_tier,
@@ -5402,6 +5497,14 @@ def _experiment_variant(
             jump_height_value=1.6 if jump_height_tier == "high" else (0.9 if jump_height_tier == "low" else 1.2 if jump_height_tier == "standard" else None),
             gravity_tier=gravity_tier,
             gravity_value=6.0 if gravity_tier == "low_gravity" else (13.0 if gravity_tier == "high_gravity" else 9.81 if gravity_tier == "standard_gravity" else None),
+            gap_size_tier=gap_size_tier,
+            gap_size_value=4.5 if gap_size_tier == "large" else (2.0 if gap_size_tier == "small" else 3.0 if gap_size_tier == "standard" else None),
+            obstacle_density_tier=obstacle_density_tier,
+            obstacle_density_value=1.5 if obstacle_density_tier == "dense" else (0.5 if obstacle_density_tier == "sparse" else 1.0 if obstacle_density_tier == "standard" else None),
+            enemy_density_tier=enemy_density_tier,
+            enemy_density_value=3.0 if enemy_density_tier == "high" else (1.0 if enemy_density_tier == "low" else 2.0 if enemy_density_tier == "standard" else None),
+            segment_count_tier=segment_count_tier,
+            segment_count_value=12.0 if segment_count_tier == "long" else (5.0 if segment_count_tier == "short" else 8.0 if segment_count_tier == "standard" else None),
             acceleration_tier=acceleration_tier,
             acceleration_value=6.5 if acceleration_tier == "fast" else (3.5 if acceleration_tier == "slow" else 5.0 if acceleration_tier == "standard" else None),
             max_speed_tier=max_speed_tier,
@@ -5424,6 +5527,10 @@ def _experiment_variant(
                     f"spawn pressure {spawn_pressure_tier}" if spawn_pressure_tier else "",
                     f"jump height {jump_height_tier}" if jump_height_tier else "",
                     f"gravity {gravity_tier}" if gravity_tier else "",
+                    f"gap size {gap_size_tier}" if gap_size_tier else "",
+                    f"obstacle density {obstacle_density_tier}" if obstacle_density_tier else "",
+                    f"enemy density {enemy_density_tier}" if enemy_density_tier else "",
+                    f"segment count {segment_count_tier}" if segment_count_tier else "",
                     f"acceleration {acceleration_tier}" if acceleration_tier else "",
                     f"max speed {max_speed_tier}" if max_speed_tier else "",
                 )
@@ -6170,19 +6277,7 @@ def test_generic_capability_mapping_covers_supported_bounded_systems(
 
 def test_supported_generic_capability_mappings_cover_all_current_domains():
     mappings = supported_generic_capability_mappings()
-
-    assert len(mappings) == 11
-    assert {item["target_context"] for item in mappings} == {
-        "zombie",
-        "runner",
-        "encounter",
-        "racer",
-        "platformer",
-    }
-    assert {
-        (item["target_context"], item["parameter_name"])
-        for item in mappings
-    } == {
+    expected_pairs = {
         ("zombie", "speed"),
         ("zombie", "aggression"),
         ("runner", "speed"),
@@ -6194,7 +6289,24 @@ def test_supported_generic_capability_mappings_cover_all_current_domains():
         ("platformer", "jump_height"),
         ("platformer", "gravity"),
         ("platformer", "speed"),
+        ("platformer", "gap_size"),
+        ("platformer", "obstacle_density"),
+        ("platformer", "enemy_density"),
+        ("platformer", "segment_count"),
     }
+
+    assert len(mappings) == len(expected_pairs)
+    assert {item["target_context"] for item in mappings} == {
+        "zombie",
+        "runner",
+        "encounter",
+        "racer",
+        "platformer",
+    }
+    assert {
+        (item["target_context"], item["parameter_name"])
+        for item in mappings
+    } == expected_pairs
 
 
 def test_task_intake_preserves_zombie_prompt_and_attaches_generic_capability_definition(tmp_path):
@@ -6301,6 +6413,10 @@ def test_task_intake_preserves_racer_prompt_and_attaches_generic_capability_defi
         ("make jump higher", "level_0001_increase_platformer_jump_height", "jump_height", "restore jump to standard"),
         ("reduce gravity", "level_0001_reduce_platformer_gravity", "gravity", "restore gravity to standard"),
         ("make movement faster", "level_0001_increase_platformer_speed", "speed", "restore movement to standard"),
+        ("make gaps larger", "level_0001_increase_platformer_gap_size", "gap_size", "restore gap size to standard"),
+        ("reduce obstacle density", "level_0001_reduce_platformer_obstacle_density", "obstacle_density", "restore obstacle density to standard"),
+        ("increase enemy density", "level_0001_increase_platformer_enemy_density", "enemy_density", "restore enemy density to standard"),
+        ("make level longer", "level_0001_increase_platformer_segment_count", "segment_count", "restore segment count to standard"),
     ],
 )
 def test_task_intake_preserves_platformer_prompt_and_attaches_generic_capability_definition(
@@ -6327,6 +6443,305 @@ def test_task_intake_preserves_platformer_prompt_and_attaches_generic_capability
     assert result.routing.generic_capability_definition["restore_standard_behavior"] == expected_restore_prompt
     runtime_payload = json.loads(result.artifacts.runtime_task_payload_path.read_text(encoding="utf-8"))
     assert runtime_payload["runtime_task"]["generic_capability_definition"]["target_context"] == "platformer"
+
+
+@pytest.mark.parametrize(
+    ("prompt_text", "expected_plan_key", "expected_plan_title", "expected_step_prompts"),
+    [
+        (
+            "use level set a",
+            "platformer_level_set_a_v1",
+            "Use level set a",
+            [
+                "make jump higher",
+                "reduce gravity",
+                "restore movement to standard",
+                "make gaps smaller",
+                "reduce obstacle density",
+                "reduce enemy density",
+                "restore segment count to standard",
+            ],
+        ),
+        (
+            "use level set b",
+            "platformer_level_set_b_v1",
+            "Use level set b",
+            [
+                "restore jump to standard",
+                "restore gravity to standard",
+                "make movement faster",
+                "restore gap size to standard",
+                "reduce obstacle density",
+                "reduce enemy density",
+                "make level longer",
+            ],
+        ),
+        (
+            "use level set c",
+            "platformer_level_set_c_v1",
+            "Use level set c",
+            [
+                "make jump lower",
+                "increase gravity",
+                "make movement faster",
+                "make gaps larger",
+                "increase obstacle density",
+                "increase enemy density",
+                "make level longer",
+            ],
+        ),
+        (
+            "make the level easier",
+            "platformer_easy_traversal_v1",
+            "Use easy traversal",
+            [
+                "make gaps smaller",
+                "reduce obstacle density",
+                "reduce enemy density",
+                "restore segment count to standard",
+            ],
+        ),
+        (
+            "use balanced traversal",
+            "platformer_balanced_traversal_v1",
+            "Use balanced traversal",
+            [
+                "restore gap size to standard",
+                "restore obstacle density to standard",
+                "restore enemy density to standard",
+                "restore segment count to standard",
+            ],
+        ),
+        (
+            "use challenge traversal",
+            "platformer_challenge_traversal_v1",
+            "Use challenge traversal",
+            [
+                "make gaps larger",
+                "increase obstacle density",
+                "increase enemy density",
+                "make level longer",
+            ],
+        ),
+        (
+            "use long sparse run",
+            "platformer_long_sparse_run_v1",
+            "Use long sparse run",
+            [
+                "restore gap size to standard",
+                "reduce obstacle density",
+                "reduce enemy density",
+                "make level longer",
+            ],
+        ),
+        (
+            "use short dense run",
+            "platformer_short_dense_run_v1",
+            "Use short dense run",
+            [
+                "restore gap size to standard",
+                "increase obstacle density",
+                "increase enemy density",
+                "make level shorter",
+            ],
+        ),
+    ],
+)
+def test_task_intake_routes_platformer_profile_plan(
+    tmp_path,
+    prompt_text,
+    expected_plan_key,
+    expected_plan_title,
+    expected_step_prompts,
+):
+    config = _make_config(tmp_path / "platformer_profile_plan")
+    _write_platformer_capability_contracts(config)
+    target_repo = _create_entity_transform_prompt_repo(config)
+    intake = ConversationalTaskIntake(config)
+
+    result = intake.accept_message(
+        prompt_text,
+        session_id="platformer-profile-session",
+        target_repo=target_repo,
+    )
+
+    assert result.is_multi_step is True
+    assert result.routing.plan_key == expected_plan_key
+    assert result.routing.plan_title == expected_plan_title
+    runtime_payloads = [
+        json.loads(path.read_text(encoding="utf-8"))["runtime_task"]
+        for path in result.artifacts.runtime_task_payload_paths
+    ]
+    assert [payload["operator_prompt"] for payload in runtime_payloads] == expected_step_prompts
+    assert {payload["plan_key"] for payload in runtime_payloads} == {expected_plan_key}
+
+
+def test_task_intake_routes_restore_platformer_level_to_standard_plan(tmp_path):
+    config = _make_config(tmp_path / "platformer_restore_layout_plan")
+    _write_platformer_capability_contracts(config)
+    target_repo = _create_entity_transform_prompt_repo(config)
+    intake = ConversationalTaskIntake(config)
+
+    result = intake.accept_message(
+        "restore level to standard",
+        session_id="platformer-restore-layout-session",
+        target_repo=target_repo,
+    )
+
+    assert result.is_multi_step is True
+    assert result.routing.plan_key == "platformer_restore_layout_standard_v1"
+    assert result.plan_step_titles == [
+        "Restore gap size to standard",
+        "Restore obstacle density to standard",
+        "Restore enemy density to standard",
+        "Restore segment count to standard",
+    ]
+    runtime_payloads = [
+        json.loads(path.read_text(encoding="utf-8"))["runtime_task"]
+        for path in result.artifacts.runtime_task_payload_paths
+    ]
+    assert [payload["operator_prompt"] for payload in runtime_payloads] == [
+        "restore gap size to standard",
+        "restore obstacle density to standard",
+        "restore enemy density to standard",
+        "restore segment count to standard",
+    ]
+    assert {payload["plan_key"] for payload in runtime_payloads} == {"platformer_restore_layout_standard_v1"}
+
+
+def test_task_intake_routes_restore_platformer_level_set_to_standard_plan(tmp_path):
+    config = _make_config(tmp_path / "platformer_restore_level_set_plan")
+    _write_platformer_capability_contracts(config)
+    target_repo = _create_entity_transform_prompt_repo(config)
+    intake = ConversationalTaskIntake(config)
+
+    result = intake.accept_message(
+        "restore level set to standard",
+        session_id="platformer-restore-level-set-session",
+        target_repo=target_repo,
+    )
+
+    assert result.is_multi_step is True
+    assert result.routing.plan_key == "platformer_restore_level_set_standard_v1"
+    assert result.plan_step_titles == [
+        "Restore jump height to standard",
+        "Restore gravity to standard",
+        "Restore movement speed to standard",
+        "Restore gap size to standard",
+        "Restore obstacle density to standard",
+        "Restore enemy density to standard",
+        "Restore segment count to standard",
+    ]
+    runtime_payloads = [
+        json.loads(path.read_text(encoding="utf-8"))["runtime_task"]
+        for path in result.artifacts.runtime_task_payload_paths
+    ]
+    assert [payload["operator_prompt"] for payload in runtime_payloads] == [
+        "restore jump to standard",
+        "restore gravity to standard",
+        "restore movement to standard",
+        "restore gap size to standard",
+        "restore obstacle density to standard",
+        "restore enemy density to standard",
+        "restore segment count to standard",
+    ]
+    assert {payload["plan_key"] for payload in runtime_payloads} == {"platformer_restore_level_set_standard_v1"}
+
+
+@pytest.mark.parametrize(
+    ("prompt_text", "expected_note"),
+    [
+        (
+            "make level more intense",
+            'AI-E mapped the gameplay goal "make level more intense" to the bounded platformer plan "use challenge traversal" across the known gap size, obstacle density, enemy density, and segment count families.',
+        ),
+        (
+            "make traversal more challenging but fair",
+            'AI-E mapped the gameplay goal "make traversal more challenging but fair" to the bounded platformer plan "use challenge traversal" across the known gap size, obstacle density, enemy density, and segment count families while preserving fairness through mandatory validation and evaluation.',
+        ),
+    ],
+)
+def test_task_intake_resolves_platformer_goal_intents_to_bounded_traversal_plan(
+    tmp_path,
+    prompt_text,
+    expected_note,
+):
+    config = _make_config(tmp_path / "platformer_goal_intent_plan")
+    _write_platformer_capability_contracts(config)
+    target_repo = _create_entity_transform_prompt_repo(config)
+    intake = ConversationalTaskIntake(config)
+
+    result = intake.accept_message(
+        prompt_text,
+        session_id="platformer-goal-intent-session",
+        target_repo=target_repo,
+    )
+
+    request_payload = json.loads(result.artifacts.request_payload_path.read_text(encoding="utf-8"))
+    runtime_payloads = [
+        json.loads(path.read_text(encoding="utf-8"))["runtime_task"]
+        for path in result.artifacts.runtime_task_payload_paths
+    ]
+
+    assert result.task_type == "mutation_plan_request"
+    assert result.routing.resolution_source == "goal_intent_mapping"
+    assert result.routing.resolved_from_prompt == normalize_prompt(prompt_text)
+    assert result.routing.session_resolution_note == expected_note
+    assert result.routing.mapped_prompt == "use challenge traversal"
+    assert result.routing.goal_components == [
+        "increase gap size",
+        "increase obstacle density",
+        "increase enemy density",
+        "increase segment count",
+    ]
+    assert result.routing.plan_key == "platformer_challenge_traversal_v1"
+    assert result.routing.plan_title == "Use challenge traversal"
+    assert result.routing.decision == "sandbox_first"
+    assert result.plan_step_titles == [
+        "Set gap size to large",
+        "Set obstacle density to dense",
+        "Set enemy density to high",
+        "Set segment count to long",
+    ]
+    assert request_payload["conversational_request"]["context"]["resolved_execution_prompt"] == "use challenge traversal"
+    assert request_payload["conversational_request"]["context"]["routing"]["goal_components"] == [
+        "increase gap size",
+        "increase obstacle density",
+        "increase enemy density",
+        "increase segment count",
+    ]
+    assert [payload["operator_prompt"] for payload in runtime_payloads] == [
+        "make gaps larger",
+        "increase obstacle density",
+        "increase enemy density",
+        "make level longer",
+    ]
+    assert all(payload["source_prompt"] == normalize_prompt(prompt_text) for payload in runtime_payloads)
+    assert all(payload["mapped_prompt"] == "use challenge traversal" for payload in runtime_payloads)
+
+
+def test_task_intake_blocks_out_of_scope_platformer_goal_intent_with_explicit_guidance(tmp_path):
+    config = _make_config(tmp_path / "unsupported_platformer_goal_intent")
+    _write_platformer_capability_contracts(config)
+    target_repo = _create_entity_transform_prompt_repo(config)
+    intake = ConversationalTaskIntake(config)
+
+    result = intake.accept_message(
+        "make traversal more challenging but fair and add lava",
+        session_id="platformer-goal-intent-blocked-session",
+        target_repo=target_repo,
+    )
+
+    queue = json.loads(config.queue_path.read_text(encoding="utf-8"))["tasks"]
+
+    assert result.queue_entry["status"] == "blocked"
+    assert queue[0]["status"] == "blocked"
+    assert result.routing.decision == "block"
+    assert result.routing.decision_reason == "route_missing"
+    assert result.routing.capability_supported is False
+    assert result.routing.mutation_capable is False
+    assert result.routing.mapped_prompt == "make traversal more challenging but fair and add lava"
+    assert "bounded platformer gameplay directives only through deterministic traversal profiles and level sets" in (result.routing.intelligence_summary or "")
 
 
 def test_result_evaluation_preserves_generic_capability_state_metadata():
@@ -6887,6 +7302,1536 @@ def test_experiment_tracking_records_platformer_generic_capability_state_on_vari
     assert generic_state[0]["current_tier"] == "fast"
     assert generic_state[1]["current_tier"] == "high"
     assert generic_state[2]["current_tier"] == "low_gravity"
+
+
+def test_result_evaluation_formats_platformer_layout_generic_capability_comparison():
+    state = {
+        "session_tuning_state": {
+            "target_context": "platformer",
+            "target_entity": "platformer",
+            "contexts": {
+                "platformer": {
+                    "gap_size": {
+                        "family": "gap_size",
+                        "target_context": "platformer",
+                        "resulting_tier": "large",
+                        "observed_value": 4.5,
+                    },
+                    "obstacle_density": {
+                        "family": "obstacle_density",
+                        "target_context": "platformer",
+                        "resulting_tier": "dense",
+                        "observed_value": 1.5,
+                    },
+                    "enemy_density": {
+                        "family": "enemy_density",
+                        "target_context": "platformer",
+                        "resulting_tier": "high",
+                        "observed_value": 3.0,
+                    },
+                    "segment_count": {
+                        "family": "segment_count",
+                        "target_context": "platformer",
+                        "resulting_tier": "long",
+                        "observed_value": 12.0,
+                    },
+                }
+            },
+        },
+        "experiment_tracking": {
+            "active_experiment_id": "experiment_0020",
+            "experiments": [
+                {
+                    "experiment_id": "experiment_0020",
+                    "target_context": "platformer",
+                    "target_entity": "platformer",
+                    "active_variant_id": "variant_0002",
+                    "baseline_variant_id": "variant_0001",
+                    "variants": [
+                        _experiment_variant(
+                            order=1,
+                            experiment_id="experiment_0020",
+                            variant_id="variant_0001",
+                            source_prompt="restore level to standard",
+                            canonical_prompt="restore level to standard",
+                            variant_kind="baseline",
+                            gap_size_tier="standard",
+                            obstacle_density_tier="standard",
+                            enemy_density_tier="standard",
+                            segment_count_tier="standard",
+                            baseline_marker=True,
+                            baseline_variant_id="variant_0001",
+                            outcome_summary="gap size standard, obstacle density standard, enemy density standard, segment count standard",
+                            task_id="TASK_PLATFORMER_LAYOUT_BASELINE",
+                            request_id="REQ_PLATFORMER_LAYOUT_BASELINE",
+                            plan_key="platformer_restore_layout_standard_v1",
+                            plan_title="Restore platformer level structure to standard",
+                            level_profile_id="balanced_traversal",
+                            level_profile_name="balanced traversal",
+                        ),
+                        _experiment_variant(
+                            order=2,
+                            experiment_id="experiment_0020",
+                            variant_id="variant_0002",
+                            parent_variant_id="variant_0001",
+                            source_prompt="use challenge traversal",
+                            canonical_prompt="use challenge traversal",
+                            variant_kind="followup_variant",
+                            gap_size_tier="large",
+                            obstacle_density_tier="dense",
+                            enemy_density_tier="high",
+                            segment_count_tier="long",
+                            baseline_variant_id="variant_0001",
+                            outcome_summary="gap size large, obstacle density dense, enemy density high, segment count long",
+                            task_id="TASK_PLATFORMER_LAYOUT_VARIANT",
+                            request_id="REQ_PLATFORMER_LAYOUT_VARIANT",
+                            plan_key="platformer_challenge_traversal_v1",
+                            plan_title="Use challenge traversal",
+                            level_profile_id="challenge_traversal",
+                            level_profile_name="challenge traversal",
+                        ),
+                    ],
+                }
+            ],
+        },
+        "result_state_history": [
+            {
+                "order": 1,
+                "timestamp": "2026-04-03T15:00:00Z",
+                "task_id": "TASK_PLATFORMER_LAYOUT_BASELINE",
+                "request_id": "REQ_PLATFORMER_LAYOUT_BASELINE",
+                "plan_id": "",
+                "plan_key": "platformer_restore_layout_standard_v1",
+                "plan_title": "Restore platformer level structure to standard",
+                "level_profile_id": "balanced_traversal",
+                "level_profile_name": "balanced traversal",
+                "target_context": "platformer",
+                "target_entity": "platformer",
+                "gap_size_tier": "standard",
+                "gap_size_value": 3.0,
+                "obstacle_density_tier": "standard",
+                "obstacle_density_value": 1.0,
+                "enemy_density_tier": "standard",
+                "enemy_density_value": 2.0,
+                "segment_count_tier": "standard",
+                "segment_count_value": 8.0,
+                "generic_capability_state": build_generic_capability_state(
+                    target_context="platformer",
+                    gap_size_tier="standard",
+                    gap_size_value=3.0,
+                    obstacle_density_tier="standard",
+                    obstacle_density_value=1.0,
+                    enemy_density_tier="standard",
+                    enemy_density_value=2.0,
+                    segment_count_tier="standard",
+                    segment_count_value=8.0,
+                ),
+                "experiment_id": "experiment_0020",
+                "variant_id": "variant_0001",
+                "baseline_variant_id": "variant_0001",
+                "preferred_baseline_variant_id": "",
+                "baseline_marker": True,
+                "variant_kind": "baseline",
+            }
+        ],
+        "result_evaluation_history": [],
+        "latest_result_evaluation": {},
+    }
+
+    state = apply_result_evaluation(
+        state,
+        task={
+            "task_id": "TASK_PLATFORMER_LAYOUT_VARIANT",
+            "request_id": "REQ_PLATFORMER_LAYOUT_VARIANT",
+            "plan_id": "",
+            "plan_key": "platformer_challenge_traversal_v1",
+            "plan_title": "Use challenge traversal",
+            "plan_total_steps": 1,
+            "plan_step_index": 1,
+            "source_prompt": "use challenge traversal",
+            "operator_prompt": "make level longer",
+        },
+        timestamp="2026-04-03T15:01:00Z",
+    )
+
+    evaluation = state["latest_result_evaluation"]
+    combined_text = "\n".join([evaluation["comparison_description"], *evaluation["detected_differences"]])
+    assert evaluation["applied_profile_id"] == "challenge_traversal"
+    assert evaluation["applied_profile_name"] == "challenge traversal"
+    assert "Applied profile: challenge traversal." in evaluation["comparison_description"]
+    assert "Previous profile: balanced traversal." in evaluation["comparison_description"]
+    assert "Gap size: standard -> large" in evaluation["detected_differences"]
+    assert "Obstacle density: standard -> dense" in evaluation["detected_differences"]
+    assert "Enemy density: standard -> high" in evaluation["detected_differences"]
+    assert "Segment count: standard -> long" in evaluation["detected_differences"]
+    assert "Wider jumps required." in combined_text
+    assert "More obstacles per segment." in combined_text
+    assert "More enemies per segment." in combined_text
+    assert "Longer level traversal." in combined_text
+
+
+def test_experiment_tracking_records_platformer_layout_generic_capability_state_on_variants():
+    state = {
+        "session_tuning_state": {
+            "target_context": "platformer",
+            "target_entity": "platformer",
+            "contexts": {
+                "platformer": {
+                    "gap_size": {
+                        "family": "gap_size",
+                        "target_context": "platformer",
+                        "target_entity": "platformer",
+                        "resulting_tier": "large",
+                        "observed_value": 4.5,
+                    },
+                    "obstacle_density": {
+                        "family": "obstacle_density",
+                        "target_context": "platformer",
+                        "target_entity": "platformer",
+                        "resulting_tier": "dense",
+                        "observed_value": 1.5,
+                    },
+                    "enemy_density": {
+                        "family": "enemy_density",
+                        "target_context": "platformer",
+                        "target_entity": "platformer",
+                        "resulting_tier": "high",
+                        "observed_value": 3.0,
+                    },
+                    "segment_count": {
+                        "family": "segment_count",
+                        "target_context": "platformer",
+                        "target_entity": "platformer",
+                        "resulting_tier": "long",
+                        "observed_value": 12.0,
+                    },
+                }
+            },
+        },
+        "experiment_tracking": {},
+    }
+
+    updated = apply_experiment_tracking(
+        state,
+        task={
+            "task_id": "TASK_EXPERIMENT_PLATFORMER_LAYOUT",
+            "request_id": "REQ_EXPERIMENT_PLATFORMER_LAYOUT",
+            "plan_id": "",
+            "plan_key": "platformer_challenge_traversal_v1",
+            "plan_title": "Use challenge traversal",
+            "plan_total_steps": 1,
+            "plan_step_index": 1,
+            "source_prompt": "use challenge traversal",
+            "operator_prompt": "make level longer",
+            "capability_id": "level_0001_increase_platformer_gap_size",
+        },
+        details={
+            "translated_command": "use challenge traversal",
+            "target_context": "platformer",
+            "target_entity": "platformer",
+            "resolution_source": "direct_prompt",
+            "result_reason": "applied",
+            "executed": True,
+        },
+        timestamp="2026-04-03T15:02:00Z",
+    )
+
+    variant = updated["latest_experiment_variant"]
+    assert variant["target_context"] == "platformer"
+    assert variant["level_profile_id"] == "challenge_traversal"
+    assert variant["level_profile_name"] == "challenge traversal"
+    assert variant["outcome_summary"] == "gap size large, obstacle density dense, enemy density high, segment count long"
+    generic_state = variant["generic_capability_state"]
+    assert [entry["parameter_name"] for entry in generic_state] == [
+        "gap_size",
+        "obstacle_density",
+        "enemy_density",
+        "segment_count",
+    ]
+    assert generic_state[0]["current_tier"] == "large"
+    assert generic_state[1]["current_tier"] == "dense"
+    assert generic_state[2]["current_tier"] == "high"
+    assert generic_state[3]["current_tier"] == "long"
+
+
+def test_result_evaluation_formats_platformer_level_set_comparison():
+    state = {
+        "session_tuning_state": {
+            "target_context": "platformer",
+            "target_entity": "platformer",
+            "contexts": {
+                "platformer": {
+                    "jump_height": {
+                        "family": "jump_height",
+                        "target_context": "platformer",
+                        "resulting_tier": "high",
+                        "observed_value": 1.6,
+                    },
+                    "gravity": {
+                        "family": "gravity",
+                        "target_context": "platformer",
+                        "resulting_tier": "low_gravity",
+                        "observed_value": 6.0,
+                    },
+                    "speed": {
+                        "family": "speed",
+                        "target_context": "platformer",
+                        "resulting_tier": "standard",
+                        "observed_value": 5.5,
+                    },
+                    "gap_size": {
+                        "family": "gap_size",
+                        "target_context": "platformer",
+                        "resulting_tier": "small",
+                        "observed_value": 2.0,
+                    },
+                    "obstacle_density": {
+                        "family": "obstacle_density",
+                        "target_context": "platformer",
+                        "resulting_tier": "sparse",
+                        "observed_value": 0.5,
+                    },
+                    "enemy_density": {
+                        "family": "enemy_density",
+                        "target_context": "platformer",
+                        "resulting_tier": "low",
+                        "observed_value": 1.0,
+                    },
+                    "segment_count": {
+                        "family": "segment_count",
+                        "target_context": "platformer",
+                        "resulting_tier": "standard",
+                        "observed_value": 8.0,
+                    },
+                }
+            },
+        },
+        "experiment_tracking": {
+            "active_experiment_id": "experiment_0025",
+            "experiments": [
+                {
+                    "experiment_id": "experiment_0025",
+                    "target_context": "platformer",
+                    "target_entity": "platformer",
+                    "active_variant_id": "variant_0002",
+                    "baseline_variant_id": "variant_0001",
+                    "variants": [
+                        _experiment_variant(
+                            order=1,
+                            experiment_id="experiment_0025",
+                            variant_id="variant_0001",
+                            source_prompt="restore level set to standard",
+                            canonical_prompt="restore level set to standard",
+                            variant_kind="baseline",
+                            jump_height_tier="standard",
+                            gravity_tier="standard_gravity",
+                            speed_tier="standard",
+                            gap_size_tier="standard",
+                            obstacle_density_tier="standard",
+                            enemy_density_tier="standard",
+                            segment_count_tier="standard",
+                            baseline_marker=True,
+                            baseline_variant_id="variant_0001",
+                            outcome_summary="speed standard, jump height standard, gravity standard gravity, gap size standard, obstacle density standard, enemy density standard, segment count standard",
+                            task_id="TASK_PLATFORMER_LEVEL_SET_BASELINE",
+                            request_id="REQ_PLATFORMER_LEVEL_SET_BASELINE",
+                            plan_key="platformer_restore_level_set_standard_v1",
+                            plan_title="Restore platformer level set to standard",
+                            level_set_id="standard_level_set",
+                            level_set_name="standard level set",
+                            level_profile_id="balanced_traversal",
+                            level_profile_name="balanced traversal",
+                        ),
+                        _experiment_variant(
+                            order=2,
+                            experiment_id="experiment_0025",
+                            variant_id="variant_0002",
+                            parent_variant_id="variant_0001",
+                            source_prompt="use level set a",
+                            canonical_prompt="use level set a",
+                            variant_kind="followup_variant",
+                            jump_height_tier="high",
+                            gravity_tier="low_gravity",
+                            speed_tier="standard",
+                            gap_size_tier="small",
+                            obstacle_density_tier="sparse",
+                            enemy_density_tier="low",
+                            segment_count_tier="standard",
+                            baseline_variant_id="variant_0001",
+                            outcome_summary="speed standard, jump height high, gravity low gravity, gap size small, obstacle density sparse, enemy density low, segment count standard",
+                            task_id="TASK_PLATFORMER_LEVEL_SET_VARIANT",
+                            request_id="REQ_PLATFORMER_LEVEL_SET_VARIANT",
+                            plan_key="platformer_level_set_a_v1",
+                            plan_title="Use level set a",
+                            level_set_id="level_set_a",
+                            level_set_name="level set a",
+                            level_profile_id="easy_traversal",
+                            level_profile_name="easy traversal",
+                        ),
+                    ],
+                }
+            ],
+        },
+        "result_state_history": [
+            {
+                "order": 1,
+                "timestamp": "2026-04-03T15:10:00Z",
+                "task_id": "TASK_PLATFORMER_LEVEL_SET_BASELINE",
+                "request_id": "REQ_PLATFORMER_LEVEL_SET_BASELINE",
+                "plan_id": "",
+                "plan_key": "platformer_restore_level_set_standard_v1",
+                "plan_title": "Restore platformer level set to standard",
+                "level_set_id": "standard_level_set",
+                "level_set_name": "standard level set",
+                "level_profile_id": "balanced_traversal",
+                "level_profile_name": "balanced traversal",
+                "target_context": "platformer",
+                "target_entity": "platformer",
+                "speed_tier": "standard",
+                "speed_value": 5.5,
+                "jump_height_tier": "standard",
+                "jump_height_value": 1.2,
+                "gravity_tier": "standard_gravity",
+                "gravity_value": 9.81,
+                "gap_size_tier": "standard",
+                "gap_size_value": 3.0,
+                "obstacle_density_tier": "standard",
+                "obstacle_density_value": 1.0,
+                "enemy_density_tier": "standard",
+                "enemy_density_value": 2.0,
+                "segment_count_tier": "standard",
+                "segment_count_value": 8.0,
+                "generic_capability_state": build_generic_capability_state(
+                    target_context="platformer",
+                    speed_tier="standard",
+                    speed_value=5.5,
+                    jump_height_tier="standard",
+                    jump_height_value=1.2,
+                    gravity_tier="standard_gravity",
+                    gravity_value=9.81,
+                    gap_size_tier="standard",
+                    gap_size_value=3.0,
+                    obstacle_density_tier="standard",
+                    obstacle_density_value=1.0,
+                    enemy_density_tier="standard",
+                    enemy_density_value=2.0,
+                    segment_count_tier="standard",
+                    segment_count_value=8.0,
+                ),
+                "experiment_id": "experiment_0025",
+                "variant_id": "variant_0001",
+                "baseline_variant_id": "variant_0001",
+                "preferred_baseline_variant_id": "",
+                "baseline_marker": True,
+                "variant_kind": "baseline",
+            }
+        ],
+        "result_evaluation_history": [],
+        "latest_result_evaluation": {},
+    }
+
+    state = apply_result_evaluation(
+        state,
+        task={
+            "task_id": "TASK_PLATFORMER_LEVEL_SET_VARIANT",
+            "request_id": "REQ_PLATFORMER_LEVEL_SET_VARIANT",
+            "plan_id": "",
+            "plan_key": "platformer_level_set_a_v1",
+            "plan_title": "Use level set a",
+            "plan_total_steps": 1,
+            "plan_step_index": 1,
+            "source_prompt": "use level set a",
+            "operator_prompt": "restore segment count to standard",
+        },
+        timestamp="2026-04-03T15:11:00Z",
+    )
+
+    evaluation = state["latest_result_evaluation"]
+    combined_text = "\n".join([evaluation["comparison_description"], *evaluation["detected_differences"]])
+    assert evaluation["applied_level_set_id"] == "level_set_a"
+    assert evaluation["applied_level_set_name"] == "level set a"
+    assert evaluation["applied_profile_id"] == "easy_traversal"
+    assert evaluation["applied_profile_name"] == "easy traversal"
+    assert "Applied level set: level set a." in evaluation["comparison_description"]
+    assert "Previous level set: standard level set." in evaluation["comparison_description"]
+    assert "Applied profile: easy traversal." in evaluation["comparison_description"]
+    assert "Previous profile: balanced traversal." in evaluation["comparison_description"]
+    assert "Jump height: standard -> high" in evaluation["detected_differences"]
+    assert "Gravity: standard_gravity -> low_gravity" in evaluation["detected_differences"]
+    assert "Gap size: standard -> small" in evaluation["detected_differences"]
+    assert "Obstacle density: standard -> sparse" in evaluation["detected_differences"]
+    assert "Enemy density: standard -> low" in evaluation["detected_differences"]
+    assert "Longer airtime." in combined_text
+    assert "Slower fall speed." in combined_text
+    assert "Shorter jumps required." in combined_text
+
+
+def test_platformer_layout_correction_result_persists_project_local_artifacts(tmp_path):
+    config = _make_config(tmp_path / "platformer_layout_correction_artifacts")
+    target_repo = config.root_dir / "BABYLON_TEST"
+    target_repo.mkdir(parents=True, exist_ok=True)
+
+    result = persist_platformer_layout_correction_result(
+        task={
+            "task_id": "TASK_PLATFORMER_CORRECTION_001",
+            "request_id": "REQ_PLATFORMER_CORRECTION_001",
+            "target_repo": str(target_repo),
+        },
+        result={
+            "status": "completed",
+            "details": {
+                "target_context": "platformer",
+                "manual_edit_mode": "keyboard_mouse",
+                "layout_id": "super_monkee_tutorial",
+                "layout_name": "Super Monkee Tutorial",
+                "layout_corrections": [
+                    {
+                        "object_id": "platform_01",
+                        "object_type": "platform",
+                        "action": "move",
+                        "original_position": [0.0, 0.0, 0.0],
+                        "corrected_position": [1.5, 0.0, 0.0],
+                        "note": "Create a safer landing.",
+                    },
+                    {
+                        "object_id": "ladder_01",
+                        "object_type": "ladder",
+                        "action": "nudge",
+                        "original_position": [4.0, 0.0, 0.0],
+                        "corrected_position": [4.25, 0.0, 0.0],
+                        "note": "Align the climb start.",
+                    },
+                ],
+                "corrected_layout": {
+                    "layout_id": "super_monkee_tutorial",
+                    "objects": [
+                        {"object_id": "platform_01"},
+                        {"object_id": "ladder_01"},
+                    ],
+                },
+            },
+        },
+        timestamp="2026-04-04T10:15:00Z",
+    )
+
+    details = result["details"]
+    record_path = Path(details["layout_correction_artifact_path"])
+    history_path = Path(details["layout_correction_history_path"])
+    layout_path = Path(details["corrected_layout_artifact_path"])
+    assert record_path.exists()
+    assert history_path.exists()
+    assert layout_path.exists()
+    assert details["layout_correction_count"] == 2
+    assert details["layout_correction_summary"] == "2 manual keyboard/mouse correction(s) saved for Super Monkee Tutorial."
+
+    state = apply_platformer_layout_correction_record(
+        {},
+        task={
+            "task_id": "TASK_PLATFORMER_CORRECTION_001",
+            "request_id": "REQ_PLATFORMER_CORRECTION_001",
+            "plan_id": "",
+            "target_repo": str(target_repo),
+        },
+        details=details,
+        timestamp="2026-04-04T10:15:00Z",
+    )
+    assert state["latest_platformer_layout_correction"]["layout_name"] == "Super Monkee Tutorial"
+    assert state["latest_platformer_layout_correction"]["layout_correction_count"] == 2
+
+
+def test_platformer_layout_validation_detects_unreachable_platform_and_gap_issue():
+    metadata = extract_platformer_layout_validation_metadata(
+        {
+            "target_context": "platformer",
+            "layout_name": "Super Monkee Tutorial",
+            "jump_height_value": 1.2,
+            "gravity_value": 9.81,
+            "speed_value": 5.5,
+            "corrected_layout": {
+                "layout_id": "super_monkee_tutorial",
+                "layout_name": "Super Monkee Tutorial",
+                "ground": {"center_x": 0.0, "center_z": 0.0, "top_y": 0.0, "width": 4.0, "depth": 2.0},
+                "platforms": [
+                    {"object_id": "platform_near", "center_x": 1.5, "center_z": 0.0, "top_y": 0.3, "width": 1.5, "depth": 1.0},
+                    {"object_id": "platform_far", "center_x": 10.0, "center_z": 0.0, "top_y": 2.1, "width": 1.5, "depth": 1.0},
+                ],
+            },
+        }
+    )
+
+    assert metadata["layout_validation_available"] is True
+    assert metadata["layout_validation_issue_count"] >= 1
+    assert "gap_exceeds_jump_capability" in metadata["layout_validation_issue_codes"]
+    assert any("Gap exceeds jump capability" in message for message in metadata["layout_validation_issue_messages"])
+
+
+def test_platformer_layout_validation_detects_invalid_ladder():
+    metadata = extract_platformer_layout_validation_metadata(
+        {
+            "target_context": "platformer",
+            "layout_name": "Super Monkee Tutorial",
+            "corrected_layout": {
+                "layout_id": "super_monkee_tutorial",
+                "ground": {"center_x": 0.0, "center_z": 0.0, "top_y": 0.0, "width": 6.0, "depth": 2.0},
+                "objects": [
+                    {"object_id": "platform_01", "object_type": "platform", "position": [0.0, 0.0, 0.0], "size": [2.0, 0.5, 1.0]},
+                    {"object_id": "ladder_01", "object_type": "ladder", "position": [3.0, 0.0, 0.0], "height": 3.0},
+                ],
+            },
+        }
+    )
+
+    assert metadata["layout_validation_issue_count"] >= 1
+    assert "invalid_ladder" in metadata["layout_validation_issue_codes"]
+    assert any("Ladder does not connect to valid platform surfaces" in message for message in metadata["layout_validation_issue_messages"])
+
+
+def test_platformer_layout_validation_detects_overlap_and_crowding():
+    metadata = extract_platformer_layout_validation_metadata(
+        {
+            "target_context": "platformer",
+            "layout_name": "Dense Test Layout",
+            "corrected_layout": {
+                "layout_id": "dense_test_layout",
+                "ground": {"center_x": 0.0, "center_z": 0.0, "top_y": 0.0, "width": 8.0, "depth": 2.0},
+                "objects": [
+                    {"object_id": "platform_01", "object_type": "platform", "position": [1.0, 0.0, 0.0], "size": [2.0, 0.5, 1.0]},
+                    {"object_id": "obstacle_01", "object_type": "obstacle_cluster", "position": [1.0, 0.0, 0.0], "size": [1.0, 1.0, 1.0]},
+                    {"object_id": "obstacle_02", "object_type": "obstacle_cluster", "position": [1.3, 0.0, 0.0], "size": [1.0, 1.0, 1.0]},
+                    {"object_id": "obstacle_03", "object_type": "obstacle_cluster", "position": [1.55, 0.0, 0.0], "size": [1.0, 1.0, 1.0]},
+                ],
+            },
+        }
+    )
+
+    assert metadata["layout_validation_issue_count"] >= 1
+    assert "overlapping_objects" in metadata["layout_validation_issue_codes"]
+    assert "cramped_layout" in metadata["layout_validation_issue_codes"]
+
+
+def test_result_evaluation_includes_platformer_layout_validation_summary():
+    state = {
+        "session_tuning_state": {
+            "target_context": "platformer",
+            "target_entity": "platformer",
+            "contexts": {
+                "platformer": {
+                    "speed": {"family": "speed", "target_context": "platformer", "resulting_tier": "standard", "observed_value": 5.5},
+                    "jump_height": {"family": "jump_height", "target_context": "platformer", "resulting_tier": "standard", "observed_value": 1.2},
+                    "gravity": {"family": "gravity", "target_context": "platformer", "resulting_tier": "standard_gravity", "observed_value": 9.81},
+                }
+            },
+        },
+        "experiment_tracking": {
+            "active_experiment_id": "experiment_0040",
+            "experiments": [
+                {
+                    "experiment_id": "experiment_0040",
+                    "target_context": "platformer",
+                    "target_entity": "platformer",
+                    "active_variant_id": "variant_0002",
+                    "baseline_variant_id": "variant_0001",
+                    "variants": [
+                        _experiment_variant(
+                            order=1,
+                            experiment_id="experiment_0040",
+                            variant_id="variant_0001",
+                            source_prompt="restore level to standard",
+                            canonical_prompt="restore level to standard",
+                            variant_kind="baseline",
+                            speed_tier="standard",
+                            jump_height_tier="standard",
+                            gravity_tier="standard_gravity",
+                            baseline_marker=True,
+                            baseline_variant_id="variant_0001",
+                            outcome_summary="speed standard, jump height standard, gravity standard gravity",
+                            task_id="TASK_LAYOUT_VALIDATION_BASELINE",
+                            request_id="REQ_LAYOUT_VALIDATION_BASELINE",
+                            layout_validation_available=True,
+                            layout_validation_status="passed",
+                            layout_validation_status_label="clean",
+                            layout_validation_summary="Spatial validation clean for Super Monkee Tutorial: 0 issues detected.",
+                            layout_validation_issue_count=0,
+                            layout_validation_severity_summary="none",
+                            layout_validation_category_summary="none",
+                            layout_validation_issue_type_summary="none",
+                        ),
+                        _experiment_variant(
+                            order=2,
+                            experiment_id="experiment_0040",
+                            variant_id="variant_0002",
+                            parent_variant_id="variant_0001",
+                            source_prompt="save manual correction",
+                            canonical_prompt="save manual correction",
+                            variant_kind="followup_variant",
+                            speed_tier="standard",
+                            jump_height_tier="standard",
+                            gravity_tier="standard_gravity",
+                            baseline_variant_id="variant_0001",
+                            outcome_summary="manual correction saved",
+                            task_id="TASK_LAYOUT_VALIDATION_VARIANT",
+                            request_id="REQ_LAYOUT_VALIDATION_VARIANT",
+                            layout_validation_available=True,
+                            layout_validation_status="issues_found",
+                            layout_validation_status_label="issues detected",
+                            layout_validation_summary="3 spatial issue(s) detected for Super Monkee Tutorial: 1 unreachable platform, 1 invalid ladder, 1 obstacle crowding issue.",
+                            layout_validation_issue_count=3,
+                            layout_validation_blocking_issue_count=2,
+                            layout_validation_severity_counts={"error": 2, "warning": 1},
+                            layout_validation_severity_summary="2 errors, 1 warning",
+                            layout_validation_category_counts={"reachability": 1, "traversal": 1, "density_overlap": 1},
+                            layout_validation_category_summary="1 reachability, 1 traversal, 1 density/overlap",
+                            layout_validation_issue_type_counts={"unreachable_platform": 1, "invalid_ladder": 1, "cramped_layout": 1},
+                            layout_validation_issue_type_summary="1 unreachable platform, 1 invalid ladder, 1 obstacle crowding issue",
+                            layout_validation_highlights=["1 unreachable platform", "1 invalid ladder", "1 obstacle crowding issue"],
+                        ),
+                    ],
+                }
+            ],
+        },
+        "result_state_history": [
+            {
+                "order": 1,
+                "timestamp": "2026-04-04T11:00:00Z",
+                "task_id": "TASK_LAYOUT_VALIDATION_BASELINE",
+                "request_id": "REQ_LAYOUT_VALIDATION_BASELINE",
+                "plan_id": "",
+                "plan_key": "platformer_restore_layout_standard_v1",
+                "plan_title": "Restore platformer level structure to standard",
+                "target_context": "platformer",
+                "target_entity": "platformer",
+                "speed_tier": "standard",
+                "speed_value": 5.5,
+                "jump_height_tier": "standard",
+                "jump_height_value": 1.2,
+                "gravity_tier": "standard_gravity",
+                "gravity_value": 9.81,
+                "layout_validation_available": True,
+                "layout_validation_status": "passed",
+                "layout_validation_status_label": "clean",
+                "layout_validation_summary": "Spatial validation clean for Super Monkee Tutorial: 0 issues detected.",
+                "layout_validation_issue_count": 0,
+                "layout_validation_blocking_issue_count": 0,
+                "layout_validation_severity_summary": "none",
+                "layout_validation_category_summary": "none",
+                "layout_validation_issue_type_summary": "none",
+                "generic_capability_state": build_generic_capability_state(
+                    target_context="platformer",
+                    speed_tier="standard",
+                    speed_value=5.5,
+                    jump_height_tier="standard",
+                    jump_height_value=1.2,
+                    gravity_tier="standard_gravity",
+                    gravity_value=9.81,
+                ),
+                "experiment_id": "experiment_0040",
+                "variant_id": "variant_0001",
+                "baseline_variant_id": "variant_0001",
+                "preferred_baseline_variant_id": "",
+                "baseline_marker": True,
+                "variant_kind": "baseline",
+            }
+        ],
+        "result_evaluation_history": [],
+        "latest_result_evaluation": {},
+    }
+
+    state = apply_result_evaluation(
+        state,
+        task={
+            "task_id": "TASK_LAYOUT_VALIDATION_VARIANT",
+            "request_id": "REQ_LAYOUT_VALIDATION_VARIANT",
+            "plan_id": "",
+            "plan_key": "platformer_manual_correction_capture_v1",
+            "plan_title": "Save manual platformer correction",
+            "plan_total_steps": 1,
+            "plan_step_index": 1,
+            "source_prompt": "save manual correction",
+            "operator_prompt": "save manual correction",
+        },
+        timestamp="2026-04-04T11:01:00Z",
+    )
+
+    evaluation = state["latest_result_evaluation"]
+    assert evaluation["layout_validation_issue_count"] == 3
+    assert evaluation["layout_validation_status_label"] == "issues detected"
+    assert evaluation["layout_validation_summary"] == "3 spatial issue(s) detected for Super Monkee Tutorial: 1 unreachable platform, 1 invalid ladder, 1 obstacle crowding issue."
+    assert evaluation["layout_validation_severity_summary"] == "2 errors, 1 warning"
+    assert evaluation["layout_validation_category_summary"] == "1 reachability, 1 traversal, 1 density/overlap"
+    assert evaluation["layout_validation_issue_type_summary"] == "1 unreachable platform, 1 invalid ladder, 1 obstacle crowding issue"
+    assert evaluation["layout_validation_delta"]["issue_count_delta"] == 3
+    assert evaluation["layout_validation_delta"]["summary"].startswith("Spatial validation issue count: 0 -> 3")
+    assert "Spatial validation status: issues detected." in evaluation["comparison_description"]
+    assert "Spatial validation summary: 3 spatial issue(s) detected for Super Monkee Tutorial: 1 unreachable platform, 1 invalid ladder, 1 obstacle crowding issue." in evaluation["comparison_description"]
+    assert "Spatial validation severity: 2 errors, 1 warning." in evaluation["comparison_description"]
+    assert "Spatial validation categories: 1 reachability, 1 traversal, 1 density/overlap." in evaluation["comparison_description"]
+    assert any("introduced unreachable platform (0 -> 1)" in entry for entry in evaluation["detected_differences"])
+
+
+def test_merge_platformer_layout_correction_payload_accepts_unity_emitted_json(tmp_path):
+    payload_path = tmp_path / "unity" / "platformer_correction.json"
+    payload_path.parent.mkdir(parents=True, exist_ok=True)
+    payload_path.write_text(
+        json.dumps(
+            {
+                "layout_id": "super_monkee_tutorial",
+                "layout_name": "Super Monkee Tutorial",
+                "target_context": "platformer",
+                "manual_edit_mode": "keyboard_mouse",
+                "corrections": [
+                    {
+                        "object_id": "platform_01",
+                        "object_type": "platform",
+                        "action": "move",
+                        "original_position": [0.0, 0.0, 0.0],
+                        "new_position": [1.5, 0.0, 0.0],
+                    }
+                ],
+                "corrected_layout": {
+                    "layout_id": "super_monkee_tutorial",
+                    "objects": [{"object_id": "platform_01", "position": [1.5, 0.0, 0.0]}],
+                },
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    details, issue = merge_platformer_layout_correction_payload(
+        {"unity_exit_code": "0"},
+        payload_path_value=str(payload_path),
+    )
+
+    assert issue == ""
+    assert details["target_context"] == "platformer"
+    assert details["layout_id"] == "super_monkee_tutorial"
+    assert details["layout_name"] == "Super Monkee Tutorial"
+    assert details["manual_edit_mode"] == "keyboard_mouse"
+    assert len(details["layout_corrections"]) == 1
+    assert details["layout_corrections"][0]["object_id"] == "platform_01"
+    assert details["corrected_layout"]["layout_id"] == "super_monkee_tutorial"
+
+
+def test_result_evaluation_preserves_platformer_manual_correction_metadata():
+    state = {
+        "session_tuning_state": {
+            "target_context": "platformer",
+            "target_entity": "platformer",
+            "contexts": {
+                "platformer": {
+                    "jump_height": {
+                        "family": "jump_height",
+                        "target_context": "platformer",
+                        "resulting_tier": "standard",
+                        "observed_value": 1.2,
+                    },
+                    "gravity": {
+                        "family": "gravity",
+                        "target_context": "platformer",
+                        "resulting_tier": "standard_gravity",
+                        "observed_value": 9.81,
+                    },
+                    "speed": {
+                        "family": "speed",
+                        "target_context": "platformer",
+                        "resulting_tier": "standard",
+                        "observed_value": 5.5,
+                    },
+                }
+            },
+        },
+        "experiment_tracking": {
+            "active_experiment_id": "experiment_0030",
+            "experiments": [
+                {
+                    "experiment_id": "experiment_0030",
+                    "target_context": "platformer",
+                    "target_entity": "platformer",
+                    "active_variant_id": "variant_0002",
+                    "baseline_variant_id": "variant_0001",
+                    "variants": [
+                        _experiment_variant(
+                            order=1,
+                            experiment_id="experiment_0030",
+                            variant_id="variant_0001",
+                            source_prompt="restore level to standard",
+                            canonical_prompt="restore level to standard",
+                            variant_kind="baseline",
+                            speed_tier="standard",
+                            jump_height_tier="standard",
+                            gravity_tier="standard_gravity",
+                            baseline_marker=True,
+                            baseline_variant_id="variant_0001",
+                            outcome_summary="speed standard, jump height standard, gravity standard gravity",
+                            task_id="TASK_PLATFORMER_MANUAL_BASELINE",
+                            request_id="REQ_PLATFORMER_MANUAL_BASELINE",
+                            plan_key="platformer_restore_layout_standard_v1",
+                            plan_title="Restore platformer level to standard",
+                        ),
+                        _experiment_variant(
+                            order=2,
+                            experiment_id="experiment_0030",
+                            variant_id="variant_0002",
+                            parent_variant_id="variant_0001",
+                            source_prompt="save manual correction",
+                            canonical_prompt="save manual correction",
+                            variant_kind="followup_variant",
+                            speed_tier="standard",
+                            jump_height_tier="standard",
+                            gravity_tier="standard_gravity",
+                            baseline_variant_id="variant_0001",
+                            outcome_summary="manual correction saved",
+                            task_id="TASK_PLATFORMER_MANUAL_VARIANT",
+                            request_id="REQ_PLATFORMER_MANUAL_VARIANT",
+                            plan_key="platformer_manual_correction_capture_v1",
+                            plan_title="Save manual platformer correction",
+                            layout_id="super_monkee_tutorial",
+                            layout_name="Super Monkee Tutorial",
+                            manual_edit_mode="keyboard_mouse",
+                            layout_correction_count=2,
+                            layout_correction_summary="2 manual keyboard/mouse correction(s) saved for Super Monkee Tutorial.",
+                            derived_from_corrected_layout=True,
+                        ),
+                    ],
+                }
+            ],
+        },
+        "result_state_history": [
+            {
+                "order": 1,
+                "timestamp": "2026-04-04T10:20:00Z",
+                "task_id": "TASK_PLATFORMER_MANUAL_BASELINE",
+                "request_id": "REQ_PLATFORMER_MANUAL_BASELINE",
+                "plan_id": "",
+                "plan_key": "platformer_restore_layout_standard_v1",
+                "plan_title": "Restore platformer level to standard",
+                "target_context": "platformer",
+                "target_entity": "platformer",
+                "speed_tier": "standard",
+                "speed_value": 5.5,
+                "jump_height_tier": "standard",
+                "jump_height_value": 1.2,
+                "gravity_tier": "standard_gravity",
+                "gravity_value": 9.81,
+                "generic_capability_state": build_generic_capability_state(
+                    target_context="platformer",
+                    speed_tier="standard",
+                    speed_value=5.5,
+                    jump_height_tier="standard",
+                    jump_height_value=1.2,
+                    gravity_tier="standard_gravity",
+                    gravity_value=9.81,
+                ),
+                "experiment_id": "experiment_0030",
+                "variant_id": "variant_0001",
+                "baseline_variant_id": "variant_0001",
+                "preferred_baseline_variant_id": "",
+                "baseline_marker": True,
+                "variant_kind": "baseline",
+            }
+        ],
+        "result_evaluation_history": [],
+        "latest_result_evaluation": {},
+    }
+
+    state = apply_result_evaluation(
+        state,
+        task={
+            "task_id": "TASK_PLATFORMER_MANUAL_VARIANT",
+            "request_id": "REQ_PLATFORMER_MANUAL_VARIANT",
+            "plan_id": "",
+            "plan_key": "platformer_manual_correction_capture_v1",
+            "plan_title": "Save manual platformer correction",
+            "plan_total_steps": 1,
+            "plan_step_index": 1,
+            "source_prompt": "save manual correction",
+            "operator_prompt": "save manual correction",
+        },
+        timestamp="2026-04-04T10:21:00Z",
+    )
+
+    evaluation = state["latest_result_evaluation"]
+    assert evaluation["layout_correction_count"] == 2
+    assert evaluation["layout_correction_summary"] == "2 manual keyboard/mouse correction(s) saved for Super Monkee Tutorial."
+    assert evaluation["derived_from_corrected_layout"] is True
+    assert "Manual correction capture: 2 manual keyboard/mouse correction(s) saved for Super Monkee Tutorial." in evaluation["comparison_description"]
+    assert "Derived from corrected layout: yes." in evaluation["comparison_description"]
+
+
+def test_home_surface_loads_manual_platformer_correction_summary(tmp_path):
+    config = _make_config(tmp_path / "home_surface_platformer_manual_correction")
+    target_repo = config.root_dir / "BABYLON_TEST"
+    target_repo.mkdir(parents=True, exist_ok=True)
+    run_dir = config.runs_dir / "manual-platformer-correction-session"
+    artifacts_dir = run_dir / "artifacts"
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+
+    result = persist_platformer_layout_correction_result(
+        task={
+            "task_id": "TASK_PLATFORMER_CORRECTION_SURFACE",
+            "request_id": "REQ_PLATFORMER_CORRECTION_SURFACE",
+            "target_repo": str(target_repo),
+        },
+        result={
+            "status": "completed",
+            "details": {
+                "target_context": "platformer",
+                "action_type": "capture_manual_platformer_layout_correction",
+                "layout_id": "super_monkee_tutorial",
+                "layout_name": "Super Monkee Tutorial",
+                "layout_corrections": [
+                    {
+                        "object_id": "platform_01",
+                        "object_type": "platform",
+                        "action": "move",
+                        "original_position": [0.0, 0.0, 0.0],
+                        "corrected_position": [1.0, 0.0, 0.0],
+                    }
+                ],
+            },
+        },
+        timestamp="2026-04-04T10:30:00Z",
+    )
+    artifact_path = artifacts_dir / "TASK_PLATFORMER_CORRECTION_SURFACE_attempt_01.json"
+    artifact_path.write_text(
+        json.dumps(
+            {
+                "task": {
+                    "task_id": "TASK_PLATFORMER_CORRECTION_SURFACE",
+                    "request_id": "REQ_PLATFORMER_CORRECTION_SURFACE",
+                    "target_repo": str(target_repo),
+                    "operator_prompt": "save manual correction",
+                    "source_prompt": "save manual correction",
+                },
+                "result": result,
+                "validation": {"validation_state": "passed", "queue_action": "complete"},
+                "timestamp": "2026-04-04T10:30:00Z",
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "session_state.json").write_text(json.dumps({}, indent=2), encoding="utf-8")
+
+    proof = home_surface.load_proof_result_surface(artifact_path)
+    assert proof.available is True
+    assert proof.manual_correction_available is True
+    assert proof.manual_correction_count == 1
+    assert proof.manual_correction_summary == "1 manual keyboard/mouse correction(s) saved for Super Monkee Tutorial."
+    assert proof.final_verdict == "Manual platformer layout corrections were saved as project-local artifacts and the recorded checks passed."
+    assert "platform_01 moved from" in proof.before_after_summary
+
+
+def test_home_surface_surfaces_platformer_layout_validation_findings(tmp_path):
+    config = _make_config(tmp_path / "home_surface_platformer_layout_validation")
+    target_repo = config.root_dir / "BABYLON_TEST"
+    target_repo.mkdir(parents=True, exist_ok=True)
+    run_dir = config.runs_dir / "platformer-layout-validation-session"
+    artifacts_dir = run_dir / "artifacts"
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+
+    result = persist_platformer_layout_correction_result(
+        task={
+            "task_id": "TASK_PLATFORMER_LAYOUT_VALIDATION_SURFACE",
+            "request_id": "REQ_PLATFORMER_LAYOUT_VALIDATION_SURFACE",
+            "target_repo": str(target_repo),
+        },
+        result={
+            "status": "completed",
+            "details": {
+                "target_context": "platformer",
+                "layout_id": "super_monkee_tutorial",
+                "layout_name": "Super Monkee Tutorial",
+                "speed_value": 5.5,
+                "jump_height_value": 1.2,
+                "gravity_value": 9.81,
+                "corrected_layout": {
+                    "layout_id": "super_monkee_tutorial",
+                    "layout_name": "Super Monkee Tutorial",
+                    "ground": {"center_x": 0.0, "center_z": 0.0, "top_y": 0.0, "width": 4.0, "depth": 2.0},
+                    "platforms": [
+                        {"object_id": "platform_far", "center_x": 10.0, "center_z": 0.0, "top_y": 2.1, "width": 1.5, "depth": 1.0},
+                    ],
+                },
+            },
+        },
+        timestamp="2026-04-04T11:15:00Z",
+    )
+    result["details"].update(extract_platformer_layout_validation_metadata(result["details"]))
+
+    artifact_path = artifacts_dir / "TASK_PLATFORMER_LAYOUT_VALIDATION_SURFACE_attempt_01.json"
+    artifact_path.write_text(
+        json.dumps(
+            {
+                "task": {
+                    "task_id": "TASK_PLATFORMER_LAYOUT_VALIDATION_SURFACE",
+                    "request_id": "REQ_PLATFORMER_LAYOUT_VALIDATION_SURFACE",
+                    "target_repo": str(target_repo),
+                    "operator_prompt": "save manual correction",
+                    "source_prompt": "save manual correction",
+                },
+                "result": result,
+                "validation": {"validation_state": "passed", "queue_action": "complete"},
+                "timestamp": "2026-04-04T11:15:00Z",
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "session_state.json").write_text(json.dumps({}, indent=2), encoding="utf-8")
+
+    proof = home_surface.load_proof_result_surface(artifact_path)
+    assert any("Spatial validation status: issues detected." in check for check in proof.validation_checks)
+    assert any("Spatial validation highlights:" in check for check in proof.validation_checks)
+    assert proof.validation_outcome == "Recorded spatial validation status: issues detected; 1 layout issue(s) detected."
+    assert proof.final_verdict == "Requested change completed, but spatial validation found 1 layout issue(s)."
+
+
+def test_experiment_tracking_records_platformer_level_set_metadata_on_variants():
+    state = {
+        "session_tuning_state": {
+            "target_context": "platformer",
+            "target_entity": "platformer",
+            "contexts": {
+                "platformer": {
+                    "jump_height": {
+                        "family": "jump_height",
+                        "target_context": "platformer",
+                        "target_entity": "platformer",
+                        "resulting_tier": "low",
+                        "observed_value": 0.9,
+                    },
+                    "gravity": {
+                        "family": "gravity",
+                        "target_context": "platformer",
+                        "target_entity": "platformer",
+                        "resulting_tier": "high_gravity",
+                        "observed_value": 13.0,
+                    },
+                    "speed": {
+                        "family": "speed",
+                        "target_context": "platformer",
+                        "target_entity": "platformer",
+                        "resulting_tier": "fast",
+                        "observed_value": 7.0,
+                    },
+                    "gap_size": {
+                        "family": "gap_size",
+                        "target_context": "platformer",
+                        "target_entity": "platformer",
+                        "resulting_tier": "large",
+                        "observed_value": 4.5,
+                    },
+                    "obstacle_density": {
+                        "family": "obstacle_density",
+                        "target_context": "platformer",
+                        "target_entity": "platformer",
+                        "resulting_tier": "dense",
+                        "observed_value": 1.5,
+                    },
+                    "enemy_density": {
+                        "family": "enemy_density",
+                        "target_context": "platformer",
+                        "target_entity": "platformer",
+                        "resulting_tier": "high",
+                        "observed_value": 3.0,
+                    },
+                    "segment_count": {
+                        "family": "segment_count",
+                        "target_context": "platformer",
+                        "target_entity": "platformer",
+                        "resulting_tier": "long",
+                        "observed_value": 12.0,
+                    },
+                }
+            },
+        },
+        "experiment_tracking": {},
+    }
+
+    updated = apply_experiment_tracking(
+        state,
+        task={
+            "task_id": "TASK_EXPERIMENT_PLATFORMER_LEVEL_SET",
+            "request_id": "REQ_EXPERIMENT_PLATFORMER_LEVEL_SET",
+            "plan_id": "",
+            "plan_key": "platformer_level_set_c_v1",
+            "plan_title": "Use level set c",
+            "plan_total_steps": 1,
+            "plan_step_index": 1,
+            "source_prompt": "use level set c",
+            "operator_prompt": "make level longer",
+            "capability_id": "level_0001_increase_platformer_segment_count",
+        },
+        details={
+            "translated_command": "use level set c",
+            "target_context": "platformer",
+            "target_entity": "platformer",
+            "resolution_source": "direct_prompt",
+            "result_reason": "applied",
+            "executed": True,
+            "speed_value": 7.0,
+            "jump_height_value": 0.9,
+            "gravity_value": 13.0,
+            "corrected_layout": {
+                "layout_id": "level_set_c_layout",
+                "layout_name": "Level Set C Layout",
+                "ground": {"center_x": 0.0, "center_z": 0.0, "top_y": 0.0, "width": 4.0, "depth": 2.0},
+                "platforms": [
+                    {"object_id": "platform_far", "center_x": 0.5, "center_z": 0.0, "top_y": 3.0, "width": 1.5, "depth": 1.0},
+                ],
+                "ladders": [
+                    {"object_id": "ladder_void", "object_type": "ladder", "center_x": 5.0, "center_z": 0.0, "bottom_y": 0.0, "top_y": 2.0},
+                ],
+            },
+        },
+        timestamp="2026-04-03T15:12:00Z",
+    )
+
+    variant = updated["latest_experiment_variant"]
+    assert variant["target_context"] == "platformer"
+    assert variant["level_set_id"] == "level_set_c"
+    assert variant["level_set_name"] == "level set c"
+    assert variant["level_profile_id"] == "challenge_traversal"
+    assert variant["level_profile_name"] == "challenge traversal"
+    assert variant["layout_validation_status_label"] == "issues detected"
+    assert variant["layout_validation_issue_count"] == 2
+    assert variant["layout_validation_category_summary"] == "1 reachability, 1 traversal"
+    assert variant["layout_validation_issue_type_summary"] == "1 invalid ladder, 1 unreachable platform"
+    assert variant["outcome_summary"] == "speed fast, jump height low, gravity high gravity, gap size large, obstacle density dense, enemy density high, segment count long"
+
+
+def test_task_intake_compares_platformer_layout_variants_across_experiments(tmp_path):
+    config = _make_config(tmp_path / "experiment_cross_comparison_platformer_layout")
+    intake = ConversationalTaskIntake(config)
+    state_store = StateStore(config.runs_dir, "experiment-cross-comparison-platformer-layout-session")
+    state_store.save(
+        {
+            "session_id": "experiment-cross-comparison-platformer-layout-session",
+            "experiment_tracking": {
+                "experiments": [
+                    {
+                        "experiment_id": "experiment_0021",
+                        "target_entity": "platformer",
+                        "target_context": "platformer",
+                        "active_variant_id": "variant_0001",
+                        "baseline_variant_id": "variant_0001",
+                        "variants": [
+                            _experiment_variant(
+                                order=1,
+                                experiment_id="experiment_0021",
+                                variant_id="variant_0001",
+                                source_prompt="use challenge traversal",
+                                canonical_prompt="use challenge traversal",
+                                variant_kind="baseline",
+                                gap_size_tier="large",
+                                obstacle_density_tier="dense",
+                                enemy_density_tier="high",
+                                segment_count_tier="long",
+                                baseline_marker=True,
+                                baseline_variant_id="variant_0001",
+                                outcome_summary="gap size large, obstacle density dense, enemy density high, segment count long",
+                                plan_key="platformer_challenge_traversal_v1",
+                                plan_title="Use challenge traversal",
+                                level_profile_id="challenge_traversal",
+                                level_profile_name="challenge traversal",
+                            ),
+                        ],
+                    },
+                    {
+                        "experiment_id": "experiment_0022",
+                        "target_entity": "platformer",
+                        "target_context": "platformer",
+                        "active_variant_id": "variant_0001",
+                        "baseline_variant_id": "variant_0001",
+                        "variants": [
+                            _experiment_variant(
+                                order=1,
+                                experiment_id="experiment_0022",
+                                variant_id="variant_0001",
+                                source_prompt="restore level to standard",
+                                canonical_prompt="restore level to standard",
+                                variant_kind="baseline",
+                                gap_size_tier="standard",
+                                obstacle_density_tier="standard",
+                                enemy_density_tier="standard",
+                                segment_count_tier="standard",
+                                baseline_marker=True,
+                                baseline_variant_id="variant_0001",
+                                outcome_summary="gap size standard, obstacle density standard, enemy density standard, segment count standard",
+                                plan_key="platformer_restore_layout_standard_v1",
+                                plan_title="Restore platformer level structure to standard",
+                                level_profile_id="balanced_traversal",
+                                level_profile_name="balanced traversal",
+                            ),
+                        ],
+                    },
+                ],
+            },
+        }
+    )
+
+    result = intake.accept_message(
+        "compare variant_0001 in experiment_0021 with variant_0001 in experiment_0022",
+        session_id="experiment-cross-comparison-platformer-layout-session",
+        target_repo=str(config.root_dir),
+    )
+
+    combined_text = "\n".join(result.routing.plan_step_titles or [])
+    assert result.task_type == "experiment_review_request"
+    assert result.routing.plan_title == "Cross-experiment variant comparison"
+    assert "Left profile: challenge traversal." in combined_text
+    assert "Right profile: balanced traversal." in combined_text
+    assert "Gap size: standard -> large" in combined_text
+    assert "Obstacle density: standard -> dense" in combined_text
+    assert "Enemy density: standard -> high" in combined_text
+    assert "Segment count: standard -> long" in combined_text
+
+
+def test_task_intake_shows_platformer_layout_experiment_variant_review_summary(tmp_path):
+    config = _make_config(tmp_path / "platformer_layout_variant_review_summary")
+    intake = ConversationalTaskIntake(config)
+    state_store = StateStore(config.runs_dir, "platformer-layout-variant-review-session")
+    state_store.save(
+        {
+            "session_id": "platformer-layout-variant-review-session",
+            "experiment_tracking": {
+                "active_experiment_id": "experiment_0023",
+                "experiments": [
+                    {
+                        "experiment_id": "experiment_0023",
+                        "target_context": "platformer",
+                        "target_entity": "platformer",
+                        "active_variant_id": "variant_0002",
+                        "baseline_variant_id": "variant_0001",
+                        "preferred_baseline_variant_id": "variant_0002",
+                        "variants": [
+                            _experiment_variant(
+                                order=1,
+                                experiment_id="experiment_0023",
+                                variant_id="variant_0001",
+                                source_prompt="restore level to standard",
+                                canonical_prompt="restore level to standard",
+                                variant_kind="baseline",
+                                gap_size_tier="standard",
+                                obstacle_density_tier="standard",
+                                enemy_density_tier="standard",
+                                segment_count_tier="standard",
+                                baseline_marker=True,
+                                baseline_variant_id="variant_0001",
+                                outcome_summary="gap size standard, obstacle density standard, enemy density standard, segment count standard",
+                                plan_key="platformer_restore_layout_standard_v1",
+                                plan_title="Restore platformer level structure to standard",
+                                level_profile_id="balanced_traversal",
+                                level_profile_name="balanced traversal",
+                            ),
+                            _experiment_variant(
+                                order=2,
+                                experiment_id="experiment_0023",
+                                variant_id="variant_0002",
+                                parent_variant_id="variant_0001",
+                                source_prompt="use challenge traversal",
+                                canonical_prompt="use challenge traversal",
+                                variant_kind="followup_variant",
+                                gap_size_tier="large",
+                                obstacle_density_tier="dense",
+                                enemy_density_tier="high",
+                                segment_count_tier="long",
+                                baseline_variant_id="variant_0001",
+                                outcome_summary="gap size large, obstacle density dense, enemy density high, segment count long",
+                                plan_key="platformer_challenge_traversal_v1",
+                                plan_title="Use challenge traversal",
+                                level_profile_id="challenge_traversal",
+                                level_profile_name="challenge traversal",
+                                decision_status="kept",
+                            ),
+                        ],
+                    }
+                ],
+            },
+        }
+    )
+
+    result = intake.accept_message(
+        "show current experiment variants",
+        session_id="platformer-layout-variant-review-session",
+        target_repo=str(config.root_dir),
+    )
+
+    assert result.routing.plan_title == "Current experiment variants"
+    assert "Target context: platformer." in result.routing.decision_summary
+    assert any(
+        "variant_0002 | target context: platformer | status: current, preferred baseline, kept | prompt: use challenge traversal | profile: challenge traversal | outcome: gap size large, obstacle density dense, enemy density high, segment count long | deltas from baseline: Gap size: standard -> large; Obstacle density: standard -> dense; Enemy density: standard -> high; Segment count: standard -> long."
+        == line
+        for line in result.routing.plan_step_titles or []
+    )
+
+
+def test_task_intake_shows_platformer_level_set_experiment_variant_review_summary(tmp_path):
+    config = _make_config(tmp_path / "platformer_level_set_variant_review_summary")
+    intake = ConversationalTaskIntake(config)
+    state_store = StateStore(config.runs_dir, "platformer-level-set-variant-review-session")
+    state_store.save(
+        {
+            "session_id": "platformer-level-set-variant-review-session",
+            "experiment_tracking": {
+                "active_experiment_id": "experiment_0026",
+                "experiments": [
+                    {
+                        "experiment_id": "experiment_0026",
+                        "target_context": "platformer",
+                        "target_entity": "platformer",
+                        "active_variant_id": "variant_0002",
+                        "baseline_variant_id": "variant_0001",
+                        "preferred_baseline_variant_id": "variant_0002",
+                        "variants": [
+                            _experiment_variant(
+                                order=1,
+                                experiment_id="experiment_0026",
+                                variant_id="variant_0001",
+                                source_prompt="restore level set to standard",
+                                canonical_prompt="restore level set to standard",
+                                variant_kind="baseline",
+                                jump_height_tier="standard",
+                                gravity_tier="standard_gravity",
+                                speed_tier="standard",
+                                gap_size_tier="standard",
+                                obstacle_density_tier="standard",
+                                enemy_density_tier="standard",
+                                segment_count_tier="standard",
+                                baseline_marker=True,
+                                baseline_variant_id="variant_0001",
+                                outcome_summary="speed standard, jump height standard, gravity standard gravity, gap size standard, obstacle density standard, enemy density standard, segment count standard",
+                                plan_key="platformer_restore_level_set_standard_v1",
+                                plan_title="Restore platformer level set to standard",
+                                level_set_id="standard_level_set",
+                                level_set_name="standard level set",
+                                level_profile_id="balanced_traversal",
+                                level_profile_name="balanced traversal",
+                            ),
+                            _experiment_variant(
+                                order=2,
+                                experiment_id="experiment_0026",
+                                variant_id="variant_0002",
+                                parent_variant_id="variant_0001",
+                                source_prompt="use level set c",
+                                canonical_prompt="use level set c",
+                                variant_kind="followup_variant",
+                                jump_height_tier="low",
+                                gravity_tier="high_gravity",
+                                speed_tier="fast",
+                                gap_size_tier="large",
+                                obstacle_density_tier="dense",
+                                enemy_density_tier="high",
+                                segment_count_tier="long",
+                                baseline_variant_id="variant_0001",
+                                outcome_summary="speed fast, jump height low, gravity high gravity, gap size large, obstacle density dense, enemy density high, segment count long",
+                                plan_key="platformer_level_set_c_v1",
+                                plan_title="Use level set c",
+                                level_set_id="level_set_c",
+                                level_set_name="level set c",
+                                level_profile_id="challenge_traversal",
+                                level_profile_name="challenge traversal",
+                                decision_status="kept",
+                            ),
+                        ],
+                    }
+                ],
+            },
+        }
+    )
+
+    result = intake.accept_message(
+        "show current experiment variants",
+        session_id="platformer-level-set-variant-review-session",
+        target_repo=str(config.root_dir),
+    )
+
+    assert result.routing.plan_title == "Current experiment variants"
+    assert any(
+        "variant_0002 | target context: platformer | status: current, preferred baseline, kept | prompt: use level set c | level set: level set c | profile: challenge traversal | outcome: speed fast, jump height low, gravity high gravity, gap size large, obstacle density dense, enemy density high, segment count long | deltas from baseline: Speed: standard -> fast; Jump height: standard -> low; Gravity: standard_gravity -> high_gravity; Gap size: standard -> large; Obstacle density: standard -> dense; Enemy density: standard -> high; Segment count: standard -> long."
+        == line
+        for line in result.routing.plan_step_titles or []
+    )
+
+
+def test_task_intake_shows_platformer_profile_decision_summary(tmp_path):
+    config = _make_config(tmp_path / "platformer_profile_decision_summary")
+    intake = ConversationalTaskIntake(config)
+    state_store = StateStore(config.runs_dir, "platformer-profile-decision-session")
+    state_store.save(
+        {
+            "session_id": "platformer-profile-decision-session",
+            "experiment_tracking": {
+                "active_experiment_id": "experiment_0024",
+                "experiments": [
+                    {
+                        "experiment_id": "experiment_0024",
+                        "target_context": "platformer",
+                        "target_entity": "platformer",
+                        "active_variant_id": "variant_0002",
+                        "baseline_variant_id": "variant_0001",
+                        "preferred_baseline_variant_id": "variant_0002",
+                        "variants": [
+                            _experiment_variant(
+                                order=1,
+                                experiment_id="experiment_0024",
+                                variant_id="variant_0001",
+                                source_prompt="restore level to standard",
+                                canonical_prompt="restore level to standard",
+                                variant_kind="baseline",
+                                gap_size_tier="standard",
+                                obstacle_density_tier="standard",
+                                enemy_density_tier="standard",
+                                segment_count_tier="standard",
+                                baseline_marker=True,
+                                baseline_variant_id="variant_0001",
+                                outcome_summary="gap size standard, obstacle density standard, enemy density standard, segment count standard",
+                                plan_key="platformer_restore_layout_standard_v1",
+                                plan_title="Restore platformer level structure to standard",
+                                level_profile_id="balanced_traversal",
+                                level_profile_name="balanced traversal",
+                                decision_status="kept",
+                            ),
+                            _experiment_variant(
+                                order=2,
+                                experiment_id="experiment_0024",
+                                variant_id="variant_0002",
+                                parent_variant_id="variant_0001",
+                                source_prompt="use short dense run",
+                                canonical_prompt="use short dense run",
+                                variant_kind="followup_variant",
+                                gap_size_tier="standard",
+                                obstacle_density_tier="dense",
+                                enemy_density_tier="high",
+                                segment_count_tier="short",
+                                baseline_variant_id="variant_0001",
+                                outcome_summary="gap size standard, obstacle density dense, enemy density high, segment count short",
+                                plan_key="platformer_short_dense_run_v1",
+                                plan_title="Use short dense run",
+                                level_profile_id="short_dense_run",
+                                level_profile_name="short dense run",
+                                decision_status="rejected",
+                            ),
+                        ],
+                    }
+                ],
+            },
+        }
+    )
+
+    result = intake.accept_message(
+        "show current experiment decisions",
+        session_id="platformer-profile-decision-session",
+        target_repo=str(config.root_dir),
+    )
+
+    assert result.routing.plan_title == "Current experiment decisions"
+    assert any(
+        "variant_0002 | target context: platformer | status: current, preferred baseline, rejected | prompt: use short dense run | profile: short dense run | outcome: gap size standard, obstacle density dense, enemy density high, segment count short | deltas from baseline: Obstacle density: standard -> dense; Enemy density: standard -> high; Segment count: standard -> short."
+        == line
+        for line in result.routing.plan_step_titles or []
+    )
 
 
 def test_task_intake_compares_platformer_variants_across_experiments(tmp_path):
@@ -7540,6 +9485,198 @@ def _write_platformer_capability_contracts(config: OrchestratorConfig) -> None:
             "match_terms": ["movement", "standard"],
             "match_verbs": ["restore"],
         },
+        "level_0001_increase_platformer_gap_size.json": {
+            "capability_id": "level_0001_increase_platformer_gap_size",
+            "title": "LEVEL_0001 increase platformer gap size",
+            "intent": "mutate",
+            "target_level": "LEVEL_0001",
+            "target_scene": "Assets/AI_E_TestScenes/entity_test.unity",
+            "requested_execution_lane": "approval_required_mutation",
+            "handler_name": "level_0001_entity_transform_handler",
+            "agent_type": "level_0001_entity_transform_mutation_agent",
+            "approval_required": True,
+            "eligible_for_auto": False,
+            "evidence_state": "experimental",
+            "safety_class": "approval_gated_automation",
+            "match_terms": ["gaps", "larger"],
+            "match_verbs": ["make"],
+        },
+        "level_0001_decrease_platformer_gap_size.json": {
+            "capability_id": "level_0001_decrease_platformer_gap_size",
+            "title": "LEVEL_0001 decrease platformer gap size",
+            "intent": "mutate",
+            "target_level": "LEVEL_0001",
+            "target_scene": "Assets/AI_E_TestScenes/entity_test.unity",
+            "requested_execution_lane": "approval_required_mutation",
+            "handler_name": "level_0001_entity_transform_handler",
+            "agent_type": "level_0001_entity_transform_mutation_agent",
+            "approval_required": True,
+            "eligible_for_auto": False,
+            "evidence_state": "experimental",
+            "safety_class": "approval_gated_automation",
+            "match_terms": ["gaps", "smaller"],
+            "match_verbs": ["make"],
+        },
+        "level_0001_restore_platformer_gap_size_standard.json": {
+            "capability_id": "level_0001_restore_platformer_gap_size_standard",
+            "title": "LEVEL_0001 restore platformer gap size standard",
+            "intent": "mutate",
+            "target_level": "LEVEL_0001",
+            "target_scene": "Assets/AI_E_TestScenes/entity_test.unity",
+            "requested_execution_lane": "approval_required_mutation",
+            "handler_name": "level_0001_entity_transform_handler",
+            "agent_type": "level_0001_entity_transform_mutation_agent",
+            "approval_required": True,
+            "eligible_for_auto": False,
+            "evidence_state": "experimental",
+            "safety_class": "approval_gated_automation",
+            "match_terms": ["gap", "size", "standard"],
+            "match_verbs": ["restore"],
+        },
+        "level_0001_reduce_platformer_obstacle_density.json": {
+            "capability_id": "level_0001_reduce_platformer_obstacle_density",
+            "title": "LEVEL_0001 reduce platformer obstacle density",
+            "intent": "mutate",
+            "target_level": "LEVEL_0001",
+            "target_scene": "Assets/AI_E_TestScenes/entity_test.unity",
+            "requested_execution_lane": "approval_required_mutation",
+            "handler_name": "level_0001_entity_transform_handler",
+            "agent_type": "level_0001_entity_transform_mutation_agent",
+            "approval_required": True,
+            "eligible_for_auto": False,
+            "evidence_state": "experimental",
+            "safety_class": "approval_gated_automation",
+            "match_terms": ["obstacle", "density"],
+            "match_verbs": ["reduce"],
+        },
+        "level_0001_increase_platformer_obstacle_density.json": {
+            "capability_id": "level_0001_increase_platformer_obstacle_density",
+            "title": "LEVEL_0001 increase platformer obstacle density",
+            "intent": "mutate",
+            "target_level": "LEVEL_0001",
+            "target_scene": "Assets/AI_E_TestScenes/entity_test.unity",
+            "requested_execution_lane": "approval_required_mutation",
+            "handler_name": "level_0001_entity_transform_handler",
+            "agent_type": "level_0001_entity_transform_mutation_agent",
+            "approval_required": True,
+            "eligible_for_auto": False,
+            "evidence_state": "experimental",
+            "safety_class": "approval_gated_automation",
+            "match_terms": ["obstacle", "density"],
+            "match_verbs": ["increase"],
+        },
+        "level_0001_restore_platformer_obstacle_density_standard.json": {
+            "capability_id": "level_0001_restore_platformer_obstacle_density_standard",
+            "title": "LEVEL_0001 restore platformer obstacle density standard",
+            "intent": "mutate",
+            "target_level": "LEVEL_0001",
+            "target_scene": "Assets/AI_E_TestScenes/entity_test.unity",
+            "requested_execution_lane": "approval_required_mutation",
+            "handler_name": "level_0001_entity_transform_handler",
+            "agent_type": "level_0001_entity_transform_mutation_agent",
+            "approval_required": True,
+            "eligible_for_auto": False,
+            "evidence_state": "experimental",
+            "safety_class": "approval_gated_automation",
+            "match_terms": ["obstacle", "density", "standard"],
+            "match_verbs": ["restore"],
+        },
+        "level_0001_reduce_platformer_enemy_density.json": {
+            "capability_id": "level_0001_reduce_platformer_enemy_density",
+            "title": "LEVEL_0001 reduce platformer enemy density",
+            "intent": "mutate",
+            "target_level": "LEVEL_0001",
+            "target_scene": "Assets/AI_E_TestScenes/entity_test.unity",
+            "requested_execution_lane": "approval_required_mutation",
+            "handler_name": "level_0001_entity_transform_handler",
+            "agent_type": "level_0001_entity_transform_mutation_agent",
+            "approval_required": True,
+            "eligible_for_auto": False,
+            "evidence_state": "experimental",
+            "safety_class": "approval_gated_automation",
+            "match_terms": ["enemy", "density"],
+            "match_verbs": ["reduce"],
+        },
+        "level_0001_increase_platformer_enemy_density.json": {
+            "capability_id": "level_0001_increase_platformer_enemy_density",
+            "title": "LEVEL_0001 increase platformer enemy density",
+            "intent": "mutate",
+            "target_level": "LEVEL_0001",
+            "target_scene": "Assets/AI_E_TestScenes/entity_test.unity",
+            "requested_execution_lane": "approval_required_mutation",
+            "handler_name": "level_0001_entity_transform_handler",
+            "agent_type": "level_0001_entity_transform_mutation_agent",
+            "approval_required": True,
+            "eligible_for_auto": False,
+            "evidence_state": "experimental",
+            "safety_class": "approval_gated_automation",
+            "match_terms": ["enemy", "density"],
+            "match_verbs": ["increase"],
+        },
+        "level_0001_restore_platformer_enemy_density_standard.json": {
+            "capability_id": "level_0001_restore_platformer_enemy_density_standard",
+            "title": "LEVEL_0001 restore platformer enemy density standard",
+            "intent": "mutate",
+            "target_level": "LEVEL_0001",
+            "target_scene": "Assets/AI_E_TestScenes/entity_test.unity",
+            "requested_execution_lane": "approval_required_mutation",
+            "handler_name": "level_0001_entity_transform_handler",
+            "agent_type": "level_0001_entity_transform_mutation_agent",
+            "approval_required": True,
+            "eligible_for_auto": False,
+            "evidence_state": "experimental",
+            "safety_class": "approval_gated_automation",
+            "match_terms": ["enemy", "density", "standard"],
+            "match_verbs": ["restore"],
+        },
+        "level_0001_increase_platformer_segment_count.json": {
+            "capability_id": "level_0001_increase_platformer_segment_count",
+            "title": "LEVEL_0001 increase platformer segment count",
+            "intent": "mutate",
+            "target_level": "LEVEL_0001",
+            "target_scene": "Assets/AI_E_TestScenes/entity_test.unity",
+            "requested_execution_lane": "approval_required_mutation",
+            "handler_name": "level_0001_entity_transform_handler",
+            "agent_type": "level_0001_entity_transform_mutation_agent",
+            "approval_required": True,
+            "eligible_for_auto": False,
+            "evidence_state": "experimental",
+            "safety_class": "approval_gated_automation",
+            "match_terms": ["level", "longer"],
+            "match_verbs": ["make"],
+        },
+        "level_0001_decrease_platformer_segment_count.json": {
+            "capability_id": "level_0001_decrease_platformer_segment_count",
+            "title": "LEVEL_0001 decrease platformer segment count",
+            "intent": "mutate",
+            "target_level": "LEVEL_0001",
+            "target_scene": "Assets/AI_E_TestScenes/entity_test.unity",
+            "requested_execution_lane": "approval_required_mutation",
+            "handler_name": "level_0001_entity_transform_handler",
+            "agent_type": "level_0001_entity_transform_mutation_agent",
+            "approval_required": True,
+            "eligible_for_auto": False,
+            "evidence_state": "experimental",
+            "safety_class": "approval_gated_automation",
+            "match_terms": ["level", "shorter"],
+            "match_verbs": ["make"],
+        },
+        "level_0001_restore_platformer_segment_count_standard.json": {
+            "capability_id": "level_0001_restore_platformer_segment_count_standard",
+            "title": "LEVEL_0001 restore platformer segment count standard",
+            "intent": "mutate",
+            "target_level": "LEVEL_0001",
+            "target_scene": "Assets/AI_E_TestScenes/entity_test.unity",
+            "requested_execution_lane": "approval_required_mutation",
+            "handler_name": "level_0001_entity_transform_handler",
+            "agent_type": "level_0001_entity_transform_mutation_agent",
+            "approval_required": True,
+            "eligible_for_auto": False,
+            "evidence_state": "experimental",
+            "safety_class": "approval_gated_automation",
+            "match_terms": ["segment", "count", "standard"],
+            "match_verbs": ["restore"],
+        },
     }
     for filename, payload in payloads.items():
         (capabilities_dir / filename).write_text(json.dumps(payload, indent=2), encoding="utf-8")
@@ -7796,6 +9933,10 @@ def _create_entity_transform_prompt_repo(config: OrchestratorConfig, *, target_r
     (tools_dir / "run_unity_mutate_platformer_jump_height.ps1").write_text("placeholder", encoding="utf-8")
     (tools_dir / "run_unity_mutate_platformer_gravity.ps1").write_text("placeholder", encoding="utf-8")
     (tools_dir / "run_unity_mutate_platformer_speed.ps1").write_text("placeholder", encoding="utf-8")
+    (tools_dir / "run_unity_mutate_platformer_gap_size.ps1").write_text("placeholder", encoding="utf-8")
+    (tools_dir / "run_unity_mutate_platformer_obstacle_density.ps1").write_text("placeholder", encoding="utf-8")
+    (tools_dir / "run_unity_mutate_platformer_enemy_density.ps1").write_text("placeholder", encoding="utf-8")
+    (tools_dir / "run_unity_mutate_platformer_segment_count.ps1").write_text("placeholder", encoding="utf-8")
     (tools_dir / "aie_prompt_aliases.json").write_text(
         json.dumps(
             {
@@ -7896,6 +10037,54 @@ def _create_entity_transform_prompt_repo(config: OrchestratorConfig, *, target_r
                     {
                         "normalized_prompt": "restore movement to standard",
                         "translated_command": "restore movement to standard",
+                    },
+                    {
+                        "normalized_prompt": "make gaps larger",
+                        "translated_command": "make gaps larger",
+                    },
+                    {
+                        "normalized_prompt": "make gaps smaller",
+                        "translated_command": "make gaps smaller",
+                    },
+                    {
+                        "normalized_prompt": "restore gap size to standard",
+                        "translated_command": "restore gap size to standard",
+                    },
+                    {
+                        "normalized_prompt": "reduce obstacle density",
+                        "translated_command": "reduce obstacle density",
+                    },
+                    {
+                        "normalized_prompt": "increase obstacle density",
+                        "translated_command": "increase obstacle density",
+                    },
+                    {
+                        "normalized_prompt": "restore obstacle density to standard",
+                        "translated_command": "restore obstacle density to standard",
+                    },
+                    {
+                        "normalized_prompt": "increase enemy density",
+                        "translated_command": "increase enemy density",
+                    },
+                    {
+                        "normalized_prompt": "reduce enemy density",
+                        "translated_command": "reduce enemy density",
+                    },
+                    {
+                        "normalized_prompt": "restore enemy density to standard",
+                        "translated_command": "restore enemy density to standard",
+                    },
+                    {
+                        "normalized_prompt": "make level longer",
+                        "translated_command": "make level longer",
+                    },
+                    {
+                        "normalized_prompt": "make level shorter",
+                        "translated_command": "make level shorter",
+                    },
+                    {
+                        "normalized_prompt": "restore segment count to standard",
+                        "translated_command": "restore segment count to standard",
                     },
                     {
                         "normalized_prompt": "increase encounter count",
@@ -8362,6 +10551,222 @@ def _create_entity_transform_prompt_repo(config: OrchestratorConfig, *, target_r
                         }
                     },
                     {
+                        "normalized_command": "make gaps larger",
+                        "action_name": "increase_platformer_gap_size",
+                        "entity_type": "platformer",
+                        "probe_name": "MutatePlatformerGapSize",
+                        "wrapper_path": "Tools/run_unity_mutate_platformer_gap_size.ps1",
+                        "probe_artifact_file": "intent_make_gaps_larger_probe_result.json",
+                        "probe_log_file": "intent_make_gaps_larger_probe.log",
+                        "wrapper_arguments": {
+                            "ProjectPath": ".",
+                            "SceneName": "entity_test",
+                            "TargetObjectName": "AIE_SuperMonkee_LevelLayout_Instance",
+                            "RequestedGapSize": 4.5,
+                            "BaselineGapSize": 3.0,
+                            "MinGapSize": 2.0,
+                            "MaxGapSize": 4.5
+                        }
+                    },
+                    {
+                        "normalized_command": "make gaps smaller",
+                        "action_name": "decrease_platformer_gap_size",
+                        "entity_type": "platformer",
+                        "probe_name": "MutatePlatformerGapSize",
+                        "wrapper_path": "Tools/run_unity_mutate_platformer_gap_size.ps1",
+                        "probe_artifact_file": "intent_make_gaps_smaller_probe_result.json",
+                        "probe_log_file": "intent_make_gaps_smaller_probe.log",
+                        "wrapper_arguments": {
+                            "ProjectPath": ".",
+                            "SceneName": "entity_test",
+                            "TargetObjectName": "AIE_SuperMonkee_LevelLayout_Instance",
+                            "RequestedGapSize": 2.0,
+                            "BaselineGapSize": 3.0,
+                            "MinGapSize": 2.0,
+                            "MaxGapSize": 4.5
+                        }
+                    },
+                    {
+                        "normalized_command": "restore gap size to standard",
+                        "action_name": "set_platformer_gap_size",
+                        "entity_type": "platformer",
+                        "probe_name": "MutatePlatformerGapSize",
+                        "wrapper_path": "Tools/run_unity_mutate_platformer_gap_size.ps1",
+                        "probe_artifact_file": "intent_restore_gap_size_to_standard_probe_result.json",
+                        "probe_log_file": "intent_restore_gap_size_to_standard_probe.log",
+                        "wrapper_arguments": {
+                            "ProjectPath": ".",
+                            "SceneName": "entity_test",
+                            "TargetObjectName": "AIE_SuperMonkee_LevelLayout_Instance",
+                            "RequestedGapSize": 3.0,
+                            "BaselineGapSize": 3.0,
+                            "MinGapSize": 2.0,
+                            "MaxGapSize": 4.5
+                        }
+                    },
+                    {
+                        "normalized_command": "reduce obstacle density",
+                        "action_name": "reduce_platformer_obstacle_density",
+                        "entity_type": "platformer",
+                        "probe_name": "MutatePlatformerObstacleDensity",
+                        "wrapper_path": "Tools/run_unity_mutate_platformer_obstacle_density.ps1",
+                        "probe_artifact_file": "intent_reduce_obstacle_density_probe_result.json",
+                        "probe_log_file": "intent_reduce_obstacle_density_probe.log",
+                        "wrapper_arguments": {
+                            "ProjectPath": ".",
+                            "SceneName": "entity_test",
+                            "TargetObjectName": "AIE_SuperMonkee_LevelLayout_Instance",
+                            "RequestedObstacleDensity": 0.5,
+                            "BaselineObstacleDensity": 1.0,
+                            "MinObstacleDensity": 0.5,
+                            "MaxObstacleDensity": 1.5
+                        }
+                    },
+                    {
+                        "normalized_command": "increase obstacle density",
+                        "action_name": "increase_platformer_obstacle_density",
+                        "entity_type": "platformer",
+                        "probe_name": "MutatePlatformerObstacleDensity",
+                        "wrapper_path": "Tools/run_unity_mutate_platformer_obstacle_density.ps1",
+                        "probe_artifact_file": "intent_increase_obstacle_density_probe_result.json",
+                        "probe_log_file": "intent_increase_obstacle_density_probe.log",
+                        "wrapper_arguments": {
+                            "ProjectPath": ".",
+                            "SceneName": "entity_test",
+                            "TargetObjectName": "AIE_SuperMonkee_LevelLayout_Instance",
+                            "RequestedObstacleDensity": 1.5,
+                            "BaselineObstacleDensity": 1.0,
+                            "MinObstacleDensity": 0.5,
+                            "MaxObstacleDensity": 1.5
+                        }
+                    },
+                    {
+                        "normalized_command": "restore obstacle density to standard",
+                        "action_name": "set_platformer_obstacle_density",
+                        "entity_type": "platformer",
+                        "probe_name": "MutatePlatformerObstacleDensity",
+                        "wrapper_path": "Tools/run_unity_mutate_platformer_obstacle_density.ps1",
+                        "probe_artifact_file": "intent_restore_obstacle_density_to_standard_probe_result.json",
+                        "probe_log_file": "intent_restore_obstacle_density_to_standard_probe.log",
+                        "wrapper_arguments": {
+                            "ProjectPath": ".",
+                            "SceneName": "entity_test",
+                            "TargetObjectName": "AIE_SuperMonkee_LevelLayout_Instance",
+                            "RequestedObstacleDensity": 1.0,
+                            "BaselineObstacleDensity": 1.0,
+                            "MinObstacleDensity": 0.5,
+                            "MaxObstacleDensity": 1.5
+                        }
+                    },
+                    {
+                        "normalized_command": "increase enemy density",
+                        "action_name": "increase_platformer_enemy_density",
+                        "entity_type": "platformer",
+                        "probe_name": "MutatePlatformerEnemyDensity",
+                        "wrapper_path": "Tools/run_unity_mutate_platformer_enemy_density.ps1",
+                        "probe_artifact_file": "intent_increase_enemy_density_probe_result.json",
+                        "probe_log_file": "intent_increase_enemy_density_probe.log",
+                        "wrapper_arguments": {
+                            "ProjectPath": ".",
+                            "SceneName": "entity_test",
+                            "TargetObjectName": "AIE_SuperMonkee_LevelLayout_Instance",
+                            "RequestedEnemyDensity": 3.0,
+                            "BaselineEnemyDensity": 2.0,
+                            "MinEnemyDensity": 1.0,
+                            "MaxEnemyDensity": 3.0
+                        }
+                    },
+                    {
+                        "normalized_command": "reduce enemy density",
+                        "action_name": "reduce_platformer_enemy_density",
+                        "entity_type": "platformer",
+                        "probe_name": "MutatePlatformerEnemyDensity",
+                        "wrapper_path": "Tools/run_unity_mutate_platformer_enemy_density.ps1",
+                        "probe_artifact_file": "intent_reduce_enemy_density_probe_result.json",
+                        "probe_log_file": "intent_reduce_enemy_density_probe.log",
+                        "wrapper_arguments": {
+                            "ProjectPath": ".",
+                            "SceneName": "entity_test",
+                            "TargetObjectName": "AIE_SuperMonkee_LevelLayout_Instance",
+                            "RequestedEnemyDensity": 1.0,
+                            "BaselineEnemyDensity": 2.0,
+                            "MinEnemyDensity": 1.0,
+                            "MaxEnemyDensity": 3.0
+                        }
+                    },
+                    {
+                        "normalized_command": "restore enemy density to standard",
+                        "action_name": "set_platformer_enemy_density",
+                        "entity_type": "platformer",
+                        "probe_name": "MutatePlatformerEnemyDensity",
+                        "wrapper_path": "Tools/run_unity_mutate_platformer_enemy_density.ps1",
+                        "probe_artifact_file": "intent_restore_enemy_density_to_standard_probe_result.json",
+                        "probe_log_file": "intent_restore_enemy_density_to_standard_probe.log",
+                        "wrapper_arguments": {
+                            "ProjectPath": ".",
+                            "SceneName": "entity_test",
+                            "TargetObjectName": "AIE_SuperMonkee_LevelLayout_Instance",
+                            "RequestedEnemyDensity": 2.0,
+                            "BaselineEnemyDensity": 2.0,
+                            "MinEnemyDensity": 1.0,
+                            "MaxEnemyDensity": 3.0
+                        }
+                    },
+                    {
+                        "normalized_command": "make level longer",
+                        "action_name": "increase_platformer_segment_count",
+                        "entity_type": "platformer",
+                        "probe_name": "MutatePlatformerSegmentCount",
+                        "wrapper_path": "Tools/run_unity_mutate_platformer_segment_count.ps1",
+                        "probe_artifact_file": "intent_make_level_longer_probe_result.json",
+                        "probe_log_file": "intent_make_level_longer_probe.log",
+                        "wrapper_arguments": {
+                            "ProjectPath": ".",
+                            "SceneName": "entity_test",
+                            "TargetObjectName": "AIE_SuperMonkee_LevelLayout_Instance",
+                            "RequestedSegmentCount": 12.0,
+                            "BaselineSegmentCount": 8.0,
+                            "MinSegmentCount": 5.0,
+                            "MaxSegmentCount": 12.0
+                        }
+                    },
+                    {
+                        "normalized_command": "make level shorter",
+                        "action_name": "decrease_platformer_segment_count",
+                        "entity_type": "platformer",
+                        "probe_name": "MutatePlatformerSegmentCount",
+                        "wrapper_path": "Tools/run_unity_mutate_platformer_segment_count.ps1",
+                        "probe_artifact_file": "intent_make_level_shorter_probe_result.json",
+                        "probe_log_file": "intent_make_level_shorter_probe.log",
+                        "wrapper_arguments": {
+                            "ProjectPath": ".",
+                            "SceneName": "entity_test",
+                            "TargetObjectName": "AIE_SuperMonkee_LevelLayout_Instance",
+                            "RequestedSegmentCount": 5.0,
+                            "BaselineSegmentCount": 8.0,
+                            "MinSegmentCount": 5.0,
+                            "MaxSegmentCount": 12.0
+                        }
+                    },
+                    {
+                        "normalized_command": "restore segment count to standard",
+                        "action_name": "set_platformer_segment_count",
+                        "entity_type": "platformer",
+                        "probe_name": "MutatePlatformerSegmentCount",
+                        "wrapper_path": "Tools/run_unity_mutate_platformer_segment_count.ps1",
+                        "probe_artifact_file": "intent_restore_segment_count_to_standard_probe_result.json",
+                        "probe_log_file": "intent_restore_segment_count_to_standard_probe.log",
+                        "wrapper_arguments": {
+                            "ProjectPath": ".",
+                            "SceneName": "entity_test",
+                            "TargetObjectName": "AIE_SuperMonkee_LevelLayout_Instance",
+                            "RequestedSegmentCount": 8.0,
+                            "BaselineSegmentCount": 8.0,
+                            "MinSegmentCount": 5.0,
+                            "MaxSegmentCount": 12.0
+                        }
+                    },
+                    {
                         "normalized_command": "increase encounter count",
                         "action_name": "increase_encounter_count",
                         "entity_type": "encounter",
@@ -8627,97 +11032,3 @@ def _make_config(tmp_path) -> OrchestratorConfig:
         approvals_path=approvals_path,
         command_allowlist_path=command_allowlist_path,
     )
-@pytest.mark.parametrize(
-    ("prompt_text", "expected_note"),
-    [
-        (
-            "make level more intense",
-            'AI-E mapped the gameplay goal "make level more intense" to the bounded platformer plan "use challenge traversal" across the known gap size, obstacle density, enemy density, and segment count families.',
-        ),
-        (
-            "make traversal more challenging but fair",
-            'AI-E mapped the gameplay goal "make traversal more challenging but fair" to the bounded platformer plan "use challenge traversal" across the known gap size, obstacle density, enemy density, and segment count families while preserving fairness through mandatory validation and evaluation.',
-        ),
-    ],
-)
-def test_task_intake_resolves_platformer_goal_intents_to_bounded_traversal_plan(
-    tmp_path,
-    prompt_text,
-    expected_note,
-):
-    config = _make_config(tmp_path / "platformer_goal_intent_plan")
-    _write_platformer_capability_contracts(config)
-    target_repo = _create_entity_transform_prompt_repo(config)
-    intake = ConversationalTaskIntake(config)
-
-    result = intake.accept_message(
-        prompt_text,
-        session_id="platformer-goal-intent-session",
-        target_repo=target_repo,
-    )
-
-    request_payload = json.loads(result.artifacts.request_payload_path.read_text(encoding="utf-8"))
-    runtime_payloads = [
-        json.loads(path.read_text(encoding="utf-8"))["runtime_task"]
-        for path in result.artifacts.runtime_task_payload_paths
-    ]
-
-    assert result.task_type == "mutation_plan_request"
-    assert result.routing.resolution_source == "goal_intent_mapping"
-    assert result.routing.resolved_from_prompt == normalize_prompt(prompt_text)
-    assert result.routing.session_resolution_note == expected_note
-    assert result.routing.mapped_prompt == "use challenge traversal"
-    assert result.routing.goal_components == [
-        "increase gap size",
-        "increase obstacle density",
-        "increase enemy density",
-        "increase segment count",
-    ]
-    assert result.routing.plan_key == "platformer_challenge_traversal_v1"
-    assert result.routing.plan_title == "Use challenge traversal"
-    assert result.routing.decision == "sandbox_first"
-    assert result.plan_step_titles == [
-        "Set gap size to large",
-        "Set obstacle density to dense",
-        "Set enemy density to high",
-        "Set segment count to long",
-    ]
-    assert request_payload["conversational_request"]["context"]["resolved_execution_prompt"] == "use challenge traversal"
-    assert request_payload["conversational_request"]["context"]["routing"]["goal_components"] == [
-        "increase gap size",
-        "increase obstacle density",
-        "increase enemy density",
-        "increase segment count",
-    ]
-    assert [payload["operator_prompt"] for payload in runtime_payloads] == [
-        "make gaps larger",
-        "increase obstacle density",
-        "increase enemy density",
-        "make level longer",
-    ]
-    assert all(payload["source_prompt"] == normalize_prompt(prompt_text) for payload in runtime_payloads)
-    assert all(payload["mapped_prompt"] == "use challenge traversal" for payload in runtime_payloads)
-
-
-def test_task_intake_blocks_out_of_scope_platformer_goal_intent_with_explicit_guidance(tmp_path):
-    config = _make_config(tmp_path / "unsupported_platformer_goal_intent")
-    _write_platformer_capability_contracts(config)
-    target_repo = _create_entity_transform_prompt_repo(config)
-    intake = ConversationalTaskIntake(config)
-
-    result = intake.accept_message(
-        "make traversal more challenging but fair and add lava",
-        session_id="platformer-goal-intent-blocked-session",
-        target_repo=target_repo,
-    )
-
-    queue = json.loads(config.queue_path.read_text(encoding="utf-8"))["tasks"]
-
-    assert result.queue_entry["status"] == "blocked"
-    assert queue[0]["status"] == "blocked"
-    assert result.routing.decision == "block"
-    assert result.routing.decision_reason == "route_missing"
-    assert result.routing.capability_supported is False
-    assert result.routing.mutation_capable is False
-    assert result.routing.mapped_prompt == "make traversal more challenging but fair and add lava"
-    assert "bounded platformer gameplay directives only through deterministic traversal profiles and level sets" in (result.routing.intelligence_summary or "")

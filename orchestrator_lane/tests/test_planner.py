@@ -169,6 +169,140 @@ def test_planner_returns_predefined_restore_standard_runner_danger_plan() -> Non
     ]
 
 
+@pytest.mark.parametrize(
+    ("prompt_text", "expected_title", "expected_step_prompts"),
+    [
+        (
+            "use level set a",
+            "Use level set a",
+            [
+                "make jump higher",
+                "reduce gravity",
+                "restore movement to standard",
+                "make gaps smaller",
+                "reduce obstacle density",
+                "reduce enemy density",
+                "restore segment count to standard",
+            ],
+        ),
+        (
+            "use level set b",
+            "Use level set b",
+            [
+                "restore jump to standard",
+                "restore gravity to standard",
+                "make movement faster",
+                "restore gap size to standard",
+                "reduce obstacle density",
+                "reduce enemy density",
+                "make level longer",
+            ],
+        ),
+        (
+            "use level set c",
+            "Use level set c",
+            [
+                "make jump lower",
+                "increase gravity",
+                "make movement faster",
+                "make gaps larger",
+                "increase obstacle density",
+                "increase enemy density",
+                "make level longer",
+            ],
+        ),
+        (
+            "use easy traversal",
+            "Use easy traversal",
+            [
+                "make gaps smaller",
+                "reduce obstacle density",
+                "reduce enemy density",
+                "restore segment count to standard",
+            ],
+        ),
+        (
+            "use balanced traversal",
+            "Use balanced traversal",
+            [
+                "restore gap size to standard",
+                "restore obstacle density to standard",
+                "restore enemy density to standard",
+                "restore segment count to standard",
+            ],
+        ),
+        (
+            "make the level more challenging",
+            "Use challenge traversal",
+            [
+                "make gaps larger",
+                "increase obstacle density",
+                "increase enemy density",
+                "make level longer",
+            ],
+        ),
+        (
+            "use long sparse run",
+            "Use long sparse run",
+            [
+                "restore gap size to standard",
+                "reduce obstacle density",
+                "reduce enemy density",
+                "make level longer",
+            ],
+        ),
+        (
+            "use short dense run",
+            "Use short dense run",
+            [
+                "restore gap size to standard",
+                "increase obstacle density",
+                "increase enemy density",
+                "make level shorter",
+            ],
+        ),
+    ],
+)
+def test_planner_returns_platformer_profile_plan(
+    prompt_text: str,
+    expected_title: str,
+    expected_step_prompts: list[str],
+) -> None:
+    planner = RuleBasedPlanner()
+
+    plan = planner.plan(
+        prompt_text,
+        target_repo="E:/AI projects 2025/BABYLON VER 2",
+        request_id="REQ_PLATFORMER_PROFILE123",
+    )
+
+    assert plan.request_type == "PREDEFINED_MUTATION_PLAN"
+    assert plan.title == expected_title
+    assert [step.operator_prompt for step in plan.steps] == expected_step_prompts
+
+
+def test_planner_returns_platformer_restore_level_set_plan() -> None:
+    planner = RuleBasedPlanner()
+
+    plan = planner.plan(
+        "restore level set to standard",
+        target_repo="E:/AI projects 2025/BABYLON VER 2",
+        request_id="REQ_PLATFORMER_LEVEL_SET_RESTORE123",
+    )
+
+    assert plan.request_type == "PREDEFINED_MUTATION_PLAN"
+    assert plan.title == "Restore platformer level set to standard"
+    assert [step.operator_prompt for step in plan.steps] == [
+        "restore jump to standard",
+        "restore gravity to standard",
+        "restore movement to standard",
+        "restore gap size to standard",
+        "restore obstacle density to standard",
+        "restore enemy density to standard",
+        "restore segment count to standard",
+    ]
+
+
 def test_planner_returns_predefined_fast_low_aggression_zombie_variation_plan() -> None:
     planner = RuleBasedPlanner()
 

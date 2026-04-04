@@ -1742,7 +1742,7 @@ def test_supervisor_resume_mixed_queue_preserves_retry_and_exclusion_truthfulnes
                         "task_id": "RESUME_RETRY_001",
                         "final_status": "retry_scheduled",
                         "note": "retry before restart",
-                        "timestamp": "2026-03-19 10:00:00 -04:00 (Eastern Time â€” New York)",
+                        "timestamp": "2026-03-19 10:00:00 -04:00 (Eastern Time — New York)",
                     }
                 ],
                 "tasks_completed": [],
@@ -1750,7 +1750,7 @@ def test_supervisor_resume_mixed_queue_preserves_retry_and_exclusion_truthfulnes
                     {
                         "task_id": "RESUME_RETRY_001",
                         "note": "retry before restart",
-                        "timestamp": "2026-03-19 10:00:00 -04:00 (Eastern Time â€” New York)",
+                        "timestamp": "2026-03-19 10:00:00 -04:00 (Eastern Time — New York)",
                     }
                 ],
                 "artifacts_generated": [],
@@ -4257,6 +4257,106 @@ def test_supervisor_resumes_unity_wrapper_interruption_and_preserves_partial_out
     assert "interrupted_task_missing_attempt_artifacts" in session_summary_markdown
     assert "artifact:artifacts/UNITY_IFI_001_attempt_01.json" in operator_report
 
+
+def test_supervisor_ingests_unity_platformer_correction_payload_and_persists_artifacts(tmp_path):
+    config = _make_config(tmp_path / "unity_platformer_correction_payload")
+    target_repo = config.root_dir / "BABYLON_TEST"
+    target_repo.mkdir(parents=True, exist_ok=True)
+
+    session_dir = config.runs_dir / "unity-platformer-correction"
+    payload_path = session_dir / "unity" / "platformer_correction.json"
+    stdout_path = session_dir / "unity" / "unity.stdout.log"
+    stderr_path = session_dir / "unity" / "unity.stderr.log"
+    wrapper_script_path = config.root_dir / "contracts" / "test_runtime" / "fake_platformer_correction_wrapper.ps1"
+    wrapper_script_path.parent.mkdir(parents=True, exist_ok=True)
+    wrapper_script_path.write_text(
+        "$payloadPath = $args[0]\n"
+        "New-Item -ItemType Directory -Force -Path ([System.IO.Path]::GetDirectoryName($payloadPath)) | Out-Null\n"
+        "@'\n"
+        "{\n"
+        "  \"layout_id\": \"super_monkee_tutorial\",\n"
+        "  \"layout_name\": \"Super Monkee Tutorial\",\n"
+        "  \"target_context\": \"platformer\",\n"
+        "  \"manual_edit_mode\": \"keyboard_mouse\",\n"
+        "  \"corrections\": [\n"
+        "    {\n"
+        "      \"object_id\": \"platform_01\",\n"
+        "      \"object_type\": \"platform\",\n"
+        "      \"action\": \"move\",\n"
+        "      \"original_position\": [0.0, 0.0, 0.0],\n"
+        "      \"new_position\": [1.0, 0.0, 0.0]\n"
+        "    }\n"
+        "  ],\n"
+        "  \"corrected_layout\": {\n"
+        "    \"layout_id\": \"super_monkee_tutorial\",\n"
+        "    \"objects\": [\n"
+        "      {\n"
+        "        \"object_id\": \"platform_01\",\n"
+        "        \"object_type\": \"platform\",\n"
+        "        \"position\": [1.0, 0.0, 0.0]\n"
+        "      }\n"
+        "    ]\n"
+        "  }\n"
+        "}\n"
+        "'@ | Set-Content -Path $payloadPath -Encoding UTF8\n"
+        "[Console]::Out.WriteLine('UNITY_EXIT_CODE=0')\n"
+        "[Console]::Out.WriteLine('UNITY_EXIT_REASON=completed')\n"
+        "[Console]::Out.Flush()\n",
+        encoding="utf-8",
+    )
+
+    _write_queue(
+        config.queue_path,
+        {
+            "tasks": [
+                _task(
+                    config,
+                    "UNITY_PLATFORMER_CORRECTION_001",
+                    priority=1,
+                    execution_seconds=0,
+                    agent_type="unity_control_agent",
+                    target_repo=str(target_repo),
+                    unity_control_script=str(wrapper_script_path),
+                    unity_control_args=[str(payload_path)],
+                    unity_result_json_path=str(payload_path),
+                    require_unity_result_json=True,
+                    unity_stdout_path=str(stdout_path),
+                    unity_stderr_path=str(stderr_path),
+                    unity_poll_interval_seconds=0.02,
+                )
+            ]
+        },
+    )
+
+    supervisor = Supervisor(
+        config,
+        SupervisorConfig(
+            session_limit_seconds=20,
+            heartbeat_interval_seconds=1,
+            poll_interval_seconds=1,
+            session_id="unity-platformer-correction",
+            stop_when_queue_empty=True,
+        ),
+    )
+
+    result = supervisor.run()
+
+    assert result.stop_reason == "queue_empty"
+    artifact_path = config.runs_dir / "unity-platformer-correction" / "artifacts" / "UNITY_PLATFORMER_CORRECTION_001_attempt_01.json"
+    assert artifact_path.exists()
+
+    artifact_payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+    details = artifact_payload["result"]["details"]
+    assert details["layout_id"] == "super_monkee_tutorial"
+    assert details["layout_name"] == "Super Monkee Tutorial"
+    assert details["manual_edit_mode"] == "keyboard_mouse"
+    assert details["layout_correction_count"] == 1
+    assert details["layout_correction_summary"] == "1 manual keyboard/mouse correction(s) saved for Super Monkee Tutorial."
+    assert Path(details["layout_correction_artifact_path"]).exists()
+    assert Path(details["layout_correction_history_path"]).exists()
+    assert Path(details["corrected_layout_artifact_path"]).exists()
+    assert details["layout_corrections"][0]["object_id"] == "platform_01"
+    assert details["unity_exit_code"] == "0"
 
 
 def test_supervisor_resumes_real_unity_tool_surface_interruption_and_preserves_partial_output_truth(tmp_path):

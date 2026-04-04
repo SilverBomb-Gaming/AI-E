@@ -12,11 +12,15 @@ AI-E v1 validation is now complete for the current supported deterministic path.
 
 The latest bounded autonomy milestone is also validated for supported platformer intent flows. AI-E can now map approved gameplay directives such as `make level more intense` into a bounded traversal plan, run an internal capped attempt loop, retain only valid deterministic candidates, and stop at an explicit `AUTONOMOUS BUILD COMPLETE` summary without ranking, auto-approving, or bypassing user review.
 
+AI-E also now supports bounded platformer manual correction and layout-quality review flows. Designers can capture explicit keyboard/mouse platformer layout edits through a Unity-side correction tool, persist project-local correction artifacts, and surface deterministic spatial validation findings through the existing experiment, evaluation, and proof outputs.
+
 ## AI-E System Evolution (Latest)
 
 AI-E now layers bounded interpretation and review tools on top of the original deterministic mutation path without introducing autonomous execution. Supported requests can move through explicit goal-intent mapping, bounded goal composition, deterministic outcome evaluation, current-session experiment tracking, and explicit experiment decision tracking while still resolving into known capabilities, known predefined plans, or safe review-only summaries.
 
 AI-E now also supports bounded platformer autonomy for a narrow set of approved traversal intents. Supported directives are translated into known platformer plans, executed through a capped internal attempt loop, persisted as an unranked deterministic candidate set, and reported back through an explicit `AUTONOMOUS BUILD COMPLETE` surface that preserves user approval, rejection, and follow-up control.
+
+AI-E now also records platformer manual correction sessions and validation-aware review metadata without expanding into open-ended generation. The correction path is explicit and project-local, the Unity bridge emits a deterministic payload, and the validation layer reports reachability, ladder, elevator, gap, and overlap findings directly into comparison and proof summaries instead of silently changing geometry.
 
 AI-E now supports two bounded enemy profiles in BABYLON:
 
@@ -53,11 +57,17 @@ Example flows:
   - resolves through bounded platformer goal-intent mapping into the supported challenge traversal plan
 - `make traversal more challenging but fair`
   - runs the bounded platformer autonomy loop, stores valid deterministic candidates, and returns an `AUTONOMOUS BUILD COMPLETE` review surface instead of a ranked recommendation
+- `save manual platformer correction`
+  - persists explicit keyboard/mouse correction artifacts under project-local storage and exposes the saved correction summary through review surfaces
+- `compare level set a and level set b`
+  - returns a review-only platformer layout/profile comparison without starting execution
 
 ## Design References
 
 - Milestone summary: [docs/milestones/ai_e_bounded_experimentation.md](docs/milestones/ai_e_bounded_experimentation.md)
 - Bounded autonomous build loop: [docs/milestones/ai_e_bounded_autonomous_build_loop.md](docs/milestones/ai_e_bounded_autonomous_build_loop.md)
+- Manual correction capture: [docs/architecture/platformer_manual_correction_capture.md](docs/architecture/platformer_manual_correction_capture.md)
+- Spatial layout validation: [docs/architecture/platformer_layout_validation.md](docs/architecture/platformer_layout_validation.md)
 - Second supported enemy: [docs/milestones/ai_e_second_enemy_runner.md](docs/milestones/ai_e_second_enemy_runner.md)
 - Design doctrine: [docs/doctrine/ai_e_design_doctrine.md](docs/doctrine/ai_e_design_doctrine.md)
 
