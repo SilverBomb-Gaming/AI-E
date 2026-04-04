@@ -180,6 +180,8 @@ def resolve_goal_intent_prompt(prompt: str) -> GoalIntentResolution | None:
     normalized = normalize_prompt(prompt)
     definition = _GOAL_INTENT_MAPPINGS.get(normalized)
     if definition is None:
+        definition = _platformer_variation_goal_definition(normalized)
+    if definition is None:
         return None
     return GoalIntentResolution(
         original_prompt=normalized,
@@ -271,6 +273,40 @@ def _mentions_platformer_goal_terms(prompt: str) -> bool:
     platformer_terms = ("level", "traversal", "platformer", "gap", "jump", "gravity", "movement")
     goal_terms = ("intense", "challenging", "fair", "easier")
     return any(term in prompt for term in platformer_terms) and any(term in prompt for term in goal_terms)
+
+
+def _platformer_variation_goal_definition(normalized: str) -> GoalIntentDefinition | None:
+    tokens = set(normalized.split())
+    if not ({"level", "traversal", "platformer"} & tokens):
+        return None
+    if any(term in tokens for term in {"lava", "boss", "weapon", "dialogue"}):
+        return None
+
+    wants_variations = any(term in tokens for term in {"variation", "variations", "multiple"})
+    wants_review = "review" in tokens
+    wants_validation = any(term in tokens for term in {"validated", "validation", "reachability", "validity"})
+    wants_intensity = any(term in tokens for term in {"intense", "intensity", "challenging"})
+    wants_change = any(term in tokens for term in {"make", "modify", "create", "generate"})
+    wants_platformer_scope = any(term in tokens for term in {"level", "traversal", "platformer"})
+
+    if not wants_platformer_scope or not wants_change:
+        return None
+
+    if wants_intensity or wants_variations or wants_review or wants_validation:
+        return GoalIntentDefinition(
+            canonical_prompt="use challenge traversal",
+            goal_components=(
+                "increase gap size",
+                "increase obstacle density",
+                "increase enemy density",
+                "increase segment count",
+            ),
+            resolution_note=(
+                f'AI-E mapped the gameplay goal "{normalized}" to the bounded platformer plan '
+                '"use challenge traversal" across the known gap size, obstacle density, enemy density, and segment count families while preserving mandatory validation, evaluation, and user review.'
+            ),
+        )
+    return None
 
 
 __all__ = [

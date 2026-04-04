@@ -6720,6 +6720,54 @@ def test_task_intake_resolves_platformer_goal_intents_to_bounded_traversal_plan(
     assert all(payload["mapped_prompt"] == "use challenge traversal" for payload in runtime_payloads)
 
 
+@pytest.mark.parametrize(
+    "prompt_text",
+    [
+        "Make this level more intense",
+        "Create multiple validated variations for the current platformer level",
+        "Modify the current platformer level to increase intensity while preserving reachability and layout validity",
+        "Generate bounded platformer variations for review",
+    ],
+)
+def test_task_intake_accepts_natural_language_platformer_autonomy_requests(tmp_path, prompt_text):
+    config = _make_config(tmp_path / "platformer_natural_goal_intent_plan")
+    _write_platformer_capability_contracts(config)
+    target_repo = _create_entity_transform_prompt_repo(config)
+    intake = ConversationalTaskIntake(config)
+
+    result = intake.accept_message(
+        prompt_text,
+        session_id="platformer-natural-goal-intent-session",
+        target_repo=target_repo,
+    )
+
+    request_payload = json.loads(result.artifacts.request_payload_path.read_text(encoding="utf-8"))
+    runtime_payloads = [
+        json.loads(path.read_text(encoding="utf-8"))["runtime_task"]
+        for path in result.artifacts.runtime_task_payload_paths
+    ]
+
+    assert result.task_type == "mutation_plan_request"
+    assert result.routing.requested_intent == "mutate"
+    assert result.routing.resolution_source == "goal_intent_mapping"
+    assert result.routing.mapped_prompt == "use challenge traversal"
+    assert result.routing.plan_key == "platformer_challenge_traversal_v1"
+    assert result.routing.plan_title == "Use challenge traversal"
+    assert result.routing.capability_supported is True
+    assert result.routing.decision == "sandbox_first"
+    assert result.routing.fail_closed_reason is None
+    assert "No supported write-capable capability matched the request." not in str(result.routing.decision_summary or "")
+    assert request_payload["conversational_request"]["context"]["resolved_execution_prompt"] == "use challenge traversal"
+    assert [payload["operator_prompt"] for payload in runtime_payloads] == [
+        "make gaps larger",
+        "increase obstacle density",
+        "increase enemy density",
+        "make level longer",
+    ]
+    assert all(payload["mapped_prompt"] == "use challenge traversal" for payload in runtime_payloads)
+    assert all(payload["source_prompt"] == normalize_prompt(prompt_text) for payload in runtime_payloads)
+
+
 def test_task_intake_blocks_out_of_scope_platformer_goal_intent_with_explicit_guidance(tmp_path):
     config = _make_config(tmp_path / "unsupported_platformer_goal_intent")
     _write_platformer_capability_contracts(config)
