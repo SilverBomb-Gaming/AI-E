@@ -23,12 +23,20 @@ from .racing_profiles import (
     max_speed_tier_values,
 )
 from .platformer_profiles import (
+    enemy_density_tier_prompt,
+    enemy_density_tier_values,
+    gap_size_tier_prompt,
+    gap_size_tier_values,
     gravity_tier_prompt,
     gravity_tier_values,
     jump_height_tier_prompt,
     jump_height_tier_values,
+    obstacle_density_tier_prompt,
+    obstacle_density_tier_values,
     platformer_speed_tier_prompt,
     platformer_speed_tier_values,
+    segment_count_tier_prompt,
+    segment_count_tier_values,
 )
 from .tuning_contexts import detect_supported_tuning_context
 
@@ -92,6 +100,18 @@ def generic_capability_definition_for_capability_id(capability_id: str | None) -
     elif "gravity" in normalized:
         family = "gravity"
         target_context = "platformer"
+    elif "gap_size" in normalized or ("gap" in normalized and any(token in normalized for token in ("larger", "smaller", "standard"))):
+        family = "gap_size"
+        target_context = "platformer"
+    elif "obstacle_density" in normalized or ("obstacle" in normalized and "density" in normalized):
+        family = "obstacle_density"
+        target_context = "platformer"
+    elif "enemy_density" in normalized or ("enemy" in normalized and "density" in normalized):
+        family = "enemy_density"
+        target_context = "platformer"
+    elif "segment_count" in normalized or ("level" in normalized and any(token in normalized for token in ("longer", "shorter", "standard"))):
+        family = "segment_count"
+        target_context = "platformer"
     elif "platformer" in normalized and "speed" in normalized:
         family = "speed"
         target_context = "platformer"
@@ -123,6 +143,14 @@ def build_generic_capability_state(
     jump_height_value: Any = None,
     gravity_tier: str = "",
     gravity_value: Any = None,
+    gap_size_tier: str = "",
+    gap_size_value: Any = None,
+    obstacle_density_tier: str = "",
+    obstacle_density_value: Any = None,
+    enemy_density_tier: str = "",
+    enemy_density_value: Any = None,
+    segment_count_tier: str = "",
+    segment_count_value: Any = None,
     acceleration_tier: str = "",
     acceleration_value: Any = None,
     max_speed_tier: str = "",
@@ -136,6 +164,10 @@ def build_generic_capability_state(
         ("spawn_pressure", spawn_pressure_tier, spawn_pressure_value),
         ("jump_height", jump_height_tier, jump_height_value),
         ("gravity", gravity_tier, gravity_value),
+        ("gap_size", gap_size_tier, gap_size_value),
+        ("obstacle_density", obstacle_density_tier, obstacle_density_value),
+        ("enemy_density", enemy_density_tier, enemy_density_value),
+        ("segment_count", segment_count_tier, segment_count_value),
         ("acceleration", acceleration_tier, acceleration_value),
         ("max_speed", max_speed_tier, max_speed_value),
     ):
@@ -271,6 +303,50 @@ _GENERIC_CAPABILITY_DEFINITIONS: Dict[tuple[str, str], GenericCapabilityDefiniti
         restore_standard_behavior=platformer_speed_tier_prompt("standard"),
         evaluation_dimension="movement_speed",
         source_family="speed",
+    ),
+    ("platformer", "gap_size"): GenericCapabilityDefinition(
+        target_context="platformer",
+        target_system="layout",
+        parameter_family="gap_size",
+        parameter_name="gap_size",
+        bounded_tiers=tuple(gap_size_tier_values().keys()),
+        deterministic_values=gap_size_tier_values(),
+        restore_standard_behavior=gap_size_tier_prompt("standard"),
+        evaluation_dimension="layout_gap_size",
+        source_family="gap_size",
+    ),
+    ("platformer", "obstacle_density"): GenericCapabilityDefinition(
+        target_context="platformer",
+        target_system="layout",
+        parameter_family="obstacle_density",
+        parameter_name="obstacle_density",
+        bounded_tiers=tuple(obstacle_density_tier_values().keys()),
+        deterministic_values=obstacle_density_tier_values(),
+        restore_standard_behavior=obstacle_density_tier_prompt("standard"),
+        evaluation_dimension="layout_obstacle_density",
+        source_family="obstacle_density",
+    ),
+    ("platformer", "enemy_density"): GenericCapabilityDefinition(
+        target_context="platformer",
+        target_system="encounter",
+        parameter_family="enemy_density",
+        parameter_name="enemy_density",
+        bounded_tiers=tuple(enemy_density_tier_values().keys()),
+        deterministic_values=enemy_density_tier_values(),
+        restore_standard_behavior=enemy_density_tier_prompt("standard"),
+        evaluation_dimension="encounter_enemy_density",
+        source_family="enemy_density",
+    ),
+    ("platformer", "segment_count"): GenericCapabilityDefinition(
+        target_context="platformer",
+        target_system="layout",
+        parameter_family="segment_count",
+        parameter_name="segment_count",
+        bounded_tiers=tuple(segment_count_tier_values().keys()),
+        deterministic_values=segment_count_tier_values(),
+        restore_standard_behavior=segment_count_tier_prompt("standard"),
+        evaluation_dimension="layout_segment_count",
+        source_family="segment_count",
     ),
     ("racer", "acceleration"): GenericCapabilityDefinition(
         target_context="racer",

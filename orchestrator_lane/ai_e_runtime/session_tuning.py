@@ -25,14 +25,26 @@ from .enemy_profiles import (
     supports_movement_variation,
 )
 from .platformer_profiles import (
+    enemy_density_tier_prompt,
+    enemy_density_tier_values,
+    enemy_density_tiers,
+    gap_size_tier_prompt,
+    gap_size_tier_values,
+    gap_size_tiers,
     gravity_tier_prompt,
     gravity_tier_values,
     gravity_tiers,
     jump_height_tier_prompt,
     jump_height_tier_values,
     jump_height_tiers,
+    obstacle_density_tier_prompt,
+    obstacle_density_tier_values,
+    obstacle_density_tiers,
     platformer_speed_tier_prompt,
     platformer_speed_tier_values,
+    segment_count_tier_prompt,
+    segment_count_tier_values,
+    segment_count_tiers,
 )
 from .intent_normalizer import normalize_prompt
 from .tuning_contexts import (
@@ -146,7 +158,19 @@ def build_session_tuning_record(
     order: int,
 ) -> Dict[str, Any] | None:
     family = _value_or_none(details.get("state_family")) or _state_family_for_task(task, details=details)
-    if family not in {"speed", "aggression", "movement", "encounter_count", "spawn_pressure", "jump_height", "gravity"}:
+    if family not in {
+        "speed",
+        "aggression",
+        "movement",
+        "encounter_count",
+        "spawn_pressure",
+        "jump_height",
+        "gravity",
+        "gap_size",
+        "obstacle_density",
+        "enemy_density",
+        "segment_count",
+    }:
         return None
     target_context = _target_context_for_task(task, details=details)
 
@@ -510,13 +534,21 @@ def _resolve_revert_followup(
         canonical_prompt = jump_height_tier_prompt(previous_tier)
     elif family == "gravity" and previous_tier in gravity_tiers():
         canonical_prompt = gravity_tier_prompt(previous_tier)
+    elif family == "gap_size" and previous_tier in gap_size_tiers():
+        canonical_prompt = gap_size_tier_prompt(previous_tier)
+    elif family == "obstacle_density" and previous_tier in obstacle_density_tiers():
+        canonical_prompt = obstacle_density_tier_prompt(previous_tier)
+    elif family == "enemy_density" and previous_tier in enemy_density_tiers():
+        canonical_prompt = enemy_density_tier_prompt(previous_tier)
+    elif family == "segment_count" and previous_tier in segment_count_tiers():
+        canonical_prompt = segment_count_tier_prompt(previous_tier)
     elif family == "encounter_count" and previous_tier in encounter_count_tiers():
         canonical_prompt = encounter_count_tier_prompt(previous_tier)
     elif family == "spawn_pressure" and previous_tier in spawn_pressure_tiers():
         canonical_prompt = spawn_pressure_tier_prompt(previous_tier)
     else:
         return None, (
-            f"AI-E can only revert the latest supported {target_entity or 'tuning'} speed, aggression, jump height, gravity, encounter count, or spawn pressure tier in the current session."
+            f"AI-E can only revert the latest supported {target_entity or 'tuning'} speed, aggression, jump height, gravity, gap size, obstacle density, enemy density, segment count, encounter count, or spawn pressure tier in the current session."
         )
 
     revert_summary = (
@@ -666,6 +698,14 @@ def _state_family_for_result_kind(result_kind: str) -> str:
         return "jump_height"
     if result_kind == "gravity":
         return "gravity"
+    if result_kind == "gap_size":
+        return "gap_size"
+    if result_kind == "obstacle_density":
+        return "obstacle_density"
+    if result_kind == "enemy_density":
+        return "enemy_density"
+    if result_kind == "segment_count":
+        return "segment_count"
     return "movement"
 
 
@@ -682,6 +722,14 @@ def _state_family_for_task(task: Dict[str, Any], *, details: Dict[str, Any]) -> 
         return "jump_height"
     if "gravity" in capability_id:
         return "gravity"
+    if "gap_size" in capability_id:
+        return "gap_size"
+    if "obstacle_density" in capability_id:
+        return "obstacle_density"
+    if "enemy_density" in capability_id:
+        return "enemy_density"
+    if "segment_count" in capability_id:
+        return "segment_count"
     if "encounter_count" in capability_id:
         return "encounter_count"
     if "spawn_pressure" in capability_id:
@@ -727,6 +775,14 @@ def _state_values_for_details(details: Dict[str, Any], *, family: str) -> tuple[
         return details.get("requested_jump_height"), details.get("new_jump_height")
     if family == "gravity":
         return details.get("requested_gravity"), details.get("new_gravity")
+    if family == "gap_size":
+        return details.get("requested_gap_size"), details.get("new_gap_size")
+    if family == "obstacle_density":
+        return details.get("requested_obstacle_density"), details.get("new_obstacle_density")
+    if family == "enemy_density":
+        return details.get("requested_enemy_density"), details.get("new_enemy_density")
+    if family == "segment_count":
+        return details.get("requested_segment_count"), details.get("new_segment_count")
     return details.get("new_position"), details.get("new_position")
 
 
@@ -743,6 +799,14 @@ def _previous_value_for_details(details: Dict[str, Any], *, family: str) -> Any:
         return details.get("previous_jump_height")
     if family == "gravity":
         return details.get("previous_gravity")
+    if family == "gap_size":
+        return details.get("previous_gap_size")
+    if family == "obstacle_density":
+        return details.get("previous_obstacle_density")
+    if family == "enemy_density":
+        return details.get("previous_enemy_density")
+    if family == "segment_count":
+        return details.get("previous_segment_count")
     return details.get("previous_position")
 
 
@@ -761,6 +825,14 @@ def _tier_for_value(value: Any, *, family: str, target_context: str | None) -> s
         tier_values = jump_height_tier_values()
     elif family == "gravity":
         tier_values = gravity_tier_values()
+    elif family == "gap_size":
+        tier_values = gap_size_tier_values()
+    elif family == "obstacle_density":
+        tier_values = obstacle_density_tier_values()
+    elif family == "enemy_density":
+        tier_values = enemy_density_tier_values()
+    elif family == "segment_count":
+        tier_values = segment_count_tier_values()
     elif family == "encounter_count":
         tier_values = encounter_count_tier_values()
     else:

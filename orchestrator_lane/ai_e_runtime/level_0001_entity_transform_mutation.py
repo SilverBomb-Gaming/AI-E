@@ -87,6 +87,26 @@ _ROUTE_PROFILES = {
         probe_action_type="mutate_platformer_gravity",
         result_kind="gravity",
     ),
+    "MutatePlatformerGapSize": EntityMutationRouteProfile(
+        probe_name="MutatePlatformerGapSize",
+        probe_action_type="mutate_platformer_gap_size",
+        result_kind="gap_size",
+    ),
+    "MutatePlatformerObstacleDensity": EntityMutationRouteProfile(
+        probe_name="MutatePlatformerObstacleDensity",
+        probe_action_type="mutate_platformer_obstacle_density",
+        result_kind="obstacle_density",
+    ),
+    "MutatePlatformerEnemyDensity": EntityMutationRouteProfile(
+        probe_name="MutatePlatformerEnemyDensity",
+        probe_action_type="mutate_platformer_enemy_density",
+        result_kind="enemy_density",
+    ),
+    "MutatePlatformerSegmentCount": EntityMutationRouteProfile(
+        probe_name="MutatePlatformerSegmentCount",
+        probe_action_type="mutate_platformer_segment_count",
+        result_kind="segment_count",
+    ),
 }
 
 
@@ -452,6 +472,58 @@ def run_level_0001_entity_transform_mutation(task: Dict[str, Any]) -> Dict[str, 
                 "minimum_gravity": _float_or_none(probe_payload.get("minimum_gravity")),
                 "maximum_gravity": _float_or_none(probe_payload.get("maximum_gravity")),
                 "gravity_changed": bool(probe_payload.get("gravity_changed", False)),
+                "target_context": "platformer",
+            }
+        )
+    elif route_resolution.result_kind == "gap_size":
+        result_details.update(
+            {
+                "previous_gap_size": _float_or_none(probe_payload.get("previous_gap_size")),
+                "new_gap_size": _float_or_none(probe_payload.get("new_gap_size")),
+                "baseline_gap_size": _float_or_none(probe_payload.get("baseline_gap_size")),
+                "requested_gap_size": _float_or_none(probe_payload.get("requested_gap_size")),
+                "minimum_gap_size": _float_or_none(probe_payload.get("minimum_gap_size")),
+                "maximum_gap_size": _float_or_none(probe_payload.get("maximum_gap_size")),
+                "gap_size_changed": bool(probe_payload.get("gap_size_changed", False)),
+                "target_context": "platformer",
+            }
+        )
+    elif route_resolution.result_kind == "obstacle_density":
+        result_details.update(
+            {
+                "previous_obstacle_density": _float_or_none(probe_payload.get("previous_obstacle_density")),
+                "new_obstacle_density": _float_or_none(probe_payload.get("new_obstacle_density")),
+                "baseline_obstacle_density": _float_or_none(probe_payload.get("baseline_obstacle_density")),
+                "requested_obstacle_density": _float_or_none(probe_payload.get("requested_obstacle_density")),
+                "minimum_obstacle_density": _float_or_none(probe_payload.get("minimum_obstacle_density")),
+                "maximum_obstacle_density": _float_or_none(probe_payload.get("maximum_obstacle_density")),
+                "obstacle_density_changed": bool(probe_payload.get("obstacle_density_changed", False)),
+                "target_context": "platformer",
+            }
+        )
+    elif route_resolution.result_kind == "enemy_density":
+        result_details.update(
+            {
+                "previous_enemy_density": _float_or_none(probe_payload.get("previous_enemy_density")),
+                "new_enemy_density": _float_or_none(probe_payload.get("new_enemy_density")),
+                "baseline_enemy_density": _float_or_none(probe_payload.get("baseline_enemy_density")),
+                "requested_enemy_density": _float_or_none(probe_payload.get("requested_enemy_density")),
+                "minimum_enemy_density": _float_or_none(probe_payload.get("minimum_enemy_density")),
+                "maximum_enemy_density": _float_or_none(probe_payload.get("maximum_enemy_density")),
+                "enemy_density_changed": bool(probe_payload.get("enemy_density_changed", False)),
+                "target_context": "platformer",
+            }
+        )
+    elif route_resolution.result_kind == "segment_count":
+        result_details.update(
+            {
+                "previous_segment_count": _float_or_none(probe_payload.get("previous_segment_count")),
+                "new_segment_count": _float_or_none(probe_payload.get("new_segment_count")),
+                "baseline_segment_count": _float_or_none(probe_payload.get("baseline_segment_count")),
+                "requested_segment_count": _float_or_none(probe_payload.get("requested_segment_count")),
+                "minimum_segment_count": _float_or_none(probe_payload.get("minimum_segment_count")),
+                "maximum_segment_count": _float_or_none(probe_payload.get("maximum_segment_count")),
+                "segment_count_changed": bool(probe_payload.get("segment_count_changed", False)),
                 "target_context": "platformer",
             }
         )
@@ -824,6 +896,106 @@ def _validate_execution_artifacts(
                 return "Delegated probe skipped the gravity change before the requested deterministic state was satisfied."
         elif requested_gravity is not None and abs(new_gravity - requested_gravity) > 0.0001:
             return "Delegated probe did not apply the requested deterministic gravity value."
+    elif result_kind == "gap_size":
+        previous_gap_size = _float_or_none(probe_payload.get("previous_gap_size"))
+        new_gap_size = _float_or_none(probe_payload.get("new_gap_size"))
+        baseline_gap_size = _float_or_none(probe_payload.get("baseline_gap_size"))
+        minimum_gap_size = _float_or_none(probe_payload.get("minimum_gap_size"))
+        maximum_gap_size = _float_or_none(probe_payload.get("maximum_gap_size"))
+        requested_gap_size = _float_or_none(probe_payload.get("requested_gap_size"))
+        if previous_gap_size is None:
+            return "Delegated probe did not report a valid previous_gap_size."
+        if new_gap_size is None:
+            return "Delegated probe did not report a valid new_gap_size."
+        if minimum_gap_size is not None and new_gap_size < minimum_gap_size:
+            return "Delegated probe reported a new_gap_size below the approved minimum bound."
+        if maximum_gap_size is not None and new_gap_size > maximum_gap_size:
+            return "Delegated probe reported a new_gap_size above the approved maximum bound."
+        if not execution_applied and result_reason == "skipped_already_satisfied":
+            if requested_gap_size is not None and not _numeric_skip_satisfies_request(
+                action_name=action_name,
+                baseline_value=baseline_gap_size,
+                requested_value=requested_gap_size,
+                current_value=new_gap_size,
+            ):
+                return "Delegated probe skipped the gap-size change before the requested deterministic state was satisfied."
+        elif requested_gap_size is not None and abs(new_gap_size - requested_gap_size) > 0.0001:
+            return "Delegated probe did not apply the requested deterministic gap-size value."
+    elif result_kind == "obstacle_density":
+        previous_obstacle_density = _float_or_none(probe_payload.get("previous_obstacle_density"))
+        new_obstacle_density = _float_or_none(probe_payload.get("new_obstacle_density"))
+        baseline_obstacle_density = _float_or_none(probe_payload.get("baseline_obstacle_density"))
+        minimum_obstacle_density = _float_or_none(probe_payload.get("minimum_obstacle_density"))
+        maximum_obstacle_density = _float_or_none(probe_payload.get("maximum_obstacle_density"))
+        requested_obstacle_density = _float_or_none(probe_payload.get("requested_obstacle_density"))
+        if previous_obstacle_density is None:
+            return "Delegated probe did not report a valid previous_obstacle_density."
+        if new_obstacle_density is None:
+            return "Delegated probe did not report a valid new_obstacle_density."
+        if minimum_obstacle_density is not None and new_obstacle_density < minimum_obstacle_density:
+            return "Delegated probe reported a new_obstacle_density below the approved minimum bound."
+        if maximum_obstacle_density is not None and new_obstacle_density > maximum_obstacle_density:
+            return "Delegated probe reported a new_obstacle_density above the approved maximum bound."
+        if not execution_applied and result_reason == "skipped_already_satisfied":
+            if requested_obstacle_density is not None and not _numeric_skip_satisfies_request(
+                action_name=action_name,
+                baseline_value=baseline_obstacle_density,
+                requested_value=requested_obstacle_density,
+                current_value=new_obstacle_density,
+            ):
+                return "Delegated probe skipped the obstacle-density change before the requested deterministic state was satisfied."
+        elif requested_obstacle_density is not None and abs(new_obstacle_density - requested_obstacle_density) > 0.0001:
+            return "Delegated probe did not apply the requested deterministic obstacle-density value."
+    elif result_kind == "enemy_density":
+        previous_enemy_density = _float_or_none(probe_payload.get("previous_enemy_density"))
+        new_enemy_density = _float_or_none(probe_payload.get("new_enemy_density"))
+        baseline_enemy_density = _float_or_none(probe_payload.get("baseline_enemy_density"))
+        minimum_enemy_density = _float_or_none(probe_payload.get("minimum_enemy_density"))
+        maximum_enemy_density = _float_or_none(probe_payload.get("maximum_enemy_density"))
+        requested_enemy_density = _float_or_none(probe_payload.get("requested_enemy_density"))
+        if previous_enemy_density is None:
+            return "Delegated probe did not report a valid previous_enemy_density."
+        if new_enemy_density is None:
+            return "Delegated probe did not report a valid new_enemy_density."
+        if minimum_enemy_density is not None and new_enemy_density < minimum_enemy_density:
+            return "Delegated probe reported a new_enemy_density below the approved minimum bound."
+        if maximum_enemy_density is not None and new_enemy_density > maximum_enemy_density:
+            return "Delegated probe reported a new_enemy_density above the approved maximum bound."
+        if not execution_applied and result_reason == "skipped_already_satisfied":
+            if requested_enemy_density is not None and not _numeric_skip_satisfies_request(
+                action_name=action_name,
+                baseline_value=baseline_enemy_density,
+                requested_value=requested_enemy_density,
+                current_value=new_enemy_density,
+            ):
+                return "Delegated probe skipped the enemy-density change before the requested deterministic state was satisfied."
+        elif requested_enemy_density is not None and abs(new_enemy_density - requested_enemy_density) > 0.0001:
+            return "Delegated probe did not apply the requested deterministic enemy-density value."
+    elif result_kind == "segment_count":
+        previous_segment_count = _float_or_none(probe_payload.get("previous_segment_count"))
+        new_segment_count = _float_or_none(probe_payload.get("new_segment_count"))
+        baseline_segment_count = _float_or_none(probe_payload.get("baseline_segment_count"))
+        minimum_segment_count = _float_or_none(probe_payload.get("minimum_segment_count"))
+        maximum_segment_count = _float_or_none(probe_payload.get("maximum_segment_count"))
+        requested_segment_count = _float_or_none(probe_payload.get("requested_segment_count"))
+        if previous_segment_count is None:
+            return "Delegated probe did not report a valid previous_segment_count."
+        if new_segment_count is None:
+            return "Delegated probe did not report a valid new_segment_count."
+        if minimum_segment_count is not None and new_segment_count < minimum_segment_count:
+            return "Delegated probe reported a new_segment_count below the approved minimum bound."
+        if maximum_segment_count is not None and new_segment_count > maximum_segment_count:
+            return "Delegated probe reported a new_segment_count above the approved maximum bound."
+        if not execution_applied and result_reason == "skipped_already_satisfied":
+            if requested_segment_count is not None and not _numeric_skip_satisfies_request(
+                action_name=action_name,
+                baseline_value=baseline_segment_count,
+                requested_value=requested_segment_count,
+                current_value=new_segment_count,
+            ):
+                return "Delegated probe skipped the segment-count change before the requested deterministic state was satisfied."
+        elif requested_segment_count is not None and abs(new_segment_count - requested_segment_count) > 0.0001:
+            return "Delegated probe did not apply the requested deterministic segment-count value."
     return None
 
 
@@ -840,6 +1012,14 @@ def _validation_check_name(result_kind: str) -> str:
         return "mutate_platformer_jump_height_artifact_confirmed"
     if result_kind == "gravity":
         return "mutate_platformer_gravity_artifact_confirmed"
+    if result_kind == "gap_size":
+        return "mutate_platformer_gap_size_artifact_confirmed"
+    if result_kind == "obstacle_density":
+        return "mutate_platformer_obstacle_density_artifact_confirmed"
+    if result_kind == "enemy_density":
+        return "mutate_platformer_enemy_density_artifact_confirmed"
+    if result_kind == "segment_count":
+        return "mutate_platformer_segment_count_artifact_confirmed"
     return "mutate_entity_transform_artifact_confirmed"
 
 
