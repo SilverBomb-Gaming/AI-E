@@ -10,9 +10,13 @@ These sections are the current source of truth for the public-facing AI-E v1 exp
 
 AI-E v1 validation is now complete for the current supported deterministic path. The validated surface includes Home, Prompt Intake, Approval Review, Live Run Status, Result Summary, and Project / Session History, plus the hardening pass for copy, empty/error guidance, onboarding, proof/history polish, launch reliability, sandbox handoff, and next-step guidance. Intent normalization is now included in the deterministic movement path, so light natural-language variations map cleanly to the canonical supported action instead of failing on strict string matching alone.
 
+The latest bounded autonomy milestone is also validated for supported platformer intent flows. AI-E can now map approved gameplay directives such as `make level more intense` into a bounded traversal plan, run an internal capped attempt loop, retain only valid deterministic candidates, and stop at an explicit `AUTONOMOUS BUILD COMPLETE` summary without ranking, auto-approving, or bypassing user review.
+
 ## AI-E System Evolution (Latest)
 
 AI-E now layers bounded interpretation and review tools on top of the original deterministic mutation path without introducing autonomous execution. Supported requests can move through explicit goal-intent mapping, bounded goal composition, deterministic outcome evaluation, current-session experiment tracking, and explicit experiment decision tracking while still resolving into known capabilities, known predefined plans, or safe review-only summaries.
+
+AI-E now also supports bounded platformer autonomy for a narrow set of approved traversal intents. Supported directives are translated into known platformer plans, executed through a capped internal attempt loop, persisted as an unranked deterministic candidate set, and reported back through an explicit `AUTONOMOUS BUILD COMPLETE` surface that preserves user approval, rejection, and follow-up control.
 
 AI-E now supports two bounded enemy profiles in BABYLON:
 
@@ -45,10 +49,15 @@ Example flows:
   - returns a review-only current-session variant summary
 - `keep current variant`
   - records an explicit user decision on the active variant without executing any mutation
+- `make level more intense`
+  - resolves through bounded platformer goal-intent mapping into the supported challenge traversal plan
+- `make traversal more challenging but fair`
+  - runs the bounded platformer autonomy loop, stores valid deterministic candidates, and returns an `AUTONOMOUS BUILD COMPLETE` review surface instead of a ranked recommendation
 
 ## Design References
 
 - Milestone summary: [docs/milestones/ai_e_bounded_experimentation.md](docs/milestones/ai_e_bounded_experimentation.md)
+- Bounded autonomous build loop: [docs/milestones/ai_e_bounded_autonomous_build_loop.md](docs/milestones/ai_e_bounded_autonomous_build_loop.md)
 - Second supported enemy: [docs/milestones/ai_e_second_enemy_runner.md](docs/milestones/ai_e_second_enemy_runner.md)
 - Design doctrine: [docs/doctrine/ai_e_design_doctrine.md](docs/doctrine/ai_e_design_doctrine.md)
 
