@@ -17,14 +17,18 @@ from .clarification_guidance import (
 from .content_policy import ensure_project_content_profile, evaluate_content_policy, load_project_content_profile
 from .experiment_tracking import (
     EXPERIMENT_DECISION_RESOLUTION,
+    EXPERIMENT_NAVIGATION_RESOLUTION,
     EXPERIMENT_REVIEW_RESOLUTION,
+    build_experiment_navigation_preview,
     build_current_experiment_decisions,
     build_current_experiment_review,
     build_experiment_decision_preview,
     is_experiment_decision_prompt,
     is_experiment_decisions_prompt,
+    is_experiment_navigation_prompt,
     is_experiment_review_prompt,
 )
+from .generic_capabilities import generic_capability_definition_for_capability_id
 from .goal_composition import (
     GOAL_COMPOSITION_RESOLUTION,
     GoalCompositionResolution,
@@ -96,6 +100,7 @@ class IntakeRouting:
     mutation_capable: bool
     capability_id: str | None = None
     capability_title: str | None = None
+    generic_capability_definition: Dict[str, Any] | None = None
     handler_name: str | None = None
     agent_type: str | None = None
     target_level: str | None = None
@@ -174,6 +179,7 @@ class IntakeRouting:
             "mutation_capable": self.mutation_capable,
             "capability_id": self.capability_id,
             "capability_title": self.capability_title,
+            "generic_capability_definition": dict(self.generic_capability_definition or {}),
             "handler_name": self.handler_name,
             "agent_type": self.agent_type,
             "target_level": self.target_level,
@@ -268,6 +274,9 @@ class ConversationalTaskIntake:
     """Converts operator messages into deterministic, runnable queue tasks."""
 
     _TASK_REQUEST_VERBS = (
+        "increase",
+        "decrease",
+        "reduce",
         "stabilize",
         "fix",
         "restore",
@@ -296,6 +305,9 @@ class ConversationalTaskIntake:
         "brainstorm",
     )
     _MUTATION_REQUEST_VERBS = (
+        "increase",
+        "decrease",
+        "reduce",
         "stabilize",
         "fix",
         "restore",
@@ -523,6 +535,7 @@ class ConversationalTaskIntake:
                     "mutation_capable": step_routing.mutation_capable,
                     "capability_id": step_routing.capability_id,
                     "capability_title": step_routing.capability_title,
+                    "generic_capability_definition": dict(step_routing.generic_capability_definition or {}),
                     "handler_name": step_routing.handler_name,
                     "maturity_stage": step_routing.maturity_stage or step_routing.evidence_state,
                     "trust_score": step_routing.trust_score,
@@ -662,6 +675,8 @@ class ConversationalTaskIntake:
             return "task_request"
         if is_experiment_review_prompt(normalized):
             return "task_request"
+        if is_experiment_navigation_prompt(normalized):
+            return "task_request"
         if is_session_followup_prompt(normalized):
             return "task_request"
         if normalized.startswith(self._TASK_REQUEST_VERBS):
@@ -680,6 +695,11 @@ class ConversationalTaskIntake:
                 "encounter",
                 "spawn",
                 "spawner",
+                "racer",
+                "platformer",
+                "jump",
+                "gravity",
+                "monkee",
                 "enemy",
                 "character",
                 "kbm",
@@ -776,6 +796,7 @@ class ConversationalTaskIntake:
             "mutation_capable": routing.mutation_capable,
             "capability_id": routing.capability_id,
             "capability_title": routing.capability_title,
+            "generic_capability_definition": dict(routing.generic_capability_definition or {}),
             "handler_name": routing.handler_name,
             "trust_score": routing.trust_score,
             "trust_band": routing.trust_band,
@@ -884,6 +905,7 @@ class ConversationalTaskIntake:
         if routing is not None and str(routing.resolution_source or "") in {
             EXPERIMENT_REVIEW_RESOLUTION,
             EXPERIMENT_DECISION_RESOLUTION,
+            EXPERIMENT_NAVIGATION_RESOLUTION,
         }:
             return "experiment_review_request"
         if routing is not None and routing.plan_key:
@@ -907,6 +929,49 @@ class ConversationalTaskIntake:
         lookup_prompt = resolution.lookup_prompt.lower()
         mapping_sources = [mapping.source_term for mapping in resolution.applied_entity_mappings]
         session_state = self._load_session_followup_state(session_id)
+        if is_experiment_navigation_prompt(normalized):
+            navigation_preview = build_experiment_navigation_preview(normalized, session_state) or {}
+            overview = str(navigation_preview.get("overview") or "").strip()
+            plan_title = str(navigation_preview.get("title") or "Experiment navigation").strip()
+            plan_steps = [
+                str(item).strip()
+                for item in (navigation_preview.get("lines") or [])
+                if str(item).strip()
+            ]
+            decision_reason = str(navigation_preview.get("decision_reason") or "experiment_navigation").strip()
+            blocked = bool(navigation_preview.get("blocked"))
+            return IntakeRouting(
+                requested_intent="inspect",
+                resolved_intent="inspect",
+                requested_execution_lane="read_only_inspection",
+                execution_lane="read_only_inspection",
+                downgraded=False,
+                downgrade_reason=None,
+                approval_required=False,
+                mutation_capable=False,
+                intelligence_summary=overview,
+                decision="block",
+                decision_reason=decision_reason,
+                decision_summary=overview,
+                decision_blocked=blocked,
+                mapped_prompt=lookup_prompt,
+                entity_mapping_applied=resolution.entity_mapping_applied,
+                entity_mapping_sources=mapping_sources,
+                recommended_action=str(navigation_preview.get("recommended_action") or "refresh_summary").strip(),
+                clarification_options=[
+                    str(item).strip()
+                    for item in (navigation_preview.get("clarification_options") or [])
+                    if str(item).strip()
+                ],
+                plan_title=plan_title,
+                plan_step_titles=plan_steps,
+                plan_expected_outcome=str(navigation_preview.get("expected_outcome") or "Review only. No execution will start.").strip(),
+                plan_execution_mode=str(navigation_preview.get("plan_execution_mode") or "Explicit experiment navigation").strip(),
+                resolution_source=EXPERIMENT_NAVIGATION_RESOLUTION,
+                resolved_from_prompt=normalized,
+                session_resolution_note=overview,
+                fail_closed_reason=overview if blocked else None,
+            )
         if is_experiment_decision_prompt(normalized):
             decision_preview, review_block_message = build_experiment_decision_preview(normalized, session_state)
             if review_block_message is not None:
@@ -923,6 +988,7 @@ class ConversationalTaskIntake:
                     decision="block",
                     decision_reason="no_active_experiment",
                     decision_summary=review_block_message,
+                    decision_blocked=True,
                     mapped_prompt=lookup_prompt,
                     entity_mapping_applied=resolution.entity_mapping_applied,
                     entity_mapping_sources=mapping_sources,
@@ -982,6 +1048,7 @@ class ConversationalTaskIntake:
                     decision="block",
                     decision_reason="no_active_experiment",
                     decision_summary=review_block_message,
+                    decision_blocked=True,
                     mapped_prompt=lookup_prompt,
                     entity_mapping_applied=resolution.entity_mapping_applied,
                     entity_mapping_sources=mapping_sources,
@@ -1456,6 +1523,7 @@ class ConversationalTaskIntake:
             mutation_capable=True,
             capability_id=capability.capability_id,
             capability_title=capability.title,
+            generic_capability_definition=generic_capability_definition_for_capability_id(capability.capability_id),
             handler_name=capability.handler_name,
             agent_type=capability.agent_type,
             target_level=capability.target_level,

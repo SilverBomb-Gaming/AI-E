@@ -5,6 +5,9 @@ from typing import Any, Dict, List
 from .encounter_profiles import encounter_count_tier_values, spawn_pressure_tier_values
 from .enemy_profiles import aggression_tier_values, speed_tier_values
 from .experiment_tracking import find_experiment_by_id, find_variant_for_task
+from .generic_capabilities import build_generic_capability_state
+from .platformer_profiles import gravity_tier_values, jump_height_tier_values, platformer_speed_tier_values
+from .racing_profiles import acceleration_tier_values, max_speed_tier_values
 from .tuning_contexts import (
     detect_supported_tuning_context,
     is_supported_encounter_context,
@@ -33,6 +36,12 @@ _SPAWN_PRESSURE_ORDER = {
     "low": 0,
     "standard": 1,
     "high": 2,
+}
+_GENERIC_PARAMETER_LABELS = {
+    "jump_height": "Jump height",
+    "gravity": "Gravity",
+    "acceleration": "Acceleration",
+    "max_speed": "Max speed",
 }
 
 
@@ -66,6 +75,7 @@ def apply_result_evaluation(
             "request_id": snapshot["request_id"],
             "plan_id": snapshot["plan_id"],
             "plan_title": snapshot["plan_title"],
+            "generic_capability_state": list(snapshot.get("generic_capability_state") or []),
             **evaluation,
         }
         snapshot["evaluation"] = dict(evaluation_entry)
@@ -122,6 +132,10 @@ def _build_result_snapshot(
     movement_record = _family_record(tuning_state, family="movement", target_context=target_context)
     count_record = _family_record(tuning_state, family="encounter_count", target_context=target_context)
     pressure_record = _family_record(tuning_state, family="spawn_pressure", target_context=target_context)
+    jump_height_record = _family_record(tuning_state, family="jump_height", target_context=target_context)
+    gravity_record = _family_record(tuning_state, family="gravity", target_context=target_context)
+    acceleration_record = _family_record(tuning_state, family="acceleration", target_context=target_context)
+    max_speed_record = _family_record(tuning_state, family="max_speed", target_context=target_context)
 
     speed_tier = str(speed_record.get("resulting_tier") or "").strip()
     aggression_tier = str(aggression_record.get("resulting_tier") or "").strip()
@@ -129,11 +143,48 @@ def _build_result_snapshot(
     movement_target_z = _movement_target_z(movement_record)
     encounter_count_tier = str(count_record.get("resulting_tier") or "").strip()
     spawn_pressure_tier = str(pressure_record.get("resulting_tier") or "").strip()
+    jump_height_tier = str(jump_height_record.get("resulting_tier") or "").strip()
+    gravity_tier = str(gravity_record.get("resulting_tier") or "").strip()
+    acceleration_tier = str(acceleration_record.get("resulting_tier") or "").strip()
+    max_speed_tier = str(max_speed_record.get("resulting_tier") or "").strip()
 
-    speed_defaults = speed_tier_values(target_context) if is_supported_enemy_context(target_context) else {}
+    speed_defaults = platformer_speed_tier_values() if target_context == "platformer" else (speed_tier_values(target_context) if is_supported_enemy_context(target_context) else {})
     aggression_defaults = aggression_tier_values(target_context) if is_supported_enemy_context(target_context) else {}
     encounter_count_defaults = encounter_count_tier_values() if is_supported_encounter_context(target_context) else {}
     spawn_pressure_defaults = spawn_pressure_tier_values() if is_supported_encounter_context(target_context) else {}
+    jump_height_defaults = jump_height_tier_values() if target_context == "platformer" else {}
+    gravity_defaults = gravity_tier_values() if target_context == "platformer" else {}
+    acceleration_defaults = acceleration_tier_values() if target_context == "racer" else {}
+    max_speed_defaults = max_speed_tier_values() if target_context == "racer" else {}
+    speed_value = _float_or_default(speed_record.get("observed_value"), speed_defaults.get(speed_tier))
+    aggression_value = _float_or_default(
+        aggression_record.get("observed_value"),
+        aggression_defaults.get(aggression_tier),
+    )
+    encounter_count_value = _float_or_default(
+        count_record.get("observed_value"),
+        encounter_count_defaults.get(encounter_count_tier),
+    )
+    spawn_pressure_value = _float_or_default(
+        pressure_record.get("observed_value"),
+        spawn_pressure_defaults.get(spawn_pressure_tier),
+    )
+    jump_height_value = _float_or_default(
+        jump_height_record.get("observed_value"),
+        jump_height_defaults.get(jump_height_tier),
+    )
+    gravity_value = _float_or_default(
+        gravity_record.get("observed_value"),
+        gravity_defaults.get(gravity_tier),
+    )
+    acceleration_value = _float_or_default(
+        acceleration_record.get("observed_value"),
+        acceleration_defaults.get(acceleration_tier),
+    )
+    max_speed_value = _float_or_default(
+        max_speed_record.get("observed_value"),
+        max_speed_defaults.get(max_speed_tier),
+    )
 
     return {
         "order": int(order),
@@ -149,23 +200,41 @@ def _build_result_snapshot(
         "target_entity": target_context,
         "target_context": target_context,
         "speed_tier": speed_tier,
-        "speed_value": _float_or_default(speed_record.get("observed_value"), speed_defaults.get(speed_tier)),
+        "speed_value": speed_value,
         "aggression_tier": aggression_tier,
-        "aggression_value": _float_or_default(
-            aggression_record.get("observed_value"),
-            aggression_defaults.get(aggression_tier),
-        ),
+        "aggression_value": aggression_value,
         "movement_tier": movement_tier,
         "movement_target_z": movement_target_z,
         "encounter_count_tier": encounter_count_tier,
-        "encounter_count_value": _float_or_default(
-            count_record.get("observed_value"),
-            encounter_count_defaults.get(encounter_count_tier),
-        ),
+        "encounter_count_value": encounter_count_value,
         "spawn_pressure_tier": spawn_pressure_tier,
-        "spawn_pressure_value": _float_or_default(
-            pressure_record.get("observed_value"),
-            spawn_pressure_defaults.get(spawn_pressure_tier),
+        "spawn_pressure_value": spawn_pressure_value,
+        "jump_height_tier": jump_height_tier,
+        "jump_height_value": jump_height_value,
+        "gravity_tier": gravity_tier,
+        "gravity_value": gravity_value,
+        "acceleration_tier": acceleration_tier,
+        "acceleration_value": acceleration_value,
+        "max_speed_tier": max_speed_tier,
+        "max_speed_value": max_speed_value,
+        "generic_capability_state": build_generic_capability_state(
+            target_context=target_context,
+            speed_tier=speed_tier,
+            speed_value=speed_value,
+            aggression_tier=aggression_tier,
+            aggression_value=aggression_value,
+            encounter_count_tier=encounter_count_tier,
+            encounter_count_value=encounter_count_value,
+            spawn_pressure_tier=spawn_pressure_tier,
+            spawn_pressure_value=spawn_pressure_value,
+            jump_height_tier=jump_height_tier,
+            jump_height_value=jump_height_value,
+            gravity_tier=gravity_tier,
+            gravity_value=gravity_value,
+            acceleration_tier=acceleration_tier,
+            acceleration_value=acceleration_value,
+            max_speed_tier=max_speed_tier,
+            max_speed_value=max_speed_value,
         ),
         "experiment_id": str(experiment_variant.get("experiment_id") or "").strip(),
         "variant_id": str(experiment_variant.get("variant_id") or "").strip(),
@@ -320,16 +389,66 @@ def _experiment_comparison_fields(
     return fields
 
 
+def build_structured_state_comparison(
+    previous_snapshot: Dict[str, Any],
+    current_snapshot: Dict[str, Any],
+    *,
+    reference_label: str,
+    state_section_label: str,
+    inline_key_differences: bool = True,
+) -> Dict[str, Any]:
+    comparison_entries = _comparison_entries(previous_snapshot, current_snapshot)
+    return {
+        "comparison_description": _build_structured_comparison_summary(
+            comparison_entries,
+            reference_label=reference_label,
+            state_section_label=state_section_label,
+            inline_key_differences=inline_key_differences,
+        ),
+        "detected_differences": [entry["delta"] for entry in comparison_entries],
+        "expected_impacts": _dedupe_lines(entry["impact"] for entry in comparison_entries),
+    }
+
+
+def _compare_target_context(previous_snapshot: Dict[str, Any], current_snapshot: Dict[str, Any]) -> Dict[str, Any] | None:
+    previous_context = detect_supported_tuning_context(
+        previous_snapshot.get("target_context"),
+        previous_snapshot.get("target_entity"),
+    )
+    current_context = detect_supported_tuning_context(
+        current_snapshot.get("target_context"),
+        current_snapshot.get("target_entity"),
+    )
+    if not previous_context or not current_context or previous_context == current_context:
+        return None
+    previous_display = tuning_context_display_name(previous_context)
+    current_display = tuning_context_display_name(current_context)
+    return {
+        "attribute": "Target context",
+        "current_display": current_display,
+        "previous_display": previous_display,
+        "delta": f"Target context: {previous_display} -> {current_display}",
+        "impact": "Different tuning context.",
+        "sign": 0,
+    }
+
+
 def _compare_speed(previous_snapshot: Dict[str, Any], current_snapshot: Dict[str, Any]) -> Dict[str, Any] | None:
     previous_tier = str(previous_snapshot.get("speed_tier") or "").strip()
     current_tier = str(current_snapshot.get("speed_tier") or "").strip()
     if previous_tier not in _SPEED_ORDER or current_tier not in _SPEED_ORDER or previous_tier == current_tier:
         return None
+    target_context = detect_supported_tuning_context(
+        current_snapshot.get("target_context"),
+        current_snapshot.get("target_entity"),
+        previous_snapshot.get("target_context"),
+        previous_snapshot.get("target_entity"),
+    )
     if _SPEED_ORDER[current_tier] > _SPEED_ORDER[previous_tier]:
-        impact = "Higher movement speed."
+        impact = "Faster traversal." if target_context == "platformer" else "Higher movement speed."
         sign = 1
     else:
-        impact = "Lower movement speed."
+        impact = "Slower traversal." if target_context == "platformer" else "Lower movement speed."
         sign = -1
     return {
         "attribute": "Speed",
@@ -474,6 +593,7 @@ def _comparison_entries(
 ) -> List[Dict[str, Any]]:
     entries: List[Dict[str, Any]] = []
     for comparator in (
+        _compare_target_context,
         _compare_speed,
         _compare_aggression,
         _compare_movement,
@@ -483,7 +603,136 @@ def _comparison_entries(
         entry = comparator(previous_snapshot, current_snapshot)
         if isinstance(entry, dict):
             entries.append(entry)
+    entries.extend(_compare_generic_capability_state(previous_snapshot, current_snapshot, existing_entries=entries))
     return entries
+
+
+def _compare_generic_capability_state(
+    previous_snapshot: Dict[str, Any],
+    current_snapshot: Dict[str, Any],
+    *,
+    existing_entries: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    existing_attributes = {str(entry.get("attribute") or "").strip().lower() for entry in existing_entries}
+    previous_map = _generic_capability_map(previous_snapshot)
+    current_map = _generic_capability_map(current_snapshot)
+    entries: List[Dict[str, Any]] = []
+    for key, current_entry in current_map.items():
+        previous_entry = previous_map.get(key)
+        if not isinstance(previous_entry, dict):
+            continue
+        parameter_name = str(current_entry.get("parameter_name") or "").strip()
+        label = _GENERIC_PARAMETER_LABELS.get(parameter_name)
+        if not label or label.lower() in existing_attributes:
+            continue
+        comparison_entry = _generic_comparison_entry(previous_entry, current_entry, label=label)
+        if isinstance(comparison_entry, dict):
+            entries.append(comparison_entry)
+    return entries
+
+
+def _generic_capability_map(snapshot: Dict[str, Any]) -> Dict[tuple[str, str], Dict[str, Any]]:
+    entries = snapshot.get("generic_capability_state")
+    if not isinstance(entries, list):
+        return {}
+    mapped: Dict[tuple[str, str], Dict[str, Any]] = {}
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        key = (
+            str(entry.get("target_system") or "").strip(),
+            str(entry.get("parameter_name") or "").strip(),
+        )
+        if key == ("", ""):
+            continue
+        mapped[key] = dict(entry)
+    return mapped
+
+
+def _generic_comparison_entry(
+    previous_entry: Dict[str, Any],
+    current_entry: Dict[str, Any],
+    *,
+    label: str,
+) -> Dict[str, Any] | None:
+    previous_tier = str(previous_entry.get("current_tier") or "").strip()
+    current_tier = str(current_entry.get("current_tier") or "").strip()
+    previous_value = _float_or_none(previous_entry.get("current_value"))
+    current_value = _float_or_none(current_entry.get("current_value"))
+    if previous_tier == current_tier and previous_value == current_value:
+        return None
+    previous_display = previous_tier or _generic_value_display(previous_value)
+    current_display = current_tier or _generic_value_display(current_value)
+    if not previous_display or not current_display:
+        return None
+    sign = _generic_capability_sign(previous_entry, current_entry)
+    return {
+        "attribute": label,
+        "current_display": current_display,
+        "previous_display": previous_display,
+        "delta": f"{label}: {previous_display} -> {current_display}",
+        "impact": _generic_capability_impact(str(current_entry.get("parameter_name") or "").strip(), sign=sign),
+        "sign": sign,
+    }
+
+
+def _generic_capability_sign(previous_entry: Dict[str, Any], current_entry: Dict[str, Any]) -> int:
+    previous_tier = str(previous_entry.get("current_tier") or "").strip()
+    current_tier = str(current_entry.get("current_tier") or "").strip()
+    bounded_tiers = current_entry.get("bounded_tiers") or previous_entry.get("bounded_tiers") or []
+    if isinstance(bounded_tiers, list) and previous_tier in bounded_tiers and current_tier in bounded_tiers:
+        previous_index = bounded_tiers.index(previous_tier)
+        current_index = bounded_tiers.index(current_tier)
+        if current_index > previous_index:
+            return 1
+        if current_index < previous_index:
+            return -1
+        return 0
+    previous_value = _float_or_none(previous_entry.get("current_value"))
+    current_value = _float_or_none(current_entry.get("current_value"))
+    if previous_value is None or current_value is None:
+        return 0
+    if current_value > previous_value:
+        return 1
+    if current_value < previous_value:
+        return -1
+    return 0
+
+
+def _generic_capability_impact(parameter_name: str, *, sign: int) -> str:
+    if parameter_name == "jump_height":
+        if sign > 0:
+            return "Longer airtime."
+        if sign < 0:
+            return "Shorter airtime."
+        return "No deterministic jump-height change detected."
+    if parameter_name == "gravity":
+        if sign > 0:
+            return "Heavier fall speed."
+        if sign < 0:
+            return "Slower fall speed."
+        return "No deterministic gravity change detected."
+    if parameter_name == "acceleration":
+        if sign > 0:
+            return "Quicker speed buildup."
+        if sign < 0:
+            return "Slower speed buildup."
+        return "No deterministic acceleration change detected."
+    if parameter_name == "max_speed":
+        if sign > 0:
+            return "Higher top speed."
+        if sign < 0:
+            return "Lower top speed."
+        return "No deterministic top-speed change detected."
+    return "Different deterministic capability state."
+
+
+def _generic_value_display(value: float | None) -> str:
+    if value is None:
+        return ""
+    if abs(value - round(value)) < 0.0001:
+        return str(int(round(value)))
+    return f"{value:g}"
 
 
 def _build_structured_comparison_summary(
@@ -676,4 +925,5 @@ def _float_or_default(value: Any, default: float | None) -> float | None:
 __all__ = [
     "EVALUATION_SOURCE",
     "apply_result_evaluation",
+    "build_structured_state_comparison",
 ]

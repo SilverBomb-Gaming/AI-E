@@ -24,6 +24,16 @@ from .enemy_profiles import (
     speed_tiers,
     supports_movement_variation,
 )
+from .platformer_profiles import (
+    gravity_tier_prompt,
+    gravity_tier_values,
+    gravity_tiers,
+    jump_height_tier_prompt,
+    jump_height_tier_values,
+    jump_height_tiers,
+    platformer_speed_tier_prompt,
+    platformer_speed_tier_values,
+)
 from .intent_normalizer import normalize_prompt
 from .tuning_contexts import (
     detect_supported_tuning_context,
@@ -136,7 +146,7 @@ def build_session_tuning_record(
     order: int,
 ) -> Dict[str, Any] | None:
     family = _value_or_none(details.get("state_family")) or _state_family_for_task(task, details=details)
-    if family not in {"speed", "aggression", "movement", "encounter_count", "spawn_pressure"}:
+    if family not in {"speed", "aggression", "movement", "encounter_count", "spawn_pressure", "jump_height", "gravity"}:
         return None
     target_context = _target_context_for_task(task, details=details)
 
@@ -492,15 +502,21 @@ def _resolve_revert_followup(
     previous_tier = str(last_mutation.get("previous_tier") or "").strip() or None
     if family == "speed" and previous_tier in speed_tiers(target_entity):
         canonical_prompt = speed_tier_prompt(target_entity, previous_tier)
+    elif family == "speed" and target_entity == "platformer" and previous_tier in platformer_speed_tier_values():
+        canonical_prompt = platformer_speed_tier_prompt(previous_tier)
     elif family == "aggression" and previous_tier in aggression_tiers(target_entity):
         canonical_prompt = aggression_tier_prompt(target_entity, previous_tier)
+    elif family == "jump_height" and previous_tier in jump_height_tiers():
+        canonical_prompt = jump_height_tier_prompt(previous_tier)
+    elif family == "gravity" and previous_tier in gravity_tiers():
+        canonical_prompt = gravity_tier_prompt(previous_tier)
     elif family == "encounter_count" and previous_tier in encounter_count_tiers():
         canonical_prompt = encounter_count_tier_prompt(previous_tier)
     elif family == "spawn_pressure" and previous_tier in spawn_pressure_tiers():
         canonical_prompt = spawn_pressure_tier_prompt(previous_tier)
     else:
         return None, (
-            f"AI-E can only revert the latest supported {target_entity or 'tuning'} speed, aggression, encounter count, or spawn pressure tier in the current session."
+            f"AI-E can only revert the latest supported {target_entity or 'tuning'} speed, aggression, jump height, gravity, encounter count, or spawn pressure tier in the current session."
         )
 
     revert_summary = (
@@ -646,6 +662,10 @@ def _state_family_for_result_kind(result_kind: str) -> str:
         return "encounter_count"
     if result_kind == "spawn_pressure":
         return "spawn_pressure"
+    if result_kind == "jump_height":
+        return "jump_height"
+    if result_kind == "gravity":
+        return "gravity"
     return "movement"
 
 
@@ -658,6 +678,10 @@ def _state_family_for_task(task: Dict[str, Any], *, details: Dict[str, Any]) -> 
         return "speed"
     if "aggression" in capability_id:
         return "aggression"
+    if "jump_height" in capability_id:
+        return "jump_height"
+    if "gravity" in capability_id:
+        return "gravity"
     if "encounter_count" in capability_id:
         return "encounter_count"
     if "spawn_pressure" in capability_id:
@@ -699,6 +723,10 @@ def _state_values_for_details(details: Dict[str, Any], *, family: str) -> tuple[
         return details.get("requested_encounter_count"), details.get("new_encounter_count")
     if family == "spawn_pressure":
         return details.get("requested_spawn_interval"), details.get("new_spawn_interval")
+    if family == "jump_height":
+        return details.get("requested_jump_height"), details.get("new_jump_height")
+    if family == "gravity":
+        return details.get("requested_gravity"), details.get("new_gravity")
     return details.get("new_position"), details.get("new_position")
 
 
@@ -711,6 +739,10 @@ def _previous_value_for_details(details: Dict[str, Any], *, family: str) -> Any:
         return details.get("previous_encounter_count")
     if family == "spawn_pressure":
         return details.get("previous_spawn_interval")
+    if family == "jump_height":
+        return details.get("previous_jump_height")
+    if family == "gravity":
+        return details.get("previous_gravity")
     return details.get("previous_position")
 
 
@@ -719,9 +751,16 @@ def _tier_for_value(value: Any, *, family: str, target_context: str | None) -> s
     if numeric is None:
         return None
     if family == "speed":
-        tier_values = speed_tier_values(target_context)
+        if target_context == "platformer":
+            tier_values = platformer_speed_tier_values()
+        else:
+            tier_values = speed_tier_values(target_context)
     elif family == "aggression":
         tier_values = aggression_tier_values(target_context)
+    elif family == "jump_height":
+        tier_values = jump_height_tier_values()
+    elif family == "gravity":
+        tier_values = gravity_tier_values()
     elif family == "encounter_count":
         tier_values = encounter_count_tier_values()
     else:

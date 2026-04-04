@@ -368,6 +368,7 @@ class IntakePreviewBridge:
         self._supervisor_config_cls = None
         self._state_store_cls = None
         self._apply_experiment_decision_fn = None
+        self._apply_experiment_navigation_fn = None
         self._get_current_timestamp_fn = None
         self._import_error: str | None = None
 
@@ -534,6 +535,11 @@ class IntakePreviewBridge:
                     "AI-E prepared a current-session experiment decision update locally. "
                     "Record it to update experiment state. No execution will start."
                 )
+            elif action == "set_active_experiment_context":
+                status_message = (
+                    "AI-E prepared an explicit experiment context switch locally. "
+                    "Apply it to update the active experiment. No execution will start."
+                )
             else:
                 status_message = "AI-E prepared a current-session experiment summary locally. No execution will start."
 
@@ -667,21 +673,29 @@ class IntakePreviewBridge:
         )
 
     def apply_experiment_review_prompt(self, preview: PreparedPromptPreview) -> ReviewActionResult:
-        if preview.decision_state != "Review only" or preview.recommended_action != "record_experiment_decision":
+        if preview.decision_state != "Review only" or preview.recommended_action not in {
+            "record_experiment_decision",
+            "set_active_experiment_context",
+        }:
             return ReviewActionResult(
                 ok=False,
-                action="record_experiment_decision",
-                message="Only experiment review prompts marked for decision recording can update experiment state here.",
+                action="record_experiment_review_action",
+                message="Only experiment review prompts marked for decision recording or explicit context switching can update experiment state here.",
                 wired=False,
                 staged_only=True,
                 queue_status="",
                 request_id="",
                 task_id="",
             )
+        required_apply_fn = (
+            self._apply_experiment_decision_fn
+            if preview.recommended_action == "record_experiment_decision"
+            else self._apply_experiment_navigation_fn
+        )
         if (
             self._config_cls is None
             or self._state_store_cls is None
-            or self._apply_experiment_decision_fn is None
+            or required_apply_fn is None
             or self._get_current_timestamp_fn is None
         ):
             try:
@@ -690,7 +704,7 @@ class IntakePreviewBridge:
                 self._import_error = f"Experiment review update could not load: {exc}"
                 return ReviewActionResult(
                     ok=False,
-                    action="record_experiment_decision",
+                    action="record_experiment_review_action",
                     message=self._import_error,
                     wired=False,
                     staged_only=True,
@@ -701,7 +715,13 @@ class IntakePreviewBridge:
         config = self._config_cls.load()
         state_store = self._state_store_cls(config.runs_dir, DEFAULT_SUBMIT_SESSION_ID)
         state, _ = state_store.load_with_status()
-        updated_state, decision_result, block_message = self._apply_experiment_decision_fn(
+        if preview.recommended_action == "record_experiment_decision":
+            action = "record_experiment_decision"
+            apply_fn = self._apply_experiment_decision_fn
+        else:
+            action = "set_active_experiment_context"
+            apply_fn = self._apply_experiment_navigation_fn
+        updated_state, decision_result, block_message = apply_fn(
             state,
             prompt=preview.normalized_prompt,
             timestamp=self._get_current_timestamp_fn(),
@@ -709,7 +729,7 @@ class IntakePreviewBridge:
         if block_message:
             return ReviewActionResult(
                 ok=False,
-                action="record_experiment_decision",
+                action=action,
                 message=block_message,
                 wired=True,
                 staged_only=True,
@@ -721,8 +741,8 @@ class IntakePreviewBridge:
         decision_result = decision_result or {}
         return ReviewActionResult(
             ok=True,
-            action="record_experiment_decision",
-            message=str(decision_result.get("message") or "Experiment decision recorded.").strip(),
+            action=action,
+            message=str(decision_result.get("message") or "Experiment review update recorded.").strip(),
             wired=True,
             staged_only=False,
             queue_status="review_only",
@@ -1941,7 +1961,7 @@ class IntakePreviewBridge:
         from ai_e_runtime.request_review_bundle import build_review_bundle
         from ai_e_runtime.request_review_decision import create_review_decision
         from ai_e_runtime.runtime_state import RuntimeState
-        from ai_e_runtime.experiment_tracking import apply_experiment_decision
+        from ai_e_runtime.experiment_tracking import apply_experiment_decision, apply_experiment_navigation
         from ai_e_runtime.state_store import StateStore
         from ai_e_runtime.supervisor import Supervisor, SupervisorConfig
         from ai_e_runtime.task_intake import ConversationalTaskIntake
@@ -1957,6 +1977,7 @@ class IntakePreviewBridge:
         self._supervisor_config_cls = SupervisorConfig
         self._state_store_cls = StateStore
         self._apply_experiment_decision_fn = apply_experiment_decision
+        self._apply_experiment_navigation_fn = apply_experiment_navigation
         self._get_current_timestamp_fn = get_current_timestamp
         self._intake_cls = ConversationalTaskIntake
         self._config_cls = OrchestratorConfig
@@ -1965,10 +1986,13 @@ class IntakePreviewBridge:
     def _decision_state(*, classification: str, decision: str, confirmation_required: bool = False, routing: Any | None = None) -> str:
         if confirmation_required:
             return "Needs confirmation"
-        if (
-            str(getattr(routing, "resolution_source", "") or "") in {"experiment_review", "experiment_decision_review"}
-            and str(getattr(routing, "decision_reason", "") or "").startswith("experiment_")
-        ):
+        if str(getattr(routing, "resolution_source", "") or "") in {
+            "experiment_review",
+            "experiment_decision_review",
+            "experiment_navigation_review",
+        }:
+            if bool(getattr(routing, "decision_blocked", False)):
+                return "Blocked"
             return "Review only"
         if classification != "task_request":
             return "Blocked"
@@ -1987,6 +2011,8 @@ class IntakePreviewBridge:
         if decision_state == "Review only":
             if recommended_action == "record_experiment_decision":
                 return "Record decision"
+            if recommended_action == "set_active_experiment_context":
+                return "Switch context"
             return "Refresh summary"
         if decision_state == "Needs confirmation":
             if recommended_action == "confirm_plan" or has_plan:
@@ -2056,6 +2082,8 @@ class IntakePreviewBridge:
         if decision_state == "Review only":
             if str(getattr(routing, "recommended_action", "") or "").strip() == "record_experiment_decision":
                 return "AI-E prepared a current-session experiment decision update. Record it to update experiment state; no execution will start."
+            if str(getattr(routing, "recommended_action", "") or "").strip() == "set_active_experiment_context":
+                return "AI-E prepared an explicit experiment context switch preview. Apply it to update the active experiment; no execution will start."
             return "AI-E prepared a current-session experiment summary. Refresh it any time; no execution will start from this action."
         if decision_state == "Needs approval":
             return "This request needs one-time approval before it can continue. Open review to confirm the safe next step."
@@ -2293,9 +2321,7 @@ def _latest_attempt_artifact_path(run_dir: Path, *, session_state: dict[str, Any
     if not artifacts_dir.exists():
         return None
 
-    preferred_task_id = ""
-    preferred_request_id = ""
-    preferred_plan_id = ""
+    preferred_candidates: list[tuple[str, str, str]] = []
     state = session_state if isinstance(session_state, dict) else _load_json(run_dir / "session_state.json")
     if isinstance(state, dict):
         history = state.get("result_evaluation_history")
@@ -2311,14 +2337,27 @@ def _latest_attempt_artifact_path(run_dir: Path, *, session_state: dict[str, Any
             preferred_request_id = str(entry.get("request_id") or "").strip()
             preferred_plan_id = str(entry.get("plan_id") or "").strip()
             if preferred_task_id or preferred_request_id or preferred_plan_id:
+                preferred_candidates.append((preferred_task_id, preferred_request_id, preferred_plan_id))
                 break
+
+        latest_variant = state.get("latest_experiment_variant")
+        if isinstance(latest_variant, dict):
+            latest_variant_task_id = str(latest_variant.get("task_id") or "").strip()
+            latest_variant_request_id = str(latest_variant.get("request_id") or "").strip()
+            latest_variant_plan_id = str(latest_variant.get("plan_id") or "").strip()
+            if latest_variant_task_id or latest_variant_request_id or latest_variant_plan_id:
+                preferred_candidates.append((latest_variant_task_id, latest_variant_request_id, latest_variant_plan_id))
+
+        last_completed_task_id = str(state.get("last_completed_task") or state.get("last_started_task") or "").strip()
+        if last_completed_task_id:
+            preferred_candidates.append((last_completed_task_id, "", ""))
 
     candidates = sorted(
         (path for path in artifacts_dir.glob("*_attempt_*.json") if path.is_file()),
         key=lambda path: (path.stat().st_mtime, path.name),
         reverse=True,
     )
-    if preferred_task_id or preferred_request_id or preferred_plan_id:
+    for preferred_task_id, preferred_request_id, preferred_plan_id in preferred_candidates:
         for path in candidates:
             payload = _load_json(path)
             if not isinstance(payload, dict):
@@ -2509,7 +2548,12 @@ def _proof_result_from_plan_session(
         validation_checks = [f"Planned steps recorded: {total_steps}."]
 
     final_task = {}
-    if attempt_artifacts:
+    final_artifact_path = _latest_attempt_artifact_path(run_dir, session_state=session_state)
+    if final_artifact_path is not None:
+        final_payload = _load_json(final_artifact_path)
+        if isinstance(final_payload, dict):
+            final_task = final_payload.get("task") if isinstance(final_payload.get("task"), dict) else {}
+    elif attempt_artifacts:
         final_payload = attempt_artifacts[-1][1]
         final_task = final_payload.get("task") if isinstance(final_payload.get("task"), dict) else {}
     evaluation_payload = _result_evaluation_payload(
