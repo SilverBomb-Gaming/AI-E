@@ -8387,6 +8387,158 @@ def test_home_surface_surfaces_platformer_layout_validation_findings(tmp_path):
     assert proof.final_verdict == "Requested change completed, but spatial validation found 1 layout issue(s)."
 
 
+def test_home_surface_surfaces_platformer_autonomous_build_summary_and_approval_boundary(tmp_path):
+    config = _make_config(tmp_path / "home_surface_platformer_autonomous_build")
+    target_repo = config.root_dir / "BABYLON_TEST"
+    target_repo.mkdir(parents=True, exist_ok=True)
+    run_dir = config.runs_dir / "platformer-autonomous-build-session"
+    artifacts_dir = run_dir / "artifacts"
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+
+    request_payload_path = config.contracts_dir / "intake" / "requests" / "REQ_PLATFORMER_AUTONOMOUS_BUILD.json"
+    request_payload_path.parent.mkdir(parents=True, exist_ok=True)
+    request_payload_path.write_text(
+        json.dumps(
+            {
+                "conversational_request": {
+                    "operator_prompt": "make traversal more challenging but fair",
+                    "context": {
+                        "routing": {
+                            "mapped_prompt": "use challenge traversal",
+                        }
+                    },
+                }
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    artifact_path = artifacts_dir / "TASK_PLATFORMER_AUTONOMOUS_BUILD_attempt_01.json"
+    artifact_path.write_text(
+        json.dumps(
+            {
+                "task": {
+                    "task_id": "TASK_PLATFORMER_AUTONOMOUS_BUILD",
+                    "request_id": "REQ_PLATFORMER_AUTONOMOUS_BUILD",
+                    "target_repo": str(target_repo),
+                    "operator_prompt": "make traversal more challenging but fair",
+                    "source_prompt": "make traversal more challenging but fair",
+                    "request_payload_path": "contracts/intake/requests/REQ_PLATFORMER_AUTONOMOUS_BUILD.json",
+                },
+                "result": {
+                    "status": "completed",
+                    "details": {
+                        "target_context": "platformer",
+                        "platformer_autonomous_build_complete": "AUTONOMOUS BUILD COMPLETE",
+                        "platformer_autonomous_build_parameter_families": [
+                            "gap_size",
+                            "obstacle_density",
+                            "enemy_density",
+                            "segment_count",
+                        ],
+                        "platformer_auto_iteration_valid_candidates": [
+                            {
+                                "candidate_id": "candidate_1",
+                                "candidate_label": "Candidate A",
+                                "evaluation_summary": "Gap size: large; Obstacle density: dense; Enemy density: high; Segment count: long",
+                                "layout_parameters": {
+                                    "gap_size_tier": "large",
+                                    "obstacle_density_tier": "dense",
+                                    "enemy_density_tier": "high",
+                                    "segment_count_tier": "long",
+                                },
+                                "validation_metadata": {
+                                    "layout_validation_status_label": "clean",
+                                    "layout_validation_issue_count": 0,
+                                },
+                                "result_payload": {
+                                    "details": {
+                                        "derived_from_corrected_layout": True,
+                                        "level_profile_name": "ChallengeTraversalProfile",
+                                        "level_set_name": "ChallengeTraversalSet",
+                                    }
+                                },
+                            },
+                            {
+                                "candidate_id": "candidate_2",
+                                "candidate_label": "Candidate B",
+                                "evaluation_summary": "Gap size: medium; Obstacle density: medium; Enemy density: medium; Segment count: medium",
+                                "validation_metadata": {
+                                    "layout_validation_status_label": "issues detected",
+                                    "layout_validation_issue_count": 1,
+                                },
+                                "result_payload": {
+                                    "details": {
+                                        "derived_from_corrected_layout": False,
+                                        "level_profile_name": "FallbackProfile",
+                                        "level_set_name": "FallbackSet",
+                                    }
+                                },
+                            },
+                        ],
+                        "platformer_auto_iteration_attempts": [
+                            {
+                                "attempt_number": 1,
+                                "decision": "rejected",
+                                "layout_validation_status": "issues_found",
+                                "reason": "Unreachable platform at P9.",
+                            },
+                            {
+                                "attempt_number": 2,
+                                "decision": "accepted",
+                                "layout_validation_status": "passed",
+                                "reason": "no blocking issues",
+                            },
+                        ],
+                    },
+                    "artifacts": [],
+                },
+                "validation": {"validation_state": "passed", "queue_action": "complete"},
+                "timestamp": "2026-04-04T12:00:00Z",
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "session_state.json").write_text(json.dumps({}, indent=2), encoding="utf-8")
+
+    proof = home_surface.load_proof_result_surface(artifact_path)
+
+    assert proof.available is True
+    assert proof.autonomous_build_available is True
+    assert proof.final_verdict == "AUTONOMOUS BUILD COMPLETE. Awaiting user approval."
+    assert proof.validation_outcome == (
+        "Awaiting user approval. No candidate selected automatically. "
+        "User must approve, reject, or request changes."
+    )
+    assert proof.autonomous_build_requested_directive == "make traversal more challenging but fair"
+    assert proof.autonomous_build_bounded_mapping == "use challenge traversal"
+    assert proof.autonomous_build_parameter_families == [
+        "gap_size",
+        "obstacle_density",
+        "enemy_density",
+        "segment_count",
+    ]
+    assert proof.autonomous_build_candidate_count == 2
+    assert [candidate.label for candidate in proof.autonomous_build_candidates] == ["Candidate A", "Candidate B"]
+    assert proof.autonomous_build_candidates[0].validation_status == "clean"
+    assert proof.autonomous_build_candidates[0].derived_from_corrected_layout is True
+    assert proof.autonomous_build_candidates[1].issue_count == 1
+    assert proof.autonomous_build_attempt_log == [
+        "attempt 1: rejected | validation=issues_found | reason=Unreachable platform at P9.",
+        "attempt 2: accepted | validation=passed | reason=no blocking issues",
+    ]
+    assert proof.autonomous_build_user_controls == ["approve", "reject", "request changes"]
+    assert proof.autonomous_build_requires_approval is True
+    assert "AUTONOMOUS BUILD COMPLETE" in proof.change_summary
+    assert "Candidate A:" in proof.change_summary
+    assert "ATTEMPT LOG" in proof.change_summary
+    assert "APPROVAL STATUS" in proof.change_summary
+    assert "No candidate selected automatically" in proof.change_summary
+    assert "recommend" not in proof.change_summary.lower()
+
+
 def test_experiment_tracking_records_platformer_level_set_metadata_on_variants():
     state = {
         "session_tuning_state": {

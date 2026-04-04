@@ -168,6 +168,17 @@ class ProofArtifactLink:
 
 
 @dataclass(frozen=True)
+class AutonomousBuildCandidateSurface:
+    label: str
+    validation_status: str
+    evaluation_summary: str
+    issue_count: int = 0
+    derived_from_corrected_layout: bool = False
+    source_profile: str = ""
+    source_level_set: str = ""
+
+
+@dataclass(frozen=True)
 class ProofResultSurface:
     available: bool
     title: str
@@ -210,6 +221,17 @@ class ProofResultSurface:
     manual_correction_summary: str = ""
     manual_correction_count: int = 0
     derived_from_corrected_layout: bool = False
+    autonomous_build_available: bool = False
+    autonomous_build_summary: str = ""
+    autonomous_build_requested_directive: str = ""
+    autonomous_build_bounded_mapping: str = ""
+    autonomous_build_parameter_families: List[str] = field(default_factory=list)
+    autonomous_build_candidate_count: int = 0
+    autonomous_build_candidates: List[AutonomousBuildCandidateSurface] = field(default_factory=list)
+    autonomous_build_attempt_log: List[str] = field(default_factory=list)
+    autonomous_build_user_controls: List[str] = field(default_factory=list)
+    autonomous_build_requires_approval: bool = False
+    autonomous_build_approval_summary: str = ""
 
 
 def load_supported_projects() -> List[SupportedProject]:
@@ -2581,6 +2603,20 @@ def _proof_result_from_plan_session(
         **experiment_fields,
         **_manual_correction_surface_fields(experiment_fields),
     }
+    autonomous_fields = _autonomous_build_surface_fields(
+        task=first_task,
+        details=((attempt_artifacts[-1][1].get("result") or {}) if attempt_artifacts else {}).get("details")
+        if attempt_artifacts and isinstance((attempt_artifacts[-1][1].get("result") or {}), dict)
+        else {},
+        routing=request_routing,
+    )
+    change_summary = " ".join(change_parts).strip() or "AI-E completed the recorded plan steps for this request."
+    validation_summary = validation_outcome
+    final_summary = final_verdict
+    if autonomous_fields["autonomous_build_available"]:
+        change_summary = str(autonomous_fields["autonomous_build_summary"] or "").strip() or change_summary
+        validation_summary = str(autonomous_fields["autonomous_build_approval_summary"] or "").strip() or validation_summary
+        final_summary = "AUTONOMOUS BUILD COMPLETE. Awaiting user approval."
 
     return ProofResultSurface(
         available=True,
@@ -2590,10 +2626,10 @@ def _proof_result_from_plan_session(
         normalized_request=normalized_request,
         target_display=target_display,
         detected_action=plan_title or "Verified plan",
-        final_verdict=final_verdict,
+        final_verdict=final_summary,
         before_after_summary=" ".join(before_after_parts).strip(),
-        change_summary=" ".join(change_parts).strip() or "AI-E completed the recorded plan steps for this request.",
-        validation_outcome=validation_outcome,
+        change_summary=change_summary,
+        validation_outcome=validation_summary,
         proof_status=proof_status,
         timestamp_label=_format_timestamp(_entry_timestamp(run_dir, timestamp_hint)),
         key_steps=key_steps,
@@ -2605,6 +2641,7 @@ def _proof_result_from_plan_session(
         status_message="Loaded from the saved multi-step plan and supporting files.",
         **evaluation_fields,
         **experiment_fields,
+        **autonomous_fields,
     )
 
 
@@ -2712,9 +2749,22 @@ def _proof_result_from_attempt_artifact(
         **experiment_fields,
         **_manual_correction_surface_fields(details, experiment=experiment_fields),
     }
+    autonomous_fields = _autonomous_build_surface_fields(
+        task=task,
+        details=details,
+        routing=request_routing,
+    )
     _append_artifact_link(raw_artifacts, label="Manual correction record", kind="artifact", candidate=details.get("layout_correction_artifact_path"))
     _append_artifact_link(raw_artifacts, label="Manual correction history", kind="artifact", candidate=details.get("layout_correction_history_path"))
     _append_artifact_link(raw_artifacts, label="Corrected layout", kind="artifact", candidate=details.get("corrected_layout_artifact_path"))
+
+    change_summary = _proof_change_summary(details)
+    validation_summary = _attempt_validation_outcome(proof_status=proof_status, validation=validation, details=details)
+    final_summary = _attempt_final_verdict(proof_status=proof_status, result=result, details=details, validation=validation)
+    if autonomous_fields["autonomous_build_available"]:
+        change_summary = str(autonomous_fields["autonomous_build_summary"] or "").strip() or change_summary
+        validation_summary = str(autonomous_fields["autonomous_build_approval_summary"] or "").strip() or validation_summary
+        final_summary = "AUTONOMOUS BUILD COMPLETE. Awaiting user approval."
 
     return ProofResultSurface(
         available=True,
@@ -2724,10 +2774,10 @@ def _proof_result_from_attempt_artifact(
         normalized_request=translated_request if translated_request and translated_request != original_request else "",
         target_display=target_display,
         detected_action=_humanize_text(details.get("action_name") or details.get("action_type")) or "Verified change",
-        final_verdict=_attempt_final_verdict(proof_status=proof_status, result=result, details=details, validation=validation),
+        final_verdict=final_summary,
         before_after_summary=_proof_before_after_summary(details),
-        change_summary=_proof_change_summary(details),
-        validation_outcome=_attempt_validation_outcome(proof_status=proof_status, validation=validation, details=details),
+        change_summary=change_summary,
+        validation_outcome=validation_summary,
         proof_status=proof_status,
         timestamp_label=_format_timestamp(_entry_timestamp(run_dir, attempt_artifact.get("timestamp"))),
         key_steps=key_steps,
@@ -2739,6 +2789,7 @@ def _proof_result_from_attempt_artifact(
         status_message="Loaded from the saved run details and supporting files.",
         **evaluation_fields,
         **experiment_fields,
+        **autonomous_fields,
     )
 
 
@@ -3535,6 +3586,171 @@ def _manual_correction_surface_fields(
     }
 
 
+def _autonomous_build_surface_fields(
+    *,
+    task: dict[str, Any] | None,
+    details: dict[str, Any] | None,
+    routing: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    task_payload = task if isinstance(task, dict) else {}
+    details_payload = details if isinstance(details, dict) else {}
+    routing_payload = routing if isinstance(routing, dict) else {}
+    valid_candidates = [
+        dict(entry)
+        for entry in (details_payload.get("platformer_auto_iteration_valid_candidates") or [])
+        if isinstance(entry, dict)
+    ]
+    attempts = [
+        dict(entry)
+        for entry in (details_payload.get("platformer_auto_iteration_attempts") or [])
+        if isinstance(entry, dict)
+    ]
+    presentation_available = bool(
+        str(details_payload.get("platformer_autonomous_build_complete") or "").strip()
+        or valid_candidates
+        or attempts
+    )
+    if not presentation_available:
+        return {
+            "autonomous_build_available": False,
+            "autonomous_build_summary": "",
+            "autonomous_build_requested_directive": "",
+            "autonomous_build_bounded_mapping": "",
+            "autonomous_build_parameter_families": [],
+            "autonomous_build_candidate_count": 0,
+            "autonomous_build_candidates": [],
+            "autonomous_build_attempt_log": [],
+            "autonomous_build_user_controls": [],
+            "autonomous_build_requires_approval": False,
+            "autonomous_build_approval_summary": "",
+        }
+
+    requested_directive = str(
+        task_payload.get("source_prompt")
+        or routing_payload.get("resolved_from_prompt")
+        or task_payload.get("operator_prompt")
+        or ""
+    ).strip()
+    bounded_mapping = str(
+        task_payload.get("mapped_prompt")
+        or routing_payload.get("mapped_prompt")
+        or task_payload.get("plan_title")
+        or task_payload.get("operator_prompt")
+        or ""
+    ).strip()
+    parameter_families = [
+        str(item).strip()
+        for item in (details_payload.get("platformer_autonomous_build_parameter_families") or [])
+        if str(item).strip()
+    ]
+    if not parameter_families:
+        for candidate in valid_candidates:
+            layout_parameters = dict(candidate.get("layout_parameters") or {})
+            for key in layout_parameters.keys():
+                if not str(key).endswith("_tier"):
+                    continue
+                family = str(key[:-5]).strip()
+                if family and family not in parameter_families:
+                    parameter_families.append(family)
+
+    candidate_surfaces: List[AutonomousBuildCandidateSurface] = []
+    for index, candidate in enumerate(valid_candidates, start=1):
+        validation_metadata = dict(candidate.get("validation_metadata") or {})
+        result_payload = candidate.get("result_payload") if isinstance(candidate.get("result_payload"), dict) else {}
+        result_details = result_payload.get("details") if isinstance(result_payload.get("details"), dict) else {}
+        label = str(candidate.get("candidate_label") or f"Candidate {chr(ord('A') + index - 1)}").strip()
+        candidate_surfaces.append(
+            AutonomousBuildCandidateSurface(
+                label=label,
+                validation_status=str(validation_metadata.get("layout_validation_status_label") or "unknown").strip() or "unknown",
+                evaluation_summary=str(candidate.get("evaluation_summary") or "No evaluation summary available.").strip() or "No evaluation summary available.",
+                issue_count=int(validation_metadata.get("layout_validation_issue_count") or 0),
+                derived_from_corrected_layout=bool(result_details.get("derived_from_corrected_layout")),
+                source_profile=str(result_details.get("level_profile_name") or "").strip(),
+                source_level_set=str(result_details.get("level_set_name") or "").strip(),
+            )
+        )
+
+    attempt_log = []
+    for entry in attempts:
+        attempt_log.append(
+            (
+                f"attempt {int(entry.get('attempt_number') or 0)}: {str(entry.get('decision') or 'unknown')}"
+                f" | validation={str(entry.get('layout_validation_status') or 'unknown')}"
+                f" | reason={str(entry.get('reason') or 'unknown')}"
+            )
+        )
+
+    user_controls = ["approve", "reject", "request changes"]
+    approval_summary = (
+        "Awaiting user approval. No candidate selected automatically. "
+        "User must approve, reject, or request changes."
+    )
+    count = len(candidate_surfaces)
+    count_label = "candidate" if count == 1 else "candidates"
+    lines = [
+        "AUTONOMOUS BUILD COMPLETE",
+        "",
+        "Requested directive:",
+        f"- {requested_directive or 'not available'}",
+        "",
+        "Bounded mapping:",
+        f"- {bounded_mapping or 'not available'}",
+        "",
+        "Known capability families:",
+        *([f"- {family}" for family in parameter_families] or ["- not available"]),
+        "",
+        "AUTONOMOUS RESULT SET",
+        "",
+        f"{count} valid {count_label} generated",
+        "",
+    ]
+    for candidate in candidate_surfaces:
+        lines.extend(
+            [
+                f"{candidate.label}:",
+                f"- Validation: {candidate.validation_status}",
+                f"- Evaluation: {candidate.evaluation_summary}",
+            ]
+        )
+        if candidate.issue_count > 0:
+            lines.append(f"- Issue count: {candidate.issue_count}")
+        if candidate.derived_from_corrected_layout:
+            lines.append("- Derived from corrected layout: yes")
+        if candidate.source_profile:
+            lines.append(f"- Profile: {candidate.source_profile}")
+        if candidate.source_level_set:
+            lines.append(f"- Level set: {candidate.source_level_set}")
+        lines.append("")
+    lines.extend(
+        [
+            "ATTEMPT LOG",
+            *([f"- {entry}" for entry in attempt_log] or ["- No attempt log available"]),
+            "",
+            "USER CONTROL",
+            *[f"- {action}" for action in user_controls],
+            "",
+            "APPROVAL STATUS",
+            "- Awaiting user approval",
+            "- No candidate selected automatically",
+            "- User must approve, reject, or request changes",
+        ]
+    )
+    return {
+        "autonomous_build_available": True,
+        "autonomous_build_summary": "\n".join(lines).strip(),
+        "autonomous_build_requested_directive": requested_directive,
+        "autonomous_build_bounded_mapping": bounded_mapping,
+        "autonomous_build_parameter_families": parameter_families,
+        "autonomous_build_candidate_count": count,
+        "autonomous_build_candidates": candidate_surfaces,
+        "autonomous_build_attempt_log": attempt_log,
+        "autonomous_build_user_controls": user_controls,
+        "autonomous_build_requires_approval": True,
+        "autonomous_build_approval_summary": approval_summary,
+    }
+
+
 def _session_resolution_lines(*, routing: dict[str, Any], details: dict[str, Any]) -> tuple[list[str], list[str]]:
     resolution_source = str(details.get("resolution_source") or routing.get("resolution_source") or "").strip().lower()
     if resolution_source not in {"session_followup_resolution", "goal_intent_mapping", "goal_composition"}:
@@ -3841,6 +4057,17 @@ def _unavailable_proof_result_surface(message: str) -> ProofResultSurface:
         rerun_prompt="",
         rerun_project_path="",
         status_message=message,
+        autonomous_build_available=False,
+        autonomous_build_summary="",
+        autonomous_build_requested_directive="",
+        autonomous_build_bounded_mapping="",
+        autonomous_build_parameter_families=[],
+        autonomous_build_candidate_count=0,
+        autonomous_build_candidates=[],
+        autonomous_build_attempt_log=[],
+        autonomous_build_user_controls=[],
+        autonomous_build_requires_approval=False,
+        autonomous_build_approval_summary="",
     )
 
 
