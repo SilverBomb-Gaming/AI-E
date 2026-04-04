@@ -4,8 +4,15 @@ from pathlib import Path
 import pytest
 
 from app import home_surface
+from ai_e_runtime.experiment_tracking import apply_experiment_navigation, apply_experiment_tracking
 from ai_e_runtime.outcome_evaluation import apply_result_evaluation
 from ai_e_runtime.experiment_tracking import apply_experiment_decision
+from ai_e_runtime.generic_capabilities import (
+    build_generic_capability_state,
+    generic_capability_definition,
+    generic_capability_definition_for_capability_id,
+    supported_generic_capability_mappings,
+)
 from ai_e_runtime.intent_normalizer import normalize_prompt
 from ai_e_runtime.state_store import StateStore
 from ai_e_runtime.task_intake import ConversationalTaskIntake
@@ -1724,13 +1731,18 @@ def test_home_surface_prepare_prompt_shows_review_only_current_experiment_summar
     assert preview.next_action_label == "Refresh summary"
     assert preview.plan_title == "Current experiment variants"
     assert preview.plan_steps == [
-        "variant_0001: move zombie forward -> standard forward movement (baseline, preferred baseline).",
-        "variant_0002: try another version -> movement variation (current variant, rejected, followup variant).",
+        "variant_0001 | target context: zombie | status: original baseline, preferred baseline, undecided | prompt: move zombie forward | outcome: standard forward movement | deltas from baseline: none.",
+        "variant_0002 | target context: zombie | status: current, rejected | prompt: try another version | outcome: movement variation | deltas from baseline: Movement: standard_forward -> movement_variation.",
     ]
     assert preview.plan_execution_mode == "Current session summary"
-    assert preview.decision_reason.startswith("AI-E is tracking 2 recorded variant(s) in experiment_0001.")
-    assert "Preferred baseline: variant_0001." in preview.decision_reason
+    assert preview.decision_reason.startswith("Variant review: experiment_0001.")
+    assert "Original baseline: variant_0001." in preview.decision_reason
+    assert "Preferred baseline: variant_0001 (same as original baseline)." in preview.decision_reason
+    assert "Kept variants: none." in preview.decision_reason
     assert "Rejected variants: variant_0002." in preview.decision_reason
+    assert "Undecided variants: variant_0001." in preview.decision_reason
+    assert "better" not in preview.decision_reason.lower()
+    assert "best" not in preview.decision_reason.lower()
     assert preview.status_message == "AI-E prepared a current-session experiment summary locally. No execution will start."
 
 
@@ -1858,11 +1870,19 @@ def test_home_surface_prepare_prompt_shows_review_only_experiment_decision_updat
     assert preview.plan_title == "Keep current variant"
     assert preview.plan_steps == [
         "Current variant: variant_0002.",
-        "Current decision status: undecided.",
-        "Rejected variants: none.",
+        "Target context: zombie.",
+        "Current status: undecided.",
+        "Current variant deltas from baseline: Speed: fast -> standard.",
         "Original baseline: variant_0001.",
+        "Preferred baseline: not set; comparisons default to variant_0001.",
+        "Kept variants: none.",
+        "Rejected variants: none.",
         "Decision to record: kept.",
-        "Decision outcome: variant_0002 stays available for comparison. Original baseline remains variant_0001.",
+        "Status change: variant_0002 -> kept.",
+        "Preferred baseline change: none; comparisons continue to use original baseline variant_0001.",
+        "Comparison reference after decision: variant_0001.",
+        "Decision outcome: variant_0002 remains available for comparison and history.",
+        "Original baseline lineage: remains variant_0001.",
         "Changes relative to baseline:",
         "What changed",
         "Speed changed.",
@@ -1875,13 +1895,19 @@ def test_home_surface_prepare_prompt_shows_review_only_experiment_decision_updat
     ]
     assert preview.plan_execution_mode == "Current session decision update"
     assert preview.decision_reason == (
-        "AI-E will record variant_0002 as kept in experiment_0001. "
-        "Original baseline remains variant_0001. No execution will start."
+        "Decision preview: experiment_0001.\n"
+        "Action: keep current variant.\n"
+        "Status change: variant_0002 -> kept.\n"
+        "Preferred baseline change: none; comparisons continue to use original baseline variant_0001.\n"
+        "Comparison reference after decision: variant_0001.\n"
+        "Original baseline lineage: remains variant_0001.\n"
+        "Execution: none."
     )
     assert preview.status_message == (
         "AI-E prepared a current-session experiment decision update locally. "
         "Record it to update experiment state. No execution will start."
     )
+    assert "recommend" not in " ".join(preview.plan_steps).lower()
 
 
 def test_home_surface_apply_experiment_decision_records_keep_and_reject_status(tmp_path):
@@ -1978,7 +2004,11 @@ def test_home_surface_apply_experiment_decision_records_keep_and_reject_status(t
     keep_preview = bridge.prepare_prompt("keep current variant", project)
     keep_result = bridge.apply_experiment_review_prompt(keep_preview)
     assert keep_result.ok is True
-    assert keep_result.message == "Recorded: variant_0002 was kept in experiment_0001. Original baseline remains variant_0001."
+    assert keep_result.message == (
+        "Recorded: variant_0002 is kept in experiment_0001. "
+        "Preferred baseline remains variant_0001. "
+        "Original baseline remains variant_0001."
+    )
 
     state = json.loads((config.runs_dir / home_surface.DEFAULT_SUBMIT_SESSION_ID / "session_state.json").read_text(encoding="utf-8"))
     experiment = state["experiment_tracking"]["experiments"][0]
@@ -1990,9 +2020,15 @@ def test_home_surface_apply_experiment_decision_records_keep_and_reject_status(t
 
     bridge._get_current_timestamp_fn = lambda: "2026-04-02T07:05:00Z"
     reject_preview = bridge.prepare_prompt("reject current variant", project)
+    assert "Status change: variant_0002 -> rejected." in reject_preview.plan_steps
+    assert "Decision outcome: variant_0002 remains in experiment history but will not be used." in reject_preview.plan_steps
+    assert "Original baseline lineage: remains variant_0001." in reject_preview.plan_steps
     reject_result = bridge.apply_experiment_review_prompt(reject_preview)
     assert reject_result.ok is True
-    assert reject_result.message == "Recorded: variant_0002 was rejected in experiment_0001 and will not be used."
+    assert reject_result.message == (
+        "Recorded: variant_0002 was rejected in experiment_0001. "
+        "variant_0002 remains in experiment history but will not be used."
+    )
 
     updated_state = json.loads((config.runs_dir / home_surface.DEFAULT_SUBMIT_SESSION_ID / "session_state.json").read_text(encoding="utf-8"))
     updated_experiment = updated_state["experiment_tracking"]["experiments"][0]
@@ -2096,11 +2132,19 @@ def test_home_surface_apply_experiment_decision_sets_preferred_baseline_without_
     preview = bridge.prepare_prompt("set current variant as baseline", project)
     assert preview.plan_steps == [
         "Current variant: variant_0002.",
-        "Current decision status: undecided.",
-        "Rejected variants: none.",
+        "Target context: zombie.",
+        "Current status: undecided.",
+        "Current variant deltas from baseline: Speed: fast -> standard.",
         "Original baseline: variant_0001.",
+        "Preferred baseline: not set; comparisons default to variant_0001.",
+        "Kept variants: none.",
+        "Rejected variants: none.",
         "Decision to record: preferred baseline.",
-        "Decision outcome: variant_0002 becomes the preferred baseline for later comparisons. Original baseline remains variant_0001.",
+        "Status change: none; the current decision status stays recorded as-is.",
+        "Preferred baseline change: variant_0001 -> variant_0002.",
+        "Comparison reference after decision: variant_0002.",
+        "Decision outcome: variant_0002 becomes the preferred baseline for later comparisons.",
+        "Original baseline lineage: remains variant_0001.",
         "Changes relative to baseline:",
         "What changed",
         "Speed changed.",
@@ -2112,13 +2156,22 @@ def test_home_surface_apply_experiment_decision_sets_preferred_baseline_without_
         "Lower movement speed.",
     ]
     assert preview.decision_reason == (
-        "AI-E will set variant_0002 as the preferred baseline in experiment_0001. "
-        "Original baseline remains variant_0001. No execution will start."
+        "Decision preview: experiment_0001.\n"
+        "Action: set current variant as baseline.\n"
+        "Status change: none; current variant status stays recorded as-is.\n"
+        "Preferred baseline change: variant_0001 -> variant_0002.\n"
+        "Comparison reference after decision: variant_0002.\n"
+        "Original baseline lineage: remains variant_0001.\n"
+        "Execution: none."
     )
     result = bridge.apply_experiment_review_prompt(preview)
 
     assert result.ok is True
-    assert result.message == "Recorded: variant_0002 is now the preferred baseline in experiment_0001. Original baseline remains variant_0001."
+    assert result.message == (
+        "Recorded: variant_0002 is now the preferred baseline in experiment_0001. "
+        "Later baseline comparisons will reference variant_0002. "
+        "Original baseline remains variant_0001."
+    )
 
     state = json.loads((config.runs_dir / home_surface.DEFAULT_SUBMIT_SESSION_ID / "session_state.json").read_text(encoding="utf-8"))
     experiment = state["experiment_tracking"]["experiments"][0]
@@ -2196,7 +2249,7 @@ def test_home_surface_prepare_prompt_shows_current_experiment_decisions_summary(
                             "timestamp": "2026-04-02T07:10:00Z",
                             "order": 3,
                             "source": "explicit_user_review",
-                                    "summary": "Latest explicit user decision: set variant_0002 as the preferred baseline. Original baseline remains variant_0001.",
+                                    "summary": "Latest explicit user decision: set variant_0002 as the preferred baseline. Later baseline comparisons will reference variant_0002. Original baseline remains variant_0001.",
                         },
                         "variants": [variant_one, variant_two],
                     }
@@ -2222,12 +2275,875 @@ def test_home_surface_prepare_prompt_shows_current_experiment_decisions_summary(
     assert preview.next_action_label == "Refresh summary"
     assert preview.plan_title == "Current experiment decisions"
     assert preview.plan_steps == [
-        "variant_0001: make zombie faster -> speed fast (decision: kept, original baseline).",
-        "variant_0002: make it slower -> speed standard (decision: rejected, current variant, preferred baseline).",
+        "variant_0001 | target context: zombie | status: original baseline, kept | prompt: make zombie faster | outcome: speed fast | deltas from baseline: none.",
+        "variant_0002 | target context: zombie | status: current, preferred baseline, rejected | prompt: make it slower | outcome: speed standard | deltas from baseline: Speed: fast -> standard.",
     ]
-    assert preview.decision_reason.startswith("AI-E is tracking explicit decisions for 2 recorded variant(s) in experiment_0001.")
+    assert preview.decision_reason.startswith("Decision review: experiment_0001.")
     assert "Preferred baseline: variant_0002." in preview.decision_reason
+    assert "Kept variants: variant_0001." in preview.decision_reason
     assert "Rejected variants: variant_0002." in preview.decision_reason
+    assert "Undecided variants: none." in preview.decision_reason
+
+
+def test_task_intake_lists_recorded_experiments(tmp_path):
+    config = _make_config(tmp_path / "experiment_navigation_list")
+    intake = ConversationalTaskIntake(config)
+    state_store = StateStore(config.runs_dir, "experiment-navigation-list-session")
+    state_store.save(
+        {
+            "session_id": "experiment-navigation-list-session",
+            "experiment_tracking": {
+                "active_experiment_id": "experiment_0002",
+                "experiments": [
+                    {
+                        "experiment_id": "experiment_0001",
+                        "target_entity": "zombie",
+                        "active_variant_id": "variant_0002",
+                        "baseline_variant_id": "variant_0001",
+                        "preferred_baseline_variant_id": "variant_0001",
+                        "variants": [
+                            _experiment_variant(
+                                order=1,
+                                experiment_id="experiment_0001",
+                                variant_id="variant_0001",
+                                source_prompt="make zombie faster",
+                                canonical_prompt="make zombie faster",
+                                variant_kind="baseline",
+                                speed_tier="fast",
+                                aggression_tier="standard",
+                                baseline_marker=True,
+                                baseline_variant_id="variant_0001",
+                                outcome_summary="speed fast",
+                            ),
+                            _experiment_variant(
+                                order=2,
+                                experiment_id="experiment_0001",
+                                variant_id="variant_0002",
+                                parent_variant_id="variant_0001",
+                                source_prompt="make it slower",
+                                canonical_prompt="restore zombie speed to standard",
+                                variant_kind="followup_variant",
+                                speed_tier="standard",
+                                baseline_variant_id="variant_0001",
+                                outcome_summary="speed standard",
+                            ),
+                        ],
+                    },
+                    {
+                        "experiment_id": "experiment_0002",
+                        "target_entity": "runner",
+                        "active_variant_id": "variant_0002",
+                        "baseline_variant_id": "variant_0001",
+                        "preferred_baseline_variant_id": "variant_0002",
+                        "variants": [
+                            _experiment_variant(
+                                order=1,
+                                experiment_id="experiment_0002",
+                                variant_id="variant_0001",
+                                source_prompt="make runner faster",
+                                canonical_prompt="make runner faster",
+                                variant_kind="baseline",
+                                speed_tier="fast",
+                                aggression_tier="standard",
+                                baseline_marker=True,
+                                baseline_variant_id="variant_0001",
+                                outcome_summary="speed fast",
+                            ),
+                            _experiment_variant(
+                                order=2,
+                                experiment_id="experiment_0002",
+                                variant_id="variant_0002",
+                                parent_variant_id="variant_0001",
+                                source_prompt="make runner more dangerous",
+                                canonical_prompt="make runner more dangerous",
+                                variant_kind="followup_variant",
+                                speed_tier="fast",
+                                aggression_tier="aggressive",
+                                baseline_variant_id="variant_0001",
+                                outcome_summary="speed fast, aggression aggressive",
+                            ),
+                        ],
+                    },
+                ],
+            },
+        }
+    )
+
+    result = intake.accept_message(
+        "show experiments",
+        session_id="experiment-navigation-list-session",
+        target_repo=str(config.root_dir),
+    )
+
+    assert result.task_type == "experiment_review_request"
+    assert result.routing.plan_title == "Experiment list"
+    assert result.routing.decision_reason == "experiment_navigation_list"
+    assert "Recorded experiments: 2." in result.routing.decision_summary
+    assert "Active experiment: experiment_0002." in result.routing.decision_summary
+    assert any(
+        "experiment_0001 | target context: zombie | status: inactive | variants: 2 | current: variant_0002" in line
+        for line in result.routing.plan_step_titles or []
+    )
+    assert any(
+        "experiment_0002 | target context: runner | status: active | variants: 2 | current: variant_0002" in line
+        for line in result.routing.plan_step_titles or []
+    )
+
+
+def test_home_surface_apply_experiment_navigation_switches_active_context(tmp_path):
+    config = _make_config(tmp_path / "home_surface_experiment_navigation_switch")
+    _write_move_zombie_capability_contract(config)
+    target_repo = _create_entity_transform_prompt_repo(config)
+    state_store = StateStore(config.runs_dir, home_surface.DEFAULT_SUBMIT_SESSION_ID)
+    state_store.save(
+        {
+            "session_id": home_surface.DEFAULT_SUBMIT_SESSION_ID,
+            "experiment_tracking": {
+                "active_experiment_id": "experiment_0001",
+                "experiments": [
+                    {
+                        "experiment_id": "experiment_0001",
+                        "target_entity": "zombie",
+                        "active_variant_id": "variant_0002",
+                        "baseline_variant_id": "variant_0001",
+                        "variants": [
+                            _experiment_variant(
+                                order=1,
+                                experiment_id="experiment_0001",
+                                variant_id="variant_0001",
+                                source_prompt="make zombie faster",
+                                canonical_prompt="make zombie faster",
+                                variant_kind="baseline",
+                                speed_tier="fast",
+                                aggression_tier="standard",
+                                baseline_marker=True,
+                                baseline_variant_id="variant_0001",
+                                outcome_summary="speed fast",
+                            ),
+                            _experiment_variant(
+                                order=2,
+                                experiment_id="experiment_0001",
+                                variant_id="variant_0002",
+                                parent_variant_id="variant_0001",
+                                source_prompt="make it slower",
+                                canonical_prompt="restore zombie speed to standard",
+                                variant_kind="followup_variant",
+                                speed_tier="standard",
+                                baseline_variant_id="variant_0001",
+                                outcome_summary="speed standard",
+                            ),
+                        ],
+                    },
+                    {
+                        "experiment_id": "experiment_0002",
+                        "target_entity": "runner",
+                        "active_variant_id": "variant_0001",
+                        "baseline_variant_id": "variant_0001",
+                        "preferred_baseline_variant_id": "variant_0001",
+                        "variants": [
+                            _experiment_variant(
+                                order=1,
+                                experiment_id="experiment_0002",
+                                variant_id="variant_0001",
+                                source_prompt="make runner faster",
+                                canonical_prompt="make runner faster",
+                                variant_kind="baseline",
+                                speed_tier="fast",
+                                aggression_tier="standard",
+                                baseline_marker=True,
+                                baseline_variant_id="variant_0001",
+                                outcome_summary="speed fast",
+                            ),
+                        ],
+                    },
+                ],
+            },
+        }
+    )
+    intake = ConversationalTaskIntake(config)
+    bridge = home_surface.IntakePreviewBridge()
+    bridge._create_intake = lambda: intake
+    bridge._config_cls = type("_ConfigLoader", (), {"load": staticmethod(lambda: config)})
+    bridge._state_store_cls = StateStore
+    bridge._apply_experiment_decision_fn = apply_experiment_decision
+    bridge._apply_experiment_navigation_fn = apply_experiment_navigation
+    bridge._get_current_timestamp_fn = lambda: "2026-04-03T10:00:00Z"
+    project = home_surface.SupportedProject(
+        name="BABYLON TEST",
+        path=Path(target_repo),
+        project_type="unity_project",
+        source="test",
+        status="supported",
+    )
+
+    switch_preview = bridge.prepare_prompt("open experiment_0002", project)
+
+    assert switch_preview.available is True
+    assert switch_preview.decision_state == "Review only"
+    assert switch_preview.next_action_label == "Switch context"
+    assert switch_preview.plan_title == "Switch experiment context"
+    assert "Requested active experiment: experiment_0002." in switch_preview.decision_reason
+    assert "Context change after review: active experiment -> experiment_0002." in switch_preview.plan_steps
+
+    switch_result = bridge.apply_experiment_review_prompt(switch_preview)
+    assert switch_result.ok is True
+    assert switch_result.message.startswith("Active experiment context switched to experiment_0002.")
+
+    variants_preview = bridge.prepare_prompt("show current experiment variants", project)
+    assert variants_preview.decision_reason.startswith("Variant review: experiment_0002.")
+    assert any(
+        "variant_0001 | target context: runner | status: current, original baseline, preferred baseline, undecided" in line
+        for line in variants_preview.plan_steps
+    )
+
+
+def test_task_intake_shows_selected_experiment_summary(tmp_path):
+    config = _make_config(tmp_path / "experiment_navigation_summary")
+    intake = ConversationalTaskIntake(config)
+    state_store = StateStore(config.runs_dir, "experiment-navigation-summary-session")
+    state_store.save(
+        {
+            "session_id": "experiment-navigation-summary-session",
+            "experiment_tracking": {
+                "active_experiment_id": "experiment_0001",
+                "experiments": [
+                    {
+                        "experiment_id": "experiment_0001",
+                        "target_entity": "zombie",
+                        "active_variant_id": "variant_0001",
+                        "baseline_variant_id": "variant_0001",
+                        "variants": [
+                            _experiment_variant(
+                                order=1,
+                                experiment_id="experiment_0001",
+                                variant_id="variant_0001",
+                                source_prompt="make zombie faster",
+                                canonical_prompt="make zombie faster",
+                                variant_kind="baseline",
+                                speed_tier="fast",
+                                aggression_tier="standard",
+                                baseline_marker=True,
+                                baseline_variant_id="variant_0001",
+                                outcome_summary="speed fast",
+                            ),
+                        ],
+                    },
+                    {
+                        "experiment_id": "experiment_0002",
+                        "target_entity": "runner",
+                        "active_variant_id": "variant_0002",
+                        "baseline_variant_id": "variant_0001",
+                        "preferred_baseline_variant_id": "variant_0002",
+                        "latest_decision": {
+                            "summary": "Latest explicit user decision: set variant_0002 as the preferred baseline. Later baseline comparisons will reference variant_0002. Original baseline remains variant_0001.",
+                        },
+                        "variants": [
+                            _experiment_variant(
+                                order=1,
+                                experiment_id="experiment_0002",
+                                variant_id="variant_0001",
+                                source_prompt="make runner faster",
+                                canonical_prompt="make runner faster",
+                                variant_kind="baseline",
+                                speed_tier="fast",
+                                baseline_marker=True,
+                                baseline_variant_id="variant_0001",
+                                outcome_summary="speed fast",
+                                decision_status="kept",
+                            ),
+                            _experiment_variant(
+                                order=2,
+                                experiment_id="experiment_0002",
+                                variant_id="variant_0002",
+                                parent_variant_id="variant_0001",
+                                source_prompt="make runner more dangerous",
+                                canonical_prompt="make runner more dangerous",
+                                variant_kind="followup_variant",
+                                speed_tier="fast",
+                                aggression_tier="aggressive",
+                                baseline_variant_id="variant_0001",
+                                outcome_summary="speed fast, aggression aggressive",
+                                decision_status="kept",
+                            ),
+                        ],
+                    },
+                ],
+            },
+        }
+    )
+
+    result = intake.accept_message(
+        "show experiment_0002 summary",
+        session_id="experiment-navigation-summary-session",
+        target_repo=str(config.root_dir),
+    )
+
+    assert result.task_type == "experiment_review_request"
+    assert result.routing.plan_title == "Experiment summary"
+    assert result.routing.decision_reason == "experiment_navigation_summary"
+    assert result.routing.decision_summary.startswith("Experiment summary: experiment_0002.")
+    assert "Preferred baseline: variant_0002." in result.routing.decision_summary
+    assert any(
+        "variant_0002 | target context: runner | status: current, preferred baseline, kept | prompt: make runner more dangerous" in line
+        for line in result.routing.plan_step_titles or []
+    )
+
+
+def test_task_intake_inspects_variant_in_active_experiment(tmp_path):
+    config = _make_config(tmp_path / "experiment_variant_navigation")
+    intake = ConversationalTaskIntake(config)
+    state_store = StateStore(config.runs_dir, "experiment-variant-navigation-session")
+    state_store.save(
+        {
+            "session_id": "experiment-variant-navigation-session",
+            "experiment_tracking": {
+                "active_experiment_id": "experiment_0002",
+                "experiments": [
+                    {
+                        "experiment_id": "experiment_0001",
+                        "target_entity": "zombie",
+                        "active_variant_id": "variant_0001",
+                        "baseline_variant_id": "variant_0001",
+                        "variants": [
+                            _experiment_variant(
+                                order=1,
+                                experiment_id="experiment_0001",
+                                variant_id="variant_0001",
+                                source_prompt="make zombie faster",
+                                canonical_prompt="make zombie faster",
+                                variant_kind="baseline",
+                                speed_tier="fast",
+                                baseline_marker=True,
+                                baseline_variant_id="variant_0001",
+                                outcome_summary="speed fast",
+                            ),
+                        ],
+                    },
+                    {
+                        "experiment_id": "experiment_0002",
+                        "target_entity": "runner",
+                        "active_variant_id": "variant_0001",
+                        "baseline_variant_id": "variant_0001",
+                        "variants": [
+                            _experiment_variant(
+                                order=1,
+                                experiment_id="experiment_0002",
+                                variant_id="variant_0001",
+                                source_prompt="make runner faster",
+                                canonical_prompt="make runner faster",
+                                variant_kind="baseline",
+                                speed_tier="fast",
+                                aggression_tier="standard",
+                                baseline_marker=True,
+                                baseline_variant_id="variant_0001",
+                                outcome_summary="speed fast",
+                            ),
+                        ],
+                    },
+                ],
+            },
+            "result_evaluation_history": [
+                {
+                    "experiment_id": "experiment_0002",
+                    "variant_id": "variant_0001",
+                    "experiment_comparison_description": (
+                        "What changed\n"
+                        "Speed changed.\n\n"
+                        "Current variant vs baseline\n"
+                        "Speed: fast vs standard\n\n"
+                        "Key differences\n"
+                        "Speed: standard -> fast\n\n"
+                        "Expected gameplay impact\n"
+                        "Higher movement speed."
+                    ),
+                }
+            ],
+        }
+    )
+
+    result = intake.accept_message(
+        "show variant_0001",
+        session_id="experiment-variant-navigation-session",
+        target_repo=str(config.root_dir),
+    )
+
+    assert result.task_type == "experiment_review_request"
+    assert result.routing.plan_title == "Variant details"
+    assert result.routing.decision_reason == "experiment_variant_review"
+    assert result.routing.decision_summary.startswith("Variant inspection: variant_0001.")
+    assert result.routing.plan_step_titles[:4] == [
+        "Experiment: experiment_0002.",
+        "Variant: variant_0001.",
+        "Target context: runner.",
+        "Status: current, original baseline, undecided.",
+    ]
+    assert "Evaluation:" in result.routing.plan_step_titles
+    assert "Speed: standard -> fast" in result.routing.plan_step_titles
+
+
+def test_task_intake_blocks_ambiguous_variant_navigation_across_experiments(tmp_path):
+    config = _make_config(tmp_path / "experiment_variant_navigation_ambiguous")
+    intake = ConversationalTaskIntake(config)
+    state_store = StateStore(config.runs_dir, "experiment-variant-navigation-ambiguous-session")
+    state_store.save(
+        {
+            "session_id": "experiment-variant-navigation-ambiguous-session",
+            "experiment_tracking": {
+                "experiments": [
+                    {
+                        "experiment_id": "experiment_0001",
+                        "target_entity": "zombie",
+                        "active_variant_id": "variant_0001",
+                        "baseline_variant_id": "variant_0001",
+                        "variants": [
+                            _experiment_variant(
+                                order=1,
+                                experiment_id="experiment_0001",
+                                variant_id="variant_0001",
+                                source_prompt="make zombie faster",
+                                canonical_prompt="make zombie faster",
+                                variant_kind="baseline",
+                                speed_tier="fast",
+                                baseline_marker=True,
+                                baseline_variant_id="variant_0001",
+                                outcome_summary="speed fast",
+                            ),
+                        ],
+                    },
+                    {
+                        "experiment_id": "experiment_0002",
+                        "target_entity": "runner",
+                        "active_variant_id": "variant_0001",
+                        "baseline_variant_id": "variant_0001",
+                        "variants": [
+                            _experiment_variant(
+                                order=1,
+                                experiment_id="experiment_0002",
+                                variant_id="variant_0001",
+                                source_prompt="make runner faster",
+                                canonical_prompt="make runner faster",
+                                variant_kind="baseline",
+                                speed_tier="fast",
+                                baseline_marker=True,
+                                baseline_variant_id="variant_0001",
+                                outcome_summary="speed fast",
+                            ),
+                        ],
+                    },
+                ],
+            },
+        }
+    )
+
+    result = intake.accept_message(
+        "inspect variant_0001",
+        session_id="experiment-variant-navigation-ambiguous-session",
+        target_repo=str(config.root_dir),
+    )
+
+    assert result.task_type == "experiment_review_request"
+    assert result.routing.decision_reason == "ambiguous_experiment_context"
+    assert result.routing.plan_title == "Clarify experiment context"
+    assert result.routing.plan_step_titles == ["open experiment_0001", "open experiment_0002"]
+    assert result.routing.decision_summary == (
+        "This request is ambiguous across multiple experiments. Choose one explicit experiment context first."
+    )
+
+
+def test_task_intake_compares_variants_across_experiments(tmp_path):
+    config = _make_config(tmp_path / "experiment_cross_comparison_variants")
+    intake = ConversationalTaskIntake(config)
+    state_store = StateStore(config.runs_dir, "experiment-cross-comparison-variants-session")
+    state_store.save(
+        {
+            "session_id": "experiment-cross-comparison-variants-session",
+            "experiment_tracking": {
+                "active_experiment_id": "experiment_0002",
+                "experiments": [
+                    {
+                        "experiment_id": "experiment_0001",
+                        "target_entity": "zombie",
+                        "active_variant_id": "variant_0001",
+                        "baseline_variant_id": "variant_0001",
+                        "variants": [
+                            _experiment_variant(
+                                order=1,
+                                experiment_id="experiment_0001",
+                                variant_id="variant_0001",
+                                source_prompt="make zombie faster",
+                                canonical_prompt="make zombie faster",
+                                variant_kind="baseline",
+                                speed_tier="fast",
+                                baseline_marker=True,
+                                baseline_variant_id="variant_0001",
+                                outcome_summary="speed fast",
+                            ),
+                        ],
+                    },
+                    {
+                        "experiment_id": "experiment_0002",
+                        "target_entity": "runner",
+                        "active_variant_id": "variant_0002",
+                        "baseline_variant_id": "variant_0001",
+                        "variants": [
+                            _experiment_variant(
+                                order=1,
+                                experiment_id="experiment_0002",
+                                variant_id="variant_0001",
+                                source_prompt="make runner faster",
+                                canonical_prompt="make runner faster",
+                                variant_kind="baseline",
+                                speed_tier="fast",
+                                baseline_marker=True,
+                                baseline_variant_id="variant_0001",
+                                outcome_summary="speed fast",
+                            ),
+                            _experiment_variant(
+                                order=2,
+                                experiment_id="experiment_0002",
+                                variant_id="variant_0002",
+                                parent_variant_id="variant_0001",
+                                source_prompt="make runner more dangerous",
+                                canonical_prompt="make runner more dangerous",
+                                variant_kind="followup_variant",
+                                speed_tier="fast",
+                                aggression_tier="aggressive",
+                                baseline_variant_id="variant_0001",
+                                outcome_summary="speed fast, aggression aggressive",
+                            ),
+                        ],
+                    },
+                ],
+            },
+        }
+    )
+
+    result = intake.accept_message(
+        "compare variant_0001 in experiment_0001 with variant_0002 in experiment_0002",
+        session_id="experiment-cross-comparison-variants-session",
+        target_repo=str(config.root_dir),
+    )
+
+    combined_text = "\n".join(result.routing.plan_step_titles or []).lower()
+    assert result.task_type == "experiment_review_request"
+    assert result.routing.plan_title == "Cross-experiment variant comparison"
+    assert result.routing.decision_reason == "cross_experiment_variant_comparison"
+    assert result.routing.decision_summary.startswith("Cross-experiment variant comparison.")
+    assert "Left experiment: experiment_0001." in result.routing.plan_step_titles
+    assert "Right experiment: experiment_0002." in result.routing.plan_step_titles
+    assert "Left target context: zombie." in result.routing.plan_step_titles
+    assert "Right target context: runner." in result.routing.plan_step_titles
+    assert "What changed" in result.routing.plan_step_titles
+    assert "Key differences" in result.routing.plan_step_titles
+    assert "Expected gameplay impact" in result.routing.plan_step_titles
+    assert "Target context: runner -> zombie" in result.routing.plan_step_titles
+    assert "better" not in combined_text
+    assert "best" not in combined_text
+    assert "recommend" not in combined_text
+
+
+def test_task_intake_compares_baselines_across_experiments(tmp_path):
+    config = _make_config(tmp_path / "experiment_cross_comparison_baselines")
+    intake = ConversationalTaskIntake(config)
+    state_store = StateStore(config.runs_dir, "experiment-cross-comparison-baselines-session")
+    state_store.save(
+        {
+            "session_id": "experiment-cross-comparison-baselines-session",
+            "experiment_tracking": {
+                "experiments": [
+                    {
+                        "experiment_id": "experiment_0001",
+                        "target_entity": "zombie",
+                        "active_variant_id": "variant_0002",
+                        "baseline_variant_id": "variant_0001",
+                        "preferred_baseline_variant_id": "variant_0002",
+                        "variants": [
+                            _experiment_variant(
+                                order=1,
+                                experiment_id="experiment_0001",
+                                variant_id="variant_0001",
+                                source_prompt="make zombie faster",
+                                canonical_prompt="make zombie faster",
+                                variant_kind="baseline",
+                                speed_tier="fast",
+                                baseline_marker=True,
+                                baseline_variant_id="variant_0001",
+                                outcome_summary="speed fast",
+                            ),
+                            _experiment_variant(
+                                order=2,
+                                experiment_id="experiment_0001",
+                                variant_id="variant_0002",
+                                source_prompt="make zombie slower",
+                                canonical_prompt="make zombie slower",
+                                variant_kind="followup_variant",
+                                speed_tier="slow",
+                                baseline_variant_id="variant_0001",
+                                outcome_summary="speed slow",
+                            ),
+                        ],
+                    },
+                    {
+                        "experiment_id": "experiment_0002",
+                        "target_entity": "runner",
+                        "active_variant_id": "variant_0002",
+                        "baseline_variant_id": "variant_0001",
+                        "preferred_baseline_variant_id": "variant_0002",
+                        "variants": [
+                            _experiment_variant(
+                                order=1,
+                                experiment_id="experiment_0002",
+                                variant_id="variant_0001",
+                                source_prompt="make runner faster",
+                                canonical_prompt="make runner faster",
+                                variant_kind="baseline",
+                                speed_tier="fast",
+                                baseline_marker=True,
+                                baseline_variant_id="variant_0001",
+                                outcome_summary="speed fast",
+                            ),
+                            _experiment_variant(
+                                order=2,
+                                experiment_id="experiment_0002",
+                                variant_id="variant_0002",
+                                source_prompt="make runner slower",
+                                canonical_prompt="make runner slower",
+                                variant_kind="followup_variant",
+                                speed_tier="slow",
+                                baseline_variant_id="variant_0001",
+                                outcome_summary="speed slow",
+                            ),
+                        ],
+                    },
+                ],
+            },
+        }
+    )
+
+    result = intake.accept_message(
+        "compare baselines of experiment_0001 and experiment_0002",
+        session_id="experiment-cross-comparison-baselines-session",
+        target_repo=str(config.root_dir),
+    )
+
+    assert result.task_type == "experiment_review_request"
+    assert result.routing.plan_title == "Baseline comparison"
+    assert result.routing.decision_reason == "cross_experiment_baseline_comparison"
+    assert result.routing.decision_summary.startswith("Cross-experiment baseline comparison.")
+    assert "Original baseline comparison:" in result.routing.plan_step_titles
+    assert "Preferred baseline comparison:" in result.routing.plan_step_titles
+    assert any(line == "Original baseline vs original baseline" for line in result.routing.plan_step_titles or [])
+    assert any(line == "Preferred baseline vs preferred baseline" for line in result.routing.plan_step_titles or [])
+
+
+def test_task_intake_blocks_ambiguous_cross_experiment_variant_comparison(tmp_path):
+    config = _make_config(tmp_path / "experiment_cross_comparison_ambiguous")
+    intake = ConversationalTaskIntake(config)
+    state_store = StateStore(config.runs_dir, "experiment-cross-comparison-ambiguous-session")
+    state_store.save(
+        {
+            "session_id": "experiment-cross-comparison-ambiguous-session",
+            "experiment_tracking": {
+                "experiments": [
+                    {
+                        "experiment_id": "experiment_0001",
+                        "target_entity": "zombie",
+                        "active_variant_id": "variant_0001",
+                        "baseline_variant_id": "variant_0001",
+                        "variants": [
+                            _experiment_variant(
+                                order=1,
+                                experiment_id="experiment_0001",
+                                variant_id="variant_0001",
+                                source_prompt="make zombie faster",
+                                canonical_prompt="make zombie faster",
+                                variant_kind="baseline",
+                                speed_tier="fast",
+                                baseline_marker=True,
+                                baseline_variant_id="variant_0001",
+                            ),
+                        ],
+                    },
+                    {
+                        "experiment_id": "experiment_0002",
+                        "target_entity": "runner",
+                        "active_variant_id": "variant_0001",
+                        "baseline_variant_id": "variant_0001",
+                        "variants": [
+                            _experiment_variant(
+                                order=1,
+                                experiment_id="experiment_0002",
+                                variant_id="variant_0001",
+                                source_prompt="make runner faster",
+                                canonical_prompt="make runner faster",
+                                variant_kind="baseline",
+                                speed_tier="fast",
+                                baseline_marker=True,
+                                baseline_variant_id="variant_0001",
+                            ),
+                        ],
+                    },
+                ],
+            },
+        }
+    )
+
+    result = intake.accept_message(
+        "compare variant_0001",
+        session_id="experiment-cross-comparison-ambiguous-session",
+        target_repo=str(config.root_dir),
+    )
+
+    assert result.task_type == "experiment_review_request"
+    assert result.routing.plan_title == "Clarify experiment comparison"
+    assert result.routing.decision_reason == "ambiguous_experiment_comparison"
+    assert result.routing.decision_summary == (
+        "This request is ambiguous across experiments. Specify which experiment variants to compare for variant_0001."
+    )
+    assert result.routing.plan_step_titles == [
+        "compare variant_0001 in experiment_0001 with variant_0001 in experiment_0002"
+    ]
+
+
+def test_task_intake_compares_current_variants_across_mixed_context_experiments(tmp_path):
+    config = _make_config(tmp_path / "experiment_cross_comparison_mixed_contexts")
+    intake = ConversationalTaskIntake(config)
+    state_store = StateStore(config.runs_dir, "experiment-cross-comparison-mixed-contexts-session")
+    state_store.save(
+        {
+            "session_id": "experiment-cross-comparison-mixed-contexts-session",
+            "experiment_tracking": {
+                "experiments": [
+                    {
+                        "experiment_id": "experiment_0001",
+                        "target_entity": "zombie",
+                        "active_variant_id": "variant_0001",
+                        "baseline_variant_id": "variant_0001",
+                        "variants": [
+                            _experiment_variant(
+                                order=1,
+                                experiment_id="experiment_0001",
+                                variant_id="variant_0001",
+                                source_prompt="make zombie faster",
+                                canonical_prompt="make zombie faster",
+                                variant_kind="baseline",
+                                speed_tier="fast",
+                                baseline_marker=True,
+                                baseline_variant_id="variant_0001",
+                                outcome_summary="speed fast",
+                            ),
+                        ],
+                    },
+                    {
+                        "experiment_id": "experiment_0002",
+                        "target_entity": "encounter",
+                        "active_variant_id": "variant_0001",
+                        "baseline_variant_id": "variant_0001",
+                        "variants": [
+                            _experiment_variant(
+                                order=1,
+                                experiment_id="experiment_0002",
+                                variant_id="variant_0001",
+                                source_prompt="increase encounter count",
+                                canonical_prompt="increase encounter count",
+                                variant_kind="baseline",
+                                encounter_count_tier="high",
+                                baseline_marker=True,
+                                baseline_variant_id="variant_0001",
+                                outcome_summary="encounter count high",
+                            ),
+                        ],
+                    },
+                ],
+            },
+        }
+    )
+
+    result = intake.accept_message(
+        "compare experiment_0001 and experiment_0002",
+        session_id="experiment-cross-comparison-mixed-contexts-session",
+        target_repo=str(config.root_dir),
+    )
+
+    assert result.task_type == "experiment_review_request"
+    assert result.routing.plan_title == "Cross-experiment comparison"
+    assert result.routing.decision_reason == "cross_experiment_current_variant_comparison"
+    assert "Left target context: zombie." in result.routing.plan_step_titles
+    assert "Right target context: encounter." in result.routing.plan_step_titles
+    assert "Different tuning context." in result.routing.plan_step_titles
+    assert "Target context: encounter -> zombie" in result.routing.plan_step_titles
+
+
+def test_home_surface_prepares_cross_experiment_comparison_as_review_only(tmp_path):
+    config = _make_config(tmp_path / "home_surface_cross_experiment_comparison")
+    _write_move_zombie_capability_contract(config)
+    target_repo = _create_entity_transform_prompt_repo(config)
+    intake = ConversationalTaskIntake(config)
+    bridge = home_surface.IntakePreviewBridge()
+    bridge._create_intake = lambda: intake
+    state_store = StateStore(config.runs_dir, home_surface.DEFAULT_SUBMIT_SESSION_ID)
+    state_store.save(
+        {
+            "session_id": home_surface.DEFAULT_SUBMIT_SESSION_ID,
+            "experiment_tracking": {
+                "experiments": [
+                    {
+                        "experiment_id": "experiment_0001",
+                        "target_entity": "zombie",
+                        "active_variant_id": "variant_0001",
+                        "baseline_variant_id": "variant_0001",
+                        "variants": [
+                            _experiment_variant(
+                                order=1,
+                                experiment_id="experiment_0001",
+                                variant_id="variant_0001",
+                                source_prompt="make zombie faster",
+                                canonical_prompt="make zombie faster",
+                                variant_kind="baseline",
+                                speed_tier="fast",
+                                baseline_marker=True,
+                                baseline_variant_id="variant_0001",
+                            ),
+                        ],
+                    },
+                    {
+                        "experiment_id": "experiment_0002",
+                        "target_entity": "runner",
+                        "active_variant_id": "variant_0001",
+                        "baseline_variant_id": "variant_0001",
+                        "variants": [
+                            _experiment_variant(
+                                order=1,
+                                experiment_id="experiment_0002",
+                                variant_id="variant_0001",
+                                source_prompt="make runner faster",
+                                canonical_prompt="make runner faster",
+                                variant_kind="baseline",
+                                speed_tier="fast",
+                                baseline_marker=True,
+                                baseline_variant_id="variant_0001",
+                            ),
+                        ],
+                    },
+                ],
+            },
+        }
+    )
+    project = home_surface.SupportedProject(
+        name="BABYLON TEST",
+        path=Path(target_repo),
+        project_type="unity_project",
+        source="test",
+        status="supported",
+    )
+
+    preview = bridge.prepare_prompt("compare experiment_0001 and experiment_0002", project)
+
+    assert preview.available is True
+    assert preview.decision_state == "Review only"
+    assert preview.next_action_label == "Refresh summary"
+    assert preview.plan_title == "Cross-experiment comparison"
+    assert "Execution: none." in preview.decision_reason
 
 
 def test_home_surface_blocks_experiment_decisions_without_active_experiment(tmp_path):
@@ -2564,7 +3480,7 @@ def test_home_surface_loads_attempt_result_experiment_metadata_from_session_stat
                                 "timestamp": "2026-04-02T06:09:00Z",
                                 "order": 3,
                                 "source": "explicit_user_review",
-                                "summary": "Latest explicit user decision: set variant_0002 as the preferred baseline. Original baseline remains variant_0001.",
+                                "summary": "Latest explicit user decision: set variant_0002 as the preferred baseline. Later baseline comparisons will reference variant_0002. Original baseline remains variant_0001.",
                             },
                             "variants": [
                                 _experiment_variant(
@@ -2632,6 +3548,7 @@ def test_home_surface_loads_attempt_result_experiment_metadata_from_session_stat
     assert proof.decision_status == "kept"
     assert proof.latest_decision_summary == (
         "Latest explicit user decision: set variant_0002 as the preferred baseline. "
+        "Later baseline comparisons will reference variant_0002. "
         "Original baseline remains variant_0001."
     )
 
@@ -4418,6 +5335,12 @@ def _experiment_variant(
     speed_tier: str = "",
     aggression_tier: str = "",
     movement_tier: str = "",
+    encounter_count_tier: str = "",
+    spawn_pressure_tier: str = "",
+    jump_height_tier: str = "",
+    gravity_tier: str = "",
+    acceleration_tier: str = "",
+    max_speed_tier: str = "",
     baseline_marker: bool = False,
     baseline_variant_id: str = "",
     parent_variant_id: str = "",
@@ -4453,6 +5376,37 @@ def _experiment_variant(
         "aggression_value": 0.6 if aggression_tier == "aggressive" else (1.0 if aggression_tier else None),
         "movement_tier": movement_tier,
         "movement_value": [0.0, 0.0, 6.0] if movement_tier == "movement_variation" else ([0.0, 0.0, 3.0] if movement_tier == "standard_forward" else None),
+        "encounter_count_tier": encounter_count_tier,
+        "encounter_count_value": 5 if encounter_count_tier == "high" else (2 if encounter_count_tier == "low" else 3 if encounter_count_tier == "standard" else None),
+        "spawn_pressure_tier": spawn_pressure_tier,
+        "spawn_pressure_value": 1.2 if spawn_pressure_tier == "high" else (3.0 if spawn_pressure_tier == "low" else 2.0 if spawn_pressure_tier == "standard" else None),
+        "jump_height_tier": jump_height_tier,
+        "jump_height_value": 1.6 if jump_height_tier == "high" else (0.9 if jump_height_tier == "low" else 1.2 if jump_height_tier == "standard" else None),
+        "gravity_tier": gravity_tier,
+        "gravity_value": 6.0 if gravity_tier == "low_gravity" else (13.0 if gravity_tier == "high_gravity" else 9.81 if gravity_tier == "standard_gravity" else None),
+        "acceleration_tier": acceleration_tier,
+        "acceleration_value": 6.5 if acceleration_tier == "fast" else (3.5 if acceleration_tier == "slow" else 5.0 if acceleration_tier == "standard" else None),
+        "max_speed_tier": max_speed_tier,
+        "max_speed_value": 15.0 if max_speed_tier == "fast" else (10.0 if max_speed_tier == "slow" else 12.5 if max_speed_tier == "standard" else None),
+        "generic_capability_state": build_generic_capability_state(
+            target_context="encounter" if encounter_count_tier or spawn_pressure_tier else "platformer" if jump_height_tier or gravity_tier or "jump" in canonical_prompt or "gravity" in canonical_prompt or "movement" in canonical_prompt else "racer" if acceleration_tier or max_speed_tier else "runner" if "runner" in canonical_prompt else "zombie",
+            speed_tier=speed_tier,
+            speed_value=4.5 if speed_tier == "standard" else (5.0 if speed_tier == "fast" else 3.5 if speed_tier == "slow" else None),
+            aggression_tier=aggression_tier,
+            aggression_value=0.8 if aggression_tier == "standard" else (0.5 if aggression_tier == "aggressive" else None),
+            encounter_count_tier=encounter_count_tier,
+            encounter_count_value=5 if encounter_count_tier == "high" else (2 if encounter_count_tier == "low" else 3 if encounter_count_tier == "standard" else None),
+            spawn_pressure_tier=spawn_pressure_tier,
+            spawn_pressure_value=1.2 if spawn_pressure_tier == "high" else (3.0 if spawn_pressure_tier == "low" else 2.0 if spawn_pressure_tier == "standard" else None),
+            jump_height_tier=jump_height_tier,
+            jump_height_value=1.6 if jump_height_tier == "high" else (0.9 if jump_height_tier == "low" else 1.2 if jump_height_tier == "standard" else None),
+            gravity_tier=gravity_tier,
+            gravity_value=6.0 if gravity_tier == "low_gravity" else (13.0 if gravity_tier == "high_gravity" else 9.81 if gravity_tier == "standard_gravity" else None),
+            acceleration_tier=acceleration_tier,
+            acceleration_value=6.5 if acceleration_tier == "fast" else (3.5 if acceleration_tier == "slow" else 5.0 if acceleration_tier == "standard" else None),
+            max_speed_tier=max_speed_tier,
+            max_speed_value=15.0 if max_speed_tier == "fast" else (10.0 if max_speed_tier == "slow" else 12.5 if max_speed_tier == "standard" else None),
+        ),
         "executed": True,
         "result_reason": "applied",
         "decision_status": decision_status,
@@ -4466,6 +5420,12 @@ def _experiment_variant(
                     f"speed {speed_tier}" if speed_tier else "",
                     f"aggression {aggression_tier}" if aggression_tier else "",
                     "movement variation" if movement_tier == "movement_variation" else ("standard forward movement" if movement_tier == "standard_forward" else ""),
+                    f"encounter count {encounter_count_tier}" if encounter_count_tier else "",
+                    f"spawn pressure {spawn_pressure_tier}" if spawn_pressure_tier else "",
+                    f"jump height {jump_height_tier}" if jump_height_tier else "",
+                    f"gravity {gravity_tier}" if gravity_tier else "",
+                    f"acceleration {acceleration_tier}" if acceleration_tier else "",
+                    f"max speed {max_speed_tier}" if max_speed_tier else "",
                 )
                 if part
             ]
@@ -4790,7 +5750,7 @@ def test_task_intake_shows_runner_experiment_decision_review_summary(tmp_path):
     assert result.routing.plan_title == "Current experiment decisions"
     assert "Target context: runner." in result.routing.decision_summary
     assert any(
-        "variant_0002: make runner more dangerous" in line
+        "variant_0002 | target context: runner | status: current, preferred baseline, kept | prompt: make runner more dangerous" in line
         for line in result.routing.plan_step_titles or []
     )
 
@@ -4842,11 +5802,11 @@ def test_task_intake_shows_runner_experiment_variant_review_summary(tmp_path):
     assert result.routing.plan_title == "Current experiment variants"
     assert "Target context: runner." in result.routing.decision_summary
     assert any(
-        "variant_0001: make runner faster" in line
+        "variant_0001 | target context: runner | status: original baseline, undecided | prompt: make runner faster" in line
         for line in result.routing.plan_step_titles or []
     )
     assert any(
-        "variant_0002: make runner more dangerous" in line
+        "variant_0002 | target context: runner | status: current, kept | prompt: make runner more dangerous" in line
         for line in result.routing.plan_step_titles or []
     )
 
@@ -4916,13 +5876,21 @@ def test_home_surface_apply_runner_experiment_decision_updates_keep_and_preferre
     keep_preview = bridge.prepare_prompt("keep current variant", project)
     keep_result = bridge.apply_experiment_review_prompt(keep_preview)
     assert keep_result.ok is True
-    assert keep_result.message == "Recorded: variant_0002 was kept in experiment_0004. Original baseline remains variant_0001."
+    assert keep_result.message == (
+        "Recorded: variant_0002 is kept in experiment_0004. "
+        "Preferred baseline remains variant_0001. "
+        "Original baseline remains variant_0001."
+    )
 
     bridge._get_current_timestamp_fn = lambda: "2026-04-02T08:05:00Z"
     baseline_preview = bridge.prepare_prompt("set current variant as baseline", project)
     baseline_result = bridge.apply_experiment_review_prompt(baseline_preview)
     assert baseline_result.ok is True
-    assert baseline_result.message == "Recorded: variant_0002 is now the preferred baseline in experiment_0004. Original baseline remains variant_0001."
+    assert baseline_result.message == (
+        "Recorded: variant_0002 is now the preferred baseline in experiment_0004. "
+        "Later baseline comparisons will reference variant_0002. "
+        "Original baseline remains variant_0001."
+    )
 
     updated_state = json.loads(
         (config.runs_dir / home_surface.DEFAULT_SUBMIT_SESSION_ID / "session_state.json").read_text(encoding="utf-8")
@@ -5024,7 +5992,7 @@ def test_home_surface_loads_runner_result_with_evaluation_and_decision_metadata(
                                 "timestamp": "2026-04-02T08:05:00Z",
                                 "order": 2,
                                 "source": "explicit_user_review",
-                                "summary": "Latest explicit user decision: set variant_0002 as the preferred baseline. Original baseline remains variant_0001.",
+                                "summary": "Latest explicit user decision: set variant_0002 as the preferred baseline. Later baseline comparisons will reference variant_0002. Original baseline remains variant_0001.",
                             },
                             "variants": [
                                 {
@@ -5164,6 +6132,1417 @@ def test_result_evaluation_formats_combined_encounter_deltas_deterministically()
     combined_text = "\n".join([evaluation["comparison_description"], *evaluation["detected_differences"]]).lower()
     assert "better" not in combined_text
     assert "best" not in combined_text
+
+
+@pytest.mark.parametrize(
+    ("target_context", "family", "expected_system", "expected_name", "expected_restore"),
+    [
+        ("zombie", "speed", "movement", "speed", "restore zombie speed to standard"),
+        ("zombie", "aggression", "combat", "aggression", "restore zombie aggression to standard"),
+        ("runner", "speed", "movement", "speed", "restore runner speed to standard"),
+        ("runner", "aggression", "combat", "aggression", "restore runner aggression to standard"),
+        ("encounter", "encounter_count", "encounter", "spawn_count", "restore encounter count to standard"),
+        ("encounter", "spawn_pressure", "encounter", "spawn_interval", "restore spawn pressure to standard"),
+        ("racer", "acceleration", "movement", "acceleration", "restore racer acceleration to standard"),
+        ("racer", "max_speed", "movement", "max_speed", "restore racer max speed to standard"),
+        ("platformer", "jump_height", "movement", "jump_height", "restore jump to standard"),
+        ("platformer", "gravity", "physics", "gravity", "restore gravity to standard"),
+        ("platformer", "speed", "movement", "speed", "restore movement to standard"),
+    ],
+)
+def test_generic_capability_mapping_covers_supported_bounded_systems(
+    target_context,
+    family,
+    expected_system,
+    expected_name,
+    expected_restore,
+):
+    mapping = generic_capability_definition(target_context, family)
+
+    assert mapping["target_context"] == target_context
+    assert mapping["target_system"] == expected_system
+    assert mapping["parameter_name"] == expected_name
+    assert mapping["restore_standard_behavior"] == expected_restore
+    assert mapping["bounded_tiers"]
+    assert mapping["deterministic_values"]
+    assert mapping["evaluation_dimension"]
+
+
+def test_supported_generic_capability_mappings_cover_all_current_domains():
+    mappings = supported_generic_capability_mappings()
+
+    assert len(mappings) == 11
+    assert {item["target_context"] for item in mappings} == {
+        "zombie",
+        "runner",
+        "encounter",
+        "racer",
+        "platformer",
+    }
+    assert {
+        (item["target_context"], item["parameter_name"])
+        for item in mappings
+    } == {
+        ("zombie", "speed"),
+        ("zombie", "aggression"),
+        ("runner", "speed"),
+        ("runner", "aggression"),
+        ("encounter", "spawn_count"),
+        ("encounter", "spawn_interval"),
+        ("racer", "acceleration"),
+        ("racer", "max_speed"),
+        ("platformer", "jump_height"),
+        ("platformer", "gravity"),
+        ("platformer", "speed"),
+    }
+
+
+def test_task_intake_preserves_zombie_prompt_and_attaches_generic_capability_definition(tmp_path):
+    config = _make_config(tmp_path / "generic_capability_zombie_prompt")
+    _write_zombie_speed_capability_contracts(config)
+    target_repo = _create_entity_transform_prompt_repo(config)
+    intake = ConversationalTaskIntake(config)
+
+    result = intake.accept_message(
+        "make zombie faster",
+        session_id="generic-zombie-session",
+        target_repo=target_repo,
+    )
+
+    assert result.routing.capability_id == "level_0001_increase_zombie_speed"
+    assert result.routing.generic_capability_definition == {
+        "target_context": "zombie",
+        "target_system": "movement",
+        "parameter_family": "speed",
+        "parameter_name": "speed",
+        "bounded_tiers": ["slow", "standard", "fast"],
+        "deterministic_values": {"slow": 2.5, "standard": 3.5, "fast": 4.5},
+        "restore_standard_behavior": "restore zombie speed to standard",
+        "evaluation_dimension": "movement_speed",
+        "source_family": "speed",
+    }
+    runtime_payload = json.loads(result.artifacts.runtime_task_payload_path.read_text(encoding="utf-8"))
+    assert runtime_payload["runtime_task"]["generic_capability_definition"]["target_context"] == "zombie"
+
+
+def test_task_intake_preserves_runner_prompt_and_attaches_generic_capability_definition(tmp_path):
+    config = _make_config(tmp_path / "generic_capability_runner_prompt")
+    _write_runner_aggression_capability_contract(config)
+    target_repo = _create_entity_transform_prompt_repo(config)
+    intake = ConversationalTaskIntake(config)
+
+    result = intake.accept_message(
+        "make runner more aggressive",
+        session_id="generic-runner-session",
+        target_repo=target_repo,
+    )
+
+    assert result.routing.capability_id == "level_0001_increase_runner_aggression"
+    assert result.routing.generic_capability_definition["target_context"] == "runner"
+    assert result.routing.generic_capability_definition["target_system"] == "combat"
+    assert result.routing.generic_capability_definition["parameter_name"] == "aggression"
+    assert result.routing.generic_capability_definition["restore_standard_behavior"] == "restore runner aggression to standard"
+
+
+def test_task_intake_preserves_encounter_prompt_and_attaches_generic_capability_definition(tmp_path):
+    config = _make_config(tmp_path / "generic_capability_encounter_prompt")
+    _write_encounter_capability_contracts(config)
+    target_repo = _create_entity_transform_prompt_repo(config)
+    intake = ConversationalTaskIntake(config)
+
+    result = intake.accept_message(
+        "increase spawn pressure",
+        session_id="generic-encounter-session",
+        target_repo=target_repo,
+    )
+
+    assert result.routing.capability_id == "level_0001_increase_spawn_pressure"
+    assert result.routing.generic_capability_definition["target_context"] == "encounter"
+    assert result.routing.generic_capability_definition["target_system"] == "encounter"
+    assert result.routing.generic_capability_definition["parameter_name"] == "spawn_interval"
+    assert result.routing.generic_capability_definition["restore_standard_behavior"] == "restore spawn pressure to standard"
+
+
+@pytest.mark.parametrize(
+    ("prompt_text", "expected_capability", "expected_parameter_name"),
+    [
+        ("increase racer acceleration", "level_0001_increase_racer_acceleration", "acceleration"),
+        ("increase racer max speed", "level_0001_increase_racer_max_speed", "max_speed"),
+    ],
+)
+def test_task_intake_preserves_racer_prompt_and_attaches_generic_capability_definition(
+    tmp_path,
+    prompt_text,
+    expected_capability,
+    expected_parameter_name,
+):
+    config = _make_config(tmp_path / "generic_capability_racer_prompt")
+    _write_racer_capability_contracts(config)
+    target_repo = _create_entity_transform_prompt_repo(config)
+    intake = ConversationalTaskIntake(config)
+
+    result = intake.accept_message(
+        prompt_text,
+        session_id="generic-racer-session",
+        target_repo=target_repo,
+    )
+
+    assert result.routing.capability_id == expected_capability
+    assert result.routing.generic_capability_definition["target_context"] == "racer"
+    assert result.routing.generic_capability_definition["target_system"] == "movement"
+    assert result.routing.generic_capability_definition["parameter_name"] == expected_parameter_name
+    runtime_payload = json.loads(result.artifacts.runtime_task_payload_path.read_text(encoding="utf-8"))
+    assert runtime_payload["runtime_task"]["generic_capability_definition"]["target_context"] == "racer"
+
+
+@pytest.mark.parametrize(
+    ("prompt_text", "expected_capability", "expected_parameter_name", "expected_restore_prompt"),
+    [
+        ("make jump higher", "level_0001_increase_platformer_jump_height", "jump_height", "restore jump to standard"),
+        ("reduce gravity", "level_0001_reduce_platformer_gravity", "gravity", "restore gravity to standard"),
+        ("make movement faster", "level_0001_increase_platformer_speed", "speed", "restore movement to standard"),
+    ],
+)
+def test_task_intake_preserves_platformer_prompt_and_attaches_generic_capability_definition(
+    tmp_path,
+    prompt_text,
+    expected_capability,
+    expected_parameter_name,
+    expected_restore_prompt,
+):
+    config = _make_config(tmp_path / "generic_capability_platformer_prompt")
+    _write_platformer_capability_contracts(config)
+    target_repo = _create_entity_transform_prompt_repo(config)
+    intake = ConversationalTaskIntake(config)
+
+    result = intake.accept_message(
+        prompt_text,
+        session_id="generic-platformer-session",
+        target_repo=target_repo,
+    )
+
+    assert result.routing.capability_id == expected_capability
+    assert result.routing.generic_capability_definition["target_context"] == "platformer"
+    assert result.routing.generic_capability_definition["parameter_name"] == expected_parameter_name
+    assert result.routing.generic_capability_definition["restore_standard_behavior"] == expected_restore_prompt
+    runtime_payload = json.loads(result.artifacts.runtime_task_payload_path.read_text(encoding="utf-8"))
+    assert runtime_payload["runtime_task"]["generic_capability_definition"]["target_context"] == "platformer"
+
+
+def test_result_evaluation_preserves_generic_capability_state_metadata():
+    state = {
+        "session_tuning_state": {
+            "target_context": "runner",
+            "target_entity": "runner",
+            "contexts": {
+                "runner": {
+                    "speed": {
+                        "resulting_tier": "fast",
+                        "observed_value": 5.0,
+                        "target_context": "runner",
+                    },
+                    "aggression": {
+                        "resulting_tier": "aggressive",
+                        "observed_value": 0.5,
+                        "target_context": "runner",
+                    },
+                }
+            },
+        },
+        "experiment_tracking": {
+            "active_experiment_id": "experiment_0001",
+            "experiments": [
+                {
+                    "experiment_id": "experiment_0001",
+                    "target_context": "runner",
+                    "target_entity": "runner",
+                    "active_variant_id": "variant_0002",
+                    "baseline_variant_id": "variant_0001",
+                    "variants": [
+                        _experiment_variant(
+                            order=1,
+                            experiment_id="experiment_0001",
+                            variant_id="variant_0001",
+                            source_prompt="make runner faster",
+                            canonical_prompt="make runner faster",
+                            variant_kind="baseline",
+                            speed_tier="standard",
+                            aggression_tier="standard",
+                            baseline_marker=True,
+                            baseline_variant_id="variant_0001",
+                            outcome_summary="speed standard, aggression standard",
+                            task_id="TASK_RUNNER_BASELINE",
+                            request_id="REQ_RUNNER_BASELINE",
+                        ),
+                        _experiment_variant(
+                            order=2,
+                            experiment_id="experiment_0001",
+                            variant_id="variant_0002",
+                            parent_variant_id="variant_0001",
+                            source_prompt="make runner more dangerous",
+                            canonical_prompt="make runner more dangerous",
+                            variant_kind="followup_variant",
+                            speed_tier="fast",
+                            aggression_tier="aggressive",
+                            baseline_variant_id="variant_0001",
+                            outcome_summary="speed fast, aggression aggressive",
+                            task_id="TASK_RUNNER_VARIANT",
+                            request_id="REQ_RUNNER_VARIANT",
+                        ),
+                    ],
+                }
+            ],
+        },
+        "result_state_history": [
+            {
+                "order": 1,
+                "timestamp": "2026-04-03T12:00:00Z",
+                "task_id": "TASK_RUNNER_BASELINE",
+                "request_id": "REQ_RUNNER_BASELINE",
+                "plan_id": "",
+                "plan_title": "",
+                "target_context": "runner",
+                "target_entity": "runner",
+                "speed_tier": "standard",
+                "speed_value": 4.5,
+                "aggression_tier": "standard",
+                "aggression_value": 0.8,
+                "movement_tier": None,
+                "movement_target_z": None,
+                "encounter_count_tier": "",
+                "encounter_count_value": None,
+                "spawn_pressure_tier": "",
+                "spawn_pressure_value": None,
+                "experiment_id": "experiment_0001",
+                "variant_id": "variant_0001",
+                "baseline_variant_id": "variant_0001",
+                "preferred_baseline_variant_id": "",
+                "baseline_marker": True,
+                "variant_kind": "baseline",
+            }
+        ],
+        "result_evaluation_history": [],
+        "latest_result_evaluation": {},
+    }
+
+    state = apply_result_evaluation(
+        state,
+        task={
+            "task_id": "TASK_RUNNER_VARIANT",
+            "request_id": "REQ_RUNNER_VARIANT",
+            "plan_id": "",
+            "plan_total_steps": 1,
+            "plan_step_index": 1,
+            "operator_prompt": "make runner more dangerous",
+        },
+        timestamp="2026-04-03T12:01:00Z",
+    )
+
+    evaluation = state["latest_result_evaluation"]
+    generic_state = evaluation["generic_capability_state"]
+    assert len(generic_state) == 2
+    assert generic_state[0]["target_system"] == "movement"
+    assert generic_state[0]["parameter_name"] == "speed"
+    assert generic_state[0]["current_tier"] == "fast"
+    assert generic_state[1]["target_system"] == "combat"
+    assert generic_state[1]["parameter_name"] == "aggression"
+    assert generic_state[1]["current_tier"] == "aggressive"
+
+
+def test_experiment_tracking_records_generic_capability_state_on_variants():
+    state = {
+        "session_tuning_state": {
+            "target_context": "encounter",
+            "target_entity": "encounter",
+            "contexts": {
+                "encounter": {
+                    "encounter_count": {
+                        "family": "encounter_count",
+                        "target_context": "encounter",
+                        "target_entity": "encounter",
+                        "resulting_tier": "high",
+                        "observed_value": 7,
+                    },
+                    "spawn_pressure": {
+                        "family": "spawn_pressure",
+                        "target_context": "encounter",
+                        "target_entity": "encounter",
+                        "resulting_tier": "high",
+                        "observed_value": 4.0,
+                    },
+                }
+            },
+        },
+        "experiment_tracking": {},
+    }
+
+    updated = apply_experiment_tracking(
+        state,
+        task={
+            "task_id": "TASK_EXPERIMENT_ENCOUNTER",
+            "request_id": "REQ_EXPERIMENT_ENCOUNTER",
+            "plan_id": "",
+            "plan_total_steps": 1,
+            "plan_step_index": 1,
+            "operator_prompt": "increase spawn pressure",
+            "capability_id": "level_0001_increase_spawn_pressure",
+        },
+        details={
+            "translated_command": "increase spawn pressure",
+            "target_context": "encounter",
+            "target_entity": "encounter",
+            "resolution_source": "direct_prompt",
+            "result_reason": "applied",
+            "executed": True,
+        },
+        timestamp="2026-04-03T12:02:00Z",
+    )
+
+    variant = updated["latest_experiment_variant"]
+    generic_state = variant["generic_capability_state"]
+    assert [entry["parameter_name"] for entry in generic_state] == ["spawn_count", "spawn_interval"]
+    assert generic_state[0]["current_tier"] == "high"
+    assert generic_state[0]["current_value"] == 7
+    assert generic_state[1]["current_tier"] == "high"
+    assert generic_state[1]["current_value"] == 4.0
+
+
+def test_result_evaluation_formats_racer_generic_capability_comparison():
+    state = {
+        "session_tuning_state": {
+            "target_context": "racer",
+            "target_entity": "racer",
+            "contexts": {
+                "racer": {
+                    "acceleration": {
+                        "family": "acceleration",
+                        "target_context": "racer",
+                        "resulting_tier": "fast",
+                        "observed_value": 6.5,
+                    },
+                    "max_speed": {
+                        "family": "max_speed",
+                        "target_context": "racer",
+                        "resulting_tier": "fast",
+                        "observed_value": 15.0,
+                    },
+                }
+            },
+        },
+        "experiment_tracking": {
+            "active_experiment_id": "experiment_0007",
+            "experiments": [
+                {
+                    "experiment_id": "experiment_0007",
+                    "target_context": "racer",
+                    "target_entity": "racer",
+                    "active_variant_id": "variant_0002",
+                    "baseline_variant_id": "variant_0001",
+                    "variants": [
+                        _experiment_variant(
+                            order=1,
+                            experiment_id="experiment_0007",
+                            variant_id="variant_0001",
+                            source_prompt="restore racer acceleration to standard",
+                            canonical_prompt="restore racer acceleration to standard",
+                            variant_kind="baseline",
+                            acceleration_tier="standard",
+                            max_speed_tier="standard",
+                            baseline_marker=True,
+                            baseline_variant_id="variant_0001",
+                            outcome_summary="acceleration standard, max speed standard",
+                            task_id="TASK_RACER_BASELINE",
+                            request_id="REQ_RACER_BASELINE",
+                        ),
+                        _experiment_variant(
+                            order=2,
+                            experiment_id="experiment_0007",
+                            variant_id="variant_0002",
+                            parent_variant_id="variant_0001",
+                            source_prompt="increase racer acceleration",
+                            canonical_prompt="increase racer acceleration",
+                            variant_kind="followup_variant",
+                            acceleration_tier="fast",
+                            max_speed_tier="fast",
+                            baseline_variant_id="variant_0001",
+                            outcome_summary="acceleration fast, max speed fast",
+                            task_id="TASK_RACER_VARIANT",
+                            request_id="REQ_RACER_VARIANT",
+                        ),
+                    ],
+                }
+            ],
+        },
+        "result_state_history": [
+            {
+                "order": 1,
+                "timestamp": "2026-04-03T13:00:00Z",
+                "task_id": "TASK_RACER_BASELINE",
+                "request_id": "REQ_RACER_BASELINE",
+                "plan_id": "",
+                "plan_title": "",
+                "target_context": "racer",
+                "target_entity": "racer",
+                "acceleration_tier": "standard",
+                "acceleration_value": 5.0,
+                "max_speed_tier": "standard",
+                "max_speed_value": 12.5,
+                "generic_capability_state": build_generic_capability_state(
+                    target_context="racer",
+                    acceleration_tier="standard",
+                    acceleration_value=5.0,
+                    max_speed_tier="standard",
+                    max_speed_value=12.5,
+                ),
+                "experiment_id": "experiment_0007",
+                "variant_id": "variant_0001",
+                "baseline_variant_id": "variant_0001",
+                "preferred_baseline_variant_id": "",
+                "baseline_marker": True,
+                "variant_kind": "baseline",
+            }
+        ],
+        "result_evaluation_history": [],
+        "latest_result_evaluation": {},
+    }
+
+    state = apply_result_evaluation(
+        state,
+        task={
+            "task_id": "TASK_RACER_VARIANT",
+            "request_id": "REQ_RACER_VARIANT",
+            "plan_id": "",
+            "plan_total_steps": 1,
+            "plan_step_index": 1,
+            "operator_prompt": "increase racer acceleration",
+        },
+        timestamp="2026-04-03T13:01:00Z",
+    )
+
+    evaluation = state["latest_result_evaluation"]
+    combined_text = "\n".join([evaluation["comparison_description"], *evaluation["detected_differences"]])
+    assert "Acceleration" in combined_text
+    assert "Max speed" in combined_text
+    assert "Acceleration: standard -> fast" in evaluation["detected_differences"]
+    assert "Max speed: standard -> fast" in evaluation["detected_differences"]
+    assert "Quicker speed buildup." in combined_text
+    assert "Higher top speed." in combined_text
+
+
+def test_experiment_tracking_records_racer_generic_capability_state_on_variants():
+    state = {
+        "session_tuning_state": {
+            "target_context": "racer",
+            "target_entity": "racer",
+            "contexts": {
+                "racer": {
+                    "acceleration": {
+                        "family": "acceleration",
+                        "target_context": "racer",
+                        "target_entity": "racer",
+                        "resulting_tier": "fast",
+                        "observed_value": 6.5,
+                    },
+                    "max_speed": {
+                        "family": "max_speed",
+                        "target_context": "racer",
+                        "target_entity": "racer",
+                        "resulting_tier": "fast",
+                        "observed_value": 15.0,
+                    },
+                }
+            },
+        },
+        "experiment_tracking": {},
+    }
+
+    updated = apply_experiment_tracking(
+        state,
+        task={
+            "task_id": "TASK_EXPERIMENT_RACER",
+            "request_id": "REQ_EXPERIMENT_RACER",
+            "plan_id": "",
+            "plan_total_steps": 1,
+            "plan_step_index": 1,
+            "operator_prompt": "increase racer acceleration",
+            "capability_id": "level_0001_increase_racer_acceleration",
+        },
+        details={
+            "translated_command": "increase racer acceleration",
+            "target_context": "racer",
+            "target_entity": "racer",
+            "resolution_source": "direct_prompt",
+            "result_reason": "applied",
+            "executed": True,
+        },
+        timestamp="2026-04-03T13:02:00Z",
+    )
+
+    variant = updated["latest_experiment_variant"]
+    assert variant["target_context"] == "racer"
+    assert variant["outcome_summary"] == "acceleration fast, max speed fast"
+    generic_state = variant["generic_capability_state"]
+    assert [entry["parameter_name"] for entry in generic_state] == ["acceleration", "max_speed"]
+    assert generic_state[0]["current_tier"] == "fast"
+    assert generic_state[0]["current_value"] == 6.5
+    assert generic_state[1]["current_tier"] == "fast"
+    assert generic_state[1]["current_value"] == 15
+
+
+def test_result_evaluation_formats_platformer_generic_capability_comparison():
+    state = {
+        "session_tuning_state": {
+            "target_context": "platformer",
+            "target_entity": "platformer",
+            "contexts": {
+                "platformer": {
+                    "jump_height": {
+                        "family": "jump_height",
+                        "target_context": "platformer",
+                        "resulting_tier": "high",
+                        "observed_value": 1.6,
+                    },
+                    "gravity": {
+                        "family": "gravity",
+                        "target_context": "platformer",
+                        "resulting_tier": "low_gravity",
+                        "observed_value": 6.0,
+                    },
+                    "speed": {
+                        "family": "speed",
+                        "target_context": "platformer",
+                        "resulting_tier": "fast",
+                        "observed_value": 7.0,
+                    },
+                }
+            },
+        },
+        "experiment_tracking": {
+            "active_experiment_id": "experiment_0010",
+            "experiments": [
+                {
+                    "experiment_id": "experiment_0010",
+                    "target_context": "platformer",
+                    "target_entity": "platformer",
+                    "active_variant_id": "variant_0002",
+                    "baseline_variant_id": "variant_0001",
+                    "variants": [
+                        _experiment_variant(
+                            order=1,
+                            experiment_id="experiment_0010",
+                            variant_id="variant_0001",
+                            source_prompt="restore gravity to standard",
+                            canonical_prompt="restore gravity to standard",
+                            variant_kind="baseline",
+                            jump_height_tier="standard",
+                            gravity_tier="standard_gravity",
+                            speed_tier="standard",
+                            baseline_marker=True,
+                            baseline_variant_id="variant_0001",
+                            outcome_summary="jump height standard, gravity standard_gravity, speed standard",
+                            task_id="TASK_PLATFORMER_BASELINE",
+                            request_id="REQ_PLATFORMER_BASELINE",
+                        ),
+                        _experiment_variant(
+                            order=2,
+                            experiment_id="experiment_0010",
+                            variant_id="variant_0002",
+                            parent_variant_id="variant_0001",
+                            source_prompt="make jump higher",
+                            canonical_prompt="make jump higher",
+                            variant_kind="followup_variant",
+                            jump_height_tier="high",
+                            gravity_tier="low_gravity",
+                            speed_tier="fast",
+                            baseline_variant_id="variant_0001",
+                            outcome_summary="jump height high, gravity low_gravity, speed fast",
+                            task_id="TASK_PLATFORMER_VARIANT",
+                            request_id="REQ_PLATFORMER_VARIANT",
+                        ),
+                    ],
+                }
+            ],
+        },
+        "result_state_history": [
+            {
+                "order": 1,
+                "timestamp": "2026-04-03T14:00:00Z",
+                "task_id": "TASK_PLATFORMER_BASELINE",
+                "request_id": "REQ_PLATFORMER_BASELINE",
+                "plan_id": "",
+                "plan_title": "",
+                "target_context": "platformer",
+                "target_entity": "platformer",
+                "speed_tier": "standard",
+                "speed_value": 5.5,
+                "jump_height_tier": "standard",
+                "jump_height_value": 1.2,
+                "gravity_tier": "standard_gravity",
+                "gravity_value": 9.81,
+                "generic_capability_state": build_generic_capability_state(
+                    target_context="platformer",
+                    speed_tier="standard",
+                    speed_value=5.5,
+                    jump_height_tier="standard",
+                    jump_height_value=1.2,
+                    gravity_tier="standard_gravity",
+                    gravity_value=9.81,
+                ),
+                "experiment_id": "experiment_0010",
+                "variant_id": "variant_0001",
+                "baseline_variant_id": "variant_0001",
+                "preferred_baseline_variant_id": "",
+                "baseline_marker": True,
+                "variant_kind": "baseline",
+            }
+        ],
+        "result_evaluation_history": [],
+        "latest_result_evaluation": {},
+    }
+
+    state = apply_result_evaluation(
+        state,
+        task={
+            "task_id": "TASK_PLATFORMER_VARIANT",
+            "request_id": "REQ_PLATFORMER_VARIANT",
+            "plan_id": "",
+            "plan_total_steps": 1,
+            "plan_step_index": 1,
+            "operator_prompt": "make jump higher",
+        },
+        timestamp="2026-04-03T14:01:00Z",
+    )
+
+    evaluation = state["latest_result_evaluation"]
+    combined_text = "\n".join([evaluation["comparison_description"], *evaluation["detected_differences"]])
+    assert "Jump height: standard -> high" in evaluation["detected_differences"]
+    assert "Gravity: standard_gravity -> low_gravity" in evaluation["detected_differences"]
+    assert "Speed: standard -> fast" in evaluation["detected_differences"]
+    assert "Longer airtime." in combined_text
+    assert "Slower fall speed." in combined_text
+    assert "Faster traversal." in combined_text
+
+
+def test_experiment_tracking_records_platformer_generic_capability_state_on_variants():
+    state = {
+        "session_tuning_state": {
+            "target_context": "platformer",
+            "target_entity": "platformer",
+            "contexts": {
+                "platformer": {
+                    "jump_height": {
+                        "family": "jump_height",
+                        "target_context": "platformer",
+                        "target_entity": "platformer",
+                        "resulting_tier": "high",
+                        "observed_value": 1.6,
+                    },
+                    "gravity": {
+                        "family": "gravity",
+                        "target_context": "platformer",
+                        "target_entity": "platformer",
+                        "resulting_tier": "low_gravity",
+                        "observed_value": 6.0,
+                    },
+                    "speed": {
+                        "family": "speed",
+                        "target_context": "platformer",
+                        "target_entity": "platformer",
+                        "resulting_tier": "fast",
+                        "observed_value": 7.0,
+                    },
+                }
+            },
+        },
+        "experiment_tracking": {},
+    }
+
+    updated = apply_experiment_tracking(
+        state,
+        task={
+            "task_id": "TASK_EXPERIMENT_PLATFORMER",
+            "request_id": "REQ_EXPERIMENT_PLATFORMER",
+            "plan_id": "",
+            "plan_total_steps": 1,
+            "plan_step_index": 1,
+            "operator_prompt": "make jump higher",
+            "capability_id": "level_0001_increase_platformer_jump_height",
+        },
+        details={
+            "translated_command": "make jump higher",
+            "target_context": "platformer",
+            "target_entity": "platformer",
+            "resolution_source": "direct_prompt",
+            "result_reason": "applied",
+            "executed": True,
+        },
+        timestamp="2026-04-03T14:02:00Z",
+    )
+
+    variant = updated["latest_experiment_variant"]
+    assert variant["target_context"] == "platformer"
+    assert variant["outcome_summary"] == "speed fast, jump height high, gravity low gravity"
+    generic_state = variant["generic_capability_state"]
+    assert [entry["parameter_name"] for entry in generic_state] == ["speed", "jump_height", "gravity"]
+    assert generic_state[0]["current_tier"] == "fast"
+    assert generic_state[1]["current_tier"] == "high"
+    assert generic_state[2]["current_tier"] == "low_gravity"
+
+
+def test_task_intake_compares_platformer_variants_across_experiments(tmp_path):
+    config = _make_config(tmp_path / "experiment_cross_comparison_platformer")
+    intake = ConversationalTaskIntake(config)
+    state_store = StateStore(config.runs_dir, "experiment-cross-comparison-platformer-session")
+    state_store.save(
+        {
+            "session_id": "experiment-cross-comparison-platformer-session",
+            "experiment_tracking": {
+                "experiments": [
+                    {
+                        "experiment_id": "experiment_0003",
+                        "target_entity": "platformer",
+                        "target_context": "platformer",
+                        "active_variant_id": "variant_0001",
+                        "baseline_variant_id": "variant_0001",
+                        "variants": [
+                            _experiment_variant(
+                                order=1,
+                                experiment_id="experiment_0003",
+                                variant_id="variant_0001",
+                                source_prompt="make jump higher",
+                                canonical_prompt="make jump higher",
+                                variant_kind="baseline",
+                                jump_height_tier="high",
+                                gravity_tier="low_gravity",
+                                speed_tier="fast",
+                                baseline_marker=True,
+                                baseline_variant_id="variant_0001",
+                                outcome_summary="jump height high, gravity low_gravity, speed fast",
+                            ),
+                        ],
+                    },
+                    {
+                        "experiment_id": "experiment_0004",
+                        "target_entity": "platformer",
+                        "target_context": "platformer",
+                        "active_variant_id": "variant_0001",
+                        "baseline_variant_id": "variant_0001",
+                        "variants": [
+                            _experiment_variant(
+                                order=1,
+                                experiment_id="experiment_0004",
+                                variant_id="variant_0001",
+                                source_prompt="restore movement to standard",
+                                canonical_prompt="restore movement to standard",
+                                variant_kind="baseline",
+                                jump_height_tier="standard",
+                                gravity_tier="standard_gravity",
+                                speed_tier="standard",
+                                baseline_marker=True,
+                                baseline_variant_id="variant_0001",
+                                outcome_summary="jump height standard, gravity standard_gravity, speed standard",
+                            ),
+                        ],
+                    },
+                ],
+            },
+        }
+    )
+
+    result = intake.accept_message(
+        "compare variant_0001 in experiment_0003 with variant_0001 in experiment_0004",
+        session_id="experiment-cross-comparison-platformer-session",
+        target_repo=str(config.root_dir),
+    )
+
+    combined_text = "\n".join(result.routing.plan_step_titles or [])
+    assert result.task_type == "experiment_review_request"
+    assert result.routing.plan_title == "Cross-experiment variant comparison"
+    assert "Left target context: platformer." in result.routing.plan_step_titles
+    assert "Right target context: platformer." in result.routing.plan_step_titles
+    assert "Jump height: standard -> high" in combined_text
+    assert "Gravity: standard_gravity -> low_gravity" in combined_text
+    assert "Speed: standard -> fast" in combined_text
+    assert "Longer airtime." in combined_text
+    assert "Slower fall speed." in combined_text
+
+
+def test_task_intake_shows_platformer_experiment_variant_review_summary(tmp_path):
+    config = _make_config(tmp_path / "platformer_variant_review_summary")
+    intake = ConversationalTaskIntake(config)
+    state_store = StateStore(config.runs_dir, "platformer-variant-review-session")
+    state_store.save(
+        {
+            "session_id": "platformer-variant-review-session",
+            "experiment_tracking": {
+                "active_experiment_id": "experiment_0011",
+                "experiments": [
+                    {
+                        "experiment_id": "experiment_0011",
+                        "target_context": "platformer",
+                        "target_entity": "platformer",
+                        "active_variant_id": "variant_0002",
+                        "baseline_variant_id": "variant_0001",
+                        "preferred_baseline_variant_id": "variant_0002",
+                        "variants": [
+                            _experiment_variant(
+                                order=1,
+                                experiment_id="experiment_0011",
+                                variant_id="variant_0001",
+                                source_prompt="restore movement to standard",
+                                canonical_prompt="restore movement to standard",
+                                variant_kind="baseline",
+                                jump_height_tier="standard",
+                                gravity_tier="standard_gravity",
+                                speed_tier="standard",
+                                baseline_marker=True,
+                                baseline_variant_id="variant_0001",
+                                outcome_summary="speed standard, jump height standard, gravity standard gravity",
+                            ),
+                            _experiment_variant(
+                                order=2,
+                                experiment_id="experiment_0011",
+                                variant_id="variant_0002",
+                                parent_variant_id="variant_0001",
+                                source_prompt="make jump higher",
+                                canonical_prompt="make jump higher",
+                                variant_kind="followup_variant",
+                                jump_height_tier="high",
+                                gravity_tier="low_gravity",
+                                speed_tier="fast",
+                                baseline_variant_id="variant_0001",
+                                outcome_summary="speed fast, jump height high, gravity low gravity",
+                                decision_status="kept",
+                            ),
+                        ],
+                    }
+                ],
+            },
+        }
+    )
+
+    result = intake.accept_message(
+        "show current experiment variants",
+        session_id="platformer-variant-review-session",
+        target_repo=str(config.root_dir),
+    )
+
+    assert result.routing.plan_title == "Current experiment variants"
+    assert "Target context: platformer." in result.routing.decision_summary
+    assert "Preferred baseline: variant_0002." in result.routing.decision_summary
+    assert any(
+        "variant_0002 | target context: platformer | status: current, preferred baseline, kept | prompt: make jump higher | outcome: speed fast, jump height high, gravity low gravity | deltas from baseline: Speed: standard -> fast; Jump height: standard -> high; Gravity: standard_gravity -> low_gravity."
+        == line
+        for line in result.routing.plan_step_titles or []
+    )
+
+
+def test_task_intake_shows_platformer_experiment_decision_review_summary(tmp_path):
+    config = _make_config(tmp_path / "platformer_decision_review_summary")
+    intake = ConversationalTaskIntake(config)
+    state_store = StateStore(config.runs_dir, "platformer-decision-review-session")
+    state_store.save(
+        {
+            "session_id": "platformer-decision-review-session",
+            "experiment_tracking": {
+                "active_experiment_id": "experiment_0012",
+                "experiments": [
+                    {
+                        "experiment_id": "experiment_0012",
+                        "target_context": "platformer",
+                        "target_entity": "platformer",
+                        "active_variant_id": "variant_0002",
+                        "baseline_variant_id": "variant_0001",
+                        "preferred_baseline_variant_id": "variant_0002",
+                        "latest_decision": {
+                            "summary": "Latest explicit user decision: set variant_0002 as the preferred baseline. Later baseline comparisons will reference variant_0002. Original baseline remains variant_0001.",
+                        },
+                        "variants": [
+                            _experiment_variant(
+                                order=1,
+                                experiment_id="experiment_0012",
+                                variant_id="variant_0001",
+                                source_prompt="restore gravity to standard",
+                                canonical_prompt="restore gravity to standard",
+                                variant_kind="baseline",
+                                jump_height_tier="standard",
+                                gravity_tier="standard_gravity",
+                                speed_tier="standard",
+                                baseline_marker=True,
+                                baseline_variant_id="variant_0001",
+                                outcome_summary="speed standard, jump height standard, gravity standard gravity",
+                                decision_status="kept",
+                            ),
+                            _experiment_variant(
+                                order=2,
+                                experiment_id="experiment_0012",
+                                variant_id="variant_0002",
+                                parent_variant_id="variant_0001",
+                                source_prompt="make movement faster",
+                                canonical_prompt="make movement faster",
+                                variant_kind="followup_variant",
+                                jump_height_tier="high",
+                                gravity_tier="low_gravity",
+                                speed_tier="fast",
+                                baseline_variant_id="variant_0001",
+                                outcome_summary="speed fast, jump height high, gravity low gravity",
+                                decision_status="kept",
+                            ),
+                        ],
+                    }
+                ],
+            },
+        }
+    )
+
+    result = intake.accept_message(
+        "show current experiment decisions",
+        session_id="platformer-decision-review-session",
+        target_repo=str(config.root_dir),
+    )
+
+    assert result.routing.plan_title == "Current experiment decisions"
+    assert "Decision review: experiment_0012." in result.routing.decision_summary
+    assert "Target context: platformer." in result.routing.decision_summary
+    assert "Original baseline: variant_0001." in result.routing.decision_summary
+    assert "Preferred baseline: variant_0002." in result.routing.decision_summary
+    assert "Kept variants: variant_0001, variant_0002." in result.routing.decision_summary
+    assert "Rejected variants: none." in result.routing.decision_summary
+    assert "Undecided variants: none." in result.routing.decision_summary
+    assert any(
+        "variant_0002 | target context: platformer | status: current, preferred baseline, kept | prompt: make movement faster | outcome: speed fast, jump height high, gravity low gravity | deltas from baseline: Speed: standard -> fast; Jump height: standard -> high; Gravity: standard_gravity -> low_gravity."
+        == line
+        for line in result.routing.plan_step_titles or []
+    )
+
+
+def test_task_intake_compares_racer_variants_across_experiments(tmp_path):
+    config = _make_config(tmp_path / "experiment_cross_comparison_racer")
+    intake = ConversationalTaskIntake(config)
+    state_store = StateStore(config.runs_dir, "experiment-cross-comparison-racer-session")
+    state_store.save(
+        {
+            "session_id": "experiment-cross-comparison-racer-session",
+            "experiment_tracking": {
+                "experiments": [
+                    {
+                        "experiment_id": "experiment_0001",
+                        "target_entity": "racer",
+                        "target_context": "racer",
+                        "active_variant_id": "variant_0001",
+                        "baseline_variant_id": "variant_0001",
+                        "variants": [
+                            _experiment_variant(
+                                order=1,
+                                experiment_id="experiment_0001",
+                                variant_id="variant_0001",
+                                source_prompt="increase racer acceleration",
+                                canonical_prompt="increase racer acceleration",
+                                variant_kind="baseline",
+                                acceleration_tier="fast",
+                                max_speed_tier="fast",
+                                baseline_marker=True,
+                                baseline_variant_id="variant_0001",
+                                outcome_summary="acceleration fast, max speed fast",
+                            ),
+                        ],
+                    },
+                    {
+                        "experiment_id": "experiment_0002",
+                        "target_entity": "racer",
+                        "target_context": "racer",
+                        "active_variant_id": "variant_0001",
+                        "baseline_variant_id": "variant_0001",
+                        "variants": [
+                            _experiment_variant(
+                                order=1,
+                                experiment_id="experiment_0002",
+                                variant_id="variant_0001",
+                                source_prompt="restore racer acceleration to standard",
+                                canonical_prompt="restore racer acceleration to standard",
+                                variant_kind="baseline",
+                                acceleration_tier="standard",
+                                max_speed_tier="standard",
+                                baseline_marker=True,
+                                baseline_variant_id="variant_0001",
+                                outcome_summary="acceleration standard, max speed standard",
+                            ),
+                        ],
+                    },
+                ],
+            },
+        }
+    )
+
+    result = intake.accept_message(
+        "compare variant_0001 in experiment_0001 with variant_0001 in experiment_0002",
+        session_id="experiment-cross-comparison-racer-session",
+        target_repo=str(config.root_dir),
+    )
+
+    combined_text = "\n".join(result.routing.plan_step_titles or [])
+    assert result.task_type == "experiment_review_request"
+    assert result.routing.plan_title == "Cross-experiment variant comparison"
+    assert "Left target context: racer." in result.routing.plan_step_titles
+    assert "Right target context: racer." in result.routing.plan_step_titles
+    assert "Acceleration: standard -> fast" in combined_text
+    assert "Max speed: standard -> fast" in combined_text
+    assert "Quicker speed buildup." in combined_text
+    assert "Higher top speed." in combined_text
+
+
+def _write_racer_capability_contracts(config: OrchestratorConfig) -> None:
+    capabilities_dir = config.contracts_dir / "capabilities"
+    capabilities_dir.mkdir(parents=True, exist_ok=True)
+    payloads = {
+        "level_0001_increase_racer_acceleration.json": {
+            "capability_id": "level_0001_increase_racer_acceleration",
+            "title": "LEVEL_0001 increase racer acceleration",
+            "intent": "mutate",
+            "target_level": "LEVEL_0001",
+            "target_scene": "Assets/AI_E_TestScenes/entity_test.unity",
+            "requested_execution_lane": "approval_required_mutation",
+            "handler_name": "level_0001_entity_transform_handler",
+            "agent_type": "level_0001_entity_transform_mutation_agent",
+            "approval_required": True,
+            "eligible_for_auto": False,
+            "evidence_state": "experimental",
+            "safety_class": "approval_gated_automation",
+            "content_tags": {
+                "violence_level": "none",
+                "blood_level": "none",
+                "gore_level": "none",
+                "dismemberment": False,
+                "horror_intensity": "none",
+                "language_level": "none",
+                "sexual_content_level": "none",
+                "nudity_level": "none",
+                "substance_reference_level": "none",
+                "gambling_reference_level": "none",
+            },
+            "match_terms": ["racer", "acceleration"],
+            "match_verbs": ["increase"],
+        },
+        "level_0001_restore_racer_acceleration_standard.json": {
+            "capability_id": "level_0001_restore_racer_acceleration_standard",
+            "title": "LEVEL_0001 restore racer acceleration standard",
+            "intent": "mutate",
+            "target_level": "LEVEL_0001",
+            "target_scene": "Assets/AI_E_TestScenes/entity_test.unity",
+            "requested_execution_lane": "approval_required_mutation",
+            "handler_name": "level_0001_entity_transform_handler",
+            "agent_type": "level_0001_entity_transform_mutation_agent",
+            "approval_required": True,
+            "eligible_for_auto": False,
+            "evidence_state": "experimental",
+            "safety_class": "approval_gated_automation",
+            "content_tags": {
+                "violence_level": "none",
+                "blood_level": "none",
+                "gore_level": "none",
+                "dismemberment": False,
+                "horror_intensity": "none",
+                "language_level": "none",
+                "sexual_content_level": "none",
+                "nudity_level": "none",
+                "substance_reference_level": "none",
+                "gambling_reference_level": "none",
+            },
+            "match_terms": ["racer", "acceleration", "standard"],
+            "match_verbs": ["restore"],
+        },
+        "level_0001_increase_racer_max_speed.json": {
+            "capability_id": "level_0001_increase_racer_max_speed",
+            "title": "LEVEL_0001 increase racer max speed",
+            "intent": "mutate",
+            "target_level": "LEVEL_0001",
+            "target_scene": "Assets/AI_E_TestScenes/entity_test.unity",
+            "requested_execution_lane": "approval_required_mutation",
+            "handler_name": "level_0001_entity_transform_handler",
+            "agent_type": "level_0001_entity_transform_mutation_agent",
+            "approval_required": True,
+            "eligible_for_auto": False,
+            "evidence_state": "experimental",
+            "safety_class": "approval_gated_automation",
+            "content_tags": {
+                "violence_level": "none",
+                "blood_level": "none",
+                "gore_level": "none",
+                "dismemberment": False,
+                "horror_intensity": "none",
+                "language_level": "none",
+                "sexual_content_level": "none",
+                "nudity_level": "none",
+                "substance_reference_level": "none",
+                "gambling_reference_level": "none",
+            },
+            "match_terms": ["racer", "max", "speed"],
+            "match_verbs": ["increase"],
+        },
+    }
+    for filename, payload in payloads.items():
+        (capabilities_dir / filename).write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def _write_platformer_capability_contracts(config: OrchestratorConfig) -> None:
+    capabilities_dir = config.contracts_dir / "capabilities"
+    capabilities_dir.mkdir(parents=True, exist_ok=True)
+    payloads = {
+        "level_0001_increase_platformer_jump_height.json": {
+            "capability_id": "level_0001_increase_platformer_jump_height",
+            "title": "LEVEL_0001 increase platformer jump height",
+            "intent": "mutate",
+            "target_level": "LEVEL_0001",
+            "target_scene": "Assets/AI_E_TestScenes/entity_test.unity",
+            "requested_execution_lane": "approval_required_mutation",
+            "handler_name": "level_0001_entity_transform_handler",
+            "agent_type": "level_0001_entity_transform_mutation_agent",
+            "approval_required": True,
+            "eligible_for_auto": False,
+            "evidence_state": "experimental",
+            "safety_class": "approval_gated_automation",
+            "content_tags": {
+                "violence_level": "none",
+                "blood_level": "none",
+                "gore_level": "none",
+                "dismemberment": False,
+                "horror_intensity": "none",
+                "language_level": "none",
+                "sexual_content_level": "none",
+                "nudity_level": "none",
+                "substance_reference_level": "none",
+                "gambling_reference_level": "none",
+            },
+            "match_terms": ["jump", "higher"],
+            "match_verbs": ["make"],
+        },
+        "level_0001_decrease_platformer_jump_height.json": {
+            "capability_id": "level_0001_decrease_platformer_jump_height",
+            "title": "LEVEL_0001 decrease platformer jump height",
+            "intent": "mutate",
+            "target_level": "LEVEL_0001",
+            "target_scene": "Assets/AI_E_TestScenes/entity_test.unity",
+            "requested_execution_lane": "approval_required_mutation",
+            "handler_name": "level_0001_entity_transform_handler",
+            "agent_type": "level_0001_entity_transform_mutation_agent",
+            "approval_required": True,
+            "eligible_for_auto": False,
+            "evidence_state": "experimental",
+            "safety_class": "approval_gated_automation",
+            "content_tags": {
+                "violence_level": "none",
+                "blood_level": "none",
+                "gore_level": "none",
+                "dismemberment": False,
+                "horror_intensity": "none",
+                "language_level": "none",
+                "sexual_content_level": "none",
+                "nudity_level": "none",
+                "substance_reference_level": "none",
+                "gambling_reference_level": "none",
+            },
+            "match_terms": ["jump", "lower"],
+            "match_verbs": ["make"],
+        },
+        "level_0001_restore_platformer_jump_height_standard.json": {
+            "capability_id": "level_0001_restore_platformer_jump_height_standard",
+            "title": "LEVEL_0001 restore platformer jump height standard",
+            "intent": "mutate",
+            "target_level": "LEVEL_0001",
+            "target_scene": "Assets/AI_E_TestScenes/entity_test.unity",
+            "requested_execution_lane": "approval_required_mutation",
+            "handler_name": "level_0001_entity_transform_handler",
+            "agent_type": "level_0001_entity_transform_mutation_agent",
+            "approval_required": True,
+            "eligible_for_auto": False,
+            "evidence_state": "experimental",
+            "safety_class": "approval_gated_automation",
+            "content_tags": {
+                "violence_level": "none",
+                "blood_level": "none",
+                "gore_level": "none",
+                "dismemberment": False,
+                "horror_intensity": "none",
+                "language_level": "none",
+                "sexual_content_level": "none",
+                "nudity_level": "none",
+                "substance_reference_level": "none",
+                "gambling_reference_level": "none",
+            },
+            "match_terms": ["jump", "standard"],
+            "match_verbs": ["restore"],
+        },
+        "level_0001_reduce_platformer_gravity.json": {
+            "capability_id": "level_0001_reduce_platformer_gravity",
+            "title": "LEVEL_0001 reduce platformer gravity",
+            "intent": "mutate",
+            "target_level": "LEVEL_0001",
+            "target_scene": "Assets/AI_E_TestScenes/entity_test.unity",
+            "requested_execution_lane": "approval_required_mutation",
+            "handler_name": "level_0001_entity_transform_handler",
+            "agent_type": "level_0001_entity_transform_mutation_agent",
+            "approval_required": True,
+            "eligible_for_auto": False,
+            "evidence_state": "experimental",
+            "safety_class": "approval_gated_automation",
+            "content_tags": {
+                "violence_level": "none",
+                "blood_level": "none",
+                "gore_level": "none",
+                "dismemberment": False,
+                "horror_intensity": "none",
+                "language_level": "none",
+                "sexual_content_level": "none",
+                "nudity_level": "none",
+                "substance_reference_level": "none",
+                "gambling_reference_level": "none",
+            },
+            "match_terms": ["gravity"],
+            "match_verbs": ["reduce"],
+        },
+        "level_0001_increase_platformer_gravity.json": {
+            "capability_id": "level_0001_increase_platformer_gravity",
+            "title": "LEVEL_0001 increase platformer gravity",
+            "intent": "mutate",
+            "target_level": "LEVEL_0001",
+            "target_scene": "Assets/AI_E_TestScenes/entity_test.unity",
+            "requested_execution_lane": "approval_required_mutation",
+            "handler_name": "level_0001_entity_transform_handler",
+            "agent_type": "level_0001_entity_transform_mutation_agent",
+            "approval_required": True,
+            "eligible_for_auto": False,
+            "evidence_state": "experimental",
+            "safety_class": "approval_gated_automation",
+            "content_tags": {
+                "violence_level": "none",
+                "blood_level": "none",
+                "gore_level": "none",
+                "dismemberment": False,
+                "horror_intensity": "none",
+                "language_level": "none",
+                "sexual_content_level": "none",
+                "nudity_level": "none",
+                "substance_reference_level": "none",
+                "gambling_reference_level": "none",
+            },
+            "match_terms": ["gravity"],
+            "match_verbs": ["increase"],
+        },
+        "level_0001_restore_platformer_gravity_standard.json": {
+            "capability_id": "level_0001_restore_platformer_gravity_standard",
+            "title": "LEVEL_0001 restore platformer gravity standard",
+            "intent": "mutate",
+            "target_level": "LEVEL_0001",
+            "target_scene": "Assets/AI_E_TestScenes/entity_test.unity",
+            "requested_execution_lane": "approval_required_mutation",
+            "handler_name": "level_0001_entity_transform_handler",
+            "agent_type": "level_0001_entity_transform_mutation_agent",
+            "approval_required": True,
+            "eligible_for_auto": False,
+            "evidence_state": "experimental",
+            "safety_class": "approval_gated_automation",
+            "content_tags": {
+                "violence_level": "none",
+                "blood_level": "none",
+                "gore_level": "none",
+                "dismemberment": False,
+                "horror_intensity": "none",
+                "language_level": "none",
+                "sexual_content_level": "none",
+                "nudity_level": "none",
+                "substance_reference_level": "none",
+                "gambling_reference_level": "none",
+            },
+            "match_terms": ["gravity", "standard"],
+            "match_verbs": ["restore"],
+        },
+        "level_0001_increase_platformer_speed.json": {
+            "capability_id": "level_0001_increase_platformer_speed",
+            "title": "LEVEL_0001 increase platformer speed",
+            "intent": "mutate",
+            "target_level": "LEVEL_0001",
+            "target_scene": "Assets/AI_E_TestScenes/entity_test.unity",
+            "requested_execution_lane": "approval_required_mutation",
+            "handler_name": "level_0001_entity_transform_handler",
+            "agent_type": "level_0001_entity_transform_mutation_agent",
+            "approval_required": True,
+            "eligible_for_auto": False,
+            "evidence_state": "experimental",
+            "safety_class": "approval_gated_automation",
+            "content_tags": {
+                "violence_level": "none",
+                "blood_level": "none",
+                "gore_level": "none",
+                "dismemberment": False,
+                "horror_intensity": "none",
+                "language_level": "none",
+                "sexual_content_level": "none",
+                "nudity_level": "none",
+                "substance_reference_level": "none",
+                "gambling_reference_level": "none",
+            },
+            "match_terms": ["movement", "faster"],
+            "match_verbs": ["make"],
+        },
+        "level_0001_decrease_platformer_speed.json": {
+            "capability_id": "level_0001_decrease_platformer_speed",
+            "title": "LEVEL_0001 decrease platformer speed",
+            "intent": "mutate",
+            "target_level": "LEVEL_0001",
+            "target_scene": "Assets/AI_E_TestScenes/entity_test.unity",
+            "requested_execution_lane": "approval_required_mutation",
+            "handler_name": "level_0001_entity_transform_handler",
+            "agent_type": "level_0001_entity_transform_mutation_agent",
+            "approval_required": True,
+            "eligible_for_auto": False,
+            "evidence_state": "experimental",
+            "safety_class": "approval_gated_automation",
+            "content_tags": {
+                "violence_level": "none",
+                "blood_level": "none",
+                "gore_level": "none",
+                "dismemberment": False,
+                "horror_intensity": "none",
+                "language_level": "none",
+                "sexual_content_level": "none",
+                "nudity_level": "none",
+                "substance_reference_level": "none",
+                "gambling_reference_level": "none",
+            },
+            "match_terms": ["movement", "slower"],
+            "match_verbs": ["make"],
+        },
+        "level_0001_restore_platformer_speed_standard.json": {
+            "capability_id": "level_0001_restore_platformer_speed_standard",
+            "title": "LEVEL_0001 restore platformer speed standard",
+            "intent": "mutate",
+            "target_level": "LEVEL_0001",
+            "target_scene": "Assets/AI_E_TestScenes/entity_test.unity",
+            "requested_execution_lane": "approval_required_mutation",
+            "handler_name": "level_0001_entity_transform_handler",
+            "agent_type": "level_0001_entity_transform_mutation_agent",
+            "approval_required": True,
+            "eligible_for_auto": False,
+            "evidence_state": "experimental",
+            "safety_class": "approval_gated_automation",
+            "content_tags": {
+                "violence_level": "none",
+                "blood_level": "none",
+                "gore_level": "none",
+                "dismemberment": False,
+                "horror_intensity": "none",
+                "language_level": "none",
+                "sexual_content_level": "none",
+                "nudity_level": "none",
+                "substance_reference_level": "none",
+                "gambling_reference_level": "none",
+            },
+            "match_terms": ["movement", "standard"],
+            "match_verbs": ["restore"],
+        },
+    }
+    for filename, payload in payloads.items():
+        (capabilities_dir / filename).write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
 def _write_move_zombie_capability_contract(config: OrchestratorConfig) -> None:
@@ -5414,6 +7793,9 @@ def _create_entity_transform_prompt_repo(config: OrchestratorConfig, *, target_r
     (tools_dir / "run_unity_mutate_enemy_aggression.ps1").write_text("placeholder", encoding="utf-8")
     (tools_dir / "run_unity_mutate_encounter_count.ps1").write_text("placeholder", encoding="utf-8")
     (tools_dir / "run_unity_mutate_spawn_pressure.ps1").write_text("placeholder", encoding="utf-8")
+    (tools_dir / "run_unity_mutate_platformer_jump_height.ps1").write_text("placeholder", encoding="utf-8")
+    (tools_dir / "run_unity_mutate_platformer_gravity.ps1").write_text("placeholder", encoding="utf-8")
+    (tools_dir / "run_unity_mutate_platformer_speed.ps1").write_text("placeholder", encoding="utf-8")
     (tools_dir / "aie_prompt_aliases.json").write_text(
         json.dumps(
             {
@@ -5466,6 +7848,54 @@ def _create_entity_transform_prompt_repo(config: OrchestratorConfig, *, target_r
                     {
                         "normalized_prompt": "restore runner aggression to standard",
                         "translated_command": "restore runner aggression to standard",
+                    },
+                    {
+                        "normalized_prompt": "increase racer acceleration",
+                        "translated_command": "increase racer acceleration",
+                    },
+                    {
+                        "normalized_prompt": "restore racer acceleration to standard",
+                        "translated_command": "restore racer acceleration to standard",
+                    },
+                    {
+                        "normalized_prompt": "increase racer max speed",
+                        "translated_command": "increase racer max speed",
+                    },
+                    {
+                        "normalized_prompt": "make jump higher",
+                        "translated_command": "make jump higher",
+                    },
+                    {
+                        "normalized_prompt": "make jump lower",
+                        "translated_command": "make jump lower",
+                    },
+                    {
+                        "normalized_prompt": "restore jump to standard",
+                        "translated_command": "restore jump to standard",
+                    },
+                    {
+                        "normalized_prompt": "reduce gravity",
+                        "translated_command": "reduce gravity",
+                    },
+                    {
+                        "normalized_prompt": "increase gravity",
+                        "translated_command": "increase gravity",
+                    },
+                    {
+                        "normalized_prompt": "restore gravity to standard",
+                        "translated_command": "restore gravity to standard",
+                    },
+                    {
+                        "normalized_prompt": "make movement faster",
+                        "translated_command": "make movement faster",
+                    },
+                    {
+                        "normalized_prompt": "make movement slower",
+                        "translated_command": "make movement slower",
+                    },
+                    {
+                        "normalized_prompt": "restore movement to standard",
+                        "translated_command": "restore movement to standard",
                     },
                     {
                         "normalized_prompt": "increase encounter count",
@@ -5713,6 +8143,222 @@ def _create_entity_transform_prompt_repo(config: OrchestratorConfig, *, target_r
                             "BaselineAttackCooldown": 0.8,
                             "MinAttackCooldown": 0.25,
                             "MaxAttackCooldown": 2.0
+                        }
+                    },
+                    {
+                        "normalized_command": "increase racer acceleration",
+                        "action_name": "increase_racer_acceleration",
+                        "entity_type": "racer",
+                        "probe_name": "MutateEnemyMoveSpeed",
+                        "wrapper_path": "Tools/run_unity_mutate_enemy_move_speed.ps1",
+                        "probe_artifact_file": "intent_increase_racer_acceleration_probe_result.json",
+                        "probe_log_file": "intent_increase_racer_acceleration_probe.log",
+                        "wrapper_arguments": {
+                            "ProjectPath": ".",
+                            "SceneName": "entity_test",
+                            "TargetObjectName": "AIE_Racer_Profile_Instance",
+                            "RequestedSpeed": 6.5,
+                            "BaselineSpeed": 5.0,
+                            "MinSpeed": 2.0,
+                            "MaxSpeed": 8.0
+                        }
+                    },
+                    {
+                        "normalized_command": "restore racer acceleration to standard",
+                        "action_name": "set_racer_acceleration",
+                        "entity_type": "racer",
+                        "probe_name": "MutateEnemyMoveSpeed",
+                        "wrapper_path": "Tools/run_unity_mutate_enemy_move_speed.ps1",
+                        "probe_artifact_file": "intent_restore_racer_acceleration_to_standard_probe_result.json",
+                        "probe_log_file": "intent_restore_racer_acceleration_to_standard_probe.log",
+                        "wrapper_arguments": {
+                            "ProjectPath": ".",
+                            "SceneName": "entity_test",
+                            "TargetObjectName": "AIE_Racer_Profile_Instance",
+                            "RequestedSpeed": 5.0,
+                            "BaselineSpeed": 5.0,
+                            "MinSpeed": 2.0,
+                            "MaxSpeed": 8.0
+                        }
+                    },
+                    {
+                        "normalized_command": "increase racer max speed",
+                        "action_name": "increase_racer_max_speed",
+                        "entity_type": "racer",
+                        "probe_name": "MutateEnemyMoveSpeed",
+                        "wrapper_path": "Tools/run_unity_mutate_enemy_move_speed.ps1",
+                        "probe_artifact_file": "intent_increase_racer_max_speed_probe_result.json",
+                        "probe_log_file": "intent_increase_racer_max_speed_probe.log",
+                        "wrapper_arguments": {
+                            "ProjectPath": ".",
+                            "SceneName": "entity_test",
+                            "TargetObjectName": "AIE_Racer_Profile_Instance",
+                            "RequestedSpeed": 15.0,
+                            "BaselineSpeed": 12.5,
+                            "MinSpeed": 8.0,
+                            "MaxSpeed": 18.0
+                        }
+                    },
+                    {
+                        "normalized_command": "make jump higher",
+                        "action_name": "increase_platformer_jump_height",
+                        "entity_type": "platformer",
+                        "probe_name": "MutatePlatformerJumpHeight",
+                        "wrapper_path": "Tools/run_unity_mutate_platformer_jump_height.ps1",
+                        "probe_artifact_file": "intent_make_jump_higher_probe_result.json",
+                        "probe_log_file": "intent_make_jump_higher_probe.log",
+                        "wrapper_arguments": {
+                            "ProjectPath": ".",
+                            "SceneName": "entity_test",
+                            "TargetObjectName": "AIE_SuperMonkee_Profile_Instance",
+                            "RequestedJumpHeight": 1.6,
+                            "BaselineJumpHeight": 1.2,
+                            "MinJumpHeight": 0.9,
+                            "MaxJumpHeight": 1.6
+                        }
+                    },
+                    {
+                        "normalized_command": "make jump lower",
+                        "action_name": "decrease_platformer_jump_height",
+                        "entity_type": "platformer",
+                        "probe_name": "MutatePlatformerJumpHeight",
+                        "wrapper_path": "Tools/run_unity_mutate_platformer_jump_height.ps1",
+                        "probe_artifact_file": "intent_make_jump_lower_probe_result.json",
+                        "probe_log_file": "intent_make_jump_lower_probe.log",
+                        "wrapper_arguments": {
+                            "ProjectPath": ".",
+                            "SceneName": "entity_test",
+                            "TargetObjectName": "AIE_SuperMonkee_Profile_Instance",
+                            "RequestedJumpHeight": 0.9,
+                            "BaselineJumpHeight": 1.2,
+                            "MinJumpHeight": 0.9,
+                            "MaxJumpHeight": 1.6
+                        }
+                    },
+                    {
+                        "normalized_command": "restore jump to standard",
+                        "action_name": "set_platformer_jump_height",
+                        "entity_type": "platformer",
+                        "probe_name": "MutatePlatformerJumpHeight",
+                        "wrapper_path": "Tools/run_unity_mutate_platformer_jump_height.ps1",
+                        "probe_artifact_file": "intent_restore_jump_to_standard_probe_result.json",
+                        "probe_log_file": "intent_restore_jump_to_standard_probe.log",
+                        "wrapper_arguments": {
+                            "ProjectPath": ".",
+                            "SceneName": "entity_test",
+                            "TargetObjectName": "AIE_SuperMonkee_Profile_Instance",
+                            "RequestedJumpHeight": 1.2,
+                            "BaselineJumpHeight": 1.2,
+                            "MinJumpHeight": 0.9,
+                            "MaxJumpHeight": 1.6
+                        }
+                    },
+                    {
+                        "normalized_command": "reduce gravity",
+                        "action_name": "reduce_platformer_gravity",
+                        "entity_type": "platformer",
+                        "probe_name": "MutatePlatformerGravity",
+                        "wrapper_path": "Tools/run_unity_mutate_platformer_gravity.ps1",
+                        "probe_artifact_file": "intent_reduce_gravity_probe_result.json",
+                        "probe_log_file": "intent_reduce_gravity_probe.log",
+                        "wrapper_arguments": {
+                            "ProjectPath": ".",
+                            "SceneName": "entity_test",
+                            "TargetObjectName": "AIE_SuperMonkee_Profile_Instance",
+                            "RequestedGravity": 6.0,
+                            "BaselineGravity": 9.81,
+                            "MinGravity": 6.0,
+                            "MaxGravity": 13.0
+                        }
+                    },
+                    {
+                        "normalized_command": "increase gravity",
+                        "action_name": "increase_platformer_gravity",
+                        "entity_type": "platformer",
+                        "probe_name": "MutatePlatformerGravity",
+                        "wrapper_path": "Tools/run_unity_mutate_platformer_gravity.ps1",
+                        "probe_artifact_file": "intent_increase_gravity_probe_result.json",
+                        "probe_log_file": "intent_increase_gravity_probe.log",
+                        "wrapper_arguments": {
+                            "ProjectPath": ".",
+                            "SceneName": "entity_test",
+                            "TargetObjectName": "AIE_SuperMonkee_Profile_Instance",
+                            "RequestedGravity": 13.0,
+                            "BaselineGravity": 9.81,
+                            "MinGravity": 6.0,
+                            "MaxGravity": 13.0
+                        }
+                    },
+                    {
+                        "normalized_command": "restore gravity to standard",
+                        "action_name": "set_platformer_gravity",
+                        "entity_type": "platformer",
+                        "probe_name": "MutatePlatformerGravity",
+                        "wrapper_path": "Tools/run_unity_mutate_platformer_gravity.ps1",
+                        "probe_artifact_file": "intent_restore_gravity_to_standard_probe_result.json",
+                        "probe_log_file": "intent_restore_gravity_to_standard_probe.log",
+                        "wrapper_arguments": {
+                            "ProjectPath": ".",
+                            "SceneName": "entity_test",
+                            "TargetObjectName": "AIE_SuperMonkee_Profile_Instance",
+                            "RequestedGravity": 9.81,
+                            "BaselineGravity": 9.81,
+                            "MinGravity": 6.0,
+                            "MaxGravity": 13.0
+                        }
+                    },
+                    {
+                        "normalized_command": "make movement faster",
+                        "action_name": "increase_platformer_speed",
+                        "entity_type": "platformer",
+                        "probe_name": "MutateEnemyMoveSpeed",
+                        "wrapper_path": "Tools/run_unity_mutate_platformer_speed.ps1",
+                        "probe_artifact_file": "intent_make_movement_faster_probe_result.json",
+                        "probe_log_file": "intent_make_movement_faster_probe.log",
+                        "wrapper_arguments": {
+                            "ProjectPath": ".",
+                            "SceneName": "entity_test",
+                            "TargetObjectName": "AIE_SuperMonkee_Profile_Instance",
+                            "RequestedSpeed": 7.0,
+                            "BaselineSpeed": 5.5,
+                            "MinSpeed": 4.0,
+                            "MaxSpeed": 7.0
+                        }
+                    },
+                    {
+                        "normalized_command": "make movement slower",
+                        "action_name": "decrease_platformer_speed",
+                        "entity_type": "platformer",
+                        "probe_name": "MutateEnemyMoveSpeed",
+                        "wrapper_path": "Tools/run_unity_mutate_platformer_speed.ps1",
+                        "probe_artifact_file": "intent_make_movement_slower_probe_result.json",
+                        "probe_log_file": "intent_make_movement_slower_probe.log",
+                        "wrapper_arguments": {
+                            "ProjectPath": ".",
+                            "SceneName": "entity_test",
+                            "TargetObjectName": "AIE_SuperMonkee_Profile_Instance",
+                            "RequestedSpeed": 4.0,
+                            "BaselineSpeed": 5.5,
+                            "MinSpeed": 4.0,
+                            "MaxSpeed": 7.0
+                        }
+                    },
+                    {
+                        "normalized_command": "restore movement to standard",
+                        "action_name": "set_platformer_speed",
+                        "entity_type": "platformer",
+                        "probe_name": "MutateEnemyMoveSpeed",
+                        "wrapper_path": "Tools/run_unity_mutate_platformer_speed.ps1",
+                        "probe_artifact_file": "intent_restore_movement_to_standard_probe_result.json",
+                        "probe_log_file": "intent_restore_movement_to_standard_probe.log",
+                        "wrapper_arguments": {
+                            "ProjectPath": ".",
+                            "SceneName": "entity_test",
+                            "TargetObjectName": "AIE_SuperMonkee_Profile_Instance",
+                            "RequestedSpeed": 5.5,
+                            "BaselineSpeed": 5.5,
+                            "MinSpeed": 4.0,
+                            "MaxSpeed": 7.0
                         }
                     },
                     {
