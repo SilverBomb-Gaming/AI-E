@@ -7,6 +7,7 @@ from app import home_surface
 from ai_e_runtime.experiment_tracking import apply_experiment_navigation, apply_experiment_tracking
 from ai_e_runtime.outcome_evaluation import apply_result_evaluation
 from ai_e_runtime.experiment_tracking import apply_experiment_decision
+from ai_e_runtime.environment_theme_action_normalization import canonicalize_environment_theme_action_prompt
 from ai_e_runtime.generic_capabilities import (
     build_generic_capability_state,
     generic_capability_definition,
@@ -14,12 +15,20 @@ from ai_e_runtime.generic_capabilities import (
     supported_generic_capability_mappings,
 )
 from ai_e_runtime.intent_normalizer import normalize_prompt
+from ai_e_runtime.level_0001_entity_transform_mutation import resolve_entity_transform_route
+from ai_e_runtime.mutation_approval import approve_mutation_task
+from ai_e_runtime.platformer_action_normalization import (
+    canonicalize_platformer_action_prompt,
+    extract_platformer_action_matches,
+    normalize_platformer_action,
+)
 from ai_e_runtime.platformer_layout_corrections import (
     apply_platformer_layout_correction_record,
     merge_platformer_layout_correction_payload,
     persist_platformer_layout_correction_result,
 )
 from ai_e_runtime.platformer_layout_validation import extract_platformer_layout_validation_metadata
+from ai_e_runtime.request_review_bundle import build_review_bundle
 from ai_e_runtime.state_store import StateStore
 from ai_e_runtime.task_intake import ConversationalTaskIntake
 from orchestrator.config import OrchestratorConfig
@@ -994,6 +1003,7 @@ def test_home_surface_prepare_prompt_blocks_ambiguous_generalized_entity_prompt(
     intake = ConversationalTaskIntake(config)
     bridge = home_surface.IntakePreviewBridge()
     bridge._create_intake = lambda: intake
+    bridge._build_review_bundle_fn = build_review_bundle
     project = home_surface.SupportedProject(
         name="BABYLON TEST",
         path=Path(target_repo),
@@ -1025,6 +1035,7 @@ def test_home_surface_prepare_prompt_blocks_ambiguous_generalized_speed_with_cla
     intake = ConversationalTaskIntake(config)
     bridge = home_surface.IntakePreviewBridge()
     bridge._create_intake = lambda: intake
+    bridge._build_review_bundle_fn = build_review_bundle
     project = home_surface.SupportedProject(
         name="BABYLON TEST",
         path=Path(target_repo),
@@ -1044,6 +1055,34 @@ def test_home_surface_prepare_prompt_blocks_ambiguous_generalized_speed_with_cla
     ]
     assert preview.plan_execution_mode == "Clarification required"
     assert "No execution will start" in preview.status_message
+
+
+def test_home_surface_prepare_prompt_reports_missing_platformer_route_assets_instead_of_unknown_action(tmp_path):
+    config = _make_config(tmp_path / "home_surface_platformer_route_assets_missing")
+    _write_platformer_capability_contracts(config)
+    target_repo = _create_entity_transform_prompt_repo(config)
+    _strip_platformer_route_assets(target_repo)
+    intake = ConversationalTaskIntake(config)
+    bridge = home_surface.IntakePreviewBridge()
+    bridge._create_intake = lambda: intake
+    bridge._build_review_bundle_fn = build_review_bundle
+    project = home_surface.SupportedProject(
+        name="BABYLON TEST",
+        path=Path(target_repo),
+        project_type="unity_project",
+        source="test",
+        status="supported",
+    )
+
+    preview = bridge.prepare_prompt("make more obstacles", project)
+
+    assert preview.available is True
+    assert preview.classification == "task_request"
+    assert preview.decision_state == "Blocked"
+    assert preview.mapped_prompt == "increase obstacle density"
+    assert "recognized the bounded platformer action 'increase obstacle density'" in preview.decision_reason
+    assert "does not expose the deterministic platformer prompt aliases, route entries, and wrapper scripts" in preview.decision_reason
+    assert "couldn't match it to a known action" not in preview.decision_reason
 
 
 def test_home_surface_prepare_prompt_blocks_ambiguous_generalized_aggression_capability(tmp_path):
@@ -6696,7 +6735,8 @@ def test_task_intake_resolves_platformer_goal_intents_to_bounded_traversal_plan(
     ]
     assert result.routing.plan_key == "platformer_challenge_traversal_v1"
     assert result.routing.plan_title == "Use challenge traversal"
-    assert result.routing.decision == "sandbox_first"
+    assert result.routing.decision == "require_approval"
+    assert result.queue_entry["status"] == "needs_approval"
     assert result.plan_step_titles == [
         "Set gap size to large",
         "Set obstacle density to dense",
@@ -6754,9 +6794,11 @@ def test_task_intake_accepts_natural_language_platformer_autonomy_requests(tmp_p
     assert result.routing.plan_key == "platformer_challenge_traversal_v1"
     assert result.routing.plan_title == "Use challenge traversal"
     assert result.routing.capability_supported is True
-    assert result.routing.decision == "sandbox_first"
-    assert result.routing.fail_closed_reason is None
+    assert result.routing.decision == "require_approval"
+    assert result.queue_entry["status"] == "needs_approval"
+    assert "bounded autonomy pipeline" in str(result.routing.decision_summary or "")
     assert "No supported write-capable capability matched the request." not in str(result.routing.decision_summary or "")
+    assert "couldn't match it to a known action" not in str(result.routing.decision_summary or "")
     assert request_payload["conversational_request"]["context"]["resolved_execution_prompt"] == "use challenge traversal"
     assert [payload["operator_prompt"] for payload in runtime_payloads] == [
         "make gaps larger",
@@ -6766,6 +6808,731 @@ def test_task_intake_accepts_natural_language_platformer_autonomy_requests(tmp_p
     ]
     assert all(payload["mapped_prompt"] == "use challenge traversal" for payload in runtime_payloads)
     assert all(payload["source_prompt"] == normalize_prompt(prompt_text) for payload in runtime_payloads)
+
+
+@pytest.mark.parametrize(
+    ("prompt_text", "expected_plan_key", "expected_plan_title", "expected_mapped_prompt", "expected_step_prompts"),
+    [
+        (
+            "Increase obstacle density and enemy density",
+            "platformer_multi_intent_obstacle_enemy_v1",
+            "Increase obstacle density and enemy density",
+            "increase obstacle density and enemy density",
+            ["increase obstacle density", "increase enemy density"],
+        ),
+        (
+            "Make the gaps larger and add more obstacles",
+            "platformer_multi_intent_gap_obstacle_v1",
+            "Make gaps larger and add more obstacles",
+            "make gaps larger and add more obstacles",
+            ["make gaps larger", "increase obstacle density"],
+        ),
+        (
+            "Make the level longer and increase enemy density",
+            "platformer_multi_intent_enemy_segment_v1",
+            "Make the level longer and increase enemy density",
+            "make level longer and increase enemy density",
+            ["increase enemy density", "make level longer"],
+        ),
+        (
+            "Make this section more intense with more obstacles and enemies",
+            "platformer_multi_intent_obstacle_enemy_v1",
+            "Increase obstacle density and enemy density",
+            "increase obstacle density and enemy density",
+            ["increase obstacle density", "increase enemy density"],
+        ),
+    ],
+)
+def test_task_intake_routes_allowlisted_platformer_multi_intent_prompts_into_reviewed_plans(
+    tmp_path,
+    prompt_text,
+    expected_plan_key,
+    expected_plan_title,
+    expected_mapped_prompt,
+    expected_step_prompts,
+):
+    config = _make_config(tmp_path / "platformer_multi_intent_plan")
+    _write_platformer_capability_contracts(config)
+    target_repo = _create_entity_transform_prompt_repo(config)
+    intake = ConversationalTaskIntake(config)
+
+    result = intake.accept_message(
+        prompt_text,
+        session_id="platformer-multi-intent-session",
+        target_repo=target_repo,
+    )
+
+    request_payload = json.loads(result.artifacts.request_payload_path.read_text(encoding="utf-8"))
+    runtime_payloads = [
+        json.loads(path.read_text(encoding="utf-8"))["runtime_task"]
+        for path in result.artifacts.runtime_task_payload_paths
+    ]
+
+    assert result.task_type == "mutation_plan_request"
+    assert result.routing.resolution_source == "platformer_multi_intent_composition"
+    assert result.routing.resolved_from_prompt == normalize_prompt(prompt_text)
+    assert result.routing.mapped_prompt == expected_mapped_prompt
+    assert result.routing.plan_key == expected_plan_key
+    assert result.routing.plan_title == expected_plan_title
+    assert result.routing.capability_supported is True
+    assert result.routing.decision == "require_approval"
+    assert result.queue_entry["status"] == "needs_approval"
+    assert request_payload["conversational_request"]["context"]["resolved_execution_prompt"] == expected_mapped_prompt
+    assert [payload["operator_prompt"] for payload in runtime_payloads] == expected_step_prompts
+    assert all(payload["mapped_prompt"] == expected_mapped_prompt for payload in runtime_payloads)
+    assert all(payload["source_prompt"] == normalize_prompt(prompt_text) for payload in runtime_payloads)
+
+
+@pytest.mark.parametrize(
+    ("prompt_text", "expected_message_fragment"),
+    [
+        (
+            "Make the gaps larger and add lava",
+            "Remove unsupported scope such as lava, destructibles, terrain realism, or art direction.",
+        ),
+        (
+            "Increase obstacle density and make the level longer",
+            "AI-E only supports a small allowlisted set of compound platformer mutations in this pass.",
+        ),
+    ],
+)
+def test_task_intake_blocks_unsupported_platformer_multi_intent_prompts(tmp_path, prompt_text, expected_message_fragment):
+    config = _make_config(tmp_path / "platformer_multi_intent_blocked")
+    _write_platformer_capability_contracts(config)
+    target_repo = _create_entity_transform_prompt_repo(config)
+    intake = ConversationalTaskIntake(config)
+
+    result = intake.accept_message(
+        prompt_text,
+        session_id="platformer-multi-intent-blocked-session",
+        target_repo=target_repo,
+    )
+
+    assert result.queue_entry["status"] == "blocked"
+    assert result.routing.decision == "block"
+    assert result.routing.decision_reason == "route_missing"
+    assert result.routing.capability_supported is False
+    assert result.routing.mutation_capable is False
+    assert expected_message_fragment in str(result.routing.fail_closed_reason or "")
+
+
+def test_platformer_action_extraction_finds_multiple_bounded_families_without_duplicates():
+    matches = extract_platformer_action_matches("Make the gaps larger and add more obstacles and more obstacles")
+
+    assert [match.resolution.action_id for match in matches] == [
+        "platformer_increase_obstacle_density",
+        "platformer_increase_gap_size",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("prompt_text", "expected_capability", "expected_canonical_prompt"),
+    [
+        (
+            "Increase obstacle density in the platformer level",
+            "level_0001_increase_platformer_obstacle_density",
+            "increase obstacle density",
+        ),
+        (
+            "increase platformer obstacle density",
+            "level_0001_increase_platformer_obstacle_density",
+            "increase obstacle density",
+        ),
+        (
+            "make more obstacles",
+            "level_0001_increase_platformer_obstacle_density",
+            "increase obstacle density",
+        ),
+        (
+            "increase gap size",
+            "level_0001_increase_platformer_gap_size",
+            "make gaps larger",
+        ),
+        (
+            "make the gaps larger",
+            "level_0001_increase_platformer_gap_size",
+            "make gaps larger",
+        ),
+    ],
+)
+def test_task_intake_routes_direct_platformer_action_variants_through_canonical_prompt(
+    tmp_path,
+    prompt_text,
+    expected_capability,
+    expected_canonical_prompt,
+):
+    config = _make_config(tmp_path / "direct_platformer_action_variants")
+    _write_platformer_capability_contracts(config)
+    target_repo = _create_entity_transform_prompt_repo(config)
+    intake = ConversationalTaskIntake(config)
+
+    result = intake.accept_message(
+        prompt_text,
+        session_id="direct-platformer-action-session",
+        target_repo=target_repo,
+    )
+
+    request_payload = json.loads(result.artifacts.request_payload_path.read_text(encoding="utf-8"))
+
+    assert result.task_type == "mutation_request"
+    assert result.routing.capability_id == expected_capability
+    assert result.routing.mapped_prompt == expected_canonical_prompt
+    assert result.routing.capability_supported is True
+    assert result.routing.decision == "require_approval"
+    assert result.queue_entry["status"] == "needs_approval"
+    assert "bounded autonomy pipeline" in str(result.routing.decision_summary or "")
+    assert "No supported write-capable capability matched the request." not in str(result.routing.decision_summary or "")
+    assert "couldn't match it to a known action" not in str(result.routing.decision_summary or "")
+    assert request_payload["conversational_request"]["context"]["resolved_execution_prompt"] == expected_canonical_prompt
+
+
+def test_environment_theme_action_normalization_canonicalizes_ground_grass_prompt():
+    assert canonicalize_environment_theme_action_prompt("Make the ground grassy") == "apply grass ground theme"
+
+
+def test_environment_theme_action_normalization_canonicalizes_ground_dirt_prompt():
+    assert canonicalize_environment_theme_action_prompt("Change the ground to dirt") == "apply dirt ground theme"
+
+
+def test_task_intake_routes_direct_ground_theme_prompt_through_canonical_prompt(tmp_path):
+    config = _make_config(tmp_path / "direct_ground_theme_action")
+    _write_environment_theme_capability_contracts(config)
+    _write_environment_theme_real_target_evidence(config)
+    target_repo = _create_entity_transform_prompt_repo(config)
+    intake = ConversationalTaskIntake(config)
+
+    result = intake.accept_message(
+        "Make the ground grassy",
+        session_id="direct-ground-theme-session",
+        target_repo=target_repo,
+    )
+
+    request_payload = json.loads(result.artifacts.request_payload_path.read_text(encoding="utf-8"))
+
+    assert result.task_type == "mutation_request"
+    assert result.routing.capability_id == "level_0001_apply_grass_ground_theme"
+    assert result.routing.mapped_prompt == "apply grass ground theme"
+    assert result.routing.capability_supported is True
+    assert result.routing.decision == "require_approval"
+    assert result.queue_entry["status"] == "needs_approval"
+    assert request_payload["conversational_request"]["context"]["resolved_execution_prompt"] == "apply grass ground theme"
+
+
+def test_task_intake_routes_direct_dirt_ground_theme_prompt_through_canonical_prompt(tmp_path):
+    config = _make_config(tmp_path / "direct_dirt_ground_theme_action")
+    _write_environment_theme_capability_contracts(config)
+    _write_environment_theme_real_target_evidence(config)
+    target_repo = _create_entity_transform_prompt_repo(config)
+    intake = ConversationalTaskIntake(config)
+
+    result = intake.accept_message(
+        "Change the ground to dirt",
+        session_id="direct-dirt-ground-theme-session",
+        target_repo=target_repo,
+    )
+
+    request_payload = json.loads(result.artifacts.request_payload_path.read_text(encoding="utf-8"))
+
+    assert result.task_type == "mutation_request"
+    assert result.routing.capability_id == "level_0001_apply_dirt_ground_theme"
+    assert result.routing.mapped_prompt == "apply dirt ground theme"
+    assert result.routing.capability_supported is True
+    assert result.routing.decision == "require_approval"
+    assert result.queue_entry["status"] == "needs_approval"
+    assert request_payload["conversational_request"]["context"]["resolved_execution_prompt"] == "apply dirt ground theme"
+
+
+def test_home_surface_prepare_prompt_routes_environment_theme_into_review(tmp_path):
+    config = _make_config(tmp_path / "home_surface_environment_theme_review")
+    _write_environment_theme_capability_contracts(config)
+    _write_environment_theme_real_target_evidence(config)
+    target_repo = _create_entity_transform_prompt_repo(config)
+    intake = ConversationalTaskIntake(config)
+    bridge = home_surface.IntakePreviewBridge()
+    bridge._create_intake = lambda: intake
+    project = home_surface.SupportedProject(
+        name="BABYLON TEST",
+        path=Path(target_repo),
+        project_type="unity_project",
+        source="test",
+        status="supported",
+    )
+
+    preview = bridge.prepare_prompt("Make the ground grassy", project)
+
+    assert preview.available is True
+    assert preview.decision_state == "Needs approval"
+    assert preview.next_action_label == "Open review"
+    assert preview.mapped_prompt == "apply grass ground theme"
+    assert "requires operator approval" in preview.decision_reason
+
+
+def test_home_surface_prepare_prompt_routes_dirt_environment_theme_into_review(tmp_path):
+    config = _make_config(tmp_path / "home_surface_dirt_environment_theme_review")
+    _write_environment_theme_capability_contracts(config)
+    _write_environment_theme_real_target_evidence(config)
+    target_repo = _create_entity_transform_prompt_repo(config)
+    intake = ConversationalTaskIntake(config)
+    bridge = home_surface.IntakePreviewBridge()
+    bridge._create_intake = lambda: intake
+    project = home_surface.SupportedProject(
+        name="BABYLON TEST",
+        path=Path(target_repo),
+        project_type="unity_project",
+        source="test",
+        status="supported",
+    )
+
+    preview = bridge.prepare_prompt("Change the ground to dirt", project)
+
+    assert preview.available is True
+    assert preview.decision_state == "Needs approval"
+    assert preview.next_action_label == "Open review"
+    assert preview.mapped_prompt == "apply dirt ground theme"
+    assert "requires operator approval" in preview.decision_reason
+
+
+def test_home_surface_environment_theme_review_surface_explains_scope_validation_and_boundary(tmp_path):
+    config = _make_config(tmp_path / "home_surface_environment_theme_review_surface")
+    _write_environment_theme_capability_contracts(config)
+    _write_environment_theme_real_target_evidence(config)
+    target_repo = _create_entity_transform_prompt_repo(config)
+    intake = ConversationalTaskIntake(config)
+    bridge = home_surface.IntakePreviewBridge()
+    bridge._create_intake = lambda: intake
+    bridge._build_review_bundle_fn = build_review_bundle
+    project = home_surface.SupportedProject(
+        name="BABYLON TEST",
+        path=Path(target_repo),
+        project_type="unity_project",
+        source="test",
+        status="supported",
+    )
+
+    preview = bridge.prepare_prompt("Make the ground grassy", project)
+    review = bridge.build_review_surface(preview, project)
+
+    assert preview.decision_state == "Needs approval"
+    assert review.available is True
+    assert review.request_summary == (
+        "Reviewing the bounded environment theme action 'apply grass ground theme' for BABYLON TEST. "
+        "This approval covers only the reviewed Ground material theme change."
+    )
+    assert review.approval_reason == (
+        "This request enters bounded environment visual-theme review before any run is queued. "
+        "Approval authorizes only the reviewed Ground material action 'apply grass ground theme'. "
+        "It does not authorize broader terrain art direction, follow-on scene styling, or any extra mutation outside the reviewed scope."
+    )
+    assert review.expected_change_scope == (
+        "Limit execution to the reviewed environment theme action 'apply grass ground theme' on Ground in Babylon FPS game ver 002 for BABYLON TEST. "
+        "No broader terrain realism pass, foliage expansion, decal work, or extra scene styling changes are included."
+    )
+    assert review.validation_intent == (
+        "After approval, AI-E will execute the reviewed bounded environment theme action through the deterministic project tool route, "
+        "validate the recorded Ground material mutation artifact, and confirm the approved Babylon scene target before treating the run as complete. "
+        "Sandbox remains an explicit alternative path instead of the default approval path."
+    )
+    assert "Guardrails limit execution to the reviewed environment theme action 'apply grass ground theme'." in review.risk_guardrail_status
+    assert "Scope is limited to the approved Ground material mutation in the supported Babylon scene." in review.risk_guardrail_status
+    assert "Deterministic project tool routing has already been matched for this request." in review.risk_guardrail_status
+    assert "Sandbox remains a separate operator choice and is not implied by approval." in review.risk_guardrail_status
+    assert review.status_message == (
+        "This bounded environment theme review is prepared only. Nothing has run yet. "
+        "Approve to queue the reviewed run, reject to stop here, or choose sandbox as the explicit alternative path."
+    )
+    assert review.approve_enabled is True
+    assert review.sandbox_enabled is True
+
+
+def test_home_surface_review_approve_once_approves_environment_theme_request(tmp_path):
+    config = _make_config(tmp_path / "home_surface_environment_theme_review_approve_once")
+    _write_environment_theme_capability_contracts(config)
+    _write_environment_theme_real_target_evidence(config)
+    target_repo = _create_entity_transform_prompt_repo(config)
+    intake = ConversationalTaskIntake(config)
+    bridge = home_surface.IntakePreviewBridge()
+    bridge._create_intake = lambda: intake
+    bridge._config_cls = OrchestratorConfig
+    bridge._build_review_bundle_fn = build_review_bundle
+    bridge._approve_mutation_task_fn = approve_mutation_task
+    project = home_surface.SupportedProject(
+        name="BABYLON TEST",
+        path=Path(target_repo),
+        project_type="unity_project",
+        source="test",
+        status="supported",
+    )
+
+    preview = bridge.prepare_prompt("Make the ground grassy", project)
+    review = bridge.build_review_surface(preview, project)
+    action_result = bridge.apply_review_action(
+        review,
+        action="approve_once",
+        project=project,
+        approved_by="Operator",
+    )
+
+    queue = json.loads(config.queue_path.read_text(encoding="utf-8"))["tasks"]
+
+    assert preview.decision_state == "Needs approval"
+    assert review.available is True
+    assert action_result.ok is True
+    assert action_result.queue_status == "pending"
+    assert len(queue) == 1
+    assert queue[0]["status"] == "pending"
+    assert queue[0]["approval_state"] == "approved"
+
+
+def test_task_intake_blocks_broad_ground_realism_prompt(tmp_path):
+    config = _make_config(tmp_path / "blocked_ground_realism_action")
+    _write_environment_theme_capability_contracts(config)
+    target_repo = _create_entity_transform_prompt_repo(config)
+    intake = ConversationalTaskIntake(config)
+
+    result = intake.accept_message(
+        "Make the terrain realistic with grass, flowers, and gravel everywhere",
+        session_id="blocked-ground-realism-session",
+        target_repo=target_repo,
+    )
+
+    assert result.queue_entry["status"] == "blocked"
+    assert result.routing.decision == "block"
+    assert result.routing.capability_supported is False
+    assert result.routing.mutation_capable is False
+    assert "bounded environment look-dev actions" in str(result.routing.fail_closed_reason or "")
+
+
+def test_task_intake_blocks_broad_layered_ground_art_prompt(tmp_path):
+    config = _make_config(tmp_path / "blocked_layered_ground_art_action")
+    _write_environment_theme_capability_contracts(config)
+    target_repo = _create_entity_transform_prompt_repo(config)
+    intake = ConversationalTaskIntake(config)
+
+    result = intake.accept_message(
+        "Make the terrain realistic with layered dirt, grass, gravel, flowers, and battle damage",
+        session_id="blocked-layered-ground-art-session",
+        target_repo=target_repo,
+    )
+
+    assert result.queue_entry["status"] == "blocked"
+    assert result.routing.decision == "block"
+    assert result.routing.capability_supported is False
+    assert result.routing.mutation_capable is False
+    assert "bounded environment look-dev actions" in str(result.routing.fail_closed_reason or "")
+
+
+def test_task_intake_reports_missing_ground_theme_route_assets_for_supported_prompt(tmp_path):
+    config = _make_config(tmp_path / "ground_theme_route_assets_missing")
+    _write_environment_theme_capability_contracts(config)
+    target_repo = _create_entity_transform_prompt_repo(config)
+    tools_dir = Path(target_repo) / "Tools"
+    (tools_dir / "run_unity_mutate_ground_theme.ps1").unlink()
+    intake = ConversationalTaskIntake(config)
+
+    result = intake.accept_message(
+        "Make the ground grassy",
+        session_id="ground-theme-route-assets-missing-session",
+        target_repo=target_repo,
+    )
+
+    assert result.routing.decision == "block"
+    assert result.routing.mapped_prompt == "apply grass ground theme"
+    assert "recognized the bounded environment theme action 'apply grass ground theme'" in (result.routing.fail_closed_reason or "")
+
+
+def test_home_surface_prepare_prompt_routes_platformer_direct_mutation_into_review(tmp_path):
+    config = _make_config(tmp_path / "home_surface_platformer_direct_review")
+    _write_platformer_capability_contracts(config)
+    target_repo = _create_entity_transform_prompt_repo(config)
+    intake = ConversationalTaskIntake(config)
+    bridge = home_surface.IntakePreviewBridge()
+    bridge._create_intake = lambda: intake
+    project = home_surface.SupportedProject(
+        name="BABYLON TEST",
+        path=Path(target_repo),
+        project_type="unity_project",
+        source="test",
+        status="supported",
+    )
+
+    preview = bridge.prepare_prompt("make more obstacles", project)
+
+    assert preview.available is True
+    assert preview.decision_state == "Needs approval"
+    assert preview.next_action_label == "Open review"
+    assert preview.mapped_prompt == "increase obstacle density"
+    assert "bounded autonomy pipeline" in preview.decision_reason
+
+
+def test_home_surface_prepare_prompt_routes_platformer_goal_plan_into_review(tmp_path):
+    config = _make_config(tmp_path / "home_surface_platformer_goal_review")
+    _write_platformer_capability_contracts(config)
+    target_repo = _create_entity_transform_prompt_repo(config)
+    intake = ConversationalTaskIntake(config)
+    bridge = home_surface.IntakePreviewBridge()
+    bridge._create_intake = lambda: intake
+    project = home_surface.SupportedProject(
+        name="BABYLON TEST",
+        path=Path(target_repo),
+        project_type="unity_project",
+        source="test",
+        status="supported",
+    )
+
+    preview = bridge.prepare_prompt("Make this level more intense", project)
+
+    assert preview.available is True
+    assert preview.decision_state == "Needs approval"
+    assert preview.next_action_label == "Open review"
+    assert preview.plan_title == "Use challenge traversal"
+    assert preview.plan_steps == [
+        "Set gap size to large",
+        "Set obstacle density to dense",
+        "Set enemy density to high",
+        "Set segment count to long",
+    ]
+    assert "bounded autonomy pipeline" in preview.decision_reason
+
+
+def test_home_surface_review_approve_once_approves_all_platformer_plan_steps(tmp_path):
+    config = _make_config(tmp_path / "home_surface_platformer_review_approve_all_steps")
+    _write_platformer_capability_contracts(config)
+    target_repo = _create_entity_transform_prompt_repo(config)
+    intake = ConversationalTaskIntake(config)
+    bridge = home_surface.IntakePreviewBridge()
+    bridge._create_intake = lambda: intake
+    bridge._config_cls = OrchestratorConfig
+    bridge._build_review_bundle_fn = build_review_bundle
+    bridge._approve_mutation_task_fn = approve_mutation_task
+    project = home_surface.SupportedProject(
+        name="BABYLON TEST",
+        path=Path(target_repo),
+        project_type="unity_project",
+        source="test",
+        status="supported",
+    )
+
+    preview = bridge.prepare_prompt("Make this level more intense", project)
+    review = bridge.build_review_surface(preview, project)
+    action_result = bridge.apply_review_action(
+        review,
+        action="approve_once",
+        project=project,
+        approved_by="Operator",
+    )
+
+    queue = json.loads(config.queue_path.read_text(encoding="utf-8"))["tasks"]
+
+    assert preview.decision_state == "Needs approval"
+    assert review.available is True
+    assert action_result.ok is True
+    assert action_result.queue_status == "pending"
+    assert all(task["status"] == "pending" for task in queue)
+    assert all(task["approval_state"] == "approved" for task in queue)
+
+
+def test_home_surface_platformer_direct_review_surface_explains_scope_validation_and_boundary(tmp_path):
+    config = _make_config(tmp_path / "home_surface_platformer_direct_review_surface")
+    _write_platformer_capability_contracts(config)
+    target_repo = _create_entity_transform_prompt_repo(config)
+    intake = ConversationalTaskIntake(config)
+    bridge = home_surface.IntakePreviewBridge()
+    bridge._create_intake = lambda: intake
+    bridge._build_review_bundle_fn = build_review_bundle
+    project = home_surface.SupportedProject(
+        name="BABYLON TEST",
+        path=Path(target_repo),
+        project_type="unity_project",
+        source="test",
+        status="supported",
+    )
+
+    preview = bridge.prepare_prompt("make more obstacles", project)
+    review = bridge.build_review_surface(preview, project)
+
+    assert preview.decision_state == "Needs approval"
+    assert review.available is True
+    assert review.request_summary == (
+        "Reviewing the bounded platformer action 'increase obstacle density' for BABYLON TEST. "
+        "This approval covers only the reviewed deterministic platformer change."
+    )
+    assert review.approval_reason == (
+        "This request enters bounded platformer review before any run is queued. "
+        "Approval authorizes only the reviewed platformer action 'increase obstacle density'. "
+        "It does not authorize arbitrary follow-on mutations, and sandbox remains a separate operator choice."
+    )
+    assert review.expected_change_scope == (
+        "Limit execution to the reviewed platformer action 'increase obstacle density' in BABYLON TEST. "
+        "No arbitrary geometry, content, or unsupported gameplay changes are included."
+    )
+    assert review.validation_intent == (
+        "After approval, AI-E will execute the reviewed bounded platformer action through the deterministic project tool route "
+        "and validate the resulting platformer state before treating the run as complete. "
+        "Sandbox runs that bounded route as an explicit proof path instead of the approval path."
+    )
+    assert "Guardrails limit execution to the reviewed platformer action 'increase obstacle density'." in review.risk_guardrail_status
+    assert "Deterministic project tool routing has already been matched for this request." in review.risk_guardrail_status
+    assert "Sandbox remains a separate operator choice and is not implied by approval." in review.risk_guardrail_status
+    assert review.status_message == (
+        "This bounded platformer review is prepared only. Nothing has run yet. "
+        "Approve to queue the reviewed run, reject to stop here, or choose sandbox as the explicit alternative path."
+    )
+    assert review.approve_enabled is True
+    assert review.sandbox_enabled is True
+
+
+def test_home_surface_platformer_plan_review_surface_explains_scope_validation_and_boundary(tmp_path):
+    config = _make_config(tmp_path / "home_surface_platformer_plan_review_surface")
+    _write_platformer_capability_contracts(config)
+    target_repo = _create_entity_transform_prompt_repo(config)
+    intake = ConversationalTaskIntake(config)
+    bridge = home_surface.IntakePreviewBridge()
+    bridge._create_intake = lambda: intake
+    bridge._build_review_bundle_fn = build_review_bundle
+    project = home_surface.SupportedProject(
+        name="BABYLON TEST",
+        path=Path(target_repo),
+        project_type="unity_project",
+        source="test",
+        status="supported",
+    )
+
+    preview = bridge.prepare_prompt("Make this level more intense", project)
+    review = bridge.build_review_surface(preview, project)
+
+    assert preview.decision_state == "Needs approval"
+    assert review.available is True
+    assert review.request_summary == (
+        "Reviewing the bounded platformer plan 'Use challenge traversal' for BABYLON TEST. "
+        "This approval covers 4 fixed step(s) in the reviewed traversal scope only."
+    )
+    assert review.approval_reason == (
+        "This request enters bounded platformer review before any run is queued. "
+        "Approval authorizes only the reviewed platformer plan 'Use challenge traversal'. "
+        "It does not authorize arbitrary follow-on mutations, and sandbox remains a separate operator choice."
+    )
+    assert review.expected_change_scope == (
+        "Limit execution to the reviewed platformer plan 'Use challenge traversal' with 4 fixed step(s) in BABYLON TEST. "
+        "No extra mutation families or unsupported content changes are included."
+    )
+    assert review.validation_intent == (
+        "After approval, AI-E will execute the reviewed bounded platformer plan, keep each step inside the deterministic "
+        "project tool route, and validate the resulting platformer state before treating the run as complete. "
+        "Sandbox runs the same bounded route as an explicit proof path instead of the approval path."
+    )
+    assert "Guardrails limit execution to the 4-step reviewed plan 'Use challenge traversal'." in review.risk_guardrail_status
+    assert "Deterministic project tool routing has already been matched for this request." in review.risk_guardrail_status
+    assert "Sandbox remains a separate operator choice and is not implied by approval." in review.risk_guardrail_status
+    assert review.status_message == (
+        "This bounded platformer review is prepared only. Nothing has run yet. "
+        "Approve to queue the reviewed run, reject to stop here, or choose sandbox as the explicit alternative path."
+    )
+    assert review.approve_enabled is True
+    assert review.sandbox_enabled is True
+
+
+def test_home_surface_review_ignores_stale_blocked_platformer_request_for_fresh_prepare(tmp_path):
+    config = _make_config(tmp_path / "home_surface_platformer_stale_blocked_review")
+    _write_platformer_capability_contracts(config)
+    target_repo = _create_entity_transform_prompt_repo(config)
+    intake = ConversationalTaskIntake(config)
+    prompt = "make more obstacles"
+    task_type = "mutation_request"
+    request_id = intake._derive_request_id(prompt, target_repo, task_type)
+    queue_payload = {
+        "tasks": [
+            {
+                "task_id": "INTAKE_STALE_BLOCKED",
+                "request_id": request_id,
+                "status": "blocked",
+                "approval_state": "approved",
+                "execution_lane": "approval_required_mutation",
+            }
+        ]
+    }
+    config.queue_path.write_text(json.dumps(queue_payload, indent=2), encoding="utf-8")
+
+    bridge = home_surface.IntakePreviewBridge()
+    bridge._create_intake = lambda: intake
+    bridge._build_review_bundle_fn = build_review_bundle
+    project = home_surface.SupportedProject(
+        name="BABYLON TEST",
+        path=Path(target_repo),
+        project_type="unity_project",
+        source="test",
+        status="supported",
+    )
+
+    preview = bridge.prepare_prompt(prompt, project)
+    review = bridge.build_review_surface(preview, project)
+
+    assert preview.decision_state == "Needs approval"
+    assert review.available is True
+    assert review.queue_status == ""
+    assert review.approve_enabled is True
+    assert review.reject_enabled is True
+    assert review.sandbox_enabled is True
+
+
+@pytest.mark.parametrize(
+    ("user_prompt", "plan_step_text", "expected_action", "expected_canonical_prompt"),
+    [
+        (
+            "increase platformer obstacle density",
+            "Set obstacle density to dense",
+            "platformer_increase_obstacle_density",
+            "increase obstacle density",
+        ),
+        (
+            "increase gap size",
+            "Set gap size to large",
+            "platformer_increase_gap_size",
+            "make gaps larger",
+        ),
+    ],
+)
+def test_platformer_action_normalization_maps_direct_and_plan_step_text_to_same_canonical_action(
+    user_prompt,
+    plan_step_text,
+    expected_action,
+    expected_canonical_prompt,
+):
+    assert normalize_platformer_action(user_prompt) == expected_action
+    assert normalize_platformer_action(plan_step_text) == expected_action
+    assert canonicalize_platformer_action_prompt(user_prompt) == expected_canonical_prompt
+    assert canonicalize_platformer_action_prompt(plan_step_text) == expected_canonical_prompt
+
+
+@pytest.mark.parametrize(
+    ("prompt_text", "expected_translated_command", "expected_probe_action_type"),
+    [
+        (
+            "increase platformer obstacle density",
+            "increase obstacle density",
+            "mutate_platformer_obstacle_density",
+        ),
+        (
+            "Set gap size to large",
+            "make gaps larger",
+            "mutate_platformer_gap_size",
+        ),
+    ],
+)
+def test_entity_transform_route_resolution_uses_platformer_canonical_action_normalization(
+    tmp_path,
+    prompt_text,
+    expected_translated_command,
+    expected_probe_action_type,
+):
+    config = _make_config(tmp_path / "platformer_route_normalization")
+    target_repo = _create_entity_transform_prompt_repo(config)
+
+    route_resolution, route_issue = resolve_entity_transform_route(Path(target_repo), prompt_text)
+
+    assert route_issue is None
+    assert route_resolution is not None
+    assert route_resolution.translated_command == expected_translated_command
+    assert route_resolution.probe_action_type == expected_probe_action_type
 
 
 def test_task_intake_blocks_out_of_scope_platformer_goal_intent_with_explicit_guidance(tmp_path):
@@ -6790,6 +7557,26 @@ def test_task_intake_blocks_out_of_scope_platformer_goal_intent_with_explicit_gu
     assert result.routing.mutation_capable is False
     assert result.routing.mapped_prompt == "make traversal more challenging but fair and add lava"
     assert "bounded platformer gameplay directives only through deterministic traversal profiles and level sets" in (result.routing.intelligence_summary or "")
+
+
+def test_task_intake_reports_missing_platformer_route_assets_for_supported_direct_prompt(tmp_path):
+    config = _make_config(tmp_path / "platformer_route_assets_missing")
+    _write_platformer_capability_contracts(config)
+    target_repo = _create_entity_transform_prompt_repo(config)
+    _strip_platformer_route_assets(target_repo)
+    intake = ConversationalTaskIntake(config)
+
+    result = intake.accept_message(
+        "make more obstacles",
+        session_id="platformer-route-assets-missing-session",
+        target_repo=target_repo,
+    )
+
+    assert result.routing.decision == "block"
+    assert result.routing.mapped_prompt == "increase obstacle density"
+    assert "recognized the bounded platformer action 'increase obstacle density'" in (result.routing.fail_closed_reason or "")
+    assert "does not expose the deterministic platformer prompt aliases, route entries, and wrapper scripts" in (result.routing.fail_closed_reason or "")
+    assert "couldn't match it to a known action" not in (result.routing.fail_closed_reason or "")
 
 
 def test_result_evaluation_preserves_generic_capability_state_metadata():
@@ -8435,6 +9222,455 @@ def test_home_surface_surfaces_platformer_layout_validation_findings(tmp_path):
     assert proof.final_verdict == "Requested change completed, but spatial validation found 1 layout issue(s)."
 
 
+def test_home_surface_surfaces_platformer_direct_proof_with_review_scope_language(tmp_path):
+    config = _make_config(tmp_path / "home_surface_platformer_direct_proof_scope")
+    target_repo = config.root_dir / "BABYLON_TEST"
+    target_repo.mkdir(parents=True, exist_ok=True)
+    request_payload_path = config.contracts_dir / "intake" / "requests" / "REQ_PLATFORMER_DIRECT_SCOPE.json"
+    request_payload_path.parent.mkdir(parents=True, exist_ok=True)
+    request_payload_path.write_text(
+        json.dumps(
+            {
+                "conversational_request": {
+                    "operator_prompt": "make more obstacles",
+                    "context": {
+                        "routing": {
+                            "capability_id": "bounded_platformer_entity_transform",
+                            "mapped_prompt": "increase obstacle density",
+                            "target_context": "platformer",
+                        }
+                    },
+                }
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    run_dir = config.runs_dir / "platformer-direct-proof-session"
+    artifacts_dir = run_dir / "artifacts"
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+    artifact_path = artifacts_dir / "TASK_PLATFORMER_DIRECT_SCOPE_attempt_01.json"
+    artifact_path.write_text(
+        json.dumps(
+            {
+                "task": {
+                    "task_id": "TASK_PLATFORMER_DIRECT_SCOPE",
+                    "request_id": "REQ_PLATFORMER_DIRECT_SCOPE",
+                    "target_repo": str(target_repo),
+                    "operator_prompt": "make more obstacles",
+                    "source_prompt": "make more obstacles",
+                    "request_payload_path": "contracts/intake/requests/REQ_PLATFORMER_DIRECT_SCOPE.json",
+                    "approval_state": "approved",
+                    "approved_by": "Operator",
+                },
+                "result": {
+                    "status": "blocked",
+                    "details": {
+                        "target_context": "platformer",
+                        "translated_command": "increase obstacle density",
+                        "action_name": "verified_change",
+                    },
+                    "artifacts": [],
+                },
+                "validation": {
+                    "validation_state": "blocked",
+                    "note": "Translated route execution failed for 'increase obstacle density'.",
+                },
+                "timestamp": "2026-04-05T15:32:33Z",
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "session_state.json").write_text(json.dumps({}, indent=2), encoding="utf-8")
+
+    proof = home_surface.load_proof_result_surface(artifact_path)
+
+    assert proof.available is True
+    assert proof.final_verdict == (
+        "The approved bounded platformer action 'increase obstacle density' entered the deterministic project tool route after Operator approval, "
+        "but AI-E stopped it before completion. Stop reason: Translated route execution failed for 'increase obstacle density'. "
+        "Constraint: Deterministic guardrail."
+    )
+    assert proof.validation_outcome == (
+        "Validation stopped after the approved bounded platformer action 'increase obstacle density' entered the deterministic project tool route. "
+        "AI-E did not widen scope beyond the reviewed change. Failing check: Translated route execution. "
+        "Stop reason: Translated route execution failed for 'increase obstacle density'. Constraint enforcement: Deterministic guardrail."
+    )
+    assert proof.change_summary == (
+        "AI-E stayed inside the approved bounded platformer action 'increase obstacle density' for this recorded run. "
+        "Attempt trace: Reached validation for 'increase obstacle density' and stopped before completion."
+    )
+    assert "Mutation attempt: 'increase obstacle density'." in proof.key_steps
+    assert "Stop reason: Translated route execution failed for 'increase obstacle density'." in proof.key_steps
+    assert "Constraint enforcement: Deterministic guardrail." in proof.key_steps
+    assert "Failing check: Translated route execution." in proof.validation_checks
+    assert "Constraint enforcement: Deterministic guardrail." in proof.validation_checks
+    assert proof.debug_expanded is False
+    assert proof.debug_router_refs == []
+    assert proof.debug_translated_commands == []
+
+    debug_proof = home_surface.load_proof_result_surface(artifact_path, debug_expanded=True)
+
+    assert debug_proof.debug_available is True
+    assert debug_proof.debug_expanded is True
+    assert "mapped_prompt=increase obstacle density" in debug_proof.debug_translated_commands
+    assert "translated_command=increase obstacle density" in debug_proof.debug_translated_commands
+    assert "validation_state=blocked" in debug_proof.debug_validation_codes
+    assert any(item == "task_id=TASK_PLATFORMER_DIRECT_SCOPE" for item in debug_proof.debug_attempt_metadata)
+
+
+def test_home_surface_surfaces_platformer_plan_proof_with_review_scope_language(tmp_path):
+    config = _make_config(tmp_path / "home_surface_platformer_plan_proof_scope")
+    target_repo = config.root_dir / "BABYLON_TEST"
+    target_repo.mkdir(parents=True, exist_ok=True)
+    request_payload_path = config.contracts_dir / "intake" / "requests" / "REQ_PLATFORMER_PLAN_SCOPE.json"
+    request_payload_path.parent.mkdir(parents=True, exist_ok=True)
+    request_payload_path.write_text(
+        json.dumps(
+            {
+                "conversational_request": {
+                    "operator_prompt": "make this level more intense",
+                    "context": {
+                        "routing": {
+                            "plan_key": "platformer_use_challenge_traversal",
+                            "capability_id": "bounded_platformer_traversal_plan",
+                            "mapped_prompt": "use challenge traversal",
+                            "plan_title": "Use challenge traversal",
+                            "plan_step_titles": [
+                                "Set gap size to large",
+                                "Set obstacle density to dense",
+                                "Set enemy density to high",
+                                "Set segment count to long",
+                            ],
+                            "target_context": "platformer",
+                        }
+                    },
+                }
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    run_dir = config.runs_dir / "platformer-plan-proof-session"
+    artifacts_dir = run_dir / "artifacts"
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "session_state.json").write_text(
+        json.dumps(
+            {
+                "last_generated_plan_steps": [
+                    "Set gap size to large",
+                    "Set obstacle density to dense",
+                    "Set enemy density to high",
+                    "Set segment count to long",
+                ]
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    artifact_path = artifacts_dir / "TASK_PLATFORMER_PLAN_SCOPE__STEP_01_attempt_01.json"
+    artifact_path.write_text(
+        json.dumps(
+            {
+                "task": {
+                    "task_id": "TASK_PLATFORMER_PLAN_SCOPE__STEP_01",
+                    "request_id": "REQ_PLATFORMER_PLAN_SCOPE",
+                    "plan_id": "PLAN_PLATFORMER_PLAN_SCOPE",
+                    "plan_title": "Use challenge traversal",
+                    "plan_step_index": 1,
+                    "plan_step_title": "Set gap size to large",
+                    "target_repo": str(target_repo),
+                    "operator_prompt": "make this level more intense",
+                    "source_prompt": "make this level more intense",
+                    "request_payload_path": "contracts/intake/requests/REQ_PLATFORMER_PLAN_SCOPE.json",
+                    "approval_state": "approved",
+                    "approved_by": "Operator",
+                },
+                "result": {
+                    "status": "blocked",
+                    "details": {
+                        "target_context": "platformer",
+                        "translated_command": "make gaps larger",
+                        "action_name": "verified_change",
+                    },
+                    "artifacts": [],
+                },
+                "validation": {
+                    "validation_state": "blocked",
+                    "note": "Translated route execution failed for 'make gaps larger'.",
+                },
+                "timestamp": "2026-04-05T15:32:50Z",
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    proof = home_surface.load_proof_result_surface(run_dir)
+
+    assert proof.available is True
+    assert proof.final_verdict == (
+        "AI-E started the approved bounded platformer plan 'Use challenge traversal' after Operator approval, "
+        "but stopped when a reviewed step could not complete safely. Stopped at reviewed step 1: Set gap size to large. "
+        "Stop reason: Translated route execution failed for 'make gaps larger'. Constraint: Deterministic guardrail."
+    )
+    assert proof.validation_outcome == (
+        "At least one reviewed step in the approved bounded platformer plan 'Use challenge traversal' was blocked inside the deterministic project tool route. "
+        "AI-E did not widen scope beyond the approved traversal. Stopped at reviewed step 1: Set gap size to large. "
+        "Failing check: Translated route execution. Stop reason: Translated route execution failed for 'make gaps larger'. "
+        "Constraint enforcement: Deterministic guardrail."
+    )
+    assert proof.change_summary == (
+        "AI-E stayed inside the approved 4-step platformer plan 'Use challenge traversal' for this recorded run. "
+        "Attempt trace: executed 1 reviewed step(s) and stopped at step 1 'Set gap size to large'."
+    )
+    assert any(
+        step.startswith(
+            "1. Set gap size to large: Status: Blocked. Mutation: 'make gaps larger'. Failing check: Translated route execution. "
+            "Stop reason: Translated route execution failed for 'make gaps larger'. Constraint: Deterministic guardrail."
+        )
+        for step in proof.key_steps
+    )
+    assert "Set gap size to large: Failing check: Translated route execution." in proof.validation_checks
+    assert "Set gap size to large: Constraint enforcement: Deterministic guardrail." in proof.validation_checks
+    assert proof.debug_expanded is False
+    assert proof.debug_attempt_metadata == []
+
+    debug_proof = home_surface.load_proof_result_surface(run_dir, debug_expanded=True)
+
+    assert debug_proof.debug_available is True
+    assert debug_proof.debug_expanded is True
+    assert "step_1:translated_command=make gaps larger" in debug_proof.debug_translated_commands
+    assert "step_1:validation_state=blocked" in debug_proof.debug_validation_codes
+    assert any(item.startswith("step_1: title=Set gap size to large; result_status=blocked;") for item in debug_proof.debug_attempt_metadata)
+
+
+def test_home_surface_keeps_multiple_reviewed_plans_separate_in_one_session(tmp_path):
+    config = _make_config(tmp_path / "home_surface_platformer_multi_plan_proof")
+    target_repo = config.root_dir / "BABYLON_TEST"
+    target_repo.mkdir(parents=True, exist_ok=True)
+
+    request_dir = config.contracts_dir / "intake" / "requests"
+    request_dir.mkdir(parents=True, exist_ok=True)
+    request_dir.joinpath("REQ_PLATFORMER_MULTI_PLAN_ONE.json").write_text(
+        json.dumps(
+            {
+                "conversational_request": {
+                    "operator_prompt": "increase obstacle density and enemy density",
+                    "context": {
+                        "routing": {
+                            "plan_key": "platformer_multi_intent_obstacle_enemy_v1",
+                            "capability_id": "bounded_platformer_intensity_plan",
+                            "mapped_prompt": "increase obstacle density and enemy density",
+                            "plan_title": "Increase obstacle density and enemy density",
+                            "plan_step_titles": [
+                                "Set obstacle density to dense",
+                                "Set enemy density to high",
+                            ],
+                            "target_context": "platformer",
+                            "resolution_source": "platformer_multi_intent_composition",
+                        }
+                    },
+                }
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    request_dir.joinpath("REQ_PLATFORMER_MULTI_PLAN_TWO.json").write_text(
+        json.dumps(
+            {
+                "conversational_request": {
+                    "operator_prompt": "make the gaps larger and add more obstacles",
+                    "context": {
+                        "routing": {
+                            "plan_key": "platformer_multi_intent_gap_obstacle_v1",
+                            "capability_id": "bounded_platformer_intensity_plan",
+                            "mapped_prompt": "make the gaps larger and add more obstacles",
+                            "plan_title": "Make gaps larger and add more obstacles",
+                            "plan_step_titles": [
+                                "Set gap size to large",
+                                "Set obstacle density to dense",
+                            ],
+                            "target_context": "platformer",
+                            "resolution_source": "platformer_multi_intent_composition",
+                        }
+                    },
+                }
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    run_dir = config.runs_dir / "platformer-multi-plan-proof-session"
+    artifacts_dir = run_dir / "artifacts"
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+
+    attempts = [
+        (
+            "TASK_MULTI_PLAN_ONE__STEP_01_attempt_01.json",
+            {
+                "task": {
+                    "task_id": "TASK_MULTI_PLAN_ONE__STEP_01",
+                    "request_id": "REQ_PLATFORMER_MULTI_PLAN_ONE",
+                    "plan_id": "PLAN_PLATFORMER_MULTI_PLAN_ONE",
+                    "plan_title": "Increase obstacle density and enemy density",
+                    "plan_step_index": 1,
+                    "plan_step_title": "Set obstacle density to dense",
+                    "target_repo": str(target_repo),
+                    "operator_prompt": "increase obstacle density and enemy density",
+                    "source_prompt": "increase obstacle density and enemy density",
+                    "request_payload_path": "contracts/intake/requests/REQ_PLATFORMER_MULTI_PLAN_ONE.json",
+                    "approval_state": "approved",
+                    "approved_by": "Operator",
+                },
+                "result": {
+                    "status": "completed",
+                    "details": {
+                        "target_context": "platformer",
+                        "translated_command": "increase obstacle density",
+                        "action_name": "verified_change",
+                    },
+                    "artifacts": [],
+                },
+                "validation": {
+                    "validation_state": "passed",
+                    "note": "Recorded validation passed.",
+                },
+                "timestamp": "2026-04-05T17:10:00Z",
+            },
+        ),
+        (
+            "TASK_MULTI_PLAN_ONE__STEP_02_attempt_01.json",
+            {
+                "task": {
+                    "task_id": "TASK_MULTI_PLAN_ONE__STEP_02",
+                    "request_id": "REQ_PLATFORMER_MULTI_PLAN_ONE",
+                    "plan_id": "PLAN_PLATFORMER_MULTI_PLAN_ONE",
+                    "plan_title": "Increase obstacle density and enemy density",
+                    "plan_step_index": 2,
+                    "plan_step_title": "Set enemy density to high",
+                    "target_repo": str(target_repo),
+                    "operator_prompt": "increase obstacle density and enemy density",
+                    "source_prompt": "increase obstacle density and enemy density",
+                    "request_payload_path": "contracts/intake/requests/REQ_PLATFORMER_MULTI_PLAN_ONE.json",
+                    "approval_state": "approved",
+                    "approved_by": "Operator",
+                },
+                "result": {
+                    "status": "completed",
+                    "details": {
+                        "target_context": "platformer",
+                        "translated_command": "increase enemy density",
+                        "action_name": "verified_change",
+                    },
+                    "artifacts": [],
+                },
+                "validation": {
+                    "validation_state": "passed",
+                    "note": "Recorded validation passed.",
+                },
+                "timestamp": "2026-04-05T17:10:10Z",
+            },
+        ),
+        (
+            "TASK_MULTI_PLAN_TWO__STEP_01_attempt_01.json",
+            {
+                "task": {
+                    "task_id": "TASK_MULTI_PLAN_TWO__STEP_01",
+                    "request_id": "REQ_PLATFORMER_MULTI_PLAN_TWO",
+                    "plan_id": "PLAN_PLATFORMER_MULTI_PLAN_TWO",
+                    "plan_title": "Make gaps larger and add more obstacles",
+                    "plan_step_index": 1,
+                    "plan_step_title": "Set gap size to large",
+                    "target_repo": str(target_repo),
+                    "operator_prompt": "make the gaps larger and add more obstacles",
+                    "source_prompt": "make the gaps larger and add more obstacles",
+                    "request_payload_path": "contracts/intake/requests/REQ_PLATFORMER_MULTI_PLAN_TWO.json",
+                    "approval_state": "approved",
+                    "approved_by": "Operator",
+                },
+                "result": {
+                    "status": "completed",
+                    "details": {
+                        "target_context": "platformer",
+                        "translated_command": "make gaps larger",
+                        "action_name": "verified_change",
+                    },
+                    "artifacts": [],
+                },
+                "validation": {
+                    "validation_state": "passed",
+                    "note": "Recorded validation passed.",
+                },
+                "timestamp": "2026-04-05T17:10:20Z",
+            },
+        ),
+        (
+            "TASK_MULTI_PLAN_TWO__STEP_02_attempt_01.json",
+            {
+                "task": {
+                    "task_id": "TASK_MULTI_PLAN_TWO__STEP_02",
+                    "request_id": "REQ_PLATFORMER_MULTI_PLAN_TWO",
+                    "plan_id": "PLAN_PLATFORMER_MULTI_PLAN_TWO",
+                    "plan_title": "Make gaps larger and add more obstacles",
+                    "plan_step_index": 2,
+                    "plan_step_title": "Set obstacle density to dense",
+                    "target_repo": str(target_repo),
+                    "operator_prompt": "make the gaps larger and add more obstacles",
+                    "source_prompt": "make the gaps larger and add more obstacles",
+                    "request_payload_path": "contracts/intake/requests/REQ_PLATFORMER_MULTI_PLAN_TWO.json",
+                    "approval_state": "approved",
+                    "approved_by": "Operator",
+                },
+                "result": {
+                    "status": "completed",
+                    "details": {
+                        "target_context": "platformer",
+                        "translated_command": "increase obstacle density",
+                        "action_name": "verified_change",
+                    },
+                    "artifacts": [],
+                },
+                "validation": {
+                    "validation_state": "passed",
+                    "note": "Recorded validation passed.",
+                },
+                "timestamp": "2026-04-05T17:10:30Z",
+            },
+        ),
+    ]
+    for filename, payload in attempts:
+        artifacts_dir.joinpath(filename).write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    proof = home_surface.load_proof_result_surface(run_dir)
+
+    assert proof.available is True
+    assert proof.title == "2 approved reviewed plans"
+    assert "2 separate approved reviewed plans" in proof.final_verdict
+    assert "Plan 1 'Increase obstacle density and enemy density'" in proof.final_verdict
+    assert "Plan 2 'Make gaps larger and add more obstacles'" in proof.final_verdict
+    assert "Plan 1 'Increase obstacle density and enemy density'" in proof.change_summary
+    assert "Plan 2 'Make gaps larger and add more obstacles'" in proof.validation_outcome
+    assert "Plan 1: Increase obstacle density and enemy density." in proof.key_steps
+    assert "Plan 2: Make gaps larger and add more obstacles." in proof.key_steps
+    assert any(
+        step.startswith(
+            "Plan 1 - 1. Set obstacle density to dense: Status: Passed. Mutation: 'increase obstacle density'."
+        )
+        for step in proof.key_steps
+    )
+    assert any(
+        step.startswith(
+            "Plan 2 - 1. Set gap size to large: Status: Passed. Mutation: 'make gaps larger'."
+        )
+        for step in proof.key_steps
+    )
+
 def test_home_surface_surfaces_platformer_autonomous_review_summary_and_approval_boundary(tmp_path):
     config = _make_config(tmp_path / "home_surface_platformer_autonomous_build")
     target_repo = config.root_dir / "BABYLON_TEST"
@@ -10060,6 +11296,142 @@ def _write_platformer_capability_contracts(config: OrchestratorConfig) -> None:
         (capabilities_dir / filename).write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
+def _write_environment_theme_capability_contracts(config: OrchestratorConfig) -> None:
+    capabilities_dir = config.contracts_dir / "capabilities"
+    capabilities_dir.mkdir(parents=True, exist_ok=True)
+    (capabilities_dir / "level_0001_apply_grass_ground_theme.json").write_text(
+        json.dumps(
+            {
+                "capability_id": "level_0001_apply_grass_ground_theme",
+                "title": "LEVEL_0001 apply grass ground theme",
+                "intent": "mutate",
+                "target_level": "LEVEL_0001",
+                "target_scene": "Assets/Babylon FPS game ver 002.unity",
+                "requested_execution_lane": "approval_required_mutation",
+                "handler_name": "level_0001_entity_transform_handler",
+                "agent_type": "level_0001_entity_transform_mutation_agent",
+                "approval_required": True,
+                "eligible_for_auto": False,
+                "evidence_state": "experimental",
+                "safety_class": "approval_gated_automation",
+                "content_tags": {
+                    "violence_level": "none",
+                    "blood_level": "none",
+                    "gore_level": "none",
+                    "dismemberment": False,
+                    "horror_intensity": "none",
+                    "language_level": "none",
+                    "sexual_content_level": "none",
+                    "nudity_level": "none",
+                    "substance_reference_level": "none",
+                    "gambling_reference_level": "none"
+                },
+                "match_terms": ["grass", "ground", "theme"],
+                "match_verbs": ["apply"],
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    (capabilities_dir / "level_0001_apply_dirt_ground_theme.json").write_text(
+        json.dumps(
+            {
+                "capability_id": "level_0001_apply_dirt_ground_theme",
+                "title": "LEVEL_0001 apply dirt ground theme",
+                "intent": "mutate",
+                "target_level": "LEVEL_0001",
+                "target_scene": "Assets/Babylon FPS game ver 002.unity",
+                "requested_execution_lane": "approval_required_mutation",
+                "handler_name": "level_0001_entity_transform_handler",
+                "agent_type": "level_0001_entity_transform_mutation_agent",
+                "approval_required": True,
+                "eligible_for_auto": False,
+                "evidence_state": "experimental",
+                "safety_class": "approval_gated_automation",
+                "content_tags": {
+                    "violence_level": "none",
+                    "blood_level": "none",
+                    "gore_level": "none",
+                    "dismemberment": False,
+                    "horror_intensity": "none",
+                    "language_level": "none",
+                    "sexual_content_level": "none",
+                    "nudity_level": "none",
+                    "substance_reference_level": "none",
+                    "gambling_reference_level": "none"
+                },
+                "match_terms": ["dirt", "ground", "theme"],
+                "match_verbs": ["apply", "change", "make"],
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+
+def _write_environment_theme_real_target_evidence(config: OrchestratorConfig) -> None:
+    capabilities_dir = config.contracts_dir / "capabilities"
+    capabilities_dir.mkdir(parents=True, exist_ok=True)
+    (capabilities_dir / "evidence.json").write_text(
+        json.dumps(
+            {
+                "capabilities": {
+                    "level_0001_apply_grass_ground_theme": {
+                        "capability_id": "level_0001_apply_grass_ground_theme",
+                        "handler_name": "level_0001_entity_transform_handler",
+                        "safety_class": "approval_gated_automation",
+                        "times_attempted": 1,
+                        "times_passed": 1,
+                        "last_validation_result": "passed",
+                        "last_rollback_result": "none",
+                        "artifact_requirements_met": True,
+                        "eligible_for_auto": False,
+                        "requires_approval": True,
+                        "evidence_state": "real_target_verified",
+                        "sandbox_verified": True,
+                        "real_target_verified": True,
+                        "rollback_verified": False,
+                        "evidence_progression": [
+                            "experimental",
+                            "sandbox_verified",
+                            "real_target_verified",
+                        ],
+                        "validation_history_summary": "attempts=1; passed=1; last_validation_result=passed; sandbox_verified=yes; real_target_verified=yes",
+                        "rollback_history_summary": "last_rollback_result=none; rollback_verified=no",
+                        "notes": "Seeded test evidence for the bounded grass ground theme review path.",
+                    },
+                    "level_0001_apply_dirt_ground_theme": {
+                        "capability_id": "level_0001_apply_dirt_ground_theme",
+                        "handler_name": "level_0001_entity_transform_handler",
+                        "safety_class": "approval_gated_automation",
+                        "times_attempted": 1,
+                        "times_passed": 1,
+                        "last_validation_result": "passed",
+                        "last_rollback_result": "none",
+                        "artifact_requirements_met": True,
+                        "eligible_for_auto": False,
+                        "requires_approval": True,
+                        "evidence_state": "real_target_verified",
+                        "sandbox_verified": True,
+                        "real_target_verified": True,
+                        "rollback_verified": False,
+                        "evidence_progression": [
+                            "experimental",
+                            "sandbox_verified",
+                            "real_target_verified",
+                        ],
+                        "validation_history_summary": "attempts=1; passed=1; last_validation_result=passed; sandbox_verified=yes; real_target_verified=yes",
+                        "rollback_history_summary": "last_rollback_result=none; rollback_verified=no",
+                        "notes": "Seeded test evidence for the bounded dirt ground theme review path.",
+                    }
+                }
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+
 def _write_move_zombie_capability_contract(config: OrchestratorConfig) -> None:
     capabilities_dir = config.contracts_dir / "capabilities"
     capabilities_dir.mkdir(parents=True, exist_ok=True)
@@ -10315,11 +11687,28 @@ def _create_entity_transform_prompt_repo(config: OrchestratorConfig, *, target_r
     (tools_dir / "run_unity_mutate_platformer_obstacle_density.ps1").write_text("placeholder", encoding="utf-8")
     (tools_dir / "run_unity_mutate_platformer_enemy_density.ps1").write_text("placeholder", encoding="utf-8")
     (tools_dir / "run_unity_mutate_platformer_segment_count.ps1").write_text("placeholder", encoding="utf-8")
+    (tools_dir / "run_unity_mutate_ground_theme.ps1").write_text("placeholder", encoding="utf-8")
     (tools_dir / "aie_prompt_aliases.json").write_text(
         json.dumps(
             {
                 "schema_version": 1,
                 "aliases": [
+                    {
+                        "normalized_prompt": "apply grass ground theme",
+                        "translated_command": "apply grass ground theme",
+                    },
+                    {
+                        "normalized_prompt": "make the ground grassy",
+                        "translated_command": "apply grass ground theme",
+                    },
+                    {
+                        "normalized_prompt": "apply dirt ground theme",
+                        "translated_command": "apply dirt ground theme",
+                    },
+                    {
+                        "normalized_prompt": "change the ground to dirt",
+                        "translated_command": "apply dirt ground theme",
+                    },
                     {
                         "normalized_prompt": "move zombie forward",
                         "translated_command": "move zombie forward",
@@ -10499,6 +11888,40 @@ def _create_entity_transform_prompt_repo(config: OrchestratorConfig, *, target_r
             {
                 "scene_name": "entity_test",
                 "routes": [
+                    {
+                        "normalized_command": "apply grass ground theme",
+                        "action_name": "apply_grass_ground_theme",
+                        "entity_type": "environment_theme",
+                        "probe_name": "MutateGroundTheme",
+                        "wrapper_path": "Tools/run_unity_mutate_ground_theme.ps1",
+                        "probe_artifact_file": "intent_apply_grass_ground_theme_probe_result.json",
+                        "probe_log_file": "intent_apply_grass_ground_theme_probe.log",
+                        "wrapper_arguments": {
+                            "ProjectPath": ".",
+                            "SceneName": "Babylon FPS game ver 002",
+                            "TargetObjectName": "Ground",
+                            "ThemeName": "grass_ground",
+                            "RequestedMaterialPath": "Assets/Resources/Materials/GrassGround.mat",
+                            "BaselineMaterialPath": "Assets/Resources/Materials/Cement.mat"
+                        }
+                    },
+                    {
+                        "normalized_command": "apply dirt ground theme",
+                        "action_name": "apply_dirt_ground_theme",
+                        "entity_type": "environment_theme",
+                        "probe_name": "MutateGroundTheme",
+                        "wrapper_path": "Tools/run_unity_mutate_ground_theme.ps1",
+                        "probe_artifact_file": "intent_apply_dirt_ground_theme_probe_result.json",
+                        "probe_log_file": "intent_apply_dirt_ground_theme_probe.log",
+                        "wrapper_arguments": {
+                            "ProjectPath": ".",
+                            "SceneName": "Babylon FPS game ver 002",
+                            "TargetObjectName": "Ground",
+                            "ThemeName": "dirt_ground",
+                            "RequestedMaterialPath": "Assets/Resources/Materials/DirtGround.mat",
+                            "BaselineMaterialPath": "Assets/Resources/Materials/Cement.mat"
+                        }
+                    },
                     {
                         "normalized_command": "move zombie forward",
                         "action_name": "move_entity_forward",
@@ -11259,6 +12682,69 @@ def _create_entity_transform_prompt_repo(config: OrchestratorConfig, *, target_r
         encoding="utf-8",
     )
     return str(target_repo.resolve())
+
+
+def _strip_platformer_route_assets(target_repo: str) -> None:
+    tools_dir = Path(target_repo) / "Tools"
+
+    alias_path = tools_dir / "aie_prompt_aliases.json"
+    alias_payload = json.loads(alias_path.read_text(encoding="utf-8"))
+    alias_payload["aliases"] = [
+        entry
+        for entry in alias_payload.get("aliases", [])
+        if not any(
+            token in str(entry.get("normalized_prompt") or "")
+            for token in (
+                "jump",
+                "gravity",
+                "movement",
+                "gaps",
+                "obstacle density",
+                "enemy density",
+                "segment count",
+                "level longer",
+                "level shorter",
+                "platformer",
+            )
+        )
+    ]
+    alias_path.write_text(json.dumps(alias_payload, indent=2), encoding="utf-8")
+
+    route_path = tools_dir / "intent_layer_v1_routes.json"
+    route_payload = json.loads(route_path.read_text(encoding="utf-8"))
+    route_payload["routes"] = [
+        entry
+        for entry in route_payload.get("routes", [])
+        if not any(
+            token in str(entry.get("normalized_command") or "")
+            for token in (
+                "jump",
+                "gravity",
+                "movement",
+                "gaps",
+                "obstacle density",
+                "enemy density",
+                "segment count",
+                "level longer",
+                "level shorter",
+                "platformer",
+            )
+        )
+    ]
+    route_path.write_text(json.dumps(route_payload, indent=2), encoding="utf-8")
+
+    for script_name in (
+        "run_unity_mutate_platformer_jump_height.ps1",
+        "run_unity_mutate_platformer_gravity.ps1",
+        "run_unity_mutate_platformer_speed.ps1",
+        "run_unity_mutate_platformer_gap_size.ps1",
+        "run_unity_mutate_platformer_obstacle_density.ps1",
+        "run_unity_mutate_platformer_enemy_density.ps1",
+        "run_unity_mutate_platformer_segment_count.ps1",
+    ):
+        script_path = tools_dir / script_name
+        if script_path.exists():
+            script_path.unlink()
 
 
 def _write_locked_content_profile(config: OrchestratorConfig, *, rating_system: str, rating_target: str) -> None:

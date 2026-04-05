@@ -28,6 +28,7 @@ from .experiment_tracking import (
     is_experiment_navigation_prompt,
     is_experiment_review_prompt,
 )
+from .environment_theme_action_normalization import canonicalize_environment_theme_action_prompt
 from .generic_capabilities import generic_capability_definition_for_capability_id
 from .goal_composition import (
     GOAL_COMPOSITION_RESOLUTION,
@@ -54,6 +55,13 @@ from orchestrator.utils import ensure_dir, read_json, write_json
 
 from .planner import RuleBasedPlanner
 from .planner_task_graph import build_plan_task_graph
+from .platformer_action_normalization import canonicalize_platformer_action_prompt
+from .platformer_multi_intent_plans import (
+    PLATFORMER_MULTI_INTENT_RESOLUTION,
+    PlatformerMultiIntentPlanResolution,
+    resolve_platformer_multi_intent_plan,
+    unsupported_platformer_multi_intent_message,
+)
 from .predefined_plans import match_predefined_plan, unsupported_predefined_plan_message
 from .session_tuning import (
     DIRECT_PROMPT_RESOLUTION,
@@ -455,6 +463,7 @@ class ConversationalTaskIntake:
                 SESSION_FOLLOWUP_RESOLUTION,
                 GOAL_INTENT_MAPPING_RESOLUTION,
                 GOAL_COMPOSITION_RESOLUTION,
+                PLATFORMER_MULTI_INTENT_RESOLUTION,
             }
             if len(task_graph.nodes) > 1 or (step_prompt != normalized_prompt and not preserve_request_resolution):
                 step_routing = self._resolve_intake_routing(
@@ -700,6 +709,8 @@ class ConversationalTaskIntake:
             return "task_request"
         lookup_prompt = resolve_prompt(normalized).lookup_prompt
         if match_predefined_plan(lookup_prompt) is not None:
+            return "task_request"
+        if canonicalize_environment_theme_action_prompt(lookup_prompt):
             return "task_request"
         if self._looks_like_world_mutation_request(lookup_prompt):
             return "task_request"
@@ -1196,12 +1207,36 @@ class ConversationalTaskIntake:
             effective_lookup_prompt = goal_intent_resolution.canonical_prompt.lower().strip()
         goal_composition_resolution = None
         goal_composition_block_message = None
+        platformer_multi_intent_resolution = None
+        platformer_multi_intent_block_message = None
         if goal_intent_resolution is None:
             goal_composition_resolution = resolve_goal_composition_prompt(effective_lookup_prompt)
             if goal_composition_resolution is not None:
                 effective_lookup_prompt = goal_composition_resolution.canonical_prompt.lower().strip()
             else:
                 goal_composition_block_message = unsupported_goal_composition_message(effective_lookup_prompt)
+        if goal_intent_resolution is None and goal_composition_resolution is None:
+            platformer_multi_intent_resolution = resolve_platformer_multi_intent_plan(effective_lookup_prompt)
+            if platformer_multi_intent_resolution is not None:
+                goal_composition_block_message = None
+                effective_lookup_prompt = platformer_multi_intent_resolution.canonical_prompt.lower().strip()
+            else:
+                platformer_multi_intent_block_message = unsupported_platformer_multi_intent_message(effective_lookup_prompt)
+        effective_lookup_prompt = canonicalize_platformer_action_prompt(effective_lookup_prompt) or effective_lookup_prompt
+        if goal_intent_resolution is None and platformer_multi_intent_resolution is None:
+            late_platformer_multi_intent_resolution = resolve_platformer_multi_intent_plan(effective_lookup_prompt)
+            if late_platformer_multi_intent_resolution is not None:
+                platformer_multi_intent_resolution = late_platformer_multi_intent_resolution
+                platformer_multi_intent_block_message = None
+                goal_composition_block_message = None
+                effective_lookup_prompt = late_platformer_multi_intent_resolution.canonical_prompt.lower().strip()
+            elif platformer_multi_intent_block_message is None:
+                platformer_multi_intent_block_message = unsupported_platformer_multi_intent_message(effective_lookup_prompt)
+        effective_lookup_prompt = (
+            canonicalize_environment_theme_action_prompt(effective_lookup_prompt)
+            or canonicalize_platformer_action_prompt(effective_lookup_prompt)
+            or effective_lookup_prompt
+        )
         requested_intent = self._classify_requested_intent(effective_lookup_prompt)
         requested_execution_lane = self._requested_lane_for_intent(requested_intent)
         if goal_composition_block_message is not None and requested_intent == "mutate":
@@ -1214,13 +1249,34 @@ class ConversationalTaskIntake:
                 entity_mapping_sources=mapping_sources,
                 clarification_options=clarification_options_for_prompt(lookup_prompt),
             )
-        predefined_plan = match_predefined_plan(effective_lookup_prompt)
+        if platformer_multi_intent_block_message is not None and requested_intent == "mutate":
+            return self._blocked_mutation_route_routing(
+                requested_execution_lane=requested_execution_lane,
+                session_id=session_id,
+                route_issue=platformer_multi_intent_block_message,
+                mapped_prompt=effective_lookup_prompt,
+                entity_mapping_applied=resolution.entity_mapping_applied,
+                entity_mapping_sources=mapping_sources,
+                clarification_options=clarification_options_for_prompt(lookup_prompt),
+            )
+        predefined_plan = (
+            platformer_multi_intent_resolution.plan
+            if platformer_multi_intent_resolution is not None
+            else match_predefined_plan(effective_lookup_prompt)
+        )
         if predefined_plan is not None:
             step_capabilities: List[RuntimeCapability] = []
             step_titles = [step.title for step in predefined_plan.steps]
             step_prompts = [step.operator_prompt for step in predefined_plan.steps]
             for step in predefined_plan.steps:
-                capability = self.capability_registry.match(step.operator_prompt)
+                step_lookup_prompt = (
+                    canonicalize_environment_theme_action_prompt(step.operator_prompt)
+                    or canonicalize_environment_theme_action_prompt(step.title)
+                    or canonicalize_platformer_action_prompt(step.operator_prompt)
+                    or canonicalize_platformer_action_prompt(step.title)
+                    or step.operator_prompt
+                )
+                capability = self.capability_registry.match(step_lookup_prompt)
                 if capability is None:
                     return self._blocked_mutation_route_routing(
                         requested_execution_lane=requested_execution_lane,
@@ -1235,7 +1291,7 @@ class ConversationalTaskIntake:
                         clarification_options=clarification_options_for_prompt(lookup_prompt),
                     )
                 preflight_issue = self._resolve_mutation_route_issue(
-                    prompt=step.operator_prompt,
+                    prompt=step_lookup_prompt,
                     capability=capability,
                     target_repo=target_repo,
                 )
@@ -1274,6 +1330,7 @@ class ConversationalTaskIntake:
                 followup_resolution=followup_resolution,
                 goal_intent_resolution=goal_intent_resolution,
                 goal_composition_resolution=goal_composition_resolution,
+                platformer_multi_intent_resolution=platformer_multi_intent_resolution,
                 mapped_prompt=predefined_plan.canonical_prompt,
             )
             routing = self._apply_content_policy(
@@ -1282,15 +1339,24 @@ class ConversationalTaskIntake:
                 capability=primary_capability,
                 session_id=session_id,
             )
+            autonomy_review_prefix = ""
+            if (
+                self._routes_through_platformer_autonomy_review(routing, primary_capability)
+                and str(routing.decision or "").strip().lower() in {"require_approval", "require_review"}
+            ):
+                autonomy_review_prefix = self._platformer_autonomy_review_summary(routing) + " "
             routing = replace(
                 routing,
                 decision_summary=(
+                    autonomy_review_prefix
+                    +
                     (
                         (str(routing.session_resolution_note or "").strip() + " ")
                         if str(routing.resolution_source or "") in {
                             SESSION_FOLLOWUP_RESOLUTION,
                             GOAL_INTENT_MAPPING_RESOLUTION,
                             GOAL_COMPOSITION_RESOLUTION,
+                            PLATFORMER_MULTI_INTENT_RESOLUTION,
                         }
                         else ""
                     )
@@ -1350,6 +1416,7 @@ class ConversationalTaskIntake:
                 followup_resolution=followup_resolution,
                 goal_intent_resolution=goal_intent_resolution,
                 goal_composition_resolution=goal_composition_resolution,
+                platformer_multi_intent_resolution=platformer_multi_intent_resolution,
                 mapped_prompt=effective_lookup_prompt,
             )
             confirmation_message = entity_confirmation_message(resolution)
@@ -1383,6 +1450,7 @@ class ConversationalTaskIntake:
                     SESSION_FOLLOWUP_RESOLUTION,
                     GOAL_INTENT_MAPPING_RESOLUTION,
                     GOAL_COMPOSITION_RESOLUTION,
+                    PLATFORMER_MULTI_INTENT_RESOLUTION,
                 }
                 and routing.session_resolution_note
             ):
@@ -1464,6 +1532,7 @@ class ConversationalTaskIntake:
                 followup_resolution=followup_resolution,
                 goal_intent_resolution=goal_intent_resolution,
                 goal_composition_resolution=goal_composition_resolution,
+                platformer_multi_intent_resolution=platformer_multi_intent_resolution,
                 mapped_prompt=effective_lookup_prompt,
             )
             if (
@@ -1471,6 +1540,7 @@ class ConversationalTaskIntake:
                     SESSION_FOLLOWUP_RESOLUTION,
                     GOAL_INTENT_MAPPING_RESOLUTION,
                     GOAL_COMPOSITION_RESOLUTION,
+                    PLATFORMER_MULTI_INTENT_RESOLUTION,
                 }
                 and routing.session_resolution_note
             ):
@@ -1567,6 +1637,37 @@ class ConversationalTaskIntake:
             rollback_verified=capability.rollback_verified,
         )
 
+    @staticmethod
+    def _routes_through_platformer_autonomy_review(
+        routing: IntakeRouting,
+        capability: RuntimeCapability | None,
+    ) -> bool:
+        if not (routing.requested_intent == "mutate" or routing.mutation_capable):
+            return False
+        if str(routing.plan_key or "").strip().lower().startswith("platformer_"):
+            return True
+
+        capability_id = str(
+            (capability.capability_id if capability is not None else routing.capability_id) or ""
+        ).strip().lower()
+        if "_platformer_" in capability_id:
+            return True
+
+        generic_definition = dict(routing.generic_capability_definition or {})
+        if capability is not None and not generic_definition:
+            generic_definition = generic_capability_definition_for_capability_id(capability.capability_id)
+        return str(generic_definition.get("target_context") or "").strip().lower() == "platformer"
+
+    @staticmethod
+    def _platformer_autonomy_review_summary(routing: IntakeRouting) -> str:
+        mapped_prompt = str(routing.mapped_prompt or routing.plan_title or routing.capability_title or "").strip()
+        bounded_target = mapped_prompt or "this bounded platformer mutation"
+        return (
+            f"Platformer request '{bounded_target}' routes through the bounded autonomy pipeline: "
+            "AI-E will generate and validate candidate variations, build a candidate set for review, "
+            "and require explicit approval before applying any user-selected outcome."
+        )
+
     def _apply_content_policy(
         self,
         *,
@@ -1587,6 +1688,10 @@ class ConversationalTaskIntake:
         approval_required = routing.approval_required
         auto_execution_enabled = routing.auto_execution_enabled
         auto_execution_reason = routing.auto_execution_reason
+        eligible_for_auto = routing.eligible_for_auto
+        intelligence_summary = routing.intelligence_summary
+        decision_missing_evidence = list(routing.missing_evidence or [])
+        platformer_autonomy_review = self._routes_through_platformer_autonomy_review(routing, capability)
 
         if routing.requested_intent == "mutate" or routing.mutation_capable:
             if assessment.content_policy_decision == "requires_review":
@@ -1601,6 +1706,15 @@ class ConversationalTaskIntake:
                 approval_required = False
                 auto_execution_enabled = False
                 auto_execution_reason = None
+            elif platformer_autonomy_review:
+                execution_decision = "approval_required"
+                recommended_action = "approval_required"
+                approval_required = True
+                auto_execution_enabled = False
+                auto_execution_reason = None
+                eligible_for_auto = False
+                intelligence_summary = self._platformer_autonomy_review_summary(routing)
+                decision_missing_evidence = []
 
         runtime_context = self._load_runtime_context(session_id)
         decision = evaluate_autonomous_decision(
@@ -1608,12 +1722,12 @@ class ConversationalTaskIntake:
             resolved_intent=routing.resolved_intent,
             mutation_capable=routing.mutation_capable,
             capability_supported=capability is not None or routing.requested_intent != "mutate",
-            eligible_for_auto=routing.eligible_for_auto,
+            eligible_for_auto=eligible_for_auto,
             approval_required_by_capability=approval_required,
             intelligence_execution_decision=execution_decision,
-            intelligence_summary=routing.intelligence_summary,
+            intelligence_summary=intelligence_summary,
             auto_execution_reason=auto_execution_reason,
-            missing_evidence=list(routing.missing_evidence or []),
+            missing_evidence=decision_missing_evidence,
             content_policy_decision=assessment.content_policy_decision,
             content_policy_summary=assessment.summary,
             rating_locked=assessment.rating_locked,
@@ -1656,6 +1770,8 @@ class ConversationalTaskIntake:
             recommended_action=recommended_action,
             auto_execution_enabled=auto_execution_enabled,
             auto_execution_reason=auto_execution_reason,
+            intelligence_summary=intelligence_summary,
+            eligible_for_auto=eligible_for_auto,
             rating_system=assessment.rating_system,
             rating_target=assessment.rating_target,
             rating_locked=assessment.rating_locked,
@@ -1840,7 +1956,10 @@ class ConversationalTaskIntake:
             SESSION_FOLLOWUP_RESOLUTION,
             GOAL_INTENT_MAPPING_RESOLUTION,
             GOAL_COMPOSITION_RESOLUTION,
+            PLATFORMER_MULTI_INTENT_RESOLUTION,
         }:
+            return mapped_prompt
+        if mapped_prompt and bool(getattr(routing, "mutation_capable", False)):
             return mapped_prompt
         return original_prompt
 
@@ -1857,9 +1976,24 @@ class ConversationalTaskIntake:
         followup_resolution: SessionFollowUpResolution | None,
         goal_intent_resolution: GoalIntentResolution | None,
         goal_composition_resolution: GoalCompositionResolution | None,
+        platformer_multi_intent_resolution: PlatformerMultiIntentPlanResolution | None,
         mapped_prompt: str,
     ) -> IntakeRouting:
         if followup_resolution is not None:
+            if platformer_multi_intent_resolution is not None:
+                return replace(
+                    routing,
+                    mapped_prompt=mapped_prompt,
+                    resolution_source=platformer_multi_intent_resolution.resolution_source,
+                    resolved_from_prompt=platformer_multi_intent_resolution.original_prompt,
+                    session_resolution_note=platformer_multi_intent_resolution.resolution_note,
+                    goal_components=list(platformer_multi_intent_resolution.goal_components),
+                    state_family=followup_resolution.state_family,
+                    previous_tier=followup_resolution.previous_tier,
+                    requested_tier=followup_resolution.requested_tier,
+                    revert_requested=followup_resolution.revert_requested,
+                    revert_summary=followup_resolution.revert_summary,
+                )
             return replace(
                 routing,
                 mapped_prompt=mapped_prompt,
@@ -1895,6 +2029,20 @@ class ConversationalTaskIntake:
                 resolved_from_prompt=goal_composition_resolution.original_prompt,
                 session_resolution_note=goal_composition_resolution.resolution_note,
                 goal_components=list(goal_composition_resolution.goal_components),
+                state_family=None,
+                previous_tier=None,
+                requested_tier=None,
+                revert_requested=False,
+                revert_summary=None,
+            )
+        if platformer_multi_intent_resolution is not None:
+            return replace(
+                routing,
+                mapped_prompt=mapped_prompt,
+                resolution_source=platformer_multi_intent_resolution.resolution_source,
+                resolved_from_prompt=platformer_multi_intent_resolution.original_prompt,
+                session_resolution_note=platformer_multi_intent_resolution.resolution_note,
+                goal_components=list(platformer_multi_intent_resolution.goal_components),
                 state_family=None,
                 previous_tier=None,
                 requested_tier=None,

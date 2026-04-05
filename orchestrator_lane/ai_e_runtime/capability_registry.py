@@ -8,6 +8,9 @@ from typing import Any, Dict, List
 from orchestrator.config import OrchestratorConfig
 from orchestrator.utils import ensure_dir, read_json, write_json
 
+from .environment_theme_action_normalization import canonicalize_environment_theme_action_prompt
+from .platformer_action_normalization import canonicalize_platformer_action_prompt
+
 
 _DEFAULT_CAPABILITY = {
     "capability_id": "level_0001_add_grass",
@@ -166,6 +169,11 @@ class CapabilityRegistry:
 
     def match(self, prompt: str) -> RuntimeCapability | None:
         normalized = " ".join(str(prompt or "").strip().lower().split())
+        normalized = (
+            canonicalize_environment_theme_action_prompt(normalized)
+            or canonicalize_platformer_action_prompt(normalized)
+            or normalized
+        )
         for capability in self.all_capabilities():
             if self._matches_capability(normalized, capability):
                 return capability

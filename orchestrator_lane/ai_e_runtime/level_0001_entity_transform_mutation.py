@@ -11,7 +11,12 @@ from orchestrator.utils import ensure_dir, read_json_with_status
 from .capability_registry import CapabilityEvidenceStore, RuntimeCapability
 from .encounter_profiles import supported_encounter_examples_for_family
 from .enemy_profiles import supported_entity_examples_for_family
+from .environment_theme_action_normalization import (
+    canonicalize_environment_theme_action_prompt,
+    resolve_environment_theme_action,
+)
 from .intent_normalizer import fuzzy_match, normalize_prompt, resolve_prompt
+from .platformer_action_normalization import canonicalize_platformer_action_prompt, resolve_platformer_action
 from .session_tuning import build_result_session_metadata
 from .time_utils import get_current_timestamp
 
@@ -107,6 +112,11 @@ _ROUTE_PROFILES = {
         probe_action_type="mutate_platformer_segment_count",
         result_kind="segment_count",
     ),
+    "MutateGroundTheme": EntityMutationRouteProfile(
+        probe_name="MutateGroundTheme",
+        probe_action_type="mutate_ground_theme",
+        result_kind="ground_theme",
+    ),
 }
 
 
@@ -135,6 +145,14 @@ def resolve_entity_transform_route(
     resolution = resolve_prompt(prompt)
     normalized_prompt = resolution.normalized_prompt
     lookup_prompt = resolution.lookup_prompt
+    environment_theme_action = resolve_environment_theme_action(lookup_prompt)
+    platformer_action = resolve_platformer_action(lookup_prompt)
+    lookup_prompt = (
+        canonicalize_environment_theme_action_prompt(lookup_prompt)
+        or canonicalize_platformer_action_prompt(lookup_prompt)
+        or lookup_prompt
+    )
+    normalized_prompt = lookup_prompt
     translated_command = _resolve_translated_command(alias_table, lookup_prompt)
     if not translated_command:
         fallback_prompt = fuzzy_match(lookup_prompt)
@@ -145,6 +163,10 @@ def resolve_entity_transform_route(
         unsupported_message = unsupported_entity_transform_prompt_message(lookup_prompt)
         if unsupported_message:
             return None, unsupported_message
+        if environment_theme_action is not None:
+            return None, _missing_environment_theme_route_assets_message(project_path, lookup_prompt)
+        if platformer_action is not None:
+            return None, _missing_platformer_route_assets_message(project_path, lookup_prompt)
         return (
             None,
             _unmatched_prompt_message(),
@@ -152,6 +174,10 @@ def resolve_entity_transform_route(
 
     route = _resolve_route(route_table, translated_command)
     if route is None:
+        if environment_theme_action is not None:
+            return None, _missing_environment_theme_route_assets_message(project_path, translated_command)
+        if platformer_action is not None:
+            return None, _missing_platformer_route_assets_message(project_path, translated_command)
         return (
             None,
             "No deterministic entity-transform route matched the prompt. "
@@ -168,10 +194,18 @@ def resolve_entity_transform_route(
 
     wrapper_relative = str(route.get("wrapper_path") or "").strip()
     if not wrapper_relative:
+        if environment_theme_action is not None:
+            return None, _missing_environment_theme_route_assets_message(project_path, translated_command)
+        if platformer_action is not None:
+            return None, _missing_platformer_route_assets_message(project_path, translated_command)
         return None, f"Deterministic route '{translated_command}' does not define a wrapper path."
 
     wrapper_path = (project_path / Path(wrapper_relative)).resolve()
     if not wrapper_path.exists():
+        if environment_theme_action is not None:
+            return None, _missing_environment_theme_route_assets_message(project_path, translated_command)
+        if platformer_action is not None:
+            return None, _missing_platformer_route_assets_message(project_path, translated_command)
         return None, f"Deterministic route '{translated_command}' points to missing wrapper {wrapper_path}"
 
     wrapper_arguments = route.get("wrapper_arguments") if isinstance(route.get("wrapper_arguments"), dict) else {}
@@ -510,6 +544,12 @@ def run_level_0001_entity_transform_mutation(task: Dict[str, Any]) -> Dict[str, 
                 "requested_enemy_density": _float_or_none(probe_payload.get("requested_enemy_density")),
                 "minimum_enemy_density": _float_or_none(probe_payload.get("minimum_enemy_density")),
                 "maximum_enemy_density": _float_or_none(probe_payload.get("maximum_enemy_density")),
+                "previous_enemy_count": _float_or_none(probe_payload.get("previous_enemy_count")),
+                "new_enemy_count": _float_or_none(probe_payload.get("new_enemy_count")),
+                "baseline_enemy_count": _float_or_none(probe_payload.get("baseline_enemy_count")),
+                "requested_enemy_count": _float_or_none(probe_payload.get("requested_enemy_count")),
+                "minimum_enemy_count": _float_or_none(probe_payload.get("minimum_enemy_count")),
+                "maximum_enemy_count": _float_or_none(probe_payload.get("maximum_enemy_count")),
                 "enemy_density_changed": bool(probe_payload.get("enemy_density_changed", False)),
                 "target_context": "platformer",
             }
@@ -525,6 +565,24 @@ def run_level_0001_entity_transform_mutation(task: Dict[str, Any]) -> Dict[str, 
                 "maximum_segment_count": _float_or_none(probe_payload.get("maximum_segment_count")),
                 "segment_count_changed": bool(probe_payload.get("segment_count_changed", False)),
                 "target_context": "platformer",
+            }
+        )
+    elif route_resolution.result_kind == "ground_theme":
+        result_details.update(
+            {
+                "theme_name": str(probe_payload.get("theme_name") or "grass_ground"),
+                "previous_material_name": str(probe_payload.get("previous_material_name") or ""),
+                "previous_material_path": str(probe_payload.get("previous_material_path") or ""),
+                "previous_material_guid": str(probe_payload.get("previous_material_guid") or ""),
+                "new_material_name": str(probe_payload.get("new_material_name") or ""),
+                "new_material_path": str(probe_payload.get("new_material_path") or ""),
+                "new_material_guid": str(probe_payload.get("new_material_guid") or ""),
+                "requested_material_path": str(probe_payload.get("requested_material_path") or ""),
+                "requested_material_guid": str(probe_payload.get("requested_material_guid") or ""),
+                "baseline_material_path": str(probe_payload.get("baseline_material_path") or ""),
+                "baseline_material_guid": str(probe_payload.get("baseline_material_guid") or ""),
+                "theme_changed": bool(probe_payload.get("theme_changed", False)),
+                "target_context": "environment_theme",
             }
         )
     result_details.update(
@@ -560,7 +618,25 @@ def _unmatched_prompt_message() -> str:
     return (
         "I understood part of your request, but couldn't match it to a known action. "
         "Try something like: 'move zombie forward', 'make zombie faster', 'make runner faster', "
-        "'make runner more aggressive', or 'increase encounter count'."
+        "'make runner more aggressive', 'apply grass ground theme', 'apply dirt ground theme', or 'increase encounter count'."
+    )
+
+
+def _missing_environment_theme_route_assets_message(project_path: Path, canonical_prompt: str) -> str:
+    project_name = project_path.name or str(project_path)
+    return (
+        f"AI-E recognized the bounded environment theme action '{canonical_prompt}', but the selected project '{project_name}' "
+        "does not expose the deterministic theme prompt aliases, route entries, and wrapper scripts required for route preflight yet. "
+        "Add the bounded environment theme route assets to the project Tools folder before preparing this request again."
+    )
+
+
+def _missing_platformer_route_assets_message(project_path: Path, canonical_prompt: str) -> str:
+    project_name = project_path.name or str(project_path)
+    return (
+        f"AI-E recognized the bounded platformer action '{canonical_prompt}', but the selected project '{project_name}' "
+        "does not expose the deterministic platformer prompt aliases, route entries, and wrapper scripts required for route preflight yet. "
+        "Add the bounded platformer route assets to the project Tools folder before preparing this request again."
     )
 
 
@@ -568,6 +644,22 @@ def unsupported_entity_transform_prompt_message(prompt: str) -> str | None:
     normalized = normalize_prompt(prompt)
     tokens = set(normalized.split())
     generalized_entity = _generalized_entity_label(tokens)
+    environment_theme_requested = "ground" in tokens or "terrain" in tokens
+    mixed_environment_art_direction = bool({"grass", "dirt", "gravel", "flowers", "battle", "damage"} & tokens)
+    if environment_theme_requested and mixed_environment_art_direction and (
+        "realistic" in tokens
+        or "terrain" in tokens
+        or "flowers" in tokens
+        or "gravel" in tokens
+        or "everywhere" in tokens
+        or "layered" in tokens
+        or "battle" in tokens
+        or "damage" in tokens
+    ):
+        return (
+            "AI-E only supports bounded environment look-dev actions in this pass: applying the grass or dirt ground theme to the Ground object. "
+            "Broader terrain realism or mixed art-direction requests are blocked. Try 'make the ground grassy' or 'change the ground to dirt'."
+        )
     if {"move", "zombie", "backward"}.issubset(tokens):
         return (
             "Backward zombie movement is not a supported deterministic action yet. "
@@ -953,24 +1045,60 @@ def _validate_execution_artifacts(
         minimum_enemy_density = _float_or_none(probe_payload.get("minimum_enemy_density"))
         maximum_enemy_density = _float_or_none(probe_payload.get("maximum_enemy_density"))
         requested_enemy_density = _float_or_none(probe_payload.get("requested_enemy_density"))
+        previous_enemy_count = _float_or_none(probe_payload.get("previous_enemy_count"))
+        new_enemy_count = _float_or_none(probe_payload.get("new_enemy_count"))
+        baseline_enemy_count = _float_or_none(probe_payload.get("baseline_enemy_count"))
+        minimum_enemy_count = _float_or_none(probe_payload.get("minimum_enemy_count"))
+        maximum_enemy_count = _float_or_none(probe_payload.get("maximum_enemy_count"))
+        requested_enemy_count = _float_or_none(probe_payload.get("requested_enemy_count"))
         if previous_enemy_density is None:
             return "Delegated probe did not report a valid previous_enemy_density."
         if new_enemy_density is None:
             return "Delegated probe did not report a valid new_enemy_density."
-        if minimum_enemy_density is not None and new_enemy_density < minimum_enemy_density:
-            return "Delegated probe reported a new_enemy_density below the approved minimum bound."
-        if maximum_enemy_density is not None and new_enemy_density > maximum_enemy_density:
-            return "Delegated probe reported a new_enemy_density above the approved maximum bound."
-        if not execution_applied and result_reason == "skipped_already_satisfied":
-            if requested_enemy_density is not None and not _numeric_skip_satisfies_request(
-                action_name=action_name,
-                baseline_value=baseline_enemy_density,
-                requested_value=requested_enemy_density,
-                current_value=new_enemy_density,
-            ):
-                return "Delegated probe skipped the enemy-density change before the requested deterministic state was satisfied."
-        elif requested_enemy_density is not None and abs(new_enemy_density - requested_enemy_density) > 0.0001:
-            return "Delegated probe did not apply the requested deterministic enemy-density value."
+        count_validation_available = any(
+            value is not None
+            for value in (
+                previous_enemy_count,
+                new_enemy_count,
+                minimum_enemy_count,
+                maximum_enemy_count,
+                requested_enemy_count,
+            )
+        )
+        if count_validation_available:
+            if previous_enemy_count is None:
+                return "Delegated probe did not report a valid previous_enemy_count."
+            if new_enemy_count is None:
+                return "Delegated probe did not report a valid new_enemy_count."
+            if minimum_enemy_count is not None and new_enemy_count < minimum_enemy_count:
+                return "Delegated probe reported a new_enemy_count below the approved minimum bound."
+            if maximum_enemy_count is not None and new_enemy_count > maximum_enemy_count:
+                return "Delegated probe reported a new_enemy_count above the approved maximum bound."
+            if not execution_applied and result_reason == "skipped_already_satisfied":
+                if requested_enemy_count is not None and not _numeric_skip_satisfies_request(
+                    action_name=action_name,
+                    baseline_value=baseline_enemy_count,
+                    requested_value=requested_enemy_count,
+                    current_value=new_enemy_count,
+                ):
+                    return "Delegated probe skipped the enemy-density change before the requested deterministic state was satisfied."
+            elif requested_enemy_count is not None and abs(new_enemy_count - requested_enemy_count) > 0.0001:
+                return "Delegated probe did not apply the requested deterministic enemy-count value."
+        else:
+            if minimum_enemy_density is not None and new_enemy_density < minimum_enemy_density:
+                return "Delegated probe reported a new_enemy_density below the approved minimum bound."
+            if maximum_enemy_density is not None and new_enemy_density > maximum_enemy_density:
+                return "Delegated probe reported a new_enemy_density above the approved maximum bound."
+            if not execution_applied and result_reason == "skipped_already_satisfied":
+                if requested_enemy_density is not None and not _numeric_skip_satisfies_request(
+                    action_name=action_name,
+                    baseline_value=baseline_enemy_density,
+                    requested_value=requested_enemy_density,
+                    current_value=new_enemy_density,
+                ):
+                    return "Delegated probe skipped the enemy-density change before the requested deterministic state was satisfied."
+            elif requested_enemy_density is not None and abs(new_enemy_density - requested_enemy_density) > 0.0001:
+                return "Delegated probe did not apply the requested deterministic enemy-density value."
     elif result_kind == "segment_count":
         previous_segment_count = _float_or_none(probe_payload.get("previous_segment_count"))
         new_segment_count = _float_or_none(probe_payload.get("new_segment_count"))
@@ -996,6 +1124,28 @@ def _validate_execution_artifacts(
                 return "Delegated probe skipped the segment-count change before the requested deterministic state was satisfied."
         elif requested_segment_count is not None and abs(new_segment_count - requested_segment_count) > 0.0001:
             return "Delegated probe did not apply the requested deterministic segment-count value."
+    elif result_kind == "ground_theme":
+        previous_material_guid = str(probe_payload.get("previous_material_guid") or "").strip()
+        new_material_guid = str(probe_payload.get("new_material_guid") or "").strip()
+        requested_material_guid = str(probe_payload.get("requested_material_guid") or "").strip()
+        requested_material_path = str(probe_payload.get("requested_material_path") or "").strip()
+        new_material_path = str(probe_payload.get("new_material_path") or "").strip()
+        if not previous_material_guid:
+            return "Delegated probe did not report a valid previous_material_guid."
+        if not new_material_guid:
+            return "Delegated probe did not report a valid new_material_guid."
+        if not requested_material_guid and not requested_material_path:
+            return "Delegated probe did not report the requested ground-theme material."
+        if not execution_applied and result_reason == "skipped_already_satisfied":
+            if requested_material_guid and new_material_guid != requested_material_guid:
+                return "Delegated probe skipped the ground-theme change before the requested theme was already satisfied."
+            if requested_material_path and new_material_path != requested_material_path:
+                return "Delegated probe skipped the ground-theme change before the requested theme was already satisfied."
+        else:
+            if requested_material_guid and new_material_guid != requested_material_guid:
+                return "Delegated probe did not apply the requested deterministic ground-theme material."
+            if requested_material_path and new_material_path != requested_material_path:
+                return "Delegated probe did not apply the requested deterministic ground-theme material path."
     return None
 
 
@@ -1020,6 +1170,8 @@ def _validation_check_name(result_kind: str) -> str:
         return "mutate_platformer_enemy_density_artifact_confirmed"
     if result_kind == "segment_count":
         return "mutate_platformer_segment_count_artifact_confirmed"
+    if result_kind == "ground_theme":
+        return "mutate_ground_theme_artifact_confirmed"
     return "mutate_entity_transform_artifact_confirmed"
 
 

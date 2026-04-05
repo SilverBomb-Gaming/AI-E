@@ -155,7 +155,11 @@ def evaluate_autonomous_decision(
             runtime_context=context,
         )
 
-    if is_mutation_path and (intelligence_execution_decision == "sandbox_first" or not capability_supported or bool(evidence_gaps)):
+    if is_mutation_path and (
+        intelligence_execution_decision == "sandbox_first"
+        or not capability_supported
+        or (intelligence_execution_decision in {None, ""} and bool(evidence_gaps))
+    ):
         summary = intelligence_summary or "Decision: sandbox_first - insufficient proof for real-target execution."
         return AutonomousDecision(
             decision="sandbox_first",

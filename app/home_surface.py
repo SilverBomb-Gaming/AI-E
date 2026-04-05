@@ -11,6 +11,7 @@ from typing import Any, Iterable, List
 
 from ai_e_runtime.platformer_layout_corrections import extract_platformer_layout_correction_metadata
 from ai_e_runtime.platformer_layout_validation import extract_platformer_layout_validation_metadata
+from ai_e_runtime.environment_theme_action_normalization import resolve_environment_theme_action
 
 from .paths import ARTIFACTS_ROOT, PROJECT_ROOT
 
@@ -245,6 +246,12 @@ class ProofResultSurface:
     autonomous_build_selected_candidate_id: str = ""
     autonomous_build_selected_candidate_label: str = ""
     autonomous_build_completion_summary: str = ""
+    debug_available: bool = False
+    debug_expanded: bool = False
+    debug_router_refs: List[str] = field(default_factory=list)
+    debug_translated_commands: List[str] = field(default_factory=list)
+    debug_validation_codes: List[str] = field(default_factory=list)
+    debug_attempt_metadata: List[str] = field(default_factory=list)
 
 
 def load_supported_projects() -> List[SupportedProject]:
@@ -336,6 +343,7 @@ def load_proof_result_surface(
     target: Path | str,
     *,
     supported_projects: List[SupportedProject] | None = None,
+    debug_expanded: bool = False,
 ) -> ProofResultSurface:
     candidate = Path(str(target))
     if candidate.is_file() and candidate.name.endswith(".json"):
@@ -346,6 +354,7 @@ def load_proof_result_surface(
                 attempt_artifact,
                 artifact_path=candidate,
                 supported_projects=supported_projects or [],
+                debug_expanded=debug_expanded,
             )
     run_dir = candidate if candidate.is_dir() else candidate.parent
     if not run_dir.exists():
@@ -369,6 +378,7 @@ def load_proof_result_surface(
             session_state=session_state,
             attempt_artifacts=plan_attempt_artifacts,
             supported_projects=supported_projects or [],
+            debug_expanded=debug_expanded,
         )
 
     attempt_artifact_path = _latest_attempt_artifact_path(run_dir, session_state=session_state)
@@ -380,6 +390,7 @@ def load_proof_result_surface(
                 attempt_artifact,
                 artifact_path=attempt_artifact_path,
                 supported_projects=supported_projects or [],
+                debug_expanded=debug_expanded,
             )
 
     session_summary = _load_json(run_dir / "session_summary.json")
@@ -820,7 +831,11 @@ class IntakePreviewBridge:
         queue_status = str(existing_task.get("status") or "").strip().lower() if existing_task else ""
         approval_state = str(existing_task.get("approval_state") or "").strip().lower() if existing_task else ""
         action_required = queue_status in {"", "needs_approval"}
-        status_message = self._review_status_message(queue_status=queue_status, approval_state=approval_state)
+        status_message = self._review_status_message(
+            queue_status=queue_status,
+            approval_state=approval_state,
+            routing=context["routing"],
+        )
 
         return ReviewSurface(
             available=True,
@@ -1031,12 +1046,25 @@ class IntakePreviewBridge:
         task_id = intake_result.task_id
         if queue_status == "needs_approval":
             try:
-                approval = self._approve_mutation_task_fn(
-                    intake.config,
-                    task_id=task_id,
-                    approved_by=self._approved_by_name(approved_by),
-                    notes="Approved once from the AI-E v1 review surface.",
-                )
+                approval = None
+                for pending_task_id in intake_result.task_ids:
+                    queue_task = next(
+                        (
+                            task
+                            for task in self._all_queue_tasks(intake.config)
+                            if str(task.get("task_id") or task.get("id") or "").strip() == pending_task_id
+                        ),
+                        None,
+                    )
+                    task_status = str((queue_task or {}).get("status") or "").strip().lower()
+                    if task_status != "needs_approval":
+                        continue
+                    approval = self._approve_mutation_task_fn(
+                        intake.config,
+                        task_id=pending_task_id,
+                        approved_by=self._approved_by_name(approved_by),
+                        notes="Approved once from the AI-E v1 review surface.",
+                    )
             except Exception as exc:  # noqa: BLE001
                 return ReviewActionResult(
                     ok=False,
@@ -1055,7 +1083,7 @@ class IntakePreviewBridge:
                 message="Approved once. This request is now waiting to run, and AI-E did not start it from this surface. Refresh status to follow it.",
                 wired=True,
                 staged_only=False,
-                queue_status=approval.queue_status,
+                queue_status=str((approval.queue_status if approval is not None else "pending") or "pending"),
                 request_id=intake_result.request_id,
                 task_id=task_id,
             )
@@ -1382,6 +1410,15 @@ class IntakePreviewBridge:
         ]
         if not matches:
             return None
+        active_matches = [
+            task
+            for task in matches
+            if str(task.get("status") or "").strip().lower() in {"needs_approval", "pending", "running"}
+        ]
+        if active_matches:
+            matches = active_matches
+        else:
+            return None
         priority = {"needs_approval": 0, "pending": 1, "running": 2, "blocked": 3, "completed": 4}
         matches.sort(key=lambda item: priority.get(str(item.get("status") or "").strip().lower(), 99))
         return matches[0]
@@ -1452,6 +1489,25 @@ class IntakePreviewBridge:
         routing: Any,
         project: SupportedProject,
     ) -> str:
+        if IntakePreviewBridge._is_platformer_review(routing):
+            plan_title = str(getattr(routing, "plan_title", "") or "").strip()
+            mapped_prompt = str(getattr(routing, "mapped_prompt", "") or preview.detected_action or "").strip()
+            step_count = len([item for item in getattr(routing, "plan_step_titles", []) or [] if str(item).strip()])
+            if plan_title:
+                return (
+                    f"Reviewing the bounded platformer plan '{plan_title}' for {project.name}. "
+                    f"This approval covers {step_count} fixed step(s) in the reviewed traversal scope only."
+                )
+            return (
+                f"Reviewing the bounded platformer action '{mapped_prompt or preview.detected_action}' for {project.name}. "
+                "This approval covers only the reviewed deterministic platformer change."
+            )
+        if IntakePreviewBridge._is_environment_theme_review(routing):
+            mapped_prompt = str(getattr(routing, "mapped_prompt", "") or preview.detected_action or "").strip()
+            return (
+                f"Reviewing the bounded environment theme action '{mapped_prompt or preview.detected_action}' for {project.name}. "
+                "This approval covers only the reviewed Ground material theme change."
+            )
         target_level = str(getattr(routing, "target_level", "") or "").strip()
         if target_level:
             return f"{preview.detected_action} requests a bounded change in {target_level} inside {project.name}."
@@ -1459,6 +1515,26 @@ class IntakePreviewBridge:
 
     @staticmethod
     def _approval_reason(*, preview: PreparedPromptPreview, routing: Any) -> str:
+        if IntakePreviewBridge._is_platformer_review(routing):
+            plan_title = str(getattr(routing, "plan_title", "") or "").strip()
+            mapped_prompt = str(getattr(routing, "mapped_prompt", "") or preview.detected_action or "").strip()
+            boundary = (
+                f"Approval authorizes only the reviewed platformer plan '{plan_title}'."
+                if plan_title
+                else f"Approval authorizes only the reviewed platformer action '{mapped_prompt or preview.detected_action}'."
+            )
+            return (
+                "This request enters bounded platformer review before any run is queued. "
+                + boundary
+                + " It does not authorize arbitrary follow-on mutations, and sandbox remains a separate operator choice."
+            )
+        if IntakePreviewBridge._is_environment_theme_review(routing):
+            mapped_prompt = str(getattr(routing, "mapped_prompt", "") or preview.detected_action or "").strip()
+            return (
+                "This request enters bounded environment visual-theme review before any run is queued. "
+                f"Approval authorizes only the reviewed Ground material action '{mapped_prompt or preview.detected_action}'. "
+                "It does not authorize broader terrain art direction, follow-on scene styling, or any extra mutation outside the reviewed scope."
+            )
         reason = _clean_decision_text(str(preview.decision_reason or "").strip())
         if reason:
             return reason
@@ -1469,6 +1545,27 @@ class IntakePreviewBridge:
 
     @staticmethod
     def _expected_change_scope(*, preview: PreparedPromptPreview, routing: Any, project: SupportedProject) -> str:
+        if IntakePreviewBridge._is_platformer_review(routing):
+            plan_title = str(getattr(routing, "plan_title", "") or "").strip()
+            mapped_prompt = str(getattr(routing, "mapped_prompt", "") or preview.detected_action or "").strip()
+            step_count = len([item for item in getattr(routing, "plan_step_titles", []) or [] if str(item).strip()])
+            if plan_title:
+                return (
+                    f"Limit execution to the reviewed platformer plan '{plan_title}' with {step_count} fixed step(s) in {project.name}. "
+                    "No extra mutation families or unsupported content changes are included."
+                )
+            return (
+                f"Limit execution to the reviewed platformer action '{mapped_prompt or preview.detected_action}' in {project.name}. "
+                "No arbitrary geometry, content, or unsupported gameplay changes are included."
+            )
+        if IntakePreviewBridge._is_environment_theme_review(routing):
+            target_scene = str(getattr(routing, "target_scene", "") or "").strip()
+            scene_name = Path(target_scene).stem or "the supported scene"
+            mapped_prompt = str(getattr(routing, "mapped_prompt", "") or preview.detected_action or "").strip()
+            return (
+                f"Limit execution to the reviewed environment theme action '{mapped_prompt or preview.detected_action}' on Ground in {scene_name} for {project.name}. "
+                "No broader terrain realism pass, foliage expansion, decal work, or extra scene styling changes are included."
+            )
         target_level = str(getattr(routing, "target_level", "") or "").strip()
         target_scene = str(getattr(routing, "target_scene", "") or "").strip()
         if target_level:
@@ -1482,6 +1579,25 @@ class IntakePreviewBridge:
 
     @staticmethod
     def _validation_intent(*, routing: Any) -> str:
+        if IntakePreviewBridge._is_platformer_review(routing):
+            plan_title = str(getattr(routing, "plan_title", "") or "").strip()
+            if plan_title:
+                return (
+                    "After approval, AI-E will execute the reviewed bounded platformer plan, keep each step inside the deterministic "
+                    "project tool route, and validate the resulting platformer state before treating the run as complete. "
+                    "Sandbox runs the same bounded route as an explicit proof path instead of the approval path."
+                )
+            return (
+                "After approval, AI-E will execute the reviewed bounded platformer action through the deterministic project tool route "
+                "and validate the resulting platformer state before treating the run as complete. "
+                "Sandbox runs that bounded route as an explicit proof path instead of the approval path."
+            )
+        if IntakePreviewBridge._is_environment_theme_review(routing):
+            return (
+                "After approval, AI-E will execute the reviewed bounded environment theme action through the deterministic project tool route, "
+                "validate the recorded Ground material mutation artifact, and confirm the approved Babylon scene target before treating the run as complete. "
+                "Sandbox remains an explicit alternative path instead of the default approval path."
+            )
         missing_evidence = [str(item).strip() for item in getattr(routing, "missing_evidence", []) or [] if str(item).strip()]
         if bool(getattr(routing, "sandbox_first_required", False)):
             return "Validate in sandbox first before real changes are allowed."
@@ -1491,6 +1607,57 @@ class IntakePreviewBridge:
 
     @staticmethod
     def _risk_guardrail_status(*, routing: Any, queue_status: str, approval_state: str) -> str:
+        if IntakePreviewBridge._is_platformer_review(routing):
+            parts: List[str] = []
+            if queue_status == "needs_approval":
+                parts.append("This bounded platformer request is waiting for operator approval.")
+            elif queue_status == "pending":
+                parts.append("Approval was already recorded. The reviewed platformer run is waiting to start.")
+            else:
+                parts.append("No work has started yet. This platformer request is still under review.")
+
+            plan_title = str(getattr(routing, "plan_title", "") or "").strip()
+            step_count = len([item for item in getattr(routing, "plan_step_titles", []) or [] if str(item).strip()])
+            if plan_title:
+                parts.append(f"Guardrails limit execution to the {step_count}-step reviewed plan '{plan_title}'.")
+            else:
+                mapped_prompt = str(getattr(routing, "mapped_prompt", "") or "").strip()
+                if mapped_prompt:
+                    parts.append(f"Guardrails limit execution to the reviewed platformer action '{mapped_prompt}'.")
+
+            parts.append("Deterministic project tool routing has already been matched for this request.")
+            parts.append("Sandbox remains a separate operator choice and is not implied by approval.")
+
+            evidence_state = str(getattr(routing, "evidence_state", "") or getattr(routing, "maturity_stage", "") or "").strip()
+            if evidence_state:
+                parts.append(f"Current proof coverage is {evidence_state}.")
+            policy_state = str(getattr(routing, "policy_state", "") or "").strip()
+            if policy_state:
+                parts.append(f"Safety policy status is {policy_state.replace('_', ' ')}.")
+            return " ".join(parts)
+        if IntakePreviewBridge._is_environment_theme_review(routing):
+            parts: List[str] = []
+            if queue_status == "needs_approval":
+                parts.append("This bounded environment theme request is waiting for operator approval.")
+            elif queue_status == "pending":
+                parts.append("Approval was already recorded. The reviewed environment theme run is waiting to start.")
+            else:
+                parts.append("No work has started yet. This environment theme request is still in review.")
+
+            mapped_prompt = str(getattr(routing, "mapped_prompt", "") or "").strip()
+            if mapped_prompt:
+                parts.append(f"Guardrails limit execution to the reviewed environment theme action '{mapped_prompt}'.")
+            parts.append("Scope is limited to the approved Ground material mutation in the supported Babylon scene.")
+            parts.append("Deterministic project tool routing has already been matched for this request.")
+            parts.append("Sandbox remains a separate operator choice and is not implied by approval.")
+
+            evidence_state = str(getattr(routing, "evidence_state", "") or getattr(routing, "maturity_stage", "") or "").strip()
+            if evidence_state:
+                parts.append(f"Current proof coverage is {evidence_state}.")
+            policy_state = str(getattr(routing, "policy_state", "") or "").strip()
+            if policy_state:
+                parts.append(f"Safety policy status is {policy_state.replace('_', ' ')}.")
+            return " ".join(parts)
         parts: List[str] = []
         if queue_status == "needs_approval":
             parts.append("This request is waiting for approval.")
@@ -1520,7 +1687,41 @@ class IntakePreviewBridge:
         return " ".join(parts)
 
     @staticmethod
-    def _review_status_message(*, queue_status: str, approval_state: str) -> str:
+    def _review_status_message(*, queue_status: str, approval_state: str, routing: Any | None = None) -> str:
+        if IntakePreviewBridge._is_platformer_review(routing):
+            if queue_status == "needs_approval":
+                return (
+                    "This bounded platformer request is waiting for operator choice. "
+                    "Approve it to queue the reviewed run, reject it to stop here, or choose sandbox to exercise the same bounded route explicitly."
+                )
+            if queue_status == "pending" and approval_state in {"approved", "auto_approved", "not_required"}:
+                return (
+                    "Approval was already recorded for this bounded platformer request. "
+                    "It is waiting to run under the reviewed scope. Refresh status to follow it."
+                )
+            if queue_status == "blocked":
+                return "AI-E has blocked this platformer request. Revise it to stay within supported scope before preparing it again."
+            return (
+                "This bounded platformer review is prepared only. Nothing has run yet. "
+                "Approve to queue the reviewed run, reject to stop here, or choose sandbox as the explicit alternative path."
+            )
+        if IntakePreviewBridge._is_environment_theme_review(routing):
+            if queue_status == "needs_approval":
+                return (
+                    "This bounded environment theme request is waiting for operator choice. "
+                    "Approve it to queue the reviewed run, reject it to stop here, or choose sandbox to exercise the same bounded route explicitly."
+                )
+            if queue_status == "pending" and approval_state in {"approved", "auto_approved", "not_required"}:
+                return (
+                    "Approval was already recorded for this bounded environment theme request. "
+                    "It is waiting to run under the reviewed scope. Refresh status to follow it."
+                )
+            if queue_status == "blocked":
+                return "AI-E has blocked this environment theme request. Revise it to stay within supported scope before preparing it again."
+            return (
+                "This bounded environment theme review is prepared only. Nothing has run yet. "
+                "Approve to queue the reviewed run, reject to stop here, or choose sandbox as the explicit alternative path."
+            )
         if queue_status == "needs_approval":
             return "This request is waiting for approval. AI-E has not started any work. Approve it once, reject it, or keep it staged for sandbox-first review."
         if queue_status == "pending" and approval_state in {"approved", "auto_approved", "not_required"}:
@@ -1528,6 +1729,33 @@ class IntakePreviewBridge:
         if queue_status == "blocked":
             return "AI-E has blocked this request. Revise it to stay within supported scope before preparing it again."
         return "This review is prepared only. AI-E has not started any work. Choose a review action when you are ready."
+
+    @staticmethod
+    def _is_platformer_review(routing: Any) -> bool:
+        plan_key = str(getattr(routing, "plan_key", "") or "").strip().lower()
+        if plan_key.startswith("platformer_"):
+            return True
+        capability_id = str(getattr(routing, "capability_id", "") or "").strip().lower()
+        if "_platformer_" in capability_id:
+            return True
+        generic_definition = getattr(routing, "generic_capability_definition", None)
+        if isinstance(generic_definition, dict):
+            return str(generic_definition.get("target_context") or "").strip().lower() == "platformer"
+        return False
+
+    @staticmethod
+    def _is_environment_theme_review(routing: Any) -> bool:
+        capability_id = str(getattr(routing, "capability_id", "") or "").strip().lower()
+        if capability_id.endswith("_ground_theme") or "environment_theme" in capability_id:
+            return True
+        generic_definition = getattr(routing, "generic_capability_definition", None)
+        if isinstance(generic_definition, dict):
+            if str(generic_definition.get("target_context") or "").strip().lower() == "environment_theme":
+                return True
+        mapped_prompt = str(getattr(routing, "mapped_prompt", "") or "").strip()
+        if mapped_prompt and resolve_environment_theme_action(mapped_prompt) is not None:
+            return True
+        return False
 
     @staticmethod
     def _review_intent_type(*, task_type: str, routing: Any) -> str:
@@ -2474,7 +2702,50 @@ def _is_multi_step_plan_run(
         plan_steps = [str(item).strip() for item in state.get("last_generated_plan_steps", []) if str(item).strip()]
         if len(plan_steps) >= 2 and len(attempts) >= 1:
             return True
+    if len(attempts) >= 1:
+        request_payload = _load_request_payload_from_attempt(run_dir, attempts[0][1])
+        request_context = request_payload.get("context") if isinstance(request_payload.get("context"), dict) else {}
+        request_routing = request_context.get("routing") if isinstance(request_context.get("routing"), dict) else {}
+        routed_plan_steps = [
+            str(item).strip()
+            for item in (request_routing.get("plan_step_titles") or [])
+            if str(item).strip()
+        ]
+        if len(routed_plan_steps) >= 2:
+            return True
     return False
+
+
+def _plan_attempt_group_key(task: dict[str, Any]) -> tuple[str, str, str, str, str]:
+    task_id = str(task.get("task_id") or task.get("id") or "").strip()
+    task_family = task_id.split("__STEP_", 1)[0] if task_id else ""
+    return (
+        str(task.get("request_id") or "").strip(),
+        str(task.get("plan_id") or "").strip(),
+        str(task.get("request_payload_path") or "").strip(),
+        str(task.get("plan_title") or "").strip(),
+        task_family,
+    )
+
+
+def _plan_attempt_groups(run_dir: Path, attempt_artifacts: List[tuple[Path, dict[str, Any]]]) -> List[dict[str, Any]]:
+    grouped: dict[tuple[str, str, str, str, str], dict[str, Any]] = {}
+    for artifact_path, attempt_artifact in attempt_artifacts:
+        task = attempt_artifact.get("task") if isinstance(attempt_artifact.get("task"), dict) else {}
+        group_key = _plan_attempt_group_key(task)
+        group = grouped.get(group_key)
+        if group is None:
+            request_payload = _load_request_payload_from_attempt(run_dir, attempt_artifact)
+            request_context = request_payload.get("context") if isinstance(request_payload.get("context"), dict) else {}
+            request_routing = request_context.get("routing") if isinstance(request_context.get("routing"), dict) else {}
+            group = {
+                "request_payload": request_payload,
+                "routing": request_routing,
+                "attempt_artifacts": [],
+            }
+            grouped[group_key] = group
+        group["attempt_artifacts"].append((artifact_path, attempt_artifact))
+    return list(grouped.values())
 
 
 def _proof_result_from_plan_session(
@@ -2483,12 +2754,40 @@ def _proof_result_from_plan_session(
     session_state: dict[str, Any] | None,
     attempt_artifacts: List[tuple[Path, dict[str, Any]]],
     supported_projects: List[SupportedProject],
+    debug_expanded: bool = False,
+) -> ProofResultSurface:
+    plan_groups = _plan_attempt_groups(run_dir, attempt_artifacts)
+    if len(plan_groups) > 1:
+        return _proof_result_from_multi_plan_session(
+            run_dir,
+            session_state=session_state,
+            plan_groups=plan_groups,
+            supported_projects=supported_projects,
+            debug_expanded=debug_expanded,
+        )
+    return _proof_result_from_single_plan_session(
+        run_dir,
+        session_state=session_state,
+        attempt_artifacts=attempt_artifacts,
+        supported_projects=supported_projects,
+        debug_expanded=debug_expanded,
+    )
+
+
+def _proof_result_from_single_plan_session(
+    run_dir: Path,
+    *,
+    session_state: dict[str, Any] | None,
+    attempt_artifacts: List[tuple[Path, dict[str, Any]]],
+    supported_projects: List[SupportedProject],
+    debug_expanded: bool = False,
 ) -> ProofResultSurface:
     first_payload = attempt_artifacts[0][1] if attempt_artifacts else {}
     first_task = first_payload.get("task") if isinstance(first_payload.get("task"), dict) else {}
     request_payload = _load_request_payload_from_attempt(run_dir, first_payload)
     request_context = request_payload.get("context") if isinstance(request_payload.get("context"), dict) else {}
     request_routing = request_context.get("routing") if isinstance(request_context.get("routing"), dict) else {}
+    platformer_context = _platformer_review_context(task=first_task, routing=request_routing)
 
     original_request = str(request_payload.get("operator_prompt") or "").strip()
     normalized_request = str(request_routing.get("mapped_prompt") or "").strip()
@@ -2508,6 +2807,15 @@ def _proof_result_from_plan_session(
     validation_checks: List[str] = []
     raw_artifacts: List[ProofArtifactLink] = []
     skipped_steps = 0
+    failing_step_index: int | None = None
+    failing_step_title = ""
+    failing_step_reason = ""
+    failing_step_constraint = ""
+    failing_step_check = ""
+    debug_router_refs: List[str] = []
+    debug_translated_commands: List[str] = []
+    debug_validation_codes: List[str] = []
+    debug_attempt_metadata: List[str] = []
 
     resolution_steps, resolution_checks = _session_resolution_lines(
         routing=request_routing,
@@ -2531,22 +2839,76 @@ def _proof_result_from_plan_session(
             skipped_steps += 1
         step_status = _attempt_proof_status(result=result, validation=validation)
         proof_statuses.append(step_status)
-        step_verdict = _attempt_final_verdict(
-            proof_status=step_status,
+        step_stop_reason = _attempt_stop_reason(validation=validation, result=result, details=details)
+        step_constraint = _attempt_constraint_label(validation=validation, details=details, stop_reason=step_stop_reason)
+        step_failing_check = _attempt_failing_check(validation=validation, details=details, stop_reason=step_stop_reason)
+        translated_command = str(details.get("translated_command") or "").strip()
+        step_debug_fields = _attempt_debug_fields(
+            task=task,
             result=result,
-            details=details,
             validation=validation,
+            details=details,
+            platformer_context=platformer_context,
+            debug_expanded=debug_expanded,
         )
-        key_steps.append(f"{index}. {step_title}: {step_verdict}")
+        debug_router_refs.extend(step_debug_fields["debug_router_refs"])
+        debug_translated_commands.extend(
+            f"step_{index}:{item}" for item in step_debug_fields["debug_translated_commands"]
+        )
+        debug_validation_codes.extend(
+            f"step_{index}:{item}" for item in step_debug_fields["debug_validation_codes"]
+        )
+        if debug_expanded:
+            debug_attempt_metadata.append(
+                f"step_{index}: title={step_title}; result_status={str(result.get('status') or '').strip() or 'unknown'}; "
+                f"validation_state={str(validation.get('validation_state') or validation.get('status') or '').strip() or 'unknown'}; "
+                f"translated_command={translated_command or 'n/a'}"
+            )
+            debug_attempt_metadata.extend(
+                f"step_{index}:{item}" for item in step_debug_fields["debug_attempt_metadata"]
+            )
+        if platformer_context is not None:
+            step_detail_parts: List[str] = [f"Status: {step_status}."]
+            if translated_command:
+                step_detail_parts.append(f"Mutation: '{translated_command}'.")
+            if step_failing_check:
+                step_detail_parts.append(f"Failing check: {step_failing_check}.")
+            if step_stop_reason and step_status in {"Blocked", "Failed"}:
+                step_detail_parts.append(f"Stop reason: {step_stop_reason.rstrip('.') }.")
+            if step_constraint and step_status in {"Blocked", "Failed"}:
+                step_detail_parts.append(f"Constraint: {step_constraint}.")
+            key_steps.append(f"{index}. {step_title}: {' '.join(step_detail_parts)}")
+        else:
+            step_verdict = _attempt_final_verdict(
+                proof_status=step_status,
+                result=result,
+                details=details,
+                validation=validation,
+            )
+            key_steps.append(f"{index}. {step_title}: {step_verdict}")
+        if platformer_context is not None and failing_step_index is None and step_status in {"Blocked", "Failed"}:
+            failing_step_index = index
+            failing_step_title = step_title
+            failing_step_reason = step_stop_reason
+            failing_step_constraint = step_constraint
+            failing_step_check = step_failing_check
 
         change_summary = _proof_change_summary(details)
-        if change_summary and "does not include a clear change summary" not in change_summary.lower():
+        if (
+            change_summary
+            and "does not include a clear change summary" not in change_summary.lower()
+            and change_summary.strip().lower() != "ai-e applied mutation to target object."
+        ):
             change_parts.append(f"{step_title}: {change_summary}")
         before_after_summary = _proof_before_after_summary(details)
         if before_after_summary:
             before_after_parts.append(f"{step_title}: {before_after_summary}")
         for check in _attempt_validation_checks(validation=validation, details=details):
             validation_checks.append(f"{step_title}: {check}")
+        if platformer_context is not None and step_failing_check:
+            validation_checks.append(f"{step_title}: Failing check: {step_failing_check}.")
+        if platformer_context is not None and step_constraint and step_status in {"Blocked", "Failed"}:
+            validation_checks.append(f"{step_title}: Constraint enforcement: {step_constraint}.")
 
         _append_artifact_link(raw_artifacts, label=f"Step {index} details", kind="summary", candidate=artifact_path)
         for artifact_index, candidate in enumerate(result.get("artifacts") or [], start=1):
@@ -2586,6 +2948,35 @@ def _proof_result_from_plan_session(
         final_verdict = "AI-E saved this planned run with partial details."
         validation_outcome = "AI-E saved the planned run, but the full validation picture is not available."
 
+    if platformer_context is not None:
+        final_verdict = _platformer_plan_final_verdict_with_reason(
+            context=platformer_context,
+            proof_status=proof_status,
+            total_steps=total_steps,
+            skipped_steps=skipped_steps,
+            failing_step_index=failing_step_index,
+            failing_step_title=failing_step_title,
+            stop_reason=failing_step_reason,
+            constraint_label=failing_step_constraint,
+        )
+        validation_outcome = _platformer_plan_validation_outcome(
+            context=platformer_context,
+            proof_status=proof_status,
+            total_steps=total_steps,
+            skipped_steps=skipped_steps,
+        )
+        validation_outcome = _platformer_plan_validation_outcome_with_reason(
+            context=platformer_context,
+            proof_status=proof_status,
+            total_steps=total_steps,
+            skipped_steps=skipped_steps,
+            failing_step_index=failing_step_index,
+            failing_step_title=failing_step_title,
+            failing_check=failing_step_check,
+            stop_reason=failing_step_reason,
+            constraint_label=failing_step_constraint,
+        )
+
     if not validation_checks:
         validation_checks = [f"Planned steps recorded: {total_steps}."]
 
@@ -2624,8 +3015,21 @@ def _proof_result_from_plan_session(
         routing=request_routing,
     )
     change_summary = " ".join(change_parts).strip() or "AI-E completed the recorded plan steps for this request."
+    if platformer_context is not None:
+        change_summary = _platformer_review_change_summary(context=platformer_context, fallback=change_summary)
+        if proof_status in {"Blocked", "Failed"} and failing_step_index is not None and failing_step_title:
+            change_summary = (
+                f"{change_summary} Attempt trace: executed {executed_steps} reviewed step(s) and stopped at step {failing_step_index} '{failing_step_title}'."
+            ).strip()
     validation_summary = validation_outcome
     final_summary = final_verdict
+    debug_fields = _debug_field_bundle(
+        debug_expanded=debug_expanded,
+        router_refs=debug_router_refs,
+        translated_commands=debug_translated_commands,
+        validation_codes=debug_validation_codes,
+        attempt_metadata=debug_attempt_metadata,
+    )
     if autonomous_fields["autonomous_build_available"]:
         change_summary = str(autonomous_fields["autonomous_build_summary"] or "").strip() or change_summary
         validation_summary = str(autonomous_fields["autonomous_build_approval_summary"] or "").strip() or validation_summary
@@ -2659,6 +3063,169 @@ def _proof_result_from_plan_session(
         **evaluation_fields,
         **experiment_fields,
         **autonomous_fields,
+        **debug_fields,
+    )
+
+
+def _proof_result_from_multi_plan_session(
+    run_dir: Path,
+    *,
+    session_state: dict[str, Any] | None,
+    plan_groups: List[dict[str, Any]],
+    supported_projects: List[SupportedProject],
+    debug_expanded: bool = False,
+) -> ProofResultSurface:
+    plan_surfaces: List[ProofResultSurface] = []
+    for group in plan_groups:
+        group_attempts = list(group.get("attempt_artifacts") or [])
+        if not group_attempts:
+            continue
+        plan_surfaces.append(
+            _proof_result_from_single_plan_session(
+                run_dir,
+                session_state=session_state,
+                attempt_artifacts=group_attempts,
+                supported_projects=supported_projects,
+                debug_expanded=debug_expanded,
+            )
+        )
+
+    if not plan_surfaces:
+        return _unavailable_proof_result_surface("Saved plan proof artifacts were not available for this session.")
+
+    first_group_attempts = list(plan_groups[0].get("attempt_artifacts") or [])
+    first_payload = first_group_attempts[0][1] if first_group_attempts else {}
+    first_task = first_payload.get("task") if isinstance(first_payload.get("task"), dict) else {}
+    overall_status = _aggregate_plan_proof_status([surface.proof_status for surface in plan_surfaces])
+    plan_titles = [
+        str(surface.detected_action or surface.title or surface.original_request or f"Plan {index}").strip()
+        for index, surface in enumerate(plan_surfaces, start=1)
+    ]
+    original_requests = [str(surface.original_request or "").strip() for surface in plan_surfaces if str(surface.original_request or "").strip()]
+    normalized_requests = [str(surface.normalized_request or "").strip() for surface in plan_surfaces if str(surface.normalized_request or "").strip()]
+    unique_targets = [
+        str(surface.target_display or "").strip()
+        for surface in plan_surfaces
+        if str(surface.target_display or "").strip()
+    ]
+    target_display = unique_targets[0] if len(set(unique_targets)) == 1 and unique_targets else (unique_targets[0] if unique_targets else "")
+
+    final_summary = (
+        f"AI-E recorded {len(plan_surfaces)} separate approved reviewed plans in this session. "
+        + " ".join(
+            f"Plan {index} '{plan_titles[index - 1]}': {surface.final_verdict}"
+            for index, surface in enumerate(plan_surfaces, start=1)
+        )
+    ).strip()
+    change_summary = (
+        f"This saved proof session keeps {len(plan_surfaces)} approved reviewed plans separate. "
+        + " ".join(
+            f"Plan {index} '{plan_titles[index - 1]}': {str(surface.change_summary or '').strip()}"
+            for index, surface in enumerate(plan_surfaces, start=1)
+            if str(surface.change_summary or '').strip()
+        )
+    ).strip()
+    validation_summary = (
+        f"Validation is reported separately for {len(plan_surfaces)} approved reviewed plans in this session. "
+        + " ".join(
+            f"Plan {index} '{plan_titles[index - 1]}': {surface.validation_outcome}"
+            for index, surface in enumerate(plan_surfaces, start=1)
+        )
+    ).strip()
+    before_after_summary = " ".join(
+        f"Plan {index} '{plan_titles[index - 1]}': {str(surface.before_after_summary or '').strip()}"
+        for index, surface in enumerate(plan_surfaces, start=1)
+        if str(surface.before_after_summary or '').strip()
+    ).strip()
+
+    key_steps: List[str] = []
+    validation_checks: List[str] = []
+    raw_artifacts: List[ProofArtifactLink] = []
+    seen_artifacts: set[tuple[str, str, str]] = set()
+    debug_router_refs: List[str] = []
+    debug_translated_commands: List[str] = []
+    debug_validation_codes: List[str] = []
+    debug_attempt_metadata: List[str] = []
+
+    for index, surface in enumerate(plan_surfaces, start=1):
+        plan_label = plan_titles[index - 1]
+        key_steps.append(f"Plan {index}: {plan_label}.")
+        key_steps.extend(f"Plan {index} - {item}" for item in surface.key_steps)
+        validation_checks.append(f"Plan {index}: {plan_label}.")
+        validation_checks.extend(f"Plan {index} - {item}" for item in surface.validation_checks)
+        for artifact in surface.raw_artifacts:
+            artifact_key = (str(artifact.path), artifact.label, artifact.kind)
+            if artifact_key in seen_artifacts:
+                continue
+            seen_artifacts.add(artifact_key)
+            raw_artifacts.append(artifact)
+        debug_router_refs.extend(f"plan_{index}:{item}" for item in surface.debug_router_refs)
+        debug_translated_commands.extend(f"plan_{index}:{item}" for item in surface.debug_translated_commands)
+        debug_validation_codes.extend(f"plan_{index}:{item}" for item in surface.debug_validation_codes)
+        debug_attempt_metadata.extend(f"plan_{index}:{item}" for item in surface.debug_attempt_metadata)
+
+    final_task = {}
+    final_artifact_path = _latest_attempt_artifact_path(run_dir, session_state=session_state)
+    if final_artifact_path is not None:
+        final_payload = _load_json(final_artifact_path)
+        if isinstance(final_payload, dict):
+            final_task = final_payload.get("task") if isinstance(final_payload.get("task"), dict) else {}
+    evaluation_payload = _result_evaluation_payload(
+        run_dir,
+        session_state=session_state,
+        final_task=final_task,
+    )
+    evaluation_fields = _evaluation_surface_fields(evaluation_payload)
+    experiment_fields = _experiment_surface_fields(
+        _result_experiment_payload(
+            run_dir,
+            session_state=session_state,
+            final_task=final_task,
+            evaluation=evaluation_payload,
+        )
+    )
+    experiment_fields = {
+        **experiment_fields,
+        **_manual_correction_surface_fields(experiment_fields),
+    }
+    autonomous_fields = _autonomous_build_surface_fields(
+        task=first_task,
+        details={},
+        routing={},
+    )
+    debug_fields = _debug_field_bundle(
+        debug_expanded=debug_expanded,
+        router_refs=debug_router_refs,
+        translated_commands=debug_translated_commands,
+        validation_codes=debug_validation_codes,
+        attempt_metadata=debug_attempt_metadata,
+    )
+
+    return ProofResultSurface(
+        available=True,
+        title=f"{len(plan_surfaces)} approved reviewed plans",
+        source="proof",
+        original_request="; ".join(original_requests),
+        normalized_request="; ".join(normalized_requests),
+        target_display=target_display,
+        detected_action=f"{len(plan_surfaces)} reviewed plans",
+        final_verdict=final_summary,
+        before_after_summary=before_after_summary,
+        change_summary=change_summary,
+        validation_outcome=validation_summary,
+        proof_status=overall_status,
+        timestamp_label=plan_surfaces[-1].timestamp_label,
+        key_steps=key_steps,
+        validation_checks=validation_checks,
+        raw_artifacts=raw_artifacts,
+        primary_artifact_path=raw_artifacts[0].path if raw_artifacts else None,
+        rerun_prompt="; ".join(original_requests),
+        rerun_project_path=str(first_task.get("target_repo") or "").strip(),
+        status_message="Loaded from the saved reviewed multi-plan session and supporting files.",
+        **evaluation_fields,
+        **experiment_fields,
+        **autonomous_fields,
+        **debug_fields,
     )
 
 
@@ -2712,12 +3279,488 @@ def _resolve_saved_path(run_dir: Path, raw_path: str) -> Path | None:
     return None
 
 
+def _platformer_review_context(
+    *,
+    task: dict[str, Any] | None,
+    routing: dict[str, Any] | None,
+    details: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    task_payload = task if isinstance(task, dict) else {}
+    routing_payload = routing if isinstance(routing, dict) else {}
+    details_payload = details if isinstance(details, dict) else {}
+
+    plan_key = str(routing_payload.get("plan_key") or task_payload.get("plan_key") or "").strip().lower()
+    capability_id = str(routing_payload.get("capability_id") or task_payload.get("capability_id") or "").strip().lower()
+    generic_definition = routing_payload.get("generic_capability_definition")
+    target_context = str(
+        details_payload.get("target_context")
+        or routing_payload.get("target_context")
+        or (generic_definition.get("target_context") if isinstance(generic_definition, dict) else "")
+        or ""
+    ).strip().lower()
+    routed_platformer = plan_key.startswith("platformer_") or "_platformer_" in capability_id
+    if not routed_platformer and target_context == "platformer":
+        routed_platformer = any(
+            str(routing_payload.get(field) or "").strip()
+            for field in ("mapped_prompt", "plan_title", "plan_key", "capability_id")
+        )
+    if not routed_platformer:
+        return None
+
+    raw_plan_title = str(task_payload.get("plan_title") or routing_payload.get("plan_title") or "").strip()
+    mapped_prompt = str(
+        task_payload.get("mapped_prompt")
+        or routing_payload.get("mapped_prompt")
+        or details_payload.get("translated_command")
+        or ""
+    ).strip()
+    step_titles = [
+        str(item).strip()
+        for item in (routing_payload.get("plan_step_titles") or [])
+        if str(item).strip()
+    ]
+    plan_title = raw_plan_title
+    if raw_plan_title.lower() in {"plan", "verified plan"} and not step_titles:
+        plan_title = ""
+    approved_by = " ".join(str(task_payload.get("approved_by") or "").split())
+    approval_state = str(task_payload.get("approval_state") or "").strip().lower()
+    return {
+        "plan_title": plan_title,
+        "mapped_prompt": mapped_prompt,
+        "step_count": len(step_titles),
+        "approved_by": approved_by,
+        "approval_state": approval_state,
+    }
+
+
+def _platformer_review_subject(context: dict[str, Any]) -> str:
+    approved = str(context.get("approval_state") or "").strip().lower() in {"approved", "auto_approved", "not_required"}
+    qualifier = "approved" if approved else "reviewed"
+    plan_title = str(context.get("plan_title") or "").strip()
+    mapped_prompt = str(context.get("mapped_prompt") or "").strip()
+    if plan_title:
+        return f"the {qualifier} bounded platformer plan '{plan_title}'"
+    if mapped_prompt:
+        return f"the {qualifier} bounded platformer action '{mapped_prompt}'"
+    return f"the {qualifier} bounded platformer change"
+
+
+def _platformer_review_approval_clause(context: dict[str, Any]) -> str:
+    approved_by = str(context.get("approved_by") or "").strip()
+    if approved_by and approved_by.lower() != "default":
+        return f" after {approved_by} approval"
+    if str(context.get("approval_state") or "").strip().lower() in {"approved", "auto_approved", "not_required"}:
+        return " after approval"
+    return ""
+
+
+def _platformer_review_change_summary(*, context: dict[str, Any], fallback: str) -> str:
+    plan_title = str(context.get("plan_title") or "").strip()
+    step_count = int(context.get("step_count") or 0)
+    if plan_title:
+        prefix = (
+            f"AI-E stayed inside the approved {step_count}-step platformer plan '{plan_title}' for this recorded run."
+            if step_count > 0
+            else f"AI-E stayed inside {_platformer_review_subject(context)} for this recorded run."
+        )
+    else:
+        prefix = f"AI-E stayed inside {_platformer_review_subject(context)} for this recorded run."
+    lowered = str(fallback or "").strip().lower()
+    if not lowered or lowered == "this result does not include a clear change summary.":
+        return prefix
+    if lowered in {
+        "ai-e applied mutation to target object.",
+        "ai-e completed the recorded plan steps for this request.",
+    }:
+        return prefix
+    return f"{prefix} {fallback}".strip()
+
+
+def _attempt_stop_reason(*, validation: dict[str, Any], result: dict[str, Any], details: dict[str, Any]) -> str:
+    candidates = [
+        validation.get("note"),
+        result.get("summary"),
+        details.get("stop_reason"),
+        details.get("block_reason"),
+        details.get("error"),
+    ]
+    for candidate in candidates:
+        text = _clean_decision_text(str(candidate or "").strip())
+        if text:
+            return text.rstrip(".")
+    return ""
+
+
+def _attempt_constraint_label(*, validation: dict[str, Any], details: dict[str, Any], stop_reason: str = "") -> str:
+    layout_validation = extract_platformer_layout_validation_metadata(details)
+    if layout_validation and int(layout_validation.get("layout_validation_issue_count") or 0) > 0:
+        return "Structural invalidity"
+
+    normalized = stop_reason.strip().lower()
+    if not normalized:
+        normalized = _clean_decision_text(str(validation.get("note") or "").strip()).lower()
+    if any(token in normalized for token in ("safety", "unsafe", "policy", "forbidden", "denied")):
+        return "Safety constraint"
+    if any(
+        token in normalized
+        for token in (
+            "translated route execution failed",
+            "router artifact",
+            "deterministic",
+            "guardrail",
+            "unsupported",
+            "missing_dependencies",
+        )
+    ):
+        return "Deterministic guardrail"
+    if any(
+        token in normalized
+        for token in ("invalid", "unreachable", "overlap", "ladder", "gap exceeds", "layout")
+    ):
+        return "Structural invalidity"
+    validation_state = str(validation.get("validation_state") or validation.get("status") or "").strip().lower()
+    if validation_state in {"blocked", "failed", "error"}:
+        return "Deterministic guardrail"
+    return ""
+
+
+def _attempt_failing_check(*, validation: dict[str, Any], details: dict[str, Any], stop_reason: str = "") -> str:
+    validation_payload = details.get("validation") if isinstance(details.get("validation"), dict) else {}
+    validation_check = str(validation_payload.get("check") or "").strip()
+    if validation_check:
+        return _humanize_text(validation_check)
+
+    layout_validation = extract_platformer_layout_validation_metadata(details)
+    if layout_validation and int(layout_validation.get("layout_validation_issue_count") or 0) > 0:
+        return "Spatial layout validation"
+
+    normalized = stop_reason.strip().lower()
+    if not normalized:
+        normalized = _clean_decision_text(str(validation.get("note") or "").strip()).lower()
+    if "translated route execution failed" in normalized:
+        return "Translated route execution"
+    if any(token in normalized for token in ("safety", "unsafe", "policy", "forbidden", "denied")):
+        return "Safety policy evaluation"
+    if "deterministic" in normalized or "guardrail" in normalized:
+        return "Deterministic project tool route"
+    return ""
+
+
+def _platformer_attempt_trace(*, proof_status: str, details: dict[str, Any], mapped_prompt: str = "") -> str:
+    translated_command = str(details.get("translated_command") or mapped_prompt or "").strip()
+    route_label = f"'{translated_command}'" if translated_command else "the reviewed deterministic route"
+    if proof_status == "Blocked":
+        return f"Reached validation for {route_label} and stopped before completion."
+    if proof_status == "Failed":
+        return f"Started {route_label}, but the run did not finish cleanly."
+    if proof_status == "Passed":
+        return f"Executed {route_label} and completed the recorded validation checks."
+    if proof_status == "Completed":
+        return f"Executed {route_label} with partial validation detail."
+    return ""
+
+
+def _debug_field_bundle(
+    *,
+    debug_expanded: bool,
+    router_refs: List[str] | None = None,
+    translated_commands: List[str] | None = None,
+    validation_codes: List[str] | None = None,
+    attempt_metadata: List[str] | None = None,
+) -> dict[str, Any]:
+    def _clean(values: List[str] | None) -> List[str]:
+        cleaned: List[str] = []
+        for value in values or []:
+            text = str(value or "").strip()
+            if not text or text in cleaned:
+                continue
+            cleaned.append(text)
+        return cleaned
+
+    router_values = _clean(router_refs)
+    translated_values = _clean(translated_commands)
+    validation_values = _clean(validation_codes)
+    metadata_values = _clean(attempt_metadata)
+    available = bool(router_values or translated_values or validation_values or metadata_values)
+    if not debug_expanded:
+        return {
+            "debug_available": available,
+            "debug_expanded": False,
+            "debug_router_refs": [],
+            "debug_translated_commands": [],
+            "debug_validation_codes": [],
+            "debug_attempt_metadata": [],
+        }
+    return {
+        "debug_available": available,
+        "debug_expanded": available,
+        "debug_router_refs": router_values,
+        "debug_translated_commands": translated_values,
+        "debug_validation_codes": validation_values,
+        "debug_attempt_metadata": metadata_values,
+    }
+
+
+def _attempt_debug_fields(
+    *,
+    task: dict[str, Any],
+    result: dict[str, Any],
+    validation: dict[str, Any],
+    details: dict[str, Any],
+    platformer_context: dict[str, Any] | None,
+    debug_expanded: bool,
+) -> dict[str, Any]:
+    router_refs: List[str] = []
+    router_artifact_path = str(details.get("router_artifact_path") or "").strip()
+    router_log_path = str(details.get("router_log_path") or "").strip()
+    if router_artifact_path:
+        router_refs.append(f"router_artifact_path={router_artifact_path}")
+    if router_log_path:
+        router_refs.append(f"router_log_path={router_log_path}")
+
+    translated_commands: List[str] = []
+    mapped_prompt = str((platformer_context or {}).get("mapped_prompt") or "").strip()
+    translated_command = str(details.get("translated_command") or "").strip()
+    if mapped_prompt:
+        translated_commands.append(f"mapped_prompt={mapped_prompt}")
+    if translated_command:
+        translated_commands.append(f"translated_command={translated_command}")
+    router_status = str(details.get("router_status") or "").strip()
+    if router_status:
+        translated_commands.append(f"router_status={router_status}")
+    action_name = str(details.get("action_name") or details.get("action_type") or "").strip()
+    if action_name:
+        translated_commands.append(f"action_name={action_name}")
+
+    validation_codes: List[str] = []
+    validation_state = str(validation.get("validation_state") or validation.get("status") or "").strip()
+    if validation_state:
+        validation_codes.append(f"validation_state={validation_state}")
+    validation_payload = details.get("validation") if isinstance(details.get("validation"), dict) else {}
+    validation_check = str(validation_payload.get("check") or "").strip()
+    if validation_check:
+        validation_codes.append(f"validation_check={validation_check}")
+    for code in list(details.get("layout_validation_issue_codes") or []):
+        text = str(code or "").strip()
+        if text:
+            validation_codes.append(f"layout_issue_code={text}")
+
+    attempt_metadata: List[str] = []
+    for key in ("task_id", "request_id", "approval_state", "approved_by"):
+        value = str(task.get(key) or "").strip()
+        if value:
+            attempt_metadata.append(f"{key}={value}")
+    result_status = str(result.get("status") or "").strip()
+    if result_status:
+        attempt_metadata.append(f"result_status={result_status}")
+    if validation_state:
+        attempt_metadata.append(f"validation_state={validation_state}")
+    return _debug_field_bundle(
+        debug_expanded=debug_expanded,
+        router_refs=router_refs,
+        translated_commands=translated_commands,
+        validation_codes=validation_codes,
+        attempt_metadata=attempt_metadata,
+    )
+
+
+def _platformer_attempt_validation_outcome(*, context: dict[str, Any], proof_status: str) -> str:
+    subject = _platformer_review_subject(context)
+    plan_title = str(context.get("plan_title") or "").strip()
+    if proof_status == "Passed":
+        if plan_title:
+            return f"Recorded validation passed across {subject} inside the deterministic project tool route."
+        return f"Recorded validation passed for {subject} inside the deterministic project tool route."
+    if proof_status == "Completed":
+        return f"AI-E completed {subject}, but some validation details were only partially recorded."
+    if proof_status == "Blocked":
+        if plan_title:
+            return (
+                f"Validation stopped after {subject} entered the deterministic project tool route. "
+                "AI-E did not widen scope beyond the approved traversal."
+            )
+        return (
+            f"Validation stopped after {subject} entered the deterministic project tool route. "
+            "AI-E did not widen scope beyond the reviewed change."
+        )
+    if proof_status == "Failed":
+        return f"Recorded validation did not pass for {subject}."
+    return f"Detailed validation checks are not fully available for {subject}."
+
+
+def _platformer_attempt_validation_outcome_with_reason(
+    *,
+    context: dict[str, Any],
+    proof_status: str,
+    stop_reason: str,
+    failing_check: str,
+    constraint_label: str,
+) -> str:
+    summary = _platformer_attempt_validation_outcome(context=context, proof_status=proof_status)
+    extras: List[str] = []
+    if failing_check:
+        extras.append(f"Failing check: {failing_check}.")
+    if stop_reason and proof_status in {"Blocked", "Failed"}:
+        extras.append(f"Stop reason: {stop_reason.rstrip('.') }.")
+    if constraint_label and proof_status in {"Blocked", "Failed"}:
+        extras.append(f"Constraint enforcement: {constraint_label}.")
+    if not extras:
+        return summary
+    return f"{summary} {' '.join(extras)}".strip()
+
+
+def _platformer_attempt_final_verdict(*, context: dict[str, Any], proof_status: str) -> str:
+    subject = _platformer_review_subject(context)
+    approval_clause = _platformer_review_approval_clause(context)
+    plan_title = str(context.get("plan_title") or "").strip()
+    if proof_status == "Passed":
+        if plan_title:
+            return f"AI-E completed {subject} and the recorded checks passed."
+        return f"{subject.capitalize()} completed and the recorded checks passed."
+    if proof_status == "Completed":
+        if plan_title:
+            return f"AI-E completed {subject} with partial validation details."
+        return f"{subject.capitalize()} completed with partial validation details."
+    if proof_status == "Blocked":
+        if plan_title:
+            return f"AI-E started {subject}{approval_clause}, but stopped when a reviewed step could not complete safely."
+        return (
+            f"{subject.capitalize()} entered the deterministic project tool route{approval_clause}, "
+            "but AI-E stopped it before completion."
+        )
+    if proof_status == "Failed":
+        if plan_title:
+            return f"AI-E did not finish {subject} cleanly."
+        return f"{subject.capitalize()} did not finish cleanly."
+    return f"AI-E saved partial result details for {subject}."
+
+
+def _platformer_attempt_final_verdict_with_reason(
+    *,
+    context: dict[str, Any],
+    proof_status: str,
+    stop_reason: str,
+    constraint_label: str,
+) -> str:
+    summary = _platformer_attempt_final_verdict(context=context, proof_status=proof_status)
+    extras: List[str] = []
+    if stop_reason and proof_status in {"Blocked", "Failed"}:
+        extras.append(f"Stop reason: {stop_reason.rstrip('.') }.")
+    if constraint_label and proof_status in {"Blocked", "Failed"}:
+        extras.append(f"Constraint: {constraint_label}.")
+    if not extras:
+        return summary
+    return f"{summary} {' '.join(extras)}".strip()
+
+
+def _platformer_plan_validation_outcome(*, context: dict[str, Any], proof_status: str, total_steps: int, skipped_steps: int) -> str:
+    subject = _platformer_review_subject(context)
+    if proof_status == "Passed":
+        if skipped_steps:
+            return (
+                f"All recorded validation checks passed across {subject}. "
+                f"{skipped_steps} step(s) were skipped because the requested state was already satisfied."
+            )
+        return f"All recorded validation checks passed across {subject}."
+    if proof_status == "Completed":
+        return f"AI-E finished {subject}, but some validation details were only partially recorded."
+    if proof_status == "Blocked":
+        return (
+            f"At least one reviewed step in {subject} was blocked inside the deterministic project tool route. "
+            "AI-E did not widen scope beyond the approved traversal."
+        )
+    if proof_status == "Failed":
+        return f"At least one reviewed step in {subject} did not finish cleanly."
+    return f"AI-E saved {subject}, but the full validation picture is not available."
+
+
+def _platformer_plan_validation_outcome_with_reason(
+    *,
+    context: dict[str, Any],
+    proof_status: str,
+    total_steps: int,
+    skipped_steps: int,
+    failing_step_index: int | None,
+    failing_step_title: str,
+    failing_check: str,
+    stop_reason: str,
+    constraint_label: str,
+) -> str:
+    summary = _platformer_plan_validation_outcome(
+        context=context,
+        proof_status=proof_status,
+        total_steps=total_steps,
+        skipped_steps=skipped_steps,
+    )
+    extras: List[str] = []
+    if failing_step_index is not None and failing_step_title and proof_status in {"Blocked", "Failed"}:
+        extras.append(f"Stopped at reviewed step {failing_step_index}: {failing_step_title}.")
+    if failing_check:
+        extras.append(f"Failing check: {failing_check}.")
+    if stop_reason and proof_status in {"Blocked", "Failed"}:
+        extras.append(f"Stop reason: {stop_reason.rstrip('.') }.")
+    if constraint_label and proof_status in {"Blocked", "Failed"}:
+        extras.append(f"Constraint enforcement: {constraint_label}.")
+    if not extras:
+        return summary
+    return f"{summary} {' '.join(extras)}".strip()
+
+
+def _platformer_plan_final_verdict(*, context: dict[str, Any], proof_status: str, total_steps: int, skipped_steps: int) -> str:
+    subject = _platformer_review_subject(context)
+    approval_clause = _platformer_review_approval_clause(context)
+    if proof_status == "Passed":
+        if skipped_steps:
+            executed_steps = max(total_steps - skipped_steps, 0)
+            return (
+                f"AI-E finished {subject}. {executed_steps} step(s) executed and {skipped_steps} step(s) were already satisfied."
+            )
+        return f"AI-E completed {subject} and the recorded checks passed."
+    if proof_status == "Completed":
+        return f"AI-E completed {subject} with partial validation details."
+    if proof_status == "Blocked":
+        return f"AI-E started {subject}{approval_clause}, but stopped when a reviewed step could not complete safely."
+    if proof_status == "Failed":
+        return f"AI-E did not finish {subject} cleanly."
+    return f"AI-E saved partial run details for {subject}."
+
+
+def _platformer_plan_final_verdict_with_reason(
+    *,
+    context: dict[str, Any],
+    proof_status: str,
+    total_steps: int,
+    skipped_steps: int,
+    failing_step_index: int | None,
+    failing_step_title: str,
+    stop_reason: str,
+    constraint_label: str,
+) -> str:
+    summary = _platformer_plan_final_verdict(
+        context=context,
+        proof_status=proof_status,
+        total_steps=total_steps,
+        skipped_steps=skipped_steps,
+    )
+    extras: List[str] = []
+    if failing_step_index is not None and failing_step_title and proof_status in {"Blocked", "Failed"}:
+        extras.append(f"Stopped at reviewed step {failing_step_index}: {failing_step_title}.")
+    if stop_reason and proof_status in {"Blocked", "Failed"}:
+        extras.append(f"Stop reason: {stop_reason.rstrip('.') }.")
+    if constraint_label and proof_status in {"Blocked", "Failed"}:
+        extras.append(f"Constraint: {constraint_label}.")
+    if not extras:
+        return summary
+    return f"{summary} {' '.join(extras)}".strip()
+
+
 def _proof_result_from_attempt_artifact(
     run_dir: Path,
     attempt_artifact: dict[str, Any],
     *,
     artifact_path: Path,
     supported_projects: List[SupportedProject],
+    debug_expanded: bool = False,
 ) -> ProofResultSurface:
     task = attempt_artifact.get("task") if isinstance(attempt_artifact.get("task"), dict) else {}
     request_payload = _load_request_payload_from_attempt(run_dir, attempt_artifact)
@@ -2775,9 +3818,64 @@ def _proof_result_from_attempt_artifact(
     _append_artifact_link(raw_artifacts, label="Manual correction history", kind="artifact", candidate=details.get("layout_correction_history_path"))
     _append_artifact_link(raw_artifacts, label="Corrected layout", kind="artifact", candidate=details.get("corrected_layout_artifact_path"))
 
+    platformer_context = _platformer_review_context(task=task, routing=request_routing, details=details)
+    stop_reason = _attempt_stop_reason(validation=validation, result=result, details=details)
+    constraint_label = _attempt_constraint_label(validation=validation, details=details, stop_reason=stop_reason)
+    failing_check = _attempt_failing_check(validation=validation, details=details, stop_reason=stop_reason)
+    debug_fields = _attempt_debug_fields(
+        task=task,
+        result=result,
+        validation=validation,
+        details=details,
+        platformer_context=platformer_context,
+        debug_expanded=debug_expanded,
+    )
+    mapped_platformer_prompt = str(platformer_context.get("mapped_prompt") or "") if platformer_context else ""
+    translated_command = str(details.get("translated_command") or mapped_platformer_prompt or "").strip()
+    if platformer_context is not None:
+        if translated_command:
+            key_steps.append(f"Mutation attempt: '{translated_command}'.")
+        attempt_trace = _platformer_attempt_trace(
+            proof_status=proof_status,
+            details=details,
+            mapped_prompt=mapped_platformer_prompt,
+        )
+        if attempt_trace:
+            key_steps.append(f"Attempt trace: {attempt_trace}")
+        if stop_reason and proof_status in {"Blocked", "Failed"}:
+            key_steps.append(f"Stop reason: {stop_reason.rstrip('.') }.")
+        if constraint_label and proof_status in {"Blocked", "Failed"}:
+            key_steps.append(f"Constraint enforcement: {constraint_label}.")
+        if failing_check:
+            validation_checks.append(f"Failing check: {failing_check}.")
+        if constraint_label and proof_status in {"Blocked", "Failed"}:
+            validation_checks.append(f"Constraint enforcement: {constraint_label}.")
     change_summary = _proof_change_summary(details)
     validation_summary = _attempt_validation_outcome(proof_status=proof_status, validation=validation, details=details)
     final_summary = _attempt_final_verdict(proof_status=proof_status, result=result, details=details, validation=validation)
+    if platformer_context is not None:
+        change_summary = _platformer_review_change_summary(context=platformer_context, fallback=change_summary)
+        if proof_status in {"Blocked", "Failed"}:
+            trace = _platformer_attempt_trace(
+                proof_status=proof_status,
+                details=details,
+                mapped_prompt=mapped_platformer_prompt,
+            )
+            if trace:
+                change_summary = f"{change_summary} Attempt trace: {trace}".strip()
+        validation_summary = _platformer_attempt_validation_outcome_with_reason(
+            context=platformer_context,
+            proof_status=proof_status,
+            stop_reason=stop_reason,
+            failing_check=failing_check,
+            constraint_label=constraint_label,
+        )
+        final_summary = _platformer_attempt_final_verdict_with_reason(
+            context=platformer_context,
+            proof_status=proof_status,
+            stop_reason=stop_reason,
+            constraint_label=constraint_label,
+        )
     if autonomous_fields["autonomous_build_available"]:
         change_summary = str(autonomous_fields["autonomous_build_summary"] or "").strip() or change_summary
         validation_summary = str(autonomous_fields["autonomous_build_approval_summary"] or "").strip() or validation_summary
@@ -2811,6 +3909,7 @@ def _proof_result_from_attempt_artifact(
         **evaluation_fields,
         **experiment_fields,
         **autonomous_fields,
+        **debug_fields,
     )
 
 
