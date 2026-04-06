@@ -338,3 +338,24 @@ def test_plan_task_graph_preserves_operator_prompts_for_predefined_encounter_int
         "increase spawn pressure",
     ]
     assert graph.nodes[1].dependencies == ["INTAKE_GRAPH_ENCOUNTER_INTENSE__STEP_01"]
+
+
+def test_plan_task_graph_preserves_operator_prompts_for_environment_theme_multi_intent_plan() -> None:
+    planner = RuleBasedPlanner()
+    plan = planner.plan(
+        "make the ground gravel and damaged",
+        target_repo="E:/AI projects 2025/BABYLON VER 2",
+        request_id="REQ_GRAPH_GROUND_THEME_MULTI",
+    )
+
+    graph = build_plan_task_graph(
+        plan,
+        request_id="REQ_GRAPH_GROUND_THEME_MULTI",
+        task_id_prefix="INTAKE_GRAPH_GROUND_THEME_MULTI",
+    )
+
+    assert [node.operator_prompt for node in graph.nodes] == [
+        "apply gravel ground theme",
+        "apply damaged-ground theme",
+    ]
+    assert graph.nodes[1].dependencies == ["INTAKE_GRAPH_GROUND_THEME_MULTI__STEP_01"]

@@ -456,6 +456,96 @@ _PREDEFINED_PLANS = (
         ),
     ),
     PredefinedPlan(
+        plan_key="environment_theme_gravel_damaged_v1",
+        title="Apply gravel then damaged ground theme",
+        canonical_prompt="apply gravel then damaged ground theme",
+        expected_outcome=(
+            "AI-E applies the reviewed gravel ground theme on Ground first, then applies the reviewed damaged-ground theme "
+            "through the same deterministic ground-theme mutation lane. This is bounded reviewed sequential composition only; "
+            "it does not authorize freeform material blending, broader terrain realism, or extra scene styling."
+        ),
+        execution_mode_label="Needs approval",
+        trigger_prompts=(
+            "apply gravel then damaged ground theme",
+            "make the ground gravel and damaged",
+            "apply a damaged gravel ground theme",
+            "apply damaged gravel ground theme",
+        ),
+        steps=(
+            PredefinedPlanStep(
+                step_index=1,
+                title="Apply gravel ground theme",
+                operator_prompt="apply gravel ground theme",
+                priority=20,
+            ),
+            PredefinedPlanStep(
+                step_index=2,
+                title="Apply damaged-ground theme",
+                operator_prompt="apply damaged-ground theme",
+                priority=25,
+            ),
+        ),
+    ),
+    PredefinedPlan(
+        plan_key="environment_theme_dirt_damaged_v1",
+        title="Apply dirt then damaged ground theme",
+        canonical_prompt="apply dirt then damaged ground theme",
+        expected_outcome=(
+            "AI-E applies the reviewed dirt ground theme on Ground first, then applies the reviewed damaged-ground theme "
+            "through the same deterministic ground-theme mutation lane. This is bounded reviewed sequential composition only; "
+            "it does not authorize freeform material blending, broader terrain realism, or extra scene styling."
+        ),
+        execution_mode_label="Needs approval",
+        trigger_prompts=(
+            "apply dirt then damaged ground theme",
+            "apply a dirt and damaged ground theme",
+            "apply dirt and damaged ground theme",
+        ),
+        steps=(
+            PredefinedPlanStep(
+                step_index=1,
+                title="Apply dirt ground theme",
+                operator_prompt="apply dirt ground theme",
+                priority=20,
+            ),
+            PredefinedPlanStep(
+                step_index=2,
+                title="Apply damaged-ground theme",
+                operator_prompt="apply damaged-ground theme",
+                priority=25,
+            ),
+        ),
+    ),
+    PredefinedPlan(
+        plan_key="environment_theme_grass_damaged_v1",
+        title="Apply grass then damaged ground theme",
+        canonical_prompt="apply grass then damaged ground theme",
+        expected_outcome=(
+            "AI-E applies the reviewed grass ground theme on Ground first, then applies the reviewed damaged-ground theme "
+            "through the same deterministic ground-theme mutation lane. This is bounded reviewed sequential composition only; "
+            "it does not authorize freeform material blending, broader terrain realism, or extra scene styling."
+        ),
+        execution_mode_label="Needs approval",
+        trigger_prompts=(
+            "apply grass then damaged ground theme",
+            "make the ground grassy and damaged",
+        ),
+        steps=(
+            PredefinedPlanStep(
+                step_index=1,
+                title="Apply grass ground theme",
+                operator_prompt="apply grass ground theme",
+                priority=20,
+            ),
+            PredefinedPlanStep(
+                step_index=2,
+                title="Apply damaged-ground theme",
+                operator_prompt="apply damaged-ground theme",
+                priority=25,
+            ),
+        ),
+    ),
+    PredefinedPlan(
         plan_key="zombie_fast_low_aggression_v1",
         title="Test fast low-aggression zombie variation",
         canonical_prompt="make zombie faster but less aggressive",

@@ -1503,7 +1503,14 @@ class IntakePreviewBridge:
                 "This approval covers only the reviewed deterministic platformer change."
             )
         if IntakePreviewBridge._is_environment_theme_review(routing):
+            plan_title = str(getattr(routing, "plan_title", "") or "").strip()
             mapped_prompt = str(getattr(routing, "mapped_prompt", "") or preview.detected_action or "").strip()
+            step_count = len([item for item in getattr(routing, "plan_step_titles", []) or [] if str(item).strip()])
+            if plan_title:
+                return (
+                    f"Reviewing the bounded environment theme plan '{plan_title}' for {project.name}. "
+                    f"This approval covers {step_count} fixed Ground theme step(s) in the reviewed scope only."
+                )
             return (
                 f"Reviewing the bounded environment theme action '{mapped_prompt or preview.detected_action}' for {project.name}. "
                 "This approval covers only the reviewed Ground material theme change."
@@ -1529,7 +1536,15 @@ class IntakePreviewBridge:
                 + " It does not authorize arbitrary follow-on mutations, and sandbox remains a separate operator choice."
             )
         if IntakePreviewBridge._is_environment_theme_review(routing):
+            plan_title = str(getattr(routing, "plan_title", "") or "").strip()
             mapped_prompt = str(getattr(routing, "mapped_prompt", "") or preview.detected_action or "").strip()
+            if plan_title:
+                return (
+                    "This request enters bounded environment visual-theme review before any run is queued. "
+                    f"Approval authorizes only the reviewed environment theme plan '{plan_title}'. "
+                    "It does not authorize freeform material blending, broader terrain art direction, follow-on scene styling, "
+                    "or any extra mutation outside the reviewed scope."
+                )
             return (
                 "This request enters bounded environment visual-theme review before any run is queued. "
                 f"Approval authorizes only the reviewed Ground material action '{mapped_prompt or preview.detected_action}'. "
@@ -1561,7 +1576,15 @@ class IntakePreviewBridge:
         if IntakePreviewBridge._is_environment_theme_review(routing):
             target_scene = str(getattr(routing, "target_scene", "") or "").strip()
             scene_name = Path(target_scene).stem or "the supported scene"
+            plan_title = str(getattr(routing, "plan_title", "") or "").strip()
             mapped_prompt = str(getattr(routing, "mapped_prompt", "") or preview.detected_action or "").strip()
+            step_count = len([item for item in getattr(routing, "plan_step_titles", []) or [] if str(item).strip()])
+            if plan_title:
+                return (
+                    f"Limit execution to the reviewed environment theme plan '{plan_title}' with {step_count} fixed step(s) "
+                    f"on Ground in {scene_name} for {project.name}. "
+                    "No broader terrain realism pass, foliage expansion, decal work, freeform material blending, or extra scene styling changes are included."
+                )
             return (
                 f"Limit execution to the reviewed environment theme action '{mapped_prompt or preview.detected_action}' on Ground in {scene_name} for {project.name}. "
                 "No broader terrain realism pass, foliage expansion, decal work, or extra scene styling changes are included."
@@ -1593,6 +1616,13 @@ class IntakePreviewBridge:
                 "Sandbox runs that bounded route as an explicit proof path instead of the approval path."
             )
         if IntakePreviewBridge._is_environment_theme_review(routing):
+            plan_title = str(getattr(routing, "plan_title", "") or "").strip()
+            if plan_title:
+                return (
+                    "After approval, AI-E will execute the reviewed bounded environment theme plan through the deterministic project tool route, "
+                    "validate the recorded Ground material mutation artifact for each approved step, and confirm the approved Babylon scene target before treating the run as complete. "
+                    "Sandbox remains an explicit alternative path instead of the default approval path."
+                )
             return (
                 "After approval, AI-E will execute the reviewed bounded environment theme action through the deterministic project tool route, "
                 "validate the recorded Ground material mutation artifact, and confirm the approved Babylon scene target before treating the run as complete. "
@@ -1644,9 +1674,14 @@ class IntakePreviewBridge:
             else:
                 parts.append("No work has started yet. This environment theme request is still in review.")
 
-            mapped_prompt = str(getattr(routing, "mapped_prompt", "") or "").strip()
-            if mapped_prompt:
-                parts.append(f"Guardrails limit execution to the reviewed environment theme action '{mapped_prompt}'.")
+            plan_title = str(getattr(routing, "plan_title", "") or "").strip()
+            step_count = len([item for item in getattr(routing, "plan_step_titles", []) or [] if str(item).strip()])
+            if plan_title:
+                parts.append(f"Guardrails limit execution to the {step_count}-step reviewed environment theme plan '{plan_title}'.")
+            else:
+                mapped_prompt = str(getattr(routing, "mapped_prompt", "") or "").strip()
+                if mapped_prompt:
+                    parts.append(f"Guardrails limit execution to the reviewed environment theme action '{mapped_prompt}'.")
             parts.append("Scope is limited to the approved Ground material mutation in the supported Babylon scene.")
             parts.append("Deterministic project tool routing has already been matched for this request.")
             parts.append("Sandbox remains a separate operator choice and is not implied by approval.")

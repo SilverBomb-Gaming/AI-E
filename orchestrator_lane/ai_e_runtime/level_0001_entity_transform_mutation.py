@@ -644,20 +644,48 @@ def unsupported_entity_transform_prompt_message(prompt: str) -> str | None:
     normalized = normalize_prompt(prompt)
     tokens = set(normalized.split())
     generalized_entity = _generalized_entity_label(tokens)
-    environment_theme_requested = "ground" in tokens or "terrain" in tokens
-    mixed_environment_art_direction = bool({"grass", "dirt", "gravel", "damaged", "flowers", "battle", "damage", "craters", "debris", "smoke"} & tokens)
+    environment_theme_requested = bool({"ground", "terrain", "map", "battlefield"} & tokens)
+    mixed_environment_art_direction = bool(
+        {
+            "grass",
+            "dirt",
+            "gravel",
+            "damaged",
+            "flowers",
+            "battle",
+            "battlefield",
+            "damage",
+            "crater",
+            "craters",
+            "debris",
+            "smoke",
+            "fog",
+            "ruined",
+            "realistic",
+            "realism",
+            "blend",
+        }
+        & tokens
+    )
     if environment_theme_requested and mixed_environment_art_direction and (
         "realistic" in tokens
         or "terrain" in tokens
+        or "map" in tokens
+        or "battlefield" in tokens
         or "flowers" in tokens
         or "gravel" in tokens
+        or "dirt" in tokens
         or "craters" in tokens
+        or "crater" in tokens
         or "debris" in tokens
         or "smoke" in tokens
+        or "fog" in tokens
         or "everywhere" in tokens
         or "layered" in tokens
         or "battle" in tokens
         or "damage" in tokens
+        or "blend" in tokens
+        or "ruined" in tokens
     ):
         return (
             "AI-E only supports bounded environment look-dev actions in this pass: applying the grass, dirt, gravel, or damaged-ground theme to the Ground object. "

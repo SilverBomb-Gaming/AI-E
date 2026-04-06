@@ -28,6 +28,12 @@ from .experiment_tracking import (
     is_experiment_navigation_prompt,
     is_experiment_review_prompt,
 )
+from .environment_theme_multi_intent_plans import (
+    ENVIRONMENT_THEME_MULTI_INTENT_RESOLUTION,
+    EnvironmentThemeMultiIntentPlanResolution,
+    resolve_environment_theme_multi_intent_plan,
+    unsupported_environment_theme_multi_intent_message,
+)
 from .environment_theme_action_normalization import canonicalize_environment_theme_action_prompt
 from .generic_capabilities import generic_capability_definition_for_capability_id
 from .goal_composition import (
@@ -463,6 +469,7 @@ class ConversationalTaskIntake:
                 SESSION_FOLLOWUP_RESOLUTION,
                 GOAL_INTENT_MAPPING_RESOLUTION,
                 GOAL_COMPOSITION_RESOLUTION,
+                ENVIRONMENT_THEME_MULTI_INTENT_RESOLUTION,
                 PLATFORMER_MULTI_INTENT_RESOLUTION,
             }
             if len(task_graph.nodes) > 1 or (step_prompt != normalized_prompt and not preserve_request_resolution):
@@ -1207,6 +1214,8 @@ class ConversationalTaskIntake:
             effective_lookup_prompt = goal_intent_resolution.canonical_prompt.lower().strip()
         goal_composition_resolution = None
         goal_composition_block_message = None
+        environment_theme_multi_intent_resolution = None
+        environment_theme_multi_intent_block_message = None
         platformer_multi_intent_resolution = None
         platformer_multi_intent_block_message = None
         if goal_intent_resolution is None:
@@ -1216,6 +1225,15 @@ class ConversationalTaskIntake:
             else:
                 goal_composition_block_message = unsupported_goal_composition_message(effective_lookup_prompt)
         if goal_intent_resolution is None and goal_composition_resolution is None:
+            environment_theme_multi_intent_resolution = resolve_environment_theme_multi_intent_plan(effective_lookup_prompt)
+            if environment_theme_multi_intent_resolution is not None:
+                goal_composition_block_message = None
+                effective_lookup_prompt = environment_theme_multi_intent_resolution.canonical_prompt.lower().strip()
+            else:
+                environment_theme_multi_intent_block_message = unsupported_environment_theme_multi_intent_message(
+                    effective_lookup_prompt
+                )
+        if goal_intent_resolution is None and goal_composition_resolution is None and environment_theme_multi_intent_resolution is None:
             platformer_multi_intent_resolution = resolve_platformer_multi_intent_plan(effective_lookup_prompt)
             if platformer_multi_intent_resolution is not None:
                 goal_composition_block_message = None
@@ -1259,10 +1277,24 @@ class ConversationalTaskIntake:
                 entity_mapping_sources=mapping_sources,
                 clarification_options=clarification_options_for_prompt(lookup_prompt),
             )
+        if environment_theme_multi_intent_block_message is not None and requested_intent == "mutate":
+            return self._blocked_mutation_route_routing(
+                requested_execution_lane=requested_execution_lane,
+                session_id=session_id,
+                route_issue=environment_theme_multi_intent_block_message,
+                mapped_prompt=effective_lookup_prompt,
+                entity_mapping_applied=resolution.entity_mapping_applied,
+                entity_mapping_sources=mapping_sources,
+                clarification_options=clarification_options_for_prompt(lookup_prompt),
+            )
         predefined_plan = (
-            platformer_multi_intent_resolution.plan
-            if platformer_multi_intent_resolution is not None
-            else match_predefined_plan(effective_lookup_prompt)
+            environment_theme_multi_intent_resolution.plan
+            if environment_theme_multi_intent_resolution is not None
+            else (
+                platformer_multi_intent_resolution.plan
+                if platformer_multi_intent_resolution is not None
+                else match_predefined_plan(effective_lookup_prompt)
+            )
         )
         if predefined_plan is not None:
             step_capabilities: List[RuntimeCapability] = []
@@ -1330,6 +1362,7 @@ class ConversationalTaskIntake:
                 followup_resolution=followup_resolution,
                 goal_intent_resolution=goal_intent_resolution,
                 goal_composition_resolution=goal_composition_resolution,
+                environment_theme_multi_intent_resolution=environment_theme_multi_intent_resolution,
                 platformer_multi_intent_resolution=platformer_multi_intent_resolution,
                 mapped_prompt=predefined_plan.canonical_prompt,
             )
@@ -1356,6 +1389,7 @@ class ConversationalTaskIntake:
                             SESSION_FOLLOWUP_RESOLUTION,
                             GOAL_INTENT_MAPPING_RESOLUTION,
                             GOAL_COMPOSITION_RESOLUTION,
+                            ENVIRONMENT_THEME_MULTI_INTENT_RESOLUTION,
                             PLATFORMER_MULTI_INTENT_RESOLUTION,
                         }
                         else ""
@@ -1416,6 +1450,7 @@ class ConversationalTaskIntake:
                 followup_resolution=followup_resolution,
                 goal_intent_resolution=goal_intent_resolution,
                 goal_composition_resolution=goal_composition_resolution,
+                environment_theme_multi_intent_resolution=environment_theme_multi_intent_resolution,
                 platformer_multi_intent_resolution=platformer_multi_intent_resolution,
                 mapped_prompt=effective_lookup_prompt,
             )
@@ -1450,6 +1485,7 @@ class ConversationalTaskIntake:
                     SESSION_FOLLOWUP_RESOLUTION,
                     GOAL_INTENT_MAPPING_RESOLUTION,
                     GOAL_COMPOSITION_RESOLUTION,
+                    ENVIRONMENT_THEME_MULTI_INTENT_RESOLUTION,
                     PLATFORMER_MULTI_INTENT_RESOLUTION,
                 }
                 and routing.session_resolution_note
@@ -1465,6 +1501,16 @@ class ConversationalTaskIntake:
                     requested_execution_lane=requested_execution_lane,
                     session_id=session_id,
                     route_issue=goal_composition_block_message,
+                    mapped_prompt=effective_lookup_prompt,
+                    entity_mapping_applied=resolution.entity_mapping_applied,
+                    entity_mapping_sources=mapping_sources,
+                    clarification_options=clarification_options_for_prompt(lookup_prompt),
+                )
+            if environment_theme_multi_intent_block_message is not None:
+                return self._blocked_mutation_route_routing(
+                    requested_execution_lane=requested_execution_lane,
+                    session_id=session_id,
+                    route_issue=environment_theme_multi_intent_block_message,
                     mapped_prompt=effective_lookup_prompt,
                     entity_mapping_applied=resolution.entity_mapping_applied,
                     entity_mapping_sources=mapping_sources,
@@ -1532,6 +1578,7 @@ class ConversationalTaskIntake:
                 followup_resolution=followup_resolution,
                 goal_intent_resolution=goal_intent_resolution,
                 goal_composition_resolution=goal_composition_resolution,
+                environment_theme_multi_intent_resolution=environment_theme_multi_intent_resolution,
                 platformer_multi_intent_resolution=platformer_multi_intent_resolution,
                 mapped_prompt=effective_lookup_prompt,
             )
@@ -1540,6 +1587,7 @@ class ConversationalTaskIntake:
                     SESSION_FOLLOWUP_RESOLUTION,
                     GOAL_INTENT_MAPPING_RESOLUTION,
                     GOAL_COMPOSITION_RESOLUTION,
+                    ENVIRONMENT_THEME_MULTI_INTENT_RESOLUTION,
                     PLATFORMER_MULTI_INTENT_RESOLUTION,
                 }
                 and routing.session_resolution_note
@@ -1956,6 +2004,7 @@ class ConversationalTaskIntake:
             SESSION_FOLLOWUP_RESOLUTION,
             GOAL_INTENT_MAPPING_RESOLUTION,
             GOAL_COMPOSITION_RESOLUTION,
+            ENVIRONMENT_THEME_MULTI_INTENT_RESOLUTION,
             PLATFORMER_MULTI_INTENT_RESOLUTION,
         }:
             return mapped_prompt
@@ -1976,10 +2025,25 @@ class ConversationalTaskIntake:
         followup_resolution: SessionFollowUpResolution | None,
         goal_intent_resolution: GoalIntentResolution | None,
         goal_composition_resolution: GoalCompositionResolution | None,
+        environment_theme_multi_intent_resolution: EnvironmentThemeMultiIntentPlanResolution | None,
         platformer_multi_intent_resolution: PlatformerMultiIntentPlanResolution | None,
         mapped_prompt: str,
     ) -> IntakeRouting:
         if followup_resolution is not None:
+            if environment_theme_multi_intent_resolution is not None:
+                return replace(
+                    routing,
+                    mapped_prompt=mapped_prompt,
+                    resolution_source=environment_theme_multi_intent_resolution.resolution_source,
+                    resolved_from_prompt=environment_theme_multi_intent_resolution.original_prompt,
+                    session_resolution_note=environment_theme_multi_intent_resolution.resolution_note,
+                    goal_components=list(environment_theme_multi_intent_resolution.goal_components),
+                    state_family=followup_resolution.state_family,
+                    previous_tier=followup_resolution.previous_tier,
+                    requested_tier=followup_resolution.requested_tier,
+                    revert_requested=followup_resolution.revert_requested,
+                    revert_summary=followup_resolution.revert_summary,
+                )
             if platformer_multi_intent_resolution is not None:
                 return replace(
                     routing,
@@ -2029,6 +2093,20 @@ class ConversationalTaskIntake:
                 resolved_from_prompt=goal_composition_resolution.original_prompt,
                 session_resolution_note=goal_composition_resolution.resolution_note,
                 goal_components=list(goal_composition_resolution.goal_components),
+                state_family=None,
+                previous_tier=None,
+                requested_tier=None,
+                revert_requested=False,
+                revert_summary=None,
+            )
+        if environment_theme_multi_intent_resolution is not None:
+            return replace(
+                routing,
+                mapped_prompt=mapped_prompt,
+                resolution_source=environment_theme_multi_intent_resolution.resolution_source,
+                resolved_from_prompt=environment_theme_multi_intent_resolution.original_prompt,
+                session_resolution_note=environment_theme_multi_intent_resolution.resolution_note,
+                goal_components=list(environment_theme_multi_intent_resolution.goal_components),
                 state_family=None,
                 previous_tier=None,
                 requested_tier=None,

@@ -535,7 +535,7 @@ def test_task_intake_resolves_lower_danger_goal_intents_to_restore_standard_plan
     assert result.routing.resolved_from_prompt == normalize_prompt(prompt_text)
     assert result.routing.session_resolution_note == expected_note
     assert result.routing.mapped_prompt == "restore zombie danger to standard"
-    assert result.routing.decision == "sandbox_first"
+    assert result.routing.decision == "require_approval"
     assert result.routing.plan_title != "Clarify target"
     assert result.routing.clarification_options in (None, [])
     assert result.plan_step_titles == [
@@ -1598,9 +1598,9 @@ def test_home_surface_prepare_prompt_resolves_speed_followup_from_active_session
     preview = bridge.prepare_prompt("make it slower", project)
 
     assert preview.available is True
-    assert preview.decision_state == "Sandbox first"
+    assert preview.decision_state == "Needs approval"
     assert preview.confirmation_required is False
-    assert preview.next_action_label == "Run in sandbox"
+    assert preview.next_action_label == "Open review"
     assert preview.detected_action == "LEVEL_0001 restore zombie speed to standard"
     assert preview.decision_reason.startswith('AI-E resolved "make it slower" from the current zombie speed tier fast to standard.')
 
@@ -5579,16 +5579,17 @@ def _experiment_variant(
     }
 
 @pytest.mark.parametrize(
-    ("prompt_text", "expected_capability", "expected_canonical_prompt"),
+    ("prompt_text", "expected_capability", "expected_canonical_prompt", "expected_decision"),
     [
-        ("make runner faster", "level_0001_increase_runner_speed", "make runner faster"),
-        ("make runner slower", "level_0001_decrease_runner_speed", "make runner slower"),
-        ("restore runner speed to standard", "level_0001_restore_runner_speed_standard", "restore runner speed to standard"),
-        ("make runner more aggressive", "level_0001_increase_runner_aggression", "make runner more aggressive"),
+        ("make runner faster", "level_0001_increase_runner_speed", "make runner faster", "sandbox_first"),
+        ("make runner slower", "level_0001_decrease_runner_speed", "make runner slower", "sandbox_first"),
+        ("restore runner speed to standard", "level_0001_restore_runner_speed_standard", "restore runner speed to standard", "require_approval"),
+        ("make runner more aggressive", "level_0001_increase_runner_aggression", "make runner more aggressive", "sandbox_first"),
         (
             "restore runner aggression to standard",
             "level_0001_restore_runner_aggression_standard",
             "restore runner aggression to standard",
+            "require_approval",
         ),
     ],
 )
@@ -5597,6 +5598,7 @@ def test_task_intake_supports_direct_runner_deterministic_capabilities(
     prompt_text,
     expected_capability,
     expected_canonical_prompt,
+    expected_decision,
 ):
     config = _make_config(tmp_path / "runner_direct_capabilities")
     _write_runner_speed_capability_contracts(config)
@@ -5615,7 +5617,7 @@ def test_task_intake_supports_direct_runner_deterministic_capabilities(
     assert result.task_type == "mutation_request"
     assert result.routing.capability_id == expected_capability
     assert result.routing.mapped_prompt == expected_canonical_prompt
-    assert result.routing.decision == "sandbox_first"
+    assert result.routing.decision == expected_decision
     assert runtime_payload["operator_prompt"] == expected_canonical_prompt
 
 
@@ -5777,7 +5779,7 @@ def test_task_intake_resolves_runner_session_followup_when_unambiguous(tmp_path)
     assert result.routing.resolution_source == "session_followup_resolution"
     assert result.routing.mapped_prompt == "restore runner speed to standard"
     assert result.routing.requested_tier == "standard"
-    assert result.routing.decision == "sandbox_first"
+    assert result.routing.decision == "require_approval"
 
 
 def test_task_intake_resolves_runner_session_make_it_easier_when_unambiguous(tmp_path):
@@ -5846,7 +5848,7 @@ def test_task_intake_resolves_runner_session_make_it_easier_when_unambiguous(tmp
     assert result.routing.resolution_source == "session_followup_resolution"
     assert result.routing.mapped_prompt == "restore runner danger to standard"
     assert result.routing.clarification_options in (None, [])
-    assert result.routing.decision == "sandbox_first"
+    assert result.routing.decision == "require_approval"
 
 
 def test_task_intake_shows_runner_experiment_decision_review_summary(tmp_path):
@@ -7098,6 +7100,79 @@ def test_task_intake_routes_direct_damaged_ground_theme_prompt_through_canonical
     assert request_payload["conversational_request"]["context"]["resolved_execution_prompt"] == "apply damaged-ground theme"
 
 
+@pytest.mark.parametrize(
+    ("prompt_text", "expected_plan_key", "expected_plan_title", "expected_mapped_prompt", "expected_step_prompts"),
+    [
+        (
+            "Make the ground gravel and damaged",
+            "environment_theme_gravel_damaged_v1",
+            "Apply gravel then damaged ground theme",
+            "apply gravel then damaged ground theme",
+            ["apply gravel ground theme", "apply damaged-ground theme"],
+        ),
+        (
+            "Apply a dirt and damaged ground theme",
+            "environment_theme_dirt_damaged_v1",
+            "Apply dirt then damaged ground theme",
+            "apply dirt then damaged ground theme",
+            ["apply dirt ground theme", "apply damaged-ground theme"],
+        ),
+        (
+            "Make the ground grassy and damaged",
+            "environment_theme_grass_damaged_v1",
+            "Apply grass then damaged ground theme",
+            "apply grass then damaged ground theme",
+            ["apply grass ground theme", "apply damaged-ground theme"],
+        ),
+    ],
+)
+def test_task_intake_routes_allowlisted_environment_theme_multi_intent_prompts_into_reviewed_plans(
+    tmp_path,
+    prompt_text,
+    expected_plan_key,
+    expected_plan_title,
+    expected_mapped_prompt,
+    expected_step_prompts,
+):
+    config = _make_config(tmp_path / "environment_theme_multi_intent_plan")
+    _write_environment_theme_capability_contracts(config)
+    _write_environment_theme_real_target_evidence(config)
+    target_repo = _create_entity_transform_prompt_repo(config)
+    intake = ConversationalTaskIntake(config)
+
+    result = intake.accept_message(
+        prompt_text,
+        session_id="environment-theme-multi-intent-session",
+        target_repo=target_repo,
+    )
+
+    request_payload = json.loads(result.artifacts.request_payload_path.read_text(encoding="utf-8"))
+    queue = json.loads(config.queue_path.read_text(encoding="utf-8"))["tasks"]
+    runtime_payloads = [
+        json.loads(path.read_text(encoding="utf-8"))["runtime_task"]
+        for path in result.artifacts.runtime_task_payload_paths
+    ]
+
+    assert result.task_type == "mutation_plan_request"
+    assert result.routing.resolution_source == "environment_theme_multi_intent_composition"
+    assert result.routing.resolved_from_prompt == normalize_prompt(prompt_text)
+    assert result.routing.mapped_prompt == expected_mapped_prompt
+    assert result.routing.plan_key == expected_plan_key
+    assert result.routing.plan_title == expected_plan_title
+    assert result.routing.goal_components is not None
+    assert result.routing.decision == "require_approval"
+    assert result.queue_entry["status"] == "needs_approval"
+    assert request_payload["conversational_request"]["context"]["resolved_execution_prompt"] == expected_mapped_prompt
+    assert len(queue) == 2
+    assert queue[0]["status"] == "needs_approval"
+    assert queue[1]["status"] == "needs_approval"
+    assert queue[1]["dependencies"] == [queue[0]["task_id"]]
+    assert [payload["operator_prompt"] for payload in runtime_payloads] == expected_step_prompts
+    assert all(payload["plan_title"] == expected_plan_title for payload in runtime_payloads)
+    assert all(payload["mapped_prompt"] == expected_mapped_prompt for payload in runtime_payloads)
+    assert runtime_payloads[1]["plan_expected_outcome"].startswith("AI-E applies the reviewed")
+
+
 def test_home_surface_prepare_prompt_routes_environment_theme_into_review(tmp_path):
     config = _make_config(tmp_path / "home_surface_environment_theme_review")
     _write_environment_theme_capability_contracts(config)
@@ -7198,6 +7273,57 @@ def test_home_surface_prepare_prompt_routes_damaged_environment_theme_into_revie
     assert "requires operator approval" in preview.decision_reason
 
 
+@pytest.mark.parametrize(
+    ("prompt_text", "expected_plan_title", "expected_step_titles", "expected_mapped_prompt"),
+    [
+        (
+            "Make the ground gravel and damaged",
+            "Apply gravel then damaged ground theme",
+            ["Apply gravel ground theme", "Apply damaged-ground theme"],
+            "apply gravel then damaged ground theme",
+        ),
+        (
+            "Apply a dirt and damaged ground theme",
+            "Apply dirt then damaged ground theme",
+            ["Apply dirt ground theme", "Apply damaged-ground theme"],
+            "apply dirt then damaged ground theme",
+        ),
+    ],
+)
+def test_home_surface_prepare_prompt_routes_environment_theme_multi_intent_plan_into_review(
+    tmp_path,
+    prompt_text,
+    expected_plan_title,
+    expected_step_titles,
+    expected_mapped_prompt,
+):
+    config = _make_config(tmp_path / "home_surface_environment_theme_multi_intent_review")
+    _write_environment_theme_capability_contracts(config)
+    _write_environment_theme_real_target_evidence(config)
+    target_repo = _create_entity_transform_prompt_repo(config)
+    intake = ConversationalTaskIntake(config)
+    bridge = home_surface.IntakePreviewBridge()
+    bridge._create_intake = lambda: intake
+    project = home_surface.SupportedProject(
+        name="BABYLON TEST",
+        path=Path(target_repo),
+        project_type="unity_project",
+        source="test",
+        status="supported",
+    )
+
+    preview = bridge.prepare_prompt(prompt_text, project)
+
+    assert preview.available is True
+    assert preview.decision_state == "Needs approval"
+    assert preview.next_action_label == "Open review"
+    assert preview.plan_title == expected_plan_title
+    assert preview.plan_steps == expected_step_titles
+    assert preview.mapped_prompt == expected_mapped_prompt
+    assert preview.plan_execution_mode == "Needs approval"
+    assert "reviewed multi-intent plan" in preview.decision_reason
+
+
 def test_home_surface_environment_theme_review_surface_explains_scope_validation_and_boundary(tmp_path):
     config = _make_config(tmp_path / "home_surface_environment_theme_review_surface")
     _write_environment_theme_capability_contracts(config)
@@ -7250,6 +7376,55 @@ def test_home_surface_environment_theme_review_surface_explains_scope_validation
     assert review.sandbox_enabled is True
 
 
+def test_home_surface_environment_theme_multi_intent_review_surface_explains_bounded_plan_scope(tmp_path):
+    config = _make_config(tmp_path / "home_surface_environment_theme_multi_intent_review_surface")
+    _write_environment_theme_capability_contracts(config)
+    _write_environment_theme_real_target_evidence(config)
+    target_repo = _create_entity_transform_prompt_repo(config)
+    intake = ConversationalTaskIntake(config)
+    bridge = home_surface.IntakePreviewBridge()
+    bridge._create_intake = lambda: intake
+    bridge._build_review_bundle_fn = build_review_bundle
+    project = home_surface.SupportedProject(
+        name="BABYLON TEST",
+        path=Path(target_repo),
+        project_type="unity_project",
+        source="test",
+        status="supported",
+    )
+
+    preview = bridge.prepare_prompt("Make the ground gravel and damaged", project)
+    review = bridge.build_review_surface(preview, project)
+
+    assert preview.decision_state == "Needs approval"
+    assert review.available is True
+    assert review.request_summary == (
+        "Reviewing the bounded environment theme plan 'Apply gravel then damaged ground theme' for BABYLON TEST. "
+        "This approval covers 2 fixed Ground theme step(s) in the reviewed scope only."
+    )
+    assert review.approval_reason == (
+        "This request enters bounded environment visual-theme review before any run is queued. "
+        "Approval authorizes only the reviewed environment theme plan 'Apply gravel then damaged ground theme'. "
+        "It does not authorize freeform material blending, broader terrain art direction, follow-on scene styling, or any extra mutation outside the reviewed scope."
+    )
+    assert review.expected_change_scope == (
+        "Limit execution to the reviewed environment theme plan 'Apply gravel then damaged ground theme' with 2 fixed step(s) "
+        "on Ground in Babylon FPS game ver 002 for BABYLON TEST. "
+        "No broader terrain realism pass, foliage expansion, decal work, freeform material blending, or extra scene styling changes are included."
+    )
+    assert review.validation_intent == (
+        "After approval, AI-E will execute the reviewed bounded environment theme plan through the deterministic project tool route, "
+        "validate the recorded Ground material mutation artifact for each approved step, and confirm the approved Babylon scene target before treating the run as complete. "
+        "Sandbox remains an explicit alternative path instead of the default approval path."
+    )
+    assert "Guardrails limit execution to the 2-step reviewed environment theme plan 'Apply gravel then damaged ground theme'." in review.risk_guardrail_status
+    assert "Scope is limited to the approved Ground material mutation in the supported Babylon scene." in review.risk_guardrail_status
+    assert review.status_message == (
+        "This bounded environment theme review is prepared only. Nothing has run yet. "
+        "Approve to queue the reviewed run, reject to stop here, or choose sandbox as the explicit alternative path."
+    )
+
+
 def test_home_surface_review_approve_once_approves_environment_theme_request(tmp_path):
     config = _make_config(tmp_path / "home_surface_environment_theme_review_approve_once")
     _write_environment_theme_capability_contracts(config)
@@ -7289,6 +7464,45 @@ def test_home_surface_review_approve_once_approves_environment_theme_request(tmp
     assert queue[0]["approval_state"] == "approved"
 
 
+def test_home_surface_review_approve_once_approves_all_environment_theme_multi_intent_plan_steps(tmp_path):
+    config = _make_config(tmp_path / "home_surface_environment_theme_multi_intent_review_approve_once")
+    _write_environment_theme_capability_contracts(config)
+    _write_environment_theme_real_target_evidence(config)
+    target_repo = _create_entity_transform_prompt_repo(config)
+    intake = ConversationalTaskIntake(config)
+    bridge = home_surface.IntakePreviewBridge()
+    bridge._create_intake = lambda: intake
+    bridge._config_cls = OrchestratorConfig
+    bridge._build_review_bundle_fn = build_review_bundle
+    bridge._approve_mutation_task_fn = approve_mutation_task
+    project = home_surface.SupportedProject(
+        name="BABYLON TEST",
+        path=Path(target_repo),
+        project_type="unity_project",
+        source="test",
+        status="supported",
+    )
+
+    preview = bridge.prepare_prompt("Make the ground gravel and damaged", project)
+    review = bridge.build_review_surface(preview, project)
+    action_result = bridge.apply_review_action(
+        review,
+        action="approve_once",
+        project=project,
+        approved_by="Operator",
+    )
+
+    queue = json.loads(config.queue_path.read_text(encoding="utf-8"))["tasks"]
+
+    assert preview.decision_state == "Needs approval"
+    assert review.available is True
+    assert action_result.ok is True
+    assert action_result.queue_status == "pending"
+    assert len(queue) == 2
+    assert all(task["status"] == "pending" for task in queue)
+    assert all(task["approval_state"] == "approved" for task in queue)
+
+
 def test_task_intake_blocks_broad_ground_realism_prompt(tmp_path):
     config = _make_config(tmp_path / "blocked_ground_realism_action")
     _write_environment_theme_capability_contracts(config)
@@ -7298,6 +7512,25 @@ def test_task_intake_blocks_broad_ground_realism_prompt(tmp_path):
     result = intake.accept_message(
         "Make the terrain realistic with grass, flowers, and gravel everywhere",
         session_id="blocked-ground-realism-session",
+        target_repo=target_repo,
+    )
+
+    assert result.queue_entry["status"] == "blocked"
+    assert result.routing.decision == "block"
+    assert result.routing.capability_supported is False
+    assert result.routing.mutation_capable is False
+    assert "bounded environment look-dev actions" in str(result.routing.fail_closed_reason or "")
+
+
+def test_task_intake_blocks_requested_broad_damaged_gravel_terrain_art_prompt(tmp_path):
+    config = _make_config(tmp_path / "blocked_requested_ground_art_action")
+    _write_environment_theme_capability_contracts(config)
+    target_repo = _create_entity_transform_prompt_repo(config)
+    intake = ConversationalTaskIntake(config)
+
+    result = intake.accept_message(
+        "Make the terrain realistic with damaged gravel, dirt paths, flowers, fog, and battle debris",
+        session_id="blocked-requested-ground-art-session",
         target_repo=target_repo,
     )
 

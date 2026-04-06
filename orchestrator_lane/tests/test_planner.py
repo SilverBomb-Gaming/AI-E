@@ -409,3 +409,25 @@ def test_planner_returns_predefined_restore_standard_encounter_plan() -> None:
         "restore encounter count to standard",
         "restore spawn pressure to standard",
     ]
+
+
+def test_planner_returns_predefined_environment_theme_multi_intent_plan() -> None:
+    planner = RuleBasedPlanner()
+
+    plan = planner.plan(
+        "make the ground gravel and damaged",
+        target_repo="E:/AI projects 2025/BABYLON VER 2",
+        request_id="REQ_GROUND_THEME_MULTI123",
+    )
+
+    assert plan.request_type == "PREDEFINED_MUTATION_PLAN"
+    assert plan.title == "Apply gravel then damaged ground theme"
+    assert plan.expected_outcome.startswith("AI-E applies the reviewed gravel ground theme")
+    assert plan.plan_step_titles() == [
+        "Apply gravel ground theme",
+        "Apply damaged-ground theme",
+    ]
+    assert [step.operator_prompt for step in plan.steps] == [
+        "apply gravel ground theme",
+        "apply damaged-ground theme",
+    ]
