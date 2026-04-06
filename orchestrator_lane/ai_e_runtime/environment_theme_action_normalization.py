@@ -62,6 +62,22 @@ _ACTION_DEFINITIONS = (
             "change the ground to gravel",
         ),
     ),
+    _EnvironmentThemeActionDefinition(
+        action_id="apply_damaged_ground_theme",
+        canonical_prompt="apply damaged-ground theme",
+        capability_id="level_0001_apply_damaged_ground_theme",
+        aliases=(
+            "apply damaged-ground theme",
+            "apply damaged ground theme",
+            "apply a damaged ground theme",
+            "make ground look damaged",
+            "make the ground look damaged",
+            "change ground to damaged theme",
+            "change ground to a damaged theme",
+            "change the ground to damaged theme",
+            "change the ground to a damaged theme",
+        ),
+    ),
 )
 
 
@@ -84,6 +100,8 @@ def _cleanup_environment_theme_phrase(text: str) -> str:
     cleaned = re.sub(r"\bgrassy ground\b", "grass ground", cleaned)
     cleaned = re.sub(r"\bground to dirt\b", "ground dirt", cleaned)
     cleaned = re.sub(r"\bground to gravel\b", "ground gravel", cleaned)
+    cleaned = cleaned.replace("damaged ground", "damaged-ground")
+    cleaned = re.sub(r"\bground to damaged theme\b", "ground damaged theme", cleaned)
     cleaned = " ".join(cleaned.split())
     return cleaned
 

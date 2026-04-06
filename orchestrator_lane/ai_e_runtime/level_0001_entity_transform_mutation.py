@@ -618,7 +618,7 @@ def _unmatched_prompt_message() -> str:
     return (
         "I understood part of your request, but couldn't match it to a known action. "
         "Try something like: 'move zombie forward', 'make zombie faster', 'make runner faster', "
-        "'make runner more aggressive', 'apply grass ground theme', 'apply dirt ground theme', 'apply gravel ground theme', or 'increase encounter count'."
+        "'make runner more aggressive', 'apply grass ground theme', 'apply dirt ground theme', 'apply gravel ground theme', 'apply damaged-ground theme', or 'increase encounter count'."
     )
 
 
@@ -645,20 +645,23 @@ def unsupported_entity_transform_prompt_message(prompt: str) -> str | None:
     tokens = set(normalized.split())
     generalized_entity = _generalized_entity_label(tokens)
     environment_theme_requested = "ground" in tokens or "terrain" in tokens
-    mixed_environment_art_direction = bool({"grass", "dirt", "gravel", "flowers", "battle", "damage"} & tokens)
+    mixed_environment_art_direction = bool({"grass", "dirt", "gravel", "damaged", "flowers", "battle", "damage", "craters", "debris", "smoke"} & tokens)
     if environment_theme_requested and mixed_environment_art_direction and (
         "realistic" in tokens
         or "terrain" in tokens
         or "flowers" in tokens
         or "gravel" in tokens
+        or "craters" in tokens
+        or "debris" in tokens
+        or "smoke" in tokens
         or "everywhere" in tokens
         or "layered" in tokens
         or "battle" in tokens
         or "damage" in tokens
     ):
         return (
-            "AI-E only supports bounded environment look-dev actions in this pass: applying the grass, dirt, or gravel ground theme to the Ground object. "
-            "Broader terrain realism or mixed art-direction requests are blocked. Try 'make the ground grassy', 'change the ground to dirt', or 'change the ground to gravel'."
+            "AI-E only supports bounded environment look-dev actions in this pass: applying the grass, dirt, gravel, or damaged-ground theme to the Ground object. "
+            "Broader terrain realism or mixed art-direction requests are blocked. Try 'make the ground grassy', 'change the ground to dirt', 'change the ground to gravel', or 'make the ground look damaged'."
         )
     if {"move", "zombie", "backward"}.issubset(tokens):
         return (
