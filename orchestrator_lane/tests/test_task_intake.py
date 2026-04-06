@@ -6994,6 +6994,10 @@ def test_environment_theme_action_normalization_canonicalizes_ground_dirt_prompt
     assert canonicalize_environment_theme_action_prompt("Change the ground to dirt") == "apply dirt ground theme"
 
 
+def test_environment_theme_action_normalization_canonicalizes_ground_gravel_prompt():
+    assert canonicalize_environment_theme_action_prompt("Change the ground to gravel") == "apply gravel ground theme"
+
+
 def test_task_intake_routes_direct_ground_theme_prompt_through_canonical_prompt(tmp_path):
     config = _make_config(tmp_path / "direct_ground_theme_action")
     _write_environment_theme_capability_contracts(config)
@@ -7040,6 +7044,30 @@ def test_task_intake_routes_direct_dirt_ground_theme_prompt_through_canonical_pr
     assert result.routing.decision == "require_approval"
     assert result.queue_entry["status"] == "needs_approval"
     assert request_payload["conversational_request"]["context"]["resolved_execution_prompt"] == "apply dirt ground theme"
+
+
+def test_task_intake_routes_direct_gravel_ground_theme_prompt_through_canonical_prompt(tmp_path):
+    config = _make_config(tmp_path / "direct_gravel_ground_theme_action")
+    _write_environment_theme_capability_contracts(config)
+    _write_environment_theme_real_target_evidence(config)
+    target_repo = _create_entity_transform_prompt_repo(config)
+    intake = ConversationalTaskIntake(config)
+
+    result = intake.accept_message(
+        "Change the ground to gravel",
+        session_id="direct-gravel-ground-theme-session",
+        target_repo=target_repo,
+    )
+
+    request_payload = json.loads(result.artifacts.request_payload_path.read_text(encoding="utf-8"))
+
+    assert result.task_type == "mutation_request"
+    assert result.routing.capability_id == "level_0001_apply_gravel_ground_theme"
+    assert result.routing.mapped_prompt == "apply gravel ground theme"
+    assert result.routing.capability_supported is True
+    assert result.routing.decision == "require_approval"
+    assert result.queue_entry["status"] == "needs_approval"
+    assert request_payload["conversational_request"]["context"]["resolved_execution_prompt"] == "apply gravel ground theme"
 
 
 def test_home_surface_prepare_prompt_routes_environment_theme_into_review(tmp_path):
@@ -7089,6 +7117,31 @@ def test_home_surface_prepare_prompt_routes_dirt_environment_theme_into_review(t
     assert preview.decision_state == "Needs approval"
     assert preview.next_action_label == "Open review"
     assert preview.mapped_prompt == "apply dirt ground theme"
+    assert "requires operator approval" in preview.decision_reason
+
+
+def test_home_surface_prepare_prompt_routes_gravel_environment_theme_into_review(tmp_path):
+    config = _make_config(tmp_path / "home_surface_gravel_environment_theme_review")
+    _write_environment_theme_capability_contracts(config)
+    _write_environment_theme_real_target_evidence(config)
+    target_repo = _create_entity_transform_prompt_repo(config)
+    intake = ConversationalTaskIntake(config)
+    bridge = home_surface.IntakePreviewBridge()
+    bridge._create_intake = lambda: intake
+    project = home_surface.SupportedProject(
+        name="BABYLON TEST",
+        path=Path(target_repo),
+        project_type="unity_project",
+        source="test",
+        status="supported",
+    )
+
+    preview = bridge.prepare_prompt("Change the ground to gravel", project)
+
+    assert preview.available is True
+    assert preview.decision_state == "Needs approval"
+    assert preview.next_action_label == "Open review"
+    assert preview.mapped_prompt == "apply gravel ground theme"
     assert "requires operator approval" in preview.decision_reason
 
 
@@ -11367,6 +11420,40 @@ def _write_environment_theme_capability_contracts(config: OrchestratorConfig) ->
         ),
         encoding="utf-8",
     )
+    (capabilities_dir / "level_0001_apply_gravel_ground_theme.json").write_text(
+        json.dumps(
+            {
+                "capability_id": "level_0001_apply_gravel_ground_theme",
+                "title": "LEVEL_0001 apply gravel ground theme",
+                "intent": "mutate",
+                "target_level": "LEVEL_0001",
+                "target_scene": "Assets/Babylon FPS game ver 002.unity",
+                "requested_execution_lane": "approval_required_mutation",
+                "handler_name": "level_0001_entity_transform_handler",
+                "agent_type": "level_0001_entity_transform_mutation_agent",
+                "approval_required": True,
+                "eligible_for_auto": False,
+                "evidence_state": "experimental",
+                "safety_class": "approval_gated_automation",
+                "content_tags": {
+                    "violence_level": "none",
+                    "blood_level": "none",
+                    "gore_level": "none",
+                    "dismemberment": False,
+                    "horror_intensity": "none",
+                    "language_level": "none",
+                    "sexual_content_level": "none",
+                    "nudity_level": "none",
+                    "substance_reference_level": "none",
+                    "gambling_reference_level": "none"
+                },
+                "match_terms": ["gravel", "ground", "theme"],
+                "match_verbs": ["apply", "change", "make"],
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
 
 
 def _write_environment_theme_real_target_evidence(config: OrchestratorConfig) -> None:
@@ -11423,6 +11510,30 @@ def _write_environment_theme_real_target_evidence(config: OrchestratorConfig) ->
                         "validation_history_summary": "attempts=1; passed=1; last_validation_result=passed; sandbox_verified=yes; real_target_verified=yes",
                         "rollback_history_summary": "last_rollback_result=none; rollback_verified=no",
                         "notes": "Seeded test evidence for the bounded dirt ground theme review path.",
+                    },
+                    "level_0001_apply_gravel_ground_theme": {
+                        "capability_id": "level_0001_apply_gravel_ground_theme",
+                        "handler_name": "level_0001_entity_transform_handler",
+                        "safety_class": "approval_gated_automation",
+                        "times_attempted": 1,
+                        "times_passed": 1,
+                        "last_validation_result": "passed",
+                        "last_rollback_result": "none",
+                        "artifact_requirements_met": True,
+                        "eligible_for_auto": False,
+                        "requires_approval": True,
+                        "evidence_state": "real_target_verified",
+                        "sandbox_verified": True,
+                        "real_target_verified": True,
+                        "rollback_verified": False,
+                        "evidence_progression": [
+                            "experimental",
+                            "sandbox_verified",
+                            "real_target_verified",
+                        ],
+                        "validation_history_summary": "attempts=1; passed=1; last_validation_result=passed; sandbox_verified=yes; real_target_verified=yes",
+                        "rollback_history_summary": "last_rollback_result=none; rollback_verified=no",
+                        "notes": "Seeded test evidence for the bounded gravel ground theme review path.",
                     }
                 }
             },
@@ -11710,6 +11821,14 @@ def _create_entity_transform_prompt_repo(config: OrchestratorConfig, *, target_r
                         "translated_command": "apply dirt ground theme",
                     },
                     {
+                        "normalized_prompt": "apply gravel ground theme",
+                        "translated_command": "apply gravel ground theme",
+                    },
+                    {
+                        "normalized_prompt": "change the ground to gravel",
+                        "translated_command": "apply gravel ground theme",
+                    },
+                    {
                         "normalized_prompt": "move zombie forward",
                         "translated_command": "move zombie forward",
                     },
@@ -11919,6 +12038,23 @@ def _create_entity_transform_prompt_repo(config: OrchestratorConfig, *, target_r
                             "TargetObjectName": "Ground",
                             "ThemeName": "dirt_ground",
                             "RequestedMaterialPath": "Assets/Resources/Materials/DirtGround.mat",
+                            "BaselineMaterialPath": "Assets/Resources/Materials/Cement.mat"
+                        }
+                    },
+                    {
+                        "normalized_command": "apply gravel ground theme",
+                        "action_name": "apply_gravel_ground_theme",
+                        "entity_type": "environment_theme",
+                        "probe_name": "MutateGroundTheme",
+                        "wrapper_path": "Tools/run_unity_mutate_ground_theme.ps1",
+                        "probe_artifact_file": "intent_apply_gravel_ground_theme_probe_result.json",
+                        "probe_log_file": "intent_apply_gravel_ground_theme_probe.log",
+                        "wrapper_arguments": {
+                            "ProjectPath": ".",
+                            "SceneName": "Babylon FPS game ver 002",
+                            "TargetObjectName": "Ground",
+                            "ThemeName": "gravel_ground",
+                            "RequestedMaterialPath": "Assets/Resources/Materials/GravelGround.mat",
                             "BaselineMaterialPath": "Assets/Resources/Materials/Cement.mat"
                         }
                     },

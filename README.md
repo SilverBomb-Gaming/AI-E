@@ -14,7 +14,7 @@ The latest bounded autonomy milestone is also validated for supported platformer
 
 AI-E also now supports bounded platformer manual correction and layout-quality review flows. Designers can capture explicit keyboard/mouse platformer layout edits through a Unity-side correction tool, persist project-local correction artifacts, and surface deterministic spatial validation findings through the existing experiment, evaluation, and proof outputs.
 
-AI-E now also supports bounded environment theme review for the Babylon Ground object. Supported prompts such as `make the ground grassy` and `change the ground to dirt` resolve to deterministic Ground material mutations, open an explicit approval review surface, and execute only after approval through the Babylon translator/router/probe lane.
+AI-E now also supports bounded environment theme review for the Babylon Ground object. The Babylon ground-theme lane can restore the live Ground object to the Cement baseline and apply the supported grass, dirt, and gravel ground themes through the same deterministic translator/router/probe path. Supported prompts such as `make the ground grassy`, `change the ground to dirt`, and `change the ground to gravel` resolve to explicit approval review first, execute only after approval, and continue to fail closed for unsupported broad terrain-art prompts.
 
 ## AI-E System Evolution (Latest)
 
@@ -123,7 +123,7 @@ These requests remain intentionally blocked because backward zombie movement is 
 - readable result summaries built from saved proof, run, and session artifacts
 - project/session history with reopen and re-stage paths when saved data supports them
 - deterministic prompt normalization for currently supported forward-movement variants
-- bounded environment theme review for the Babylon Ground object using the supported grass and dirt themes
+- bounded environment theme review for the Babylon Ground object using the supported grass, dirt, and gravel themes
 - controlled conversational mapping from `enemy` and `character` onto the supported zombie target with explicit confirmation before execution
 - direct bounded enemy tuning for the supported `zombie` and `runner` profiles in BABYLON
 - bounded goal-intent prompts such as `make runner more dangerous` and `make runner easier`
@@ -133,7 +133,7 @@ These requests remain intentionally blocked because backward zombie movement is 
 
 - choose a supported project like `BABYLON VER 2`
 - prepare a request such as `move zombie forward`, `move zombie forward again`, or `please move zombie forward`
-- prepare a bounded environment theme request such as `make the ground grassy` or `change the ground to dirt`
+- prepare a bounded environment theme request such as `make the ground grassy`, `change the ground to dirt`, or `change the ground to gravel`
 - prepare a direct bounded tuning request such as `make zombie faster`, `make runner faster`, `make runner more dangerous`, or `make runner easier`
 - name the supported enemy target explicitly when tuning archetypes, for example `zombie` or `runner`
 - generalized terms such as `enemy` or `character` are intentionally blocked once multiple bounded enemy archetypes are supported, so AI-E does not guess the target for you

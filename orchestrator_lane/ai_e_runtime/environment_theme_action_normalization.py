@@ -49,6 +49,19 @@ _ACTION_DEFINITIONS = (
             "change the ground to dirt",
         ),
     ),
+    _EnvironmentThemeActionDefinition(
+        action_id="apply_gravel_ground_theme",
+        canonical_prompt="apply gravel ground theme",
+        capability_id="level_0001_apply_gravel_ground_theme",
+        aliases=(
+            "apply gravel ground theme",
+            "apply a gravel ground theme",
+            "make ground gravel",
+            "make the ground gravel",
+            "change ground to gravel",
+            "change the ground to gravel",
+        ),
+    ),
 )
 
 
@@ -70,6 +83,7 @@ def _cleanup_environment_theme_phrase(text: str) -> str:
     cleaned = cleaned.replace(" for level", "")
     cleaned = re.sub(r"\bgrassy ground\b", "grass ground", cleaned)
     cleaned = re.sub(r"\bground to dirt\b", "ground dirt", cleaned)
+    cleaned = re.sub(r"\bground to gravel\b", "ground gravel", cleaned)
     cleaned = " ".join(cleaned.split())
     return cleaned
 

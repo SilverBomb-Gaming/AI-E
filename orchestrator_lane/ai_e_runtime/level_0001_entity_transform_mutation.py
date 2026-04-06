@@ -618,7 +618,7 @@ def _unmatched_prompt_message() -> str:
     return (
         "I understood part of your request, but couldn't match it to a known action. "
         "Try something like: 'move zombie forward', 'make zombie faster', 'make runner faster', "
-        "'make runner more aggressive', 'apply grass ground theme', 'apply dirt ground theme', or 'increase encounter count'."
+        "'make runner more aggressive', 'apply grass ground theme', 'apply dirt ground theme', 'apply gravel ground theme', or 'increase encounter count'."
     )
 
 
@@ -657,8 +657,8 @@ def unsupported_entity_transform_prompt_message(prompt: str) -> str | None:
         or "damage" in tokens
     ):
         return (
-            "AI-E only supports bounded environment look-dev actions in this pass: applying the grass or dirt ground theme to the Ground object. "
-            "Broader terrain realism or mixed art-direction requests are blocked. Try 'make the ground grassy' or 'change the ground to dirt'."
+            "AI-E only supports bounded environment look-dev actions in this pass: applying the grass, dirt, or gravel ground theme to the Ground object. "
+            "Broader terrain realism or mixed art-direction requests are blocked. Try 'make the ground grassy', 'change the ground to dirt', or 'change the ground to gravel'."
         )
     if {"move", "zombie", "backward"}.issubset(tokens):
         return (
