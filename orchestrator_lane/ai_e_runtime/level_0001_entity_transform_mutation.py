@@ -8,6 +8,11 @@ from typing import Any, Dict, Tuple
 
 from orchestrator.utils import ensure_dir, read_json_with_status
 
+from .barrel_action_normalization import (
+    canonicalize_barrel_action_prompt,
+    resolve_barrel_action,
+    supported_barrel_foundation_examples,
+)
 from .capability_registry import CapabilityEvidenceStore, RuntimeCapability
 from .encounter_profiles import supported_encounter_examples_for_family
 from .enemy_profiles import supported_entity_examples_for_family
@@ -117,6 +122,11 @@ _ROUTE_PROFILES = {
         probe_action_type="mutate_ground_theme",
         result_kind="ground_theme",
     ),
+    "MutateExplosiveBarrelFoundation": EntityMutationRouteProfile(
+        probe_name="MutateExplosiveBarrelFoundation",
+        probe_action_type="mutate_explosive_barrel_foundation",
+        result_kind="barrel_foundation",
+    ),
 }
 
 
@@ -145,10 +155,12 @@ def resolve_entity_transform_route(
     resolution = resolve_prompt(prompt)
     normalized_prompt = resolution.normalized_prompt
     lookup_prompt = resolution.lookup_prompt
+    barrel_action = resolve_barrel_action(lookup_prompt)
     environment_theme_action = resolve_environment_theme_action(lookup_prompt)
     platformer_action = resolve_platformer_action(lookup_prompt)
     lookup_prompt = (
-        canonicalize_environment_theme_action_prompt(lookup_prompt)
+        canonicalize_barrel_action_prompt(lookup_prompt)
+        or canonicalize_environment_theme_action_prompt(lookup_prompt)
         or canonicalize_platformer_action_prompt(lookup_prompt)
         or lookup_prompt
     )
@@ -163,6 +175,8 @@ def resolve_entity_transform_route(
         unsupported_message = unsupported_entity_transform_prompt_message(lookup_prompt)
         if unsupported_message:
             return None, unsupported_message
+        if barrel_action is not None:
+            return None, _missing_barrel_route_assets_message(project_path, lookup_prompt)
         if environment_theme_action is not None:
             return None, _missing_environment_theme_route_assets_message(project_path, lookup_prompt)
         if platformer_action is not None:
@@ -174,6 +188,8 @@ def resolve_entity_transform_route(
 
     route = _resolve_route(route_table, translated_command)
     if route is None:
+        if barrel_action is not None:
+            return None, _missing_barrel_route_assets_message(project_path, translated_command)
         if environment_theme_action is not None:
             return None, _missing_environment_theme_route_assets_message(project_path, translated_command)
         if platformer_action is not None:
@@ -194,6 +210,8 @@ def resolve_entity_transform_route(
 
     wrapper_relative = str(route.get("wrapper_path") or "").strip()
     if not wrapper_relative:
+        if barrel_action is not None:
+            return None, _missing_barrel_route_assets_message(project_path, translated_command)
         if environment_theme_action is not None:
             return None, _missing_environment_theme_route_assets_message(project_path, translated_command)
         if platformer_action is not None:
@@ -202,6 +220,8 @@ def resolve_entity_transform_route(
 
     wrapper_path = (project_path / Path(wrapper_relative)).resolve()
     if not wrapper_path.exists():
+        if barrel_action is not None:
+            return None, _missing_barrel_route_assets_message(project_path, translated_command)
         if environment_theme_action is not None:
             return None, _missing_environment_theme_route_assets_message(project_path, translated_command)
         if platformer_action is not None:
@@ -585,6 +605,29 @@ def run_level_0001_entity_transform_mutation(task: Dict[str, Any]) -> Dict[str, 
                 "target_context": "environment_theme",
             }
         )
+    elif route_resolution.result_kind == "barrel_foundation":
+        result_details.update(
+            {
+                "foundation_component_type": str(probe_payload.get("foundation_component_type") or ""),
+                "previous_component_present": bool(probe_payload.get("previous_component_present", False)),
+                "new_component_present": bool(probe_payload.get("new_component_present", False)),
+                "foundation_marker_added": bool(probe_payload.get("foundation_marker_added", False)),
+                "foundation_changed": bool(probe_payload.get("foundation_changed", False)),
+                "previous_foundation_stage": str(probe_payload.get("previous_foundation_stage") or ""),
+                "new_foundation_stage": str(probe_payload.get("new_foundation_stage") or ""),
+                "requested_foundation_stage": str(probe_payload.get("requested_foundation_stage") or ""),
+                "previous_designation_id": str(probe_payload.get("previous_designation_id") or ""),
+                "new_designation_id": str(probe_payload.get("new_designation_id") or ""),
+                "requested_designation_id": str(probe_payload.get("requested_designation_id") or ""),
+                "previous_approved_point_id": str(probe_payload.get("previous_approved_point_id") or ""),
+                "new_approved_point_id": str(probe_payload.get("new_approved_point_id") or ""),
+                "requested_approved_point_id": str(probe_payload.get("requested_approved_point_id") or ""),
+                "target_position_x": _float_or_none(probe_payload.get("target_position_x")),
+                "target_position_y": _float_or_none(probe_payload.get("target_position_y")),
+                "target_position_z": _float_or_none(probe_payload.get("target_position_z")),
+                "target_context": "interactable_object",
+            }
+        )
     result_details.update(
         build_result_session_metadata(
             task=task,
@@ -618,7 +661,17 @@ def _unmatched_prompt_message() -> str:
     return (
         "I understood part of your request, but couldn't match it to a known action. "
         "Try something like: 'move zombie forward', 'make zombie faster', 'make runner faster', "
-        "'make runner more aggressive', 'apply grass ground theme', 'apply dirt ground theme', 'apply gravel ground theme', 'apply damaged-ground theme', or 'increase encounter count'."
+        "'make runner more aggressive', 'apply grass ground theme', 'apply dirt ground theme', 'apply gravel ground theme', "
+        "'apply damaged-ground theme', 'enable explosive barrel', or 'increase encounter count'."
+    )
+
+
+def _missing_barrel_route_assets_message(project_path: Path, canonical_prompt: str) -> str:
+    project_name = project_path.name or str(project_path)
+    return (
+        f"AI-E recognized the bounded explosive barrel action '{canonical_prompt}', but the selected project '{project_name}' "
+        "does not expose the deterministic barrel prompt aliases, route entries, and wrapper scripts required for route preflight yet. "
+        "Add the bounded explosive barrel route assets to the project Tools folder before preparing this request again."
     )
 
 
@@ -691,6 +744,39 @@ def unsupported_entity_transform_prompt_message(prompt: str) -> str | None:
             "AI-E only supports bounded environment look-dev actions in this pass: applying the grass, dirt, gravel, or damaged-ground theme to the Ground object. "
             "Broader terrain realism or mixed art-direction requests are blocked. Try 'make the ground grassy', 'change the ground to dirt', 'change the ground to gravel', or 'make the ground look damaged'."
         )
+    if {"barrel", "barrels", "explosive"} & tokens:
+        supported_message = (
+            "AI-E currently supports only one bounded explosive-barrel foundation action in this pass: "
+            "designating the fixed approved scene barrel as the explosive barrel foundation. "
+            f"Try something like: {supported_barrel_foundation_examples()}."
+        )
+        if (
+            "all" in tokens
+            or "everywhere" in tokens
+            or "windows" in tokens
+            or "near" in tokens
+            or "leaking" in tokens
+            or "leak" in tokens
+            or "explode" in tokens
+            or "shot" in tokens
+            or "shoot" in tokens
+            or "grenade" in tokens
+            or "blast" in tokens
+            or "radius" in tokens
+            or "falloff" in tokens
+            or "damage" in tokens
+            or "zombies" in tokens
+            or "player" in tokens
+            or "props" in tokens
+            or "destructible" in tokens
+            or "combat" in tokens
+        ):
+            return (
+                "AI-E does not support leak, explosion, blast-radius, multi-placement, or broader combat-prop behavior for barrels yet. "
+                + supported_message
+            )
+        if resolve_barrel_action(prompt) is None:
+            return supported_message
     if {"move", "zombie", "backward"}.issubset(tokens):
         return (
             "Backward zombie movement is not a supported deterministic action yet. "
@@ -1177,6 +1263,26 @@ def _validate_execution_artifacts(
                 return "Delegated probe did not apply the requested deterministic ground-theme material."
             if requested_material_path and new_material_path != requested_material_path:
                 return "Delegated probe did not apply the requested deterministic ground-theme material path."
+    elif result_kind == "barrel_foundation":
+        requested_foundation_stage = str(probe_payload.get("requested_foundation_stage") or "").strip()
+        new_foundation_stage = str(probe_payload.get("new_foundation_stage") or "").strip()
+        requested_designation_id = str(probe_payload.get("requested_designation_id") or "").strip()
+        new_designation_id = str(probe_payload.get("new_designation_id") or "").strip()
+        requested_approved_point_id = str(probe_payload.get("requested_approved_point_id") or "").strip()
+        new_approved_point_id = str(probe_payload.get("new_approved_point_id") or "").strip()
+        new_component_present = probe_payload.get("new_component_present")
+        if not isinstance(new_component_present, bool):
+            return "Delegated probe did not report whether the explosive-barrel foundation component was present."
+        if not new_component_present:
+            return "Delegated probe did not leave the explosive-barrel foundation component attached to the approved target."
+        if not requested_foundation_stage:
+            return "Delegated probe did not report the requested explosive-barrel foundation stage."
+        if new_foundation_stage != requested_foundation_stage:
+            return "Delegated probe did not apply the requested explosive-barrel foundation stage."
+        if requested_designation_id and new_designation_id != requested_designation_id:
+            return "Delegated probe did not apply the requested explosive-barrel designation id."
+        if requested_approved_point_id and new_approved_point_id != requested_approved_point_id:
+            return "Delegated probe did not apply the requested explosive-barrel approved point id."
     return None
 
 
@@ -1203,6 +1309,8 @@ def _validation_check_name(result_kind: str) -> str:
         return "mutate_platformer_segment_count_artifact_confirmed"
     if result_kind == "ground_theme":
         return "mutate_ground_theme_artifact_confirmed"
+    if result_kind == "barrel_foundation":
+        return "mutate_explosive_barrel_foundation_artifact_confirmed"
     return "mutate_entity_transform_artifact_confirmed"
 
 

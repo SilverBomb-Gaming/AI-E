@@ -9949,6 +9949,151 @@ def test_supervisor_generates_structured_evaluation_for_encounter_plan_compariso
     assert "best" not in proof.evaluation_summary.lower()
 
 
+def test_supervisor_executes_explosive_barrel_foundation_and_loads_proof_result(tmp_path, monkeypatch):
+    config = _make_config(tmp_path / "barrel_foundation")
+    _write_barrel_capability_contracts(config)
+    target_repo = _create_entity_transform_prompt_repo(config, target_repo_name="BABYLON_TEST")
+    intake = ConversationalTaskIntake(config)
+
+    def fake_run(command, cwd, capture_output, text, check):
+        prompt_text = command[command.index("-PromptText") + 1]
+        assert prompt_text == "enable explosive barrel"
+        assert command[command.index("-ProjectPath") + 1] == target_repo
+        translator_artifact_path = Path(command[command.index("-ArtifactPath") + 1])
+        translator_log_path = Path(command[command.index("-LogPath") + 1])
+        translator_artifact_path.parent.mkdir(parents=True, exist_ok=True)
+        translator_log_path.parent.mkdir(parents=True, exist_ok=True)
+
+        router_artifact_path = translator_artifact_path.with_name(f"{translator_artifact_path.stem}.router_result.json")
+        router_log_path = translator_log_path.with_name(f"{translator_log_path.stem}.router.log")
+        probe_artifact_path = translator_artifact_path.parent / "intent_enable_explosive_barrel_probe_result.json"
+        probe_log_path = translator_artifact_path.parent / "intent_enable_explosive_barrel_probe.log"
+
+        translator_log_path.write_text("translator log", encoding="utf-8")
+        router_log_path.write_text("router log", encoding="utf-8")
+        probe_log_path.write_text("probe log", encoding="utf-8")
+        probe_artifact_path.write_text(
+            json.dumps(
+                {
+                    "status": "success",
+                    "scene": "Babylon FPS game ver 002",
+                    "scene_name": "Babylon FPS game ver 002",
+                    "action_type": "mutate_explosive_barrel_foundation",
+                    "object_name": "barrel0",
+                    "foundation_component_type": "ExplosiveBarrelFoundationMarker",
+                    "previous_component_present": False,
+                    "new_component_present": True,
+                    "foundation_marker_added": True,
+                    "foundation_changed": True,
+                    "previous_foundation_stage": "",
+                    "new_foundation_stage": "foundation_only",
+                    "requested_foundation_stage": "foundation_only",
+                    "previous_designation_id": "",
+                    "new_designation_id": "level2_explosive_barrel_a",
+                    "requested_designation_id": "level2_explosive_barrel_a",
+                    "previous_approved_point_id": "",
+                    "new_approved_point_id": "level2_barrel_point_a",
+                    "requested_approved_point_id": "level2_barrel_point_a",
+                    "target_position_x": 22.22121,
+                    "target_position_y": 1.0,
+                    "target_position_z": 10.259869,
+                    "scene_path": "Assets/Babylon FPS game ver 002.unity",
+                    "timestamp": "2026-04-06T12:00:00Z",
+                    "executed": True,
+                    "result_reason": "applied",
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        router_artifact_path.write_text(
+            json.dumps(
+                {
+                    "status": "success",
+                    "action_name": "enable_explosive_barrel_foundation",
+                    "route_kind": "single",
+                    "executed_probe": "MutateExplosiveBarrelFoundation",
+                    "delegated_probe_artifact_path": str(probe_artifact_path),
+                    "delegated_probe_log_path": str(probe_log_path),
+                    "delegated_probe_action_type": "mutate_explosive_barrel_foundation",
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        translator_artifact_path.write_text(
+            json.dumps(
+                {
+                    "status": "success",
+                    "raw_prompt": "enable explosive barrel",
+                    "normalized_prompt": "enable explosive barrel",
+                    "translated_command": "enable explosive barrel",
+                    "matched_prompt_pattern": "enable explosive barrel",
+                    "action_name": "enable_explosive_barrel_foundation",
+                    "router_artifact_path": str(router_artifact_path),
+                    "router_log_path": str(router_log_path),
+                    "router_status": "success",
+                    "timestamp": "2026-04-06T12:00:00Z",
+                    "message": "",
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        return subprocess.CompletedProcess(command, 0, stdout="translator ok", stderr="")
+
+    monkeypatch.setattr("ai_e_runtime.level_0001_entity_transform_mutation.subprocess.run", fake_run)
+
+    result = intake.accept_message(
+        "Place an explosive barrel",
+        session_id="barrel-foundation-session",
+        target_repo=target_repo,
+    )
+    approval = approve_mutation_task(
+        config,
+        task_id=result.task_id,
+        approved_by="operator-test",
+        notes="Approve bounded explosive barrel foundation run.",
+    )
+    assert approval.queue_status == "pending"
+
+    run_result = Supervisor(
+        config,
+        SupervisorConfig(
+            session_limit_seconds=10,
+            heartbeat_interval_seconds=1,
+            poll_interval_seconds=1,
+            idle_timeout_seconds=2,
+            idle_timeout_poll_limit=99,
+            session_id="barrel-foundation-session",
+            stop_when_queue_empty=False,
+        ),
+    ).run()
+
+    assert run_result.tasks_completed == 1
+    artifact = json.loads(
+        (
+            config.runs_dir
+            / "barrel-foundation-session"
+            / "artifacts"
+            / f"{result.task_id}_attempt_01.json"
+        ).read_text(encoding="utf-8")
+    )
+    details = artifact["result"]["details"]
+    assert details["new_component_present"] is True
+    assert details["new_foundation_stage"] == "foundation_only"
+    assert details["new_designation_id"] == "level2_explosive_barrel_a"
+
+    proof = home_surface.load_proof_result_surface(config.runs_dir / "barrel-foundation-session")
+
+    assert proof.available is True
+    assert proof.detected_action == "Enable explosive barrel foundation"
+    assert proof.proof_status == "Passed"
+    assert "approved explosive barrel foundation target" in proof.change_summary
+    assert "foundation_only" in proof.before_after_summary
+    assert proof.final_verdict == "barrel0 is now the approved explosive barrel foundation target and the recorded checks passed."
+
+
 def _make_stateful_zombie_mutation_fake_run(target_repo: str):
     state = {
         "speed": 3.5,
@@ -10859,6 +11004,33 @@ def _write_encounter_capability_contracts(config: OrchestratorConfig) -> None:
         )
 
 
+def _write_barrel_capability_contracts(config: OrchestratorConfig) -> None:
+    capabilities_dir = config.contracts_dir / "capabilities"
+    capabilities_dir.mkdir(parents=True, exist_ok=True)
+    (capabilities_dir / "level_0001_enable_explosive_barrel_foundation.json").write_text(
+        json.dumps(
+            {
+                "capability_id": "level_0001_enable_explosive_barrel_foundation",
+                "title": "LEVEL_0001 enable explosive barrel foundation",
+                "intent": "mutate",
+                "target_level": "LEVEL_0001",
+                "target_scene": "Assets/Babylon FPS game ver 002.unity",
+                "requested_execution_lane": "approval_required_mutation",
+                "handler_name": "level_0001_entity_transform_handler",
+                "agent_type": "level_0001_entity_transform_mutation_agent",
+                "approval_required": True,
+                "eligible_for_auto": False,
+                "evidence_state": "experimental",
+                "safety_class": "approval_gated_automation",
+                "match_terms": ["explosive", "barrel"],
+                "match_verbs": ["enable", "place", "add"],
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+
 def _create_entity_transform_prompt_repo(config: OrchestratorConfig, *, target_repo_name: str = "BABYLON_TEST") -> str:
     target_repo = config.root_dir / target_repo_name
     tools_dir = target_repo / "Tools"
@@ -10871,6 +11043,7 @@ def _create_entity_transform_prompt_repo(config: OrchestratorConfig, *, target_r
     (tools_dir / "run_unity_mutate_enemy_aggression.ps1").write_text("placeholder", encoding="utf-8")
     (tools_dir / "run_unity_mutate_encounter_count.ps1").write_text("placeholder", encoding="utf-8")
     (tools_dir / "run_unity_mutate_spawn_pressure.ps1").write_text("placeholder", encoding="utf-8")
+    (tools_dir / "run_unity_mutate_explosive_barrel_foundation.ps1").write_text("placeholder", encoding="utf-8")
     (tools_dir / "aie_prompt_aliases.json").write_text(
         json.dumps(
             {
@@ -10947,6 +11120,22 @@ def _create_entity_transform_prompt_repo(config: OrchestratorConfig, *, target_r
                     {
                         "normalized_prompt": "restore spawn pressure to standard",
                         "translated_command": "restore spawn pressure to standard",
+                    },
+                    {
+                        "normalized_prompt": "enable explosive barrel",
+                        "translated_command": "enable explosive barrel",
+                    },
+                    {
+                        "normalized_prompt": "enable the explosive barrel",
+                        "translated_command": "enable explosive barrel",
+                    },
+                    {
+                        "normalized_prompt": "place an explosive barrel",
+                        "translated_command": "enable explosive barrel",
+                    },
+                    {
+                        "normalized_prompt": "add an explosive barrel",
+                        "translated_command": "enable explosive barrel",
                     }
                 ],
             },
@@ -11278,6 +11467,23 @@ def _create_entity_transform_prompt_repo(config: OrchestratorConfig, *, target_r
                             "BaselineSpawnInterval": 6.0,
                             "MinSpawnInterval": 4.0,
                             "MaxSpawnInterval": 8.0
+                        }
+                    },
+                    {
+                        "normalized_command": "enable explosive barrel",
+                        "action_name": "enable_explosive_barrel_foundation",
+                        "entity_type": "interactable_object",
+                        "probe_name": "MutateExplosiveBarrelFoundation",
+                        "wrapper_path": "Tools/run_unity_mutate_explosive_barrel_foundation.ps1",
+                        "probe_artifact_file": "intent_enable_explosive_barrel_probe_result.json",
+                        "probe_log_file": "intent_enable_explosive_barrel_probe.log",
+                        "wrapper_arguments": {
+                            "ProjectPath": ".",
+                            "SceneName": "Babylon FPS game ver 002",
+                            "TargetObjectName": "barrel0",
+                            "FoundationStage": "foundation_only",
+                            "DesignationId": "level2_explosive_barrel_a",
+                            "ApprovedPointId": "level2_barrel_point_a"
                         }
                     }
                 ],

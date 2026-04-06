@@ -7,6 +7,7 @@ from app import home_surface
 from ai_e_runtime.experiment_tracking import apply_experiment_navigation, apply_experiment_tracking
 from ai_e_runtime.outcome_evaluation import apply_result_evaluation
 from ai_e_runtime.experiment_tracking import apply_experiment_decision
+from ai_e_runtime.barrel_action_normalization import canonicalize_barrel_action_prompt
 from ai_e_runtime.environment_theme_action_normalization import canonicalize_environment_theme_action_prompt
 from ai_e_runtime.generic_capabilities import (
     build_generic_capability_state,
@@ -7004,6 +7005,99 @@ def test_environment_theme_action_normalization_canonicalizes_damaged_ground_pro
     assert canonicalize_environment_theme_action_prompt("Make the ground look damaged") == "apply damaged-ground theme"
 
 
+def test_barrel_action_normalization_canonicalizes_place_prompt():
+    assert canonicalize_barrel_action_prompt("Place an explosive barrel") == "enable explosive barrel"
+
+
+def test_task_intake_routes_direct_explosive_barrel_prompt_through_canonical_prompt(tmp_path):
+    config = _make_config(tmp_path / "direct_explosive_barrel_action")
+    _write_barrel_capability_contracts(config)
+    _write_barrel_real_target_evidence(config)
+    target_repo = _create_entity_transform_prompt_repo(config)
+    intake = ConversationalTaskIntake(config)
+
+    result = intake.accept_message(
+        "Place an explosive barrel",
+        session_id="direct-explosive-barrel-session",
+        target_repo=target_repo,
+    )
+
+    request_payload = json.loads(result.artifacts.request_payload_path.read_text(encoding="utf-8"))
+
+    assert result.task_type == "mutation_request"
+    assert result.routing.capability_id == "level_0001_enable_explosive_barrel_foundation"
+    assert result.routing.mapped_prompt == "enable explosive barrel"
+    assert result.routing.capability_supported is True
+    assert result.routing.decision == "require_approval"
+    assert result.queue_entry["status"] == "needs_approval"
+    assert request_payload["conversational_request"]["context"]["resolved_execution_prompt"] == "enable explosive barrel"
+
+
+def test_home_surface_explosive_barrel_review_surface_explains_bounded_foundation_scope(tmp_path):
+    config = _make_config(tmp_path / "home_surface_explosive_barrel_review")
+    _write_barrel_capability_contracts(config)
+    _write_barrel_real_target_evidence(config)
+    target_repo = _create_entity_transform_prompt_repo(config)
+    intake = ConversationalTaskIntake(config)
+    bridge = home_surface.IntakePreviewBridge()
+    bridge._create_intake = lambda: intake
+    bridge._build_review_bundle_fn = build_review_bundle
+    project = home_surface.SupportedProject(
+        name="BABYLON TEST",
+        path=Path(target_repo),
+        project_type="unity_project",
+        source="test",
+        status="supported",
+    )
+
+    preview = bridge.prepare_prompt("Enable the explosive barrel", project)
+    review = bridge.build_review_surface(preview, project)
+
+    assert preview.available is True
+    assert preview.decision_state == "Needs approval"
+    assert preview.mapped_prompt == "enable explosive barrel"
+    assert review.available is True
+    assert review.request_summary == (
+        "Reviewing the bounded explosive barrel foundation action 'enable explosive barrel' for BABYLON TEST. "
+        "This approval covers only the reviewed single-barrel foundation change at the fixed approved scene point."
+    )
+    assert review.approval_reason == (
+        "This request enters bounded destructible-object foundation review before any run is queued. "
+        "Approval authorizes only the reviewed explosive barrel foundation action 'enable explosive barrel'. "
+        "It does not authorize leak simulation, explosion triggers, blast-radius damage, chain reactions, or any extra combat-environment mutation outside the reviewed scope."
+    )
+    assert review.expected_change_scope == (
+        "Limit execution to the reviewed explosive barrel foundation action 'enable explosive barrel' "
+        "on the fixed approved barrel target in Babylon FPS game ver 002 for BABYLON TEST. "
+        "No free placement, multi-barrel scattering, leak state, explosion trigger, blast-radius damage, or extra combat-prop behavior is included."
+    )
+    assert review.validation_intent == (
+        "After approval, AI-E will execute the reviewed bounded explosive barrel foundation action through the deterministic project tool route, "
+        "validate the recorded barrel-foundation artifact, and confirm the approved Babylon scene target before treating the run as complete. "
+        "Sandbox remains an explicit alternative path instead of the default approval path."
+    )
+    assert "single-barrel foundation" in review.request_summary
+    assert "leak simulation" in review.approval_reason
+
+
+def test_task_intake_blocks_richer_explosive_barrel_prompt_outside_foundation_scope(tmp_path):
+    config = _make_config(tmp_path / "unsupported_explosive_barrel_prompt")
+    _write_barrel_capability_contracts(config)
+    target_repo = _create_entity_transform_prompt_repo(config)
+    intake = ConversationalTaskIntake(config)
+
+    result = intake.accept_message(
+        "Add leaking explosive barrels that damage zombies and the player in a blast radius",
+        session_id="unsupported-explosive-barrel-session",
+        target_repo=target_repo,
+    )
+
+    assert result.queue_entry["status"] == "blocked"
+    assert result.routing.decision == "block"
+    assert "does not support leak, explosion, blast-radius" in str(result.routing.fail_closed_reason or "")
+    assert "place an explosive barrel" in str(result.routing.fail_closed_reason or "")
+
+
 def test_task_intake_routes_direct_ground_theme_prompt_through_canonical_prompt(tmp_path):
     config = _make_config(tmp_path / "direct_ground_theme_action")
     _write_environment_theme_capability_contracts(config)
@@ -11887,6 +11981,84 @@ def _write_environment_theme_real_target_evidence(config: OrchestratorConfig) ->
     )
 
 
+def _write_barrel_capability_contracts(config: OrchestratorConfig) -> None:
+    capabilities_dir = config.contracts_dir / "capabilities"
+    capabilities_dir.mkdir(parents=True, exist_ok=True)
+    (capabilities_dir / "level_0001_enable_explosive_barrel_foundation.json").write_text(
+        json.dumps(
+            {
+                "capability_id": "level_0001_enable_explosive_barrel_foundation",
+                "title": "LEVEL_0001 enable explosive barrel foundation",
+                "intent": "mutate",
+                "target_level": "LEVEL_0001",
+                "target_scene": "Assets/Babylon FPS game ver 002.unity",
+                "requested_execution_lane": "approval_required_mutation",
+                "handler_name": "level_0001_entity_transform_handler",
+                "agent_type": "level_0001_entity_transform_mutation_agent",
+                "approval_required": True,
+                "eligible_for_auto": False,
+                "evidence_state": "experimental",
+                "safety_class": "approval_gated_automation",
+                "content_tags": {
+                    "violence_level": "none",
+                    "blood_level": "none",
+                    "gore_level": "none",
+                    "dismemberment": False,
+                    "horror_intensity": "none",
+                    "language_level": "none",
+                    "sexual_content_level": "none",
+                    "nudity_level": "none",
+                    "substance_reference_level": "none",
+                    "gambling_reference_level": "none",
+                },
+                "match_terms": ["explosive", "barrel"],
+                "match_verbs": ["enable", "place", "add"],
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+
+def _write_barrel_real_target_evidence(config: OrchestratorConfig) -> None:
+    capabilities_dir = config.contracts_dir / "capabilities"
+    capabilities_dir.mkdir(parents=True, exist_ok=True)
+    (capabilities_dir / "evidence.json").write_text(
+        json.dumps(
+            {
+                "capabilities": {
+                    "level_0001_enable_explosive_barrel_foundation": {
+                        "capability_id": "level_0001_enable_explosive_barrel_foundation",
+                        "handler_name": "level_0001_entity_transform_handler",
+                        "safety_class": "approval_gated_automation",
+                        "times_attempted": 1,
+                        "times_passed": 1,
+                        "last_validation_result": "passed",
+                        "last_rollback_result": "none",
+                        "artifact_requirements_met": True,
+                        "eligible_for_auto": False,
+                        "requires_approval": True,
+                        "evidence_state": "real_target_verified",
+                        "sandbox_verified": True,
+                        "real_target_verified": True,
+                        "rollback_verified": False,
+                        "evidence_progression": [
+                            "experimental",
+                            "sandbox_verified",
+                            "real_target_verified",
+                        ],
+                        "validation_history_summary": "attempts=1; passed=1; last_validation_result=passed; sandbox_verified=yes; real_target_verified=yes",
+                        "rollback_history_summary": "last_rollback_result=none; rollback_verified=no",
+                        "notes": "Seeded test evidence for the bounded explosive barrel foundation review path.",
+                    }
+                }
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+
 def _write_move_zombie_capability_contract(config: OrchestratorConfig) -> None:
     capabilities_dir = config.contracts_dir / "capabilities"
     capabilities_dir.mkdir(parents=True, exist_ok=True)
@@ -12143,6 +12315,7 @@ def _create_entity_transform_prompt_repo(config: OrchestratorConfig, *, target_r
     (tools_dir / "run_unity_mutate_platformer_enemy_density.ps1").write_text("placeholder", encoding="utf-8")
     (tools_dir / "run_unity_mutate_platformer_segment_count.ps1").write_text("placeholder", encoding="utf-8")
     (tools_dir / "run_unity_mutate_ground_theme.ps1").write_text("placeholder", encoding="utf-8")
+    (tools_dir / "run_unity_mutate_explosive_barrel_foundation.ps1").write_text("placeholder", encoding="utf-8")
     (tools_dir / "aie_prompt_aliases.json").write_text(
         json.dumps(
             {
@@ -12183,6 +12356,22 @@ def _create_entity_transform_prompt_repo(config: OrchestratorConfig, *, target_r
                     {
                         "normalized_prompt": "change the ground to a damaged theme",
                         "translated_command": "apply damaged-ground theme",
+                    },
+                    {
+                        "normalized_prompt": "enable explosive barrel",
+                        "translated_command": "enable explosive barrel",
+                    },
+                    {
+                        "normalized_prompt": "enable the explosive barrel",
+                        "translated_command": "enable explosive barrel",
+                    },
+                    {
+                        "normalized_prompt": "place an explosive barrel",
+                        "translated_command": "enable explosive barrel",
+                    },
+                    {
+                        "normalized_prompt": "add an explosive barrel",
+                        "translated_command": "enable explosive barrel",
                     },
                     {
                         "normalized_prompt": "move zombie forward",
@@ -12429,6 +12618,23 @@ def _create_entity_transform_prompt_repo(config: OrchestratorConfig, *, target_r
                             "ThemeName": "damaged_ground",
                             "RequestedMaterialPath": "Assets/Resources/Materials/DamagedGround.mat",
                             "BaselineMaterialPath": "Assets/Resources/Materials/Cement.mat"
+                        }
+                    },
+                    {
+                        "normalized_command": "enable explosive barrel",
+                        "action_name": "enable_explosive_barrel_foundation",
+                        "entity_type": "interactable_object",
+                        "probe_name": "MutateExplosiveBarrelFoundation",
+                        "wrapper_path": "Tools/run_unity_mutate_explosive_barrel_foundation.ps1",
+                        "probe_artifact_file": "intent_enable_explosive_barrel_probe_result.json",
+                        "probe_log_file": "intent_enable_explosive_barrel_probe.log",
+                        "wrapper_arguments": {
+                            "ProjectPath": ".",
+                            "SceneName": "Babylon FPS game ver 002",
+                            "TargetObjectName": "barrel0",
+                            "FoundationStage": "foundation_only",
+                            "DesignationId": "level2_explosive_barrel_a",
+                            "ApprovedPointId": "level2_barrel_point_a"
                         }
                     },
                     {

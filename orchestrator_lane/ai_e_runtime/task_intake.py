@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from .autonomous_decision import DecisionRuntimeContext, evaluate_autonomous_decision
+from .barrel_action_normalization import canonicalize_barrel_action_prompt
 from .capability_intelligence import assess_capability_intelligence, assess_mutation_without_capability
 from .capability_registry import CapabilityRegistry, RuntimeCapability
 from .clarification_guidance import (
@@ -717,6 +718,8 @@ class ConversationalTaskIntake:
         lookup_prompt = resolve_prompt(normalized).lookup_prompt
         if match_predefined_plan(lookup_prompt) is not None:
             return "task_request"
+        if canonicalize_barrel_action_prompt(lookup_prompt):
+            return "task_request"
         if canonicalize_environment_theme_action_prompt(lookup_prompt):
             return "task_request"
         if self._looks_like_world_mutation_request(lookup_prompt):
@@ -727,6 +730,8 @@ class ConversationalTaskIntake:
                 "level_0001",
                 "zombie",
                 "runner",
+                "barrel",
+                "explosive",
                 "encounter",
                 "spawn",
                 "spawner",
@@ -1251,7 +1256,8 @@ class ConversationalTaskIntake:
             elif platformer_multi_intent_block_message is None:
                 platformer_multi_intent_block_message = unsupported_platformer_multi_intent_message(effective_lookup_prompt)
         effective_lookup_prompt = (
-            canonicalize_environment_theme_action_prompt(effective_lookup_prompt)
+            canonicalize_barrel_action_prompt(effective_lookup_prompt)
+            or canonicalize_environment_theme_action_prompt(effective_lookup_prompt)
             or canonicalize_platformer_action_prompt(effective_lookup_prompt)
             or effective_lookup_prompt
         )
@@ -1302,7 +1308,9 @@ class ConversationalTaskIntake:
             step_prompts = [step.operator_prompt for step in predefined_plan.steps]
             for step in predefined_plan.steps:
                 step_lookup_prompt = (
-                    canonicalize_environment_theme_action_prompt(step.operator_prompt)
+                    canonicalize_barrel_action_prompt(step.operator_prompt)
+                    or canonicalize_barrel_action_prompt(step.title)
+                    or canonicalize_environment_theme_action_prompt(step.operator_prompt)
                     or canonicalize_environment_theme_action_prompt(step.title)
                     or canonicalize_platformer_action_prompt(step.operator_prompt)
                     or canonicalize_platformer_action_prompt(step.title)

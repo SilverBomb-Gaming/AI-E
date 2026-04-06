@@ -9,6 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable, List
 
+from ai_e_runtime.barrel_action_normalization import resolve_barrel_action
 from ai_e_runtime.platformer_layout_corrections import extract_platformer_layout_correction_metadata
 from ai_e_runtime.platformer_layout_validation import extract_platformer_layout_validation_metadata
 from ai_e_runtime.environment_theme_action_normalization import resolve_environment_theme_action
@@ -1515,6 +1516,12 @@ class IntakePreviewBridge:
                 f"Reviewing the bounded environment theme action '{mapped_prompt or preview.detected_action}' for {project.name}. "
                 "This approval covers only the reviewed Ground material theme change."
             )
+        if IntakePreviewBridge._is_barrel_foundation_review(routing):
+            mapped_prompt = str(getattr(routing, "mapped_prompt", "") or preview.detected_action or "").strip()
+            return (
+                f"Reviewing the bounded explosive barrel foundation action '{mapped_prompt or preview.detected_action}' for {project.name}. "
+                "This approval covers only the reviewed single-barrel foundation change at the fixed approved scene point."
+            )
         target_level = str(getattr(routing, "target_level", "") or "").strip()
         if target_level:
             return f"{preview.detected_action} requests a bounded change in {target_level} inside {project.name}."
@@ -1549,6 +1556,13 @@ class IntakePreviewBridge:
                 "This request enters bounded environment visual-theme review before any run is queued. "
                 f"Approval authorizes only the reviewed Ground material action '{mapped_prompt or preview.detected_action}'. "
                 "It does not authorize broader terrain art direction, follow-on scene styling, or any extra mutation outside the reviewed scope."
+            )
+        if IntakePreviewBridge._is_barrel_foundation_review(routing):
+            mapped_prompt = str(getattr(routing, "mapped_prompt", "") or preview.detected_action or "").strip()
+            return (
+                "This request enters bounded destructible-object foundation review before any run is queued. "
+                f"Approval authorizes only the reviewed explosive barrel foundation action '{mapped_prompt or preview.detected_action}'. "
+                "It does not authorize leak simulation, explosion triggers, blast-radius damage, chain reactions, or any extra combat-environment mutation outside the reviewed scope."
             )
         reason = _clean_decision_text(str(preview.decision_reason or "").strip())
         if reason:
@@ -1589,6 +1603,15 @@ class IntakePreviewBridge:
                 f"Limit execution to the reviewed environment theme action '{mapped_prompt or preview.detected_action}' on Ground in {scene_name} for {project.name}. "
                 "No broader terrain realism pass, foliage expansion, decal work, or extra scene styling changes are included."
             )
+        if IntakePreviewBridge._is_barrel_foundation_review(routing):
+            target_scene = str(getattr(routing, "target_scene", "") or "").strip()
+            scene_name = Path(target_scene).stem or "the supported scene"
+            mapped_prompt = str(getattr(routing, "mapped_prompt", "") or preview.detected_action or "").strip()
+            return (
+                f"Limit execution to the reviewed explosive barrel foundation action '{mapped_prompt or preview.detected_action}' "
+                f"on the fixed approved barrel target in {scene_name} for {project.name}. "
+                "No free placement, multi-barrel scattering, leak state, explosion trigger, blast-radius damage, or extra combat-prop behavior is included."
+            )
         target_level = str(getattr(routing, "target_level", "") or "").strip()
         target_scene = str(getattr(routing, "target_scene", "") or "").strip()
         if target_level:
@@ -1626,6 +1649,12 @@ class IntakePreviewBridge:
             return (
                 "After approval, AI-E will execute the reviewed bounded environment theme action through the deterministic project tool route, "
                 "validate the recorded Ground material mutation artifact, and confirm the approved Babylon scene target before treating the run as complete. "
+                "Sandbox remains an explicit alternative path instead of the default approval path."
+            )
+        if IntakePreviewBridge._is_barrel_foundation_review(routing):
+            return (
+                "After approval, AI-E will execute the reviewed bounded explosive barrel foundation action through the deterministic project tool route, "
+                "validate the recorded barrel-foundation artifact, and confirm the approved Babylon scene target before treating the run as complete. "
                 "Sandbox remains an explicit alternative path instead of the default approval path."
             )
         missing_evidence = [str(item).strip() for item in getattr(routing, "missing_evidence", []) or [] if str(item).strip()]
@@ -1683,6 +1712,29 @@ class IntakePreviewBridge:
                 if mapped_prompt:
                     parts.append(f"Guardrails limit execution to the reviewed environment theme action '{mapped_prompt}'.")
             parts.append("Scope is limited to the approved Ground material mutation in the supported Babylon scene.")
+            parts.append("Deterministic project tool routing has already been matched for this request.")
+            parts.append("Sandbox remains a separate operator choice and is not implied by approval.")
+
+            evidence_state = str(getattr(routing, "evidence_state", "") or getattr(routing, "maturity_stage", "") or "").strip()
+            if evidence_state:
+                parts.append(f"Current proof coverage is {evidence_state}.")
+            policy_state = str(getattr(routing, "policy_state", "") or "").strip()
+            if policy_state:
+                parts.append(f"Safety policy status is {policy_state.replace('_', ' ')}.")
+            return " ".join(parts)
+        if IntakePreviewBridge._is_barrel_foundation_review(routing):
+            parts: List[str] = []
+            if queue_status == "needs_approval":
+                parts.append("This bounded explosive barrel foundation request is waiting for operator approval.")
+            elif queue_status == "pending":
+                parts.append("Approval was already recorded. The reviewed explosive barrel foundation run is waiting to start.")
+            else:
+                parts.append("No work has started yet. This explosive barrel foundation request is still in review.")
+
+            mapped_prompt = str(getattr(routing, "mapped_prompt", "") or "").strip()
+            if mapped_prompt:
+                parts.append(f"Guardrails limit execution to the reviewed explosive barrel foundation action '{mapped_prompt}'.")
+            parts.append("Scope is limited to one fixed approved barrel target in the supported Babylon scene.")
             parts.append("Deterministic project tool routing has already been matched for this request.")
             parts.append("Sandbox remains a separate operator choice and is not implied by approval.")
 
@@ -1757,6 +1809,23 @@ class IntakePreviewBridge:
                 "This bounded environment theme review is prepared only. Nothing has run yet. "
                 "Approve to queue the reviewed run, reject to stop here, or choose sandbox as the explicit alternative path."
             )
+        if IntakePreviewBridge._is_barrel_foundation_review(routing):
+            if queue_status == "needs_approval":
+                return (
+                    "This bounded explosive barrel foundation request is waiting for operator choice. "
+                    "Approve it to queue the reviewed run, reject it to stop here, or choose sandbox to exercise the same bounded route explicitly."
+                )
+            if queue_status == "pending" and approval_state in {"approved", "auto_approved", "not_required"}:
+                return (
+                    "Approval was already recorded for this bounded explosive barrel foundation request. "
+                    "It is waiting to run under the reviewed scope. Refresh status to follow it."
+                )
+            if queue_status == "blocked":
+                return "AI-E has blocked this explosive barrel foundation request. Revise it to stay within supported scope before preparing it again."
+            return (
+                "This bounded explosive barrel foundation review is prepared only. Nothing has run yet. "
+                "Approve to queue the reviewed run, reject to stop here, or choose sandbox as the explicit alternative path."
+            )
         if queue_status == "needs_approval":
             return "This request is waiting for approval. AI-E has not started any work. Approve it once, reject it, or keep it staged for sandbox-first review."
         if queue_status == "pending" and approval_state in {"approved", "auto_approved", "not_required"}:
@@ -1790,6 +1859,19 @@ class IntakePreviewBridge:
         mapped_prompt = str(getattr(routing, "mapped_prompt", "") or "").strip()
         if mapped_prompt and resolve_environment_theme_action(mapped_prompt) is not None:
             return True
+        return False
+
+    @staticmethod
+    def _is_barrel_foundation_review(routing: Any) -> bool:
+        capability_id = str(getattr(routing, "capability_id", "") or "").strip().lower()
+        if "explosive_barrel" in capability_id:
+            return True
+        mapped_prompt = str(getattr(routing, "mapped_prompt", "") or "").strip()
+        if mapped_prompt and resolve_barrel_action(mapped_prompt) is not None:
+            return True
+        generic_definition = getattr(routing, "generic_capability_definition", None)
+        if isinstance(generic_definition, dict):
+            return str(generic_definition.get("target_context") or "").strip().lower() == "interactable_object"
         return False
 
     @staticmethod
@@ -4269,6 +4351,8 @@ def _attempt_final_verdict(
             return f"{object_name or 'Target'} encounter count changed successfully and the recorded checks passed."
         if isinstance(details.get("previous_spawn_interval"), (int, float)) and isinstance(details.get("new_spawn_interval"), (int, float)):
             return f"{object_name or 'Target'} spawn pressure changed successfully and the recorded checks passed."
+        if bool(details.get("new_component_present")) and str(details.get("new_foundation_stage") or "").strip():
+            return f"{object_name or 'Target'} is now the approved explosive barrel foundation target and the recorded checks passed."
         if object_name:
             return f"{object_name} changed successfully and the recorded checks passed."
         return "Requested change completed successfully and the recorded checks passed."
@@ -4319,6 +4403,11 @@ def _proof_before_after_summary(mutation: dict[str, Any]) -> str:
                 f"{object_name} stayed at spawn interval {float(mutation.get('new_spawn_interval')):g} "
                 "because it already satisfied this request."
             )
+        if bool(mutation.get("new_component_present")) and str(mutation.get("new_foundation_stage") or "").strip():
+            return (
+                f"{object_name} already carried the approved explosive barrel foundation marker "
+                f"('{str(mutation.get('new_foundation_stage') or '').strip()}'), so no mutation was needed."
+            )
         return f"{object_name} already satisfied this request, so no mutation was needed."
     previous_speed = mutation.get("previous_speed")
     new_speed = mutation.get("new_speed")
@@ -4361,6 +4450,20 @@ def _proof_before_after_summary(mutation: dict[str, Any]) -> str:
         return f"{object_name} now uses spawn interval {float(new_spawn_interval):g}. The starting spawn interval is not available in this result."
     if isinstance(previous_spawn_interval, (int, float)):
         return f"{object_name} started at spawn interval {float(previous_spawn_interval):g}. The ending spawn interval is not available in this result."
+    previous_foundation_stage = str(mutation.get("previous_foundation_stage") or "").strip()
+    new_foundation_stage = str(mutation.get("new_foundation_stage") or "").strip()
+    if previous_foundation_stage and new_foundation_stage:
+        return f"{object_name} explosive barrel foundation stage changed from {previous_foundation_stage} to {new_foundation_stage}."
+    if new_foundation_stage:
+        return (
+            f"{object_name} is now marked as explosive barrel foundation stage {new_foundation_stage}. "
+            "The starting foundation state is not available in this result."
+        )
+    if previous_foundation_stage:
+        return (
+            f"{object_name} started at explosive barrel foundation stage {previous_foundation_stage}. "
+            "The ending foundation state is not available in this result."
+        )
     previous_position = mutation.get("previous_position")
     new_position = mutation.get("new_position")
     if isinstance(previous_position, list) and isinstance(new_position, list):
@@ -4415,6 +4518,11 @@ def _proof_change_summary(mutation: dict[str, Any]) -> str:
         return (
             f"AI-E changed spawn pressure for {object_name} by adjusting spawn interval "
             f"from {float(previous_spawn_interval):g} to {float(new_spawn_interval):g}."
+        )
+    if bool(mutation.get("new_component_present")) and str(mutation.get("new_foundation_stage") or "").strip():
+        return (
+            f"AI-E designated {object_name} as the approved explosive barrel foundation target "
+            f"at stage '{str(mutation.get('new_foundation_stage') or '').strip()}'."
         )
     if mutation.get("position_changed") is True:
         distance = mutation.get("movement_distance")
@@ -4509,6 +4617,11 @@ def _attempt_skip_reason(details: dict[str, Any]) -> str:
                 f"({float(new_spawn_interval):g} vs requested {float(requested_spawn_interval):g} interval)."
             )
         return f"{object_name} was already {comparator} the desired spawn pressure."
+    if bool(details.get("new_component_present")) and str(details.get("new_foundation_stage") or "").strip():
+        return (
+            f"{object_name} was already marked as the approved explosive barrel foundation "
+            f"('{str(details.get('new_foundation_stage') or '').strip()}')."
+        )
     return ""
 
 
