@@ -6,7 +6,7 @@ Controlled execution surface for supported projects. AI-E turns a bounded reques
 
 The current active operator-console surface in this repo is the Windows-first OpenClaw controller shell. The known-good checkpoint is:
 
-- Current baseline: `Windows OpenClaw Operator Console v1.8 - Capability Manifests & Trust Boundaries`
+- Current baseline: `Windows OpenClaw Operator Console v1.9 - Sandbox, Scope & Audit Layer`
 - Health: `Healthy`
 - Security: `Safe`
 - Readiness: `Ready`
@@ -18,34 +18,48 @@ What is now working:
 - offline/online mode selection with policy guardrails preserved
 - trusted health and security diagnostics, including ownership-aware port conflict checks and multi-signal runtime liveness
 - secure Telegram bot validation, connection testing, and polling-loop start/stop controls
-- duplicate-safe Telegram interaction loop with `/start`, `/help`, `/status`, `/mode`, `/models`, `/capabilities`, `/ask <prompt>`, and `/askd <prompt>`
+- duplicate-safe Telegram interaction loop with `/start`, `/help`, `/status`, `/mode`, `/models`, `/capabilities`, `/audit`, `/ask <prompt>`, and `/askd <prompt>`
 - deterministic Telegram command parsing with whitespace-tolerant handling, consistent casing behavior, and short correction replies for malformed commands
 - per-chat provider-ask control with explicit in-flight rejection, bounded provider timeouts, and a narrow provider-ask cooldown to prevent accidental spam
 - centralized capability registry and evaluator that gate command execution through explicit `allowed`, `blocked`, `degraded`, `confirmation_required`, or `unavailable` states
 - one-shot confirmation handling for online-sensitive asks under `Ask Before Online`, including short-lived pending approvals plus Telegram `/confirm <id>` and `/deny <id>` controls
-- structured execution requests and results that drive Telegram command replies, recent operator summaries, and desktop result visibility with consistent success, blocked, degraded, timed-out, and confirmation-aware outcomes
-- manifest-backed capability definitions with explicit trust-boundary classification, Telegram exposure rules, startup validation, trust-aware `/capabilities` output, and compact desktop trust summaries for the most recent capability and execution result
+- structured execution requests and results that drive Telegram command replies, recent operator summaries, and desktop result visibility with consistent success, blocked, degraded, timed-out, confirmation-aware, and out-of-scope outcomes
+- manifest-backed capability definitions with explicit trust-boundary classification, Telegram exposure rules, startup validation, trust-aware `/capabilities` output, and compact desktop trust summaries
+- manifest-driven scope validation and bounded in-memory audit recording for every capability attempt, including `/audit` summaries and recent scope/audit visibility in the desktop shell
 
 What a capability manifest means in this project:
 
-- a capability manifest is now the source of truth for one named action's identity, execution type, provider dependency, runtime/readiness needs, trust boundary, exposure rules, timeout support, confirmation sensitivity, and user visibility
-- registry loading validates capability ids, required fields, and basic trust-boundary consistency before the controller uses those capabilities
-- evaluator, executor, `/capabilities`, and recent desktop summaries now read trust assumptions from the manifest instead of duplicating them in scattered command branches
-- manifests currently classify each capability by `access_kind`, `locality`, `data_scope`, `offline_safety`, `confirmation_sensitivity`, and `telegram_exposure`
+- a capability manifest is the source of truth for one named action's identity, execution type, provider dependency, runtime/readiness needs, trust boundary, exposure rules, scope expectations, timeout support, confirmation sensitivity, and user visibility
+- registry loading validates capability ids, required fields, basic trust-boundary consistency, and scope-shape consistency before the controller uses those capabilities
+- evaluator, executor, `/capabilities`, scope validation, and recent desktop summaries now read control assumptions from the manifest instead of duplicating them in scattered command branches
+
+What scope and sandboxing mean here:
+
+- every execution request now carries a structured scope with `scope_type`, `access_mode`, and optional bounded targets such as allowed paths, repository root, or domain allowlist
+- current user-facing capabilities are still narrow: most operator reads are `internal/read`, while `ask.provider_query` is `network/execute` and restricted to the expected provider targets rather than arbitrary hosts
+- scope validation now runs after capability evaluation and confirmation checks but before actual execution, so out-of-scope requests are rejected before provider work starts
+- confirmation does not override scope restrictions, and request-provided scope data cannot widen a manifest's allowlist
+
+How audit logging works:
+
+- every structured execution attempt now creates one bounded audit record, including success, blocked, confirmation-required, denied, expired, timed-out, failed, unavailable, degraded, invalid-request, and out-of-scope outcomes
+- audit records are kept in a bounded in-memory append-only log and surfaced through `/audit` plus compact desktop summaries
+- each record includes capability id, outcome, reason code, confirmation usage, scope summary, provider usage if any, duration, and a short action summary
+- audit records intentionally do not store secrets, raw provider payloads, or full prompts; provider asks are recorded as hidden prompt summaries instead
 
 Execution and trust model:
 
-- every Telegram capability execution still creates one structured request and one structured result with outcome, reason code, user-facing message, sanitized internal summary, duration, provider/mode usage, and confirmation usage state
-- execution results now also carry manifest trust metadata so Telegram summaries and the desktop shell can show concise trust labels like `read-only`, `local`, or `online-sensitive`
-- Telegram exposure is now explicit: capabilities marked `denied` cannot run from Telegram, and `limited` capabilities degrade into a restricted Telegram-safe path instead of executing as a full action
-- no capability can silently bypass `always_offline`, invalid provider state, runtime failure, readiness failure, or confirmation rules
+- every Telegram capability execution still creates one structured request and one structured result with outcome, reason code, user-facing message, sanitized internal summary, duration, provider/mode usage, confirmation usage state, and scope summary
+- execution results also carry manifest trust metadata so Telegram summaries and the desktop shell can show concise trust labels like `read-only`, `local`, `networked`, or `online-sensitive`
+- Telegram exposure is explicit: capabilities marked `denied` cannot run from Telegram, and `limited` capabilities degrade into a Telegram-safe restricted path instead of executing as a full action
+- no capability can silently bypass `always_offline`, invalid provider state, runtime failure, readiness failure, confirmation rules, or scope restrictions
 
 Confirmation flow:
 
 - online-sensitive `/ask` requests under `ask_before_online` return a confirmation prompt with a short id instead of silently escalating
 - approve that one request with `/confirm <id>` or reject it with `/deny <id>` from the same Telegram chat
 - pending confirmations expire automatically after a short lifetime and can be used only once
-- confirmation does not override `always_offline`, runtime failures, readiness failures, or invalid provider state
+- confirmation does not override `always_offline`, runtime failures, readiness failures, invalid provider state, or scope restrictions
 
 Milestone notes:
 
@@ -58,30 +72,31 @@ Milestone notes:
 - v1.6: `docs/milestones/windows_openclaw_operator_console_v1_6_confirmation_and_escalation_layer.md`
 - v1.7: `docs/milestones/windows_openclaw_operator_console_v1_7_capability_execution_contracts.md`
 - v1.8: `docs/milestones/windows_openclaw_operator_console_v1_8_capability_manifests_and_trust_boundaries.md`
+- v1.9: `docs/milestones/windows_openclaw_operator_console_v1_9_sandbox_scope_and_audit_layer.md`
 
 Important guardrails and usage notes:
 
 - Offline Mode remains first-class and no silent provider or mode fallback is allowed.
 - `/ask` and `/askd` remain explicit; generic plain text is not auto-routed into provider-backed queries.
-- capability manifests define Telegram exposure and trust boundaries; registration, evaluation, and execution do not guess these rules dynamically
+- capability manifests define Telegram exposure, trust boundaries, and scope expectations; registration, evaluation, confirmation, and execution do not guess these rules dynamically
 - `/confirm <id>` approves exactly one pending action; `/deny <id>` rejects it; expired or already-used confirmations cannot be replayed
-- `/capabilities` is introspection only; it reports current trust-aware capability state and does not grant new powers
-- the controller stays local-first with loopback bind defaults and secret redaction in logs, summaries, and Telegram activity surfaces
-- still intentionally not implemented: automation, scheduling, scraping, RAG, repo mutation, multi-channel expansion, or AI-E orchestration behavior
+- `/audit` is bounded and recent-only; it summarizes capability attempts without exposing secrets or full prompt contents
+- the controller stays local-first with loopback bind defaults and secret redaction in logs, summaries, Telegram activity, and audit records
+- still intentionally not implemented: automation, scheduling, scraping, RAG, repo mutation, file mutation, multi-channel expansion, or AI-E orchestration behavior
 
 Current next milestone:
 
-- `Windows OpenClaw Operator Console v1.9 - Approval Visibility & Pending Action Polish`
-- goal: make pending confirmations and trust-boundary decisions easier to inspect from the desktop shell and Telegram without broadening execution scope
+- `Windows OpenClaw Operator Console v1.10 - Scoped Capability Introductions`
+- goal: add the first narrow repo/file/web read pilots through the new manifest, scope, confirmation, and audit layers without weakening the trust model
 
 Fast operator path:
 
 1. Launch the desktop shell with `python -m app.main`.
 2. Start the runtime and run Health/Security checks.
 3. Validate Telegram, start the Telegram loop, and message the configured bot.
-4. Use `/help`, `/status`, `/mode`, `/models`, `/capabilities`, `/ask hello`, or `/askd hello` from Telegram.
+4. Use `/help`, `/status`, `/mode`, `/models`, `/capabilities`, `/audit`, `/ask hello`, or `/askd hello` from Telegram.
 5. If `/ask` returns a confirmation prompt, reply with `/confirm <id>` to approve that one request or `/deny <id>` to reject it.
-6. If `/capabilities` shows `blocked`, `degraded`, or `unavailable` provider-query state, resolve the noted readiness or provider issue before retrying `/ask`.
+6. If `/capabilities` shows `blocked`, `degraded`, or `unavailable` provider-query state, or `/audit` shows repeated `out_of_scope` results, resolve the noted readiness, provider, or scope issue before retrying.
 7. Run `python -m unittest discover -s tests -v` and `python diagnostics_smoke.py` for the current controller verification pass.
 
 ## AI-E v1 Product Surface Status
@@ -518,6 +533,7 @@ Use **Help > Demo Checklist...** inside the app to run the current quick walkthr
 6. **F.** Use `Modify and test again` or `Try a variation` to show the next quick iteration.
 
 The dialog resets each time you open it, so the same checklist can be reused before the next demo or local-user handoff.
+
 
 
 

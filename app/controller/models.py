@@ -73,8 +73,10 @@ class ControllerSnapshot:
     last_execution_reason_code: str
     last_execution_summary: str
     last_execution_trust_summary: str
+    last_execution_scope_summary: str
     last_execution_duration_ms: int
     last_execution_finished_at: str
+    last_audit_summary: str
     pending_confirmation_count: int
     last_confirmation_requested: str
     last_confirmation_result: str

@@ -336,6 +336,7 @@ class TelegramCommandTests(unittest.TestCase):
             self.assertLessEqual(len(reply), 500)
             self.assertEqual(lines[0], "Operator commands")
             self.assertIn("/capabilities - current capability gate summary", lines)
+            self.assertIn("/audit - recent capability audit entries", lines)
             self.assertIn("/ask <prompt> - concise provider reply", lines)
             self.assertIn("/askd <prompt> - more detailed provider reply", lines)
             self.assertEqual(lines[-1], "Plain text is not auto-routed to /ask.")
@@ -392,6 +393,7 @@ class TelegramCommandTests(unittest.TestCase):
             self.assertIn("- mode.read: Allowed | read-only | local | offline-safe", reply)
             self.assertIn("- models.read: Allowed | read-only | local | offline-safe", reply)
             self.assertIn("- ask.provider_query: Allowed | external-side-effect | hybrid | online-sensitive", reply)
+            self.assertIn("- audit.read: Allowed | read-only | local | offline-safe", reply)
             self.assertNotIn("telegram.parse_failure", reply)
             self.assertEqual(snapshot.last_capability_id, "capabilities.read")
             self.assertEqual(snapshot.last_capability_state, "allowed")
@@ -791,3 +793,5 @@ class TelegramCommandTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+

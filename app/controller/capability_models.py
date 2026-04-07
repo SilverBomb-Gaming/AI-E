@@ -6,6 +6,7 @@ from typing import Literal, Tuple
 
 from ..providers.base import ProviderStatus
 from .models import CapabilityAvailabilityState, Mode, Policy, ProviderType, ReadinessState
+from .scope_models import ScopeAccessMode, ScopeType
 
 CapabilityCategory = Literal["operator", "runtime", "provider"]
 CapabilityExecutionType = Literal["read", "query"]
@@ -47,6 +48,11 @@ class CapabilityManifest:
     cooldown_sensitive: bool = False
     user_visible: bool = True
     include_in_capabilities_summary: bool = True
+    scope_type: ScopeType = "internal"
+    access_mode: ScopeAccessMode = "read"
+    scope_allowed_paths: Tuple[str, ...] = ()
+    scope_domain_allowlist: Tuple[str, ...] = ()
+    scope_repo_root: str = ""
 
     @property
     def description(self) -> str:
@@ -101,6 +107,8 @@ class CapabilityEvaluation:
     cooldown_sensitive: bool
     user_visible: bool
     include_in_capabilities_summary: bool
+    scope_type: ScopeType
+    access_mode: ScopeAccessMode
     invocation_source: CapabilityInvocationSource
     current_availability_state: CapabilityAvailabilityState
     blocking_reason: str

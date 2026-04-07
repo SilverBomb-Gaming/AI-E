@@ -109,6 +109,7 @@ class CapabilityExecutionContractTests(unittest.TestCase):
             self.assertEqual(result.offline_safety, "safe_offline")
             self.assertEqual(result.telegram_exposure, "allowed")
             self.assertIn("read-only | local | offline-safe", result.trust_summary)
+            self.assertEqual(result.scope_summary, "internal/read")
             self.assertEqual(snapshot.last_execution_outcome, "success")
             self.assertEqual(snapshot.last_execution_reason_code, "ok")
             self.assertEqual(snapshot.last_execution_summary, result.internal_summary)
@@ -165,6 +166,7 @@ class CapabilityExecutionContractTests(unittest.TestCase):
             self.assertEqual(result.offline_safety, "optional_online")
             self.assertEqual(result.confirmation_sensitivity, "policy_based")
             self.assertIn("external-side-effect | hybrid | online-sensitive", result.trust_summary)
+            self.assertEqual(result.scope_summary, "network/execute target=127.0.0.1")
             self.assertEqual(result.user_message, reply)
             self.assertIn("provider_model", result.telemetry)
             self.assertIn("Answer (Offline | Ollama", result.user_message)
@@ -264,3 +266,5 @@ class CapabilityExecutionContractTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+

@@ -182,6 +182,27 @@ CAPABILITY_MANIFESTS: tuple[CapabilityManifest, ...] = (
         supports_confirmation=True,
         default_timeout_ms=18000,
         cooldown_sensitive=True,
+        scope_type="network",
+        access_mode="execute",
+        scope_domain_allowlist=("api.openai.com", "127.0.0.1", "localhost"),
+    ),
+    CapabilityManifest(
+        capability_id="audit.read",
+        name="Audit",
+        category="operator",
+        short_description="Summarize recent capability executions from the in-memory audit log.",
+        execution_type="read",
+        provider_dependency="none",
+        network_requirement="none",
+        requires_runtime=False,
+        requires_readiness=False,
+        access_kind="read_only",
+        locality="local_only",
+        data_scope="internal_state",
+        offline_safety="safe_offline",
+        confirmation_sensitivity="never",
+        telegram_exposure="allowed",
+        supports_degraded_mode=True,
     ),
     CapabilityManifest(
         capability_id="capabilities.read",
@@ -212,6 +233,7 @@ COMMAND_CAPABILITY_MAP: dict[str, str] = {
     "/models": "models.read",
     "/ask": "ask.provider_query",
     "/askd": "ask.provider_query",
+    "/audit": "audit.read",
     "/capabilities": "capabilities.read",
 }
 
@@ -246,6 +268,14 @@ def validate_capability_manifests(manifests: tuple[CapabilityManifest, ...] | li
             issues.append(f"{manifest.capability_id}: non-read-only capability cannot use execution_type='read'.")
         if manifest.telegram_exposure == "denied" and manifest.include_in_capabilities_summary:
             issues.append(f"{manifest.capability_id}: telegram_exposure='denied' cannot be summary-visible.")
+        if manifest.scope_type == "internal" and manifest.access_mode == "execute":
+            issues.append(f"{manifest.capability_id}: internal scope cannot use execute access mode.")
+        if manifest.scope_type == "internal" and (manifest.scope_allowed_paths or manifest.scope_domain_allowlist or manifest.scope_repo_root):
+            issues.append(f"{manifest.capability_id}: internal scope cannot define filesystem, repository, or domain targets.")
+        if manifest.scope_type == "filesystem" and not manifest.scope_allowed_paths:
+            issues.append(f"{manifest.capability_id}: filesystem scope requires scope_allowed_paths.")
+        if manifest.scope_type == "repository" and not manifest.scope_repo_root:
+            issues.append(f"{manifest.capability_id}: repository scope requires scope_repo_root.")
     return tuple(issues)
 
 

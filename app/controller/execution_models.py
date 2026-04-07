@@ -13,6 +13,7 @@ from .capability_models import (
 )
 from .confirmation_models import ConfirmationContextSnapshot
 from .models import Mode, Policy, ProviderType, ReadinessState
+from .scope_models import ExecutionScope
 
 ExecutionSource = Literal["telegram", "desktop"]
 ExecutionOutcome = Literal[
@@ -26,6 +27,7 @@ ExecutionOutcome = Literal[
     "failed",
     "timed_out",
     "invalid_request",
+    "out_of_scope",
 ]
 
 
@@ -61,6 +63,7 @@ class CapabilityExecutionRequest:
     provider_snapshot: ProviderExecutionSnapshot
     confirmation_context: ConfirmationContextSnapshot | None
     readiness_snapshot: ReadinessState
+    scope: ExecutionScope
     metadata: dict[str, object] = field(default_factory=dict)
 
 
@@ -87,6 +90,7 @@ class CapabilityExecutionResult:
     confirmation_sensitivity: CapabilityConfirmationSensitivity
     telegram_exposure: CapabilityTelegramExposure
     trust_summary: str
+    scope_summary: str
     command_label: str
     activity_state: str
     ask_status: str = ""

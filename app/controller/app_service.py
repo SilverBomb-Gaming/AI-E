@@ -3,9 +3,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from datetime import datetime
+import secrets
 import threading
 import time
+from urllib.parse import urlparse
 
+from .audit_models import AuditRecord
+from .audit_store import AuditStore
 from .capability_evaluator import CapabilityEvaluator
 from .capability_executor import CapabilityExecutor
 from .capability_models import CapabilityContext, CapabilityEvaluation, CapabilityManifest
@@ -18,6 +22,8 @@ from .execution_models import CapabilityExecutionResult
 from .diagnostics import ControllerDiagnosticsService
 from .models import ControllerSnapshot
 from .profile_store import ControllerConfig, ControllerConfigStore, Mode, Policy, ProviderType
+from .scope_models import ExecutionScope, ScopeValidationResult
+from .scope_validator import ScopeValidator
 from .telegram_service import TelegramApiError, TelegramChannelService, TelegramInboundMessage, mask_telegram_token
 from ..platform.secrets import SecretStore, get_secret_store
 from ..providers import OllamaProviderAdapter, OpenAIProviderAdapter, ProviderReply, ProviderStatus, ProviderType as AdapterProviderType, mask_secret
@@ -25,7 +31,7 @@ from ..runtime.manager import OpenClawRuntimeManager
 from ..runtime.log_sanitizer import sanitize_log_text
 
 
-_OPERATOR_CONSOLE_LABEL = "Windows OpenClaw Operator Console v1.8"
+_OPERATOR_CONSOLE_LABEL = "Windows OpenClaw Operator Console v1.9"
 _ASK_CONCISE_LIMIT = 700
 _ASK_DETAILED_LIMIT = 1500
 _PROVIDER_ASK_COMMANDS = frozenset({"/ask", "/askd"})
@@ -33,6 +39,7 @@ _PROVIDER_ASK_COOLDOWN_SECONDS = 4.0
 _OLLAMA_ASK_TIMEOUT_SECONDS = 12.0
 _OPENAI_ASK_TIMEOUT_SECONDS = 18.0
 _CONFIRMATION_LIFETIME_SECONDS = 120.0
+_AUDIT_LOG_MAX_RECORDS = 50
 
 
 @dataclass(frozen=True)
@@ -97,8 +104,10 @@ class ControllerService:
             config_store=self._config_store,
             secret_store=self._secret_store,
         )
+        self._scope_validator = ScopeValidator()
         self._capability_evaluator = CapabilityEvaluator()
         self._capability_executor = CapabilityExecutor(self)
+        self._audit_store = AuditStore(max_records=_AUDIT_LOG_MAX_RECORDS)
         self._last_capability_evaluation: CapabilityEvaluation | None = None
         self._last_execution_result: CapabilityExecutionResult | None = None
         self._confirmation_store = ConfirmationStore(lifetime_seconds=_CONFIRMATION_LIFETIME_SECONDS)
@@ -284,8 +293,10 @@ class ControllerService:
             last_execution_reason_code=self._last_execution_result.outcome_reason_code if self._last_execution_result else "no_execution_yet",
             last_execution_summary=self._last_execution_result.internal_summary if self._last_execution_result else "No execution result yet.",
             last_execution_trust_summary=self._last_execution_result.trust_summary if self._last_execution_result else "No execution trust summary yet.",
+            last_execution_scope_summary=self._last_execution_result.scope_summary if self._last_execution_result else "No execution scope summary yet.",
             last_execution_duration_ms=self._last_execution_result.duration_ms if self._last_execution_result else 0,
             last_execution_finished_at=self._last_execution_result.finished_at if self._last_execution_result else "-",
+            last_audit_summary=self._format_audit_record_summary(self._audit_store.latest()) if self._audit_store.latest() else "No audit record yet.",
             pending_confirmation_count=self._confirmation_store.pending_count(),
             last_confirmation_requested=self._last_confirmation_requested,
             last_confirmation_result=self._last_confirmation_result,
@@ -800,6 +811,7 @@ class ControllerService:
 
     def _remember_execution_result(self, result: CapabilityExecutionResult) -> None:
         self._last_execution_result = result
+        self._audit_store.append(self._build_audit_record(result))
         self._last_message = result.internal_summary or self._last_message
 
     @staticmethod
@@ -827,6 +839,7 @@ class ControllerService:
                     "/mode - mode, policy, and remote-use gate",
                     "/models - local Ollama models",
                     "/capabilities - current capability gate summary",
+                    "/audit - recent capability audit entries",
                     "/ask <prompt> - concise provider reply",
                     "/askd <prompt> - more detailed provider reply",
                     "/confirm <id> - approve one pending action",
@@ -1258,7 +1271,7 @@ class ControllerService:
         argument = parts[1].strip() if len(parts) > 1 else ""
         command = command_token.split("@", 1)[0].lower()
         normalized_text = " ".join(text.split())
-        if command in {"/start", "/help", "/status", "/mode", "/models", "/capabilities", "/confirm", "/deny", "/ask", "/askd"}:
+        if command in {"/start", "/help", "/status", "/mode", "/models", "/capabilities", "/audit", "/confirm", "/deny", "/ask", "/askd"}:
             return _ParsedTelegramCommand(command_label=command, argument=argument, normalized_text=normalized_text)
         if command.startswith("/ask"):
             return _ParsedTelegramCommand(
@@ -1425,6 +1438,21 @@ class ControllerService:
         return _TelegramResponsePlan(
             reply=chr(10).join(lines),
             command_label="/capabilities",
+        )
+
+    def _build_audit_reply(self, *, limit: int = 5) -> _TelegramResponsePlan:
+        records = self._audit_store.recent(limit=max(1, min(limit, 8)))
+        if not records:
+            return _TelegramResponsePlan(
+                reply="Audit\nNo capability executions have been recorded yet.",
+                command_label="/audit",
+            )
+        lines = ["Audit"]
+        for record in records:
+            lines.append(self._format_audit_record_summary(record))
+        return _TelegramResponsePlan(
+            reply=chr(10).join(lines),
+            command_label="/audit",
         )
 
     def _format_capability_summary_line(self, evaluation: CapabilityEvaluation) -> str:
@@ -2041,6 +2069,95 @@ class ControllerService:
             self._format_manifest_trust_summary(self._capability_manifest(evaluation.capability_id)),
             limit=120,
         )
+
+    def _build_execution_scope(
+        self,
+        capability_id: str,
+        *,
+        snapshot: ControllerSnapshot,
+    ) -> ExecutionScope:
+        manifest = self._capability_manifest(capability_id)
+        if manifest.scope_type == "network" and capability_id == "ask.provider_query":
+            if snapshot.selected_mode == "online" and snapshot.mode != "online":
+                target_domain = "api.openai.com"
+            elif snapshot.mode == "online":
+                target_domain = "api.openai.com"
+            else:
+                target_domain = self._host_from_url(self._config.ollama_base_url) or "127.0.0.1"
+            return ExecutionScope(
+                scope_type=manifest.scope_type,
+                access_mode=manifest.access_mode,
+                target_domain=target_domain,
+                domain_allowlist=(target_domain,),
+            )
+        return ExecutionScope(
+            scope_type=manifest.scope_type,
+            access_mode=manifest.access_mode,
+            repo_root=manifest.scope_repo_root,
+            allowed_paths=manifest.scope_allowed_paths,
+            domain_allowlist=manifest.scope_domain_allowlist,
+        )
+
+    def validate_request_scope(self, request) -> ScopeValidationResult:
+        manifest = self._capability_manifest(request.capability_id)
+        return self._scope_validator.validate(request, manifest)
+
+    def _format_scope_summary(self, scope: ExecutionScope) -> str:
+        parts = [f"{scope.scope_type}/{scope.access_mode}"]
+        if scope.scope_type == "network" and scope.target_domain:
+            parts.append(f"target={scope.target_domain}")
+        elif scope.scope_type == "repository":
+            parts.append("repo=bounded")
+        elif scope.scope_type == "filesystem" and scope.target_path:
+            parts.append("target=path")
+        return " ".join(parts)
+
+    def _build_audit_record(self, result: CapabilityExecutionResult) -> AuditRecord:
+        action_summary = str(result.request.metadata.get("argument_summary") or result.command_label)
+        return AuditRecord(
+            audit_id=self._generate_audit_id(),
+            request_id=result.request_id,
+            capability_id=result.capability_id,
+            timestamp_start=result.started_at,
+            timestamp_end=result.finished_at,
+            outcome=result.outcome,
+            outcome_reason=result.outcome_reason_code,
+            user_id=result.request.user_id,
+            chat_id=result.request.chat_id,
+            confirmation_used=result.confirmation_used,
+            scope_summary=result.scope_summary,
+            provider_used=result.provider_used,
+            duration_ms=result.duration_ms,
+            action_summary=self._summarize_text(action_summary, limit=80),
+        )
+
+    def _format_audit_record_summary(self, record: AuditRecord | None) -> str:
+        if record is None:
+            return "No audit record yet."
+        return self._summarize_text(
+            f"- {self._short_time(record.timestamp_end)} {record.capability_id} | {record.outcome} | {record.outcome_reason}",
+            limit=120,
+        )
+
+    @staticmethod
+    def _generate_audit_id() -> str:
+        return f"AUD-{secrets.token_hex(4).upper()}"
+
+    @staticmethod
+    def _host_from_url(value: str) -> str:
+        if not value.strip():
+            return ""
+        parsed = urlparse(value)
+        return (parsed.hostname or "").lower()
+
+    @staticmethod
+    def _short_time(value: str) -> str:
+        if not value or value == "-":
+            return "--:--:--"
+        try:
+            return datetime.fromisoformat(value).astimezone().strftime("%H:%M:%S")
+        except ValueError:
+            return value
 
     def _compute_readiness(
 

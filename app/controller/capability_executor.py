@@ -49,6 +49,9 @@ class CapabilityExecutor:
                 parsed_arguments={},
                 metadata={"argument_summary": "non-text message"},
             )
+            scope_failure = self._scope_failure_result(request, command_label="non_text")
+            if scope_failure is not None:
+                return scope_failure
             return self._result(
                 request,
                 outcome="invalid_request",
@@ -70,6 +73,9 @@ class CapabilityExecutor:
                 parsed_arguments={"usage_hint": parsed_command.usage_hint},
                 metadata={"argument_summary": parsed_command.normalized_text or "malformed command"},
             )
+            scope_failure = self._scope_failure_result(request, command_label="parse_failure")
+            if scope_failure is not None:
+                return scope_failure
             usage_hint = parsed_command.usage_hint or "Use /help to see supported commands."
             return self._result(
                 request,
@@ -92,6 +98,9 @@ class CapabilityExecutor:
                 parsed_arguments={"text": parsed_command.normalized_text},
                 metadata={"argument_summary": "plain text message"},
             )
+            scope_failure = self._scope_failure_result(request, command_label="plain_text")
+            if scope_failure is not None:
+                return scope_failure
             if snapshot.runtime_state != "running":
                 return self._result(
                     request,
@@ -132,7 +141,7 @@ class CapabilityExecutor:
             )
 
         if command == "/start":
-            request, _, _ = self._prepare_capability_request(
+            request, _, _, scope_failure = self._prepare_capability_request(
                 capability_id="help.read",
                 snapshot=snapshot,
                 chat_id=update.chat_id,
@@ -140,6 +149,8 @@ class CapabilityExecutor:
                 original_command="/start",
                 parsed_arguments={},
             )
+            if scope_failure is not None:
+                return scope_failure
             return self._result(
                 request,
                 outcome="success",
@@ -165,6 +176,8 @@ class CapabilityExecutor:
             return self._execute_mode(update=update, snapshot=snapshot)
         if command == "/models":
             return self._execute_models(update=update, snapshot=snapshot)
+        if command == "/audit":
+            return self._execute_audit(update=update, snapshot=snapshot, argument=parsed_command.argument)
         if command == "/capabilities":
             return self._execute_capabilities(update=update, snapshot=snapshot)
         if command == "/ask":
@@ -199,6 +212,9 @@ class CapabilityExecutor:
             parsed_arguments={},
             metadata={"argument_summary": parsed_command.normalized_text or command},
         )
+        scope_failure = self._scope_failure_result(request, command_label="parse_failure")
+        if scope_failure is not None:
+            return scope_failure
         return self._result(
             request,
             outcome="invalid_request",
@@ -211,7 +227,7 @@ class CapabilityExecutor:
         )
 
     def _execute_help(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot) -> CapabilityExecutionResult:
-        request, _, _ = self._prepare_capability_request(
+        request, _, _, scope_failure = self._prepare_capability_request(
             capability_id="help.read",
             snapshot=snapshot,
             chat_id=update.chat_id,
@@ -219,6 +235,8 @@ class CapabilityExecutor:
             original_command="/help",
             parsed_arguments={},
         )
+        if scope_failure is not None:
+            return scope_failure
         reply = self._service._build_help_reply().reply
         return self._result(
             request,
@@ -232,7 +250,7 @@ class CapabilityExecutor:
         )
 
     def _execute_status(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot) -> CapabilityExecutionResult:
-        request, _, _ = self._prepare_capability_request(
+        request, _, _, scope_failure = self._prepare_capability_request(
             capability_id="status.read",
             snapshot=snapshot,
             chat_id=update.chat_id,
@@ -240,6 +258,8 @@ class CapabilityExecutor:
             original_command="/status",
             parsed_arguments={},
         )
+        if scope_failure is not None:
+            return scope_failure
         reply = self._service._build_status_reply(snapshot).reply
         return self._result(
             request,
@@ -253,7 +273,7 @@ class CapabilityExecutor:
         )
 
     def _execute_mode(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot) -> CapabilityExecutionResult:
-        request, _, _ = self._prepare_capability_request(
+        request, _, _, scope_failure = self._prepare_capability_request(
             capability_id="mode.read",
             snapshot=snapshot,
             chat_id=update.chat_id,
@@ -261,6 +281,8 @@ class CapabilityExecutor:
             original_command="/mode",
             parsed_arguments={},
         )
+        if scope_failure is not None:
+            return scope_failure
         reply = self._service._build_mode_reply(snapshot).reply
         return self._result(
             request,
@@ -274,7 +296,7 @@ class CapabilityExecutor:
         )
 
     def _execute_models(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot) -> CapabilityExecutionResult:
-        request, evaluation, context = self._prepare_capability_request(
+        request, evaluation, context, scope_failure = self._prepare_capability_request(
             capability_id="models.read",
             snapshot=snapshot,
             chat_id=update.chat_id,
@@ -282,6 +304,8 @@ class CapabilityExecutor:
             original_command="/models",
             parsed_arguments={},
         )
+        if scope_failure is not None:
+            return scope_failure
         reply = self._service._build_models_reply(evaluation, context).reply
         outcome = "success"
         degraded = False
@@ -308,7 +332,7 @@ class CapabilityExecutor:
         )
 
     def _execute_capabilities(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot) -> CapabilityExecutionResult:
-        request, _, _ = self._prepare_capability_request(
+        request, _, _, scope_failure = self._prepare_capability_request(
             capability_id="capabilities.read",
             snapshot=snapshot,
             chat_id=update.chat_id,
@@ -316,6 +340,8 @@ class CapabilityExecutor:
             original_command="/capabilities",
             parsed_arguments={},
         )
+        if scope_failure is not None:
+            return scope_failure
         reply = self._service._build_capabilities_reply(snapshot).reply
         return self._result(
             request,
@@ -325,6 +351,47 @@ class CapabilityExecutor:
             internal_summary="capabilities.read returned the current capability gate summary.",
             retryable=False,
             command_label="/capabilities",
+            activity_state="processing_command",
+        )
+
+    def _execute_audit(
+        self,
+        *,
+        update: TelegramInboundMessage,
+        snapshot: ControllerSnapshot,
+        argument: str,
+    ) -> CapabilityExecutionResult:
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="audit.read",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/audit",
+            parsed_arguments={"limit": argument.strip()},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        limit = self._parse_audit_limit(argument)
+        if limit is None:
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="invalid_audit_limit",
+                user_message="Couldn't parse that audit command.\nNext: Use /audit or /audit <1-8>.",
+                internal_summary="/audit rejected because the limit argument was invalid.",
+                retryable=False,
+                command_label="/audit",
+                activity_state="processing_command",
+            )
+        reply = self._service._build_audit_reply(limit=limit).reply
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=reply,
+            internal_summary="audit.read returned recent capability audit entries.",
+            retryable=False,
+            command_label="/audit",
             activity_state="processing_command",
         )
 
@@ -432,6 +499,9 @@ class CapabilityExecutor:
                 evaluation=evaluation,
                 command_label=command_label,
             )
+        scope_failure = self._scope_failure_result(request, command_label=command_label)
+        if scope_failure is not None:
+            return scope_failure
 
         execution_mode = snapshot.mode
         if snapshot.selected_mode == "online" and snapshot.mode != "online":
@@ -642,6 +712,9 @@ class CapabilityExecutor:
                 confirmation_id=confirmation.confirmation_id,
                 evaluation=evaluation,
             )
+        scope_failure = self._scope_failure_result(request, command_label="/confirm", confirmation_used=True)
+        if scope_failure is not None:
+            return scope_failure
 
         use_online_provider = confirmation.evaluation_context.selected_mode == "online" or snapshot.mode == "online"
         if use_online_provider:
@@ -1249,7 +1322,7 @@ class CapabilityExecutor:
         confirmation_granted: bool = False,
         confirmation_context: ConfirmationContextSnapshot | None = None,
         metadata: dict[str, object] | None = None,
-    ) -> tuple[CapabilityExecutionRequest, CapabilityEvaluation, CapabilityContext]:
+    ) -> tuple[CapabilityExecutionRequest, CapabilityEvaluation, CapabilityContext, CapabilityExecutionResult | None]:
         evaluation, context = self._service._evaluate_capability_id(
             capability_id,
             snapshot,
@@ -1267,7 +1340,7 @@ class CapabilityExecutor:
             confirmation_context=confirmation_context,
             metadata=metadata,
         )
-        return request, evaluation, context
+        return request, evaluation, context, self._scope_failure_result(request, command_label=original_command)
 
     def _build_request(
         self,
@@ -1283,6 +1356,10 @@ class CapabilityExecutor:
         metadata: dict[str, object] | None = None,
     ) -> CapabilityExecutionRequest:
         provider_snapshot = self._provider_snapshot(snapshot, context=context)
+        scope = self._service._build_execution_scope(
+            capability_id,
+            snapshot=snapshot,
+        )
         return CapabilityExecutionRequest(
             request_id=self._generate_request_id(),
             capability_id=capability_id,
@@ -1299,6 +1376,7 @@ class CapabilityExecutor:
             provider_snapshot=provider_snapshot,
             confirmation_context=confirmation_context,
             readiness_snapshot=snapshot.readiness_state,
+            scope=scope,
             metadata=dict(metadata or {}),
         )
 
@@ -1375,12 +1453,56 @@ class CapabilityExecutor:
             confirmation_sensitivity=manifest.confirmation_sensitivity,
             telegram_exposure=manifest.telegram_exposure,
             trust_summary=trust_summary,
+            scope_summary=self._service._format_scope_summary(request.scope),
             command_label=command_label,
             activity_state=activity_state,
             ask_status=ask_status,
             hide_content_in_summary=hide_content_in_summary,
             telemetry=dict(telemetry or {}),
         )
+
+    def _scope_failure_result(
+        self,
+        request: CapabilityExecutionRequest,
+        *,
+        command_label: str,
+        confirmation_used: bool = False,
+    ) -> CapabilityExecutionResult | None:
+        validation = self._service.validate_request_scope(request)
+        if validation.allowed:
+            return None
+        title = "Action is out of scope." if command_label in {"/confirm", "/deny"} else f"Can't run {command_label} right now."
+        return self._result(
+            request,
+            outcome="out_of_scope",
+            reason_code=validation.reason_code,
+            user_message="\n".join(
+                (
+                    title,
+                    f"Reason: {validation.message}",
+                    "Next: Use an allowed scope for this capability or adjust the operator-console configuration.",
+                )
+            ),
+            internal_summary=f"{command_label} rejected by scope validation ({validation.reason_code}).",
+            retryable=False,
+            command_label=command_label,
+            activity_state="processing_command",
+            ask_status=f"{command_label} blocked by scope validation." if command_label in {"/ask", "/askd", "/confirm"} else "",
+            hide_content_in_summary=command_label in {"/ask", "/askd", "/confirm"},
+            confirmation_used=confirmation_used,
+        )
+
+    @staticmethod
+    def _parse_audit_limit(argument: str) -> int | None:
+        value = argument.strip()
+        if not value:
+            return 5
+        if not value.isdigit():
+            return None
+        limit = int(value)
+        if limit < 1 or limit > 8:
+            return None
+        return limit
 
     def _progress_ask_status(self, command_label: str, confirmation_id: str) -> str:
         if confirmation_id:

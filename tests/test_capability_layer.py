@@ -88,6 +88,7 @@ class CapabilityLayerTests(unittest.TestCase):
         self.assertIn("mode.read", CAPABILITY_REGISTRY)
         self.assertIn("models.read", CAPABILITY_REGISTRY)
         self.assertIn("ask.provider_query", CAPABILITY_REGISTRY)
+        self.assertIn("audit.read", CAPABILITY_REGISTRY)
         self.assertIn("capabilities.read", CAPABILITY_REGISTRY)
         for definition in CAPABILITY_DEFINITIONS:
             self.assertTrue(definition.name)
@@ -97,6 +98,8 @@ class CapabilityLayerTests(unittest.TestCase):
             self.assertTrue(definition.access_kind)
             self.assertTrue(definition.locality)
             self.assertTrue(definition.offline_safety)
+        self.assertEqual(CAPABILITY_REGISTRY["status.read"].scope_type, "internal")
+        self.assertEqual(CAPABILITY_REGISTRY["ask.provider_query"].scope_type, "network")
 
     def test_invalid_manifest_combinations_are_reported_clearly(self) -> None:
         invalid = CapabilityManifest(
@@ -277,3 +280,5 @@ class CapabilityLayerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+

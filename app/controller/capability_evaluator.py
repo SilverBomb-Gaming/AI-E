@@ -340,6 +340,8 @@ class CapabilityEvaluator:
             cooldown_sensitive=manifest.cooldown_sensitive,
             user_visible=manifest.user_visible,
             include_in_capabilities_summary=manifest.include_in_capabilities_summary,
+            scope_type=manifest.scope_type,
+            access_mode=manifest.access_mode,
             invocation_source=source,
             current_availability_state=availability_state,  # type: ignore[arg-type]
             blocking_reason=blocking_reason,
