@@ -8,6 +8,7 @@ from .models import ValidationState
 
 
 TelegramTestResult = Literal["not_run", "passed", "failed"]
+TelegramLoopState = Literal["stopped", "starting", "running", "error"]
 
 
 @dataclass(frozen=True)
@@ -72,3 +73,13 @@ class TelegramChannelStatus:
             last_test_message=str(raw.get("last_test_message", "Telegram connection test has not been run yet.")),
             last_test_at=str(raw.get("last_test_at", "")),
         )
+
+
+@dataclass(frozen=True)
+class TelegramLoopStatus:
+    state: TelegramLoopState = "stopped"
+    message: str = "Telegram loop is stopped."
+    last_activity_at: str = ""
+    last_success_at: str = ""
+    last_inbound_summary: str = "No inbound Telegram activity yet."
+    last_outbound_summary: str = "No outbound Telegram activity yet."

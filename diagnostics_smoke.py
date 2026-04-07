@@ -64,6 +64,7 @@ def run() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         config_store = ControllerConfigStore(config_path=Path(tmp) / "controller_config.json")
         secrets = InMemorySecretStore()
+        ollama_reachable = lambda base_url: True
 
         local_bind_service = ControllerDiagnosticsService(
             runtime_manager=FakeRuntimeManager(
@@ -137,14 +138,92 @@ def run() -> None:
             config_store=config_store,
             secret_store=secrets,
         )
+        degraded_runtime_service._ollama_service_reachable = ollama_reachable  # type: ignore[method-assign]
         degraded_report = degraded_runtime_service.run_health_check(ControllerConfig(), ready_ollama)
         assert_true(any(item.code == "runtime.process_missing" and item.severity == "error" for item in degraded_report.items), "degraded runtime detection failed")
+
+        websocket_only_service = ControllerDiagnosticsService(
+            runtime_manager=FakeRuntimeManager(
+                inspection=RuntimeInspection(
+                    configured_bind="loopback",
+                    configured_host="127.0.0.1",
+                    configured_port=18789,
+                    cli_reachable=True,
+                    process_exists=True,
+                    process_responsive=False,
+                    gateway_tcp_connectable=False,
+                    gateway_listener_detected=True,
+                    gateway_listener_owned=True,
+                    liveness_state="responsive",
+                    liveness_message="Gateway TCP probe did not respond, but runtime appears active via alternate signals. Configured gateway listener is owned by the active OpenClaw runtime.",
+                    listener_addresses=("127.0.0.1",),
+                )
+            ),
+            config_store=config_store,
+            secret_store=secrets,
+        )
+        websocket_only_service._ollama_service_reachable = ollama_reachable  # type: ignore[method-assign]
+        websocket_only_report = websocket_only_service.run_health_check(ControllerConfig(), ready_ollama)
+        assert_true(any(item.code == "runtime.unresponsive" and item.severity == "info" for item in websocket_only_report.items), "websocket listener liveness should not block health")
+
+        telegram_liveness_service = ControllerDiagnosticsService(
+            runtime_manager=FakeRuntimeManager(
+                inspection=RuntimeInspection(
+                    configured_bind="loopback",
+                    configured_host="127.0.0.1",
+                    configured_port=18789,
+                    cli_reachable=True,
+                    process_exists=True,
+                    process_responsive=False,
+                    gateway_tcp_connectable=False,
+                    gateway_listener_detected=False,
+                    gateway_listener_owned=False,
+                    liveness_state="unresponsive",
+                    liveness_message="Runtime process exists but the gateway probe did not respond.",
+                )
+            ),
+            config_store=config_store,
+            secret_store=secrets,
+        )
+        telegram_liveness_service._ollama_service_reachable = ollama_reachable  # type: ignore[method-assign]
+        telegram_liveness_report = telegram_liveness_service.run_health_check(
+            ControllerConfig(),
+            ready_ollama,
+            telegram_recent_success=True,
+            telegram_last_success_at="2026-04-07T10:00:00-04:00",
+        )
+        assert_true(telegram_liveness_report.overall_status == "ok", "recent Telegram success should prevent a false blocking unresponsive error")
+
+        startup_grace_service = ControllerDiagnosticsService(
+            runtime_manager=FakeRuntimeManager(
+                inspection=RuntimeInspection(
+                    configured_bind="loopback",
+                    configured_host="127.0.0.1",
+                    configured_port=18789,
+                    cli_reachable=True,
+                    process_exists=True,
+                    process_responsive=False,
+                    gateway_tcp_connectable=False,
+                    gateway_listener_detected=False,
+                    gateway_listener_owned=False,
+                    startup_grace_active=True,
+                    liveness_state="indeterminate",
+                    liveness_message="Runtime is still within the startup grace period; listener probes are still settling.",
+                )
+            ),
+            config_store=config_store,
+            secret_store=secrets,
+        )
+        startup_grace_service._ollama_service_reachable = ollama_reachable  # type: ignore[method-assign]
+        startup_grace_report = startup_grace_service.run_health_check(ControllerConfig(), ready_ollama)
+        assert_true(startup_grace_report.overall_status == "degraded", "startup grace should warn instead of block")
 
         invalid_combo_service = ControllerDiagnosticsService(
             runtime_manager=FakeRuntimeManager(),
             config_store=config_store,
             secret_store=secrets,
         )
+        invalid_combo_service._ollama_service_reachable = ollama_reachable  # type: ignore[method-assign]
         invalid_combo_report = invalid_combo_service.run_health_check(
             ControllerConfig(selected_mode="online", selected_provider="ollama"),
             ready_ollama,
@@ -245,6 +324,7 @@ def run() -> None:
             config_store=config_store,
             secret_store=secrets,
         )
+        indeterminate_service._ollama_service_reachable = ollama_reachable  # type: ignore[method-assign]
         indeterminate_report = indeterminate_service.run_health_check(ControllerConfig(), ready_ollama)
         assert_true(indeterminate_report.overall_status == "degraded", "indeterminate port ownership should not block health readiness")
         assert_true(any(item.code == "runtime.port_ownership_indeterminate" and item.severity == "warning" for item in indeterminate_report.items), "indeterminate ownership warning was not reported")

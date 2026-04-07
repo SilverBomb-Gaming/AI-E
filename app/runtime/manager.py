@@ -5,6 +5,8 @@ import socket
 import subprocess
 import threading
 import time
+import urllib.error
+import urllib.request
 from dataclasses import replace
 from pathlib import Path
 from typing import TextIO
@@ -248,12 +250,30 @@ class OpenClawRuntimeManager:
             process_exists = process is not None and process.poll() is None
             configured_host = self._configured_host()
             listeners = self._listener_details(self._gateway_port)
-            process_responsive = process_exists and self._can_connect(configured_host, self._gateway_port)
+            gateway_tcp_connectable = self._can_connect(configured_host, self._gateway_port)
+            process_responsive = process_exists and gateway_tcp_connectable
             port_check_state, port_check_message, owner_pids = self._detect_port_usage(
                 managed_pid=process.pid if process_exists and process else None,
                 runtime_state=status.runtime_state,
                 openclaw=status.openclaw,
                 listeners=listeners,
+            )
+            control_http_responding, control_http_endpoint = self._probe_related_http_endpoint(
+                managed_pid=process.pid if process_exists and process else None,
+                gateway_port=self._gateway_port,
+            )
+            recent_stdout_count = self._log_buffer.count_recent("stdout", window_seconds=180.0)
+            recent_listener_log = self._has_recent_listener_log()
+            startup_grace_active = self._within_startup_grace(status.runtime_state)
+            liveness_state, liveness_message = self._classify_liveness(
+                runtime_state=status.runtime_state,
+                process_exists=process_exists,
+                gateway_tcp_connectable=gateway_tcp_connectable,
+                port_check_state=port_check_state,
+                control_http_responding=control_http_responding,
+                recent_stdout_count=recent_stdout_count,
+                recent_listener_log=recent_listener_log,
+                startup_grace_active=startup_grace_active,
             )
             invalid_executable_path = bool(status.openclaw.entrypoint_path and not Path(status.openclaw.entrypoint_path).exists())
             stderr_recent_count = self._log_buffer.count_recent("stderr", window_seconds=300.0)
@@ -265,6 +285,17 @@ class OpenClawRuntimeManager:
                 invalid_executable_path=invalid_executable_path,
                 process_exists=process_exists,
                 process_responsive=process_responsive,
+                gateway_tcp_connectable=gateway_tcp_connectable,
+                gateway_listener_detected=bool(listeners),
+                gateway_listener_owned=port_check_state == "owned_by_active_runtime",
+                control_http_responding=control_http_responding,
+                control_http_endpoint=control_http_endpoint,
+                recent_stdout_activity=recent_stdout_count > 0,
+                recent_stdout_count=recent_stdout_count,
+                recent_listener_log=recent_listener_log,
+                startup_grace_active=startup_grace_active,
+                liveness_state=liveness_state,
+                liveness_message=liveness_message,
                 stderr_recent=stderr_recent_count > 0,
                 recent_stderr_count=stderr_recent_count,
                 port_conflict=port_check_state == "conflict_unrelated_process",
@@ -486,3 +517,100 @@ class OpenClawRuntimeManager:
         if openclaw.wrapper_path and Path(openclaw.wrapper_path).name.lower() in normalized:
             return True
         return False
+
+    def _probe_related_http_endpoint(self, *, managed_pid: int | None, gateway_port: int) -> tuple[bool, str]:
+        if managed_pid is None or psutil is None:  # type: ignore[truthy-bool]
+            return False, ""
+        related_pids = self._related_runtime_pids(managed_pid)
+        if not related_pids:
+            return False, ""
+
+        candidates: list[tuple[int, str]] = []
+        try:
+            for conn in psutil.net_connections(kind="tcp"):
+                laddr = getattr(conn, "laddr", None)
+                if not laddr or conn.status != psutil.CONN_LISTEN:
+                    continue
+                if conn.pid not in related_pids:
+                    continue
+                port = getattr(laddr, "port", None)
+                if port is None or port == gateway_port:
+                    continue
+                host = str(getattr(laddr, "ip", None) or laddr[0])
+                if host not in {"127.0.0.1", "::1", "0.0.0.0"}:
+                    continue
+                probe_host = "127.0.0.1"
+                candidates.append((int(port), f"http://{probe_host}:{int(port)}/"))
+        except Exception:  # noqa: BLE001
+            return False, ""
+
+        candidates.sort(key=lambda item: abs(item[0] - gateway_port))
+        for _, endpoint in candidates:
+            if self._http_probe(endpoint):
+                return True, endpoint
+        return False, ""
+
+    def _http_probe(self, url: str) -> bool:
+        request = urllib.request.Request(url, method="GET", headers={"User-Agent": "AI-E-HealthCheck/1.0"})
+        try:
+            with urllib.request.urlopen(request, timeout=0.75):
+                return True
+        except urllib.error.HTTPError:
+            return True
+        except (urllib.error.URLError, OSError, TimeoutError, ValueError):
+            return False
+
+    def _has_recent_listener_log(self) -> bool:
+        recent_stdout = self._log_buffer.recent_lines(source="stdout", window_seconds=180.0, limit=40)
+        keywords = ("listening", "listener", "ws://", "http://", "gateway", "browser")
+        return any(any(keyword in line.lower() for keyword in keywords) for line in recent_stdout)
+
+    def _classify_liveness(
+        self,
+        *,
+        runtime_state: str,
+        process_exists: bool,
+        gateway_tcp_connectable: bool,
+        port_check_state: str,
+        control_http_responding: bool,
+        recent_stdout_count: int,
+        recent_listener_log: bool,
+        startup_grace_active: bool,
+    ) -> tuple[str, str]:
+        if runtime_state != "running":
+            if startup_grace_active:
+                return "indeterminate", "Runtime startup is still within the initial grace period."
+            return "indeterminate", "Runtime is not expected to respond because it is not running."
+
+        if not process_exists:
+            return "unresponsive", "Runtime is marked running, but no active process was found."
+
+        strong_signals: list[str] = []
+        limited_signals: list[str] = []
+
+        if gateway_tcp_connectable:
+            strong_signals.append("Configured gateway port accepted a TCP connection.")
+        if port_check_state == "owned_by_active_runtime":
+            strong_signals.append("Configured gateway listener is owned by the active OpenClaw runtime.")
+        elif port_check_state == "indeterminate":
+            limited_signals.append("Configured gateway listener is active, but ownership is still being verified.")
+        if control_http_responding:
+            strong_signals.append("A related local HTTP control endpoint responded successfully.")
+        if recent_listener_log:
+            strong_signals.append("Recent runtime logs report active gateway or browser listeners.")
+        elif recent_stdout_count > 0:
+            limited_signals.append("Recent runtime stdout activity was observed.")
+
+        if strong_signals:
+            message = strong_signals[0]
+            if not gateway_tcp_connectable and len(strong_signals) > 0:
+                message = f"Gateway TCP probe did not respond, but runtime appears active via alternate signals. {strong_signals[0]}"
+            return "responsive", message
+
+        if startup_grace_active:
+            return "indeterminate", "Runtime is still within the startup grace period; listener probes are still settling."
+
+        if limited_signals:
+            return "responsive_with_limited_probe", limited_signals[0]
+
+        return "unresponsive", "Runtime process exists but no listener or alternate liveness signal responded."

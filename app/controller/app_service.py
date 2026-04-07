@@ -2,16 +2,19 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import datetime
+import threading
 
-from .channel_models import TelegramChannelStatus
+from .channel_models import TelegramChannelStatus, TelegramLoopStatus
 from .diagnostic_models import DiagnosticReport
 from .diagnostics import ControllerDiagnosticsService
 from .models import ControllerSnapshot
 from .profile_store import ControllerConfig, ControllerConfigStore, Mode, Policy, ProviderType
-from .telegram_service import TelegramChannelService, mask_telegram_token
+from .telegram_service import TelegramApiError, TelegramChannelService, TelegramInboundMessage, mask_telegram_token
 from ..platform.secrets import SecretStore, get_secret_store
 from ..providers import OllamaProviderAdapter, OpenAIProviderAdapter, ProviderStatus, ProviderType as AdapterProviderType, mask_secret
 from ..runtime.manager import OpenClawRuntimeManager
+from ..runtime.log_sanitizer import sanitize_log_text
 
 
 class ControllerService:
@@ -37,6 +40,10 @@ class ControllerService:
         self._runtime_manager.configure(gateway_port=self._config.gateway_port, gateway_bind=self._config.gateway_bind)
         self._provider_status_cache: dict[str, ProviderStatus] = self._load_provider_status_cache(self._config)
         self._telegram_status = self._reconcile_telegram_status(self._config.telegram_status)
+        self._telegram_loop_lock = threading.RLock()
+        self._telegram_loop_thread: threading.Thread | None = None
+        self._telegram_loop_stop_event: threading.Event | None = None
+        self._telegram_loop_status = TelegramLoopStatus()
         self._diagnostics_service = ControllerDiagnosticsService(
             runtime_manager=self._runtime_manager,
             config_store=self._config_store,
@@ -66,6 +73,98 @@ class ControllerService:
         self._last_message = "Runtime logs cleared."
         return self.snapshot()
 
+    def start_telegram_loop(self) -> ControllerSnapshot:
+        previous = self._telegram_status
+        validation = self._telegram_service.validate(
+            secret_store=self._secret_store,
+            secret_id=self._config.telegram_secret_id,
+            transient_token="",
+        )
+        validation = replace(
+            validation,
+            last_test_result=previous.last_test_result,
+            last_test_message=previous.last_test_message,
+            last_test_at=previous.last_test_at,
+        )
+        self._telegram_status = validation
+        self._persist_telegram_status()
+
+        with self._telegram_loop_lock:
+            if self._telegram_loop_thread is not None and self._telegram_loop_thread.is_alive():
+                self._update_telegram_loop_status(
+                    state=self._telegram_loop_status.state,
+                    message="Telegram loop is already running.",
+                    activity=False,
+                )
+                self._last_message = self._telegram_loop_status.message
+                return self.snapshot()
+
+            if not validation.token_present:
+                self._update_telegram_loop_status(
+                    state="error",
+                    message="Telegram loop cannot start because no stored bot token is available.",
+                )
+                self._last_message = self._telegram_loop_status.message
+                return self.snapshot()
+
+            if validation.validation_state == "invalid":
+                self._update_telegram_loop_status(
+                    state="error",
+                    message=f"Telegram loop cannot start: {validation.message}",
+                )
+                self._last_message = self._telegram_loop_status.message
+                return self.snapshot()
+
+            stop_event = threading.Event()
+            thread = threading.Thread(
+                target=self._telegram_loop_worker,
+                args=(stop_event,),
+                name="TelegramPollingLoop",
+                daemon=True,
+            )
+            self._telegram_loop_stop_event = stop_event
+            self._telegram_loop_thread = thread
+            self._update_telegram_loop_status(
+                state="starting",
+                message="Starting Telegram polling loop.",
+            )
+            thread.start()
+
+        self._last_message = self._telegram_loop_status.message
+        return self.snapshot()
+
+    def stop_telegram_loop(self) -> ControllerSnapshot:
+        thread: threading.Thread | None
+        stop_event: threading.Event | None
+        with self._telegram_loop_lock:
+            thread = self._telegram_loop_thread
+            stop_event = self._telegram_loop_stop_event
+            if thread is None or not thread.is_alive():
+                self._telegram_loop_thread = None
+                self._telegram_loop_stop_event = None
+                self._update_telegram_loop_status(
+                    state="stopped",
+                    message="Telegram loop is already stopped.",
+                    activity=False,
+                )
+                self._last_message = self._telegram_loop_status.message
+                return self.snapshot()
+            if stop_event is not None:
+                stop_event.set()
+
+        if thread is not None:
+            thread.join(timeout=5.0)
+
+        with self._telegram_loop_lock:
+            self._telegram_loop_thread = None
+            self._telegram_loop_stop_event = None
+            self._update_telegram_loop_status(
+                state="stopped",
+                message="Telegram loop stopped.",
+            )
+        self._last_message = self._telegram_loop_status.message
+        return self.snapshot()
+
     def check_status(self) -> ControllerSnapshot:
         self._runtime_manager.refresh_status()
         self._refresh_provider_status(self._config.selected_provider)
@@ -84,6 +183,8 @@ class ControllerService:
             self._config.selected_provider
         )
         telegram_status = self._reconcile_telegram_status(self._telegram_status)
+        with self._telegram_loop_lock:
+            telegram_loop_status = self._telegram_loop_status
         readiness_state, readiness_message = self._compute_readiness(
             runtime_state=status.runtime_state,
             selected_provider_status=selected_provider_status,
@@ -111,6 +212,11 @@ class ControllerService:
             telegram_bot_identity=telegram_status.identity_label if telegram_status.bot_id or telegram_status.bot_username or telegram_status.bot_display_name else "-",
             telegram_last_test_result=telegram_status.last_test_result,
             telegram_last_test_at=telegram_status.last_test_at or "-",
+            telegram_loop_state=telegram_loop_status.state,
+            telegram_loop_message=telegram_loop_status.message,
+            telegram_last_activity_at=telegram_loop_status.last_activity_at or "-",
+            telegram_last_inbound_summary=telegram_loop_status.last_inbound_summary,
+            telegram_last_outbound_summary=telegram_loop_status.last_outbound_summary,
             readiness_state=readiness_state,
             readiness_message=readiness_message,
             health_status=self._latest_health_report.overall_status if self._latest_health_report else "unknown",
@@ -283,7 +389,12 @@ class ControllerService:
         selected_provider_status = self._provider_status_cache.get(self._config.selected_provider) or self._default_provider_status(
             self._config.selected_provider
         )
-        self._latest_health_report = self._diagnostics_service.run_health_check(self._config, selected_provider_status)
+        self._latest_health_report = self._diagnostics_service.run_health_check(
+            self._config,
+            selected_provider_status,
+            telegram_recent_success=self._telegram_recent_success(),
+            telegram_last_success_at=self._telegram_loop_status.last_success_at,
+        )
         self._last_message = self._latest_health_report.summary
         return self.snapshot()
 
@@ -297,6 +408,7 @@ class ControllerService:
         return self.snapshot()
 
     def shutdown(self) -> None:
+        self.stop_telegram_loop()
         self._runtime_manager.stop_runtime()
 
     def _validate_provider(
@@ -369,6 +481,12 @@ class ControllerService:
         self._config.telegram_status = self._telegram_status
         self._config_store.save(self._config)
 
+    def _persist_telegram_offset(self, update_id: int) -> None:
+        if update_id <= self._config.telegram_last_processed_update_id:
+            return
+        self._config.telegram_last_processed_update_id = update_id
+        self._config_store.save(self._config)
+
     def _reconcile_telegram_status(self, status: TelegramChannelStatus) -> TelegramChannelStatus:
         has_secret = self._secret_store.available and self._secret_store.has_secret(self._config.telegram_secret_id)
         if not has_secret:
@@ -430,6 +548,211 @@ class ControllerService:
         if not lines:
             lines.append("Run Health Check or Security Check to populate diagnostics.")
         return tuple(lines[:10])
+
+    def _telegram_loop_worker(self, stop_event: threading.Event) -> None:
+        self._update_telegram_loop_status(
+            state="running",
+            message="Telegram polling loop is active.",
+        )
+        while not stop_event.is_set():
+            try:
+                updates = self._telegram_service.get_updates(
+                    secret_store=self._secret_store,
+                    secret_id=self._config.telegram_secret_id,
+                    offset=self._config.telegram_last_processed_update_id + 1,
+                    timeout=2,
+                )
+                if self._telegram_loop_status.state != "running":
+                    self._update_telegram_loop_status(
+                        state="running",
+                        message="Telegram polling loop is active.",
+                        activity=False,
+                    )
+                for update in updates:
+                    if stop_event.is_set():
+                        break
+                    self._handle_telegram_update(update)
+            except TelegramApiError as exc:
+                self._update_telegram_loop_status(
+                    state="error",
+                    message=f"Telegram polling failed: {sanitize_log_text(str(exc))}",
+                )
+                if stop_event.wait(1.5):
+                    break
+            except Exception as exc:  # noqa: BLE001
+                self._update_telegram_loop_status(
+                    state="error",
+                    message=f"Telegram loop failed: {sanitize_log_text(str(exc))}",
+                )
+                if stop_event.wait(1.5):
+                    break
+
+        with self._telegram_loop_lock:
+            if self._telegram_loop_stop_event is stop_event:
+                self._telegram_loop_thread = None
+                self._telegram_loop_stop_event = None
+                self._update_telegram_loop_status(
+                    state="stopped",
+                    message="Telegram loop stopped.",
+                    activity=False,
+                )
+
+    def _handle_telegram_update(self, update: TelegramInboundMessage) -> None:
+        if update.update_id <= self._config.telegram_last_processed_update_id:
+            self._update_telegram_loop_status(
+                state=self._telegram_loop_status.state if self._telegram_loop_status.state != "error" else "running",
+                message=f"Skipped duplicate Telegram update {update.update_id}.",
+                inbound_summary=f"Duplicate update {update.update_id} skipped.",
+                activity=True,
+            )
+            return
+
+        inbound_summary = self._summarize_text(update.summary)
+        reply = self._build_telegram_reply(update)
+        outbound_summary = "No reply sent."
+        loop_message = "Processed Telegram update."
+
+        try:
+            message_id = self._telegram_service.send_text(
+                secret_store=self._secret_store,
+                secret_id=self._config.telegram_secret_id,
+                chat_id=update.chat_id,
+                text=reply,
+            )
+            outbound_summary = self._summarize_text(f"Sent to {update.sender_label}: {reply}")
+            if message_id:
+                loop_message = f"Processed Telegram update {update.update_id} and sent reply {message_id}."
+            else:
+                loop_message = f"Processed Telegram update {update.update_id} and sent reply."
+        except TelegramApiError as exc:
+            outbound_summary = self._summarize_text(f"Reply failed: {sanitize_log_text(str(exc))}")
+            loop_message = sanitize_log_text(str(exc))
+            self._update_telegram_loop_status(
+                state="error",
+                message=f"Telegram reply failed: {loop_message}",
+                inbound_summary=inbound_summary,
+                outbound_summary=outbound_summary,
+                activity=True,
+            )
+            self._persist_telegram_offset(update.update_id)
+            return
+
+        self._persist_telegram_offset(update.update_id)
+        self._update_telegram_loop_status(
+            state="running",
+            message=loop_message,
+            inbound_summary=inbound_summary,
+            outbound_summary=outbound_summary,
+            activity=True,
+            success=True,
+        )
+
+    def _build_telegram_reply(self, update: TelegramInboundMessage) -> str:
+        if not update.has_text:
+            return "Windows OpenClaw Operator Console v1 supports plain text Telegram messages only."
+
+        text = update.text.strip()
+        command = text.split()[0].lower() if text else ""
+        snapshot = self.snapshot()
+
+        if command == "/start":
+            return (
+                "Windows OpenClaw Operator Console v1 is connected to Telegram. "
+                f"Current readiness: {self._readiness_label(snapshot.readiness_state)}."
+            )
+        if command == "/status":
+            return "\n".join(
+                (
+                    f"Runtime: {snapshot.runtime_state}",
+                    f"Health: {self._health_label(snapshot.health_status)}",
+                    f"Security: {self._safety_label(snapshot.safety_status)}",
+                    f"Readiness: {self._readiness_label(snapshot.readiness_state)}",
+                    f"Mode: {snapshot.mode}",
+                    f"Provider: {self._provider_label(snapshot.active_provider, snapshot.provider_model)}",
+                )
+            )
+        if command == "/mode":
+            return "\n".join(
+                (
+                    f"Selected mode: {snapshot.selected_mode}",
+                    f"Policy: {snapshot.policy}",
+                    f"Active provider: {self._provider_label(snapshot.active_provider, snapshot.provider_model)}",
+                )
+            )
+
+        if snapshot.runtime_state != "running":
+            return "OpenClaw runtime is not available. Start the runtime in the operator console and try again."
+        if snapshot.readiness_state == "not_ready":
+            return "Operator console is not ready. Resolve blocking health or security issues in the desktop app and try again."
+        if not snapshot.provider_ready:
+            return "Active provider is not available. Validate the selected provider in the operator console and try again."
+        return (
+            "Message received by Windows OpenClaw Operator Console v1. "
+            "Provider-backed replies are not yet enabled."
+        )
+
+    def _update_telegram_loop_status(
+        self,
+        *,
+        state: str,
+        message: str,
+        inbound_summary: str | None = None,
+        outbound_summary: str | None = None,
+        activity: bool = True,
+        success: bool = False,
+    ) -> None:
+        with self._telegram_loop_lock:
+            timestamp = self._now_iso() if activity else self._telegram_loop_status.last_activity_at
+            self._telegram_loop_status = TelegramLoopStatus(
+                state=state,  # type: ignore[arg-type]
+                message=sanitize_log_text(message),
+                last_activity_at=timestamp,
+                last_success_at=timestamp if success and activity else self._telegram_loop_status.last_success_at,
+                last_inbound_summary=sanitize_log_text(inbound_summary or self._telegram_loop_status.last_inbound_summary),
+                last_outbound_summary=sanitize_log_text(outbound_summary or self._telegram_loop_status.last_outbound_summary),
+            )
+
+    @staticmethod
+    def _summarize_text(text: str, limit: int = 160) -> str:
+        normalized = " ".join(text.split())
+        sanitized = sanitize_log_text(normalized)
+        if len(sanitized) <= limit:
+            return sanitized
+        return f"{sanitized[: limit - 3]}..."
+
+    @staticmethod
+    def _now_iso() -> str:
+        return datetime.now().astimezone().isoformat(timespec="seconds")
+
+    def _telegram_recent_success(self, *, window_seconds: float = 300.0) -> bool:
+        last_success_at = self._telegram_loop_status.last_success_at.strip()
+        if not last_success_at:
+            return False
+        try:
+            last_success = datetime.fromisoformat(last_success_at)
+        except ValueError:
+            return False
+        return (datetime.now().astimezone() - last_success).total_seconds() <= window_seconds
+
+    @staticmethod
+    def _health_label(status: str) -> str:
+        return {"ok": "Healthy", "degraded": "Degraded", "blocked": "Blocked", "unknown": "Unknown"}.get(status, status)
+
+    @staticmethod
+    def _safety_label(status: str) -> str:
+        return {"ok": "Safe", "degraded": "Warning", "blocked": "Unsafe", "unknown": "Unknown"}.get(status, status)
+
+    @staticmethod
+    def _readiness_label(state: str) -> str:
+        return {"ready": "Ready", "degraded": "Degraded", "not_ready": "Not Ready"}.get(state, state)
+
+    @staticmethod
+    def _provider_label(provider: ProviderType, model: str) -> str:
+        if provider == "ollama" and model:
+            return f"Ollama / {model}"
+        if provider == "ollama":
+            return "Ollama"
+        return "OpenAI"
 
     def _compute_readiness(
         self,

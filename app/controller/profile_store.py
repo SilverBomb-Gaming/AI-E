@@ -18,7 +18,7 @@ ProviderType = Literal["ollama", "openai"]
 
 @dataclass
 class ControllerConfig:
-    schema_version: int = 2
+    schema_version: int = 3
     current_mode: Mode = "offline"
     selected_mode: Mode = "offline"
     selected_provider: ProviderType = "ollama"
@@ -31,6 +31,7 @@ class ControllerConfig:
     openai_key_masked: str = ""
     openai_has_secret: bool = False
     telegram_secret_id: str = "telegram/default"
+    telegram_last_processed_update_id: int = 0
     telegram_status: TelegramChannelStatus = field(default_factory=TelegramChannelStatus)
     last_provider_statuses: dict[str, dict[str, Any]] = field(default_factory=dict)
 
@@ -82,7 +83,7 @@ class ControllerConfigStore:
         if not isinstance(last_provider_statuses, dict):
             last_provider_statuses = {}
         return ControllerConfig(
-            schema_version=int(raw.get("schema_version", 2)),
+            schema_version=int(raw.get("schema_version", 3)),
             current_mode=str(raw.get("current_mode", "offline")),  # type: ignore[arg-type]
             selected_mode=str(raw.get("selected_mode", raw.get("current_mode", "offline"))),  # type: ignore[arg-type]
             selected_provider=str(raw.get("selected_provider", "ollama")),  # type: ignore[arg-type]
@@ -95,6 +96,7 @@ class ControllerConfigStore:
             openai_key_masked=str(raw.get("openai_key_masked", "")),
             openai_has_secret=bool(raw.get("openai_has_secret", False)),
             telegram_secret_id=str(raw.get("telegram_secret_id", "telegram/default")),
+            telegram_last_processed_update_id=int(raw.get("telegram_last_processed_update_id", 0)),
             telegram_status=TelegramChannelStatus.from_payload(raw.get("telegram_status")),
             last_provider_statuses={str(key): value for key, value in last_provider_statuses.items() if isinstance(value, dict)},
         )

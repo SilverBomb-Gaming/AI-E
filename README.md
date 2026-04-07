@@ -2,6 +2,42 @@
 
 Controlled execution surface for supported projects. AI-E turns a bounded request into a real, reviewable result with guardrails, live status, proof summaries, and saved history.
 
+## Windows OpenClaw Operator Console Status
+
+The current active operator-console surface in this repo is the Windows-first OpenClaw controller shell. The known-good checkpoint is:
+
+- Current baseline: `Windows OpenClaw Operator Console v1.1 - Telegram Interaction Loop`
+- Health: `Healthy`
+- Security: `Safe`
+- Readiness: `Ready`
+- Launch command: `python -m app.main`
+
+What is now working:
+
+- local OpenClaw runtime start, stop, restart, and status control from the PySide6 desktop shell
+- offline/online mode selection with policy guardrails preserved
+- trusted health and security diagnostics, including ownership-aware port conflict checks and multi-signal runtime liveness
+- secure Telegram bot validation, connection testing, and polling-loop start/stop controls
+- minimal end-to-end Telegram interaction flow with `/start`, `/status`, `/mode`, duplicate-safe polling, and safe placeholder plain-text replies
+
+Important guardrails and usage notes:
+
+- Offline Mode remains first-class and no silent provider or mode fallback is allowed.
+- The controller stays local-first with loopback bind defaults and secret redaction in logs.
+- Generic plain text in Telegram is still limited; only explicit command handling is enabled.
+
+Current next milestone:
+
+- `Windows OpenClaw Operator Console v1.2 - First Useful Commands Layer`
+- goal: add `/help`, `/models`, and explicit `/ask <prompt>` replies without broadening into automation, scraping, RAG, or repo mutation
+
+Fast operator path:
+
+1. Launch the desktop shell with `python -m app.main`.
+2. Start the runtime and run Health/Security checks.
+3. Validate Telegram, start the Telegram loop, and message the configured bot.
+4. Run `python -m unittest discover -s tests -v` and `python diagnostics_smoke.py` for the current controller verification pass.
+
 ## AI-E v1 Product Surface Status
 
 These sections are the current source of truth for the public-facing AI-E v1 experience. Where they conflict with older control-panel wording below, use this product-surface status first.

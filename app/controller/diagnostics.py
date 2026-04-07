@@ -26,7 +26,14 @@ class ControllerDiagnosticsService:
         self._config_store = config_store
         self._secret_store = secret_store
 
-    def run_health_check(self, config: ControllerConfig, selected_provider_status: ProviderStatus) -> DiagnosticReport:
+    def run_health_check(
+        self,
+        config: ControllerConfig,
+        selected_provider_status: ProviderStatus,
+        *,
+        telegram_recent_success: bool = False,
+        telegram_last_success_at: str = "",
+    ) -> DiagnosticReport:
         runtime_status = self._runtime_manager.get_status()
         inspection = self._runtime_manager.inspect_runtime()
         items: list[DiagnosticItem] = []
@@ -115,7 +122,15 @@ class ControllerDiagnosticsService:
             )
         )
 
-        items.extend(self._runtime_health_items(config, inspection, runtime_status.runtime_state))
+        items.extend(
+            self._runtime_health_items(
+                config,
+                inspection,
+                runtime_status.runtime_state,
+                telegram_recent_success=telegram_recent_success,
+                telegram_last_success_at=telegram_last_success_at,
+            )
+        )
         return self._build_report("health", items)
 
     def run_security_check(self, config: ControllerConfig, selected_provider_status: ProviderStatus) -> DiagnosticReport:
@@ -193,7 +208,15 @@ class ControllerDiagnosticsService:
         items.extend(self._state_integrity_items(config, selected_provider_status, runtime_status.runtime_state))
         return self._build_report("security", items)
 
-    def _runtime_health_items(self, config: ControllerConfig, inspection, runtime_state: str) -> list[DiagnosticItem]:
+    def _runtime_health_items(
+        self,
+        config: ControllerConfig,
+        inspection,
+        runtime_state: str,
+        *,
+        telegram_recent_success: bool = False,
+        telegram_last_success_at: str = "",
+    ) -> list[DiagnosticItem]:
         items: list[DiagnosticItem] = []
         if inspection.invalid_executable_path:
             items.append(
@@ -218,14 +241,12 @@ class ControllerDiagnosticsService:
                 )
             )
 
-        unresponsive = runtime_state == "running" and inspection.process_exists and not inspection.process_responsive
         items.append(
-            self._item(
-                "health",
-                "runtime.unresponsive",
-                not unresponsive,
-                "Runtime responds on the configured port." if not unresponsive else "Runtime process exists but did not respond on the configured port.",
-                "Restart OpenClaw and inspect recent stderr output if the process stays unresponsive.",
+            self._runtime_liveness_item(
+                inspection,
+                runtime_state=runtime_state,
+                telegram_recent_success=telegram_recent_success,
+                telegram_last_success_at=telegram_last_success_at,
             )
         )
 
@@ -267,6 +288,96 @@ class ControllerDiagnosticsService:
             self._runtime_port_item(inspection)
         )
         return items
+
+    def _runtime_liveness_item(
+        self,
+        inspection,
+        *,
+        runtime_state: str,
+        telegram_recent_success: bool = False,
+        telegram_last_success_at: str = "",
+    ) -> DiagnosticItem:
+        if runtime_state != "running":
+            return DiagnosticItem(
+                check_type="health",
+                status="pass",
+                severity="info",
+                code="runtime.unresponsive",
+                message="Runtime is not running, so no active liveness probe is required.",
+                recommended_action="No action needed.",
+            )
+
+        if not inspection.process_exists:
+            return DiagnosticItem(
+                check_type="health",
+                status="fail",
+                severity="error",
+                code="runtime.unresponsive",
+                message="Runtime is marked running, but no active process was found.",
+                recommended_action="Use Check Status or restart the runtime to recover from stale process state.",
+            )
+
+        liveness_state = getattr(inspection, "liveness_state", "indeterminate")
+        liveness_message = getattr(inspection, "liveness_message", "") or "Runtime liveness could not be determined."
+
+        if telegram_recent_success:
+            telegram_message = "Recent Telegram interaction succeeded, confirming live controller-to-runtime activity."
+            if telegram_last_success_at:
+                telegram_message = f"{telegram_message} Last success: {telegram_last_success_at}."
+            if liveness_state == "unresponsive":
+                return DiagnosticItem(
+                    check_type="health",
+                    status="pass",
+                    severity="info",
+                    code="runtime.unresponsive",
+                    message=f"Gateway probe was limited, but runtime appears active via alternate signals. {telegram_message}",
+                    recommended_action="No action needed.",
+                )
+            if liveness_state in {"indeterminate", "responsive_with_limited_probe"}:
+                return DiagnosticItem(
+                    check_type="health",
+                    status="pass",
+                    severity="info",
+                    code="runtime.unresponsive",
+                    message=f"Runtime is active via recent Telegram success. {liveness_message}",
+                    recommended_action="No action needed.",
+                )
+
+        if liveness_state == "responsive":
+            return DiagnosticItem(
+                check_type="health",
+                status="pass",
+                severity="info",
+                code="runtime.unresponsive",
+                message=liveness_message,
+                recommended_action="No action needed.",
+            )
+        if liveness_state == "responsive_with_limited_probe":
+            return DiagnosticItem(
+                check_type="health",
+                status="warn",
+                severity="warning",
+                code="runtime.unresponsive",
+                message=liveness_message,
+                recommended_action="If this warning persists, rerun the health check after the runtime has been active for a few more seconds.",
+            )
+        if liveness_state == "indeterminate":
+            return DiagnosticItem(
+                check_type="health",
+                status="warn",
+                severity="warning",
+                code="runtime.unresponsive",
+                message=liveness_message,
+                recommended_action="Wait for startup or listener discovery to settle, then rerun the health check.",
+            )
+        return DiagnosticItem(
+            check_type="health",
+            status="fail",
+            severity="error",
+            code="runtime.unresponsive",
+            message=liveness_message,
+            recommended_action="Restart OpenClaw and inspect recent stderr output if the runtime stays unresponsive.",
+        )
 
     def _state_integrity_items(self, config: ControllerConfig, selected_provider_status: ProviderStatus, runtime_state: str) -> list[DiagnosticItem]:
         items: list[DiagnosticItem] = []

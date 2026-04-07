@@ -38,6 +38,22 @@ class TelegramBotIdentity:
     display_name: str
 
 
+@dataclass(frozen=True)
+class TelegramInboundMessage:
+    update_id: int
+    chat_id: str
+    text: str
+    sender_label: str
+    message_id: int = 0
+    has_text: bool = True
+
+    @property
+    def summary(self) -> str:
+        if self.has_text and self.text.strip():
+            return f"{self.sender_label}: {self.text.strip()}"
+        return f"{self.sender_label}: [non-text message]"
+
+
 class TelegramApiClient:
     def __init__(self, request_json: Callable[[str], dict[str, object]] | None = None) -> None:
         self._request_json = request_json or self._default_request_json
@@ -59,6 +75,93 @@ class TelegramApiClient:
         if not (bot_id or username or display_name):
             raise TelegramApiError("Telegram API returned incomplete bot metadata.")
         return TelegramBotIdentity(bot_id=bot_id, username=username, display_name=display_name)
+
+    def get_updates(self, token: str, *, offset: int = 0, timeout: int = 2) -> tuple[TelegramInboundMessage, ...]:
+        payload = self._call(token, "getUpdates", {"offset": str(offset), "timeout": str(timeout)})
+        result = payload.get("result")
+        if not isinstance(result, list):
+            raise TelegramApiError("Telegram API did not return an updates list.")
+        updates: list[TelegramInboundMessage] = []
+        for raw_update in result:
+            if not isinstance(raw_update, dict):
+                continue
+            try:
+                update_id = int(raw_update.get("update_id"))
+            except (TypeError, ValueError):
+                continue
+            message = raw_update.get("message")
+            if not isinstance(message, dict):
+                continue
+            chat = message.get("chat")
+            if not isinstance(chat, dict):
+                continue
+            chat_id = str(chat.get("id") or "").strip()
+            if not chat_id:
+                continue
+            sender = message.get("from")
+            sender_label = self._sender_label(sender, chat)
+            text = str(message.get("text") or "")
+            has_text = bool(text.strip())
+            try:
+                message_id = int(message.get("message_id", 0) or 0)
+            except (TypeError, ValueError):
+                message_id = 0
+            updates.append(
+                TelegramInboundMessage(
+                    update_id=update_id,
+                    chat_id=chat_id,
+                    text=text,
+                    sender_label=sender_label,
+                    message_id=message_id,
+                    has_text=has_text,
+                )
+            )
+        return tuple(updates)
+
+    def send_text(self, token: str, *, chat_id: str, text: str) -> int:
+        payload = self._call(
+            token,
+            "sendMessage",
+            {
+                "chat_id": chat_id,
+                "text": text,
+                "disable_web_page_preview": "true",
+            },
+        )
+        result = payload.get("result")
+        if not isinstance(result, dict):
+            raise TelegramApiError("Telegram API did not confirm the outbound message.")
+        try:
+            return int(result.get("message_id", 0) or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    def _call(self, token: str, method_name: str, params: dict[str, str]) -> dict[str, object]:
+        safe_token = urllib.parse.quote(token, safe=":_-")
+        query = urllib.parse.urlencode(params)
+        payload = self._request_json(f"https://api.telegram.org/bot{safe_token}/{method_name}?{query}")
+        if not isinstance(payload, dict):
+            raise TelegramApiError("Telegram API returned an invalid response.")
+        if not payload.get("ok"):
+            description = str(payload.get("description") or "Telegram API rejected the request.")
+            raise TelegramApiError(description)
+        return payload
+
+    @staticmethod
+    def _sender_label(sender: object, chat: dict[str, object]) -> str:
+        if isinstance(sender, dict):
+            username = str(sender.get("username") or "").strip()
+            if username:
+                return f"@{username}"
+            first_name = str(sender.get("first_name") or "").strip()
+            last_name = str(sender.get("last_name") or "").strip()
+            full_name = " ".join(part for part in (first_name, last_name) if part)
+            if full_name:
+                return full_name
+        title = str(chat.get("title") or "").strip()
+        if title:
+            return title
+        return f"chat {chat.get('id', '?')}"
 
     @staticmethod
     def _default_request_json(url: str) -> dict[str, object]:
@@ -170,6 +273,36 @@ class TelegramChannelService:
             last_test_message=validated.message or fallback.last_test_message,
             last_test_at=ran_at,
         )
+
+    def get_updates(
+        self,
+        *,
+        secret_store: SecretStore,
+        secret_id: str,
+        offset: int = 0,
+        timeout: int = 2,
+    ) -> tuple[TelegramInboundMessage, ...]:
+        token = secret_store.get_secret(secret_id).strip()
+        if not token:
+            raise TelegramApiError("Telegram bot token is not configured.")
+        if not self._looks_like_token(token):
+            raise TelegramApiError("Stored Telegram bot token format is invalid.")
+        return self._api_client.get_updates(token, offset=offset, timeout=timeout)
+
+    def send_text(
+        self,
+        *,
+        secret_store: SecretStore,
+        secret_id: str,
+        chat_id: str,
+        text: str,
+    ) -> int:
+        token = secret_store.get_secret(secret_id).strip()
+        if not token:
+            raise TelegramApiError("Telegram bot token is not configured.")
+        if not self._looks_like_token(token):
+            raise TelegramApiError("Stored Telegram bot token format is invalid.")
+        return self._api_client.send_text(token, chat_id=chat_id, text=text)
 
     @staticmethod
     def _looks_like_token(token: str) -> bool:

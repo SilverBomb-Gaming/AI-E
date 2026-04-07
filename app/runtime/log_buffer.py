@@ -36,3 +36,21 @@ class LogBuffer:
         cutoff = time.time() - window_seconds
         with self._lock:
             return sum(1 for ts, entry_source, _ in self._entries if entry_source == source and ts >= cutoff)
+
+    def recent_lines(
+        self,
+        *,
+        source: str | None = None,
+        window_seconds: float = 300.0,
+        limit: int = 50,
+    ) -> tuple[str, ...]:
+        cutoff = time.time() - window_seconds
+        with self._lock:
+            filtered = [
+                rendered
+                for ts, entry_source, rendered in self._entries
+                if ts >= cutoff and (source is None or entry_source == source)
+            ]
+        if limit <= 0:
+            return tuple(filtered)
+        return tuple(filtered[-limit:])

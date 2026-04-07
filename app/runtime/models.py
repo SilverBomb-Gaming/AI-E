@@ -12,6 +12,12 @@ PortCheckState = Literal[
     "conflict_unrelated_process",
     "indeterminate",
 ]
+LivenessState = Literal[
+    "responsive",
+    "responsive_with_limited_probe",
+    "indeterminate",
+    "unresponsive",
+]
 
 
 @dataclass(frozen=True)
@@ -49,6 +55,17 @@ class RuntimeInspection:
     invalid_executable_path: bool = False
     process_exists: bool = False
     process_responsive: bool = False
+    gateway_tcp_connectable: bool = False
+    gateway_listener_detected: bool = False
+    gateway_listener_owned: bool = False
+    control_http_responding: bool = False
+    control_http_endpoint: str = ""
+    recent_stdout_activity: bool = False
+    recent_stdout_count: int = 0
+    recent_listener_log: bool = False
+    startup_grace_active: bool = False
+    liveness_state: LivenessState = "indeterminate"
+    liveness_message: str = "Runtime liveness has not been evaluated."
     stderr_recent: bool = False
     recent_stderr_count: int = 0
     port_conflict: bool = False

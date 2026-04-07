@@ -141,16 +141,27 @@ class FoundationWindow(QtWidgets.QMainWindow):
         self.telegram_bot_identity_value = self._create_value_label("-")
         self.telegram_last_test_result_value = self._create_value_label("Not Run")
         self.telegram_last_test_at_value = self._create_value_label("-")
+        self.telegram_loop_status_value = self._create_value_label("Stopped")
+        self.telegram_loop_message_value = self._create_value_label("Telegram loop is stopped.")
+        self.telegram_last_activity_value = self._create_value_label("-")
+        self.telegram_last_inbound_value = self._create_value_label("No inbound Telegram activity yet.")
+        self.telegram_last_outbound_value = self._create_value_label("No outbound Telegram activity yet.")
 
         self.save_telegram_button = QtWidgets.QPushButton("Save Telegram Settings")
         self.validate_telegram_button = QtWidgets.QPushButton("Validate Telegram")
         self.test_telegram_button = QtWidgets.QPushButton("Test Telegram Connection")
+        self.start_telegram_loop_button = QtWidgets.QPushButton("Start Telegram Loop")
+        self.stop_telegram_loop_button = QtWidgets.QPushButton("Stop Telegram Loop")
         self.save_telegram_button.clicked.connect(self._handle_save_telegram_settings)
         self.validate_telegram_button.clicked.connect(self._handle_validate_telegram)
         self.test_telegram_button.clicked.connect(self._handle_test_telegram)
+        self.start_telegram_loop_button.clicked.connect(lambda: self._run_background(self._service.start_telegram_loop))
+        self.stop_telegram_loop_button.clicked.connect(lambda: self._run_background(self._service.stop_telegram_loop))
         self._configure_button(self.save_telegram_button)
         self._configure_button(self.validate_telegram_button)
         self._configure_button(self.test_telegram_button)
+        self._configure_button(self.start_telegram_loop_button)
+        self._configure_button(self.stop_telegram_loop_button)
 
         actions_widget = QtWidgets.QWidget()
         actions_layout = QtWidgets.QVBoxLayout(actions_widget)
@@ -163,6 +174,13 @@ class FoundationWindow(QtWidgets.QMainWindow):
         top_row.addWidget(self.validate_telegram_button)
         top_row.addStretch(1)
         actions_layout.addLayout(top_row)
+        middle_row = QtWidgets.QHBoxLayout()
+        middle_row.setContentsMargins(0, 0, 0, 0)
+        middle_row.setSpacing(10)
+        middle_row.addWidget(self.start_telegram_loop_button)
+        middle_row.addWidget(self.stop_telegram_loop_button)
+        middle_row.addStretch(1)
+        actions_layout.addLayout(middle_row)
         actions_layout.addWidget(self.test_telegram_button)
 
         layout.addRow("Telegram Status", self.telegram_status_value)
@@ -171,6 +189,11 @@ class FoundationWindow(QtWidgets.QMainWindow):
         layout.addRow("Bot Identity", self.telegram_bot_identity_value)
         layout.addRow("Last Test Result", self.telegram_last_test_result_value)
         layout.addRow("Last Test At", self.telegram_last_test_at_value)
+        layout.addRow("Loop Status", self.telegram_loop_status_value)
+        layout.addRow("Loop Message", self.telegram_loop_message_value)
+        layout.addRow("Last Activity", self.telegram_last_activity_value)
+        layout.addRow("Last Inbound", self.telegram_last_inbound_value)
+        layout.addRow("Last Outbound", self.telegram_last_outbound_value)
         layout.addRow("Actions", actions_widget)
         return group
 
@@ -370,6 +393,11 @@ class FoundationWindow(QtWidgets.QMainWindow):
         self.telegram_bot_identity_value.setText(snapshot.telegram_bot_identity)
         self.telegram_last_test_result_value.setText(self._telegram_test_result_label(snapshot.telegram_last_test_result))
         self.telegram_last_test_at_value.setText(snapshot.telegram_last_test_at)
+        self.telegram_loop_status_value.setText(self._telegram_loop_label(snapshot.telegram_loop_state))
+        self.telegram_loop_message_value.setText(snapshot.telegram_loop_message)
+        self.telegram_last_activity_value.setText(snapshot.telegram_last_activity_at)
+        self.telegram_last_inbound_value.setText(snapshot.telegram_last_inbound_summary)
+        self.telegram_last_outbound_value.setText(snapshot.telegram_last_outbound_summary)
         self.health_status_value.setText(self._health_label(snapshot.health_status))
         self.safety_status_value.setText(self._safety_label(snapshot.safety_status))
         self.last_health_check_value.setText(snapshot.last_health_check_at)
@@ -408,6 +436,8 @@ class FoundationWindow(QtWidgets.QMainWindow):
         self.save_telegram_button.setEnabled(True)
         self.validate_telegram_button.setEnabled(True)
         self.test_telegram_button.setEnabled(snapshot.telegram_token_present)
+        self.start_telegram_loop_button.setEnabled(snapshot.telegram_token_present and snapshot.telegram_loop_state == "stopped")
+        self.stop_telegram_loop_button.setEnabled(snapshot.telegram_loop_state in {"starting", "running", "error"})
         self.health_check_button.setEnabled(True)
         self.security_check_button.setEnabled(True)
         self.clear_logs_button.setEnabled(True)
@@ -424,6 +454,8 @@ class FoundationWindow(QtWidgets.QMainWindow):
             self.save_telegram_button.setEnabled(False)
             self.validate_telegram_button.setEnabled(False)
             self.test_telegram_button.setEnabled(False)
+            self.start_telegram_loop_button.setEnabled(False)
+            self.stop_telegram_loop_button.setEnabled(False)
             self.health_check_button.setEnabled(False)
             self.security_check_button.setEnabled(False)
             self.clear_logs_button.setEnabled(False)
@@ -559,6 +591,10 @@ class FoundationWindow(QtWidgets.QMainWindow):
     @staticmethod
     def _telegram_test_result_label(result: str) -> str:
         return {"passed": "Passed", "failed": "Failed", "not_run": "Not Run"}.get(result, result)
+
+    @staticmethod
+    def _telegram_loop_label(state: str) -> str:
+        return {"running": "Running", "starting": "Starting", "stopped": "Stopped", "error": "Error"}.get(state, state)
 
     @classmethod
     def _telegram_test_label(cls, result: str, timestamp: str) -> str:
