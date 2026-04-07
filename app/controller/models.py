@@ -14,6 +14,15 @@ OverallStatus = Literal["unknown", "ok", "degraded", "blocked"]
 ReadinessState = Literal["not_ready", "degraded", "ready"]
 TelegramTestResult = Literal["not_run", "passed", "failed"]
 TelegramLoopState = Literal["stopped", "starting", "running", "error"]
+TelegramLoopActivityState = Literal[
+    "idle",
+    "polling",
+    "processing_command",
+    "waiting_on_provider",
+    "timed_out",
+    "provider_failed",
+    "sent_reply",
+]
 
 
 @dataclass(frozen=True)
@@ -40,6 +49,7 @@ class ControllerSnapshot:
     telegram_last_test_result: TelegramTestResult
     telegram_last_test_at: str
     telegram_loop_state: TelegramLoopState
+    telegram_loop_activity: TelegramLoopActivityState
     telegram_loop_message: str
     telegram_last_activity_at: str
     telegram_last_command: str

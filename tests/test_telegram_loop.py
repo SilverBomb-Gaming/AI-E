@@ -257,6 +257,7 @@ class TelegramLoopTests(unittest.TestCase):
             started = service.start_telegram_loop()
             self.assertIn(started.telegram_loop_state, {"starting", "running"})
             self.assertTrue(_wait_until(lambda: service.snapshot().telegram_loop_state == "running"))
+            self.assertEqual(service.snapshot().telegram_loop_activity, "polling")
             stopped = service.stop_telegram_loop()
             self.assertEqual(stopped.telegram_loop_state, "stopped")
             self.assertGreaterEqual(len(telegram_service.get_updates_offsets), 1)
@@ -309,7 +310,7 @@ class TelegramLoopTests(unittest.TestCase):
             self.assertTrue(_wait_until(lambda: len(telegram_service.sent_messages) == 1))
             service.stop_telegram_loop()
             reply = telegram_service.sent_messages[0][1]
-            self.assertIn("Windows OpenClaw Operator Console v1.3 is connected.", reply)
+            self.assertIn("Windows OpenClaw Operator Console v1.4 is connected.", reply)
             self.assertIn("Readiness: Ready", reply)
             self.assertIn("Use /help to see supported commands.", reply)
 

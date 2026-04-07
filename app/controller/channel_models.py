@@ -1,4 +1,3 @@
-"""Channel-side state models for daily-use integrations."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -9,6 +8,15 @@ from .models import ValidationState
 
 TelegramTestResult = Literal["not_run", "passed", "failed"]
 TelegramLoopState = Literal["stopped", "starting", "running", "error"]
+TelegramLoopActivityState = Literal[
+    "idle",
+    "polling",
+    "processing_command",
+    "waiting_on_provider",
+    "timed_out",
+    "provider_failed",
+    "sent_reply",
+]
 
 
 @dataclass(frozen=True)
@@ -78,6 +86,7 @@ class TelegramChannelStatus:
 @dataclass(frozen=True)
 class TelegramLoopStatus:
     state: TelegramLoopState = "stopped"
+    activity_state: TelegramLoopActivityState = "idle"
     message: str = "Telegram loop is stopped."
     last_activity_at: str = ""
     last_success_at: str = ""

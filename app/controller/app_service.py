@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from datetime import datetime
 import threading
+import time
 
 from .channel_models import TelegramChannelStatus, TelegramLoopStatus
 from .diagnostic_models import DiagnosticReport
@@ -17,9 +18,13 @@ from ..runtime.manager import OpenClawRuntimeManager
 from ..runtime.log_sanitizer import sanitize_log_text
 
 
-_OPERATOR_CONSOLE_LABEL = "Windows OpenClaw Operator Console v1.3"
+_OPERATOR_CONSOLE_LABEL = "Windows OpenClaw Operator Console v1.4"
 _ASK_CONCISE_LIMIT = 700
 _ASK_DETAILED_LIMIT = 1500
+_PROVIDER_ASK_COMMANDS = frozenset({"/ask", "/askd"})
+_PROVIDER_ASK_COOLDOWN_SECONDS = 4.0
+_OLLAMA_ASK_TIMEOUT_SECONDS = 12.0
+_OPENAI_ASK_TIMEOUT_SECONDS = 18.0
 
 
 @dataclass(frozen=True)
@@ -30,6 +35,21 @@ class _TelegramResponsePlan:
     hide_content_in_summary: bool = False
     response_style: str = "concise"
     acknowledge_work: bool = False
+
+
+@dataclass(frozen=True)
+class _ParsedTelegramCommand:
+    command_label: str
+    argument: str = ""
+    normalized_text: str = ""
+    usage_hint: str = ""
+
+
+@dataclass(frozen=True)
+class _ProviderCallResult:
+    state: str
+    reply: ProviderReply | None = None
+    error_message: str = ""
 
 
 class ControllerService:
@@ -59,6 +79,11 @@ class ControllerService:
         self._telegram_loop_thread: threading.Thread | None = None
         self._telegram_loop_stop_event: threading.Event | None = None
         self._telegram_loop_status = TelegramLoopStatus()
+        self._provider_timeouts = {"ollama": _OLLAMA_ASK_TIMEOUT_SECONDS, "openai": _OPENAI_ASK_TIMEOUT_SECONDS}
+        self._provider_ask_cooldown_seconds = _PROVIDER_ASK_COOLDOWN_SECONDS
+        self._provider_chat_lock = threading.RLock()
+        self._active_provider_chats: dict[str, tuple[str, threading.Thread]] = {}
+        self._provider_cooldowns: dict[str, float] = {}
         self._diagnostics_service = ControllerDiagnosticsService(
             runtime_manager=self._runtime_manager,
             config_store=self._config_store,
@@ -228,6 +253,7 @@ class ControllerService:
             telegram_last_test_result=telegram_status.last_test_result,
             telegram_last_test_at=telegram_status.last_test_at or "-",
             telegram_loop_state=telegram_loop_status.state,
+            telegram_loop_activity=telegram_loop_status.activity_state,
             telegram_loop_message=telegram_loop_status.message,
             telegram_last_activity_at=telegram_loop_status.last_activity_at or "-",
             telegram_last_command=telegram_loop_status.last_command,
@@ -578,32 +604,44 @@ class ControllerService:
             lines.append("Run Health Check or Security Check to populate diagnostics.")
         return tuple(lines[:10])
 
+
     def _telegram_loop_worker(self, stop_event: threading.Event) -> None:
         self._update_telegram_loop_status(
             state="running",
+            activity_state="polling",
             message="Telegram polling loop is active.",
         )
         while not stop_event.is_set():
             try:
+                if self._telegram_loop_status.state != "running" or self._telegram_loop_status.activity_state != "polling":
+                    self._update_telegram_loop_status(
+                        state="running",
+                        activity_state="polling",
+                        message="Telegram polling loop is active.",
+                        activity=False,
+                    )
                 updates = self._telegram_service.get_updates(
                     secret_store=self._secret_store,
                     secret_id=self._config.telegram_secret_id,
                     offset=self._config.telegram_last_processed_update_id + 1,
                     timeout=2,
                 )
-                if self._telegram_loop_status.state != "running":
-                    self._update_telegram_loop_status(
-                        state="running",
-                        message="Telegram polling loop is active.",
-                        activity=False,
-                    )
+                batch_provider_chats: set[str] = set()
                 for update in updates:
                     if stop_event.is_set():
                         break
-                    self._handle_telegram_update(update)
+                    parsed_command = self._parse_telegram_command(update)
+                    batch_busy = False
+                    if parsed_command.command_label in _PROVIDER_ASK_COMMANDS:
+                        if update.chat_id in batch_provider_chats:
+                            batch_busy = True
+                        else:
+                            batch_provider_chats.add(update.chat_id)
+                    self._handle_telegram_update(update, parsed_command=parsed_command, batch_busy=batch_busy)
             except TelegramApiError as exc:
                 self._update_telegram_loop_status(
                     state="error",
+                    activity_state="provider_failed",
                     message=f"Telegram polling failed: {sanitize_log_text(str(exc))}",
                 )
                 if stop_event.wait(1.5):
@@ -611,6 +649,7 @@ class ControllerService:
             except Exception as exc:  # noqa: BLE001
                 self._update_telegram_loop_status(
                     state="error",
+                    activity_state="provider_failed",
                     message=f"Telegram loop failed: {sanitize_log_text(str(exc))}",
                 )
                 if stop_event.wait(1.5):
@@ -622,25 +661,43 @@ class ControllerService:
                 self._telegram_loop_stop_event = None
                 self._update_telegram_loop_status(
                     state="stopped",
+                    activity_state="idle",
                     message="Telegram loop stopped.",
                     activity=False,
                 )
 
-    def _handle_telegram_update(self, update: TelegramInboundMessage) -> None:
+    def _handle_telegram_update(
+        self,
+        update: TelegramInboundMessage,
+        *,
+        parsed_command: _ParsedTelegramCommand | None = None,
+        batch_busy: bool = False,
+    ) -> None:
         if update.update_id <= self._config.telegram_last_processed_update_id:
             self._update_telegram_loop_status(
                 state=self._telegram_loop_status.state if self._telegram_loop_status.state != "error" else "running",
+                activity_state="processing_command",
                 message=f"Skipped duplicate Telegram update {update.update_id}.",
                 inbound_summary=f"Duplicate update {update.update_id} skipped.",
                 activity=True,
             )
             return
 
-        command_hint = self._incoming_command_label(update)
+        parsed = parsed_command or self._parse_telegram_command(update)
+        command_hint = parsed.command_label
         inbound_summary = self._summarize_inbound_update(update, command_hint)
-        if command_hint in {"/ask", "/askd"}:
+        self._update_telegram_loop_status(
+            state="running",
+            activity_state="processing_command",
+            message=f"Handling Telegram command {command_hint}.",
+            inbound_summary=inbound_summary,
+            activity=True,
+            last_command=command_hint,
+        )
+        if command_hint in _PROVIDER_ASK_COMMANDS and not batch_busy:
             self._update_telegram_loop_status(
                 state="running",
+                activity_state="waiting_on_provider",
                 message=f"Working on {command_hint} request.",
                 inbound_summary=inbound_summary,
                 outbound_summary=self._summarize_text(f"{command_hint} in progress."),
@@ -649,7 +706,7 @@ class ControllerService:
                 last_ask_status=f"{command_hint} in progress.",
             )
 
-        plan = self._build_telegram_reply(update)
+        plan = self._build_telegram_reply(update, parsed_command=parsed, batch_busy=batch_busy)
         outbound_summary = self._outbound_summary_for_plan(update, plan)
         loop_message = f"Processed Telegram update {update.update_id}."
 
@@ -669,12 +726,13 @@ class ControllerService:
             loop_message = sanitize_log_text(str(exc))
             self._update_telegram_loop_status(
                 state="error",
+                activity_state="provider_failed",
                 message=f"Telegram reply failed: {loop_message}",
                 inbound_summary=inbound_summary,
                 outbound_summary=outbound_summary,
                 activity=True,
                 last_command=plan.command_label,
-                last_ask_status=plan.ask_status if plan.command_label in {"/ask", "/askd"} else None,
+                last_ask_status=plan.ask_status if plan.command_label in _PROVIDER_ASK_COMMANDS else None,
             )
             self._persist_telegram_offset(update.update_id)
             return
@@ -682,32 +740,44 @@ class ControllerService:
         self._persist_telegram_offset(update.update_id)
         self._update_telegram_loop_status(
             state="running",
+            activity_state="sent_reply",
             message=loop_message,
             inbound_summary=inbound_summary,
             outbound_summary=outbound_summary,
             activity=True,
             success=True,
             last_command=plan.command_label,
-            last_ask_status=plan.ask_status if plan.command_label in {"/ask", "/askd"} else None,
+            last_ask_status=plan.ask_status if plan.command_label in _PROVIDER_ASK_COMMANDS else None,
         )
 
-    def _build_telegram_reply(self, update: TelegramInboundMessage) -> _TelegramResponsePlan:
-        if not update.has_text:
+
+    def _build_telegram_reply(
+        self,
+        update: TelegramInboundMessage,
+        *,
+        parsed_command: _ParsedTelegramCommand | None = None,
+        batch_busy: bool = False,
+    ) -> _TelegramResponsePlan:
+        parsed = parsed_command or self._parse_telegram_command(update)
+        if parsed.command_label == "non_text":
             return _TelegramResponsePlan(
                 reply=f"{_OPERATOR_CONSOLE_LABEL} supports plain text Telegram messages only.",
                 command_label="non_text",
             )
 
-        text = update.text.strip()
-        command = text.split()[0].lower() if text else ""
         snapshot = self.snapshot()
+        command = parsed.command_label
 
+        if command == "parse_failure":
+            return self._build_parse_failure_reply(parsed)
         if command == "/start":
             return _TelegramResponsePlan(
-                reply=(
-                    f"{_OPERATOR_CONSOLE_LABEL} is connected.\n"
-                    f"Readiness: {self._readiness_label(snapshot.readiness_state)}\n"
-                    "Use /help to see supported commands."
+                reply=chr(10).join(
+                    (
+                        f"{_OPERATOR_CONSOLE_LABEL} is connected.",
+                        f"Readiness: {self._readiness_label(snapshot.readiness_state)}",
+                        "Use /help to see supported commands.",
+                    )
                 ),
                 command_label="/start",
             )
@@ -720,11 +790,23 @@ class ControllerService:
         if command == "/models":
             return self._build_models_reply()
         if command == "/ask":
-            prompt = text[len("/ask") :].strip()
-            return self._build_ask_reply(prompt, snapshot, response_style="concise", command_label="/ask")
+            return self._build_ask_reply(
+                parsed.argument,
+                snapshot,
+                chat_id=update.chat_id,
+                response_style="concise",
+                command_label="/ask",
+                batch_busy=batch_busy,
+            )
         if command == "/askd":
-            prompt = text[len("/askd") :].strip()
-            return self._build_ask_reply(prompt, snapshot, response_style="detailed", command_label="/askd")
+            return self._build_ask_reply(
+                parsed.argument,
+                snapshot,
+                chat_id=update.chat_id,
+                response_style="detailed",
+                command_label="/askd",
+                batch_busy=batch_busy,
+            )
 
         if snapshot.runtime_state != "running":
             return _TelegramResponsePlan(
@@ -737,17 +819,19 @@ class ControllerService:
                 command_label="plain_text",
             )
         return _TelegramResponsePlan(
-            reply=(
-                f"{_OPERATOR_CONSOLE_LABEL}\n"
-                "Use /help to see supported commands.\n"
-                "Plain text is not treated as /ask automatically."
+            reply=chr(10).join(
+                (
+                    _OPERATOR_CONSOLE_LABEL,
+                    "Use /help to see supported commands.",
+                    "Plain text is not treated as /ask automatically.",
+                )
             ),
             command_label="plain_text",
         )
 
     def _build_help_reply(self) -> _TelegramResponsePlan:
         return _TelegramResponsePlan(
-            reply="\n".join(
+            reply=chr(10).join(
                 (
                     "Operator commands",
                     "/help - show this command list",
@@ -774,11 +858,12 @@ class ControllerService:
             f"Policy: {self._policy_label(snapshot.policy)}",
             f"Provider: {self._provider_label(snapshot.active_provider, active_status.model)}",
             f"Telegram loop: {self._telegram_loop_label(snapshot.telegram_loop_state)}",
+            f"Loop activity: {self._telegram_loop_activity_label(snapshot.telegram_loop_activity)}",
         ]
         if snapshot.readiness_state != "ready":
             lines.append(f"Note: {snapshot.readiness_message}")
         return _TelegramResponsePlan(
-            reply="\n".join(lines),
+            reply=chr(10).join(lines),
             command_label="/status",
         )
 
@@ -786,7 +871,7 @@ class ControllerService:
         active_status = self._provider_status_for_mode(self._config.current_mode)
         online_state, online_message = self._online_use_state()
         return _TelegramResponsePlan(
-            reply="\n".join(
+            reply=chr(10).join(
                 (
                     "Mode",
                     f"Selected: {snapshot.selected_mode}",
@@ -804,7 +889,7 @@ class ControllerService:
         ollama_status = self._provider_status_for_mode("offline")
         if not ollama_status.available:
             return _TelegramResponsePlan(
-                reply="\n".join(
+                reply=chr(10).join(
                     (
                         "Local models",
                         "Unavailable right now.",
@@ -815,7 +900,7 @@ class ControllerService:
             )
         if not ollama_status.available_models:
             return _TelegramResponsePlan(
-                reply="\n".join(
+                reply=chr(10).join(
                     (
                         "Local models",
                         "No local Ollama models are available yet.",
@@ -832,24 +917,46 @@ class ControllerService:
         if ollama_status.model:
             lines.append(f"Active: {ollama_status.model}")
         return _TelegramResponsePlan(
-            reply="\n".join(lines),
+            reply=chr(10).join(lines),
             command_label="/models",
         )
 
     def _build_ask_reply(
+
         self,
         prompt: str,
         snapshot: ControllerSnapshot,
         *,
+        chat_id: str,
         response_style: str,
         command_label: str,
+        batch_busy: bool,
     ) -> _TelegramResponsePlan:
+        if batch_busy or self._is_provider_chat_busy(chat_id):
+            return self._blocked_ask_reply(
+                command_label=command_label,
+                reason="Another provider-backed ask is still running for this chat.",
+                next_step="Wait for the current reply before sending another ask.",
+                activity_state="processing_command",
+            )
+
+        prompt = " ".join(prompt.split())
         if not prompt:
             usage = "/askd <prompt>" if command_label == "/askd" else "/ask <prompt>"
             return self._blocked_ask_reply(
                 command_label=command_label,
                 reason="No prompt was provided.",
                 next_step=f"Try {usage}.",
+                activity_state="processing_command",
+            )
+
+        rate_limited, wait_seconds = self._provider_ask_is_rate_limited(chat_id)
+        if rate_limited:
+            return self._blocked_ask_reply(
+                command_label=command_label,
+                reason=f"Provider ask rate limit is active for this chat. Wait about {wait_seconds:.1f}s.",
+                next_step="Wait a moment, then resend your ask command.",
+                activity_state="processing_command",
             )
 
         if snapshot.runtime_state != "running":
@@ -857,6 +964,7 @@ class ControllerService:
                 command_label=command_label,
                 reason="Runtime is not running.",
                 next_step="Start the runtime in the desktop app and try again.",
+                activity_state="processing_command",
             )
 
         current_mode = self._config.current_mode
@@ -867,27 +975,51 @@ class ControllerService:
                     command_label=command_label,
                     reason=provider_status.message,
                     next_step="Validate Ollama in the desktop app before asking again.",
+                    activity_state="provider_failed",
                 )
             if snapshot.readiness_state == "not_ready":
                 return self._blocked_ask_reply(
                     command_label=command_label,
                     reason="Readiness is not ready.",
                     next_step="Resolve the blocking health or security issue in the desktop app.",
+                    activity_state="processing_command",
                 )
-            adapter = self._provider_adapters["ollama"]
-            reply = adapter.ask(  # type: ignore[call-arg]
-                runtime_status=self._runtime_manager.get_status(),
-                base_url=self._config.ollama_base_url,
-                preferred_model=self._config.preferred_ollama_model,
-                prompt=prompt,
-                response_style=response_style,
+            self._update_telegram_loop_status(
+                state="running",
+                activity_state="waiting_on_provider",
+                message=f"Waiting on {command_label} via Ollama.",
+                activity=True,
+                last_command=command_label,
+                last_ask_status=f"{command_label} in progress.",
             )
-            if not isinstance(reply, ProviderReply) or not reply.ok:
-                message = reply.message if isinstance(reply, ProviderReply) else "Offline provider call failed."
+            self._mark_provider_ask_started(chat_id)
+            result = self._run_provider_request(
+                provider="ollama",
+                chat_id=chat_id,
+                func=lambda: self._provider_adapters["ollama"].ask(  # type: ignore[call-arg]
+                    runtime_status=self._runtime_manager.get_status(),
+                    base_url=self._config.ollama_base_url,
+                    preferred_model=self._config.preferred_ollama_model,
+                    prompt=prompt,
+                    response_style=response_style,
+                ),
+            )
+            if result.state == "timeout":
+                return self._timeout_ask_reply(command_label=command_label, provider_name="Ollama")
+            if result.state != "ok" or not isinstance(result.reply, ProviderReply):
                 return self._blocked_ask_reply(
                     command_label=command_label,
-                    reason=message,
+                    reason="Provider request failed before a reply was returned.",
+                    next_step="Check Ollama and try again.",
+                    activity_state="provider_failed",
+                )
+            reply = result.reply
+            if not reply.ok:
+                return self._blocked_ask_reply(
+                    command_label=command_label,
+                    reason=reply.message,
                     next_step="Check Ollama and rerun /models or provider validation.",
+                    activity_state="provider_failed",
                 )
             model = reply.model or provider_status.model or "Ollama"
             return _TelegramResponsePlan(
@@ -912,6 +1044,7 @@ class ControllerService:
                 command_label=command_label,
                 reason=online_message,
                 next_step=next_step,
+                activity_state="processing_command",
             )
 
         provider_status = self._provider_status_for_mode("online")
@@ -920,28 +1053,51 @@ class ControllerService:
                 command_label=command_label,
                 reason=provider_status.message,
                 next_step="Save or validate the OpenAI configuration in the desktop app.",
+                activity_state="provider_failed",
             )
         if snapshot.readiness_state == "not_ready":
             return self._blocked_ask_reply(
                 command_label=command_label,
                 reason="Readiness is not ready.",
                 next_step="Resolve the blocking health or security issue in the desktop app.",
+                activity_state="processing_command",
             )
-
-        adapter = self._provider_adapters["openai"]
-        reply = adapter.ask(  # type: ignore[call-arg]
-            secret_store=self._secret_store,
-            secret_id=self._config.openai_secret_id,
-            transient_secret="",
-            prompt=prompt,
-            response_style=response_style,
+        self._update_telegram_loop_status(
+            state="running",
+            activity_state="waiting_on_provider",
+            message=f"Waiting on {command_label} via OpenAI.",
+            activity=True,
+            last_command=command_label,
+            last_ask_status=f"{command_label} in progress.",
         )
-        if not isinstance(reply, ProviderReply) or not reply.ok:
-            message = reply.message if isinstance(reply, ProviderReply) else "Online provider call failed."
+        self._mark_provider_ask_started(chat_id)
+        result = self._run_provider_request(
+            provider="openai",
+            chat_id=chat_id,
+            func=lambda: self._provider_adapters["openai"].ask(  # type: ignore[call-arg]
+                secret_store=self._secret_store,
+                secret_id=self._config.openai_secret_id,
+                transient_secret="",
+                prompt=prompt,
+                response_style=response_style,
+            ),
+        )
+        if result.state == "timeout":
+            return self._timeout_ask_reply(command_label=command_label, provider_name="OpenAI")
+        if result.state != "ok" or not isinstance(result.reply, ProviderReply):
             return self._blocked_ask_reply(
                 command_label=command_label,
-                reason=message,
+                reason="Provider request failed before a reply was returned.",
                 next_step="Check the online provider configuration and try again.",
+                activity_state="provider_failed",
+            )
+        reply = result.reply
+        if not reply.ok:
+            return self._blocked_ask_reply(
+                command_label=command_label,
+                reason=reply.message,
+                next_step="Check the online provider configuration and try again.",
+                activity_state="provider_failed",
             )
         model = reply.model or "OpenAI"
         return _TelegramResponsePlan(
@@ -957,10 +1113,38 @@ class ControllerService:
             response_style=response_style,
         )
 
-    def _blocked_ask_reply(self, *, command_label: str, reason: str, next_step: str) -> _TelegramResponsePlan:
-        title = "Can't run /askd right now." if command_label == "/askd" else "Can't run /ask right now."
+
+    def _build_parse_failure_reply(self, parsed: _ParsedTelegramCommand) -> _TelegramResponsePlan:
+        usage_hint = parsed.usage_hint or "Use /help to see supported commands."
         return _TelegramResponsePlan(
-            reply="\n".join(
+            reply=chr(10).join(
+                (
+                    "Couldn't parse that command.",
+                    f"Next: {usage_hint}",
+                )
+            ),
+            command_label="parse_failure",
+        )
+
+    def _blocked_ask_reply(
+        self,
+        *,
+        command_label: str,
+        reason: str,
+        next_step: str,
+        activity_state: str,
+    ) -> _TelegramResponsePlan:
+        title = "Can't run /askd right now." if command_label == "/askd" else "Can't run /ask right now."
+        self._update_telegram_loop_status(
+            state="running",
+            activity_state=activity_state,
+            message=reason,
+            activity=True,
+            last_command=command_label,
+            last_ask_status=f"{command_label} blocked: {reason}",
+        )
+        return _TelegramResponsePlan(
+            reply=chr(10).join(
                 (
                     title,
                     f"Reason: {reason}",
@@ -969,6 +1153,30 @@ class ControllerService:
             ),
             command_label=command_label,
             ask_status=f"{command_label} blocked: {reason}",
+            hide_content_in_summary=True,
+            response_style="detailed" if command_label == "/askd" else "concise",
+        )
+
+    def _timeout_ask_reply(self, *, command_label: str, provider_name: str) -> _TelegramResponsePlan:
+        reason = f"{provider_name} did not finish before the timeout."
+        self._update_telegram_loop_status(
+            state="running",
+            activity_state="timed_out",
+            message=reason,
+            activity=True,
+            last_command=command_label,
+            last_ask_status=f"{command_label} timed out via {provider_name}.",
+        )
+        return _TelegramResponsePlan(
+            reply=chr(10).join(
+                (
+                    "Provider request timed out.",
+                    f"Reason: {reason}",
+                    "Next: Wait a moment, then try again.",
+                )
+            ),
+            command_label=command_label,
+            ask_status=f"{command_label} timed out via {provider_name}.",
             hide_content_in_summary=True,
             response_style="detailed" if command_label == "/askd" else "concise",
         )
@@ -984,12 +1192,14 @@ class ControllerService:
         heading = "Detailed answer" if response_style == "detailed" else "Answer"
         normalized = self._normalize_telegram_reply(answer, response_style=response_style)
         source = f"{mode_label} | {provider_label}"
-        return "\n".join((f"{heading} ({source})", normalized))
+        return chr(10).join((f"{heading} ({source})", normalized))
 
     def _update_telegram_loop_status(
+
         self,
         *,
         state: str,
+        activity_state: str | None = None,
         message: str,
         inbound_summary: str | None = None,
         outbound_summary: str | None = None,
@@ -1002,6 +1212,7 @@ class ControllerService:
             timestamp = self._now_iso() if activity else self._telegram_loop_status.last_activity_at
             self._telegram_loop_status = TelegramLoopStatus(
                 state=state,  # type: ignore[arg-type]
+                activity_state=(activity_state or self._telegram_loop_status.activity_state),  # type: ignore[arg-type]
                 message=sanitize_log_text(message),
                 last_activity_at=timestamp,
                 last_success_at=timestamp if success and activity else self._telegram_loop_status.last_success_at,
@@ -1010,7 +1221,6 @@ class ControllerService:
                 last_inbound_summary=sanitize_log_text(inbound_summary or self._telegram_loop_status.last_inbound_summary),
                 last_outbound_summary=sanitize_log_text(outbound_summary or self._telegram_loop_status.last_outbound_summary),
             )
-
     @staticmethod
     def _summarize_text(text: str, limit: int = 160) -> str:
         normalized = " ".join(text.split())
@@ -1020,45 +1230,135 @@ class ControllerService:
         return f"{sanitized[: limit - 3]}..."
 
     def _summarize_inbound_update(self, update: TelegramInboundMessage, command_label: str) -> str:
-        if command_label in {"/ask", "/askd"}:
+        if command_label in _PROVIDER_ASK_COMMANDS:
             return self._summarize_text(f"{update.sender_label}: {command_label} [prompt hidden]")
         if command_label == "plain_text":
             return self._summarize_text(f"{update.sender_label}: text message received")
         if command_label == "non_text":
             return self._summarize_text(f"{update.sender_label}: non-text message received")
+        if command_label == "parse_failure":
+            return self._summarize_text(f"{update.sender_label}: malformed command")
         text = update.text.strip() or command_label
         return self._summarize_text(f"{update.sender_label}: {text}")
 
     def _outbound_summary_for_plan(self, update: TelegramInboundMessage, plan: _TelegramResponsePlan) -> str:
-        if plan.command_label in {"/ask", "/askd"}:
+        if plan.command_label in _PROVIDER_ASK_COMMANDS:
             return self._summarize_text(plan.ask_status or f"Sent {plan.command_label} reply to {update.sender_label}.")
         if plan.command_label == "plain_text":
             return self._summarize_text(f"Sent placeholder reply to {update.sender_label}.")
         if plan.command_label == "non_text":
             return self._summarize_text(f"Sent non-text guidance reply to {update.sender_label}.")
+        if plan.command_label == "parse_failure":
+            return self._summarize_text(f"Sent command correction to {update.sender_label}.")
         return self._summarize_text(f"Sent {plan.command_label} reply to {update.sender_label}.")
 
     @staticmethod
-    def _incoming_command_label(update: TelegramInboundMessage) -> str:
+    def _parse_telegram_command(update: TelegramInboundMessage) -> _ParsedTelegramCommand:
         if not update.has_text:
-            return "non_text"
+            return _ParsedTelegramCommand(command_label="non_text")
         text = update.text.strip()
         if not text:
-            return "plain_text"
-        command = text.split()[0].lower()
-        return command if command.startswith("/") else "plain_text"
+            return _ParsedTelegramCommand(command_label="plain_text")
+        if not text.startswith("/"):
+            return _ParsedTelegramCommand(command_label="plain_text", normalized_text=" ".join(text.split()))
+        parts = text.split(None, 1)
+        command_token = parts[0]
+        argument = parts[1].strip() if len(parts) > 1 else ""
+        command = command_token.split("@", 1)[0].lower()
+        normalized_text = " ".join(text.split())
+        if command in {"/start", "/help", "/status", "/mode", "/models", "/ask", "/askd"}:
+            return _ParsedTelegramCommand(command_label=command, argument=argument, normalized_text=normalized_text)
+        if command.startswith("/ask"):
+            return _ParsedTelegramCommand(
+                command_label="parse_failure",
+                normalized_text=normalized_text,
+                usage_hint="Use /ask <prompt> or /askd <prompt>.",
+            )
+        return _ParsedTelegramCommand(
+            command_label="parse_failure",
+            normalized_text=normalized_text,
+            usage_hint="Use /help to see supported commands.",
+        )
+
+    def _run_provider_request(self, *, provider: str, chat_id: str, func) -> _ProviderCallResult:
+        request_id = f"{chat_id}:{time.monotonic()}"
+        result_box: dict[str, object] = {}
+        done_event = threading.Event()
+
+        def _worker() -> None:
+            try:
+                result_box["reply"] = func()
+            except Exception as exc:  # noqa: BLE001
+                result_box["error"] = sanitize_log_text(str(exc))
+            finally:
+                done_event.set()
+                self._finish_provider_chat(chat_id, request_id)
+
+        worker = threading.Thread(target=_worker, name=f"Telegram{provider.title()}Ask", daemon=True)
+        self._begin_provider_chat(chat_id, request_id, worker)
+        worker.start()
+        finished = done_event.wait(self._provider_timeout_seconds(provider))
+        if not finished:
+            return _ProviderCallResult(state="timeout")
+        if "error" in result_box:
+            return _ProviderCallResult(state="error", error_message=str(result_box["error"]))
+        reply = result_box.get("reply")
+        if not isinstance(reply, ProviderReply):
+            return _ProviderCallResult(state="error", error_message="Provider call returned an invalid result.")
+        return _ProviderCallResult(state="ok", reply=reply)
+
+    def _provider_timeout_seconds(self, provider: str) -> float:
+        return float(self._provider_timeouts.get(provider, _OLLAMA_ASK_TIMEOUT_SECONDS))
+
+    def _begin_provider_chat(self, chat_id: str, request_id: str, worker: threading.Thread) -> None:
+        with self._provider_chat_lock:
+            self._active_provider_chats[chat_id] = (request_id, worker)
+
+    def _finish_provider_chat(self, chat_id: str, request_id: str) -> None:
+        with self._provider_chat_lock:
+            current = self._active_provider_chats.get(chat_id)
+            if current is None:
+                return
+            if current[0] == request_id:
+                self._active_provider_chats.pop(chat_id, None)
+
+    def _is_provider_chat_busy(self, chat_id: str) -> bool:
+        with self._provider_chat_lock:
+            current = self._active_provider_chats.get(chat_id)
+            if current is None:
+                return False
+            _, worker = current
+            if worker.is_alive():
+                return True
+            self._active_provider_chats.pop(chat_id, None)
+            return False
+
+    def _mark_provider_ask_started(self, chat_id: str) -> None:
+        with self._provider_chat_lock:
+            self._provider_cooldowns[chat_id] = time.monotonic()
+
+    def _provider_ask_is_rate_limited(self, chat_id: str) -> tuple[bool, float]:
+        with self._provider_chat_lock:
+            last_started = self._provider_cooldowns.get(chat_id)
+        if last_started is None:
+            return False, 0.0
+        elapsed = time.monotonic() - last_started
+        remaining = self._provider_ask_cooldown_seconds - elapsed
+        if remaining > 0:
+            return True, round(remaining, 1)
+        return False, 0.0
+
+
 
     @staticmethod
     def _normalize_telegram_reply(text: str, *, response_style: str) -> str:
-        lines = [
-            " ".join(raw_line.split())
-            for raw_line in text.replace("\r", "\n").split("\n")
-        ]
+        lines = [" ".join(raw_line.split()) for raw_line in text.splitlines()]
         cleaned = [line for line in lines if line]
         if not cleaned:
-            return "No answer text was returned."
+            normalized_fallback = " ".join(text.split())
+            return normalized_fallback or "No answer text was returned."
         if response_style == "detailed":
-            normalized = "\n".join(cleaned[:8])
+            normalized = chr(10).join(cleaned[:8])
             return ControllerService._trim_telegram_text(normalized, limit=_ASK_DETAILED_LIMIT)
         normalized = " ".join(cleaned)
         return ControllerService._trim_telegram_text(normalized, limit=_ASK_CONCISE_LIMIT)
@@ -1148,7 +1448,20 @@ class ControllerService:
     def _telegram_loop_label(state: str) -> str:
         return {"running": "Running", "starting": "Starting", "stopped": "Stopped", "error": "Error"}.get(state, state)
 
+    @staticmethod
+    def _telegram_loop_activity_label(state: str) -> str:
+        return {
+            "idle": "Idle",
+            "polling": "Polling",
+            "processing_command": "Processing Command",
+            "waiting_on_provider": "Waiting On Provider",
+            "timed_out": "Timed Out",
+            "provider_failed": "Provider Failed",
+            "sent_reply": "Sent Reply",
+        }.get(state, state)
+
     def _compute_readiness(
+
         self,
         *,
         runtime_state: str,
@@ -1201,4 +1514,9 @@ class ControllerService:
         if warnings:
             return "degraded", " ".join(warnings[:2])
         return "ready", "Runtime, provider, diagnostics, and Telegram are ready for daily use."
+
+
+
+
+
 

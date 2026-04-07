@@ -6,7 +6,7 @@ Controlled execution surface for supported projects. AI-E turns a bounded reques
 
 The current active operator-console surface in this repo is the Windows-first OpenClaw controller shell. The known-good checkpoint is:
 
-- Current baseline: `Windows OpenClaw Operator Console v1.3 - Conversation Quality Layer`
+- Current baseline: `Windows OpenClaw Operator Console v1.4 - Interaction Reliability & Control Layer`
 - Health: `Healthy`
 - Security: `Safe`
 - Readiness: `Ready`
@@ -19,9 +19,10 @@ What is now working:
 - trusted health and security diagnostics, including ownership-aware port conflict checks and multi-signal runtime liveness
 - secure Telegram bot validation, connection testing, and polling-loop start/stop controls
 - duplicate-safe Telegram interaction loop with `/start`, `/help`, `/status`, `/mode`, `/models`, `/ask <prompt>`, and `/askd <prompt>`
-- cleaner Telegram reply formatting for mobile use, including concise headings, readable status and mode summaries, capped local-model output, and bounded provider-backed answers
+- deterministic Telegram command parsing with whitespace-tolerant handling, consistent casing behavior, and short correction replies for malformed commands
+- per-chat provider-ask control with explicit in-flight rejection, bounded provider timeouts, and a narrow provider-ask cooldown to prevent accidental spam
+- clearer loop observability in both Telegram summaries and the desktop UI, including activity phases such as polling, waiting on provider, timed out, provider failed, and sent reply
 - explicit concise vs detailed ask styles with `/ask` and `/askd`, plus clearer blocked-action messages with one short next step
-- lightweight UI observability for the last Telegram command handled, the last provider-backed ask status, and recent inbound/outbound loop activity
 
 Milestone notes:
 
@@ -29,18 +30,19 @@ Milestone notes:
 - v1.1: `docs/milestones/windows_openclaw_operator_console_v1_1_telegram_interaction_loop.md`
 - v1.2: `docs/milestones/windows_openclaw_operator_console_v1_2_first_useful_commands_layer.md`
 - v1.3: `docs/milestones/windows_openclaw_operator_console_v1_3_conversation_quality_layer.md`
+- v1.4: `docs/milestones/windows_openclaw_operator_console_v1_4_interaction_reliability_and_control_layer.md`
 
 Important guardrails and usage notes:
 
 - Offline Mode remains first-class and no silent provider or mode fallback is allowed.
 - `/ask` stays explicit; generic plain text is not auto-routed into provider-backed queries.
-- `/askd` allows more detail, but replies remain bounded and Telegram-friendly; no streaming or multi-message transcript flow has been added.
+- Provider-backed asks now enforce a small per-chat cooldown and reject overlapping asks for the same chat instead of trying to queue hidden work.
+- Provider-backed asks now time out cleanly instead of hanging indefinitely, and timeout replies stay single-shot with no duplicate final response.
 - The controller stays local-first with loopback bind defaults and secret redaction in logs and Telegram activity summaries.
-- If a provider cannot answer, the bot reports the blocking reason and a short next step instead of switching modes or providers.
 
 Current next milestone:
 
-- `Windows OpenClaw Operator Console v1.4 - Explicit Online Approval UX`
+- `Windows OpenClaw Operator Console v1.5 - Explicit Online Approval UX`
 - goal: make remote-use approval clearer from both the desktop app and Telegram without expanding into automation, scraping, RAG, repo mutation, or autonomous workflows
 
 Fast operator path:
@@ -49,7 +51,8 @@ Fast operator path:
 2. Start the runtime and run Health/Security checks.
 3. Validate Telegram, start the Telegram loop, and message the configured bot.
 4. Use `/help`, `/status`, `/mode`, `/models`, `/ask hello`, or `/askd hello` from Telegram.
-5. Run `python -m unittest discover -s tests -v` and `python diagnostics_smoke.py` for the current controller verification pass.
+5. If Telegram reports an in-flight ask, timeout, or cooldown message, wait for the current reply or retry after the short delay instead of resending repeatedly.
+6. Run `python -m unittest discover -s tests -v` and `python diagnostics_smoke.py` for the current controller verification pass.
 
 ## AI-E v1 Product Surface Status
 

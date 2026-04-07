@@ -142,6 +142,7 @@ class FoundationWindow(QtWidgets.QMainWindow):
         self.telegram_last_test_result_value = self._create_value_label("Not Run")
         self.telegram_last_test_at_value = self._create_value_label("-")
         self.telegram_loop_status_value = self._create_value_label("Stopped")
+        self.telegram_loop_activity_value = self._create_value_label("Idle")
         self.telegram_loop_message_value = self._create_value_label("Telegram loop is stopped.")
         self.telegram_last_activity_value = self._create_value_label("-")
         self.telegram_last_command_value = self._create_value_label("No Telegram command handled yet.")
@@ -192,6 +193,7 @@ class FoundationWindow(QtWidgets.QMainWindow):
         layout.addRow("Last Test Result", self.telegram_last_test_result_value)
         layout.addRow("Last Test At", self.telegram_last_test_at_value)
         layout.addRow("Loop Status", self.telegram_loop_status_value)
+        layout.addRow("Loop Activity", self.telegram_loop_activity_value)
         layout.addRow("Loop Message", self.telegram_loop_message_value)
         layout.addRow("Last Activity", self.telegram_last_activity_value)
         layout.addRow("Last Command", self.telegram_last_command_value)
@@ -291,6 +293,7 @@ class FoundationWindow(QtWidgets.QMainWindow):
         self.provider_status_value = self._create_value_label("unknown")
         self.provider_status_message_value = self._create_value_label("Provider has not been validated yet.")
         self.telegram_status_summary_value = self._create_value_label("unknown")
+        self.telegram_loop_activity_summary_value = self._create_value_label("Idle")
         self.telegram_status_message_value = self._create_value_label("Telegram has not been configured yet.")
         self.telegram_bot_value = self._create_value_label("-")
         self.telegram_test_value = self._create_value_label("Not Run")
@@ -308,6 +311,7 @@ class FoundationWindow(QtWidgets.QMainWindow):
         layout.addRow("Provider Status", self.provider_status_value)
         layout.addRow("Provider Message", self.provider_status_message_value)
         layout.addRow("Telegram Status", self.telegram_status_summary_value)
+        layout.addRow("Loop Activity", self.telegram_loop_activity_summary_value)
         layout.addRow("Telegram Message", self.telegram_status_message_value)
         layout.addRow("Telegram Bot", self.telegram_bot_value)
         layout.addRow("Telegram Test", self.telegram_test_value)
@@ -398,6 +402,8 @@ class FoundationWindow(QtWidgets.QMainWindow):
         self.telegram_last_test_result_value.setText(self._telegram_test_result_label(snapshot.telegram_last_test_result))
         self.telegram_last_test_at_value.setText(snapshot.telegram_last_test_at)
         self.telegram_loop_status_value.setText(self._telegram_loop_label(snapshot.telegram_loop_state))
+        self.telegram_loop_activity_value.setText(self._telegram_loop_activity_label(snapshot.telegram_loop_activity))
+        self.telegram_loop_activity_summary_value.setText(self._telegram_loop_activity_label(snapshot.telegram_loop_activity))
         self.telegram_loop_message_value.setText(snapshot.telegram_loop_message)
         self.telegram_last_activity_value.setText(snapshot.telegram_last_activity_at)
         self.telegram_last_command_value.setText(snapshot.telegram_last_command)
@@ -602,6 +608,18 @@ class FoundationWindow(QtWidgets.QMainWindow):
     def _telegram_loop_label(state: str) -> str:
         return {"running": "Running", "starting": "Starting", "stopped": "Stopped", "error": "Error"}.get(state, state)
 
+    @staticmethod
+    def _telegram_loop_activity_label(state: str) -> str:
+        return {
+            "idle": "Idle",
+            "polling": "Polling",
+            "processing_command": "Processing Command",
+            "waiting_on_provider": "Waiting On Provider",
+            "timed_out": "Timed Out",
+            "provider_failed": "Provider Failed",
+            "sent_reply": "Sent Reply",
+        }.get(state, state)
+
     @classmethod
     def _telegram_test_label(cls, result: str, timestamp: str) -> str:
         label = cls._telegram_test_result_label(result)
@@ -633,3 +651,4 @@ def launch_controller_app() -> None:
     window = FoundationWindow()
     window.show()
     app.exec()
+
