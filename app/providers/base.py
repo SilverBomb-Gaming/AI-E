@@ -38,10 +38,22 @@ class ProviderStatus:
         }
 
 
+@dataclass(frozen=True)
+class ProviderReply:
+    provider: ProviderType
+    ok: bool
+    text: str
+    message: str
+    model: str = ""
+
+
 class BaseProviderAdapter(ABC):
     provider_type: ProviderType
     display_name: str
 
     @abstractmethod
     def validate(self, **kwargs: object) -> ProviderStatus:
+        raise NotImplementedError
+
+    def ask(self, **kwargs: object) -> ProviderReply:
         raise NotImplementedError

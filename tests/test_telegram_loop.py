@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import tempfile
 import time
@@ -362,7 +362,7 @@ class TelegramLoopTests(unittest.TestCase):
             self.assertTrue(_wait_until(lambda: len(telegram_service.sent_messages) == 1))
             snapshot = service.stop_telegram_loop()
             self.assertNotIn(raw_secret, snapshot.telegram_last_inbound_summary)
-            self.assertIn("sk-abc", snapshot.telegram_last_inbound_summary)
+            self.assertIn("text message received", snapshot.telegram_last_inbound_summary)
 
 
 if __name__ == "__main__":

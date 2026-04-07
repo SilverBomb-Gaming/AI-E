@@ -6,7 +6,7 @@ Controlled execution surface for supported projects. AI-E turns a bounded reques
 
 The current active operator-console surface in this repo is the Windows-first OpenClaw controller shell. The known-good checkpoint is:
 
-- Current baseline: `Windows OpenClaw Operator Console v1.1 - Telegram Interaction Loop`
+- Current baseline: `Windows OpenClaw Operator Console v1.2 - First Useful Commands Layer`
 - Health: `Healthy`
 - Security: `Safe`
 - Readiness: `Ready`
@@ -18,25 +18,35 @@ What is now working:
 - offline/online mode selection with policy guardrails preserved
 - trusted health and security diagnostics, including ownership-aware port conflict checks and multi-signal runtime liveness
 - secure Telegram bot validation, connection testing, and polling-loop start/stop controls
-- minimal end-to-end Telegram interaction flow with `/start`, `/status`, `/mode`, duplicate-safe polling, and safe placeholder plain-text replies
+- duplicate-safe Telegram interaction loop with `/start`, `/help`, `/status`, `/mode`, `/models`, and `/ask <prompt>`
+- explicit provider-backed `/ask` flow with Offline-first behavior, no silent fallback, and concise guardrail-respecting replies
+- lightweight UI observability for the last Telegram command handled and the last provider-backed `/ask` result
+
+Milestone notes:
+
+- v1 baseline: `docs/OPENCLAW_BASELINE_V1.md`
+- v1.1: `docs/milestones/windows_openclaw_operator_console_v1_1_telegram_interaction_loop.md`
+- v1.2: `docs/milestones/windows_openclaw_operator_console_v1_2_first_useful_commands_layer.md`
 
 Important guardrails and usage notes:
 
 - Offline Mode remains first-class and no silent provider or mode fallback is allowed.
 - The controller stays local-first with loopback bind defaults and secret redaction in logs.
-- Generic plain text in Telegram is still limited; only explicit command handling is enabled.
+- Generic plain text in Telegram is still limited; `/ask` is explicit and generic text is not auto-routed into provider queries.
+- If a provider cannot answer, the bot reports the blocking reason clearly instead of switching modes or providers.
 
 Current next milestone:
 
-- `Windows OpenClaw Operator Console v1.2 - First Useful Commands Layer`
-- goal: add `/help`, `/models`, and explicit `/ask <prompt>` replies without broadening into automation, scraping, RAG, or repo mutation
+- `Windows OpenClaw Operator Console v1.3 - Command Polish and Explicit Online Approval UX`
+- goal: tighten reply formatting and online confirmation clarity without broadening into automation, scraping, RAG, repo mutation, or autonomous workflows
 
 Fast operator path:
 
 1. Launch the desktop shell with `python -m app.main`.
 2. Start the runtime and run Health/Security checks.
 3. Validate Telegram, start the Telegram loop, and message the configured bot.
-4. Run `python -m unittest discover -s tests -v` and `python diagnostics_smoke.py` for the current controller verification pass.
+4. Use `/help`, `/status`, `/mode`, `/models`, and `/ask hello` from Telegram.
+5. Run `python -m unittest discover -s tests -v` and `python diagnostics_smoke.py` for the current controller verification pass.
 
 ## AI-E v1 Product Surface Status
 

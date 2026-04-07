@@ -81,5 +81,7 @@ class TelegramLoopStatus:
     message: str = "Telegram loop is stopped."
     last_activity_at: str = ""
     last_success_at: str = ""
+    last_command: str = "No Telegram command handled yet."
+    last_ask_status: str = "No provider-backed ask has run yet."
     last_inbound_summary: str = "No inbound Telegram activity yet."
     last_outbound_summary: str = "No outbound Telegram activity yet."

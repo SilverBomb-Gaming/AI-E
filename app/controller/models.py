@@ -42,6 +42,8 @@ class ControllerSnapshot:
     telegram_loop_state: TelegramLoopState
     telegram_loop_message: str
     telegram_last_activity_at: str
+    telegram_last_command: str
+    telegram_last_ask_status: str
     telegram_last_inbound_summary: str
     telegram_last_outbound_summary: str
     readiness_state: ReadinessState
