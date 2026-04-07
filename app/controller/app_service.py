@@ -9,6 +9,8 @@ import time
 from .capability_evaluator import CapabilityEvaluator
 from .capability_models import CapabilityContext, CapabilityEvaluation
 from .capability_registry import COMMAND_CAPABILITY_MAP
+from .confirmation_models import ConfirmationContextSnapshot, PendingConfirmation
+from .confirmation_store import ConfirmationStore
 from .channel_models import TelegramChannelStatus, TelegramLoopStatus
 from .diagnostic_models import DiagnosticReport
 from .diagnostics import ControllerDiagnosticsService
@@ -21,13 +23,14 @@ from ..runtime.manager import OpenClawRuntimeManager
 from ..runtime.log_sanitizer import sanitize_log_text
 
 
-_OPERATOR_CONSOLE_LABEL = "Windows OpenClaw Operator Console v1.5"
+_OPERATOR_CONSOLE_LABEL = "Windows OpenClaw Operator Console v1.6"
 _ASK_CONCISE_LIMIT = 700
 _ASK_DETAILED_LIMIT = 1500
 _PROVIDER_ASK_COMMANDS = frozenset({"/ask", "/askd"})
 _PROVIDER_ASK_COOLDOWN_SECONDS = 4.0
 _OLLAMA_ASK_TIMEOUT_SECONDS = 12.0
 _OPENAI_ASK_TIMEOUT_SECONDS = 18.0
+_CONFIRMATION_LIFETIME_SECONDS = 120.0
 
 
 @dataclass(frozen=True)
@@ -94,6 +97,9 @@ class ControllerService:
         )
         self._capability_evaluator = CapabilityEvaluator()
         self._last_capability_evaluation: CapabilityEvaluation | None = None
+        self._confirmation_store = ConfirmationStore(lifetime_seconds=_CONFIRMATION_LIFETIME_SECONDS)
+        self._last_confirmation_requested = "No pending confirmation requested yet."
+        self._last_confirmation_result = "No confirmation handled yet."
         self._latest_health_report: DiagnosticReport | None = None
         self._latest_security_report: DiagnosticReport | None = None
         self._last_message = "Controller ready."
@@ -223,6 +229,7 @@ class ControllerService:
         return self.snapshot()
 
     def snapshot(self) -> ControllerSnapshot:
+        self._cleanup_expired_confirmations()
         status = self._runtime_manager.get_status()
         selected_provider_status = self._provider_status_cache.get(self._config.selected_provider) or self._default_provider_status(
             self._config.selected_provider
@@ -268,6 +275,9 @@ class ControllerService:
             last_capability_id=self._last_capability_evaluation.capability_id if self._last_capability_evaluation else "-",
             last_capability_state=self._last_capability_evaluation.current_availability_state if self._last_capability_evaluation else "unknown",
             last_capability_message=self._last_capability_evaluation.message if self._last_capability_evaluation else "No capability evaluated yet.",
+            pending_confirmation_count=self._confirmation_store.pending_count(),
+            last_confirmation_requested=self._last_confirmation_requested,
+            last_confirmation_result=self._last_confirmation_result,
             readiness_state=readiness_state,
             readiness_message=readiness_message,
             health_status=self._latest_health_report.overall_status if self._latest_health_report else "unknown",
@@ -411,7 +421,7 @@ class ControllerService:
         self._config_store.save(self._config)
 
         if selected_mode == "online" and policy == "ask_before_online" and self._config.current_mode != "online" and not confirm_online:
-            self._last_message = "Settings saved. Confirm Online Mode before activating a remote provider."
+            self._last_message = "Settings saved. Online requests will require one-shot confirmation before remote execution."
             return self.snapshot()
 
         validation = self._validate_provider(
@@ -740,7 +750,7 @@ class ControllerService:
                 outbound_summary=outbound_summary,
                 activity=True,
                 last_command=plan.command_label,
-                last_ask_status=plan.ask_status if plan.command_label in _PROVIDER_ASK_COMMANDS else None,
+                last_ask_status=plan.ask_status if plan.command_label in _PROVIDER_ASK_COMMANDS or (plan.command_label == "/confirm" and plan.ask_status) else None,
             )
             self._persist_telegram_offset(update.update_id)
             return
@@ -804,11 +814,16 @@ class ControllerService:
         if command == "/capabilities":
             self._evaluate_command_capability(command, snapshot)
             return self._build_capabilities_reply(snapshot)
+        if command == "/confirm":
+            return self._build_confirm_reply(parsed.argument, snapshot, chat_id=update.chat_id)
+        if command == "/deny":
+            return self._build_deny_reply(parsed.argument, chat_id=update.chat_id)
         if command == "/ask":
             return self._build_ask_reply(
                 parsed.argument,
                 snapshot,
                 chat_id=update.chat_id,
+                requester_label=update.sender_label,
                 response_style="concise",
                 command_label="/ask",
                 batch_busy=batch_busy,
@@ -818,6 +833,7 @@ class ControllerService:
                 parsed.argument,
                 snapshot,
                 chat_id=update.chat_id,
+                requester_label=update.sender_label,
                 response_style="detailed",
                 command_label="/askd",
                 batch_busy=batch_busy,
@@ -844,7 +860,6 @@ class ControllerService:
             command_label="plain_text",
         )
 
-
     def _build_help_reply(self) -> _TelegramResponsePlan:
         return _TelegramResponsePlan(
             reply=chr(10).join(
@@ -857,12 +872,13 @@ class ControllerService:
                     "/capabilities - current capability gate summary",
                     "/ask <prompt> - concise provider reply",
                     "/askd <prompt> - more detailed provider reply",
+                    "/confirm <id> - approve one pending action",
+                    "/deny <id> - reject one pending action",
                     "Plain text is not auto-routed to /ask.",
                 )
             ),
             command_label="/help",
         )
-
 
     def _build_status_reply(self, snapshot: ControllerSnapshot) -> _TelegramResponsePlan:
         active_status = self._provider_status_for_mode(self._config.current_mode)
@@ -971,6 +987,7 @@ class ControllerService:
         snapshot: ControllerSnapshot,
         *,
         chat_id: str,
+        requester_label: str,
         response_style: str,
         command_label: str,
         batch_busy: bool,
@@ -1010,11 +1027,24 @@ class ControllerService:
                 next_step="Run /status from Telegram or the desktop app, then try again.",
                 activity_state="processing_command",
             )
+        if capability.current_availability_state == "confirmation_required":
+            return self._build_confirmation_required_reply(
+                command_label=command_label,
+                capability=capability,
+                context=context,
+                snapshot=snapshot,
+                prompt=prompt,
+                response_style=response_style,
+                chat_id=chat_id,
+                requester_label=requester_label,
+            )
         if capability.current_availability_state != "allowed":
             return self._blocked_ask_reply_from_capability(command_label=command_label, capability=capability)
 
-        current_mode = self._config.current_mode
-        if current_mode == "offline":
+        execution_mode = self._config.current_mode
+        if self._config.selected_mode == "online" and self._config.current_mode != "online":
+            execution_mode = "online"
+        if execution_mode == "offline":
             provider_status = context.offline_provider_status
             self._update_telegram_loop_status(
                 state="running",
@@ -1118,7 +1148,6 @@ class ControllerService:
             hide_content_in_summary=True,
             response_style=response_style,
         )
-
 
     def _build_parse_failure_reply(self, parsed: _ParsedTelegramCommand) -> _TelegramResponsePlan:
         usage_hint = parsed.usage_hint or "Use /help to see supported commands."
@@ -1248,7 +1277,7 @@ class ControllerService:
         return self._summarize_text(f"{update.sender_label}: {text}")
 
     def _outbound_summary_for_plan(self, update: TelegramInboundMessage, plan: _TelegramResponsePlan) -> str:
-        if plan.command_label in _PROVIDER_ASK_COMMANDS:
+        if plan.command_label in _PROVIDER_ASK_COMMANDS or (plan.command_label == "/confirm" and plan.ask_status):
             return self._summarize_text(plan.ask_status or f"Sent {plan.command_label} reply to {update.sender_label}.")
         if plan.command_label == "plain_text":
             return self._summarize_text(f"Sent placeholder reply to {update.sender_label}.")
@@ -1272,13 +1301,19 @@ class ControllerService:
         argument = parts[1].strip() if len(parts) > 1 else ""
         command = command_token.split("@", 1)[0].lower()
         normalized_text = " ".join(text.split())
-        if command in {"/start", "/help", "/status", "/mode", "/models", "/capabilities", "/ask", "/askd"}:
+        if command in {"/start", "/help", "/status", "/mode", "/models", "/capabilities", "/confirm", "/deny", "/ask", "/askd"}:
             return _ParsedTelegramCommand(command_label=command, argument=argument, normalized_text=normalized_text)
         if command.startswith("/ask"):
             return _ParsedTelegramCommand(
                 command_label="parse_failure",
                 normalized_text=normalized_text,
                 usage_hint="Use /ask <prompt> or /askd <prompt>.",
+            )
+        if command.startswith("/confirm") or command.startswith("/deny"):
+            return _ParsedTelegramCommand(
+                command_label="parse_failure",
+                normalized_text=normalized_text,
+                usage_hint="Use /confirm <id> or /deny <id>.",
             )
         return _ParsedTelegramCommand(
             command_label="parse_failure",
@@ -1360,11 +1395,17 @@ class ControllerService:
         snapshot: ControllerSnapshot,
         *,
         remember: bool = True,
+        confirmation_granted: bool = False,
     ) -> tuple[CapabilityEvaluation | None, CapabilityContext | None]:
         capability_id = COMMAND_CAPABILITY_MAP.get(command_label)
         if capability_id is None:
             return None, None
-        return self._evaluate_capability_id(capability_id, snapshot, remember=remember)
+        return self._evaluate_capability_id(
+            capability_id,
+            snapshot,
+            remember=remember,
+            confirmation_granted=confirmation_granted,
+        )
 
     def _evaluate_capability_id(
         self,
@@ -1372,9 +1413,14 @@ class ControllerService:
         snapshot: ControllerSnapshot,
         *,
         remember: bool = True,
+        confirmation_granted: bool = False,
     ) -> tuple[CapabilityEvaluation, CapabilityContext]:
         context = self._build_capability_context(snapshot, capability_id=capability_id)
-        evaluation = self._capability_evaluator.evaluate(capability_id, context)
+        evaluation = self._capability_evaluator.evaluate(
+            capability_id,
+            context,
+            confirmation_granted=confirmation_granted,
+        )
         if remember:
             self._last_capability_evaluation = evaluation
         return evaluation, context
@@ -1434,9 +1480,9 @@ class ControllerService:
             "offline_provider_unavailable": "Validate Ollama in the desktop app before asking again.",
             "online_provider_unavailable": "Save or validate the OpenAI configuration in the desktop app.",
             "policy_always_offline": "Switch to Offline Mode or activate Online Mode explicitly in the desktop app.",
-            "online_confirmation_required": "Confirm Online Mode in the desktop app before sending a remote ask.",
+            "online_confirmation_required": "Approve the pending remote request with /confirm <id> after /ask returns a confirmation prompt.",
         }
-        next_step = next_step_map.get(capability.reason_code, "Check the desktop app configuration and try again.")
+        next_step = next_step_map.get(capability.reason_code, "Check the operator console configuration and try again.")
         activity_state = "provider_failed" if capability.current_availability_state in {"unavailable", "degraded"} else "processing_command"
         return self._blocked_ask_reply(
             command_label=command_label,
@@ -1444,6 +1490,413 @@ class ControllerService:
             next_step=next_step,
             activity_state=activity_state,
         )
+
+    def _build_confirmation_required_reply(
+        self,
+        *,
+        command_label: str,
+        capability: CapabilityEvaluation,
+        context: CapabilityContext,
+        snapshot: ControllerSnapshot,
+        prompt: str,
+        response_style: str,
+        chat_id: str,
+        requester_label: str,
+    ) -> _TelegramResponsePlan:
+        confirmation = self._confirmation_store.create(
+            capability_id=capability.capability_id,
+            original_command=command_label,
+            argument_summary=f"{command_label} [prompt hidden]",
+            prompt_text=prompt,
+            response_style=response_style,
+            chat_id=chat_id,
+            requester_label=requester_label,
+            evaluation_context=self._confirmation_context_snapshot(snapshot, context),
+        )
+        expires_in = self._confirmation_seconds_remaining(confirmation)
+        awaiting_message = f"{command_label} awaiting confirmation {confirmation.confirmation_id}."
+        self._last_confirmation_requested = f"{confirmation.confirmation_id} pending for {capability.capability_id} ({command_label})."
+        self._last_confirmation_result = f"{confirmation.confirmation_id} pending approval."
+        self._last_message = f"Confirmation {confirmation.confirmation_id} created for {capability.capability_id}."
+        self._update_telegram_loop_status(
+            state="running",
+            activity_state="processing_command",
+            message=self._last_message,
+            activity=True,
+            last_command=command_label,
+            last_ask_status=awaiting_message,
+        )
+        return _TelegramResponsePlan(
+            reply=chr(10).join(
+                (
+                    "Action requires confirmation.",
+                    f"Action: {command_label} (prompt hidden)",
+                    f"Capability: {capability.capability_id}",
+                    f"Reason: {self._confirmation_reason_message(capability.reason_code)}",
+                    f"ID: {confirmation.confirmation_id} (expires in about {expires_in}s)",
+                    f"Reply with: /confirm {confirmation.confirmation_id} or /deny {confirmation.confirmation_id}",
+                )
+            ),
+            command_label=command_label,
+            ask_status=awaiting_message,
+            hide_content_in_summary=True,
+            response_style=response_style,
+        )
+
+    def _build_confirm_reply(
+        self,
+        argument: str,
+        snapshot: ControllerSnapshot,
+        *,
+        chat_id: str,
+    ) -> _TelegramResponsePlan:
+        confirmation_id = self._normalize_confirmation_id(argument)
+        if not confirmation_id:
+            return self._confirmation_usage_reply(command_label="/confirm")
+        outcome, confirmation = self._confirmation_store.approve(confirmation_id, chat_id=chat_id)
+        if outcome == "approved" and confirmation is not None:
+            return self._execute_confirmed_capability(confirmation, snapshot, chat_id=chat_id)
+        return self._confirmation_state_reply(
+            command_label="/confirm",
+            confirmation_id=confirmation_id,
+            outcome=outcome,
+            confirmation=confirmation,
+        )
+
+    def _build_deny_reply(self, argument: str, *, chat_id: str) -> _TelegramResponsePlan:
+        confirmation_id = self._normalize_confirmation_id(argument)
+        if not confirmation_id:
+            return self._confirmation_usage_reply(command_label="/deny")
+        outcome, confirmation = self._confirmation_store.reject(confirmation_id, chat_id=chat_id)
+        return self._confirmation_state_reply(
+            command_label="/deny",
+            confirmation_id=confirmation_id,
+            outcome=outcome,
+            confirmation=confirmation,
+        )
+
+    def _execute_confirmed_capability(
+        self,
+        confirmation: PendingConfirmation,
+        snapshot: ControllerSnapshot,
+        *,
+        chat_id: str,
+    ) -> _TelegramResponsePlan:
+        if confirmation.capability_id != "ask.provider_query":
+            message = f"Confirmation {confirmation.confirmation_id} cannot run because the capability is no longer supported."
+            self._last_confirmation_result = message
+            self._last_message = message
+            return _TelegramResponsePlan(
+                reply=chr(10).join(
+                    (
+                        f"Confirmation {confirmation.confirmation_id} could not run.",
+                        "Reason: The capability is no longer supported for confirmation execution.",
+                        "Next: Send the original command again after checking the desktop app.",
+                    )
+                ),
+                command_label="/confirm",
+            )
+        return self._execute_confirmed_provider_query(confirmation, snapshot, chat_id=chat_id)
+
+    def _execute_confirmed_provider_query(
+        self,
+        confirmation: PendingConfirmation,
+        snapshot: ControllerSnapshot,
+        *,
+        chat_id: str,
+    ) -> _TelegramResponsePlan:
+        if self._is_provider_chat_busy(chat_id):
+            return self._confirmation_result_reply(
+                confirmation_id=confirmation.confirmation_id,
+                state_label="could not run",
+                reason="Another provider-backed ask is still running for this chat.",
+                next_step="Wait for the current reply before confirming another action.",
+                command_label="/confirm",
+            )
+
+        if confirmation.evaluation_context.selected_mode == "online" and snapshot.selected_mode != "online":
+            return self._confirmation_result_reply(
+                confirmation_id=confirmation.confirmation_id,
+                state_label="could not run",
+                reason="Selected mode changed after this confirmation was created.",
+                next_step="Re-select Online Mode, resend the original command, and confirm the new request.",
+                command_label="/confirm",
+            )
+
+        capability, context = self._evaluate_capability_id(
+            confirmation.capability_id,
+            snapshot,
+            remember=True,
+            confirmation_granted=True,
+        )
+        if capability.current_availability_state != "allowed":
+            return self._blocked_confirmation_reply_from_capability(
+                confirmation_id=confirmation.confirmation_id,
+                capability=capability,
+            )
+
+        use_online_provider = confirmation.evaluation_context.selected_mode == "online" or snapshot.mode == "online"
+        provider_name = "OpenAI" if use_online_provider else "Ollama"
+        provider_key = "openai" if use_online_provider else "ollama"
+        provider_status = context.online_provider_status if use_online_provider else context.offline_provider_status
+        mode_label = "Online" if use_online_provider else "Offline"
+
+        self._update_telegram_loop_status(
+            state="running",
+            activity_state="waiting_on_provider",
+            message=f"Waiting on confirmation {confirmation.confirmation_id} via {provider_name}.",
+            activity=True,
+            last_command="/confirm",
+            last_ask_status=f"Confirmation {confirmation.confirmation_id} in progress.",
+        )
+        self._mark_provider_ask_started(chat_id)
+
+        if use_online_provider:
+            result = self._run_provider_request(
+                provider=provider_key,
+                chat_id=chat_id,
+                func=lambda: self._provider_adapters["openai"].ask(  # type: ignore[call-arg]
+                    secret_store=self._secret_store,
+                    secret_id=self._config.openai_secret_id,
+                    transient_secret="",
+                    prompt=confirmation.prompt_text,
+                    response_style=confirmation.response_style,
+                ),
+            )
+        else:
+            result = self._run_provider_request(
+                provider=provider_key,
+                chat_id=chat_id,
+                func=lambda: self._provider_adapters["ollama"].ask(  # type: ignore[call-arg]
+                    runtime_status=self._runtime_manager.get_status(),
+                    base_url=self._config.ollama_base_url,
+                    preferred_model=self._config.preferred_ollama_model,
+                    prompt=confirmation.prompt_text,
+                    response_style=confirmation.response_style,
+                ),
+            )
+
+        if result.state == "timeout":
+            reason = f"{provider_name} did not finish before the timeout."
+            self._last_confirmation_result = f"Confirmation {confirmation.confirmation_id} timed out via {provider_name}."
+            self._last_message = self._last_confirmation_result
+            return _TelegramResponsePlan(
+                reply=chr(10).join(
+                    (
+                        f"Confirmation {confirmation.confirmation_id} timed out.",
+                        f"Reason: {reason}",
+                        "Next: Send the original command again if you still want to run it.",
+                    )
+                ),
+                command_label="/confirm",
+                ask_status=self._last_confirmation_result,
+                hide_content_in_summary=True,
+                response_style=confirmation.response_style,
+            )
+        if result.state != "ok" or not isinstance(result.reply, ProviderReply):
+            return self._confirmation_result_reply(
+                confirmation_id=confirmation.confirmation_id,
+                state_label="could not run",
+                reason="Provider request failed before a reply was returned.",
+                next_step="Check the provider configuration and try the original command again.",
+                command_label="/confirm",
+            )
+
+        reply = result.reply
+        if not reply.ok:
+            next_step = "Check the online provider configuration and try the original command again."
+            if not use_online_provider:
+                next_step = "Check Ollama and try the original command again."
+            return self._confirmation_result_reply(
+                confirmation_id=confirmation.confirmation_id,
+                state_label="could not run",
+                reason=reply.message,
+                next_step=next_step,
+                command_label="/confirm",
+            )
+
+        model = reply.model or provider_status.model or provider_name
+        self._last_confirmation_result = f"Confirmation {confirmation.confirmation_id} approved and completed via {provider_name}."
+        self._last_message = self._last_confirmation_result
+        return _TelegramResponsePlan(
+            reply=chr(10).join(
+                (
+                    f"Confirmation {confirmation.confirmation_id} approved.",
+                    self._format_ask_success(
+                        reply.text,
+                        provider_label=self._provider_label(provider_key, model),  # type: ignore[arg-type]
+                        mode_label=mode_label,
+                        response_style=confirmation.response_style,
+                    ),
+                )
+            ),
+            command_label="/confirm",
+            ask_status=f"Confirmation {confirmation.confirmation_id} completed via {provider_name} / {model}.",
+            hide_content_in_summary=True,
+            response_style=confirmation.response_style,
+        )
+
+    def _blocked_confirmation_reply_from_capability(
+        self,
+        *,
+        confirmation_id: str,
+        capability: CapabilityEvaluation,
+    ) -> _TelegramResponsePlan:
+        next_step_map = {
+            "runtime_not_running": "Start the runtime in the desktop app and resend the original command.",
+            "readiness_not_ready": "Resolve the blocking health or security issue in the desktop app, then resend the original command.",
+            "offline_provider_unavailable": "Validate Ollama in the desktop app before retrying the original command.",
+            "online_provider_unavailable": "Save or validate the OpenAI configuration in the desktop app before retrying the original command.",
+            "policy_always_offline": "Switch to Offline Mode or resend the original command after changing policy in the desktop app.",
+            "online_confirmation_required": "Resend the original command to request a fresh confirmation.",
+        }
+        return self._confirmation_result_reply(
+            confirmation_id=confirmation_id,
+            state_label="could not run",
+            reason=capability.blocking_reason or capability.message,
+            next_step=next_step_map.get(capability.reason_code, "Check the desktop app configuration and resend the original command."),
+            command_label="/confirm",
+        )
+
+    def _confirmation_usage_reply(self, *, command_label: str) -> _TelegramResponsePlan:
+        usage = "/confirm <id>" if command_label == "/confirm" else "/deny <id>"
+        action = "approve" if command_label == "/confirm" else "reject"
+        return _TelegramResponsePlan(
+            reply=f"Use {usage} to {action} a pending action.",
+            command_label=command_label,
+        )
+
+    def _confirmation_state_reply(
+        self,
+        *,
+        command_label: str,
+        confirmation_id: str,
+        outcome: str,
+        confirmation: PendingConfirmation | None,
+    ) -> _TelegramResponsePlan:
+        if outcome in {"not_found", "wrong_chat"}:
+            message = f"No pending confirmation matches {confirmation_id} for this chat."
+            self._last_confirmation_result = message
+            self._last_message = message
+            return _TelegramResponsePlan(
+                reply=chr(10).join(
+                    (
+                        message,
+                        "Next: Send the original command again if you still want to run it.",
+                    )
+                ),
+                command_label=command_label,
+            )
+        if outcome == "expired" or (confirmation is not None and confirmation.current_state == "expired"):
+            return self._confirmation_result_reply(
+                confirmation_id=confirmation_id,
+                state_label="expired",
+                reason="This confirmation is no longer valid.",
+                next_step="Send the original command again to request a new confirmation.",
+                command_label=command_label,
+            )
+        if outcome == "rejected":
+            message = f"Confirmation {confirmation_id} denied. Request not executed."
+            self._last_confirmation_result = message
+            self._last_message = message
+            return _TelegramResponsePlan(
+                reply=message,
+                command_label=command_label,
+            )
+        if outcome == "already_used" and confirmation is not None:
+            if confirmation.current_state == "approved":
+                return self._confirmation_result_reply(
+                    confirmation_id=confirmation_id,
+                    state_label="was already used",
+                    reason="This confirmation has already been consumed.",
+                    next_step="Send the original command again if you need a new request.",
+                    command_label=command_label,
+                )
+            if confirmation.current_state == "rejected":
+                return self._confirmation_result_reply(
+                    confirmation_id=confirmation_id,
+                    state_label="was already denied",
+                    reason="This confirmation has already been rejected.",
+                    next_step="Send the original command again if you want a fresh confirmation prompt.",
+                    command_label=command_label,
+                )
+        return self._confirmation_result_reply(
+            confirmation_id=confirmation_id,
+            state_label="could not be processed",
+            reason="The confirmation state is no longer valid.",
+            next_step="Send the original command again if you still want to run it.",
+            command_label=command_label,
+        )
+
+    def _confirmation_result_reply(
+        self,
+        *,
+        confirmation_id: str,
+        state_label: str,
+        reason: str,
+        next_step: str,
+        command_label: str,
+    ) -> _TelegramResponsePlan:
+        summary = f"Confirmation {confirmation_id} {state_label}."
+        self._last_confirmation_result = summary
+        self._last_message = summary
+        return _TelegramResponsePlan(
+            reply=chr(10).join(
+                (
+                    summary,
+                    f"Reason: {reason}",
+                    f"Next: {next_step}",
+                )
+            ),
+            command_label=command_label,
+        )
+
+    def _confirmation_context_snapshot(
+        self,
+        snapshot: ControllerSnapshot,
+        context: CapabilityContext,
+    ) -> ConfirmationContextSnapshot:
+        selected_online = snapshot.selected_mode == "online"
+        provider_status = context.online_provider_status if selected_online else context.offline_provider_status
+        return ConfirmationContextSnapshot(
+            mode=snapshot.mode,
+            selected_mode=snapshot.selected_mode,
+            policy=snapshot.policy,
+            active_provider=snapshot.active_provider,
+            selected_provider=snapshot.selected_provider,
+            readiness_state=snapshot.readiness_state,
+            provider_state=provider_status.validation_state,
+            provider_message=provider_status.message,
+        )
+
+    @staticmethod
+    def _normalize_confirmation_id(argument: str) -> str:
+        token = argument.strip().split()[0] if argument.strip() else ""
+        return token.upper()
+
+    @staticmethod
+    def _confirmation_reason_message(reason_code: str) -> str:
+        return {
+            "online_confirmation_required": "Online access requires one-shot approval under Ask Before Online.",
+        }.get(reason_code, "Explicit operator confirmation is required before this action can run.")
+
+    @staticmethod
+    def _confirmation_seconds_remaining(confirmation: PendingConfirmation) -> int:
+        try:
+            expires_at = datetime.fromisoformat(confirmation.expires_at)
+        except ValueError:
+            return 0
+        remaining = int((expires_at - datetime.now().astimezone()).total_seconds())
+        return max(0, remaining)
+
+    def _cleanup_expired_confirmations(self) -> None:
+        expired = self._confirmation_store.cleanup_expired()
+        if expired <= 0:
+            return
+        noun = "confirmation has" if expired == 1 else "confirmations have"
+        message = f"{expired} pending {noun} expired."
+        self._last_confirmation_result = message
+        self._last_message = message
 
 
     @staticmethod
@@ -1496,11 +1949,10 @@ class ControllerService:
 
     @staticmethod
     def _provider_label(provider: ProviderType, model: str) -> str:
-        if provider == "ollama" and model:
-            return f"Ollama / {model}"
-        if provider == "ollama":
-            return "Ollama"
-        return "OpenAI"
+        base = "Ollama" if provider == "ollama" else "OpenAI"
+        if model:
+            return f"{base} / {model}"
+        return base
 
     @staticmethod
     def _policy_label(policy: str) -> str:
@@ -1532,7 +1984,7 @@ class ControllerService:
 
         if self._config.current_mode != "online":
             if self._config.selected_mode == "online" and self._config.policy == "ask_before_online":
-                return "confirmation-gated", "Online Mode is selected but not activated yet. Confirm it in the desktop app."
+                return "confirmation-gated", "Online Mode is selected, but each remote ask still needs one-shot approval with /confirm <id>."
             return "blocked", "Offline Mode is active."
 
         if not online_status.ready:

@@ -14,7 +14,13 @@ class CapabilityEvaluator:
     def list_capabilities(self) -> tuple[object, ...]:
         return tuple(self._registry.values())
 
-    def evaluate(self, capability_id: str, context: CapabilityContext) -> CapabilityEvaluation:
+    def evaluate(
+        self,
+        capability_id: str,
+        context: CapabilityContext,
+        *,
+        confirmation_granted: bool = False,
+    ) -> CapabilityEvaluation:
         if capability_id not in self._registry:
             raise KeyError(f"Unknown capability: {capability_id}")
         definition = self._registry[capability_id]
@@ -45,6 +51,29 @@ class CapabilityEvaluator:
                 blocking_reason = "Runtime is not running."
                 reason_code = "runtime_not_running"
                 message = "Provider queries require a running OpenClaw runtime."
+            elif context.selected_mode == "online" and context.mode != "online":
+                if context.policy == "always_offline":
+                    availability_state = "blocked"
+                    blocking_reason = "Always Offline policy is active."
+                    reason_code = "policy_always_offline"
+                    message = "Always Offline policy blocks remote provider queries."
+                elif not context.online_provider_status.ready:
+                    availability_state = "unavailable"
+                    blocking_reason = context.online_provider_status.message or "OpenAI is unavailable."
+                    reason_code = "online_provider_unavailable"
+                    message = f"Online provider query is unavailable: {blocking_reason}"
+                elif context.readiness_state == "not_ready":
+                    availability_state = "blocked"
+                    blocking_reason = "Readiness is not ready."
+                    reason_code = "readiness_not_ready"
+                    message = "Provider queries are blocked until readiness is restored."
+                elif context.policy == "ask_before_online" and not confirmation_granted:
+                    availability_state = "confirmation_required"
+                    blocking_reason = "Online Mode is selected but not activated yet. Confirm it in the desktop app."
+                    reason_code = "online_confirmation_required"
+                    message = "Online provider queries require explicit online confirmation in the desktop app."
+                else:
+                    message = "Online provider query is approved for one confirmed request." if confirmation_granted else "Online provider query is available via OpenAI."
             elif context.mode == "offline":
                 ollama_status = context.offline_provider_status
                 if not ollama_status.ready:
@@ -66,11 +95,6 @@ class CapabilityEvaluator:
                     blocking_reason = "Always Offline policy is active."
                     reason_code = "policy_always_offline"
                     message = "Always Offline policy blocks remote provider queries."
-                elif context.selected_mode == "online" and context.mode != "online":
-                    availability_state = "confirmation_required"
-                    blocking_reason = "Online Mode is selected but not activated yet. Confirm it in the desktop app."
-                    reason_code = "online_confirmation_required"
-                    message = "Online provider queries require explicit online confirmation in the desktop app."
                 elif not context.online_provider_status.ready:
                     availability_state = "unavailable"
                     blocking_reason = context.online_provider_status.message or "OpenAI is unavailable."

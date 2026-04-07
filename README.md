@@ -6,7 +6,7 @@ Controlled execution surface for supported projects. AI-E turns a bounded reques
 
 The current active operator-console surface in this repo is the Windows-first OpenClaw controller shell. The known-good checkpoint is:
 
-- Current baseline: `Windows OpenClaw Operator Console v1.5 - Controlled Capability Layer`
+- Current baseline: `Windows OpenClaw Operator Console v1.6 - Confirmation & Escalation Layer`
 - Health: `Healthy`
 - Security: `Safe`
 - Readiness: `Ready`
@@ -22,6 +22,7 @@ What is now working:
 - deterministic Telegram command parsing with whitespace-tolerant handling, consistent casing behavior, and short correction replies for malformed commands
 - per-chat provider-ask control with explicit in-flight rejection, bounded provider timeouts, and a narrow provider-ask cooldown to prevent accidental spam
 - centralized capability registry and evaluator that now gate command execution through explicit `allowed`, `blocked`, `degraded`, `confirmation_required`, or `unavailable` states
+- one-shot confirmation handling for online-sensitive asks under `Ask Before Online`, including short-lived pending approvals plus Telegram `/confirm <id>` and `/deny <id>` controls
 - compact capability observability in both Telegram (`/capabilities`) and the desktop status panel via the most recent evaluated capability summary
 
 What a capability means in this project:
@@ -29,6 +30,14 @@ What a capability means in this project:
 - a capability is a named action with explicit metadata for category, execution type, provider dependency, network requirement, readiness requirement, mode constraints, and policy sensitivity
 - Telegram command execution now evaluates capability state before running provider-backed or provider-aware work instead of scattering guardrail logic across handlers
 - capability checks consume current mode, current policy, readiness, runtime state, and provider validation; they do not silently escalate modes or switch providers
+- when a capability returns `confirmation_required`, the controller creates a short-lived pending action instead of executing immediately
+
+Confirmation flow:
+
+- online-sensitive `/ask` requests under `ask_before_online` return a confirmation prompt with a short id instead of silently escalating
+- approve that one request with `/confirm <id>` or reject it with `/deny <id>` from the same Telegram chat
+- pending confirmations expire automatically after a short lifetime and can be used only once
+- confirmation does not override `always_offline`, runtime failures, readiness failures, or invalid provider state
 
 Milestone notes:
 
@@ -38,20 +47,23 @@ Milestone notes:
 - v1.3: `docs/milestones/windows_openclaw_operator_console_v1_3_conversation_quality_layer.md`
 - v1.4: `docs/milestones/windows_openclaw_operator_console_v1_4_interaction_reliability_and_control_layer.md`
 - v1.5: `docs/milestones/windows_openclaw_operator_console_v1_5_controlled_capability_layer.md`
+- v1.6: `docs/milestones/windows_openclaw_operator_console_v1_6_confirmation_and_escalation_layer.md`
 
 Important guardrails and usage notes:
 
 - Offline Mode remains first-class and no silent provider or mode fallback is allowed.
 - `/ask` and `/askd` remain explicit; generic plain text is not auto-routed into provider-backed queries.
-- Capability evaluation gates command execution but does not auto-confirm online-sensitive actions, mutate permissions, or broaden plain-text behavior.
+- Capability evaluation gates command execution and now routes online-sensitive asks through explicit one-shot confirmation instead of auto-confirming them.
+- `/confirm <id>` approves exactly one pending action; `/deny <id>` rejects it; expired or already-used confirmations cannot be replayed.
+- Confirmation does not bypass runtime failures, readiness failures, invalid provider state, or the `always_offline` policy.
 - `/capabilities` is introspection only; it reports current execution state and does not grant new powers.
 - The controller stays local-first with loopback bind defaults and secret redaction in logs and Telegram activity summaries.
 - Still intentionally not implemented: automation, scheduling, scraping, RAG, repo mutation, multi-channel expansion, or AI-E orchestration behavior.
 
 Current next milestone:
 
-- `Windows OpenClaw Operator Console v1.6 - Explicit Online Approval UX`
-- goal: make remote-capable asks and future online-sensitive capabilities require clearer operator-visible approval across Telegram and desktop surfaces without adding automation or broader execution powers
+- `Windows OpenClaw Operator Console v1.7 - Pending Confirmation Visibility & Approval Polish`
+- goal: improve operator visibility for outstanding confirmations and make approval state easier to inspect without broadening execution scope
 
 Fast operator path:
 
@@ -59,8 +71,9 @@ Fast operator path:
 2. Start the runtime and run Health/Security checks.
 3. Validate Telegram, start the Telegram loop, and message the configured bot.
 4. Use `/help`, `/status`, `/mode`, `/models`, `/capabilities`, `/ask hello`, or `/askd hello` from Telegram.
-5. If `/capabilities` shows `blocked`, `degraded`, or `unavailable` provider-query state, resolve the noted readiness or provider issue before retrying `/ask`.
-6. Run `python -m unittest discover -s tests -v` and `python diagnostics_smoke.py` for the current controller verification pass.
+5. If `/ask` returns a confirmation prompt, reply with `/confirm <id>` to approve that one request or `/deny <id>` to reject it.
+6. If `/capabilities` shows `blocked`, `degraded`, or `unavailable` provider-query state, resolve the noted readiness or provider issue before retrying `/ask`.
+7. Run `python -m unittest discover -s tests -v` and `python diagnostics_smoke.py` for the current controller verification pass.
 
 ## AI-E v1 Product Surface Status
 

@@ -148,6 +148,32 @@ class CapabilityLayerTests(unittest.TestCase):
         self.assertEqual(evaluation.current_availability_state, "blocked")
         self.assertEqual(evaluation.reason_code, "policy_always_offline")
 
+    def test_ask_provider_query_becomes_confirmation_required_when_online_is_selected_but_not_active(self) -> None:
+        evaluation = self.evaluator.evaluate(
+            "ask.provider_query",
+            self._context(
+                mode="offline",
+                selected_mode="online",
+                policy="ask_before_online",
+            ),
+        )
+        self.assertEqual(evaluation.current_availability_state, "confirmation_required")
+        self.assertEqual(evaluation.reason_code, "online_confirmation_required")
+
+    def test_confirmation_granted_allows_one_online_query_when_provider_is_ready(self) -> None:
+        evaluation = self.evaluator.evaluate(
+            "ask.provider_query",
+            self._context(
+                mode="offline",
+                selected_mode="online",
+                policy="ask_before_online",
+            ),
+            confirmation_granted=True,
+        )
+        self.assertEqual(evaluation.current_availability_state, "allowed")
+        self.assertEqual(evaluation.reason_code, "allowed")
+        self.assertIn("approved for one confirmed request", evaluation.message)
+
     def test_reason_output_is_deterministic(self) -> None:
         context = self._context(readiness_state="not_ready")
         first = self.evaluator.evaluate("ask.provider_query", context)

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import re
 import tempfile
 import time
 import unittest
 from dataclasses import replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from app.controller.app_service import ControllerService
@@ -306,6 +307,25 @@ class TelegramCommandTests(unittest.TestCase):
         snapshot = service.stop_telegram_loop()
         return snapshot, telegram_service.sent_messages[0][1]
 
+    def _configure_online_confirmation_mode(self, service: ControllerService, config_store: ControllerConfigStore) -> None:
+        config = config_store.load()
+        config.selected_mode = "online"
+        config.current_mode = "offline"
+        config.selected_provider = "openai"
+        config.policy = "ask_before_online"
+        config_store.save(config)
+        service._config = config_store.load()
+        service._secret_store.put_secret(service._config.openai_secret_id, "sk-test-confirmation")
+        service._config.openai_has_secret = True
+        service._config.openai_key_masked = "sk-...rmation"
+        config_store.save(service._config)
+        service.validate_provider(provider="openai")
+
+    def _extract_confirmation_id(self, reply: str) -> str:
+        match = re.search(r"ID: ([A-F0-9]+)", reply)
+        self.assertIsNotNone(match)
+        return match.group(1)
+
     def test_help_command_formatting_is_concise_and_lists_commands(self) -> None:
         update = TelegramInboundMessage(update_id=1, chat_id="chat-1", text="/help", sender_label="@tester")
         with tempfile.TemporaryDirectory() as tmp:
@@ -356,7 +376,7 @@ class TelegramCommandTests(unittest.TestCase):
             _, reply = self._run_single_update(service, telegram_service)
             lines = reply.splitlines()
             self.assertIn("Remote use: Confirmation-gated", lines)
-            self.assertIn("Reason: Online Mode is selected but not activated yet. Confirm it in the desktop app.", lines)
+            self.assertIn("Reason: Online Mode is selected, but each remote ask still needs one-shot approval with /confirm <id>.", lines)
 
     def test_capabilities_command_returns_compact_summary(self) -> None:
         update = TelegramInboundMessage(update_id=4, chat_id="chat-1", text="/capabilities", sender_label="@tester")
@@ -588,6 +608,181 @@ class TelegramCommandTests(unittest.TestCase):
             self.assertEqual(ollama.ask_calls, 0)
             self.assertEqual(openai.ask_calls, 0)
             self.assertIn("Duplicate update 17 skipped", snapshot.telegram_last_inbound_summary)
+
+    def test_confirmation_prompt_is_created_for_online_ask_under_ask_before_online(self) -> None:
+        update = TelegramInboundMessage(update_id=18, chat_id="chat-1", text="/ask hello", sender_label="@tester")
+        with tempfile.TemporaryDirectory() as tmp:
+            telegram_service = _FakeTelegramService(update_batches=[(update,)])
+            service, config_store, _, _, _, openai = self._make_service(tmp_dir=tmp, telegram_service=telegram_service)
+            self._configure_online_confirmation_mode(service, config_store)
+            snapshot, reply = self._run_single_update(service, telegram_service)
+            self.assertEqual(openai.ask_calls, 0)
+            self.assertIn("Action requires confirmation.", reply)
+            self.assertIn("Capability: ask.provider_query", reply)
+            self.assertIn("Reply with: /confirm", reply)
+            self.assertEqual(snapshot.last_capability_id, "ask.provider_query")
+            self.assertEqual(snapshot.last_capability_state, "confirmation_required")
+            self.assertEqual(snapshot.pending_confirmation_count, 1)
+
+    def test_confirm_executes_online_request_exactly_once(self) -> None:
+        first_update = TelegramInboundMessage(update_id=19, chat_id="chat-1", text="/ask hello", sender_label="@tester")
+        with tempfile.TemporaryDirectory() as tmp:
+            create_service = _FakeTelegramService(update_batches=[(first_update,)])
+            service, config_store, _, _, _, openai = self._make_service(tmp_dir=tmp, telegram_service=create_service)
+            self._configure_online_confirmation_mode(service, config_store)
+            _, prompt_reply = self._run_single_update(service, create_service)
+            confirmation_id = self._extract_confirmation_id(prompt_reply)
+
+            confirm_service = _FakeTelegramService(
+                update_batches=[(TelegramInboundMessage(update_id=20, chat_id="chat-1", text=f"/confirm {confirmation_id}", sender_label="@tester"),)]
+            )
+            service._telegram_service = confirm_service
+            snapshot, confirm_reply = self._run_single_update(service, confirm_service)
+            self.assertEqual(openai.ask_calls, 1)
+            self.assertIn(f"Confirmation {confirmation_id} approved.", confirm_reply)
+            self.assertIn("Answer (Online | OpenAI / gpt-5-mini)", confirm_reply)
+            self.assertEqual(snapshot.pending_confirmation_count, 0)
+            self.assertEqual(service._confirmation_store.get(confirmation_id).current_state, "approved")
+
+    def test_deny_marks_confirmation_rejected_without_execution(self) -> None:
+        first_update = TelegramInboundMessage(update_id=21, chat_id="chat-1", text="/ask hello", sender_label="@tester")
+        with tempfile.TemporaryDirectory() as tmp:
+            create_service = _FakeTelegramService(update_batches=[(first_update,)])
+            service, config_store, _, _, _, openai = self._make_service(tmp_dir=tmp, telegram_service=create_service)
+            self._configure_online_confirmation_mode(service, config_store)
+            _, prompt_reply = self._run_single_update(service, create_service)
+            confirmation_id = self._extract_confirmation_id(prompt_reply)
+
+            deny_service = _FakeTelegramService(
+                update_batches=[(TelegramInboundMessage(update_id=22, chat_id="chat-1", text=f"/deny {confirmation_id}", sender_label="@tester"),)]
+            )
+            service._telegram_service = deny_service
+            snapshot, deny_reply = self._run_single_update(service, deny_service)
+            self.assertEqual(openai.ask_calls, 0)
+            self.assertEqual(deny_reply, f"Confirmation {confirmation_id} denied. Request not executed.")
+            self.assertEqual(snapshot.pending_confirmation_count, 0)
+            self.assertEqual(service._confirmation_store.get(confirmation_id).current_state, "rejected")
+
+    def test_expired_confirmation_cannot_execute(self) -> None:
+        first_update = TelegramInboundMessage(update_id=23, chat_id="chat-1", text="/ask hello", sender_label="@tester")
+        with tempfile.TemporaryDirectory() as tmp:
+            create_service = _FakeTelegramService(update_batches=[(first_update,)])
+            service, config_store, _, _, _, openai = self._make_service(tmp_dir=tmp, telegram_service=create_service)
+            self._configure_online_confirmation_mode(service, config_store)
+            _, prompt_reply = self._run_single_update(service, create_service)
+            confirmation_id = self._extract_confirmation_id(prompt_reply)
+            confirmation = service._confirmation_store.get(confirmation_id)
+            service._confirmation_store._items[confirmation_id] = replace(
+                confirmation,
+                expires_at=(datetime.now().astimezone() - timedelta(seconds=5)).isoformat(timespec="seconds"),
+            )
+
+            confirm_service = _FakeTelegramService(
+                update_batches=[(TelegramInboundMessage(update_id=24, chat_id="chat-1", text=f"/confirm {confirmation_id}", sender_label="@tester"),)]
+            )
+            service._telegram_service = confirm_service
+            _, confirm_reply = self._run_single_update(service, confirm_service)
+            self.assertEqual(openai.ask_calls, 0)
+            self.assertIn(f"Confirmation {confirmation_id} expired.", confirm_reply)
+            self.assertEqual(service._confirmation_store.get(confirmation_id).current_state, "expired")
+
+    def test_duplicate_confirm_does_not_reexecute(self) -> None:
+        first_update = TelegramInboundMessage(update_id=25, chat_id="chat-1", text="/ask hello", sender_label="@tester")
+        with tempfile.TemporaryDirectory() as tmp:
+            create_service = _FakeTelegramService(update_batches=[(first_update,)])
+            service, config_store, _, _, _, openai = self._make_service(tmp_dir=tmp, telegram_service=create_service)
+            self._configure_online_confirmation_mode(service, config_store)
+            _, prompt_reply = self._run_single_update(service, create_service)
+            confirmation_id = self._extract_confirmation_id(prompt_reply)
+
+            confirm_service = _FakeTelegramService(
+                update_batches=[
+                    (TelegramInboundMessage(update_id=26, chat_id="chat-1", text=f"/confirm {confirmation_id}", sender_label="@tester"),),
+                    (TelegramInboundMessage(update_id=27, chat_id="chat-1", text=f"/confirm {confirmation_id}", sender_label="@tester"),),
+                ]
+            )
+            service._telegram_service = confirm_service
+            service.start_telegram_loop()
+            self.assertTrue(_wait_until(lambda: len(confirm_service.sent_messages) == 2, timeout=2.0))
+            service.stop_telegram_loop()
+            self.assertEqual(openai.ask_calls, 1)
+            self.assertIn(f"Confirmation {confirmation_id} approved.", confirm_service.sent_messages[0][1])
+            self.assertIn(f"Confirmation {confirmation_id} was already used.", confirm_service.sent_messages[1][1])
+
+    def test_confirmation_does_not_override_always_offline_policy(self) -> None:
+        update = TelegramInboundMessage(update_id=28, chat_id="chat-1", text="/ask hello", sender_label="@tester")
+        with tempfile.TemporaryDirectory() as tmp:
+            telegram_service = _FakeTelegramService(update_batches=[(update,)])
+            service, config_store, _, _, ollama, openai = self._make_service(tmp_dir=tmp, telegram_service=telegram_service)
+            config = config_store.load()
+            config.selected_mode = "online"
+            config.current_mode = "offline"
+            config.selected_provider = "openai"
+            config.policy = "always_offline"
+            config_store.save(config)
+            service._config = config_store.load()
+            snapshot, reply = self._run_single_update(service, telegram_service)
+            self.assertEqual(ollama.ask_calls, 0)
+            self.assertEqual(openai.ask_calls, 0)
+            self.assertEqual(snapshot.pending_confirmation_count, 0)
+            self.assertIn("Always Offline policy is active.", reply)
+
+    def test_confirmation_does_not_bypass_invalid_provider_after_state_changes(self) -> None:
+        first_update = TelegramInboundMessage(update_id=29, chat_id="chat-1", text="/ask hello", sender_label="@tester")
+        with tempfile.TemporaryDirectory() as tmp:
+            create_service = _FakeTelegramService(update_batches=[(first_update,)])
+            service, config_store, _, _, _, openai = self._make_service(tmp_dir=tmp, telegram_service=create_service)
+            self._configure_online_confirmation_mode(service, config_store)
+            _, prompt_reply = self._run_single_update(service, create_service)
+            confirmation_id = self._extract_confirmation_id(prompt_reply)
+            openai.validation_status = ProviderStatus(
+                provider="openai",
+                display_name="OpenAI",
+                configured=False,
+                available=False,
+                validation_state="invalid",
+                ready=False,
+                message="Missing OpenAI API key.",
+                is_local=False,
+            )
+
+            confirm_service = _FakeTelegramService(
+                update_batches=[(TelegramInboundMessage(update_id=30, chat_id="chat-1", text=f"/confirm {confirmation_id}", sender_label="@tester"),)]
+            )
+            service._telegram_service = confirm_service
+            _, confirm_reply = self._run_single_update(service, confirm_service)
+            self.assertEqual(openai.ask_calls, 0)
+            self.assertIn(f"Confirmation {confirmation_id} could not run.", confirm_reply)
+            self.assertIn("Missing OpenAI API key.", confirm_reply)
+
+    def test_confirmation_does_not_bypass_readiness_failure_after_state_changes(self) -> None:
+        first_update = TelegramInboundMessage(update_id=31, chat_id="chat-1", text="/ask hello", sender_label="@tester")
+        with tempfile.TemporaryDirectory() as tmp:
+            create_service = _FakeTelegramService(update_batches=[(first_update,)])
+            service, config_store, _, _, _, openai = self._make_service(tmp_dir=tmp, telegram_service=create_service)
+            self._configure_online_confirmation_mode(service, config_store)
+            _, prompt_reply = self._run_single_update(service, create_service)
+            confirmation_id = self._extract_confirmation_id(prompt_reply)
+            service._latest_health_report = _report("health", "blocked", "error", "Blocked")
+
+            confirm_service = _FakeTelegramService(
+                update_batches=[(TelegramInboundMessage(update_id=32, chat_id="chat-1", text=f"/confirm {confirmation_id}", sender_label="@tester"),)]
+            )
+            service._telegram_service = confirm_service
+            _, confirm_reply = self._run_single_update(service, confirm_service)
+            self.assertEqual(openai.ask_calls, 0)
+            self.assertIn(f"Confirmation {confirmation_id} could not run.", confirm_reply)
+            self.assertIn("Readiness is not ready.", confirm_reply)
+
+    def test_confirm_invalid_id_returns_clear_message(self) -> None:
+        update = TelegramInboundMessage(update_id=33, chat_id="chat-1", text="/confirm BAD999", sender_label="@tester")
+        with tempfile.TemporaryDirectory() as tmp:
+            telegram_service = _FakeTelegramService(update_batches=[(update,)])
+            service, _, _, _, _, _ = self._make_service(tmp_dir=tmp, telegram_service=telegram_service)
+            _, reply = self._run_single_update(service, telegram_service)
+            self.assertIn("No pending confirmation matches BAD999 for this chat.", reply)
+            self.assertIn("Next: Send the original command again if you still want to run it.", reply)
+
 
 
 if __name__ == "__main__":

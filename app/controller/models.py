@@ -31,6 +31,7 @@ CapabilityAvailabilityState = Literal[
     "confirmation_required",
     "unavailable",
 ]
+ConfirmationState = Literal["none", "pending", "approved", "rejected", "expired"]
 
 
 @dataclass(frozen=True)
@@ -67,6 +68,9 @@ class ControllerSnapshot:
     last_capability_id: str
     last_capability_state: CapabilityAvailabilityState
     last_capability_message: str
+    pending_confirmation_count: int
+    last_confirmation_requested: str
+    last_confirmation_result: str
     readiness_state: ReadinessState
     readiness_message: str
     health_status: OverallStatus
