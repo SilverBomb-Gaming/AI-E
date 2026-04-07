@@ -68,6 +68,11 @@ class ControllerSnapshot:
     last_capability_id: str
     last_capability_state: CapabilityAvailabilityState
     last_capability_message: str
+    last_execution_outcome: str
+    last_execution_reason_code: str
+    last_execution_summary: str
+    last_execution_duration_ms: int
+    last_execution_finished_at: str
     pending_confirmation_count: int
     last_confirmation_requested: str
     last_confirmation_result: str

@@ -6,7 +6,7 @@ Controlled execution surface for supported projects. AI-E turns a bounded reques
 
 The current active operator-console surface in this repo is the Windows-first OpenClaw controller shell. The known-good checkpoint is:
 
-- Current baseline: `Windows OpenClaw Operator Console v1.6 - Confirmation & Escalation Layer`
+- Current baseline: `Windows OpenClaw Operator Console v1.7 - Capability Execution Contracts`
 - Health: `Healthy`
 - Security: `Safe`
 - Readiness: `Ready`
@@ -24,6 +24,7 @@ What is now working:
 - centralized capability registry and evaluator that now gate command execution through explicit `allowed`, `blocked`, `degraded`, `confirmation_required`, or `unavailable` states
 - one-shot confirmation handling for online-sensitive asks under `Ask Before Online`, including short-lived pending approvals plus Telegram `/confirm <id>` and `/deny <id>` controls
 - compact capability observability in both Telegram (`/capabilities`) and the desktop status panel via the most recent evaluated capability summary
+- structured execution requests and results now drive Telegram command replies, recent operator summaries, and desktop result visibility with consistent success, blocked, degraded, timed-out, and confirmation-aware outcomes
 
 What a capability means in this project:
 
@@ -31,6 +32,13 @@ What a capability means in this project:
 - Telegram command execution now evaluates capability state before running provider-backed or provider-aware work instead of scattering guardrail logic across handlers
 - capability checks consume current mode, current policy, readiness, runtime state, and provider validation; they do not silently escalate modes or switch providers
 - when a capability returns `confirmation_required`, the controller creates a short-lived pending action instead of executing immediately
+
+Execution contracts:
+
+- every Telegram capability execution now creates a structured request with a request id, source, command, argument snapshot, mode/policy snapshot, provider snapshot, readiness snapshot, and optional confirmation context
+- every execution now returns one structured result with an outcome, reason code, user-facing message, sanitized internal summary, duration, provider/mode usage, retryability, and confirmation usage state
+- standardized outcomes currently include `success`, `blocked`, `confirmation_required`, `denied`, `expired`, `unavailable`, `degraded`, `failed`, `timed_out`, and `invalid_request`
+- Telegram replies, loop summaries, and recent desktop execution visibility now derive from that structured execution result instead of ad hoc command-specific return handling
 
 Confirmation flow:
 
@@ -48,21 +56,22 @@ Milestone notes:
 - v1.4: `docs/milestones/windows_openclaw_operator_console_v1_4_interaction_reliability_and_control_layer.md`
 - v1.5: `docs/milestones/windows_openclaw_operator_console_v1_5_controlled_capability_layer.md`
 - v1.6: `docs/milestones/windows_openclaw_operator_console_v1_6_confirmation_and_escalation_layer.md`
+- v1.7: `docs/milestones/windows_openclaw_operator_console_v1_7_capability_execution_contracts.md`
 
 Important guardrails and usage notes:
 
 - Offline Mode remains first-class and no silent provider or mode fallback is allowed.
 - `/ask` and `/askd` remain explicit; generic plain text is not auto-routed into provider-backed queries.
-- Capability evaluation gates command execution and now routes online-sensitive asks through explicit one-shot confirmation instead of auto-confirming them.
+- Capability evaluation gates command execution and routes online-sensitive asks through explicit one-shot confirmation instead of auto-confirming them.
 - `/confirm <id>` approves exactly one pending action; `/deny <id>` rejects it; expired or already-used confirmations cannot be replayed.
-- Confirmation does not bypass runtime failures, readiness failures, invalid provider state, or the `always_offline` policy.
+- Execution contracts standardize outcomes and summaries, but they do not bypass runtime failures, readiness failures, invalid provider state, or the `always_offline` policy.
 - `/capabilities` is introspection only; it reports current execution state and does not grant new powers.
-- The controller stays local-first with loopback bind defaults and secret redaction in logs and Telegram activity summaries.
+- The controller stays local-first with loopback bind defaults and secret redaction in logs, summaries, and Telegram activity surfaces.
 - Still intentionally not implemented: automation, scheduling, scraping, RAG, repo mutation, multi-channel expansion, or AI-E orchestration behavior.
 
 Current next milestone:
 
-- `Windows OpenClaw Operator Console v1.7 - Pending Confirmation Visibility & Approval Polish`
+- `Windows OpenClaw Operator Console v1.8 - Pending Confirmation Visibility & Approval Polish`
 - goal: improve operator visibility for outstanding confirmations and make approval state easier to inspect without broadening execution scope
 
 Fast operator path:

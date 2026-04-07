@@ -439,7 +439,7 @@ class TelegramCommandTests(unittest.TestCase):
             _, reply = self._run_single_update(service, telegram_service)
             self.assertEqual(ollama.ask_calls, 0)
             self.assertEqual(openai.ask_calls, 0)
-            self.assertEqual(reply, "Can't run /ask right now.\nReason: No prompt was provided.\nNext: Try /ask <prompt>.")
+            self.assertEqual(reply, "Couldn't run that ask.\nReason: No prompt was provided.\nNext: Try /ask <prompt>.")
 
     def test_malformed_command_returns_short_correction(self) -> None:
         update = TelegramInboundMessage(update_id=7, chat_id="chat-1", text="/askhello", sender_label="@tester")
@@ -533,7 +533,7 @@ class TelegramCommandTests(unittest.TestCase):
             service, _, _, _, _, openai = self._make_service(tmp_dir=tmp, telegram_service=telegram_service, ollama_adapter=ollama)
             snapshot, reply = self._run_single_update(service, telegram_service)
             self.assertEqual(openai.ask_calls, 0)
-            self.assertEqual(reply, "Can't run /ask right now.\nReason: Ollama service is unavailable.\nNext: Validate Ollama in the desktop app before asking again.")
+            self.assertEqual(reply, "Can't run /ask right now.\nReason: Ollama service is unavailable.\nNext: Validate Ollama in the operator console before asking again.")
             self.assertEqual(snapshot.last_capability_id, "ask.provider_query")
             self.assertEqual(snapshot.last_capability_state, "unavailable")
 
@@ -553,7 +553,7 @@ class TelegramCommandTests(unittest.TestCase):
             snapshot, reply = self._run_single_update(service, telegram_service)
             self.assertEqual(ollama.ask_calls, 0)
             self.assertEqual(openai.ask_calls, 0)
-            self.assertEqual(reply, "Can't run /ask right now.\nReason: Always Offline policy is active.\nNext: Switch to Offline Mode or activate Online Mode explicitly in the desktop app.")
+            self.assertEqual(reply, "Can't run /ask right now.\nReason: Always Offline policy is active.\nNext: Switch to Offline Mode or change policy before retrying the remote ask.")
             self.assertEqual(snapshot.last_capability_id, "ask.provider_query")
             self.assertEqual(snapshot.last_capability_state, "blocked")
 
@@ -589,7 +589,7 @@ class TelegramCommandTests(unittest.TestCase):
             _, reply = self._run_single_update(service, telegram_service)
             self.assertEqual(remote.ask_calls, 0)
             self.assertEqual(ollama.ask_calls, 0)
-            self.assertEqual(reply, "Can't run /ask right now.\nReason: Missing OpenAI API key.\nNext: Save or validate the OpenAI configuration in the desktop app.")
+            self.assertEqual(reply, "Can't run /ask right now.\nReason: Missing OpenAI API key.\nNext: Save or validate the OpenAI configuration in the operator console.")
             self.assertNotIn("Ollama", reply)
 
     def test_duplicate_suppression_still_applies_to_ask_commands(self) -> None:

@@ -7,12 +7,14 @@ import threading
 import time
 
 from .capability_evaluator import CapabilityEvaluator
+from .capability_executor import CapabilityExecutor
 from .capability_models import CapabilityContext, CapabilityEvaluation
 from .capability_registry import COMMAND_CAPABILITY_MAP
 from .confirmation_models import ConfirmationContextSnapshot, PendingConfirmation
 from .confirmation_store import ConfirmationStore
 from .channel_models import TelegramChannelStatus, TelegramLoopStatus
 from .diagnostic_models import DiagnosticReport
+from .execution_models import CapabilityExecutionResult
 from .diagnostics import ControllerDiagnosticsService
 from .models import ControllerSnapshot
 from .profile_store import ControllerConfig, ControllerConfigStore, Mode, Policy, ProviderType
@@ -23,7 +25,7 @@ from ..runtime.manager import OpenClawRuntimeManager
 from ..runtime.log_sanitizer import sanitize_log_text
 
 
-_OPERATOR_CONSOLE_LABEL = "Windows OpenClaw Operator Console v1.6"
+_OPERATOR_CONSOLE_LABEL = "Windows OpenClaw Operator Console v1.7"
 _ASK_CONCISE_LIMIT = 700
 _ASK_DETAILED_LIMIT = 1500
 _PROVIDER_ASK_COMMANDS = frozenset({"/ask", "/askd"})
@@ -96,7 +98,9 @@ class ControllerService:
             secret_store=self._secret_store,
         )
         self._capability_evaluator = CapabilityEvaluator()
+        self._capability_executor = CapabilityExecutor(self)
         self._last_capability_evaluation: CapabilityEvaluation | None = None
+        self._last_execution_result: CapabilityExecutionResult | None = None
         self._confirmation_store = ConfirmationStore(lifetime_seconds=_CONFIRMATION_LIFETIME_SECONDS)
         self._last_confirmation_requested = "No pending confirmation requested yet."
         self._last_confirmation_result = "No confirmation handled yet."
@@ -275,6 +279,11 @@ class ControllerService:
             last_capability_id=self._last_capability_evaluation.capability_id if self._last_capability_evaluation else "-",
             last_capability_state=self._last_capability_evaluation.current_availability_state if self._last_capability_evaluation else "unknown",
             last_capability_message=self._last_capability_evaluation.message if self._last_capability_evaluation else "No capability evaluated yet.",
+            last_execution_outcome=self._last_execution_result.outcome if self._last_execution_result else "unknown",
+            last_execution_reason_code=self._last_execution_result.outcome_reason_code if self._last_execution_result else "no_execution_yet",
+            last_execution_summary=self._last_execution_result.internal_summary if self._last_execution_result else "No execution result yet.",
+            last_execution_duration_ms=self._last_execution_result.duration_ms if self._last_execution_result else 0,
+            last_execution_finished_at=self._last_execution_result.finished_at if self._last_execution_result else "-",
             pending_confirmation_count=self._confirmation_store.pending_count(),
             last_confirmation_requested=self._last_confirmation_requested,
             last_confirmation_result=self._last_confirmation_result,
@@ -765,7 +774,7 @@ class ControllerService:
             activity=True,
             success=True,
             last_command=plan.command_label,
-            last_ask_status=plan.ask_status if plan.command_label in _PROVIDER_ASK_COMMANDS else None,
+            last_ask_status=plan.ask_status if plan.command_label in _PROVIDER_ASK_COMMANDS or (plan.command_label == "/confirm" and plan.ask_status) else None,
         )
 
 
@@ -777,88 +786,34 @@ class ControllerService:
         batch_busy: bool = False,
     ) -> _TelegramResponsePlan:
         parsed = parsed_command or self._parse_telegram_command(update)
-        if parsed.command_label == "non_text":
-            return _TelegramResponsePlan(
-                reply=f"{_OPERATOR_CONSOLE_LABEL} supports plain text Telegram messages only.",
-                command_label="non_text",
-            )
-
         snapshot = self.snapshot()
-        command = parsed.command_label
-
-        if command == "parse_failure":
-            return self._build_parse_failure_reply(parsed)
-        if command == "/start":
-            return _TelegramResponsePlan(
-                reply=chr(10).join(
-                    (
-                        f"{_OPERATOR_CONSOLE_LABEL} is connected.",
-                        f"Readiness: {self._readiness_label(snapshot.readiness_state)}",
-                        "Use /help to see supported commands.",
-                    )
-                ),
-                command_label="/start",
-            )
-        if command == "/status":
-            self._evaluate_command_capability(command, snapshot)
-            return self._build_status_reply(snapshot)
-        if command == "/mode":
-            self._evaluate_command_capability(command, snapshot)
-            return self._build_mode_reply(snapshot)
-        if command == "/help":
-            self._evaluate_command_capability(command, snapshot)
-            return self._build_help_reply()
-        if command == "/models":
-            capability, context = self._evaluate_command_capability(command, snapshot)
-            return self._build_models_reply(capability, context)
-        if command == "/capabilities":
-            self._evaluate_command_capability(command, snapshot)
-            return self._build_capabilities_reply(snapshot)
-        if command == "/confirm":
-            return self._build_confirm_reply(parsed.argument, snapshot, chat_id=update.chat_id)
-        if command == "/deny":
-            return self._build_deny_reply(parsed.argument, chat_id=update.chat_id)
-        if command == "/ask":
-            return self._build_ask_reply(
-                parsed.argument,
-                snapshot,
-                chat_id=update.chat_id,
-                requester_label=update.sender_label,
-                response_style="concise",
-                command_label="/ask",
-                batch_busy=batch_busy,
-            )
-        if command == "/askd":
-            return self._build_ask_reply(
-                parsed.argument,
-                snapshot,
-                chat_id=update.chat_id,
-                requester_label=update.sender_label,
-                response_style="detailed",
-                command_label="/askd",
-                batch_busy=batch_busy,
-            )
-
-        if snapshot.runtime_state != "running":
-            return _TelegramResponsePlan(
-                reply="OpenClaw runtime is not available. Start the runtime in the operator console and try again.",
-                command_label="plain_text",
-            )
-        if snapshot.readiness_state == "not_ready":
-            return _TelegramResponsePlan(
-                reply="Operator console is not ready. Resolve blocking health or security issues in the desktop app and try again.",
-                command_label="plain_text",
-            )
-        return _TelegramResponsePlan(
-            reply=chr(10).join(
-                (
-                    _OPERATOR_CONSOLE_LABEL,
-                    "Use /help to see supported commands.",
-                    "Plain text is not treated as /ask automatically.",
-                )
-            ),
-            command_label="plain_text",
+        result = self._capability_executor.execute_telegram(
+            update=update,
+            parsed_command=parsed,
+            snapshot=snapshot,
+            batch_busy=batch_busy,
         )
+        self._remember_execution_result(result)
+        return self._plan_from_execution_result(result)
+
+    def _remember_execution_result(self, result: CapabilityExecutionResult) -> None:
+        self._last_execution_result = result
+        self._last_message = result.internal_summary or self._last_message
+
+    @staticmethod
+    def _plan_from_execution_result(result: CapabilityExecutionResult) -> _TelegramResponsePlan:
+        response_style = str(result.request.metadata.get("response_style", "detailed" if result.command_label == "/askd" else "concise"))
+        return _TelegramResponsePlan(
+            reply=result.user_message,
+            command_label=result.command_label,
+            ask_status=result.ask_status,
+            hide_content_in_summary=result.hide_content_in_summary,
+            response_style=response_style,
+        )
+
+    @staticmethod
+    def _operator_console_label() -> str:
+        return _OPERATOR_CONSOLE_LABEL
 
     def _build_help_reply(self) -> _TelegramResponsePlan:
         return _TelegramResponsePlan(
@@ -1475,11 +1430,11 @@ class ControllerService:
     ) -> _TelegramResponsePlan:
         reason = capability.blocking_reason or capability.message
         next_step_map = {
-            "runtime_not_running": "Start the runtime in the desktop app and try again.",
-            "readiness_not_ready": "Resolve the blocking health or security issue in the desktop app.",
-            "offline_provider_unavailable": "Validate Ollama in the desktop app before asking again.",
-            "online_provider_unavailable": "Save or validate the OpenAI configuration in the desktop app.",
-            "policy_always_offline": "Switch to Offline Mode or activate Online Mode explicitly in the desktop app.",
+            "runtime_not_running": "Start the runtime in the operator console and try again.",
+            "readiness_not_ready": "Resolve the blocking health or security issue in the operator console.",
+            "offline_provider_unavailable": "Validate Ollama in the operator console before asking again.",
+            "online_provider_unavailable": "Save or validate the OpenAI configuration in the operator console.",
+            "policy_always_offline": "Switch to Offline Mode or activate Online Mode explicitly in the operator console.",
             "online_confirmation_required": "Approve the pending remote request with /confirm <id> after /ask returns a confirmation prompt.",
         }
         next_step = next_step_map.get(capability.reason_code, "Check the operator console configuration and try again.")
@@ -1591,7 +1546,7 @@ class ControllerService:
                     (
                         f"Confirmation {confirmation.confirmation_id} could not run.",
                         "Reason: The capability is no longer supported for confirmation execution.",
-                        "Next: Send the original command again after checking the desktop app.",
+                        "Next: Send the original command again after checking the operator console.",
                     )
                 ),
                 command_label="/confirm",
@@ -1743,18 +1698,18 @@ class ControllerService:
         capability: CapabilityEvaluation,
     ) -> _TelegramResponsePlan:
         next_step_map = {
-            "runtime_not_running": "Start the runtime in the desktop app and resend the original command.",
-            "readiness_not_ready": "Resolve the blocking health or security issue in the desktop app, then resend the original command.",
-            "offline_provider_unavailable": "Validate Ollama in the desktop app before retrying the original command.",
-            "online_provider_unavailable": "Save or validate the OpenAI configuration in the desktop app before retrying the original command.",
-            "policy_always_offline": "Switch to Offline Mode or resend the original command after changing policy in the desktop app.",
+            "runtime_not_running": "Start the runtime in the operator console and resend the original command.",
+            "readiness_not_ready": "Resolve the blocking health or security issue in the operator console, then resend the original command.",
+            "offline_provider_unavailable": "Validate Ollama in the operator console before retrying the original command.",
+            "online_provider_unavailable": "Save or validate the OpenAI configuration in the operator console before retrying the original command.",
+            "policy_always_offline": "Switch to Offline Mode or resend the original command after changing policy in the operator console.",
             "online_confirmation_required": "Resend the original command to request a fresh confirmation.",
         }
         return self._confirmation_result_reply(
             confirmation_id=confirmation_id,
             state_label="could not run",
             reason=capability.blocking_reason or capability.message,
-            next_step=next_step_map.get(capability.reason_code, "Check the desktop app configuration and resend the original command."),
+            next_step=next_step_map.get(capability.reason_code, "Check the operator console configuration and resend the original command."),
             command_label="/confirm",
         )
 
