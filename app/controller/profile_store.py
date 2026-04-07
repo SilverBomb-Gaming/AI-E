@@ -22,7 +22,7 @@ def _default_repo_root() -> str:
 
 @dataclass
 class ControllerConfig:
-    schema_version: int = 4
+    schema_version: int = 5
     current_mode: Mode = "offline"
     selected_mode: Mode = "offline"
     selected_provider: ProviderType = "ollama"
@@ -32,6 +32,7 @@ class ControllerConfig:
     preferred_ollama_model: str = ""
     ollama_base_url: str = "http://127.0.0.1:11434"
     repo_root: str = field(default_factory=_default_repo_root)
+    file_allowed_roots: tuple[str, ...] = ()
     openai_secret_id: str = "openai/default"
     openai_key_masked: str = ""
     openai_has_secret: bool = False
@@ -88,7 +89,7 @@ class ControllerConfigStore:
         if not isinstance(last_provider_statuses, dict):
             last_provider_statuses = {}
         return ControllerConfig(
-            schema_version=int(raw.get("schema_version", 4)),
+            schema_version=int(raw.get("schema_version", 5)),
             current_mode=str(raw.get("current_mode", "offline")),  # type: ignore[arg-type]
             selected_mode=str(raw.get("selected_mode", raw.get("current_mode", "offline"))),  # type: ignore[arg-type]
             selected_provider=str(raw.get("selected_provider", "ollama")),  # type: ignore[arg-type]
@@ -98,6 +99,11 @@ class ControllerConfigStore:
             preferred_ollama_model=str(raw.get("preferred_ollama_model", "")),
             ollama_base_url=str(raw.get("ollama_base_url", "http://127.0.0.1:11434")),
             repo_root=str(raw.get("repo_root", _default_repo_root())),
+            file_allowed_roots=tuple(
+                str(item).strip()
+                for item in raw.get("file_allowed_roots", [])
+                if str(item).strip()
+            ),
             openai_secret_id=str(raw.get("openai_secret_id", "openai/default")),
             openai_key_masked=str(raw.get("openai_key_masked", "")),
             openai_has_secret=bool(raw.get("openai_has_secret", False)),

@@ -119,6 +119,25 @@ class CapabilityEvaluator:
                 message=f"Repository insight is available for {repo_name}.",
             )
 
+        if capability_id == "file.read":
+            if not context.file_scope_valid:
+                return self._result(
+                    manifest,
+                    source=source,
+                    availability_state="unavailable",
+                    reason_code="file_scope_invalid",
+                    blocking_reason=context.file_message or "No allowed file directories are configured.",
+                    message=context.file_message or "No allowed file directories are configured.",
+                )
+            return self._result(
+                manifest,
+                source=source,
+                availability_state="allowed",
+                reason_code="allowed",
+                blocking_reason="",
+                message="Scoped file preview is available inside the configured allowed roots.",
+            )
+
         if capability_id == "ask.provider_query":
             return self._evaluate_provider_query(
                 manifest,

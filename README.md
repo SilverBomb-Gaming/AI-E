@@ -6,7 +6,7 @@ Controlled execution surface for supported projects. AI-E turns a bounded reques
 
 The current active operator-console surface in this repo is the Windows-first OpenClaw controller shell. The known-good checkpoint is:
 
-- Current baseline: `Windows OpenClaw Operator Console v2.0 - Read-Only Repo Insight Capability`
+- Current baseline: `Windows OpenClaw Operator Console v2.1 - Read-Only File Access Capability`
 - Health: `Healthy`
 - Security: `Safe`
 - Readiness: `Ready`
@@ -18,7 +18,7 @@ What is now working:
 - offline/online mode selection with policy guardrails preserved
 - trusted health and security diagnostics, including ownership-aware port conflict checks and multi-signal runtime liveness
 - secure Telegram bot validation, connection testing, and polling-loop start/stop controls
-- duplicate-safe Telegram interaction loop with `/start`, `/help`, `/status`, `/mode`, `/models`, `/repo`, `/capabilities`, `/audit`, `/ask <prompt>`, and `/askd <prompt>`
+- duplicate-safe Telegram interaction loop with `/start`, `/help`, `/status`, `/mode`, `/models`, `/repo`, `/file <path>`, `/capabilities`, `/audit`, `/ask <prompt>`, and `/askd <prompt>`
 - deterministic Telegram command parsing with whitespace-tolerant handling, consistent casing behavior, and short correction replies for malformed commands
 - per-chat provider-ask control with explicit in-flight rejection, bounded provider timeouts, and a narrow provider-ask cooldown to prevent accidental spam
 - centralized capability registry and evaluator that gate command execution through explicit `allowed`, `blocked`, `degraded`, `confirmation_required`, or `unavailable` states
@@ -27,6 +27,7 @@ What is now working:
 - manifest-backed capability definitions with explicit trust-boundary classification, Telegram exposure rules, startup validation, trust-aware `/capabilities` output, and compact desktop trust summaries
 - manifest-driven scope validation and bounded in-memory audit recording for every capability attempt, including `/audit` summaries and recent scope/audit visibility in the desktop shell
 - the first real external capability, `repo.status.read`, which inspects one configured repository root through fixed read-only git commands and returns a concise Telegram/Desktop summary of branch, clean/dirty state, and recent commits
+- the second external capability, `file.read`, which returns a bounded preview from text files inside configured allowed roots without exposing traversal, mutation, or arbitrary filesystem access
 
 What a capability manifest means in this project:
 
@@ -37,7 +38,8 @@ What a capability manifest means in this project:
 What scope and sandboxing mean here:
 
 - every execution request now carries a structured scope with `scope_type`, `access_mode`, and optional bounded targets such as allowed paths, repository root, or domain allowlist
-- current user-facing capabilities are still narrow: most operator reads are `internal/read`, `repo.status.read` is `repository/read` and bounded to the configured `repo_root`, and `ask.provider_query` is `network/execute` and restricted to the expected provider targets rather than arbitrary hosts
+- current user-facing capabilities are still narrow: most operator reads are `internal/read`, `repo.status.read` is `repository/read` and bounded to the configured `repo_root`, `file.read` is `filesystem/read` and bounded to configured `file_allowed_roots`, and `ask.provider_query` is `network/execute` and restricted to the expected provider targets rather than arbitrary hosts
+- by default the file-read roots fall back to the configured repo root, and file previews stay bounded to safe text types plus capped preview size instead of full-file dumping
 - scope validation now runs after capability evaluation and confirmation checks but before actual execution, so out-of-scope requests are rejected before provider work starts
 - confirmation does not override scope restrictions, and request-provided scope data cannot widen a manifest's allowlist
 
@@ -46,7 +48,7 @@ How audit logging works:
 - every structured execution attempt now creates one bounded audit record, including success, blocked, confirmation-required, denied, expired, timed-out, failed, unavailable, degraded, invalid-request, and out-of-scope outcomes
 - audit records are kept in a bounded in-memory append-only log and surfaced through `/audit` plus compact desktop summaries
 - each record includes capability id, outcome, reason code, confirmation usage, scope summary, provider usage if any, duration, and a short action summary
-- audit records intentionally do not store secrets, raw provider payloads, or full prompts; provider asks are recorded as hidden prompt summaries instead
+- audit records intentionally do not store secrets, raw provider payloads, full prompts, or full file contents; provider asks are recorded as hidden prompt summaries and file reads are recorded as sanitized path/size summaries instead
 
 Execution and trust model:
 
@@ -75,6 +77,7 @@ Milestone notes:
 - v1.8: `docs/milestones/windows_openclaw_operator_console_v1_8_capability_manifests_and_trust_boundaries.md`
 - v1.9: `docs/milestones/windows_openclaw_operator_console_v1_9_sandbox_scope_and_audit_layer.md`
 - v2.0: `docs/milestones/windows_openclaw_operator_console_v2_0_read_only_repo_insight_capability.md`
+- v2.1: `docs/milestones/windows_openclaw_operator_console_v2_1_read_only_file_access_capability.md`
 
 Important guardrails and usage notes:
 
@@ -84,20 +87,21 @@ Important guardrails and usage notes:
 - `/confirm <id>` approves exactly one pending action; `/deny <id>` rejects it; expired or already-used confirmations cannot be replayed
 - `/audit` is bounded and recent-only; it summarizes capability attempts without exposing secrets or full prompt contents
 - `/repo` is read-only only; it is scoped to the configured repository root, uses fixed git status/log/branch inspection only, and does not allow file browsing, mutation, or arbitrary shell passthrough
+- `/file <path>` is read-only only; it accepts relative paths inside configured allowed roots, blocks traversal and absolute paths, shows only bounded text previews, rejects unsupported/binary file types, and never performs write/delete/execute operations
 - the controller stays local-first with loopback bind defaults and secret redaction in logs, summaries, Telegram activity, and audit records
 - still intentionally not implemented: automation, scheduling, scraping, RAG, repo mutation, file mutation, multi-channel expansion, or AI-E orchestration behavior
 
 Current next milestone:
 
-- `Windows OpenClaw Operator Console v2.1 - Scoped File Read Capability`
-- goal: extend the same manifest, scope, confirmation, execution-contract, and audit stack from repo-level status into tightly bounded read-only file insight without weakening the trust model
+- `Next external capability milestone is not started yet`
+- v2.1 now provides the bounded repository + file-read foundation needed for future scoped search or file-detail work without widening the trust model in this checkpoint
 
 Fast operator path:
 
 1. Launch the desktop shell with `python -m app.main`.
 2. Start the runtime and run Health/Security checks.
 3. Validate Telegram, start the Telegram loop, and message the configured bot.
-4. Use `/help`, `/status`, `/mode`, `/models`, `/repo`, `/capabilities`, `/audit`, `/ask hello`, or `/askd hello` from Telegram.
+4. Use `/help`, `/status`, `/mode`, `/models`, `/repo`, `/file app/controller/app_service.py`, `/capabilities`, `/audit`, `/ask hello`, or `/askd hello` from Telegram.
 5. If `/ask` returns a confirmation prompt, reply with `/confirm <id>` to approve that one request or `/deny <id>` to reject it.
 6. If `/capabilities` shows `blocked`, `degraded`, or `unavailable` provider-query state, or `/audit` shows repeated `out_of_scope` results, resolve the noted readiness, provider, or scope issue before retrying.
 7. Run `python -m unittest discover -s tests -v` and `python diagnostics_smoke.py` for the current controller verification pass.

@@ -9,7 +9,9 @@ from ..providers.base import ProviderReply
 from .capability_models import CapabilityContext, CapabilityEvaluation
 from .confirmation_models import ConfirmationContextSnapshot, PendingConfirmation
 from .execution_models import CapabilityExecutionRequest, CapabilityExecutionResult, ProviderExecutionSnapshot
+from .file_reader import FileReaderError
 from .repo_inspector import RepoInspectorError
+from .scope_models import ExecutionScope
 from .telegram_service import TelegramInboundMessage
 
 if TYPE_CHECKING:
@@ -179,6 +181,8 @@ class CapabilityExecutor:
             return self._execute_models(update=update, snapshot=snapshot)
         if command == "/repo":
             return self._execute_repo_status(update=update, snapshot=snapshot, argument=parsed_command.argument)
+        if command == "/file":
+            return self._execute_file_read(update=update, snapshot=snapshot, argument=parsed_command.argument)
         if command == "/audit":
             return self._execute_audit(update=update, snapshot=snapshot, argument=parsed_command.argument)
         if command == "/capabilities":
@@ -420,6 +424,130 @@ class CapabilityExecutor:
             },
         )
 
+    def _execute_file_read(
+        self,
+        *,
+        update: TelegramInboundMessage,
+        snapshot: ControllerSnapshot,
+        argument: str,
+    ) -> CapabilityExecutionResult:
+        relative_path, target_path, allowed_roots, resolve_code, resolve_message = self._service.resolve_file_request(argument)
+        evaluation, context = self._service._evaluate_capability_id(
+            "file.read",
+            snapshot,
+            remember=True,
+        )
+        scope = ExecutionScope(
+            scope_type="filesystem",
+            access_mode="read",
+            allowed_paths=allowed_roots,
+            target_path=target_path,
+        )
+        request = self._build_request(
+            capability_id="file.read",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/file",
+            parsed_arguments={"relative_path": relative_path},
+            context=context,
+            metadata={"argument_summary": f"/file {relative_path or '[missing]'}"},
+            scope_override=scope,
+        )
+        if resolve_code == "missing_file_path":
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="missing_file_path",
+                user_message="Couldn't parse that file command.\nNext: Use /file <relative_path>.",
+                internal_summary="/file rejected because no relative path was provided.",
+                retryable=False,
+                command_label="/file",
+                activity_state="processing_command",
+            )
+        if resolve_code == "absolute_path_not_allowed":
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="absolute_path_not_allowed",
+                user_message="Couldn't parse that file command.\nNext: Use /file <relative_path> inside the allowed directories.",
+                internal_summary="/file rejected because an absolute path was provided.",
+                retryable=False,
+                command_label="/file",
+                activity_state="processing_command",
+            )
+        if evaluation.current_availability_state != "allowed":
+            outcome = "blocked"
+            retryable = True
+            if evaluation.current_availability_state == "unavailable":
+                outcome = "unavailable"
+            elif evaluation.current_availability_state == "degraded":
+                outcome = "degraded"
+            return self._result(
+                request,
+                outcome=outcome,
+                reason_code=evaluation.reason_code,
+                user_message="\n".join(
+                    (
+                        "Can't run /file right now.",
+                        f"Reason: {evaluation.blocking_reason or evaluation.message}",
+                        "Next: Check readiness and the configured allowed file roots in the operator console.",
+                    )
+                ),
+                internal_summary=f"file.read blocked: {evaluation.reason_code}.",
+                retryable=retryable,
+                degraded=outcome == "degraded",
+                command_label="/file",
+                activity_state="processing_command",
+            )
+        if resolve_code == "target_path_not_allowed":
+            return self._file_error_result(
+                request=request,
+                error=FileReaderError(resolve_code, resolve_message),
+                relative_path=relative_path,
+            )
+        scope_failure = self._scope_failure_result(request, command_label="/file")
+        if scope_failure is not None:
+            return scope_failure
+        if resolve_code != "file_target_ready":
+            return self._file_error_result(
+                request=request,
+                error=FileReaderError(resolve_code, resolve_message),
+                relative_path=relative_path,
+            )
+        try:
+            preview = self._service.read_file_preview(relative_path)
+        except FileReaderError as exc:
+            return self._file_error_result(request=request, error=exc, relative_path=relative_path)
+        reply = self._service._build_file_reply(preview).reply
+        if preview.oversized:
+            file_status = "Large file preview truncated."
+        elif preview.truncated:
+            file_status = "Preview truncated."
+        else:
+            file_status = "Preview ready."
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=reply,
+            internal_summary=f"file.read returned {preview.display_path} ({preview.size_label}).",
+            retryable=False,
+            command_label="/file",
+            activity_state="processing_command",
+            telemetry={
+                "display_path": preview.display_path,
+                "file_name": preview.file_name,
+                "file_status": file_status,
+                "file_truncated": preview.truncated,
+                "file_size_bytes": preview.size_bytes,
+                "file_size_label": preview.size_label,
+                "file_size_category": preview.size_category,
+                "file_read_at": preview.read_at,
+                "file_summary": preview.audit_summary,
+            },
+        )
+
     def _execute_capabilities(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot) -> CapabilityExecutionResult:
         request, _, _, scope_failure = self._prepare_capability_request(
             capability_id="capabilities.read",
@@ -531,6 +659,49 @@ class CapabilityExecutor:
             command_label="/repo",
             activity_state="provider_failed" if outcome == "failed" else "processing_command",
             telemetry={"repo_summary": f"{self._service._repo_display_name()} | {error.code}"},
+        )
+
+    def _file_error_result(
+        self,
+        *,
+        request: CapabilityExecutionRequest,
+        error: FileReaderError,
+        relative_path: str,
+    ) -> CapabilityExecutionResult:
+        next_step_map = {
+            "file_not_found": "Check the relative path and try again.",
+            "file_type_not_supported": "Request a supported text-based file inside the allowed scope.",
+            "file_encoding_not_supported": "Request a UTF-8 text file inside the allowed scope.",
+            "file_too_large": "Request a smaller file or narrow the target.",
+            "file_roots_missing": "Configure at least one allowed file directory in the controller config.",
+            "file_roots_not_absolute": "Use absolute allowed file directories in the controller config.",
+            "target_path_not_allowed": "Use a relative path inside the allowed directories only.",
+        }
+        outcome = "unavailable"
+        retryable = True
+        if error.code == "target_path_not_allowed":
+            outcome = "out_of_scope"
+            retryable = False
+        elif error.code in {"file_not_found"}:
+            outcome = "unavailable"
+        elif error.code in {"file_type_not_supported", "file_encoding_not_supported", "file_too_large"}:
+            outcome = "failed"
+        return self._result(
+            request,
+            outcome=outcome,
+            reason_code=error.code,
+            user_message="\n".join(
+                (
+                    "Can't run /file right now." if outcome != "out_of_scope" else "Action is out of scope.",
+                    f"Reason: {error.message}",
+                    f"Next: {next_step_map.get(error.code, 'Check the file path and allowed directories, then try again.')}",
+                )
+            ),
+            internal_summary=f"file.read failed: {error.code} ({relative_path or 'missing path'}).",
+            retryable=retryable,
+            command_label="/file",
+            activity_state="processing_command",
+            telemetry={"display_path": relative_path, "file_summary": f"{relative_path or 'unknown file'} | {error.code}"},
         )
 
     def _execute_provider_query(
@@ -1492,9 +1663,10 @@ class CapabilityExecutor:
         context: CapabilityContext | None = None,
         confirmation_context: ConfirmationContextSnapshot | None = None,
         metadata: dict[str, object] | None = None,
+        scope_override: ExecutionScope | None = None,
     ) -> CapabilityExecutionRequest:
         provider_snapshot = self._provider_snapshot(snapshot, context=context)
-        scope = self._service._build_execution_scope(
+        scope = scope_override or self._service._build_execution_scope(
             capability_id,
             snapshot=snapshot,
         )

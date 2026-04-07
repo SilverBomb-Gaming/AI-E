@@ -20,6 +20,7 @@ from .confirmation_store import ConfirmationStore
 from .channel_models import TelegramChannelStatus, TelegramLoopStatus
 from .diagnostic_models import DiagnosticReport
 from .execution_models import CapabilityExecutionResult
+from .file_reader import FileReadSnapshot, FileReader, FileReaderError
 from .diagnostics import ControllerDiagnosticsService
 from .models import ControllerSnapshot
 from .profile_store import ControllerConfig, ControllerConfigStore, Mode, Policy, ProviderType
@@ -33,7 +34,7 @@ from ..runtime.manager import OpenClawRuntimeManager
 from ..runtime.log_sanitizer import sanitize_log_text
 
 
-_OPERATOR_CONSOLE_LABEL = "Windows OpenClaw Operator Console v2.0"
+_OPERATOR_CONSOLE_LABEL = "Windows OpenClaw Operator Console v2.1"
 _ASK_CONCISE_LIMIT = 700
 _ASK_DETAILED_LIMIT = 1500
 _PROVIDER_ASK_COMMANDS = frozenset({"/ask", "/askd"})
@@ -80,6 +81,7 @@ class ControllerService:
         provider_adapters: dict[AdapterProviderType, object] | None = None,
         telegram_service: TelegramChannelService | None = None,
         repo_inspector: RepoInspector | None = None,
+        file_reader: FileReader | None = None,
     ) -> None:
         self._runtime_manager = runtime_manager or OpenClawRuntimeManager()
         self._config_store = config_store or ControllerConfigStore()
@@ -90,8 +92,10 @@ class ControllerService:
         }
         self._telegram_service = telegram_service or TelegramChannelService()
         self._repo_inspector = repo_inspector or RepoInspector()
+        self._file_reader = file_reader or FileReader()
         self._config = self._config_store.load()
         self._normalize_repo_root_config()
+        self._normalize_file_roots_config()
         self._runtime_manager.configure(gateway_port=self._config.gateway_port, gateway_bind=self._config.gateway_bind)
         self._provider_status_cache: dict[str, ProviderStatus] = self._load_provider_status_cache(self._config)
         self._telegram_status = self._reconcile_telegram_status(self._config.telegram_status)
@@ -118,6 +122,9 @@ class ControllerService:
         self._last_repo_branch = "-"
         self._last_repo_state = "No repository insight result yet."
         self._last_repo_checked_at = "-"
+        self._last_file_read = "No file preview result yet."
+        self._last_file_status = "No file preview result yet."
+        self._last_file_read_at = "-"
         self._confirmation_store = ConfirmationStore(lifetime_seconds=_CONFIRMATION_LIFETIME_SECONDS)
         self._last_confirmation_requested = "No pending confirmation requested yet."
         self._last_confirmation_result = "No confirmation handled yet."
@@ -294,9 +301,13 @@ class ControllerService:
             telegram_last_inbound_summary=telegram_loop_status.last_inbound_summary,
             telegram_last_outbound_summary=telegram_loop_status.last_outbound_summary,
             configured_repo_root=self._config.repo_root or "-",
+            configured_file_roots=self._file_roots_summary(self._config.file_allowed_roots),
             last_repo_branch=self._last_repo_branch,
             last_repo_status=self._last_repo_state,
             last_repo_checked_at=self._last_repo_checked_at,
+            last_file_read=self._last_file_read,
+            last_file_read_status=self._last_file_status,
+            last_file_read_at=self._last_file_read_at,
             last_capability_id=self._last_capability_evaluation.capability_id if self._last_capability_evaluation else "-",
             last_capability_state=self._last_capability_evaluation.current_availability_state if self._last_capability_evaluation else "unknown",
             last_capability_message=self._last_capability_evaluation.message if self._last_capability_evaluation else "No capability evaluated yet.",
@@ -654,6 +665,29 @@ class ControllerService:
             self._config.repo_root = normalized
             self._config_store.save(self._config)
 
+    def _normalize_file_roots_config(self) -> None:
+        raw_roots = tuple(root for root in self._config.file_allowed_roots if root.strip())
+        if not raw_roots:
+            raw_roots = (self._config.repo_root.strip(),)
+        normalized_roots: list[str] = []
+        seen: set[str] = set()
+        for raw_root in raw_roots:
+            candidate_text = raw_root.strip()
+            if not candidate_text:
+                continue
+            try:
+                candidate = Path(candidate_text)
+                normalized = str(candidate.resolve(strict=False)) if not candidate.is_absolute() else str(candidate)
+            except OSError:
+                normalized = candidate_text
+            if normalized not in seen:
+                seen.add(normalized)
+                normalized_roots.append(normalized)
+        final_roots = tuple(normalized_roots)
+        if final_roots != self._config.file_allowed_roots:
+            self._config.file_allowed_roots = final_roots
+            self._config_store.save(self._config)
+
     def _repo_configuration_state(self) -> tuple[str, bool, str, str]:
         raw_value = self._config.repo_root.strip()
         if not raw_value:
@@ -671,6 +705,30 @@ class ControllerService:
             return str(resolved), False, "Repository root is not a directory.", "repo_root_not_directory"
         return str(resolved), True, f"Repository root ready: {resolved.name}.", "repo_ready"
 
+    def _file_scope_state(self) -> tuple[tuple[str, ...], bool, str, str]:
+        usable_roots: list[str] = []
+        invalid_absolute = False
+        for raw_root in self._config.file_allowed_roots:
+            candidate_text = raw_root.strip()
+            if not candidate_text:
+                continue
+            candidate = Path(candidate_text)
+            if not candidate.is_absolute():
+                invalid_absolute = True
+                continue
+            try:
+                resolved = candidate.resolve(strict=False)
+            except OSError:
+                continue
+            if resolved.exists() and resolved.is_dir():
+                usable_roots.append(str(resolved))
+        roots = tuple(dict.fromkeys(usable_roots))
+        if roots:
+            return roots, True, f"File preview is scoped to {len(roots)} allowed director{'y' if len(roots) == 1 else 'ies'}.", "file_scope_ready"
+        if invalid_absolute:
+            return (), False, "Allowed file directories must use absolute paths.", "file_roots_not_absolute"
+        return (), False, "No allowed file directories are configured.", "file_roots_missing"
+
     def _repo_display_name(self, repo_root: str = "") -> str:
         candidate = repo_root.strip() or self._config.repo_root.strip()
         if not candidate:
@@ -678,11 +736,56 @@ class ControllerService:
         path = Path(candidate)
         return path.name or candidate
 
+    @staticmethod
+    def _file_roots_summary(roots: tuple[str, ...]) -> str:
+        if not roots:
+            return "-"
+        labels = [Path(root).name or root for root in roots[:2]]
+        if len(roots) > 2:
+            labels.append(f"+{len(roots) - 2} more")
+        return ", ".join(labels)
+
     def inspect_repo_status(self) -> RepoInspectionSnapshot:
         repo_root, repo_root_valid, repo_message, repo_code = self._repo_configuration_state()
         if not repo_root_valid:
             raise RepoInspectorError(repo_code, repo_message)
         return self._repo_inspector.inspect(repo_root, commit_limit=4)
+
+    def resolve_file_request(self, relative_path: str) -> tuple[str, str, tuple[str, ...], str, str]:
+        requested = relative_path.strip()
+        if not requested:
+            return "", "", (), "missing_file_path", "Use /file <relative_path>."
+        candidate_path = Path(requested)
+        if candidate_path.is_absolute():
+            return requested, "", (), "absolute_path_not_allowed", "Use /file <relative_path> inside the allowed directories."
+        if any(part == ".." for part in candidate_path.parts):
+            return requested.replace("\\", "/"), "", (), "target_path_not_allowed", "File is outside allowed directories."
+
+        allowed_roots, roots_valid, roots_message, roots_code = self._file_scope_state()
+        if not roots_valid:
+            return requested.replace("\\", "/"), "", allowed_roots, roots_code, roots_message
+
+        requested_display = requested.replace("\\", "/")
+        first_scoped_target = ""
+        for root in allowed_roots:
+            try:
+                target = (Path(root) / candidate_path).resolve(strict=False)
+                target.relative_to(Path(root).resolve())
+            except (OSError, ValueError):
+                continue
+            if not first_scoped_target:
+                first_scoped_target = str(target)
+            if target.exists() and target.is_file():
+                return requested_display, str(target), allowed_roots, "file_target_ready", "Scoped file target is ready."
+        if first_scoped_target:
+            return requested_display, first_scoped_target, allowed_roots, "file_not_found", "File not found in allowed scope."
+        return requested_display, "", allowed_roots, "target_path_not_allowed", "File is outside allowed directories."
+
+    def read_file_preview(self, relative_path: str) -> FileReadSnapshot:
+        display_path, target_path, _, reason_code, message = self.resolve_file_request(relative_path)
+        if reason_code != "file_target_ready" or not target_path:
+            raise FileReaderError(reason_code, message)
+        return self._file_reader.read_text_preview(target_path, display_path=display_path)
 
     def _build_repo_reply(self, inspection: RepoInspectionSnapshot) -> _TelegramResponsePlan:
         lines = [
@@ -698,6 +801,22 @@ class ControllerService:
         return _TelegramResponsePlan(
             reply=chr(10).join(lines),
             command_label="/repo",
+        )
+
+    def _build_file_reply(self, preview: FileReadSnapshot) -> _TelegramResponsePlan:
+        lines = [
+            f"File: {preview.display_path}",
+            f"Size: {preview.size_label}",
+            "Preview:",
+            preview.preview_text,
+        ]
+        if preview.oversized:
+            lines.append("Note: Large file preview truncated for safety.")
+        elif preview.truncated:
+            lines.append("Note: Preview truncated.")
+        return _TelegramResponsePlan(
+            reply=chr(10).join(lines),
+            command_label="/file",
         )
 
     def _diagnostic_summary_lines(self) -> tuple[str, ...]:
@@ -885,6 +1004,7 @@ class ControllerService:
         self._last_execution_result = result
         self._audit_store.append(self._build_audit_record(result))
         self._remember_repo_execution_result(result)
+        self._remember_file_execution_result(result)
         self._last_message = result.internal_summary or self._last_message
 
     def _remember_repo_execution_result(self, result: CapabilityExecutionResult) -> None:
@@ -900,6 +1020,19 @@ class ControllerService:
         else:
             self._last_repo_state = self._summarize_text(result.internal_summary, limit=120)
         self._last_repo_checked_at = result.finished_at or self._now_iso()
+
+    def _remember_file_execution_result(self, result: CapabilityExecutionResult) -> None:
+        if result.capability_id != "file.read":
+            return
+        file_name = str(result.telemetry.get("file_name") or "").strip()
+        file_status = str(result.telemetry.get("file_status") or "").strip()
+        file_display = str(result.telemetry.get("display_path") or file_name or "unknown file").strip()
+        self._last_file_read = file_display
+        if file_status:
+            self._last_file_status = self._summarize_text(file_status, limit=120)
+        else:
+            self._last_file_status = self._summarize_text(result.internal_summary, limit=120)
+        self._last_file_read_at = result.finished_at or self._now_iso()
 
     @staticmethod
     def _plan_from_execution_result(result: CapabilityExecutionResult) -> _TelegramResponsePlan:
@@ -922,17 +1055,18 @@ class ControllerService:
                 (
                     "Operator commands",
                     "/help - show this command list",
-                    "/status - runtime, health, safety, readiness",
-                    "/mode - mode, policy, and remote-use gate",
+                    "/status - runtime, health, readiness",
+                    "/mode - mode, policy, remote-use gate",
                     "/models - local Ollama models",
-                    "/repo - scoped read-only repo summary",
-                    "/capabilities - current capability gate summary",
-                    "/audit - recent capability audit entries",
+                    "/repo - scoped repo summary",
+                    "/file <path> - scoped file preview",
+                    "/capabilities - capability gate summary",
+                    "/audit - recent audit entries",
                     "/ask <prompt> - concise provider reply",
-                    "/askd <prompt> - more detailed provider reply",
-                    "/confirm <id> - approve one pending action",
-                    "/deny <id> - reject one pending action",
-                    "Plain text is not auto-routed to /ask.",
+                    "/askd <prompt> - detailed provider reply",
+                    "/confirm <id> - approve pending action",
+                    "/deny <id> - reject pending action",
+                    "Plain text is not auto-routed.",
                 )
             ),
             command_label="/help",
@@ -1325,6 +1459,8 @@ class ControllerService:
     def _summarize_inbound_update(self, update: TelegramInboundMessage, command_label: str) -> str:
         if command_label in _PROVIDER_ASK_COMMANDS:
             return self._summarize_text(f"{update.sender_label}: {command_label} [prompt hidden]")
+        if command_label == "/file":
+            return self._summarize_text(f"{update.sender_label}: /file [path hidden]")
         if command_label == "plain_text":
             return self._summarize_text(f"{update.sender_label}: text message received")
         if command_label == "non_text":
@@ -1343,6 +1479,8 @@ class ControllerService:
             return self._summarize_text(f"Sent non-text guidance reply to {update.sender_label}.")
         if plan.command_label == "parse_failure":
             return self._summarize_text(f"Sent command correction to {update.sender_label}.")
+        if plan.command_label == "/file":
+            return self._summarize_text(f"Sent /file reply to {update.sender_label}.")
         return self._summarize_text(f"Sent {plan.command_label} reply to {update.sender_label}.")
 
     @staticmethod
@@ -1359,8 +1497,14 @@ class ControllerService:
         argument = parts[1].strip() if len(parts) > 1 else ""
         command = command_token.split("@", 1)[0].lower()
         normalized_text = " ".join(text.split())
-        if command in {"/start", "/help", "/status", "/mode", "/models", "/repo", "/capabilities", "/audit", "/confirm", "/deny", "/ask", "/askd"}:
+        if command in {"/start", "/help", "/status", "/mode", "/models", "/repo", "/file", "/capabilities", "/audit", "/confirm", "/deny", "/ask", "/askd"}:
             return _ParsedTelegramCommand(command_label=command, argument=argument, normalized_text=normalized_text)
+        if command.startswith("/file"):
+            return _ParsedTelegramCommand(
+                command_label="parse_failure",
+                normalized_text=normalized_text,
+                usage_hint="Use /file <relative_path>.",
+            )
         if command.startswith("/repo"):
             return _ParsedTelegramCommand(
                 command_label="parse_failure",
@@ -1506,6 +1650,7 @@ class ControllerService:
         offline_status = self._provider_status_for_mode("offline") if need_offline else self._provider_status_cache.get("ollama") or self._default_provider_status("ollama")
         online_status = self._provider_status_for_mode("online") if need_online else self._provider_status_cache.get("openai") or self._default_provider_status("openai")
         repo_root, repo_root_valid, repo_message, _ = self._repo_configuration_state()
+        file_allowed_roots, file_scope_valid, file_message, _ = self._file_scope_state()
         return CapabilityContext(
             runtime_state=snapshot.runtime_state,
             readiness_state=snapshot.readiness_state,
@@ -1521,6 +1666,9 @@ class ControllerService:
             repo_root=repo_root,
             repo_root_valid=repo_root_valid,
             repo_message=repo_message,
+            file_allowed_roots=file_allowed_roots,
+            file_scope_valid=file_scope_valid,
+            file_message=file_message,
         )
 
     def _build_capabilities_reply(self, snapshot: ControllerSnapshot) -> _TelegramResponsePlan:
@@ -2196,6 +2344,13 @@ class ControllerService:
                 repo_root=repo_root,
                 target_path=repo_root,
             )
+        if manifest.scope_type == "filesystem":
+            allowed_paths = self._config.file_allowed_roots if manifest.scope_uses_configured_paths else manifest.scope_allowed_paths
+            return ExecutionScope(
+                scope_type=manifest.scope_type,
+                access_mode=manifest.access_mode,
+                allowed_paths=tuple(allowed_paths),
+            )
         return ExecutionScope(
             scope_type=manifest.scope_type,
             access_mode=manifest.access_mode,
@@ -2221,6 +2376,8 @@ class ControllerService:
     def _build_audit_record(self, result: CapabilityExecutionResult) -> AuditRecord:
         if result.capability_id == "repo.status.read":
             action_summary = str(result.telemetry.get("repo_summary") or f"repo status for {self._repo_display_name()}")
+        elif result.capability_id == "file.read":
+            action_summary = str(result.telemetry.get("file_summary") or "file preview")
         else:
             action_summary = str(result.request.metadata.get("argument_summary") or result.command_label)
         return AuditRecord(

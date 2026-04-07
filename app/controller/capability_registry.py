@@ -225,6 +225,26 @@ CAPABILITY_MANIFESTS: tuple[CapabilityManifest, ...] = (
         scope_uses_configured_root=True,
     ),
     CapabilityManifest(
+        capability_id="file.read",
+        name="File Read",
+        category="filesystem",
+        short_description="Read a bounded preview from a text file inside the configured allowed roots.",
+        execution_type="read",
+        provider_dependency="none",
+        network_requirement="none",
+        requires_runtime=False,
+        requires_readiness=True,
+        access_kind="read_only",
+        locality="local_only",
+        data_scope="file_system",
+        offline_safety="safe_offline",
+        confirmation_sensitivity="never",
+        telegram_exposure="allowed",
+        scope_type="filesystem",
+        access_mode="read",
+        scope_uses_configured_paths=True,
+    ),
+    CapabilityManifest(
         capability_id="capabilities.read",
         name="Capabilities",
         category="operator",
@@ -252,6 +272,7 @@ COMMAND_CAPABILITY_MAP: dict[str, str] = {
     "/mode": "mode.read",
     "/models": "models.read",
     "/repo": "repo.status.read",
+    "/file": "file.read",
     "/ask": "ask.provider_query",
     "/askd": "ask.provider_query",
     "/audit": "audit.read",
@@ -292,15 +313,21 @@ def validate_capability_manifests(manifests: tuple[CapabilityManifest, ...] | li
         if manifest.scope_type == "internal" and manifest.access_mode == "execute":
             issues.append(f"{manifest.capability_id}: internal scope cannot use execute access mode.")
         if manifest.scope_type == "internal" and (
-            manifest.scope_allowed_paths or manifest.scope_domain_allowlist or manifest.scope_repo_root or manifest.scope_uses_configured_root
+            manifest.scope_allowed_paths
+            or manifest.scope_domain_allowlist
+            or manifest.scope_repo_root
+            or manifest.scope_uses_configured_root
+            or manifest.scope_uses_configured_paths
         ):
             issues.append(f"{manifest.capability_id}: internal scope cannot define filesystem, repository, or domain targets.")
-        if manifest.scope_type == "filesystem" and not manifest.scope_allowed_paths:
-            issues.append(f"{manifest.capability_id}: filesystem scope requires scope_allowed_paths.")
+        if manifest.scope_type == "filesystem" and not (manifest.scope_allowed_paths or manifest.scope_uses_configured_paths):
+            issues.append(f"{manifest.capability_id}: filesystem scope requires scope_allowed_paths or configured-path binding.")
         if manifest.scope_type == "repository" and not (manifest.scope_repo_root or manifest.scope_uses_configured_root):
             issues.append(f"{manifest.capability_id}: repository scope requires scope_repo_root or configured-root binding.")
         if manifest.scope_uses_configured_root and manifest.scope_type != "repository":
             issues.append(f"{manifest.capability_id}: configured-root binding currently supports repository scope only.")
+        if manifest.scope_uses_configured_paths and manifest.scope_type != "filesystem":
+            issues.append(f"{manifest.capability_id}: configured-path binding currently supports filesystem scope only.")
     return tuple(issues)
 
 

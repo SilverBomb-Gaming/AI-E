@@ -335,11 +335,11 @@ class TelegramCommandTests(unittest.TestCase):
             lines = reply.splitlines()
             self.assertLessEqual(len(reply), 500)
             self.assertEqual(lines[0], "Operator commands")
-            self.assertIn("/capabilities - current capability gate summary", lines)
-            self.assertIn("/audit - recent capability audit entries", lines)
+            self.assertIn("/capabilities - capability gate summary", lines)
+            self.assertIn("/audit - recent audit entries", lines)
             self.assertIn("/ask <prompt> - concise provider reply", lines)
-            self.assertIn("/askd <prompt> - more detailed provider reply", lines)
-            self.assertEqual(lines[-1], "Plain text is not auto-routed to /ask.")
+            self.assertIn("/askd <prompt> - detailed provider reply", lines)
+            self.assertEqual(lines[-1], "Plain text is not auto-routed.")
 
     def test_status_command_is_mobile_readable_and_shows_loop_activity(self) -> None:
         update = TelegramInboundMessage(update_id=2, chat_id="chat-1", text="/status", sender_label="@tester")
@@ -793,5 +793,6 @@ class TelegramCommandTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
 
 
