@@ -138,6 +138,14 @@ class CapabilityEvaluator:
                 message="Scoped file preview is available inside the configured allowed roots.",
             )
 
+        if capability_id == "web.fetch.read":
+            return self._evaluate_web_fetch(
+                manifest,
+                context,
+                source=source,
+                confirmation_granted=confirmation_granted,
+            )
+
         if capability_id == "ask.provider_query":
             return self._evaluate_provider_query(
                 manifest,
@@ -276,6 +284,83 @@ class CapabilityEvaluator:
             reason_code="allowed",
             blocking_reason="",
             message="Online provider query is available via OpenAI.",
+        )
+
+    def _evaluate_web_fetch(
+        self,
+        manifest: CapabilityManifest,
+        context: CapabilityContext,
+        *,
+        source: CapabilityInvocationSource,
+        confirmation_granted: bool,
+    ) -> CapabilityEvaluation:
+        if not context.web_scope_valid:
+            return self._result(
+                manifest,
+                source=source,
+                availability_state="unavailable",
+                reason_code="web_scope_invalid",
+                blocking_reason=context.web_message or "No allowed web domains are configured.",
+                message=context.web_message or "No allowed web domains are configured.",
+            )
+
+        if context.policy == "always_offline":
+            return self._result(
+                manifest,
+                source=source,
+                availability_state="blocked",
+                reason_code="policy_always_offline",
+                blocking_reason="Always Offline policy is active.",
+                message="Always Offline policy blocks web fetch requests.",
+            )
+
+        if context.readiness_state == "not_ready":
+            return self._result(
+                manifest,
+                source=source,
+                availability_state="blocked",
+                reason_code="readiness_not_ready",
+                blocking_reason="Readiness is not ready.",
+                message="Web fetch is blocked until readiness is restored.",
+            )
+
+        if context.mode == "online":
+            return self._result(
+                manifest,
+                source=source,
+                availability_state="allowed",
+                reason_code="allowed",
+                blocking_reason="",
+                message="Web fetch is available in Online Mode.",
+            )
+
+        if manifest.confirmation_sensitivity == "always" and not confirmation_granted:
+            return self._result(
+                manifest,
+                source=source,
+                availability_state="confirmation_required",
+                reason_code="capability_confirmation_required",
+                blocking_reason="This capability always requires explicit confirmation.",
+                message="This capability requires explicit confirmation before it can run.",
+            )
+
+        if context.policy == "ask_before_online" and not confirmation_granted:
+            return self._result(
+                manifest,
+                source=source,
+                availability_state="confirmation_required",
+                reason_code="online_confirmation_required",
+                blocking_reason="Online access requires one-shot confirmation under the current policy.",
+                message="Web fetch requires one-shot confirmation before it can use the network.",
+            )
+
+        return self._result(
+            manifest,
+            source=source,
+            availability_state="allowed",
+            reason_code="allowed",
+            blocking_reason="",
+            message="Web fetch is available for allowlisted domains.",
         )
 
     def _evaluate_selected_online_query(

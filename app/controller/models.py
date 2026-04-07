@@ -67,12 +67,17 @@ class ControllerSnapshot:
     telegram_last_outbound_summary: str
     configured_repo_root: str
     configured_file_roots: str
+    configured_web_domains: str
     last_repo_branch: str
     last_repo_status: str
     last_repo_checked_at: str
     last_file_read: str
     last_file_read_status: str
     last_file_read_at: str
+    last_web_fetch: str
+    last_web_status: str
+    last_web_content_type: str
+    last_web_fetched_at: str
     last_capability_id: str
     last_capability_state: CapabilityAvailabilityState
     last_capability_message: str

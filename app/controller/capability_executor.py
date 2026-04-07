@@ -13,6 +13,7 @@ from .file_reader import FileReaderError
 from .repo_inspector import RepoInspectorError
 from .scope_models import ExecutionScope
 from .telegram_service import TelegramInboundMessage
+from .web_fetcher import WebFetchError
 
 if TYPE_CHECKING:
     from .app_service import ControllerService
@@ -183,6 +184,8 @@ class CapabilityExecutor:
             return self._execute_repo_status(update=update, snapshot=snapshot, argument=parsed_command.argument)
         if command == "/file":
             return self._execute_file_read(update=update, snapshot=snapshot, argument=parsed_command.argument)
+        if command == "/web":
+            return self._execute_web_fetch(update=update, snapshot=snapshot, argument=parsed_command.argument)
         if command == "/audit":
             return self._execute_audit(update=update, snapshot=snapshot, argument=parsed_command.argument)
         if command == "/capabilities":
@@ -548,6 +551,119 @@ class CapabilityExecutor:
             },
         )
 
+    def _execute_web_fetch(
+        self,
+        *,
+        update: TelegramInboundMessage,
+        snapshot: ControllerSnapshot,
+        argument: str,
+    ) -> CapabilityExecutionResult:
+        display_url, normalized_url, allowed_domains, target_domain, resolve_code, resolve_message = self._service.resolve_web_request(argument)
+        evaluation, context = self._service._evaluate_capability_id(
+            "web.fetch.read",
+            snapshot,
+            remember=True,
+        )
+        scope = ExecutionScope(
+            scope_type="network",
+            access_mode="read",
+            target_domain=target_domain,
+            domain_allowlist=allowed_domains,
+        )
+        request = self._build_request(
+            capability_id="web.fetch.read",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/web",
+            parsed_arguments={"url": display_url},
+            context=context,
+            metadata={"argument_summary": f"/web {display_url or '[missing]'}"},
+            scope_override=scope,
+        )
+        if resolve_code == "missing_url":
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="missing_url",
+                user_message="Couldn't parse that web command.\nNext: Use /web <https://allowed-domain/path>.",
+                internal_summary="/web rejected because no URL was provided.",
+                retryable=False,
+                command_label="/web",
+                activity_state="processing_command",
+            )
+        if resolve_code in {"malformed_url", "unsupported_url_scheme"}:
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code=resolve_code,
+                user_message="Couldn't parse that web command.\nNext: Use /web <https://allowed-domain/path>.",
+                internal_summary=f"/web rejected because the URL was invalid ({resolve_code}).",
+                retryable=False,
+                command_label="/web",
+                activity_state="processing_command",
+            )
+        if resolve_code == "web_target_ready":
+            scope_failure = self._scope_failure_result(request, command_label="/web")
+            if scope_failure is not None:
+                return scope_failure
+        if evaluation.current_availability_state == "confirmation_required":
+            return self._web_confirmation_required_result(
+                request=request,
+                evaluation=evaluation,
+                context=context,
+                snapshot=snapshot,
+                normalized_url=normalized_url,
+                display_url=display_url,
+                chat_id=update.chat_id,
+                requester_label=update.sender_label,
+            )
+        if evaluation.current_availability_state != "allowed":
+            return self._web_blocked_result(
+                request=request,
+                evaluation=evaluation,
+            )
+        if resolve_code != "web_target_ready":
+            return self._web_error_result(
+                request=request,
+                error=WebFetchError(resolve_code, resolve_message),
+                display_url=display_url,
+            )
+        try:
+            preview = self._service.fetch_web_preview(normalized_url)
+        except WebFetchError as exc:
+            return self._web_error_result(request=request, error=exc, display_url=display_url)
+        reply = self._service._build_web_reply(preview).reply
+        if preview.oversized:
+            status = "Large web preview truncated."
+        elif preview.truncated:
+            status = "Web preview truncated."
+        else:
+            status = "Web preview ready."
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=reply,
+            internal_summary=f"web.fetch.read returned {preview.domain} ({preview.content_type}).",
+            retryable=False,
+            command_label="/web",
+            activity_state="processing_command",
+            mode_used="online" if snapshot.mode == "online" else snapshot.mode,
+            telemetry={
+                "web_domain": preview.domain,
+                "web_display_url": preview.display_url,
+                "web_content_type": preview.content_type,
+                "web_status": status,
+                "web_truncated": preview.truncated,
+                "web_size_bytes": preview.size_bytes,
+                "web_size_label": preview.size_label,
+                "web_size_category": preview.size_category,
+                "web_fetched_at": preview.fetched_at,
+                "web_summary": preview.audit_summary,
+            },
+        )
+
     def _execute_capabilities(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot) -> CapabilityExecutionResult:
         request, _, _, scope_failure = self._prepare_capability_request(
             capability_id="capabilities.read",
@@ -702,6 +818,162 @@ class CapabilityExecutor:
             command_label="/file",
             activity_state="processing_command",
             telemetry={"display_path": relative_path, "file_summary": f"{relative_path or 'unknown file'} | {error.code}"},
+        )
+
+    def _web_error_result(
+        self,
+        *,
+        request: CapabilityExecutionRequest,
+        error: WebFetchError,
+        display_url: str,
+        confirmation_id: str = "",
+    ) -> CapabilityExecutionResult:
+        next_step_map = {
+            "missing_url": "Use /web <https://allowed-domain/path>.",
+            "malformed_url": "Use a full https:// or http:// URL from the allowed domain list.",
+            "unsupported_url_scheme": "Use an https:// or http:// URL from the allowed web scope.",
+            "web_scope_missing": "Configure at least one allowed web domain in the controller config.",
+            "target_domain_not_allowed": "Use a URL from the configured allowlisted domains only.",
+            "redirect_target_not_allowed": "Use a URL that stays within the configured allowlisted domains.",
+            "unsupported_content_type": "Request supported text, HTML, or JSON content only.",
+            "web_fetch_timeout": "Try /web again in a moment.",
+            "web_fetch_failed": "Check network access for the allowlisted domain, then try again.",
+            "redirect_limit_exceeded": "Use a URL that resolves directly or stays within a short redirect chain.",
+        }
+        outcome = "failed"
+        retryable = True
+        if error.code in {"missing_url", "malformed_url", "unsupported_url_scheme"}:
+            outcome = "invalid_request"
+            retryable = False
+        elif error.code in {"target_domain_not_allowed", "redirect_target_not_allowed"}:
+            outcome = "out_of_scope"
+            retryable = False
+        elif error.code == "web_scope_missing":
+            outcome = "unavailable"
+        elif error.code == "web_fetch_timeout":
+            outcome = "timed_out"
+        return self._result(
+            request,
+            outcome=outcome,
+            reason_code=error.code,
+            user_message="\n".join(
+                (
+                    "Can't run /web right now." if outcome not in {"out_of_scope", "timed_out", "invalid_request"} else (
+                        "Action is out of scope." if outcome == "out_of_scope" else (
+                            "Web request timed out." if outcome == "timed_out" else "Couldn't parse that web command."
+                        )
+                    ),
+                    f"Reason: {error.message}",
+                    f"Next: {next_step_map.get(error.code, 'Check the URL and web-scope configuration, then try again.')}",
+                )
+            ),
+            internal_summary=f"web.fetch.read failed: {error.code} ({display_url or 'missing url'}).",
+            retryable=retryable,
+            command_label="/web" if not confirmation_id else "/confirm",
+            activity_state="provider_failed" if outcome in {"failed", "timed_out"} else "processing_command",
+            confirmation_used=bool(confirmation_id),
+            telemetry={
+                "web_domain": request.scope.target_domain,
+                "web_content_type": "",
+                "web_status": error.message,
+                "web_summary": f"{request.scope.target_domain or 'web'} | {error.code}",
+            },
+        )
+
+    def _web_blocked_result(
+        self,
+        *,
+        request: CapabilityExecutionRequest,
+        evaluation: CapabilityEvaluation,
+        confirmation_id: str = "",
+    ) -> CapabilityExecutionResult:
+        next_step_map = {
+            "policy_always_offline": "Switch out of Always Offline before retrying the web fetch.",
+            "readiness_not_ready": "Resolve the blocking health or security issue in the operator console.",
+            "web_scope_invalid": "Configure at least one allowed web domain in the controller config.",
+            "online_confirmation_required": "Approve the pending remote request with /confirm <id> after /web returns a confirmation prompt.",
+        }
+        outcome = "blocked"
+        retryable = True
+        if evaluation.current_availability_state == "unavailable":
+            outcome = "unavailable"
+        elif evaluation.current_availability_state == "degraded":
+            outcome = "degraded"
+        return self._result(
+            request,
+            outcome=outcome,
+            reason_code=evaluation.reason_code,
+            user_message="\n".join(
+                (
+                    "Can't run /web right now.",
+                    f"Reason: {evaluation.blocking_reason or evaluation.message}",
+                    f"Next: {next_step_map.get(evaluation.reason_code, 'Check the operator console configuration and try again.')}",
+                )
+            ),
+            internal_summary=f"web.fetch.read blocked: {evaluation.reason_code}.",
+            retryable=retryable,
+            degraded=outcome == "degraded",
+            command_label="/web" if not confirmation_id else "/confirm",
+            activity_state="processing_command",
+            confirmation_used=bool(confirmation_id),
+        )
+
+    def _web_confirmation_required_result(
+        self,
+        *,
+        request: CapabilityExecutionRequest,
+        evaluation: CapabilityEvaluation,
+        context: CapabilityContext,
+        snapshot: ControllerSnapshot,
+        normalized_url: str,
+        display_url: str,
+        chat_id: str,
+        requester_label: str,
+    ) -> CapabilityExecutionResult:
+        confirmation = self._service._confirmation_store.create(
+            capability_id=evaluation.capability_id,
+            original_command=request.original_command,
+            argument_summary=f"/web {display_url}",
+            prompt_text=normalized_url,
+            response_style="concise",
+            chat_id=chat_id,
+            requester_label=requester_label,
+            evaluation_context=self._confirmation_context_snapshot(snapshot, context),
+        )
+        expires_in = self._service._confirmation_seconds_remaining(confirmation)
+        self._service._last_confirmation_requested = f"{confirmation.confirmation_id} pending for {evaluation.capability_id} (/web)."
+        self._service._last_confirmation_result = f"{confirmation.confirmation_id} pending approval."
+        self._service._update_telegram_loop_status(
+            state="running",
+            activity_state="processing_command",
+            message=f"Confirmation {confirmation.confirmation_id} created for {evaluation.capability_id}.",
+            activity=True,
+            last_command=request.original_command,
+        )
+        return self._result(
+            request,
+            outcome="confirmation_required",
+            reason_code=evaluation.reason_code,
+            user_message="\n".join(
+                (
+                    "Action requires confirmation.",
+                    f"Action: /web {display_url}",
+                    f"Capability: {evaluation.capability_id}",
+                    f"Reason: {self._service._confirmation_reason_message(evaluation.reason_code)}",
+                    f"ID: {confirmation.confirmation_id} (expires in about {expires_in}s)",
+                    f"Reply with: /confirm {confirmation.confirmation_id} or /deny {confirmation.confirmation_id}",
+                )
+            ),
+            internal_summary=f"Confirmation {confirmation.confirmation_id} created for {evaluation.capability_id}.",
+            retryable=False,
+            command_label="/web",
+            activity_state="processing_command",
+            confirmation_used=False,
+            telemetry={
+                "confirmation_id": confirmation.confirmation_id,
+                "web_domain": request.scope.target_domain,
+                "web_summary": f"{request.scope.target_domain or 'web'} | confirmation pending",
+            },
         )
 
     def _execute_provider_query(
@@ -936,7 +1208,21 @@ class CapabilityExecutor:
         snapshot: ControllerSnapshot,
         chat_id: str,
     ) -> CapabilityExecutionResult:
-        if confirmation.capability_id != "ask.provider_query":
+        if confirmation.capability_id == "ask.provider_query":
+            return self._execute_confirmed_provider_query(
+                request=request,
+                confirmation=confirmation,
+                snapshot=snapshot,
+                chat_id=chat_id,
+            )
+        if confirmation.capability_id == "web.fetch.read":
+            return self._execute_confirmed_web_fetch(
+                request=request,
+                confirmation=confirmation,
+                snapshot=snapshot,
+                chat_id=chat_id,
+            )
+        if confirmation.capability_id not in {"ask.provider_query", "web.fetch.read"}:
             message = f"Confirmation {confirmation.confirmation_id} cannot run because the capability is no longer supported."
             self._service._last_confirmation_result = message
             return self._result(
@@ -956,11 +1242,16 @@ class CapabilityExecutor:
                 activity_state="provider_failed",
                 confirmation_used=True,
             )
-        return self._execute_confirmed_provider_query(
-            request=request,
-            confirmation=confirmation,
-            snapshot=snapshot,
-            chat_id=chat_id,
+        return self._result(
+            request,
+            outcome="failed",
+            reason_code="unsupported_confirmation_capability",
+            user_message=f"Confirmation {confirmation.confirmation_id} could not run.",
+            internal_summary=f"Unsupported confirmation capability {confirmation.capability_id}.",
+            retryable=False,
+            command_label="/confirm",
+            activity_state="provider_failed",
+            confirmation_used=True,
         )
 
     def _execute_confirmed_provider_query(
@@ -1046,6 +1337,102 @@ class CapabilityExecutor:
             command_label="/confirm",
             confirmation_used=True,
             confirmation_id=confirmation.confirmation_id,
+        )
+
+    def _execute_confirmed_web_fetch(
+        self,
+        *,
+        request: CapabilityExecutionRequest,
+        confirmation: PendingConfirmation,
+        snapshot: ControllerSnapshot,
+        chat_id: str,
+    ) -> CapabilityExecutionResult:
+        evaluation, context = self._service._evaluate_capability_id(
+            confirmation.capability_id,
+            snapshot,
+            remember=True,
+            confirmation_granted=True,
+        )
+        display_url, normalized_url, allowed_domains, target_domain, resolve_code, resolve_message = self._service.resolve_web_request(confirmation.prompt_text)
+        scope = ExecutionScope(
+            scope_type="network",
+            access_mode="read",
+            target_domain=target_domain,
+            domain_allowlist=allowed_domains,
+        )
+        request = self._build_request(
+            capability_id=evaluation.capability_id,
+            snapshot=snapshot,
+            chat_id=chat_id,
+            requester_label=confirmation.requester_label,
+            original_command="/confirm",
+            parsed_arguments={
+                "confirmation_id": confirmation.confirmation_id,
+                "url": display_url,
+            },
+            context=context,
+            confirmation_context=confirmation.evaluation_context,
+            metadata={
+                "argument_summary": f"/confirm {confirmation.confirmation_id}",
+                "response_style": confirmation.response_style,
+            },
+            scope_override=scope,
+        )
+        if evaluation.current_availability_state != "allowed":
+            return self._blocked_confirmation_from_evaluation(
+                request=request,
+                confirmation_id=confirmation.confirmation_id,
+                evaluation=evaluation,
+            )
+        scope_failure = self._scope_failure_result(request, command_label="/confirm", confirmation_used=True)
+        if scope_failure is not None:
+            return scope_failure
+        if resolve_code != "web_target_ready":
+            return self._web_error_result(
+                request=request,
+                error=WebFetchError(resolve_code, resolve_message),
+                display_url=display_url,
+                confirmation_id=confirmation.confirmation_id,
+            )
+        try:
+            preview = self._service.fetch_web_preview(normalized_url)
+        except WebFetchError as exc:
+            return self._web_error_result(
+                request=request,
+                error=exc,
+                display_url=display_url,
+                confirmation_id=confirmation.confirmation_id,
+            )
+        self._service._last_confirmation_result = f"Confirmation {confirmation.confirmation_id} approved and completed via web fetch."
+        reply = "\n".join(
+            (
+                f"Confirmation {confirmation.confirmation_id} approved.",
+                self._service._build_web_reply(preview).reply,
+            )
+        )
+        status = "Large web preview truncated." if preview.oversized else ("Web preview truncated." if preview.truncated else "Web preview ready.")
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=reply,
+            internal_summary=self._service._last_confirmation_result,
+            retryable=False,
+            command_label="/confirm",
+            activity_state="processing_command",
+            confirmation_used=True,
+            telemetry={
+                "web_domain": preview.domain,
+                "web_display_url": preview.display_url,
+                "web_content_type": preview.content_type,
+                "web_status": status,
+                "web_truncated": preview.truncated,
+                "web_size_bytes": preview.size_bytes,
+                "web_size_label": preview.size_label,
+                "web_size_category": preview.size_category,
+                "web_fetched_at": preview.fetched_at,
+                "web_summary": preview.audit_summary,
+            },
         )
 
     def _run_offline_provider_query(

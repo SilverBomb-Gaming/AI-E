@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import tempfile
 import time
@@ -310,7 +310,7 @@ class TelegramLoopTests(unittest.TestCase):
             self.assertTrue(_wait_until(lambda: len(telegram_service.sent_messages) == 1))
             service.stop_telegram_loop()
             reply = telegram_service.sent_messages[0][1]
-            self.assertIn("Windows OpenClaw Operator Console v2.1 is connected.", reply)
+            self.assertIn("Windows OpenClaw Operator Console v2.2 is connected.", reply)
             self.assertIn("Readiness: Ready", reply)
             self.assertIn("Use /help to see supported commands.", reply)
 
@@ -371,6 +371,7 @@ class TelegramLoopTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
 
 
 

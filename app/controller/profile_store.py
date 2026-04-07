@@ -20,9 +20,13 @@ def _default_repo_root() -> str:
     return str(Path(__file__).resolve().parents[2])
 
 
+def _default_web_allowed_domains() -> tuple[str, ...]:
+    return ("docs.openclaw.ai", "platform.openai.com", "ollama.com")
+
+
 @dataclass
 class ControllerConfig:
-    schema_version: int = 5
+    schema_version: int = 6
     current_mode: Mode = "offline"
     selected_mode: Mode = "offline"
     selected_provider: ProviderType = "ollama"
@@ -33,6 +37,7 @@ class ControllerConfig:
     ollama_base_url: str = "http://127.0.0.1:11434"
     repo_root: str = field(default_factory=_default_repo_root)
     file_allowed_roots: tuple[str, ...] = ()
+    web_allowed_domains: tuple[str, ...] = field(default_factory=_default_web_allowed_domains)
     openai_secret_id: str = "openai/default"
     openai_key_masked: str = ""
     openai_has_secret: bool = False
@@ -89,7 +94,7 @@ class ControllerConfigStore:
         if not isinstance(last_provider_statuses, dict):
             last_provider_statuses = {}
         return ControllerConfig(
-            schema_version=int(raw.get("schema_version", 5)),
+            schema_version=int(raw.get("schema_version", 6)),
             current_mode=str(raw.get("current_mode", "offline")),  # type: ignore[arg-type]
             selected_mode=str(raw.get("selected_mode", raw.get("current_mode", "offline"))),  # type: ignore[arg-type]
             selected_provider=str(raw.get("selected_provider", "ollama")),  # type: ignore[arg-type]
@@ -102,6 +107,11 @@ class ControllerConfigStore:
             file_allowed_roots=tuple(
                 str(item).strip()
                 for item in raw.get("file_allowed_roots", [])
+                if str(item).strip()
+            ),
+            web_allowed_domains=tuple(
+                str(item).strip().lower()
+                for item in raw.get("web_allowed_domains", _default_web_allowed_domains())
                 if str(item).strip()
             ),
             openai_secret_id=str(raw.get("openai_secret_id", "openai/default")),

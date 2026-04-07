@@ -8,7 +8,7 @@ from ..providers.base import ProviderStatus
 from .models import CapabilityAvailabilityState, Mode, Policy, ProviderType, ReadinessState
 from .scope_models import ScopeAccessMode, ScopeType
 
-CapabilityCategory = Literal["operator", "runtime", "provider", "repository", "filesystem"]
+CapabilityCategory = Literal["operator", "runtime", "provider", "repository", "filesystem", "web"]
 CapabilityExecutionType = Literal["read", "query"]
 CapabilityProviderDependency = Literal["none", "ollama", "openai", "active_provider"]
 CapabilityNetworkRequirement = Literal["none", "local", "remote", "conditional"]
@@ -55,6 +55,7 @@ class CapabilityManifest:
     scope_repo_root: str = ""
     scope_uses_configured_root: bool = False
     scope_uses_configured_paths: bool = False
+    scope_uses_configured_domains: bool = False
 
     @property
     def description(self) -> str:
@@ -87,6 +88,9 @@ class CapabilityContext:
     file_allowed_roots: Tuple[str, ...] = ()
     file_scope_valid: bool = False
     file_message: str = ""
+    web_allowed_domains: Tuple[str, ...] = ()
+    web_scope_valid: bool = False
+    web_message: str = ""
 
 
 @dataclass(frozen=True)

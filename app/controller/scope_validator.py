@@ -135,11 +135,20 @@ class ScopeValidator:
             self._normalize_domain(domain)
             for domain in (manifest.scope_domain_allowlist or scope.domain_allowlist)
         )
-        if target_domain and allowlist and target_domain not in allowlist:
+        if not target_domain:
+            return ScopeValidationResult(
+                allowed=False,
+                reason_code="target_domain_missing",
+                message="This capability needs a network target before it can run.",
+                scope_summary=scope_summary,
+            )
+        if allowlist and not self._is_allowed_network_target(target_domain, allowlist):
             return ScopeValidationResult(
                 allowed=False,
                 reason_code="target_domain_not_allowed",
-                message="This capability is not allowed to contact that network target.",
+                message="URL is not allowed by current web scope."
+                if manifest.data_scope == "web"
+                else "This capability is not allowed to contact that network target.",
                 scope_summary=scope_summary,
             )
         return ScopeValidationResult(True, "scope_allowed", "Network scope allowed.", scope_summary)
@@ -156,6 +165,19 @@ class ScopeValidator:
             parsed = urlparse(f"https://{candidate}")
             return (parsed.hostname or "").lower()
         return candidate.lower()
+
+    @classmethod
+    def _is_allowed_network_target(cls, target_domain: str, allowlist: tuple[str, ...]) -> bool:
+        for allowed in allowlist:
+            if not allowed:
+                continue
+            if allowed.startswith("*."):
+                suffix = allowed[1:]
+                if target_domain.endswith(suffix) and target_domain != allowed[2:]:
+                    return True
+            elif target_domain == allowed:
+                return True
+        return False
 
     @staticmethod
     def _repo_name(value: str) -> str:

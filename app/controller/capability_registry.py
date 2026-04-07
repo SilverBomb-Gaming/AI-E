@@ -245,6 +245,30 @@ CAPABILITY_MANIFESTS: tuple[CapabilityManifest, ...] = (
         scope_uses_configured_paths=True,
     ),
     CapabilityManifest(
+        capability_id="web.fetch.read",
+        name="Web Fetch",
+        category="web",
+        short_description="Fetch a bounded preview from an allowlisted public web URL.",
+        execution_type="read",
+        provider_dependency="none",
+        network_requirement="remote",
+        requires_runtime=False,
+        requires_readiness=True,
+        access_kind="read_only",
+        locality="networked",
+        data_scope="web",
+        offline_safety="requires_online",
+        confirmation_sensitivity="policy_based",
+        telegram_exposure="allowed",
+        policy_sensitivity="online_sensitive",
+        supports_timeout=True,
+        supports_confirmation=True,
+        default_timeout_ms=8000,
+        scope_type="network",
+        access_mode="read",
+        scope_uses_configured_domains=True,
+    ),
+    CapabilityManifest(
         capability_id="capabilities.read",
         name="Capabilities",
         category="operator",
@@ -273,6 +297,7 @@ COMMAND_CAPABILITY_MAP: dict[str, str] = {
     "/models": "models.read",
     "/repo": "repo.status.read",
     "/file": "file.read",
+    "/web": "web.fetch.read",
     "/ask": "ask.provider_query",
     "/askd": "ask.provider_query",
     "/audit": "audit.read",
@@ -318,16 +343,21 @@ def validate_capability_manifests(manifests: tuple[CapabilityManifest, ...] | li
             or manifest.scope_repo_root
             or manifest.scope_uses_configured_root
             or manifest.scope_uses_configured_paths
+            or manifest.scope_uses_configured_domains
         ):
             issues.append(f"{manifest.capability_id}: internal scope cannot define filesystem, repository, or domain targets.")
         if manifest.scope_type == "filesystem" and not (manifest.scope_allowed_paths or manifest.scope_uses_configured_paths):
             issues.append(f"{manifest.capability_id}: filesystem scope requires scope_allowed_paths or configured-path binding.")
         if manifest.scope_type == "repository" and not (manifest.scope_repo_root or manifest.scope_uses_configured_root):
             issues.append(f"{manifest.capability_id}: repository scope requires scope_repo_root or configured-root binding.")
+        if manifest.scope_type == "network" and not (manifest.scope_domain_allowlist or manifest.scope_uses_configured_domains):
+            issues.append(f"{manifest.capability_id}: network scope requires scope_domain_allowlist or configured-domain binding.")
         if manifest.scope_uses_configured_root and manifest.scope_type != "repository":
             issues.append(f"{manifest.capability_id}: configured-root binding currently supports repository scope only.")
         if manifest.scope_uses_configured_paths and manifest.scope_type != "filesystem":
             issues.append(f"{manifest.capability_id}: configured-path binding currently supports filesystem scope only.")
+        if manifest.scope_uses_configured_domains and manifest.scope_type != "network":
+            issues.append(f"{manifest.capability_id}: configured-domain binding currently supports network scope only.")
     return tuple(issues)
 
 

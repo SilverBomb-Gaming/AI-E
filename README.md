@@ -1,4 +1,4 @@
-# AI-E v1
+﻿# AI-E v1
 
 Controlled execution surface for supported projects. AI-E turns a bounded request into a real, reviewable result with guardrails, live status, proof summaries, and saved history.
 
@@ -6,7 +6,7 @@ Controlled execution surface for supported projects. AI-E turns a bounded reques
 
 The current active operator-console surface in this repo is the Windows-first OpenClaw controller shell. The known-good checkpoint is:
 
-- Current baseline: `Windows OpenClaw Operator Console v2.1 - Read-Only File Access Capability`
+- Current baseline: `Windows OpenClaw Operator Console v2.2 - Bounded Web Fetch Capability`
 - Health: `Healthy`
 - Security: `Safe`
 - Readiness: `Ready`
@@ -18,7 +18,7 @@ What is now working:
 - offline/online mode selection with policy guardrails preserved
 - trusted health and security diagnostics, including ownership-aware port conflict checks and multi-signal runtime liveness
 - secure Telegram bot validation, connection testing, and polling-loop start/stop controls
-- duplicate-safe Telegram interaction loop with `/start`, `/help`, `/status`, `/mode`, `/models`, `/repo`, `/file <path>`, `/capabilities`, `/audit`, `/ask <prompt>`, and `/askd <prompt>`
+- duplicate-safe Telegram interaction loop with `/start`, `/help`, `/status`, `/mode`, `/models`, `/repo`, `/file <path>`, `/web <url>`, `/capabilities`, `/audit`, `/ask <prompt>`, and `/askd <prompt>`
 - deterministic Telegram command parsing with whitespace-tolerant handling, consistent casing behavior, and short correction replies for malformed commands
 - per-chat provider-ask control with explicit in-flight rejection, bounded provider timeouts, and a narrow provider-ask cooldown to prevent accidental spam
 - centralized capability registry and evaluator that gate command execution through explicit `allowed`, `blocked`, `degraded`, `confirmation_required`, or `unavailable` states
@@ -28,6 +28,7 @@ What is now working:
 - manifest-driven scope validation and bounded in-memory audit recording for every capability attempt, including `/audit` summaries and recent scope/audit visibility in the desktop shell
 - the first real external capability, `repo.status.read`, which inspects one configured repository root through fixed read-only git commands and returns a concise Telegram/Desktop summary of branch, clean/dirty state, and recent commits
 - the second external capability, `file.read`, which returns a bounded preview from text files inside configured allowed roots without exposing traversal, mutation, or arbitrary filesystem access
+- the third external capability, `web.fetch.read`, which fetches bounded previews from configured allowlisted domains through fixed GET-only requests, explicit confirmation/policy checks, scope validation, and audit recording without browser automation or session state
 
 What a capability manifest means in this project:
 
@@ -38,7 +39,7 @@ What a capability manifest means in this project:
 What scope and sandboxing mean here:
 
 - every execution request now carries a structured scope with `scope_type`, `access_mode`, and optional bounded targets such as allowed paths, repository root, or domain allowlist
-- current user-facing capabilities are still narrow: most operator reads are `internal/read`, `repo.status.read` is `repository/read` and bounded to the configured `repo_root`, `file.read` is `filesystem/read` and bounded to configured `file_allowed_roots`, and `ask.provider_query` is `network/execute` and restricted to the expected provider targets rather than arbitrary hosts
+- current user-facing capabilities are still narrow: most operator reads are `internal/read`, `repo.status.read` is `repository/read` and bounded to the configured `repo_root`, `file.read` is `filesystem/read` and bounded to configured `file_allowed_roots`, `web.fetch.read` is `network/read` and bounded to configured `web_allowed_domains`, and `ask.provider_query` is `network/execute` and restricted to the expected provider targets rather than arbitrary hosts
 - by default the file-read roots fall back to the configured repo root, and file previews stay bounded to safe text types plus capped preview size instead of full-file dumping
 - scope validation now runs after capability evaluation and confirmation checks but before actual execution, so out-of-scope requests are rejected before provider work starts
 - confirmation does not override scope restrictions, and request-provided scope data cannot widen a manifest's allowlist
@@ -78,6 +79,7 @@ Milestone notes:
 - v1.9: `docs/milestones/windows_openclaw_operator_console_v1_9_sandbox_scope_and_audit_layer.md`
 - v2.0: `docs/milestones/windows_openclaw_operator_console_v2_0_read_only_repo_insight_capability.md`
 - v2.1: `docs/milestones/windows_openclaw_operator_console_v2_1_read_only_file_access_capability.md`
+- v2.2: `docs/milestones/windows_openclaw_operator_console_v2_2_bounded_web_fetch_capability.md`
 
 Important guardrails and usage notes:
 
@@ -88,22 +90,23 @@ Important guardrails and usage notes:
 - `/audit` is bounded and recent-only; it summarizes capability attempts without exposing secrets or full prompt contents
 - `/repo` is read-only only; it is scoped to the configured repository root, uses fixed git status/log/branch inspection only, and does not allow file browsing, mutation, or arbitrary shell passthrough
 - `/file <path>` is read-only only; it accepts relative paths inside configured allowed roots, blocks traversal and absolute paths, shows only bounded text previews, rejects unsupported/binary file types, and never performs write/delete/execute operations
+- `/web <url>` is read-only only; it accepts only allowlisted `http`/`https` domains, uses fixed GET requests with bounded timeout/response size/content-type checks, strips query strings from summaries, blocks out-of-scope redirects, and never runs browser automation, sessions, or data-posting flows
 - the controller stays local-first with loopback bind defaults and secret redaction in logs, summaries, Telegram activity, and audit records
-- still intentionally not implemented: automation, scheduling, scraping, RAG, repo mutation, file mutation, multi-channel expansion, or AI-E orchestration behavior
+- still intentionally not implemented: automation, scheduling, scraping workflows, browser automation, repo mutation, file mutation, multi-channel expansion, or AI-E orchestration behavior
 
 Current next milestone:
 
 - `Next external capability milestone is not started yet`
-- v2.1 now provides the bounded repository + file-read foundation needed for future scoped search or file-detail work without widening the trust model in this checkpoint
+- v2.2 now provides the bounded repository + filesystem + allowlisted web-read foundation needed for future scoped search or documentation lookup work without widening the trust model in this checkpoint
 
 Fast operator path:
 
 1. Launch the desktop shell with `python -m app.main`.
 2. Start the runtime and run Health/Security checks.
 3. Validate Telegram, start the Telegram loop, and message the configured bot.
-4. Use `/help`, `/status`, `/mode`, `/models`, `/repo`, `/file app/controller/app_service.py`, `/capabilities`, `/audit`, `/ask hello`, or `/askd hello` from Telegram.
-5. If `/ask` returns a confirmation prompt, reply with `/confirm <id>` to approve that one request or `/deny <id>` to reject it.
-6. If `/capabilities` shows `blocked`, `degraded`, or `unavailable` provider-query state, or `/audit` shows repeated `out_of_scope` results, resolve the noted readiness, provider, or scope issue before retrying.
+4. Use `/help`, `/status`, `/mode`, `/models`, `/repo`, `/file app/controller/app_service.py`, `/web https://docs.openclaw.ai/`, `/capabilities`, `/audit`, `/ask hello`, or `/askd hello` from Telegram.
+5. If `/ask` or `/web` returns a confirmation prompt, reply with `/confirm <id>` to approve that one request or `/deny <id>` to reject it.
+6. If `/capabilities` shows `blocked`, `degraded`, or `unavailable` state, or `/audit` shows repeated `out_of_scope` results, resolve the noted readiness, provider, or scope issue before retrying.
 7. Run `python -m unittest discover -s tests -v` and `python diagnostics_smoke.py` for the current controller verification pass.
 
 ## AI-E v1 Product Surface Status
@@ -298,11 +301,11 @@ AI-E **is not** a bot player, training framework, content generator, stealth aut
 
 | Pillar | Status | Notes |
 | --- | --- | --- |
-| Core Architecture | ✅ Locked | Engine-agnostic perception adapter (`UnityWindowPerception`), action interface abstraction (`DisabledActionInterface` by default), and clear separation of perception / processing / reporting / UI layers. |
-| Perception Layer | 🟡 Stable | Window-bound captures, hash-based delta detection, and focus-aware input gating via `InputFocusGate`. |
-| Artifact & Reporting | 🟡 Stable | Timestamped run directories, structured JSON outputs, and movement telemetry stored alongside screenshots. |
-| Operator UI | 🟡 Calm | Start/Stop, runtime diagnostics, action layer status indicator, and explicit messaging that automation stays locked. |
-| Stability & Guardrails | 🟡 Enforced | Zero background network calls, failure-aware recorders, and regression hooks for missing windows/devices/artifacts. |
+| Core Architecture | âœ… Locked | Engine-agnostic perception adapter (`UnityWindowPerception`), action interface abstraction (`DisabledActionInterface` by default), and clear separation of perception / processing / reporting / UI layers. |
+| Perception Layer | ðŸŸ¡ Stable | Window-bound captures, hash-based delta detection, and focus-aware input gating via `InputFocusGate`. |
+| Artifact & Reporting | ðŸŸ¡ Stable | Timestamped run directories, structured JSON outputs, and movement telemetry stored alongside screenshots. |
+| Operator UI | ðŸŸ¡ Calm | Start/Stop, runtime diagnostics, action layer status indicator, and explicit messaging that automation stays locked. |
+| Stability & Guardrails | ðŸŸ¡ Enforced | Zero background network calls, failure-aware recorders, and regression hooks for missing windows/devices/artifacts. |
 
 Nothing outside these pillars is part of v5.
 
@@ -324,11 +327,11 @@ app/
   ui.py           # PySide6 operator surface
 ```
 
-- **Perception Layer** — `perception.py` exposes `UnityWindowPerception`, which captures screenshots, hashes them, and records `MovementDelta` entries to prove the window is alive without touching gameplay.
-- **Processing Layer** — `RunSession` (runner.py) coordinates focus tracking, recorders, and action/perception adapters. Input capture is gated by `InputFocusGate` (recorders.py) so only foreground BABYLON activity is stored.
-- **Reporting Layer** — `artifacts.py` (`build_run_summary`, `build_mapprobe_snapshot`) and `logger.py` guarantee immutable artifacts with explicit status blocks (OK, attention, no_data) instead of silent failures.
-- **UI Layer** — `ui.py` (PySide6) keeps Start/Stop within reach, surfaces artifact folders, and shows the action layer lock so operators stay informed.
-- **Action Layer** — `actions.py` defines `ActionInterface` but defaults to `DisabledActionInterface`. The UI’s Action Layer panel reiterates that automation stays off until an operator explicitly unlocks it.
+- **Perception Layer** â€” `perception.py` exposes `UnityWindowPerception`, which captures screenshots, hashes them, and records `MovementDelta` entries to prove the window is alive without touching gameplay.
+- **Processing Layer** â€” `RunSession` (runner.py) coordinates focus tracking, recorders, and action/perception adapters. Input capture is gated by `InputFocusGate` (recorders.py) so only foreground BABYLON activity is stored.
+- **Reporting Layer** â€” `artifacts.py` (`build_run_summary`, `build_mapprobe_snapshot`) and `logger.py` guarantee immutable artifacts with explicit status blocks (OK, attention, no_data) instead of silent failures.
+- **UI Layer** â€” `ui.py` (PySide6) keeps Start/Stop within reach, surfaces artifact folders, and shows the action layer lock so operators stay informed.
+- **Action Layer** â€” `actions.py` defines `ActionInterface` but defaults to `DisabledActionInterface`. The UIâ€™s Action Layer panel reiterates that automation stays off until an operator explicitly unlocks it.
 
 ## Setup & Run
 
@@ -404,7 +407,7 @@ runner_artifacts/
 - `run_summary.json` now includes `perception.adapter`, `perception.movement[]`, and `action_layer` sections so every run proves observation (not automation).
 - `events.log` logs attaches/detaches, screenshot successes/failures, and focus transitions; nothing fails silently.
 - Movement deltas are derived from SHA-256 hashes of captured frames to confirm window activity without saving raw comparisons.
-- When recorders are enabled but emit no data, artifacts include `{ "status": "no_data", "reason": "..." }` blocks so operators aren’t left guessing.
+- When recorders are enabled but emit no data, artifacts include `{ "status": "no_data", "reason": "..." }` blocks so operators arenâ€™t left guessing.
 
 ## Stability & Guardrails
 
@@ -495,7 +498,7 @@ Guaranteed outputs every run:
 - `events.log` always logs start/stop, launches, attaches, screenshot outcomes, and warnings (even if no input or mic data exists).
 - `run_summary.json` is emitted on **Stop Run** with explicit references to each screenshot (or the failure reason) plus the new input-focus statistics.
 
-Input capture is now clamped to the BABYLON foreground window. When **Record Input (BABYLON focus only)** is enabled, any keyboard/mouse events detected while another window is active are suppressed, counted, and surfaced as warnings so “empty” runs are still explainable.
+Input capture is now clamped to the BABYLON foreground window. When **Record Input (BABYLON focus only)** is enabled, any keyboard/mouse events detected while another window is active are suppressed, counted, and surfaced as warnings so â€œemptyâ€ runs are still explainable.
 
 Screenshots rely on Windows desktop capture permissions; if a capture fails the folder now contains a `screenshot_*` reason entry plus an events.log warning. Mic recording is mic-only (no system audio) and can optionally be gated by holding the space bar when Push-to-Talk is enabled. When a recorder is enabled but produces no data, the artifacts include `{ "status": "no_data", "reason": "..." }` blocks so operators never see empty files.
 
@@ -509,7 +512,7 @@ cd "E:\AI projects 2025\AI-E"
 
 The script installs pinned dependencies, runs PyInstaller with the updated settings, and produces `dist/AI-E.exe`. It also collects the required PySide6 binaries, writes a transcript to `build_artifacts\build_log.txt`, and returns a non-zero exit code if anything fails. Double-clicking the executable shows the same UI with no console window, and assets (icons, future resources) are bundled automatically.
 
-First-launch UX: if the BABYLON path is empty, the UI prompts you to browse. Once selected, the exe path persists via the local runtime state file `app_state.local.json` so subsequent launches auto-fill it. The tracked `app_state.example.json` file is only a sanitized example and is not used for runtime writes. The Run Controls panel now keeps the operator-oriented signals front and center: Target EXE path, detected PID/state, a live duration timer, and the artifacts destination. The typical workflow is **Launch BABYLON** → **Attach** → **Start Run** → interact/gameplay → **Stop Run** → **Open Run Folder** / **Open Logs Folder** to inspect the collected screenshots, logs, and summaries.
+First-launch UX: if the BABYLON path is empty, the UI prompts you to browse. Once selected, the exe path persists via the local runtime state file `app_state.local.json` so subsequent launches auto-fill it. The tracked `app_state.example.json` file is only a sanitized example and is not used for runtime writes. The Run Controls panel now keeps the operator-oriented signals front and center: Target EXE path, detected PID/state, a live duration timer, and the artifacts destination. The typical workflow is **Launch BABYLON** â†’ **Attach** â†’ **Start Run** â†’ interact/gameplay â†’ **Stop Run** â†’ **Open Run Folder** / **Open Logs Folder** to inspect the collected screenshots, logs, and summaries.
 
 ## Local State Files
 
@@ -540,6 +543,9 @@ Use **Help > Demo Checklist...** inside the app to run the current quick walkthr
 6. **F.** Use `Modify and test again` or `Try a variation` to show the next quick iteration.
 
 The dialog resets each time you open it, so the same checklist can be reused before the next demo or local-user handoff.
+
+
+
 
 
 

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import unittest
 
@@ -79,6 +79,9 @@ class CapabilityLayerTests(unittest.TestCase):
                 available=True,
                 message="OpenAI is ready.",
             ),
+            web_allowed_domains=("docs.openclaw.ai",),
+            web_scope_valid=True,
+            web_message="Allowlisted web domains are configured.",
         )
 
     def test_registry_integrity_and_expected_capabilities_exist(self) -> None:
@@ -88,6 +91,7 @@ class CapabilityLayerTests(unittest.TestCase):
         self.assertIn("mode.read", CAPABILITY_REGISTRY)
         self.assertIn("models.read", CAPABILITY_REGISTRY)
         self.assertIn("ask.provider_query", CAPABILITY_REGISTRY)
+        self.assertIn("web.fetch.read", CAPABILITY_REGISTRY)
         self.assertIn("audit.read", CAPABILITY_REGISTRY)
         self.assertIn("capabilities.read", CAPABILITY_REGISTRY)
         for definition in CAPABILITY_DEFINITIONS:
@@ -100,6 +104,7 @@ class CapabilityLayerTests(unittest.TestCase):
             self.assertTrue(definition.offline_safety)
         self.assertEqual(CAPABILITY_REGISTRY["status.read"].scope_type, "internal")
         self.assertEqual(CAPABILITY_REGISTRY["ask.provider_query"].scope_type, "network")
+        self.assertEqual(CAPABILITY_REGISTRY["web.fetch.read"].scope_type, "network")
 
     def test_invalid_manifest_combinations_are_reported_clearly(self) -> None:
         invalid = CapabilityManifest(
@@ -155,6 +160,40 @@ class CapabilityLayerTests(unittest.TestCase):
         self.assertEqual(evaluation.current_availability_state, "allowed")
         self.assertEqual(evaluation.reason_code, "allowed")
         self.assertIn("Offline provider query", evaluation.message)
+
+    def test_web_fetch_requires_confirmation_when_offline_and_policy_is_ask_before_online(self) -> None:
+        evaluation = self.evaluator.evaluate("web.fetch.read", self._context())
+        self.assertEqual(evaluation.current_availability_state, "confirmation_required")
+        self.assertEqual(evaluation.reason_code, "online_confirmation_required")
+
+    def test_web_fetch_is_allowed_in_online_mode(self) -> None:
+        evaluation = self.evaluator.evaluate(
+            "web.fetch.read",
+            self._context(mode="online", selected_mode="online"),
+        )
+        self.assertEqual(evaluation.current_availability_state, "allowed")
+        self.assertEqual(evaluation.reason_code, "allowed")
+
+    def test_web_fetch_is_blocked_by_always_offline_policy(self) -> None:
+        evaluation = self.evaluator.evaluate(
+            "web.fetch.read",
+            self._context(policy="always_offline"),
+        )
+        self.assertEqual(evaluation.current_availability_state, "blocked")
+        self.assertEqual(evaluation.reason_code, "policy_always_offline")
+
+    def test_web_fetch_is_unavailable_when_web_scope_is_missing(self) -> None:
+        context = CapabilityContext(
+            **{
+                **self._context().__dict__,
+                "web_allowed_domains": (),
+                "web_scope_valid": False,
+                "web_message": "No allowed web domains are configured.",
+            }
+        )
+        evaluation = self.evaluator.evaluate("web.fetch.read", context)
+        self.assertEqual(evaluation.current_availability_state, "unavailable")
+        self.assertEqual(evaluation.reason_code, "web_scope_invalid")
 
     def test_ask_provider_query_blocked_when_readiness_is_not_ready(self) -> None:
         evaluation = self.evaluator.evaluate("ask.provider_query", self._context(readiness_state="not_ready"))
@@ -280,5 +319,3 @@ class CapabilityLayerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
-

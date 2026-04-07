@@ -26,6 +26,7 @@ from .models import ControllerSnapshot
 from .profile_store import ControllerConfig, ControllerConfigStore, Mode, Policy, ProviderType
 from .scope_models import ExecutionScope, ScopeValidationResult
 from .scope_validator import ScopeValidator
+from .web_fetcher import WebFetchError, WebFetchSnapshot, WebFetcher
 from .repo_inspector import RepoInspectionSnapshot, RepoInspector, RepoInspectorError
 from .telegram_service import TelegramApiError, TelegramChannelService, TelegramInboundMessage, mask_telegram_token
 from ..platform.secrets import SecretStore, get_secret_store
@@ -34,7 +35,7 @@ from ..runtime.manager import OpenClawRuntimeManager
 from ..runtime.log_sanitizer import sanitize_log_text
 
 
-_OPERATOR_CONSOLE_LABEL = "Windows OpenClaw Operator Console v2.1"
+_OPERATOR_CONSOLE_LABEL = "Windows OpenClaw Operator Console v2.2"
 _ASK_CONCISE_LIMIT = 700
 _ASK_DETAILED_LIMIT = 1500
 _PROVIDER_ASK_COMMANDS = frozenset({"/ask", "/askd"})
@@ -82,6 +83,7 @@ class ControllerService:
         telegram_service: TelegramChannelService | None = None,
         repo_inspector: RepoInspector | None = None,
         file_reader: FileReader | None = None,
+        web_fetcher: WebFetcher | None = None,
     ) -> None:
         self._runtime_manager = runtime_manager or OpenClawRuntimeManager()
         self._config_store = config_store or ControllerConfigStore()
@@ -93,9 +95,11 @@ class ControllerService:
         self._telegram_service = telegram_service or TelegramChannelService()
         self._repo_inspector = repo_inspector or RepoInspector()
         self._file_reader = file_reader or FileReader()
+        self._web_fetcher = web_fetcher or WebFetcher()
         self._config = self._config_store.load()
         self._normalize_repo_root_config()
         self._normalize_file_roots_config()
+        self._normalize_web_domains_config()
         self._runtime_manager.configure(gateway_port=self._config.gateway_port, gateway_bind=self._config.gateway_bind)
         self._provider_status_cache: dict[str, ProviderStatus] = self._load_provider_status_cache(self._config)
         self._telegram_status = self._reconcile_telegram_status(self._config.telegram_status)
@@ -125,6 +129,10 @@ class ControllerService:
         self._last_file_read = "No file preview result yet."
         self._last_file_status = "No file preview result yet."
         self._last_file_read_at = "-"
+        self._last_web_fetch = "No web fetch result yet."
+        self._last_web_status = "No web fetch result yet."
+        self._last_web_content_type = "-"
+        self._last_web_fetched_at = "-"
         self._confirmation_store = ConfirmationStore(lifetime_seconds=_CONFIRMATION_LIFETIME_SECONDS)
         self._last_confirmation_requested = "No pending confirmation requested yet."
         self._last_confirmation_result = "No confirmation handled yet."
@@ -302,12 +310,17 @@ class ControllerService:
             telegram_last_outbound_summary=telegram_loop_status.last_outbound_summary,
             configured_repo_root=self._config.repo_root or "-",
             configured_file_roots=self._file_roots_summary(self._config.file_allowed_roots),
+            configured_web_domains=self._web_domains_summary(self._config.web_allowed_domains),
             last_repo_branch=self._last_repo_branch,
             last_repo_status=self._last_repo_state,
             last_repo_checked_at=self._last_repo_checked_at,
             last_file_read=self._last_file_read,
             last_file_read_status=self._last_file_status,
             last_file_read_at=self._last_file_read_at,
+            last_web_fetch=self._last_web_fetch,
+            last_web_status=self._last_web_status,
+            last_web_content_type=self._last_web_content_type,
+            last_web_fetched_at=self._last_web_fetched_at,
             last_capability_id=self._last_capability_evaluation.capability_id if self._last_capability_evaluation else "-",
             last_capability_state=self._last_capability_evaluation.current_availability_state if self._last_capability_evaluation else "unknown",
             last_capability_message=self._last_capability_evaluation.message if self._last_capability_evaluation else "No capability evaluated yet.",
@@ -688,6 +701,31 @@ class ControllerService:
             self._config.file_allowed_roots = final_roots
             self._config_store.save(self._config)
 
+    def _normalize_web_domains_config(self) -> None:
+        raw_domains = tuple(domain for domain in self._config.web_allowed_domains if domain.strip())
+        normalized_domains: list[str] = []
+        seen: set[str] = set()
+        for raw_domain in raw_domains:
+            candidate = raw_domain.strip().lower()
+            if not candidate:
+                continue
+            if "://" in candidate:
+                candidate = self._host_from_url(candidate)
+            else:
+                candidate = candidate.split("/", 1)[0]
+            if candidate.startswith("*."):
+                candidate = f"*.{candidate[2:].lstrip('.')}"
+            else:
+                candidate = candidate.lstrip(".")
+            if not candidate or candidate in seen:
+                continue
+            seen.add(candidate)
+            normalized_domains.append(candidate)
+        final_domains = tuple(normalized_domains)
+        if final_domains != self._config.web_allowed_domains:
+            self._config.web_allowed_domains = final_domains
+            self._config_store.save(self._config)
+
     def _repo_configuration_state(self) -> tuple[str, bool, str, str]:
         raw_value = self._config.repo_root.strip()
         if not raw_value:
@@ -729,6 +767,12 @@ class ControllerService:
             return (), False, "Allowed file directories must use absolute paths.", "file_roots_not_absolute"
         return (), False, "No allowed file directories are configured.", "file_roots_missing"
 
+    def _web_scope_state(self) -> tuple[tuple[str, ...], bool, str, str]:
+        allowed_domains = tuple(domain for domain in self._config.web_allowed_domains if domain.strip())
+        if allowed_domains:
+            return allowed_domains, True, f"Web fetch is scoped to {len(allowed_domains)} allowed domain{'s' if len(allowed_domains) != 1 else ''}.", "web_scope_ready"
+        return (), False, "No allowed web domains are configured.", "web_scope_missing"
+
     def _repo_display_name(self, repo_root: str = "") -> str:
         candidate = repo_root.strip() or self._config.repo_root.strip()
         if not candidate:
@@ -743,6 +787,15 @@ class ControllerService:
         labels = [Path(root).name or root for root in roots[:2]]
         if len(roots) > 2:
             labels.append(f"+{len(roots) - 2} more")
+        return ", ".join(labels)
+
+    @staticmethod
+    def _web_domains_summary(domains: tuple[str, ...]) -> str:
+        if not domains:
+            return "-"
+        labels = list(domains[:3])
+        if len(domains) > 3:
+            labels.append(f"+{len(domains) - 3} more")
         return ", ".join(labels)
 
     def inspect_repo_status(self) -> RepoInspectionSnapshot:
@@ -787,6 +840,29 @@ class ControllerService:
             raise FileReaderError(reason_code, message)
         return self._file_reader.read_text_preview(target_path, display_path=display_path)
 
+    def resolve_web_request(self, target_url: str) -> tuple[str, str, tuple[str, ...], str, str, str]:
+        requested = " ".join(target_url.split())
+        if not requested:
+            return "", "", (), "", "missing_url", "Use /web <https://allowed-domain/path>."
+
+        allowed_domains, scope_valid, scope_message, scope_code = self._web_scope_state()
+        if not scope_valid:
+            return requested, "", allowed_domains, "", scope_code, scope_message
+
+        try:
+            normalized_url = WebFetcher.normalize_target_url(requested)
+        except WebFetchError as exc:
+            return requested, "", allowed_domains, "", exc.code, exc.message
+
+        target_domain = self._host_from_url(normalized_url)
+        return self._sanitize_url_for_display(normalized_url), normalized_url, allowed_domains, target_domain, "web_target_ready", "Scoped web target is ready."
+
+    def fetch_web_preview(self, target_url: str) -> WebFetchSnapshot:
+        display_url, normalized_url, allowed_domains, _, reason_code, message = self.resolve_web_request(target_url)
+        if reason_code != "web_target_ready" or not normalized_url:
+            raise WebFetchError(reason_code, message)
+        return self._web_fetcher.fetch_text_preview(normalized_url, allowed_domains=allowed_domains)
+
     def _build_repo_reply(self, inspection: RepoInspectionSnapshot) -> _TelegramResponsePlan:
         lines = [
             f"Repo: {inspection.repo_name}",
@@ -817,6 +893,23 @@ class ControllerService:
         return _TelegramResponsePlan(
             reply=chr(10).join(lines),
             command_label="/file",
+        )
+
+    def _build_web_reply(self, preview: WebFetchSnapshot) -> _TelegramResponsePlan:
+        lines = [
+            f"Web: {preview.domain}",
+            f"Type: {preview.content_type}",
+            f"URL: {preview.display_url}",
+            "Preview:",
+            preview.preview_text,
+        ]
+        if preview.oversized:
+            lines.append("Note: Large web preview truncated for safety.")
+        elif preview.truncated:
+            lines.append("Note: Preview truncated.")
+        return _TelegramResponsePlan(
+            reply=chr(10).join(lines),
+            command_label="/web",
         )
 
     def _diagnostic_summary_lines(self) -> tuple[str, ...]:
@@ -1005,6 +1098,7 @@ class ControllerService:
         self._audit_store.append(self._build_audit_record(result))
         self._remember_repo_execution_result(result)
         self._remember_file_execution_result(result)
+        self._remember_web_execution_result(result)
         self._last_message = result.internal_summary or self._last_message
 
     def _remember_repo_execution_result(self, result: CapabilityExecutionResult) -> None:
@@ -1034,6 +1128,17 @@ class ControllerService:
             self._last_file_status = self._summarize_text(result.internal_summary, limit=120)
         self._last_file_read_at = result.finished_at or self._now_iso()
 
+    def _remember_web_execution_result(self, result: CapabilityExecutionResult) -> None:
+        if result.capability_id != "web.fetch.read":
+            return
+        web_domain = str(result.telemetry.get("web_domain") or "unknown domain").strip()
+        web_status = str(result.telemetry.get("web_status") or "").strip()
+        content_type = str(result.telemetry.get("web_content_type") or "").strip()
+        self._last_web_fetch = web_domain
+        self._last_web_status = self._summarize_text(web_status or result.internal_summary, limit=120)
+        self._last_web_content_type = content_type or "-"
+        self._last_web_fetched_at = result.finished_at or self._now_iso()
+
     @staticmethod
     def _plan_from_execution_result(result: CapabilityExecutionResult) -> _TelegramResponsePlan:
         response_style = str(result.request.metadata.get("response_style", "detailed" if result.command_label == "/askd" else "concise"))
@@ -1054,18 +1159,19 @@ class ControllerService:
             reply=chr(10).join(
                 (
                     "Operator commands",
-                    "/help - show this command list",
-                    "/status - runtime, health, readiness",
-                    "/mode - mode, policy, remote-use gate",
+                    "/help - command list",
+                    "/status - runtime and readiness",
+                    "/mode - mode and policy",
                     "/models - local Ollama models",
                     "/repo - scoped repo summary",
                     "/file <path> - scoped file preview",
-                    "/capabilities - capability gate summary",
-                    "/audit - recent audit entries",
-                    "/ask <prompt> - concise provider reply",
-                    "/askd <prompt> - detailed provider reply",
-                    "/confirm <id> - approve pending action",
-                    "/deny <id> - reject pending action",
+                    "/web <url> - allowlisted web preview",
+                    "/capabilities - capability summary",
+                    "/audit - recent audit",
+                    "/ask <prompt> - concise ask",
+                    "/askd <prompt> - detailed ask",
+                    "/confirm <id> - approve action",
+                    "/deny <id> - reject action",
                     "Plain text is not auto-routed.",
                 )
             ),
@@ -1461,6 +1567,8 @@ class ControllerService:
             return self._summarize_text(f"{update.sender_label}: {command_label} [prompt hidden]")
         if command_label == "/file":
             return self._summarize_text(f"{update.sender_label}: /file [path hidden]")
+        if command_label == "/web":
+            return self._summarize_text(f"{update.sender_label}: /web [url hidden]")
         if command_label == "plain_text":
             return self._summarize_text(f"{update.sender_label}: text message received")
         if command_label == "non_text":
@@ -1481,6 +1589,8 @@ class ControllerService:
             return self._summarize_text(f"Sent command correction to {update.sender_label}.")
         if plan.command_label == "/file":
             return self._summarize_text(f"Sent /file reply to {update.sender_label}.")
+        if plan.command_label == "/web":
+            return self._summarize_text(f"Sent /web reply to {update.sender_label}.")
         return self._summarize_text(f"Sent {plan.command_label} reply to {update.sender_label}.")
 
     @staticmethod
@@ -1497,13 +1607,19 @@ class ControllerService:
         argument = parts[1].strip() if len(parts) > 1 else ""
         command = command_token.split("@", 1)[0].lower()
         normalized_text = " ".join(text.split())
-        if command in {"/start", "/help", "/status", "/mode", "/models", "/repo", "/file", "/capabilities", "/audit", "/confirm", "/deny", "/ask", "/askd"}:
+        if command in {"/start", "/help", "/status", "/mode", "/models", "/repo", "/file", "/web", "/capabilities", "/audit", "/confirm", "/deny", "/ask", "/askd"}:
             return _ParsedTelegramCommand(command_label=command, argument=argument, normalized_text=normalized_text)
         if command.startswith("/file"):
             return _ParsedTelegramCommand(
                 command_label="parse_failure",
                 normalized_text=normalized_text,
                 usage_hint="Use /file <relative_path>.",
+            )
+        if command.startswith("/web"):
+            return _ParsedTelegramCommand(
+                command_label="parse_failure",
+                normalized_text=normalized_text,
+                usage_hint="Use /web <https://allowed-domain/path>.",
             )
         if command.startswith("/repo"):
             return _ParsedTelegramCommand(
@@ -1651,6 +1767,7 @@ class ControllerService:
         online_status = self._provider_status_for_mode("online") if need_online else self._provider_status_cache.get("openai") or self._default_provider_status("openai")
         repo_root, repo_root_valid, repo_message, _ = self._repo_configuration_state()
         file_allowed_roots, file_scope_valid, file_message, _ = self._file_scope_state()
+        web_allowed_domains, web_scope_valid, web_message, _ = self._web_scope_state()
         return CapabilityContext(
             runtime_state=snapshot.runtime_state,
             readiness_state=snapshot.readiness_state,
@@ -1669,6 +1786,9 @@ class ControllerService:
             file_allowed_roots=file_allowed_roots,
             file_scope_valid=file_scope_valid,
             file_message=file_message,
+            web_allowed_domains=web_allowed_domains,
+            web_scope_valid=web_scope_valid,
+            web_message=web_message,
         )
 
     def _build_capabilities_reply(self, snapshot: ControllerSnapshot) -> _TelegramResponsePlan:
@@ -2351,6 +2471,12 @@ class ControllerService:
                 access_mode=manifest.access_mode,
                 allowed_paths=tuple(allowed_paths),
             )
+        if manifest.scope_type == "network" and manifest.scope_uses_configured_domains:
+            return ExecutionScope(
+                scope_type=manifest.scope_type,
+                access_mode=manifest.access_mode,
+                domain_allowlist=tuple(self._config.web_allowed_domains),
+            )
         return ExecutionScope(
             scope_type=manifest.scope_type,
             access_mode=manifest.access_mode,
@@ -2378,6 +2504,8 @@ class ControllerService:
             action_summary = str(result.telemetry.get("repo_summary") or f"repo status for {self._repo_display_name()}")
         elif result.capability_id == "file.read":
             action_summary = str(result.telemetry.get("file_summary") or "file preview")
+        elif result.capability_id == "web.fetch.read":
+            action_summary = str(result.telemetry.get("web_summary") or "web fetch preview")
         else:
             action_summary = str(result.request.metadata.get("argument_summary") or result.command_label)
         return AuditRecord(
@@ -2415,6 +2543,11 @@ class ControllerService:
             return ""
         parsed = urlparse(value)
         return (parsed.hostname or "").lower()
+
+    @staticmethod
+    def _sanitize_url_for_display(value: str) -> str:
+        parsed = urlparse(value)
+        return parsed._replace(query="", fragment="", params="").geturl()
 
     @staticmethod
     def _short_time(value: str) -> str:
