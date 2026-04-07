@@ -308,7 +308,10 @@ class TelegramLoopTests(unittest.TestCase):
             service.start_telegram_loop()
             self.assertTrue(_wait_until(lambda: len(telegram_service.sent_messages) == 1))
             service.stop_telegram_loop()
-            self.assertIn("connected to Telegram", telegram_service.sent_messages[0][1])
+            reply = telegram_service.sent_messages[0][1]
+            self.assertIn("Windows OpenClaw Operator Console v1.3 is connected.", reply)
+            self.assertIn("Readiness: Ready", reply)
+            self.assertIn("Use /help to see supported commands.", reply)
 
     def test_status_command_returns_runtime_and_safety_summary(self) -> None:
         update = TelegramInboundMessage(update_id=2, chat_id="chat-1", text="/status", sender_label="@tester")
@@ -367,3 +370,4 @@ class TelegramLoopTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

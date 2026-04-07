@@ -17,7 +17,9 @@ from ..runtime.manager import OpenClawRuntimeManager
 from ..runtime.log_sanitizer import sanitize_log_text
 
 
-_OPERATOR_CONSOLE_LABEL = "Windows OpenClaw Operator Console v1.2"
+_OPERATOR_CONSOLE_LABEL = "Windows OpenClaw Operator Console v1.3"
+_ASK_CONCISE_LIMIT = 700
+_ASK_DETAILED_LIMIT = 1500
 
 
 @dataclass(frozen=True)
@@ -26,6 +28,8 @@ class _TelegramResponsePlan:
     command_label: str
     ask_status: str = ""
     hide_content_in_summary: bool = False
+    response_style: str = "concise"
+    acknowledge_work: bool = False
 
 
 class ControllerService:
@@ -632,8 +636,20 @@ class ControllerService:
             )
             return
 
+        command_hint = self._incoming_command_label(update)
+        inbound_summary = self._summarize_inbound_update(update, command_hint)
+        if command_hint in {"/ask", "/askd"}:
+            self._update_telegram_loop_status(
+                state="running",
+                message=f"Working on {command_hint} request.",
+                inbound_summary=inbound_summary,
+                outbound_summary=self._summarize_text(f"{command_hint} in progress."),
+                activity=True,
+                last_command=command_hint,
+                last_ask_status=f"{command_hint} in progress.",
+            )
+
         plan = self._build_telegram_reply(update)
-        inbound_summary = self._summarize_inbound_update(update, plan.command_label)
         outbound_summary = self._outbound_summary_for_plan(update, plan)
         loop_message = f"Processed Telegram update {update.update_id}."
 
@@ -658,7 +674,7 @@ class ControllerService:
                 outbound_summary=outbound_summary,
                 activity=True,
                 last_command=plan.command_label,
-                last_ask_status=plan.ask_status if plan.command_label == "/ask" else None,
+                last_ask_status=plan.ask_status if plan.command_label in {"/ask", "/askd"} else None,
             )
             self._persist_telegram_offset(update.update_id)
             return
@@ -672,7 +688,7 @@ class ControllerService:
             activity=True,
             success=True,
             last_command=plan.command_label,
-            last_ask_status=plan.ask_status if plan.command_label == "/ask" else None,
+            last_ask_status=plan.ask_status if plan.command_label in {"/ask", "/askd"} else None,
         )
 
     def _build_telegram_reply(self, update: TelegramInboundMessage) -> _TelegramResponsePlan:
@@ -689,64 +705,26 @@ class ControllerService:
         if command == "/start":
             return _TelegramResponsePlan(
                 reply=(
-                    f"{_OPERATOR_CONSOLE_LABEL} is connected to Telegram. "
-                    f"Current readiness: {self._readiness_label(snapshot.readiness_state)}. "
+                    f"{_OPERATOR_CONSOLE_LABEL} is connected.\n"
+                    f"Readiness: {self._readiness_label(snapshot.readiness_state)}\n"
                     "Use /help to see supported commands."
                 ),
                 command_label="/start",
             )
         if command == "/status":
-            active_status = self._provider_status_for_mode(self._config.current_mode)
-            return _TelegramResponsePlan(
-                reply="\n".join(
-                    (
-                        f"Runtime: {snapshot.runtime_state}",
-                        f"Health: {self._health_label(snapshot.health_status)}",
-                        f"Security: {self._safety_label(snapshot.safety_status)}",
-                        f"Readiness: {self._readiness_label(snapshot.readiness_state)}",
-                        f"Mode: {snapshot.mode}",
-                        f"Policy: {snapshot.policy}",
-                        f"Provider: {self._provider_label(snapshot.active_provider, active_status.model)}",
-                        f"Telegram Loop: {self._telegram_loop_label(snapshot.telegram_loop_state)}",
-                    )
-                ),
-                command_label="/status",
-            )
+            return self._build_status_reply(snapshot)
         if command == "/mode":
-            active_status = self._provider_status_for_mode(self._config.current_mode)
-            online_state, online_message = self._online_use_state()
-            return _TelegramResponsePlan(
-                reply="\n".join(
-                    (
-                        f"Selected mode: {snapshot.selected_mode}",
-                        f"Current mode: {snapshot.mode}",
-                        f"Policy: {snapshot.policy}",
-                        f"Active provider: {self._provider_label(snapshot.active_provider, active_status.model)}",
-                        f"Online use: {online_state}",
-                        f"Note: {online_message}",
-                    )
-                ),
-                command_label="/mode",
-            )
+            return self._build_mode_reply(snapshot)
         if command == "/help":
-            return _TelegramResponsePlan(
-                reply="\n".join(
-                    (
-                        "Commands:",
-                        "/help - list supported Telegram commands",
-                        "/status - show runtime, diagnostics, mode, and provider state",
-                        "/mode - show mode, policy, provider, and online-use gate",
-                        "/models - list detected local Ollama models",
-                        "/ask <prompt> - run one explicit provider-backed query",
-                    )
-                ),
-                command_label="/help",
-            )
+            return self._build_help_reply()
         if command == "/models":
             return self._build_models_reply()
         if command == "/ask":
             prompt = text[len("/ask") :].strip()
-            return self._build_ask_reply(prompt, snapshot)
+            return self._build_ask_reply(prompt, snapshot, response_style="concise", command_label="/ask")
+        if command == "/askd":
+            prompt = text[len("/askd") :].strip()
+            return self._build_ask_reply(prompt, snapshot, response_style="detailed", command_label="/askd")
 
         if snapshot.runtime_state != "running":
             return _TelegramResponsePlan(
@@ -760,65 +738,141 @@ class ControllerService:
             )
         return _TelegramResponsePlan(
             reply=(
-                f"Message received by {_OPERATOR_CONSOLE_LABEL}. "
-                "Use /help to see supported commands. Generic text does not trigger provider queries yet."
+                f"{_OPERATOR_CONSOLE_LABEL}\n"
+                "Use /help to see supported commands.\n"
+                "Plain text is not treated as /ask automatically."
             ),
             command_label="plain_text",
+        )
+
+    def _build_help_reply(self) -> _TelegramResponsePlan:
+        return _TelegramResponsePlan(
+            reply="\n".join(
+                (
+                    "Operator commands",
+                    "/help - show this command list",
+                    "/status - runtime, health, safety, readiness",
+                    "/mode - mode, policy, and remote-use gate",
+                    "/models - local Ollama models",
+                    "/ask <prompt> - concise provider reply",
+                    "/askd <prompt> - more detailed provider reply",
+                    "Plain text is not auto-routed to /ask.",
+                )
+            ),
+            command_label="/help",
+        )
+
+    def _build_status_reply(self, snapshot: ControllerSnapshot) -> _TelegramResponsePlan:
+        active_status = self._provider_status_for_mode(self._config.current_mode)
+        lines = [
+            "Status",
+            f"Runtime: {snapshot.runtime_state}",
+            f"Health: {self._health_label(snapshot.health_status)}",
+            f"Security: {self._safety_label(snapshot.safety_status)}",
+            f"Readiness: {self._readiness_label(snapshot.readiness_state)}",
+            f"Mode: {snapshot.mode}",
+            f"Policy: {self._policy_label(snapshot.policy)}",
+            f"Provider: {self._provider_label(snapshot.active_provider, active_status.model)}",
+            f"Telegram loop: {self._telegram_loop_label(snapshot.telegram_loop_state)}",
+        ]
+        if snapshot.readiness_state != "ready":
+            lines.append(f"Note: {snapshot.readiness_message}")
+        return _TelegramResponsePlan(
+            reply="\n".join(lines),
+            command_label="/status",
+        )
+
+    def _build_mode_reply(self, snapshot: ControllerSnapshot) -> _TelegramResponsePlan:
+        active_status = self._provider_status_for_mode(self._config.current_mode)
+        online_state, online_message = self._online_use_state()
+        return _TelegramResponsePlan(
+            reply="\n".join(
+                (
+                    "Mode",
+                    f"Selected: {snapshot.selected_mode}",
+                    f"Current: {snapshot.mode}",
+                    f"Policy: {self._policy_label(snapshot.policy)}",
+                    f"Provider: {self._provider_label(snapshot.active_provider, active_status.model)}",
+                    f"Remote use: {self._online_use_label(online_state)}",
+                    f"Reason: {online_message}",
+                )
+            ),
+            command_label="/mode",
         )
 
     def _build_models_reply(self) -> _TelegramResponsePlan:
         ollama_status = self._provider_status_for_mode("offline")
         if not ollama_status.available:
             return _TelegramResponsePlan(
-                reply=f"/models is unavailable: {ollama_status.message}",
+                reply="\n".join(
+                    (
+                        "Local models",
+                        "Unavailable right now.",
+                        f"Reason: {ollama_status.message}",
+                    )
+                ),
                 command_label="/models",
             )
         if not ollama_status.available_models:
             return _TelegramResponsePlan(
-                reply="Ollama is reachable, but no local models are available yet.",
+                reply="\n".join(
+                    (
+                        "Local models",
+                        "No local Ollama models are available yet.",
+                    )
+                ),
                 command_label="/models",
             )
-        models = list(ollama_status.available_models[:6])
-        suffix = "" if len(ollama_status.available_models) <= len(models) else ", ..."
-        selected = f" | active: {ollama_status.model}" if ollama_status.model else ""
+        models = list(ollama_status.available_models[:5])
+        remaining = len(ollama_status.available_models) - len(models)
+        lines = ["Local models"]
+        lines.extend(f"- {model}" for model in models)
+        if remaining > 0:
+            lines.append(f"... and {remaining} more")
+        if ollama_status.model:
+            lines.append(f"Active: {ollama_status.model}")
         return _TelegramResponsePlan(
-            reply=f"Local Ollama models ({len(ollama_status.available_models)}): {', '.join(models)}{suffix}{selected}",
+            reply="\n".join(lines),
             command_label="/models",
         )
 
-    def _build_ask_reply(self, prompt: str, snapshot: ControllerSnapshot) -> _TelegramResponsePlan:
+    def _build_ask_reply(
+        self,
+        prompt: str,
+        snapshot: ControllerSnapshot,
+        *,
+        response_style: str,
+        command_label: str,
+    ) -> _TelegramResponsePlan:
         if not prompt:
-            return _TelegramResponsePlan(
-                reply="Usage: /ask <prompt>",
-                command_label="/ask",
-                ask_status="/ask blocked: missing prompt.",
-                hide_content_in_summary=True,
+            usage = "/askd <prompt>" if command_label == "/askd" else "/ask <prompt>"
+            return self._blocked_ask_reply(
+                command_label=command_label,
+                reason="No prompt was provided.",
+                next_step=f"Try {usage}.",
             )
 
         if snapshot.runtime_state != "running":
-            return _TelegramResponsePlan(
-                reply="OpenClaw runtime is not available. Start the runtime in the operator console and try again.",
-                command_label="/ask",
-                ask_status="/ask blocked: runtime not running.",
-                hide_content_in_summary=True,
+            return self._blocked_ask_reply(
+                command_label=command_label,
+                reason="Runtime is not running.",
+                next_step="Start the runtime in the desktop app and try again.",
             )
 
         current_mode = self._config.current_mode
         if current_mode == "offline":
             provider_status = self._provider_status_for_mode("offline")
             if not provider_status.ready:
-                return _TelegramResponsePlan(
-                    reply=f"Offline ask is unavailable: {provider_status.message}",
-                    command_label="/ask",
-                    ask_status=f"/ask blocked: {provider_status.message}",
-                    hide_content_in_summary=True,
+                return self._blocked_ask_reply(
+                    command_label=command_label,
+                    reason=provider_status.message,
+                    next_step="Validate Ollama in the desktop app before asking again.",
                 )
             if snapshot.readiness_state == "not_ready":
-                return _TelegramResponsePlan(
-                    reply="Operator console is not ready. Resolve blocking health or security issues in the desktop app and try again.",
-                    command_label="/ask",
-                    ask_status="/ask blocked: readiness is not ready.",
-                    hide_content_in_summary=True,
+                return self._blocked_ask_reply(
+                    command_label=command_label,
+                    reason="Readiness is not ready.",
+                    next_step="Resolve the blocking health or security issue in the desktop app.",
                 )
             adapter = self._provider_adapters["ollama"]
             reply = adapter.ask(  # type: ignore[call-arg]
@@ -826,46 +880,52 @@ class ControllerService:
                 base_url=self._config.ollama_base_url,
                 preferred_model=self._config.preferred_ollama_model,
                 prompt=prompt,
+                response_style=response_style,
             )
             if not isinstance(reply, ProviderReply) or not reply.ok:
                 message = reply.message if isinstance(reply, ProviderReply) else "Offline provider call failed."
-                return _TelegramResponsePlan(
-                    reply=f"Offline ask failed: {message}",
-                    command_label="/ask",
-                    ask_status=f"/ask failed via Ollama: {message}",
-                    hide_content_in_summary=True,
+                return self._blocked_ask_reply(
+                    command_label=command_label,
+                    reason=message,
+                    next_step="Check Ollama and rerun /models or provider validation.",
                 )
             model = reply.model or provider_status.model or "Ollama"
             return _TelegramResponsePlan(
-                reply=reply.text,
-                command_label="/ask",
-                ask_status=f"/ask completed via Ollama / {model}.",
+                reply=self._format_ask_success(
+                    reply.text,
+                    provider_label=self._provider_label("ollama", model),
+                    mode_label="Offline",
+                    response_style=response_style,
+                ),
+                command_label=command_label,
+                ask_status=f"{command_label} completed via Ollama / {model}.",
                 hide_content_in_summary=True,
+                response_style=response_style,
             )
 
         online_state, online_message = self._online_use_state()
         if online_state != "allowed":
-            return _TelegramResponsePlan(
-                reply=f"Online ask is blocked: {online_message}",
-                command_label="/ask",
-                ask_status=f"/ask blocked: {online_message}",
-                hide_content_in_summary=True,
+            next_step = "Switch to Offline Mode or activate Online Mode explicitly in the desktop app."
+            if self._config.current_mode == "online" and self._config.policy != "always_offline":
+                next_step = "Save or validate the OpenAI configuration in the desktop app."
+            return self._blocked_ask_reply(
+                command_label=command_label,
+                reason=online_message,
+                next_step=next_step,
             )
 
         provider_status = self._provider_status_for_mode("online")
         if not provider_status.ready:
-            return _TelegramResponsePlan(
-                reply=f"Online ask is unavailable: {provider_status.message}",
-                command_label="/ask",
-                ask_status=f"/ask blocked: {provider_status.message}",
-                hide_content_in_summary=True,
+            return self._blocked_ask_reply(
+                command_label=command_label,
+                reason=provider_status.message,
+                next_step="Save or validate the OpenAI configuration in the desktop app.",
             )
         if snapshot.readiness_state == "not_ready":
-            return _TelegramResponsePlan(
-                reply="Operator console is not ready. Resolve blocking health or security issues in the desktop app and try again.",
-                command_label="/ask",
-                ask_status="/ask blocked: readiness is not ready.",
-                hide_content_in_summary=True,
+            return self._blocked_ask_reply(
+                command_label=command_label,
+                reason="Readiness is not ready.",
+                next_step="Resolve the blocking health or security issue in the desktop app.",
             )
 
         adapter = self._provider_adapters["openai"]
@@ -874,22 +934,57 @@ class ControllerService:
             secret_id=self._config.openai_secret_id,
             transient_secret="",
             prompt=prompt,
+            response_style=response_style,
         )
         if not isinstance(reply, ProviderReply) or not reply.ok:
             message = reply.message if isinstance(reply, ProviderReply) else "Online provider call failed."
-            return _TelegramResponsePlan(
-                reply=f"Online ask failed: {message}",
-                command_label="/ask",
-                ask_status=f"/ask failed via OpenAI: {message}",
-                hide_content_in_summary=True,
+            return self._blocked_ask_reply(
+                command_label=command_label,
+                reason=message,
+                next_step="Check the online provider configuration and try again.",
             )
         model = reply.model or "OpenAI"
         return _TelegramResponsePlan(
-            reply=reply.text,
-            command_label="/ask",
-            ask_status=f"/ask completed via OpenAI / {model}.",
+            reply=self._format_ask_success(
+                reply.text,
+                provider_label=self._provider_label("openai", model),
+                mode_label="Online",
+                response_style=response_style,
+            ),
+            command_label=command_label,
+            ask_status=f"{command_label} completed via OpenAI / {model}.",
             hide_content_in_summary=True,
+            response_style=response_style,
         )
+
+    def _blocked_ask_reply(self, *, command_label: str, reason: str, next_step: str) -> _TelegramResponsePlan:
+        title = "Can't run /askd right now." if command_label == "/askd" else "Can't run /ask right now."
+        return _TelegramResponsePlan(
+            reply="\n".join(
+                (
+                    title,
+                    f"Reason: {reason}",
+                    f"Next: {next_step}",
+                )
+            ),
+            command_label=command_label,
+            ask_status=f"{command_label} blocked: {reason}",
+            hide_content_in_summary=True,
+            response_style="detailed" if command_label == "/askd" else "concise",
+        )
+
+    def _format_ask_success(
+        self,
+        answer: str,
+        *,
+        provider_label: str,
+        mode_label: str,
+        response_style: str,
+    ) -> str:
+        heading = "Detailed answer" if response_style == "detailed" else "Answer"
+        normalized = self._normalize_telegram_reply(answer, response_style=response_style)
+        source = f"{mode_label} | {provider_label}"
+        return "\n".join((f"{heading} ({source})", normalized))
 
     def _update_telegram_loop_status(
         self,
@@ -925,8 +1020,8 @@ class ControllerService:
         return f"{sanitized[: limit - 3]}..."
 
     def _summarize_inbound_update(self, update: TelegramInboundMessage, command_label: str) -> str:
-        if command_label == "/ask":
-            return self._summarize_text(f"{update.sender_label}: /ask [prompt hidden]")
+        if command_label in {"/ask", "/askd"}:
+            return self._summarize_text(f"{update.sender_label}: {command_label} [prompt hidden]")
         if command_label == "plain_text":
             return self._summarize_text(f"{update.sender_label}: text message received")
         if command_label == "non_text":
@@ -935,13 +1030,47 @@ class ControllerService:
         return self._summarize_text(f"{update.sender_label}: {text}")
 
     def _outbound_summary_for_plan(self, update: TelegramInboundMessage, plan: _TelegramResponsePlan) -> str:
-        if plan.command_label == "/ask":
-            return self._summarize_text(plan.ask_status or f"Sent /ask reply to {update.sender_label}.")
+        if plan.command_label in {"/ask", "/askd"}:
+            return self._summarize_text(plan.ask_status or f"Sent {plan.command_label} reply to {update.sender_label}.")
         if plan.command_label == "plain_text":
             return self._summarize_text(f"Sent placeholder reply to {update.sender_label}.")
         if plan.command_label == "non_text":
             return self._summarize_text(f"Sent non-text guidance reply to {update.sender_label}.")
         return self._summarize_text(f"Sent {plan.command_label} reply to {update.sender_label}.")
+
+    @staticmethod
+    def _incoming_command_label(update: TelegramInboundMessage) -> str:
+        if not update.has_text:
+            return "non_text"
+        text = update.text.strip()
+        if not text:
+            return "plain_text"
+        command = text.split()[0].lower()
+        return command if command.startswith("/") else "plain_text"
+
+    @staticmethod
+    def _normalize_telegram_reply(text: str, *, response_style: str) -> str:
+        lines = [
+            " ".join(raw_line.split())
+            for raw_line in text.replace("\r", "\n").split("\n")
+        ]
+        cleaned = [line for line in lines if line]
+        if not cleaned:
+            return "No answer text was returned."
+        if response_style == "detailed":
+            normalized = "\n".join(cleaned[:8])
+            return ControllerService._trim_telegram_text(normalized, limit=_ASK_DETAILED_LIMIT)
+        normalized = " ".join(cleaned)
+        return ControllerService._trim_telegram_text(normalized, limit=_ASK_CONCISE_LIMIT)
+
+    @staticmethod
+    def _trim_telegram_text(text: str, *, limit: int) -> str:
+        if len(text) <= limit:
+            return text
+        truncated = text[: limit - 3].rstrip()
+        if " " in truncated:
+            truncated = truncated.rsplit(" ", 1)[0]
+        return f"{truncated}..."
 
     @staticmethod
     def _now_iso() -> str:
@@ -976,6 +1105,22 @@ class ControllerService:
         if provider == "ollama":
             return "Ollama"
         return "OpenAI"
+
+    @staticmethod
+    def _policy_label(policy: str) -> str:
+        return {
+            "always_offline": "Always Offline",
+            "ask_before_online": "Ask Before Online",
+            "always_online": "Always Online",
+        }.get(policy, policy)
+
+    @staticmethod
+    def _online_use_label(state: str) -> str:
+        return {
+            "blocked": "Blocked",
+            "confirmation-gated": "Confirmation-gated",
+            "allowed": "Allowed",
+        }.get(state, state)
 
     def _online_use_state(self) -> tuple[str, str]:
         if self._config.policy == "always_offline":
@@ -1056,3 +1201,4 @@ class ControllerService:
         if warnings:
             return "degraded", " ".join(warnings[:2])
         return "ready", "Runtime, provider, diagnostics, and Telegram are ready for daily use."
+

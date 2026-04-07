@@ -127,12 +127,14 @@ class _FakeOllamaAdapter:
             model="llama3.1:latest",
         )
         self.ask_calls = 0
+        self.last_ask_kwargs: dict[str, object] = {}
 
     def validate(self, **kwargs: object) -> ProviderStatus:
         return self.validation_status
 
     def ask(self, **kwargs: object) -> ProviderReply:
         self.ask_calls += 1
+        self.last_ask_kwargs = dict(kwargs)
         return self.ask_reply
 
 
@@ -161,12 +163,14 @@ class _FakeOpenAIAdapter:
             model="gpt-5-mini",
         )
         self.ask_calls = 0
+        self.last_ask_kwargs: dict[str, object] = {}
 
     def validate(self, **kwargs: object) -> ProviderStatus:
         return self.validation_status
 
     def ask(self, **kwargs: object) -> ProviderReply:
         self.ask_calls += 1
+        self.last_ask_kwargs = dict(kwargs)
         return self.ask_reply
 
 
@@ -280,33 +284,102 @@ class TelegramCommandTests(unittest.TestCase):
         service._latest_security_report = _report("security", "ok", "info", "Safe")
         return service, config_store, secret_store, tg, local_ollama, remote_openai
 
-    def test_help_command_lists_supported_commands(self) -> None:
+    def _run_single_update(self, service: ControllerService, telegram_service: _FakeTelegramService) -> tuple[object, str]:
+        service.start_telegram_loop()
+        self.assertTrue(_wait_until(lambda: len(telegram_service.sent_messages) == 1))
+        snapshot = service.stop_telegram_loop()
+        return snapshot, telegram_service.sent_messages[0][1]
+
+    def test_help_command_formatting_is_concise_and_lists_commands(self) -> None:
         update = TelegramInboundMessage(update_id=1, chat_id="chat-1", text="/help", sender_label="@tester")
         with tempfile.TemporaryDirectory() as tmp:
             telegram_service = _FakeTelegramService(update_batches=[(update,)])
             service, _, _, _, _, _ = self._make_service(tmp_dir=tmp, telegram_service=telegram_service)
-            service.start_telegram_loop()
-            self.assertTrue(_wait_until(lambda: len(telegram_service.sent_messages) == 1))
-            service.stop_telegram_loop()
-            reply = telegram_service.sent_messages[0][1]
-            self.assertIn("/help", reply)
-            self.assertIn("/models", reply)
-            self.assertIn("/ask <prompt>", reply)
+            _, reply = self._run_single_update(service, telegram_service)
+            self.assertLessEqual(len(reply), 400)
+            lines = reply.splitlines()
+            self.assertEqual(lines[0], "Operator commands")
+            self.assertIn("/help - show this command list", lines)
+            self.assertIn("/status - runtime, health, safety, readiness", lines)
+            self.assertIn("/mode - mode, policy, and remote-use gate", lines)
+            self.assertIn("/models - local Ollama models", lines)
+            self.assertIn("/ask <prompt> - concise provider reply", lines)
+            self.assertIn("/askd <prompt> - more detailed provider reply", lines)
+            self.assertEqual(lines[-1], "Plain text is not auto-routed to /ask.")
 
-    def test_models_command_lists_available_models(self) -> None:
-        update = TelegramInboundMessage(update_id=2, chat_id="chat-1", text="/models", sender_label="@tester")
+    def test_status_command_is_mobile_readable(self) -> None:
+        update = TelegramInboundMessage(update_id=2, chat_id="chat-1", text="/status", sender_label="@tester")
         with tempfile.TemporaryDirectory() as tmp:
             telegram_service = _FakeTelegramService(update_batches=[(update,)])
             service, _, _, _, _, _ = self._make_service(tmp_dir=tmp, telegram_service=telegram_service)
-            service.start_telegram_loop()
-            self.assertTrue(_wait_until(lambda: len(telegram_service.sent_messages) == 1))
-            service.stop_telegram_loop()
-            reply = telegram_service.sent_messages[0][1]
-            self.assertIn("Local Ollama models", reply)
-            self.assertIn("llama3.1:latest", reply)
+            _, reply = self._run_single_update(service, telegram_service)
+            lines = reply.splitlines()
+            self.assertEqual(lines[0], "Status")
+            self.assertIn("Runtime: running", lines)
+            self.assertIn("Health: Healthy", lines)
+            self.assertIn("Security: Safe", lines)
+            self.assertIn("Readiness: Ready", lines)
+            self.assertIn("Mode: offline", lines)
+            self.assertIn("Policy: Ask Before Online", lines)
+            self.assertTrue(any(line.startswith("Provider: Ollama") for line in lines))
+            self.assertIn("Telegram loop: Running", lines)
+            self.assertLessEqual(len(lines), 10)
+
+    def test_mode_command_reports_confirmation_gated_remote_use(self) -> None:
+        update = TelegramInboundMessage(update_id=3, chat_id="chat-1", text="/mode", sender_label="@tester")
+        with tempfile.TemporaryDirectory() as tmp:
+            telegram_service = _FakeTelegramService(update_batches=[(update,)])
+            service, config_store, _, _, _, _ = self._make_service(tmp_dir=tmp, telegram_service=telegram_service)
+            config = config_store.load()
+            config.selected_mode = "online"
+            config.current_mode = "offline"
+            config.selected_provider = "openai"
+            config.policy = "ask_before_online"
+            config_store.save(config)
+            service._config = config_store.load()
+            _, reply = self._run_single_update(service, telegram_service)
+            lines = reply.splitlines()
+            self.assertEqual(lines[0], "Mode")
+            self.assertIn("Selected: online", lines)
+            self.assertIn("Current: offline", lines)
+            self.assertIn("Policy: Ask Before Online", lines)
+            self.assertIn("Remote use: Confirmation-gated", lines)
+            self.assertIn("Reason: Online Mode is selected but not activated yet. Confirm it in the desktop app.", lines)
+
+    def test_mode_command_reports_allowed_remote_use(self) -> None:
+        update = TelegramInboundMessage(update_id=4, chat_id="chat-1", text="/mode", sender_label="@tester")
+        with tempfile.TemporaryDirectory() as tmp:
+            telegram_service = _FakeTelegramService(update_batches=[(update,)])
+            service, config_store, _, _, _, _ = self._make_service(tmp_dir=tmp, telegram_service=telegram_service)
+            config = config_store.load()
+            config.selected_mode = "online"
+            config.current_mode = "online"
+            config.selected_provider = "openai"
+            config.policy = "always_online"
+            config_store.save(config)
+            service._config = config_store.load()
+            _, reply = self._run_single_update(service, telegram_service)
+            lines = reply.splitlines()
+            self.assertIn("Current: online", lines)
+            self.assertIn("Policy: Always Online", lines)
+            self.assertIn("Provider: OpenAI", lines)
+            self.assertIn("Remote use: Allowed", lines)
+            self.assertIn("Reason: Online Mode is active and OpenAI is ready.", lines)
+
+    def test_models_command_lists_available_models(self) -> None:
+        update = TelegramInboundMessage(update_id=5, chat_id="chat-1", text="/models", sender_label="@tester")
+        with tempfile.TemporaryDirectory() as tmp:
+            telegram_service = _FakeTelegramService(update_batches=[(update,)])
+            service, _, _, _, _, _ = self._make_service(tmp_dir=tmp, telegram_service=telegram_service)
+            _, reply = self._run_single_update(service, telegram_service)
+            lines = reply.splitlines()
+            self.assertEqual(lines[0], "Local models")
+            self.assertIn("- llama3.1:latest", lines)
+            self.assertIn("- qwen2.5:latest", lines)
+            self.assertIn("Active: llama3.1:latest", lines)
 
     def test_models_command_reports_no_local_models(self) -> None:
-        update = TelegramInboundMessage(update_id=3, chat_id="chat-1", text="/models", sender_label="@tester")
+        update = TelegramInboundMessage(update_id=6, chat_id="chat-1", text="/models", sender_label="@tester")
         ollama = _FakeOllamaAdapter(
             validation_status=ProviderStatus(
                 provider="ollama",
@@ -324,13 +397,11 @@ class TelegramCommandTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             telegram_service = _FakeTelegramService(update_batches=[(update,)])
             service, _, _, _, _, _ = self._make_service(tmp_dir=tmp, telegram_service=telegram_service, ollama_adapter=ollama)
-            service.start_telegram_loop()
-            self.assertTrue(_wait_until(lambda: len(telegram_service.sent_messages) == 1))
-            service.stop_telegram_loop()
-            self.assertIn("no local models", telegram_service.sent_messages[0][1].lower())
+            _, reply = self._run_single_update(service, telegram_service)
+            self.assertEqual(reply, "Local models\nNo local Ollama models are available yet.")
 
     def test_models_command_reports_ollama_unavailable(self) -> None:
-        update = TelegramInboundMessage(update_id=4, chat_id="chat-1", text="/models", sender_label="@tester")
+        update = TelegramInboundMessage(update_id=7, chat_id="chat-1", text="/models", sender_label="@tester")
         ollama = _FakeOllamaAdapter(
             validation_status=ProviderStatus(
                 provider="ollama",
@@ -346,26 +417,102 @@ class TelegramCommandTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             telegram_service = _FakeTelegramService(update_batches=[(update,)])
             service, _, _, _, _, _ = self._make_service(tmp_dir=tmp, telegram_service=telegram_service, ollama_adapter=ollama)
-            service.start_telegram_loop()
-            self.assertTrue(_wait_until(lambda: len(telegram_service.sent_messages) == 1))
-            service.stop_telegram_loop()
-            self.assertIn("unavailable", telegram_service.sent_messages[0][1].lower())
+            _, reply = self._run_single_update(service, telegram_service)
+            self.assertEqual(reply, "Local models\nUnavailable right now.\nReason: Ollama is not installed or was not found on PATH.")
 
-    def test_offline_ask_uses_ollama_when_provider_is_valid(self) -> None:
-        update = TelegramInboundMessage(update_id=5, chat_id="chat-1", text="/ask hello", sender_label="@tester")
+    def test_models_command_caps_long_model_lists(self) -> None:
+        update = TelegramInboundMessage(update_id=8, chat_id="chat-1", text="/models", sender_label="@tester")
+        models = tuple(f"model-{index}" for index in range(1, 8))
+        ollama = _FakeOllamaAdapter(
+            validation_status=ProviderStatus(
+                provider="ollama",
+                display_name="Ollama",
+                configured=True,
+                available=True,
+                validation_state="valid",
+                ready=True,
+                message="Ollama is ready.",
+                is_local=True,
+                model="model-1",
+                available_models=models,
+            )
+        )
         with tempfile.TemporaryDirectory() as tmp:
             telegram_service = _FakeTelegramService(update_batches=[(update,)])
-            service, _, _, _, ollama, openai = self._make_service(tmp_dir=tmp, telegram_service=telegram_service)
-            service.start_telegram_loop()
-            self.assertTrue(_wait_until(lambda: len(telegram_service.sent_messages) == 1))
-            snapshot = service.stop_telegram_loop()
-            self.assertEqual(ollama.ask_calls, 1)
-            self.assertEqual(openai.ask_calls, 0)
-            self.assertIn("Offline answer from Ollama.", telegram_service.sent_messages[0][1])
-            self.assertIn("completed via Ollama", snapshot.telegram_last_ask_status)
+            service, _, _, _, _, _ = self._make_service(tmp_dir=tmp, telegram_service=telegram_service, ollama_adapter=ollama)
+            _, reply = self._run_single_update(service, telegram_service)
+            self.assertIn("- model-1", reply)
+            self.assertIn("- model-5", reply)
+            self.assertNotIn("- model-6", reply)
+            self.assertIn("... and 2 more", reply)
 
-    def test_ask_blocks_when_provider_is_invalid(self) -> None:
-        update = TelegramInboundMessage(update_id=6, chat_id="chat-1", text="/ask hello", sender_label="@tester")
+    def test_offline_ask_uses_ollama_and_formats_concisely(self) -> None:
+        update = TelegramInboundMessage(update_id=9, chat_id="chat-1", text="/ask hello", sender_label="@tester")
+        ollama = _FakeOllamaAdapter(
+            ask_reply=ProviderReply(
+                provider="ollama",
+                ok=True,
+                text="  Hello   there.\n\nThis   is a concise   offline answer.  ",
+                message="Ollama replied successfully.",
+                model="llama3.1:latest",
+            )
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            telegram_service = _FakeTelegramService(update_batches=[(update,)])
+            service, _, _, _, local_ollama, openai = self._make_service(
+                tmp_dir=tmp,
+                telegram_service=telegram_service,
+                ollama_adapter=ollama,
+            )
+            snapshot, reply = self._run_single_update(service, telegram_service)
+            self.assertEqual(local_ollama.ask_calls, 1)
+            self.assertEqual(openai.ask_calls, 0)
+            self.assertEqual(local_ollama.last_ask_kwargs.get("response_style"), "concise")
+            self.assertTrue(reply.startswith("Answer (Offline | Ollama / llama3.1:latest)\n"))
+            self.assertIn("Hello there. This is a concise offline answer.", reply)
+            self.assertLessEqual(len(reply), 850)
+            self.assertIn("/ask completed via Ollama / llama3.1:latest.", snapshot.telegram_last_ask_status)
+            self.assertIn("/ask [prompt hidden]", snapshot.telegram_last_inbound_summary)
+            self.assertEqual(len(telegram_service.sent_messages), 1)
+
+    def test_askd_returns_more_detailed_but_bounded_reply(self) -> None:
+        update = TelegramInboundMessage(update_id=10, chat_id="chat-1", text="/askd hello", sender_label="@tester")
+        ollama = _FakeOllamaAdapter(
+            ask_reply=ProviderReply(
+                provider="ollama",
+                ok=True,
+                text=(
+                    "First point with  extra spacing.\n"
+                    "\n"
+                    "Second point stays readable.\n"
+                    "Third point is still short.\n"
+                    "Fourth point is present for detail."
+                ),
+                message="Ollama replied successfully.",
+                model="llama3.1:latest",
+            )
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            telegram_service = _FakeTelegramService(update_batches=[(update,)])
+            service, _, _, _, local_ollama, openai = self._make_service(
+                tmp_dir=tmp,
+                telegram_service=telegram_service,
+                ollama_adapter=ollama,
+            )
+            snapshot, reply = self._run_single_update(service, telegram_service)
+            self.assertEqual(local_ollama.ask_calls, 1)
+            self.assertEqual(openai.ask_calls, 0)
+            self.assertEqual(local_ollama.last_ask_kwargs.get("response_style"), "detailed")
+            self.assertTrue(reply.startswith("Detailed answer (Offline | Ollama / llama3.1:latest)\n"))
+            self.assertIn("First point with extra spacing.", reply)
+            self.assertIn("Second point stays readable.", reply)
+            self.assertIn("Fourth point is present for detail.", reply)
+            self.assertLessEqual(len(reply), 1650)
+            self.assertIn("/askd completed via Ollama / llama3.1:latest.", snapshot.telegram_last_ask_status)
+            self.assertEqual(len(telegram_service.sent_messages), 1)
+
+    def test_ask_blocks_when_provider_is_invalid_with_clear_action(self) -> None:
+        update = TelegramInboundMessage(update_id=11, chat_id="chat-1", text="/ask hello", sender_label="@tester")
         ollama = _FakeOllamaAdapter(
             validation_status=ProviderStatus(
                 provider="ollama",
@@ -381,14 +528,15 @@ class TelegramCommandTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             telegram_service = _FakeTelegramService(update_batches=[(update,)])
             service, _, _, _, _, openai = self._make_service(tmp_dir=tmp, telegram_service=telegram_service, ollama_adapter=ollama)
-            service.start_telegram_loop()
-            self.assertTrue(_wait_until(lambda: len(telegram_service.sent_messages) == 1))
-            service.stop_telegram_loop()
+            _, reply = self._run_single_update(service, telegram_service)
             self.assertEqual(openai.ask_calls, 0)
-            self.assertIn("offline ask is unavailable", telegram_service.sent_messages[0][1].lower())
+            self.assertEqual(
+                reply,
+                "Can't run /ask right now.\nReason: Ollama service is unavailable.\nNext: Validate Ollama in the desktop app before asking again.",
+            )
 
     def test_ask_blocks_when_online_policy_disallows_remote_use(self) -> None:
-        update = TelegramInboundMessage(update_id=7, chat_id="chat-1", text="/ask hello", sender_label="@tester")
+        update = TelegramInboundMessage(update_id=12, chat_id="chat-1", text="/ask hello", sender_label="@tester")
         with tempfile.TemporaryDirectory() as tmp:
             telegram_service = _FakeTelegramService(update_batches=[(update,)])
             service, config_store, _, _, ollama, openai = self._make_service(tmp_dir=tmp, telegram_service=telegram_service)
@@ -399,29 +547,30 @@ class TelegramCommandTests(unittest.TestCase):
             config.policy = "always_offline"
             config_store.save(config)
             service._config = config_store.load()
-            service.start_telegram_loop()
-            self.assertTrue(_wait_until(lambda: len(telegram_service.sent_messages) == 1))
-            service.stop_telegram_loop()
+            _, reply = self._run_single_update(service, telegram_service)
             self.assertEqual(ollama.ask_calls, 0)
             self.assertEqual(openai.ask_calls, 0)
-            self.assertIn("online ask is blocked", telegram_service.sent_messages[0][1].lower())
-            self.assertIn("always offline policy", telegram_service.sent_messages[0][1].lower())
+            self.assertEqual(
+                reply,
+                "Can't run /ask right now.\nReason: Always Offline policy is active.\nNext: Switch to Offline Mode or activate Online Mode explicitly in the desktop app.",
+            )
 
     def test_ask_blocks_when_readiness_is_not_ready(self) -> None:
-        update = TelegramInboundMessage(update_id=8, chat_id="chat-1", text="/ask hello", sender_label="@tester")
+        update = TelegramInboundMessage(update_id=13, chat_id="chat-1", text="/ask hello", sender_label="@tester")
         with tempfile.TemporaryDirectory() as tmp:
             telegram_service = _FakeTelegramService(update_batches=[(update,)])
             service, _, _, _, ollama, openai = self._make_service(tmp_dir=tmp, telegram_service=telegram_service)
             service._latest_health_report = _report("health", "blocked", "error", "Blocked")
-            service.start_telegram_loop()
-            self.assertTrue(_wait_until(lambda: len(telegram_service.sent_messages) == 1))
-            service.stop_telegram_loop()
+            _, reply = self._run_single_update(service, telegram_service)
             self.assertEqual(ollama.ask_calls, 0)
             self.assertEqual(openai.ask_calls, 0)
-            self.assertIn("not ready", telegram_service.sent_messages[0][1].lower())
+            self.assertEqual(
+                reply,
+                "Can't run /ask right now.\nReason: Readiness is not ready.\nNext: Resolve the blocking health or security issue in the desktop app.",
+            )
 
     def test_no_silent_provider_fallback_occurs(self) -> None:
-        update = TelegramInboundMessage(update_id=9, chat_id="chat-1", text="/ask hello", sender_label="@tester")
+        update = TelegramInboundMessage(update_id=14, chat_id="chat-1", text="/ask hello", sender_label="@tester")
         openai = _FakeOpenAIAdapter(
             validation_status=ProviderStatus(
                 provider="openai",
@@ -448,20 +597,22 @@ class TelegramCommandTests(unittest.TestCase):
             config.policy = "always_online"
             config_store.save(config)
             service._config = config_store.load()
-            service.start_telegram_loop()
-            self.assertTrue(_wait_until(lambda: len(telegram_service.sent_messages) == 1))
-            service.stop_telegram_loop()
+            _, reply = self._run_single_update(service, telegram_service)
             self.assertEqual(remote.ask_calls, 0)
             self.assertEqual(ollama.ask_calls, 0)
-            self.assertIn("online ask is blocked", telegram_service.sent_messages[0][1].lower())
+            self.assertEqual(
+                reply,
+                "Can't run /ask right now.\nReason: Missing OpenAI API key.\nNext: Save or validate the OpenAI configuration in the desktop app.",
+            )
+            self.assertNotIn("Ollama", reply)
 
     def test_duplicate_suppression_still_applies_to_ask_commands(self) -> None:
-        duplicate = TelegramInboundMessage(update_id=10, chat_id="chat-1", text="/ask hello", sender_label="@tester")
+        duplicate = TelegramInboundMessage(update_id=15, chat_id="chat-1", text="/askd hello", sender_label="@tester")
         with tempfile.TemporaryDirectory() as tmp:
             telegram_service = _FakeTelegramService(update_batches=[(duplicate,)], ignore_offset=True)
             service, config_store, _, _, ollama, openai = self._make_service(tmp_dir=tmp, telegram_service=telegram_service)
             config = config_store.load()
-            config.telegram_last_processed_update_id = 10
+            config.telegram_last_processed_update_id = 15
             config_store.save(config)
             service._config = config_store.load()
             service.start_telegram_loop()
@@ -470,7 +621,7 @@ class TelegramCommandTests(unittest.TestCase):
             self.assertEqual(telegram_service.sent_messages, [])
             self.assertEqual(ollama.ask_calls, 0)
             self.assertEqual(openai.ask_calls, 0)
-            self.assertIn("Duplicate update 10 skipped", snapshot.telegram_last_inbound_summary)
+            self.assertIn("Duplicate update 15 skipped", snapshot.telegram_last_inbound_summary)
 
 
 if __name__ == "__main__":

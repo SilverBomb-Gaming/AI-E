@@ -13,6 +13,7 @@ _DEFAULT_OPENAI_MODEL = "gpt-5-mini"
 _OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
 _OPENAI_TIMEOUT_SECONDS = 20.0
 _OPENAI_MAX_RESPONSE_CHARS = 1200
+_OPENAI_DETAILED_MAX_RESPONSE_CHARS = 2200
 
 
 def mask_secret(secret: str) -> str:
@@ -84,6 +85,7 @@ class OpenAIProviderAdapter(BaseProviderAdapter):
         transient_secret = str(kwargs.get("transient_secret") or "").strip()
         prompt = str(kwargs.get("prompt") or "").strip()
         model = str(kwargs.get("model") or _DEFAULT_OPENAI_MODEL).strip() or _DEFAULT_OPENAI_MODEL
+        response_style = str(kwargs.get("response_style") or "concise").strip().lower()
         if not prompt:
             return ProviderReply(
                 provider="openai",
@@ -113,13 +115,9 @@ class OpenAIProviderAdapter(BaseProviderAdapter):
                 _OPENAI_RESPONSES_URL,
                 {
                     "model": model,
-                    "instructions": (
-                        "You are Windows OpenClaw Operator Console v1.2. "
-                        "Reply concisely in plain text, keep the answer under 6 short sentences, "
-                        "and do not include hidden reasoning."
-                    ),
+                    "instructions": self._build_instructions(response_style=response_style),
                     "input": prompt,
-                    "max_output_tokens": 220,
+                    "max_output_tokens": 420 if response_style == "detailed" else 220,
                 },
                 api_key=secret,
                 timeout=_OPENAI_TIMEOUT_SECONDS,
@@ -146,7 +144,7 @@ class OpenAIProviderAdapter(BaseProviderAdapter):
         return ProviderReply(
             provider="openai",
             ok=True,
-            text=self._trim_text(text),
+            text=self._trim_text(text, response_style=response_style),
             message=f"OpenAI replied with model '{model}'.",
             model=model,
         )
@@ -212,8 +210,32 @@ class OpenAIProviderAdapter(BaseProviderAdapter):
         return ""
 
     @staticmethod
-    def _trim_text(text: str, *, limit: int = _OPENAI_MAX_RESPONSE_CHARS) -> str:
-        normalized = " ".join(text.split())
+    def _build_instructions(*, response_style: str) -> str:
+        if response_style == "detailed":
+            return (
+                "You are Windows OpenClaw Operator Console v1.3. "
+                "Reply in plain text with a clear, mobile-friendly answer. "
+                "Use at most 3 short paragraphs or 8 short bullet points. "
+                "Be informative but still bounded, and do not include hidden reasoning."
+            )
+        return (
+            "You are Windows OpenClaw Operator Console v1.3. "
+            "Reply in plain text with a concise, mobile-friendly answer. "
+            "Use at most 5 short sentences, keep whitespace tidy, "
+            "and do not include hidden reasoning."
+        )
+
+    @staticmethod
+    def _trim_text(text: str, *, response_style: str) -> str:
+        limit = _OPENAI_DETAILED_MAX_RESPONSE_CHARS if response_style == "detailed" else _OPENAI_MAX_RESPONSE_CHARS
+        normalized = "\n".join(
+            line
+            for line in (
+                " ".join(raw_line.split())
+                for raw_line in text.replace("\r", "\n").split("\n")
+            )
+            if line
+        )
         if len(normalized) <= limit:
             return normalized
         return f"{normalized[: limit - 3]}..."

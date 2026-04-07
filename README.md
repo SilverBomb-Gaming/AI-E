@@ -6,7 +6,7 @@ Controlled execution surface for supported projects. AI-E turns a bounded reques
 
 The current active operator-console surface in this repo is the Windows-first OpenClaw controller shell. The known-good checkpoint is:
 
-- Current baseline: `Windows OpenClaw Operator Console v1.2 - First Useful Commands Layer`
+- Current baseline: `Windows OpenClaw Operator Console v1.3 - Conversation Quality Layer`
 - Health: `Healthy`
 - Security: `Safe`
 - Readiness: `Ready`
@@ -18,34 +18,37 @@ What is now working:
 - offline/online mode selection with policy guardrails preserved
 - trusted health and security diagnostics, including ownership-aware port conflict checks and multi-signal runtime liveness
 - secure Telegram bot validation, connection testing, and polling-loop start/stop controls
-- duplicate-safe Telegram interaction loop with `/start`, `/help`, `/status`, `/mode`, `/models`, and `/ask <prompt>`
-- explicit provider-backed `/ask` flow with Offline-first behavior, no silent fallback, and concise guardrail-respecting replies
-- lightweight UI observability for the last Telegram command handled and the last provider-backed `/ask` result
+- duplicate-safe Telegram interaction loop with `/start`, `/help`, `/status`, `/mode`, `/models`, `/ask <prompt>`, and `/askd <prompt>`
+- cleaner Telegram reply formatting for mobile use, including concise headings, readable status and mode summaries, capped local-model output, and bounded provider-backed answers
+- explicit concise vs detailed ask styles with `/ask` and `/askd`, plus clearer blocked-action messages with one short next step
+- lightweight UI observability for the last Telegram command handled, the last provider-backed ask status, and recent inbound/outbound loop activity
 
 Milestone notes:
 
 - v1 baseline: `docs/OPENCLAW_BASELINE_V1.md`
 - v1.1: `docs/milestones/windows_openclaw_operator_console_v1_1_telegram_interaction_loop.md`
 - v1.2: `docs/milestones/windows_openclaw_operator_console_v1_2_first_useful_commands_layer.md`
+- v1.3: `docs/milestones/windows_openclaw_operator_console_v1_3_conversation_quality_layer.md`
 
 Important guardrails and usage notes:
 
 - Offline Mode remains first-class and no silent provider or mode fallback is allowed.
-- The controller stays local-first with loopback bind defaults and secret redaction in logs.
-- Generic plain text in Telegram is still limited; `/ask` is explicit and generic text is not auto-routed into provider queries.
-- If a provider cannot answer, the bot reports the blocking reason clearly instead of switching modes or providers.
+- `/ask` stays explicit; generic plain text is not auto-routed into provider-backed queries.
+- `/askd` allows more detail, but replies remain bounded and Telegram-friendly; no streaming or multi-message transcript flow has been added.
+- The controller stays local-first with loopback bind defaults and secret redaction in logs and Telegram activity summaries.
+- If a provider cannot answer, the bot reports the blocking reason and a short next step instead of switching modes or providers.
 
 Current next milestone:
 
-- `Windows OpenClaw Operator Console v1.3 - Command Polish and Explicit Online Approval UX`
-- goal: tighten reply formatting and online confirmation clarity without broadening into automation, scraping, RAG, repo mutation, or autonomous workflows
+- `Windows OpenClaw Operator Console v1.4 - Explicit Online Approval UX`
+- goal: make remote-use approval clearer from both the desktop app and Telegram without expanding into automation, scraping, RAG, repo mutation, or autonomous workflows
 
 Fast operator path:
 
 1. Launch the desktop shell with `python -m app.main`.
 2. Start the runtime and run Health/Security checks.
 3. Validate Telegram, start the Telegram loop, and message the configured bot.
-4. Use `/help`, `/status`, `/mode`, `/models`, and `/ask hello` from Telegram.
+4. Use `/help`, `/status`, `/mode`, `/models`, `/ask hello`, or `/askd hello` from Telegram.
 5. Run `python -m unittest discover -s tests -v` and `python diagnostics_smoke.py` for the current controller verification pass.
 
 ## AI-E v1 Product Surface Status
@@ -482,5 +485,6 @@ Use **Help > Demo Checklist...** inside the app to run the current quick walkthr
 6. **F.** Use `Modify and test again` or `Try a variation` to show the next quick iteration.
 
 The dialog resets each time you open it, so the same checklist can be reused before the next demo or local-user handoff.
+
 
 

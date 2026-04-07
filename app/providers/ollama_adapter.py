@@ -12,6 +12,7 @@ from .base import BaseProviderAdapter, ProviderReply, ProviderStatus
 
 _OLLAMA_TIMEOUT_SECONDS = 15.0
 _OLLAMA_MAX_RESPONSE_CHARS = 1200
+_OLLAMA_DETAILED_MAX_RESPONSE_CHARS = 2200
 
 
 class OllamaProviderAdapter(BaseProviderAdapter):
@@ -137,6 +138,7 @@ class OllamaProviderAdapter(BaseProviderAdapter):
         base_url = str(kwargs.get("base_url") or "http://127.0.0.1:11434").rstrip("/")
         preferred_model = str(kwargs.get("preferred_model") or "").strip()
         prompt = str(kwargs.get("prompt") or "").strip()
+        response_style = str(kwargs.get("response_style") or "concise").strip().lower()
         if not prompt:
             return ProviderReply(
                 provider="ollama",
@@ -163,7 +165,7 @@ class OllamaProviderAdapter(BaseProviderAdapter):
         model = validation.model or preferred_model
         payload = {
             "model": model,
-            "prompt": self._build_prompt(prompt),
+            "prompt": self._build_prompt(prompt, response_style=response_style),
             "stream": False,
         }
         try:
@@ -190,23 +192,42 @@ class OllamaProviderAdapter(BaseProviderAdapter):
         return ProviderReply(
             provider="ollama",
             ok=True,
-            text=self._trim_text(text),
+            text=self._trim_text(text, response_style=response_style),
             message=f"Ollama replied with model '{model}'.",
             model=model,
         )
 
     @staticmethod
-    def _build_prompt(prompt: str) -> str:
+    def _build_prompt(prompt: str, *, response_style: str) -> str:
+        if response_style == "detailed":
+            style = (
+                "Reply in plain text with a clear, mobile-friendly answer. "
+                "Use at most 3 short paragraphs or 8 short bullet points. "
+                "Be informative but still bounded, and do not mention hidden reasoning."
+            )
+        else:
+            style = (
+                "Reply in plain text with a concise, mobile-friendly answer. "
+                "Use at most 5 short sentences, keep whitespace tidy, "
+                "and do not mention hidden reasoning."
+            )
         return (
-            "You are Windows OpenClaw Operator Console v1.2. "
-            "Reply concisely in plain text, keep the answer under 6 short sentences, "
-            "and do not mention hidden reasoning.\n\n"
+            "You are Windows OpenClaw Operator Console v1.3. "
+            f"{style}\n\n"
             f"User request: {prompt}"
         )
 
     @staticmethod
-    def _trim_text(text: str, *, limit: int = _OLLAMA_MAX_RESPONSE_CHARS) -> str:
-        normalized = " ".join(text.split())
+    def _trim_text(text: str, *, response_style: str) -> str:
+        limit = _OLLAMA_DETAILED_MAX_RESPONSE_CHARS if response_style == "detailed" else _OLLAMA_MAX_RESPONSE_CHARS
+        normalized = "\n".join(
+            line
+            for line in (
+                " ".join(raw_line.split())
+                for raw_line in text.replace("\r", "\n").split("\n")
+            )
+            if line
+        )
         if len(normalized) <= limit:
             return normalized
         return f"{normalized[: limit - 3]}..."
