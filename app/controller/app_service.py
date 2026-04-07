@@ -6,6 +6,9 @@ from datetime import datetime
 import threading
 import time
 
+from .capability_evaluator import CapabilityEvaluator
+from .capability_models import CapabilityContext, CapabilityEvaluation
+from .capability_registry import COMMAND_CAPABILITY_MAP
 from .channel_models import TelegramChannelStatus, TelegramLoopStatus
 from .diagnostic_models import DiagnosticReport
 from .diagnostics import ControllerDiagnosticsService
@@ -18,7 +21,7 @@ from ..runtime.manager import OpenClawRuntimeManager
 from ..runtime.log_sanitizer import sanitize_log_text
 
 
-_OPERATOR_CONSOLE_LABEL = "Windows OpenClaw Operator Console v1.4"
+_OPERATOR_CONSOLE_LABEL = "Windows OpenClaw Operator Console v1.5"
 _ASK_CONCISE_LIMIT = 700
 _ASK_DETAILED_LIMIT = 1500
 _PROVIDER_ASK_COMMANDS = frozenset({"/ask", "/askd"})
@@ -89,6 +92,8 @@ class ControllerService:
             config_store=self._config_store,
             secret_store=self._secret_store,
         )
+        self._capability_evaluator = CapabilityEvaluator()
+        self._last_capability_evaluation: CapabilityEvaluation | None = None
         self._latest_health_report: DiagnosticReport | None = None
         self._latest_security_report: DiagnosticReport | None = None
         self._last_message = "Controller ready."
@@ -260,6 +265,9 @@ class ControllerService:
             telegram_last_ask_status=telegram_loop_status.last_ask_status,
             telegram_last_inbound_summary=telegram_loop_status.last_inbound_summary,
             telegram_last_outbound_summary=telegram_loop_status.last_outbound_summary,
+            last_capability_id=self._last_capability_evaluation.capability_id if self._last_capability_evaluation else "-",
+            last_capability_state=self._last_capability_evaluation.current_availability_state if self._last_capability_evaluation else "unknown",
+            last_capability_message=self._last_capability_evaluation.message if self._last_capability_evaluation else "No capability evaluated yet.",
             readiness_state=readiness_state,
             readiness_message=readiness_message,
             health_status=self._latest_health_report.overall_status if self._latest_health_report else "unknown",
@@ -782,13 +790,20 @@ class ControllerService:
                 command_label="/start",
             )
         if command == "/status":
+            self._evaluate_command_capability(command, snapshot)
             return self._build_status_reply(snapshot)
         if command == "/mode":
+            self._evaluate_command_capability(command, snapshot)
             return self._build_mode_reply(snapshot)
         if command == "/help":
+            self._evaluate_command_capability(command, snapshot)
             return self._build_help_reply()
         if command == "/models":
-            return self._build_models_reply()
+            capability, context = self._evaluate_command_capability(command, snapshot)
+            return self._build_models_reply(capability, context)
+        if command == "/capabilities":
+            self._evaluate_command_capability(command, snapshot)
+            return self._build_capabilities_reply(snapshot)
         if command == "/ask":
             return self._build_ask_reply(
                 parsed.argument,
@@ -829,6 +844,7 @@ class ControllerService:
             command_label="plain_text",
         )
 
+
     def _build_help_reply(self) -> _TelegramResponsePlan:
         return _TelegramResponsePlan(
             reply=chr(10).join(
@@ -838,6 +854,7 @@ class ControllerService:
                     "/status - runtime, health, safety, readiness",
                     "/mode - mode, policy, and remote-use gate",
                     "/models - local Ollama models",
+                    "/capabilities - current capability gate summary",
                     "/ask <prompt> - concise provider reply",
                     "/askd <prompt> - more detailed provider reply",
                     "Plain text is not auto-routed to /ask.",
@@ -845,6 +862,7 @@ class ControllerService:
             ),
             command_label="/help",
         )
+
 
     def _build_status_reply(self, snapshot: ControllerSnapshot) -> _TelegramResponsePlan:
         active_status = self._provider_status_for_mode(self._config.current_mode)
@@ -885,8 +903,33 @@ class ControllerService:
             command_label="/mode",
         )
 
-    def _build_models_reply(self) -> _TelegramResponsePlan:
-        ollama_status = self._provider_status_for_mode("offline")
+    def _build_models_reply(
+        self,
+        capability: CapabilityEvaluation | None,
+        context: CapabilityContext | None,
+    ) -> _TelegramResponsePlan:
+        ollama_status = context.offline_provider_status if context is not None else self._provider_status_for_mode("offline")
+        if capability is not None and capability.reason_code == "ollama_unavailable":
+            return _TelegramResponsePlan(
+                reply=chr(10).join(
+                    (
+                        "Local models",
+                        "Unavailable right now.",
+                        f"Reason: {capability.blocking_reason}",
+                    )
+                ),
+                command_label="/models",
+            )
+        if capability is not None and capability.reason_code == "no_local_models":
+            return _TelegramResponsePlan(
+                reply=chr(10).join(
+                    (
+                        "Local models",
+                        "No local Ollama models are available yet.",
+                    )
+                ),
+                command_label="/models",
+            )
         if not ollama_status.available:
             return _TelegramResponsePlan(
                 reply=chr(10).join(
@@ -921,8 +964,8 @@ class ControllerService:
             command_label="/models",
         )
 
-    def _build_ask_reply(
 
+    def _build_ask_reply(
         self,
         prompt: str,
         snapshot: ControllerSnapshot,
@@ -959,31 +1002,20 @@ class ControllerService:
                 activity_state="processing_command",
             )
 
-        if snapshot.runtime_state != "running":
+        capability, context = self._evaluate_command_capability(command_label, snapshot)
+        if capability is None or context is None:
             return self._blocked_ask_reply(
                 command_label=command_label,
-                reason="Runtime is not running.",
-                next_step="Start the runtime in the desktop app and try again.",
+                reason="Capability evaluation is unavailable.",
+                next_step="Run /status from Telegram or the desktop app, then try again.",
                 activity_state="processing_command",
             )
+        if capability.current_availability_state != "allowed":
+            return self._blocked_ask_reply_from_capability(command_label=command_label, capability=capability)
 
         current_mode = self._config.current_mode
         if current_mode == "offline":
-            provider_status = self._provider_status_for_mode("offline")
-            if not provider_status.ready:
-                return self._blocked_ask_reply(
-                    command_label=command_label,
-                    reason=provider_status.message,
-                    next_step="Validate Ollama in the desktop app before asking again.",
-                    activity_state="provider_failed",
-                )
-            if snapshot.readiness_state == "not_ready":
-                return self._blocked_ask_reply(
-                    command_label=command_label,
-                    reason="Readiness is not ready.",
-                    next_step="Resolve the blocking health or security issue in the desktop app.",
-                    activity_state="processing_command",
-                )
+            provider_status = context.offline_provider_status
             self._update_telegram_loop_status(
                 state="running",
                 activity_state="waiting_on_provider",
@@ -1035,33 +1067,7 @@ class ControllerService:
                 response_style=response_style,
             )
 
-        online_state, online_message = self._online_use_state()
-        if online_state != "allowed":
-            next_step = "Switch to Offline Mode or activate Online Mode explicitly in the desktop app."
-            if self._config.current_mode == "online" and self._config.policy != "always_offline":
-                next_step = "Save or validate the OpenAI configuration in the desktop app."
-            return self._blocked_ask_reply(
-                command_label=command_label,
-                reason=online_message,
-                next_step=next_step,
-                activity_state="processing_command",
-            )
-
-        provider_status = self._provider_status_for_mode("online")
-        if not provider_status.ready:
-            return self._blocked_ask_reply(
-                command_label=command_label,
-                reason=provider_status.message,
-                next_step="Save or validate the OpenAI configuration in the desktop app.",
-                activity_state="provider_failed",
-            )
-        if snapshot.readiness_state == "not_ready":
-            return self._blocked_ask_reply(
-                command_label=command_label,
-                reason="Readiness is not ready.",
-                next_step="Resolve the blocking health or security issue in the desktop app.",
-                activity_state="processing_command",
-            )
+        provider_status = context.online_provider_status
         self._update_telegram_loop_status(
             state="running",
             activity_state="waiting_on_provider",
@@ -1099,7 +1105,7 @@ class ControllerService:
                 next_step="Check the online provider configuration and try again.",
                 activity_state="provider_failed",
             )
-        model = reply.model or "OpenAI"
+        model = reply.model or provider_status.model or "OpenAI"
         return _TelegramResponsePlan(
             reply=self._format_ask_success(
                 reply.text,
@@ -1266,7 +1272,7 @@ class ControllerService:
         argument = parts[1].strip() if len(parts) > 1 else ""
         command = command_token.split("@", 1)[0].lower()
         normalized_text = " ".join(text.split())
-        if command in {"/start", "/help", "/status", "/mode", "/models", "/ask", "/askd"}:
+        if command in {"/start", "/help", "/status", "/mode", "/models", "/capabilities", "/ask", "/askd"}:
             return _ParsedTelegramCommand(command_label=command, argument=argument, normalized_text=normalized_text)
         if command.startswith("/ask"):
             return _ParsedTelegramCommand(
@@ -1348,6 +1354,96 @@ class ControllerService:
             return True, round(remaining, 1)
         return False, 0.0
 
+    def _evaluate_command_capability(
+        self,
+        command_label: str,
+        snapshot: ControllerSnapshot,
+        *,
+        remember: bool = True,
+    ) -> tuple[CapabilityEvaluation | None, CapabilityContext | None]:
+        capability_id = COMMAND_CAPABILITY_MAP.get(command_label)
+        if capability_id is None:
+            return None, None
+        return self._evaluate_capability_id(capability_id, snapshot, remember=remember)
+
+    def _evaluate_capability_id(
+        self,
+        capability_id: str,
+        snapshot: ControllerSnapshot,
+        *,
+        remember: bool = True,
+    ) -> tuple[CapabilityEvaluation, CapabilityContext]:
+        context = self._build_capability_context(snapshot, capability_id=capability_id)
+        evaluation = self._capability_evaluator.evaluate(capability_id, context)
+        if remember:
+            self._last_capability_evaluation = evaluation
+        return evaluation, context
+
+    def _build_capability_context(self, snapshot: ControllerSnapshot, *, capability_id: str) -> CapabilityContext:
+        need_offline = capability_id in {"models.read", "ask.provider_query", "capabilities.read"} or snapshot.mode == "offline"
+        need_online = capability_id in {"ask.provider_query", "capabilities.read"} or snapshot.mode == "online" or self._config.selected_mode == "online"
+        offline_status = self._provider_status_for_mode("offline") if need_offline else self._provider_status_cache.get("ollama") or self._default_provider_status("ollama")
+        online_status = self._provider_status_for_mode("online") if need_online else self._provider_status_cache.get("openai") or self._default_provider_status("openai")
+        return CapabilityContext(
+            runtime_state=snapshot.runtime_state,
+            readiness_state=snapshot.readiness_state,
+            mode=snapshot.mode,
+            selected_mode=snapshot.selected_mode,
+            policy=snapshot.policy,
+            active_provider=snapshot.active_provider,
+            selected_provider=snapshot.selected_provider,
+            health_status=snapshot.health_status,
+            safety_status=snapshot.safety_status,
+            offline_provider_status=offline_status,
+            online_provider_status=online_status,
+        )
+
+    def _build_capabilities_reply(self, snapshot: ControllerSnapshot) -> _TelegramResponsePlan:
+        lines = ["Capabilities"]
+        for capability_id in ("help.read", "status.read", "mode.read", "models.read", "ask.provider_query"):
+            evaluation, _ = self._evaluate_capability_id(capability_id, snapshot, remember=False)
+            lines.append(self._format_capability_summary_line(evaluation))
+        return _TelegramResponsePlan(
+            reply=chr(10).join(lines),
+            command_label="/capabilities",
+        )
+
+    def _format_capability_summary_line(self, evaluation: CapabilityEvaluation) -> str:
+        state_label = self._capability_state_label(evaluation.current_availability_state)
+        detail = evaluation.blocking_reason or evaluation.message
+        if evaluation.current_availability_state == "allowed":
+            if evaluation.capability_id == "ask.provider_query":
+                detail = "Offline via Ollama" if self._config.current_mode == "offline" else "Online via OpenAI"
+            elif evaluation.capability_id == "models.read":
+                detail = "Ollama local model discovery available"
+            else:
+                detail = evaluation.message
+            return f"- {evaluation.capability_id}: {state_label} ({self._summarize_text(detail, limit=70)})"
+        return f"- {evaluation.capability_id}: {state_label} ({self._summarize_text(detail, limit=70)})"
+
+    def _blocked_ask_reply_from_capability(
+        self,
+        *,
+        command_label: str,
+        capability: CapabilityEvaluation,
+    ) -> _TelegramResponsePlan:
+        reason = capability.blocking_reason or capability.message
+        next_step_map = {
+            "runtime_not_running": "Start the runtime in the desktop app and try again.",
+            "readiness_not_ready": "Resolve the blocking health or security issue in the desktop app.",
+            "offline_provider_unavailable": "Validate Ollama in the desktop app before asking again.",
+            "online_provider_unavailable": "Save or validate the OpenAI configuration in the desktop app.",
+            "policy_always_offline": "Switch to Offline Mode or activate Online Mode explicitly in the desktop app.",
+            "online_confirmation_required": "Confirm Online Mode in the desktop app before sending a remote ask.",
+        }
+        next_step = next_step_map.get(capability.reason_code, "Check the desktop app configuration and try again.")
+        activity_state = "provider_failed" if capability.current_availability_state in {"unavailable", "degraded"} else "processing_command"
+        return self._blocked_ask_reply(
+            command_label=command_label,
+            reason=reason,
+            next_step=next_step,
+            activity_state=activity_state,
+        )
 
 
     @staticmethod
@@ -1458,6 +1554,17 @@ class ControllerService:
             "timed_out": "Timed Out",
             "provider_failed": "Provider Failed",
             "sent_reply": "Sent Reply",
+        }.get(state, state)
+
+    @staticmethod
+    def _capability_state_label(state: str) -> str:
+        return {
+            "allowed": "Allowed",
+            "blocked": "Blocked",
+            "degraded": "Degraded",
+            "confirmation_required": "Confirmation Required",
+            "unavailable": "Unavailable",
+            "unknown": "Unknown",
         }.get(state, state)
 
     def _compute_readiness(

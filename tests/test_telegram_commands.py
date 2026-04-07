@@ -311,10 +311,11 @@ class TelegramCommandTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             telegram_service = _FakeTelegramService(update_batches=[(update,)])
             service, _, _, _, _, _ = self._make_service(tmp_dir=tmp, telegram_service=telegram_service)
-            _, reply = self._run_single_update(service, telegram_service)
+            snapshot, reply = self._run_single_update(service, telegram_service)
             lines = reply.splitlines()
-            self.assertLessEqual(len(reply), 400)
+            self.assertLessEqual(len(reply), 500)
             self.assertEqual(lines[0], "Operator commands")
+            self.assertIn("/capabilities - current capability gate summary", lines)
             self.assertIn("/ask <prompt> - concise provider reply", lines)
             self.assertIn("/askd <prompt> - more detailed provider reply", lines)
             self.assertEqual(lines[-1], "Plain text is not auto-routed to /ask.")
@@ -324,7 +325,7 @@ class TelegramCommandTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             telegram_service = _FakeTelegramService(update_batches=[(update,)])
             service, _, _, _, _, _ = self._make_service(tmp_dir=tmp, telegram_service=telegram_service)
-            _, reply = self._run_single_update(service, telegram_service)
+            snapshot, reply = self._run_single_update(service, telegram_service)
             lines = reply.splitlines()
             self.assertEqual(lines[0], "Status")
             self.assertIn("Runtime: running", lines)
@@ -337,6 +338,8 @@ class TelegramCommandTests(unittest.TestCase):
             self.assertIn("Telegram loop: Running", lines)
             self.assertTrue(any(line.startswith("Loop activity:") for line in lines))
             self.assertLessEqual(len(lines), 11)
+            self.assertEqual(snapshot.last_capability_id, "status.read")
+            self.assertEqual(snapshot.last_capability_state, "allowed")
 
     def test_mode_command_reports_confirmation_gated_remote_use(self) -> None:
         update = TelegramInboundMessage(update_id=3, chat_id="chat-1", text="/mode", sender_label="@tester")
@@ -354,6 +357,21 @@ class TelegramCommandTests(unittest.TestCase):
             lines = reply.splitlines()
             self.assertIn("Remote use: Confirmation-gated", lines)
             self.assertIn("Reason: Online Mode is selected but not activated yet. Confirm it in the desktop app.", lines)
+
+    def test_capabilities_command_returns_compact_summary(self) -> None:
+        update = TelegramInboundMessage(update_id=4, chat_id="chat-1", text="/capabilities", sender_label="@tester")
+        with tempfile.TemporaryDirectory() as tmp:
+            telegram_service = _FakeTelegramService(update_batches=[(update,)])
+            service, _, _, _, _, _ = self._make_service(tmp_dir=tmp, telegram_service=telegram_service)
+            snapshot, reply = self._run_single_update(service, telegram_service)
+            lines = reply.splitlines()
+            self.assertEqual(lines[0], "Capabilities")
+            self.assertIn("- status.read: Allowed", reply)
+            self.assertIn("- mode.read: Allowed", reply)
+            self.assertIn("- models.read: Allowed", reply)
+            self.assertIn("- ask.provider_query: Allowed", reply)
+            self.assertEqual(snapshot.last_capability_id, "capabilities.read")
+            self.assertEqual(snapshot.last_capability_state, "allowed")
 
     def test_models_command_caps_long_model_lists(self) -> None:
         update = TelegramInboundMessage(update_id=4, chat_id="chat-1", text="/models", sender_label="@tester")
@@ -375,11 +393,12 @@ class TelegramCommandTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             telegram_service = _FakeTelegramService(update_batches=[(update,)])
             service, _, _, _, _, _ = self._make_service(tmp_dir=tmp, telegram_service=telegram_service, ollama_adapter=ollama)
-            _, reply = self._run_single_update(service, telegram_service)
+            snapshot, reply = self._run_single_update(service, telegram_service)
             self.assertIn("- model-1", reply)
             self.assertIn("- model-5", reply)
             self.assertNotIn("- model-6", reply)
             self.assertIn("... and 2 more", reply)
+            self.assertEqual(snapshot.last_capability_id, "models.read")
 
     def test_ask_parsing_handles_extra_whitespace_and_casing(self) -> None:
         update = TelegramInboundMessage(update_id=5, chat_id="chat-1", text="  /ASK   hello there  ", sender_label="@tester")
@@ -492,9 +511,12 @@ class TelegramCommandTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             telegram_service = _FakeTelegramService(update_batches=[(update,)])
             service, _, _, _, _, openai = self._make_service(tmp_dir=tmp, telegram_service=telegram_service, ollama_adapter=ollama)
-            _, reply = self._run_single_update(service, telegram_service)
+            snapshot, reply = self._run_single_update(service, telegram_service)
             self.assertEqual(openai.ask_calls, 0)
             self.assertEqual(reply, "Can't run /ask right now.\nReason: Ollama service is unavailable.\nNext: Validate Ollama in the desktop app before asking again.")
+            self.assertEqual(snapshot.last_capability_id, "ask.provider_query")
+            self.assertEqual(snapshot.last_capability_state, "unavailable")
+
 
     def test_policy_block_remains_clear(self) -> None:
         update = TelegramInboundMessage(update_id=15, chat_id="chat-1", text="/ask hello", sender_label="@tester")
@@ -508,10 +530,13 @@ class TelegramCommandTests(unittest.TestCase):
             config.policy = "always_offline"
             config_store.save(config)
             service._config = config_store.load()
-            _, reply = self._run_single_update(service, telegram_service)
+            snapshot, reply = self._run_single_update(service, telegram_service)
             self.assertEqual(ollama.ask_calls, 0)
             self.assertEqual(openai.ask_calls, 0)
             self.assertEqual(reply, "Can't run /ask right now.\nReason: Always Offline policy is active.\nNext: Switch to Offline Mode or activate Online Mode explicitly in the desktop app.")
+            self.assertEqual(snapshot.last_capability_id, "ask.provider_query")
+            self.assertEqual(snapshot.last_capability_state, "blocked")
+
 
     def test_no_silent_provider_fallback_occurs(self) -> None:
         update = TelegramInboundMessage(update_id=16, chat_id="chat-1", text="/ask hello", sender_label="@tester")

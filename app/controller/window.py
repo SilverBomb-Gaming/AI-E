@@ -294,6 +294,9 @@ class FoundationWindow(QtWidgets.QMainWindow):
         self.provider_status_message_value = self._create_value_label("Provider has not been validated yet.")
         self.telegram_status_summary_value = self._create_value_label("unknown")
         self.telegram_loop_activity_summary_value = self._create_value_label("Idle")
+        self.last_capability_id_value = self._create_value_label("-")
+        self.last_capability_state_value = self._create_value_label("Unknown")
+        self.last_capability_message_value = self._create_value_label("No capability evaluated yet.")
         self.telegram_status_message_value = self._create_value_label("Telegram has not been configured yet.")
         self.telegram_bot_value = self._create_value_label("-")
         self.telegram_test_value = self._create_value_label("Not Run")
@@ -312,6 +315,9 @@ class FoundationWindow(QtWidgets.QMainWindow):
         layout.addRow("Provider Message", self.provider_status_message_value)
         layout.addRow("Telegram Status", self.telegram_status_summary_value)
         layout.addRow("Loop Activity", self.telegram_loop_activity_summary_value)
+        layout.addRow("Last Capability", self.last_capability_id_value)
+        layout.addRow("Capability State", self.last_capability_state_value)
+        layout.addRow("Capability Note", self.last_capability_message_value)
         layout.addRow("Telegram Message", self.telegram_status_message_value)
         layout.addRow("Telegram Bot", self.telegram_bot_value)
         layout.addRow("Telegram Test", self.telegram_test_value)
@@ -618,6 +624,17 @@ class FoundationWindow(QtWidgets.QMainWindow):
             "timed_out": "Timed Out",
             "provider_failed": "Provider Failed",
             "sent_reply": "Sent Reply",
+        }.get(state, state)
+
+    @staticmethod
+    def _capability_state_label(state: str) -> str:
+        return {
+            "allowed": "Allowed",
+            "blocked": "Blocked",
+            "degraded": "Degraded",
+            "confirmation_required": "Confirmation Required",
+            "unavailable": "Unavailable",
+            "unknown": "Unknown",
         }.get(state, state)
 
     @classmethod

@@ -23,6 +23,14 @@ TelegramLoopActivityState = Literal[
     "provider_failed",
     "sent_reply",
 ]
+CapabilityAvailabilityState = Literal[
+    "unknown",
+    "allowed",
+    "blocked",
+    "degraded",
+    "confirmation_required",
+    "unavailable",
+]
 
 
 @dataclass(frozen=True)
@@ -56,6 +64,9 @@ class ControllerSnapshot:
     telegram_last_ask_status: str
     telegram_last_inbound_summary: str
     telegram_last_outbound_summary: str
+    last_capability_id: str
+    last_capability_state: CapabilityAvailabilityState
+    last_capability_message: str
     readiness_state: ReadinessState
     readiness_message: str
     health_status: OverallStatus
