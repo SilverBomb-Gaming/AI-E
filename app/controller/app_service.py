@@ -8,8 +8,8 @@ import time
 
 from .capability_evaluator import CapabilityEvaluator
 from .capability_executor import CapabilityExecutor
-from .capability_models import CapabilityContext, CapabilityEvaluation
-from .capability_registry import COMMAND_CAPABILITY_MAP
+from .capability_models import CapabilityContext, CapabilityEvaluation, CapabilityManifest
+from .capability_registry import COMMAND_CAPABILITY_MAP, get_capability_manifest, list_summary_capabilities
 from .confirmation_models import ConfirmationContextSnapshot, PendingConfirmation
 from .confirmation_store import ConfirmationStore
 from .channel_models import TelegramChannelStatus, TelegramLoopStatus
@@ -25,7 +25,7 @@ from ..runtime.manager import OpenClawRuntimeManager
 from ..runtime.log_sanitizer import sanitize_log_text
 
 
-_OPERATOR_CONSOLE_LABEL = "Windows OpenClaw Operator Console v1.7"
+_OPERATOR_CONSOLE_LABEL = "Windows OpenClaw Operator Console v1.8"
 _ASK_CONCISE_LIMIT = 700
 _ASK_DETAILED_LIMIT = 1500
 _PROVIDER_ASK_COMMANDS = frozenset({"/ask", "/askd"})
@@ -279,9 +279,11 @@ class ControllerService:
             last_capability_id=self._last_capability_evaluation.capability_id if self._last_capability_evaluation else "-",
             last_capability_state=self._last_capability_evaluation.current_availability_state if self._last_capability_evaluation else "unknown",
             last_capability_message=self._last_capability_evaluation.message if self._last_capability_evaluation else "No capability evaluated yet.",
+            last_capability_trust_summary=self._format_evaluation_trust_summary(self._last_capability_evaluation) if self._last_capability_evaluation else "No capability trust summary yet.",
             last_execution_outcome=self._last_execution_result.outcome if self._last_execution_result else "unknown",
             last_execution_reason_code=self._last_execution_result.outcome_reason_code if self._last_execution_result else "no_execution_yet",
             last_execution_summary=self._last_execution_result.internal_summary if self._last_execution_result else "No execution result yet.",
+            last_execution_trust_summary=self._last_execution_result.trust_summary if self._last_execution_result else "No execution trust summary yet.",
             last_execution_duration_ms=self._last_execution_result.duration_ms if self._last_execution_result else 0,
             last_execution_finished_at=self._last_execution_result.finished_at if self._last_execution_result else "-",
             pending_confirmation_count=self._confirmation_store.pending_count(),
@@ -1351,6 +1353,7 @@ class ControllerService:
         *,
         remember: bool = True,
         confirmation_granted: bool = False,
+        source: str = "telegram",
     ) -> tuple[CapabilityEvaluation | None, CapabilityContext | None]:
         capability_id = COMMAND_CAPABILITY_MAP.get(command_label)
         if capability_id is None:
@@ -1360,6 +1363,7 @@ class ControllerService:
             snapshot,
             remember=remember,
             confirmation_granted=confirmation_granted,
+            source=source,
         )
 
     def _evaluate_capability_id(
@@ -1369,11 +1373,13 @@ class ControllerService:
         *,
         remember: bool = True,
         confirmation_granted: bool = False,
+        source: str = "telegram",
     ) -> tuple[CapabilityEvaluation, CapabilityContext]:
         context = self._build_capability_context(snapshot, capability_id=capability_id)
         evaluation = self._capability_evaluator.evaluate(
             capability_id,
             context,
+            source=source,  # type: ignore[arg-type]
             confirmation_granted=confirmation_granted,
         )
         if remember:
@@ -1381,8 +1387,15 @@ class ControllerService:
         return evaluation, context
 
     def _build_capability_context(self, snapshot: ControllerSnapshot, *, capability_id: str) -> CapabilityContext:
-        need_offline = capability_id in {"models.read", "ask.provider_query", "capabilities.read"} or snapshot.mode == "offline"
-        need_online = capability_id in {"ask.provider_query", "capabilities.read"} or snapshot.mode == "online" or self._config.selected_mode == "online"
+        manifest = self._capability_manifest(capability_id)
+        need_offline = manifest.provider_dependency in {"ollama", "active_provider"} and (
+            manifest.offline_safety != "requires_online" or snapshot.mode == "offline" or self._config.selected_mode == "offline"
+        )
+        need_online = manifest.provider_dependency in {"openai", "active_provider"} and (
+            manifest.offline_safety != "safe_offline" or snapshot.mode == "online" or self._config.selected_mode == "online"
+        )
+        need_offline = need_offline or snapshot.mode == "offline"
+        need_online = need_online or snapshot.mode == "online" or self._config.selected_mode == "online"
         offline_status = self._provider_status_for_mode("offline") if need_offline else self._provider_status_cache.get("ollama") or self._default_provider_status("ollama")
         online_status = self._provider_status_for_mode("online") if need_online else self._provider_status_cache.get("openai") or self._default_provider_status("openai")
         return CapabilityContext(
@@ -1401,8 +1414,13 @@ class ControllerService:
 
     def _build_capabilities_reply(self, snapshot: ControllerSnapshot) -> _TelegramResponsePlan:
         lines = ["Capabilities"]
-        for capability_id in ("help.read", "status.read", "mode.read", "models.read", "ask.provider_query"):
-            evaluation, _ = self._evaluate_capability_id(capability_id, snapshot, remember=False)
+        for manifest in list_summary_capabilities():
+            evaluation, _ = self._evaluate_capability_id(
+                manifest.capability_id,
+                snapshot,
+                remember=False,
+                source="telegram",
+            )
             lines.append(self._format_capability_summary_line(evaluation))
         return _TelegramResponsePlan(
             reply=chr(10).join(lines),
@@ -1411,16 +1429,19 @@ class ControllerService:
 
     def _format_capability_summary_line(self, evaluation: CapabilityEvaluation) -> str:
         state_label = self._capability_state_label(evaluation.current_availability_state)
+        parts = [
+            state_label,
+            self._access_kind_label(evaluation.access_kind),
+            self._locality_label(evaluation.locality),
+            self._offline_safety_label(evaluation.offline_safety),
+        ]
+        if evaluation.current_availability_state == "confirmation_required":
+            parts.append("confirmation-gated")
         detail = evaluation.blocking_reason or evaluation.message
-        if evaluation.current_availability_state == "allowed":
-            if evaluation.capability_id == "ask.provider_query":
-                detail = "Offline via Ollama" if self._config.current_mode == "offline" else "Online via OpenAI"
-            elif evaluation.capability_id == "models.read":
-                detail = "Ollama local model discovery available"
-            else:
-                detail = evaluation.message
-            return f"- {evaluation.capability_id}: {state_label} ({self._summarize_text(detail, limit=70)})"
-        return f"- {evaluation.capability_id}: {state_label} ({self._summarize_text(detail, limit=70)})"
+        line = f"- {evaluation.capability_id}: {' | '.join(parts)}"
+        if evaluation.current_availability_state != "allowed":
+            line = f"{line} ({self._summarize_text(detail, limit=60)})"
+        return line
 
     def _blocked_ask_reply_from_capability(
         self,
@@ -1973,6 +1994,53 @@ class ControllerService:
             "unavailable": "Unavailable",
             "unknown": "Unknown",
         }.get(state, state)
+
+    @staticmethod
+    def _access_kind_label(access_kind: str) -> str:
+        return {
+            "read_only": "read-only",
+            "mutating": "mutating",
+            "external_side_effect": "external-side-effect",
+        }.get(access_kind, access_kind)
+
+    @staticmethod
+    def _locality_label(locality: str) -> str:
+        return {
+            "local_only": "local",
+            "networked": "networked",
+            "hybrid": "hybrid",
+        }.get(locality, locality)
+
+    @staticmethod
+    def _offline_safety_label(offline_safety: str) -> str:
+        return {
+            "safe_offline": "offline-safe",
+            "requires_online": "online-required",
+            "optional_online": "online-sensitive",
+        }.get(offline_safety, offline_safety)
+
+    def _capability_manifest(self, capability_id: str) -> CapabilityManifest:
+        return get_capability_manifest(capability_id)
+
+    def _format_manifest_trust_summary(self, manifest: CapabilityManifest) -> str:
+        parts = [
+            self._access_kind_label(manifest.access_kind),
+            self._locality_label(manifest.locality),
+            self._offline_safety_label(manifest.offline_safety),
+        ]
+        if manifest.confirmation_sensitivity == "always":
+            parts.append("always-confirm")
+        elif manifest.confirmation_sensitivity == "policy_based":
+            parts.append("policy-confirm")
+        if manifest.telegram_exposure != "allowed":
+            parts.append(f"telegram-{manifest.telegram_exposure}")
+        return " | ".join(parts)
+
+    def _format_evaluation_trust_summary(self, evaluation: CapabilityEvaluation) -> str:
+        return self._summarize_text(
+            self._format_manifest_trust_summary(self._capability_manifest(evaluation.capability_id)),
+            limit=120,
+        )
 
     def _compute_readiness(
 

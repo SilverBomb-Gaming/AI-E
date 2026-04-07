@@ -4,6 +4,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
+from .capability_models import (
+    CapabilityAccessKind,
+    CapabilityConfirmationSensitivity,
+    CapabilityLocality,
+    CapabilityOfflineSafety,
+    CapabilityTelegramExposure,
+)
 from .confirmation_models import ConfirmationContextSnapshot
 from .models import Mode, Policy, ProviderType, ReadinessState
 
@@ -74,6 +81,12 @@ class CapabilityExecutionResult:
     mode_used: str
     degraded: bool
     retryable: bool
+    access_kind: CapabilityAccessKind
+    locality: CapabilityLocality
+    offline_safety: CapabilityOfflineSafety
+    confirmation_sensitivity: CapabilityConfirmationSensitivity
+    telegram_exposure: CapabilityTelegramExposure
+    trust_summary: str
     command_label: str
     activity_state: str
     ask_status: str = ""

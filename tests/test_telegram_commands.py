@@ -360,6 +360,7 @@ class TelegramCommandTests(unittest.TestCase):
             self.assertLessEqual(len(lines), 11)
             self.assertEqual(snapshot.last_capability_id, "status.read")
             self.assertEqual(snapshot.last_capability_state, "allowed")
+            self.assertIn("read-only | local | offline-safe", snapshot.last_capability_trust_summary)
 
     def test_mode_command_reports_confirmation_gated_remote_use(self) -> None:
         update = TelegramInboundMessage(update_id=3, chat_id="chat-1", text="/mode", sender_label="@tester")
@@ -378,7 +379,7 @@ class TelegramCommandTests(unittest.TestCase):
             self.assertIn("Remote use: Confirmation-gated", lines)
             self.assertIn("Reason: Online Mode is selected, but each remote ask still needs one-shot approval with /confirm <id>.", lines)
 
-    def test_capabilities_command_returns_compact_summary(self) -> None:
+    def test_capabilities_command_returns_compact_trust_aware_summary(self) -> None:
         update = TelegramInboundMessage(update_id=4, chat_id="chat-1", text="/capabilities", sender_label="@tester")
         with tempfile.TemporaryDirectory() as tmp:
             telegram_service = _FakeTelegramService(update_batches=[(update,)])
@@ -386,12 +387,15 @@ class TelegramCommandTests(unittest.TestCase):
             snapshot, reply = self._run_single_update(service, telegram_service)
             lines = reply.splitlines()
             self.assertEqual(lines[0], "Capabilities")
-            self.assertIn("- status.read: Allowed", reply)
-            self.assertIn("- mode.read: Allowed", reply)
-            self.assertIn("- models.read: Allowed", reply)
-            self.assertIn("- ask.provider_query: Allowed", reply)
+            self.assertIn("- help.read: Allowed | read-only | local | offline-safe", reply)
+            self.assertIn("- status.read: Allowed | read-only | local | offline-safe", reply)
+            self.assertIn("- mode.read: Allowed | read-only | local | offline-safe", reply)
+            self.assertIn("- models.read: Allowed | read-only | local | offline-safe", reply)
+            self.assertIn("- ask.provider_query: Allowed | external-side-effect | hybrid | online-sensitive", reply)
+            self.assertNotIn("telegram.parse_failure", reply)
             self.assertEqual(snapshot.last_capability_id, "capabilities.read")
             self.assertEqual(snapshot.last_capability_state, "allowed")
+            self.assertIn("read-only | local | offline-safe", snapshot.last_capability_trust_summary)
 
     def test_models_command_caps_long_model_lists(self) -> None:
         update = TelegramInboundMessage(update_id=4, chat_id="chat-1", text="/models", sender_label="@tester")

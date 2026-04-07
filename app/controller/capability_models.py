@@ -1,4 +1,4 @@
-"""Capability definitions and evaluation models for operator-controlled actions."""
+"""Capability manifest and evaluation models for operator-controlled actions."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -11,23 +11,53 @@ CapabilityCategory = Literal["operator", "runtime", "provider"]
 CapabilityExecutionType = Literal["read", "query"]
 CapabilityProviderDependency = Literal["none", "ollama", "openai", "active_provider"]
 CapabilityNetworkRequirement = Literal["none", "local", "remote", "conditional"]
-CapabilityReadinessRequirement = Literal["none", "ready"]
 CapabilityPolicySensitivity = Literal["none", "online_sensitive"]
+CapabilityInvocationSource = Literal["telegram", "desktop"]
+CapabilityAccessKind = Literal["read_only", "mutating", "external_side_effect"]
+CapabilityLocality = Literal["local_only", "networked", "hybrid"]
+CapabilityDataScope = Literal["internal_state", "provider_query", "file_system", "repository", "web", "other"]
+CapabilityOfflineSafety = Literal["safe_offline", "requires_online", "optional_online"]
+CapabilityConfirmationSensitivity = Literal["never", "policy_based", "always"]
+CapabilityTelegramExposure = Literal["allowed", "limited", "denied"]
 
 
 @dataclass(frozen=True)
-class CapabilityDefinition:
+class CapabilityManifest:
     capability_id: str
     name: str
     category: CapabilityCategory
-    description: str
+    short_description: str
     execution_type: CapabilityExecutionType
     provider_dependency: CapabilityProviderDependency
     network_requirement: CapabilityNetworkRequirement
-    readiness_requirement: CapabilityReadinessRequirement
+    requires_runtime: bool
+    requires_readiness: bool
+    access_kind: CapabilityAccessKind
+    locality: CapabilityLocality
+    data_scope: CapabilityDataScope
+    offline_safety: CapabilityOfflineSafety
+    confirmation_sensitivity: CapabilityConfirmationSensitivity
+    telegram_exposure: CapabilityTelegramExposure
     mode_constraints: Tuple[Mode, ...] = ()
     policy_sensitivity: CapabilityPolicySensitivity = "none"
-    confirmation_requirement: bool = False
+    supports_timeout: bool = False
+    supports_confirmation: bool = False
+    supports_degraded_mode: bool = False
+    default_timeout_ms: int = 0
+    cooldown_sensitive: bool = False
+    user_visible: bool = True
+    include_in_capabilities_summary: bool = True
+
+    @property
+    def description(self) -> str:
+        return self.short_description
+
+    @property
+    def confirmation_requirement(self) -> bool:
+        return self.confirmation_sensitivity != "never"
+
+
+CapabilityDefinition = CapabilityManifest
 
 
 @dataclass(frozen=True)
@@ -50,15 +80,37 @@ class CapabilityEvaluation:
     capability_id: str
     name: str
     category: CapabilityCategory
-    description: str
+    short_description: str
     execution_type: CapabilityExecutionType
     provider_dependency: CapabilityProviderDependency
     network_requirement: CapabilityNetworkRequirement
-    readiness_requirement: CapabilityReadinessRequirement
+    requires_runtime: bool
+    requires_readiness: bool
     mode_constraints: Tuple[Mode, ...]
     policy_sensitivity: CapabilityPolicySensitivity
-    confirmation_requirement: bool
+    access_kind: CapabilityAccessKind
+    locality: CapabilityLocality
+    data_scope: CapabilityDataScope
+    offline_safety: CapabilityOfflineSafety
+    confirmation_sensitivity: CapabilityConfirmationSensitivity
+    telegram_exposure: CapabilityTelegramExposure
+    supports_timeout: bool
+    supports_confirmation: bool
+    supports_degraded_mode: bool
+    default_timeout_ms: int
+    cooldown_sensitive: bool
+    user_visible: bool
+    include_in_capabilities_summary: bool
+    invocation_source: CapabilityInvocationSource
     current_availability_state: CapabilityAvailabilityState
     blocking_reason: str
     reason_code: str
     message: str
+
+    @property
+    def description(self) -> str:
+        return self.short_description
+
+    @property
+    def confirmation_requirement(self) -> bool:
+        return self.confirmation_sensitivity != "never"

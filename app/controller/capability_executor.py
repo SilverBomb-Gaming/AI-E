@@ -1351,6 +1351,8 @@ class CapabilityExecutor:
         finished_at = self._service._now_iso()
         duration_ms = max(0, int((datetime.fromisoformat(finished_at) - datetime.fromisoformat(request.invocation_timestamp)).total_seconds() * 1000))
         summary = self._service._summarize_text(internal_summary, limit=180)
+        manifest = self._service._capability_manifest(request.capability_id)
+        trust_summary = self._service._format_manifest_trust_summary(manifest)
         return CapabilityExecutionResult(
             request=request,
             request_id=request.request_id,
@@ -1367,6 +1369,12 @@ class CapabilityExecutor:
             mode_used=mode_used or request.mode_snapshot,
             degraded=degraded,
             retryable=retryable,
+            access_kind=manifest.access_kind,
+            locality=manifest.locality,
+            offline_safety=manifest.offline_safety,
+            confirmation_sensitivity=manifest.confirmation_sensitivity,
+            telegram_exposure=manifest.telegram_exposure,
+            trust_summary=trust_summary,
             command_label=command_label,
             activity_state=activity_state,
             ask_status=ask_status,

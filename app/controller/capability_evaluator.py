@@ -1,130 +1,346 @@
-"""Capability evaluation for deterministic command gating."""
+"""Capability evaluation for deterministic, manifest-driven command gating."""
 from __future__ import annotations
 
-from .capability_models import CapabilityContext, CapabilityEvaluation
+from .capability_models import (
+    CapabilityContext,
+    CapabilityEvaluation,
+    CapabilityInvocationSource,
+    CapabilityManifest,
+)
 from .capability_registry import CAPABILITY_REGISTRY
 
 
 class CapabilityEvaluator:
     """Evaluate whether a capability is currently allowed, blocked, or degraded."""
 
-    def __init__(self, registry: dict[str, object] | None = None) -> None:
+    def __init__(self, registry: dict[str, CapabilityManifest] | None = None) -> None:
         self._registry = registry or CAPABILITY_REGISTRY
 
-    def list_capabilities(self) -> tuple[object, ...]:
+    def list_capabilities(self) -> tuple[CapabilityManifest, ...]:
         return tuple(self._registry.values())
+
+    def get_manifest(self, capability_id: str) -> CapabilityManifest:
+        if capability_id not in self._registry:
+            raise KeyError(f"Unknown capability: {capability_id}")
+        return self._registry[capability_id]
 
     def evaluate(
         self,
         capability_id: str,
         context: CapabilityContext,
         *,
+        source: CapabilityInvocationSource = "telegram",
         confirmation_granted: bool = False,
     ) -> CapabilityEvaluation:
-        if capability_id not in self._registry:
-            raise KeyError(f"Unknown capability: {capability_id}")
-        definition = self._registry[capability_id]
-        availability_state = "allowed"
-        blocking_reason = ""
-        reason_code = "allowed"
-        message = f"{definition.name} is available."
+        manifest = self.get_manifest(capability_id)
+
+        exposure_result = self._evaluate_source_exposure(manifest, source=source)
+        if exposure_result is not None:
+            return exposure_result
+
+        if manifest.requires_runtime and context.runtime_state != "running":
+            return self._result(
+                manifest,
+                source=source,
+                availability_state="blocked",
+                reason_code="runtime_not_running",
+                blocking_reason="Runtime is not running.",
+                message=f"{manifest.name} requires a running OpenClaw runtime.",
+            )
+
+        if manifest.requires_readiness and context.readiness_state == "not_ready" and capability_id != "ask.provider_query":
+            return self._result(
+                manifest,
+                source=source,
+                availability_state="blocked",
+                reason_code="readiness_not_ready",
+                blocking_reason="Readiness is not ready.",
+                message=f"{manifest.name} is blocked until readiness is restored.",
+            )
 
         if capability_id in {"help.read", "status.read", "mode.read", "capabilities.read"}:
-            message = f"{definition.name} is available."
-        elif capability_id == "models.read":
+            return self._result(
+                manifest,
+                source=source,
+                availability_state="allowed",
+                reason_code="allowed",
+                blocking_reason="",
+                message=f"{manifest.name} is available.",
+            )
+
+        if capability_id == "models.read":
             ollama_status = context.offline_provider_status
             if not ollama_status.available:
-                availability_state = "degraded"
-                blocking_reason = ollama_status.message or "Ollama is unavailable."
-                reason_code = "ollama_unavailable"
-                message = f"Local model discovery is limited: {blocking_reason}"
-            elif not ollama_status.available_models:
-                availability_state = "degraded"
-                blocking_reason = "No local Ollama models are available yet."
-                reason_code = "no_local_models"
-                message = blocking_reason
-            else:
-                message = "Local model discovery is available via Ollama."
-        elif capability_id == "ask.provider_query":
-            if context.runtime_state != "running":
-                availability_state = "blocked"
-                blocking_reason = "Runtime is not running."
-                reason_code = "runtime_not_running"
-                message = "Provider queries require a running OpenClaw runtime."
-            elif context.selected_mode == "online" and context.mode != "online":
-                if context.policy == "always_offline":
-                    availability_state = "blocked"
-                    blocking_reason = "Always Offline policy is active."
-                    reason_code = "policy_always_offline"
-                    message = "Always Offline policy blocks remote provider queries."
-                elif not context.online_provider_status.ready:
-                    availability_state = "unavailable"
-                    blocking_reason = context.online_provider_status.message or "OpenAI is unavailable."
-                    reason_code = "online_provider_unavailable"
-                    message = f"Online provider query is unavailable: {blocking_reason}"
-                elif context.readiness_state == "not_ready":
-                    availability_state = "blocked"
-                    blocking_reason = "Readiness is not ready."
-                    reason_code = "readiness_not_ready"
-                    message = "Provider queries are blocked until readiness is restored."
-                elif context.policy == "ask_before_online" and not confirmation_granted:
-                    availability_state = "confirmation_required"
-                    blocking_reason = "Online Mode is selected but not activated yet. Confirm it in the desktop app."
-                    reason_code = "online_confirmation_required"
-                    message = "Online provider queries require explicit online confirmation in the desktop app."
-                else:
-                    message = "Online provider query is approved for one confirmed request." if confirmation_granted else "Online provider query is available via OpenAI."
-            elif context.mode == "offline":
-                ollama_status = context.offline_provider_status
-                if not ollama_status.ready:
-                    availability_state = "unavailable"
-                    blocking_reason = ollama_status.message or "Ollama is unavailable."
-                    reason_code = "offline_provider_unavailable"
-                    message = f"Offline provider query is unavailable: {blocking_reason}"
-                elif context.readiness_state == "not_ready":
-                    availability_state = "blocked"
-                    blocking_reason = "Readiness is not ready."
-                    reason_code = "readiness_not_ready"
-                    message = "Provider queries are blocked until readiness is restored."
-                else:
-                    model_suffix = f" / {ollama_status.model}" if ollama_status.model else ""
-                    message = f"Offline provider query is available via Ollama{model_suffix}."
-            else:
-                if context.policy == "always_offline":
-                    availability_state = "blocked"
-                    blocking_reason = "Always Offline policy is active."
-                    reason_code = "policy_always_offline"
-                    message = "Always Offline policy blocks remote provider queries."
-                elif not context.online_provider_status.ready:
-                    availability_state = "unavailable"
-                    blocking_reason = context.online_provider_status.message or "OpenAI is unavailable."
-                    reason_code = "online_provider_unavailable"
-                    message = f"Online provider query is unavailable: {blocking_reason}"
-                elif context.readiness_state == "not_ready":
-                    availability_state = "blocked"
-                    blocking_reason = "Readiness is not ready."
-                    reason_code = "readiness_not_ready"
-                    message = "Provider queries are blocked until readiness is restored."
-                else:
-                    message = "Online provider query is available via OpenAI."
-        else:
-            availability_state = "unavailable"
-            blocking_reason = "Capability is not registered for evaluation."
-            reason_code = "capability_not_registered"
-            message = blocking_reason
+                return self._result(
+                    manifest,
+                    source=source,
+                    availability_state="degraded",
+                    reason_code="ollama_unavailable",
+                    blocking_reason=ollama_status.message or "Ollama is unavailable.",
+                    message=f"Local model discovery is limited: {ollama_status.message or 'Ollama is unavailable.'}",
+                )
+            if not ollama_status.available_models:
+                return self._result(
+                    manifest,
+                    source=source,
+                    availability_state="degraded",
+                    reason_code="no_local_models",
+                    blocking_reason="No local Ollama models are available yet.",
+                    message="No local Ollama models are available yet.",
+                )
+            return self._result(
+                manifest,
+                source=source,
+                availability_state="allowed",
+                reason_code="allowed",
+                blocking_reason="",
+                message="Local model discovery is available via Ollama.",
+            )
 
+        if capability_id == "ask.provider_query":
+            return self._evaluate_provider_query(
+                manifest,
+                context,
+                source=source,
+                confirmation_granted=confirmation_granted,
+            )
+
+        return self._result(
+            manifest,
+            source=source,
+            availability_state="allowed",
+            reason_code="allowed",
+            blocking_reason="",
+            message=f"{manifest.name} is available.",
+        )
+
+    def _evaluate_source_exposure(
+        self,
+        manifest: CapabilityManifest,
+        *,
+        source: CapabilityInvocationSource,
+    ) -> CapabilityEvaluation | None:
+        if source != "telegram":
+            return None
+        if manifest.telegram_exposure == "denied":
+            return self._result(
+                manifest,
+                source=source,
+                availability_state="blocked",
+                reason_code="telegram_exposure_denied",
+                blocking_reason="This capability is not exposed to Telegram.",
+                message=f"{manifest.name} is not available from Telegram.",
+            )
+        if manifest.telegram_exposure == "limited":
+            return self._result(
+                manifest,
+                source=source,
+                availability_state="degraded",
+                reason_code="telegram_exposure_limited",
+                blocking_reason="Telegram only exposes a limited form of this capability.",
+                message=f"{manifest.name} is available in a limited Telegram-safe form.",
+            )
+        return None
+
+    def _evaluate_provider_query(
+        self,
+        manifest: CapabilityManifest,
+        context: CapabilityContext,
+        *,
+        source: CapabilityInvocationSource,
+        confirmation_granted: bool,
+    ) -> CapabilityEvaluation:
+        if context.selected_mode == "online" and context.mode != "online":
+            return self._evaluate_selected_online_query(
+                manifest,
+                context,
+                source=source,
+                confirmation_granted=confirmation_granted,
+            )
+
+        if context.mode == "offline":
+            offline_status = context.offline_provider_status
+            if not offline_status.ready:
+                return self._result(
+                    manifest,
+                    source=source,
+                    availability_state="unavailable",
+                    reason_code="offline_provider_unavailable",
+                    blocking_reason=offline_status.message or "Ollama is unavailable.",
+                    message=f"Offline provider query is unavailable: {offline_status.message or 'Ollama is unavailable.'}",
+                )
+            if context.readiness_state == "not_ready":
+                return self._result(
+                    manifest,
+                    source=source,
+                    availability_state="blocked",
+                    reason_code="readiness_not_ready",
+                    blocking_reason="Readiness is not ready.",
+                    message="Provider queries are blocked until readiness is restored.",
+                )
+            model_suffix = f" / {offline_status.model}" if offline_status.model else ""
+            return self._result(
+                manifest,
+                source=source,
+                availability_state="allowed",
+                reason_code="allowed",
+                blocking_reason="",
+                message=f"Offline provider query is available via Ollama{model_suffix}.",
+            )
+
+        if context.policy == "always_offline":
+            return self._result(
+                manifest,
+                source=source,
+                availability_state="blocked",
+                reason_code="policy_always_offline",
+                blocking_reason="Always Offline policy is active.",
+                message="Always Offline policy blocks remote provider queries.",
+            )
+
+        online_status = context.online_provider_status
+        if not online_status.ready:
+            return self._result(
+                manifest,
+                source=source,
+                availability_state="unavailable",
+                reason_code="online_provider_unavailable",
+                blocking_reason=online_status.message or "OpenAI is unavailable.",
+                message=f"Online provider query is unavailable: {online_status.message or 'OpenAI is unavailable.'}",
+            )
+        if context.readiness_state == "not_ready":
+            return self._result(
+                manifest,
+                source=source,
+                availability_state="blocked",
+                reason_code="readiness_not_ready",
+                blocking_reason="Readiness is not ready.",
+                message="Provider queries are blocked until readiness is restored.",
+            )
+
+        if manifest.confirmation_sensitivity == "always" and not confirmation_granted:
+            return self._result(
+                manifest,
+                source=source,
+                availability_state="confirmation_required",
+                reason_code="capability_confirmation_required",
+                blocking_reason="This capability always requires explicit confirmation.",
+                message="This capability requires explicit confirmation before it can run.",
+            )
+
+        return self._result(
+            manifest,
+            source=source,
+            availability_state="allowed",
+            reason_code="allowed",
+            blocking_reason="",
+            message="Online provider query is available via OpenAI.",
+        )
+
+    def _evaluate_selected_online_query(
+        self,
+        manifest: CapabilityManifest,
+        context: CapabilityContext,
+        *,
+        source: CapabilityInvocationSource,
+        confirmation_granted: bool,
+    ) -> CapabilityEvaluation:
+        if context.policy == "always_offline":
+            return self._result(
+                manifest,
+                source=source,
+                availability_state="blocked",
+                reason_code="policy_always_offline",
+                blocking_reason="Always Offline policy is active.",
+                message="Always Offline policy blocks remote provider queries.",
+            )
+
+        online_status = context.online_provider_status
+        if not online_status.ready:
+            return self._result(
+                manifest,
+                source=source,
+                availability_state="unavailable",
+                reason_code="online_provider_unavailable",
+                blocking_reason=online_status.message or "OpenAI is unavailable.",
+                message=f"Online provider query is unavailable: {online_status.message or 'OpenAI is unavailable.'}",
+            )
+        if context.readiness_state == "not_ready":
+            return self._result(
+                manifest,
+                source=source,
+                availability_state="blocked",
+                reason_code="readiness_not_ready",
+                blocking_reason="Readiness is not ready.",
+                message="Provider queries are blocked until readiness is restored.",
+            )
+
+        if manifest.confirmation_sensitivity == "always" and not confirmation_granted:
+            return self._result(
+                manifest,
+                source=source,
+                availability_state="confirmation_required",
+                reason_code="capability_confirmation_required",
+                blocking_reason="This capability always requires explicit confirmation.",
+                message="This capability requires explicit confirmation before it can run.",
+            )
+
+        if context.policy == "ask_before_online" and manifest.confirmation_sensitivity == "policy_based" and not confirmation_granted:
+            return self._result(
+                manifest,
+                source=source,
+                availability_state="confirmation_required",
+                reason_code="online_confirmation_required",
+                blocking_reason="Online Mode is selected but not activated yet. Confirm it in the desktop app.",
+                message="Online provider queries require explicit online confirmation in the desktop app.",
+            )
+
+        message = "Online provider query is approved for one confirmed request." if confirmation_granted else "Online provider query is available via OpenAI."
+        return self._result(
+            manifest,
+            source=source,
+            availability_state="allowed",
+            reason_code="allowed",
+            blocking_reason="",
+            message=message,
+        )
+
+    def _result(
+        self,
+        manifest: CapabilityManifest,
+        *,
+        source: CapabilityInvocationSource,
+        availability_state: str,
+        reason_code: str,
+        blocking_reason: str,
+        message: str,
+    ) -> CapabilityEvaluation:
         return CapabilityEvaluation(
-            capability_id=definition.capability_id,
-            name=definition.name,
-            category=definition.category,
-            description=definition.description,
-            execution_type=definition.execution_type,
-            provider_dependency=definition.provider_dependency,
-            network_requirement=definition.network_requirement,
-            readiness_requirement=definition.readiness_requirement,
-            mode_constraints=definition.mode_constraints,
-            policy_sensitivity=definition.policy_sensitivity,
-            confirmation_requirement=definition.confirmation_requirement,
+            capability_id=manifest.capability_id,
+            name=manifest.name,
+            category=manifest.category,
+            short_description=manifest.short_description,
+            execution_type=manifest.execution_type,
+            provider_dependency=manifest.provider_dependency,
+            network_requirement=manifest.network_requirement,
+            requires_runtime=manifest.requires_runtime,
+            requires_readiness=manifest.requires_readiness,
+            mode_constraints=manifest.mode_constraints,
+            policy_sensitivity=manifest.policy_sensitivity,
+            access_kind=manifest.access_kind,
+            locality=manifest.locality,
+            data_scope=manifest.data_scope,
+            offline_safety=manifest.offline_safety,
+            confirmation_sensitivity=manifest.confirmation_sensitivity,
+            telegram_exposure=manifest.telegram_exposure,
+            supports_timeout=manifest.supports_timeout,
+            supports_confirmation=manifest.supports_confirmation,
+            supports_degraded_mode=manifest.supports_degraded_mode,
+            default_timeout_ms=manifest.default_timeout_ms,
+            cooldown_sensitive=manifest.cooldown_sensitive,
+            user_visible=manifest.user_visible,
+            include_in_capabilities_summary=manifest.include_in_capabilities_summary,
+            invocation_source=source,
             current_availability_state=availability_state,  # type: ignore[arg-type]
             blocking_reason=blocking_reason,
             reason_code=reason_code,

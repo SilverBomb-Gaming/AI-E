@@ -310,7 +310,7 @@ class TelegramLoopTests(unittest.TestCase):
             self.assertTrue(_wait_until(lambda: len(telegram_service.sent_messages) == 1))
             service.stop_telegram_loop()
             reply = telegram_service.sent_messages[0][1]
-            self.assertIn("Windows OpenClaw Operator Console v1.7 is connected.", reply)
+            self.assertIn("Windows OpenClaw Operator Console v1.8 is connected.", reply)
             self.assertIn("Readiness: Ready", reply)
             self.assertIn("Use /help to see supported commands.", reply)
 
