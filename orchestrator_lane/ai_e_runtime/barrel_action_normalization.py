@@ -38,6 +38,19 @@ _ACTION_DEFINITIONS = (
             "add an explosive barrel",
         ),
     ),
+    _BarrelActionDefinition(
+        action_id="prepare_explosive_barrel_destructible_ready",
+        canonical_prompt="make explosive barrel destructible",
+        capability_id="level_0001_prepare_explosive_barrel_destructible_ready",
+        aliases=(
+            "make explosive barrel destructible",
+            "make the explosive barrel destructible",
+            "prepare explosive barrel as destructible prop",
+            "prepare the explosive barrel as a destructible prop",
+            "configure explosive barrel for destructible behavior",
+            "configure the explosive barrel for destructible behavior",
+        ),
+    ),
 )
 
 
@@ -59,6 +72,21 @@ def supported_barrel_foundation_examples() -> str:
     )
 
 
+def supported_barrel_destructible_ready_examples() -> str:
+    return (
+        "'make the explosive barrel destructible', "
+        "'prepare the explosive barrel as a destructible prop', "
+        "or 'configure the explosive barrel for destructible behavior'"
+    )
+
+
+def supported_barrel_action_examples() -> str:
+    return (
+        f"{supported_barrel_foundation_examples()}, or "
+        f"{supported_barrel_destructible_ready_examples()}"
+    )
+
+
 def _cleanup_barrel_phrase(text: str) -> str:
     normalized = normalize_prompt(text)
     tokens = [token for token in normalized.split() if token not in _FILLER_TOKENS]
@@ -66,6 +94,7 @@ def _cleanup_barrel_phrase(text: str) -> str:
     cleaned = cleaned.replace("barrels", "barrel")
     cleaned = re.sub(r"\bplace barrel\b", "place explosive barrel", cleaned)
     cleaned = re.sub(r"\badd barrel\b", "add explosive barrel", cleaned)
+    cleaned = re.sub(r"\bmake barrel destructible\b", "make explosive barrel destructible", cleaned)
     cleaned = " ".join(cleaned.split())
     return cleaned
 
@@ -85,5 +114,7 @@ __all__ = [
     "BarrelActionResolution",
     "canonicalize_barrel_action_prompt",
     "resolve_barrel_action",
+    "supported_barrel_action_examples",
+    "supported_barrel_destructible_ready_examples",
     "supported_barrel_foundation_examples",
 ]

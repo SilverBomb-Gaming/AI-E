@@ -7009,6 +7009,12 @@ def test_barrel_action_normalization_canonicalizes_place_prompt():
     assert canonicalize_barrel_action_prompt("Place an explosive barrel") == "enable explosive barrel"
 
 
+def test_barrel_action_normalization_canonicalizes_destructible_prompt():
+    assert canonicalize_barrel_action_prompt("Make the explosive barrel destructible") == (
+        "make explosive barrel destructible"
+    )
+
+
 def test_task_intake_routes_direct_explosive_barrel_prompt_through_canonical_prompt(tmp_path):
     config = _make_config(tmp_path / "direct_explosive_barrel_action")
     _write_barrel_capability_contracts(config)
@@ -7031,6 +7037,33 @@ def test_task_intake_routes_direct_explosive_barrel_prompt_through_canonical_pro
     assert result.routing.decision == "require_approval"
     assert result.queue_entry["status"] == "needs_approval"
     assert request_payload["conversational_request"]["context"]["resolved_execution_prompt"] == "enable explosive barrel"
+
+
+def test_task_intake_routes_direct_explosive_barrel_destructible_prompt_through_canonical_prompt(tmp_path):
+    config = _make_config(tmp_path / "direct_explosive_barrel_destructible_action")
+    _write_barrel_capability_contracts(config)
+    _write_barrel_real_target_evidence(config)
+    target_repo = _create_entity_transform_prompt_repo(config)
+    intake = ConversationalTaskIntake(config)
+
+    result = intake.accept_message(
+        "Make the explosive barrel destructible",
+        session_id="direct-explosive-barrel-destructible-session",
+        target_repo=target_repo,
+    )
+
+    request_payload = json.loads(result.artifacts.request_payload_path.read_text(encoding="utf-8"))
+
+    assert result.task_type == "mutation_request"
+    assert result.routing.capability_id == "level_0001_prepare_explosive_barrel_destructible_ready"
+    assert result.routing.mapped_prompt == "make explosive barrel destructible"
+    assert result.routing.capability_supported is True
+    assert result.routing.decision == "require_approval"
+    assert result.queue_entry["status"] == "needs_approval"
+    assert (
+        request_payload["conversational_request"]["context"]["resolved_execution_prompt"]
+        == "make explosive barrel destructible"
+    )
 
 
 def test_home_surface_explosive_barrel_review_surface_explains_bounded_foundation_scope(tmp_path):
@@ -7080,6 +7113,57 @@ def test_home_surface_explosive_barrel_review_surface_explains_bounded_foundatio
     assert "leak simulation" in review.approval_reason
 
 
+def test_home_surface_explosive_barrel_destructible_review_surface_explains_bounded_scope(tmp_path):
+    config = _make_config(tmp_path / "home_surface_explosive_barrel_destructible_review")
+    _write_barrel_capability_contracts(config)
+    _write_barrel_real_target_evidence(config)
+    target_repo = _create_entity_transform_prompt_repo(config)
+    intake = ConversationalTaskIntake(config)
+    bridge = home_surface.IntakePreviewBridge()
+    bridge._create_intake = lambda: intake
+    bridge._build_review_bundle_fn = build_review_bundle
+    project = home_surface.SupportedProject(
+        name="BABYLON TEST",
+        path=Path(target_repo),
+        project_type="unity_project",
+        source="test",
+        status="supported",
+    )
+
+    preview = bridge.prepare_prompt("Make the explosive barrel destructible", project)
+    review = bridge.build_review_surface(preview, project)
+
+    assert preview.available is True
+    assert preview.decision_state == "Needs approval"
+    assert preview.mapped_prompt == "make explosive barrel destructible"
+    assert review.available is True
+    assert review.request_summary == (
+        "Reviewing the bounded explosive barrel destructible-ready action "
+        "'make explosive barrel destructible' for BABYLON TEST. "
+        "This approval covers only the reviewed single-barrel destructible-ready config change at the fixed approved scene point."
+    )
+    assert review.approval_reason == (
+        "This request enters bounded destructible-object state review before any run is queued. "
+        "Approval authorizes only the reviewed explosive barrel destructible-ready action "
+        "'make explosive barrel destructible'. "
+        "It does not authorize leak simulation, bullet-hit progression, grenade detonation, "
+        "explosion triggers, blast-radius damage, chain reactions, or any extra combat-environment mutation outside the reviewed scope."
+    )
+    assert review.expected_change_scope == (
+        "Limit execution to the reviewed explosive barrel destructible-ready action "
+        "'make explosive barrel destructible' on the fixed approved barrel target in Babylon FPS game ver 002 for BABYLON TEST. "
+        "No free placement, multi-barrel scattering, leak state, bullet-hit progression, grenade detonation, explosion trigger, "
+        "blast-radius damage, or extra combat-prop behavior is included."
+    )
+    assert review.validation_intent == (
+        "After approval, AI-E will execute the reviewed bounded explosive barrel destructible-ready action through the deterministic project tool route, "
+        "validate the recorded barrel destructible-ready artifact, and confirm the approved Babylon scene target before treating the run as complete. "
+        "Sandbox remains an explicit alternative path instead of the default approval path."
+    )
+    assert "single-barrel destructible-ready" in review.request_summary
+    assert "bullet-hit progression" in review.approval_reason
+
+
 def test_task_intake_blocks_richer_explosive_barrel_prompt_outside_foundation_scope(tmp_path):
     config = _make_config(tmp_path / "unsupported_explosive_barrel_prompt")
     _write_barrel_capability_contracts(config)
@@ -7094,8 +7178,30 @@ def test_task_intake_blocks_richer_explosive_barrel_prompt_outside_foundation_sc
 
     assert result.queue_entry["status"] == "blocked"
     assert result.routing.decision == "block"
-    assert "does not support leak, explosion, blast-radius" in str(result.routing.fail_closed_reason or "")
+    assert "does not support leak, bullet-hit progression, grenade detonation, explosion, blast-radius" in str(
+        result.routing.fail_closed_reason or ""
+    )
     assert "place an explosive barrel" in str(result.routing.fail_closed_reason or "")
+
+
+def test_task_intake_blocks_richer_explosive_barrel_destructible_prompt_outside_scope(tmp_path):
+    config = _make_config(tmp_path / "unsupported_explosive_barrel_destructible_prompt")
+    _write_barrel_capability_contracts(config)
+    target_repo = _create_entity_transform_prompt_repo(config)
+    intake = ConversationalTaskIntake(config)
+
+    result = intake.accept_message(
+        "Make the barrel leak and explode with blast-radius damage",
+        session_id="unsupported-explosive-barrel-destructible-session",
+        target_repo=target_repo,
+    )
+
+    assert result.queue_entry["status"] == "blocked"
+    assert result.routing.decision == "block"
+    assert "does not support leak, bullet-hit progression, grenade detonation, explosion, blast-radius" in str(
+        result.routing.fail_closed_reason or ""
+    )
+    assert "make the explosive barrel destructible" in str(result.routing.fail_closed_reason or "")
 
 
 def test_task_intake_routes_direct_ground_theme_prompt_through_canonical_prompt(tmp_path):
@@ -12018,6 +12124,40 @@ def _write_barrel_capability_contracts(config: OrchestratorConfig) -> None:
         ),
         encoding="utf-8",
     )
+    (capabilities_dir / "level_0001_prepare_explosive_barrel_destructible_ready.json").write_text(
+        json.dumps(
+            {
+                "capability_id": "level_0001_prepare_explosive_barrel_destructible_ready",
+                "title": "LEVEL_0001 prepare explosive barrel destructible ready",
+                "intent": "mutate",
+                "target_level": "LEVEL_0001",
+                "target_scene": "Assets/Babylon FPS game ver 002.unity",
+                "requested_execution_lane": "approval_required_mutation",
+                "handler_name": "level_0001_entity_transform_handler",
+                "agent_type": "level_0001_entity_transform_mutation_agent",
+                "approval_required": True,
+                "eligible_for_auto": False,
+                "evidence_state": "experimental",
+                "safety_class": "approval_gated_automation",
+                "content_tags": {
+                    "violence_level": "none",
+                    "blood_level": "none",
+                    "gore_level": "none",
+                    "dismemberment": False,
+                    "horror_intensity": "none",
+                    "language_level": "none",
+                    "sexual_content_level": "none",
+                    "nudity_level": "none",
+                    "substance_reference_level": "none",
+                    "gambling_reference_level": "none",
+                },
+                "match_terms": ["explosive", "barrel", "destructible"],
+                "match_verbs": ["make", "prepare", "configure"],
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
 
 
 def _write_barrel_real_target_evidence(config: OrchestratorConfig) -> None:
@@ -12050,6 +12190,30 @@ def _write_barrel_real_target_evidence(config: OrchestratorConfig) -> None:
                         "validation_history_summary": "attempts=1; passed=1; last_validation_result=passed; sandbox_verified=yes; real_target_verified=yes",
                         "rollback_history_summary": "last_rollback_result=none; rollback_verified=no",
                         "notes": "Seeded test evidence for the bounded explosive barrel foundation review path.",
+                    },
+                    "level_0001_prepare_explosive_barrel_destructible_ready": {
+                        "capability_id": "level_0001_prepare_explosive_barrel_destructible_ready",
+                        "handler_name": "level_0001_entity_transform_handler",
+                        "safety_class": "approval_gated_automation",
+                        "times_attempted": 1,
+                        "times_passed": 1,
+                        "last_validation_result": "passed",
+                        "last_rollback_result": "none",
+                        "artifact_requirements_met": True,
+                        "eligible_for_auto": False,
+                        "requires_approval": True,
+                        "evidence_state": "real_target_verified",
+                        "sandbox_verified": True,
+                        "real_target_verified": True,
+                        "rollback_verified": False,
+                        "evidence_progression": [
+                            "experimental",
+                            "sandbox_verified",
+                            "real_target_verified",
+                        ],
+                        "validation_history_summary": "attempts=1; passed=1; last_validation_result=passed; sandbox_verified=yes; real_target_verified=yes",
+                        "rollback_history_summary": "last_rollback_result=none; rollback_verified=no",
+                        "notes": "Seeded test evidence for the bounded explosive barrel destructible-ready review path.",
                     }
                 }
             },
@@ -12374,6 +12538,22 @@ def _create_entity_transform_prompt_repo(config: OrchestratorConfig, *, target_r
                         "translated_command": "enable explosive barrel",
                     },
                     {
+                        "normalized_prompt": "make explosive barrel destructible",
+                        "translated_command": "make explosive barrel destructible",
+                    },
+                    {
+                        "normalized_prompt": "make the explosive barrel destructible",
+                        "translated_command": "make explosive barrel destructible",
+                    },
+                    {
+                        "normalized_prompt": "prepare the explosive barrel as a destructible prop",
+                        "translated_command": "make explosive barrel destructible",
+                    },
+                    {
+                        "normalized_prompt": "configure the explosive barrel for destructible behavior",
+                        "translated_command": "make explosive barrel destructible",
+                    },
+                    {
                         "normalized_prompt": "move zombie forward",
                         "translated_command": "move zombie forward",
                     },
@@ -12635,6 +12815,27 @@ def _create_entity_transform_prompt_repo(config: OrchestratorConfig, *, target_r
                             "FoundationStage": "foundation_only",
                             "DesignationId": "level2_explosive_barrel_a",
                             "ApprovedPointId": "level2_barrel_point_a"
+                        }
+                    },
+                    {
+                        "normalized_command": "make explosive barrel destructible",
+                        "action_name": "configure_explosive_barrel_destructible_ready",
+                        "entity_type": "interactable_object",
+                        "probe_name": "MutateExplosiveBarrelDestructibleReady",
+                        "wrapper_path": "Tools/run_unity_mutate_explosive_barrel_foundation.ps1",
+                        "probe_artifact_file": "intent_make_explosive_barrel_destructible_probe_result.json",
+                        "probe_log_file": "intent_make_explosive_barrel_destructible_probe.log",
+                        "wrapper_arguments": {
+                            "ProjectPath": ".",
+                            "SceneName": "Babylon FPS game ver 002",
+                            "TargetObjectName": "barrel0",
+                            "FoundationStage": "destructible_ready",
+                            "DesignationId": "level2_explosive_barrel_a",
+                            "ApprovedPointId": "level2_barrel_point_a",
+                            "ActionType": "mutate_explosive_barrel_destructible_ready",
+                            "ActionName": "configure_explosive_barrel_destructible_ready",
+                            "DestructibleReadyConfigured": True,
+                            "DestructibleProfile": "approved_destructible_ready_v1"
                         }
                     },
                     {

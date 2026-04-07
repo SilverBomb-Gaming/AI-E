@@ -11,6 +11,8 @@ from orchestrator.utils import ensure_dir, read_json_with_status
 from .barrel_action_normalization import (
     canonicalize_barrel_action_prompt,
     resolve_barrel_action,
+    supported_barrel_action_examples,
+    supported_barrel_destructible_ready_examples,
     supported_barrel_foundation_examples,
 )
 from .capability_registry import CapabilityEvidenceStore, RuntimeCapability
@@ -126,6 +128,11 @@ _ROUTE_PROFILES = {
         probe_name="MutateExplosiveBarrelFoundation",
         probe_action_type="mutate_explosive_barrel_foundation",
         result_kind="barrel_foundation",
+    ),
+    "MutateExplosiveBarrelDestructibleReady": EntityMutationRouteProfile(
+        probe_name="MutateExplosiveBarrelDestructibleReady",
+        probe_action_type="mutate_explosive_barrel_destructible_ready",
+        result_kind="barrel_destructible_ready",
     ),
 }
 
@@ -628,6 +635,40 @@ def run_level_0001_entity_transform_mutation(task: Dict[str, Any]) -> Dict[str, 
                 "target_context": "interactable_object",
             }
         )
+    elif route_resolution.result_kind == "barrel_destructible_ready":
+        result_details.update(
+            {
+                "foundation_component_type": str(probe_payload.get("foundation_component_type") or ""),
+                "previous_component_present": bool(probe_payload.get("previous_component_present", False)),
+                "new_component_present": bool(probe_payload.get("new_component_present", False)),
+                "foundation_changed": bool(probe_payload.get("foundation_changed", False)),
+                "previous_foundation_stage": str(probe_payload.get("previous_foundation_stage") or ""),
+                "new_foundation_stage": str(probe_payload.get("new_foundation_stage") or ""),
+                "requested_foundation_stage": str(probe_payload.get("requested_foundation_stage") or ""),
+                "previous_designation_id": str(probe_payload.get("previous_designation_id") or ""),
+                "new_designation_id": str(probe_payload.get("new_designation_id") or ""),
+                "requested_designation_id": str(probe_payload.get("requested_designation_id") or ""),
+                "previous_approved_point_id": str(probe_payload.get("previous_approved_point_id") or ""),
+                "new_approved_point_id": str(probe_payload.get("new_approved_point_id") or ""),
+                "requested_approved_point_id": str(probe_payload.get("requested_approved_point_id") or ""),
+                "previous_destructible_ready_configured": bool(
+                    probe_payload.get("previous_destructible_ready_configured", False)
+                ),
+                "new_destructible_ready_configured": bool(
+                    probe_payload.get("new_destructible_ready_configured", False)
+                ),
+                "requested_destructible_ready_configured": bool(
+                    probe_payload.get("requested_destructible_ready_configured", False)
+                ),
+                "previous_destructible_profile": str(probe_payload.get("previous_destructible_profile") or ""),
+                "new_destructible_profile": str(probe_payload.get("new_destructible_profile") or ""),
+                "requested_destructible_profile": str(probe_payload.get("requested_destructible_profile") or ""),
+                "target_position_x": _float_or_none(probe_payload.get("target_position_x")),
+                "target_position_y": _float_or_none(probe_payload.get("target_position_y")),
+                "target_position_z": _float_or_none(probe_payload.get("target_position_z")),
+                "target_context": "interactable_object",
+            }
+        )
     result_details.update(
         build_result_session_metadata(
             task=task,
@@ -662,7 +703,7 @@ def _unmatched_prompt_message() -> str:
         "I understood part of your request, but couldn't match it to a known action. "
         "Try something like: 'move zombie forward', 'make zombie faster', 'make runner faster', "
         "'make runner more aggressive', 'apply grass ground theme', 'apply dirt ground theme', 'apply gravel ground theme', "
-        "'apply damaged-ground theme', 'enable explosive barrel', or 'increase encounter count'."
+        "'apply damaged-ground theme', 'enable explosive barrel', 'make the explosive barrel destructible', or 'increase encounter count'."
     )
 
 
@@ -746,9 +787,10 @@ def unsupported_entity_transform_prompt_message(prompt: str) -> str | None:
         )
     if {"barrel", "barrels", "explosive"} & tokens:
         supported_message = (
-            "AI-E currently supports only one bounded explosive-barrel foundation action in this pass: "
-            "designating the fixed approved scene barrel as the explosive barrel foundation. "
-            f"Try something like: {supported_barrel_foundation_examples()}."
+            "AI-E currently supports only two bounded explosive-barrel actions in this pass: "
+            "designating the fixed approved scene barrel as the explosive barrel foundation, "
+            "or preparing that approved barrel as the bounded destructible-ready target. "
+            f"Try something like: {supported_barrel_action_examples()}."
         )
         if (
             "all" in tokens
@@ -768,11 +810,17 @@ def unsupported_entity_transform_prompt_message(prompt: str) -> str | None:
             or "zombies" in tokens
             or "player" in tokens
             or "props" in tokens
-            or "destructible" in tokens
             or "combat" in tokens
+            or "bullets" in tokens
+            or "bullet" in tokens
+            or "detonate" in tokens
+            or "detonation" in tokens
+            or "chain" in tokens
+            or "reactions" in tokens
+            or "reaction" in tokens
         ):
             return (
-                "AI-E does not support leak, explosion, blast-radius, multi-placement, or broader combat-prop behavior for barrels yet. "
+                "AI-E does not support leak, bullet-hit progression, grenade detonation, explosion, blast-radius, multi-placement, or broader combat-prop behavior for barrels yet. "
                 + supported_message
             )
         if resolve_barrel_action(prompt) is None:
@@ -1283,6 +1331,35 @@ def _validate_execution_artifacts(
             return "Delegated probe did not apply the requested explosive-barrel designation id."
         if requested_approved_point_id and new_approved_point_id != requested_approved_point_id:
             return "Delegated probe did not apply the requested explosive-barrel approved point id."
+    elif result_kind == "barrel_destructible_ready":
+        requested_foundation_stage = str(probe_payload.get("requested_foundation_stage") or "").strip()
+        new_foundation_stage = str(probe_payload.get("new_foundation_stage") or "").strip()
+        requested_designation_id = str(probe_payload.get("requested_designation_id") or "").strip()
+        new_designation_id = str(probe_payload.get("new_designation_id") or "").strip()
+        requested_approved_point_id = str(probe_payload.get("requested_approved_point_id") or "").strip()
+        new_approved_point_id = str(probe_payload.get("new_approved_point_id") or "").strip()
+        requested_destructible_profile = str(probe_payload.get("requested_destructible_profile") or "").strip()
+        new_destructible_profile = str(probe_payload.get("new_destructible_profile") or "").strip()
+        new_component_present = probe_payload.get("new_component_present")
+        new_destructible_ready_configured = probe_payload.get("new_destructible_ready_configured")
+        if not isinstance(new_component_present, bool):
+            return "Delegated probe did not report whether the explosive-barrel foundation component was present."
+        if not new_component_present:
+            return "Delegated probe did not leave the explosive-barrel foundation component attached to the approved target."
+        if not requested_foundation_stage:
+            return "Delegated probe did not report the requested explosive-barrel destructible-ready stage."
+        if new_foundation_stage != requested_foundation_stage:
+            return "Delegated probe did not apply the requested explosive-barrel destructible-ready stage."
+        if requested_designation_id and new_designation_id != requested_designation_id:
+            return "Delegated probe did not apply the requested explosive-barrel designation id."
+        if requested_approved_point_id and new_approved_point_id != requested_approved_point_id:
+            return "Delegated probe did not apply the requested explosive-barrel approved point id."
+        if not isinstance(new_destructible_ready_configured, bool):
+            return "Delegated probe did not report whether the approved barrel was configured as destructible-ready."
+        if not new_destructible_ready_configured:
+            return "Delegated probe did not leave the approved barrel in the destructible-ready configuration."
+        if requested_destructible_profile and new_destructible_profile != requested_destructible_profile:
+            return "Delegated probe did not apply the requested explosive-barrel destructible-ready profile."
     return None
 
 
@@ -1311,6 +1388,8 @@ def _validation_check_name(result_kind: str) -> str:
         return "mutate_ground_theme_artifact_confirmed"
     if result_kind == "barrel_foundation":
         return "mutate_explosive_barrel_foundation_artifact_confirmed"
+    if result_kind == "barrel_destructible_ready":
+        return "mutate_explosive_barrel_destructible_ready_artifact_confirmed"
     return "mutate_entity_transform_artifact_confirmed"
 
 

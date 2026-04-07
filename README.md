@@ -1,4 +1,4 @@
-﻿# AI-E v1
+# AI-E v1
 
 Controlled execution surface for supported projects. AI-E turns a bounded request into a real, reviewable result with guardrails, live status, proof summaries, and saved history.
 
@@ -16,7 +16,7 @@ AI-E also now supports bounded platformer manual correction and layout-quality r
 
 AI-E now also supports bounded environment theme review for the Babylon Ground object. The Babylon ground-theme lane can restore the live Ground object to the Cement baseline and apply the supported grass, dirt, gravel, and damaged-ground themes through the same deterministic translator/router/probe path. Supported prompts such as `make the ground grassy`, `change the ground to dirt`, `change the ground to gravel`, and `make the ground look damaged` resolve to explicit approval review first, execute only after approval, and continue to fail closed for unsupported broad terrain-art prompts. AI-E now also supports a small allowlisted compound family on top of that proven lane: `make the ground gravel and damaged`, `apply a dirt and damaged ground theme`, `make the ground grassy and damaged`, and `apply a damaged gravel ground theme`. These compound requests stay review-gated and decompose into fixed sequential Ground theme steps rather than freeform blending or broader terrain-art generation. The damaged-ground milestone is now proven through both direct Babylon execution and the approval-reviewed AI-E path, and the bounded composition pass is proven end-to-end with live cleanup back to the Cement baseline.
 
-AI-E now also supports the first bounded explosive-barrel foundation action in BABYLON. Supported prompts such as `place an explosive barrel`, `add an explosive barrel`, and `enable the explosive barrel` normalize into one approval-gated deterministic action that designates the fixed approved scene target `barrel0` as the explosive barrel foundation. This pass is intentionally limited to the reviewed single-barrel foundation mutation only and continues to fail closed for broader destructible/combat prompts involving leaks, blast radius, damage, chain reactions, or multi-barrel placement.
+AI-E now also supports the first two bounded explosive-barrel layers in BABYLON. Foundation prompts such as `place an explosive barrel`, `add an explosive barrel`, and `enable the explosive barrel` normalize into one approval-gated deterministic action that designates the fixed approved scene target `barrel0` as the explosive barrel foundation. The next bounded prompt family, including `make the explosive barrel destructible`, `prepare the explosive barrel as a destructible prop`, and `configure the explosive barrel for destructible behavior`, now advances that same approved target into the reviewed `destructible_ready` state/config without yet adding leak, explosion, blast-radius, chain-reaction, or broader combat behavior.
 
 ## AI-E System Evolution (Latest)
 
@@ -71,6 +71,7 @@ Example flows:
 - Milestone summary: [docs/milestones/ai_e_bounded_experimentation.md](docs/milestones/ai_e_bounded_experimentation.md)
 - Environment theme composition: [docs/milestones/ai_e_environment_theme_composition.md](docs/milestones/ai_e_environment_theme_composition.md)
 - Explosive barrel foundation: [docs/milestones/ai_e_explosive_barrel_foundation.md](docs/milestones/ai_e_explosive_barrel_foundation.md)
+- Explosive barrel destructible-ready: [docs/milestones/ai_e_explosive_barrel_destructible_ready.md](docs/milestones/ai_e_explosive_barrel_destructible_ready.md)
 - Bounded autonomous build loop: [docs/milestones/ai_e_bounded_autonomous_build_loop.md](docs/milestones/ai_e_bounded_autonomous_build_loop.md)
 - Manual correction capture: [docs/architecture/platformer_manual_correction_capture.md](docs/architecture/platformer_manual_correction_capture.md)
 - Spatial layout validation: [docs/architecture/platformer_layout_validation.md](docs/architecture/platformer_layout_validation.md)
@@ -128,7 +129,7 @@ These requests remain intentionally blocked because backward zombie movement is 
 - project/session history with reopen and re-stage paths when saved data supports them
 - deterministic prompt normalization for currently supported forward-movement variants
 - bounded environment theme review for the Babylon Ground object using the supported grass, dirt, gravel, and damaged-ground themes
-- bounded explosive-barrel foundation review for one fixed approved barrel target in `Babylon FPS game ver 002`
+- bounded explosive-barrel foundation and destructible-ready review for one fixed approved barrel target in `Babylon FPS game ver 002`
 - controlled conversational mapping from `enemy` and `character` onto the supported zombie target with explicit confirmation before execution
 - direct bounded enemy tuning for the supported `zombie` and `runner` profiles in BABYLON
 - bounded goal-intent prompts such as `make runner more dangerous` and `make runner easier`
@@ -140,7 +141,7 @@ These requests remain intentionally blocked because backward zombie movement is 
 - prepare a request such as `move zombie forward`, `move zombie forward again`, or `please move zombie forward`
 - prepare a bounded environment theme request such as `make the ground grassy`, `change the ground to dirt`, `change the ground to gravel`, or `make the ground look damaged`
 - prepare a direct bounded tuning request such as `make zombie faster`, `make runner faster`, `make runner more dangerous`, or `make runner easier`
-- prepare a bounded destructible-object foundation request such as `place an explosive barrel` or `enable the explosive barrel`
+- prepare a bounded destructible-object request such as `place an explosive barrel`, `enable the explosive barrel`, or `make the explosive barrel destructible`
 - name the supported enemy target explicitly when tuning archetypes, for example `zombie` or `runner`
 - generalized terms such as `enemy` or `character` are intentionally blocked once multiple bounded enemy archetypes are supported, so AI-E does not guess the target for you
 - submit it when AI-E shows `Ready`, or open review and approve it once when needed
@@ -435,4 +436,5 @@ Use **Help > Demo Checklist...** inside the app to run the current quick walkthr
 6. **F.** Use `Modify and test again` or `Try a variation` to show the next quick iteration.
 
 The dialog resets each time you open it, so the same checklist can be reused before the next demo or local-user handoff.
+
 

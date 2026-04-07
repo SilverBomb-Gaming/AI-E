@@ -1522,6 +1522,12 @@ class IntakePreviewBridge:
                 f"Reviewing the bounded explosive barrel foundation action '{mapped_prompt or preview.detected_action}' for {project.name}. "
                 "This approval covers only the reviewed single-barrel foundation change at the fixed approved scene point."
             )
+        if IntakePreviewBridge._is_barrel_destructible_ready_review(routing):
+            mapped_prompt = str(getattr(routing, "mapped_prompt", "") or preview.detected_action or "").strip()
+            return (
+                f"Reviewing the bounded explosive barrel destructible-ready action '{mapped_prompt or preview.detected_action}' for {project.name}. "
+                "This approval covers only the reviewed single-barrel destructible-ready config change at the fixed approved scene point."
+            )
         target_level = str(getattr(routing, "target_level", "") or "").strip()
         if target_level:
             return f"{preview.detected_action} requests a bounded change in {target_level} inside {project.name}."
@@ -1563,6 +1569,13 @@ class IntakePreviewBridge:
                 "This request enters bounded destructible-object foundation review before any run is queued. "
                 f"Approval authorizes only the reviewed explosive barrel foundation action '{mapped_prompt or preview.detected_action}'. "
                 "It does not authorize leak simulation, explosion triggers, blast-radius damage, chain reactions, or any extra combat-environment mutation outside the reviewed scope."
+            )
+        if IntakePreviewBridge._is_barrel_destructible_ready_review(routing):
+            mapped_prompt = str(getattr(routing, "mapped_prompt", "") or preview.detected_action or "").strip()
+            return (
+                "This request enters bounded destructible-object state review before any run is queued. "
+                f"Approval authorizes only the reviewed explosive barrel destructible-ready action '{mapped_prompt or preview.detected_action}'. "
+                "It does not authorize leak simulation, bullet-hit progression, grenade detonation, explosion triggers, blast-radius damage, chain reactions, or any extra combat-environment mutation outside the reviewed scope."
             )
         reason = _clean_decision_text(str(preview.decision_reason or "").strip())
         if reason:
@@ -1612,6 +1625,15 @@ class IntakePreviewBridge:
                 f"on the fixed approved barrel target in {scene_name} for {project.name}. "
                 "No free placement, multi-barrel scattering, leak state, explosion trigger, blast-radius damage, or extra combat-prop behavior is included."
             )
+        if IntakePreviewBridge._is_barrel_destructible_ready_review(routing):
+            target_scene = str(getattr(routing, "target_scene", "") or "").strip()
+            scene_name = Path(target_scene).stem or "the supported scene"
+            mapped_prompt = str(getattr(routing, "mapped_prompt", "") or preview.detected_action or "").strip()
+            return (
+                f"Limit execution to the reviewed explosive barrel destructible-ready action '{mapped_prompt or preview.detected_action}' "
+                f"on the fixed approved barrel target in {scene_name} for {project.name}. "
+                "No free placement, multi-barrel scattering, leak state, bullet-hit progression, grenade detonation, explosion trigger, blast-radius damage, or extra combat-prop behavior is included."
+            )
         target_level = str(getattr(routing, "target_level", "") or "").strip()
         target_scene = str(getattr(routing, "target_scene", "") or "").strip()
         if target_level:
@@ -1655,6 +1677,12 @@ class IntakePreviewBridge:
             return (
                 "After approval, AI-E will execute the reviewed bounded explosive barrel foundation action through the deterministic project tool route, "
                 "validate the recorded barrel-foundation artifact, and confirm the approved Babylon scene target before treating the run as complete. "
+                "Sandbox remains an explicit alternative path instead of the default approval path."
+            )
+        if IntakePreviewBridge._is_barrel_destructible_ready_review(routing):
+            return (
+                "After approval, AI-E will execute the reviewed bounded explosive barrel destructible-ready action through the deterministic project tool route, "
+                "validate the recorded barrel destructible-ready artifact, and confirm the approved Babylon scene target before treating the run as complete. "
                 "Sandbox remains an explicit alternative path instead of the default approval path."
             )
         missing_evidence = [str(item).strip() for item in getattr(routing, "missing_evidence", []) or [] if str(item).strip()]
@@ -1734,6 +1762,29 @@ class IntakePreviewBridge:
             mapped_prompt = str(getattr(routing, "mapped_prompt", "") or "").strip()
             if mapped_prompt:
                 parts.append(f"Guardrails limit execution to the reviewed explosive barrel foundation action '{mapped_prompt}'.")
+            parts.append("Scope is limited to one fixed approved barrel target in the supported Babylon scene.")
+            parts.append("Deterministic project tool routing has already been matched for this request.")
+            parts.append("Sandbox remains a separate operator choice and is not implied by approval.")
+
+            evidence_state = str(getattr(routing, "evidence_state", "") or getattr(routing, "maturity_stage", "") or "").strip()
+            if evidence_state:
+                parts.append(f"Current proof coverage is {evidence_state}.")
+            policy_state = str(getattr(routing, "policy_state", "") or "").strip()
+            if policy_state:
+                parts.append(f"Safety policy status is {policy_state.replace('_', ' ')}.")
+            return " ".join(parts)
+        if IntakePreviewBridge._is_barrel_destructible_ready_review(routing):
+            parts: List[str] = []
+            if queue_status == "needs_approval":
+                parts.append("This bounded explosive barrel destructible-ready request is waiting for operator approval.")
+            elif queue_status == "pending":
+                parts.append("Approval was already recorded. The reviewed explosive barrel destructible-ready run is waiting to start.")
+            else:
+                parts.append("No work has started yet. This explosive barrel destructible-ready request is still in review.")
+
+            mapped_prompt = str(getattr(routing, "mapped_prompt", "") or "").strip()
+            if mapped_prompt:
+                parts.append(f"Guardrails limit execution to the reviewed explosive barrel destructible-ready action '{mapped_prompt}'.")
             parts.append("Scope is limited to one fixed approved barrel target in the supported Babylon scene.")
             parts.append("Deterministic project tool routing has already been matched for this request.")
             parts.append("Sandbox remains a separate operator choice and is not implied by approval.")
@@ -1826,6 +1877,23 @@ class IntakePreviewBridge:
                 "This bounded explosive barrel foundation review is prepared only. Nothing has run yet. "
                 "Approve to queue the reviewed run, reject to stop here, or choose sandbox as the explicit alternative path."
             )
+        if IntakePreviewBridge._is_barrel_destructible_ready_review(routing):
+            if queue_status == "needs_approval":
+                return (
+                    "This bounded explosive barrel destructible-ready request is waiting for operator choice. "
+                    "Approve it to queue the reviewed run, reject it to stop here, or choose sandbox to exercise the same bounded route explicitly."
+                )
+            if queue_status == "pending" and approval_state in {"approved", "auto_approved", "not_required"}:
+                return (
+                    "Approval was already recorded for this bounded explosive barrel destructible-ready request. "
+                    "It is waiting to run under the reviewed scope. Refresh status to follow it."
+                )
+            if queue_status == "blocked":
+                return "AI-E has blocked this explosive barrel destructible-ready request. Revise it to stay within supported scope before preparing it again."
+            return (
+                "This bounded explosive barrel destructible-ready review is prepared only. Nothing has run yet. "
+                "Approve to queue the reviewed run, reject to stop here, or choose sandbox as the explicit alternative path."
+            )
         if queue_status == "needs_approval":
             return "This request is waiting for approval. AI-E has not started any work. Approve it once, reject it, or keep it staged for sandbox-first review."
         if queue_status == "pending" and approval_state in {"approved", "auto_approved", "not_required"}:
@@ -1862,7 +1930,7 @@ class IntakePreviewBridge:
         return False
 
     @staticmethod
-    def _is_barrel_foundation_review(routing: Any) -> bool:
+    def _is_barrel_review(routing: Any) -> bool:
         capability_id = str(getattr(routing, "capability_id", "") or "").strip().lower()
         if "explosive_barrel" in capability_id:
             return True
@@ -1873,6 +1941,21 @@ class IntakePreviewBridge:
         if isinstance(generic_definition, dict):
             return str(generic_definition.get("target_context") or "").strip().lower() == "interactable_object"
         return False
+
+    @staticmethod
+    def _is_barrel_destructible_ready_review(routing: Any) -> bool:
+        capability_id = str(getattr(routing, "capability_id", "") or "").strip().lower()
+        if "destructible_ready" in capability_id:
+            return True
+        mapped_prompt = str(getattr(routing, "mapped_prompt", "") or "").strip()
+        resolution = resolve_barrel_action(mapped_prompt) if mapped_prompt else None
+        return bool(resolution and resolution.action_id == "prepare_explosive_barrel_destructible_ready")
+
+    @staticmethod
+    def _is_barrel_foundation_review(routing: Any) -> bool:
+        if not IntakePreviewBridge._is_barrel_review(routing):
+            return False
+        return not IntakePreviewBridge._is_barrel_destructible_ready_review(routing)
 
     @staticmethod
     def _review_intent_type(*, task_type: str, routing: Any) -> str:
@@ -4351,6 +4434,11 @@ def _attempt_final_verdict(
             return f"{object_name or 'Target'} encounter count changed successfully and the recorded checks passed."
         if isinstance(details.get("previous_spawn_interval"), (int, float)) and isinstance(details.get("new_spawn_interval"), (int, float)):
             return f"{object_name or 'Target'} spawn pressure changed successfully and the recorded checks passed."
+        if bool(details.get("new_destructible_ready_configured")) and str(details.get("new_foundation_stage") or "").strip():
+            return (
+                f"{object_name or 'Target'} is now the approved explosive barrel destructible-ready target "
+                "and the recorded checks passed."
+            )
         if bool(details.get("new_component_present")) and str(details.get("new_foundation_stage") or "").strip():
             return f"{object_name or 'Target'} is now the approved explosive barrel foundation target and the recorded checks passed."
         if object_name:
@@ -4403,6 +4491,17 @@ def _proof_before_after_summary(mutation: dict[str, Any]) -> str:
                 f"{object_name} stayed at spawn interval {float(mutation.get('new_spawn_interval')):g} "
                 "because it already satisfied this request."
             )
+        if bool(mutation.get("new_destructible_ready_configured")) and str(mutation.get("new_foundation_stage") or "").strip():
+            profile_name = str(mutation.get("new_destructible_profile") or "").strip()
+            if profile_name:
+                return (
+                    f"{object_name} already carried the approved explosive barrel destructible-ready config "
+                    f"('{profile_name}'), so no mutation was needed."
+                )
+            return (
+                f"{object_name} already carried the approved explosive barrel destructible-ready config "
+                f"('{str(mutation.get('new_foundation_stage') or '').strip()}'), so no mutation was needed."
+            )
         if bool(mutation.get("new_component_present")) and str(mutation.get("new_foundation_stage") or "").strip():
             return (
                 f"{object_name} already carried the approved explosive barrel foundation marker "
@@ -4452,6 +4551,29 @@ def _proof_before_after_summary(mutation: dict[str, Any]) -> str:
         return f"{object_name} started at spawn interval {float(previous_spawn_interval):g}. The ending spawn interval is not available in this result."
     previous_foundation_stage = str(mutation.get("previous_foundation_stage") or "").strip()
     new_foundation_stage = str(mutation.get("new_foundation_stage") or "").strip()
+    new_destructible_profile = str(mutation.get("new_destructible_profile") or "").strip()
+    previous_destructible_profile = str(mutation.get("previous_destructible_profile") or "").strip()
+    if bool(mutation.get("new_destructible_ready_configured")):
+        if previous_foundation_stage and new_foundation_stage:
+            profile_suffix = f" using profile {new_destructible_profile}" if new_destructible_profile else ""
+            return (
+                f"{object_name} destructible-ready stage changed from {previous_foundation_stage} "
+                f"to {new_foundation_stage}{profile_suffix}."
+            )
+        if new_destructible_profile:
+            return (
+                f"{object_name} is now configured as explosive barrel destructible-ready profile "
+                f"{new_destructible_profile}. The starting destructible-ready state is not available in this result."
+            )
+        return (
+            f"{object_name} is now marked as explosive barrel destructible-ready stage {new_foundation_stage or 'destructible_ready'}. "
+            "The starting destructible-ready state is not available in this result."
+        )
+    if previous_destructible_profile:
+        return (
+            f"{object_name} started with explosive barrel destructible-ready profile {previous_destructible_profile}. "
+            "The ending destructible-ready state is not available in this result."
+        )
     if previous_foundation_stage and new_foundation_stage:
         return f"{object_name} explosive barrel foundation stage changed from {previous_foundation_stage} to {new_foundation_stage}."
     if new_foundation_stage:
@@ -4519,6 +4641,14 @@ def _proof_change_summary(mutation: dict[str, Any]) -> str:
             f"AI-E changed spawn pressure for {object_name} by adjusting spawn interval "
             f"from {float(previous_spawn_interval):g} to {float(new_spawn_interval):g}."
         )
+    if bool(mutation.get("new_destructible_ready_configured")):
+        profile_name = str(mutation.get("new_destructible_profile") or "").strip()
+        if profile_name:
+            return (
+                f"AI-E configured {object_name} as the approved explosive barrel destructible-ready target "
+                f"using profile '{profile_name}'."
+            )
+        return f"AI-E configured {object_name} as the approved explosive barrel destructible-ready target."
     if bool(mutation.get("new_component_present")) and str(mutation.get("new_foundation_stage") or "").strip():
         return (
             f"AI-E designated {object_name} as the approved explosive barrel foundation target "
@@ -4617,6 +4747,14 @@ def _attempt_skip_reason(details: dict[str, Any]) -> str:
                 f"({float(new_spawn_interval):g} vs requested {float(requested_spawn_interval):g} interval)."
             )
         return f"{object_name} was already {comparator} the desired spawn pressure."
+    if bool(details.get("new_destructible_ready_configured")):
+        profile_name = str(details.get("new_destructible_profile") or "").strip()
+        if profile_name:
+            return (
+                f"{object_name} was already configured as the approved explosive barrel destructible-ready "
+                f"target ('{profile_name}')."
+            )
+        return f"{object_name} was already configured as the approved explosive barrel destructible-ready target."
     if bool(details.get("new_component_present")) and str(details.get("new_foundation_stage") or "").strip():
         return (
             f"{object_name} was already marked as the approved explosive barrel foundation "
