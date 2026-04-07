@@ -9,6 +9,7 @@ from ..providers.base import ProviderReply
 from .capability_models import CapabilityContext, CapabilityEvaluation
 from .confirmation_models import ConfirmationContextSnapshot, PendingConfirmation
 from .execution_models import CapabilityExecutionRequest, CapabilityExecutionResult, ProviderExecutionSnapshot
+from .repo_inspector import RepoInspectorError
 from .telegram_service import TelegramInboundMessage
 
 if TYPE_CHECKING:
@@ -176,6 +177,8 @@ class CapabilityExecutor:
             return self._execute_mode(update=update, snapshot=snapshot)
         if command == "/models":
             return self._execute_models(update=update, snapshot=snapshot)
+        if command == "/repo":
+            return self._execute_repo_status(update=update, snapshot=snapshot, argument=parsed_command.argument)
         if command == "/audit":
             return self._execute_audit(update=update, snapshot=snapshot, argument=parsed_command.argument)
         if command == "/capabilities":
@@ -331,6 +334,92 @@ class CapabilityExecutor:
             mode_used="offline",
         )
 
+    def _execute_repo_status(
+        self,
+        *,
+        update: TelegramInboundMessage,
+        snapshot: ControllerSnapshot,
+        argument: str,
+    ) -> CapabilityExecutionResult:
+        normalized_argument = " ".join(argument.split()).lower()
+        evaluation, context = self._service._evaluate_capability_id(
+            "repo.status.read",
+            snapshot,
+            remember=True,
+        )
+        request = self._build_request(
+            capability_id="repo.status.read",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/repo",
+            parsed_arguments={"view": normalized_argument},
+            context=context,
+            metadata={"argument_summary": "/repo" if not normalized_argument else f"/repo {normalized_argument}"},
+        )
+        if normalized_argument not in {"", "status"}:
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="invalid_repo_command",
+                user_message="Couldn't parse that repo command.\nNext: Use /repo or /repo status.",
+                internal_summary="/repo rejected because the argument was invalid.",
+                retryable=False,
+                command_label="/repo",
+                activity_state="processing_command",
+            )
+        if evaluation.current_availability_state != "allowed":
+            outcome = "blocked"
+            retryable = True
+            if evaluation.current_availability_state == "unavailable":
+                outcome = "unavailable"
+            elif evaluation.current_availability_state == "degraded":
+                outcome = "degraded"
+            return self._result(
+                request,
+                outcome=outcome,
+                reason_code=evaluation.reason_code,
+                user_message="\n".join(
+                    (
+                        "Can't run /repo right now.",
+                        f"Reason: {evaluation.blocking_reason or evaluation.message}",
+                        "Next: Check the configured repository path and current readiness in the operator console.",
+                    )
+                ),
+                internal_summary=f"repo.status.read blocked: {evaluation.reason_code}.",
+                retryable=retryable,
+                degraded=outcome == "degraded",
+                command_label="/repo",
+                activity_state="processing_command",
+            )
+        scope_failure = self._scope_failure_result(request, command_label="/repo")
+        if scope_failure is not None:
+            return scope_failure
+        try:
+            inspection = self._service.inspect_repo_status()
+        except RepoInspectorError as exc:
+            return self._repo_error_result(request=request, error=exc)
+        reply = self._service._build_repo_reply(inspection).reply
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=reply,
+            internal_summary=f"repo.status.read returned {inspection.audit_summary}.",
+            retryable=False,
+            command_label="/repo",
+            activity_state="processing_command",
+            telemetry={
+                "repo_root": inspection.repo_root,
+                "repo_name": inspection.repo_name,
+                "repo_branch": inspection.branch,
+                "repo_status_label": inspection.status_label,
+                "repo_changed_count": inspection.changed_count,
+                "repo_checked_at": inspection.inspected_at,
+                "repo_summary": inspection.audit_summary,
+            },
+        )
+
     def _execute_capabilities(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot) -> CapabilityExecutionResult:
         request, _, _, scope_failure = self._prepare_capability_request(
             capability_id="capabilities.read",
@@ -393,6 +482,55 @@ class CapabilityExecutor:
             retryable=False,
             command_label="/audit",
             activity_state="processing_command",
+        )
+
+    def _repo_error_result(
+        self,
+        *,
+        request: CapabilityExecutionRequest,
+        error: RepoInspectorError,
+    ) -> CapabilityExecutionResult:
+        next_step_map = {
+            "git_not_installed": "Install Git or add it to PATH on this machine.",
+            "repo_not_found": "Update the configured repository root to a valid local path.",
+            "repo_root_not_absolute": "Set the repository root to an absolute path in the controller config.",
+            "repo_root_not_directory": "Point the repository root at a directory, not a file.",
+            "repo_root_invalid": "Check the configured repository root in the controller config.",
+            "repo_root_missing": "Configure a repository root before using /repo.",
+            "not_git_repository": "Point the repository root at a valid Git repository.",
+            "git_command_failed": "Check local Git health for the configured repository, then try again.",
+            "repo_inspection_timeout": "Try /repo again in a moment.",
+        }
+        outcome = "failed"
+        retryable = True
+        if error.code in {
+            "git_not_installed",
+            "repo_not_found",
+            "repo_root_not_absolute",
+            "repo_root_not_directory",
+            "repo_root_invalid",
+            "repo_root_missing",
+            "not_git_repository",
+        }:
+            outcome = "unavailable"
+        elif error.code == "repo_inspection_timeout":
+            outcome = "timed_out"
+        return self._result(
+            request,
+            outcome=outcome,
+            reason_code=error.code,
+            user_message="\n".join(
+                (
+                    "Can't run /repo right now." if outcome != "timed_out" else "Repository check timed out.",
+                    f"Reason: {error.message}",
+                    f"Next: {next_step_map.get(error.code, 'Check the repository configuration and try again.')}",
+                )
+            ),
+            internal_summary=f"repo.status.read failed: {error.code}.",
+            retryable=retryable,
+            command_label="/repo",
+            activity_state="provider_failed" if outcome == "failed" else "processing_command",
+            telemetry={"repo_summary": f"{self._service._repo_display_name()} | {error.code}"},
         )
 
     def _execute_provider_query(

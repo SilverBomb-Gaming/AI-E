@@ -8,7 +8,7 @@ from ..providers.base import ProviderStatus
 from .models import CapabilityAvailabilityState, Mode, Policy, ProviderType, ReadinessState
 from .scope_models import ScopeAccessMode, ScopeType
 
-CapabilityCategory = Literal["operator", "runtime", "provider"]
+CapabilityCategory = Literal["operator", "runtime", "provider", "repository"]
 CapabilityExecutionType = Literal["read", "query"]
 CapabilityProviderDependency = Literal["none", "ollama", "openai", "active_provider"]
 CapabilityNetworkRequirement = Literal["none", "local", "remote", "conditional"]
@@ -53,6 +53,7 @@ class CapabilityManifest:
     scope_allowed_paths: Tuple[str, ...] = ()
     scope_domain_allowlist: Tuple[str, ...] = ()
     scope_repo_root: str = ""
+    scope_uses_configured_root: bool = False
 
     @property
     def description(self) -> str:
@@ -79,6 +80,9 @@ class CapabilityContext:
     safety_status: str
     offline_provider_status: ProviderStatus
     online_provider_status: ProviderStatus
+    repo_root: str = ""
+    repo_root_valid: bool = False
+    repo_message: str = ""
 
 
 @dataclass(frozen=True)

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from datetime import datetime
+from pathlib import Path
 import secrets
 import threading
 import time
@@ -24,6 +25,7 @@ from .models import ControllerSnapshot
 from .profile_store import ControllerConfig, ControllerConfigStore, Mode, Policy, ProviderType
 from .scope_models import ExecutionScope, ScopeValidationResult
 from .scope_validator import ScopeValidator
+from .repo_inspector import RepoInspectionSnapshot, RepoInspector, RepoInspectorError
 from .telegram_service import TelegramApiError, TelegramChannelService, TelegramInboundMessage, mask_telegram_token
 from ..platform.secrets import SecretStore, get_secret_store
 from ..providers import OllamaProviderAdapter, OpenAIProviderAdapter, ProviderReply, ProviderStatus, ProviderType as AdapterProviderType, mask_secret
@@ -31,7 +33,7 @@ from ..runtime.manager import OpenClawRuntimeManager
 from ..runtime.log_sanitizer import sanitize_log_text
 
 
-_OPERATOR_CONSOLE_LABEL = "Windows OpenClaw Operator Console v1.9"
+_OPERATOR_CONSOLE_LABEL = "Windows OpenClaw Operator Console v2.0"
 _ASK_CONCISE_LIMIT = 700
 _ASK_DETAILED_LIMIT = 1500
 _PROVIDER_ASK_COMMANDS = frozenset({"/ask", "/askd"})
@@ -77,6 +79,7 @@ class ControllerService:
         secret_store: SecretStore | None = None,
         provider_adapters: dict[AdapterProviderType, object] | None = None,
         telegram_service: TelegramChannelService | None = None,
+        repo_inspector: RepoInspector | None = None,
     ) -> None:
         self._runtime_manager = runtime_manager or OpenClawRuntimeManager()
         self._config_store = config_store or ControllerConfigStore()
@@ -86,7 +89,9 @@ class ControllerService:
             "openai": OpenAIProviderAdapter(),
         }
         self._telegram_service = telegram_service or TelegramChannelService()
+        self._repo_inspector = repo_inspector or RepoInspector()
         self._config = self._config_store.load()
+        self._normalize_repo_root_config()
         self._runtime_manager.configure(gateway_port=self._config.gateway_port, gateway_bind=self._config.gateway_bind)
         self._provider_status_cache: dict[str, ProviderStatus] = self._load_provider_status_cache(self._config)
         self._telegram_status = self._reconcile_telegram_status(self._config.telegram_status)
@@ -110,6 +115,9 @@ class ControllerService:
         self._audit_store = AuditStore(max_records=_AUDIT_LOG_MAX_RECORDS)
         self._last_capability_evaluation: CapabilityEvaluation | None = None
         self._last_execution_result: CapabilityExecutionResult | None = None
+        self._last_repo_branch = "-"
+        self._last_repo_state = "No repository insight result yet."
+        self._last_repo_checked_at = "-"
         self._confirmation_store = ConfirmationStore(lifetime_seconds=_CONFIRMATION_LIFETIME_SECONDS)
         self._last_confirmation_requested = "No pending confirmation requested yet."
         self._last_confirmation_result = "No confirmation handled yet."
@@ -285,6 +293,10 @@ class ControllerService:
             telegram_last_ask_status=telegram_loop_status.last_ask_status,
             telegram_last_inbound_summary=telegram_loop_status.last_inbound_summary,
             telegram_last_outbound_summary=telegram_loop_status.last_outbound_summary,
+            configured_repo_root=self._config.repo_root or "-",
+            last_repo_branch=self._last_repo_branch,
+            last_repo_status=self._last_repo_state,
+            last_repo_checked_at=self._last_repo_checked_at,
             last_capability_id=self._last_capability_evaluation.capability_id if self._last_capability_evaluation else "-",
             last_capability_state=self._last_capability_evaluation.current_availability_state if self._last_capability_evaluation else "unknown",
             last_capability_message=self._last_capability_evaluation.message if self._last_capability_evaluation else "No capability evaluated yet.",
@@ -628,6 +640,66 @@ class ControllerService:
             return "Always Online policy blocks Offline Mode activation. Choose Online Mode or a different policy."
         return ""
 
+    def _normalize_repo_root_config(self) -> None:
+        raw_value = self._config.repo_root.strip()
+        if not raw_value:
+            normalized = str(Path(__file__).resolve().parents[2])
+        else:
+            try:
+                candidate = Path(raw_value)
+                normalized = str(candidate.resolve(strict=False)) if not candidate.is_absolute() else str(candidate)
+            except OSError:
+                normalized = raw_value
+        if normalized != self._config.repo_root:
+            self._config.repo_root = normalized
+            self._config_store.save(self._config)
+
+    def _repo_configuration_state(self) -> tuple[str, bool, str, str]:
+        raw_value = self._config.repo_root.strip()
+        if not raw_value:
+            return "", False, "Repository root is not configured.", "repo_root_missing"
+        candidate = Path(raw_value)
+        if not candidate.is_absolute():
+            return raw_value, False, "Repository root must be an absolute path.", "repo_root_not_absolute"
+        try:
+            resolved = candidate.resolve(strict=False)
+        except OSError:
+            return raw_value, False, "Repository root could not be resolved.", "repo_root_invalid"
+        if not resolved.exists():
+            return str(resolved), False, "Repository not found at configured path.", "repo_not_found"
+        if not resolved.is_dir():
+            return str(resolved), False, "Repository root is not a directory.", "repo_root_not_directory"
+        return str(resolved), True, f"Repository root ready: {resolved.name}.", "repo_ready"
+
+    def _repo_display_name(self, repo_root: str = "") -> str:
+        candidate = repo_root.strip() or self._config.repo_root.strip()
+        if not candidate:
+            return "Configured Repo"
+        path = Path(candidate)
+        return path.name or candidate
+
+    def inspect_repo_status(self) -> RepoInspectionSnapshot:
+        repo_root, repo_root_valid, repo_message, repo_code = self._repo_configuration_state()
+        if not repo_root_valid:
+            raise RepoInspectorError(repo_code, repo_message)
+        return self._repo_inspector.inspect(repo_root, commit_limit=4)
+
+    def _build_repo_reply(self, inspection: RepoInspectionSnapshot) -> _TelegramResponsePlan:
+        lines = [
+            f"Repo: {inspection.repo_name}",
+            f"Branch: {inspection.branch}",
+            f"Status: {inspection.status_label}",
+        ]
+        if inspection.recent_commits:
+            lines.append("Recent commits:")
+            lines.extend(f"- {commit}" for commit in inspection.recent_commits[:4])
+        else:
+            lines.append("Recent commits: none yet")
+        return _TelegramResponsePlan(
+            reply=chr(10).join(lines),
+            command_label="/repo",
+        )
+
     def _diagnostic_summary_lines(self) -> tuple[str, ...]:
         lines: list[str] = []
         if self._latest_health_report is not None:
@@ -812,7 +884,22 @@ class ControllerService:
     def _remember_execution_result(self, result: CapabilityExecutionResult) -> None:
         self._last_execution_result = result
         self._audit_store.append(self._build_audit_record(result))
+        self._remember_repo_execution_result(result)
         self._last_message = result.internal_summary or self._last_message
+
+    def _remember_repo_execution_result(self, result: CapabilityExecutionResult) -> None:
+        if result.capability_id != "repo.status.read":
+            return
+        repo_branch = str(result.telemetry.get("repo_branch") or "").strip()
+        repo_status = str(result.telemetry.get("repo_status_label") or "").strip()
+        repo_name = str(result.telemetry.get("repo_name") or self._repo_display_name()).strip() or self._repo_display_name()
+        if repo_branch:
+            self._last_repo_branch = repo_branch
+        if repo_status:
+            self._last_repo_state = self._summarize_text(f"{repo_name}: {repo_status}", limit=120)
+        else:
+            self._last_repo_state = self._summarize_text(result.internal_summary, limit=120)
+        self._last_repo_checked_at = result.finished_at or self._now_iso()
 
     @staticmethod
     def _plan_from_execution_result(result: CapabilityExecutionResult) -> _TelegramResponsePlan:
@@ -838,6 +925,7 @@ class ControllerService:
                     "/status - runtime, health, safety, readiness",
                     "/mode - mode, policy, and remote-use gate",
                     "/models - local Ollama models",
+                    "/repo - scoped read-only repo summary",
                     "/capabilities - current capability gate summary",
                     "/audit - recent capability audit entries",
                     "/ask <prompt> - concise provider reply",
@@ -1271,8 +1359,14 @@ class ControllerService:
         argument = parts[1].strip() if len(parts) > 1 else ""
         command = command_token.split("@", 1)[0].lower()
         normalized_text = " ".join(text.split())
-        if command in {"/start", "/help", "/status", "/mode", "/models", "/capabilities", "/audit", "/confirm", "/deny", "/ask", "/askd"}:
+        if command in {"/start", "/help", "/status", "/mode", "/models", "/repo", "/capabilities", "/audit", "/confirm", "/deny", "/ask", "/askd"}:
             return _ParsedTelegramCommand(command_label=command, argument=argument, normalized_text=normalized_text)
+        if command.startswith("/repo"):
+            return _ParsedTelegramCommand(
+                command_label="parse_failure",
+                normalized_text=normalized_text,
+                usage_hint="Use /repo or /repo status.",
+            )
         if command.startswith("/ask"):
             return _ParsedTelegramCommand(
                 command_label="parse_failure",
@@ -1411,6 +1505,7 @@ class ControllerService:
         need_online = need_online or snapshot.mode == "online" or self._config.selected_mode == "online"
         offline_status = self._provider_status_for_mode("offline") if need_offline else self._provider_status_cache.get("ollama") or self._default_provider_status("ollama")
         online_status = self._provider_status_for_mode("online") if need_online else self._provider_status_cache.get("openai") or self._default_provider_status("openai")
+        repo_root, repo_root_valid, repo_message, _ = self._repo_configuration_state()
         return CapabilityContext(
             runtime_state=snapshot.runtime_state,
             readiness_state=snapshot.readiness_state,
@@ -1423,6 +1518,9 @@ class ControllerService:
             safety_status=snapshot.safety_status,
             offline_provider_status=offline_status,
             online_provider_status=online_status,
+            repo_root=repo_root,
+            repo_root_valid=repo_root_valid,
+            repo_message=repo_message,
         )
 
     def _build_capabilities_reply(self, snapshot: ControllerSnapshot) -> _TelegramResponsePlan:
@@ -2090,6 +2188,14 @@ class ControllerService:
                 target_domain=target_domain,
                 domain_allowlist=(target_domain,),
             )
+        if manifest.scope_type == "repository":
+            repo_root = self._config.repo_root.strip() if manifest.scope_uses_configured_root else manifest.scope_repo_root
+            return ExecutionScope(
+                scope_type=manifest.scope_type,
+                access_mode=manifest.access_mode,
+                repo_root=repo_root,
+                target_path=repo_root,
+            )
         return ExecutionScope(
             scope_type=manifest.scope_type,
             access_mode=manifest.access_mode,
@@ -2107,13 +2213,16 @@ class ControllerService:
         if scope.scope_type == "network" and scope.target_domain:
             parts.append(f"target={scope.target_domain}")
         elif scope.scope_type == "repository":
-            parts.append("repo=bounded")
+            parts.append(f"repo={self._repo_display_name(scope.repo_root)}")
         elif scope.scope_type == "filesystem" and scope.target_path:
             parts.append("target=path")
         return " ".join(parts)
 
     def _build_audit_record(self, result: CapabilityExecutionResult) -> AuditRecord:
-        action_summary = str(result.request.metadata.get("argument_summary") or result.command_label)
+        if result.capability_id == "repo.status.read":
+            action_summary = str(result.telemetry.get("repo_summary") or f"repo status for {self._repo_display_name()}")
+        else:
+            action_summary = str(result.request.metadata.get("argument_summary") or result.command_label)
         return AuditRecord(
             audit_id=self._generate_audit_id(),
             request_id=result.request_id,
@@ -2213,6 +2322,8 @@ class ControllerService:
         if warnings:
             return "degraded", " ".join(warnings[:2])
         return "ready", "Runtime, provider, diagnostics, and Telegram are ready for daily use."
+
+
 
 
 

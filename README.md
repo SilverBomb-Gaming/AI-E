@@ -6,7 +6,7 @@ Controlled execution surface for supported projects. AI-E turns a bounded reques
 
 The current active operator-console surface in this repo is the Windows-first OpenClaw controller shell. The known-good checkpoint is:
 
-- Current baseline: `Windows OpenClaw Operator Console v1.9 - Sandbox, Scope & Audit Layer`
+- Current baseline: `Windows OpenClaw Operator Console v2.0 - Read-Only Repo Insight Capability`
 - Health: `Healthy`
 - Security: `Safe`
 - Readiness: `Ready`
@@ -18,7 +18,7 @@ What is now working:
 - offline/online mode selection with policy guardrails preserved
 - trusted health and security diagnostics, including ownership-aware port conflict checks and multi-signal runtime liveness
 - secure Telegram bot validation, connection testing, and polling-loop start/stop controls
-- duplicate-safe Telegram interaction loop with `/start`, `/help`, `/status`, `/mode`, `/models`, `/capabilities`, `/audit`, `/ask <prompt>`, and `/askd <prompt>`
+- duplicate-safe Telegram interaction loop with `/start`, `/help`, `/status`, `/mode`, `/models`, `/repo`, `/capabilities`, `/audit`, `/ask <prompt>`, and `/askd <prompt>`
 - deterministic Telegram command parsing with whitespace-tolerant handling, consistent casing behavior, and short correction replies for malformed commands
 - per-chat provider-ask control with explicit in-flight rejection, bounded provider timeouts, and a narrow provider-ask cooldown to prevent accidental spam
 - centralized capability registry and evaluator that gate command execution through explicit `allowed`, `blocked`, `degraded`, `confirmation_required`, or `unavailable` states
@@ -26,6 +26,7 @@ What is now working:
 - structured execution requests and results that drive Telegram command replies, recent operator summaries, and desktop result visibility with consistent success, blocked, degraded, timed-out, confirmation-aware, and out-of-scope outcomes
 - manifest-backed capability definitions with explicit trust-boundary classification, Telegram exposure rules, startup validation, trust-aware `/capabilities` output, and compact desktop trust summaries
 - manifest-driven scope validation and bounded in-memory audit recording for every capability attempt, including `/audit` summaries and recent scope/audit visibility in the desktop shell
+- the first real external capability, `repo.status.read`, which inspects one configured repository root through fixed read-only git commands and returns a concise Telegram/Desktop summary of branch, clean/dirty state, and recent commits
 
 What a capability manifest means in this project:
 
@@ -36,7 +37,7 @@ What a capability manifest means in this project:
 What scope and sandboxing mean here:
 
 - every execution request now carries a structured scope with `scope_type`, `access_mode`, and optional bounded targets such as allowed paths, repository root, or domain allowlist
-- current user-facing capabilities are still narrow: most operator reads are `internal/read`, while `ask.provider_query` is `network/execute` and restricted to the expected provider targets rather than arbitrary hosts
+- current user-facing capabilities are still narrow: most operator reads are `internal/read`, `repo.status.read` is `repository/read` and bounded to the configured `repo_root`, and `ask.provider_query` is `network/execute` and restricted to the expected provider targets rather than arbitrary hosts
 - scope validation now runs after capability evaluation and confirmation checks but before actual execution, so out-of-scope requests are rejected before provider work starts
 - confirmation does not override scope restrictions, and request-provided scope data cannot widen a manifest's allowlist
 
@@ -73,6 +74,7 @@ Milestone notes:
 - v1.7: `docs/milestones/windows_openclaw_operator_console_v1_7_capability_execution_contracts.md`
 - v1.8: `docs/milestones/windows_openclaw_operator_console_v1_8_capability_manifests_and_trust_boundaries.md`
 - v1.9: `docs/milestones/windows_openclaw_operator_console_v1_9_sandbox_scope_and_audit_layer.md`
+- v2.0: `docs/milestones/windows_openclaw_operator_console_v2_0_read_only_repo_insight_capability.md`
 
 Important guardrails and usage notes:
 
@@ -81,20 +83,21 @@ Important guardrails and usage notes:
 - capability manifests define Telegram exposure, trust boundaries, and scope expectations; registration, evaluation, confirmation, and execution do not guess these rules dynamically
 - `/confirm <id>` approves exactly one pending action; `/deny <id>` rejects it; expired or already-used confirmations cannot be replayed
 - `/audit` is bounded and recent-only; it summarizes capability attempts without exposing secrets or full prompt contents
+- `/repo` is read-only only; it is scoped to the configured repository root, uses fixed git status/log/branch inspection only, and does not allow file browsing, mutation, or arbitrary shell passthrough
 - the controller stays local-first with loopback bind defaults and secret redaction in logs, summaries, Telegram activity, and audit records
 - still intentionally not implemented: automation, scheduling, scraping, RAG, repo mutation, file mutation, multi-channel expansion, or AI-E orchestration behavior
 
 Current next milestone:
 
-- `Windows OpenClaw Operator Console v1.10 - Scoped Capability Introductions`
-- goal: add the first narrow repo/file/web read pilots through the new manifest, scope, confirmation, and audit layers without weakening the trust model
+- `Windows OpenClaw Operator Console v2.1 - Scoped File Read Capability`
+- goal: extend the same manifest, scope, confirmation, execution-contract, and audit stack from repo-level status into tightly bounded read-only file insight without weakening the trust model
 
 Fast operator path:
 
 1. Launch the desktop shell with `python -m app.main`.
 2. Start the runtime and run Health/Security checks.
 3. Validate Telegram, start the Telegram loop, and message the configured bot.
-4. Use `/help`, `/status`, `/mode`, `/models`, `/capabilities`, `/audit`, `/ask hello`, or `/askd hello` from Telegram.
+4. Use `/help`, `/status`, `/mode`, `/models`, `/repo`, `/capabilities`, `/audit`, `/ask hello`, or `/askd hello` from Telegram.
 5. If `/ask` returns a confirmation prompt, reply with `/confirm <id>` to approve that one request or `/deny <id>` to reject it.
 6. If `/capabilities` shows `blocked`, `degraded`, or `unavailable` provider-query state, or `/audit` shows repeated `out_of_scope` results, resolve the noted readiness, provider, or scope issue before retrying.
 7. Run `python -m unittest discover -s tests -v` and `python diagnostics_smoke.py` for the current controller verification pass.
@@ -533,6 +536,8 @@ Use **Help > Demo Checklist...** inside the app to run the current quick walkthr
 6. **F.** Use `Modify and test again` or `Try a variation` to show the next quick iteration.
 
 The dialog resets each time you open it, so the same checklist can be reused before the next demo or local-user handoff.
+
+
 
 
 

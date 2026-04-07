@@ -1,6 +1,8 @@
 """Capability evaluation for deterministic, manifest-driven command gating."""
 from __future__ import annotations
 
+from pathlib import Path
+
 from .capability_models import (
     CapabilityContext,
     CapabilityEvaluation,
@@ -58,7 +60,7 @@ class CapabilityEvaluator:
                 message=f"{manifest.name} is blocked until readiness is restored.",
             )
 
-        if capability_id in {"help.read", "status.read", "mode.read", "capabilities.read"}:
+        if capability_id in {"help.read", "status.read", "mode.read", "audit.read", "capabilities.read"}:
             return self._result(
                 manifest,
                 source=source,
@@ -95,6 +97,26 @@ class CapabilityEvaluator:
                 reason_code="allowed",
                 blocking_reason="",
                 message="Local model discovery is available via Ollama.",
+            )
+
+        if capability_id == "repo.status.read":
+            if not context.repo_root_valid:
+                return self._result(
+                    manifest,
+                    source=source,
+                    availability_state="unavailable",
+                    reason_code="repo_root_invalid",
+                    blocking_reason=context.repo_message or "Repository root is not configured.",
+                    message=context.repo_message or "Repository root is not configured.",
+                )
+            repo_name = Path(context.repo_root).name or context.repo_root
+            return self._result(
+                manifest,
+                source=source,
+                availability_state="allowed",
+                reason_code="allowed",
+                blocking_reason="",
+                message=f"Repository insight is available for {repo_name}.",
             )
 
         if capability_id == "ask.provider_query":

@@ -14,7 +14,7 @@ class ScopeValidator:
 
     def validate(self, request: CapabilityExecutionRequest, manifest: CapabilityManifest) -> ScopeValidationResult:
         scope = request.scope
-        scope_summary = self._scope_summary(scope)
+        scope_summary = self._scope_summary(scope, manifest=manifest)
 
         if scope.scope_type != manifest.scope_type:
             return ScopeValidationResult(
@@ -94,7 +94,15 @@ class ScopeValidator:
                 message="This capability is missing a repository root.",
                 scope_summary=scope_summary,
             )
-        repo_root_path = Path(repo_root).resolve()
+        repo_root_path = Path(repo_root)
+        if not repo_root_path.is_absolute():
+            return ScopeValidationResult(
+                allowed=False,
+                reason_code="repo_root_not_absolute",
+                message="Repository scope requires an absolute repo root.",
+                scope_summary=scope_summary,
+            )
+        repo_root_path = repo_root_path.resolve()
         target_candidate = scope.target_path or scope.repo_root
         if not target_candidate:
             return ScopeValidationResult(
@@ -149,13 +157,25 @@ class ScopeValidator:
             return (parsed.hostname or "").lower()
         return candidate.lower()
 
+    @staticmethod
+    def _repo_name(value: str) -> str:
+        candidate = value.strip()
+        if not candidate:
+            return "configured"
+        path = Path(candidate)
+        name = path.name or candidate
+        return name
+
     @classmethod
-    def _scope_summary(cls, scope) -> str:
+    def _scope_summary(cls, scope, *, manifest: CapabilityManifest) -> str:
         parts = [f"{scope.scope_type}/{scope.access_mode}"]
         if scope.scope_type == "network" and scope.target_domain:
             parts.append(f"target={cls._normalize_domain(scope.target_domain) or 'configured'}")
-        elif scope.scope_type in {"filesystem", "repository"} and scope.target_path:
+        elif scope.scope_type == "filesystem" and scope.target_path:
             parts.append("target=path")
-        elif scope.scope_type == "repository" and scope.repo_root:
-            parts.append("repo=bounded")
+        elif scope.scope_type == "repository":
+            repo_root = manifest.scope_repo_root or scope.repo_root
+            parts.append(f"repo={cls._repo_name(repo_root)}")
+            if scope.target_path:
+                parts.append("target=path")
         return " ".join(parts)

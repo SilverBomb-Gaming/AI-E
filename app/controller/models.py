@@ -65,6 +65,10 @@ class ControllerSnapshot:
     telegram_last_ask_status: str
     telegram_last_inbound_summary: str
     telegram_last_outbound_summary: str
+    configured_repo_root: str
+    last_repo_branch: str
+    last_repo_status: str
+    last_repo_checked_at: str
     last_capability_id: str
     last_capability_state: CapabilityAvailabilityState
     last_capability_message: str

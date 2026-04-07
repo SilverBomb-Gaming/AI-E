@@ -15,6 +15,7 @@ class ControllerConfigStoreTests(unittest.TestCase):
             store = ControllerConfigStore(config_path=config_path)
             config = store.load()
             self.assertEqual(config.current_mode, "offline")
+            self.assertTrue(Path(config.repo_root).is_absolute())
 
             updated = replace(
                 config,
@@ -23,6 +24,7 @@ class ControllerConfigStoreTests(unittest.TestCase):
                 selected_provider="openai",
                 policy="always_online",
                 preferred_ollama_model="qwen2.5-coder:7b",
+                repo_root=str((Path(tmp) / "repo-root").resolve()),
                 openai_key_masked="sk-abc...1234",
                 openai_has_secret=True,
             )
@@ -31,6 +33,7 @@ class ControllerConfigStoreTests(unittest.TestCase):
             self.assertEqual(reloaded.current_mode, "online")
             self.assertEqual(reloaded.selected_provider, "openai")
             self.assertEqual(reloaded.policy, "always_online")
+            self.assertEqual(reloaded.repo_root, str((Path(tmp) / "repo-root").resolve()))
             self.assertEqual(reloaded.openai_key_masked, "sk-abc...1234")
 
 
