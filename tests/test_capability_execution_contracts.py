@@ -244,6 +244,54 @@ class CapabilityExecutionContractTests(unittest.TestCase):
             self.assertEqual(len(result.telemetry["executed_capability_ids"]), 3)
             self.assertEqual(result.telemetry["plan_bridge_state"]["task_group_progress"][0]["status"], "completed")
 
+    def test_chat_new_idea_returns_structured_routed_result(self) -> None:
+        update = TelegramInboundMessage(
+            update_id=1027,
+            chat_id="chat-1",
+            text="/chat Build me a landing page for BABYLON with wishlist CTA and email signup.",
+            sender_label="@tester",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            telegram_service = _FakeTelegramService(update_batches=[(update,)])
+            service, _, _, _, ollama, openai = self._make_service(tmp_dir=tmp, telegram_service=telegram_service)
+            _, reply = self._run_single_update(service, telegram_service)
+            result = self._last_result(service)
+            self.assertEqual(ollama.ask_calls, 0)
+            self.assertEqual(openai.ask_calls, 0)
+            self.assertEqual(result.capability_id, "chat.orchestrate.read")
+            self.assertEqual(result.outcome, "success")
+            self.assertEqual(result.user_message, reply)
+            self.assertIn("orchestration_result", result.telemetry)
+            self.assertIn("orchestration_context", result.telemetry)
+            self.assertEqual(result.telemetry["orchestration_result"]["detected_mode"], "new_intent")
+            self.assertEqual(result.telemetry["orchestration_result"]["routed_capability"], "intent.translate.read")
+            self.assertEqual(result.telemetry["routed_capability_id"], "intent.translate.read")
+
+    def test_chat_approval_request_returns_structured_boundary_result(self) -> None:
+        updates = (
+            TelegramInboundMessage(update_id=1028, chat_id="chat-1", text="/translate Build me a landing page for BABYLON with wishlist CTA and email signup.", sender_label="@tester"),
+            TelegramInboundMessage(update_id=1029, chat_id="chat-1", text="/refine one-page site, dark style, deploy to Vercel, use React, use Mailchimp", sender_label="@tester"),
+            TelegramInboundMessage(update_id=1030, chat_id="chat-1", text="/planbuild", sender_label="@tester"),
+            TelegramInboundMessage(update_id=1031, chat_id="chat-1", text="/planstep", sender_label="@tester"),
+            TelegramInboundMessage(update_id=1032, chat_id="chat-1", text="/chat approve it", sender_label="@tester"),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            telegram_service = _FakeTelegramService(update_batches=[updates])
+            service, _, _, _, ollama, openai = self._make_service(tmp_dir=tmp, telegram_service=telegram_service)
+            service.start_telegram_loop()
+            self.assertTrue(_wait_until(lambda: len(telegram_service.sent_messages) == 5, timeout=2.0))
+            service.stop_telegram_loop()
+            result = self._last_result(service)
+            self.assertEqual(ollama.ask_calls, 0)
+            self.assertEqual(openai.ask_calls, 0)
+            self.assertEqual(result.capability_id, "chat.orchestrate.read")
+            self.assertEqual(result.outcome, "success")
+            self.assertEqual(result.outcome_reason_code, "explicit_approval_required")
+            self.assertFalse(result.confirmation_used)
+            self.assertEqual(result.telemetry["orchestration_result"]["detected_mode"], "approve_step_request")
+            self.assertEqual(result.telemetry["orchestration_result"]["routed_action"], "/planapprove")
+            self.assertIn("Approval stays explicit", result.user_message)
+
     def test_models_read_returns_structured_degraded_result_when_ollama_unavailable(self) -> None:
         update = TelegramInboundMessage(update_id=102, chat_id="chat-1", text="/models", sender_label="@tester")
         ollama = _FakeOllamaAdapter(

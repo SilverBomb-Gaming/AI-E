@@ -38,6 +38,7 @@ from .intent_formatter import IntentFormatter
 from .intent_store import IntentStore
 from .intent_translator import IntentTranslator
 from .diagnostics import ControllerDiagnosticsService
+from .chat_orchestrator import ChatOrchestrator
 from .models import ControllerSnapshot
 from .profile_store import ControllerConfig, ControllerConfigStore, Mode, Policy, ProviderType
 from .scope_models import ExecutionScope, ScopeValidationResult
@@ -142,6 +143,7 @@ class ControllerService:
         self._plan_bridge_formatter = PlanBridgeFormatter(self._plan_bridge)
         self._autonomy_bundle = AutonomyBundle(self._plan_bridge)
         self._autonomy_bundle_formatter = AutonomyBundleFormatter()
+        self._chat_orchestrator = ChatOrchestrator()
         self._config = self._config_store.load()
         self._normalize_repo_root_config()
         self._normalize_file_roots_config()
@@ -1473,7 +1475,7 @@ class ControllerService:
             reply=chr(10).join(
                 (
                     "Operator commands",
-                    "Core: /translate|/refine|/planbuild|/planstep|/planstepbundle",
+                    "Core: /chat /translate|/refine|/planbuild|/planstep|/planstepbundle",
                     "Read: /repo|/file /planview|/planstatus /bundlestatus /contexts",
                     "Run: /patchfile|/writefile /run|/test /planapprove|/bundleapprove",
                     "Reset: /translateclear|/planclear /planresetstep /bundlecancel|/bundlereset",
@@ -2024,6 +2026,7 @@ class ControllerService:
             "/help",
             "/status",
             "/lastaction",
+            "/chat",
             "/translate",
             "/refine",
             "/translateview",
@@ -2114,6 +2117,12 @@ class ControllerService:
                 command_label="parse_failure",
                 normalized_text=normalized_text,
                 usage_hint="Use /translate <idea or request>.",
+            )
+        if command.startswith("/chat"):
+            return _ParsedTelegramCommand(
+                command_label="parse_failure",
+                normalized_text=normalized_text,
+                usage_hint="Use /chat <message>.",
             )
         if command.startswith("/refine"):
             return _ParsedTelegramCommand(

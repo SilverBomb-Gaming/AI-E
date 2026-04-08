@@ -345,6 +345,7 @@ class TelegramCommandTests(unittest.TestCase):
             lines = reply.splitlines()
             self.assertLessEqual(len(reply), 500)
             self.assertEqual(lines[0], "Operator commands")
+            self.assertIn("/chat", lines[1])
             self.assertIn("/translate", lines[1])
             self.assertIn("/refine", lines[1])
             self.assertIn("/planbuild", lines[1])
@@ -785,6 +786,144 @@ class TelegramCommandTests(unittest.TestCase):
             self.assertIn("cancelled", telegram_service.sent_messages[5][1])
             self.assertIn("Bundle reset.", telegram_service.sent_messages[6][1])
             self.assertEqual(telegram_service.sent_messages[7][1], "No active bundle.\nNext: Use /planstepbundle after /planbuild.")
+
+    def test_chat_new_product_idea_routes_to_translation_flow(self) -> None:
+        update = TelegramInboundMessage(
+            update_id=272,
+            chat_id="chat-1",
+            text="/chat I have an idea for a local desktop milestone tracker that exports CSV.",
+            sender_label="@tester",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            telegram_service = _FakeTelegramService(update_batches=[(update,)])
+            service, _, _, _, ollama, openai = self._make_service(tmp_dir=tmp, telegram_service=telegram_service)
+            _, reply = self._run_single_update(service, telegram_service)
+            self.assertEqual(ollama.ask_calls, 0)
+            self.assertEqual(openai.ask_calls, 0)
+            self.assertIn("Translation", reply)
+            self.assertIn("Session: TR-", reply)
+            self.assertLessEqual(len(reply), 700)
+
+    def test_chat_active_draft_clarification_routes_to_refinement_flow(self) -> None:
+        updates = (
+            TelegramInboundMessage(update_id=273, chat_id="chat-1", text="/chat I have an idea for a local desktop milestone tracker.", sender_label="@tester"),
+            TelegramInboundMessage(update_id=274, chat_id="chat-1", text="/chat Use PySide6 and CSV export.", sender_label="@tester"),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            telegram_service = _FakeTelegramService(update_batches=[updates])
+            service, _, _, _, ollama, openai = self._make_service(tmp_dir=tmp, telegram_service=telegram_service)
+            service.start_telegram_loop()
+            self.assertTrue(_wait_until(lambda: len(telegram_service.sent_messages) == 2, timeout=2.0))
+            service.stop_telegram_loop()
+            reply = telegram_service.sent_messages[-1][1]
+            self.assertEqual(ollama.ask_calls, 0)
+            self.assertEqual(openai.ask_calls, 0)
+            self.assertIn("Translation refined", reply)
+
+    def test_chat_whats_next_with_active_plan_routes_to_planstep(self) -> None:
+        updates = (
+            TelegramInboundMessage(update_id=275, chat_id="chat-1", text="/chat Build me a landing page for BABYLON with wishlist CTA and email signup.", sender_label="@tester"),
+            TelegramInboundMessage(update_id=276, chat_id="chat-1", text="/chat one-page site, dark style, deploy to Vercel, use React, use Mailchimp", sender_label="@tester"),
+            TelegramInboundMessage(update_id=277, chat_id="chat-1", text="/planbuild", sender_label="@tester"),
+            TelegramInboundMessage(update_id=278, chat_id="chat-1", text="/chat what's next?", sender_label="@tester"),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            telegram_service = _FakeTelegramService(update_batches=[updates])
+            service, _, _, _, ollama, openai = self._make_service(tmp_dir=tmp, telegram_service=telegram_service)
+            service.start_telegram_loop()
+            self.assertTrue(_wait_until(lambda: len(telegram_service.sent_messages) == 4, timeout=2.0))
+            service.stop_telegram_loop()
+            reply = telegram_service.sent_messages[-1][1]
+            self.assertEqual(ollama.ask_calls, 0)
+            self.assertEqual(openai.ask_calls, 0)
+            self.assertIn("Plan step", reply)
+            self.assertIn("Approve: /planapprove", reply)
+
+    def test_chat_bundle_request_routes_to_bundle_proposal(self) -> None:
+        updates = (
+            TelegramInboundMessage(update_id=279, chat_id="chat-1", text="/chat Build me a landing page for BABYLON with wishlist CTA and email signup.", sender_label="@tester"),
+            TelegramInboundMessage(update_id=280, chat_id="chat-1", text="/chat one-page site, dark style, deploy to Vercel, use React, use Mailchimp", sender_label="@tester"),
+            TelegramInboundMessage(update_id=281, chat_id="chat-1", text="/planbuild", sender_label="@tester"),
+            TelegramInboundMessage(update_id=282, chat_id="chat-1", text="/chat can we do the next 3 safe steps?", sender_label="@tester"),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            telegram_service = _FakeTelegramService(update_batches=[updates])
+            service, _, _, _, _, _ = self._make_service(tmp_dir=tmp, telegram_service=telegram_service)
+            service.start_telegram_loop()
+            self.assertTrue(_wait_until(lambda: len(telegram_service.sent_messages) == 4, timeout=2.0))
+            service.stop_telegram_loop()
+            reply = telegram_service.sent_messages[-1][1]
+            self.assertIn("Bundle proposal", reply)
+            self.assertIn("Approve: /bundleapprove", reply)
+
+    def test_chat_status_question_returns_project_state_summary(self) -> None:
+        updates = (
+            TelegramInboundMessage(update_id=283, chat_id="chat-1", text="/chat Build me a landing page for BABYLON", sender_label="@tester"),
+            TelegramInboundMessage(update_id=284, chat_id="chat-1", text="/planbuild", sender_label="@tester"),
+            TelegramInboundMessage(update_id=285, chat_id="chat-1", text="/chat where are we?", sender_label="@tester"),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            telegram_service = _FakeTelegramService(update_batches=[updates])
+            service, _, _, _, _, _ = self._make_service(tmp_dir=tmp, telegram_service=telegram_service)
+            service.start_telegram_loop()
+            self.assertTrue(_wait_until(lambda: len(telegram_service.sent_messages) == 3, timeout=2.0))
+            service.stop_telegram_loop()
+            reply = telegram_service.sent_messages[-1][1]
+            self.assertIn("Plan status", reply)
+
+    def test_chat_ambiguous_input_asks_for_clarification(self) -> None:
+        update = TelegramInboundMessage(update_id=286, chat_id="chat-1", text="/chat maybe", sender_label="@tester")
+        with tempfile.TemporaryDirectory() as tmp:
+            telegram_service = _FakeTelegramService(update_batches=[(update,)])
+            service, _, _, _, _, _ = self._make_service(tmp_dir=tmp, telegram_service=telegram_service)
+            _, reply = self._run_single_update(service, telegram_service)
+            self.assertIn("too ambiguous", reply)
+            self.assertIn("Do you want to start a new idea", reply)
+            self.assertLessEqual(len(reply), 260)
+
+    def test_chat_go_ahead_with_next_step_proposes_without_executing(self) -> None:
+        updates = (
+            TelegramInboundMessage(update_id=287, chat_id="chat-1", text="/chat Build me a landing page for BABYLON with wishlist CTA and email signup.", sender_label="@tester"),
+            TelegramInboundMessage(update_id=288, chat_id="chat-1", text="/chat one-page site, dark style, deploy to Vercel, use React, use Mailchimp", sender_label="@tester"),
+            TelegramInboundMessage(update_id=289, chat_id="chat-1", text="/planbuild", sender_label="@tester"),
+            TelegramInboundMessage(update_id=290, chat_id="chat-1", text="/chat go ahead with the next step", sender_label="@tester"),
+            TelegramInboundMessage(update_id=291, chat_id="chat-1", text="/planstatus", sender_label="@tester"),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            telegram_service = _FakeTelegramService(update_batches=[updates])
+            service, _, _, _, _, _ = self._make_service(tmp_dir=tmp, telegram_service=telegram_service)
+            service.start_telegram_loop()
+            self.assertTrue(_wait_until(lambda: len(telegram_service.sent_messages) == 5, timeout=2.0))
+            service.stop_telegram_loop()
+            chat_reply = telegram_service.sent_messages[3][1]
+            status_reply = telegram_service.sent_messages[4][1]
+            self.assertIn("Plan step", chat_reply)
+            self.assertIn("Approve: /planapprove", chat_reply)
+            self.assertIn("Completed: 0", status_reply)
+            self.assertIn("In progress: 1", status_reply)
+            self.assertNotIn("Completed: 1", status_reply)
+
+    def test_chat_approve_request_keeps_explicit_boundary(self) -> None:
+        updates = (
+            TelegramInboundMessage(update_id=292, chat_id="chat-1", text="/chat Build me a landing page for BABYLON with wishlist CTA and email signup.", sender_label="@tester"),
+            TelegramInboundMessage(update_id=293, chat_id="chat-1", text="/chat one-page site, dark style, deploy to Vercel, use React, use Mailchimp", sender_label="@tester"),
+            TelegramInboundMessage(update_id=294, chat_id="chat-1", text="/planbuild", sender_label="@tester"),
+            TelegramInboundMessage(update_id=295, chat_id="chat-1", text="/planstep", sender_label="@tester"),
+            TelegramInboundMessage(update_id=296, chat_id="chat-1", text="/chat approve it", sender_label="@tester"),
+            TelegramInboundMessage(update_id=297, chat_id="chat-1", text="/planstatus", sender_label="@tester"),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            telegram_service = _FakeTelegramService(update_batches=[updates])
+            service, _, _, _, _, _ = self._make_service(tmp_dir=tmp, telegram_service=telegram_service)
+            service.start_telegram_loop()
+            self.assertTrue(_wait_until(lambda: len(telegram_service.sent_messages) == 6, timeout=2.0))
+            service.stop_telegram_loop()
+            chat_reply = telegram_service.sent_messages[4][1]
+            status_reply = telegram_service.sent_messages[5][1]
+            self.assertIn("Approval stays explicit", chat_reply)
+            self.assertIn("/planapprove", chat_reply)
+            self.assertNotIn("Plan approval", chat_reply)
+            self.assertIn("Completed: 0", status_reply)
 
     def test_mode_command_reports_confirmation_gated_remote_use(self) -> None:
         update = TelegramInboundMessage(update_id=3, chat_id="chat-1", text="/mode", sender_label="@tester")

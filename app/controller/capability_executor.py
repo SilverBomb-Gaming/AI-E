@@ -191,6 +191,8 @@ class CapabilityExecutor:
             return self._execute_status(update=update, snapshot=snapshot)
         if command == "/lastaction":
             return self._execute_last_action(update=update, snapshot=snapshot)
+        if command == "/chat":
+            return self._execute_chat(update=update, snapshot=snapshot, argument=parsed_command.argument)
         if command == "/translate":
             return self._execute_translate(update=update, snapshot=snapshot, argument=parsed_command.argument)
         if command == "/refine":
@@ -460,6 +462,113 @@ class CapabilityExecutor:
             },
         )
 
+    def _execute_chat(
+        self,
+        *,
+        update: TelegramInboundMessage,
+        snapshot: ControllerSnapshot,
+        argument: str,
+    ) -> CapabilityExecutionResult:
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="chat.orchestrate.read",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/chat",
+            parsed_arguments={"message": argument},
+            metadata={"argument_summary": "/chat [message hidden]"},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        prompt = " ".join(argument.split())
+        if not prompt:
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="missing_chat_message",
+                user_message="Couldn't route that chat request.\nReason: No conversational message was provided.\nNext: Use /chat <message>.",
+                internal_summary="chat.orchestrate.read rejected because no /chat message was provided.",
+                retryable=False,
+                command_label="/chat",
+                activity_state="processing_command",
+            )
+        session = self._service._intent_store.get_active(chat_id=update.chat_id)
+        plan = self._service._build_plan_store.get_active(chat_id=update.chat_id)
+        bridge_state = self._service._plan_bridge_store.get_active(chat_id=update.chat_id)
+        bundle_state = self._service._autonomy_bundle_store.get_active(chat_id=update.chat_id)
+        orchestration_context = self._service._chat_orchestrator.build_context(
+            snapshot=snapshot,
+            session=session,
+            plan=plan,
+            bridge_state=bridge_state,
+            bundle_state=bundle_state,
+        )
+        orchestration = self._service._chat_orchestrator.orchestrate(
+            prompt,
+            orchestration_id=self._generate_chat_orchestration_id(),
+            chat_id=update.chat_id,
+            context=orchestration_context,
+        )
+        if orchestration.detected_mode in {"unknown", "approve_step_request", "approve_bundle_request"}:
+            lines = [orchestration.user_visible_summary]
+            lines.extend(orchestration.follow_up_questions)
+            return self._result(
+                request,
+                outcome="success",
+                reason_code=(
+                    "needs_clarification"
+                    if orchestration.detected_mode == "unknown"
+                    else "explicit_approval_required"
+                ),
+                user_message="\n".join(lines),
+                internal_summary=(
+                    f"chat.orchestrate.read classified /chat as {orchestration.detected_mode} and held the explicit approval boundary."
+                ),
+                retryable=False,
+                command_label="/chat",
+                activity_state="processing_command",
+                telemetry={
+                    "orchestration_context": orchestration_context.to_payload(),
+                    "orchestration_result": orchestration.to_payload(),
+                },
+            )
+        inner_result = self._dispatch_chat_routed_action(
+            update=update,
+            snapshot=snapshot,
+            routed_action=orchestration.routed_action,
+            message=prompt,
+        )
+        return self._result(
+            request,
+            outcome=inner_result.outcome,
+            reason_code=inner_result.outcome_reason_code,
+            user_message=inner_result.user_message,
+            internal_summary=(
+                f"chat.orchestrate.read routed /chat to {orchestration.routed_action} ({orchestration.detected_mode}); "
+                f"inner outcome={inner_result.outcome}."
+            ),
+            retryable=inner_result.retryable,
+            command_label="/chat",
+            activity_state="processing_command",
+            degraded=inner_result.degraded,
+            provider_used=inner_result.provider_used,
+            mode_used=inner_result.mode_used,
+            confirmation_used=inner_result.confirmation_used,
+            telemetry={
+                "orchestration_context": orchestration_context.to_payload(),
+                "orchestration_result": orchestration.to_payload(),
+                "routed_capability_id": inner_result.capability_id,
+                "routed_command_label": orchestration.routed_action,
+                "inner_result": {
+                    "capability_id": inner_result.capability_id,
+                    "outcome": inner_result.outcome,
+                    "reason_code": inner_result.outcome_reason_code,
+                    "summary": inner_result.internal_summary,
+                },
+                "routed_telemetry": dict(inner_result.telemetry),
+            },
+        )
+
     def _execute_refine(
         self,
         *,
@@ -621,6 +730,10 @@ class CapabilityExecutor:
     @staticmethod
     def _generate_translation_session_id() -> str:
         return f"TR-{secrets.token_hex(3).upper()}"
+
+    @staticmethod
+    def _generate_chat_orchestration_id() -> str:
+        return f"CH-{secrets.token_hex(3).upper()}"
 
     def _execute_plan_build(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot) -> CapabilityExecutionResult:
         request, _, _, scope_failure = self._prepare_capability_request(
@@ -1398,6 +1511,55 @@ class CapabilityExecutor:
             internal_summary=f"Unsupported plan proposal target: {proposal.target_capability_id}.",
             retryable=False,
             command_label="/planapprove",
+            activity_state="processing_command",
+        )
+
+    def _dispatch_chat_routed_action(
+        self,
+        *,
+        update: TelegramInboundMessage,
+        snapshot: ControllerSnapshot,
+        routed_action: str,
+        message: str,
+    ) -> CapabilityExecutionResult:
+        if routed_action == "/translate":
+            return self._execute_translate(update=update, snapshot=snapshot, argument=message)
+        if routed_action == "/refine":
+            return self._execute_refine(update=update, snapshot=snapshot, argument=message)
+        if routed_action == "/translateview":
+            return self._execute_translate_view(update=update, snapshot=snapshot)
+        if routed_action == "/planbuild":
+            return self._execute_plan_build(update=update, snapshot=snapshot)
+        if routed_action == "/planview":
+            return self._execute_plan_view(update=update, snapshot=snapshot)
+        if routed_action == "/planstep":
+            return self._execute_plan_step(update=update, snapshot=snapshot)
+        if routed_action == "/planstepbundle":
+            return self._execute_plan_step_bundle(update=update, snapshot=snapshot)
+        if routed_action == "/planstatus":
+            return self._execute_plan_status(update=update, snapshot=snapshot)
+        if routed_action == "/bundlestatus":
+            return self._execute_bundle_status(update=update, snapshot=snapshot)
+        if routed_action == "/lastaction":
+            return self._execute_last_action(update=update, snapshot=snapshot)
+        if routed_action == "/status":
+            return self._execute_status(update=update, snapshot=snapshot)
+        request = self._build_request(
+            capability_id="chat.orchestrate.read",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/chat",
+            parsed_arguments={"message": message, "routed_action": routed_action},
+        )
+        return self._result(
+            request,
+            outcome="failed",
+            reason_code="unsupported_chat_route",
+            user_message="Couldn't complete that chat route.\nReason: The requested orchestration route is not supported.",
+            internal_summary=f"Unsupported /chat route: {routed_action or 'empty'}.",
+            retryable=False,
+            command_label="/chat",
             activity_state="processing_command",
         )
 

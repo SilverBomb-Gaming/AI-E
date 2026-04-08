@@ -64,6 +64,7 @@ class CapabilityEvaluator:
             "help.read",
             "status.read",
             "action.last.read",
+            "chat.orchestrate.read",
             "intent.translate.read",
             "intent.refine.read",
             "intent.view.read",
