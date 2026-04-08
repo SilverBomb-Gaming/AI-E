@@ -189,6 +189,8 @@ class CapabilityExecutor:
             return self._execute_help(update=update, snapshot=snapshot)
         if command == "/status":
             return self._execute_status(update=update, snapshot=snapshot)
+        if command == "/lastaction":
+            return self._execute_last_action(update=update, snapshot=snapshot)
         if command == "/mode":
             return self._execute_mode(update=update, snapshot=snapshot)
         if command == "/models":
@@ -330,6 +332,29 @@ class CapabilityExecutor:
             internal_summary="status.read returned runtime, health, and readiness state.",
             retryable=False,
             command_label="/status",
+            activity_state="processing_command",
+        )
+
+    def _execute_last_action(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot) -> CapabilityExecutionResult:
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="action.last.read",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/lastaction",
+            parsed_arguments={},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        reply = self._service._build_last_action_reply(chat_id=update.chat_id).reply
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=reply,
+            internal_summary="action.last.read returned the latest operator loop action summary.",
+            retryable=False,
+            command_label="/lastaction",
             activity_state="processing_command",
         )
 

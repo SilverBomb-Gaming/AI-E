@@ -6,7 +6,7 @@ Controlled execution surface for supported projects. AI-E turns a bounded reques
 
 The current active operator-console surface in this repo is the Windows-first OpenClaw controller shell. The known-good checkpoint is:
 
-- Current baseline: `Windows OpenClaw Operator Console v2.9 - Controlled Execution Layer`
+- Current baseline: `Windows OpenClaw Operator Console v3.0 - Operator Dev Loop Stabilization`
 - Health: `Healthy`
 - Security: `Safe`
 - Readiness: `Ready`
@@ -18,7 +18,7 @@ What is now working:
 - offline/online mode selection with policy guardrails preserved
 - trusted health and security diagnostics, including ownership-aware port conflict checks and multi-signal runtime liveness
 - secure Telegram bot validation, connection testing, and polling-loop start/stop controls
-- duplicate-safe Telegram interaction loop with `/start`, `/help`, `/status`, `/mode`, `/models`, `/repo`, `/file <path>`, `/patchfile <path>`, `/writefile <path>`, `/run <command>`, `/test [target]`, `/web <url>`, `/contexts`, `/clearcontext`, `/capabilities`, `/ask <prompt>`, `/askd <prompt>`, `/asklast <prompt>`, `/askctx <id> <prompt>`, `/explainrepo [path]`, `/explainfile <path>`, `/summarizeweb <url>`, `/workflows`, `/workflowstatus [id]`, and `/cancelworkflow [id]`
+- duplicate-safe Telegram interaction loop with `/start`, `/help`, `/status`, `/mode`, `/models`, `/repo`, `/file <path>`, `/patchfile <path>`, `/writefile <path>`, `/lastaction`, `/run <command>`, `/test [target]`, `/web <url>`, `/contexts`, `/clearcontext`, `/capabilities`, `/ask <prompt>`, `/askd <prompt>`, `/asklast <prompt>`, `/askctx <id> <prompt>`, `/explainrepo [path]`, `/explainfile <path>`, `/summarizeweb <url>`, `/workflows`, `/workflowstatus [id]`, and `/cancelworkflow [id]`
 - deterministic Telegram command parsing with whitespace-tolerant handling, consistent casing behavior, and short correction replies for malformed commands
 - per-chat provider-ask control with explicit in-flight rejection, bounded provider timeouts, and a narrow provider-ask cooldown to prevent accidental spam
 - centralized capability registry and evaluator that gate command execution through explicit `allowed`, `blocked`, `degraded`, `confirmation_required`, or `unavailable` states
@@ -28,9 +28,11 @@ What is now working:
 - explicit repository, file, and web read-only capability surfaces that preserve scope enforcement, trust labels, and auditability across `/repo`, `/file`, and `/web`
 - controlled file mutation through confirmation-gated `/patchfile` and `/writefile`, with scoped existing-file writes only, bounded text formats, stale-base rejection, and audit summaries that stay Telegram-readable
 - controlled local execution through confirmation-gated `/run` and `/test`, with repository-root scope enforcement, blocked shell operators, bounded Python/test command allowlists, deterministic exact-once confirmation handling, timeout enforcement, and concise execution summaries
+- explicit operator loop continuity through `/lastaction`, which preserves the latest meaningful inspect/edit/run action without being overwritten by passive status or audit reads
 - bounded explicit context reuse with Option A semantics: visible recent contexts, stale contexts allowed with warning, expired contexts visible but blocked from reuse, and no hidden carryover across chats or restarts
 - explicit bounded workflow composition that chains existing safe capabilities into short operator-visible sequences without adding autonomy, background planning, or mutation powers
 - workflow reliability hardening with bounded workflow retention, deterministic expiry, explicit cancel/resume semantics, and operator-visible workflow inspection replies
+- concise audit summaries that now keep execution exit codes and output summaries visible enough to follow edit-to-test sequences from Telegram
 
 What the v2.7 workflow layer means in this project:
 
@@ -101,6 +103,7 @@ Milestone notes:
 - v2.7: `docs/milestones/windows_openclaw_operator_console_v2_7_workflow_reliability_resume_and_operator_transparency.md`
 - v2.8: `docs/milestones/windows_openclaw_operator_console_v2_8_controlled_file_mutation_patch_first.md`
 - v2.9: `docs/milestones/windows_openclaw_operator_console_v2_9_controlled_execution_layer.md`
+- v3.0: `docs/milestones/windows_openclaw_operator_console_v3_0_operator_dev_loop_stabilization.md`
 
 Important guardrails and usage notes:
 
@@ -114,15 +117,15 @@ Important guardrails and usage notes:
 
 Current active checkpoint:
 
-- `Windows OpenClaw Operator Console v2.9 - Controlled Execution Layer`
-- goal: add narrowly scoped, confirmation-gated `/run` and `/test` execution without bypassing evaluator, scope, confirmation, execution, or audit controls
+- `Windows OpenClaw Operator Console v3.0 - Operator Dev Loop Stabilization`
+- goal: prove the explicit inspect -> patch -> confirm -> run/test -> inspect-result loop stays deterministic, concise, and non-autonomous
 
 Fast operator path:
 
 1. Launch the desktop shell with `python -m app.main`.
 2. Start the runtime and run Health/Security checks.
 3. Validate Telegram, start the Telegram loop, and message the configured bot.
-4. Use `/help`, `/status`, `/mode`, `/repo`, `/file <path>`, `/patchfile <path>`, `/writefile <path>`, `/run <command>`, `/test [target]`, `/web <url>`, `/explainrepo [path]`, `/explainfile <path>`, `/summarizeweb <url>`, `/workflows`, `/workflowstatus [id]`, `/contexts`, `/capabilities`, `/ask hello`, or `/askd hello` from Telegram.
+4. Use `/help`, `/status`, `/mode`, `/repo`, `/file <path>`, `/patchfile <path>`, `/writefile <path>`, `/lastaction`, `/run <command>`, `/test [target]`, `/web <url>`, `/explainrepo [path]`, `/explainfile <path>`, `/summarizeweb <url>`, `/workflows`, `/workflowstatus [id]`, `/contexts`, `/capabilities`, `/ask hello`, or `/askd hello` from Telegram.
 5. If `/ask`, `/web`, or a workflow step returns a confirmation prompt, reply with `/confirm <id>` to approve that one request, `/deny <id>` to reject it, or `/cancelworkflow [id]` to cancel the active workflow instead of resuming it.
 6. If `/capabilities` shows `blocked`, `degraded`, or `unavailable` state for provider, repo, file, or web actions, resolve the noted readiness, scope, or provider issue before retrying.
 7. Run `python -m unittest discover -s tests -v` and `python diagnostics_smoke.py` for the current controller verification pass.

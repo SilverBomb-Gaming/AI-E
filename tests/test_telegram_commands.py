@@ -346,6 +346,7 @@ class TelegramCommandTests(unittest.TestCase):
             self.assertLessEqual(len(reply), 500)
             self.assertEqual(lines[0], "Operator commands")
             self.assertIn("/run|/test", lines[1])
+            self.assertIn("/lastaction", lines[1])
             self.assertIn("/contexts - ctx", lines)
             self.assertIn("/clearcontext - clear", lines)
             self.assertIn("/capabilities - trust", lines)

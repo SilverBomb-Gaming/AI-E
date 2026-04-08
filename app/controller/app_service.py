@@ -56,6 +56,16 @@ _CONTEXT_LIFETIME_SECONDS = 1800.0
 _CONTEXT_PROMPT_CHAR_LIMIT = 2200
 _WORKFLOW_BUFFER_MAX_ITEMS = 8
 _WORKFLOW_LIFETIME_SECONDS = 1800.0
+_LOOP_ACTION_CAPABILITIES = frozenset(
+    {
+        "repo.status.read",
+        "file.read",
+        "file.patch.write",
+        "file.write.replace",
+        "shell.command.run",
+        "test.command.run",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -148,6 +158,7 @@ class ControllerService:
         )
         self._last_capability_evaluation: CapabilityEvaluation | None = None
         self._last_execution_result: CapabilityExecutionResult | None = None
+        self._last_loop_result: CapabilityExecutionResult | None = None
         self._last_context_source = "No buffered context yet."
         self._last_context_action = "No context action yet."
         self._last_repo_branch = "-"
@@ -1340,12 +1351,17 @@ class ControllerService:
 
     def _remember_execution_result(self, result: CapabilityExecutionResult) -> None:
         self._last_execution_result = result
+        self._remember_loop_execution_result(result)
         self._remember_context_execution_result(result)
         self._audit_store.append(self._build_audit_record(result))
         self._remember_repo_execution_result(result)
         self._remember_file_execution_result(result)
         self._remember_web_execution_result(result)
         self._last_message = result.internal_summary or self._last_message
+
+    def _remember_loop_execution_result(self, result: CapabilityExecutionResult) -> None:
+        if result.capability_id in _LOOP_ACTION_CAPABILITIES:
+            self._last_loop_result = result
 
     def _remember_context_execution_result(self, result: CapabilityExecutionResult) -> None:
         created_context_id = str(result.telemetry.get("context_created_id") or "").strip()
@@ -1433,7 +1449,7 @@ class ControllerService:
             reply=chr(10).join(
                 (
                     "Operator commands",
-                    "Core: /repo /file /patchfile|/writefile /run|/test /web",
+                    "Core: /repo /file /patchfile|/writefile /run|/test /lastaction /web",
                     "/contexts - ctx",
                     "/clearcontext - clear",
                     "/capabilities - trust",
@@ -1453,6 +1469,106 @@ class ControllerService:
             ),
             command_label="/help",
         )
+
+    def _build_last_action_reply(self, *, chat_id: str) -> _TelegramResponsePlan:
+        result = self._last_loop_result
+        workflow = self.current_or_latest_workflow_for_chat(chat_id=chat_id)
+        if result is None:
+            lines = [
+                "Last action",
+                "No loop action is recorded yet.",
+                "Next: Use /repo or /file, then /patchfile, /writefile, /run, or /test explicitly.",
+            ]
+            if workflow is not None:
+                lines.insert(2, f"Workflow: {workflow.workflow_id} {self._workflow_state_label(workflow)}")
+            return _TelegramResponsePlan(reply=chr(10).join(lines), command_label="/lastaction")
+
+        lines = ["Last action"]
+        lines.extend(self._last_action_lines(result=result))
+        if workflow is not None:
+            lines.append(f"Workflow: {workflow.workflow_id} {self._workflow_state_label(workflow)}")
+        lines.append(f"Next: {self._last_action_next_step(result=result, workflow=workflow)}")
+        return _TelegramResponsePlan(
+            reply=chr(10).join(lines),
+            command_label="/lastaction",
+        )
+
+    def _last_action_lines(self, *, result: CapabilityExecutionResult) -> tuple[str, ...]:
+        telemetry = result.telemetry
+        capability_id = result.capability_id
+        if capability_id == "repo.status.read":
+            summary = str(telemetry.get("repo_summary") or result.internal_summary)
+            return (
+                f"Action: repo {self._outcome_label(result.outcome)}",
+                f"Summary: {self._summarize_text(summary, limit=180)}",
+            )
+        if capability_id == "file.read":
+            display_path = str(telemetry.get("display_path") or self._last_file_read or "unknown file")
+            status = str(telemetry.get("file_status") or result.internal_summary)
+            return (
+                "Action: file preview ready",
+                f"File: {display_path}",
+                f"Summary: {self._summarize_text(status, limit=180)}",
+            )
+        if capability_id in {"file.patch.write", "file.write.replace"}:
+            display_path = str(telemetry.get("display_path") or self._last_file_read or "unknown file")
+            operation = str(telemetry.get("mutation_operation") or ("patch" if capability_id == "file.patch.write" else "replace"))
+            status = str(telemetry.get("file_status") or result.internal_summary)
+            return (
+                f"Action: {operation} {self._outcome_label(result.outcome)}",
+                f"File: {display_path}",
+                f"Summary: {self._summarize_text(status, limit=180)}",
+            )
+        if capability_id in {"shell.command.run", "test.command.run"}:
+            command_summary = str(telemetry.get("execution_command_summary") or result.request.metadata.get("argument_summary") or result.command_label)
+            output_summary = str(telemetry.get("execution_output_summary") or result.internal_summary)
+            lines = [
+                f"Action: {('test' if capability_id == 'test.command.run' else 'run')} {self._outcome_label(result.outcome)}",
+                f"Command: {command_summary}",
+            ]
+            exit_code = telemetry.get("execution_exit_code")
+            if isinstance(exit_code, int):
+                lines.append(f"Exit code: {exit_code}" if exit_code >= 0 else "Exit: timeout")
+            lines.append(f"Summary: {self._summarize_text(output_summary, limit=180)}")
+            first_issue = str(telemetry.get("execution_first_issue") or "").strip()
+            if first_issue:
+                lines.append(f"First issue: {self._summarize_text(first_issue, limit=120)}")
+            return tuple(lines)
+        return (
+            f"Action: {capability_id} {self._outcome_label(result.outcome)}",
+            f"Summary: {self._summarize_text(result.internal_summary, limit=180)}",
+        )
+
+    def _last_action_next_step(self, *, result: CapabilityExecutionResult, workflow: WorkflowRecord | None) -> str:
+        if result.outcome == "confirmation_required":
+            confirmation_id = str(result.telemetry.get("confirmation_id") or "").strip().upper()
+            if confirmation_id:
+                return f"Reply with /confirm {confirmation_id} or /deny {confirmation_id}."
+            return "Approve or deny the pending action explicitly."
+        if workflow is not None and workflow.current_state in {"paused", "running", "pending"}:
+            pending_confirmation_id = workflow.metadata.get("pending_confirmation_id", "").strip().upper()
+            if pending_confirmation_id:
+                return f"Use /workflowstatus or /confirm {pending_confirmation_id} explicitly."
+            return "Use /workflowstatus or /cancelworkflow explicitly."
+        if result.capability_id == "file.read":
+            return "Use /patchfile, /writefile, /run, or /test explicitly."
+        if result.capability_id in {"file.patch.write", "file.write.replace"} and result.outcome == "success":
+            return "Run /test or /run explicitly if you want to validate the edit."
+        if result.capability_id in {"shell.command.run", "test.command.run"}:
+            return "Inspect with /file, patch with /patchfile, or run another bounded command explicitly."
+        return "Continue explicitly with the next operator command you want."
+
+    @staticmethod
+    def _outcome_label(outcome: str) -> str:
+        return {
+            "success": "completed",
+            "failed": "failed",
+            "timed_out": "timed out",
+            "out_of_scope": "blocked",
+            "unavailable": "unavailable",
+            "invalid_request": "rejected",
+            "confirmation_required": "pending confirmation",
+        }.get(outcome, outcome.replace("_", " "))
 
     def _build_status_reply(self, snapshot: ControllerSnapshot) -> _TelegramResponsePlan:
         active_status = self._provider_status_for_mode(self._config.current_mode)
@@ -1891,6 +2007,7 @@ class ControllerService:
             "/start",
             "/help",
             "/status",
+            "/lastaction",
             "/mode",
             "/models",
             "/repo",
@@ -1953,6 +2070,12 @@ class ControllerService:
                 command_label="parse_failure",
                 normalized_text=normalized_text,
                 usage_hint="Use /web <https://allowed-domain/path>.",
+            )
+        if command.startswith("/lastaction"):
+            return _ParsedTelegramCommand(
+                command_label="parse_failure",
+                normalized_text=normalized_text,
+                usage_hint="Use /lastaction.",
             )
         if command.startswith("/repo"):
             return _ParsedTelegramCommand(
@@ -2985,8 +3108,12 @@ class ControllerService:
     def _format_audit_record_summary(self, record: AuditRecord | None) -> str:
         if record is None:
             return "No audit record yet."
+        detail = record.output_summary or record.action_summary
+        if record.exit_code is not None:
+            detail = f"exit {record.exit_code} | {detail}" if detail else f"exit {record.exit_code}"
         return self._summarize_text(
-            f"- {self._short_time(record.timestamp_end)} {record.capability_id} | {record.outcome} | {record.outcome_reason}",
+            f"- {self._short_time(record.timestamp_end)} {record.capability_id} | {record.outcome} | {record.outcome_reason}"
+            + (f" | {detail}" if detail else ""),
             limit=120,
         )
 

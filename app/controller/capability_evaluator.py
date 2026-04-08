@@ -63,6 +63,7 @@ class CapabilityEvaluator:
         if capability_id in {
             "help.read",
             "status.read",
+            "action.last.read",
             "mode.read",
             "audit.read",
             "capabilities.read",
