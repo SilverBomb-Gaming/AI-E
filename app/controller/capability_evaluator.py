@@ -50,7 +50,12 @@ class CapabilityEvaluator:
                 message=f"{manifest.name} requires a running OpenClaw runtime.",
             )
 
-        if manifest.requires_readiness and context.readiness_state == "not_ready" and capability_id != "ask.provider_query":
+        if (
+            manifest.requires_readiness
+            and context.readiness_state == "not_ready"
+            and capability_id != "ask.provider_query"
+            and not manifest.supports_degraded_mode
+        ):
             return self._result(
                 manifest,
                 source=source,

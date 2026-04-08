@@ -1542,6 +1542,91 @@ class TelegramCommandTests(unittest.TestCase):
             self.assertIn(f"Confirmation {confirmation_id} could not run.", confirm_reply)
             self.assertIn("Readiness is not ready.", confirm_reply)
 
+    def test_readiness_not_ready_keeps_chat_translate_and_planbuild_available(self) -> None:
+        updates = (
+            TelegramInboundMessage(update_id=301, chat_id="chat-1", text="/chat Build me a local desktop milestone tracker.", sender_label="@tester"),
+            TelegramInboundMessage(update_id=302, chat_id="chat-1", text="/translate Build me a local desktop milestone tracker with CSV export.", sender_label="@tester"),
+            TelegramInboundMessage(update_id=303, chat_id="chat-1", text="/planbuild", sender_label="@tester"),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            telegram_service = _FakeTelegramService(update_batches=[updates])
+            service, _, _, _, ollama, openai = self._make_service(tmp_dir=tmp, telegram_service=telegram_service)
+            service._latest_health_report = _report("health", "blocked", "error", "Blocked")
+            service.start_telegram_loop()
+            self.assertTrue(_wait_until(lambda: len(telegram_service.sent_messages) == 3, timeout=2.0))
+            service.stop_telegram_loop()
+
+            chat_reply = telegram_service.sent_messages[0][1]
+            translate_reply = telegram_service.sent_messages[1][1]
+            plan_reply = telegram_service.sent_messages[2][1]
+
+            self.assertEqual(ollama.ask_calls, 0)
+            self.assertEqual(openai.ask_calls, 0)
+            self.assertIn("Translation", chat_reply)
+            self.assertNotEqual(chat_reply.splitlines()[0], "Status")
+            self.assertIn("Translation", translate_reply)
+            self.assertIn("Build plan", plan_reply)
+            self.assertLessEqual(len(chat_reply), 700)
+
+    def test_readiness_not_ready_blocks_repo_run_and_ask(self) -> None:
+        updates = (
+            TelegramInboundMessage(update_id=304, chat_id="chat-1", text="/repo", sender_label="@tester"),
+            TelegramInboundMessage(update_id=305, chat_id="chat-1", text="/run python validate_runtime.py", sender_label="@tester"),
+            TelegramInboundMessage(update_id=306, chat_id="chat-1", text="/ask hello", sender_label="@tester"),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            telegram_service = _FakeTelegramService(update_batches=[updates])
+            service, config_store, _, _, ollama, openai = self._make_service(tmp_dir=tmp, telegram_service=telegram_service)
+            config = config_store.load()
+            config.repo_root = tmp
+            config.file_allowed_roots = (tmp,)
+            config_store.save(config)
+            service._config = config_store.load()
+            service._normalize_repo_root_config()
+            service._normalize_file_roots_config()
+            service._latest_health_report = _report("health", "blocked", "error", "Blocked")
+            service.start_telegram_loop()
+            self.assertTrue(_wait_until(lambda: len(telegram_service.sent_messages) == 3, timeout=2.0))
+            service.stop_telegram_loop()
+
+            repo_reply = telegram_service.sent_messages[0][1]
+            run_reply = telegram_service.sent_messages[1][1]
+            ask_reply = telegram_service.sent_messages[2][1]
+
+            self.assertEqual(ollama.ask_calls, 0)
+            self.assertEqual(openai.ask_calls, 0)
+            self.assertIn("Can't run /repo right now.", repo_reply)
+            self.assertIn("Readiness is not ready.", repo_reply)
+            self.assertIn("Can't run /run right now.", run_reply)
+            self.assertIn("Readiness is not ready.", run_reply)
+            self.assertIn("Can't run /ask right now.", ask_reply)
+            self.assertIn("Readiness is not ready.", ask_reply)
+
+    def test_readiness_not_ready_still_allows_status_and_help(self) -> None:
+        updates = (
+            TelegramInboundMessage(update_id=307, chat_id="chat-1", text="/status", sender_label="@tester"),
+            TelegramInboundMessage(update_id=308, chat_id="chat-1", text="/help", sender_label="@tester"),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            telegram_service = _FakeTelegramService(update_batches=[updates])
+            service, _, _, _, _, _ = self._make_service(tmp_dir=tmp, telegram_service=telegram_service)
+            service._latest_health_report = _report("health", "blocked", "error", "Blocked")
+            service.start_telegram_loop()
+            self.assertTrue(_wait_until(lambda: len(telegram_service.sent_messages) == 2, timeout=2.0))
+            service.stop_telegram_loop()
+
+            status_reply = telegram_service.sent_messages[0][1]
+            help_reply = telegram_service.sent_messages[1][1]
+
+            self.assertIn("Status", status_reply)
+            self.assertIn("Readiness: Not Ready", status_reply)
+            self.assertLessEqual(len(status_reply.splitlines()), 11)
+            self.assertIn("Operator commands", help_reply)
+            self.assertIn("/chat", help_reply)
+            self.assertIn("/planbuild", help_reply)
+            self.assertIn("/run|/test", help_reply)
+            self.assertIn("/ask", help_reply)
+
     def test_confirm_invalid_id_returns_clear_message(self) -> None:
         update = TelegramInboundMessage(update_id=33, chat_id="chat-1", text="/confirm BAD999", sender_label="@tester")
         with tempfile.TemporaryDirectory() as tmp:

@@ -258,6 +258,58 @@ class CapabilityLayerTests(unittest.TestCase):
         self.assertEqual(evaluation.reason_code, "readiness_not_ready")
         self.assertEqual(evaluation.blocking_reason, "Readiness is not ready.")
 
+    def test_manifest_with_degraded_mode_support_bypasses_generic_readiness_block(self) -> None:
+        manifest = CapabilityManifest(
+            capability_id="demo.safe.read",
+            name="Demo Safe Read",
+            category="operator",
+            short_description="Read-only degraded-safe surface.",
+            execution_type="read",
+            provider_dependency="none",
+            network_requirement="none",
+            requires_runtime=False,
+            requires_readiness=True,
+            access_kind="read_only",
+            locality="local_only",
+            data_scope="internal_state",
+            offline_safety="safe_offline",
+            confirmation_sensitivity="never",
+            telegram_exposure="allowed",
+            supports_degraded_mode=True,
+        )
+        evaluator = CapabilityEvaluator(registry={manifest.capability_id: manifest})
+
+        evaluation = evaluator.evaluate(manifest.capability_id, self._context(readiness_state="not_ready"))
+
+        self.assertEqual(evaluation.current_availability_state, "allowed")
+        self.assertEqual(evaluation.reason_code, "allowed")
+
+    def test_manifest_without_degraded_mode_support_still_blocks_on_readiness(self) -> None:
+        manifest = CapabilityManifest(
+            capability_id="demo.blocked.read",
+            name="Demo Blocked Read",
+            category="repository",
+            short_description="Read-only but readiness-sensitive surface.",
+            execution_type="read",
+            provider_dependency="none",
+            network_requirement="none",
+            requires_runtime=False,
+            requires_readiness=True,
+            access_kind="read_only",
+            locality="local_only",
+            data_scope="repository",
+            offline_safety="safe_offline",
+            confirmation_sensitivity="never",
+            telegram_exposure="allowed",
+        )
+        evaluator = CapabilityEvaluator(registry={manifest.capability_id: manifest})
+
+        evaluation = evaluator.evaluate(manifest.capability_id, self._context(readiness_state="not_ready"))
+
+        self.assertEqual(evaluation.current_availability_state, "blocked")
+        self.assertEqual(evaluation.reason_code, "readiness_not_ready")
+        self.assertEqual(evaluation.blocking_reason, "Readiness is not ready.")
+
     def test_ask_provider_query_unavailable_when_provider_invalid(self) -> None:
         evaluation = self.evaluator.evaluate(
             "ask.provider_query",
