@@ -307,6 +307,11 @@ class TelegramCommandTests(unittest.TestCase):
         snapshot = service.stop_telegram_loop()
         return snapshot, telegram_service.sent_messages[0][1]
 
+    def _run_until(self, service: ControllerService, telegram_service: _FakeTelegramService, expected_messages: int) -> object:
+        service.start_telegram_loop()
+        self.assertTrue(_wait_until(lambda: len(telegram_service.sent_messages) == expected_messages, timeout=2.0))
+        return service.stop_telegram_loop()
+
     def _configure_online_confirmation_mode(self, service: ControllerService, config_store: ControllerConfigStore) -> None:
         config = config_store.load()
         config.selected_mode = "online"
@@ -326,6 +331,11 @@ class TelegramCommandTests(unittest.TestCase):
         self.assertIsNotNone(match)
         return match.group(1)
 
+    def _extract_workflow_id(self, reply: str) -> str:
+        match = re.search(r"(WF-[A-F0-9]{6})", reply)
+        self.assertIsNotNone(match)
+        return match.group(1)
+
     def test_help_command_formatting_is_concise_and_lists_commands(self) -> None:
         update = TelegramInboundMessage(update_id=1, chat_id="chat-1", text="/help", sender_label="@tester")
         with tempfile.TemporaryDirectory() as tmp:
@@ -335,17 +345,20 @@ class TelegramCommandTests(unittest.TestCase):
             lines = reply.splitlines()
             self.assertLessEqual(len(reply), 500)
             self.assertEqual(lines[0], "Operator commands")
-            self.assertIn("/contexts - recent context", lines)
-            self.assertIn("/clearcontext - clear context", lines)
-            self.assertIn("/capabilities - capability state", lines)
-            self.assertIn("/audit - recent actions", lines)
-            self.assertIn("/ask <prompt> - concise ask", lines)
-            self.assertIn("/askd <prompt> - detailed ask", lines)
-            self.assertIn("/asklast <prompt> - latest context", lines)
-            self.assertIn("/askctx <id> <prompt> - chosen context", lines)
-            self.assertIn("/explainrepo [path] - workflow", lines)
-            self.assertIn("/explainfile <path> - workflow", lines)
-            self.assertIn("/summarizeweb <url> - workflow", lines)
+            self.assertIn("/contexts - contexts", lines)
+            self.assertIn("/clearcontext - clear", lines)
+            self.assertIn("/capabilities - trust", lines)
+            self.assertIn("/audit - audit", lines)
+            self.assertIn("/ask <prompt> - ask", lines)
+            self.assertIn("/askd <prompt> - ask detail", lines)
+            self.assertIn("/asklast <prompt> - ask latest", lines)
+            self.assertIn("/askctx <id> <prompt> - ask context", lines)
+            self.assertIn("/explainrepo [path] - explain repo", lines)
+            self.assertIn("/explainfile <path> - explain file", lines)
+            self.assertIn("/summarizeweb <url> - summarize web", lines)
+            self.assertIn("/workflows - workflows", lines)
+            self.assertIn("/workflowstatus [id] - workflow status", lines)
+            self.assertIn("/cancelworkflow [id] - cancel workflow", lines)
             self.assertEqual(lines[-1], "Plain text is not auto-routed.")
 
     def test_status_command_is_mobile_readable_and_shows_loop_activity(self) -> None:
@@ -698,6 +711,95 @@ class TelegramCommandTests(unittest.TestCase):
             self.assertEqual(openai.ask_calls, 0)
             self.assertIn(f"Confirmation {confirmation_id} expired.", confirm_reply)
             self.assertEqual(service._confirmation_store.get(confirmation_id).current_state, "expired")
+
+    def test_workflow_commands_report_and_cancel_paused_workflow(self) -> None:
+        first_update = TelegramInboundMessage(
+            update_id=801,
+            chat_id="chat-1",
+            text="/summarizeweb https://docs.openclaw.ai/guide",
+            sender_label="@tester",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            create_service = _FakeTelegramService(update_batches=[(first_update,)])
+            service, config_store, _, _, _, openai = self._make_service(tmp_dir=tmp, telegram_service=create_service)
+            self._configure_online_confirmation_mode(service, config_store)
+            config = config_store.load()
+            config.web_allowed_domains = ("docs.openclaw.ai",)
+            config_store.save(config)
+            service._config = config_store.load()
+
+            _, prompt_reply = self._run_single_update(service, create_service)
+            confirmation_id = self._extract_confirmation_id(prompt_reply)
+            workflow_id = service._workflow_store.current(chat_id="chat-1").workflow_id
+
+            command_service = _FakeTelegramService(
+                update_batches=[
+                    (TelegramInboundMessage(update_id=802, chat_id="chat-1", text="/workflows", sender_label="@tester"),),
+                    (TelegramInboundMessage(update_id=803, chat_id="chat-1", text=f"/workflowstatus {workflow_id}", sender_label="@tester"),),
+                    (TelegramInboundMessage(update_id=804, chat_id="chat-1", text="/cancelworkflow", sender_label="@tester"),),
+                    (TelegramInboundMessage(update_id=805, chat_id="chat-1", text=f"/confirm {confirmation_id}", sender_label="@tester"),),
+                ]
+            )
+            service._telegram_service = command_service
+            snapshot = self._run_until(service, command_service, 4)
+
+            workflows_reply = command_service.sent_messages[0][1]
+            status_reply = command_service.sent_messages[1][1]
+            cancel_reply = command_service.sent_messages[2][1]
+            confirm_reply = command_service.sent_messages[3][1]
+
+            self.assertIn(workflow_id, workflows_reply)
+            self.assertIn("paused", workflows_reply)
+            self.assertIn(f"ID: {workflow_id}", status_reply)
+            self.assertIn(f"Pending confirmation: {confirmation_id}", status_reply)
+            self.assertIn(f"Workflow cancelled: {workflow_id} web.summarize", cancel_reply)
+            self.assertIn("already been rejected", confirm_reply)
+            self.assertEqual(openai.ask_calls, 0)
+            self.assertEqual(service._workflow_store.get(workflow_id).current_state, "cancelled")
+            self.assertEqual(snapshot.last_workflow_state, "cancelled")
+            self.assertIn(f"Workflow cancelled: {workflow_id} web.summarize", snapshot.last_workflow_summary)
+
+    def test_workflow_expiry_blocks_resume_and_status_shows_expired(self) -> None:
+        first_update = TelegramInboundMessage(
+            update_id=806,
+            chat_id="chat-1",
+            text="/summarizeweb https://docs.openclaw.ai/guide",
+            sender_label="@tester",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            create_service = _FakeTelegramService(update_batches=[(first_update,)])
+            service, config_store, _, _, _, openai = self._make_service(tmp_dir=tmp, telegram_service=create_service)
+            self._configure_online_confirmation_mode(service, config_store)
+            config = config_store.load()
+            config.web_allowed_domains = ("docs.openclaw.ai",)
+            config_store.save(config)
+            service._config = config_store.load()
+
+            _, prompt_reply = self._run_single_update(service, create_service)
+            confirmation_id = self._extract_confirmation_id(prompt_reply)
+            workflow = service._workflow_store.current(chat_id="chat-1")
+            self.assertIsNotNone(workflow)
+            workflow_id = workflow.workflow_id
+            self.assertTrue(service._workflow_store.expire_for_testing(chat_id="chat-1", workflow_id=workflow_id))
+
+            command_service = _FakeTelegramService(
+                update_batches=[
+                    (TelegramInboundMessage(update_id=807, chat_id="chat-1", text=f"/workflowstatus {workflow_id}", sender_label="@tester"),),
+                    (TelegramInboundMessage(update_id=808, chat_id="chat-1", text=f"/confirm {confirmation_id}", sender_label="@tester"),),
+                ]
+            )
+            service._telegram_service = command_service
+            snapshot = self._run_until(service, command_service, 2)
+
+            status_reply = command_service.sent_messages[0][1]
+            confirm_reply = command_service.sent_messages[1][1]
+
+            self.assertIn("State: expired", status_reply)
+            self.assertIn(f"Workflow expired: {workflow_id} web.summarize", status_reply)
+            self.assertIn(f"Workflow expired: {workflow_id} web.summarize", confirm_reply)
+            self.assertEqual(openai.ask_calls, 0)
+            self.assertEqual(service._workflow_store.get(workflow_id).current_state, "expired")
+            self.assertEqual(snapshot.last_workflow_state, "expired")
 
     def test_duplicate_confirm_does_not_reexecute(self) -> None:
         first_update = TelegramInboundMessage(update_id=25, chat_id="chat-1", text="/ask hello", sender_label="@tester")

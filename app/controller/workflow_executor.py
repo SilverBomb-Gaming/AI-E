@@ -5,7 +5,7 @@ from dataclasses import replace
 from typing import TYPE_CHECKING
 
 from .telegram_service import TelegramInboundMessage
-from .workflow_models import WorkflowRecord, WorkflowStep, WorkflowType
+from .workflow_models import ACTIVE_WORKFLOW_STATES, RESUMABLE_WORKFLOW_STATES, WorkflowRecord, WorkflowStep, WorkflowType
 
 if TYPE_CHECKING:
     from .capability_executor import CapabilityExecutor
@@ -20,6 +20,51 @@ class WorkflowExecutor:
     def __init__(self, service: ControllerService, capability_executor: CapabilityExecutor) -> None:
         self._service = service
         self._capability_executor = capability_executor
+
+    def cleanup_expired_workflows(self) -> int:
+        expired_records = self._service._workflow_store.cleanup_expired()
+        for record in expired_records:
+            updated = replace(
+                record,
+                audit_summary=self._workflow_audit_summary(record),
+                final_user_facing_summary=self._workflow_expired_summary(record),
+            )
+            self._service._workflow_store.update(updated)
+        return len(expired_records)
+
+    def cancel_workflow(self, *, chat_id: str, reference: str = "") -> tuple[str, WorkflowRecord | None]:
+        self.cleanup_expired_workflows()
+        token = reference.strip()
+        if token:
+            record = self._service._workflow_store.resolve(chat_id=chat_id, reference=token)
+            if record is None:
+                return "not_found", None
+        else:
+            record = self._service._workflow_store.current(chat_id=chat_id)
+            if record is None:
+                return "no_active", None
+        if record.current_state not in ACTIVE_WORKFLOW_STATES:
+            return "not_cancellable", record
+
+        pending_confirmation_id = self._pending_confirmation_id(record)
+        if pending_confirmation_id:
+            self._service._confirmation_store.reject(pending_confirmation_id, chat_id=chat_id)
+        metadata = dict(record.metadata)
+        metadata.pop("pending_confirmation_id", None)
+        metadata["cancel_reason"] = "operator_cancelled"
+        cancelled = replace(
+            record,
+            current_state="cancelled",
+            finished_at=self._service._now_iso(),
+            confirmation_state="denied" if record.confirmation_state == "pending" else record.confirmation_state,
+            metadata=metadata,
+        )
+        cancelled = replace(
+            cancelled,
+            audit_summary=self._workflow_audit_summary(cancelled),
+            final_user_facing_summary=self._workflow_cancelled_summary(cancelled, pending_confirmation_id=pending_confirmation_id),
+        )
+        return "cancelled", self._service._workflow_store.update(cancelled)
 
     def execute_repo_explain(
         self,
@@ -173,12 +218,54 @@ class WorkflowExecutor:
         snapshot: ControllerSnapshot,
         chat_id: str,
     ) -> CapabilityExecutionResult | None:
+        self.cleanup_expired_workflows()
         workflow_id = confirmation.metadata.get("workflow_id", "").strip().upper()
         if not workflow_id:
             return None
         record = self._service._workflow_store.get(workflow_id)
+        request = self._capability_executor._build_request(
+            capability_id=confirmation.capability_id,
+            snapshot=snapshot,
+            chat_id=chat_id,
+            requester_label=confirmation.requester_label,
+            original_command="/confirm",
+            parsed_arguments={"confirmation_id": confirmation.confirmation_id},
+            confirmation_context=confirmation.evaluation_context,
+            metadata={"argument_summary": f"/confirm {confirmation.confirmation_id}"},
+        )
         if record is None:
-            return None
+            return self._capability_executor._result(
+                request,
+                outcome="invalid_request",
+                reason_code="workflow_not_found",
+                user_message="This workflow is no longer available. Send the original workflow command again if you still want to run it.",
+                internal_summary=f"Workflow {workflow_id} was not found for /confirm {confirmation.confirmation_id}.",
+                retryable=False,
+                command_label="/confirm",
+                activity_state="processing_command",
+            )
+        if record.current_state == "expired":
+            return self._capability_executor._result(
+                request,
+                outcome="expired",
+                reason_code="workflow_expired",
+                user_message=self._workflow_expired_summary(record),
+                internal_summary=f"Workflow {record.workflow_id} expired before confirmation resume.",
+                retryable=False,
+                command_label="/confirm",
+                activity_state="processing_command",
+            )
+        if record.current_state not in RESUMABLE_WORKFLOW_STATES:
+            return self._capability_executor._result(
+                request,
+                outcome="invalid_request",
+                reason_code="workflow_not_resumable",
+                user_message=f"Workflow {record.workflow_id} is already {record.current_state.replace('_', ' ')} and cannot be resumed.",
+                internal_summary=f"Workflow {record.workflow_id} could not resume from state {record.current_state}.",
+                retryable=False,
+                command_label="/confirm",
+                activity_state="processing_command",
+            )
         update = TelegramInboundMessage(
             update_id=0,
             chat_id=chat_id,
@@ -186,13 +273,16 @@ class WorkflowExecutor:
             sender_label=confirmation.requester_label,
         )
         step_index = max(0, int(confirmation.metadata.get("workflow_step_index", str(max(1, record.current_step_index))) or "1") - 1)
+        metadata = dict(record.metadata)
+        metadata.pop("pending_confirmation_id", None)
         updated = replace(
             record,
             current_state="running",
             confirmation_state="approved",
             current_step_index=step_index + 1,
+            metadata=metadata,
             audit_summary=self._workflow_audit_summary(
-                replace(record, current_state="running", confirmation_state="approved", current_step_index=step_index + 1)
+                replace(record, current_state="running", confirmation_state="approved", current_step_index=step_index + 1, metadata=metadata)
             ),
         )
         self._service._workflow_store.update(updated)
@@ -208,26 +298,34 @@ class WorkflowExecutor:
     def mark_confirmation_resolution(self, *, confirmation: PendingConfirmation | None, outcome: str) -> None:
         if confirmation is None:
             return
+        self.cleanup_expired_workflows()
         workflow_id = confirmation.metadata.get("workflow_id", "").strip().upper()
         if not workflow_id:
             return
         record = self._service._workflow_store.get(workflow_id)
         if record is None:
             return
-        state = "cancelled" if outcome == "rejected" else "failed"
+        if record.current_state not in ACTIVE_WORKFLOW_STATES:
+            return
+        state = "cancelled" if outcome == "rejected" else "expired"
         confirmation_state = "denied" if outcome == "rejected" else "expired"
-        summary = (
-            f"Workflow {record.workflow_type} cancelled at step {record.current_step_index}/{record.total_steps}."
-            if outcome == "rejected"
-            else f"Workflow {record.workflow_type} expired at step {record.current_step_index}/{record.total_steps}."
-        )
+        metadata = dict(record.metadata)
+        metadata.pop("pending_confirmation_id", None)
         updated = replace(
             record,
             current_state=state,
             confirmation_state=confirmation_state,
             finished_at=self._service._now_iso(),
-            audit_summary=summary,
-            final_user_facing_summary=summary,
+            metadata=metadata,
+        )
+        updated = replace(
+            updated,
+            audit_summary=self._workflow_audit_summary(updated),
+            final_user_facing_summary=(
+                self._workflow_cancelled_summary(updated, pending_confirmation_id=confirmation.confirmation_id)
+                if outcome == "rejected"
+                else self._workflow_expired_summary(updated)
+            ),
         )
         self._service._workflow_store.update(updated)
 
@@ -241,15 +339,24 @@ class WorkflowExecutor:
         start_index: int = 0,
         confirmation: PendingConfirmation | None = None,
     ) -> CapabilityExecutionResult:
+        self.cleanup_expired_workflows()
         running_record = record
         if running_record.started_at == "":
+            started_at = self._service._now_iso()
             running_record = replace(
                 running_record,
-                started_at=self._service._now_iso(),
+                started_at=started_at,
                 current_state="running",
                 current_step_index=max(1, start_index + 1),
+                metadata={key: value for key, value in running_record.metadata.items() if key != "pending_confirmation_id"},
                 audit_summary=self._workflow_audit_summary(
-                    replace(record, started_at=self._service._now_iso(), current_state="running", current_step_index=max(1, start_index + 1))
+                    replace(
+                        record,
+                        started_at=started_at,
+                        current_state="running",
+                        current_step_index=max(1, start_index + 1),
+                        metadata={key: value for key, value in running_record.metadata.items() if key != "pending_confirmation_id"},
+                    )
                 ),
             )
             self._service._workflow_store.update(running_record)
@@ -329,14 +436,20 @@ class WorkflowExecutor:
                     )
                 waiting = replace(
                     running_record,
-                    current_state="waiting_confirmation",
+                    current_state="paused",
                     confirmation_state="pending",
+                    metadata={**running_record.metadata, "pending_confirmation_id": confirmation_id},
                     audit_summary=self._workflow_audit_summary(
-                        replace(running_record, current_state="waiting_confirmation", confirmation_state="pending")
+                        replace(
+                            running_record,
+                            current_state="paused",
+                            confirmation_state="pending",
+                            metadata={**running_record.metadata, "pending_confirmation_id": confirmation_id},
+                        )
                     ),
                     final_user_facing_summary=self._workflow_user_summary(
                         running_record,
-                        state="waiting_confirmation",
+                        state="paused",
                         step=running_record.steps[index],
                         step_result=step_result,
                     ),
@@ -346,17 +459,23 @@ class WorkflowExecutor:
                     step_result,
                     record=waiting,
                     step=waiting.steps[index],
-                    state="waiting_confirmation",
+                    state="paused",
                 )
 
-            failed_state = "cancelled" if step_result.outcome == "denied" else ("blocked" if step_result.outcome in {"blocked", "out_of_scope", "unavailable", "degraded"} else "failed")
+            failed_state = self._terminal_state_from_outcome(step_result.outcome)
             failed = replace(
                 running_record,
                 current_state=failed_state,
                 finished_at=step_result.finished_at,
                 confirmation_state=running_record.confirmation_state,
+                metadata={key: value for key, value in running_record.metadata.items() if key != "pending_confirmation_id"},
                 audit_summary=self._workflow_audit_summary(
-                    replace(running_record, current_state=failed_state, finished_at=step_result.finished_at)
+                    replace(
+                        running_record,
+                        current_state=failed_state,
+                        finished_at=step_result.finished_at,
+                        metadata={key: value for key, value in running_record.metadata.items() if key != "pending_confirmation_id"},
+                    )
                 ),
                 final_user_facing_summary=self._workflow_user_summary(
                     running_record,
@@ -493,6 +612,7 @@ class WorkflowExecutor:
             name=name,
             description=description,
             created_at=created_at,
+            expires_at=self._service._workflow_store.default_expires_at(),
             current_state="pending",
             current_step_index=0,
             total_steps=len(steps),
@@ -564,6 +684,10 @@ class WorkflowExecutor:
                 "workflow_state": record.current_state,
                 "workflow_step_id": step.step_id,
                 "workflow_step_description": step.description,
+                "workflow_current_step": str(record.current_step_index),
+                "workflow_total_steps": str(record.total_steps),
+                "workflow_expires_at": record.expires_at,
+                "workflow_pending_confirmation_id": self._pending_confirmation_id(record),
                 "workflow_summary": record.audit_summary,
             }
         )
@@ -579,7 +703,17 @@ class WorkflowExecutor:
     def _workflow_audit_summary(self, record: WorkflowRecord) -> str:
         attempted = sum(1 for step in record.steps if step.outcome != "pending")
         state_label = record.current_state.replace("_", " ")
-        return f"Workflow {record.workflow_type} {state_label} after {attempted}/{record.total_steps} steps."
+        step = self._current_step(record)
+        parts = [f"Workflow {record.workflow_id} {record.workflow_type} {state_label}."]
+        parts.append(f"Steps {attempted}/{record.total_steps}.")
+        if step is not None:
+            parts.append(f"Current {step.step_id} {step.capability_id} {step.outcome} ({self._step_position(record)}).")
+            if step.outcome_reason:
+                parts.append(f"Reason {step.outcome_reason}.")
+        pending_confirmation_id = self._pending_confirmation_id(record)
+        if record.current_state == "paused" and pending_confirmation_id:
+            parts.append(f"Awaiting /confirm {pending_confirmation_id}.")
+        return " ".join(parts)
 
     def _workflow_user_summary(
         self,
@@ -589,23 +723,67 @@ class WorkflowExecutor:
         step: WorkflowStep,
         step_result: CapabilityExecutionResult,
     ) -> str:
-        if state == "completed":
-            return "\n".join((f"Workflow: {record.workflow_type} completed.", step_result.user_message))
-        if state == "waiting_confirmation":
-            return "\n".join(
-                (
-                    f"Workflow paused: {record.workflow_type}",
-                    f"Blocking step: {step.capability_id} ({record.current_step_index}/{record.total_steps})",
-                    step_result.user_message,
-                )
-            )
-        return "\n".join(
-            (
-                f"Workflow failed: {record.workflow_type}",
-                f"Blocking step: {step.capability_id} ({record.current_step_index}/{record.total_steps})",
-                step_result.user_message,
-            )
-        )
+        lines = [self._workflow_title(record, state)]
+        lines.append(f"Step: {step.step_id} {step.capability_id} ({self._step_position(record)})")
+        pending_confirmation_id = self._pending_confirmation_id(record)
+        if state == "paused" and pending_confirmation_id:
+            lines.append(f"Resume: /confirm {pending_confirmation_id} or /deny {pending_confirmation_id}")
+        elif state == "expired":
+            lines.append("Next: Send the workflow command again to start over.")
+        elif state in {"blocked", "failed", "cancelled"}:
+            lines.append("Next: Review the blocking step and rerun the workflow if needed.")
+        if step_result.user_message:
+            lines.append(step_result.user_message)
+        return "\n".join(lines)
+
+    def _workflow_cancelled_summary(self, record: WorkflowRecord, *, pending_confirmation_id: str = "") -> str:
+        lines = [self._workflow_title(record, "cancelled")]
+        current_step = self._current_step(record)
+        if current_step is not None:
+            lines.append(f"Step: {current_step.step_id} {current_step.capability_id} ({self._step_position(record)})")
+        if pending_confirmation_id:
+            lines.append(f"Pending confirmation {pending_confirmation_id} was rejected.")
+        lines.append("Next: Send the workflow command again if you still want to run it.")
+        return "\n".join(lines)
+
+    def _workflow_expired_summary(self, record: WorkflowRecord) -> str:
+        lines = [self._workflow_title(record, "expired")]
+        current_step = self._current_step(record)
+        if current_step is not None:
+            lines.append(f"Last step: {current_step.step_id} {current_step.capability_id} ({self._step_position(record)})")
+        lines.append("Next: Send the workflow command again to create a fresh run.")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _terminal_state_from_outcome(outcome: str) -> str:
+        if outcome == "expired":
+            return "expired"
+        if outcome == "denied":
+            return "cancelled"
+        if outcome in {"blocked", "out_of_scope", "unavailable", "degraded"}:
+            return "blocked"
+        return "failed"
+
+    @staticmethod
+    def _pending_confirmation_id(record: WorkflowRecord) -> str:
+        return record.metadata.get("pending_confirmation_id", "").strip().upper()
+
+    @staticmethod
+    def _current_step(record: WorkflowRecord) -> WorkflowStep | None:
+        if record.current_step_index <= 0 or record.current_step_index > len(record.steps):
+            return None
+        return record.steps[record.current_step_index - 1]
+
+    @staticmethod
+    def _step_position(record: WorkflowRecord) -> str:
+        if record.total_steps <= 0:
+            return "0/0"
+        current = min(max(record.current_step_index, 1), record.total_steps)
+        return f"{current}/{record.total_steps}"
+
+    @staticmethod
+    def _workflow_title(record: WorkflowRecord, state: str) -> str:
+        return f"Workflow {state.replace('_', ' ')}: {record.workflow_id} {record.workflow_type}"
 
     @staticmethod
     def _workflow_command(workflow_type: WorkflowType) -> str:

@@ -348,7 +348,8 @@ class ContextBridgingTests(unittest.TestCase):
             recent = service._audit_store.recent(limit=3)
 
             self.assertEqual(offline.ask_calls, 1)
-            self.assertTrue(reply.startswith("Workflow: repo.explain completed."))
+            self.assertTrue(reply.startswith("Workflow completed: "))
+            self.assertIn("repo.explain", reply)
             self.assertIn("Answer (Offline | Ollama", reply)
             self.assertIn("Context 1: AI-E codex/home-screen-v1 Dirty (3 changes)", offline.ask_prompts[0])
             self.assertIn("Context 2: docs/notes.txt", offline.ask_prompts[0])
@@ -356,7 +357,8 @@ class ContextBridgingTests(unittest.TestCase):
             self.assertEqual(snapshot.last_workflow_type, "repo.explain")
             self.assertEqual(snapshot.last_workflow_state, "completed")
             self.assertIn("S3 ask.provider_query success", snapshot.last_workflow_step)
-            self.assertIn("Workflow: repo.explain completed.", snapshot.last_workflow_summary)
+            self.assertIn("Workflow completed:", snapshot.last_workflow_summary)
+            self.assertIn("repo.explain", snapshot.last_workflow_summary)
             self.assertIn("used C1,C2", recent[0].action_summary)
 
 

@@ -40,7 +40,7 @@ from ..runtime.manager import OpenClawRuntimeManager
 from ..runtime.log_sanitizer import sanitize_log_text
 
 
-_OPERATOR_CONSOLE_LABEL = "Windows OpenClaw Operator Console v2.6"
+_OPERATOR_CONSOLE_LABEL = "Windows OpenClaw Operator Console v2.7"
 _ASK_CONCISE_LIMIT = 700
 _ASK_DETAILED_LIMIT = 1500
 _PROVIDER_ASK_COMMANDS = frozenset({"/ask", "/askd", "/asklast", "/askctx"})
@@ -52,6 +52,8 @@ _AUDIT_LOG_MAX_RECORDS = 50
 _CONTEXT_BUFFER_MAX_ITEMS = 6
 _CONTEXT_LIFETIME_SECONDS = 1800.0
 _CONTEXT_PROMPT_CHAR_LIMIT = 2200
+_WORKFLOW_BUFFER_MAX_ITEMS = 8
+_WORKFLOW_LIFETIME_SECONDS = 1800.0
 
 
 @dataclass(frozen=True)
@@ -128,7 +130,10 @@ class ControllerService:
         self._scope_validator = ScopeValidator()
         self._capability_evaluator = CapabilityEvaluator()
         self._capability_executor = CapabilityExecutor(self)
-        self._workflow_store = WorkflowStore()
+        self._workflow_store = WorkflowStore(
+            max_workflows_per_chat=_WORKFLOW_BUFFER_MAX_ITEMS,
+            lifetime_seconds=_WORKFLOW_LIFETIME_SECONDS,
+        )
         self._workflow_executor = WorkflowExecutor(self, self._capability_executor)
         self._audit_store = AuditStore(max_records=_AUDIT_LOG_MAX_RECORDS)
         self._context_store = ContextStore(
@@ -283,6 +288,7 @@ class ControllerService:
     def snapshot(self) -> ControllerSnapshot:
         self._cleanup_expired_confirmations()
         self._cleanup_expired_contexts()
+        self._cleanup_expired_workflows()
         status = self._runtime_manager.get_status()
         selected_provider_status = self._provider_status_cache.get(self._config.selected_provider) or self._default_provider_status(
             self._config.selected_provider
@@ -1016,6 +1022,9 @@ class ControllerService:
         if latest is None:
             self._last_context_source = "No buffered context yet."
 
+    def _cleanup_expired_workflows(self) -> None:
+        self._workflow_executor.cleanup_expired_workflows()
+
     def _context_ready_note(self, context: BufferedContext) -> str:
         return f"Context: {context.context_id} ready for /asklast or /askctx {context.context_id} <prompt>."
 
@@ -1044,6 +1053,65 @@ class ControllerService:
         return _TelegramResponsePlan(
             reply=message,
             command_label="/clearcontext",
+        )
+
+    def recent_workflows_for_chat(self, *, chat_id: str, limit: int = 5) -> tuple[WorkflowRecord, ...]:
+        self._cleanup_expired_workflows()
+        return self._workflow_store.recent(chat_id=chat_id, limit=limit)
+
+    def resolve_workflow_for_chat(self, *, chat_id: str, reference: str) -> WorkflowRecord | None:
+        self._cleanup_expired_workflows()
+        return self._workflow_store.resolve(chat_id=chat_id, reference=reference)
+
+    def current_or_latest_workflow_for_chat(self, *, chat_id: str) -> WorkflowRecord | None:
+        self._cleanup_expired_workflows()
+        return self._workflow_store.current(chat_id=chat_id) or self._workflow_store.latest(chat_id=chat_id)
+
+    def _build_workflows_reply(self, *, chat_id: str, limit: int = 5) -> _TelegramResponsePlan:
+        workflows = self.recent_workflows_for_chat(chat_id=chat_id, limit=max(1, min(limit, 6)))
+        if not workflows:
+            return _TelegramResponsePlan(
+                reply="Workflows\nNo recent workflow is available in this chat.",
+                command_label="/workflows",
+            )
+        lines = ["Workflows (latest first)"]
+        for index, record in enumerate(workflows, start=1):
+            lines.append(
+                f"- {index}. {record.workflow_id} {record.workflow_type} | {self._workflow_state_label(record)} | {self._workflow_step_label(record)}"
+            )
+        return _TelegramResponsePlan(
+            reply=chr(10).join(lines),
+            command_label="/workflows",
+        )
+
+    def _build_workflow_status_reply(self, *, chat_id: str, reference: str = "") -> _TelegramResponsePlan:
+        record = self.resolve_workflow_for_chat(chat_id=chat_id, reference=reference) if reference.strip() else self.current_or_latest_workflow_for_chat(chat_id=chat_id)
+        if record is None:
+            return _TelegramResponsePlan(
+                reply="Workflow\nNo workflow is available in this chat.",
+                command_label="/workflowstatus",
+            )
+        pending_confirmation_id = record.metadata.get("pending_confirmation_id", "").strip().upper()
+        lines = [
+            "Workflow",
+            f"ID: {record.workflow_id}",
+            f"Type: {record.workflow_type}",
+            f"State: {self._workflow_state_label(record)}",
+            f"Step: {self._workflow_step_label(record)}",
+            f"Created: {self._short_time(record.created_at)}",
+        ]
+        if record.started_at:
+            lines.append(f"Started: {self._short_time(record.started_at)}")
+        if record.finished_at:
+            lines.append(f"Finished: {self._short_time(record.finished_at)}")
+        else:
+            lines.append(f"Expires: {self._short_time(record.expires_at)}")
+        if pending_confirmation_id:
+            lines.append(f"Pending confirmation: {pending_confirmation_id}")
+        lines.append(f"Summary: {self._summarize_text(self._workflow_summary_label(record), limit=220)}")
+        return _TelegramResponsePlan(
+            reply=chr(10).join(lines),
+            command_label="/workflowstatus",
         )
 
     def _build_contextual_prompt(self, *, prompt: str, context: BufferedContext) -> tuple[str, bool]:
@@ -1359,20 +1427,23 @@ class ControllerService:
             reply=chr(10).join(
                 (
                     "Operator commands",
-                    "/repo - summary",
-                    "/file <path> - preview",
-                    "/web <url> - preview",
-                    "/contexts - recent context",
-                    "/clearcontext - clear context",
-                    "/capabilities - capability state",
-                    "/audit - recent actions",
-                    "/ask <prompt> - concise ask",
-                    "/askd <prompt> - detailed ask",
-                    "/asklast <prompt> - latest context",
-                    "/askctx <id> <prompt> - chosen context",
-                    "/explainrepo [path] - workflow",
-                    "/explainfile <path> - workflow",
-                    "/summarizeweb <url> - workflow",
+                    "/repo - repo",
+                    "/file <path> - file",
+                    "/web <url> - web",
+                    "/contexts - contexts",
+                    "/clearcontext - clear",
+                    "/capabilities - trust",
+                    "/audit - audit",
+                    "/ask <prompt> - ask",
+                    "/askd <prompt> - ask detail",
+                    "/asklast <prompt> - ask latest",
+                    "/askctx <id> <prompt> - ask context",
+                    "/explainrepo [path] - explain repo",
+                    "/explainfile <path> - explain file",
+                    "/summarizeweb <url> - summarize web",
+                    "/workflows - workflows",
+                    "/workflowstatus [id] - workflow status",
+                    "/cancelworkflow [id] - cancel workflow",
                     "Plain text is not auto-routed.",
                 )
             ),
@@ -1832,6 +1903,9 @@ class ControllerService:
             "/explainrepo",
             "/explainfile",
             "/summarizeweb",
+            "/workflows",
+            "/workflowstatus",
+            "/cancelworkflow",
         }:
             return _ParsedTelegramCommand(command_label=command, argument=argument, normalized_text=normalized_text)
         if command.startswith("/file"):
@@ -1893,6 +1967,24 @@ class ControllerService:
                 command_label="parse_failure",
                 normalized_text=normalized_text,
                 usage_hint="Use /summarizeweb <https://allowed-domain/path>.",
+            )
+        if command.startswith("/workflows"):
+            return _ParsedTelegramCommand(
+                command_label="parse_failure",
+                normalized_text=normalized_text,
+                usage_hint="Use /workflows.",
+            )
+        if command.startswith("/workflowstatus"):
+            return _ParsedTelegramCommand(
+                command_label="parse_failure",
+                normalized_text=normalized_text,
+                usage_hint="Use /workflowstatus or /workflowstatus <workflow_id>.",
+            )
+        if command.startswith("/cancelworkflow"):
+            return _ParsedTelegramCommand(
+                command_label="parse_failure",
+                normalized_text=normalized_text,
+                usage_hint="Use /cancelworkflow or /cancelworkflow <workflow_id>.",
             )
         if command.startswith("/confirm") or command.startswith("/deny"):
             return _ParsedTelegramCommand(
@@ -2776,12 +2868,19 @@ class ControllerService:
         created_context_id = str(result.telemetry.get("context_created_id") or "").strip()
         used_context_id = str(result.telemetry.get("context_used_id") or "").strip()
         used_context_ids = str(result.telemetry.get("context_used_ids") or "").strip()
+        workflow_id = str(result.telemetry.get("workflow_id") or "").strip().upper()
+        workflow_state = str(result.telemetry.get("workflow_state") or "").strip()
         if created_context_id and result.capability_id in {"repo.status.read", "file.read", "web.fetch.read"}:
             action_summary = f"{action_summary} | created {created_context_id}"
         elif used_context_id and result.capability_id == "ask.provider_query":
             action_summary = f"{action_summary} | used {used_context_id}"
         elif used_context_ids and result.capability_id == "ask.provider_query":
             action_summary = f"{action_summary} | used {used_context_ids}"
+        if workflow_id:
+            workflow_suffix = f"workflow {workflow_id}"
+            if workflow_state:
+                workflow_suffix = f"{workflow_suffix} {workflow_state}"
+            action_summary = f"{action_summary} | {workflow_suffix}"
         return AuditRecord(
             audit_id=self._generate_audit_id(),
             request_id=result.request_id,
@@ -2800,18 +2899,23 @@ class ControllerService:
         )
 
     def _current_or_latest_workflow(self) -> WorkflowRecord | None:
+        self._cleanup_expired_workflows()
         return self._workflow_store.current_any() or self._workflow_store.latest_any()
 
     @staticmethod
     def _workflow_state_label(record: WorkflowRecord) -> str:
-        return record.current_state.replace("_", " ")
+        label = record.current_state.replace("_", " ")
+        pending_confirmation_id = record.metadata.get("pending_confirmation_id", "").strip().upper()
+        if pending_confirmation_id and record.current_state == "paused":
+            return f"{label} ({pending_confirmation_id})"
+        return label
 
     @staticmethod
     def _workflow_step_label(record: WorkflowRecord) -> str:
         if record.current_step_index <= 0 or record.current_step_index > len(record.steps):
             return "No step started yet."
         step = record.steps[record.current_step_index - 1]
-        return f"{step.step_id} {step.capability_id} {step.outcome}".strip()
+        return f"{step.step_id} {step.capability_id} {step.outcome} ({record.current_step_index}/{record.total_steps})".strip()
 
     @staticmethod
     def _workflow_summary_label(record: WorkflowRecord) -> str:
@@ -2833,6 +2937,7 @@ class ControllerService:
                 "workflow_type": workflow_type,
                 "workflow_step_id": workflow_step_id,
                 "workflow_step_index": str(workflow_step_index),
+                "pending_confirmation_id": confirmation_id,
             },
         )
 

@@ -9,11 +9,12 @@ WorkflowType = Literal["repo.explain", "file.explain", "web.summarize"]
 WorkflowState = Literal[
     "pending",
     "running",
-    "waiting_confirmation",
+    "paused",
     "blocked",
     "failed",
     "completed",
     "cancelled",
+    "expired",
 ]
 WorkflowConfirmationState = Literal["none", "pending", "approved", "denied", "expired"]
 WorkflowStepType = Literal["repo_status", "file_read", "web_fetch", "ask"]
@@ -32,6 +33,10 @@ WorkflowStepOutcome = Literal[
     "unavailable",
     "degraded",
 ]
+
+ACTIVE_WORKFLOW_STATES = frozenset({"pending", "running", "paused"})
+TERMINAL_WORKFLOW_STATES = frozenset({"blocked", "failed", "completed", "cancelled", "expired"})
+RESUMABLE_WORKFLOW_STATES = frozenset({"paused"})
 
 
 @dataclass(frozen=True)
@@ -57,6 +62,7 @@ class WorkflowRecord:
     name: str
     description: str
     created_at: str
+    expires_at: str
     started_at: str = ""
     finished_at: str = ""
     current_state: WorkflowState = "pending"

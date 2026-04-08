@@ -193,6 +193,12 @@ class CapabilityExecutor:
             return self._execute_web_fetch(update=update, snapshot=snapshot, argument=parsed_command.argument)
         if command == "/summarizeweb":
             return self._execute_web_summarize(update=update, snapshot=snapshot, argument=parsed_command.argument, batch_busy=batch_busy)
+        if command == "/workflows":
+            return self._execute_workflows(update=update, snapshot=snapshot)
+        if command == "/workflowstatus":
+            return self._execute_workflow_status(update=update, snapshot=snapshot, argument=parsed_command.argument)
+        if command == "/cancelworkflow":
+            return self._execute_cancel_workflow(update=update, snapshot=snapshot, argument=parsed_command.argument)
         if command == "/contexts":
             return self._execute_contexts(update=update, snapshot=snapshot)
         if command == "/clearcontext":
@@ -796,6 +802,150 @@ class CapabilityExecutor:
             command_label="/contexts",
             activity_state="processing_command",
             telemetry={"context_summary": f"contexts listed ({len(contexts)})"},
+        )
+
+    def _execute_workflows(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot) -> CapabilityExecutionResult:
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="workflow.read",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/workflows",
+            parsed_arguments={},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        workflows = self._service.recent_workflows_for_chat(chat_id=update.chat_id, limit=5)
+        reply = self._service._build_workflows_reply(chat_id=update.chat_id, limit=5).reply
+        summary = f"workflow.read returned {len(workflows)} workflows for chat {update.chat_id}."
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=reply,
+            internal_summary=summary,
+            retryable=False,
+            command_label="/workflows",
+            activity_state="processing_command",
+            telemetry={"workflow_count": len(workflows)},
+        )
+
+    def _execute_workflow_status(
+        self,
+        *,
+        update: TelegramInboundMessage,
+        snapshot: ControllerSnapshot,
+        argument: str,
+    ) -> CapabilityExecutionResult:
+        reference = " ".join(argument.split())
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="workflow.read",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/workflowstatus",
+            parsed_arguments={"reference": reference},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        record = self._service.resolve_workflow_for_chat(chat_id=update.chat_id, reference=reference) if reference else self._service.current_or_latest_workflow_for_chat(chat_id=update.chat_id)
+        reply = self._service._build_workflow_status_reply(chat_id=update.chat_id, reference=reference).reply
+        if record is None:
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="workflow_not_found",
+                user_message=reply,
+                internal_summary=f"workflow.read found no workflow for chat {update.chat_id}.",
+                retryable=False,
+                command_label="/workflowstatus",
+                activity_state="processing_command",
+            )
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=reply,
+            internal_summary=f"workflow.read returned {record.workflow_id} in state {record.current_state}.",
+            retryable=False,
+            command_label="/workflowstatus",
+            activity_state="processing_command",
+            telemetry={"workflow_id": record.workflow_id, "workflow_state": record.current_state},
+        )
+
+    def _execute_cancel_workflow(
+        self,
+        *,
+        update: TelegramInboundMessage,
+        snapshot: ControllerSnapshot,
+        argument: str,
+    ) -> CapabilityExecutionResult:
+        reference = " ".join(argument.split())
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="workflow.cancel",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/cancelworkflow",
+            parsed_arguments={"reference": reference},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        outcome, record = self._service._workflow_executor.cancel_workflow(chat_id=update.chat_id, reference=reference)
+        if outcome == "no_active":
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="workflow_not_active",
+                user_message="No active workflow is available to cancel in this chat.",
+                internal_summary=f"workflow.cancel found no active workflow for chat {update.chat_id}.",
+                retryable=False,
+                command_label="/cancelworkflow",
+                activity_state="processing_command",
+            )
+        if outcome == "not_found":
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="workflow_not_found",
+                user_message=f"Workflow {reference or '[missing]'} was not found in this chat.",
+                internal_summary=f"workflow.cancel could not find workflow reference {reference or '[missing]'}.",
+                retryable=False,
+                command_label="/cancelworkflow",
+                activity_state="processing_command",
+            )
+        if outcome == "not_cancellable" and record is not None:
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="workflow_not_cancellable",
+                user_message=f"Workflow {record.workflow_id} is already {record.current_state.replace('_', ' ')} and cannot be cancelled.",
+                internal_summary=f"workflow.cancel skipped terminal workflow {record.workflow_id} ({record.current_state}).",
+                retryable=False,
+                command_label="/cancelworkflow",
+                activity_state="processing_command",
+            )
+        if record is None:
+            return self._result(
+                request,
+                outcome="failed",
+                reason_code="workflow_cancel_failed",
+                user_message="Workflow cancellation failed unexpectedly.",
+                internal_summary="workflow.cancel returned no workflow record.",
+                retryable=False,
+                command_label="/cancelworkflow",
+                activity_state="processing_command",
+            )
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=record.final_user_facing_summary,
+            internal_summary=f"workflow.cancel cancelled {record.workflow_id}.",
+            retryable=False,
+            command_label="/cancelworkflow",
+            activity_state="processing_command",
+            telemetry={"workflow_id": record.workflow_id, "workflow_state": record.current_state},
         )
 
     def _execute_clear_context(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot) -> CapabilityExecutionResult:
