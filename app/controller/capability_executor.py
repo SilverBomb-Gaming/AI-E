@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Protocol
 from ..providers.base import ProviderReply
 from .capability_models import CapabilityContext, CapabilityEvaluation
 from .confirmation_models import ConfirmationContextSnapshot, PendingConfirmation
+from .context_models import BufferedContext
 from .execution_models import CapabilityExecutionRequest, CapabilityExecutionResult, ProviderExecutionSnapshot
 from .file_reader import FileReaderError
 from .repo_inspector import RepoInspectorError
@@ -186,6 +187,10 @@ class CapabilityExecutor:
             return self._execute_file_read(update=update, snapshot=snapshot, argument=parsed_command.argument)
         if command == "/web":
             return self._execute_web_fetch(update=update, snapshot=snapshot, argument=parsed_command.argument)
+        if command == "/contexts":
+            return self._execute_contexts(update=update, snapshot=snapshot)
+        if command == "/clearcontext":
+            return self._execute_clear_context(update=update, snapshot=snapshot)
         if command == "/audit":
             return self._execute_audit(update=update, snapshot=snapshot, argument=parsed_command.argument)
         if command == "/capabilities":
@@ -206,6 +211,20 @@ class CapabilityExecutor:
                 command_label="/askd",
                 prompt=parsed_command.argument,
                 response_style="detailed",
+                batch_busy=batch_busy,
+            )
+        if command == "/asklast":
+            return self._execute_provider_query_with_latest_context(
+                update=update,
+                snapshot=snapshot,
+                prompt=parsed_command.argument,
+                batch_busy=batch_busy,
+            )
+        if command == "/askctx":
+            return self._execute_provider_query_with_selected_context(
+                update=update,
+                snapshot=snapshot,
+                argument=parsed_command.argument,
                 batch_busy=batch_busy,
             )
         if command == "/confirm":
@@ -407,6 +426,20 @@ class CapabilityExecutor:
         except RepoInspectorError as exc:
             return self._repo_error_result(request=request, error=exc)
         reply = self._service._build_repo_reply(inspection).reply
+        context_entry = self._service.create_context_buffer(
+            source_capability_id="repo.status.read",
+            source_command="/repo",
+            scope_type=request.scope.scope_type,
+            source_summary=f"{inspection.repo_name} {inspection.branch} {inspection.status_label}",
+            content_kind="repo_summary",
+            normalized_content=reply,
+            content_preview=inspection.audit_summary,
+            size_class="summary",
+            chat_id=update.chat_id,
+            user_id=update.chat_id,
+            request_id=request.request_id,
+        )
+        reply = "\n".join((reply, self._service._context_ready_note(context_entry)))
         return self._result(
             request,
             outcome="success",
@@ -424,6 +457,8 @@ class CapabilityExecutor:
                 "repo_changed_count": inspection.changed_count,
                 "repo_checked_at": inspection.inspected_at,
                 "repo_summary": inspection.audit_summary,
+                "context_created_id": context_entry.context_id,
+                "context_source_summary": context_entry.source_summary,
             },
         )
 
@@ -523,6 +558,20 @@ class CapabilityExecutor:
         except FileReaderError as exc:
             return self._file_error_result(request=request, error=exc, relative_path=relative_path)
         reply = self._service._build_file_reply(preview).reply
+        context_entry = self._service.create_context_buffer(
+            source_capability_id="file.read",
+            source_command="/file",
+            scope_type=request.scope.scope_type,
+            source_summary=preview.display_path,
+            content_kind="file_preview",
+            normalized_content=reply,
+            content_preview=preview.display_path,
+            size_class=preview.size_category,
+            chat_id=update.chat_id,
+            user_id=update.chat_id,
+            request_id=request.request_id,
+        )
+        reply = "\n".join((reply, self._service._context_ready_note(context_entry)))
         if preview.oversized:
             file_status = "Large file preview truncated."
         elif preview.truncated:
@@ -548,6 +597,8 @@ class CapabilityExecutor:
                 "file_size_category": preview.size_category,
                 "file_read_at": preview.read_at,
                 "file_summary": preview.audit_summary,
+                "context_created_id": context_entry.context_id,
+                "context_source_summary": context_entry.source_summary,
             },
         )
 
@@ -634,6 +685,20 @@ class CapabilityExecutor:
         except WebFetchError as exc:
             return self._web_error_result(request=request, error=exc, display_url=display_url)
         reply = self._service._build_web_reply(preview).reply
+        context_entry = self._service.create_context_buffer(
+            source_capability_id="web.fetch.read",
+            source_command="/web",
+            scope_type=request.scope.scope_type,
+            source_summary=preview.domain,
+            content_kind="web_preview",
+            normalized_content=reply,
+            content_preview=preview.audit_summary,
+            size_class=preview.size_category,
+            chat_id=update.chat_id,
+            user_id=update.chat_id,
+            request_id=request.request_id,
+        )
+        reply = "\n".join((reply, self._service._context_ready_note(context_entry)))
         if preview.oversized:
             status = "Large web preview truncated."
         elif preview.truncated:
@@ -661,7 +726,183 @@ class CapabilityExecutor:
                 "web_size_category": preview.size_category,
                 "web_fetched_at": preview.fetched_at,
                 "web_summary": preview.audit_summary,
+                "context_created_id": context_entry.context_id,
+                "context_source_summary": context_entry.source_summary,
             },
+        )
+
+    def _execute_contexts(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot) -> CapabilityExecutionResult:
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="context.read",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/contexts",
+            parsed_arguments={},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        contexts = self._service.recent_contexts_for_chat(chat_id=update.chat_id, limit=5)
+        reply = self._service._build_contexts_reply(chat_id=update.chat_id, limit=5).reply
+        summary = f"contexts.read returned {len(contexts)} context entries for chat {update.chat_id}."
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=reply,
+            internal_summary=summary,
+            retryable=False,
+            command_label="/contexts",
+            activity_state="processing_command",
+            telemetry={"context_summary": f"contexts listed ({len(contexts)})"},
+        )
+
+    def _execute_clear_context(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot) -> CapabilityExecutionResult:
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="context.clear",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/clearcontext",
+            parsed_arguments={},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        cleared = self._service.clear_contexts_for_chat(chat_id=update.chat_id)
+        reply = self._service._build_clear_context_reply(cleared_count=cleared).reply
+        summary = f"Cleared {cleared} buffered context entries for chat {update.chat_id}."
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=reply,
+            internal_summary=summary,
+            retryable=False,
+            command_label="/clearcontext",
+            activity_state="processing_command",
+            telemetry={"context_clear_summary": summary},
+        )
+
+    def _execute_provider_query_with_latest_context(
+        self,
+        *,
+        update: TelegramInboundMessage,
+        snapshot: ControllerSnapshot,
+        prompt: str,
+        batch_busy: bool,
+    ) -> CapabilityExecutionResult:
+        context_entry = self._service.latest_context_for_chat(chat_id=update.chat_id)
+        request = self._build_request(
+            capability_id="ask.provider_query",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/asklast",
+            parsed_arguments={"prompt": " ".join(prompt.split())},
+            metadata={"argument_summary": "/asklast [prompt hidden]", "response_style": "concise"},
+        )
+        if not " ".join(prompt.split()):
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="missing_prompt",
+                user_message="Couldn't run that ask.\nReason: No prompt was provided.\nNext: Try /asklast <prompt>.",
+                internal_summary="/asklast rejected because no prompt was provided.",
+                retryable=False,
+                command_label="/asklast",
+                activity_state="processing_command",
+                ask_status="/asklast invalid: missing prompt.",
+                hide_content_in_summary=True,
+            )
+        if context_entry is None:
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="context_not_found",
+                user_message="No recent context is available in this chat.\nNext: Run /repo, /file, or /web first, then retry /asklast <prompt>.",
+                internal_summary="/asklast rejected because no recent context was available.",
+                retryable=False,
+                command_label="/asklast",
+                activity_state="processing_command",
+                ask_status="/asklast invalid: no recent context.",
+                hide_content_in_summary=True,
+            )
+        return self._execute_provider_query(
+            update=update,
+            snapshot=snapshot,
+            command_label="/asklast",
+            prompt=prompt,
+            response_style="concise",
+            batch_busy=batch_busy,
+            context_entry=context_entry,
+        )
+
+    def _execute_provider_query_with_selected_context(
+        self,
+        *,
+        update: TelegramInboundMessage,
+        snapshot: ControllerSnapshot,
+        argument: str,
+        batch_busy: bool,
+    ) -> CapabilityExecutionResult:
+        reference, prompt = self._parse_context_prompt_argument(argument)
+        request = self._build_request(
+            capability_id="ask.provider_query",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/askctx",
+            parsed_arguments={"context_id": reference, "prompt": prompt},
+            metadata={"argument_summary": f"/askctx {reference or '<missing>'} [prompt hidden]", "response_style": "concise"},
+        )
+        if not reference:
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="missing_context_id",
+                user_message="Couldn't run that ask.\nReason: No context id was provided.\nNext: Try /askctx <context_id> <prompt>.",
+                internal_summary="/askctx rejected because no context id was provided.",
+                retryable=False,
+                command_label="/askctx",
+                activity_state="processing_command",
+                ask_status="/askctx invalid: missing context id.",
+                hide_content_in_summary=True,
+            )
+        if not prompt:
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="missing_prompt",
+                user_message="Couldn't run that ask.\nReason: No prompt was provided.\nNext: Try /askctx <context_id> <prompt>.",
+                internal_summary=f"/askctx rejected because no prompt was provided for context {reference}.",
+                retryable=False,
+                command_label="/askctx",
+                activity_state="processing_command",
+                ask_status="/askctx invalid: missing prompt.",
+                hide_content_in_summary=True,
+            )
+        context_entry = self._service.resolve_context_for_chat(chat_id=update.chat_id, reference=reference)
+        if context_entry is None:
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="context_not_found",
+                user_message=f"Context {reference.upper()} was not found.\nNext: Run /contexts to inspect available context ids, then retry /askctx.",
+                internal_summary=f"/askctx rejected because context {reference.upper()} was not available in this chat.",
+                retryable=False,
+                command_label="/askctx",
+                activity_state="processing_command",
+                ask_status=f"/askctx invalid: context {reference.upper()} not found.",
+                hide_content_in_summary=True,
+            )
+        return self._execute_provider_query(
+            update=update,
+            snapshot=snapshot,
+            command_label="/askctx",
+            prompt=prompt,
+            response_style="concise",
+            batch_busy=batch_busy,
+            context_entry=context_entry,
         )
 
     def _execute_capabilities(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot) -> CapabilityExecutionResult:
@@ -985,8 +1226,26 @@ class CapabilityExecutor:
         prompt: str,
         response_style: str,
         batch_busy: bool,
+        context_entry: BufferedContext | None = None,
     ) -> CapabilityExecutionResult:
         prompt = " ".join(prompt.split())
+        argument_summary = f"{command_label} [prompt hidden]"
+        confirmation_action_label = f"{command_label} (prompt hidden)"
+        metadata: dict[str, object] = {
+            "argument_summary": argument_summary,
+            "response_style": response_style,
+        }
+        if context_entry is not None:
+            argument_summary = f"{command_label} {context_entry.context_id} [prompt hidden]"
+            confirmation_action_label = f"{command_label} {context_entry.context_id} (prompt hidden)"
+            metadata.update(
+                {
+                    "argument_summary": argument_summary,
+                    "context_id": context_entry.context_id,
+                    "context_source_summary": context_entry.source_summary,
+                    "confirmation_action_label": confirmation_action_label,
+                }
+            )
         request = self._build_request(
             capability_id="ask.provider_query",
             snapshot=snapshot,
@@ -994,10 +1253,7 @@ class CapabilityExecutor:
             requester_label=update.sender_label,
             original_command=command_label,
             parsed_arguments={"prompt": prompt, "response_style": response_style},
-            metadata={
-                "argument_summary": f"{command_label} [prompt hidden]",
-                "response_style": response_style,
-            },
+            metadata=metadata,
         )
 
         if batch_busy or self._service._is_provider_chat_busy(update.chat_id):
@@ -1057,11 +1313,12 @@ class CapabilityExecutor:
             original_command=command_label,
             parsed_arguments={"prompt": prompt, "response_style": response_style},
             context=context,
-            metadata={
-                "argument_summary": f"{command_label} [prompt hidden]",
-                "response_style": response_style,
-            },
+            metadata=metadata,
         )
+        provider_prompt = prompt
+        context_trimmed = False
+        if context_entry is not None:
+            provider_prompt, context_trimmed = self._service._build_contextual_prompt(prompt=prompt, context=context_entry)
 
         if evaluation.current_availability_state == "confirmation_required":
             return self._confirmation_required_result(
@@ -1073,6 +1330,7 @@ class CapabilityExecutor:
                 response_style=response_style,
                 chat_id=update.chat_id,
                 requester_label=update.sender_label,
+                context_entry=context_entry,
             )
         if evaluation.current_availability_state != "allowed":
             return self._result_from_capability_block(
@@ -1092,18 +1350,22 @@ class CapabilityExecutor:
                 request=request,
                 context=context,
                 chat_id=update.chat_id,
-                prompt=prompt,
+                prompt=provider_prompt,
                 response_style=response_style,
                 command_label=command_label,
+                context_entry=context_entry,
+                context_trimmed=context_trimmed,
             )
         return self._run_online_provider_query(
             request=request,
             context=context,
             chat_id=update.chat_id,
-            prompt=prompt,
+            prompt=provider_prompt,
             response_style=response_style,
             command_label=command_label,
             confirmation_used=False,
+            context_entry=context_entry,
+            context_trimmed=context_trimmed,
         )
 
     def _execute_confirm(
@@ -1283,6 +1545,29 @@ class CapabilityExecutor:
                 retryable=True,
             )
 
+        context_entry: BufferedContext | None = None
+        context_trimmed = False
+        provider_prompt = confirmation.prompt_text
+        context_id = confirmation.metadata.get("context_id", "").strip()
+        context_source_summary = confirmation.metadata.get("context_source_summary", "").strip()
+        if context_id:
+            context_entry = self._service.resolve_context_for_chat(chat_id=chat_id, reference=context_id)
+            if context_entry is None:
+                return self._confirmation_result(
+                    request=request,
+                    confirmation_id=confirmation.confirmation_id,
+                    outcome="invalid_request",
+                    reason_code="context_not_found",
+                    reason=f"Context {context_id} is no longer available.",
+                    next_step="Run /contexts, then resend /asklast or /askctx with an available context.",
+                    retryable=True,
+                )
+            provider_prompt, context_trimmed = self._service._build_contextual_prompt(
+                prompt=confirmation.prompt_text,
+                context=context_entry,
+            )
+            context_source_summary = context_entry.source_summary
+
         evaluation, context = self._service._evaluate_capability_id(
             confirmation.capability_id,
             snapshot,
@@ -1302,8 +1587,10 @@ class CapabilityExecutor:
             context=context,
             confirmation_context=confirmation.evaluation_context,
             metadata={
-                "argument_summary": f"/confirm {confirmation.confirmation_id}",
+                "argument_summary": confirmation.argument_summary or f"/confirm {confirmation.confirmation_id}",
                 "response_style": confirmation.response_style,
+                "context_id": context_id,
+                "context_source_summary": context_source_summary,
             },
         )
         if evaluation.current_availability_state != "allowed":
@@ -1322,21 +1609,25 @@ class CapabilityExecutor:
                 request=request,
                 context=context,
                 chat_id=chat_id,
-                prompt=confirmation.prompt_text,
+                prompt=provider_prompt,
                 response_style=confirmation.response_style,
                 command_label="/confirm",
                 confirmation_used=True,
                 confirmation_id=confirmation.confirmation_id,
+                context_entry=context_entry,
+                context_trimmed=context_trimmed,
             )
         return self._run_offline_provider_query(
             request=request,
             context=context,
             chat_id=chat_id,
-            prompt=confirmation.prompt_text,
+            prompt=provider_prompt,
             response_style=confirmation.response_style,
             command_label="/confirm",
             confirmation_used=True,
             confirmation_id=confirmation.confirmation_id,
+            context_entry=context_entry,
+            context_trimmed=context_trimmed,
         )
 
     def _execute_confirmed_web_fetch(
@@ -1404,12 +1695,26 @@ class CapabilityExecutor:
                 confirmation_id=confirmation.confirmation_id,
             )
         self._service._last_confirmation_result = f"Confirmation {confirmation.confirmation_id} approved and completed via web fetch."
-        reply = "\n".join(
+        base_reply = "\n".join(
             (
                 f"Confirmation {confirmation.confirmation_id} approved.",
                 self._service._build_web_reply(preview).reply,
             )
         )
+        context_entry = self._service.create_context_buffer(
+            source_capability_id="web.fetch.read",
+            source_command="/web",
+            scope_type=request.scope.scope_type,
+            source_summary=preview.domain,
+            content_kind="web_preview",
+            normalized_content=self._service._build_web_reply(preview).reply,
+            content_preview=preview.audit_summary,
+            size_class=preview.size_category,
+            chat_id=chat_id,
+            user_id=chat_id,
+            request_id=request.request_id,
+        )
+        reply = "\n".join((base_reply, self._service._context_ready_note(context_entry)))
         status = "Large web preview truncated." if preview.oversized else ("Web preview truncated." if preview.truncated else "Web preview ready.")
         return self._result(
             request,
@@ -1432,6 +1737,8 @@ class CapabilityExecutor:
                 "web_size_category": preview.size_category,
                 "web_fetched_at": preview.fetched_at,
                 "web_summary": preview.audit_summary,
+                "context_created_id": context_entry.context_id,
+                "context_source_summary": context_entry.source_summary,
             },
         )
 
@@ -1446,6 +1753,8 @@ class CapabilityExecutor:
         command_label: str,
         confirmation_used: bool = False,
         confirmation_id: str = "",
+        context_entry: BufferedContext | None = None,
+        context_trimmed: bool = False,
     ) -> CapabilityExecutionResult:
         provider_status = context.offline_provider_status
         provider_name = "Ollama"
@@ -1516,6 +1825,7 @@ class CapabilityExecutor:
                 mode_label=mode_label,
                 response_style=response_style,
                 confirmation_id=confirmation_id,
+                context_trimmed=context_trimmed,
             ),
             internal_summary=internal_summary,
             retryable=False,
@@ -1526,7 +1836,12 @@ class CapabilityExecutor:
             provider_used="ollama",
             mode_used="offline",
             confirmation_used=confirmation_used,
-            telemetry={"provider_model": model},
+            telemetry={
+                "provider_model": model,
+                "context_used_id": context_entry.context_id if context_entry is not None else "",
+                "context_source_summary": context_entry.source_summary if context_entry is not None else "",
+                "context_trimmed": context_trimmed,
+            },
         )
 
     def _run_online_provider_query(
@@ -1540,6 +1855,8 @@ class CapabilityExecutor:
         command_label: str,
         confirmation_used: bool,
         confirmation_id: str = "",
+        context_entry: BufferedContext | None = None,
+        context_trimmed: bool = False,
     ) -> CapabilityExecutionResult:
         provider_status = context.online_provider_status
         provider_name = "OpenAI"
@@ -1610,6 +1927,7 @@ class CapabilityExecutor:
                 mode_label=mode_label,
                 response_style=response_style,
                 confirmation_id=confirmation_id,
+                context_trimmed=context_trimmed,
             ),
             internal_summary=internal_summary,
             retryable=False,
@@ -1620,7 +1938,12 @@ class CapabilityExecutor:
             provider_used="openai",
             mode_used="online",
             confirmation_used=confirmation_used,
-            telemetry={"provider_model": model},
+            telemetry={
+                "provider_model": model,
+                "context_used_id": context_entry.context_id if context_entry is not None else "",
+                "context_source_summary": context_entry.source_summary if context_entry is not None else "",
+                "context_trimmed": context_trimmed,
+            },
         )
 
     def _result_from_capability_block(
@@ -1672,7 +1995,7 @@ class CapabilityExecutor:
         degraded: bool = False,
     ) -> CapabilityExecutionResult:
         command_label = request.original_command
-        title = "Can't run /askd right now." if command_label == "/askd" else "Can't run /ask right now."
+        title = self._ask_command_title(command_label)
         ask_status = f"{command_label} {outcome}: {reason}"
         self._service._update_telegram_loop_status(
             state="running",
@@ -1707,16 +2030,25 @@ class CapabilityExecutor:
         response_style: str,
         chat_id: str,
         requester_label: str,
+        context_entry: BufferedContext | None = None,
     ) -> CapabilityExecutionResult:
+        action_label = str(request.metadata.get("confirmation_action_label") or f"{request.original_command} (prompt hidden)")
+        confirmation_metadata: dict[str, str] = {}
+        if context_entry is not None:
+            confirmation_metadata = {
+                "context_id": context_entry.context_id,
+                "context_source_summary": context_entry.source_summary,
+            }
         confirmation = self._service._confirmation_store.create(
             capability_id=evaluation.capability_id,
             original_command=request.original_command,
-            argument_summary=f"{request.original_command} [prompt hidden]",
+            argument_summary=str(request.metadata.get("argument_summary") or f"{request.original_command} [prompt hidden]"),
             prompt_text=prompt,
             response_style=response_style,
             chat_id=chat_id,
             requester_label=requester_label,
             evaluation_context=self._confirmation_context_snapshot(snapshot, context),
+            metadata=confirmation_metadata,
         )
         expires_in = self._service._confirmation_seconds_remaining(confirmation)
         ask_status = f"{request.original_command} awaiting confirmation {confirmation.confirmation_id}."
@@ -1737,7 +2069,7 @@ class CapabilityExecutor:
             user_message="\n".join(
                 (
                     "Action requires confirmation.",
-                    f"Action: {request.original_command} (prompt hidden)",
+                    f"Action: {action_label}",
                     f"Capability: {evaluation.capability_id}",
                     f"Reason: {self._service._confirmation_reason_message(evaluation.reason_code)}",
                     f"ID: {confirmation.confirmation_id} (expires in about {expires_in}s)",
@@ -1752,7 +2084,11 @@ class CapabilityExecutor:
             hide_content_in_summary=True,
             mode_used=request.selected_mode_snapshot,
             provider_used=request.provider_snapshot.selected_provider,
-            telemetry={"confirmation_id": confirmation.confirmation_id},
+            telemetry={
+                "confirmation_id": confirmation.confirmation_id,
+                "context_used_id": context_entry.context_id if context_entry is not None else "",
+                "context_source_summary": context_entry.source_summary if context_entry is not None else "",
+            },
         )
 
     def _confirmation_state_result(
@@ -1959,7 +2295,7 @@ class CapabilityExecutor:
             user_message = "\n".join((summary, f"Reason: {reason}", f"Next: {next_step}"))
             reason_code = "provider_failure_after_confirmation"
         else:
-            title = "Can't run /askd right now." if command_label == "/askd" else "Can't run /ask right now."
+            title = self._ask_command_title(command_label)
             user_message = "\n".join((title, f"Reason: {reason}", f"Next: {next_step}"))
             reason_code = "provider_execution_failed"
         self._service._update_telegram_loop_status(
@@ -1995,6 +2331,7 @@ class CapabilityExecutor:
         mode_label: str,
         response_style: str,
         confirmation_id: str,
+        context_trimmed: bool = False,
     ) -> str:
         formatted = self._service._format_ask_success(
             reply_text,
@@ -2002,6 +2339,8 @@ class CapabilityExecutor:
             mode_label=mode_label,
             response_style=response_style,
         )
+        if context_trimmed:
+            formatted = "\n".join(("Context note: prior result was trimmed to fit safe prompt limits.", formatted))
         if confirmation_id:
             return "\n".join((f"Confirmation {confirmation_id} approved.", formatted))
         return formatted
@@ -2201,6 +2540,16 @@ class CapabilityExecutor:
             return None
         return limit
 
+    @staticmethod
+    def _parse_context_prompt_argument(argument: str) -> tuple[str, str]:
+        value = " ".join(argument.split())
+        if not value:
+            return "", ""
+        parts = value.split(" ", 1)
+        if len(parts) == 1:
+            return parts[0], ""
+        return parts[0], parts[1].strip()
+
     def _progress_ask_status(self, command_label: str, confirmation_id: str) -> str:
         if confirmation_id:
             return f"Confirmation {confirmation_id} in progress."
@@ -2210,6 +2559,10 @@ class CapabilityExecutor:
         if confirmation_id:
             return f"Confirmation {confirmation_id} completed via {provider_name} / {model}."
         return f"{command_label} completed via {provider_name} / {model}."
+
+    @staticmethod
+    def _ask_command_title(command_label: str) -> str:
+        return f"Can't run {command_label} right now."
 
     def _timeout_ask_status(self, command_label: str, provider_name: str, confirmation_id: str) -> str:
         if confirmation_id:

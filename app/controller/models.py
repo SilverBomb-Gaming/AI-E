@@ -68,6 +68,9 @@ class ControllerSnapshot:
     configured_repo_root: str
     configured_file_roots: str
     configured_web_domains: str
+    buffered_context_count: int
+    last_context_source: str
+    last_context_action: str
     last_repo_branch: str
     last_repo_status: str
     last_repo_checked_at: str

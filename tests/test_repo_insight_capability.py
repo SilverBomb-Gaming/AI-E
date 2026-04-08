@@ -125,7 +125,7 @@ class RepoInsightCapabilityTests(unittest.TestCase):
             self.assertEqual(latest.capability_id, "repo.status.read")
             self.assertEqual(latest.outcome, "success")
             self.assertEqual(latest.scope_summary, "repository/read repo=AI-E")
-            self.assertEqual(latest.action_summary, "AI-E | codex/home-screen-v1 | Dirty (3 changes)")
+            self.assertEqual(latest.action_summary, "AI-E | codex/home-screen-v1 | Dirty (3 changes) | created C1")
             self.assertNotIn("trainer.py", latest.action_summary)
 
     def test_repo_command_rejects_invalid_subcommand_cleanly(self) -> None:
@@ -193,3 +193,4 @@ class RepoInsightCapabilityTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

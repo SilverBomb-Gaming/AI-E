@@ -1,7 +1,7 @@
 """Confirmation state models for one-shot capability escalation."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 from .models import Mode, Policy, ProviderType, ReadinessState
@@ -36,3 +36,4 @@ class PendingConfirmation:
     chat_id: str
     requester_label: str
     evaluation_context: ConfirmationContextSnapshot
+    metadata: dict[str, str] = field(default_factory=dict)

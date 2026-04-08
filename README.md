@@ -1,4 +1,4 @@
-﻿# AI-E v1
+# AI-E v1
 
 Controlled execution surface for supported projects. AI-E turns a bounded request into a real, reviewable result with guardrails, live status, proof summaries, and saved history.
 
@@ -6,7 +6,7 @@ Controlled execution surface for supported projects. AI-E turns a bounded reques
 
 The current active operator-console surface in this repo is the Windows-first OpenClaw controller shell. The known-good checkpoint is:
 
-- Current baseline: `Windows OpenClaw Operator Console v2.2 - Bounded Web Fetch Capability`
+- Current baseline: `Windows OpenClaw Operator Console v2.3 - Context Bridging Layer`
 - Health: `Healthy`
 - Security: `Safe`
 - Readiness: `Ready`
@@ -18,49 +18,59 @@ What is now working:
 - offline/online mode selection with policy guardrails preserved
 - trusted health and security diagnostics, including ownership-aware port conflict checks and multi-signal runtime liveness
 - secure Telegram bot validation, connection testing, and polling-loop start/stop controls
-- duplicate-safe Telegram interaction loop with `/start`, `/help`, `/status`, `/mode`, `/models`, `/repo`, `/file <path>`, `/web <url>`, `/capabilities`, `/audit`, `/ask <prompt>`, and `/askd <prompt>`
+- duplicate-safe Telegram interaction loop with `/start`, `/help`, `/status`, `/mode`, `/models`, `/repo`, `/file <path>`, `/web <url>`, `/contexts`, `/clearcontext`, `/capabilities`, `/audit`, `/ask <prompt>`, `/askd <prompt>`, `/asklast <prompt>`, and `/askctx <id> <prompt>`
 - deterministic Telegram command parsing with whitespace-tolerant handling, consistent casing behavior, and short correction replies for malformed commands
 - per-chat provider-ask control with explicit in-flight rejection, bounded provider timeouts, and a narrow provider-ask cooldown to prevent accidental spam
 - centralized capability registry and evaluator that gate command execution through explicit `allowed`, `blocked`, `degraded`, `confirmation_required`, or `unavailable` states
 - one-shot confirmation handling for online-sensitive asks under `Ask Before Online`, including short-lived pending approvals plus Telegram `/confirm <id>` and `/deny <id>` controls
-- structured execution requests and results that drive Telegram command replies, recent operator summaries, and desktop result visibility with consistent success, blocked, degraded, timed-out, confirmation-aware, and out-of-scope outcomes
+- structured execution requests and results that drive Telegram command replies, recent operator summaries, desktop result visibility, and bounded audit records with consistent success, blocked, degraded, timed-out, confirmation-aware, invalid-request, and out-of-scope outcomes
 - manifest-backed capability definitions with explicit trust-boundary classification, Telegram exposure rules, startup validation, trust-aware `/capabilities` output, and compact desktop trust summaries
 - manifest-driven scope validation and bounded in-memory audit recording for every capability attempt, including `/audit` summaries and recent scope/audit visibility in the desktop shell
-- the first real external capability, `repo.status.read`, which inspects one configured repository root through fixed read-only git commands and returns a concise Telegram/Desktop summary of branch, clean/dirty state, and recent commits
-- the second external capability, `file.read`, which returns a bounded preview from text files inside configured allowed roots without exposing traversal, mutation, or arbitrary filesystem access
-- the third external capability, `web.fetch.read`, which fetches bounded previews from configured allowlisted domains through fixed GET-only requests, explicit confirmation/policy checks, scope validation, and audit recording without browser automation or session state
+- the first three scoped external read-only capabilities:
+  - `repo.status.read` for one configured repository root
+  - `file.read` for bounded text previews inside configured allowed roots
+  - `web.fetch.read` for bounded GET-only previews from allowlisted domains without browser automation
+- explicit context bridging for successful `/repo`, `/file`, and `/web` results through bounded per-chat context buffers that can be inspected with `/contexts`, reused with `/asklast` or `/askctx`, and cleared with `/clearcontext`
 
 What a capability manifest means in this project:
 
 - a capability manifest is the source of truth for one named action's identity, execution type, provider dependency, runtime/readiness needs, trust boundary, exposure rules, scope expectations, timeout support, confirmation sensitivity, and user visibility
 - registry loading validates capability ids, required fields, basic trust-boundary consistency, and scope-shape consistency before the controller uses those capabilities
-- evaluator, executor, `/capabilities`, scope validation, and recent desktop summaries now read control assumptions from the manifest instead of duplicating them in scattered command branches
+- evaluator, executor, `/capabilities`, scope validation, audit recording, and recent desktop summaries now read control assumptions from the manifest instead of duplicating them in scattered command branches
 
 What scope and sandboxing mean here:
 
-- every execution request now carries a structured scope with `scope_type`, `access_mode`, and optional bounded targets such as allowed paths, repository root, or domain allowlist
-- current user-facing capabilities are still narrow: most operator reads are `internal/read`, `repo.status.read` is `repository/read` and bounded to the configured `repo_root`, `file.read` is `filesystem/read` and bounded to configured `file_allowed_roots`, `web.fetch.read` is `network/read` and bounded to configured `web_allowed_domains`, and `ask.provider_query` is `network/execute` and restricted to the expected provider targets rather than arbitrary hosts
-- by default the file-read roots fall back to the configured repo root, and file previews stay bounded to safe text types plus capped preview size instead of full-file dumping
-- scope validation now runs after capability evaluation and confirmation checks but before actual execution, so out-of-scope requests are rejected before provider work starts
-- confirmation does not override scope restrictions, and request-provided scope data cannot widen a manifest's allowlist
+- every execution request carries a structured scope with `scope_type`, `access_mode`, and optional bounded targets such as allowed paths, repository root, or domain allowlist
+- current user-facing capabilities stay narrow: most operator reads are `internal/read`, `repo.status.read` is `repository/read` and bounded to the configured `repo_root`, `file.read` is `filesystem/read` and bounded to configured `file_allowed_roots`, `web.fetch.read` is `network/read` and bounded to configured `web_allowed_domains`, and `ask.provider_query` is `network/execute` and restricted to the expected provider targets rather than arbitrary hosts
+- scope validation runs after capability evaluation and confirmation checks but before actual execution, so out-of-scope requests are rejected before provider, filesystem, git, or network work starts
+- confirmation does not override scope restrictions, and request-provided scope data cannot widen a manifest allowlist
+
+What context bridging means here:
+
+- context reuse is explicit and temporary, not hidden memory
+- successful `/repo`, `/file`, and `/web` results create bounded per-chat context entries with short ids such as `C1`
+- `/contexts` lists recent context entries, `/asklast <prompt>` uses the newest entry, `/askctx <id> <prompt>` uses a specific entry, and `/clearcontext` clears the current chat buffer
+- plain `/ask` and `/askd` remain prompt-only and do not silently inject stored context
+- context buffers are in-memory only, bounded in size, scoped per chat, aggressively trimmed for safe prompt construction, auditable on create/use/clear, and easy to discard
 
 How audit logging works:
 
-- every structured execution attempt now creates one bounded audit record, including success, blocked, confirmation-required, denied, expired, timed-out, failed, unavailable, degraded, invalid-request, and out-of-scope outcomes
+- every structured execution attempt creates one bounded audit record, including success, blocked, confirmation-required, denied, expired, timed-out, failed, unavailable, degraded, invalid-request, and out-of-scope outcomes
 - audit records are kept in a bounded in-memory append-only log and surfaced through `/audit` plus compact desktop summaries
 - each record includes capability id, outcome, reason code, confirmation usage, scope summary, provider usage if any, duration, and a short action summary
-- audit records intentionally do not store secrets, raw provider payloads, full prompts, or full file contents; provider asks are recorded as hidden prompt summaries and file reads are recorded as sanitized path/size summaries instead
+- context operations are also audited, including context creation, context-backed ask usage, invalid context references, and buffer clearing
+- audit records intentionally do not store secrets, raw provider payloads, full prompts, full file contents, or full fetched page bodies
 
 Execution and trust model:
 
-- every Telegram capability execution still creates one structured request and one structured result with outcome, reason code, user-facing message, sanitized internal summary, duration, provider/mode usage, confirmation usage state, and scope summary
+- every Telegram capability execution creates one structured request and one structured result with outcome, reason code, user-facing message, sanitized internal summary, duration, provider/mode usage, confirmation usage state, and scope summary
 - execution results also carry manifest trust metadata so Telegram summaries and the desktop shell can show concise trust labels like `read-only`, `local`, `networked`, or `online-sensitive`
 - Telegram exposure is explicit: capabilities marked `denied` cannot run from Telegram, and `limited` capabilities degrade into a Telegram-safe restricted path instead of executing as a full action
-- no capability can silently bypass `always_offline`, invalid provider state, runtime failure, readiness failure, confirmation rules, or scope restrictions
+- no capability can silently bypass `always_offline`, invalid provider state, runtime failure, readiness failure, confirmation rules, scope restrictions, or per-chat context boundaries
 
 Confirmation flow:
 
-- online-sensitive `/ask` requests under `ask_before_online` return a confirmation prompt with a short id instead of silently escalating
+- online-sensitive `/ask`, `/askd`, `/asklast`, `/askctx`, and `/web` requests under `ask_before_online` return a confirmation prompt with a short id instead of silently escalating
 - approve that one request with `/confirm <id>` or reject it with `/deny <id>` from the same Telegram chat
 - pending confirmations expire automatically after a short lifetime and can be used only once
 - confirmation does not override `always_offline`, runtime failures, readiness failures, invalid provider state, or scope restrictions
@@ -80,34 +90,38 @@ Milestone notes:
 - v2.0: `docs/milestones/windows_openclaw_operator_console_v2_0_read_only_repo_insight_capability.md`
 - v2.1: `docs/milestones/windows_openclaw_operator_console_v2_1_read_only_file_access_capability.md`
 - v2.2: `docs/milestones/windows_openclaw_operator_console_v2_2_bounded_web_fetch_capability.md`
+- v2.3: `docs/milestones/windows_openclaw_operator_console_v2_3_context_bridging_layer.md`
 
 Important guardrails and usage notes:
 
 - Offline Mode remains first-class and no silent provider or mode fallback is allowed.
-- `/ask` and `/askd` remain explicit; generic plain text is not auto-routed into provider-backed queries.
-- capability manifests define Telegram exposure, trust boundaries, and scope expectations; registration, evaluation, confirmation, and execution do not guess these rules dynamically
-- `/confirm <id>` approves exactly one pending action; `/deny <id>` rejects it; expired or already-used confirmations cannot be replayed
-- `/audit` is bounded and recent-only; it summarizes capability attempts without exposing secrets or full prompt contents
-- `/repo` is read-only only; it is scoped to the configured repository root, uses fixed git status/log/branch inspection only, and does not allow file browsing, mutation, or arbitrary shell passthrough
-- `/file <path>` is read-only only; it accepts relative paths inside configured allowed roots, blocks traversal and absolute paths, shows only bounded text previews, rejects unsupported/binary file types, and never performs write/delete/execute operations
-- `/web <url>` is read-only only; it accepts only allowlisted `http`/`https` domains, uses fixed GET requests with bounded timeout/response size/content-type checks, strips query strings from summaries, blocks out-of-scope redirects, and never runs browser automation, sessions, or data-posting flows
-- the controller stays local-first with loopback bind defaults and secret redaction in logs, summaries, Telegram activity, and audit records
-- still intentionally not implemented: automation, scheduling, scraping workflows, browser automation, repo mutation, file mutation, multi-channel expansion, or AI-E orchestration behavior
+- `/ask` and `/askd` remain explicit prompt-only commands; generic plain text is not auto-routed into provider-backed queries.
+- `/asklast` and `/askctx` are also explicit; they may reuse only the bounded context entries created in the same Telegram chat and never inject hidden carryover into plain `/ask`.
+- capability manifests define Telegram exposure, trust boundaries, and scope expectations; registration, evaluation, confirmation, and execution do not guess these rules dynamically.
+- `/confirm <id>` approves exactly one pending action; `/deny <id>` rejects it; expired or already-used confirmations cannot be replayed.
+- `/audit` is bounded and recent-only; it summarizes capability attempts without exposing secrets, full prompt contents, or full context payloads.
+- `/repo` is read-only only; it is scoped to the configured repository root, uses fixed git status/log/branch inspection only, and does not allow mutation or arbitrary shell passthrough.
+- `/file <path>` is read-only only; it accepts relative paths inside configured allowed roots, blocks traversal and absolute paths, shows only bounded text previews, rejects unsupported/binary file types, and never performs write/delete/execute operations.
+- `/web <url>` is read-only only; it accepts only allowlisted `http`/`https` domains, uses fixed GET requests with bounded timeout/response size/content-type checks, strips query strings from summaries, blocks out-of-scope redirects, and never runs browser automation, sessions, or data-posting flows.
+- context buffers are in-memory only, bounded, per-chat, auditable, and easy to clear; they do not survive restarts and do not bypass the original repo/file/web scope checks that produced them.
+- the controller stays local-first with loopback bind defaults and secret redaction in logs, summaries, Telegram activity, context previews, and audit records.
+- still intentionally not implemented: automation, scheduling, scraping workflows, browser automation, repo mutation, file mutation, persistent memory, cross-chat shared context, multi-channel expansion, or AI-E orchestration behavior.
 
 Current next milestone:
 
-- `Next external capability milestone is not started yet`
-- v2.2 now provides the bounded repository + filesystem + allowlisted web-read foundation needed for future scoped search or documentation lookup work without widening the trust model in this checkpoint
+- `Next milestone after v2.3 is not started yet`
+- v2.3 now provides the explicit context-reuse layer needed for future scoped analysis helpers without widening the trust model into hidden memory or autonomous chaining
 
 Fast operator path:
 
 1. Launch the desktop shell with `python -m app.main`.
 2. Start the runtime and run Health/Security checks.
 3. Validate Telegram, start the Telegram loop, and message the configured bot.
-4. Use `/help`, `/status`, `/mode`, `/models`, `/repo`, `/file app/controller/app_service.py`, `/web https://docs.openclaw.ai/`, `/capabilities`, `/audit`, `/ask hello`, or `/askd hello` from Telegram.
-5. If `/ask` or `/web` returns a confirmation prompt, reply with `/confirm <id>` to approve that one request or `/deny <id>` to reject it.
-6. If `/capabilities` shows `blocked`, `degraded`, or `unavailable` state, or `/audit` shows repeated `out_of_scope` results, resolve the noted readiness, provider, or scope issue before retrying.
-7. Run `python -m unittest discover -s tests -v` and `python diagnostics_smoke.py` for the current controller verification pass.
+4. Use `/help`, `/status`, `/mode`, `/models`, `/repo`, `/file app/controller/app_service.py`, `/web https://docs.openclaw.ai/`, `/contexts`, `/capabilities`, `/audit`, `/ask hello`, `/asklast summarize this`, or `/askctx C1 explain this file` from Telegram.
+5. If `/ask`, `/askd`, `/asklast`, `/askctx`, or `/web` returns a confirmation prompt, reply with `/confirm <id>` to approve that one request or `/deny <id>` to reject it.
+6. Use `/clearcontext` whenever you want the current chat buffer reset to zero retained context entries.
+7. If `/capabilities` shows `blocked`, `degraded`, or `unavailable` state, or `/audit` shows repeated `out_of_scope` or invalid-context results, resolve the noted readiness, provider, scope, or context issue before retrying.
+8. Run `python -m unittest discover -s tests -v` and `python diagnostics_smoke.py` for the current controller verification pass.
 
 ## AI-E v1 Product Surface Status
 
@@ -301,11 +315,11 @@ AI-E **is not** a bot player, training framework, content generator, stealth aut
 
 | Pillar | Status | Notes |
 | --- | --- | --- |
-| Core Architecture | âœ… Locked | Engine-agnostic perception adapter (`UnityWindowPerception`), action interface abstraction (`DisabledActionInterface` by default), and clear separation of perception / processing / reporting / UI layers. |
-| Perception Layer | ðŸŸ¡ Stable | Window-bound captures, hash-based delta detection, and focus-aware input gating via `InputFocusGate`. |
-| Artifact & Reporting | ðŸŸ¡ Stable | Timestamped run directories, structured JSON outputs, and movement telemetry stored alongside screenshots. |
-| Operator UI | ðŸŸ¡ Calm | Start/Stop, runtime diagnostics, action layer status indicator, and explicit messaging that automation stays locked. |
-| Stability & Guardrails | ðŸŸ¡ Enforced | Zero background network calls, failure-aware recorders, and regression hooks for missing windows/devices/artifacts. |
+| Core Architecture | ✅ Locked | Engine-agnostic perception adapter (`UnityWindowPerception`), action interface abstraction (`DisabledActionInterface` by default), and clear separation of perception / processing / reporting / UI layers. |
+| Perception Layer | 🟡 Stable | Window-bound captures, hash-based delta detection, and focus-aware input gating via `InputFocusGate`. |
+| Artifact & Reporting | 🟡 Stable | Timestamped run directories, structured JSON outputs, and movement telemetry stored alongside screenshots. |
+| Operator UI | 🟡 Calm | Start/Stop, runtime diagnostics, action layer status indicator, and explicit messaging that automation stays locked. |
+| Stability & Guardrails | 🟡 Enforced | Zero background network calls, failure-aware recorders, and regression hooks for missing windows/devices/artifacts. |
 
 Nothing outside these pillars is part of v5.
 
@@ -327,11 +341,11 @@ app/
   ui.py           # PySide6 operator surface
 ```
 
-- **Perception Layer** â€” `perception.py` exposes `UnityWindowPerception`, which captures screenshots, hashes them, and records `MovementDelta` entries to prove the window is alive without touching gameplay.
-- **Processing Layer** â€” `RunSession` (runner.py) coordinates focus tracking, recorders, and action/perception adapters. Input capture is gated by `InputFocusGate` (recorders.py) so only foreground BABYLON activity is stored.
-- **Reporting Layer** â€” `artifacts.py` (`build_run_summary`, `build_mapprobe_snapshot`) and `logger.py` guarantee immutable artifacts with explicit status blocks (OK, attention, no_data) instead of silent failures.
-- **UI Layer** â€” `ui.py` (PySide6) keeps Start/Stop within reach, surfaces artifact folders, and shows the action layer lock so operators stay informed.
-- **Action Layer** â€” `actions.py` defines `ActionInterface` but defaults to `DisabledActionInterface`. The UIâ€™s Action Layer panel reiterates that automation stays off until an operator explicitly unlocks it.
+- **Perception Layer** — `perception.py` exposes `UnityWindowPerception`, which captures screenshots, hashes them, and records `MovementDelta` entries to prove the window is alive without touching gameplay.
+- **Processing Layer** — `RunSession` (runner.py) coordinates focus tracking, recorders, and action/perception adapters. Input capture is gated by `InputFocusGate` (recorders.py) so only foreground BABYLON activity is stored.
+- **Reporting Layer** — `artifacts.py` (`build_run_summary`, `build_mapprobe_snapshot`) and `logger.py` guarantee immutable artifacts with explicit status blocks (OK, attention, no_data) instead of silent failures.
+- **UI Layer** — `ui.py` (PySide6) keeps Start/Stop within reach, surfaces artifact folders, and shows the action layer lock so operators stay informed.
+- **Action Layer** — `actions.py` defines `ActionInterface` but defaults to `DisabledActionInterface`. The UI’s Action Layer panel reiterates that automation stays off until an operator explicitly unlocks it.
 
 ## Setup & Run
 
@@ -407,7 +421,7 @@ runner_artifacts/
 - `run_summary.json` now includes `perception.adapter`, `perception.movement[]`, and `action_layer` sections so every run proves observation (not automation).
 - `events.log` logs attaches/detaches, screenshot successes/failures, and focus transitions; nothing fails silently.
 - Movement deltas are derived from SHA-256 hashes of captured frames to confirm window activity without saving raw comparisons.
-- When recorders are enabled but emit no data, artifacts include `{ "status": "no_data", "reason": "..." }` blocks so operators arenâ€™t left guessing.
+- When recorders are enabled but emit no data, artifacts include `{ "status": "no_data", "reason": "..." }` blocks so operators aren’t left guessing.
 
 ## Stability & Guardrails
 
@@ -498,7 +512,7 @@ Guaranteed outputs every run:
 - `events.log` always logs start/stop, launches, attaches, screenshot outcomes, and warnings (even if no input or mic data exists).
 - `run_summary.json` is emitted on **Stop Run** with explicit references to each screenshot (or the failure reason) plus the new input-focus statistics.
 
-Input capture is now clamped to the BABYLON foreground window. When **Record Input (BABYLON focus only)** is enabled, any keyboard/mouse events detected while another window is active are suppressed, counted, and surfaced as warnings so â€œemptyâ€ runs are still explainable.
+Input capture is now clamped to the BABYLON foreground window. When **Record Input (BABYLON focus only)** is enabled, any keyboard/mouse events detected while another window is active are suppressed, counted, and surfaced as warnings so “empty” runs are still explainable.
 
 Screenshots rely on Windows desktop capture permissions; if a capture fails the folder now contains a `screenshot_*` reason entry plus an events.log warning. Mic recording is mic-only (no system audio) and can optionally be gated by holding the space bar when Push-to-Talk is enabled. When a recorder is enabled but produces no data, the artifacts include `{ "status": "no_data", "reason": "..." }` blocks so operators never see empty files.
 
@@ -512,7 +526,7 @@ cd "E:\AI projects 2025\AI-E"
 
 The script installs pinned dependencies, runs PyInstaller with the updated settings, and produces `dist/AI-E.exe`. It also collects the required PySide6 binaries, writes a transcript to `build_artifacts\build_log.txt`, and returns a non-zero exit code if anything fails. Double-clicking the executable shows the same UI with no console window, and assets (icons, future resources) are bundled automatically.
 
-First-launch UX: if the BABYLON path is empty, the UI prompts you to browse. Once selected, the exe path persists via the local runtime state file `app_state.local.json` so subsequent launches auto-fill it. The tracked `app_state.example.json` file is only a sanitized example and is not used for runtime writes. The Run Controls panel now keeps the operator-oriented signals front and center: Target EXE path, detected PID/state, a live duration timer, and the artifacts destination. The typical workflow is **Launch BABYLON** â†’ **Attach** â†’ **Start Run** â†’ interact/gameplay â†’ **Stop Run** â†’ **Open Run Folder** / **Open Logs Folder** to inspect the collected screenshots, logs, and summaries.
+First-launch UX: if the BABYLON path is empty, the UI prompts you to browse. Once selected, the exe path persists via the local runtime state file `app_state.local.json` so subsequent launches auto-fill it. The tracked `app_state.example.json` file is only a sanitized example and is not used for runtime writes. The Run Controls panel now keeps the operator-oriented signals front and center: Target EXE path, detected PID/state, a live duration timer, and the artifacts destination. The typical workflow is **Launch BABYLON** → **Attach** → **Start Run** → interact/gameplay → **Stop Run** → **Open Run Folder** / **Open Logs Folder** to inspect the collected screenshots, logs, and summaries.
 
 ## Local State Files
 
@@ -543,6 +557,8 @@ Use **Help > Demo Checklist...** inside the app to run the current quick walkthr
 6. **F.** Use `Modify and test again` or `Try a variation` to show the next quick iteration.
 
 The dialog resets each time you open it, so the same checklist can be reused before the next demo or local-user handoff.
+
+
 
 
 

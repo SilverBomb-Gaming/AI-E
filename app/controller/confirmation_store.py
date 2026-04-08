@@ -37,6 +37,7 @@ class ConfirmationStore:
         chat_id: str,
         requester_label: str,
         evaluation_context: ConfirmationContextSnapshot,
+        metadata: dict[str, str] | None = None,
     ) -> PendingConfirmation:
         with self._lock:
             self.cleanup_expired()
@@ -56,6 +57,7 @@ class ConfirmationStore:
                 chat_id=chat_id,
                 requester_label=requester_label,
                 evaluation_context=evaluation_context,
+                metadata=dict(metadata or {}),
             )
             self._items[confirmation_id] = confirmation
             return confirmation

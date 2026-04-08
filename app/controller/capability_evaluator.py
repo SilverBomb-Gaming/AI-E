@@ -60,7 +60,7 @@ class CapabilityEvaluator:
                 message=f"{manifest.name} is blocked until readiness is restored.",
             )
 
-        if capability_id in {"help.read", "status.read", "mode.read", "audit.read", "capabilities.read"}:
+        if capability_id in {"help.read", "status.read", "mode.read", "audit.read", "capabilities.read", "context.read", "context.clear"}:
             return self._result(
                 manifest,
                 source=source,

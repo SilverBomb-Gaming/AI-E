@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import re
 import tempfile
@@ -335,10 +335,14 @@ class TelegramCommandTests(unittest.TestCase):
             lines = reply.splitlines()
             self.assertLessEqual(len(reply), 500)
             self.assertEqual(lines[0], "Operator commands")
-            self.assertIn("/capabilities - capability summary", lines)
-            self.assertIn("/audit - recent audit", lines)
+            self.assertIn("/contexts - recent context", lines)
+            self.assertIn("/clearcontext - clear context", lines)
+            self.assertIn("/capabilities - capability state", lines)
+            self.assertIn("/audit - recent actions", lines)
             self.assertIn("/ask <prompt> - concise ask", lines)
             self.assertIn("/askd <prompt> - detailed ask", lines)
+            self.assertIn("/asklast <prompt> - latest context", lines)
+            self.assertIn("/askctx <id> <prompt> - chosen context", lines)
             self.assertEqual(lines[-1], "Plain text is not auto-routed.")
 
     def test_status_command_is_mobile_readable_and_shows_loop_activity(self) -> None:
@@ -793,6 +797,8 @@ class TelegramCommandTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
 
 
 

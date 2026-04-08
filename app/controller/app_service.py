@@ -15,6 +15,8 @@ from .capability_evaluator import CapabilityEvaluator
 from .capability_executor import CapabilityExecutor
 from .capability_models import CapabilityContext, CapabilityEvaluation, CapabilityManifest
 from .capability_registry import COMMAND_CAPABILITY_MAP, get_capability_manifest, list_summary_capabilities
+from .context_models import BufferedContext
+from .context_store import ContextStore
 from .confirmation_models import ConfirmationContextSnapshot, PendingConfirmation
 from .confirmation_store import ConfirmationStore
 from .channel_models import TelegramChannelStatus, TelegramLoopStatus
@@ -35,15 +37,18 @@ from ..runtime.manager import OpenClawRuntimeManager
 from ..runtime.log_sanitizer import sanitize_log_text
 
 
-_OPERATOR_CONSOLE_LABEL = "Windows OpenClaw Operator Console v2.2"
+_OPERATOR_CONSOLE_LABEL = "Windows OpenClaw Operator Console v2.3"
 _ASK_CONCISE_LIMIT = 700
 _ASK_DETAILED_LIMIT = 1500
-_PROVIDER_ASK_COMMANDS = frozenset({"/ask", "/askd"})
+_PROVIDER_ASK_COMMANDS = frozenset({"/ask", "/askd", "/asklast", "/askctx"})
 _PROVIDER_ASK_COOLDOWN_SECONDS = 4.0
 _OLLAMA_ASK_TIMEOUT_SECONDS = 12.0
 _OPENAI_ASK_TIMEOUT_SECONDS = 18.0
 _CONFIRMATION_LIFETIME_SECONDS = 120.0
 _AUDIT_LOG_MAX_RECORDS = 50
+_CONTEXT_BUFFER_MAX_ITEMS = 6
+_CONTEXT_LIFETIME_SECONDS = 1800.0
+_CONTEXT_PROMPT_CHAR_LIMIT = 2200
 
 
 @dataclass(frozen=True)
@@ -121,8 +126,14 @@ class ControllerService:
         self._capability_evaluator = CapabilityEvaluator()
         self._capability_executor = CapabilityExecutor(self)
         self._audit_store = AuditStore(max_records=_AUDIT_LOG_MAX_RECORDS)
+        self._context_store = ContextStore(
+            max_contexts_per_chat=_CONTEXT_BUFFER_MAX_ITEMS,
+            lifetime_seconds=_CONTEXT_LIFETIME_SECONDS,
+        )
         self._last_capability_evaluation: CapabilityEvaluation | None = None
         self._last_execution_result: CapabilityExecutionResult | None = None
+        self._last_context_source = "No buffered context yet."
+        self._last_context_action = "No context action yet."
         self._last_repo_branch = "-"
         self._last_repo_state = "No repository insight result yet."
         self._last_repo_checked_at = "-"
@@ -266,6 +277,7 @@ class ControllerService:
 
     def snapshot(self) -> ControllerSnapshot:
         self._cleanup_expired_confirmations()
+        self._cleanup_expired_contexts()
         status = self._runtime_manager.get_status()
         selected_provider_status = self._provider_status_cache.get(self._config.selected_provider) or self._default_provider_status(
             self._config.selected_provider
@@ -311,6 +323,9 @@ class ControllerService:
             configured_repo_root=self._config.repo_root or "-",
             configured_file_roots=self._file_roots_summary(self._config.file_allowed_roots),
             configured_web_domains=self._web_domains_summary(self._config.web_allowed_domains),
+            buffered_context_count=self._context_store.total_count(),
+            last_context_source=self._last_context_source,
+            last_context_action=self._last_context_action,
             last_repo_branch=self._last_repo_branch,
             last_repo_status=self._last_repo_state,
             last_repo_checked_at=self._last_repo_checked_at,
@@ -912,6 +927,112 @@ class ControllerService:
             command_label="/web",
         )
 
+    def create_context_buffer(
+        self,
+        *,
+        source_capability_id: str,
+        source_command: str,
+        scope_type: str,
+        source_summary: str,
+        content_kind: str,
+        normalized_content: str,
+        content_preview: str,
+        size_class: str,
+        chat_id: str,
+        user_id: str,
+        request_id: str,
+    ) -> BufferedContext:
+        normalized = self._summarize_text(normalized_content, limit=2400)
+        preview = self._summarize_text(content_preview or normalized, limit=240)
+        summary = self._summarize_text(source_summary, limit=96)
+        return self._context_store.create(
+            source_capability_id=source_capability_id,
+            source_command=source_command,
+            scope_type=scope_type,  # type: ignore[arg-type]
+            source_summary=summary,
+            content_kind=content_kind,  # type: ignore[arg-type]
+            content_preview=preview,
+            normalized_content=normalized,
+            size_class=size_class,  # type: ignore[arg-type]
+            user_id=user_id,
+            chat_id=chat_id,
+            originating_request_id=request_id,
+        )
+
+    def latest_context_for_chat(self, *, chat_id: str) -> BufferedContext | None:
+        self._cleanup_expired_contexts()
+        return self._context_store.latest(chat_id=chat_id)
+
+    def resolve_context_for_chat(self, *, chat_id: str, reference: str) -> BufferedContext | None:
+        self._cleanup_expired_contexts()
+        return self._context_store.resolve(chat_id=chat_id, reference=reference)
+
+    def recent_contexts_for_chat(self, *, chat_id: str, limit: int = 5) -> tuple[BufferedContext, ...]:
+        self._cleanup_expired_contexts()
+        return self._context_store.recent(chat_id=chat_id, limit=limit)
+
+    def clear_contexts_for_chat(self, *, chat_id: str) -> int:
+        cleared = self._context_store.clear(chat_id=chat_id)
+        if self._context_store.total_count() == 0:
+            self._last_context_source = "No buffered context yet."
+        return cleared
+
+    def _cleanup_expired_contexts(self) -> None:
+        expired = self._context_store.cleanup_expired()
+        if expired and self._context_store.total_count() == 0:
+            self._last_context_source = "No buffered context yet."
+        latest = self._context_store.latest_any()
+        if latest is None:
+            self._last_context_source = "No buffered context yet."
+
+    def _context_ready_note(self, context: BufferedContext) -> str:
+        return f"Context: {context.context_id} ready for /asklast or /askctx {context.context_id} <prompt>."
+
+    def _build_contexts_reply(self, *, chat_id: str, limit: int = 5) -> _TelegramResponsePlan:
+        contexts = self.recent_contexts_for_chat(chat_id=chat_id, limit=max(1, min(limit, 6)))
+        if not contexts:
+            return _TelegramResponsePlan(
+                reply="Contexts\nNo recent context is available in this chat.",
+                command_label="/contexts",
+            )
+        lines = ["Contexts (latest first)"]
+        for item in contexts:
+            lines.append(f"- {item.context_id} {item.source_capability_id} {item.source_summary}")
+        return _TelegramResponsePlan(
+            reply=chr(10).join(lines),
+            command_label="/contexts",
+        )
+
+    def _build_clear_context_reply(self, *, cleared_count: int) -> _TelegramResponsePlan:
+        if cleared_count <= 0:
+            message = "Context buffer is already clear for this chat."
+        elif cleared_count == 1:
+            message = "Cleared 1 context entry for this chat."
+        else:
+            message = f"Cleared {cleared_count} context entries for this chat."
+        return _TelegramResponsePlan(
+            reply=message,
+            command_label="/clearcontext",
+        )
+
+    def _build_contextual_prompt(self, *, prompt: str, context: BufferedContext) -> tuple[str, bool]:
+        content = context.normalized_content.strip()
+        trimmed = False
+        if len(content) > _CONTEXT_PROMPT_CHAR_LIMIT:
+            content = f"{content[: _CONTEXT_PROMPT_CHAR_LIMIT - 3].rstrip()}..."
+            trimmed = True
+        combined = "\n".join(
+            (
+                "Use the explicit operator-provided context below if it helps answer the request.",
+                f"Context Source: {context.source_summary}",
+                "Context:",
+                content,
+                "User Request:",
+                prompt.strip(),
+            )
+        )
+        return combined, trimmed
+
     def _diagnostic_summary_lines(self) -> tuple[str, ...]:
         lines: list[str] = []
         if self._latest_health_report is not None:
@@ -1095,11 +1216,40 @@ class ControllerService:
 
     def _remember_execution_result(self, result: CapabilityExecutionResult) -> None:
         self._last_execution_result = result
+        self._remember_context_execution_result(result)
         self._audit_store.append(self._build_audit_record(result))
         self._remember_repo_execution_result(result)
         self._remember_file_execution_result(result)
         self._remember_web_execution_result(result)
         self._last_message = result.internal_summary or self._last_message
+
+    def _remember_context_execution_result(self, result: CapabilityExecutionResult) -> None:
+        created_context_id = str(result.telemetry.get("context_created_id") or "").strip()
+        context_source = str(result.telemetry.get("context_source_summary") or "").strip()
+        if created_context_id and context_source:
+            self._last_context_source = self._summarize_text(f"{created_context_id} {context_source}", limit=120)
+            self._last_context_action = self._summarize_text(
+                f"Created {created_context_id} from {result.capability_id}.",
+                limit=120,
+            )
+            return
+        if result.capability_id == "context.clear":
+            summary = str(result.telemetry.get("context_clear_summary") or result.internal_summary).strip()
+            self._last_context_action = self._summarize_text(summary or "Context buffer cleared.", limit=120)
+            if self._context_store.total_count() == 0:
+                self._last_context_source = "No buffered context yet."
+            return
+        if result.capability_id == "context.read":
+            self._last_context_action = self._summarize_text(result.internal_summary, limit=120)
+            return
+        used_context_id = str(result.telemetry.get("context_used_id") or "").strip()
+        used_source = str(result.telemetry.get("context_source_summary") or "").strip()
+        if used_context_id:
+            label = used_source or "stored context"
+            self._last_context_action = self._summarize_text(
+                f"Used {used_context_id} from {label} via {result.command_label}.",
+                limit=120,
+            )
 
     def _remember_repo_execution_result(self, result: CapabilityExecutionResult) -> None:
         if result.capability_id != "repo.status.read":
@@ -1160,16 +1310,20 @@ class ControllerService:
                 (
                     "Operator commands",
                     "/help - command list",
-                    "/status - runtime and readiness",
-                    "/mode - mode and policy",
-                    "/models - local Ollama models",
-                    "/repo - scoped repo summary",
-                    "/file <path> - scoped file preview",
-                    "/web <url> - allowlisted web preview",
-                    "/capabilities - capability summary",
-                    "/audit - recent audit",
+                    "/status - readiness",
+                    "/mode - mode / policy",
+                    "/models - local models",
+                    "/repo - summary",
+                    "/file <path> - preview",
+                    "/web <url> - preview",
+                    "/contexts - recent context",
+                    "/clearcontext - clear context",
+                    "/capabilities - capability state",
+                    "/audit - recent actions",
                     "/ask <prompt> - concise ask",
                     "/askd <prompt> - detailed ask",
+                    "/asklast <prompt> - latest context",
+                    "/askctx <id> <prompt> - chosen context",
                     "/confirm <id> - approve action",
                     "/deny <id> - reject action",
                     "Plain text is not auto-routed.",
@@ -1569,6 +1723,8 @@ class ControllerService:
             return self._summarize_text(f"{update.sender_label}: /file [path hidden]")
         if command_label == "/web":
             return self._summarize_text(f"{update.sender_label}: /web [url hidden]")
+        if command_label in {"/contexts", "/clearcontext"}:
+            return self._summarize_text(f"{update.sender_label}: {command_label}")
         if command_label == "plain_text":
             return self._summarize_text(f"{update.sender_label}: text message received")
         if command_label == "non_text":
@@ -1607,7 +1763,26 @@ class ControllerService:
         argument = parts[1].strip() if len(parts) > 1 else ""
         command = command_token.split("@", 1)[0].lower()
         normalized_text = " ".join(text.split())
-        if command in {"/start", "/help", "/status", "/mode", "/models", "/repo", "/file", "/web", "/capabilities", "/audit", "/confirm", "/deny", "/ask", "/askd"}:
+        if command in {
+            "/start",
+            "/help",
+            "/status",
+            "/mode",
+            "/models",
+            "/repo",
+            "/file",
+            "/web",
+            "/contexts",
+            "/clearcontext",
+            "/capabilities",
+            "/audit",
+            "/confirm",
+            "/deny",
+            "/ask",
+            "/askd",
+            "/asklast",
+            "/askctx",
+        }:
             return _ParsedTelegramCommand(command_label=command, argument=argument, normalized_text=normalized_text)
         if command.startswith("/file"):
             return _ParsedTelegramCommand(
@@ -1626,6 +1801,24 @@ class ControllerService:
                 command_label="parse_failure",
                 normalized_text=normalized_text,
                 usage_hint="Use /repo or /repo status.",
+            )
+        if command.startswith("/contexts") or command.startswith("/clearcontext"):
+            return _ParsedTelegramCommand(
+                command_label="parse_failure",
+                normalized_text=normalized_text,
+                usage_hint="Use /contexts or /clearcontext.",
+            )
+        if command.startswith("/asklast"):
+            return _ParsedTelegramCommand(
+                command_label="parse_failure",
+                normalized_text=normalized_text,
+                usage_hint="Use /asklast <prompt>.",
+            )
+        if command.startswith("/askctx"):
+            return _ParsedTelegramCommand(
+                command_label="parse_failure",
+                normalized_text=normalized_text,
+                usage_hint="Use /askctx <context_id> <prompt>.",
             )
         if command.startswith("/ask"):
             return _ParsedTelegramCommand(
@@ -2506,8 +2699,18 @@ class ControllerService:
             action_summary = str(result.telemetry.get("file_summary") or "file preview")
         elif result.capability_id == "web.fetch.read":
             action_summary = str(result.telemetry.get("web_summary") or "web fetch preview")
+        elif result.capability_id == "context.read":
+            action_summary = str(result.telemetry.get("context_summary") or "context listing")
+        elif result.capability_id == "context.clear":
+            action_summary = str(result.telemetry.get("context_clear_summary") or "context buffer cleared")
         else:
             action_summary = str(result.request.metadata.get("argument_summary") or result.command_label)
+        created_context_id = str(result.telemetry.get("context_created_id") or "").strip()
+        used_context_id = str(result.telemetry.get("context_used_id") or "").strip()
+        if created_context_id and result.capability_id in {"repo.status.read", "file.read", "web.fetch.read"}:
+            action_summary = f"{action_summary} | created {created_context_id}"
+        elif used_context_id and result.capability_id == "ask.provider_query":
+            action_summary = f"{action_summary} | used {used_context_id}"
         return AuditRecord(
             audit_id=self._generate_audit_id(),
             request_id=result.request_id,
