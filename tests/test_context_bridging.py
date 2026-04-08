@@ -323,6 +323,42 @@ class ContextBridgingTests(unittest.TestCase):
             for record in recent:
                 self.assertNotIn("secret-token-should-not-appear", record.action_summary)
 
+    def test_explainrepo_workflow_uses_repo_and_file_contexts_for_one_grounded_ask(self) -> None:
+        updates = [
+            (TelegramInboundMessage(update_id=719, chat_id="chat-1", text="/explainrepo docs/notes.txt", sender_label="@tester"),),
+        ]
+        ollama = _RecordingOllamaAdapter()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "workspace"
+            target = root / "docs" / "notes.txt"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("alpha\nbeta\ngamma\n", encoding="utf-8")
+
+            telegram_service = _FakeTelegramService(update_batches=updates)
+            service, config_store, _, _, offline = self._make_service(tmp_dir=tmp, telegram_service=telegram_service, ollama_adapter=ollama)
+            service._provider_ask_cooldown_seconds = 0.0
+            config = config_store.load()
+            config.repo_root = str(root.resolve())
+            config.file_allowed_roots = (str(root.resolve()),)
+            config_store.save(config)
+            service._config = config_store.load()
+
+            snapshot = self._run_until(service, telegram_service, 1)
+            reply = telegram_service.sent_messages[0][1]
+            recent = service._audit_store.recent(limit=3)
+
+            self.assertEqual(offline.ask_calls, 1)
+            self.assertTrue(reply.startswith("Workflow: repo.explain completed."))
+            self.assertIn("Answer (Offline | Ollama", reply)
+            self.assertIn("Context 1: AI-E codex/home-screen-v1 Dirty (3 changes)", offline.ask_prompts[0])
+            self.assertIn("Context 2: docs/notes.txt", offline.ask_prompts[0])
+            self.assertIn("User Request:\nProvide a concise operator-facing explanation", offline.ask_prompts[0])
+            self.assertEqual(snapshot.last_workflow_type, "repo.explain")
+            self.assertEqual(snapshot.last_workflow_state, "completed")
+            self.assertIn("S3 ask.provider_query success", snapshot.last_workflow_step)
+            self.assertIn("Workflow: repo.explain completed.", snapshot.last_workflow_summary)
+            self.assertIn("used C1,C2", recent[0].action_summary)
+
 
 if __name__ == "__main__":
     unittest.main()

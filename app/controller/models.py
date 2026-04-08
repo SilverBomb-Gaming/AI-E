@@ -70,6 +70,7 @@ class ControllerSnapshot:
     configured_web_domains: str
     buffered_context_count: int
     last_context_source: str
+    current_context_freshness: str
     last_context_action: str
     last_repo_branch: str
     last_repo_status: str
@@ -93,6 +94,10 @@ class ControllerSnapshot:
     last_execution_duration_ms: int
     last_execution_finished_at: str
     last_audit_summary: str
+    last_workflow_type: str
+    last_workflow_state: str
+    last_workflow_step: str
+    last_workflow_summary: str
     pending_confirmation_count: int
     last_confirmation_requested: str
     last_confirmation_result: str

@@ -29,6 +29,9 @@ from .profile_store import ControllerConfig, ControllerConfigStore, Mode, Policy
 from .scope_models import ExecutionScope, ScopeValidationResult
 from .scope_validator import ScopeValidator
 from .web_fetcher import WebFetchError, WebFetchSnapshot, WebFetcher
+from .workflow_executor import WorkflowExecutor
+from .workflow_models import WorkflowRecord
+from .workflow_store import WorkflowStore
 from .repo_inspector import RepoInspectionSnapshot, RepoInspector, RepoInspectorError
 from .telegram_service import TelegramApiError, TelegramChannelService, TelegramInboundMessage, mask_telegram_token
 from ..platform.secrets import SecretStore, get_secret_store
@@ -37,7 +40,7 @@ from ..runtime.manager import OpenClawRuntimeManager
 from ..runtime.log_sanitizer import sanitize_log_text
 
 
-_OPERATOR_CONSOLE_LABEL = "Windows OpenClaw Operator Console v2.5"
+_OPERATOR_CONSOLE_LABEL = "Windows OpenClaw Operator Console v2.6"
 _ASK_CONCISE_LIMIT = 700
 _ASK_DETAILED_LIMIT = 1500
 _PROVIDER_ASK_COMMANDS = frozenset({"/ask", "/askd", "/asklast", "/askctx"})
@@ -125,6 +128,8 @@ class ControllerService:
         self._scope_validator = ScopeValidator()
         self._capability_evaluator = CapabilityEvaluator()
         self._capability_executor = CapabilityExecutor(self)
+        self._workflow_store = WorkflowStore()
+        self._workflow_executor = WorkflowExecutor(self, self._capability_executor)
         self._audit_store = AuditStore(max_records=_AUDIT_LOG_MAX_RECORDS)
         self._context_store = ContextStore(
             max_contexts_per_chat=_CONTEXT_BUFFER_MAX_ITEMS,
@@ -292,6 +297,7 @@ class ControllerService:
         )
         current_context = self._context_store.current_any()
         current_context_freshness = self._describe_current_context_freshness(current_context)
+        workflow_record = self._current_or_latest_workflow()
         return ControllerSnapshot(
             runtime_state=status.runtime_state,
             status_message=self._last_message or status.status_message,
@@ -351,6 +357,10 @@ class ControllerService:
             last_execution_duration_ms=self._last_execution_result.duration_ms if self._last_execution_result else 0,
             last_execution_finished_at=self._last_execution_result.finished_at if self._last_execution_result else "-",
             last_audit_summary=self._format_audit_record_summary(self._audit_store.latest()) if self._audit_store.latest() else "No audit record yet.",
+            last_workflow_type=workflow_record.workflow_type if workflow_record is not None else "-",
+            last_workflow_state=self._workflow_state_label(workflow_record) if workflow_record is not None else "No workflow yet.",
+            last_workflow_step=self._workflow_step_label(workflow_record) if workflow_record is not None else "No workflow step yet.",
+            last_workflow_summary=self._workflow_summary_label(workflow_record) if workflow_record is not None else "No workflow executed yet.",
             pending_confirmation_count=self._confirmation_store.pending_count(),
             last_confirmation_requested=self._last_confirmation_requested,
             last_confirmation_result=self._last_confirmation_result,
@@ -1054,6 +1064,25 @@ class ControllerService:
         )
         return combined, trimmed
 
+    def _build_multi_contextual_prompt(self, *, prompt: str, contexts: tuple[BufferedContext, ...]) -> tuple[str, bool]:
+        chunks: list[str] = ["Use the explicit operator-provided context below if it helps answer the request."]
+        budget = _CONTEXT_PROMPT_CHAR_LIMIT
+        trimmed = False
+        for index, context in enumerate(contexts, start=1):
+            content = context.normalized_content.strip()
+            header = f"Context {index}: {context.source_summary}\n"
+            remaining_budget = max(120, budget - len("\n".join(chunks)) - len(prompt.strip()) - 32)
+            if len(content) > remaining_budget:
+                content = f"{content[: max(0, remaining_budget - 3)].rstrip()}..."
+                trimmed = True
+            chunks.append(header + content)
+        chunks.extend(("User Request:", prompt.strip()))
+        combined = "\n".join(chunks)
+        if len(combined) > budget:
+            combined = f"{combined[: budget - 3].rstrip()}..."
+            trimmed = True
+        return combined, trimmed
+
     def _diagnostic_summary_lines(self) -> tuple[str, ...]:
         lines: list[str] = []
         if self._latest_health_report is not None:
@@ -1330,10 +1359,6 @@ class ControllerService:
             reply=chr(10).join(
                 (
                     "Operator commands",
-                    "/help - command list",
-                    "/status - readiness",
-                    "/mode - mode / policy",
-                    "/models - local models",
                     "/repo - summary",
                     "/file <path> - preview",
                     "/web <url> - preview",
@@ -1345,8 +1370,9 @@ class ControllerService:
                     "/askd <prompt> - detailed ask",
                     "/asklast <prompt> - latest context",
                     "/askctx <id> <prompt> - chosen context",
-                    "/confirm <id> - approve action",
-                    "/deny <id> - reject action",
+                    "/explainrepo [path] - workflow",
+                    "/explainfile <path> - workflow",
+                    "/summarizeweb <url> - workflow",
                     "Plain text is not auto-routed.",
                 )
             ),
@@ -1803,6 +1829,9 @@ class ControllerService:
             "/askd",
             "/asklast",
             "/askctx",
+            "/explainrepo",
+            "/explainfile",
+            "/summarizeweb",
         }:
             return _ParsedTelegramCommand(command_label=command, argument=argument, normalized_text=normalized_text)
         if command.startswith("/file"):
@@ -1846,6 +1875,24 @@ class ControllerService:
                 command_label="parse_failure",
                 normalized_text=normalized_text,
                 usage_hint="Use /ask <prompt> or /askd <prompt>.",
+            )
+        if command.startswith("/explainrepo"):
+            return _ParsedTelegramCommand(
+                command_label="parse_failure",
+                normalized_text=normalized_text,
+                usage_hint="Use /explainrepo or /explainrepo <relative_path>.",
+            )
+        if command.startswith("/explainfile"):
+            return _ParsedTelegramCommand(
+                command_label="parse_failure",
+                normalized_text=normalized_text,
+                usage_hint="Use /explainfile <relative_path>.",
+            )
+        if command.startswith("/summarizeweb"):
+            return _ParsedTelegramCommand(
+                command_label="parse_failure",
+                normalized_text=normalized_text,
+                usage_hint="Use /summarizeweb <https://allowed-domain/path>.",
             )
         if command.startswith("/confirm") or command.startswith("/deny"):
             return _ParsedTelegramCommand(
@@ -2728,10 +2775,13 @@ class ControllerService:
             action_summary = str(result.request.metadata.get("argument_summary") or result.command_label)
         created_context_id = str(result.telemetry.get("context_created_id") or "").strip()
         used_context_id = str(result.telemetry.get("context_used_id") or "").strip()
+        used_context_ids = str(result.telemetry.get("context_used_ids") or "").strip()
         if created_context_id and result.capability_id in {"repo.status.read", "file.read", "web.fetch.read"}:
             action_summary = f"{action_summary} | created {created_context_id}"
         elif used_context_id and result.capability_id == "ask.provider_query":
             action_summary = f"{action_summary} | used {used_context_id}"
+        elif used_context_ids and result.capability_id == "ask.provider_query":
+            action_summary = f"{action_summary} | used {used_context_ids}"
         return AuditRecord(
             audit_id=self._generate_audit_id(),
             request_id=result.request_id,
@@ -2747,6 +2797,43 @@ class ControllerService:
             provider_used=result.provider_used,
             duration_ms=result.duration_ms,
             action_summary=self._summarize_text(action_summary, limit=80),
+        )
+
+    def _current_or_latest_workflow(self) -> WorkflowRecord | None:
+        return self._workflow_store.current_any() or self._workflow_store.latest_any()
+
+    @staticmethod
+    def _workflow_state_label(record: WorkflowRecord) -> str:
+        return record.current_state.replace("_", " ")
+
+    @staticmethod
+    def _workflow_step_label(record: WorkflowRecord) -> str:
+        if record.current_step_index <= 0 or record.current_step_index > len(record.steps):
+            return "No step started yet."
+        step = record.steps[record.current_step_index - 1]
+        return f"{step.step_id} {step.capability_id} {step.outcome}".strip()
+
+    @staticmethod
+    def _workflow_summary_label(record: WorkflowRecord) -> str:
+        return record.final_user_facing_summary or record.audit_summary or "No workflow executed yet."
+
+    def _attach_workflow_metadata_to_confirmation(
+        self,
+        *,
+        confirmation_id: str,
+        workflow_id: str,
+        workflow_type: str,
+        workflow_step_id: str,
+        workflow_step_index: int,
+    ) -> None:
+        self._confirmation_store.update_metadata(
+            confirmation_id,
+            metadata={
+                "workflow_id": workflow_id,
+                "workflow_type": workflow_type,
+                "workflow_step_id": workflow_step_id,
+                "workflow_step_index": str(workflow_step_index),
+            },
         )
 
     def _format_audit_record_summary(self, record: AuditRecord | None) -> str:

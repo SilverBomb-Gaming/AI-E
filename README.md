@@ -6,7 +6,7 @@ Controlled execution surface for supported projects. AI-E turns a bounded reques
 
 The current active operator-console surface in this repo is the Windows-first OpenClaw controller shell. The known-good checkpoint is:
 
-- Current baseline: `Windows OpenClaw Operator Console v2.5 - Bounded Web Fetch Capability`
+- Current baseline: `Windows OpenClaw Operator Console v2.6 - Multi-Step Task Composition (Operator Workflow Layer)`
 - Health: `Healthy`
 - Security: `Safe`
 - Readiness: `Ready`
@@ -18,7 +18,7 @@ What is now working:
 - offline/online mode selection with policy guardrails preserved
 - trusted health and security diagnostics, including ownership-aware port conflict checks and multi-signal runtime liveness
 - secure Telegram bot validation, connection testing, and polling-loop start/stop controls
-- duplicate-safe Telegram interaction loop with `/start`, `/help`, `/status`, `/mode`, `/models`, `/repo`, `/file <path>`, `/web <url>`, `/contexts`, `/clearcontext`, `/capabilities`, `/ask <prompt>`, `/askd <prompt>`, `/asklast <prompt>`, and `/askctx <id> <prompt>`
+- duplicate-safe Telegram interaction loop with `/start`, `/help`, `/status`, `/mode`, `/models`, `/repo`, `/file <path>`, `/web <url>`, `/contexts`, `/clearcontext`, `/capabilities`, `/ask <prompt>`, `/askd <prompt>`, `/asklast <prompt>`, `/askctx <id> <prompt>`, `/explainrepo [path]`, `/explainfile <path>`, and `/summarizeweb <url>`
 - deterministic Telegram command parsing with whitespace-tolerant handling, consistent casing behavior, and short correction replies for malformed commands
 - per-chat provider-ask control with explicit in-flight rejection, bounded provider timeouts, and a narrow provider-ask cooldown to prevent accidental spam
 - centralized capability registry and evaluator that gate command execution through explicit `allowed`, `blocked`, `degraded`, `confirmation_required`, or `unavailable` states
@@ -27,6 +27,18 @@ What is now working:
 - manifest-backed capability definitions with explicit trust-boundary classification, Telegram exposure rules, startup validation, trust-aware `/capabilities` output, and compact desktop trust summaries for the most recent capability and execution result
 - explicit repository, file, and web read-only capability surfaces that preserve scope enforcement, trust labels, and auditability across `/repo`, `/file`, and `/web`
 - bounded explicit context reuse with Option A semantics: visible recent contexts, stale contexts allowed with warning, expired contexts visible but blocked from reuse, and no hidden carryover across chats or restarts
+- explicit bounded workflow composition that chains existing safe capabilities into short operator-visible sequences without adding autonomy, background planning, or mutation powers
+
+What the v2.6 workflow layer means in this project:
+
+- workflows are explicit Telegram commands, not freeform planning
+- each workflow is a short deterministic sequence over already-supported capabilities
+- current workflows are `/explainrepo [path]`, `/explainfile <path>`, and `/summarizeweb <url>`
+- workflows may reuse one or more explicit context buffers as grounded input to a single final `/ask` step
+- each step still runs through the normal evaluator, scope validator, confirmation rules, audit store, and context buffer layer
+- workflows can pause on confirmation and resume only from `/confirm <id>` in the same chat
+- workflow status is visible in the desktop shell through last workflow type, state, step, and summary
+- workflows do not introduce branching graphs, retries, hidden tools, scheduling, or autonomous execution
 
 What `web.fetch.read` means in this project:
 
@@ -80,6 +92,7 @@ Milestone notes:
 - v2.2: `docs/milestones/windows_openclaw_operator_console_v2_2_bounded_web_fetch_capability.md`
 - v2.3: `docs/milestones/windows_openclaw_operator_console_v2_3_context_bridging_layer.md`
 - v2.5: `docs/milestones/windows_openclaw_operator_console_v2_5_bounded_web_fetch_capability.md`
+- v2.6: `docs/milestones/windows_openclaw_operator_console_v2_6_multi_step_task_composition_operator_workflow_layer.md`
 
 Important guardrails and usage notes:
 
@@ -93,16 +106,16 @@ Important guardrails and usage notes:
 
 Current active checkpoint:
 
-- `Windows OpenClaw Operator Console v2.5 - Bounded Web Fetch Capability`
-- goal: complete the bounded read-only information triangle across repo, file, and web without broadening into scraping or browser automation
+- `Windows OpenClaw Operator Console v2.6 - Multi-Step Task Composition (Operator Workflow Layer)`
+- goal: compose the verified repo, file, web, ask, and context surfaces into short explicit workflows without introducing agent autonomy
 
 Fast operator path:
 
 1. Launch the desktop shell with `python -m app.main`.
 2. Start the runtime and run Health/Security checks.
 3. Validate Telegram, start the Telegram loop, and message the configured bot.
-4. Use `/help`, `/status`, `/mode`, `/repo`, `/file <path>`, `/web <url>`, `/contexts`, `/capabilities`, `/ask hello`, or `/askd hello` from Telegram.
-5. If `/ask` or `/web` returns a confirmation prompt, reply with `/confirm <id>` to approve that one request or `/deny <id>` to reject it.
+4. Use `/help`, `/status`, `/mode`, `/repo`, `/file <path>`, `/web <url>`, `/explainrepo [path]`, `/explainfile <path>`, `/summarizeweb <url>`, `/contexts`, `/capabilities`, `/ask hello`, or `/askd hello` from Telegram.
+5. If `/ask`, `/web`, or a workflow step returns a confirmation prompt, reply with `/confirm <id>` to approve that one request or `/deny <id>` to reject it.
 6. If `/capabilities` shows `blocked`, `degraded`, or `unavailable` state for provider, repo, file, or web actions, resolve the noted readiness, scope, or provider issue before retrying.
 7. Run `python -m unittest discover -s tests -v` and `python diagnostics_smoke.py` for the current controller verification pass.
 

@@ -343,6 +343,9 @@ class TelegramCommandTests(unittest.TestCase):
             self.assertIn("/askd <prompt> - detailed ask", lines)
             self.assertIn("/asklast <prompt> - latest context", lines)
             self.assertIn("/askctx <id> <prompt> - chosen context", lines)
+            self.assertIn("/explainrepo [path] - workflow", lines)
+            self.assertIn("/explainfile <path> - workflow", lines)
+            self.assertIn("/summarizeweb <url> - workflow", lines)
             self.assertEqual(lines[-1], "Plain text is not auto-routed.")
 
     def test_status_command_is_mobile_readable_and_shows_loop_activity(self) -> None:

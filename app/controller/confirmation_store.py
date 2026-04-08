@@ -99,6 +99,16 @@ class ConfirmationStore:
             self.cleanup_expired()
             return self._items.get(confirmation_id.upper())
 
+    def update_metadata(self, confirmation_id: str, *, metadata: dict[str, str]) -> PendingConfirmation | None:
+        with self._lock:
+            self.cleanup_expired()
+            existing = self._items.get(confirmation_id.upper())
+            if existing is None:
+                return None
+            updated = replace(existing, metadata={**existing.metadata, **metadata})
+            self._items[confirmation_id.upper()] = updated
+            return updated
+
     def pending_count(self, *, chat_id: str | None = None) -> int:
         with self._lock:
             self.cleanup_expired()
