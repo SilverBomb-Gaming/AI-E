@@ -19,6 +19,15 @@ ConfirmationOutcome = Literal[
     "already_used",
 ]
 
+ConfirmationLookupOutcome = Literal[
+    "pending",
+    "approved",
+    "rejected",
+    "not_found",
+    "wrong_chat",
+    "expired",
+]
+
 
 class ConfirmationStore:
     def __init__(self, *, lifetime_seconds: float = 120.0) -> None:
@@ -78,6 +87,16 @@ class ConfirmationStore:
             self._items[confirmation_id.upper()] = approved
             return "approved", approved
 
+    def inspect(self, confirmation_id: str, *, chat_id: str) -> tuple[ConfirmationLookupOutcome, PendingConfirmation | None]:
+        with self._lock:
+            self.cleanup_expired()
+            confirmation = self._items.get(confirmation_id.upper())
+            if confirmation is None:
+                return "not_found", None
+            if confirmation.chat_id != chat_id:
+                return "wrong_chat", None
+            return confirmation.current_state, confirmation
+
     def reject(self, confirmation_id: str, *, chat_id: str) -> tuple[ConfirmationOutcome, PendingConfirmation | None]:
         with self._lock:
             self.cleanup_expired()
@@ -98,6 +117,16 @@ class ConfirmationStore:
         with self._lock:
             self.cleanup_expired()
             return self._items.get(confirmation_id.upper())
+
+    def expire(self, confirmation_id: str) -> PendingConfirmation | None:
+        with self._lock:
+            self.cleanup_expired()
+            existing = self._items.get(confirmation_id.upper())
+            if existing is None or existing.current_state != "pending":
+                return existing
+            expired = replace(existing, current_state="expired")
+            self._items[confirmation_id.upper()] = expired
+            return expired
 
     def update_metadata(self, confirmation_id: str, *, metadata: dict[str, str]) -> PendingConfirmation | None:
         with self._lock:

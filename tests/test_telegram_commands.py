@@ -796,10 +796,121 @@ class TelegramCommandTests(unittest.TestCase):
 
             self.assertIn("State: expired", status_reply)
             self.assertIn(f"Workflow expired: {workflow_id} web.summarize", status_reply)
-            self.assertIn(f"Workflow expired: {workflow_id} web.summarize", confirm_reply)
+            self.assertIn(f"Confirmation {confirmation_id} expired.", confirm_reply)
             self.assertEqual(openai.ask_calls, 0)
             self.assertEqual(service._workflow_store.get(workflow_id).current_state, "expired")
+            self.assertEqual(service._confirmation_store.get(confirmation_id).current_state, "expired")
             self.assertEqual(snapshot.last_workflow_state, "expired")
+
+    def test_workflow_duplicate_confirm_does_not_reexecute(self) -> None:
+        first_update = TelegramInboundMessage(
+            update_id=809,
+            chat_id="chat-1",
+            text="/explainrepo",
+            sender_label="@tester",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            create_service = _FakeTelegramService(update_batches=[(first_update,)])
+            service, config_store, _, _, _, openai = self._make_service(tmp_dir=tmp, telegram_service=create_service)
+            self._configure_online_confirmation_mode(service, config_store)
+
+            _, prompt_reply = self._run_single_update(service, create_service)
+            confirmation_id = self._extract_confirmation_id(prompt_reply)
+            workflow_id = service._workflow_store.current(chat_id="chat-1").workflow_id
+
+            first_confirm_service = _FakeTelegramService(
+                update_batches=[(TelegramInboundMessage(update_id=810, chat_id="chat-1", text=f"/confirm {confirmation_id}", sender_label="@tester"),)]
+            )
+            service._telegram_service = first_confirm_service
+            snapshot = self._run_single_update(service, first_confirm_service)[0]
+
+            second_confirm_service = _FakeTelegramService(
+                update_batches=[(TelegramInboundMessage(update_id=811, chat_id="chat-1", text=f"/confirm {confirmation_id}", sender_label="@tester"),)]
+            )
+            service._telegram_service = second_confirm_service
+            _, duplicate_reply = self._run_single_update(service, second_confirm_service)
+
+            self.assertEqual(openai.ask_calls, 1)
+            self.assertIn(f"Workflow completed: {workflow_id} repo.explain", first_confirm_service.sent_messages[0][1])
+            self.assertIn(f"Confirmation {confirmation_id} was already used.", duplicate_reply)
+            workflow = service._workflow_store.get(workflow_id)
+            self.assertEqual(workflow.current_state, "completed")
+            self.assertEqual(workflow.metadata.get("consumed_confirmation_id"), confirmation_id)
+            self.assertEqual(snapshot.last_workflow_state, "completed")
+
+    def test_workflow_confirm_rejects_step_binding_mismatch_without_consuming_confirmation(self) -> None:
+        first_update = TelegramInboundMessage(
+            update_id=812,
+            chat_id="chat-1",
+            text="/summarizeweb https://docs.openclaw.ai/guide",
+            sender_label="@tester",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            create_service = _FakeTelegramService(update_batches=[(first_update,)])
+            service, config_store, _, _, _, openai = self._make_service(tmp_dir=tmp, telegram_service=create_service)
+            self._configure_online_confirmation_mode(service, config_store)
+            config = config_store.load()
+            config.web_allowed_domains = ("docs.openclaw.ai",)
+            config_store.save(config)
+            service._config = config_store.load()
+
+            _, prompt_reply = self._run_single_update(service, create_service)
+            confirmation_id = self._extract_confirmation_id(prompt_reply)
+            workflow = service._workflow_store.current(chat_id="chat-1")
+            service._workflow_store.update(
+                replace(
+                    workflow,
+                    metadata={**workflow.metadata, "pending_confirmation_step_id": "S9"},
+                )
+            )
+
+            confirm_service = _FakeTelegramService(
+                update_batches=[(TelegramInboundMessage(update_id=813, chat_id="chat-1", text=f"/confirm {confirmation_id}", sender_label="@tester"),)]
+            )
+            service._telegram_service = confirm_service
+            _, confirm_reply = self._run_single_update(service, confirm_service)
+
+            self.assertEqual(openai.ask_calls, 0)
+            self.assertIn(f"Confirmation {confirmation_id} no longer matches this workflow.", confirm_reply)
+            self.assertIn("saved workflow step", confirm_reply)
+            self.assertEqual(service._confirmation_store.get(confirmation_id).current_state, "pending")
+
+    def test_workflow_terminal_resume_rejected_before_confirmation_is_consumed(self) -> None:
+        first_update = TelegramInboundMessage(
+            update_id=814,
+            chat_id="chat-1",
+            text="/summarizeweb https://docs.openclaw.ai/guide",
+            sender_label="@tester",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            create_service = _FakeTelegramService(update_batches=[(first_update,)])
+            service, config_store, _, _, _, openai = self._make_service(tmp_dir=tmp, telegram_service=create_service)
+            self._configure_online_confirmation_mode(service, config_store)
+            config = config_store.load()
+            config.web_allowed_domains = ("docs.openclaw.ai",)
+            config_store.save(config)
+            service._config = config_store.load()
+
+            _, prompt_reply = self._run_single_update(service, create_service)
+            confirmation_id = self._extract_confirmation_id(prompt_reply)
+            workflow = service._workflow_store.current(chat_id="chat-1")
+            service._workflow_store.update(
+                replace(
+                    workflow,
+                    current_state="completed",
+                    finished_at="2000-01-01T00:00:00+00:00",
+                )
+            )
+
+            confirm_service = _FakeTelegramService(
+                update_batches=[(TelegramInboundMessage(update_id=815, chat_id="chat-1", text=f"/confirm {confirmation_id}", sender_label="@tester"),)]
+            )
+            service._telegram_service = confirm_service
+            _, confirm_reply = self._run_single_update(service, confirm_service)
+
+            self.assertEqual(openai.ask_calls, 0)
+            self.assertIn("already completed and cannot be resumed", confirm_reply)
+            self.assertEqual(service._confirmation_store.get(confirmation_id).current_state, "pending")
 
     def test_duplicate_confirm_does_not_reexecute(self) -> None:
         first_update = TelegramInboundMessage(update_id=25, chat_id="chat-1", text="/ask hello", sender_label="@tester")

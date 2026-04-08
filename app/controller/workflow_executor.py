@@ -5,7 +5,7 @@ from dataclasses import replace
 from typing import TYPE_CHECKING
 
 from .telegram_service import TelegramInboundMessage
-from .workflow_models import ACTIVE_WORKFLOW_STATES, RESUMABLE_WORKFLOW_STATES, WorkflowRecord, WorkflowStep, WorkflowType
+from .workflow_models import ACTIVE_WORKFLOW_STATES, RESUMABLE_WORKFLOW_STATES, TERMINAL_WORKFLOW_STATES, WorkflowRecord, WorkflowStep, WorkflowType
 
 if TYPE_CHECKING:
     from .capability_executor import CapabilityExecutor
@@ -24,8 +24,12 @@ class WorkflowExecutor:
     def cleanup_expired_workflows(self) -> int:
         expired_records = self._service._workflow_store.cleanup_expired()
         for record in expired_records:
+            pending_confirmation_id = self._pending_confirmation_id(record)
+            if pending_confirmation_id:
+                self._service._confirmation_store.expire(pending_confirmation_id)
             updated = replace(
                 record,
+                metadata=self._clear_pending_confirmation_metadata(record.metadata),
                 audit_summary=self._workflow_audit_summary(record),
                 final_user_facing_summary=self._workflow_expired_summary(record),
             )
@@ -49,8 +53,7 @@ class WorkflowExecutor:
         pending_confirmation_id = self._pending_confirmation_id(record)
         if pending_confirmation_id:
             self._service._confirmation_store.reject(pending_confirmation_id, chat_id=chat_id)
-        metadata = dict(record.metadata)
-        metadata.pop("pending_confirmation_id", None)
+        metadata = self._clear_pending_confirmation_metadata(record.metadata)
         metadata["cancel_reason"] = "operator_cancelled"
         cancelled = replace(
             record,
@@ -222,6 +225,7 @@ class WorkflowExecutor:
         workflow_id = confirmation.metadata.get("workflow_id", "").strip().upper()
         if not workflow_id:
             return None
+        confirmation_id = confirmation.confirmation_id.strip().upper()
         record = self._service._workflow_store.get(workflow_id)
         request = self._capability_executor._build_request(
             capability_id=confirmation.capability_id,
@@ -229,9 +233,9 @@ class WorkflowExecutor:
             chat_id=chat_id,
             requester_label=confirmation.requester_label,
             original_command="/confirm",
-            parsed_arguments={"confirmation_id": confirmation.confirmation_id},
+            parsed_arguments={"confirmation_id": confirmation_id},
             confirmation_context=confirmation.evaluation_context,
-            metadata={"argument_summary": f"/confirm {confirmation.confirmation_id}"},
+            metadata={"argument_summary": f"/confirm {confirmation_id}"},
         )
         if record is None:
             return self._capability_executor._result(
@@ -239,18 +243,30 @@ class WorkflowExecutor:
                 outcome="invalid_request",
                 reason_code="workflow_not_found",
                 user_message="This workflow is no longer available. Send the original workflow command again if you still want to run it.",
-                internal_summary=f"Workflow {workflow_id} was not found for /confirm {confirmation.confirmation_id}.",
+                internal_summary=f"Workflow {workflow_id} was not found for /confirm {confirmation_id}.",
                 retryable=False,
                 command_label="/confirm",
                 activity_state="processing_command",
             )
         if record.current_state == "expired":
+            self._service._confirmation_store.expire(confirmation_id)
             return self._capability_executor._result(
                 request,
                 outcome="expired",
                 reason_code="workflow_expired",
                 user_message=self._workflow_expired_summary(record),
                 internal_summary=f"Workflow {record.workflow_id} expired before confirmation resume.",
+                retryable=False,
+                command_label="/confirm",
+                activity_state="processing_command",
+            )
+        if record.current_state in TERMINAL_WORKFLOW_STATES:
+            return self._capability_executor._result(
+                request,
+                outcome="invalid_request",
+                reason_code="workflow_not_resumable",
+                user_message=f"Workflow {record.workflow_id} is already {record.current_state.replace('_', ' ')} and cannot be resumed.",
+                internal_summary=f"Workflow {record.workflow_id} could not resume from state {record.current_state}.",
                 retryable=False,
                 command_label="/confirm",
                 activity_state="processing_command",
@@ -266,15 +282,70 @@ class WorkflowExecutor:
                 command_label="/confirm",
                 activity_state="processing_command",
             )
+        if self._consumed_confirmation_id(record) == confirmation_id:
+            return self._capability_executor._confirmation_result(
+                request=request,
+                confirmation_id=confirmation_id,
+                outcome="invalid_request",
+                reason_code="confirmation_already_used",
+                reason="This confirmation has already been consumed.",
+                next_step="Send the original command again if you need a new request.",
+                retryable=False,
+            )
+
+        pending_confirmation_id = self._pending_confirmation_id(record)
+        if pending_confirmation_id != confirmation_id:
+            return self._workflow_confirmation_mismatch_result(
+                request=request,
+                confirmation_id=confirmation_id,
+                reason_code="workflow_confirmation_stale",
+                reason="This confirmation no longer matches the current workflow step.",
+            )
+
+        step_index = max(0, self._confirmation_step_index(confirmation.metadata.get("workflow_step_index", "1")) - 1)
+        current_step = record.steps[step_index] if 0 <= step_index < len(record.steps) else None
+        pending_step_id = self._pending_confirmation_step_id(record)
+        pending_step_index = self._pending_confirmation_step_index(record)
+        metadata_step_id = confirmation.metadata.get("workflow_step_id", "").strip().upper()
+        if (
+            current_step is None
+            or record.current_step_index != step_index + 1
+            or pending_step_index != step_index + 1
+            or pending_step_id != metadata_step_id
+            or pending_step_id != current_step.step_id.strip().upper()
+        ):
+            return self._workflow_confirmation_mismatch_result(
+                request=request,
+                confirmation_id=confirmation_id,
+                reason_code="workflow_confirmation_step_mismatch",
+                reason="This confirmation no longer matches the saved workflow step.",
+            )
+
+        outcome, approved_confirmation = self._service._confirmation_store.approve(confirmation_id, chat_id=chat_id)
+        if outcome != "approved" or approved_confirmation is None:
+            if outcome == "expired":
+                self.mark_confirmation_resolution(confirmation=confirmation, outcome=outcome)
+            return self._capability_executor._confirmation_state_result(
+                request=request,
+                command_label="/confirm",
+                confirmation_id=confirmation_id,
+                outcome=outcome,
+                confirmation=approved_confirmation or confirmation,
+            )
+
         update = TelegramInboundMessage(
             update_id=0,
             chat_id=chat_id,
-            text=f"/confirm {confirmation.confirmation_id}",
-            sender_label=confirmation.requester_label,
+            text=f"/confirm {confirmation_id}",
+            sender_label=approved_confirmation.requester_label,
         )
-        step_index = max(0, int(confirmation.metadata.get("workflow_step_index", str(max(1, record.current_step_index))) or "1") - 1)
-        metadata = dict(record.metadata)
-        metadata.pop("pending_confirmation_id", None)
+        metadata = self._clear_pending_confirmation_metadata(record.metadata)
+        metadata = self._set_consumed_confirmation_metadata(
+            metadata,
+            confirmation_id=confirmation_id,
+            step_id=current_step.step_id,
+            step_index=step_index + 1,
+        )
         updated = replace(
             record,
             current_state="running",
@@ -292,7 +363,7 @@ class WorkflowExecutor:
             snapshot=snapshot,
             batch_busy=False,
             start_index=step_index,
-            confirmation=confirmation,
+            confirmation=approved_confirmation,
         )
 
     def mark_confirmation_resolution(self, *, confirmation: PendingConfirmation | None, outcome: str) -> None:
@@ -307,10 +378,11 @@ class WorkflowExecutor:
             return
         if record.current_state not in ACTIVE_WORKFLOW_STATES:
             return
+        if self._pending_confirmation_id(record) != confirmation.confirmation_id.strip().upper():
+            return
         state = "cancelled" if outcome == "rejected" else "expired"
         confirmation_state = "denied" if outcome == "rejected" else "expired"
-        metadata = dict(record.metadata)
-        metadata.pop("pending_confirmation_id", None)
+        metadata = self._clear_pending_confirmation_metadata(record.metadata)
         updated = replace(
             record,
             current_state=state,
@@ -348,14 +420,14 @@ class WorkflowExecutor:
                 started_at=started_at,
                 current_state="running",
                 current_step_index=max(1, start_index + 1),
-                metadata={key: value for key, value in running_record.metadata.items() if key != "pending_confirmation_id"},
+                metadata=self._clear_pending_confirmation_metadata(running_record.metadata),
                 audit_summary=self._workflow_audit_summary(
                     replace(
                         record,
                         started_at=started_at,
                         current_state="running",
                         current_step_index=max(1, start_index + 1),
-                        metadata={key: value for key, value in running_record.metadata.items() if key != "pending_confirmation_id"},
+                        metadata=self._clear_pending_confirmation_metadata(running_record.metadata),
                     )
                 ),
             )
@@ -438,13 +510,23 @@ class WorkflowExecutor:
                     running_record,
                     current_state="paused",
                     confirmation_state="pending",
-                    metadata={**running_record.metadata, "pending_confirmation_id": confirmation_id},
+                    metadata=self._set_pending_confirmation_metadata(
+                        running_record.metadata,
+                        confirmation_id=confirmation_id,
+                        step_id=running_record.steps[index].step_id,
+                        step_index=index + 1,
+                    ),
                     audit_summary=self._workflow_audit_summary(
                         replace(
                             running_record,
                             current_state="paused",
                             confirmation_state="pending",
-                            metadata={**running_record.metadata, "pending_confirmation_id": confirmation_id},
+                            metadata=self._set_pending_confirmation_metadata(
+                                running_record.metadata,
+                                confirmation_id=confirmation_id,
+                                step_id=running_record.steps[index].step_id,
+                                step_index=index + 1,
+                            ),
                         )
                     ),
                     final_user_facing_summary=self._workflow_user_summary(
@@ -468,13 +550,13 @@ class WorkflowExecutor:
                 current_state=failed_state,
                 finished_at=step_result.finished_at,
                 confirmation_state=running_record.confirmation_state,
-                metadata={key: value for key, value in running_record.metadata.items() if key != "pending_confirmation_id"},
+                metadata=self._clear_pending_confirmation_metadata(running_record.metadata),
                 audit_summary=self._workflow_audit_summary(
                     replace(
                         running_record,
                         current_state=failed_state,
                         finished_at=step_result.finished_at,
-                        metadata={key: value for key, value in running_record.metadata.items() if key != "pending_confirmation_id"},
+                        metadata=self._clear_pending_confirmation_metadata(running_record.metadata),
                     )
                 ),
                 final_user_facing_summary=self._workflow_user_summary(
@@ -767,6 +849,87 @@ class WorkflowExecutor:
     @staticmethod
     def _pending_confirmation_id(record: WorkflowRecord) -> str:
         return record.metadata.get("pending_confirmation_id", "").strip().upper()
+
+    @staticmethod
+    def _pending_confirmation_step_id(record: WorkflowRecord) -> str:
+        return record.metadata.get("pending_confirmation_step_id", "").strip().upper()
+
+    @classmethod
+    def _pending_confirmation_step_index(cls, record: WorkflowRecord) -> int:
+        return cls._confirmation_step_index(record.metadata.get("pending_confirmation_step_index", "0"))
+
+    @staticmethod
+    def _consumed_confirmation_id(record: WorkflowRecord) -> str:
+        return record.metadata.get("consumed_confirmation_id", "").strip().upper()
+
+    @staticmethod
+    def _clear_pending_confirmation_metadata(metadata: dict[str, str]) -> dict[str, str]:
+        return {
+            key: value
+            for key, value in metadata.items()
+            if key not in {"pending_confirmation_id", "pending_confirmation_step_id", "pending_confirmation_step_index"}
+        }
+
+    @classmethod
+    def _set_pending_confirmation_metadata(
+        cls,
+        metadata: dict[str, str],
+        *,
+        confirmation_id: str,
+        step_id: str,
+        step_index: int,
+    ) -> dict[str, str]:
+        updated = cls._clear_pending_confirmation_metadata(metadata)
+        updated["pending_confirmation_id"] = confirmation_id.strip().upper()
+        updated["pending_confirmation_step_id"] = step_id.strip().upper()
+        updated["pending_confirmation_step_index"] = str(max(1, step_index))
+        return updated
+
+    @staticmethod
+    def _set_consumed_confirmation_metadata(
+        metadata: dict[str, str],
+        *,
+        confirmation_id: str,
+        step_id: str,
+        step_index: int,
+    ) -> dict[str, str]:
+        updated = dict(metadata)
+        updated["consumed_confirmation_id"] = confirmation_id.strip().upper()
+        updated["consumed_confirmation_step_id"] = step_id.strip().upper()
+        updated["consumed_confirmation_step_index"] = str(max(1, step_index))
+        return updated
+
+    @staticmethod
+    def _confirmation_step_index(value: str) -> int:
+        try:
+            return max(0, int(value or "0"))
+        except ValueError:
+            return 0
+
+    def _workflow_confirmation_mismatch_result(
+        self,
+        *,
+        request,
+        confirmation_id: str,
+        reason_code: str,
+        reason: str,
+    ):
+        return self._capability_executor._result(
+            request,
+            outcome="invalid_request",
+            reason_code=reason_code,
+            user_message="\n".join(
+                (
+                    f"Confirmation {confirmation_id} no longer matches this workflow.",
+                    f"Reason: {reason}",
+                    "Next: Send the original workflow command again if you still want to run it.",
+                )
+            ),
+            internal_summary=f"Confirmation {confirmation_id} no longer matches workflow resume state.",
+            retryable=False,
+            command_label="/confirm",
+            activity_state="processing_command",
+        )
 
     @staticmethod
     def _current_step(record: WorkflowRecord) -> WorkflowStep | None:

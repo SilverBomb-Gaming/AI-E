@@ -1610,6 +1610,28 @@ class CapabilityExecutor:
                 activity_state="processing_command",
             )
 
+        lookup_outcome, confirmation = self._service._confirmation_store.inspect(confirmation_id, chat_id=update.chat_id)
+        if lookup_outcome != "pending" or confirmation is None:
+            outcome = "already_used" if lookup_outcome in {"approved", "rejected"} else lookup_outcome
+            if lookup_outcome == "expired":
+                self._service._workflow_executor.mark_confirmation_resolution(confirmation=confirmation, outcome=lookup_outcome)
+            return self._confirmation_state_result(
+                request=request,
+                command_label="/confirm",
+                confirmation_id=confirmation_id,
+                outcome=outcome,
+                confirmation=confirmation,
+            )
+
+        if confirmation.metadata.get("workflow_id", "").strip():
+            workflow_result = self._service._workflow_executor.resume_confirmation(
+                confirmation=confirmation,
+                snapshot=snapshot,
+                chat_id=update.chat_id,
+            )
+            if workflow_result is not None:
+                return workflow_result
+
         outcome, confirmation = self._service._confirmation_store.approve(confirmation_id, chat_id=update.chat_id)
         if outcome != "approved" or confirmation is None:
             if outcome == "expired":
@@ -1621,14 +1643,6 @@ class CapabilityExecutor:
                 outcome=outcome,
                 confirmation=confirmation,
             )
-
-        workflow_result = self._service._workflow_executor.resume_confirmation(
-            confirmation=confirmation,
-            snapshot=snapshot,
-            chat_id=update.chat_id,
-        )
-        if workflow_result is not None:
-            return workflow_result
 
         request = self._build_request(
             capability_id=confirmation.capability_id,
