@@ -3,7 +3,13 @@ from __future__ import annotations
 
 import re
 
-from .intent_models import IntentProductGoal, IntentRequestType, IntentTranslationSpec
+from .intent_models import (
+    IntentProductGoal,
+    IntentRefinementProfile,
+    IntentRequestType,
+    IntentTranslationSession,
+    IntentTranslationSpec,
+)
 
 
 _WEBSITE_KEYWORDS = ("website", "landing page", "homepage", "marketing site", "site")
@@ -36,27 +42,114 @@ _STACK_KEYWORDS = (
     "python",
 )
 _DEPLOY_KEYWORDS = ("deploy", "deployment", "vercel", "netlify", "steam", "itch", "desktop installer", "hosted", "cloud")
+_DEPLOY_TARGET_KEYWORDS = ("vercel", "netlify", "steam", "itch", "desktop installer", "hosted", "cloud")
 _STYLE_KEYWORDS = ("cozy", "dark", "darker", "minimal", "bold", "gritty", "whimsical", "cinematic", "retro")
 _PLATFORM_KEYWORDS = ("web", "desktop", "windows", "mac", "linux", "ios", "android", "steam")
+_MAIL_PROVIDER_KEYWORDS = ("mailchimp", "convertkit", "beehiiv", "substack", "hubspot")
 
 
 class IntentTranslator:
     """Build a stable intent spec from a messy product request."""
 
     def translate(self, request_text: str) -> IntentTranslationSpec:
-        normalized = " ".join(request_text.split())
-        lowered = normalized.lower()
-        request_type = self._classify_request_type(lowered)
-        delivery_target = request_type if request_type != "unknown" else "clarify_target"
-        title = self._build_title(normalized, request_type)
-        functional_requirements = self._extract_functional_requirements(normalized, lowered, request_type)
-        constraints = self._extract_constraints(lowered, request_type)
-        non_functional_requirements = self._extract_non_functional_requirements(lowered, request_type)
-        open_questions = self._extract_open_questions(lowered, request_type)
-        assumptions = self._extract_assumptions(lowered, request_type)
+        normalized = self._normalize_text(request_text)
+        profile = self._extract_profile(normalized)
+        return self._build_spec(base_request=normalized, conversation_notes=(), profile=profile)
+
+    def start_session(
+        self,
+        request_text: str,
+        *,
+        translation_session_id: str,
+        timestamp: str,
+    ) -> IntentTranslationSession:
+        normalized = self._normalize_text(request_text)
+        profile = self._extract_profile(normalized)
+        spec = self._build_spec(base_request=normalized, conversation_notes=(), profile=profile)
+        state = "complete" if not spec.open_questions else "draft"
+        return IntentTranslationSession(
+            translation_session_id=translation_session_id,
+            intent_id=spec.intent_id,
+            state=state,
+            created_at=timestamp,
+            updated_at=timestamp,
+            source_request=normalized,
+            current_spec=spec,
+            profile=profile,
+            conversation_notes=(),
+            resolved_fields=self._resolved_fields(spec, profile),
+            open_questions=spec.open_questions,
+            assumptions=spec.assumptions,
+            latest_handoff=spec.execution_handoff,
+        )
+
+    def refine_session(
+        self,
+        session: IntentTranslationSession,
+        clarification_text: str,
+        *,
+        timestamp: str,
+    ) -> IntentTranslationSession:
+        normalized = self._normalize_text(clarification_text)
+        update_profile = self._extract_profile(normalized)
+        merged_profile = session.profile.merge(update_profile)
+        notes = self._merged_notes(session.conversation_notes, normalized)
+        spec = self._build_spec(base_request=session.source_request, conversation_notes=notes, profile=merged_profile)
+        state = "complete" if not spec.open_questions else "refined"
+        return IntentTranslationSession(
+            translation_session_id=session.translation_session_id,
+            intent_id=spec.intent_id,
+            state=state,
+            created_at=session.created_at,
+            updated_at=timestamp,
+            source_request=session.source_request,
+            current_spec=spec,
+            profile=merged_profile,
+            conversation_notes=notes,
+            resolved_fields=self._resolved_fields(spec, merged_profile),
+            open_questions=spec.open_questions,
+            assumptions=spec.assumptions,
+            latest_handoff=spec.execution_handoff,
+        )
+
+    def archive_session(self, session: IntentTranslationSession, *, timestamp: str) -> IntentTranslationSession:
+        return IntentTranslationSession(
+            translation_session_id=session.translation_session_id,
+            intent_id=session.intent_id,
+            state="archived",
+            created_at=session.created_at,
+            updated_at=timestamp,
+            source_request=session.source_request,
+            current_spec=session.current_spec,
+            profile=session.profile,
+            conversation_notes=session.conversation_notes,
+            resolved_fields=session.resolved_fields,
+            open_questions=session.open_questions,
+            assumptions=session.assumptions,
+            latest_handoff=session.latest_handoff,
+        )
+
+    def _build_spec(
+        self,
+        *,
+        base_request: str,
+        conversation_notes: tuple[str, ...],
+        profile: IntentRefinementProfile,
+    ) -> IntentTranslationSpec:
+        combined_text = self._combined_text(base_request=base_request, conversation_notes=conversation_notes)
+        lowered = combined_text.lower()
+        request_type = self._determine_request_type(lowered, profile)
+        delivery_target = profile.delivery_target or (request_type if request_type != "unknown" else "clarify_target")
+        title = self._build_title(base_request, request_type)
+        functional_requirements = self._extract_functional_requirements(base_request, lowered, request_type, profile)
+        constraints = self._extract_constraints(lowered, request_type, profile)
+        non_functional_requirements = self._extract_non_functional_requirements(lowered, request_type, profile)
+        open_questions = self._extract_open_questions(lowered, request_type, profile)
+        assumptions = self._extract_assumptions(lowered, request_type, profile)
         clarification_questions = open_questions[:3]
-        product_goal = self._build_product_goal(normalized, lowered, request_type, title)
+        product_goal = self._build_product_goal(base_request, lowered, request_type, title)
         proposed_phases = self._build_proposed_phases(request_type)
+        confirmed_values = self._confirmed_values(request_type=request_type, profile=profile)
         execution_brief = self._build_execution_brief(
             request_type=request_type,
             title=title,
@@ -73,8 +166,9 @@ class IntentTranslator:
             non_functional_requirements=non_functional_requirements,
             assumptions=assumptions,
             open_questions=open_questions,
+            confirmed_values=confirmed_values,
         )
-        summary = self._build_summary(normalized, lowered, request_type, title, functional_requirements)
+        summary = self._build_summary(base_request, lowered, request_type, title, functional_requirements, profile)
         return IntentTranslationSpec(
             intent_id=self._build_intent_id(request_type, title),
             title=title,
@@ -88,6 +182,7 @@ class IntentTranslator:
             clarification_questions=clarification_questions,
             open_questions=open_questions,
             assumptions=assumptions,
+            confirmed_values=confirmed_values,
             proposed_phases=proposed_phases,
             execution_brief=execution_brief,
             execution_handoff=execution_handoff,
@@ -109,6 +204,20 @@ class IntentTranslator:
         if self._contains_any(lowered, _REPO_TASK_KEYWORDS):
             return "repo_task"
         return "unknown"
+
+    def _determine_request_type(self, lowered: str, profile: IntentRefinementProfile) -> IntentRequestType:
+        if profile.delivery_target in {
+            "website",
+            "game",
+            "desktop_app",
+            "backend_service",
+            "automation_tool",
+            "feature_request",
+            "repo_task",
+            "unknown",
+        }:
+            return profile.delivery_target  # type: ignore[return-value]
+        return self._classify_request_type(lowered)
 
     def _build_title(self, request_text: str, request_type: IntentRequestType) -> str:
         lowered = request_text.lower().strip()
@@ -199,7 +308,12 @@ class IntentTranslator:
             why="A delivery target and audience are required before a controlled build handoff is credible.",
         )
 
-    def _extract_constraints(self, lowered: str, request_type: IntentRequestType) -> tuple[str, ...]:
+    def _extract_constraints(
+        self,
+        lowered: str,
+        request_type: IntentRequestType,
+        profile: IntentRefinementProfile,
+    ) -> tuple[str, ...]:
         constraints: list[str] = []
         if request_type == "website":
             constraints.append("Target platform: web")
@@ -211,18 +325,30 @@ class IntentTranslator:
             constraints.append("Target platform: backend service")
         elif request_type == "automation_tool":
             constraints.append("Target class: operator automation tool")
-        if self._contains_any(lowered, _STACK_KEYWORDS):
+        if profile.stack:
+            constraints.append(f"Preferred stack: {profile.stack}")
+        elif self._contains_any(lowered, _STACK_KEYWORDS):
             constraints.append(f"Preferred stack signal: {self._first_match(lowered, _STACK_KEYWORDS)}")
-        if self._contains_any(lowered, _PLATFORM_KEYWORDS):
+        if profile.platform:
+            constraints.append(f"Explicit platform: {profile.platform}")
+        elif self._contains_any(lowered, _PLATFORM_KEYWORDS):
             constraints.append(f"Explicit platform signal: {self._first_match(lowered, _PLATFORM_KEYWORDS)}")
-        if "prototype" in lowered:
+        if profile.delivery_stage:
+            constraints.append(f"Delivery expectation: {profile.delivery_stage}")
+        elif "prototype" in lowered:
             constraints.append("Delivery expectation: prototype")
-        if "production" in lowered or "production-ready" in lowered:
+        elif "production" in lowered or "production-ready" in lowered:
             constraints.append("Delivery expectation: production-ready")
+        if profile.deployment_target:
+            constraints.append(f"Deployment target: {profile.deployment_target}")
         if "local" in lowered:
             constraints.append("Runtime preference: local-first")
         if "hosted" in lowered or "cloud" in lowered:
             constraints.append("Deployment preference: hosted")
+        if profile.site_scope == "one-page":
+            constraints.append("Site structure: one-page")
+        if profile.site_scope == "multi-page":
+            constraints.append("Site structure: multi-page")
         constraints.append("Execution must remain operator-controlled and non-autonomous")
         return self._unique(constraints)
 
@@ -231,10 +357,13 @@ class IntentTranslator:
         request_text: str,
         lowered: str,
         request_type: IntentRequestType,
+        profile: IntentRefinementProfile,
     ) -> tuple[str, ...]:
         requirements: list[str] = []
         if request_type == "website":
-            if "landing page" in lowered:
+            if profile.site_scope == "multi-page":
+                requirements.append("Multi-page information architecture")
+            elif profile.site_scope == "one-page" or "landing page" in lowered:
                 requirements.append("One-page landing flow")
             requirements.append("Hero section")
             requirements.append("Core value proposition or premise section")
@@ -288,7 +417,12 @@ class IntentTranslator:
             requirements.append("Primary CTA")
         return self._unique(requirements)
 
-    def _extract_non_functional_requirements(self, lowered: str, request_type: IntentRequestType) -> tuple[str, ...]:
+    def _extract_non_functional_requirements(
+        self,
+        lowered: str,
+        request_type: IntentRequestType,
+        profile: IntentRefinementProfile,
+    ) -> tuple[str, ...]:
         requirements: list[str] = []
         if request_type == "website":
             requirements.append("Mobile-responsive layout")
@@ -303,36 +437,43 @@ class IntentTranslator:
             requirements.append("Clear interface boundaries")
         elif request_type == "automation_tool":
             requirements.append("Deterministic, reviewable automation steps")
+        if profile.style_direction:
+            requirements.append(f"Visual direction should stay {profile.style_direction}")
         if "small" in lowered or "mvp" in lowered:
             requirements.append("Keep v1 scope intentionally small")
-        if "production" in lowered or "production-ready" in lowered:
+        if profile.delivery_stage == "production-ready" or "production" in lowered or "production-ready" in lowered:
             requirements.append("Quality bar should support production expectations")
         return self._unique(requirements)
 
-    def _extract_open_questions(self, lowered: str, request_type: IntentRequestType) -> tuple[str, ...]:
+    def _extract_open_questions(
+        self,
+        lowered: str,
+        request_type: IntentRequestType,
+        profile: IntentRefinementProfile,
+    ) -> tuple[str, ...]:
         questions: list[str] = []
         if request_type == "website":
-            if not self._contains_any(lowered, _STACK_KEYWORDS):
+            if not profile.stack and not self._contains_any(lowered, _STACK_KEYWORDS):
                 questions.append("Which web stack should this use?")
-            if not self._contains_any(lowered, _DEPLOY_KEYWORDS):
+            if not profile.deployment_target and not self._contains_any(lowered, _DEPLOY_KEYWORDS):
                 questions.append("Where should the site be deployed?")
-            if ("email signup" in lowered or "newsletter" in lowered) and not self._contains_any(lowered, ("mailchimp", "convertkit", "beehiiv", "substack", "hubspot")):
+            if ("email signup" in lowered or "newsletter" in lowered) and not profile.mailing_provider and not self._contains_any(lowered, _MAIL_PROVIDER_KEYWORDS):
                 questions.append("Which mailing or CRM provider should handle signups?")
-            if not self._contains_any(lowered, _STYLE_KEYWORDS):
+            if not profile.style_direction and not self._contains_any(lowered, _STYLE_KEYWORDS):
                 questions.append("What visual style should the site follow?")
         elif request_type == "game":
             if not self._contains_any(lowered, ("unity", "unreal", "godot", "babylon")):
                 questions.append("Which engine or framework should the game use?")
-            if not self._contains_any(lowered, _PLATFORM_KEYWORDS):
+            if not profile.platform and not self._contains_any(lowered, _PLATFORM_KEYWORDS):
                 questions.append("What is the primary target platform?")
-            if not self._contains_any(lowered, ("prototype", "vertical slice", "production", "production-ready")):
+            if not profile.delivery_stage and not self._contains_any(lowered, ("prototype", "vertical slice", "production", "production-ready")):
                 questions.append("Is this meant to be a prototype, vertical slice, or production plan?")
             if "multiplayer" in lowered and not self._contains_any(lowered, ("turn-based", "drop-in", "server", "hosted", "peer")):
                 questions.append("How lightweight should the multiplayer layer be?")
         elif request_type == "desktop_app":
-            if not self._contains_any(lowered, ("windows", "mac", "linux")):
+            if not profile.platform and not self._contains_any(lowered, ("windows", "mac", "linux")):
                 questions.append("Which desktop OS matters first?")
-            if not self._contains_any(lowered, _STACK_KEYWORDS):
+            if not profile.stack and not self._contains_any(lowered, _STACK_KEYWORDS):
                 questions.append("Should this stay in Python and PySide6 or use another desktop stack?")
             if "doc" in lowered and not self._contains_any(lowered, ("markdown", "md", "pdf", "docx", "txt", "json")):
                 questions.append("What document formats need to be supported?")
@@ -341,12 +482,12 @@ class IntentTranslator:
         elif request_type == "backend_service":
             if not self._contains_any(lowered, ("rest", "graphql", "queue", "worker", "webhook")):
                 questions.append("What interface style should the service expose?")
-            if not self._contains_any(lowered, _DEPLOY_KEYWORDS):
+            if not profile.deployment_target and not self._contains_any(lowered, _DEPLOY_KEYWORDS):
                 questions.append("Where should the service run?")
             if not self._contains_any(lowered, ("postgres", "sqlite", "redis", "s3", "database")):
                 questions.append("What storage or persistence layer is required?")
         elif request_type == "automation_tool":
-            if not self._contains_any(lowered, ("local", "desktop", "server", "cloud")):
+            if not profile.platform and not self._contains_any(lowered, ("local", "desktop", "server", "cloud")):
                 questions.append("Where should the automation run?")
             if not self._contains_any(lowered, ("schedule", "manual", "trigger", "event")):
                 questions.append("What should trigger the automation?")
@@ -364,10 +505,19 @@ class IntentTranslator:
             questions.append("What does deployable mean here: prototype, internal tool, or production release?")
         return self._unique(questions)
 
-    def _extract_assumptions(self, lowered: str, request_type: IntentRequestType) -> tuple[str, ...]:
+    def _extract_assumptions(
+        self,
+        lowered: str,
+        request_type: IntentRequestType,
+        profile: IntentRefinementProfile,
+    ) -> tuple[str, ...]:
         assumptions: list[str] = []
         if request_type == "website":
-            if "landing page" in lowered:
+            if profile.site_scope == "one-page":
+                assumptions.append("Confirmed as a one-page site")
+            elif profile.site_scope == "multi-page":
+                assumptions.append("Confirmed as a multi-page site")
+            elif "landing page" in lowered:
                 assumptions.append("Assume a one-page marketing site unless a larger sitemap is requested")
             assumptions.append("Assume the site should work well on mobile and desktop")
             if not self._contains_any(lowered, ("dashboard", "account", "login", "cms")):
@@ -408,9 +558,12 @@ class IntentTranslator:
         request_type: IntentRequestType,
         title: str,
         functional_requirements: tuple[str, ...],
+        profile: IntentRefinementProfile,
     ) -> str:
         if request_type == "website":
             if "landing page" in lowered:
+                if profile.site_scope == "multi-page":
+                    return f"Marketing site for {self._extract_subject(request_text) or title} with a multi-page conversion structure."
                 return f"Marketing landing page for {self._extract_subject(request_text) or title} focused on conversion."
             return f"Website brief for {self._extract_subject(request_text) or title} with a clear conversion path."
         if request_type == "game":
@@ -460,11 +613,14 @@ class IntentTranslator:
         non_functional_requirements: tuple[str, ...],
         assumptions: tuple[str, ...],
         open_questions: tuple[str, ...],
+        confirmed_values: tuple[str, ...],
     ) -> str:
         lines = [
             f"Build target: {request_type}",
             f"Working title: {title}",
         ]
+        if confirmed_values:
+            lines.append("Confirmed values: " + "; ".join(confirmed_values))
         if functional_requirements:
             lines.append("Required capabilities: " + "; ".join(functional_requirements))
         if constraints:
@@ -515,3 +671,102 @@ class IntentTranslator:
             seen.add(normalized)
             ordered.append(normalized)
         return tuple(ordered)
+
+    @staticmethod
+    def _normalize_text(text: str) -> str:
+        return " ".join(text.split())
+
+    def _combined_text(self, *, base_request: str, conversation_notes: tuple[str, ...]) -> str:
+        values = [base_request]
+        values.extend(conversation_notes)
+        return self._normalize_text(" ".join(values))
+
+    def _merged_notes(self, existing: tuple[str, ...], note: str) -> tuple[str, ...]:
+        values = list(existing)
+        if note:
+            values.append(note)
+        return tuple(values[-6:])
+
+    def _extract_profile(self, text: str) -> IntentRefinementProfile:
+        lowered = text.lower()
+        delivery_target = self._classify_request_type(lowered)
+        if delivery_target == "unknown":
+            delivery_target = ""
+        platform = self._first_match(lowered, _PLATFORM_KEYWORDS)
+        stack = self._extract_stack(lowered)
+        style = self._first_match(lowered, _STYLE_KEYWORDS)
+        deployment = self._extract_deployment_target(lowered)
+        if any(value in lowered for value in ("multi-page", "multi page", "multiple pages")):
+            site_scope = "multi-page"
+        elif any(value in lowered for value in ("one-page", "one page", "single page")):
+            site_scope = "one-page"
+        else:
+            site_scope = ""
+        if "production-ready" in lowered or "production ready" in lowered:
+            delivery_stage = "production-ready"
+        elif "prototype" in lowered or "mvp" in lowered or "vertical slice" in lowered:
+            delivery_stage = "prototype"
+        else:
+            delivery_stage = ""
+        mailing_provider = self._first_match(lowered, _MAIL_PROVIDER_KEYWORDS)
+        return IntentRefinementProfile(
+            delivery_target=delivery_target,
+            platform=platform,
+            stack=stack,
+            style_direction=style,
+            deployment_target=deployment,
+            delivery_stage=delivery_stage,
+            site_scope=site_scope,
+            mailing_provider=mailing_provider,
+        )
+
+    def _extract_stack(self, lowered: str) -> str:
+        has_python = "python" in lowered
+        has_pyside = "pyside6" in lowered or "pyside" in lowered
+        has_typescript = "typescript" in lowered
+        has_react = "react" in lowered
+        if has_python and has_pyside:
+            return "python + pyside6"
+        if has_typescript and has_react:
+            return "typescript + react"
+        if "next.js" in lowered or "nextjs" in lowered:
+            return "next.js"
+        if "pyside6" in lowered:
+            return "pyside6"
+        return self._first_match(lowered, _STACK_KEYWORDS)
+
+    def _extract_deployment_target(self, lowered: str) -> str:
+        return self._first_match(lowered, _DEPLOY_TARGET_KEYWORDS)
+
+    def _confirmed_values(
+        self,
+        *,
+        request_type: IntentRequestType,
+        profile: IntentRefinementProfile,
+    ) -> tuple[str, ...]:
+        values: list[str] = []
+        if request_type != "unknown":
+            values.append(f"request_type: {request_type}")
+        if profile.stack:
+            values.append(f"stack: {profile.stack}")
+        if profile.platform:
+            values.append(f"platform: {profile.platform}")
+        if profile.style_direction:
+            values.append(f"style_direction: {profile.style_direction}")
+        if profile.deployment_target:
+            values.append(f"deployment_target: {profile.deployment_target}")
+        if profile.delivery_stage:
+            values.append(f"delivery_stage: {profile.delivery_stage}")
+        if profile.site_scope:
+            values.append(f"site_scope: {profile.site_scope}")
+        if profile.mailing_provider:
+            values.append(f"mailing_provider: {profile.mailing_provider}")
+        return self._unique(values)
+
+    def _resolved_fields(self, spec: IntentTranslationSpec, profile: IntentRefinementProfile) -> tuple[str, ...]:
+        field_names = [
+            value.split(":", 1)[0].strip() for value in spec.confirmed_values if ":" in value
+        ]
+        if profile.delivery_target:
+            field_names.append("delivery_target")
+        return self._unique(field_names)

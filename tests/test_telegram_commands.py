@@ -346,23 +346,23 @@ class TelegramCommandTests(unittest.TestCase):
             self.assertLessEqual(len(reply), 500)
             self.assertEqual(lines[0], "Operator commands")
             self.assertIn("/translate", lines[1])
+            self.assertIn("/refine", lines[1])
             self.assertIn("/run|/test", lines[1])
-            self.assertIn("/lastaction", lines[1])
             self.assertIn("/contexts - ctx", lines)
             self.assertIn("/clearcontext - clear", lines)
             self.assertIn("/capabilities - trust", lines)
             self.assertIn("/audit - audit", lines)
-            self.assertIn("/translate <idea> - spec", lines)
+            self.assertIn("/translateview|/translateclear - draft", lines)
             self.assertIn("/ask <prompt> - ask", lines)
             self.assertIn("/askd <prompt> - detail", lines)
             self.assertIn("/asklast <prompt> - latest", lines)
             self.assertIn("/askctx <id> <prompt> - ctx", lines)
             self.assertIn("/explainrepo [path] - repo", lines)
             self.assertIn("/explainfile <path> - file", lines)
-            self.assertIn("/summarizeweb <url> - web sum", lines)
+            self.assertIn("/summarizeweb - web sum", lines)
             self.assertIn("/workflows - flow", lines)
-            self.assertIn("/workflowstatus [id] - flow check", lines)
-            self.assertIn("/cancelworkflow [id] - cancel flow", lines)
+            self.assertIn("/workflowstatus - flow", lines)
+            self.assertIn("/cancelworkflow - cancel", lines)
             self.assertEqual(lines[-1], "Plain text is not auto-routed.")
 
     def test_status_command_is_mobile_readable_and_shows_loop_activity(self) -> None:
@@ -402,7 +402,8 @@ class TelegramCommandTests(unittest.TestCase):
             self.assertEqual(openai.ask_calls, 0)
             self.assertIn("Translation", reply)
             self.assertIn("Type: website", reply)
-            self.assertIn("Requirements:", reply)
+            self.assertIn("Session: TR-", reply)
+            self.assertIn("Confirmed:", reply)
             self.assertIn("Open questions:", reply)
             self.assertIn("Next:", reply)
             self.assertEqual(snapshot.last_capability_id, "intent.translate.read")
@@ -420,6 +421,91 @@ class TelegramCommandTests(unittest.TestCase):
                 reply,
                 "Couldn't translate that request.\nReason: No product idea or request was provided.\nNext: Use /translate <idea or request>.",
             )
+
+    def test_refine_updates_current_translation_draft_without_execution_side_effects(self) -> None:
+        updates = (
+            TelegramInboundMessage(update_id=203, chat_id="chat-1", text="/translate Build me a landing page for BABYLON with wishlist CTA and email signup.", sender_label="@tester"),
+            TelegramInboundMessage(update_id=204, chat_id="chat-1", text="/refine one-page site, dark style, deploy to Vercel, use React", sender_label="@tester"),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            telegram_service = _FakeTelegramService(update_batches=[updates])
+            service, _, _, _, ollama, openai = self._make_service(tmp_dir=tmp, telegram_service=telegram_service)
+            service.start_telegram_loop()
+            self.assertTrue(_wait_until(lambda: len(telegram_service.sent_messages) == 2, timeout=2.0))
+            snapshot = service.stop_telegram_loop()
+            reply = telegram_service.sent_messages[-1][1]
+            self.assertEqual(ollama.ask_calls, 0)
+            self.assertEqual(openai.ask_calls, 0)
+            self.assertIn("Translation refined", reply)
+            self.assertIn("stack: react", reply)
+            self.assertIn("deployment_target: vercel", reply)
+            self.assertEqual(snapshot.last_capability_id, "intent.refine.read")
+
+    def test_refine_with_no_active_draft_fails_cleanly(self) -> None:
+        update = TelegramInboundMessage(update_id=205, chat_id="chat-1", text="/refine use React", sender_label="@tester")
+        with tempfile.TemporaryDirectory() as tmp:
+            telegram_service = _FakeTelegramService(update_batches=[(update,)])
+            service, _, _, _, ollama, openai = self._make_service(tmp_dir=tmp, telegram_service=telegram_service)
+            _, reply = self._run_single_update(service, telegram_service)
+            self.assertEqual(ollama.ask_calls, 0)
+            self.assertEqual(openai.ask_calls, 0)
+            self.assertEqual(
+                reply,
+                "Couldn't refine that draft.\nReason: No active translation draft exists.\nNext: Use /translate <idea or request> first.",
+            )
+
+    def test_translateview_shows_current_draft_summary(self) -> None:
+        updates = (
+            TelegramInboundMessage(update_id=206, chat_id="chat-1", text="/translate Build me a landing page for BABYLON", sender_label="@tester"),
+            TelegramInboundMessage(update_id=207, chat_id="chat-1", text="/translateview", sender_label="@tester"),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            telegram_service = _FakeTelegramService(update_batches=[updates])
+            service, _, _, _, ollama, openai = self._make_service(tmp_dir=tmp, telegram_service=telegram_service)
+            service.start_telegram_loop()
+            self.assertTrue(_wait_until(lambda: len(telegram_service.sent_messages) == 2, timeout=2.0))
+            service.stop_telegram_loop()
+            reply = telegram_service.sent_messages[-1][1]
+            self.assertEqual(ollama.ask_calls, 0)
+            self.assertEqual(openai.ask_calls, 0)
+            self.assertIn("Translation view", reply)
+            self.assertIn("Session: TR-", reply)
+            self.assertIn("Open questions:", reply)
+
+    def test_translateview_with_no_active_draft_reports_cleanly(self) -> None:
+        update = TelegramInboundMessage(update_id=208, chat_id="chat-1", text="/translateview", sender_label="@tester")
+        with tempfile.TemporaryDirectory() as tmp:
+            telegram_service = _FakeTelegramService(update_batches=[(update,)])
+            service, _, _, _, _, _ = self._make_service(tmp_dir=tmp, telegram_service=telegram_service)
+            _, reply = self._run_single_update(service, telegram_service)
+            self.assertEqual(reply, "No active translation draft.\nNext: Use /translate <idea or request>.")
+
+    def test_translateclear_archives_active_draft(self) -> None:
+        updates = (
+            TelegramInboundMessage(update_id=209, chat_id="chat-1", text="/translate Build me a landing page for BABYLON", sender_label="@tester"),
+            TelegramInboundMessage(update_id=210, chat_id="chat-1", text="/translateclear", sender_label="@tester"),
+            TelegramInboundMessage(update_id=211, chat_id="chat-1", text="/translateview", sender_label="@tester"),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            telegram_service = _FakeTelegramService(update_batches=[updates])
+            service, _, _, _, ollama, openai = self._make_service(tmp_dir=tmp, telegram_service=telegram_service)
+            service.start_telegram_loop()
+            self.assertTrue(_wait_until(lambda: len(telegram_service.sent_messages) == 3, timeout=2.0))
+            service.stop_telegram_loop()
+            clear_reply = telegram_service.sent_messages[1][1]
+            view_reply = telegram_service.sent_messages[2][1]
+            self.assertEqual(ollama.ask_calls, 0)
+            self.assertEqual(openai.ask_calls, 0)
+            self.assertIn("Translation draft cleared.", clear_reply)
+            self.assertEqual(view_reply, "No active translation draft.\nNext: Use /translate <idea or request>.")
+
+    def test_translateclear_with_no_active_draft_is_clean_noop(self) -> None:
+        update = TelegramInboundMessage(update_id=212, chat_id="chat-1", text="/translateclear", sender_label="@tester")
+        with tempfile.TemporaryDirectory() as tmp:
+            telegram_service = _FakeTelegramService(update_batches=[(update,)])
+            service, _, _, _, _, _ = self._make_service(tmp_dir=tmp, telegram_service=telegram_service)
+            _, reply = self._run_single_update(service, telegram_service)
+            self.assertEqual(reply, "No active translation draft to clear.")
 
     def test_mode_command_reports_confirmation_gated_remote_use(self) -> None:
         update = TelegramInboundMessage(update_id=3, chat_id="chat-1", text="/mode", sender_label="@tester")

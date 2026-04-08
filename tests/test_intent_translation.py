@@ -20,6 +20,7 @@ class IntentTranslationTests(unittest.TestCase):
         self.assertIn("Marketing landing page", spec.summary)
         self.assertTrue(any("stack" in item.lower() for item in spec.open_questions))
         self.assertTrue(any("one-page marketing site" in item.lower() for item in spec.assumptions))
+        self.assertIn("request_type: website", spec.confirmed_values)
         self.assertIn("Build target: website", spec.execution_handoff)
 
     def test_game_request_extracts_core_features_and_missing_fields(self) -> None:
@@ -58,6 +59,7 @@ class IntentTranslationTests(unittest.TestCase):
         summary = self.formatter.format_operator_summary(spec)
         self.assertIn("Translation", summary)
         self.assertIn("Type: website", summary)
+        self.assertIn("Confirmed:", summary)
         self.assertIn("Open questions:", summary)
         self.assertIn("Next:", summary)
         self.assertLessEqual(len(summary), 900)

@@ -193,6 +193,12 @@ class CapabilityExecutor:
             return self._execute_last_action(update=update, snapshot=snapshot)
         if command == "/translate":
             return self._execute_translate(update=update, snapshot=snapshot, argument=parsed_command.argument)
+        if command == "/refine":
+            return self._execute_refine(update=update, snapshot=snapshot, argument=parsed_command.argument)
+        if command == "/translateview":
+            return self._execute_translate_view(update=update, snapshot=snapshot)
+        if command == "/translateclear":
+            return self._execute_translate_clear(update=update, snapshot=snapshot)
         if command == "/mode":
             return self._execute_mode(update=update, snapshot=snapshot)
         if command == "/models":
@@ -390,30 +396,198 @@ class CapabilityExecutor:
                 command_label="/translate",
                 activity_state="processing_command",
             )
-        spec = self._service._intent_translator.translate(prompt)
-        summary = self._service._intent_formatter.format_operator_summary(spec)
-        handoff = self._service._intent_formatter.format_execution_handoff(spec)
+        archived_session = None
+        active_session = self._service._intent_store.get_active(chat_id=update.chat_id)
+        if active_session is not None:
+            archived_session = self._service._intent_translator.archive_session(active_session, timestamp=self._service._now_iso())
+            self._service._intent_store.archive_active(chat_id=update.chat_id, archived_session=archived_session)
+        session = self._service._intent_translator.start_session(
+            prompt,
+            translation_session_id=self._generate_translation_session_id(),
+            timestamp=self._service._now_iso(),
+        )
+        self._service._intent_store.set_active(chat_id=update.chat_id, session=session)
+        summary = self._service._intent_formatter.format_translation_session(session, heading="Translation draft")
         return self._result(
             request,
             outcome="success",
             reason_code="ok",
             user_message=summary,
             internal_summary=(
-                f"intent.translate.read synthesized a {spec.request_type} intent with "
-                f"{len(spec.open_questions)} open question(s)."
+                f"intent.translate.read created session {session.translation_session_id} for a {session.current_spec.request_type} intent with "
+                f"{len(session.open_questions)} open question(s)."
             ),
             retryable=False,
             command_label="/translate",
             activity_state="processing_command",
             telemetry={
-                "intent_spec": spec.to_payload(),
-                "execution_brief": spec.execution_brief,
-                "execution_handoff": handoff,
-                "clarification_questions": list(spec.clarification_questions),
-                "open_question_count": len(spec.open_questions),
-                "assumption_count": len(spec.assumptions),
+                "translation_session": session.to_payload(),
+                "intent_spec": session.current_spec.to_payload(),
+                "execution_brief": session.current_spec.execution_brief,
+                "execution_handoff": session.latest_handoff,
+                "clarification_questions": list(session.current_spec.clarification_questions),
+                "open_question_count": len(session.open_questions),
+                "assumption_count": len(session.assumptions),
+                "resolved_field_count": len(session.resolved_fields),
+                "archived_previous_session_id": archived_session.translation_session_id if archived_session is not None else "",
             },
         )
+
+    def _execute_refine(
+        self,
+        *,
+        update: TelegramInboundMessage,
+        snapshot: ControllerSnapshot,
+        argument: str,
+    ) -> CapabilityExecutionResult:
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="intent.refine.read",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/refine",
+            parsed_arguments={"clarification": argument},
+            metadata={"argument_summary": "/refine [clarification hidden]"},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        clarification = " ".join(argument.split())
+        if not clarification:
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="missing_refinement_request",
+                user_message="Couldn't refine that draft.\nReason: No clarification was provided.\nNext: Use /refine <clarification>.",
+                internal_summary="/refine rejected because no clarification text was provided.",
+                retryable=False,
+                command_label="/refine",
+                activity_state="processing_command",
+            )
+        active_session = self._service._intent_store.get_active(chat_id=update.chat_id)
+        if active_session is None:
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="no_active_translation_session",
+                user_message="Couldn't refine that draft.\nReason: No active translation draft exists.\nNext: Use /translate <idea or request> first.",
+                internal_summary="/refine rejected because there is no active translation draft.",
+                retryable=False,
+                command_label="/refine",
+                activity_state="processing_command",
+            )
+        session = self._service._intent_translator.refine_session(
+            active_session,
+            clarification,
+            timestamp=self._service._now_iso(),
+        )
+        self._service._intent_store.set_active(chat_id=update.chat_id, session=session)
+        summary = self._service._intent_formatter.format_translation_session(session, heading="Translation refined")
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=summary,
+            internal_summary=(
+                f"intent.refine.read updated session {session.translation_session_id}; "
+                f"{len(session.open_questions)} open question(s) remain."
+            ),
+            retryable=False,
+            command_label="/refine",
+            activity_state="processing_command",
+            telemetry={
+                "translation_session": session.to_payload(),
+                "intent_spec": session.current_spec.to_payload(),
+                "execution_brief": session.current_spec.execution_brief,
+                "execution_handoff": session.latest_handoff,
+                "clarification_questions": list(session.current_spec.clarification_questions),
+                "open_question_count": len(session.open_questions),
+                "assumption_count": len(session.assumptions),
+                "resolved_field_count": len(session.resolved_fields),
+            },
+        )
+
+    def _execute_translate_view(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot) -> CapabilityExecutionResult:
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="intent.view.read",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/translateview",
+            parsed_arguments={},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        session = self._service._intent_store.get_active(chat_id=update.chat_id)
+        if session is None:
+            return self._result(
+                request,
+                outcome="success",
+                reason_code="no_active_translation_session",
+                user_message=self._service._intent_formatter.format_no_active_session(),
+                internal_summary="intent.view.read found no active translation draft.",
+                retryable=False,
+                command_label="/translateview",
+                activity_state="processing_command",
+                telemetry={"translation_session": None},
+            )
+        reply = self._service._intent_formatter.format_translation_session(session, heading="Translation view")
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=reply,
+            internal_summary=f"intent.view.read returned session {session.translation_session_id} in state {session.state}.",
+            retryable=False,
+            command_label="/translateview",
+            activity_state="processing_command",
+            telemetry={
+                "translation_session": session.to_payload(),
+                "intent_spec": session.current_spec.to_payload(),
+                "execution_handoff": session.latest_handoff,
+            },
+        )
+
+    def _execute_translate_clear(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot) -> CapabilityExecutionResult:
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="intent.clear.read",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/translateclear",
+            parsed_arguments={},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        active_session = self._service._intent_store.get_active(chat_id=update.chat_id)
+        if active_session is None:
+            return self._result(
+                request,
+                outcome="success",
+                reason_code="no_active_translation_session",
+                user_message=self._service._intent_formatter.format_clear_reply(None),
+                internal_summary="intent.clear.read found no active translation draft to archive.",
+                retryable=False,
+                command_label="/translateclear",
+                activity_state="processing_command",
+                telemetry={"translation_session": None},
+            )
+        archived_session = self._service._intent_translator.archive_session(active_session, timestamp=self._service._now_iso())
+        self._service._intent_store.archive_active(chat_id=update.chat_id, archived_session=archived_session)
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=self._service._intent_formatter.format_clear_reply(archived_session),
+            internal_summary=f"intent.clear.read archived session {archived_session.translation_session_id}.",
+            retryable=False,
+            command_label="/translateclear",
+            activity_state="processing_command",
+            telemetry={"translation_session": archived_session.to_payload()},
+        )
+
+    @staticmethod
+    def _generate_translation_session_id() -> str:
+        return f"TR-{secrets.token_hex(3).upper()}"
 
     def _execute_mode(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot) -> CapabilityExecutionResult:
         request, _, _, scope_failure = self._prepare_capability_request(

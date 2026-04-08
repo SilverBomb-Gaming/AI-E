@@ -137,12 +137,34 @@ class CapabilityExecutionContractTests(unittest.TestCase):
             self.assertEqual(result.locality, "local_only")
             self.assertEqual(result.offline_safety, "safe_offline")
             self.assertEqual(result.scope_summary, "internal/read")
+            self.assertIn("translation_session", result.telemetry)
             self.assertIn("intent_spec", result.telemetry)
             self.assertIn("execution_handoff", result.telemetry)
             spec_payload = result.telemetry["intent_spec"]
             self.assertEqual(spec_payload["request_type"], "website")
             self.assertIn("Wishlist CTA", spec_payload["functional_requirements"])
             self.assertEqual(snapshot.last_execution_outcome, "success")
+
+    def test_refine_read_returns_structured_success_result(self) -> None:
+        updates = (
+            TelegramInboundMessage(update_id=1012, chat_id="chat-1", text="/translate Build me a landing page for BABYLON with wishlist CTA and email signup.", sender_label="@tester"),
+            TelegramInboundMessage(update_id=1013, chat_id="chat-1", text="/refine one-page site, dark style, deploy to Vercel, use React", sender_label="@tester"),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            telegram_service = _FakeTelegramService(update_batches=[updates])
+            service, _, _, _, ollama, openai = self._make_service(tmp_dir=tmp, telegram_service=telegram_service)
+            service.start_telegram_loop()
+            self.assertTrue(_wait_until(lambda: len(telegram_service.sent_messages) == 2, timeout=2.0))
+            service.stop_telegram_loop()
+            result = self._last_result(service)
+            self.assertEqual(ollama.ask_calls, 0)
+            self.assertEqual(openai.ask_calls, 0)
+            self.assertEqual(result.capability_id, "intent.refine.read")
+            self.assertEqual(result.outcome, "success")
+            self.assertIn("translation_session", result.telemetry)
+            self.assertIn("intent_spec", result.telemetry)
+            self.assertIn("stack: react", result.telemetry["intent_spec"]["confirmed_values"])
+            self.assertLess(result.telemetry["open_question_count"], 4)
 
     def test_models_read_returns_structured_degraded_result_when_ollama_unavailable(self) -> None:
         update = TelegramInboundMessage(update_id=102, chat_id="chat-1", text="/models", sender_label="@tester")

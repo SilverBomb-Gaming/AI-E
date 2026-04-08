@@ -95,6 +95,9 @@ class CapabilityLayerTests(unittest.TestCase):
         self.assertIn("shell.command.run", CAPABILITY_REGISTRY)
         self.assertIn("test.command.run", CAPABILITY_REGISTRY)
         self.assertIn("intent.translate.read", CAPABILITY_REGISTRY)
+        self.assertIn("intent.refine.read", CAPABILITY_REGISTRY)
+        self.assertIn("intent.view.read", CAPABILITY_REGISTRY)
+        self.assertIn("intent.clear.read", CAPABILITY_REGISTRY)
         self.assertIn("audit.read", CAPABILITY_REGISTRY)
         self.assertIn("capabilities.read", CAPABILITY_REGISTRY)
         for definition in CAPABILITY_DEFINITIONS:
@@ -165,6 +168,12 @@ class CapabilityLayerTests(unittest.TestCase):
         evaluation = self.evaluator.evaluate("intent.translate.read", self._context())
         self.assertEqual(evaluation.current_availability_state, "allowed")
         self.assertEqual(evaluation.reason_code, "allowed")
+
+    def test_refine_view_and_clear_are_allowed_in_healthy_normal_state(self) -> None:
+        for capability_id in {"intent.refine.read", "intent.view.read", "intent.clear.read"}:
+            evaluation = self.evaluator.evaluate(capability_id, self._context())
+            self.assertEqual(evaluation.current_availability_state, "allowed")
+            self.assertEqual(evaluation.reason_code, "allowed")
 
     def test_models_read_degraded_when_ollama_unavailable(self) -> None:
         evaluation = self.evaluator.evaluate(

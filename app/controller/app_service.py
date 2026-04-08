@@ -26,6 +26,7 @@ from .execution_models import CapabilityExecutionResult
 from .file_mutator import FileMutator
 from .file_reader import FileReadSnapshot, FileReader, FileReaderError
 from .intent_formatter import IntentFormatter
+from .intent_store import IntentStore
 from .intent_translator import IntentTranslator
 from .diagnostics import ControllerDiagnosticsService
 from .models import ControllerSnapshot
@@ -160,6 +161,7 @@ class ControllerService:
             max_contexts_per_chat=_CONTEXT_BUFFER_MAX_ITEMS,
             lifetime_seconds=_CONTEXT_LIFETIME_SECONDS,
         )
+        self._intent_store = IntentStore()
         self._last_capability_evaluation: CapabilityEvaluation | None = None
         self._last_execution_result: CapabilityExecutionResult | None = None
         self._last_loop_result: CapabilityExecutionResult | None = None
@@ -1453,22 +1455,22 @@ class ControllerService:
             reply=chr(10).join(
                 (
                     "Operator commands",
-                    "Core: /translate /repo /file /patchfile|/writefile /run|/test /lastaction /web",
+                    "Core: /translate|/refine /repo /file /patchfile|/writefile /run|/test /web",
                     "/contexts - ctx",
                     "/clearcontext - clear",
                     "/capabilities - trust",
                     "/audit - audit",
-                    "/translate <idea> - spec",
+                    "/translateview|/translateclear - draft",
                     "/ask <prompt> - ask",
                     "/askd <prompt> - detail",
                     "/asklast <prompt> - latest",
                     "/askctx <id> <prompt> - ctx",
                     "/explainrepo [path] - repo",
                     "/explainfile <path> - file",
-                    "/summarizeweb <url> - web sum",
+                    "/summarizeweb - web sum",
                     "/workflows - flow",
-                    "/workflowstatus [id] - flow check",
-                    "/cancelworkflow [id] - cancel flow",
+                    "/workflowstatus - flow",
+                    "/cancelworkflow - cancel",
                     "Plain text is not auto-routed.",
                 )
             ),
@@ -2014,6 +2016,9 @@ class ControllerService:
             "/status",
             "/lastaction",
             "/translate",
+            "/refine",
+            "/translateview",
+            "/translateclear",
             "/mode",
             "/models",
             "/repo",
@@ -2088,6 +2093,18 @@ class ControllerService:
                 command_label="parse_failure",
                 normalized_text=normalized_text,
                 usage_hint="Use /translate <idea or request>.",
+            )
+        if command.startswith("/refine"):
+            return _ParsedTelegramCommand(
+                command_label="parse_failure",
+                normalized_text=normalized_text,
+                usage_hint="Use /refine <clarification>.",
+            )
+        if command.startswith("/translateview") or command.startswith("/translateclear"):
+            return _ParsedTelegramCommand(
+                command_label="parse_failure",
+                normalized_text=normalized_text,
+                usage_hint="Use /translateview or /translateclear.",
             )
         if command.startswith("/repo"):
             return _ParsedTelegramCommand(
