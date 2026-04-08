@@ -199,6 +199,12 @@ class CapabilityExecutor:
             return self._execute_translate_view(update=update, snapshot=snapshot)
         if command == "/translateclear":
             return self._execute_translate_clear(update=update, snapshot=snapshot)
+        if command == "/planbuild":
+            return self._execute_plan_build(update=update, snapshot=snapshot)
+        if command == "/planview":
+            return self._execute_plan_view(update=update, snapshot=snapshot)
+        if command == "/planclear":
+            return self._execute_plan_clear(update=update, snapshot=snapshot)
         if command == "/mode":
             return self._execute_mode(update=update, snapshot=snapshot)
         if command == "/models":
@@ -401,6 +407,7 @@ class CapabilityExecutor:
         if active_session is not None:
             archived_session = self._service._intent_translator.archive_session(active_session, timestamp=self._service._now_iso())
             self._service._intent_store.archive_active(chat_id=update.chat_id, archived_session=archived_session)
+        self._service._build_plan_store.clear_active(chat_id=update.chat_id)
         session = self._service._intent_translator.start_session(
             prompt,
             translation_session_id=self._generate_translation_session_id(),
@@ -481,6 +488,7 @@ class CapabilityExecutor:
             timestamp=self._service._now_iso(),
         )
         self._service._intent_store.set_active(chat_id=update.chat_id, session=session)
+        self._service._build_plan_store.clear_active(chat_id=update.chat_id)
         summary = self._service._intent_formatter.format_translation_session(session, heading="Translation refined")
         return self._result(
             request,
@@ -571,6 +579,7 @@ class CapabilityExecutor:
                 activity_state="processing_command",
                 telemetry={"translation_session": None},
             )
+        self._service._build_plan_store.clear_active(chat_id=update.chat_id)
         archived_session = self._service._intent_translator.archive_session(active_session, timestamp=self._service._now_iso())
         self._service._intent_store.archive_active(chat_id=update.chat_id, archived_session=archived_session)
         return self._result(
@@ -588,6 +597,123 @@ class CapabilityExecutor:
     @staticmethod
     def _generate_translation_session_id() -> str:
         return f"TR-{secrets.token_hex(3).upper()}"
+
+    def _execute_plan_build(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot) -> CapabilityExecutionResult:
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="build.plan.read",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/planbuild",
+            parsed_arguments={},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        session = self._service._intent_store.get_active(chat_id=update.chat_id)
+        if session is None:
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="no_active_translation_session",
+                user_message="Couldn't plan that build.\nReason: No active translation draft exists.\nNext: Use /translate <idea or request> first.",
+                internal_summary="/planbuild rejected because there is no active translation draft.",
+                retryable=False,
+                command_label="/planbuild",
+                activity_state="processing_command",
+            )
+        plan = self._service._build_planner.build_plan(session, plan_id=self._generate_build_plan_id())
+        self._service._build_plan_store.set_active(chat_id=update.chat_id, plan=plan)
+        reply = self._service._build_plan_formatter.format_build_plan(plan, heading="Build plan")
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok" if plan.state == "ready" else "planning_blocked",
+            user_message=reply,
+            internal_summary=(
+                f"build.plan.read created plan {plan.plan_id} from session {session.translation_session_id} with "
+                f"{len(plan.blockers)} blocker(s)."
+            ),
+            retryable=False,
+            command_label="/planbuild",
+            activity_state="processing_command",
+            telemetry={
+                "translation_session": session.to_payload(),
+                "intent_spec": session.current_spec.to_payload(),
+                "build_plan": plan.to_payload(),
+                "plan_state": plan.state,
+                "plan_phase_count": len(plan.phases),
+                "plan_blocker_count": len(plan.blockers),
+                "operator_handoff": plan.operator_handoff,
+            },
+        )
+
+    def _execute_plan_view(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot) -> CapabilityExecutionResult:
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="build.plan.view.read",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/planview",
+            parsed_arguments={},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        plan = self._service._build_plan_store.get_active(chat_id=update.chat_id)
+        if plan is None:
+            return self._result(
+                request,
+                outcome="success",
+                reason_code="no_active_build_plan",
+                user_message=self._service._build_plan_formatter.format_no_active_plan(),
+                internal_summary="build.plan.view.read found no active build plan.",
+                retryable=False,
+                command_label="/planview",
+                activity_state="processing_command",
+                telemetry={"build_plan": None},
+            )
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=self._service._build_plan_formatter.format_build_plan(plan, heading="Build plan view"),
+            internal_summary=f"build.plan.view.read returned plan {plan.plan_id} in state {plan.state}.",
+            retryable=False,
+            command_label="/planview",
+            activity_state="processing_command",
+            telemetry={"build_plan": plan.to_payload()},
+        )
+
+    def _execute_plan_clear(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot) -> CapabilityExecutionResult:
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="build.plan.clear.read",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/planclear",
+            parsed_arguments={},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        cleared_plan = self._service._build_plan_store.clear_active(chat_id=update.chat_id)
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok" if cleared_plan is not None else "no_active_build_plan",
+            user_message=self._service._build_plan_formatter.format_clear_reply(cleared_plan),
+            internal_summary=(
+                f"build.plan.clear.read cleared plan {cleared_plan.plan_id}."
+                if cleared_plan is not None
+                else "build.plan.clear.read found no active build plan to clear."
+            ),
+            retryable=False,
+            command_label="/planclear",
+            activity_state="processing_command",
+            telemetry={"build_plan": cleared_plan.to_payload() if cleared_plan is not None else None},
+        )
+
+    @staticmethod
+    def _generate_build_plan_id() -> str:
+        return f"BP-{secrets.token_hex(3).upper()}"
 
     def _execute_mode(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot) -> CapabilityExecutionResult:
         request, _, _, scope_failure = self._prepare_capability_request(

@@ -166,6 +166,29 @@ class CapabilityExecutionContractTests(unittest.TestCase):
             self.assertIn("stack: react", result.telemetry["intent_spec"]["confirmed_values"])
             self.assertLess(result.telemetry["open_question_count"], 4)
 
+    def test_planbuild_returns_structured_build_plan_result(self) -> None:
+        updates = (
+            TelegramInboundMessage(update_id=1014, chat_id="chat-1", text="/translate Build me a landing page for BABYLON with wishlist CTA and email signup.", sender_label="@tester"),
+            TelegramInboundMessage(update_id=1015, chat_id="chat-1", text="/refine one-page site, dark style, deploy to Vercel, use React", sender_label="@tester"),
+            TelegramInboundMessage(update_id=1016, chat_id="chat-1", text="/planbuild", sender_label="@tester"),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            telegram_service = _FakeTelegramService(update_batches=[updates])
+            service, _, _, _, ollama, openai = self._make_service(tmp_dir=tmp, telegram_service=telegram_service)
+            service.start_telegram_loop()
+            self.assertTrue(_wait_until(lambda: len(telegram_service.sent_messages) == 3, timeout=2.0))
+            service.stop_telegram_loop()
+            result = self._last_result(service)
+            self.assertEqual(ollama.ask_calls, 0)
+            self.assertEqual(openai.ask_calls, 0)
+            self.assertEqual(result.capability_id, "build.plan.read")
+            self.assertEqual(result.outcome, "success")
+            self.assertIn("build_plan", result.telemetry)
+            self.assertIn("translation_session", result.telemetry)
+            self.assertEqual(result.telemetry["build_plan"]["request_type"], "website")
+            self.assertEqual(result.telemetry["build_plan"]["phases"][0]["name"], "Scope contract")
+            self.assertIn("Deployment target: vercel", result.telemetry["build_plan"]["cross_phase_dependencies"])
+
     def test_models_read_returns_structured_degraded_result_when_ollama_unavailable(self) -> None:
         update = TelegramInboundMessage(update_id=102, chat_id="chat-1", text="/models", sender_label="@tester")
         ollama = _FakeOllamaAdapter(

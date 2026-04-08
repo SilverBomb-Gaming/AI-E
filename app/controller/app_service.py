@@ -11,6 +11,9 @@ from urllib.parse import urlparse
 
 from .audit_models import AuditRecord
 from .audit_store import AuditStore
+from .build_plan_formatter import BuildPlanFormatter
+from .build_plan_store import BuildPlanStore
+from .build_planner import BuildPlanner
 from .capability_evaluator import CapabilityEvaluator
 from .capability_executor import CapabilityExecutor
 from .capability_models import CapabilityContext, CapabilityEvaluation, CapabilityManifest
@@ -127,6 +130,8 @@ class ControllerService:
         self._web_fetcher = web_fetcher or WebFetcher()
         self._intent_translator = IntentTranslator()
         self._intent_formatter = IntentFormatter()
+        self._build_planner = BuildPlanner()
+        self._build_plan_formatter = BuildPlanFormatter()
         self._config = self._config_store.load()
         self._normalize_repo_root_config()
         self._normalize_file_roots_config()
@@ -162,6 +167,7 @@ class ControllerService:
             lifetime_seconds=_CONTEXT_LIFETIME_SECONDS,
         )
         self._intent_store = IntentStore()
+        self._build_plan_store = BuildPlanStore()
         self._last_capability_evaluation: CapabilityEvaluation | None = None
         self._last_execution_result: CapabilityExecutionResult | None = None
         self._last_loop_result: CapabilityExecutionResult | None = None
@@ -1455,22 +1461,23 @@ class ControllerService:
             reply=chr(10).join(
                 (
                     "Operator commands",
-                    "Core: /translate|/refine /repo /file /patchfile|/writefile /run|/test /web",
+                    "Core: /translate|/refine|/planbuild /repo /file /patchfile|/writefile /run|/test /web",
                     "/contexts - ctx",
-                    "/clearcontext - clear",
+                    "/clearcontext - clr",
                     "/capabilities - trust",
-                    "/audit - audit",
+                    "/audit - aud",
                     "/translateview|/translateclear - draft",
+                    "/planview|/planclear - bp",
                     "/ask <prompt> - ask",
-                    "/askd <prompt> - detail",
-                    "/asklast <prompt> - latest",
+                    "/askd <prompt> - dtl",
+                    "/asklast <prompt> - last",
                     "/askctx <id> <prompt> - ctx",
                     "/explainrepo [path] - repo",
                     "/explainfile <path> - file",
-                    "/summarizeweb - web sum",
+                    "/summarizeweb - sum",
                     "/workflows - flow",
-                    "/workflowstatus - flow",
-                    "/cancelworkflow - cancel",
+                    "/workflowstatus - wf",
+                    "/cancelworkflow - stop",
                     "Plain text is not auto-routed.",
                 )
             ),
@@ -2019,6 +2026,9 @@ class ControllerService:
             "/refine",
             "/translateview",
             "/translateclear",
+            "/planbuild",
+            "/planview",
+            "/planclear",
             "/mode",
             "/models",
             "/repo",
@@ -2099,6 +2109,18 @@ class ControllerService:
                 command_label="parse_failure",
                 normalized_text=normalized_text,
                 usage_hint="Use /refine <clarification>.",
+            )
+        if command.startswith("/planbuild"):
+            return _ParsedTelegramCommand(
+                command_label="parse_failure",
+                normalized_text=normalized_text,
+                usage_hint="Use /planbuild after /translate or /refine.",
+            )
+        if command.startswith("/planview") or command.startswith("/planclear"):
+            return _ParsedTelegramCommand(
+                command_label="parse_failure",
+                normalized_text=normalized_text,
+                usage_hint="Use /planview or /planclear.",
             )
         if command.startswith("/translateview") or command.startswith("/translateclear"):
             return _ParsedTelegramCommand(

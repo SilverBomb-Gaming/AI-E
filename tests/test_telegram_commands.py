@@ -347,22 +347,24 @@ class TelegramCommandTests(unittest.TestCase):
             self.assertEqual(lines[0], "Operator commands")
             self.assertIn("/translate", lines[1])
             self.assertIn("/refine", lines[1])
+            self.assertIn("/planbuild", lines[1])
             self.assertIn("/run|/test", lines[1])
             self.assertIn("/contexts - ctx", lines)
-            self.assertIn("/clearcontext - clear", lines)
+            self.assertIn("/clearcontext - clr", lines)
             self.assertIn("/capabilities - trust", lines)
-            self.assertIn("/audit - audit", lines)
+            self.assertIn("/audit - aud", lines)
             self.assertIn("/translateview|/translateclear - draft", lines)
+            self.assertIn("/planview|/planclear - bp", lines)
             self.assertIn("/ask <prompt> - ask", lines)
-            self.assertIn("/askd <prompt> - detail", lines)
-            self.assertIn("/asklast <prompt> - latest", lines)
+            self.assertIn("/askd <prompt> - dtl", lines)
+            self.assertIn("/asklast <prompt> - last", lines)
             self.assertIn("/askctx <id> <prompt> - ctx", lines)
             self.assertIn("/explainrepo [path] - repo", lines)
             self.assertIn("/explainfile <path> - file", lines)
-            self.assertIn("/summarizeweb - web sum", lines)
+            self.assertIn("/summarizeweb - sum", lines)
             self.assertIn("/workflows - flow", lines)
-            self.assertIn("/workflowstatus - flow", lines)
-            self.assertIn("/cancelworkflow - cancel", lines)
+            self.assertIn("/workflowstatus - wf", lines)
+            self.assertIn("/cancelworkflow - stop", lines)
             self.assertEqual(lines[-1], "Plain text is not auto-routed.")
 
     def test_status_command_is_mobile_readable_and_shows_loop_activity(self) -> None:
@@ -506,6 +508,105 @@ class TelegramCommandTests(unittest.TestCase):
             service, _, _, _, _, _ = self._make_service(tmp_dir=tmp, telegram_service=telegram_service)
             _, reply = self._run_single_update(service, telegram_service)
             self.assertEqual(reply, "No active translation draft to clear.")
+
+    def test_planbuild_returns_concise_build_plan_without_execution_side_effects(self) -> None:
+        updates = (
+            TelegramInboundMessage(update_id=213, chat_id="chat-1", text="/translate Build me a landing page for BABYLON with wishlist CTA and email signup.", sender_label="@tester"),
+            TelegramInboundMessage(update_id=214, chat_id="chat-1", text="/refine one-page site, dark style, deploy to Vercel, use React", sender_label="@tester"),
+            TelegramInboundMessage(update_id=215, chat_id="chat-1", text="/planbuild", sender_label="@tester"),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            telegram_service = _FakeTelegramService(update_batches=[updates])
+            service, _, _, _, ollama, openai = self._make_service(tmp_dir=tmp, telegram_service=telegram_service)
+            service.start_telegram_loop()
+            self.assertTrue(_wait_until(lambda: len(telegram_service.sent_messages) == 3, timeout=2.0))
+            snapshot = service.stop_telegram_loop()
+            reply = telegram_service.sent_messages[-1][1]
+            self.assertEqual(ollama.ask_calls, 0)
+            self.assertEqual(openai.ask_calls, 0)
+            self.assertIn("Build plan", reply)
+            self.assertIn("Plan: BP-", reply)
+            self.assertIn("Phases: Scope contract; Experience build; Launch prep", reply)
+            self.assertIn("Dependencies:", reply)
+            self.assertIn("Next:", reply)
+            self.assertEqual(snapshot.last_capability_id, "build.plan.read")
+
+    def test_planbuild_with_no_active_draft_fails_cleanly(self) -> None:
+        update = TelegramInboundMessage(update_id=216, chat_id="chat-1", text="/planbuild", sender_label="@tester")
+        with tempfile.TemporaryDirectory() as tmp:
+            telegram_service = _FakeTelegramService(update_batches=[(update,)])
+            service, _, _, _, ollama, openai = self._make_service(tmp_dir=tmp, telegram_service=telegram_service)
+            _, reply = self._run_single_update(service, telegram_service)
+            self.assertEqual(ollama.ask_calls, 0)
+            self.assertEqual(openai.ask_calls, 0)
+            self.assertEqual(
+                reply,
+                "Couldn't plan that build.\nReason: No active translation draft exists.\nNext: Use /translate <idea or request> first.",
+            )
+
+    def test_planview_shows_current_build_plan(self) -> None:
+        updates = (
+            TelegramInboundMessage(update_id=217, chat_id="chat-1", text="/translate Build me a landing page for BABYLON", sender_label="@tester"),
+            TelegramInboundMessage(update_id=218, chat_id="chat-1", text="/planbuild", sender_label="@tester"),
+            TelegramInboundMessage(update_id=219, chat_id="chat-1", text="/planview", sender_label="@tester"),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            telegram_service = _FakeTelegramService(update_batches=[updates])
+            service, _, _, _, ollama, openai = self._make_service(tmp_dir=tmp, telegram_service=telegram_service)
+            service.start_telegram_loop()
+            self.assertTrue(_wait_until(lambda: len(telegram_service.sent_messages) == 3, timeout=2.0))
+            service.stop_telegram_loop()
+            reply = telegram_service.sent_messages[-1][1]
+            self.assertEqual(ollama.ask_calls, 0)
+            self.assertEqual(openai.ask_calls, 0)
+            self.assertIn("Build plan view", reply)
+            self.assertIn("Plan: BP-", reply)
+
+    def test_planview_with_no_active_plan_reports_cleanly(self) -> None:
+        update = TelegramInboundMessage(update_id=220, chat_id="chat-1", text="/planview", sender_label="@tester")
+        with tempfile.TemporaryDirectory() as tmp:
+            telegram_service = _FakeTelegramService(update_batches=[(update,)])
+            service, _, _, _, _, _ = self._make_service(tmp_dir=tmp, telegram_service=telegram_service)
+            _, reply = self._run_single_update(service, telegram_service)
+            self.assertEqual(reply, "No active build plan.\nNext: Use /planbuild after /translate or /refine.")
+
+    def test_planclear_clears_active_plan(self) -> None:
+        updates = (
+            TelegramInboundMessage(update_id=221, chat_id="chat-1", text="/translate Build me a landing page for BABYLON", sender_label="@tester"),
+            TelegramInboundMessage(update_id=222, chat_id="chat-1", text="/planbuild", sender_label="@tester"),
+            TelegramInboundMessage(update_id=223, chat_id="chat-1", text="/planclear", sender_label="@tester"),
+            TelegramInboundMessage(update_id=224, chat_id="chat-1", text="/planview", sender_label="@tester"),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            telegram_service = _FakeTelegramService(update_batches=[updates])
+            service, _, _, _, ollama, openai = self._make_service(tmp_dir=tmp, telegram_service=telegram_service)
+            service.start_telegram_loop()
+            self.assertTrue(_wait_until(lambda: len(telegram_service.sent_messages) == 4, timeout=2.0))
+            service.stop_telegram_loop()
+            clear_reply = telegram_service.sent_messages[2][1]
+            view_reply = telegram_service.sent_messages[3][1]
+            self.assertEqual(ollama.ask_calls, 0)
+            self.assertEqual(openai.ask_calls, 0)
+            self.assertIn("Build plan cleared.", clear_reply)
+            self.assertEqual(view_reply, "No active build plan.\nNext: Use /planbuild after /translate or /refine.")
+
+    def test_plan_is_invalidated_after_refinement(self) -> None:
+        updates = (
+            TelegramInboundMessage(update_id=225, chat_id="chat-1", text="/translate Build me a landing page for BABYLON", sender_label="@tester"),
+            TelegramInboundMessage(update_id=226, chat_id="chat-1", text="/planbuild", sender_label="@tester"),
+            TelegramInboundMessage(update_id=227, chat_id="chat-1", text="/refine use React and deploy to Vercel", sender_label="@tester"),
+            TelegramInboundMessage(update_id=228, chat_id="chat-1", text="/planview", sender_label="@tester"),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            telegram_service = _FakeTelegramService(update_batches=[updates])
+            service, _, _, _, _, _ = self._make_service(tmp_dir=tmp, telegram_service=telegram_service)
+            service.start_telegram_loop()
+            self.assertTrue(_wait_until(lambda: len(telegram_service.sent_messages) == 4, timeout=2.0))
+            service.stop_telegram_loop()
+            self.assertEqual(
+                telegram_service.sent_messages[-1][1],
+                "No active build plan.\nNext: Use /planbuild after /translate or /refine.",
+            )
 
     def test_mode_command_reports_confirmation_gated_remote_use(self) -> None:
         update = TelegramInboundMessage(update_id=3, chat_id="chat-1", text="/mode", sender_label="@tester")
