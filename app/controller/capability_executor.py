@@ -201,10 +201,28 @@ class CapabilityExecutor:
             return self._execute_translate_clear(update=update, snapshot=snapshot)
         if command == "/planbuild":
             return self._execute_plan_build(update=update, snapshot=snapshot)
+        if command == "/planstep":
+            return self._execute_plan_step(update=update, snapshot=snapshot)
+        if command == "/planstepbundle":
+            return self._execute_plan_step_bundle(update=update, snapshot=snapshot)
+        if command == "/planapprove":
+            return self._execute_plan_approve(update=update, snapshot=snapshot)
+        if command == "/bundleapprove":
+            return self._execute_bundle_approve(update=update, snapshot=snapshot)
+        if command == "/planstatus":
+            return self._execute_plan_status(update=update, snapshot=snapshot)
+        if command == "/bundlestatus":
+            return self._execute_bundle_status(update=update, snapshot=snapshot)
+        if command == "/planresetstep":
+            return self._execute_plan_reset_step(update=update, snapshot=snapshot)
+        if command == "/bundlecancel":
+            return self._execute_bundle_cancel(update=update, snapshot=snapshot)
         if command == "/planview":
             return self._execute_plan_view(update=update, snapshot=snapshot)
         if command == "/planclear":
             return self._execute_plan_clear(update=update, snapshot=snapshot)
+        if command == "/bundlereset":
+            return self._execute_bundle_reset(update=update, snapshot=snapshot)
         if command == "/mode":
             return self._execute_mode(update=update, snapshot=snapshot)
         if command == "/models":
@@ -407,7 +425,9 @@ class CapabilityExecutor:
         if active_session is not None:
             archived_session = self._service._intent_translator.archive_session(active_session, timestamp=self._service._now_iso())
             self._service._intent_store.archive_active(chat_id=update.chat_id, archived_session=archived_session)
+        self._invalidate_bundle_for_plan_change(chat_id=update.chat_id, reason="translation_restarted")
         self._service._build_plan_store.clear_active(chat_id=update.chat_id)
+        self._service._plan_bridge_store.clear_active(chat_id=update.chat_id)
         session = self._service._intent_translator.start_session(
             prompt,
             translation_session_id=self._generate_translation_session_id(),
@@ -488,7 +508,9 @@ class CapabilityExecutor:
             timestamp=self._service._now_iso(),
         )
         self._service._intent_store.set_active(chat_id=update.chat_id, session=session)
+        self._invalidate_bundle_for_plan_change(chat_id=update.chat_id, reason="translation_refined")
         self._service._build_plan_store.clear_active(chat_id=update.chat_id)
+        self._service._plan_bridge_store.clear_active(chat_id=update.chat_id)
         summary = self._service._intent_formatter.format_translation_session(session, heading="Translation refined")
         return self._result(
             request,
@@ -579,7 +601,9 @@ class CapabilityExecutor:
                 activity_state="processing_command",
                 telemetry={"translation_session": None},
             )
+        self._invalidate_bundle_for_plan_change(chat_id=update.chat_id, reason="translation_cleared")
         self._service._build_plan_store.clear_active(chat_id=update.chat_id)
+        self._service._plan_bridge_store.clear_active(chat_id=update.chat_id)
         archived_session = self._service._intent_translator.archive_session(active_session, timestamp=self._service._now_iso())
         self._service._intent_store.archive_active(chat_id=update.chat_id, archived_session=archived_session)
         return self._result(
@@ -622,6 +646,8 @@ class CapabilityExecutor:
                 activity_state="processing_command",
             )
         plan = self._service._build_planner.build_plan(session, plan_id=self._generate_build_plan_id())
+        self._invalidate_bundle_for_plan_change(chat_id=update.chat_id, reason="plan_rebuilt")
+        self._service._plan_bridge_store.clear_active(chat_id=update.chat_id)
         self._service._build_plan_store.set_active(chat_id=update.chat_id, plan=plan)
         reply = self._service._build_plan_formatter.format_build_plan(plan, heading="Build plan")
         return self._result(
@@ -683,6 +709,552 @@ class CapabilityExecutor:
             telemetry={"build_plan": plan.to_payload()},
         )
 
+    def _execute_plan_step(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot) -> CapabilityExecutionResult:
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="build.step.read",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/planstep",
+            parsed_arguments={},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        plan = self._service._build_plan_store.get_active(chat_id=update.chat_id)
+        if plan is None:
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="no_active_build_plan",
+                user_message=self._service._plan_bridge_formatter.format_no_active_plan(),
+                internal_summary="build.step.read rejected because there is no active build plan.",
+                retryable=False,
+                command_label="/planstep",
+                activity_state="processing_command",
+                telemetry={"build_plan": None, "plan_bridge_state": None},
+            )
+        if plan.state == "blocked":
+            state = self._service._plan_bridge.ensure_state(
+                plan,
+                self._service._plan_bridge_store.get_active(chat_id=update.chat_id),
+            )
+            self._service._plan_bridge_store.set_active(chat_id=update.chat_id, state=state)
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="planning_blocked",
+                user_message=self._service._plan_bridge_formatter.format_blocked_plan(plan),
+                internal_summary=f"build.step.read rejected because plan {plan.plan_id} is blocked.",
+                retryable=True,
+                command_label="/planstep",
+                activity_state="processing_command",
+                telemetry={"build_plan": plan.to_payload(), "plan_bridge_state": state.to_payload()},
+            )
+        state = self._service._plan_bridge.propose_next_step(
+            plan,
+            self._service._plan_bridge_store.get_active(chat_id=update.chat_id),
+            proposal_id=self._generate_plan_step_proposal_id(),
+        )
+        self._service._plan_bridge_store.set_active(chat_id=update.chat_id, state=state)
+        proposal = state.execution_proposal
+        if proposal is None:
+            return self._result(
+                request,
+                outcome="success",
+                reason_code="plan_completed",
+                user_message=self._service._plan_bridge_formatter.format_completed_plan(plan),
+                internal_summary=f"build.step.read found no remaining task groups for plan {plan.plan_id}.",
+                retryable=False,
+                command_label="/planstep",
+                activity_state="processing_command",
+                telemetry={"build_plan": plan.to_payload(), "plan_bridge_state": state.to_payload(), "execution_proposal": None},
+            )
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=self._service._plan_bridge_formatter.format_proposal(plan, state, proposal),
+            internal_summary=f"build.step.read proposed {proposal.proposal_id} for task group {proposal.task_group_id} in plan {plan.plan_id}.",
+            retryable=False,
+            command_label="/planstep",
+            activity_state="processing_command",
+            telemetry={
+                "build_plan": plan.to_payload(),
+                "plan_bridge_state": state.to_payload(),
+                "execution_proposal": proposal.to_payload(),
+            },
+        )
+
+    def _execute_plan_step_bundle(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot) -> CapabilityExecutionResult:
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="build.bundle.propose.read",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/planstepbundle",
+            parsed_arguments={},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        plan = self._service._build_plan_store.get_active(chat_id=update.chat_id)
+        if plan is None:
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="no_active_build_plan",
+                user_message=self._service._autonomy_bundle_formatter.format_no_active_plan(),
+                internal_summary="build.bundle.propose.read rejected because there is no active build plan.",
+                retryable=False,
+                command_label="/planstepbundle",
+                activity_state="processing_command",
+                telemetry={"build_plan": None, "plan_bridge_state": None, "bundle_state": None, "bundle_proposal": None},
+            )
+        bridge_state = self._service._plan_bridge.ensure_state(
+            plan,
+            self._service._plan_bridge_store.get_active(chat_id=update.chat_id),
+        )
+        self._service._plan_bridge_store.set_active(chat_id=update.chat_id, state=bridge_state)
+        if plan.state == "blocked":
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="planning_blocked",
+                user_message=self._service._autonomy_bundle_formatter.format_blocked_plan(),
+                internal_summary=f"build.bundle.propose.read rejected because plan {plan.plan_id} is blocked.",
+                retryable=True,
+                command_label="/planstepbundle",
+                activity_state="processing_command",
+                telemetry={"build_plan": plan.to_payload(), "plan_bridge_state": bridge_state.to_payload(), "bundle_state": None, "bundle_proposal": None},
+            )
+        bundle_state = self._service._autonomy_bundle_store.get_active(chat_id=update.chat_id)
+        if bridge_state.execution_proposal is not None and bridge_state.current_step_state in {"proposed", "approved", "executing"}:
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="active_plan_step_conflict",
+                user_message=self._service._autonomy_bundle_formatter.format_active_conflict(),
+                internal_summary=f"build.bundle.propose.read rejected because plan {plan.plan_id} already has an active step proposal.",
+                retryable=False,
+                command_label="/planstepbundle",
+                activity_state="processing_command",
+                telemetry={
+                    "build_plan": plan.to_payload(),
+                    "plan_bridge_state": bridge_state.to_payload(),
+                    "bundle_state": bundle_state.to_payload() if bundle_state is not None else None,
+                    "bundle_proposal": bundle_state.proposal.to_payload() if bundle_state is not None else None,
+                },
+            )
+        if bundle_state is not None and not self._service._autonomy_bundle.is_terminal(bundle_state):
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="active_bundle_conflict",
+                user_message=self._service._autonomy_bundle_formatter.format_active_conflict(),
+                internal_summary=f"build.bundle.propose.read rejected because bundle {bundle_state.bundle_id} is still active.",
+                retryable=False,
+                command_label="/planstepbundle",
+                activity_state="processing_command",
+                telemetry={
+                    "build_plan": plan.to_payload(),
+                    "plan_bridge_state": bridge_state.to_payload(),
+                    "bundle_state": bundle_state.to_payload(),
+                    "bundle_proposal": bundle_state.proposal.to_payload(),
+                },
+            )
+        proposal = self._service._autonomy_bundle.build_proposal(
+            plan,
+            bridge_state,
+            bundle_id=self._generate_bundle_id(),
+        )
+        if proposal is None:
+            return self._result(
+                request,
+                outcome="success",
+                reason_code="plan_completed",
+                user_message=self._service._plan_bridge_formatter.format_completed_plan(plan),
+                internal_summary=f"build.bundle.propose.read found no remaining dependency-valid task groups for plan {plan.plan_id}.",
+                retryable=False,
+                command_label="/planstepbundle",
+                activity_state="processing_command",
+                telemetry={"build_plan": plan.to_payload(), "plan_bridge_state": bridge_state.to_payload(), "bundle_state": None, "bundle_proposal": None},
+            )
+        proposed_state = self._service._autonomy_bundle.proposed_run_state(proposal, timestamp=self._service._now_iso())
+        self._service._autonomy_bundle_store.set_active(chat_id=update.chat_id, state=proposed_state)
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=self._service._autonomy_bundle_formatter.format_proposal(proposal),
+            internal_summary=f"build.bundle.propose.read proposed bundle {proposal.bundle_id} with {len(proposal.selected_steps)} step(s) for plan {plan.plan_id}.",
+            retryable=False,
+            command_label="/planstepbundle",
+            activity_state="processing_command",
+            telemetry={
+                "build_plan": plan.to_payload(),
+                "plan_bridge_state": bridge_state.to_payload(),
+                "bundle_state": proposed_state.to_payload(),
+                "bundle_proposal": proposal.to_payload(),
+            },
+        )
+
+    def _execute_plan_status(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot) -> CapabilityExecutionResult:
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="build.status.read",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/planstatus",
+            parsed_arguments={},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        plan = self._service._build_plan_store.get_active(chat_id=update.chat_id)
+        if plan is None:
+            return self._result(
+                request,
+                outcome="success",
+                reason_code="no_active_build_plan",
+                user_message=self._service._build_plan_formatter.format_no_active_plan(),
+                internal_summary="build.status.read found no active build plan.",
+                retryable=False,
+                command_label="/planstatus",
+                activity_state="processing_command",
+                telemetry={"build_plan": None, "plan_bridge_state": None},
+            )
+        state = self._service._plan_bridge.ensure_state(
+            plan,
+            self._service._plan_bridge_store.get_active(chat_id=update.chat_id),
+        )
+        self._service._plan_bridge_store.set_active(chat_id=update.chat_id, state=state)
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=self._service._plan_bridge_formatter.format_status(plan, state),
+            internal_summary=f"build.status.read returned bridge status for plan {plan.plan_id}.",
+            retryable=False,
+            command_label="/planstatus",
+            activity_state="processing_command",
+            telemetry={"build_plan": plan.to_payload(), "plan_bridge_state": state.to_payload()},
+        )
+
+    def _execute_bundle_status(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot) -> CapabilityExecutionResult:
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="build.bundle.status.read",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/bundlestatus",
+            parsed_arguments={},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        state = self._service._autonomy_bundle_store.get_active(chat_id=update.chat_id)
+        if state is None:
+            return self._result(
+                request,
+                outcome="success",
+                reason_code="no_active_bundle",
+                user_message=self._service._autonomy_bundle_formatter.format_no_active_bundle(),
+                internal_summary="build.bundle.status.read found no active bundle.",
+                retryable=False,
+                command_label="/bundlestatus",
+                activity_state="processing_command",
+                telemetry={"bundle_state": None},
+            )
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=self._service._autonomy_bundle_formatter.format_status(state),
+            internal_summary=f"build.bundle.status.read returned bundle {state.bundle_id} in state {state.state}.",
+            retryable=False,
+            command_label="/bundlestatus",
+            activity_state="processing_command",
+            telemetry={"bundle_state": state.to_payload(), "bundle_proposal": state.proposal.to_payload()},
+        )
+
+    def _execute_plan_reset_step(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot) -> CapabilityExecutionResult:
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="build.step.reset.read",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/planresetstep",
+            parsed_arguments={},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        plan = self._service._build_plan_store.get_active(chat_id=update.chat_id)
+        state = self._service._plan_bridge_store.get_active(chat_id=update.chat_id)
+        had_state = state is not None
+        had_proposal = state is not None and state.execution_proposal is not None
+        if plan is None or state is None:
+            if state is not None:
+                self._service._plan_bridge_store.clear_active(chat_id=update.chat_id)
+            return self._result(
+                request,
+                outcome="success",
+                reason_code="no_active_plan_step",
+                user_message=self._service._plan_bridge_formatter.format_reset_reply(had_state, had_proposal),
+                internal_summary="build.step.reset.read found no active plan proposal to reset.",
+                retryable=False,
+                command_label="/planresetstep",
+                activity_state="processing_command",
+                telemetry={"build_plan": plan.to_payload() if plan is not None else None, "plan_bridge_state": None},
+            )
+        state = self._service._plan_bridge.reset_current_step(plan, state)
+        self._service._plan_bridge_store.set_active(chat_id=update.chat_id, state=state)
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=self._service._plan_bridge_formatter.format_reset_reply(had_state, had_proposal),
+            internal_summary=f"build.step.reset.read reset the active proposal for plan {plan.plan_id}.",
+            retryable=False,
+            command_label="/planresetstep",
+            activity_state="processing_command",
+            telemetry={"build_plan": plan.to_payload(), "plan_bridge_state": state.to_payload()},
+        )
+
+    def _execute_plan_approve(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot) -> CapabilityExecutionResult:
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="build.step.approve.query",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/planapprove",
+            parsed_arguments={},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        plan = self._service._build_plan_store.get_active(chat_id=update.chat_id)
+        if plan is None:
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="no_active_build_plan",
+                user_message="Couldn't approve that plan step.\nReason: No active build plan exists.\nNext: Use /planbuild after /translate or /refine.",
+                internal_summary="build.step.approve.query rejected because there is no active build plan.",
+                retryable=False,
+                command_label="/planapprove",
+                activity_state="processing_command",
+                telemetry={"build_plan": None, "plan_bridge_state": None, "execution_proposal": None},
+            )
+        state = self._service._plan_bridge.ensure_state(
+            plan,
+            self._service._plan_bridge_store.get_active(chat_id=update.chat_id),
+        )
+        proposal = state.execution_proposal
+        if proposal is None or state.current_step_state not in {"proposed", "approved", "executing"}:
+            self._service._plan_bridge_store.set_active(chat_id=update.chat_id, state=state)
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="no_active_plan_step",
+                user_message=self._service._plan_bridge_formatter.format_no_active_proposal(),
+                internal_summary=f"build.step.approve.query rejected because plan {plan.plan_id} has no active proposal.",
+                retryable=False,
+                command_label="/planapprove",
+                activity_state="processing_command",
+                telemetry={"build_plan": plan.to_payload(), "plan_bridge_state": state.to_payload(), "execution_proposal": None},
+            )
+        state = self._service._plan_bridge.mark_approved(state)
+        self._service._plan_bridge_store.set_active(chat_id=update.chat_id, state=state)
+        executed_state = self._service._plan_bridge.mark_executing(state)
+        self._service._plan_bridge_store.set_active(chat_id=update.chat_id, state=executed_state)
+        inner_result = self._dispatch_plan_proposal(
+            update=update,
+            snapshot=snapshot,
+            request=request,
+            proposal=proposal,
+        )
+        updated_state = self._service._plan_bridge.apply_execution_result(plan, executed_state, inner_result)
+        self._service._plan_bridge_store.set_active(chat_id=update.chat_id, state=updated_state)
+        return self._result(
+            request,
+            outcome=inner_result.outcome,
+            reason_code=inner_result.outcome_reason_code,
+            user_message=self._service._plan_bridge_formatter.format_approval_result(
+                proposal,
+                inner_result.capability_id,
+                inner_result.outcome,
+                inner_result.internal_summary,
+            ),
+            internal_summary=(
+                f"build.step.approve.query executed {proposal.command_label} for task group {proposal.task_group_id}; "
+                f"inner outcome={inner_result.outcome}."
+            ),
+            retryable=inner_result.retryable,
+            command_label="/planapprove",
+            activity_state="processing_command",
+            confirmation_used=True,
+            telemetry={
+                "build_plan": plan.to_payload(),
+                "plan_bridge_state": updated_state.to_payload(),
+                "execution_proposal": proposal.to_payload(),
+                "executed_capability_id": inner_result.capability_id,
+                "executed_command_label": proposal.command_label,
+                "executed_command_argument": proposal.command_argument,
+                "executed_outcome": inner_result.outcome,
+                "executed_reason_code": inner_result.outcome_reason_code,
+                "inner_result": {
+                    "capability_id": inner_result.capability_id,
+                    "outcome": inner_result.outcome,
+                    "reason_code": inner_result.outcome_reason_code,
+                    "summary": inner_result.internal_summary,
+                },
+            },
+        )
+
+    def _execute_bundle_approve(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot) -> CapabilityExecutionResult:
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="build.bundle.approve.query",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/bundleapprove",
+            parsed_arguments={},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        state = self._service._autonomy_bundle_store.get_active(chat_id=update.chat_id)
+        if state is None or state.state != "proposed":
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="no_proposed_bundle",
+                user_message=self._service._autonomy_bundle_formatter.format_no_proposed_bundle(),
+                internal_summary="build.bundle.approve.query rejected because there is no proposed bundle.",
+                retryable=False,
+                command_label="/bundleapprove",
+                activity_state="processing_command",
+                telemetry={"bundle_state": state.to_payload() if state is not None else None},
+            )
+        plan = self._service._build_plan_store.get_active(chat_id=update.chat_id)
+        if plan is None or plan.plan_id != state.plan_id:
+            invalidated = self._service._autonomy_bundle.mark_invalidated(
+                state,
+                reason="plan_changed",
+                timestamp=self._service._now_iso(),
+            )
+            self._service._autonomy_bundle_store.set_active(chat_id=update.chat_id, state=invalidated)
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="bundle_invalidated",
+                user_message=self._service._autonomy_bundle_formatter.format_result(invalidated),
+                internal_summary="build.bundle.approve.query rejected because the approved plan changed before bundle execution started.",
+                retryable=False,
+                command_label="/bundleapprove",
+                activity_state="processing_command",
+                telemetry={"build_plan": plan.to_payload() if plan is not None else None, "bundle_state": invalidated.to_payload()},
+            )
+        bundle_state = self._service._autonomy_bundle.mark_approved(state, timestamp=self._service._now_iso())
+        bundle_state = self._service._autonomy_bundle.mark_running(bundle_state, timestamp=self._service._now_iso())
+        self._service._autonomy_bundle_store.set_active(chat_id=update.chat_id, state=bundle_state)
+        bridge_state = self._service._plan_bridge.ensure_state(
+            plan,
+            self._service._plan_bridge_store.get_active(chat_id=update.chat_id),
+        )
+        for step in bundle_state.proposal.selected_steps:
+            current_plan = self._service._build_plan_store.get_active(chat_id=update.chat_id)
+            if current_plan is None or current_plan.plan_id != plan.plan_id:
+                bundle_state = self._service._autonomy_bundle.mark_invalidated(
+                    bundle_state,
+                    reason="plan_changed",
+                    timestamp=self._service._now_iso(),
+                )
+                self._service._autonomy_bundle_store.set_active(chat_id=update.chat_id, state=bundle_state)
+                return self._result(
+                    request,
+                    outcome="failed",
+                    reason_code="bundle_invalidated",
+                    user_message=self._service._autonomy_bundle_formatter.format_result(bundle_state),
+                    internal_summary=f"build.bundle.approve.query invalidated bundle {bundle_state.bundle_id} because the active plan changed during execution.",
+                    retryable=False,
+                    command_label="/bundleapprove",
+                    activity_state="processing_command",
+                    confirmation_used=True,
+                    telemetry={"build_plan": None, "bundle_state": bundle_state.to_payload()},
+                )
+            bundle_state = self._service._autonomy_bundle.mark_step_running(bundle_state, step, timestamp=self._service._now_iso())
+            self._service._autonomy_bundle_store.set_active(chat_id=update.chat_id, state=bundle_state)
+            bridge_state, step_proposal = self._prepare_bridge_state_for_bundle_step(plan=plan, state=bridge_state, step=step)
+            self._service._plan_bridge_store.set_active(chat_id=update.chat_id, state=bridge_state)
+            inner_result = self._dispatch_bundle_step(
+                update=update,
+                snapshot=snapshot,
+                request=request,
+                step=step,
+            )
+            bridge_state = self._service._plan_bridge.apply_execution_result(plan, bridge_state, inner_result)
+            self._service._plan_bridge_store.set_active(chat_id=update.chat_id, state=bridge_state)
+            bundle_state = self._service._autonomy_bundle.record_step_result(
+                bundle_state,
+                step,
+                capability_id=inner_result.capability_id,
+                outcome=inner_result.outcome,
+                reason_code=inner_result.outcome_reason_code,
+                summary=inner_result.internal_summary,
+                timestamp=self._service._now_iso(),
+            )
+            self._service._autonomy_bundle_store.set_active(chat_id=update.chat_id, state=bundle_state)
+            if inner_result.outcome != "success":
+                return self._result(
+                    request,
+                    outcome=inner_result.outcome,
+                    reason_code=inner_result.outcome_reason_code,
+                    user_message=self._service._autonomy_bundle_formatter.format_result(bundle_state),
+                    internal_summary=(
+                        f"build.bundle.approve.query stopped bundle {bundle_state.bundle_id} on step {step.step_index}; "
+                        f"inner outcome={inner_result.outcome}."
+                    ),
+                    retryable=inner_result.retryable,
+                    command_label="/bundleapprove",
+                    activity_state="processing_command",
+                    confirmation_used=True,
+                    telemetry={
+                        "build_plan": plan.to_payload(),
+                        "plan_bridge_state": bridge_state.to_payload(),
+                        "bundle_state": bundle_state.to_payload(),
+                        "bundle_proposal": bundle_state.proposal.to_payload(),
+                        "execution_proposal": step_proposal.to_payload(),
+                        "executed_capability_id": inner_result.capability_id,
+                        "executed_command_label": step.command_label,
+                        "executed_command_argument": step.command_argument,
+                        "executed_outcome": inner_result.outcome,
+                        "executed_reason_code": inner_result.outcome_reason_code,
+                    },
+                )
+        bundle_state = self._service._autonomy_bundle.mark_completed(
+            bundle_state,
+            stop_reason="approved_step_budget_reached",
+            timestamp=self._service._now_iso(),
+        )
+        self._service._autonomy_bundle_store.set_active(chat_id=update.chat_id, state=bundle_state)
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=self._service._autonomy_bundle_formatter.format_result(bundle_state),
+            internal_summary=(
+                f"build.bundle.approve.query executed bundle {bundle_state.bundle_id} with "
+                f"{len(bundle_state.completed_steps)} completed step(s)."
+            ),
+            retryable=False,
+            command_label="/bundleapprove",
+            activity_state="processing_command",
+            confirmation_used=True,
+            telemetry={
+                "build_plan": plan.to_payload(),
+                "plan_bridge_state": bridge_state.to_payload(),
+                "bundle_state": bundle_state.to_payload(),
+                "bundle_proposal": bundle_state.proposal.to_payload(),
+                "executed_capability_ids": [step_result.capability_id for step_result in bundle_state.completed_steps],
+            },
+        )
+
     def _execute_plan_clear(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot) -> CapabilityExecutionResult:
         request, _, _, scope_failure = self._prepare_capability_request(
             capability_id="build.plan.clear.read",
@@ -694,7 +1266,9 @@ class CapabilityExecutor:
         )
         if scope_failure is not None:
             return scope_failure
+        self._invalidate_bundle_for_plan_change(chat_id=update.chat_id, reason="plan_cleared")
         cleared_plan = self._service._build_plan_store.clear_active(chat_id=update.chat_id)
+        self._service._plan_bridge_store.clear_active(chat_id=update.chat_id)
         return self._result(
             request,
             outcome="success",
@@ -711,9 +1285,278 @@ class CapabilityExecutor:
             telemetry={"build_plan": cleared_plan.to_payload() if cleared_plan is not None else None},
         )
 
+    def _execute_bundle_cancel(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot) -> CapabilityExecutionResult:
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="build.bundle.cancel.query",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/bundlecancel",
+            parsed_arguments={},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        state = self._service._autonomy_bundle_store.get_active(chat_id=update.chat_id)
+        if state is None or self._service._autonomy_bundle.is_terminal(state):
+            return self._result(
+                request,
+                outcome="success",
+                reason_code="no_active_bundle",
+                user_message=self._service._autonomy_bundle_formatter.format_cancel_reply(None),
+                internal_summary="build.bundle.cancel.query found no active bundle to cancel.",
+                retryable=False,
+                command_label="/bundlecancel",
+                activity_state="processing_command",
+                telemetry={"bundle_state": state.to_payload() if state is not None else None},
+            )
+        cancelled = self._service._autonomy_bundle.mark_cancelled(state, reason="operator_cancelled", timestamp=self._service._now_iso())
+        self._service._autonomy_bundle_store.set_active(chat_id=update.chat_id, state=cancelled)
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=self._service._autonomy_bundle_formatter.format_cancel_reply(cancelled),
+            internal_summary=f"build.bundle.cancel.query cancelled bundle {cancelled.bundle_id}.",
+            retryable=False,
+            command_label="/bundlecancel",
+            activity_state="processing_command",
+            telemetry={"bundle_state": cancelled.to_payload(), "bundle_proposal": cancelled.proposal.to_payload()},
+        )
+
+    def _execute_bundle_reset(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot) -> CapabilityExecutionResult:
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="build.bundle.reset.query",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/bundlereset",
+            parsed_arguments={},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        state = self._service._autonomy_bundle_store.clear_active(chat_id=update.chat_id)
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok" if state is not None else "no_active_bundle",
+            user_message=self._service._autonomy_bundle_formatter.format_reset_reply(state),
+            internal_summary=(
+                f"build.bundle.reset.query cleared bundle {state.bundle_id}."
+                if state is not None
+                else "build.bundle.reset.query found no active bundle to clear."
+            ),
+            retryable=False,
+            command_label="/bundlereset",
+            activity_state="processing_command",
+            telemetry={"bundle_state": state.to_payload() if state is not None else None},
+        )
+
     @staticmethod
     def _generate_build_plan_id() -> str:
         return f"BP-{secrets.token_hex(3).upper()}"
+
+    @staticmethod
+    def _generate_plan_step_proposal_id() -> str:
+        return f"PS-{secrets.token_hex(3).upper()}"
+
+    @staticmethod
+    def _generate_bundle_id() -> str:
+        return f"BD-{secrets.token_hex(3).upper()}"
+
+    def _dispatch_plan_proposal(
+        self,
+        *,
+        update: TelegramInboundMessage,
+        snapshot: ControllerSnapshot,
+        request: CapabilityExecutionRequest,
+        proposal,
+    ) -> CapabilityExecutionResult:
+        if proposal.target_capability_id == "repo.status.read":
+            return self._execute_repo_status(update=update, snapshot=snapshot, argument=proposal.command_argument)
+        if proposal.target_capability_id == "file.read":
+            return self._execute_file_read(update=update, snapshot=snapshot, argument=proposal.command_argument)
+        confirmation = self._synthetic_plan_confirmation(update=update, snapshot=snapshot, proposal=proposal)
+        if proposal.target_capability_id == "shell.command.run":
+            return self._execute_confirmed_run_command(
+                request=request,
+                confirmation=confirmation,
+                snapshot=snapshot,
+                chat_id=update.chat_id,
+            )
+        if proposal.target_capability_id == "test.command.run":
+            return self._execute_confirmed_test_command(
+                request=request,
+                confirmation=confirmation,
+                snapshot=snapshot,
+                chat_id=update.chat_id,
+            )
+        return self._result(
+            request,
+            outcome="failed",
+            reason_code="unsupported_plan_step_target",
+            user_message="Plan approval failed.\nReason: The proposed step target is not supported.",
+            internal_summary=f"Unsupported plan proposal target: {proposal.target_capability_id}.",
+            retryable=False,
+            command_label="/planapprove",
+            activity_state="processing_command",
+        )
+
+    def _dispatch_bundle_step(
+        self,
+        *,
+        update: TelegramInboundMessage,
+        snapshot: ControllerSnapshot,
+        request: CapabilityExecutionRequest,
+        step,
+    ) -> CapabilityExecutionResult:
+        if step.target_capability_id == "repo.status.read":
+            return self._execute_repo_status(update=update, snapshot=snapshot, argument=step.command_argument)
+        if step.target_capability_id == "file.read":
+            return self._execute_file_read(update=update, snapshot=snapshot, argument=step.command_argument)
+        confirmation = self._synthetic_bundle_confirmation(update=update, snapshot=snapshot, step=step)
+        if step.target_capability_id == "shell.command.run":
+            return self._execute_confirmed_run_command(
+                request=request,
+                confirmation=confirmation,
+                snapshot=snapshot,
+                chat_id=update.chat_id,
+            )
+        if step.target_capability_id == "test.command.run":
+            return self._execute_confirmed_test_command(
+                request=request,
+                confirmation=confirmation,
+                snapshot=snapshot,
+                chat_id=update.chat_id,
+            )
+        return self._result(
+            request,
+            outcome="failed",
+            reason_code="unsupported_bundle_step_target",
+            user_message="Bundle approval failed.\nReason: The proposed bundle step target is not supported.",
+            internal_summary=f"Unsupported bundle step target: {step.target_capability_id}.",
+            retryable=False,
+            command_label="/bundleapprove",
+            activity_state="processing_command",
+        )
+
+    def _synthetic_plan_confirmation(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot, proposal) -> PendingConfirmation:
+        _, context = self._service._evaluate_capability_id(
+            proposal.target_capability_id,
+            snapshot,
+            remember=False,
+            confirmation_granted=True,
+        )
+        now = self._service._now_iso()
+        return PendingConfirmation(
+            confirmation_id=proposal.proposal_id,
+            capability_id=proposal.target_capability_id,
+            original_command=proposal.command_label,
+            argument_summary=proposal.suggested_entry_command,
+            prompt_text=proposal.command_argument,
+            response_style="concise",
+            timestamp_created=now,
+            expires_at=now,
+            current_state="approved",
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            evaluation_context=self._confirmation_context_snapshot(snapshot, context),
+            metadata={
+                "execution_command_summary": proposal.suggested_entry_command,
+                "execution_action_summary": proposal.title,
+                "plan_id": proposal.plan_id,
+                "task_group_id": proposal.task_group_id,
+            },
+        )
+
+    def _synthetic_bundle_confirmation(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot, step) -> PendingConfirmation:
+        _, context = self._service._evaluate_capability_id(
+            step.target_capability_id,
+            snapshot,
+            remember=False,
+            confirmation_granted=True,
+        )
+        now = self._service._now_iso()
+        return PendingConfirmation(
+            confirmation_id=f"{step.plan_id}-{step.task_group_id}-{step.step_index}",
+            capability_id=step.target_capability_id,
+            original_command=step.command_label,
+            argument_summary=step.suggested_entry_command,
+            prompt_text=step.command_argument,
+            response_style="concise",
+            timestamp_created=now,
+            expires_at=now,
+            current_state="approved",
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            evaluation_context=self._confirmation_context_snapshot(snapshot, context),
+            metadata={
+                "execution_command_summary": step.suggested_entry_command,
+                "execution_action_summary": step.title,
+                "plan_id": step.plan_id,
+                "task_group_id": step.task_group_id,
+                "bundle_step_index": step.step_index,
+            },
+        )
+
+    def _prepare_bridge_state_for_bundle_step(self, *, plan, state, step):
+        state = self._service._plan_bridge.ensure_state(plan, state)
+        phase, task_group = self._find_plan_task_group(plan, phase_id=step.phase_id, task_group_id=step.task_group_id)
+        progress_map = {item.task_group_id: item for item in state.task_group_progress}
+        progress = progress_map[step.task_group_id]
+        proposal = self._service._plan_bridge.build_task_group_proposal(
+            plan,
+            phase=phase,
+            task_group=task_group,
+            previous_status=progress.status,
+            proposal_id=f"{step.plan_id}-{step.task_group_id}-EXEC",
+        )
+        entries = [
+            type(item)(
+                phase_id=item.phase_id,
+                task_group_id=item.task_group_id,
+                task_group_name=item.task_group_name,
+                status="in_progress" if item.task_group_id == step.task_group_id else item.status,
+                execution_proposal=proposal if item.task_group_id == step.task_group_id else item.execution_proposal,
+                last_result_summary=item.last_result_summary,
+                last_result_state=item.last_result_state,
+            )
+            for item in state.task_group_progress
+        ]
+        return (
+            type(state)(
+                active_plan_id=state.active_plan_id,
+                current_phase_id=step.phase_id,
+                current_task_group_id=step.task_group_id,
+                current_step_state="executing",
+                execution_proposal=proposal,
+                task_group_progress=tuple(entries),
+                last_result_summary=state.last_result_summary,
+                last_result_state=state.last_result_state,
+            ),
+            proposal,
+        )
+
+    @staticmethod
+    def _find_plan_task_group(plan, *, phase_id: str, task_group_id: str):
+        for phase in plan.phases:
+            if phase.phase_id != phase_id:
+                continue
+            for task_group in phase.task_groups:
+                if task_group.task_group_id == task_group_id:
+                    return phase, task_group
+        raise ValueError(f"Unknown plan task group: {phase_id}/{task_group_id}")
+
+    def _invalidate_bundle_for_plan_change(self, *, chat_id: str, reason: str):
+        state = self._service._autonomy_bundle_store.get_active(chat_id=chat_id)
+        if state is None or self._service._autonomy_bundle.is_terminal(state):
+            return state
+        invalidated = self._service._autonomy_bundle.mark_invalidated(
+            state,
+            reason=reason,
+            timestamp=self._service._now_iso(),
+        )
+        self._service._autonomy_bundle_store.set_active(chat_id=chat_id, state=invalidated)
+        return invalidated
 
     def _execute_mode(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot) -> CapabilityExecutionResult:
         request, _, _, scope_failure = self._prepare_capability_request(

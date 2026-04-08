@@ -99,6 +99,10 @@ class CapabilityLayerTests(unittest.TestCase):
         self.assertIn("intent.view.read", CAPABILITY_REGISTRY)
         self.assertIn("intent.clear.read", CAPABILITY_REGISTRY)
         self.assertIn("build.plan.read", CAPABILITY_REGISTRY)
+        self.assertIn("build.step.read", CAPABILITY_REGISTRY)
+        self.assertIn("build.step.approve.query", CAPABILITY_REGISTRY)
+        self.assertIn("build.status.read", CAPABILITY_REGISTRY)
+        self.assertIn("build.step.reset.read", CAPABILITY_REGISTRY)
         self.assertIn("build.plan.view.read", CAPABILITY_REGISTRY)
         self.assertIn("build.plan.clear.read", CAPABILITY_REGISTRY)
         self.assertIn("audit.read", CAPABILITY_REGISTRY)
@@ -179,7 +183,15 @@ class CapabilityLayerTests(unittest.TestCase):
             self.assertEqual(evaluation.reason_code, "allowed")
 
     def test_build_plan_capabilities_are_allowed_in_healthy_normal_state(self) -> None:
-        for capability_id in {"build.plan.read", "build.plan.view.read", "build.plan.clear.read"}:
+        for capability_id in {
+            "build.plan.read",
+            "build.step.read",
+            "build.step.approve.query",
+            "build.status.read",
+            "build.step.reset.read",
+            "build.plan.view.read",
+            "build.plan.clear.read",
+        }:
             evaluation = self.evaluator.evaluate(capability_id, self._context())
             self.assertEqual(evaluation.current_availability_state, "allowed")
             self.assertEqual(evaluation.reason_code, "allowed")

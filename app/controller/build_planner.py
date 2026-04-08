@@ -36,11 +36,14 @@ class BuildPlanner:
         request_type = session.current_spec.request_type
         if request_type == "website":
             return (
-                BuildPlanPhase(
+                self._phase(
+                    phase_index=1,
                     name="Scope contract",
                     goal="Lock the audience, page structure, and key implementation decisions.",
                     task_groups=(
-                        BuildPlanTaskGroup(
+                        self._task_group(
+                            phase_index=1,
+                            group_index=1,
                             name="Audience and pages",
                             objective="Turn the translated request into a concrete sitemap and CTA flow.",
                             tasks=(
@@ -48,7 +51,9 @@ class BuildPlanner:
                                 "List the sections, content inputs, and required conversion points.",
                             ),
                         ),
-                        BuildPlanTaskGroup(
+                        self._task_group(
+                            phase_index=1,
+                            group_index=2,
                             name="Technical decisions",
                             objective="Capture the stack, hosting, and integration choices before implementation.",
                             tasks=(
@@ -59,11 +64,14 @@ class BuildPlanner:
                     ),
                     dependencies=self._phase_dependencies(session, "scope"),
                 ),
-                BuildPlanPhase(
+                self._phase(
+                    phase_index=2,
                     name="Experience build",
                     goal="Implement the marketing experience, interaction flows, and supporting integrations.",
                     task_groups=(
-                        BuildPlanTaskGroup(
+                        self._task_group(
+                            phase_index=2,
+                            group_index=1,
                             name="UI implementation",
                             objective="Build the page shell, layout, and visual system.",
                             tasks=(
@@ -71,7 +79,9 @@ class BuildPlanner:
                                 "Apply the agreed styling direction and responsive behavior.",
                             ),
                         ),
-                        BuildPlanTaskGroup(
+                        self._task_group(
+                            phase_index=2,
+                            group_index=2,
                             name="Capture and integrations",
                             objective="Wire the conversion path and supporting service calls.",
                             tasks=(
@@ -82,11 +92,14 @@ class BuildPlanner:
                     ),
                     dependencies=self._phase_dependencies(session, "build"),
                 ),
-                BuildPlanPhase(
+                self._phase(
+                    phase_index=3,
                     name="Launch prep",
                     goal="Validate the finished site, package deployment details, and hand off the bounded implementation brief.",
                     task_groups=(
-                        BuildPlanTaskGroup(
+                        self._task_group(
+                            phase_index=3,
+                            group_index=1,
                             name="Quality checks",
                             objective="Validate content, conversion flow, and responsive behavior.",
                             tasks=(
@@ -94,7 +107,9 @@ class BuildPlanner:
                                 "Review desktop and mobile presentation against the requested style.",
                             ),
                         ),
-                        BuildPlanTaskGroup(
+                        self._task_group(
+                            phase_index=3,
+                            group_index=2,
                             name="Deployment prep",
                             objective="Package the launch shape without triggering deployment automation.",
                             tasks=(
@@ -108,11 +123,14 @@ class BuildPlanner:
             )
         if request_type == "desktop_app":
             return (
-                BuildPlanPhase(
+                self._phase(
+                    phase_index=1,
                     name="Workflow contract",
                     goal="Clarify the desktop workflows, supported files, and operator-facing outcomes.",
                     task_groups=(
-                        BuildPlanTaskGroup(
+                        self._task_group(
+                            phase_index=1,
+                            group_index=1,
                             name="User flows",
                             objective="Define the inputs, outputs, and core interaction path.",
                             tasks=(
@@ -120,7 +138,9 @@ class BuildPlanner:
                                 "List the input formats, output formats, and failure states.",
                             ),
                         ),
-                        BuildPlanTaskGroup(
+                        self._task_group(
+                            phase_index=1,
+                            group_index=2,
                             name="Platform choices",
                             objective="Fix the desktop stack and supported OS targets.",
                             tasks=(
@@ -131,11 +151,14 @@ class BuildPlanner:
                     ),
                     dependencies=self._phase_dependencies(session, "scope"),
                 ),
-                BuildPlanPhase(
+                self._phase(
+                    phase_index=2,
                     name="Application shell",
                     goal="Implement the UI shell, document-processing pipeline, and export path.",
                     task_groups=(
-                        BuildPlanTaskGroup(
+                        self._task_group(
+                            phase_index=2,
+                            group_index=1,
                             name="Shell and state",
                             objective="Build the windows, views, and state transitions.",
                             tasks=(
@@ -143,7 +166,9 @@ class BuildPlanner:
                                 "Add local state handling for input selection, progress, and results.",
                             ),
                         ),
-                        BuildPlanTaskGroup(
+                        self._task_group(
+                            phase_index=2,
+                            group_index=2,
                             name="Processing and exports",
                             objective="Connect document parsing to the requested export formats.",
                             tasks=(
@@ -154,11 +179,14 @@ class BuildPlanner:
                     ),
                     dependencies=self._phase_dependencies(session, "build"),
                 ),
-                BuildPlanPhase(
+                self._phase(
+                    phase_index=3,
                     name="Packaging and validation",
                     goal="Prepare local packaging, validation, and an explicit operator handoff.",
                     task_groups=(
-                        BuildPlanTaskGroup(
+                        self._task_group(
+                            phase_index=3,
+                            group_index=1,
                             name="Packaging",
                             objective="Define installable build expectations without performing release automation.",
                             tasks=(
@@ -166,7 +194,9 @@ class BuildPlanner:
                                 "Prepare asset, icon, and local configuration requirements.",
                             ),
                         ),
-                        BuildPlanTaskGroup(
+                        self._task_group(
+                            phase_index=3,
+                            group_index=2,
                             name="Acceptance review",
                             objective="Verify core flows and export correctness.",
                             tasks=(
@@ -179,11 +209,14 @@ class BuildPlanner:
                 ),
             )
         return (
-            BuildPlanPhase(
+            self._phase(
+                phase_index=1,
                 name="Scope contract",
                 goal="Translate the request into a bounded implementation contract.",
                 task_groups=(
-                    BuildPlanTaskGroup(
+                    self._task_group(
+                        phase_index=1,
+                        group_index=1,
                         name="Clarify request",
                         objective="Capture the requested outcome, constraints, and delivery target.",
                         tasks=(
@@ -194,11 +227,14 @@ class BuildPlanner:
                 ),
                 dependencies=self._phase_dependencies(session, "scope"),
             ),
-            BuildPlanPhase(
+            self._phase(
+                phase_index=2,
                 name="Implementation outline",
                 goal="Group the main build work into bounded operator-owned task groups.",
                 task_groups=(
-                    BuildPlanTaskGroup(
+                    self._task_group(
+                        phase_index=2,
+                        group_index=1,
                         name="Core delivery",
                         objective="Define the core implementation workstream.",
                         tasks=(
@@ -209,11 +245,14 @@ class BuildPlanner:
                 ),
                 dependencies=self._phase_dependencies(session, "build"),
             ),
-            BuildPlanPhase(
+            self._phase(
+                phase_index=3,
                 name="Handoff prep",
                 goal="Prepare the next explicit operator step without triggering execution.",
                 task_groups=(
-                    BuildPlanTaskGroup(
+                    self._task_group(
+                        phase_index=3,
+                        group_index=1,
                         name="Execution handoff",
                         objective="Package the next bounded operator instruction.",
                         tasks=(
@@ -312,6 +351,25 @@ class BuildPlanner:
         lines.append(f"Next: {next_step}")
         lines.append("Operator note: keep implementation explicit, bounded, and confirmation-gated.")
         return "\n".join(lines)
+
+    @staticmethod
+    def _phase(phase_index: int, *, name: str, goal: str, task_groups: tuple[BuildPlanTaskGroup, ...], dependencies: tuple[str, ...]) -> BuildPlanPhase:
+        return BuildPlanPhase(
+            phase_id=f"PH-{phase_index:03d}",
+            name=name,
+            goal=goal,
+            task_groups=task_groups,
+            dependencies=dependencies,
+        )
+
+    @staticmethod
+    def _task_group(phase_index: int, group_index: int, *, name: str, objective: str, tasks: tuple[str, ...]) -> BuildPlanTaskGroup:
+        return BuildPlanTaskGroup(
+            task_group_id=f"TG-{phase_index:03d}-{group_index:03d}",
+            name=name,
+            objective=objective,
+            tasks=tasks,
+        )
 
     @staticmethod
     def _unique_items(items: list[str]) -> tuple[str, ...]:

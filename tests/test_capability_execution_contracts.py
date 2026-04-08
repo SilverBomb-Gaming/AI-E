@@ -186,8 +186,63 @@ class CapabilityExecutionContractTests(unittest.TestCase):
             self.assertIn("build_plan", result.telemetry)
             self.assertIn("translation_session", result.telemetry)
             self.assertEqual(result.telemetry["build_plan"]["request_type"], "website")
+            self.assertEqual(result.telemetry["build_plan"]["phases"][0]["phase_id"], "PH-001")
+            self.assertEqual(result.telemetry["build_plan"]["phases"][0]["task_groups"][0]["task_group_id"], "TG-001-001")
             self.assertEqual(result.telemetry["build_plan"]["phases"][0]["name"], "Scope contract")
             self.assertIn("Deployment target: vercel", result.telemetry["build_plan"]["cross_phase_dependencies"])
+
+    def test_planapprove_returns_structured_bridge_result(self) -> None:
+        updates = (
+            TelegramInboundMessage(update_id=1017, chat_id="chat-1", text="/translate Build me a landing page for BABYLON with wishlist CTA and email signup.", sender_label="@tester"),
+            TelegramInboundMessage(update_id=1018, chat_id="chat-1", text="/refine one-page site, dark style, deploy to Vercel, use React, use Mailchimp", sender_label="@tester"),
+            TelegramInboundMessage(update_id=1019, chat_id="chat-1", text="/planbuild", sender_label="@tester"),
+            TelegramInboundMessage(update_id=1020, chat_id="chat-1", text="/planstep", sender_label="@tester"),
+            TelegramInboundMessage(update_id=1021, chat_id="chat-1", text="/planapprove", sender_label="@tester"),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            telegram_service = _FakeTelegramService(update_batches=[updates])
+            service, _, _, _, ollama, openai = self._make_service(tmp_dir=tmp, telegram_service=telegram_service)
+            service.start_telegram_loop()
+            self.assertTrue(_wait_until(lambda: len(telegram_service.sent_messages) == 5, timeout=2.0))
+            service.stop_telegram_loop()
+            result = self._last_result(service)
+            self.assertEqual(ollama.ask_calls, 0)
+            self.assertEqual(openai.ask_calls, 0)
+            self.assertEqual(result.capability_id, "build.step.approve.query")
+            self.assertEqual(result.outcome, "success")
+            self.assertTrue(result.confirmation_used)
+            self.assertEqual(result.telemetry["executed_capability_id"], "repo.status.read")
+            self.assertEqual(result.telemetry["execution_proposal"]["command_label"], "/repo")
+            self.assertEqual(result.telemetry["plan_bridge_state"]["task_group_progress"][0]["status"], "completed")
+
+    def test_bundleapprove_returns_structured_bundle_result(self) -> None:
+        updates = (
+            TelegramInboundMessage(update_id=1022, chat_id="chat-1", text="/translate Build me a landing page for BABYLON with wishlist CTA and email signup.", sender_label="@tester"),
+            TelegramInboundMessage(update_id=1023, chat_id="chat-1", text="/refine one-page site, dark style, deploy to Vercel, use React, use Mailchimp", sender_label="@tester"),
+            TelegramInboundMessage(update_id=1024, chat_id="chat-1", text="/planbuild", sender_label="@tester"),
+            TelegramInboundMessage(update_id=1025, chat_id="chat-1", text="/planstepbundle", sender_label="@tester"),
+            TelegramInboundMessage(update_id=1026, chat_id="chat-1", text="/bundleapprove", sender_label="@tester"),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            telegram_service = _FakeTelegramService(update_batches=[updates])
+            service, _, _, _, ollama, openai = self._make_service(tmp_dir=tmp, telegram_service=telegram_service)
+            service.start_telegram_loop()
+            self.assertTrue(_wait_until(lambda: len(telegram_service.sent_messages) == 5, timeout=2.0))
+            service.stop_telegram_loop()
+            result = self._last_result(service)
+            self.assertEqual(ollama.ask_calls, 0)
+            self.assertEqual(openai.ask_calls, 0)
+            self.assertEqual(result.capability_id, "build.bundle.approve.query")
+            self.assertEqual(result.outcome, "success")
+            self.assertTrue(result.confirmation_used)
+            self.assertIn("bundle_state", result.telemetry)
+            self.assertIn("bundle_proposal", result.telemetry)
+            self.assertIn("executed_capability_ids", result.telemetry)
+            self.assertEqual(len(result.telemetry["bundle_state"]["completed_steps"]), 3)
+            self.assertEqual(result.telemetry["bundle_state"]["state"], "completed")
+            self.assertEqual(result.telemetry["bundle_state"]["stop_reason"], "approved_step_budget_reached")
+            self.assertEqual(len(result.telemetry["executed_capability_ids"]), 3)
+            self.assertEqual(result.telemetry["plan_bridge_state"]["task_group_progress"][0]["status"], "completed")
 
     def test_models_read_returns_structured_degraded_result_when_ollama_unavailable(self) -> None:
         update = TelegramInboundMessage(update_id=102, chat_id="chat-1", text="/models", sender_label="@tester")

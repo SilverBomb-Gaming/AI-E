@@ -11,9 +11,15 @@ from urllib.parse import urlparse
 
 from .audit_models import AuditRecord
 from .audit_store import AuditStore
+from .autonomy_bundle import AutonomyBundle
+from .autonomy_bundle_formatter import AutonomyBundleFormatter
+from .autonomy_bundle_store import AutonomyBundleStore
 from .build_plan_formatter import BuildPlanFormatter
 from .build_plan_store import BuildPlanStore
 from .build_planner import BuildPlanner
+from .plan_bridge import PlanBridge
+from .plan_bridge_formatter import PlanBridgeFormatter
+from .plan_bridge_store import PlanBridgeStore
 from .capability_evaluator import CapabilityEvaluator
 from .capability_executor import CapabilityExecutor
 from .capability_models import CapabilityContext, CapabilityEvaluation, CapabilityManifest
@@ -132,6 +138,10 @@ class ControllerService:
         self._intent_formatter = IntentFormatter()
         self._build_planner = BuildPlanner()
         self._build_plan_formatter = BuildPlanFormatter()
+        self._plan_bridge = PlanBridge()
+        self._plan_bridge_formatter = PlanBridgeFormatter(self._plan_bridge)
+        self._autonomy_bundle = AutonomyBundle(self._plan_bridge)
+        self._autonomy_bundle_formatter = AutonomyBundleFormatter()
         self._config = self._config_store.load()
         self._normalize_repo_root_config()
         self._normalize_file_roots_config()
@@ -168,6 +178,8 @@ class ControllerService:
         )
         self._intent_store = IntentStore()
         self._build_plan_store = BuildPlanStore()
+        self._plan_bridge_store = PlanBridgeStore()
+        self._autonomy_bundle_store = AutonomyBundleStore()
         self._last_capability_evaluation: CapabilityEvaluation | None = None
         self._last_execution_result: CapabilityExecutionResult | None = None
         self._last_loop_result: CapabilityExecutionResult | None = None
@@ -1461,24 +1473,14 @@ class ControllerService:
             reply=chr(10).join(
                 (
                     "Operator commands",
-                    "Core: /translate|/refine|/planbuild /repo /file /patchfile|/writefile /run|/test /web",
-                    "/contexts - ctx",
-                    "/clearcontext - clr",
-                    "/capabilities - trust",
-                    "/audit - aud",
-                    "/translateview|/translateclear - draft",
-                    "/planview|/planclear - bp",
-                    "/ask <prompt> - ask",
-                    "/askd <prompt> - dtl",
-                    "/asklast <prompt> - last",
-                    "/askctx <id> <prompt> - ctx",
-                    "/explainrepo [path] - repo",
-                    "/explainfile <path> - file",
-                    "/summarizeweb - sum",
-                    "/workflows - flow",
-                    "/workflowstatus - wf",
-                    "/cancelworkflow - stop",
-                    "Plain text is not auto-routed.",
+                    "Core: /translate|/refine|/planbuild|/planstep|/planstepbundle",
+                    "Read: /repo|/file /planview|/planstatus /bundlestatus /contexts",
+                    "Run: /patchfile|/writefile /run|/test /planapprove|/bundleapprove",
+                    "Reset: /translateclear|/planclear /planresetstep /bundlecancel|/bundlereset",
+                    "Trust: /capabilities /audit /clearcontext",
+                    "Ask: /ask /askd /asklast /askctx",
+                    "Analyze: /explainrepo|/explainfile|/summarizeweb",
+                    "Flow: /workflows|/workflowstatus|/cancelworkflow",
                 )
             ),
             command_label="/help",
@@ -2027,6 +2029,15 @@ class ControllerService:
             "/translateview",
             "/translateclear",
             "/planbuild",
+            "/planstep",
+            "/planapprove",
+            "/planstatus",
+            "/planresetstep",
+            "/planstepbundle",
+            "/bundleapprove",
+            "/bundlestatus",
+            "/bundlecancel",
+            "/bundlereset",
             "/planview",
             "/planclear",
             "/mode",
@@ -2115,6 +2126,18 @@ class ControllerService:
                 command_label="parse_failure",
                 normalized_text=normalized_text,
                 usage_hint="Use /planbuild after /translate or /refine.",
+            )
+        if command.startswith("/planstep") or command.startswith("/planapprove") or command.startswith("/planstatus") or command.startswith("/planresetstep"):
+            return _ParsedTelegramCommand(
+                command_label="parse_failure",
+                normalized_text=normalized_text,
+                usage_hint="Use /planstep, /planapprove, /planstatus, or /planresetstep.",
+            )
+        if command.startswith("/planstepbundle") or command.startswith("/bundleapprove") or command.startswith("/bundlestatus") or command.startswith("/bundlecancel") or command.startswith("/bundlereset"):
+            return _ParsedTelegramCommand(
+                command_label="parse_failure",
+                normalized_text=normalized_text,
+                usage_hint="Use /planstepbundle, /bundleapprove, /bundlestatus, /bundlecancel, or /bundlereset.",
             )
         if command.startswith("/planview") or command.startswith("/planclear"):
             return _ParsedTelegramCommand(

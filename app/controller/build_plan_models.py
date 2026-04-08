@@ -10,12 +10,14 @@ BuildPlanState = Literal["ready", "blocked"]
 
 @dataclass(frozen=True)
 class BuildPlanTaskGroup:
+    task_group_id: str
     name: str
     objective: str
     tasks: tuple[str, ...]
 
     def to_payload(self) -> dict[str, object]:
         return {
+            "task_group_id": self.task_group_id,
             "name": self.name,
             "objective": self.objective,
             "tasks": list(self.tasks),
@@ -24,6 +26,7 @@ class BuildPlanTaskGroup:
 
 @dataclass(frozen=True)
 class BuildPlanPhase:
+    phase_id: str
     name: str
     goal: str
     task_groups: tuple[BuildPlanTaskGroup, ...]
@@ -31,6 +34,7 @@ class BuildPlanPhase:
 
     def to_payload(self) -> dict[str, object]:
         return {
+            "phase_id": self.phase_id,
             "name": self.name,
             "goal": self.goal,
             "task_groups": [group.to_payload() for group in self.task_groups],

@@ -24,6 +24,8 @@ class BuildPlanningTests(unittest.TestCase):
         self.assertEqual(plan.request_type, "website")
         self.assertEqual(plan.state, "blocked")
         self.assertEqual(len(plan.phases), 3)
+        self.assertEqual(plan.phases[0].phase_id, "PH-001")
+        self.assertEqual(plan.phases[0].task_groups[0].task_group_id, "TG-001-001")
         self.assertIn("Frontend stack is not confirmed.", plan.blockers)
         self.assertIn("Deployment target is not confirmed.", plan.blockers)
 
