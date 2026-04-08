@@ -21,7 +21,9 @@ from .confirmation_models import ConfirmationContextSnapshot, PendingConfirmatio
 from .confirmation_store import ConfirmationStore
 from .channel_models import TelegramChannelStatus, TelegramLoopStatus
 from .diagnostic_models import DiagnosticReport
+from .execution_runner import ExecutionRunner
 from .execution_models import CapabilityExecutionResult
+from .file_mutator import FileMutator
 from .file_reader import FileReadSnapshot, FileReader, FileReaderError
 from .diagnostics import ControllerDiagnosticsService
 from .models import ControllerSnapshot
@@ -40,7 +42,7 @@ from ..runtime.manager import OpenClawRuntimeManager
 from ..runtime.log_sanitizer import sanitize_log_text
 
 
-_OPERATOR_CONSOLE_LABEL = "Windows OpenClaw Operator Console v2.7"
+_OPERATOR_CONSOLE_LABEL = "Windows OpenClaw Operator Console v2.9"
 _ASK_CONCISE_LIMIT = 700
 _ASK_DETAILED_LIMIT = 1500
 _PROVIDER_ASK_COMMANDS = frozenset({"/ask", "/askd", "/asklast", "/askctx"})
@@ -93,6 +95,8 @@ class ControllerService:
         telegram_service: TelegramChannelService | None = None,
         repo_inspector: RepoInspector | None = None,
         file_reader: FileReader | None = None,
+        file_mutator: FileMutator | None = None,
+        execution_runner: ExecutionRunner | None = None,
         web_fetcher: WebFetcher | None = None,
     ) -> None:
         self._runtime_manager = runtime_manager or OpenClawRuntimeManager()
@@ -105,6 +109,8 @@ class ControllerService:
         self._telegram_service = telegram_service or TelegramChannelService()
         self._repo_inspector = repo_inspector or RepoInspector()
         self._file_reader = file_reader or FileReader()
+        self._file_mutator = file_mutator or FileMutator()
+        self._execution_runner = execution_runner or ExecutionRunner()
         self._web_fetcher = web_fetcher or WebFetcher()
         self._config = self._config_store.load()
         self._normalize_repo_root_config()
@@ -1384,7 +1390,7 @@ class ControllerService:
         self._last_repo_checked_at = result.finished_at or self._now_iso()
 
     def _remember_file_execution_result(self, result: CapabilityExecutionResult) -> None:
-        if result.capability_id != "file.read":
+        if result.capability_id not in {"file.read", "file.patch.write", "file.write.replace"}:
             return
         file_name = str(result.telemetry.get("file_name") or "").strip()
         file_status = str(result.telemetry.get("file_status") or "").strip()
@@ -1427,10 +1433,8 @@ class ControllerService:
             reply=chr(10).join(
                 (
                     "Operator commands",
-                    "/repo - repo",
-                    "/file <path> - file",
-                    "/web <url> - web",
-                    "/contexts - contexts",
+                    "Core: /repo /file /patchfile|/writefile /run|/test /web",
+                    "/contexts - ctx",
                     "/clearcontext - clear",
                     "/capabilities - trust",
                     "/audit - audit",
@@ -1441,9 +1445,9 @@ class ControllerService:
                     "/explainrepo [path] - explain repo",
                     "/explainfile <path> - explain file",
                     "/summarizeweb <url> - summarize web",
-                    "/workflows - workflows",
-                    "/workflowstatus [id] - workflow status",
-                    "/cancelworkflow [id] - cancel workflow",
+                    "/workflows - flow",
+                    "/workflowstatus [id] - flow status",
+                    "/cancelworkflow [id] - cancel flow",
                     "Plain text is not auto-routed.",
                 )
             ),
@@ -1837,8 +1841,10 @@ class ControllerService:
     def _summarize_inbound_update(self, update: TelegramInboundMessage, command_label: str) -> str:
         if command_label in _PROVIDER_ASK_COMMANDS:
             return self._summarize_text(f"{update.sender_label}: {command_label} [prompt hidden]")
-        if command_label == "/file":
-            return self._summarize_text(f"{update.sender_label}: /file [path hidden]")
+        if command_label in {"/file", "/patchfile", "/writefile"}:
+            return self._summarize_text(f"{update.sender_label}: {command_label} [path hidden]")
+        if command_label in {"/run", "/test"}:
+            return self._summarize_text(f"{update.sender_label}: {command_label} [command hidden]")
         if command_label == "/web":
             return self._summarize_text(f"{update.sender_label}: /web [url hidden]")
         if command_label in {"/contexts", "/clearcontext"}:
@@ -1861,8 +1867,8 @@ class ControllerService:
             return self._summarize_text(f"Sent non-text guidance reply to {update.sender_label}.")
         if plan.command_label == "parse_failure":
             return self._summarize_text(f"Sent command correction to {update.sender_label}.")
-        if plan.command_label == "/file":
-            return self._summarize_text(f"Sent /file reply to {update.sender_label}.")
+        if plan.command_label in {"/file", "/patchfile", "/writefile", "/run", "/test"}:
+            return self._summarize_text(f"Sent {plan.command_label} reply to {update.sender_label}.")
         if plan.command_label == "/web":
             return self._summarize_text(f"Sent /web reply to {update.sender_label}.")
         return self._summarize_text(f"Sent {plan.command_label} reply to {update.sender_label}.")
@@ -1889,6 +1895,10 @@ class ControllerService:
             "/models",
             "/repo",
             "/file",
+            "/patchfile",
+            "/writefile",
+            "/run",
+            "/test",
             "/web",
             "/contexts",
             "/clearcontext",
@@ -1913,6 +1923,30 @@ class ControllerService:
                 command_label="parse_failure",
                 normalized_text=normalized_text,
                 usage_hint="Use /file <relative_path>.",
+            )
+        if command.startswith("/patchfile"):
+            return _ParsedTelegramCommand(
+                command_label="parse_failure",
+                normalized_text=normalized_text,
+                usage_hint="Use /patchfile <relative_path> with @@ FIND / @@ REPLACE blocks.",
+            )
+        if command.startswith("/writefile"):
+            return _ParsedTelegramCommand(
+                command_label="parse_failure",
+                normalized_text=normalized_text,
+                usage_hint="Use /writefile <relative_path> with @@ CONTENT.",
+            )
+        if command.startswith("/run"):
+            return _ParsedTelegramCommand(
+                command_label="parse_failure",
+                normalized_text=normalized_text,
+                usage_hint="Use /run <bounded command>.",
+            )
+        if command.startswith("/test"):
+            return _ParsedTelegramCommand(
+                command_label="parse_failure",
+                normalized_text=normalized_text,
+                usage_hint="Use /test or /test <module_or_path>.",
             )
         if command.startswith("/web"):
             return _ParsedTelegramCommand(
@@ -2601,6 +2635,7 @@ class ControllerService:
     def _confirmation_reason_message(reason_code: str) -> str:
         return {
             "online_confirmation_required": "Online access requires one-shot approval under Ask Before Online.",
+            "operator_confirmation_required": "This action requires explicit one-shot operator approval.",
         }.get(reason_code, "Explicit operator confirmation is required before this action can run.")
 
     @staticmethod
@@ -2857,6 +2892,10 @@ class ControllerService:
             action_summary = str(result.telemetry.get("repo_summary") or f"repo status for {self._repo_display_name()}")
         elif result.capability_id == "file.read":
             action_summary = str(result.telemetry.get("file_summary") or "file preview")
+        elif result.capability_id in {"file.patch.write", "file.write.replace"}:
+            action_summary = str(result.telemetry.get("file_summary") or result.request.metadata.get("argument_summary") or "file mutation")
+        elif result.capability_id in {"shell.command.run", "test.command.run"}:
+            action_summary = str(result.telemetry.get("execution_summary") or result.request.metadata.get("argument_summary") or "bounded execution")
         elif result.capability_id == "web.fetch.read":
             action_summary = str(result.telemetry.get("web_summary") or "web fetch preview")
         elif result.capability_id == "context.read":
@@ -2896,6 +2935,8 @@ class ControllerService:
             provider_used=result.provider_used,
             duration_ms=result.duration_ms,
             action_summary=self._summarize_text(action_summary, limit=80),
+            exit_code=result.telemetry.get("execution_exit_code") if isinstance(result.telemetry.get("execution_exit_code"), int) else None,
+            output_summary=self._summarize_text(str(result.telemetry.get("execution_output_summary") or ""), limit=120),
         )
 
     def _current_or_latest_workflow(self) -> WorkflowRecord | None:

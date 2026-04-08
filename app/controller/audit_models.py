@@ -20,3 +20,5 @@ class AuditRecord:
     provider_used: str
     duration_ms: int
     action_summary: str
+    exit_code: int | None = None
+    output_summary: str = ""

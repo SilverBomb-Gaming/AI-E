@@ -96,3 +96,34 @@ class CapabilityExecutionResult:
     ask_status: str = ""
     hide_content_in_summary: bool = False
     telemetry: dict[str, object] = field(default_factory=dict)
+
+
+CommandKind = Literal["run", "test", "build"]
+CommandFamily = Literal["generic", "unittest", "pytest", "python_script"]
+
+
+@dataclass(frozen=True)
+class LocalCommandExecutionRequest:
+    capability_id: str
+    command_kind: CommandKind
+    command_family: CommandFamily
+    command_text: str
+    command_summary: str
+    working_directory: str
+    timeout_seconds: float
+    operator_reason: str = ""
+    expected_scope: str = ""
+    argv: tuple[str, ...] = field(default_factory=tuple)
+
+
+@dataclass(frozen=True)
+class LocalCommandExecutionResult:
+    request: LocalCommandExecutionRequest
+    exit_code: int
+    stdout: str
+    stderr: str
+    timed_out: bool
+    duration_ms: int
+    output_summary: str
+    first_issue: str = ""
+    completed_at: str = ""

@@ -345,7 +345,8 @@ class TelegramCommandTests(unittest.TestCase):
             lines = reply.splitlines()
             self.assertLessEqual(len(reply), 500)
             self.assertEqual(lines[0], "Operator commands")
-            self.assertIn("/contexts - contexts", lines)
+            self.assertIn("/run|/test", lines[1])
+            self.assertIn("/contexts - ctx", lines)
             self.assertIn("/clearcontext - clear", lines)
             self.assertIn("/capabilities - trust", lines)
             self.assertIn("/audit - audit", lines)
@@ -356,9 +357,9 @@ class TelegramCommandTests(unittest.TestCase):
             self.assertIn("/explainrepo [path] - explain repo", lines)
             self.assertIn("/explainfile <path> - explain file", lines)
             self.assertIn("/summarizeweb <url> - summarize web", lines)
-            self.assertIn("/workflows - workflows", lines)
-            self.assertIn("/workflowstatus [id] - workflow status", lines)
-            self.assertIn("/cancelworkflow [id] - cancel workflow", lines)
+            self.assertIn("/workflows - flow", lines)
+            self.assertIn("/workflowstatus [id] - flow status", lines)
+            self.assertIn("/cancelworkflow [id] - cancel flow", lines)
             self.assertEqual(lines[-1], "Plain text is not auto-routed.")
 
     def test_status_command_is_mobile_readable_and_shows_loop_activity(self) -> None:

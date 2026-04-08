@@ -148,6 +148,62 @@ class CapabilityEvaluator:
                 message="Scoped file preview is available inside the configured allowed roots.",
             )
 
+        if capability_id in {"file.patch.write", "file.write.replace"}:
+            if not context.file_scope_valid:
+                return self._result(
+                    manifest,
+                    source=source,
+                    availability_state="unavailable",
+                    reason_code="file_scope_invalid",
+                    blocking_reason=context.file_message or "No allowed file directories are configured.",
+                    message=context.file_message or "No allowed file directories are configured.",
+                )
+            if source == "telegram" and not confirmation_granted:
+                return self._result(
+                    manifest,
+                    source=source,
+                    availability_state="confirmation_required",
+                    reason_code="operator_confirmation_required",
+                    blocking_reason="Explicit operator confirmation is required for file mutation.",
+                    message="File mutation requires explicit one-shot operator confirmation.",
+                )
+            return self._result(
+                manifest,
+                source=source,
+                availability_state="allowed",
+                reason_code="allowed",
+                blocking_reason="",
+                message="Scoped file mutation is available inside the configured allowed roots.",
+            )
+
+        if capability_id in {"shell.command.run", "test.command.run"}:
+            if not context.repo_root_valid:
+                return self._result(
+                    manifest,
+                    source=source,
+                    availability_state="unavailable",
+                    reason_code="repo_root_invalid",
+                    blocking_reason=context.repo_message or "Repository root is not configured.",
+                    message=context.repo_message or "Repository root is not configured.",
+                )
+            if source == "telegram" and not confirmation_granted:
+                return self._result(
+                    manifest,
+                    source=source,
+                    availability_state="confirmation_required",
+                    reason_code="operator_confirmation_required",
+                    blocking_reason="Explicit operator confirmation is required for bounded local execution.",
+                    message="Bounded local execution requires explicit one-shot operator confirmation.",
+                )
+            return self._result(
+                manifest,
+                source=source,
+                availability_state="allowed",
+                reason_code="allowed",
+                blocking_reason="",
+                message="Bounded repository execution is available inside the configured repository root.",
+            )
+
         if capability_id == "web.fetch.read":
             return self._evaluate_web_fetch(
                 manifest,

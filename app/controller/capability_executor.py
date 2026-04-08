@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
 import secrets
 from typing import TYPE_CHECKING, Protocol
 
@@ -10,6 +11,17 @@ from .capability_models import CapabilityContext, CapabilityEvaluation
 from .confirmation_models import ConfirmationContextSnapshot, PendingConfirmation
 from .context_models import BufferedContext
 from .execution_models import CapabilityExecutionRequest, CapabilityExecutionResult, ProviderExecutionSnapshot
+from .execution_models import LocalCommandExecutionRequest
+from .execution_runner import ExecutionRunnerError
+from .file_mutator import (
+    FileMutatorError,
+    FilePatchMutationRequest,
+    FileWriteReplaceRequest,
+    parse_patch_command,
+    parse_write_command,
+    summarize_patch_request,
+    summarize_write_request,
+)
 from .file_reader import FileReaderError
 from .repo_inspector import RepoInspectorError
 from .scope_models import ExecutionScope
@@ -187,6 +199,14 @@ class CapabilityExecutor:
             return self._execute_repo_explain(update=update, snapshot=snapshot, argument=parsed_command.argument, batch_busy=batch_busy)
         if command == "/file":
             return self._execute_file_read(update=update, snapshot=snapshot, argument=parsed_command.argument)
+        if command == "/patchfile":
+            return self._execute_file_patch(update=update, snapshot=snapshot, argument=parsed_command.argument)
+        if command == "/writefile":
+            return self._execute_file_replace(update=update, snapshot=snapshot, argument=parsed_command.argument)
+        if command == "/run":
+            return self._execute_run_command(update=update, snapshot=snapshot, argument=parsed_command.argument)
+        if command == "/test":
+            return self._execute_test_command(update=update, snapshot=snapshot, argument=parsed_command.argument)
         if command == "/explainfile":
             return self._execute_file_explain(update=update, snapshot=snapshot, argument=parsed_command.argument, batch_busy=batch_busy)
         if command == "/web":
@@ -612,6 +632,339 @@ class CapabilityExecutor:
                 "context_created_id": context_entry.context_id,
                 "context_source_summary": context_entry.source_summary,
             },
+        )
+
+    def _execute_file_patch(
+        self,
+        *,
+        update: TelegramInboundMessage,
+        snapshot: ControllerSnapshot,
+        argument: str,
+    ) -> CapabilityExecutionResult:
+        request = self._build_request(
+            capability_id="file.patch.write",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/patchfile",
+            parsed_arguments={},
+            metadata={"argument_summary": "/patchfile [path hidden]"},
+        )
+        try:
+            parsed = parse_patch_command(argument)
+        except FileMutatorError as exc:
+            return self._file_mutation_error_result(
+                request=request,
+                error=exc,
+                relative_path="",
+                command_label="/patchfile",
+                confirmation_id="",
+            )
+
+        return self._execute_pending_file_mutation(
+            update=update,
+            snapshot=snapshot,
+            capability_id="file.patch.write",
+            command_label="/patchfile",
+            relative_path=parsed.relative_path,
+            raw_argument=parsed.raw_argument,
+            confirmation_preview=summarize_patch_request(parsed),
+            operator_reason=parsed.operator_reason,
+            expected_base_hash=parsed.expected_base_hash,
+        )
+
+    def _execute_file_replace(
+        self,
+        *,
+        update: TelegramInboundMessage,
+        snapshot: ControllerSnapshot,
+        argument: str,
+    ) -> CapabilityExecutionResult:
+        request = self._build_request(
+            capability_id="file.write.replace",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/writefile",
+            parsed_arguments={},
+            metadata={"argument_summary": "/writefile [path hidden]"},
+        )
+        try:
+            parsed = parse_write_command(argument)
+        except FileMutatorError as exc:
+            return self._file_mutation_error_result(
+                request=request,
+                error=exc,
+                relative_path="",
+                command_label="/writefile",
+                confirmation_id="",
+            )
+
+        return self._execute_pending_file_mutation(
+            update=update,
+            snapshot=snapshot,
+            capability_id="file.write.replace",
+            command_label="/writefile",
+            relative_path=parsed.relative_path,
+            raw_argument=parsed.raw_argument,
+            confirmation_preview=summarize_write_request(parsed),
+            operator_reason=parsed.operator_reason,
+            expected_base_hash=parsed.expected_base_hash,
+        )
+
+    def _execute_run_command(
+        self,
+        *,
+        update: TelegramInboundMessage,
+        snapshot: ControllerSnapshot,
+        argument: str,
+    ) -> CapabilityExecutionResult:
+        repo_root, _, _, _ = self._service._repo_configuration_state()
+        request = self._build_request(
+            capability_id="shell.command.run",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/run",
+            parsed_arguments={},
+            metadata={"argument_summary": "/run [command hidden]"},
+        )
+        try:
+            local_request = self._service._execution_runner.build_run_request(
+                capability_id="shell.command.run",
+                repo_root=repo_root,
+                command_text=argument,
+                expected_scope=self._service._repo_display_name(repo_root),
+            )
+        except ExecutionRunnerError as exc:
+            return self._local_command_error_result(
+                request=request,
+                error=exc,
+                command_summary="",
+                command_label="/run",
+                confirmation_id="",
+            )
+        return self._execute_pending_local_command(
+            update=update,
+            snapshot=snapshot,
+            capability_id="shell.command.run",
+            command_label="/run",
+            raw_prompt=local_request.command_text,
+            local_request=local_request,
+        )
+
+    def _execute_test_command(
+        self,
+        *,
+        update: TelegramInboundMessage,
+        snapshot: ControllerSnapshot,
+        argument: str,
+    ) -> CapabilityExecutionResult:
+        repo_root, _, _, _ = self._service._repo_configuration_state()
+        request = self._build_request(
+            capability_id="test.command.run",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/test",
+            parsed_arguments={},
+            metadata={"argument_summary": "/test [target hidden]"},
+        )
+        try:
+            local_request = self._service._execution_runner.build_test_request(
+                capability_id="test.command.run",
+                repo_root=repo_root,
+                target=argument,
+                expected_scope=self._service._repo_display_name(repo_root),
+            )
+        except ExecutionRunnerError as exc:
+            return self._local_command_error_result(
+                request=request,
+                error=exc,
+                command_summary="",
+                command_label="/test",
+                confirmation_id="",
+            )
+        return self._execute_pending_local_command(
+            update=update,
+            snapshot=snapshot,
+            capability_id="test.command.run",
+            command_label="/test",
+            raw_prompt=argument.strip(),
+            local_request=local_request,
+        )
+
+    def _execute_pending_local_command(
+        self,
+        *,
+        update: TelegramInboundMessage,
+        snapshot: ControllerSnapshot,
+        capability_id: str,
+        command_label: str,
+        raw_prompt: str,
+        local_request: LocalCommandExecutionRequest,
+    ) -> CapabilityExecutionResult:
+        evaluation, context = self._service._evaluate_capability_id(
+            capability_id,
+            snapshot,
+            remember=True,
+        )
+        repo_root = local_request.working_directory
+        scope = ExecutionScope(
+            scope_type="repository",
+            access_mode="execute",
+            repo_root=repo_root,
+            target_path=repo_root,
+        )
+        action_summary = f"{command_label} {local_request.command_summary}"
+        request = self._build_request(
+            capability_id=capability_id,
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command=command_label,
+            parsed_arguments={"command": local_request.command_summary},
+            context=context,
+            metadata={
+                "argument_summary": action_summary,
+                "confirmation_action_label": action_summary,
+                "confirmation_preview_lines": (
+                    f"Preview: run {local_request.command_summary}",
+                    f"Scope: {self._service._repo_display_name(repo_root)} | timeout {int(local_request.timeout_seconds)}s",
+                ),
+                "confirmation_metadata": {
+                    "execution_kind": local_request.command_kind,
+                    "execution_command_summary": local_request.command_summary,
+                    "execution_action_summary": f"{local_request.command_summary} | {self._service._repo_display_name(repo_root)}",
+                    "execution_timeout_seconds": str(int(local_request.timeout_seconds)),
+                },
+            },
+            scope_override=scope,
+        )
+        if evaluation.current_availability_state == "confirmation_required":
+            return self._confirmation_required_result(
+                request=request,
+                evaluation=evaluation,
+                context=context,
+                snapshot=snapshot,
+                prompt=raw_prompt,
+                response_style="concise",
+                chat_id=update.chat_id,
+                requester_label=update.sender_label,
+            )
+        if evaluation.current_availability_state != "allowed":
+            return self._local_command_blocked_result(
+                request=request,
+                evaluation=evaluation,
+                command_label=command_label,
+            )
+        scope_failure = self._scope_failure_result(request, command_label=command_label)
+        if scope_failure is not None:
+            return scope_failure
+        return self._confirmation_result(
+            request=request,
+            confirmation_id="pending",
+            outcome="failed",
+            reason_code="unexpected_execution_without_confirmation",
+            reason="Bounded command execution should require confirmation before it can run.",
+            next_step="Resend the original command if you still want to request a confirmation.",
+            retryable=False,
+        )
+
+    def _execute_pending_file_mutation(
+        self,
+        *,
+        update: TelegramInboundMessage,
+        snapshot: ControllerSnapshot,
+        capability_id: str,
+        command_label: str,
+        relative_path: str,
+        raw_argument: str,
+        confirmation_preview: str,
+        operator_reason: str,
+        expected_base_hash: str,
+    ) -> CapabilityExecutionResult:
+        relative_path, target_path, allowed_roots, resolve_code, resolve_message = self._service.resolve_file_request(relative_path)
+        evaluation, context = self._service._evaluate_capability_id(
+            capability_id,
+            snapshot,
+            remember=True,
+        )
+        scope = ExecutionScope(
+            scope_type="filesystem",
+            access_mode="write",
+            allowed_paths=allowed_roots,
+            target_path=target_path,
+        )
+        action_summary = f"{command_label} {relative_path or '[missing]'}"
+        preview_line = confirmation_preview
+        request = self._build_request(
+            capability_id=capability_id,
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command=command_label,
+            parsed_arguments={"relative_path": relative_path},
+            context=context,
+            metadata={
+                "argument_summary": action_summary,
+                "confirmation_action_label": action_summary,
+                "confirmation_preview_lines": (f"Preview: {preview_line}",),
+                "confirmation_metadata": {
+                    "mutation_action_summary": f"{relative_path or 'unknown file'} | {'patch' if capability_id == 'file.patch.write' else 'replace'}",
+                    "target_path": relative_path,
+                    "mutation_operation": "patch" if capability_id == "file.patch.write" else "replace",
+                    "mutation_preview": preview_line,
+                    "expected_base_hash": expected_base_hash[:12].lower(),
+                    "operator_reason": operator_reason,
+                },
+            },
+            scope_override=scope,
+        )
+        if resolve_code in {"missing_file_path", "absolute_path_not_allowed", "target_path_not_allowed"}:
+            return self._file_mutation_error_result(
+                request=request,
+                error=FileMutatorError(resolve_code, resolve_message),
+                relative_path=relative_path,
+                command_label=command_label,
+                confirmation_id="",
+            )
+        if resolve_code != "file_target_ready":
+            return self._file_mutation_error_result(
+                request=request,
+                error=FileMutatorError(resolve_code, resolve_message),
+                relative_path=relative_path,
+                command_label=command_label,
+                confirmation_id="",
+            )
+        if evaluation.current_availability_state == "confirmation_required":
+            return self._confirmation_required_result(
+                request=request,
+                evaluation=evaluation,
+                context=context,
+                snapshot=snapshot,
+                prompt=raw_argument,
+                response_style="concise",
+                chat_id=update.chat_id,
+                requester_label=update.sender_label,
+            )
+        if evaluation.current_availability_state != "allowed":
+            return self._file_mutation_blocked_result(
+                request=request,
+                evaluation=evaluation,
+                command_label=command_label,
+            )
+        scope_failure = self._scope_failure_result(request, command_label=command_label)
+        if scope_failure is not None:
+            return scope_failure
+        return self._confirmation_result(
+            request=request,
+            confirmation_id="pending",
+            outcome="failed",
+            reason_code="unexpected_mutation_without_confirmation",
+            reason="File mutation should require confirmation before execution.",
+            next_step="Resend the original command if you still want to request a confirmation.",
+            retryable=False,
         )
 
     def _execute_repo_explain(
@@ -1252,6 +1605,309 @@ class CapabilityExecutor:
             telemetry={"display_path": relative_path, "file_summary": f"{relative_path or 'unknown file'} | {error.code}"},
         )
 
+    def _file_mutation_blocked_result(
+        self,
+        *,
+        request: CapabilityExecutionRequest,
+        evaluation: CapabilityEvaluation,
+        command_label: str,
+    ) -> CapabilityExecutionResult:
+        next_step_map = {
+            "readiness_not_ready": "Resolve the blocking health or security issue in the operator console.",
+            "file_scope_invalid": "Configure at least one allowed file directory in the operator console.",
+            "operator_confirmation_required": "Approve the pending mutation request with /confirm <id>.",
+        }
+        outcome = "blocked"
+        if evaluation.current_availability_state == "unavailable":
+            outcome = "unavailable"
+        elif evaluation.current_availability_state == "degraded":
+            outcome = "degraded"
+        return self._result(
+            request,
+            outcome=outcome,
+            reason_code=evaluation.reason_code,
+            user_message="\n".join(
+                (
+                    f"Can't run {command_label} right now.",
+                    f"Reason: {evaluation.blocking_reason or evaluation.message}",
+                    f"Next: {next_step_map.get(evaluation.reason_code, 'Check readiness and the configured file scope in the operator console.')}",
+                )
+            ),
+            internal_summary=f"{request.capability_id} blocked: {evaluation.reason_code}.",
+            retryable=True,
+            degraded=outcome == "degraded",
+            command_label=command_label,
+            activity_state="processing_command",
+        )
+
+    def _file_mutation_error_result(
+        self,
+        *,
+        request: CapabilityExecutionRequest,
+        error: FileMutatorError,
+        relative_path: str,
+        command_label: str,
+        confirmation_id: str,
+    ) -> CapabilityExecutionResult:
+        next_step_map = {
+            "missing_file_path": f"Use {command_label} <relative_path> and include the required mutation body.",
+            "missing_mutation_body": f"Use {command_label} <relative_path> and include the required mutation body.",
+            "missing_patch_sections": "Use @@ FIND and @@ REPLACE blocks for each bounded patch.",
+            "missing_write_content": "Use @@ CONTENT followed by the full replacement file content.",
+            "absolute_path_not_allowed": f"Use {command_label} <relative_path> inside the allowed directories.",
+            "target_path_not_allowed": "Use a relative path inside the allowed directories only.",
+            "file_not_found": "Check the relative path and try again.",
+            "file_type_not_supported": "Target a supported UTF-8 text file only.",
+            "file_encoding_not_supported": "Target a UTF-8 text file only.",
+            "file_too_large": "Target a smaller file or narrow the mutation request.",
+            "replacement_too_large": "Use a smaller bounded patch or replacement body.",
+            "protected_path_not_allowed": "Choose a source file under the allowed roots that is not in a protected control directory.",
+            "patch_context_missing": "Re-read the file, refresh the exact patch text, and resend the request.",
+            "patch_context_ambiguous": "Narrow the @@ FIND text so it matches exactly one location.",
+            "base_hash_mismatch": "Run /file on the target again, then resend the mutation with a fresh base hash.",
+            "invalid_base_hash": "Use at least the first 8 hexadecimal characters of the current base hash.",
+            "no_changes_requested": "Adjust the request so it would change the target file.",
+            "patch_operation_limit_exceeded": "Split the work into smaller patch requests.",
+        }
+        invalid_request_codes = {
+            "missing_file_path",
+            "missing_mutation_body",
+            "missing_patch_sections",
+            "missing_write_content",
+            "absolute_path_not_allowed",
+            "invalid_base_hash",
+        }
+        out_of_scope_codes = {"target_path_not_allowed", "protected_path_not_allowed"}
+        unavailable_codes = {"file_not_found"}
+        outcome = "failed"
+        retryable = True
+        if error.code in invalid_request_codes:
+            outcome = "invalid_request"
+            retryable = False
+        elif error.code in out_of_scope_codes:
+            outcome = "out_of_scope"
+            retryable = False
+        elif error.code in unavailable_codes:
+            outcome = "unavailable"
+        title = (
+            f"Confirmation {confirmation_id} could not run."
+            if confirmation_id
+            else ("Action is out of scope." if outcome == "out_of_scope" else f"Can't run {command_label} right now.")
+        )
+        return self._result(
+            request,
+            outcome=outcome,
+            reason_code=error.code,
+            user_message="\n".join(
+                (
+                    title,
+                    f"Reason: {error.message}",
+                    f"Next: {next_step_map.get(error.code, 'Check the file path, scope, and mutation payload, then try again.')}",
+                )
+            ),
+            internal_summary=f"{request.capability_id} failed: {error.code} ({relative_path or 'missing path'}).",
+            retryable=retryable,
+            command_label=command_label,
+            activity_state="processing_command",
+            confirmation_used=bool(confirmation_id),
+            telemetry={
+                "display_path": relative_path,
+                "file_name": Path(relative_path).name if relative_path else "",
+                "file_status": error.message,
+                "file_summary": f"{relative_path or 'unknown file'} | {'patch' if request.capability_id == 'file.patch.write' else 'replace'} | {error.code}",
+            },
+        )
+
+    def _local_command_blocked_result(
+        self,
+        *,
+        request: CapabilityExecutionRequest,
+        evaluation: CapabilityEvaluation,
+        command_label: str,
+    ) -> CapabilityExecutionResult:
+        next_step_map = {
+            "readiness_not_ready": "Resolve the blocking health or security issue in the operator console.",
+            "repo_root_invalid": "Configure a valid repository root in the operator console.",
+            "operator_confirmation_required": "Approve the pending execution request with /confirm <id>.",
+        }
+        outcome = "blocked"
+        if evaluation.current_availability_state == "unavailable":
+            outcome = "unavailable"
+        elif evaluation.current_availability_state == "degraded":
+            outcome = "degraded"
+        return self._result(
+            request,
+            outcome=outcome,
+            reason_code=evaluation.reason_code,
+            user_message="\n".join(
+                (
+                    f"Can't run {command_label} right now.",
+                    f"Reason: {evaluation.blocking_reason or evaluation.message}",
+                    f"Next: {next_step_map.get(evaluation.reason_code, 'Check readiness and the configured repository root in the operator console.')}",
+                )
+            ),
+            internal_summary=f"{request.capability_id} blocked: {evaluation.reason_code}.",
+            retryable=True,
+            degraded=outcome == "degraded",
+            command_label=command_label,
+            activity_state="processing_command",
+        )
+
+    def _local_command_error_result(
+        self,
+        *,
+        request: CapabilityExecutionRequest,
+        error: ExecutionRunnerError,
+        command_summary: str,
+        command_label: str,
+        confirmation_id: str,
+    ) -> CapabilityExecutionResult:
+        next_step_map = {
+            "missing_command": "Use /run <bounded command>.",
+            "command_too_long": "Send a shorter bounded command.",
+            "target_too_long": "Send a shorter test target.",
+            "blocked_command_pattern": "Remove shell chaining, redirection, and pipeline operators.",
+            "multiline_command_not_allowed": "Use a single-line bounded command only.",
+            "multiline_target_not_allowed": "Use a single-line test target only.",
+            "command_parse_failed": "Use a simpler bounded command format.",
+            "command_prefix_not_allowed": "Use /test or an allowed Python-based /run command.",
+            "unsupported_python_command": "Use python -m unittest, python -m pytest, or an approved smoke script.",
+            "python_script_not_allowed": "Use an approved repo-local validation or smoke script only.",
+            "command_option_not_allowed": "Remove option flags in this first-pass execution model.",
+            "command_token_not_allowed": "Use module names or repo-relative paths only.",
+            "absolute_path_not_allowed": "Use repo-relative paths only.",
+            "target_path_not_allowed": "Keep command targets inside the configured repository root.",
+            "repo_root_invalid": "Configure a valid repository root in the operator console.",
+            "command_not_found": "Use an allowed command prefix or check the local Python environment.",
+            "command_execution_failed": "Check the local environment and try again.",
+        }
+        invalid_request_codes = {
+            "missing_command",
+            "command_too_long",
+            "target_too_long",
+            "blocked_command_pattern",
+            "multiline_command_not_allowed",
+            "multiline_target_not_allowed",
+            "command_parse_failed",
+            "command_prefix_not_allowed",
+            "unsupported_python_command",
+            "python_script_not_allowed",
+            "command_option_not_allowed",
+            "command_token_not_allowed",
+        }
+        out_of_scope_codes = {"absolute_path_not_allowed", "target_path_not_allowed"}
+        unavailable_codes = {"repo_root_invalid"}
+        outcome = "failed"
+        retryable = True
+        if error.code in invalid_request_codes:
+            outcome = "invalid_request"
+            retryable = False
+        elif error.code in out_of_scope_codes:
+            outcome = "out_of_scope"
+            retryable = False
+        elif error.code in unavailable_codes:
+            outcome = "unavailable"
+        title = (
+            f"Confirmation {confirmation_id} could not run."
+            if confirmation_id
+            else ("Action is out of scope." if outcome == "out_of_scope" else f"Can't run {command_label} right now.")
+        )
+        return self._result(
+            request,
+            outcome=outcome,
+            reason_code=error.code,
+            user_message="\n".join(
+                (
+                    title,
+                    f"Reason: {error.message}",
+                    f"Next: {next_step_map.get(error.code, 'Check the command, repository scope, and local environment, then try again.')}",
+                )
+            ),
+            internal_summary=f"{request.capability_id} failed: {error.code} ({command_summary or 'missing command'}).",
+            retryable=retryable,
+            command_label=command_label,
+            activity_state="processing_command",
+            confirmation_used=bool(confirmation_id),
+            telemetry={
+                "execution_command_summary": command_summary,
+                "execution_summary": f"{command_summary or 'bounded execution'} | {error.code}",
+                "execution_output_summary": error.message,
+            },
+        )
+
+    def _local_command_result(
+        self,
+        *,
+        request: CapabilityExecutionRequest,
+        confirmation: PendingConfirmation,
+        command_result,
+    ) -> CapabilityExecutionResult:
+        repo_label = self._service._repo_display_name(command_result.request.working_directory)
+        if command_result.timed_out:
+            self._service._last_confirmation_result = f"Confirmation {confirmation.confirmation_id} timed out via bounded execution."
+            lines = [
+                f"Confirmation {confirmation.confirmation_id} approved.",
+                f"Scope: {repo_label}",
+                f"Command: {command_result.request.command_summary}",
+                "Exit: timeout",
+                f"Summary: {command_result.output_summary}",
+            ]
+            if command_result.first_issue:
+                lines.append(f"First issue: {command_result.first_issue}")
+            return self._result(
+                request,
+                outcome="timed_out",
+                reason_code="command_timeout",
+                user_message="\n".join(lines),
+                internal_summary=self._service._last_confirmation_result,
+                retryable=True,
+                command_label="/confirm",
+                activity_state="timed_out",
+                confirmation_used=True,
+                telemetry={
+                    "execution_command": command_result.request.command_text,
+                    "execution_command_summary": command_result.request.command_summary,
+                    "execution_scope": command_result.request.working_directory,
+                    "execution_summary": f"{command_result.request.command_summary} | timeout",
+                    "execution_exit_code": -1,
+                    "execution_output_summary": command_result.output_summary,
+                    "execution_first_issue": command_result.first_issue,
+                },
+            )
+        outcome = "success" if command_result.exit_code == 0 else "failed"
+        reason_code = "ok" if command_result.exit_code == 0 else "command_exit_nonzero"
+        status_label = "completed" if outcome == "success" else "failed"
+        self._service._last_confirmation_result = f"Confirmation {confirmation.confirmation_id} approved and {status_label} via bounded execution."
+        lines = [
+            f"Confirmation {confirmation.confirmation_id} approved.",
+            f"Scope: {repo_label}",
+            f"Command: {command_result.request.command_summary}",
+            f"Exit code: {command_result.exit_code}",
+            f"Summary: {command_result.output_summary}",
+        ]
+        if command_result.first_issue:
+            lines.append(f"First issue: {command_result.first_issue}")
+        return self._result(
+            request,
+            outcome=outcome,
+            reason_code=reason_code,
+            user_message="\n".join(lines),
+            internal_summary=self._service._last_confirmation_result,
+            retryable=outcome != "success",
+            command_label="/confirm",
+            activity_state="processing_command" if outcome == "success" else "provider_failed",
+            confirmation_used=True,
+            telemetry={
+                "execution_command": command_result.request.command_text,
+                "execution_command_summary": command_result.request.command_summary,
+                "execution_scope": command_result.request.working_directory,
+                "execution_summary": f"{command_result.request.command_summary} | exit {command_result.exit_code}",
+                "execution_exit_code": command_result.exit_code,
+                "execution_output_summary": command_result.output_summary,
+                "execution_first_issue": command_result.first_issue,
+            },
+        )
+
     def _web_error_result(
         self,
         *,
@@ -1589,6 +2245,7 @@ class CapabilityExecutor:
         argument: str,
     ) -> CapabilityExecutionResult:
         confirmation_id = self._service._normalize_confirmation_id(argument)
+        confirmation_lookup = self._service._confirmation_store.get(confirmation_id) if confirmation_id else None
         request = self._build_request(
             capability_id="ask.provider_query",
             snapshot=snapshot,
@@ -1596,7 +2253,11 @@ class CapabilityExecutor:
             requester_label=update.sender_label,
             original_command="/confirm",
             parsed_arguments={"confirmation_id": confirmation_id},
-            metadata={"argument_summary": f"/confirm {confirmation_id}" if confirmation_id else "/confirm <missing>"},
+            metadata=self._confirmation_command_metadata(
+                command_label="/confirm",
+                confirmation_id=confirmation_id,
+                confirmation=confirmation_lookup,
+            ),
         )
         if not confirmation_id:
             return self._result(
@@ -1656,7 +2317,11 @@ class CapabilityExecutor:
             },
             confirmation_context=confirmation.evaluation_context,
             metadata={
-                "argument_summary": f"/confirm {confirmation.confirmation_id}",
+                **self._confirmation_command_metadata(
+                    command_label="/confirm",
+                    confirmation_id=confirmation.confirmation_id,
+                    confirmation=confirmation,
+                ),
                 "response_style": confirmation.response_style,
             },
         )
@@ -1670,6 +2335,7 @@ class CapabilityExecutor:
         argument: str,
     ) -> CapabilityExecutionResult:
         confirmation_id = self._service._normalize_confirmation_id(argument)
+        confirmation_lookup = self._service._confirmation_store.get(confirmation_id) if confirmation_id else None
         request = self._build_request(
             capability_id="ask.provider_query",
             snapshot=snapshot,
@@ -1677,7 +2343,11 @@ class CapabilityExecutor:
             requester_label=update.sender_label,
             original_command="/deny",
             parsed_arguments={"confirmation_id": confirmation_id},
-            metadata={"argument_summary": f"/deny {confirmation_id}" if confirmation_id else "/deny <missing>"},
+            metadata=self._confirmation_command_metadata(
+                command_label="/deny",
+                confirmation_id=confirmation_id,
+                confirmation=confirmation_lookup,
+            ),
         )
         if not confirmation_id:
             return self._result(
@@ -1723,37 +2393,409 @@ class CapabilityExecutor:
                 snapshot=snapshot,
                 chat_id=chat_id,
             )
-        if confirmation.capability_id not in {"ask.provider_query", "web.fetch.read"}:
-            message = f"Confirmation {confirmation.confirmation_id} cannot run because the capability is no longer supported."
-            self._service._last_confirmation_result = message
-            return self._result(
-                request,
-                outcome="failed",
-                reason_code="unsupported_confirmation_capability",
-                user_message="\n".join(
-                    (
-                        f"Confirmation {confirmation.confirmation_id} could not run.",
-                        "Reason: The capability is no longer supported for confirmation execution.",
-                        "Next: Send the original command again after checking the operator console.",
-                    )
-                ),
-                internal_summary=message,
-                retryable=False,
-                command_label="/confirm",
-                activity_state="provider_failed",
-                confirmation_used=True,
+        if confirmation.capability_id == "file.patch.write":
+            return self._execute_confirmed_file_patch(
+                request=request,
+                confirmation=confirmation,
+                snapshot=snapshot,
+                chat_id=chat_id,
             )
+        if confirmation.capability_id == "file.write.replace":
+            return self._execute_confirmed_file_replace(
+                request=request,
+                confirmation=confirmation,
+                snapshot=snapshot,
+                chat_id=chat_id,
+            )
+        if confirmation.capability_id == "shell.command.run":
+            return self._execute_confirmed_run_command(
+                request=request,
+                confirmation=confirmation,
+                snapshot=snapshot,
+                chat_id=chat_id,
+            )
+        if confirmation.capability_id == "test.command.run":
+            return self._execute_confirmed_test_command(
+                request=request,
+                confirmation=confirmation,
+                snapshot=snapshot,
+                chat_id=chat_id,
+            )
+        message = f"Confirmation {confirmation.confirmation_id} cannot run because the capability is no longer supported."
+        self._service._last_confirmation_result = message
         return self._result(
             request,
             outcome="failed",
             reason_code="unsupported_confirmation_capability",
-            user_message=f"Confirmation {confirmation.confirmation_id} could not run.",
-            internal_summary=f"Unsupported confirmation capability {confirmation.capability_id}.",
+            user_message="\n".join(
+                (
+                    f"Confirmation {confirmation.confirmation_id} could not run.",
+                    "Reason: The capability is no longer supported for confirmation execution.",
+                    "Next: Send the original command again after checking the operator console.",
+                )
+            ),
+            internal_summary=message,
             retryable=False,
             command_label="/confirm",
             activity_state="provider_failed",
             confirmation_used=True,
         )
+
+    def _execute_confirmed_file_patch(
+        self,
+        *,
+        request: CapabilityExecutionRequest,
+        confirmation: PendingConfirmation,
+        snapshot: ControllerSnapshot,
+        chat_id: str,
+    ) -> CapabilityExecutionResult:
+        try:
+            parsed = parse_patch_command(confirmation.prompt_text)
+        except FileMutatorError as exc:
+            return self._file_mutation_error_result(
+                request=request,
+                error=exc,
+                relative_path="",
+                command_label="/confirm",
+                confirmation_id=confirmation.confirmation_id,
+            )
+        mutation_request, scope_failure, relative_path = self._prepare_confirmed_file_mutation_request(
+            confirmation=confirmation,
+            snapshot=snapshot,
+            chat_id=chat_id,
+            relative_path=parsed.relative_path,
+        )
+        if isinstance(mutation_request, CapabilityExecutionResult):
+            return mutation_request
+        if scope_failure is not None:
+            return scope_failure
+        try:
+            result = self._service._file_mutator.apply_patch(
+                FilePatchMutationRequest(
+                    target_path=mutation_request.scope.target_path,
+                    display_path=relative_path,
+                    operator_reason=parsed.operator_reason,
+                    expected_base_hash=parsed.expected_base_hash,
+                    operations=parsed.operations,
+                )
+            )
+        except FileMutatorError as exc:
+            return self._file_mutation_error_result(
+                request=mutation_request,
+                error=exc,
+                relative_path=relative_path,
+                command_label="/confirm",
+                confirmation_id=confirmation.confirmation_id,
+            )
+        return self._file_mutation_success_result(
+            request=mutation_request,
+            confirmation=confirmation,
+            mutation=result,
+        )
+
+    def _execute_confirmed_file_replace(
+        self,
+        *,
+        request: CapabilityExecutionRequest,
+        confirmation: PendingConfirmation,
+        snapshot: ControllerSnapshot,
+        chat_id: str,
+    ) -> CapabilityExecutionResult:
+        try:
+            parsed = parse_write_command(confirmation.prompt_text)
+        except FileMutatorError as exc:
+            return self._file_mutation_error_result(
+                request=request,
+                error=exc,
+                relative_path="",
+                command_label="/confirm",
+                confirmation_id=confirmation.confirmation_id,
+            )
+        mutation_request, scope_failure, relative_path = self._prepare_confirmed_file_mutation_request(
+            confirmation=confirmation,
+            snapshot=snapshot,
+            chat_id=chat_id,
+            relative_path=parsed.relative_path,
+        )
+        if isinstance(mutation_request, CapabilityExecutionResult):
+            return mutation_request
+        if scope_failure is not None:
+            return scope_failure
+        try:
+            result = self._service._file_mutator.replace_file(
+                FileWriteReplaceRequest(
+                    target_path=mutation_request.scope.target_path,
+                    display_path=relative_path,
+                    operator_reason=parsed.operator_reason,
+                    expected_base_hash=parsed.expected_base_hash,
+                    new_content=parsed.new_content,
+                )
+            )
+        except FileMutatorError as exc:
+            return self._file_mutation_error_result(
+                request=mutation_request,
+                error=exc,
+                relative_path=relative_path,
+                command_label="/confirm",
+                confirmation_id=confirmation.confirmation_id,
+            )
+        return self._file_mutation_success_result(
+            request=mutation_request,
+            confirmation=confirmation,
+            mutation=result,
+        )
+
+    def _prepare_confirmed_file_mutation_request(
+        self,
+        *,
+        confirmation: PendingConfirmation,
+        snapshot: ControllerSnapshot,
+        chat_id: str,
+        relative_path: str,
+    ) -> tuple[CapabilityExecutionRequest | CapabilityExecutionResult, CapabilityExecutionResult | None, str]:
+        evaluation, context = self._service._evaluate_capability_id(
+            confirmation.capability_id,
+            snapshot,
+            remember=True,
+            confirmation_granted=True,
+        )
+        relative_path, target_path, allowed_roots, resolve_code, resolve_message = self._service.resolve_file_request(relative_path)
+        scope = ExecutionScope(
+            scope_type="filesystem",
+            access_mode="write",
+            allowed_paths=allowed_roots,
+            target_path=target_path,
+        )
+        mutation_request = self._build_request(
+            capability_id=evaluation.capability_id,
+            snapshot=snapshot,
+            chat_id=chat_id,
+            requester_label=confirmation.requester_label,
+            original_command="/confirm",
+            parsed_arguments={
+                "confirmation_id": confirmation.confirmation_id,
+                "relative_path": relative_path,
+            },
+            context=context,
+            confirmation_context=confirmation.evaluation_context,
+            metadata=self._confirmation_command_metadata(
+                command_label="/confirm",
+                confirmation_id=confirmation.confirmation_id,
+                confirmation=confirmation,
+            ),
+            scope_override=scope,
+        )
+        if evaluation.current_availability_state != "allowed":
+            return (
+                self._blocked_confirmation_from_evaluation(
+                    request=mutation_request,
+                    confirmation_id=confirmation.confirmation_id,
+                    evaluation=evaluation,
+                ),
+                None,
+                relative_path,
+            )
+        if resolve_code != "file_target_ready":
+            return (
+                self._file_mutation_error_result(
+                    request=mutation_request,
+                    error=FileMutatorError(resolve_code, resolve_message),
+                    relative_path=relative_path,
+                    command_label="/confirm",
+                    confirmation_id=confirmation.confirmation_id,
+                ),
+                None,
+                relative_path,
+            )
+        return mutation_request, self._scope_failure_result(mutation_request, command_label="/confirm", confirmation_used=True), relative_path
+
+    def _execute_confirmed_run_command(
+        self,
+        *,
+        request: CapabilityExecutionRequest,
+        confirmation: PendingConfirmation,
+        snapshot: ControllerSnapshot,
+        chat_id: str,
+    ) -> CapabilityExecutionResult:
+        repo_root, _, _, _ = self._service._repo_configuration_state()
+        try:
+            local_request = self._service._execution_runner.build_run_request(
+                capability_id="shell.command.run",
+                repo_root=repo_root,
+                command_text=confirmation.prompt_text,
+                expected_scope=self._service._repo_display_name(repo_root),
+            )
+        except ExecutionRunnerError as exc:
+            return self._local_command_error_result(
+                request=request,
+                error=exc,
+                command_summary=str(confirmation.metadata.get("execution_command_summary") or "").strip(),
+                command_label="/confirm",
+                confirmation_id=confirmation.confirmation_id,
+            )
+        return self._execute_confirmed_local_command(
+            confirmation=confirmation,
+            snapshot=snapshot,
+            chat_id=chat_id,
+            local_request=local_request,
+        )
+
+    def _execute_confirmed_test_command(
+        self,
+        *,
+        request: CapabilityExecutionRequest,
+        confirmation: PendingConfirmation,
+        snapshot: ControllerSnapshot,
+        chat_id: str,
+    ) -> CapabilityExecutionResult:
+        repo_root, _, _, _ = self._service._repo_configuration_state()
+        try:
+            local_request = self._service._execution_runner.build_test_request(
+                capability_id="test.command.run",
+                repo_root=repo_root,
+                target=confirmation.prompt_text,
+                expected_scope=self._service._repo_display_name(repo_root),
+            )
+        except ExecutionRunnerError as exc:
+            return self._local_command_error_result(
+                request=request,
+                error=exc,
+                command_summary=str(confirmation.metadata.get("execution_command_summary") or "").strip(),
+                command_label="/confirm",
+                confirmation_id=confirmation.confirmation_id,
+            )
+        return self._execute_confirmed_local_command(
+            confirmation=confirmation,
+            snapshot=snapshot,
+            chat_id=chat_id,
+            local_request=local_request,
+        )
+
+    def _execute_confirmed_local_command(
+        self,
+        *,
+        confirmation: PendingConfirmation,
+        snapshot: ControllerSnapshot,
+        chat_id: str,
+        local_request: LocalCommandExecutionRequest,
+    ) -> CapabilityExecutionResult:
+        evaluation, context = self._service._evaluate_capability_id(
+            confirmation.capability_id,
+            snapshot,
+            remember=True,
+            confirmation_granted=True,
+        )
+        scope = ExecutionScope(
+            scope_type="repository",
+            access_mode="execute",
+            repo_root=local_request.working_directory,
+            target_path=local_request.working_directory,
+        )
+        request = self._build_request(
+            capability_id=evaluation.capability_id,
+            snapshot=snapshot,
+            chat_id=chat_id,
+            requester_label=confirmation.requester_label,
+            original_command="/confirm",
+            parsed_arguments={
+                "confirmation_id": confirmation.confirmation_id,
+                "command": local_request.command_summary,
+            },
+            context=context,
+            confirmation_context=confirmation.evaluation_context,
+            metadata=self._confirmation_command_metadata(
+                command_label="/confirm",
+                confirmation_id=confirmation.confirmation_id,
+                confirmation=confirmation,
+            ),
+            scope_override=scope,
+        )
+        if evaluation.current_availability_state != "allowed":
+            return self._blocked_confirmation_from_evaluation(
+                request=request,
+                confirmation_id=confirmation.confirmation_id,
+                evaluation=evaluation,
+            )
+        scope_failure = self._scope_failure_result(request, command_label="/confirm", confirmation_used=True)
+        if scope_failure is not None:
+            return scope_failure
+        try:
+            command_result = self._service._execution_runner.execute(local_request)
+        except ExecutionRunnerError as exc:
+            return self._local_command_error_result(
+                request=request,
+                error=exc,
+                command_summary=local_request.command_summary,
+                command_label="/confirm",
+                confirmation_id=confirmation.confirmation_id,
+            )
+        return self._local_command_result(
+            request=request,
+            confirmation=confirmation,
+            command_result=command_result,
+        )
+
+    def _file_mutation_success_result(
+        self,
+        *,
+        request: CapabilityExecutionRequest,
+        confirmation: PendingConfirmation,
+        mutation,
+    ) -> CapabilityExecutionResult:
+        self._service._last_confirmation_result = f"Confirmation {confirmation.confirmation_id} approved and completed via file mutation."
+        lines = [
+            f"Confirmation {confirmation.confirmation_id} approved.",
+            f"File: {mutation.display_path}",
+            f"Operation: {mutation.operation_kind}",
+            f"Changed lines: {mutation.changed_lines}",
+            f"Changes: {mutation.change_count}",
+            f"Base: {mutation.base_hash_before[:12]} -> {mutation.base_hash_after[:12]}",
+        ]
+        if mutation.operator_reason:
+            lines.append(f"Reason: {mutation.operator_reason}")
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message="\n".join(lines),
+            internal_summary=self._service._last_confirmation_result,
+            retryable=False,
+            command_label="/confirm",
+            activity_state="processing_command",
+            confirmation_used=True,
+            telemetry={
+                "display_path": mutation.display_path,
+                "file_name": mutation.file_name,
+                "file_status": mutation.status_label,
+                "file_size_bytes": mutation.size_bytes_after,
+                "file_size_label": mutation.size_label_after,
+                "file_size_category": "mutated",
+                "file_read_at": mutation.applied_at,
+                "file_summary": mutation.audit_summary,
+                "mutation_operation": mutation.operation_kind,
+                "mutation_changed_lines": mutation.changed_lines,
+                "mutation_change_count": mutation.change_count,
+                "mutation_base_before": mutation.base_hash_before,
+                "mutation_base_after": mutation.base_hash_after,
+            },
+        )
+
+    @staticmethod
+    def _confirmation_command_metadata(
+        *,
+        command_label: str,
+        confirmation_id: str,
+        confirmation: PendingConfirmation | None,
+    ) -> dict[str, object]:
+        argument_summary = f"{command_label} {confirmation_id}" if confirmation_id else f"{command_label} <missing>"
+        if confirmation is not None:
+            mutation_summary = confirmation.metadata.get("mutation_action_summary", "").strip()
+            execution_summary = confirmation.metadata.get("execution_action_summary", "").strip()
+            if mutation_summary:
+                argument_summary = f"{argument_summary} | {mutation_summary}"
+            elif execution_summary:
+                argument_summary = f"{argument_summary} | {execution_summary}"
+        return {"argument_summary": argument_summary}
 
     def _execute_confirmed_provider_query(
         self,
@@ -2315,6 +3357,7 @@ class CapabilityExecutor:
     ) -> CapabilityExecutionResult:
         action_label = str(request.metadata.get("confirmation_action_label") or f"{request.original_command} (prompt hidden)")
         confirmation_metadata: dict[str, str] = {}
+        extra_confirmation_metadata = request.metadata.get("confirmation_metadata")
         selected_contexts = context_entries or ((context_entry,) if context_entry is not None else ())
         if len(selected_contexts) == 1:
             context_entry = selected_contexts[0]
@@ -2327,6 +3370,14 @@ class CapabilityExecutor:
                 "context_ids": ",".join(context.context_id for context in selected_contexts),
                 "context_source_summary": " | ".join(context.source_summary for context in selected_contexts),
             }
+        if isinstance(extra_confirmation_metadata, dict):
+            confirmation_metadata.update(
+                {
+                    str(key): str(value)
+                    for key, value in extra_confirmation_metadata.items()
+                    if str(key).strip() and str(value).strip()
+                }
+            )
         confirmation = self._service._confirmation_store.create(
             capability_id=evaluation.capability_id,
             original_command=request.original_command,
@@ -2350,6 +3401,8 @@ class CapabilityExecutor:
             last_command=request.original_command,
             last_ask_status=ask_status,
         )
+        preview_lines = request.metadata.get("confirmation_preview_lines")
+        preview_tuple = tuple(str(item) for item in preview_lines) if isinstance(preview_lines, (list, tuple)) else ()
         return self._result(
             request,
             outcome="confirmation_required",
@@ -2360,6 +3413,7 @@ class CapabilityExecutor:
                     f"Action: {action_label}",
                     f"Capability: {evaluation.capability_id}",
                     f"Reason: {self._service._confirmation_reason_message(evaluation.reason_code)}",
+                    *preview_tuple,
                     f"ID: {confirmation.confirmation_id} (expires in about {expires_in}s)",
                     f"Reply with: /confirm {confirmation.confirmation_id} or /deny {confirmation.confirmation_id}",
                 )

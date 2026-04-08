@@ -92,6 +92,8 @@ class CapabilityLayerTests(unittest.TestCase):
         self.assertIn("models.read", CAPABILITY_REGISTRY)
         self.assertIn("ask.provider_query", CAPABILITY_REGISTRY)
         self.assertIn("web.fetch.read", CAPABILITY_REGISTRY)
+        self.assertIn("shell.command.run", CAPABILITY_REGISTRY)
+        self.assertIn("test.command.run", CAPABILITY_REGISTRY)
         self.assertIn("audit.read", CAPABILITY_REGISTRY)
         self.assertIn("capabilities.read", CAPABILITY_REGISTRY)
         for definition in CAPABILITY_DEFINITIONS:
@@ -105,6 +107,25 @@ class CapabilityLayerTests(unittest.TestCase):
         self.assertEqual(CAPABILITY_REGISTRY["status.read"].scope_type, "internal")
         self.assertEqual(CAPABILITY_REGISTRY["ask.provider_query"].scope_type, "network")
         self.assertEqual(CAPABILITY_REGISTRY["web.fetch.read"].scope_type, "network")
+        self.assertEqual(CAPABILITY_REGISTRY["shell.command.run"].scope_type, "repository")
+        self.assertEqual(CAPABILITY_REGISTRY["test.command.run"].access_mode, "execute")
+
+    def test_run_and_test_require_confirmation_when_repo_scope_is_valid(self) -> None:
+        context = CapabilityContext(
+            **{
+                **self._context().__dict__,
+                "repo_root": "C:/repo",
+                "repo_root_valid": True,
+                "repo_message": "Repository root is configured.",
+            }
+        )
+        run_eval = self.evaluator.evaluate("shell.command.run", context)
+        test_eval = self.evaluator.evaluate("test.command.run", context)
+
+        self.assertEqual(run_eval.current_availability_state, "confirmation_required")
+        self.assertEqual(run_eval.reason_code, "operator_confirmation_required")
+        self.assertEqual(test_eval.current_availability_state, "confirmation_required")
+        self.assertEqual(test_eval.reason_code, "operator_confirmation_required")
 
     def test_invalid_manifest_combinations_are_reported_clearly(self) -> None:
         invalid = CapabilityManifest(
