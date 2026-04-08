@@ -37,7 +37,7 @@ from ..runtime.manager import OpenClawRuntimeManager
 from ..runtime.log_sanitizer import sanitize_log_text
 
 
-_OPERATOR_CONSOLE_LABEL = "Windows OpenClaw Operator Console v2.3"
+_OPERATOR_CONSOLE_LABEL = "Windows OpenClaw Operator Console v2.5"
 _ASK_CONCISE_LIMIT = 700
 _ASK_DETAILED_LIMIT = 1500
 _PROVIDER_ASK_COMMANDS = frozenset({"/ask", "/askd", "/asklast", "/askctx"})
@@ -290,6 +290,8 @@ class ControllerService:
             selected_provider_status=selected_provider_status,
             telegram_status=telegram_status,
         )
+        current_context = self._context_store.current_any()
+        current_context_freshness = self._describe_current_context_freshness(current_context)
         return ControllerSnapshot(
             runtime_state=status.runtime_state,
             status_message=self._last_message or status.status_message,
@@ -325,6 +327,7 @@ class ControllerService:
             configured_web_domains=self._web_domains_summary(self._config.web_allowed_domains),
             buffered_context_count=self._context_store.total_count(),
             last_context_source=self._last_context_source,
+            current_context_freshness=current_context_freshness,
             last_context_action=self._last_context_action,
             last_repo_branch=self._last_repo_branch,
             last_repo_status=self._last_repo_state,
@@ -813,6 +816,16 @@ class ControllerService:
             labels.append(f"+{len(domains) - 3} more")
         return ", ".join(labels)
 
+    def _describe_current_context_freshness(self, current_context: BufferedContext | None) -> str:
+        if current_context is None:
+            return "none"
+        freshness = self._context_store.freshness_of(current_context)
+        if freshness == "stale":
+            return "stale"
+        if freshness == "expired":
+            return "expired"
+        return "active"
+
     def inspect_repo_status(self) -> RepoInspectionSnapshot:
         repo_root, repo_root_valid, repo_message, repo_code = self._repo_configuration_state()
         if not repo_root_valid:
@@ -918,6 +931,10 @@ class ControllerService:
             "Preview:",
             preview.preview_text,
         ]
+        if preview.display_url.startswith("http://"):
+            lines.append("Note: HTTP preview allowed for this request; prefer HTTPS when available.")
+        if preview.redirected:
+            lines.append("Note: Followed an allowed redirect that stayed within the configured web scope.")
         if preview.oversized:
             lines.append("Note: Large web preview truncated for safety.")
         elif preview.truncated:
@@ -945,6 +962,8 @@ class ControllerService:
         normalized = self._summarize_text(normalized_content, limit=2400)
         preview = self._summarize_text(content_preview or normalized, limit=240)
         summary = self._summarize_text(source_summary, limit=96)
+        truncated = size_class in {"truncated", "large"}
+        trust_summary = self._format_manifest_trust_summary(self._capability_manifest(source_capability_id))
         return self._context_store.create(
             source_capability_id=source_capability_id,
             source_command=source_command,
@@ -954,6 +973,8 @@ class ControllerService:
             content_preview=preview,
             normalized_content=normalized,
             size_class=size_class,  # type: ignore[arg-type]
+            truncated=truncated,
+            trust_summary=trust_summary,
             user_id=user_id,
             chat_id=chat_id,
             originating_request_id=request_id,

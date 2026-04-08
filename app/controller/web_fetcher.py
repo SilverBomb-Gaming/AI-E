@@ -13,7 +13,8 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 
 _SUPPORTED_SCHEMES = frozenset({"https", "http"})
-_USER_AGENT = "WindowsOpenClawOperatorConsole/2.2"
+_SUPPORTED_TEXT_CONTENT_TYPES = frozenset({"text/plain", "text/html", "text/markdown"})
+_USER_AGENT = "WindowsOpenClawOperatorConsole/2.5"
 
 
 @dataclass(frozen=True)
@@ -46,8 +47,10 @@ class WebFetchSnapshot:
 
     @property
     def audit_summary(self) -> str:
-        suffix = " | truncated" if self.truncated else ""
-        return f"{self.domain} | {self.content_type} | {self.size_label}{suffix}"
+        parts = [self.domain, self.content_type, self.size_category, self.display_url]
+        if self.redirected:
+            parts.append("redirected")
+        return " | ".join(parts)
 
 
 class WebFetchError(RuntimeError):
@@ -238,7 +241,7 @@ class WebFetcher:
 
     @staticmethod
     def _is_supported_content_type(content_type: str) -> bool:
-        return content_type == "application/json" or content_type.startswith("text/")
+        return content_type == "application/json" or content_type in _SUPPORTED_TEXT_CONTENT_TYPES
 
     @staticmethod
     def normalize_target_url(target_url: str) -> str:

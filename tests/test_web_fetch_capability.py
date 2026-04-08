@@ -187,6 +187,25 @@ class WebFetchCapabilityTests(unittest.TestCase):
                 "Can't run /web right now.\nReason: Always Offline policy is active.\nNext: Switch out of Always Offline before retrying the web fetch.",
             )
 
+    def test_web_command_rejects_malformed_url_clearly(self) -> None:
+        update = TelegramInboundMessage(update_id=6031, chat_id="chat-1", text="/web docs.openclaw.ai/guide", sender_label="@tester")
+        with tempfile.TemporaryDirectory() as tmp:
+            telegram_service = _FakeTelegramService(update_batches=[(update,)])
+            service, config_store, _, _, fetcher = self._make_service(tmp_dir=tmp, telegram_service=telegram_service)
+            config = config_store.load()
+            config.web_allowed_domains = ("docs.openclaw.ai",)
+            config_store.save(config)
+            service._config = config_store.load()
+            _, reply = self._run_single_update(service, telegram_service)
+
+            self.assertEqual(fetcher.calls, 0)
+            self.assertEqual(service._last_execution_result.outcome, "invalid_request")
+            self.assertEqual(service._last_execution_result.outcome_reason_code, "unsupported_url_scheme")
+            self.assertEqual(
+                reply,
+                "Couldn't parse that web command.\nReason: Use an https:// or http:// URL from the allowed web scope.\nNext: Use /web <https://allowed-domain/path>.",
+            )
+
     def test_web_command_requires_confirmation_then_executes_once(self) -> None:
         first_update = TelegramInboundMessage(update_id=604, chat_id="chat-1", text="/web https://docs.openclaw.ai/guide", sender_label="@tester")
         with tempfile.TemporaryDirectory() as tmp:
@@ -228,6 +247,40 @@ class WebFetchCapabilityTests(unittest.TestCase):
             self.assertEqual(
                 reply,
                 "Web request timed out.\nReason: Web request timed out.\nNext: Try /web again in a moment.",
+            )
+
+    def test_web_confirmation_does_not_override_scope_restrictions(self) -> None:
+        first_update = TelegramInboundMessage(update_id=607, chat_id="chat-1", text="/web https://docs.openclaw.ai/guide", sender_label="@tester")
+        with tempfile.TemporaryDirectory() as tmp:
+            create_service = _FakeTelegramService(update_batches=[(first_update,)])
+            service, config_store, _, _, fetcher = self._make_service(tmp_dir=tmp, telegram_service=create_service)
+            config = config_store.load()
+            config.policy = "ask_before_online"
+            config.current_mode = "offline"
+            config.selected_mode = "offline"
+            config.web_allowed_domains = ("docs.openclaw.ai",)
+            config_store.save(config)
+            service._config = config_store.load()
+            _, prompt_reply = self._run_single_update(service, create_service)
+            confirmation_id = self._extract_confirmation_id(prompt_reply)
+
+            config = config_store.load()
+            config.web_allowed_domains = ("platform.openai.com",)
+            config_store.save(config)
+            service._config = config_store.load()
+
+            confirm_service = _FakeTelegramService(
+                update_batches=[(TelegramInboundMessage(update_id=608, chat_id="chat-1", text=f"/confirm {confirmation_id}", sender_label="@tester"),)]
+            )
+            service._telegram_service = confirm_service
+            _, confirm_reply = self._run_single_update(service, confirm_service)
+
+            self.assertEqual(fetcher.calls, 0)
+            self.assertEqual(service._last_execution_result.outcome, "out_of_scope")
+            self.assertEqual(service._last_execution_result.outcome_reason_code, "target_domain_not_allowed")
+            self.assertEqual(
+                confirm_reply,
+                "Action is out of scope.\nReason: URL is not allowed by current web scope.\nNext: Use an allowed scope for this capability or adjust the operator-console configuration.",
             )
 
 

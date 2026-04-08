@@ -6,7 +6,7 @@ Controlled execution surface for supported projects. AI-E turns a bounded reques
 
 The current active operator-console surface in this repo is the Windows-first OpenClaw controller shell. The known-good checkpoint is:
 
-- Current baseline: `Windows OpenClaw Operator Console v2.3 - Context Bridging Layer`
+- Current baseline: `Windows OpenClaw Operator Console v2.5 - Bounded Web Fetch Capability`
 - Health: `Healthy`
 - Security: `Safe`
 - Readiness: `Ready`
@@ -18,62 +18,50 @@ What is now working:
 - offline/online mode selection with policy guardrails preserved
 - trusted health and security diagnostics, including ownership-aware port conflict checks and multi-signal runtime liveness
 - secure Telegram bot validation, connection testing, and polling-loop start/stop controls
-- duplicate-safe Telegram interaction loop with `/start`, `/help`, `/status`, `/mode`, `/models`, `/repo`, `/file <path>`, `/web <url>`, `/contexts`, `/clearcontext`, `/capabilities`, `/audit`, `/ask <prompt>`, `/askd <prompt>`, `/asklast <prompt>`, and `/askctx <id> <prompt>`
+- duplicate-safe Telegram interaction loop with `/start`, `/help`, `/status`, `/mode`, `/models`, `/repo`, `/file <path>`, `/web <url>`, `/contexts`, `/clearcontext`, `/capabilities`, `/ask <prompt>`, `/askd <prompt>`, `/asklast <prompt>`, and `/askctx <id> <prompt>`
 - deterministic Telegram command parsing with whitespace-tolerant handling, consistent casing behavior, and short correction replies for malformed commands
 - per-chat provider-ask control with explicit in-flight rejection, bounded provider timeouts, and a narrow provider-ask cooldown to prevent accidental spam
 - centralized capability registry and evaluator that gate command execution through explicit `allowed`, `blocked`, `degraded`, `confirmation_required`, or `unavailable` states
 - one-shot confirmation handling for online-sensitive asks under `Ask Before Online`, including short-lived pending approvals plus Telegram `/confirm <id>` and `/deny <id>` controls
-- structured execution requests and results that drive Telegram command replies, recent operator summaries, desktop result visibility, and bounded audit records with consistent success, blocked, degraded, timed-out, confirmation-aware, invalid-request, and out-of-scope outcomes
-- manifest-backed capability definitions with explicit trust-boundary classification, Telegram exposure rules, startup validation, trust-aware `/capabilities` output, and compact desktop trust summaries
-- manifest-driven scope validation and bounded in-memory audit recording for every capability attempt, including `/audit` summaries and recent scope/audit visibility in the desktop shell
-- the first three scoped external read-only capabilities:
-  - `repo.status.read` for one configured repository root
-  - `file.read` for bounded text previews inside configured allowed roots
-  - `web.fetch.read` for bounded GET-only previews from allowlisted domains without browser automation
-- explicit context bridging for successful `/repo`, `/file`, and `/web` results through bounded per-chat context buffers that can be inspected with `/contexts`, reused with `/asklast` or `/askctx`, and cleared with `/clearcontext`
+- structured execution requests and results that drive Telegram command replies, recent operator summaries, and desktop result visibility with consistent success, blocked, degraded, timed-out, and confirmation-aware outcomes
+- manifest-backed capability definitions with explicit trust-boundary classification, Telegram exposure rules, startup validation, trust-aware `/capabilities` output, and compact desktop trust summaries for the most recent capability and execution result
+- explicit repository, file, and web read-only capability surfaces that preserve scope enforcement, trust labels, and auditability across `/repo`, `/file`, and `/web`
+- bounded explicit context reuse with Option A semantics: visible recent contexts, stale contexts allowed with warning, expired contexts visible but blocked from reuse, and no hidden carryover across chats or restarts
+
+What `web.fetch.read` means in this project:
+
+- `/web <url>` is a bounded public-web preview capability, not a browser or scraper
+- only configured allowlisted domains are reachable, using normalized hostname matching with explicit wildcard-subdomain support such as `*.ollama.com`
+- supported preview types are intentionally narrow: `text/plain`, `text/html`, `text/markdown`, and `application/json`
+- fetch execution is bounded by a fixed timeout, max response size, and max returned preview length
+- HTML is converted to readable text, JSON is compacted into a small summary, and unsupported or binary content is rejected cleanly
+- redirects are allowed only when the redirected target remains inside the configured allowlist; redirect escape attempts are blocked and audited
+- no POST, PUT, PATCH, or DELETE support exists; no browser automation, cookies, login/session handling, crawling, downloads, or script execution are performed
+- `always_offline` still blocks remote web fetches, `ask_before_online` still requires one-shot confirmation when applicable, and confirmation never overrides out-of-scope domains
+- successful `/web` replies can enter the explicit context buffer as `web_preview` entries, where truncation and source type remain visible through `/contexts`
+- each `web.fetch.read` execution is audited with bounded sanitized metadata only; full page bodies and query-string secrets are not recorded
 
 What a capability manifest means in this project:
 
-- a capability manifest is the source of truth for one named action's identity, execution type, provider dependency, runtime/readiness needs, trust boundary, exposure rules, scope expectations, timeout support, confirmation sensitivity, and user visibility
-- registry loading validates capability ids, required fields, basic trust-boundary consistency, and scope-shape consistency before the controller uses those capabilities
-- evaluator, executor, `/capabilities`, scope validation, audit recording, and recent desktop summaries now read control assumptions from the manifest instead of duplicating them in scattered command branches
-
-What scope and sandboxing mean here:
-
-- every execution request carries a structured scope with `scope_type`, `access_mode`, and optional bounded targets such as allowed paths, repository root, or domain allowlist
-- current user-facing capabilities stay narrow: most operator reads are `internal/read`, `repo.status.read` is `repository/read` and bounded to the configured `repo_root`, `file.read` is `filesystem/read` and bounded to configured `file_allowed_roots`, `web.fetch.read` is `network/read` and bounded to configured `web_allowed_domains`, and `ask.provider_query` is `network/execute` and restricted to the expected provider targets rather than arbitrary hosts
-- scope validation runs after capability evaluation and confirmation checks but before actual execution, so out-of-scope requests are rejected before provider, filesystem, git, or network work starts
-- confirmation does not override scope restrictions, and request-provided scope data cannot widen a manifest allowlist
-
-What context bridging means here:
-
-- context reuse is explicit and temporary, not hidden memory
-- successful `/repo`, `/file`, and `/web` results create bounded per-chat context entries with short ids such as `C1`
-- `/contexts` lists recent context entries, `/asklast <prompt>` uses the newest entry, `/askctx <id> <prompt>` uses a specific entry, and `/clearcontext` clears the current chat buffer
-- plain `/ask` and `/askd` remain prompt-only and do not silently inject stored context
-- context buffers are in-memory only, bounded in size, scoped per chat, aggressively trimmed for safe prompt construction, auditable on create/use/clear, and easy to discard
-
-How audit logging works:
-
-- every structured execution attempt creates one bounded audit record, including success, blocked, confirmation-required, denied, expired, timed-out, failed, unavailable, degraded, invalid-request, and out-of-scope outcomes
-- audit records are kept in a bounded in-memory append-only log and surfaced through `/audit` plus compact desktop summaries
-- each record includes capability id, outcome, reason code, confirmation usage, scope summary, provider usage if any, duration, and a short action summary
-- context operations are also audited, including context creation, context-backed ask usage, invalid context references, and buffer clearing
-- audit records intentionally do not store secrets, raw provider payloads, full prompts, full file contents, or full fetched page bodies
+- a capability manifest is now the source of truth for one named action's identity, execution type, provider dependency, runtime/readiness needs, trust boundary, exposure rules, timeout support, confirmation sensitivity, and user visibility
+- registry loading validates capability ids, required fields, and basic trust-boundary consistency before the controller uses those capabilities
+- evaluator, executor, `/capabilities`, and recent desktop summaries now read trust assumptions from the manifest instead of duplicating them in scattered command branches
+- manifests currently classify each capability by `access_kind`, `locality`, `data_scope`, `offline_safety`, `confirmation_sensitivity`, and `telegram_exposure`
 
 Execution and trust model:
 
-- every Telegram capability execution creates one structured request and one structured result with outcome, reason code, user-facing message, sanitized internal summary, duration, provider/mode usage, confirmation usage state, and scope summary
-- execution results also carry manifest trust metadata so Telegram summaries and the desktop shell can show concise trust labels like `read-only`, `local`, `networked`, or `online-sensitive`
-- Telegram exposure is explicit: capabilities marked `denied` cannot run from Telegram, and `limited` capabilities degrade into a Telegram-safe restricted path instead of executing as a full action
-- no capability can silently bypass `always_offline`, invalid provider state, runtime failure, readiness failure, confirmation rules, scope restrictions, or per-chat context boundaries
+- every Telegram capability execution still creates one structured request and one structured result with outcome, reason code, user-facing message, sanitized internal summary, duration, provider/mode usage, and confirmation usage state
+- execution results now also carry manifest trust metadata so Telegram summaries and the desktop shell can show concise trust labels like `read-only`, `local`, or `online-sensitive`
+- Telegram exposure is now explicit: capabilities marked `denied` cannot run from Telegram, and `limited` capabilities degrade into a restricted Telegram-safe path instead of executing as a full action
+- no capability can silently bypass `always_offline`, invalid provider state, runtime failure, readiness failure, or confirmation rules
+- web capability audit and reply surfaces remain bounded: concise previews only, no giant JSON dumps, no full-page HTML dumps, and no body leakage into audit summaries
 
 Confirmation flow:
 
-- online-sensitive `/ask`, `/askd`, `/asklast`, `/askctx`, and `/web` requests under `ask_before_online` return a confirmation prompt with a short id instead of silently escalating
+- online-sensitive `/ask` requests under `ask_before_online` return a confirmation prompt with a short id instead of silently escalating
 - approve that one request with `/confirm <id>` or reject it with `/deny <id>` from the same Telegram chat
 - pending confirmations expire automatically after a short lifetime and can be used only once
-- confirmation does not override `always_offline`, runtime failures, readiness failures, invalid provider state, or scope restrictions
+- confirmation does not override `always_offline`, runtime failures, readiness failures, or invalid provider state
 
 Milestone notes:
 
@@ -91,37 +79,32 @@ Milestone notes:
 - v2.1: `docs/milestones/windows_openclaw_operator_console_v2_1_read_only_file_access_capability.md`
 - v2.2: `docs/milestones/windows_openclaw_operator_console_v2_2_bounded_web_fetch_capability.md`
 - v2.3: `docs/milestones/windows_openclaw_operator_console_v2_3_context_bridging_layer.md`
+- v2.5: `docs/milestones/windows_openclaw_operator_console_v2_5_bounded_web_fetch_capability.md`
 
 Important guardrails and usage notes:
 
 - Offline Mode remains first-class and no silent provider or mode fallback is allowed.
-- `/ask` and `/askd` remain explicit prompt-only commands; generic plain text is not auto-routed into provider-backed queries.
-- `/asklast` and `/askctx` are also explicit; they may reuse only the bounded context entries created in the same Telegram chat and never inject hidden carryover into plain `/ask`.
-- capability manifests define Telegram exposure, trust boundaries, and scope expectations; registration, evaluation, confirmation, and execution do not guess these rules dynamically.
-- `/confirm <id>` approves exactly one pending action; `/deny <id>` rejects it; expired or already-used confirmations cannot be replayed.
-- `/audit` is bounded and recent-only; it summarizes capability attempts without exposing secrets, full prompt contents, or full context payloads.
-- `/repo` is read-only only; it is scoped to the configured repository root, uses fixed git status/log/branch inspection only, and does not allow mutation or arbitrary shell passthrough.
-- `/file <path>` is read-only only; it accepts relative paths inside configured allowed roots, blocks traversal and absolute paths, shows only bounded text previews, rejects unsupported/binary file types, and never performs write/delete/execute operations.
-- `/web <url>` is read-only only; it accepts only allowlisted `http`/`https` domains, uses fixed GET requests with bounded timeout/response size/content-type checks, strips query strings from summaries, blocks out-of-scope redirects, and never runs browser automation, sessions, or data-posting flows.
-- context buffers are in-memory only, bounded, per-chat, auditable, and easy to clear; they do not survive restarts and do not bypass the original repo/file/web scope checks that produced them.
-- the controller stays local-first with loopback bind defaults and secret redaction in logs, summaries, Telegram activity, context previews, and audit records.
-- still intentionally not implemented: automation, scheduling, scraping workflows, browser automation, repo mutation, file mutation, persistent memory, cross-chat shared context, multi-channel expansion, or AI-E orchestration behavior.
+- `/ask` and `/askd` remain explicit; generic plain text is not auto-routed into provider-backed queries.
+- capability manifests define Telegram exposure and trust boundaries; registration, evaluation, and execution do not guess these rules dynamically
+- `/confirm <id>` approves exactly one pending action; `/deny <id>` rejects it; expired or already-used confirmations cannot be replayed
+- `/capabilities` is introspection only; it reports current trust-aware capability state and does not grant new powers
+- the controller stays local-first with loopback bind defaults and secret redaction in logs, summaries, and Telegram activity surfaces
+- still intentionally not implemented: automation, scheduling, scraping, RAG, repo mutation, multi-channel expansion, or AI-E orchestration behavior
 
-Current next milestone:
+Current active checkpoint:
 
-- `Next milestone after v2.3 is not started yet`
-- v2.3 now provides the explicit context-reuse layer needed for future scoped analysis helpers without widening the trust model into hidden memory or autonomous chaining
+- `Windows OpenClaw Operator Console v2.5 - Bounded Web Fetch Capability`
+- goal: complete the bounded read-only information triangle across repo, file, and web without broadening into scraping or browser automation
 
 Fast operator path:
 
 1. Launch the desktop shell with `python -m app.main`.
 2. Start the runtime and run Health/Security checks.
 3. Validate Telegram, start the Telegram loop, and message the configured bot.
-4. Use `/help`, `/status`, `/mode`, `/models`, `/repo`, `/file app/controller/app_service.py`, `/web https://docs.openclaw.ai/`, `/contexts`, `/capabilities`, `/audit`, `/ask hello`, `/asklast summarize this`, or `/askctx C1 explain this file` from Telegram.
-5. If `/ask`, `/askd`, `/asklast`, `/askctx`, or `/web` returns a confirmation prompt, reply with `/confirm <id>` to approve that one request or `/deny <id>` to reject it.
-6. Use `/clearcontext` whenever you want the current chat buffer reset to zero retained context entries.
-7. If `/capabilities` shows `blocked`, `degraded`, or `unavailable` state, or `/audit` shows repeated `out_of_scope` or invalid-context results, resolve the noted readiness, provider, scope, or context issue before retrying.
-8. Run `python -m unittest discover -s tests -v` and `python diagnostics_smoke.py` for the current controller verification pass.
+4. Use `/help`, `/status`, `/mode`, `/repo`, `/file <path>`, `/web <url>`, `/contexts`, `/capabilities`, `/ask hello`, or `/askd hello` from Telegram.
+5. If `/ask` or `/web` returns a confirmation prompt, reply with `/confirm <id>` to approve that one request or `/deny <id>` to reject it.
+6. If `/capabilities` shows `blocked`, `degraded`, or `unavailable` state for provider, repo, file, or web actions, resolve the noted readiness, scope, or provider issue before retrying.
+7. Run `python -m unittest discover -s tests -v` and `python diagnostics_smoke.py` for the current controller verification pass.
 
 ## AI-E v1 Product Surface Status
 
@@ -557,14 +540,6 @@ Use **Help > Demo Checklist...** inside the app to run the current quick walkthr
 6. **F.** Use `Modify and test again` or `Try a variation` to show the next quick iteration.
 
 The dialog resets each time you open it, so the same checklist can be reused before the next demo or local-user handoff.
-
-
-
-
-
-
-
-
 
 
 

@@ -64,6 +64,44 @@ class WebFetcherTests(unittest.TestCase):
         self.assertIn("JSON keys: title, count", snapshot.preview_text)
         self.assertIn('"title": "AI-E"', snapshot.preview_text)
 
+    def test_markdown_preview_is_allowed(self) -> None:
+        transport = _FakeTransport(
+            response=WebFetchResponse(
+                final_url="https://docs.openclaw.ai/notes",
+                status_code=200,
+                content_type="text/markdown; charset=utf-8",
+                body=b"# Heading\n\n- item one\n- item two\n",
+            )
+        )
+        fetcher = WebFetcher(transport=transport)
+
+        snapshot = fetcher.fetch_text_preview(
+            "https://docs.openclaw.ai/notes",
+            allowed_domains=("docs.openclaw.ai",),
+        )
+
+        self.assertEqual(snapshot.content_type, "text/markdown")
+        self.assertIn("Heading", snapshot.preview_text)
+
+    def test_unsupported_text_content_type_is_rejected(self) -> None:
+        transport = _FakeTransport(
+            response=WebFetchResponse(
+                final_url="https://docs.openclaw.ai/export",
+                status_code=200,
+                content_type="text/csv",
+                body=b"a,b\n1,2\n",
+            )
+        )
+        fetcher = WebFetcher(transport=transport)
+
+        with self.assertRaises(WebFetchError) as context:
+            fetcher.fetch_text_preview(
+                "https://docs.openclaw.ai/export",
+                allowed_domains=("docs.openclaw.ai",),
+            )
+
+        self.assertEqual(context.exception.code, "unsupported_content_type")
+
     def test_invalid_scheme_is_rejected(self) -> None:
         fetcher = WebFetcher(transport=_FakeTransport())
         with self.assertRaises(WebFetchError) as context:
@@ -102,6 +140,25 @@ class WebFetcherTests(unittest.TestCase):
         self.assertTrue(snapshot.truncated)
         self.assertTrue(snapshot.oversized)
         self.assertEqual(snapshot.size_category, "large")
+
+    def test_audit_summary_uses_sanitized_url_and_size_category(self) -> None:
+        transport = _FakeTransport(
+            response=WebFetchResponse(
+                final_url="https://docs.openclaw.ai/guide?token=secret",
+                status_code=200,
+                content_type="text/html; charset=utf-8",
+                body=b"<html><body><p>Hello world.</p></body></html>",
+            )
+        )
+        fetcher = WebFetcher(transport=transport)
+
+        snapshot = fetcher.fetch_text_preview(
+            "https://docs.openclaw.ai/guide?token=secret",
+            allowed_domains=("docs.openclaw.ai",),
+        )
+
+        self.assertIn("docs.openclaw.ai | text/html | small | https://docs.openclaw.ai/guide", snapshot.audit_summary)
+        self.assertNotIn("token=secret", snapshot.audit_summary)
 
 
 if __name__ == "__main__":

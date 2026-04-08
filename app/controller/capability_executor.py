@@ -633,26 +633,16 @@ class CapabilityExecutor:
             scope_override=scope,
         )
         if resolve_code == "missing_url":
-            return self._result(
-                request,
-                outcome="invalid_request",
-                reason_code="missing_url",
-                user_message="Couldn't parse that web command.\nNext: Use /web <https://allowed-domain/path>.",
-                internal_summary="/web rejected because no URL was provided.",
-                retryable=False,
-                command_label="/web",
-                activity_state="processing_command",
+            return self._web_error_result(
+                request=request,
+                error=WebFetchError("missing_url", "Use /web <https://allowed-domain/path>."),
+                display_url=display_url,
             )
         if resolve_code in {"malformed_url", "unsupported_url_scheme"}:
-            return self._result(
-                request,
-                outcome="invalid_request",
-                reason_code=resolve_code,
-                user_message="Couldn't parse that web command.\nNext: Use /web <https://allowed-domain/path>.",
-                internal_summary=f"/web rejected because the URL was invalid ({resolve_code}).",
-                retryable=False,
-                command_label="/web",
-                activity_state="processing_command",
+            return self._web_error_result(
+                request=request,
+                error=WebFetchError(resolve_code, resolve_message),
+                display_url=display_url,
             )
         if resolve_code == "web_target_ready":
             scope_failure = self._scope_failure_result(request, command_label="/web")
@@ -1071,8 +1061,8 @@ class CapabilityExecutor:
     ) -> CapabilityExecutionResult:
         next_step_map = {
             "missing_url": "Use /web <https://allowed-domain/path>.",
-            "malformed_url": "Use a full https:// or http:// URL from the allowed domain list.",
-            "unsupported_url_scheme": "Use an https:// or http:// URL from the allowed web scope.",
+            "malformed_url": "Use /web <https://allowed-domain/path>.",
+            "unsupported_url_scheme": "Use /web <https://allowed-domain/path>.",
             "web_scope_missing": "Configure at least one allowed web domain in the controller config.",
             "target_domain_not_allowed": "Use a URL from the configured allowlisted domains only.",
             "redirect_target_not_allowed": "Use a URL that stays within the configured allowlisted domains.",
