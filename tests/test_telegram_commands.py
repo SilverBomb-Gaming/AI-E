@@ -345,21 +345,23 @@ class TelegramCommandTests(unittest.TestCase):
             lines = reply.splitlines()
             self.assertLessEqual(len(reply), 500)
             self.assertEqual(lines[0], "Operator commands")
+            self.assertIn("/translate", lines[1])
             self.assertIn("/run|/test", lines[1])
             self.assertIn("/lastaction", lines[1])
             self.assertIn("/contexts - ctx", lines)
             self.assertIn("/clearcontext - clear", lines)
             self.assertIn("/capabilities - trust", lines)
             self.assertIn("/audit - audit", lines)
+            self.assertIn("/translate <idea> - spec", lines)
             self.assertIn("/ask <prompt> - ask", lines)
-            self.assertIn("/askd <prompt> - ask detail", lines)
-            self.assertIn("/asklast <prompt> - ask latest", lines)
-            self.assertIn("/askctx <id> <prompt> - ask context", lines)
-            self.assertIn("/explainrepo [path] - explain repo", lines)
-            self.assertIn("/explainfile <path> - explain file", lines)
-            self.assertIn("/summarizeweb <url> - summarize web", lines)
+            self.assertIn("/askd <prompt> - detail", lines)
+            self.assertIn("/asklast <prompt> - latest", lines)
+            self.assertIn("/askctx <id> <prompt> - ctx", lines)
+            self.assertIn("/explainrepo [path] - repo", lines)
+            self.assertIn("/explainfile <path> - file", lines)
+            self.assertIn("/summarizeweb <url> - web sum", lines)
             self.assertIn("/workflows - flow", lines)
-            self.assertIn("/workflowstatus [id] - flow status", lines)
+            self.assertIn("/workflowstatus [id] - flow check", lines)
             self.assertIn("/cancelworkflow [id] - cancel flow", lines)
             self.assertEqual(lines[-1], "Plain text is not auto-routed.")
 
@@ -384,6 +386,40 @@ class TelegramCommandTests(unittest.TestCase):
             self.assertEqual(snapshot.last_capability_id, "status.read")
             self.assertEqual(snapshot.last_capability_state, "allowed")
             self.assertIn("read-only | local | offline-safe", snapshot.last_capability_trust_summary)
+
+    def test_translate_command_returns_concise_translation_without_execution_side_effects(self) -> None:
+        update = TelegramInboundMessage(
+            update_id=201,
+            chat_id="chat-1",
+            text="/translate Build me a landing page for BABYLON with wishlist CTA and email signup.",
+            sender_label="@tester",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            telegram_service = _FakeTelegramService(update_batches=[(update,)])
+            service, _, _, _, ollama, openai = self._make_service(tmp_dir=tmp, telegram_service=telegram_service)
+            snapshot, reply = self._run_single_update(service, telegram_service)
+            self.assertEqual(ollama.ask_calls, 0)
+            self.assertEqual(openai.ask_calls, 0)
+            self.assertIn("Translation", reply)
+            self.assertIn("Type: website", reply)
+            self.assertIn("Requirements:", reply)
+            self.assertIn("Open questions:", reply)
+            self.assertIn("Next:", reply)
+            self.assertEqual(snapshot.last_capability_id, "intent.translate.read")
+            self.assertEqual(snapshot.last_capability_state, "allowed")
+
+    def test_translate_missing_request_returns_usage_hint(self) -> None:
+        update = TelegramInboundMessage(update_id=202, chat_id="chat-1", text="/translate", sender_label="@tester")
+        with tempfile.TemporaryDirectory() as tmp:
+            telegram_service = _FakeTelegramService(update_batches=[(update,)])
+            service, _, _, _, ollama, openai = self._make_service(tmp_dir=tmp, telegram_service=telegram_service)
+            _, reply = self._run_single_update(service, telegram_service)
+            self.assertEqual(ollama.ask_calls, 0)
+            self.assertEqual(openai.ask_calls, 0)
+            self.assertEqual(
+                reply,
+                "Couldn't translate that request.\nReason: No product idea or request was provided.\nNext: Use /translate <idea or request>.",
+            )
 
     def test_mode_command_reports_confirmation_gated_remote_use(self) -> None:
         update = TelegramInboundMessage(update_id=3, chat_id="chat-1", text="/mode", sender_label="@tester")

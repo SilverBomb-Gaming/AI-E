@@ -64,6 +64,7 @@ class CapabilityEvaluator:
             "help.read",
             "status.read",
             "action.last.read",
+            "intent.translate.read",
             "mode.read",
             "audit.read",
             "capabilities.read",

@@ -8,7 +8,7 @@ from ..providers.base import ProviderStatus
 from .models import CapabilityAvailabilityState, Mode, Policy, ProviderType, ReadinessState
 from .scope_models import ScopeAccessMode, ScopeType
 
-CapabilityCategory = Literal["operator", "runtime", "provider", "repository", "filesystem", "web"]
+CapabilityCategory = Literal["operator", "runtime", "provider", "repository", "filesystem", "web", "intent"]
 CapabilityExecutionType = Literal["read", "query"]
 CapabilityProviderDependency = Literal["none", "ollama", "openai", "active_provider"]
 CapabilityNetworkRequirement = Literal["none", "local", "remote", "conditional"]

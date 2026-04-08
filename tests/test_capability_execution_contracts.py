@@ -115,6 +115,35 @@ class CapabilityExecutionContractTests(unittest.TestCase):
             self.assertEqual(snapshot.last_execution_summary, result.internal_summary)
             self.assertIn("read-only | local | offline-safe", snapshot.last_execution_trust_summary)
 
+    def test_translate_read_returns_structured_success_result(self) -> None:
+        update = TelegramInboundMessage(
+            update_id=1011,
+            chat_id="chat-1",
+            text="/translate Build me a landing page for BABYLON with wishlist CTA and email signup.",
+            sender_label="@tester",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            telegram_service = _FakeTelegramService(update_batches=[(update,)])
+            service, _, _, _, ollama, openai = self._make_service(tmp_dir=tmp, telegram_service=telegram_service)
+            snapshot, reply = self._run_single_update(service, telegram_service)
+            result = self._last_result(service)
+            self.assertEqual(ollama.ask_calls, 0)
+            self.assertEqual(openai.ask_calls, 0)
+            self.assertEqual(result.capability_id, "intent.translate.read")
+            self.assertEqual(result.outcome, "success")
+            self.assertEqual(result.outcome_reason_code, "ok")
+            self.assertEqual(result.user_message, reply)
+            self.assertEqual(result.access_kind, "read_only")
+            self.assertEqual(result.locality, "local_only")
+            self.assertEqual(result.offline_safety, "safe_offline")
+            self.assertEqual(result.scope_summary, "internal/read")
+            self.assertIn("intent_spec", result.telemetry)
+            self.assertIn("execution_handoff", result.telemetry)
+            spec_payload = result.telemetry["intent_spec"]
+            self.assertEqual(spec_payload["request_type"], "website")
+            self.assertIn("Wishlist CTA", spec_payload["functional_requirements"])
+            self.assertEqual(snapshot.last_execution_outcome, "success")
+
     def test_models_read_returns_structured_degraded_result_when_ollama_unavailable(self) -> None:
         update = TelegramInboundMessage(update_id=102, chat_id="chat-1", text="/models", sender_label="@tester")
         ollama = _FakeOllamaAdapter(

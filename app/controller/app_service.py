@@ -25,6 +25,8 @@ from .execution_runner import ExecutionRunner
 from .execution_models import CapabilityExecutionResult
 from .file_mutator import FileMutator
 from .file_reader import FileReadSnapshot, FileReader, FileReaderError
+from .intent_formatter import IntentFormatter
+from .intent_translator import IntentTranslator
 from .diagnostics import ControllerDiagnosticsService
 from .models import ControllerSnapshot
 from .profile_store import ControllerConfig, ControllerConfigStore, Mode, Policy, ProviderType
@@ -122,6 +124,8 @@ class ControllerService:
         self._file_mutator = file_mutator or FileMutator()
         self._execution_runner = execution_runner or ExecutionRunner()
         self._web_fetcher = web_fetcher or WebFetcher()
+        self._intent_translator = IntentTranslator()
+        self._intent_formatter = IntentFormatter()
         self._config = self._config_store.load()
         self._normalize_repo_root_config()
         self._normalize_file_roots_config()
@@ -1449,20 +1453,21 @@ class ControllerService:
             reply=chr(10).join(
                 (
                     "Operator commands",
-                    "Core: /repo /file /patchfile|/writefile /run|/test /lastaction /web",
+                    "Core: /translate /repo /file /patchfile|/writefile /run|/test /lastaction /web",
                     "/contexts - ctx",
                     "/clearcontext - clear",
                     "/capabilities - trust",
                     "/audit - audit",
+                    "/translate <idea> - spec",
                     "/ask <prompt> - ask",
-                    "/askd <prompt> - ask detail",
-                    "/asklast <prompt> - ask latest",
-                    "/askctx <id> <prompt> - ask context",
-                    "/explainrepo [path] - explain repo",
-                    "/explainfile <path> - explain file",
-                    "/summarizeweb <url> - summarize web",
+                    "/askd <prompt> - detail",
+                    "/asklast <prompt> - latest",
+                    "/askctx <id> <prompt> - ctx",
+                    "/explainrepo [path] - repo",
+                    "/explainfile <path> - file",
+                    "/summarizeweb <url> - web sum",
                     "/workflows - flow",
-                    "/workflowstatus [id] - flow status",
+                    "/workflowstatus [id] - flow check",
                     "/cancelworkflow [id] - cancel flow",
                     "Plain text is not auto-routed.",
                 )
@@ -2008,6 +2013,7 @@ class ControllerService:
             "/help",
             "/status",
             "/lastaction",
+            "/translate",
             "/mode",
             "/models",
             "/repo",
@@ -2076,6 +2082,12 @@ class ControllerService:
                 command_label="parse_failure",
                 normalized_text=normalized_text,
                 usage_hint="Use /lastaction.",
+            )
+        if command.startswith("/translate"):
+            return _ParsedTelegramCommand(
+                command_label="parse_failure",
+                normalized_text=normalized_text,
+                usage_hint="Use /translate <idea or request>.",
             )
         if command.startswith("/repo"):
             return _ParsedTelegramCommand(

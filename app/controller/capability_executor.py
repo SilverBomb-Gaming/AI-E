@@ -191,6 +191,8 @@ class CapabilityExecutor:
             return self._execute_status(update=update, snapshot=snapshot)
         if command == "/lastaction":
             return self._execute_last_action(update=update, snapshot=snapshot)
+        if command == "/translate":
+            return self._execute_translate(update=update, snapshot=snapshot, argument=parsed_command.argument)
         if command == "/mode":
             return self._execute_mode(update=update, snapshot=snapshot)
         if command == "/models":
@@ -356,6 +358,61 @@ class CapabilityExecutor:
             retryable=False,
             command_label="/lastaction",
             activity_state="processing_command",
+        )
+
+    def _execute_translate(
+        self,
+        *,
+        update: TelegramInboundMessage,
+        snapshot: ControllerSnapshot,
+        argument: str,
+    ) -> CapabilityExecutionResult:
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="intent.translate.read",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/translate",
+            parsed_arguments={"request": argument},
+            metadata={"argument_summary": "/translate [idea hidden]"},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        prompt = " ".join(argument.split())
+        if not prompt:
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="missing_translation_request",
+                user_message="Couldn't translate that request.\nReason: No product idea or request was provided.\nNext: Use /translate <idea or request>.",
+                internal_summary="/translate rejected because no request text was provided.",
+                retryable=False,
+                command_label="/translate",
+                activity_state="processing_command",
+            )
+        spec = self._service._intent_translator.translate(prompt)
+        summary = self._service._intent_formatter.format_operator_summary(spec)
+        handoff = self._service._intent_formatter.format_execution_handoff(spec)
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=summary,
+            internal_summary=(
+                f"intent.translate.read synthesized a {spec.request_type} intent with "
+                f"{len(spec.open_questions)} open question(s)."
+            ),
+            retryable=False,
+            command_label="/translate",
+            activity_state="processing_command",
+            telemetry={
+                "intent_spec": spec.to_payload(),
+                "execution_brief": spec.execution_brief,
+                "execution_handoff": handoff,
+                "clarification_questions": list(spec.clarification_questions),
+                "open_question_count": len(spec.open_questions),
+                "assumption_count": len(spec.assumptions),
+            },
         )
 
     def _execute_mode(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot) -> CapabilityExecutionResult:

@@ -94,6 +94,7 @@ class CapabilityLayerTests(unittest.TestCase):
         self.assertIn("web.fetch.read", CAPABILITY_REGISTRY)
         self.assertIn("shell.command.run", CAPABILITY_REGISTRY)
         self.assertIn("test.command.run", CAPABILITY_REGISTRY)
+        self.assertIn("intent.translate.read", CAPABILITY_REGISTRY)
         self.assertIn("audit.read", CAPABILITY_REGISTRY)
         self.assertIn("capabilities.read", CAPABILITY_REGISTRY)
         for definition in CAPABILITY_DEFINITIONS:
@@ -157,6 +158,11 @@ class CapabilityLayerTests(unittest.TestCase):
 
     def test_status_read_allowed_in_healthy_normal_state(self) -> None:
         evaluation = self.evaluator.evaluate("status.read", self._context())
+        self.assertEqual(evaluation.current_availability_state, "allowed")
+        self.assertEqual(evaluation.reason_code, "allowed")
+
+    def test_translate_read_allowed_in_healthy_normal_state(self) -> None:
+        evaluation = self.evaluator.evaluate("intent.translate.read", self._context())
         self.assertEqual(evaluation.current_availability_state, "allowed")
         self.assertEqual(evaluation.reason_code, "allowed")
 
