@@ -14,7 +14,9 @@ from .intent_models import (
 
 _WEBSITE_KEYWORDS = ("website", "landing page", "homepage", "marketing site", "site")
 _GAME_KEYWORDS = ("game", "multiplayer", "survival", "creature collecting", "creature collector", "rpg")
-_DESKTOP_KEYWORDS = ("desktop", "desktop app", "desktop tool", "windows app", "local app")
+_CLI_KEYWORDS = ("cli", "command line", "command-line", "terminal tool", "console tool", "args", "argparse")
+_DESKTOP_KEYWORDS = ("desktop", "desktop app", "desktop tool", "windows app", "local app", "gui", "window", "pyside", "pyside6")
+_LIBRARY_KEYWORDS = ("library", "module", "package", "reusable code")
 _BACKEND_KEYWORDS = ("backend", "api", "service", "server", "webhook")
 _AUTOMATION_KEYWORDS = ("automation", "automate", "pipeline", "workflow tool", "bot")
 _FEATURE_KEYWORDS = ("feature", "add support", "enhance", "extend", "improve")
@@ -46,6 +48,22 @@ _DEPLOY_TARGET_KEYWORDS = ("vercel", "netlify", "steam", "itch", "desktop instal
 _STYLE_KEYWORDS = ("cozy", "dark", "darker", "minimal", "bold", "gritty", "whimsical", "cinematic", "retro")
 _PLATFORM_KEYWORDS = ("web", "desktop", "windows", "mac", "linux", "ios", "android", "steam")
 _MAIL_PROVIDER_KEYWORDS = ("mailchimp", "convertkit", "beehiiv", "substack", "hubspot")
+_DISCOVERY_BLOCKING_KEYWORDS = (
+    "website",
+    "landing page",
+    "homepage",
+    "game",
+    "backend",
+    "api",
+    "service",
+    "server",
+    "webhook",
+    "automation",
+    "automate",
+    "workflow",
+    "repo",
+    "repository",
+)
 
 
 class IntentTranslator:
@@ -66,7 +84,7 @@ class IntentTranslator:
         normalized = self._normalize_text(request_text)
         profile = self._extract_profile(normalized)
         spec = self._build_spec(base_request=normalized, conversation_notes=(), profile=profile)
-        state = "complete" if not spec.open_questions else "draft"
+        state = "draft"
         return IntentTranslationSession(
             translation_session_id=translation_session_id,
             intent_id=spec.intent_id,
@@ -188,11 +206,23 @@ class IntentTranslator:
             execution_handoff=execution_handoff,
         )
 
-    def _classify_request_type(self, lowered: str) -> IntentRequestType:
-        if self._contains_any(lowered, _WEBSITE_KEYWORDS):
-            return "website"
+    def _classify_bounded_tool_request(self, lowered: str) -> IntentRequestType | None:
+        if self._contains_any(lowered, _CLI_KEYWORDS):
+            return "python_cli"
         if self._contains_any(lowered, _DESKTOP_KEYWORDS):
             return "desktop_app"
+        if self._contains_any(lowered, _LIBRARY_KEYWORDS):
+            return "simple_library"
+        if self._looks_like_small_python_request(lowered):
+            return "python_script"
+        return None
+
+    def _classify_request_type(self, lowered: str) -> IntentRequestType:
+        bounded = self._classify_bounded_tool_request(lowered)
+        if bounded is not None:
+            return bounded
+        if self._contains_any(lowered, _WEBSITE_KEYWORDS):
+            return "website"
         if self._contains_any(lowered, _BACKEND_KEYWORDS):
             return "backend_service"
         if self._contains_any(lowered, _GAME_KEYWORDS):
@@ -210,6 +240,9 @@ class IntentTranslator:
             "website",
             "game",
             "desktop_app",
+            "python_cli",
+            "python_script",
+            "simple_library",
             "backend_service",
             "automation_tool",
             "feature_request",
@@ -244,6 +277,9 @@ class IntentTranslator:
                 "website": "Website concept",
                 "game": "Game concept",
                 "desktop_app": "Desktop app concept",
+                "python_cli": "Python CLI concept",
+                "python_script": "Python script concept",
+                "simple_library": "Python library concept",
                 "backend_service": "Backend service concept",
                 "automation_tool": "Automation tool concept",
                 "feature_request": "Feature request",
@@ -277,6 +313,24 @@ class IntentTranslator:
                 what=f"Define a desktop workflow for {subject or title}.",
                 who="The operator or internal team using the tool day to day.",
                 why="Reduce manual work and convert the idea into a build-ready desktop spec.",
+            )
+        if request_type == "python_cli":
+            return IntentProductGoal(
+                what=f"Define a bounded Python CLI for {subject or title}.",
+                who="The operator running the tool locally from a terminal.",
+                why="Turn the request into a deterministic CLI implementation brief.",
+            )
+        if request_type == "python_script":
+            return IntentProductGoal(
+                what=f"Define a bounded Python script for {subject or title}.",
+                who="The operator running a small local utility.",
+                why="Turn the request into a deterministic script implementation brief.",
+            )
+        if request_type == "simple_library":
+            return IntentProductGoal(
+                what=f"Define a reusable Python library for {subject or title}.",
+                who="Developers importing the code into a local project.",
+                why="Convert the request into a deterministic, clearly scoped library brief.",
             )
         if request_type == "backend_service":
             return IntentProductGoal(
@@ -321,6 +375,12 @@ class IntentTranslator:
             constraints.append("Target class: game product")
         elif request_type == "desktop_app":
             constraints.append("Target platform: desktop")
+        elif request_type == "python_cli":
+            constraints.append("Target interface: CLI")
+        elif request_type == "python_script":
+            constraints.append("Target interface: Python script")
+        elif request_type == "simple_library":
+            constraints.append("Target interface: Python library")
         elif request_type == "backend_service":
             constraints.append("Target platform: backend service")
         elif request_type == "automation_tool":
@@ -395,6 +455,15 @@ class IntentTranslator:
                 requirements.append("Export milestone summaries")
             if "track" in lowered and "milestone" in lowered:
                 requirements.append("Track milestone state")
+        elif request_type == "python_cli":
+            requirements.append("CLI entrypoint")
+            requirements.extend(self._extract_bounded_tool_requirements(lowered))
+        elif request_type == "python_script":
+            requirements.append("Local script entrypoint")
+            requirements.extend(self._extract_bounded_tool_requirements(lowered))
+        elif request_type == "simple_library":
+            requirements.append("Reusable Python module surface")
+            requirements.extend(self._extract_bounded_tool_requirements(lowered))
         elif request_type == "backend_service":
             requirements.extend(("Service interface definition", "Bounded API or endpoint surface"))
         elif request_type == "automation_tool":
@@ -433,6 +502,8 @@ class IntentTranslator:
         elif request_type == "desktop_app":
             requirements.append("Simple local operator workflow")
             requirements.append("Low-friction export and review flow")
+        elif request_type in {"python_cli", "python_script", "simple_library"}:
+            requirements.append("Keep the implementation local, reviewable, and intentionally small")
         elif request_type == "backend_service":
             requirements.append("Clear interface boundaries")
         elif request_type == "automation_tool":
@@ -479,6 +550,8 @@ class IntentTranslator:
                 questions.append("What document formats need to be supported?")
             if "export" in lowered and not self._contains_any(lowered, ("json", "csv", "markdown", "md", "html", "pdf")):
                 questions.append("Which export formats are required?")
+        elif request_type in {"python_cli", "python_script", "simple_library"}:
+            questions = []
         elif request_type == "backend_service":
             if not self._contains_any(lowered, ("rest", "graphql", "queue", "worker", "webhook")):
                 questions.append("What interface style should the service expose?")
@@ -530,6 +603,8 @@ class IntentTranslator:
             assumptions.append("Assume the first release is local-first and operator-facing")
             if "doc" in lowered:
                 assumptions.append("Assume document ingestion starts with a small supported file set")
+        elif request_type in {"python_cli", "python_script", "simple_library"}:
+            assumptions = []
         elif request_type == "backend_service":
             assumptions.append("Assume the first pass should define a narrow service boundary before implementation")
         elif request_type == "automation_tool":
@@ -570,6 +645,8 @@ class IntentTranslator:
             return f"Game concept brief for {title.lower()} with the core loop and delivery questions made explicit."
         if request_type == "desktop_app":
             return f"Desktop tool brief for {title.lower()} with local workflow requirements extracted."
+        if request_type in {"python_cli", "python_script", "simple_library"}:
+            return self._ensure_sentence(title)
         if request_type == "backend_service":
             return f"Backend service brief for {title.lower()} with interface and deployment questions highlighted."
         if request_type == "automation_tool":
@@ -694,6 +771,8 @@ class IntentTranslator:
             delivery_target = ""
         platform = self._first_match(lowered, _PLATFORM_KEYWORDS)
         stack = self._extract_stack(lowered)
+        if delivery_target in {"python_cli", "python_script", "simple_library"} and not stack:
+            stack = "python"
         style = self._first_match(lowered, _STYLE_KEYWORDS)
         deployment = self._extract_deployment_target(lowered)
         if any(value in lowered for value in ("multi-page", "multi page", "multiple pages")):
@@ -749,6 +828,12 @@ class IntentTranslator:
             values.append(f"request_type: {request_type}")
         if profile.stack:
             values.append(f"stack: {profile.stack}")
+        if request_type == "python_cli":
+            values.append("interface: CLI")
+        elif request_type == "python_script":
+            values.append("interface: script")
+        elif request_type == "simple_library":
+            values.append("interface: library")
         if profile.platform:
             values.append(f"platform: {profile.platform}")
         if profile.style_direction:
@@ -770,3 +855,52 @@ class IntentTranslator:
         if profile.delivery_target:
             field_names.append("delivery_target")
         return self._unique(field_names)
+
+    def _looks_like_small_python_request(self, lowered: str) -> bool:
+        if any(value in lowered for value in _DISCOVERY_BLOCKING_KEYWORDS):
+            return False
+        if "python script" in lowered or re.search(r"\bscript\b", lowered):
+            return True
+        if "python" in lowered and any(
+            marker in lowered
+            for marker in (
+                "tool",
+                "utility",
+                "helper",
+                "scan",
+                "folder",
+                "directory",
+                "csv",
+                "json",
+                "parse",
+                "rename",
+                "read",
+                "write",
+                "generate",
+            )
+        ):
+            return True
+        return any(marker in lowered for marker in ("simple tool", "small tool", "simple helper", "small helper"))
+
+    def _extract_bounded_tool_requirements(self, lowered: str) -> tuple[str, ...]:
+        requirements: list[str] = []
+        if ("scan" in lowered or "walk" in lowered) and any(term in lowered for term in ("folder", "directory")):
+            requirements.append("Scan a folder")
+        if "csv" in lowered:
+            requirements.append("Write CSV output")
+        if "file size" in lowered or "file sizes" in lowered:
+            requirements.append("Summarize file sizes")
+        if "rename" in lowered and "file" in lowered:
+            requirements.append("Rename files in a folder")
+        if ("parse" in lowered or "parsing" in lowered) and "csv" in lowered:
+            requirements.append("Parse CSV rows")
+        if "track" in lowered and "note" in lowered:
+            requirements.append("Track notes locally")
+        return self._unique(requirements)
+
+    @staticmethod
+    def _ensure_sentence(text: str) -> str:
+        normalized = " ".join(text.split()).rstrip(".")
+        if not normalized:
+            return ""
+        return f"{normalized}."

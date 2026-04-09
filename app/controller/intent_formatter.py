@@ -102,4 +102,4 @@ class IntentFormatter:
     def _session_next_step(session: IntentTranslationSession) -> str:
         if session.open_questions:
             return "Reply with /refine <clarification> or inspect the draft with /translateview."
-        return "Draft is ready for handoff review; use /translateview or start a new /translate request."
+        return "Use /planbuild or /translateview."
