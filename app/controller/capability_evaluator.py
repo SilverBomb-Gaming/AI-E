@@ -67,6 +67,10 @@ class CapabilityEvaluator:
 
         if capability_id in {
             "help.read",
+            "nodes.read",
+            "node.view.read",
+            "node.select.query",
+            "node.clear.query",
             "status.read",
             "action.last.read",
             "chat.orchestrate.read",
@@ -86,7 +90,6 @@ class CapabilityEvaluator:
             "build.bundle.reset.query",
             "build.bootstrap.propose.read",
             "build.bootstrap.view.read",
-            "build.bootstrap.approve.query",
             "build.bootstrap.reset.query",
             "build.plan.view.read",
             "build.plan.clear.read",

@@ -5,6 +5,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 import secrets
+import socket
 import threading
 import time
 from urllib.parse import urlparse
@@ -40,6 +41,10 @@ from .file_reader import FileReadSnapshot, FileReader, FileReaderError
 from .intent_formatter import IntentFormatter
 from .intent_store import IntentStore
 from .intent_translator import IntentTranslator
+from .node_formatter import NodeFormatter
+from .node_models import NodeDescriptor, NodeResolution
+from .node_registry import NodeRegistry
+from .node_router import NodeRouter
 from .diagnostics import ControllerDiagnosticsService
 from .chat_orchestrator import ChatOrchestrator
 from .models import ControllerSnapshot
@@ -161,6 +166,7 @@ class ControllerService:
         self._file_mutator = file_mutator or FileMutator()
         self._execution_runner = execution_runner or ExecutionRunner()
         self._web_fetcher = web_fetcher or WebFetcher()
+        self._node_formatter = NodeFormatter()
         self._intent_translator = IntentTranslator()
         self._intent_formatter = IntentFormatter()
         self._build_planner = BuildPlanner()
@@ -188,6 +194,8 @@ class ControllerService:
         self._provider_chat_lock = threading.RLock()
         self._active_provider_chats: dict[str, tuple[str, threading.Thread]] = {}
         self._provider_cooldowns: dict[str, float] = {}
+        self._node_registry = NodeRegistry(local_node=self._build_local_node())
+        self._node_router = NodeRouter(self._execution_runner)
         self._diagnostics_service = ControllerDiagnosticsService(
             runtime_manager=self._runtime_manager,
             config_store=self._config_store,
@@ -375,6 +383,7 @@ class ControllerService:
         current_context = self._context_store.current_any()
         current_context_freshness = self._describe_current_context_freshness(current_context)
         workflow_record = self._current_or_latest_workflow()
+        current_node = self.resolve_execution_node()
         return ControllerSnapshot(
             runtime_state=status.runtime_state,
             status_message=self._last_message or status.status_message,
@@ -408,6 +417,9 @@ class ControllerService:
             configured_repo_root=self._config.repo_root or "-",
             configured_file_roots=self._file_roots_summary(self._config.file_allowed_roots),
             configured_web_domains=self._web_domains_summary(self._config.web_allowed_domains),
+            registered_node_count=len(self._node_registry.list_nodes()),
+            selected_node_id=current_node.node.node_id,
+            selected_node_summary=f"{current_node.node.display_name} ({current_node.source})",
             buffered_context_count=self._context_store.total_count(),
             last_context_source=self._last_context_source,
             current_context_freshness=current_context_freshness,
@@ -1556,7 +1568,7 @@ class ControllerService:
                     "Bundle: /planstepbundle /bundleapprove|status|cancel|reset",
                     "Boot: /bootstrapproject|/bootstrapview|/bootstrapapprove|/bootstrapreset",
                     "Files: /repo|file /createfile|patchfile|/writefile",
-                    "Exec: /run|/test",
+                    "Exec: /run|/test /nodes|nodeview|nodeselect|nodeclear",
                     "Trust: /capabilities|audit|clearcontext /contexts",
                     "Ask: /ask|askd|asklast|askctx",
                     "Info: /explainrepo|explainfile|summarizeweb",
@@ -1657,6 +1669,9 @@ class ControllerService:
                 f"Action: {('test' if capability_id == 'test.command.run' else 'run')} {self._outcome_label(result.outcome)}",
                 f"Command: {command_summary}",
             ]
+            node_summary = str(telemetry.get("target_node_summary") or "").strip()
+            if node_summary:
+                lines.append(f"Node: {node_summary}")
             exit_code = telemetry.get("execution_exit_code")
             if isinstance(exit_code, int):
                 lines.append(f"Exit code: {exit_code}" if exit_code >= 0 else "Exit: timeout")
@@ -2146,6 +2161,10 @@ class ControllerService:
         if command in {
             "/start",
             "/help",
+            "/nodes",
+            "/nodeview",
+            "/nodeselect",
+            "/nodeclear",
             "/status",
             "/lastaction",
             "/chat",
@@ -2169,6 +2188,10 @@ class ControllerService:
             "/bundlereset",
             "/planview",
             "/planclear",
+            "/bootstrapproject",
+            "/bootstrapview",
+            "/bootstrapapprove",
+            "/bootstrapreset",
             "/mode",
             "/models",
             "/repo",
@@ -2244,6 +2267,18 @@ class ControllerService:
                 command_label="parse_failure",
                 normalized_text=normalized_text,
                 usage_hint="Use /lastaction.",
+            )
+        if command.startswith("/nodes") or command.startswith("/nodeclear"):
+            return _ParsedTelegramCommand(
+                command_label="parse_failure",
+                normalized_text=normalized_text,
+                usage_hint="Use /nodes, /nodeview <id>, /nodeselect <id>, or /nodeclear.",
+            )
+        if command.startswith("/nodeview") or command.startswith("/nodeselect"):
+            return _ParsedTelegramCommand(
+                command_label="parse_failure",
+                normalized_text=normalized_text,
+                usage_hint="Use /nodeview <id> or /nodeselect <id>.",
             )
         if command.startswith("/translate"):
             return _ParsedTelegramCommand(
@@ -2376,6 +2411,39 @@ class ControllerService:
             normalized_text=normalized_text,
             usage_hint="Use /help to see supported commands.",
         )
+
+    def _build_local_node(self) -> NodeDescriptor:
+        hostname = socket.gethostname().strip() or "local-machine"
+        repo_label = self._repo_display_name()
+        summary = f"Local controller node for {repo_label}." if repo_label and repo_label != "configured repo" else "Local controller node."
+        return NodeDescriptor(
+            node_id="local",
+            display_name=hostname,
+            node_type="local",
+            status="online",
+            transport="in_process",
+            summary=summary,
+            supports_bounded_execution=True,
+            is_default=True,
+            last_seen_at=datetime.now().astimezone().isoformat(timespec="seconds"),
+            capability_labels=("/run", "/test"),
+            metadata={"repo_root": self._config.repo_root.strip()},
+        )
+
+    def list_registered_nodes(self) -> tuple[NodeDescriptor, ...]:
+        return self._node_registry.list_nodes()
+
+    def get_registered_node(self, node_id: str) -> NodeDescriptor | None:
+        return self._node_registry.get_node(node_id)
+
+    def resolve_execution_node(self) -> NodeResolution:
+        return self._node_registry.resolve_execution_node()
+
+    def select_execution_node(self, node_id: str) -> NodeResolution | None:
+        return self._node_registry.select_node(node_id)
+
+    def clear_execution_node(self) -> NodeResolution:
+        return self._node_registry.clear_selection()
 
     def _run_provider_request(self, *, provider: str, chat_id: str, func) -> _ProviderCallResult:
         request_id = f"{chat_id}:{time.monotonic()}"
@@ -3253,6 +3321,9 @@ class ControllerService:
             action_summary = str(result.telemetry.get("file_summary") or result.request.metadata.get("argument_summary") or "file mutation")
         elif result.capability_id in {"shell.command.run", "test.command.run"}:
             action_summary = str(result.telemetry.get("execution_summary") or result.request.metadata.get("argument_summary") or "bounded execution")
+            target_node_id = str(result.telemetry.get("target_node_id") or "").strip()
+            if target_node_id:
+                action_summary = f"{action_summary} | node {target_node_id}"
         elif result.capability_id.startswith("build.bootstrap"):
             action_summary = str(result.telemetry.get("bootstrap_summary") or result.request.metadata.get("argument_summary") or "project bootstrap")
         elif result.capability_id == "web.fetch.read":
@@ -3345,6 +3416,14 @@ class ControllerService:
         if record is None:
             return "No audit record yet."
         detail = record.output_summary or record.action_summary
+        if record.action_summary:
+            node_fragment = ""
+            for part in [segment.strip() for segment in record.action_summary.split("|")]:
+                if part.lower().startswith("node "):
+                    node_fragment = part
+                    break
+            if node_fragment and node_fragment not in detail:
+                detail = f"{detail} | {node_fragment}" if detail else node_fragment
         if record.exit_code is not None:
             detail = f"exit {record.exit_code} | {detail}" if detail else f"exit {record.exit_code}"
         return self._summarize_text(

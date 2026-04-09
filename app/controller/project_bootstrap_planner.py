@@ -1,9 +1,6 @@
 """Deterministic phase-1 starter scaffold planning derived from intent and build plans."""
 from __future__ import annotations
 
-from pathlib import Path
-import re
-
 from .build_plan_models import BuildPlan
 from .intent_models import IntentTranslationSession
 from .project_bootstrap_models import ProjectBootstrapFileSpec, ProjectBootstrapProposal, ProjectBootstrapType
@@ -31,10 +28,10 @@ class ProjectBootstrapPlanner:
         repo_root: str = "",
     ) -> ProjectBootstrapProposal:
         project_type = self._classify_project_type(session=session, plan=plan)
-        title = (plan.title or session.current_spec.title or "Starter Project").strip()
-        package_name = self._package_name(repo_root=repo_root, title=title)
-        files = self._build_files(project_type=project_type, title=title, package_name=package_name)
+        title = (plan.title or session.current_spec.title or "Project").strip() or "Project"
+        files = self._build_files(project_type=project_type)
         follow_up_commands = self._follow_up_commands(project_type)
+        source_intent_summary = (session.current_spec.summary or session.source_request or title).strip()
         return ProjectBootstrapProposal(
             bootstrap_id=bootstrap_id,
             translation_session_id=session.translation_session_id,
@@ -42,38 +39,25 @@ class ProjectBootstrapPlanner:
             intent_id=session.intent_id,
             project_type=project_type,
             title=title,
-            summary=f"Minimal {project_type} starter scaffold for {title}.",
+            summary=f"Minimal {project_type} starter scaffold.",
+            source_intent_summary=source_intent_summary,
             files=files,
             follow_up_commands=follow_up_commands,
             warnings=(),
-            next_step="Approve with /bootstrapapprove or discard with /bootstrapreset.",
+            next_step="Use /bootstrapapprove to execute.",
             created_at=created_at,
             updated_at=created_at,
         )
 
     def _classify_project_type(self, *, session: IntentTranslationSession, plan: BuildPlan) -> ProjectBootstrapType:
-        request_type = plan.request_type or session.current_spec.request_type
         combined = self._combined_text(session=session, plan=plan)
-        has_python = any(marker in combined for marker in ("python", "pyside6", "py side6"))
-        if request_type == "desktop_app":
-            if "pyside6" in combined or "py side6" in combined:
-                return "desktop_app"
-            raise ProjectBootstrapPlannerError(
-                "unsupported_desktop_stack",
-                "Phase 1 desktop app bootstrap currently supports PySide6 only.",
-            )
-        if any(marker in combined for marker in ("library", "package", "sdk", "module")) and has_python:
-            return "simple_library"
-        if any(marker in combined for marker in ("command line", "command-line", " cli", "terminal tool", "console app")) and has_python:
+        if any(marker in combined for marker in ("cli", "command line", "command-line", "args")):
             return "python_cli"
-        if request_type == "automation_tool" and has_python:
-            return "python_script"
-        if "script" in combined and has_python:
-            return "python_script"
-        raise ProjectBootstrapPlannerError(
-            "unsupported_bootstrap_type",
-            "Phase 1 bootstrap supports python_script, python_cli, desktop_app (PySide6), and simple_library only.",
-        )
+        if any(marker in combined for marker in ("desktop", "gui", "window", "pyside")):
+            return "desktop_app"
+        if any(marker in combined for marker in ("library", "module", "package")):
+            return "simple_library"
+        return "python_script"
 
     def _combined_text(self, *, session: IntentTranslationSession, plan: BuildPlan) -> str:
         values = [
@@ -94,77 +78,43 @@ class ProjectBootstrapPlanner:
         ]
         return " ".join(value for value in values if value).lower()
 
-    def _build_files(
-        self,
-        *,
-        project_type: ProjectBootstrapType,
-        title: str,
-        package_name: str,
-    ) -> tuple[ProjectBootstrapFileSpec, ...]:
+    def _build_files(self, *, project_type: ProjectBootstrapType) -> tuple[ProjectBootstrapFileSpec, ...]:
         if project_type == "python_script":
             return (
-                ProjectBootstrapFileSpec("./README.md", "document the starter scaffold", self._script_readme(title)),
-                ProjectBootstrapFileSpec("./main.py", "add the bounded starter script entrypoint", self._script_main(title)),
+                ProjectBootstrapFileSpec("main.py", "starter entrypoint", self._script_main()),
             )
         if project_type == "python_cli":
             return (
-                ProjectBootstrapFileSpec("./README.md", "document the starter scaffold", self._cli_readme(title)),
-                ProjectBootstrapFileSpec("./main.py", "add the bounded CLI entrypoint", self._cli_main(title)),
+                ProjectBootstrapFileSpec("README.md", "project overview", self._cli_readme()),
+                ProjectBootstrapFileSpec("src/main.py", "CLI entrypoint", self._cli_main()),
             )
         if project_type == "desktop_app":
             return (
-                ProjectBootstrapFileSpec("./README.md", "document the starter scaffold", self._desktop_readme(title)),
-                ProjectBootstrapFileSpec("./requirements.txt", "declare the explicit desktop dependency", "PySide6>=6.7,<7.0\n"),
-                ProjectBootstrapFileSpec("./main.py", "add the bounded PySide6 desktop entrypoint", self._desktop_main(title)),
+                ProjectBootstrapFileSpec("README.md", "project overview", self._desktop_readme()),
+                ProjectBootstrapFileSpec("main.py", "desktop entrypoint", self._desktop_main()),
             )
         return (
-            ProjectBootstrapFileSpec("./README.md", "document the starter scaffold", self._library_readme(title, package_name)),
-            ProjectBootstrapFileSpec("./pyproject.toml", "declare the bounded library package metadata", self._library_pyproject(title, package_name)),
-            ProjectBootstrapFileSpec(f"./{package_name}/__init__.py", "add the starter package module", self._library_init(title)),
-            ProjectBootstrapFileSpec("./tests/test_smoke.py", "add the starter library smoke test", self._library_test(package_name)),
+            ProjectBootstrapFileSpec("README.md", "project overview", self._library_readme()),
+            ProjectBootstrapFileSpec("src/__init__.py", "library exports", self._library_init()),
+            ProjectBootstrapFileSpec("src/core.py", "core library function", self._library_core()),
         )
 
     @staticmethod
     def _follow_up_commands(project_type: ProjectBootstrapType) -> tuple[str, ...]:
         if project_type == "python_script":
-            return ("/file ./main.py", "/run python main.py")
+            return ("/file main.py", "/run python main.py")
         if project_type == "python_cli":
-            return ("/file ./main.py", "/run python main.py --help")
+            return ("/file src/main.py", "/run python src/main.py")
         if project_type == "desktop_app":
-            return ("/file ./main.py", "/run python main.py")
-        return ("/file ./tests/test_smoke.py", "/test tests/test_smoke.py")
+            return ("/file main.py", "/run python main.py")
+        return ("/file src/core.py", "/file src/__init__.py")
 
     @staticmethod
-    def _package_name(*, repo_root: str, title: str) -> str:
-        candidate = Path(repo_root).name.strip() if repo_root.strip() else title
-        normalized = re.sub(r"[^a-zA-Z0-9]+", "_", candidate).strip("_").lower()
-        if not normalized:
-            normalized = "starter_lib"
-        if normalized[0].isdigit():
-            normalized = f"project_{normalized}"
-        return normalized
-
-    @staticmethod
-    def _py_string(value: str) -> str:
-        return value.replace("\\", "\\\\").replace('"', '\\"')
-
-    def _script_readme(self, title: str) -> str:
-        return "\n".join(
-            (
-                f"# {title}",
-                "",
-                "Bounded phase-1 bootstrap for a Python script.",
-                "",
-                "## Run",
-                "python main.py",
-            )
-        )
-
-    def _script_main(self, title: str) -> str:
+    def _script_main() -> str:
         return "\n".join(
             (
                 "def main() -> None:",
-                f"    print(\"Hello from {self._py_string(title)}.\")",
+                '    print("Hello from AI-E")',
                 "",
                 "",
                 "if __name__ == \"__main__\":",
@@ -172,69 +122,71 @@ class ProjectBootstrapPlanner:
             )
         )
 
-    def _cli_readme(self, title: str) -> str:
+    @staticmethod
+    def _cli_readme() -> str:
         return "\n".join(
             (
-                f"# {title}",
+                "# Project",
                 "",
-                "Bounded phase-1 bootstrap for a Python CLI.",
+                "Minimal Python CLI scaffold generated by AI-E.",
                 "",
                 "## Run",
-                "python main.py --help",
+                "",
+                "python src/main.py",
             )
         )
 
-    def _cli_main(self, title: str) -> str:
-        escaped = self._py_string(title)
+    @staticmethod
+    def _cli_main() -> str:
         return "\n".join(
             (
-                "import argparse",
-                "",
-                "",
-                "def build_parser() -> argparse.ArgumentParser:",
-                f"    parser = argparse.ArgumentParser(description=\"{escaped}\")",
-                '    parser.add_argument("--name", default="operator", help="Name to greet.")',
-                "    return parser",
-                "",
-                "",
-                "def main() -> None:",
-                "    args = build_parser().parse_args()",
-                f"    print(f\"Hello, {{args.name}}. {escaped} is ready.\")",
-                "",
-                "",
-                "if __name__ == \"__main__\":",
-                "    main()",
-            )
-        )
-
-    def _desktop_readme(self, title: str) -> str:
-        return "\n".join(
-            (
-                f"# {title}",
-                "",
-                "Bounded phase-1 bootstrap for a PySide6 desktop app.",
-                "",
-                "## Install",
-                "pip install -r requirements.txt",
-                "",
-                "## Run",
-                "python main.py",
-            )
-        )
-
-    def _desktop_main(self, title: str) -> str:
-        escaped = self._py_string(title)
-        return "\n".join(
-            (
-                "from PySide6.QtWidgets import QApplication, QLabel, QMainWindow",
+                "from pathlib import Path",
+                "import sys",
                 "",
                 "",
                 "def main() -> int:",
-                "    app = QApplication([])",
-                "    window = QMainWindow()",
-                f"    window.setWindowTitle(\"{escaped}\")",
-                f"    window.setCentralWidget(QLabel(\"{escaped} bootstrap ready\"))",
-                "    window.resize(480, 240)",
+                "    target = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(\".\")",
+                '    print(f"Scanning: {target}")',
+                "    return 0",
+                "",
+                "",
+                "if __name__ == \"__main__\":",
+                "    raise SystemExit(main())",
+            )
+        )
+
+    @staticmethod
+    def _desktop_readme() -> str:
+        return "\n".join(
+            (
+                "# Project",
+                "",
+                "Minimal PySide6 desktop scaffold generated by AI-E.",
+                "Install PySide6 manually.",
+                "",
+                "Run:",
+                "python main.py",
+            )
+        )
+
+    @staticmethod
+    def _desktop_main() -> str:
+        return "\n".join(
+            (
+                "import sys",
+                "from PySide6.QtWidgets import QApplication, QLabel, QWidget, QVBoxLayout",
+                "",
+                "",
+                "def main() -> int:",
+                "    app = QApplication(sys.argv)",
+                "",
+                "    window = QWidget()",
+                '    window.setWindowTitle("AI-E Desktop App")',
+                "",
+                "    layout = QVBoxLayout()",
+                '    layout.addWidget(QLabel("Hello from AI-E"))',
+                "    window.setLayout(layout)",
+                "",
                 "    window.show()",
                 "    return app.exec()",
                 "",
@@ -244,54 +196,32 @@ class ProjectBootstrapPlanner:
             )
         )
 
-    def _library_readme(self, title: str, package_name: str) -> str:
+    @staticmethod
+    def _library_readme() -> str:
         return "\n".join(
             (
-                f"# {title}",
+                "# Project",
                 "",
-                f"Bounded phase-1 bootstrap for the `{package_name}` Python library.",
-                "",
-                "## Test",
-                "pytest tests/test_smoke.py",
-            )
-        )
-
-    def _library_pyproject(self, title: str, package_name: str) -> str:
-        escaped_title = title.replace('"', "'")
-        return "\n".join(
-            (
-                "[build-system]",
-                'requires = ["setuptools>=68"]',
-                'build-backend = "setuptools.build_meta"',
-                "",
-                "[project]",
-                f'name = "{package_name.replace("_", "-")}"',
-                'version = "0.1.0"',
-                f'description = "Starter library bootstrap for {escaped_title}."',
-                'requires-python = ">=3.11"',
-            )
-        )
-
-    def _library_init(self, title: str) -> str:
-        escaped = self._py_string(title)
-        return "\n".join(
-            (
-                f'"""Starter package for {escaped}."""',
-                "",
-                "",
-                "def hello(name: str = \"world\") -> str:",
-                "    return f\"hello, {name}\"",
+                "Minimal Python library scaffold generated by AI-E.",
             )
         )
 
     @staticmethod
-    def _library_test(package_name: str) -> str:
+    def _library_init() -> str:
         return "\n".join(
             (
-                f"from {package_name} import hello",
+                "from .core import greet",
                 "",
-                "",
-                "def test_hello() -> None:",
-                '    assert hello("operator") == "hello, operator"',
+                '',
+                '__all__ = ["greet"]',
+            )
+        )
+
+    @staticmethod
+    def _library_core() -> str:
+        return "\n".join(
+            (
+                "def greet(name: str) -> str:",
+                '    return f"Hello, {name}"',
             )
         )

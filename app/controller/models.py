@@ -68,6 +68,9 @@ class ControllerSnapshot:
     configured_repo_root: str
     configured_file_roots: str
     configured_web_domains: str
+    registered_node_count: int
+    selected_node_id: str
+    selected_node_summary: str
     buffered_context_count: int
     last_context_source: str
     current_context_freshness: str

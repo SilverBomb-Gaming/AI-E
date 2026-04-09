@@ -13,6 +13,7 @@ from .context_models import BufferedContext
 from .execution_models import CapabilityExecutionRequest, CapabilityExecutionResult, ProviderExecutionSnapshot
 from .execution_models import LocalCommandExecutionRequest
 from .execution_runner import ExecutionRunnerError
+from .node_router import NodeRoutingError
 from .file_mutator import (
     FileCreateWriteRequest,
     FileMutatorError,
@@ -191,6 +192,14 @@ class CapabilityExecutor:
 
         if command == "/help":
             return self._execute_help(update=update, snapshot=snapshot)
+        if command == "/nodes":
+            return self._execute_nodes(update=update, snapshot=snapshot)
+        if command == "/nodeview":
+            return self._execute_node_view(update=update, snapshot=snapshot, argument=parsed_command.argument)
+        if command == "/nodeselect":
+            return self._execute_node_select(update=update, snapshot=snapshot, argument=parsed_command.argument)
+        if command == "/nodeclear":
+            return self._execute_node_clear(update=update, snapshot=snapshot)
         if command == "/status":
             return self._execute_status(update=update, snapshot=snapshot)
         if command == "/lastaction":
@@ -358,6 +367,171 @@ class CapabilityExecutor:
             retryable=False,
             command_label="/help",
             activity_state="processing_command",
+        )
+
+    def _execute_nodes(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot) -> CapabilityExecutionResult:
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="nodes.read",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/nodes",
+            parsed_arguments={},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        current = self._service.resolve_execution_node()
+        nodes = self._service.list_registered_nodes()
+        reply = self._service._node_formatter.format_list(nodes=nodes, current=current)
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=reply,
+            internal_summary="nodes.read returned registered execution nodes.",
+            retryable=False,
+            command_label="/nodes",
+            activity_state="processing_command",
+            telemetry={
+                "registered_node_count": len(nodes),
+                "target_node_id": current.node.node_id,
+                "target_node_summary": f"{current.node.display_name} ({current.source})",
+            },
+        )
+
+    def _execute_node_view(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot, argument: str) -> CapabilityExecutionResult:
+        node_id = argument.strip().lower()
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="node.view.read",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/nodeview",
+            parsed_arguments={"node_id": node_id},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        if not node_id:
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="missing_node_id",
+                user_message="Couldn't view that node.\nReason: No node id was provided.\nNext: Use /nodeview <id>.",
+                internal_summary="node.view.read rejected because no node id was provided.",
+                retryable=False,
+                command_label="/nodeview",
+                activity_state="processing_command",
+            )
+        node = self._service.get_registered_node(node_id)
+        if node is None:
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="node_not_found",
+                user_message=f"Couldn't view that node.\nReason: No registered node matches {node_id}.\nNext: Use /nodes to inspect available ids.",
+                internal_summary=f"node.view.read rejected unknown node id: {node_id}.",
+                retryable=False,
+                command_label="/nodeview",
+                activity_state="processing_command",
+            )
+        current = self._service.resolve_execution_node()
+        reply = self._service._node_formatter.format_detail(node=node, current=current)
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=reply,
+            internal_summary=f"node.view.read returned {node.node_id}.",
+            retryable=False,
+            command_label="/nodeview",
+            activity_state="processing_command",
+            telemetry={
+                "target_node_id": node.node_id,
+                "target_node_name": node.display_name,
+                "target_node_type": node.node_type,
+                "target_node_summary": f"{node.display_name} ({node.node_id})",
+            },
+        )
+
+    def _execute_node_select(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot, argument: str) -> CapabilityExecutionResult:
+        node_id = argument.strip().lower()
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="node.select.query",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/nodeselect",
+            parsed_arguments={"node_id": node_id},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        if not node_id:
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="missing_node_id",
+                user_message="Couldn't select that node.\nReason: No node id was provided.\nNext: Use /nodeselect <id>.",
+                internal_summary="node.select.query rejected because no node id was provided.",
+                retryable=False,
+                command_label="/nodeselect",
+                activity_state="processing_command",
+            )
+        resolution = self._service.select_execution_node(node_id)
+        if resolution is None:
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="node_not_found",
+                user_message=f"Couldn't select that node.\nReason: No registered node matches {node_id}.\nNext: Use /nodes to inspect available ids.",
+                internal_summary=f"node.select.query rejected unknown node id: {node_id}.",
+                retryable=False,
+                command_label="/nodeselect",
+                activity_state="processing_command",
+            )
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=f"Selected node: {resolution.node.node_id} | {resolution.node.display_name} | {resolution.node.node_type} | {resolution.node.status}",
+            internal_summary=f"node.select.query selected {resolution.node.node_id}.",
+            retryable=False,
+            command_label="/nodeselect",
+            activity_state="processing_command",
+            telemetry={
+                "target_node_id": resolution.node.node_id,
+                "target_node_name": resolution.node.display_name,
+                "target_node_type": resolution.node.node_type,
+                "target_node_summary": f"{resolution.node.display_name} ({resolution.source})",
+            },
+        )
+
+    def _execute_node_clear(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot) -> CapabilityExecutionResult:
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="node.clear.query",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/nodeclear",
+            parsed_arguments={},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        resolution = self._service.clear_execution_node()
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=f"Node selection cleared. Active node: {resolution.node.node_id} | {resolution.node.display_name} | {resolution.node.node_type} | {resolution.node.status}",
+            internal_summary="node.clear.query restored the default execution node.",
+            retryable=False,
+            command_label="/nodeclear",
+            activity_state="processing_command",
+            telemetry={
+                "target_node_id": resolution.node.node_id,
+                "target_node_name": resolution.node.display_name,
+                "target_node_type": resolution.node.node_type,
+                "target_node_summary": f"{resolution.node.display_name} ({resolution.source})",
+            },
         )
 
     def _execute_status(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot) -> CapabilityExecutionResult:
@@ -804,6 +978,42 @@ class CapabilityExecutor:
             },
         )
 
+    def _execute_plan_view(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot) -> CapabilityExecutionResult:
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="build.plan.view.read",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/planview",
+            parsed_arguments={},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        plan = self._service._build_plan_store.get_active(chat_id=update.chat_id)
+        if plan is None:
+            return self._result(
+                request,
+                outcome="success",
+                reason_code="no_active_build_plan",
+                user_message=self._service._build_plan_formatter.format_no_active_plan(),
+                internal_summary="build.plan.view.read found no active build plan.",
+                retryable=False,
+                command_label="/planview",
+                activity_state="processing_command",
+                telemetry={"build_plan": None},
+            )
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=self._service._build_plan_formatter.format_build_plan(plan, heading="Build plan view"),
+            internal_summary=f"build.plan.view.read returned plan {plan.plan_id} in state {plan.state}.",
+            retryable=False,
+            command_label="/planview",
+            activity_state="processing_command",
+            telemetry={"build_plan": plan.to_payload()},
+        )
+
     def _execute_bootstrap_project(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot) -> CapabilityExecutionResult:
         request, _, _, scope_failure = self._prepare_capability_request(
             capability_id="build.bootstrap.propose.read",
@@ -866,7 +1076,7 @@ class CapabilityExecutor:
             request,
             outcome="success",
             reason_code="ok",
-            user_message=self._service._project_bootstrap_formatter.format_proposal(proposal, heading="Bootstrap proposal"),
+            user_message=self._service._project_bootstrap_formatter.format_proposal(proposal, heading="Bootstrap proposal ready"),
             internal_summary=(
                 f"build.bootstrap.propose.read created bootstrap {proposal.bootstrap_id} for plan {proposal.plan_id} "
                 f"with {len(proposal.files)} file(s)."
@@ -914,7 +1124,7 @@ class CapabilityExecutor:
             request,
             outcome="success",
             reason_code="ok",
-            user_message=self._service._project_bootstrap_formatter.format_proposal(proposal, heading="Bootstrap view"),
+            user_message=self._service._project_bootstrap_formatter.format_proposal(proposal, heading="Bootstrap proposal ready"),
             internal_summary=f"build.bootstrap.view.read returned bootstrap {proposal.bootstrap_id} in state {proposal.state}.",
             retryable=False,
             command_label="/bootstrapview",
@@ -926,42 +1136,6 @@ class CapabilityExecutor:
                 "bootstrap_summary": proposal.summary,
                 "bootstrap_proposal": proposal.to_payload(),
             },
-        )
-
-    def _execute_plan_view(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot) -> CapabilityExecutionResult:
-        request, _, _, scope_failure = self._prepare_capability_request(
-            capability_id="build.plan.view.read",
-            snapshot=snapshot,
-            chat_id=update.chat_id,
-            requester_label=update.sender_label,
-            original_command="/planview",
-            parsed_arguments={},
-        )
-        if scope_failure is not None:
-            return scope_failure
-        plan = self._service._build_plan_store.get_active(chat_id=update.chat_id)
-        if plan is None:
-            return self._result(
-                request,
-                outcome="success",
-                reason_code="no_active_build_plan",
-                user_message=self._service._build_plan_formatter.format_no_active_plan(),
-                internal_summary="build.plan.view.read found no active build plan.",
-                retryable=False,
-                command_label="/planview",
-                activity_state="processing_command",
-                telemetry={"build_plan": None},
-            )
-        return self._result(
-            request,
-            outcome="success",
-            reason_code="ok",
-            user_message=self._service._build_plan_formatter.format_build_plan(plan, heading="Build plan view"),
-            internal_summary=f"build.plan.view.read returned plan {plan.plan_id} in state {plan.state}.",
-            retryable=False,
-            command_label="/planview",
-            activity_state="processing_command",
-            telemetry={"build_plan": plan.to_payload()},
         )
 
     def _execute_plan_step(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot) -> CapabilityExecutionResult:
@@ -1542,7 +1716,7 @@ class CapabilityExecutor:
         )
 
     def _execute_bootstrap_approve(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot) -> CapabilityExecutionResult:
-        request, _, _, scope_failure = self._prepare_capability_request(
+        request, evaluation, _, scope_failure = self._prepare_capability_request(
             capability_id="build.bootstrap.approve.query",
             snapshot=snapshot,
             chat_id=update.chat_id,
@@ -1552,13 +1726,35 @@ class CapabilityExecutor:
         )
         if scope_failure is not None:
             return scope_failure
+        if evaluation.current_availability_state != "allowed":
+            next_step_map = {
+                "readiness_not_ready": "Resolve the blocking health or security issue in the operator console.",
+                "runtime_not_running": "Start the runtime in the operator console and try again.",
+            }
+            reason = evaluation.blocking_reason or evaluation.message
+            next_step = next_step_map.get(evaluation.reason_code, "Check the operator console configuration and try again.")
+            outcome = "blocked"
+            if evaluation.current_availability_state == "unavailable":
+                outcome = "unavailable"
+            elif evaluation.current_availability_state == "degraded":
+                outcome = "degraded"
+            return self._result(
+                request,
+                outcome=outcome,
+                reason_code=evaluation.reason_code,
+                user_message=f"Bootstrap blocked\nReason:\n- {reason}\nNext: {next_step}",
+                internal_summary=f"build.bootstrap.approve.query blocked by capability evaluation ({evaluation.reason_code}).",
+                retryable=True,
+                command_label="/bootstrapapprove",
+                activity_state="processing_command",
+            )
         proposal = self._service._project_bootstrap_store.get_active(chat_id=update.chat_id)
         if proposal is None:
             return self._result(
                 request,
                 outcome="invalid_request",
                 reason_code="no_active_bootstrap_proposal",
-                user_message="Couldn't approve that bootstrap.\nReason: No active bootstrap proposal exists.\nNext: Use /bootstrapproject first.",
+                user_message="Bootstrap blocked\nReason:\n- No active bootstrap proposal\nNext: Use /bootstrapproject first.",
                 internal_summary="build.bootstrap.approve.query rejected because there is no active bootstrap proposal.",
                 retryable=False,
                 command_label="/bootstrapapprove",
@@ -1572,7 +1768,7 @@ class CapabilityExecutor:
                 request,
                 outcome="invalid_request",
                 reason_code="bootstrap_invalidated",
-                user_message="Couldn't approve that bootstrap.\nReason: The active translation or build plan changed.\nNext: Use /bootstrapproject again.",
+                user_message="Bootstrap blocked\nReason:\n- The active translation or build plan changed\nNext: Use /bootstrapproject again.",
                 internal_summary="build.bootstrap.approve.query rejected because the source translation or build plan changed.",
                 retryable=False,
                 command_label="/bootstrapapprove",
@@ -1584,7 +1780,7 @@ class CapabilityExecutor:
                 request,
                 outcome="unavailable",
                 reason_code="repo_root_invalid",
-                user_message=f"Couldn't approve that bootstrap.\nReason: {repo_message}\nNext: Configure the repository root, then rerun /bootstrapapprove.",
+                user_message=f"Bootstrap blocked\nReason:\n- {repo_message}\nNext: Configure the repository root, then rerun /bootstrapapprove.",
                 internal_summary="build.bootstrap.approve.query blocked because the repository root is not configured.",
                 retryable=True,
                 command_label="/bootstrapapprove",
@@ -1631,7 +1827,12 @@ class CapabilityExecutor:
                     request,
                     outcome="out_of_scope",
                     reason_code="bootstrap_outside_repo_root",
-                    user_message=f"Couldn't approve that bootstrap.\nReason: {relative_path} resolves outside the configured repository root.\nNext: Narrow the file scope or repo root, then rerun /bootstrapapprove.",
+                    user_message=(
+                        "Bootstrap blocked\n"
+                        "Reason:\n"
+                        f"- {relative_path} resolves outside the configured repository root\n"
+                        "Next: Narrow the file scope or repo root, then rerun /bootstrapapprove."
+                    ),
                     internal_summary=f"build.bootstrap.approve.query blocked because {relative_path} resolved outside the configured repository root.",
                     retryable=False,
                     command_label="/bootstrapapprove",
@@ -2059,9 +2260,9 @@ class CapabilityExecutor:
             reason_code=inner_result.outcome_reason_code,
             user_message="\n".join(
                 (
-                    "Couldn't approve that bootstrap.",
-                    f"Reason: {reason}",
-                    f"File: {relative_path or 'unknown'}",
+                    "Bootstrap blocked",
+                    "Reason:",
+                    f"- {(relative_path or 'unknown')}: {reason}",
                     f"Next: {next_step}",
                 )
             ),
@@ -2676,6 +2877,7 @@ class CapabilityExecutor:
             target_path=repo_root,
         )
         action_summary = f"{command_label} {local_request.command_summary}"
+        target_node = self._service.resolve_execution_node()
         request = self._build_request(
             capability_id=capability_id,
             snapshot=snapshot,
@@ -2689,6 +2891,7 @@ class CapabilityExecutor:
                 "confirmation_action_label": action_summary,
                 "confirmation_preview_lines": (
                     f"Preview: run {local_request.command_summary}",
+                    f"Node: {target_node.node.display_name} ({target_node.node.node_id}) | {target_node.node.node_type}",
                     f"Scope: {self._service._repo_display_name(repo_root)} | timeout {int(local_request.timeout_seconds)}s",
                 ),
                 "confirmation_metadata": {
@@ -2696,6 +2899,11 @@ class CapabilityExecutor:
                     "execution_command_summary": local_request.command_summary,
                     "execution_action_summary": f"{local_request.command_summary} | {self._service._repo_display_name(repo_root)}",
                     "execution_timeout_seconds": str(int(local_request.timeout_seconds)),
+                    "target_node_id": target_node.node.node_id,
+                    "target_node_name": target_node.node.display_name,
+                    "target_node_type": target_node.node.node_type,
+                    "target_node_transport": target_node.node.transport,
+                    "target_node_summary": f"{target_node.node.display_name} ({target_node.node.node_id})",
                 },
             },
             scope_override=scope,
@@ -2726,100 +2934,6 @@ class CapabilityExecutor:
             outcome="failed",
             reason_code="unexpected_execution_without_confirmation",
             reason="Bounded command execution should require confirmation before it can run.",
-            next_step="Resend the original command if you still want to request a confirmation.",
-            retryable=False,
-        )
-
-    def _execute_pending_file_creation(
-        self,
-        *,
-        update: TelegramInboundMessage,
-        snapshot: ControllerSnapshot,
-        relative_path: str,
-        raw_argument: str,
-        confirmation_preview: str,
-        operator_reason: str,
-    ) -> CapabilityExecutionResult:
-        relative_path, target_path, allowed_roots, missing_directories, resolve_code, resolve_message = self._service.resolve_file_creation_request(relative_path)
-        evaluation, context = self._service._evaluate_capability_id(
-            "file.create.write",
-            snapshot,
-            remember=True,
-        )
-        scope = ExecutionScope(
-            scope_type="filesystem",
-            access_mode="write",
-            allowed_paths=allowed_roots,
-            target_path=target_path,
-        )
-        preview_lines = [f"Preview: {confirmation_preview}"]
-        if missing_directories:
-            preview_lines.append(f"Will create directories: {', '.join(missing_directories)}")
-        request = self._build_request(
-            capability_id="file.create.write",
-            snapshot=snapshot,
-            chat_id=update.chat_id,
-            requester_label=update.sender_label,
-            original_command="/createfile",
-            parsed_arguments={"relative_path": relative_path},
-            context=context,
-            metadata={
-                "argument_summary": f"/createfile {relative_path or '[missing]'}",
-                "confirmation_action_label": f"/createfile {relative_path or '[missing]'}",
-                "confirmation_preview_lines": tuple(preview_lines),
-                "confirmation_metadata": {
-                    "mutation_action_summary": f"{relative_path or 'unknown file'} | create",
-                    "target_path": relative_path,
-                    "mutation_operation": "create",
-                    "mutation_preview": confirmation_preview,
-                    "operator_reason": operator_reason,
-                    "created_directories": ",".join(missing_directories),
-                },
-            },
-            scope_override=scope,
-        )
-        if resolve_code in {
-            "missing_file_path",
-            "absolute_path_not_allowed",
-            "target_path_not_allowed",
-            "file_already_exists",
-            "file_target_is_directory",
-            "parent_not_directory",
-            "file_scope_ambiguous",
-        }:
-            return self._file_mutation_error_result(
-                request=request,
-                error=FileMutatorError(resolve_code, resolve_message),
-                relative_path=relative_path,
-                command_label="/createfile",
-                confirmation_id="",
-            )
-        if evaluation.current_availability_state == "confirmation_required":
-            return self._confirmation_required_result(
-                request=request,
-                evaluation=evaluation,
-                context=context,
-                snapshot=snapshot,
-                prompt=raw_argument,
-                response_style="concise",
-                chat_id=update.chat_id,
-                requester_label=update.sender_label,
-            )
-        if evaluation.current_availability_state != "allowed":
-            return self._file_mutation_blocked_result(
-                request=request,
-                evaluation=evaluation,
-                command_label="/createfile",
-            )
-        scope_failure = self._scope_failure_result(request, command_label="/createfile")
-        if scope_failure is not None:
-            return scope_failure
-        return self._confirmation_result(
-            request=request,
-            confirmation_id="pending",
-            outcome="failed",
-            reason_code="unexpected_mutation_without_confirmation",
-            reason="File mutation should require confirmation before execution.",
             next_step="Resend the original command if you still want to request a confirmation.",
             retryable=False,
         )
@@ -2916,6 +3030,108 @@ class CapabilityExecutor:
             outcome="failed",
             reason_code="unexpected_mutation_without_confirmation",
             reason="File mutation should require confirmation before execution.",
+            next_step="Resend the original command if you still want to request a confirmation.",
+            retryable=False,
+        )
+
+    def _execute_pending_file_creation(
+        self,
+        *,
+        update: TelegramInboundMessage,
+        snapshot: ControllerSnapshot,
+        relative_path: str,
+        raw_argument: str,
+        confirmation_preview: str,
+        operator_reason: str,
+    ) -> CapabilityExecutionResult:
+        relative_path, target_path, allowed_roots, missing_directories, resolve_code, resolve_message = self._service.resolve_file_creation_request(relative_path)
+        evaluation, context = self._service._evaluate_capability_id(
+            "file.create.write",
+            snapshot,
+            remember=True,
+        )
+        scope = ExecutionScope(
+            scope_type="filesystem",
+            access_mode="write",
+            allowed_paths=allowed_roots,
+            target_path=target_path,
+        )
+        preview_lines = [f"Preview: {confirmation_preview}"]
+        if missing_directories:
+            preview_lines.append(f"Will create directories: {', '.join(missing_directories)}")
+        request = self._build_request(
+            capability_id="file.create.write",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/createfile",
+            parsed_arguments={"relative_path": relative_path},
+            context=context,
+            metadata={
+                "argument_summary": f"/createfile {relative_path or '[missing]'}",
+                "confirmation_action_label": f"/createfile {relative_path or '[missing]'}",
+                "confirmation_preview_lines": tuple(preview_lines),
+                "confirmation_metadata": {
+                    "mutation_action_summary": f"{relative_path or 'unknown file'} | create",
+                    "target_path": relative_path,
+                    "mutation_operation": "create",
+                    "mutation_preview": confirmation_preview,
+                    "operator_reason": operator_reason,
+                    "created_directories": ",".join(missing_directories),
+                },
+            },
+            scope_override=scope,
+        )
+        if resolve_code in {
+            "missing_file_path",
+            "absolute_path_not_allowed",
+            "target_path_not_allowed",
+            "file_already_exists",
+            "file_target_is_directory",
+            "parent_not_directory",
+            "file_scope_ambiguous",
+        }:
+            return self._file_mutation_error_result(
+                request=request,
+                error=FileMutatorError(resolve_code, resolve_message),
+                relative_path=relative_path,
+                command_label="/createfile",
+                confirmation_id="",
+            )
+        if resolve_code != "file_create_ready":
+            return self._file_mutation_error_result(
+                request=request,
+                error=FileMutatorError(resolve_code, resolve_message),
+                relative_path=relative_path,
+                command_label="/createfile",
+                confirmation_id="",
+            )
+        if evaluation.current_availability_state == "confirmation_required":
+            return self._confirmation_required_result(
+                request=request,
+                evaluation=evaluation,
+                context=context,
+                snapshot=snapshot,
+                prompt=raw_argument,
+                response_style="concise",
+                chat_id=update.chat_id,
+                requester_label=update.sender_label,
+            )
+        if evaluation.current_availability_state != "allowed":
+            return self._file_mutation_blocked_result(
+                request=request,
+                evaluation=evaluation,
+                command_label="/createfile",
+            )
+        scope_failure = self._scope_failure_result(request, command_label="/createfile")
+        if scope_failure is not None:
+            return scope_failure
+        return self._confirmation_result(
+            request=request,
+            confirmation_id="pending",
+            outcome="failed",
+            reason_code="unexpected_creation_without_confirmation",
+            reason="File creation should require confirmation before execution.",
             next_step="Resend the original command if you still want to request a confirmation.",
             retryable=False,
         )
@@ -3632,7 +3848,6 @@ class CapabilityExecutor:
             "missing_mutation_body",
             "missing_patch_sections",
             "missing_write_content",
-            "missing_create_content",
             "absolute_path_not_allowed",
             "invalid_base_hash",
         }
@@ -3716,7 +3931,7 @@ class CapabilityExecutor:
         self,
         *,
         request: CapabilityExecutionRequest,
-        error: ExecutionRunnerError,
+        error: ExecutionRunnerError | NodeRoutingError,
         command_summary: str,
         command_label: str,
         confirmation_id: str,
@@ -3739,6 +3954,9 @@ class CapabilityExecutor:
             "repo_root_invalid": "Configure a valid repository root in the operator console.",
             "command_not_found": "Use an allowed command prefix or check the local Python environment.",
             "command_execution_failed": "Check the local environment and try again.",
+            "node_execution_unavailable": "Use /nodes or /nodeselect local, then resend the command.",
+            "node_not_online": "Use /nodes or /nodeselect local, then resend the command.",
+            "node_type_unsupported": "Select a supported node with /nodeselect <id>.",
         }
         invalid_request_codes = {
             "missing_command",
@@ -3764,7 +3982,7 @@ class CapabilityExecutor:
         elif error.code in out_of_scope_codes:
             outcome = "out_of_scope"
             retryable = False
-        elif error.code in unavailable_codes:
+        elif error.code in unavailable_codes or error.code in {"node_execution_unavailable", "node_not_online", "node_type_unsupported"}:
             outcome = "unavailable"
         title = (
             f"Confirmation {confirmation_id} could not run."
@@ -3802,10 +4020,24 @@ class CapabilityExecutor:
         command_result,
     ) -> CapabilityExecutionResult:
         repo_label = self._service._repo_display_name(command_result.request.working_directory)
+        node_summary = f"{command_result.node.display_name} ({command_result.node.node_id})"
+        base_telemetry = {
+            "execution_command": command_result.request.command_text,
+            "execution_command_summary": command_result.request.command_summary,
+            "execution_scope": command_result.request.working_directory,
+            "execution_output_summary": command_result.output_summary,
+            "execution_first_issue": command_result.first_issue,
+            "target_node_id": command_result.node.node_id,
+            "target_node_name": command_result.node.display_name,
+            "target_node_type": command_result.node.node_type,
+            "target_node_transport": command_result.node.transport,
+            "target_node_summary": node_summary,
+        }
         if command_result.timed_out:
             self._service._last_confirmation_result = f"Confirmation {confirmation.confirmation_id} timed out via bounded execution."
             lines = [
                 f"Confirmation {confirmation.confirmation_id} approved.",
+                f"Node: {node_summary}",
                 f"Scope: {repo_label}",
                 f"Command: {command_result.request.command_summary}",
                 "Exit: timeout",
@@ -3823,15 +4055,7 @@ class CapabilityExecutor:
                 command_label="/confirm",
                 activity_state="timed_out",
                 confirmation_used=True,
-                telemetry={
-                    "execution_command": command_result.request.command_text,
-                    "execution_command_summary": command_result.request.command_summary,
-                    "execution_scope": command_result.request.working_directory,
-                    "execution_summary": f"{command_result.request.command_summary} | timeout",
-                    "execution_exit_code": -1,
-                    "execution_output_summary": command_result.output_summary,
-                    "execution_first_issue": command_result.first_issue,
-                },
+                telemetry={**base_telemetry, "execution_summary": f"{command_result.request.command_summary} | timeout", "execution_exit_code": -1},
             )
         outcome = "success" if command_result.exit_code == 0 else "failed"
         reason_code = "ok" if command_result.exit_code == 0 else "command_exit_nonzero"
@@ -3839,6 +4063,7 @@ class CapabilityExecutor:
         self._service._last_confirmation_result = f"Confirmation {confirmation.confirmation_id} approved and {status_label} via bounded execution."
         lines = [
             f"Confirmation {confirmation.confirmation_id} approved.",
+            f"Node: {node_summary}",
             f"Scope: {repo_label}",
             f"Command: {command_result.request.command_summary}",
             f"Exit code: {command_result.exit_code}",
@@ -3856,15 +4081,7 @@ class CapabilityExecutor:
             command_label="/confirm",
             activity_state="processing_command" if outcome == "success" else "provider_failed",
             confirmation_used=True,
-            telemetry={
-                "execution_command": command_result.request.command_text,
-                "execution_command_summary": command_result.request.command_summary,
-                "execution_scope": command_result.request.working_directory,
-                "execution_summary": f"{command_result.request.command_summary} | exit {command_result.exit_code}",
-                "execution_exit_code": command_result.exit_code,
-                "execution_output_summary": command_result.output_summary,
-                "execution_first_issue": command_result.first_issue,
-            },
+            telemetry={**base_telemetry, "execution_summary": f"{command_result.request.command_summary} | exit {command_result.exit_code}", "execution_exit_code": command_result.exit_code},
         )
 
     def _web_error_result(
@@ -4808,9 +5025,13 @@ class CapabilityExecutor:
         scope_failure = self._scope_failure_result(request, command_label="/confirm", confirmation_used=True)
         if scope_failure is not None:
             return scope_failure
+        target_node_id = str(confirmation.metadata.get("target_node_id") or "").strip().lower()
+        target_node = self._service.get_registered_node(target_node_id) if target_node_id else None
+        if target_node is None:
+            target_node = self._service.resolve_execution_node().node
         try:
-            command_result = self._service._execution_runner.execute(local_request)
-        except ExecutionRunnerError as exc:
+            command_result = self._service._node_router.execute(node=target_node, request=local_request)
+        except (ExecutionRunnerError, NodeRoutingError) as exc:
             return self._local_command_error_result(
                 request=request,
                 error=exc,

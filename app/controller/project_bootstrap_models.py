@@ -15,6 +15,18 @@ class ProjectBootstrapFileSpec:
     reason: str
     content: str
 
+    @property
+    def path(self) -> str:
+        return self.relative_path
+
+    @property
+    def purpose(self) -> str:
+        return self.reason
+
+    @property
+    def contents(self) -> str:
+        return self.content
+
     def to_payload(self) -> dict[str, str]:
         return {
             "relative_path": self.relative_path,
@@ -50,6 +62,20 @@ class ProjectBootstrapExecutionRecord:
 
 
 @dataclass(frozen=True)
+class BootstrapResult:
+    project_type: ProjectBootstrapType
+    created_files: tuple[str, ...]
+    summary: str
+
+    def to_payload(self) -> dict[str, object]:
+        return {
+            "project_type": self.project_type,
+            "created_files": list(self.created_files),
+            "summary": self.summary,
+        }
+
+
+@dataclass(frozen=True)
 class ProjectBootstrapProposal:
     bootstrap_id: str
     translation_session_id: str
@@ -58,6 +84,7 @@ class ProjectBootstrapProposal:
     project_type: ProjectBootstrapType
     title: str
     summary: str
+    source_intent_summary: str
     files: tuple[ProjectBootstrapFileSpec, ...]
     follow_up_commands: tuple[str, ...]
     warnings: tuple[str, ...]
@@ -93,6 +120,7 @@ class ProjectBootstrapProposal:
             "project_type": self.project_type,
             "title": self.title,
             "summary": self.summary,
+            "source_intent_summary": self.source_intent_summary,
             "files": [file_spec.to_payload() for file_spec in self.files],
             "follow_up_commands": list(self.follow_up_commands),
             "warnings": list(self.warnings),
@@ -103,3 +131,7 @@ class ProjectBootstrapProposal:
             "completed_files": [record.to_payload() for record in self.completed_files],
             "stop_reason": self.stop_reason,
         }
+
+
+BootstrapFileSpec = ProjectBootstrapFileSpec
+BootstrapPlan = ProjectBootstrapProposal

@@ -8,56 +8,32 @@ class ProjectBootstrapFormatter:
     """Render bounded bootstrap proposals and results into concise Telegram replies."""
 
     def format_proposal(self, proposal: ProjectBootstrapProposal, *, heading: str) -> str:
-        lines = [
-            heading,
-            f"Bootstrap: {proposal.bootstrap_id} {proposal.state}",
-            f"Type: {proposal.project_type}",
-            f"Plan: {proposal.plan_id}",
-            f"Summary: {proposal.summary}",
-            f"Files: {self._join_paths(file_spec.relative_path for file_spec in proposal.files)}",
-        ]
-        if proposal.follow_up_commands:
-            lines.append(f"Follow-up: {' | '.join(proposal.follow_up_commands[:2])}")
-        if proposal.warnings:
-            lines.append(f"Warnings: {'; '.join(proposal.warnings[:2])}")
+        lines = [heading, f"Type: {proposal.project_type}", "Files:"]
+        lines.extend(f"- {file_spec.relative_path}" for file_spec in proposal.files)
+        lines.append(f"Purpose: {proposal.summary}")
         if proposal.state == "proposed":
-            lines.append("Approve: /bootstrapapprove")
-            lines.append("Reset: /bootstrapreset")
+            lines.append("Use /bootstrapapprove to execute")
         elif proposal.state == "completed":
-            lines.append(f"Created: {len(proposal.completed_files)}/{len(proposal.files)}")
-            lines.append("Next: Inspect files or clear with /bootstrapreset.")
+            lines.append("Use /bootstrapreset to clear the active proposal")
         elif proposal.state == "failed":
-            lines.append(f"Created: {len(proposal.completed_files)}/{len(proposal.files)}")
-            if proposal.stop_reason:
-                lines.append(f"Stop: {proposal.stop_reason}")
-            lines.append("Next: Fix the blocking path or reset with /bootstrapreset.")
-        else:
-            lines.append(f"Next: {proposal.next_step}")
+            lines.append("Use /bootstrapreset to discard the blocked proposal")
         return "\n".join(lines)
 
     def format_result(self, proposal: ProjectBootstrapProposal) -> str:
-        lines = [
-            "Bootstrap result",
-            f"Bootstrap: {proposal.bootstrap_id} {proposal.state}",
-            f"Type: {proposal.project_type}",
-            f"Created: {len(proposal.completed_files)}/{len(proposal.files)}",
-            f"Files: {self._join_paths(record.relative_path for record in proposal.completed_files) if proposal.completed_files else self._join_paths(file_spec.relative_path for file_spec in proposal.files)}",
-        ]
-        if proposal.stop_reason:
-            lines.append(f"Stop: {proposal.stop_reason}")
-        if proposal.follow_up_commands:
-            lines.append(f"Next: {' | '.join(proposal.follow_up_commands[:2])}")
+        created = tuple(record.relative_path for record in proposal.completed_files)
+        lines = ["Bootstrap completed", "Created:"]
+        lines.extend(f"- {path}" for path in created)
         return "\n".join(lines)
 
     @staticmethod
     def format_no_active_proposal() -> str:
-        return "No active bootstrap proposal.\nNext: Use /bootstrapproject after /planbuild."
+        return "No active bootstrap proposal"
 
     @staticmethod
     def format_reset_reply(proposal: ProjectBootstrapProposal | None) -> str:
         if proposal is None:
-            return "No active bootstrap proposal to clear."
-        return f"Bootstrap proposal cleared.\nBootstrap: {proposal.bootstrap_id} removed."
+            return "No active bootstrap proposal"
+        return "Bootstrap proposal cleared"
 
     @staticmethod
     def _join_paths(paths) -> str:

@@ -206,6 +206,14 @@ class CapabilityLayerTests(unittest.TestCase):
             self.assertEqual(evaluation.current_availability_state, "allowed")
             self.assertEqual(evaluation.reason_code, "allowed")
 
+    def test_bootstrapapprove_is_blocked_when_readiness_is_not_ready(self) -> None:
+        evaluation = self.evaluator.evaluate(
+            "build.bootstrap.approve.query",
+            self._context(readiness_state="not_ready"),
+        )
+        self.assertEqual(evaluation.current_availability_state, "blocked")
+        self.assertEqual(evaluation.reason_code, "readiness_not_ready")
+
     def test_models_read_degraded_when_ollama_unavailable(self) -> None:
         evaluation = self.evaluator.evaluate(
             "models.read",
