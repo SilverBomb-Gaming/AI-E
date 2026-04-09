@@ -40,14 +40,14 @@ class CapabilityEvaluator:
         if exposure_result is not None:
             return exposure_result
 
-        if manifest.requires_runtime and context.runtime_state != "running":
+        if manifest.requires_runtime and not context.runtime_active:
             return self._result(
                 manifest,
                 source=source,
                 availability_state="blocked",
-                reason_code="runtime_not_running",
-                blocking_reason="Runtime is not running.",
-                message=f"{manifest.name} requires a running OpenClaw runtime.",
+                reason_code="runtime_not_active",
+                blocking_reason="Runtime is not active.",
+                message=f"{manifest.name} is blocked until local execution is enabled.",
             )
 
         if (
@@ -56,6 +56,15 @@ class CapabilityEvaluator:
             and capability_id not in {"ask.provider_query", "web.fetch.read"}
             and not manifest.supports_degraded_mode
         ):
+            if not context.runtime_active:
+                return self._result(
+                    manifest,
+                    source=source,
+                    availability_state="blocked",
+                    reason_code="runtime_not_active",
+                    blocking_reason="Runtime is not active.",
+                    message=f"{manifest.name} is blocked until local execution is enabled.",
+                )
             return self._result(
                 manifest,
                 source=source,
@@ -100,6 +109,7 @@ class CapabilityEvaluator:
             "context.clear",
             "workflow.read",
             "workflow.cancel",
+            "runtime.activate.query",
         }:
             return self._result(
                 manifest,

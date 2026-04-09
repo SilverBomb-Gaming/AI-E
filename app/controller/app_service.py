@@ -183,6 +183,7 @@ class ControllerService:
         self._normalize_file_roots_config()
         self._normalize_web_domains_config()
         self._runtime_manager.configure(gateway_port=self._config.gateway_port, gateway_bind=self._config.gateway_bind)
+        self._runtime_active = self._runtime_manager.get_status().runtime_state == "running"
         self._provider_status_cache: dict[str, ProviderStatus] = self._load_provider_status_cache(self._config)
         self._telegram_status = self._reconcile_telegram_status(self._config.telegram_status)
         self._telegram_loop_lock = threading.RLock()
@@ -243,18 +244,27 @@ class ControllerService:
 
     def start_runtime(self) -> ControllerSnapshot:
         self._runtime_manager.start_runtime()
+        self._runtime_active = True
         self._last_message = self._runtime_manager.get_status().status_message
         return self.snapshot()
 
     def stop_runtime(self) -> ControllerSnapshot:
         self._runtime_manager.stop_runtime()
+        self._runtime_active = False
         self._last_message = self._runtime_manager.get_status().status_message
         return self.snapshot()
 
     def restart_runtime(self) -> ControllerSnapshot:
         self._runtime_manager.restart_runtime()
+        self._runtime_active = True
         self._last_message = self._runtime_manager.get_status().status_message
         return self.snapshot()
+
+    def activate_runtime_control_plane(self) -> tuple[bool, ControllerSnapshot]:
+        already_active = self._runtime_active
+        self._runtime_active = True
+        self._last_message = "Runtime already active." if already_active else "Runtime started."
+        return already_active, self.snapshot()
 
     def clear_logs(self) -> ControllerSnapshot:
         self._runtime_manager.clear_logs()
@@ -377,7 +387,7 @@ class ControllerService:
         with self._telegram_loop_lock:
             telegram_loop_status = self._telegram_loop_status
         readiness_state, readiness_message = self._compute_readiness(
-            runtime_state=status.runtime_state,
+            runtime_active=self._runtime_active,
             telegram_status=telegram_status,
         )
         current_context = self._context_store.current_any()
@@ -468,6 +478,7 @@ class ControllerService:
             ollama_path=status.ollama.path,
             runtime_pid=status.pid,
             recent_logs=self._runtime_manager.get_recent_logs(),
+            runtime_active=self._runtime_active,
         )
 
     def validate_provider(
@@ -645,6 +656,7 @@ class ControllerService:
 
     def shutdown(self) -> None:
         self.stop_telegram_loop()
+        self._runtime_active = False
         self._runtime_manager.stop_runtime()
 
     def _validate_provider(
@@ -1567,6 +1579,7 @@ class ControllerService:
                     "Plan: /planbuild|view|status /planstep|approve|resetstep",
                     "Bundle: /planstepbundle /bundleapprove|status|cancel|reset",
                     "Boot: /bootstrapproject|/bootstrapview|/bootstrapapprove|/bootstrapreset",
+                    "Control: /startruntime",
                     "Files: /repo|file /createfile|patchfile|/writefile",
                     "Exec: /run|/test /nodes|nodeview|nodeselect|nodeclear",
                     "Trust: /capabilities|audit|clearcontext /contexts",
@@ -2161,6 +2174,7 @@ class ControllerService:
         if command in {
             "/start",
             "/help",
+            "/startruntime",
             "/nodes",
             "/nodeview",
             "/nodeselect",
@@ -2566,12 +2580,12 @@ class ControllerService:
         offline_status = self._provider_status_for_mode("offline") if need_offline else self._provider_status_cache.get("ollama") or self._default_provider_status("ollama")
         online_status = self._provider_status_for_mode("online") if need_online else self._provider_status_cache.get("openai") or self._default_provider_status("openai")
         local_readiness_state, _ = self._compute_readiness(
-            runtime_state=snapshot.runtime_state,
+            runtime_active=snapshot.runtime_active,
             telegram_status=self._reconcile_telegram_status(self._telegram_status),
         )
         selected_provider_status = online_status if self._config.selected_provider == "openai" else offline_status
         network_readiness_state, network_readiness_message = self._compute_network_readiness(
-            runtime_state=snapshot.runtime_state,
+            runtime_active=snapshot.runtime_active,
             selected_provider_status=selected_provider_status,
             telegram_status=self._reconcile_telegram_status(self._telegram_status),
         )
@@ -2601,6 +2615,7 @@ class ControllerService:
             web_allowed_domains=web_allowed_domains,
             web_scope_valid=web_scope_valid,
             web_message=web_message,
+            runtime_active=snapshot.runtime_active,
         )
 
     def _build_capabilities_reply(self, snapshot: ControllerSnapshot) -> _TelegramResponsePlan:
@@ -2657,6 +2672,7 @@ class ControllerService:
     ) -> _TelegramResponsePlan:
         reason = capability.blocking_reason or capability.message
         next_step_map = {
+            "runtime_not_active": "Use /startruntime, then try again.",
             "runtime_not_running": "Start the runtime in the operator console and try again.",
             "readiness_not_ready": "Resolve the blocking health or security issue in the operator console.",
             "offline_provider_unavailable": "Validate Ollama in the operator console before asking again.",
@@ -2925,6 +2941,7 @@ class ControllerService:
         capability: CapabilityEvaluation,
     ) -> _TelegramResponsePlan:
         next_step_map = {
+            "runtime_not_active": "Use /startruntime, then resend the original command.",
             "runtime_not_running": "Start the runtime in the operator console and resend the original command.",
             "readiness_not_ready": "Resolve the blocking health or security issue in the operator console, then resend the original command.",
             "offline_provider_unavailable": "Validate Ollama in the operator console before retrying the original command.",
@@ -3461,14 +3478,14 @@ class ControllerService:
 
         self,
         *,
-        runtime_state: str,
+        runtime_active: bool,
         telegram_status: TelegramChannelStatus,
     ) -> tuple[str, str]:
         blocking: list[str] = []
         warnings: list[str] = []
 
-        if runtime_state != "running":
-            blocking.append("Runtime is not running.")
+        if not runtime_active:
+            blocking.append("Runtime is not active. Use /startruntime to enable execution.")
 
         if self._config.current_mode != self._config.selected_mode:
             warnings.append("Current mode does not match the saved selection.")
@@ -3499,20 +3516,20 @@ class ControllerService:
             return "not_ready", " ".join(blocking[:2])
         if warnings:
             return "degraded", " ".join(warnings[:2])
-        return "ready", "Runtime, local scope, diagnostics, and Telegram are ready for local execution."
+        return "ready", "Local execution is enabled and diagnostics are ready."
 
     def _compute_network_readiness(
         self,
         *,
-        runtime_state: str,
+        runtime_active: bool,
         selected_provider_status: ProviderStatus,
         telegram_status: TelegramChannelStatus,
     ) -> tuple[str, str]:
         blocking: list[str] = []
         warnings: list[str] = []
 
-        if runtime_state != "running":
-            blocking.append("Runtime is not running.")
+        if not runtime_active:
+            blocking.append("Runtime is not active. Use /startruntime to enable execution.")
 
         compatibility_message = self._validate_mode_provider_pair(
             self._config.selected_mode,
@@ -3553,7 +3570,7 @@ class ControllerService:
             return "not_ready", " ".join(blocking[:2])
         if warnings:
             return "degraded", " ".join(warnings[:2])
-        return "ready", "Runtime, provider, diagnostics, and Telegram are ready for daily use."
+        return "ready", "Execution, provider access, diagnostics, and Telegram are ready."
 
     @staticmethod
     def _first_report_message(report: DiagnosticReport, *, severity: str, ignored_codes: frozenset[str]) -> str:

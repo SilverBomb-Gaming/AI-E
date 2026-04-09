@@ -119,3 +119,4 @@ class ControllerSnapshot:
     ollama_path: str
     runtime_pid: int | None
     recent_logs: Tuple[str, ...]
+    runtime_active: bool = False

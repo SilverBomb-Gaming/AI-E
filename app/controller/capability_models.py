@@ -93,6 +93,7 @@ class CapabilityContext:
     web_message: str = ""
     network_readiness_state: ReadinessState = "ready"
     network_readiness_message: str = ""
+    runtime_active: bool = True
 
 
 @dataclass(frozen=True)

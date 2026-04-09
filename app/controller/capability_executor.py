@@ -123,13 +123,13 @@ class CapabilityExecutor:
             scope_failure = self._scope_failure_result(request, command_label="plain_text")
             if scope_failure is not None:
                 return scope_failure
-            if snapshot.runtime_state != "running":
+            if not snapshot.runtime_active:
                 return self._result(
                     request,
                     outcome="blocked",
-                    reason_code="runtime_not_running",
-                    user_message="OpenClaw runtime is not available. Start the runtime in the operator console and try again.",
-                    internal_summary="Plain text message blocked because runtime is not running.",
+                    reason_code="runtime_not_active",
+                    user_message="Runtime is not active. Use /startruntime to enable execution first.",
+                    internal_summary="Plain text message blocked because runtime activation is disabled.",
                     retryable=True,
                     command_label="plain_text",
                     activity_state="processing_command",
@@ -192,6 +192,8 @@ class CapabilityExecutor:
 
         if command == "/help":
             return self._execute_help(update=update, snapshot=snapshot)
+        if command == "/startruntime":
+            return self._execute_start_runtime(update=update, snapshot=snapshot)
         if command == "/nodes":
             return self._execute_nodes(update=update, snapshot=snapshot)
         if command == "/nodeview":
@@ -367,6 +369,61 @@ class CapabilityExecutor:
             retryable=False,
             command_label="/help",
             activity_state="processing_command",
+        )
+
+    def _execute_start_runtime(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot) -> CapabilityExecutionResult:
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="runtime.activate.query",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/startruntime",
+            parsed_arguments={},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        already_active, activated_snapshot = self._service.activate_runtime_control_plane()
+        node_id = self._service.resolve_execution_node().node.node_id
+        if already_active:
+            reply = "\n".join(
+                (
+                    "Runtime already active",
+                    "",
+                    f"Node: {node_id}",
+                )
+            )
+            summary = "runtime.activate.query acknowledged existing local execution activation."
+        else:
+            reply = "\n".join(
+                (
+                    "Runtime started",
+                    "",
+                    f"Node: {node_id}",
+                    "Execution enabled",
+                    "",
+                    "Capabilities unlocked:",
+                    "- repo.read",
+                    "- file.write",
+                    "- run",
+                    "- test",
+                )
+            )
+            summary = "runtime.activate.query enabled local execution for the operator console."
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=reply,
+            internal_summary=summary,
+            retryable=False,
+            command_label="/startruntime",
+            activity_state="processing_command",
+            telemetry={
+                "runtime_active": True,
+                "runtime_already_active": already_active,
+                "runtime_node_id": node_id,
+                "readiness_state": activated_snapshot.readiness_state,
+            },
         )
 
     def _execute_nodes(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot) -> CapabilityExecutionResult:
@@ -1729,6 +1786,7 @@ class CapabilityExecutor:
         if evaluation.current_availability_state != "allowed":
             next_step_map = {
                 "readiness_not_ready": "Resolve the blocking health or security issue in the operator console.",
+                "runtime_not_active": "Use /startruntime, then retry /bootstrapapprove.",
                 "runtime_not_running": "Start the runtime in the operator console and try again.",
             }
             reason = evaluation.blocking_reason or evaluation.message
@@ -5606,6 +5664,7 @@ class CapabilityExecutor:
         command_label: str,
     ) -> CapabilityExecutionResult:
         next_step_map = {
+            "runtime_not_active": "Use /startruntime, then try again.",
             "runtime_not_running": "Start the runtime in the operator console and try again.",
             "readiness_not_ready": "Resolve the blocking health or security issue in the operator console.",
             "offline_provider_unavailable": "Validate Ollama in the operator console before asking again.",
@@ -5848,6 +5907,7 @@ class CapabilityExecutor:
         evaluation: CapabilityEvaluation,
     ) -> CapabilityExecutionResult:
         next_step_map = {
+            "runtime_not_active": "Use /startruntime, then resend the original command.",
             "runtime_not_running": "Start the runtime in the operator console and resend the original command.",
             "readiness_not_ready": "Resolve the blocking health or security issue in the operator console, then resend the original command.",
             "offline_provider_unavailable": "Validate Ollama in the operator console before retrying the original command.",
