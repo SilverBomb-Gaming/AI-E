@@ -17,6 +17,9 @@ from .autonomy_bundle_store import AutonomyBundleStore
 from .build_plan_formatter import BuildPlanFormatter
 from .build_plan_store import BuildPlanStore
 from .build_planner import BuildPlanner
+from .project_bootstrap_formatter import ProjectBootstrapFormatter
+from .project_bootstrap_planner import ProjectBootstrapPlanner
+from .project_bootstrap_store import ProjectBootstrapStore
 from .plan_bridge import PlanBridge
 from .plan_bridge_formatter import PlanBridgeFormatter
 from .plan_bridge_store import PlanBridgeStore
@@ -95,6 +98,9 @@ _LOOP_ACTION_CAPABILITIES = frozenset(
         "file.create.write",
         "file.patch.write",
         "file.write.replace",
+        "build.bootstrap.propose.read",
+        "build.bootstrap.approve.query",
+        "build.bootstrap.reset.query",
         "shell.command.run",
         "test.command.run",
     }
@@ -159,6 +165,8 @@ class ControllerService:
         self._intent_formatter = IntentFormatter()
         self._build_planner = BuildPlanner()
         self._build_plan_formatter = BuildPlanFormatter()
+        self._project_bootstrap_planner = ProjectBootstrapPlanner()
+        self._project_bootstrap_formatter = ProjectBootstrapFormatter()
         self._plan_bridge = PlanBridge()
         self._plan_bridge_formatter = PlanBridgeFormatter(self._plan_bridge)
         self._autonomy_bundle = AutonomyBundle(self._plan_bridge)
@@ -200,6 +208,7 @@ class ControllerService:
         )
         self._intent_store = IntentStore()
         self._build_plan_store = BuildPlanStore()
+        self._project_bootstrap_store = ProjectBootstrapStore()
         self._plan_bridge_store = PlanBridgeStore()
         self._autonomy_bundle_store = AutonomyBundleStore()
         self._last_capability_evaluation: CapabilityEvaluation | None = None
@@ -1542,14 +1551,16 @@ class ControllerService:
             reply=chr(10).join(
                 (
                     "Operator commands",
-                    "Core: /chat /translate|/refine|/planbuild|/planstep|/planstepbundle",
-                    "Read: /repo|/file /planview|/planstatus /bundlestatus|/contexts",
-                    "Run: /createfile|/patchfile|/writefile /run|/test /planapprove|/bundleapprove",
-                    "Reset: /translateclear|/planclear /planresetstep /bundlecancel|/bundlereset",
-                    "Trust: /capabilities|/audit /clearcontext",
-                    "Ask: /ask /askd /asklast /askctx",
-                    "Info: /explainrepo|/explainfile|/summarizeweb",
-                    "Flow: /workflows|/workflowstatus|/cancelworkflow",
+                    "Core: /chat /translate|/refine|translateclear",
+                    "Plan: /planbuild|view|status /planstep|approve|resetstep",
+                    "Bundle: /planstepbundle /bundleapprove|status|cancel|reset",
+                    "Boot: /bootstrapproject|/bootstrapview|/bootstrapapprove|/bootstrapreset",
+                    "Files: /repo|file /createfile|patchfile|/writefile",
+                    "Exec: /run|/test",
+                    "Trust: /capabilities|audit|clearcontext /contexts",
+                    "Ask: /ask|askd|asklast|askctx",
+                    "Info: /explainrepo|explainfile|summarizeweb",
+                    "Flow: /workflows|status|cancelworkflow",
                 )
             ),
             command_label="/help",
@@ -1562,7 +1573,7 @@ class ControllerService:
             lines = [
                 "Last action",
                 "No loop action is recorded yet.",
-                "Next: Use /repo or /file, then /createfile, /patchfile, /writefile, /run, or /test explicitly.",
+                "Next: Use /repo, /file, /bootstrapproject, /createfile, /patchfile, /writefile, /run, or /test explicitly.",
             ]
             if workflow is not None:
                 lines.insert(2, f"Workflow: {workflow.workflow_id} {self._workflow_state_label(workflow)}")
@@ -1611,6 +1622,34 @@ class ControllerService:
                 f"File: {display_path}",
                 f"Summary: {self._summarize_text(status, limit=180)}",
             )
+        if capability_id == "build.bootstrap.propose.read":
+            bootstrap_id = str(telemetry.get("bootstrap_id") or "unknown bootstrap")
+            bootstrap_type = str(telemetry.get("bootstrap_type") or "unknown")
+            file_count = int(telemetry.get("bootstrap_file_count") or 0)
+            summary = str(telemetry.get("bootstrap_summary") or result.internal_summary)
+            return (
+                "Action: bootstrap proposal ready",
+                f"Bootstrap: {bootstrap_id} ({bootstrap_type})",
+                f"Files: {file_count}",
+                f"Summary: {self._summarize_text(summary, limit=180)}",
+            )
+        if capability_id == "build.bootstrap.approve.query":
+            bootstrap_id = str(telemetry.get("bootstrap_id") or "unknown bootstrap")
+            created_count = int(telemetry.get("bootstrap_created_count") or 0)
+            planned_count = int(telemetry.get("bootstrap_file_count") or 0)
+            summary = str(telemetry.get("bootstrap_summary") or result.internal_summary)
+            return (
+                f"Action: bootstrap {self._outcome_label(result.outcome)}",
+                f"Bootstrap: {bootstrap_id}",
+                f"Created: {created_count}/{planned_count}",
+                f"Summary: {self._summarize_text(summary, limit=180)}",
+            )
+        if capability_id == "build.bootstrap.reset.query":
+            summary = str(telemetry.get("bootstrap_summary") or result.internal_summary)
+            return (
+                "Action: bootstrap reset completed",
+                f"Summary: {self._summarize_text(summary, limit=180)}",
+            )
         if capability_id in {"shell.command.run", "test.command.run"}:
             command_summary = str(telemetry.get("execution_command_summary") or result.request.metadata.get("argument_summary") or result.command_label)
             output_summary = str(telemetry.get("execution_output_summary") or result.internal_summary)
@@ -1642,6 +1681,15 @@ class ControllerService:
             if pending_confirmation_id:
                 return f"Use /workflowstatus or /confirm {pending_confirmation_id} explicitly."
             return "Use /workflowstatus or /cancelworkflow explicitly."
+        if result.capability_id == "build.bootstrap.propose.read":
+            return "Use /bootstrapview to review, /bootstrapapprove to create files, or /bootstrapreset to discard it."
+        if result.capability_id == "build.bootstrap.approve.query" and result.outcome == "success":
+            follow_up = str(result.telemetry.get("bootstrap_follow_up") or "").strip()
+            if follow_up:
+                return follow_up
+            return "Inspect the scaffold with /file or continue with an explicit /run or /test."
+        if result.capability_id == "build.bootstrap.reset.query":
+            return "Use /bootstrapproject after /planbuild if you want a fresh starter scaffold."
         if result.capability_id == "file.read":
             return "Use /createfile, /patchfile, /writefile, /run, or /test explicitly."
         if result.capability_id in {"file.create.write", "file.patch.write", "file.write.replace"} and result.outcome == "success":
@@ -2106,6 +2154,10 @@ class ControllerService:
             "/translateview",
             "/translateclear",
             "/planbuild",
+            "/bootstrapproject",
+            "/bootstrapview",
+            "/bootstrapapprove",
+            "/bootstrapreset",
             "/planstep",
             "/planapprove",
             "/planstatus",
@@ -2222,6 +2274,12 @@ class ControllerService:
                 command_label="parse_failure",
                 normalized_text=normalized_text,
                 usage_hint="Use /planstep, /planapprove, /planstatus, or /planresetstep.",
+            )
+        if command.startswith("/bootstrapproject") or command.startswith("/bootstrapview") or command.startswith("/bootstrapapprove") or command.startswith("/bootstrapreset"):
+            return _ParsedTelegramCommand(
+                command_label="parse_failure",
+                normalized_text=normalized_text,
+                usage_hint="Use /bootstrapproject, /bootstrapview, /bootstrapapprove, or /bootstrapreset.",
             )
         if command.startswith("/planstepbundle") or command.startswith("/bundleapprove") or command.startswith("/bundlestatus") or command.startswith("/bundlecancel") or command.startswith("/bundlereset"):
             return _ParsedTelegramCommand(
@@ -3195,6 +3253,8 @@ class ControllerService:
             action_summary = str(result.telemetry.get("file_summary") or result.request.metadata.get("argument_summary") or "file mutation")
         elif result.capability_id in {"shell.command.run", "test.command.run"}:
             action_summary = str(result.telemetry.get("execution_summary") or result.request.metadata.get("argument_summary") or "bounded execution")
+        elif result.capability_id.startswith("build.bootstrap"):
+            action_summary = str(result.telemetry.get("bootstrap_summary") or result.request.metadata.get("argument_summary") or "project bootstrap")
         elif result.capability_id == "web.fetch.read":
             action_summary = str(result.telemetry.get("web_summary") or "web fetch preview")
         elif result.capability_id == "context.read":

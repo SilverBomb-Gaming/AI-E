@@ -26,6 +26,7 @@ from .file_mutator import (
     summarize_write_request,
 )
 from .file_reader import FileReaderError
+from .project_bootstrap_models import ProjectBootstrapExecutionRecord
 from .repo_inspector import RepoInspectorError
 from .scope_models import ExecutionScope
 from .telegram_service import TelegramInboundMessage
@@ -226,6 +227,14 @@ class CapabilityExecutor:
             return self._execute_plan_view(update=update, snapshot=snapshot)
         if command == "/planclear":
             return self._execute_plan_clear(update=update, snapshot=snapshot)
+        if command == "/bootstrapproject":
+            return self._execute_bootstrap_project(update=update, snapshot=snapshot)
+        if command == "/bootstrapview":
+            return self._execute_bootstrap_view(update=update, snapshot=snapshot)
+        if command == "/bootstrapapprove":
+            return self._execute_bootstrap_approve(update=update, snapshot=snapshot)
+        if command == "/bootstrapreset":
+            return self._execute_bootstrap_reset(update=update, snapshot=snapshot)
         if command == "/bundlereset":
             return self._execute_bundle_reset(update=update, snapshot=snapshot)
         if command == "/mode":
@@ -434,6 +443,7 @@ class CapabilityExecutor:
             self._service._intent_store.archive_active(chat_id=update.chat_id, archived_session=archived_session)
         self._invalidate_bundle_for_plan_change(chat_id=update.chat_id, reason="translation_restarted")
         self._service._build_plan_store.clear_active(chat_id=update.chat_id)
+        self._service._project_bootstrap_store.clear_active(chat_id=update.chat_id)
         self._service._plan_bridge_store.clear_active(chat_id=update.chat_id)
         session = self._service._intent_translator.start_session(
             prompt,
@@ -624,6 +634,7 @@ class CapabilityExecutor:
         self._service._intent_store.set_active(chat_id=update.chat_id, session=session)
         self._invalidate_bundle_for_plan_change(chat_id=update.chat_id, reason="translation_refined")
         self._service._build_plan_store.clear_active(chat_id=update.chat_id)
+        self._service._project_bootstrap_store.clear_active(chat_id=update.chat_id)
         self._service._plan_bridge_store.clear_active(chat_id=update.chat_id)
         summary = self._service._intent_formatter.format_translation_session(session, heading="Translation refined")
         return self._result(
@@ -717,6 +728,7 @@ class CapabilityExecutor:
             )
         self._invalidate_bundle_for_plan_change(chat_id=update.chat_id, reason="translation_cleared")
         self._service._build_plan_store.clear_active(chat_id=update.chat_id)
+        self._service._project_bootstrap_store.clear_active(chat_id=update.chat_id)
         self._service._plan_bridge_store.clear_active(chat_id=update.chat_id)
         archived_session = self._service._intent_translator.archive_session(active_session, timestamp=self._service._now_iso())
         self._service._intent_store.archive_active(chat_id=update.chat_id, archived_session=archived_session)
@@ -765,6 +777,7 @@ class CapabilityExecutor:
             )
         plan = self._service._build_planner.build_plan(session, plan_id=self._generate_build_plan_id())
         self._invalidate_bundle_for_plan_change(chat_id=update.chat_id, reason="plan_rebuilt")
+        self._service._project_bootstrap_store.clear_active(chat_id=update.chat_id)
         self._service._plan_bridge_store.clear_active(chat_id=update.chat_id)
         self._service._build_plan_store.set_active(chat_id=update.chat_id, plan=plan)
         reply = self._service._build_plan_formatter.format_build_plan(plan, heading="Build plan")
@@ -788,6 +801,130 @@ class CapabilityExecutor:
                 "plan_phase_count": len(plan.phases),
                 "plan_blocker_count": len(plan.blockers),
                 "operator_handoff": plan.operator_handoff,
+            },
+        )
+
+    def _execute_bootstrap_project(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot) -> CapabilityExecutionResult:
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="build.bootstrap.propose.read",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/bootstrapproject",
+            parsed_arguments={},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        session = self._service._intent_store.get_active(chat_id=update.chat_id)
+        if session is None:
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="no_active_translation_session",
+                user_message="Couldn't bootstrap that project.\nReason: No active translation draft exists.\nNext: Use /translate <idea or request> first.",
+                internal_summary="build.bootstrap.propose.read rejected because there is no active translation draft.",
+                retryable=False,
+                command_label="/bootstrapproject",
+                activity_state="processing_command",
+            )
+        plan = self._service._build_plan_store.get_active(chat_id=update.chat_id)
+        if plan is None:
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="no_active_build_plan",
+                user_message="Couldn't bootstrap that project.\nReason: No active build plan exists.\nNext: Use /planbuild after /translate or /refine.",
+                internal_summary="build.bootstrap.propose.read rejected because there is no active build plan.",
+                retryable=False,
+                command_label="/bootstrapproject",
+                activity_state="processing_command",
+            )
+        repo_root, repo_root_valid, _, _ = self._service._repo_configuration_state()
+        try:
+            proposal = self._service._project_bootstrap_planner.build_proposal(
+                session,
+                plan,
+                bootstrap_id=self._generate_bootstrap_id(),
+                created_at=self._service._now_iso(),
+                repo_root=repo_root if repo_root_valid else "",
+            )
+        except Exception as exc:
+            code = getattr(exc, "code", "bootstrap_planning_failed")
+            message = getattr(exc, "message", "Bootstrap planning failed unexpectedly.")
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code=code,
+                user_message=f"Couldn't bootstrap that project.\nReason: {message}\nNext: Refine the request or choose a supported phase-1 project type.",
+                internal_summary=f"build.bootstrap.propose.read failed: {code}.",
+                retryable=False,
+                command_label="/bootstrapproject",
+                activity_state="processing_command",
+            )
+        self._service._project_bootstrap_store.set_active(chat_id=update.chat_id, proposal=proposal)
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=self._service._project_bootstrap_formatter.format_proposal(proposal, heading="Bootstrap proposal"),
+            internal_summary=(
+                f"build.bootstrap.propose.read created bootstrap {proposal.bootstrap_id} for plan {proposal.plan_id} "
+                f"with {len(proposal.files)} file(s)."
+            ),
+            retryable=False,
+            command_label="/bootstrapproject",
+            activity_state="processing_command",
+            telemetry={
+                "translation_session": session.to_payload(),
+                "build_plan": plan.to_payload(),
+                "bootstrap_id": proposal.bootstrap_id,
+                "bootstrap_type": proposal.project_type,
+                "bootstrap_file_count": len(proposal.files),
+                "bootstrap_follow_up": " | ".join(proposal.follow_up_commands[:2]),
+                "bootstrap_summary": proposal.summary,
+                "bootstrap_proposal": proposal.to_payload(),
+            },
+        )
+
+    def _execute_bootstrap_view(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot) -> CapabilityExecutionResult:
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="build.bootstrap.view.read",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/bootstrapview",
+            parsed_arguments={},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        proposal = self._service._project_bootstrap_store.get_active(chat_id=update.chat_id)
+        if proposal is None:
+            return self._result(
+                request,
+                outcome="success",
+                reason_code="no_active_bootstrap_proposal",
+                user_message=self._service._project_bootstrap_formatter.format_no_active_proposal(),
+                internal_summary="build.bootstrap.view.read found no active bootstrap proposal.",
+                retryable=False,
+                command_label="/bootstrapview",
+                activity_state="processing_command",
+                telemetry={"bootstrap_proposal": None},
+            )
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=self._service._project_bootstrap_formatter.format_proposal(proposal, heading="Bootstrap view"),
+            internal_summary=f"build.bootstrap.view.read returned bootstrap {proposal.bootstrap_id} in state {proposal.state}.",
+            retryable=False,
+            command_label="/bootstrapview",
+            activity_state="processing_command",
+            telemetry={
+                "bootstrap_id": proposal.bootstrap_id,
+                "bootstrap_type": proposal.project_type,
+                "bootstrap_file_count": len(proposal.files),
+                "bootstrap_summary": proposal.summary,
+                "bootstrap_proposal": proposal.to_payload(),
             },
         )
 
@@ -1386,6 +1523,7 @@ class CapabilityExecutor:
             return scope_failure
         self._invalidate_bundle_for_plan_change(chat_id=update.chat_id, reason="plan_cleared")
         cleared_plan = self._service._build_plan_store.clear_active(chat_id=update.chat_id)
+        self._service._project_bootstrap_store.clear_active(chat_id=update.chat_id)
         self._service._plan_bridge_store.clear_active(chat_id=update.chat_id)
         return self._result(
             request,
@@ -1401,6 +1539,212 @@ class CapabilityExecutor:
             command_label="/planclear",
             activity_state="processing_command",
             telemetry={"build_plan": cleared_plan.to_payload() if cleared_plan is not None else None},
+        )
+
+    def _execute_bootstrap_approve(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot) -> CapabilityExecutionResult:
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="build.bootstrap.approve.query",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/bootstrapapprove",
+            parsed_arguments={},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        proposal = self._service._project_bootstrap_store.get_active(chat_id=update.chat_id)
+        if proposal is None:
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="no_active_bootstrap_proposal",
+                user_message="Couldn't approve that bootstrap.\nReason: No active bootstrap proposal exists.\nNext: Use /bootstrapproject first.",
+                internal_summary="build.bootstrap.approve.query rejected because there is no active bootstrap proposal.",
+                retryable=False,
+                command_label="/bootstrapapprove",
+                activity_state="processing_command",
+            )
+        session = self._service._intent_store.get_active(chat_id=update.chat_id)
+        plan = self._service._build_plan_store.get_active(chat_id=update.chat_id)
+        if session is None or plan is None or session.translation_session_id != proposal.translation_session_id or plan.plan_id != proposal.plan_id:
+            self._service._project_bootstrap_store.clear_active(chat_id=update.chat_id)
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="bootstrap_invalidated",
+                user_message="Couldn't approve that bootstrap.\nReason: The active translation or build plan changed.\nNext: Use /bootstrapproject again.",
+                internal_summary="build.bootstrap.approve.query rejected because the source translation or build plan changed.",
+                retryable=False,
+                command_label="/bootstrapapprove",
+                activity_state="processing_command",
+            )
+        repo_root, repo_root_valid, repo_message, _ = self._service._repo_configuration_state()
+        if not repo_root_valid:
+            return self._result(
+                request,
+                outcome="unavailable",
+                reason_code="repo_root_invalid",
+                user_message=f"Couldn't approve that bootstrap.\nReason: {repo_message}\nNext: Configure the repository root, then rerun /bootstrapapprove.",
+                internal_summary="build.bootstrap.approve.query blocked because the repository root is not configured.",
+                retryable=True,
+                command_label="/bootstrapapprove",
+                activity_state="processing_command",
+                confirmation_used=True,
+                telemetry={
+                    "bootstrap_id": proposal.bootstrap_id,
+                    "bootstrap_type": proposal.project_type,
+                    "bootstrap_file_count": len(proposal.files),
+                    "bootstrap_created_count": 0,
+                    "bootstrap_follow_up": " | ".join(proposal.follow_up_commands[:2]),
+                    "bootstrap_summary": proposal.summary,
+                    "bootstrap_proposal": proposal.to_payload(),
+                },
+            )
+        executing = proposal.with_state("executing", updated_at=self._service._now_iso(), completed_files=(), stop_reason="")
+        self._service._project_bootstrap_store.set_active(chat_id=update.chat_id, proposal=executing)
+        repo_root_path = Path(repo_root).resolve()
+        preflighted: list[tuple[object, object]] = []
+        for file_spec in executing.files:
+            confirmation = self._synthetic_bootstrap_confirmation(update=update, snapshot=snapshot, proposal=executing, file_spec=file_spec)
+            parsed = parse_create_command(confirmation.prompt_text)
+            mutation_request, inner_scope_failure, relative_path, _ = self._prepare_confirmed_file_create_request(
+                confirmation=confirmation,
+                snapshot=snapshot,
+                chat_id=update.chat_id,
+                relative_path=parsed.relative_path,
+            )
+            if isinstance(mutation_request, CapabilityExecutionResult):
+                failed = executing.with_state("failed", updated_at=self._service._now_iso(), completed_files=(), stop_reason=mutation_request.outcome_reason_code)
+                self._service._project_bootstrap_store.set_active(chat_id=update.chat_id, proposal=failed)
+                return self._bootstrap_failure_result(request=request, proposal=failed, relative_path=relative_path, inner_result=mutation_request)
+            if inner_scope_failure is not None:
+                failed = executing.with_state("failed", updated_at=self._service._now_iso(), completed_files=(), stop_reason=inner_scope_failure.outcome_reason_code)
+                self._service._project_bootstrap_store.set_active(chat_id=update.chat_id, proposal=failed)
+                return self._bootstrap_failure_result(request=request, proposal=failed, relative_path=relative_path, inner_result=inner_scope_failure)
+            target_path = Path(mutation_request.scope.target_path).resolve()
+            try:
+                target_path.relative_to(repo_root_path)
+            except ValueError:
+                failed = executing.with_state("failed", updated_at=self._service._now_iso(), completed_files=(), stop_reason="bootstrap_outside_repo_root")
+                self._service._project_bootstrap_store.set_active(chat_id=update.chat_id, proposal=failed)
+                return self._result(
+                    request,
+                    outcome="out_of_scope",
+                    reason_code="bootstrap_outside_repo_root",
+                    user_message=f"Couldn't approve that bootstrap.\nReason: {relative_path} resolves outside the configured repository root.\nNext: Narrow the file scope or repo root, then rerun /bootstrapapprove.",
+                    internal_summary=f"build.bootstrap.approve.query blocked because {relative_path} resolved outside the configured repository root.",
+                    retryable=False,
+                    command_label="/bootstrapapprove",
+                    activity_state="processing_command",
+                    confirmation_used=True,
+                    telemetry={
+                        "bootstrap_id": executing.bootstrap_id,
+                        "bootstrap_type": executing.project_type,
+                        "bootstrap_file_count": len(executing.files),
+                        "bootstrap_created_count": 0,
+                        "bootstrap_follow_up": " | ".join(executing.follow_up_commands[:2]),
+                        "bootstrap_summary": executing.summary,
+                        "bootstrap_proposal": failed.to_payload(),
+                    },
+                )
+            preflighted.append((file_spec, confirmation))
+        completed_records: list[ProjectBootstrapExecutionRecord] = []
+        current = executing
+        for file_spec, confirmation in preflighted:
+            inner_result = self._execute_confirmed_file_create(
+                request=request,
+                confirmation=confirmation,
+                snapshot=snapshot,
+                chat_id=update.chat_id,
+            )
+            if inner_result.outcome != "success":
+                failed = current.with_state(
+                    "failed",
+                    updated_at=self._service._now_iso(),
+                    completed_files=tuple(completed_records),
+                    stop_reason=inner_result.outcome_reason_code,
+                )
+                self._service._project_bootstrap_store.set_active(chat_id=update.chat_id, proposal=failed)
+                return self._bootstrap_failure_result(request=request, proposal=failed, relative_path=file_spec.relative_path, inner_result=inner_result)
+            completed_records.append(
+                ProjectBootstrapExecutionRecord(
+                    relative_path=file_spec.relative_path,
+                    capability_id=inner_result.capability_id,
+                    outcome=inner_result.outcome,
+                    reason_code=inner_result.outcome_reason_code,
+                    summary=inner_result.internal_summary,
+                )
+            )
+            current = current.with_state(
+                "executing",
+                updated_at=self._service._now_iso(),
+                completed_files=tuple(completed_records),
+                stop_reason="",
+            )
+            self._service._project_bootstrap_store.set_active(chat_id=update.chat_id, proposal=current)
+        completed = current.with_state(
+            "completed",
+            updated_at=self._service._now_iso(),
+            completed_files=tuple(completed_records),
+            stop_reason="approved_bootstrap_completed",
+        )
+        self._service._project_bootstrap_store.set_active(chat_id=update.chat_id, proposal=completed)
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=self._service._project_bootstrap_formatter.format_result(completed),
+            internal_summary=(
+                f"build.bootstrap.approve.query created {len(completed.completed_files)} file(s) for bootstrap {completed.bootstrap_id}."
+            ),
+            retryable=False,
+            command_label="/bootstrapapprove",
+            activity_state="processing_command",
+            confirmation_used=True,
+            telemetry={
+                "translation_session": session.to_payload(),
+                "build_plan": plan.to_payload(),
+                "bootstrap_id": completed.bootstrap_id,
+                "bootstrap_type": completed.project_type,
+                "bootstrap_file_count": len(completed.files),
+                "bootstrap_created_count": len(completed.completed_files),
+                "bootstrap_follow_up": " | ".join(completed.follow_up_commands[:2]),
+                "bootstrap_summary": completed.summary,
+                "bootstrap_proposal": completed.to_payload(),
+                "executed_capability_ids": [record.capability_id for record in completed.completed_files],
+            },
+        )
+
+    def _execute_bootstrap_reset(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot) -> CapabilityExecutionResult:
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="build.bootstrap.reset.query",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/bootstrapreset",
+            parsed_arguments={},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        cleared = self._service._project_bootstrap_store.clear_active(chat_id=update.chat_id)
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok" if cleared is not None else "no_active_bootstrap_proposal",
+            user_message=self._service._project_bootstrap_formatter.format_reset_reply(cleared),
+            internal_summary=(
+                f"build.bootstrap.reset.query cleared bootstrap {cleared.bootstrap_id}."
+                if cleared is not None
+                else "build.bootstrap.reset.query found no active bootstrap proposal to clear."
+            ),
+            retryable=False,
+            command_label="/bootstrapreset",
+            activity_state="processing_command",
+            telemetry={
+                "bootstrap_id": cleared.bootstrap_id if cleared is not None else "",
+                "bootstrap_summary": cleared.summary if cleared is not None else "project bootstrap reset",
+                "bootstrap_proposal": cleared.to_payload() if cleared is not None else None,
+            },
         )
 
     def _execute_bundle_cancel(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot) -> CapabilityExecutionResult:
@@ -1468,6 +1812,10 @@ class CapabilityExecutor:
             activity_state="processing_command",
             telemetry={"bundle_state": state.to_payload() if state is not None else None},
         )
+
+    @staticmethod
+    def _generate_bootstrap_id() -> str:
+        return f"BT-{secrets.token_hex(3).upper()}"
 
     @staticmethod
     def _generate_build_plan_id() -> str:
@@ -1664,6 +2012,89 @@ class CapabilityExecutor:
                 "bundle_step_index": step.step_index,
             },
         )
+
+    def _synthetic_bootstrap_confirmation(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot, proposal, file_spec) -> PendingConfirmation:
+        _, context = self._service._evaluate_capability_id(
+            "file.create.write",
+            snapshot,
+            remember=False,
+            confirmation_granted=True,
+        )
+        now = self._service._now_iso()
+        confirmation_seed = secrets.token_hex(2).upper()
+        return PendingConfirmation(
+            confirmation_id=f"{proposal.bootstrap_id}-{confirmation_seed}",
+            capability_id="file.create.write",
+            original_command="/bootstrapapprove",
+            argument_summary=file_spec.relative_path,
+            prompt_text=file_spec.to_create_command_argument(),
+            response_style="concise",
+            timestamp_created=now,
+            expires_at=now,
+            current_state="approved",
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            evaluation_context=self._confirmation_context_snapshot(snapshot, context),
+            metadata={
+                "execution_command_summary": file_spec.relative_path,
+                "execution_action_summary": f"bootstrap create {file_spec.relative_path}",
+                "bootstrap_id": proposal.bootstrap_id,
+                "bootstrap_type": proposal.project_type,
+            },
+        )
+
+    def _bootstrap_failure_result(
+        self,
+        *,
+        request: CapabilityExecutionRequest,
+        proposal,
+        relative_path: str,
+        inner_result: CapabilityExecutionResult,
+    ) -> CapabilityExecutionResult:
+        reason = str(inner_result.telemetry.get("file_status") or inner_result.internal_summary or "Bootstrap file creation failed.")
+        next_step = self._bootstrap_next_step(inner_result.outcome_reason_code)
+        return self._result(
+            request,
+            outcome=inner_result.outcome,
+            reason_code=inner_result.outcome_reason_code,
+            user_message="\n".join(
+                (
+                    "Couldn't approve that bootstrap.",
+                    f"Reason: {reason}",
+                    f"File: {relative_path or 'unknown'}",
+                    f"Next: {next_step}",
+                )
+            ),
+            internal_summary=(
+                f"build.bootstrap.approve.query stopped bootstrap {proposal.bootstrap_id} at {relative_path or 'unknown'}; "
+                f"inner outcome={inner_result.outcome}."
+            ),
+            retryable=inner_result.retryable,
+            command_label="/bootstrapapprove",
+            activity_state="processing_command",
+            confirmation_used=True,
+            telemetry={
+                "bootstrap_id": proposal.bootstrap_id,
+                "bootstrap_type": proposal.project_type,
+                "bootstrap_file_count": len(proposal.files),
+                "bootstrap_created_count": len(proposal.completed_files),
+                "bootstrap_follow_up": " | ".join(proposal.follow_up_commands[:2]),
+                "bootstrap_summary": proposal.summary,
+                "bootstrap_proposal": proposal.to_payload(),
+                "display_path": relative_path,
+            },
+        )
+
+    @staticmethod
+    def _bootstrap_next_step(reason_code: str) -> str:
+        next_step_map = {
+            "repo_root_invalid": "Configure the repository root, then rerun /bootstrapapprove.",
+            "file_scope_ambiguous": "Narrow the allowed file roots before trying the bootstrap again.",
+            "file_already_exists": "Reset the proposal or choose a clean target before approving again.",
+            "target_path_not_allowed": "Use a target path inside the configured repo and allowed roots only.",
+            "bootstrap_outside_repo_root": "Align the repo root and file scope before rerunning /bootstrapapprove.",
+        }
+        return next_step_map.get(reason_code, "Inspect the blocking file path, then rerun /bootstrapproject or /bootstrapapprove explicitly.")
 
     def _prepare_bridge_state_for_bundle_step(self, *, plan, state, step):
         state = self._service._plan_bridge.ensure_state(plan, state)

@@ -107,6 +107,10 @@ class CapabilityLayerTests(unittest.TestCase):
         self.assertIn("build.step.reset.read", CAPABILITY_REGISTRY)
         self.assertIn("build.plan.view.read", CAPABILITY_REGISTRY)
         self.assertIn("build.plan.clear.read", CAPABILITY_REGISTRY)
+        self.assertIn("build.bootstrap.propose.read", CAPABILITY_REGISTRY)
+        self.assertIn("build.bootstrap.view.read", CAPABILITY_REGISTRY)
+        self.assertIn("build.bootstrap.approve.query", CAPABILITY_REGISTRY)
+        self.assertIn("build.bootstrap.reset.query", CAPABILITY_REGISTRY)
         self.assertIn("audit.read", CAPABILITY_REGISTRY)
         self.assertIn("capabilities.read", CAPABILITY_REGISTRY)
         for definition in CAPABILITY_DEFINITIONS:
@@ -193,6 +197,10 @@ class CapabilityLayerTests(unittest.TestCase):
             "build.step.reset.read",
             "build.plan.view.read",
             "build.plan.clear.read",
+            "build.bootstrap.propose.read",
+            "build.bootstrap.view.read",
+            "build.bootstrap.approve.query",
+            "build.bootstrap.reset.query",
         }:
             evaluation = self.evaluator.evaluate(capability_id, self._context())
             self.assertEqual(evaluation.current_availability_state, "allowed")

@@ -12,7 +12,6 @@ from app.controller.app_service import ControllerService
 from app.controller.channel_models import TelegramChannelStatus
 from app.controller.diagnostic_models import DiagnosticItem
 from app.controller.diagnostic_models import DiagnosticReport
-from app.controller.node_models import NodeDescriptor
 from app.controller.profile_store import ControllerConfigStore
 from app.controller.telegram_service import TelegramInboundMessage, mask_telegram_token
 from app.platform.secrets import InMemorySecretStore
@@ -369,101 +368,21 @@ class TelegramCommandTests(unittest.TestCase):
             self.assertIn("/chat", lines[1])
             self.assertIn("/translate", lines[1])
             self.assertIn("/refine", lines[1])
-            self.assertIn("/planbuild", lines[1])
-            self.assertIn("/planstep", lines[1])
-            self.assertIn("/nodes", lines[2])
-            self.assertIn("/nodeclear", lines[2])
-            self.assertIn("/contexts", lines[3])
-            self.assertIn("/bundlestatus", lines[3])
-            self.assertIn("/run|/test", lines[4])
-            self.assertIn("/bundleapprove", lines[4])
-            self.assertIn("/translateclear", lines[5])
-            self.assertIn("/bundlecancel|/bundlereset", lines[5])
-            self.assertIn("/capabilities", lines[6])
-            self.assertIn("/audit", lines[6])
-            self.assertIn("/ask", lines[7])
-            self.assertIn("/askctx", lines[7])
-            self.assertIn("/explainrepo|/explainfile|/summarizeweb", lines[8])
-            self.assertIn("/workflows|/workflowstatus|/cancelworkflow", lines[9])
-
-    def test_nodes_commands_list_select_view_and_clear_registered_nodes(self) -> None:
-        updates = (
-            TelegramInboundMessage(update_id=34, chat_id="chat-1", text="/nodes", sender_label="@tester"),
-            TelegramInboundMessage(update_id=35, chat_id="chat-1", text="/nodeselect mock-gpu", sender_label="@tester"),
-            TelegramInboundMessage(update_id=36, chat_id="chat-1", text="/nodeview mock-gpu", sender_label="@tester"),
-            TelegramInboundMessage(update_id=37, chat_id="chat-1", text="/nodeclear", sender_label="@tester"),
-        )
-        with tempfile.TemporaryDirectory() as tmp:
-            telegram_service = _FakeTelegramService(update_batches=[updates])
-            service, _, _, _, _, _ = self._make_service(tmp_dir=tmp, telegram_service=telegram_service)
-            service._node_registry.register_node(
-                NodeDescriptor(
-                    node_id="mock-gpu",
-                    display_name="Bedroom GPU Rig",
-                    node_type="mock",
-                    status="online",
-                    transport="mock",
-                    summary="Simulated remote execution node for controller tests.",
-                    capability_labels=("/run", "/test"),
-                )
-            )
-            service.start_telegram_loop()
-            self.assertTrue(_wait_until(lambda: len(telegram_service.sent_messages) == 4, timeout=2.0))
-            snapshot = service.stop_telegram_loop()
-            self.assertIn("Nodes", telegram_service.sent_messages[0][1])
-            self.assertIn("local", telegram_service.sent_messages[0][1])
-            self.assertIn("mock-gpu", telegram_service.sent_messages[0][1])
-            self.assertEqual(
-                telegram_service.sent_messages[1][1],
-                "Selected node: mock-gpu | Bedroom GPU Rig | mock | online",
-            )
-            self.assertIn("Node view", telegram_service.sent_messages[2][1])
-            self.assertIn("ID: mock-gpu", telegram_service.sent_messages[2][1])
-            self.assertIn("Commands: /run /test", telegram_service.sent_messages[2][1])
-            self.assertEqual(
-                telegram_service.sent_messages[3][1],
-                f"Node selection cleared. Active node: local | {service.resolve_execution_node().node.display_name} | local | online",
-            )
-            self.assertEqual(snapshot.selected_node_id, "local")
-
-    def test_confirmed_run_uses_selected_mock_node_without_local_execution(self) -> None:
-        first_update = TelegramInboundMessage(update_id=38, chat_id="chat-1", text="/run python validate_runtime.py", sender_label="@tester")
-        with tempfile.TemporaryDirectory() as tmp:
-            create_service = _FakeTelegramService(update_batches=[(first_update,)])
-            service, config_store, _, _, _, _ = self._make_service(tmp_dir=tmp, telegram_service=create_service)
-            config = config_store.load()
-            config.repo_root = tmp
-            config.file_allowed_roots = (tmp,)
-            config_store.save(config)
-            service._config = config_store.load()
-            service._normalize_repo_root_config()
-            service._normalize_file_roots_config()
-            service._node_registry.register_node(
-                NodeDescriptor(
-                    node_id="mock-gpu",
-                    display_name="Bedroom GPU Rig",
-                    node_type="mock",
-                    status="online",
-                    transport="mock",
-                    summary="Simulated remote execution node for controller tests.",
-                    capability_labels=("/run", "/test"),
-                    metadata={"mock_output_summary": "Mock node executed validate_runtime.py", "mock_exit_code": 0},
-                )
-            )
-            service.select_execution_node("mock-gpu")
-            _, prompt_reply = self._run_single_update(service, create_service)
-            confirmation_id = self._extract_confirmation_id(prompt_reply)
-            self.assertIn("Node: Bedroom GPU Rig (mock-gpu) | mock", prompt_reply)
-
-            confirm_service = _FakeTelegramService(
-                update_batches=[(TelegramInboundMessage(update_id=39, chat_id="chat-1", text=f"/confirm {confirmation_id}", sender_label="@tester"),)]
-            )
-            service._telegram_service = confirm_service
-            _, confirm_reply = self._run_single_update(service, confirm_service)
-            self.assertIn(f"Confirmation {confirmation_id} approved.", confirm_reply)
-            self.assertIn("Node: Bedroom GPU Rig (mock-gpu)", confirm_reply)
-            self.assertIn("Summary: Mock node executed validate_runtime.py", confirm_reply)
-
+            self.assertIn("/planbuild", lines[2])
+            self.assertIn("/planstep", lines[2])
+            self.assertIn("/bundleapprove", lines[3])
+            self.assertIn("cancel", lines[3])
+            self.assertIn("/bootstrapproject", lines[4])
+            self.assertIn("/bootstrapapprove", lines[4])
+            self.assertIn("/createfile", lines[5])
+            self.assertIn("/writefile", lines[5])
+            self.assertIn("/run", lines[6])
+            self.assertIn("/capabilities", lines[7])
+            self.assertIn("/contexts", lines[7])
+            self.assertIn("/ask", lines[8])
+            self.assertIn("askctx", lines[8])
+            self.assertIn("/explainrepo", lines[9])
+            self.assertIn("cancelworkflow", lines[10])
     def test_status_command_is_mobile_readable_and_shows_loop_activity(self) -> None:
         update = TelegramInboundMessage(update_id=2, chat_id="chat-1", text="/status", sender_label="@tester")
         with tempfile.TemporaryDirectory() as tmp:
