@@ -14,6 +14,7 @@ from app.controller.profile_store import ControllerConfigStore
 
 from tests.test_telegram_commands import (
     VALID_TOKEN,
+    _item,
     _FakeOllamaAdapter,
     _FakeOpenAIAdapter,
     _FakeRuntimeManager,
@@ -155,6 +156,58 @@ class RepoInsightCapabilityTests(unittest.TestCase):
                 reply,
                 "Can't run /repo right now.\nReason: Repository root is not configured.\nNext: Check the configured repository path and current readiness in the operator console.",
             )
+
+    def test_repo_command_reports_invalid_repo_root_cleanly(self) -> None:
+        update = TelegramInboundMessage(update_id=405, chat_id="chat-1", text="/repo", sender_label="@tester")
+        with tempfile.TemporaryDirectory() as tmp:
+            telegram_service = _FakeTelegramService(update_batches=[(update,)])
+            service, config_store, _, _ = self._make_service(tmp_dir=tmp, telegram_service=telegram_service)
+            config = config_store.load()
+            config.repo_root = str((Path(tmp) / "missing-repo").resolve())
+            config_store.save(config)
+            service._config = config_store.load()
+            _, reply = self._run_single_update(service, telegram_service)
+            self.assertEqual(service._last_execution_result.outcome, "unavailable")
+            self.assertEqual(service._last_execution_result.outcome_reason_code, "repo_root_invalid")
+            self.assertEqual(
+                reply,
+                "Can't run /repo right now.\nReason: Repository not found at configured path.\nNext: Check the configured repository path and current readiness in the operator console.",
+            )
+
+    def test_repo_command_stays_available_when_only_provider_readiness_is_blocked(self) -> None:
+        update = TelegramInboundMessage(update_id=406, chat_id="chat-1", text="/repo", sender_label="@tester")
+        with tempfile.TemporaryDirectory() as tmp:
+            telegram_service = _FakeTelegramService(update_batches=[(update,)])
+            service, config_store, _, _ = self._make_service(tmp_dir=tmp, telegram_service=telegram_service)
+            service._repo_inspector = _FakeRepoInspector()
+            config = config_store.load()
+            config.repo_root = str(Path(__file__).resolve().parents[1])
+            config_store.save(config)
+            service._config = config_store.load()
+            service._latest_health_report = _report(
+                "health",
+                "blocked",
+                "error",
+                "Provider validation failed.",
+                items=(
+                    _item("health", "error", "provider.validation", "Provider validation failed."),
+                ),
+            )
+            service._latest_security_report = _report(
+                "security",
+                "blocked",
+                "error",
+                "OpenAI secret is missing.",
+                items=(
+                    _item("security", "error", "secret.required", "Required OpenAI secret is missing."),
+                ),
+            )
+
+            _, reply = self._run_single_update(service, telegram_service)
+
+            self.assertEqual(service._last_execution_result.outcome, "success")
+            self.assertIn("Repo: AI-E", reply)
+            self.assertIn("Branch: codex/home-screen-v1", reply)
 
     def test_repo_scope_violation_blocks_before_inspector_runs(self) -> None:
         update = TelegramInboundMessage(update_id=404, chat_id="chat-1", text="/repo", sender_label="@tester")

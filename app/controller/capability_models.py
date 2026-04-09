@@ -91,6 +91,8 @@ class CapabilityContext:
     web_allowed_domains: Tuple[str, ...] = ()
     web_scope_valid: bool = False
     web_message: str = ""
+    network_readiness_state: ReadinessState = "ready"
+    network_readiness_message: str = ""
 
 
 @dataclass(frozen=True)

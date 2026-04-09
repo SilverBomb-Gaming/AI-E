@@ -53,7 +53,7 @@ class CapabilityEvaluator:
         if (
             manifest.requires_readiness
             and context.readiness_state == "not_ready"
-            and capability_id != "ask.provider_query"
+            and capability_id not in {"ask.provider_query", "web.fetch.read"}
             and not manifest.supports_degraded_mode
         ):
             return self._result(
@@ -307,7 +307,7 @@ class CapabilityEvaluator:
                     blocking_reason=offline_status.message or "Ollama is unavailable.",
                     message=f"Offline provider query is unavailable: {offline_status.message or 'Ollama is unavailable.'}",
                 )
-            if context.readiness_state == "not_ready":
+            if context.network_readiness_state == "not_ready":
                 return self._result(
                     manifest,
                     source=source,
@@ -346,7 +346,7 @@ class CapabilityEvaluator:
                 blocking_reason=online_status.message or "OpenAI is unavailable.",
                 message=f"Online provider query is unavailable: {online_status.message or 'OpenAI is unavailable.'}",
             )
-        if context.readiness_state == "not_ready":
+        if context.network_readiness_state == "not_ready":
             return self._result(
                 manifest,
                 source=source,
@@ -403,7 +403,7 @@ class CapabilityEvaluator:
                 message="Always Offline policy blocks web fetch requests.",
             )
 
-        if context.readiness_state == "not_ready":
+        if context.network_readiness_state == "not_ready":
             return self._result(
                 manifest,
                 source=source,
@@ -480,7 +480,7 @@ class CapabilityEvaluator:
                 blocking_reason=online_status.message or "OpenAI is unavailable.",
                 message=f"Online provider query is unavailable: {online_status.message or 'OpenAI is unavailable.'}",
             )
-        if context.readiness_state == "not_ready":
+        if context.network_readiness_state == "not_ready":
             return self._result(
                 manifest,
                 source=source,

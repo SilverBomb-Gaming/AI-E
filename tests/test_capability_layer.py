@@ -50,6 +50,7 @@ class CapabilityLayerTests(unittest.TestCase):
         policy: str = "ask_before_online",
         runtime_state: str = "running",
         readiness_state: str = "ready",
+        network_readiness_state: str = "ready",
         offline_provider_status: ProviderStatus | None = None,
         online_provider_status: ProviderStatus | None = None,
     ) -> CapabilityContext:
@@ -82,6 +83,7 @@ class CapabilityLayerTests(unittest.TestCase):
             web_allowed_domains=("docs.openclaw.ai",),
             web_scope_valid=True,
             web_message="Allowlisted web domains are configured.",
+            network_readiness_state=network_readiness_state,  # type: ignore[arg-type]
         )
 
     def test_registry_integrity_and_expected_capabilities_exist(self) -> None:
@@ -253,10 +255,36 @@ class CapabilityLayerTests(unittest.TestCase):
         self.assertEqual(evaluation.reason_code, "web_scope_invalid")
 
     def test_ask_provider_query_blocked_when_readiness_is_not_ready(self) -> None:
-        evaluation = self.evaluator.evaluate("ask.provider_query", self._context(readiness_state="not_ready"))
+        evaluation = self.evaluator.evaluate("ask.provider_query", self._context(network_readiness_state="not_ready"))
         self.assertEqual(evaluation.current_availability_state, "blocked")
         self.assertEqual(evaluation.reason_code, "readiness_not_ready")
         self.assertEqual(evaluation.blocking_reason, "Readiness is not ready.")
+
+    def test_repo_and_run_use_local_readiness_not_network_readiness(self) -> None:
+        context = CapabilityContext(
+            **{
+                **self._context(network_readiness_state="not_ready").__dict__,
+                "repo_root": "C:/repo",
+                "repo_root_valid": True,
+                "repo_message": "Repository root is configured.",
+            }
+        )
+
+        repo_eval = self.evaluator.evaluate("repo.status.read", context)
+        run_eval = self.evaluator.evaluate("shell.command.run", context)
+
+        self.assertEqual(repo_eval.current_availability_state, "allowed")
+        self.assertEqual(repo_eval.reason_code, "allowed")
+        self.assertEqual(run_eval.current_availability_state, "confirmation_required")
+        self.assertEqual(run_eval.reason_code, "operator_confirmation_required")
+
+    def test_web_fetch_uses_network_readiness(self) -> None:
+        evaluation = self.evaluator.evaluate(
+            "web.fetch.read",
+            self._context(network_readiness_state="not_ready"),
+        )
+        self.assertEqual(evaluation.current_availability_state, "blocked")
+        self.assertEqual(evaluation.reason_code, "readiness_not_ready")
 
     def test_manifest_with_degraded_mode_support_bypasses_generic_readiness_block(self) -> None:
         manifest = CapabilityManifest(

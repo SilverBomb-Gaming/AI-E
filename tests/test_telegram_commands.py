@@ -10,7 +10,9 @@ from pathlib import Path
 
 from app.controller.app_service import ControllerService
 from app.controller.channel_models import TelegramChannelStatus
+from app.controller.diagnostic_models import DiagnosticItem
 from app.controller.diagnostic_models import DiagnosticReport
+from app.controller.node_models import NodeDescriptor
 from app.controller.profile_store import ControllerConfigStore
 from app.controller.telegram_service import TelegramInboundMessage, mask_telegram_token
 from app.platform.secrets import InMemorySecretStore
@@ -250,14 +252,33 @@ class _FakeTelegramService:
         return len(self.sent_messages)
 
 
-def _report(check_type: str, overall_status: str, overall_severity: str, summary: str) -> DiagnosticReport:
+def _report(
+    check_type: str,
+    overall_status: str,
+    overall_severity: str,
+    summary: str,
+    *,
+    items: tuple[DiagnosticItem, ...] = (),
+) -> DiagnosticReport:
     return DiagnosticReport(
         check_type=check_type,  # type: ignore[arg-type]
         overall_status=overall_status,  # type: ignore[arg-type]
         overall_severity=overall_severity,  # type: ignore[arg-type]
         ran_at=datetime.now().astimezone().isoformat(timespec="seconds"),
         summary=summary,
-        items=(),
+        items=items,
+    )
+
+
+def _item(check_type: str, severity: str, code: str, message: str) -> DiagnosticItem:
+    status = "fail" if severity == "error" else "warn"
+    return DiagnosticItem(
+        check_type=check_type,  # type: ignore[arg-type]
+        status=status,  # type: ignore[arg-type]
+        severity=severity,  # type: ignore[arg-type]
+        code=code,
+        message=message,
+        recommended_action="Resolve in operator console.",
     )
 
 
@@ -343,25 +364,105 @@ class TelegramCommandTests(unittest.TestCase):
             service, _, _, _, _, _ = self._make_service(tmp_dir=tmp, telegram_service=telegram_service)
             snapshot, reply = self._run_single_update(service, telegram_service)
             lines = reply.splitlines()
-            self.assertLessEqual(len(reply), 500)
+            self.assertLessEqual(len(reply), 520)
             self.assertEqual(lines[0], "Operator commands")
             self.assertIn("/chat", lines[1])
             self.assertIn("/translate", lines[1])
             self.assertIn("/refine", lines[1])
             self.assertIn("/planbuild", lines[1])
             self.assertIn("/planstep", lines[1])
-            self.assertIn("/contexts", lines[2])
-            self.assertIn("/bundlestatus", lines[2])
-            self.assertIn("/run|/test", lines[3])
-            self.assertIn("/bundleapprove", lines[3])
-            self.assertIn("/translateclear", lines[4])
-            self.assertIn("/bundlecancel|/bundlereset", lines[4])
-            self.assertIn("/capabilities", lines[5])
-            self.assertIn("/audit", lines[5])
-            self.assertIn("/ask", lines[6])
-            self.assertIn("/askctx", lines[6])
-            self.assertIn("/explainrepo|/explainfile|/summarizeweb", lines[7])
-            self.assertIn("/workflows|/workflowstatus|/cancelworkflow", lines[8])
+            self.assertIn("/nodes", lines[2])
+            self.assertIn("/nodeclear", lines[2])
+            self.assertIn("/contexts", lines[3])
+            self.assertIn("/bundlestatus", lines[3])
+            self.assertIn("/run|/test", lines[4])
+            self.assertIn("/bundleapprove", lines[4])
+            self.assertIn("/translateclear", lines[5])
+            self.assertIn("/bundlecancel|/bundlereset", lines[5])
+            self.assertIn("/capabilities", lines[6])
+            self.assertIn("/audit", lines[6])
+            self.assertIn("/ask", lines[7])
+            self.assertIn("/askctx", lines[7])
+            self.assertIn("/explainrepo|/explainfile|/summarizeweb", lines[8])
+            self.assertIn("/workflows|/workflowstatus|/cancelworkflow", lines[9])
+
+    def test_nodes_commands_list_select_view_and_clear_registered_nodes(self) -> None:
+        updates = (
+            TelegramInboundMessage(update_id=34, chat_id="chat-1", text="/nodes", sender_label="@tester"),
+            TelegramInboundMessage(update_id=35, chat_id="chat-1", text="/nodeselect mock-gpu", sender_label="@tester"),
+            TelegramInboundMessage(update_id=36, chat_id="chat-1", text="/nodeview mock-gpu", sender_label="@tester"),
+            TelegramInboundMessage(update_id=37, chat_id="chat-1", text="/nodeclear", sender_label="@tester"),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            telegram_service = _FakeTelegramService(update_batches=[updates])
+            service, _, _, _, _, _ = self._make_service(tmp_dir=tmp, telegram_service=telegram_service)
+            service._node_registry.register_node(
+                NodeDescriptor(
+                    node_id="mock-gpu",
+                    display_name="Bedroom GPU Rig",
+                    node_type="mock",
+                    status="online",
+                    transport="mock",
+                    summary="Simulated remote execution node for controller tests.",
+                    capability_labels=("/run", "/test"),
+                )
+            )
+            service.start_telegram_loop()
+            self.assertTrue(_wait_until(lambda: len(telegram_service.sent_messages) == 4, timeout=2.0))
+            snapshot = service.stop_telegram_loop()
+            self.assertIn("Nodes", telegram_service.sent_messages[0][1])
+            self.assertIn("local", telegram_service.sent_messages[0][1])
+            self.assertIn("mock-gpu", telegram_service.sent_messages[0][1])
+            self.assertEqual(
+                telegram_service.sent_messages[1][1],
+                "Selected node: mock-gpu | Bedroom GPU Rig | mock | online",
+            )
+            self.assertIn("Node view", telegram_service.sent_messages[2][1])
+            self.assertIn("ID: mock-gpu", telegram_service.sent_messages[2][1])
+            self.assertIn("Commands: /run /test", telegram_service.sent_messages[2][1])
+            self.assertEqual(
+                telegram_service.sent_messages[3][1],
+                f"Node selection cleared. Active node: local | {service.resolve_execution_node().node.display_name} | local | online",
+            )
+            self.assertEqual(snapshot.selected_node_id, "local")
+
+    def test_confirmed_run_uses_selected_mock_node_without_local_execution(self) -> None:
+        first_update = TelegramInboundMessage(update_id=38, chat_id="chat-1", text="/run python validate_runtime.py", sender_label="@tester")
+        with tempfile.TemporaryDirectory() as tmp:
+            create_service = _FakeTelegramService(update_batches=[(first_update,)])
+            service, config_store, _, _, _, _ = self._make_service(tmp_dir=tmp, telegram_service=create_service)
+            config = config_store.load()
+            config.repo_root = tmp
+            config.file_allowed_roots = (tmp,)
+            config_store.save(config)
+            service._config = config_store.load()
+            service._normalize_repo_root_config()
+            service._normalize_file_roots_config()
+            service._node_registry.register_node(
+                NodeDescriptor(
+                    node_id="mock-gpu",
+                    display_name="Bedroom GPU Rig",
+                    node_type="mock",
+                    status="online",
+                    transport="mock",
+                    summary="Simulated remote execution node for controller tests.",
+                    capability_labels=("/run", "/test"),
+                    metadata={"mock_output_summary": "Mock node executed validate_runtime.py", "mock_exit_code": 0},
+                )
+            )
+            service.select_execution_node("mock-gpu")
+            _, prompt_reply = self._run_single_update(service, create_service)
+            confirmation_id = self._extract_confirmation_id(prompt_reply)
+            self.assertIn("Node: Bedroom GPU Rig (mock-gpu) | mock", prompt_reply)
+
+            confirm_service = _FakeTelegramService(
+                update_batches=[(TelegramInboundMessage(update_id=39, chat_id="chat-1", text=f"/confirm {confirmation_id}", sender_label="@tester"),)]
+            )
+            service._telegram_service = confirm_service
+            _, confirm_reply = self._run_single_update(service, confirm_service)
+            self.assertIn(f"Confirmation {confirmation_id} approved.", confirm_reply)
+            self.assertIn("Node: Bedroom GPU Rig (mock-gpu)", confirm_reply)
+            self.assertIn("Summary: Mock node executed validate_runtime.py", confirm_reply)
 
     def test_status_command_is_mobile_readable_and_shows_loop_activity(self) -> None:
         update = TelegramInboundMessage(update_id=2, chat_id="chat-1", text="/status", sender_label="@tester")
@@ -1578,13 +1679,21 @@ class TelegramCommandTests(unittest.TestCase):
             telegram_service = _FakeTelegramService(update_batches=[updates])
             service, config_store, _, _, ollama, openai = self._make_service(tmp_dir=tmp, telegram_service=telegram_service)
             config = config_store.load()
-            config.repo_root = tmp
+            config.repo_root = str(Path(__file__).resolve().parents[1])
             config.file_allowed_roots = (tmp,)
             config_store.save(config)
             service._config = config_store.load()
             service._normalize_repo_root_config()
             service._normalize_file_roots_config()
-            service._latest_health_report = _report("health", "blocked", "error", "Blocked")
+            service._latest_health_report = _report(
+                "health",
+                "blocked",
+                "error",
+                "Blocked",
+                items=(
+                    _item("health", "error", "runtime.gateway", "Runtime gateway is unavailable."),
+                ),
+            )
             service.start_telegram_loop()
             self.assertTrue(_wait_until(lambda: len(telegram_service.sent_messages) == 3, timeout=2.0))
             service.stop_telegram_loop()
@@ -1610,7 +1719,15 @@ class TelegramCommandTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             telegram_service = _FakeTelegramService(update_batches=[updates])
             service, _, _, _, _, _ = self._make_service(tmp_dir=tmp, telegram_service=telegram_service)
-            service._latest_health_report = _report("health", "blocked", "error", "Blocked")
+            service._latest_health_report = _report(
+                "health",
+                "blocked",
+                "error",
+                "Blocked",
+                items=(
+                    _item("health", "error", "runtime.gateway", "Runtime gateway is unavailable."),
+                ),
+            )
             service.start_telegram_loop()
             self.assertTrue(_wait_until(lambda: len(telegram_service.sent_messages) == 2, timeout=2.0))
             service.stop_telegram_loop()
@@ -1626,6 +1743,100 @@ class TelegramCommandTests(unittest.TestCase):
             self.assertIn("/planbuild", help_reply)
             self.assertIn("/run|/test", help_reply)
             self.assertIn("/ask", help_reply)
+
+    def test_provider_blockers_keep_local_execution_available_but_still_block_ask(self) -> None:
+        updates = (
+            TelegramInboundMessage(update_id=309, chat_id="chat-1", text="/status", sender_label="@tester"),
+            TelegramInboundMessage(update_id=310, chat_id="chat-1", text="/repo", sender_label="@tester"),
+            TelegramInboundMessage(update_id=311, chat_id="chat-1", text="/chat build a simple python script that prints hello world", sender_label="@tester"),
+            TelegramInboundMessage(
+                update_id=312,
+                chat_id="chat-1",
+                text="/file docs/notes.txt",
+                sender_label="@tester",
+            ),
+            TelegramInboundMessage(
+                update_id=313,
+                chat_id="chat-1",
+                text="/patchfile docs/notes.txt\n@@ FIND\nbeta\n@@ REPLACE\nbeta updated",
+                sender_label="@tester",
+            ),
+            TelegramInboundMessage(update_id=314, chat_id="chat-1", text="/run python validate_runtime.py", sender_label="@tester"),
+            TelegramInboundMessage(update_id=315, chat_id="chat-1", text="/test tests.test_telegram_commands", sender_label="@tester"),
+            TelegramInboundMessage(update_id=316, chat_id="chat-1", text="/web https://docs.openclaw.ai/guide", sender_label="@tester"),
+            TelegramInboundMessage(update_id=317, chat_id="chat-1", text="/ask hello", sender_label="@tester"),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp) / "workspace"
+            docs = workspace / "docs"
+            repo_root = Path(__file__).resolve().parents[1]
+            docs.mkdir(parents=True, exist_ok=True)
+            (docs / "notes.txt").write_text("alpha\nbeta\ngamma\n", encoding="utf-8")
+
+            telegram_service = _FakeTelegramService(update_batches=[updates])
+            service, config_store, _, _, ollama, openai = self._make_service(tmp_dir=tmp, telegram_service=telegram_service)
+            config = config_store.load()
+            config.repo_root = str(repo_root)
+            config.file_allowed_roots = (str(workspace.resolve()),)
+            config.web_allowed_domains = ("docs.openclaw.ai",)
+            config_store.save(config)
+            service._config = config_store.load()
+            service._normalize_repo_root_config()
+            service._normalize_file_roots_config()
+            service._normalize_web_domains_config()
+            service._latest_health_report = _report(
+                "health",
+                "blocked",
+                "error",
+                "Provider validation failed.",
+                items=(
+                    _item("health", "error", "provider.validation", "Provider validation failed."),
+                ),
+            )
+            service._latest_security_report = _report(
+                "security",
+                "blocked",
+                "error",
+                "OpenAI secret is missing.",
+                items=(
+                    _item("security", "error", "secret.required", "Required OpenAI secret is missing."),
+                ),
+            )
+
+            service.start_telegram_loop()
+            self.assertTrue(_wait_until(lambda: len(telegram_service.sent_messages) == 9, timeout=2.0))
+            service.stop_telegram_loop()
+
+            status_reply = telegram_service.sent_messages[0][1]
+            repo_reply = telegram_service.sent_messages[1][1]
+            chat_reply = telegram_service.sent_messages[2][1]
+            file_reply = telegram_service.sent_messages[3][1]
+            patch_reply = telegram_service.sent_messages[4][1]
+            run_reply = telegram_service.sent_messages[5][1]
+            test_reply = telegram_service.sent_messages[6][1]
+            web_reply = telegram_service.sent_messages[7][1]
+            ask_reply = telegram_service.sent_messages[8][1]
+
+            self.assertEqual(ollama.ask_calls, 0)
+            self.assertEqual(openai.ask_calls, 0)
+            self.assertIn("Readiness: Ready", status_reply)
+            self.assertIn("Health: Blocked", status_reply)
+            self.assertIn("Security: Unsafe", status_reply)
+            self.assertIn("Repo:", repo_reply)
+            self.assertIn("Branch:", repo_reply)
+            self.assertIn("Translation", chat_reply)
+            self.assertIn("File: docs/notes.txt", file_reply)
+            self.assertIn("Preview:", file_reply)
+            self.assertIn("Action requires confirmation.", patch_reply)
+            self.assertIn("Preview: 1 replacement", patch_reply)
+            self.assertIn("Action requires confirmation.", run_reply)
+            self.assertIn("Preview: run python validate_runtime.py", run_reply)
+            self.assertIn("Action requires confirmation.", test_reply)
+            self.assertIn("Preview: run python -m unittest tests.test_telegram_commands", test_reply)
+            self.assertIn("Can't run /web right now.", web_reply)
+            self.assertIn("Readiness is not ready.", web_reply)
+            self.assertIn("Can't run /ask right now.", ask_reply)
+            self.assertIn("Readiness is not ready.", ask_reply)
 
     def test_confirm_invalid_id_returns_clear_message(self) -> None:
         update = TelegramInboundMessage(update_id=33, chat_id="chat-1", text="/confirm BAD999", sender_label="@tester")

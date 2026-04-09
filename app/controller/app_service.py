@@ -69,6 +69,25 @@ _CONTEXT_LIFETIME_SECONDS = 1800.0
 _CONTEXT_PROMPT_CHAR_LIMIT = 2200
 _WORKFLOW_BUFFER_MAX_ITEMS = 8
 _WORKFLOW_LIFETIME_SECONDS = 1800.0
+_LOCAL_READINESS_HEALTH_IGNORED_CODES = frozenset(
+    {
+        "ollama.installation",
+        "ollama.service",
+        "provider.validation",
+        "mode.usable",
+        "secret.selected_provider",
+    }
+)
+_LOCAL_READINESS_SECURITY_IGNORED_CODES = frozenset(
+    {
+        "secret.required",
+        "state.degraded",
+        "integrity.provider_active_invalid",
+        "integrity.offline_usable",
+        "integrity.online_secret",
+        "integrity.policy_mode",
+    }
+)
 _LOOP_ACTION_CAPABILITIES = frozenset(
     {
         "repo.status.read",
@@ -341,7 +360,6 @@ class ControllerService:
             telegram_loop_status = self._telegram_loop_status
         readiness_state, readiness_message = self._compute_readiness(
             runtime_state=status.runtime_state,
-            selected_provider_status=selected_provider_status,
             telegram_status=telegram_status,
         )
         current_context = self._context_store.current_any()
@@ -2358,12 +2376,24 @@ class ControllerService:
         need_online = need_online or snapshot.mode == "online" or self._config.selected_mode == "online"
         offline_status = self._provider_status_for_mode("offline") if need_offline else self._provider_status_cache.get("ollama") or self._default_provider_status("ollama")
         online_status = self._provider_status_for_mode("online") if need_online else self._provider_status_cache.get("openai") or self._default_provider_status("openai")
+        local_readiness_state, _ = self._compute_readiness(
+            runtime_state=snapshot.runtime_state,
+            telegram_status=self._reconcile_telegram_status(self._telegram_status),
+        )
+        selected_provider_status = online_status if self._config.selected_provider == "openai" else offline_status
+        network_readiness_state, network_readiness_message = self._compute_network_readiness(
+            runtime_state=snapshot.runtime_state,
+            selected_provider_status=selected_provider_status,
+            telegram_status=self._reconcile_telegram_status(self._telegram_status),
+        )
         repo_root, repo_root_valid, repo_message, _ = self._repo_configuration_state()
         file_allowed_roots, file_scope_valid, file_message, _ = self._file_scope_state()
         web_allowed_domains, web_scope_valid, web_message, _ = self._web_scope_state()
         return CapabilityContext(
             runtime_state=snapshot.runtime_state,
-            readiness_state=snapshot.readiness_state,
+            readiness_state=local_readiness_state,
+            network_readiness_state=network_readiness_state,
+            network_readiness_message=network_readiness_message,
             mode=snapshot.mode,
             selected_mode=snapshot.selected_mode,
             policy=snapshot.policy,
@@ -3230,6 +3260,49 @@ class ControllerService:
         self,
         *,
         runtime_state: str,
+        telegram_status: TelegramChannelStatus,
+    ) -> tuple[str, str]:
+        blocking: list[str] = []
+        warnings: list[str] = []
+
+        if runtime_state != "running":
+            blocking.append("Runtime is not running.")
+
+        if self._config.current_mode != self._config.selected_mode:
+            warnings.append("Current mode does not match the saved selection.")
+
+        self._extend_readiness_from_report(
+            report=self._latest_health_report,
+            warnings=warnings,
+            blocking=blocking,
+            missing_message="Health check has not been run yet.",
+            ignored_codes=_LOCAL_READINESS_HEALTH_IGNORED_CODES,
+        )
+        self._extend_readiness_from_report(
+            report=self._latest_security_report,
+            warnings=warnings,
+            blocking=blocking,
+            missing_message="Security check has not been run yet.",
+            ignored_codes=_LOCAL_READINESS_SECURITY_IGNORED_CODES,
+        )
+
+        if not telegram_status.token_present:
+            warnings.append("Telegram bot token is not stored.")
+        elif telegram_status.validation_state != "valid":
+            warnings.append(telegram_status.message)
+        elif telegram_status.last_test_result != "passed":
+            warnings.append("Telegram connection test has not passed yet.")
+
+        if blocking:
+            return "not_ready", " ".join(blocking[:2])
+        if warnings:
+            return "degraded", " ".join(warnings[:2])
+        return "ready", "Runtime, local scope, diagnostics, and Telegram are ready for local execution."
+
+    def _compute_network_readiness(
+        self,
+        *,
+        runtime_state: str,
         selected_provider_status: ProviderStatus,
         telegram_status: TelegramChannelStatus,
     ) -> tuple[str, str]:
@@ -3279,6 +3352,35 @@ class ControllerService:
         if warnings:
             return "degraded", " ".join(warnings[:2])
         return "ready", "Runtime, provider, diagnostics, and Telegram are ready for daily use."
+
+    @staticmethod
+    def _first_report_message(report: DiagnosticReport, *, severity: str, ignored_codes: frozenset[str]) -> str:
+        for item in report.items:
+            if item.code in ignored_codes:
+                continue
+            if item.severity == severity:
+                return item.message
+        return ""
+
+    def _extend_readiness_from_report(
+        self,
+        *,
+        report: DiagnosticReport | None,
+        warnings: list[str],
+        blocking: list[str],
+        missing_message: str,
+        ignored_codes: frozenset[str],
+    ) -> None:
+        if report is None:
+            warnings.append(missing_message)
+            return
+        error_message = self._first_report_message(report, severity="error", ignored_codes=ignored_codes)
+        if error_message:
+            blocking.append(error_message)
+            return
+        warning_message = self._first_report_message(report, severity="warning", ignored_codes=ignored_codes)
+        if warning_message:
+            warnings.append(warning_message)
 
 
 
