@@ -70,6 +70,14 @@ class ParsedFileWriteCommand:
 
 
 @dataclass(frozen=True)
+class ParsedFileCreateCommand:
+    relative_path: str
+    operator_reason: str
+    new_content: str
+    raw_argument: str
+
+
+@dataclass(frozen=True)
 class FilePatchMutationRequest:
     target_path: str
     display_path: str
@@ -88,11 +96,20 @@ class FileWriteReplaceRequest:
 
 
 @dataclass(frozen=True)
+class FileCreateWriteRequest:
+    target_path: str
+    display_path: str
+    operator_reason: str
+    new_content: str
+    allowed_parent_creations: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class FileMutationSnapshot:
     target_path: str
     display_path: str
     file_name: str
-    operation_kind: Literal["patch", "replace"]
+    operation_kind: Literal["patch", "replace", "create"]
     change_count: int
     changed_lines: int
     size_bytes_before: int
@@ -101,6 +118,7 @@ class FileMutationSnapshot:
     base_hash_after: str
     applied_at: str
     operator_reason: str = ""
+    created_directories: tuple[str, ...] = ()
 
     @property
     def size_label_after(self) -> str:
@@ -108,6 +126,11 @@ class FileMutationSnapshot:
 
     @property
     def audit_summary(self) -> str:
+        if self.operation_kind == "create":
+            directory_summary = ""
+            if self.created_directories:
+                directory_summary = f" | dirs {', '.join(self.created_directories)}"
+            return f"{self.display_path} | create | {self.changed_lines} lines{directory_summary}"
         change_label = "replacement" if self.change_count == 1 else "replacements"
         return (
             f"{self.display_path} | {self.operation_kind} | "
@@ -116,6 +139,10 @@ class FileMutationSnapshot:
 
     @property
     def status_label(self) -> str:
+        if self.operation_kind == "create":
+            if self.created_directories:
+                return f"File created with {self.changed_lines} lines. Directories created: {', '.join(self.created_directories)}."
+            return f"File created with {self.changed_lines} lines."
         change_label = "replacement" if self.change_count == 1 else "replacements"
         return f"{self.operation_kind.title()} applied: {self.change_count} {change_label}, {self.changed_lines} lines changed."
 
@@ -203,6 +230,41 @@ class FileMutator:
             newline_style=newline_style,
             size_bytes_before=size_bytes_before,
             base_hash_before=base_hash_before,
+        )
+
+    def create_file(self, request: FileCreateWriteRequest) -> FileMutationSnapshot:
+        path = Path(request.target_path)
+        display_path = Path(request.display_path)
+        self._ensure_path_not_protected(display_path)
+        if path.exists():
+            raise FileMutatorError("file_already_exists", "File already exists. Use /writefile or /patchfile for existing files.")
+        if not self._is_supported_text_file(path):
+            raise FileMutatorError("file_type_not_supported", "File type not supported for controlled mutation.")
+        if len(request.new_content.encode("utf-8")) > self._max_file_size_bytes:
+            raise FileMutatorError("replacement_too_large", "Creation content is too large for a bounded mutation request.")
+        parent = path.parent
+        if parent.exists() and not parent.is_dir():
+            raise FileMutatorError("parent_not_directory", "Parent path is not a directory.")
+        created_directories: list[str] = []
+        if not parent.exists():
+            parent.mkdir(parents=True, exist_ok=False)
+            created_directories = [item for item in request.allowed_parent_creations if item.strip()]
+        encoded_output = request.new_content.encode("utf-8")
+        path.write_bytes(encoded_output)
+        return FileMutationSnapshot(
+            target_path=str(path.resolve()),
+            display_path=request.display_path,
+            file_name=path.name,
+            operation_kind="create",
+            change_count=1,
+            changed_lines=self._line_count(request.new_content),
+            size_bytes_before=0,
+            size_bytes_after=len(encoded_output),
+            base_hash_before="",
+            base_hash_after=self._content_hash(request.new_content),
+            applied_at=datetime.now().astimezone().isoformat(timespec="seconds"),
+            operator_reason=request.operator_reason.strip(),
+            created_directories=tuple(created_directories),
         )
 
     def _load_text_file(self, target_path: str, *, display_path: str) -> tuple[str, Path, int, str]:
@@ -318,6 +380,10 @@ class FileMutator:
             changed += max(end_before - start_before, end_after - start_after)
         return max(1, changed)
 
+    @staticmethod
+    def _line_count(text: str) -> int:
+        return text.count("\n") + 1
+
 
 def parse_patch_command(argument: str) -> ParsedFilePatchCommand:
     relative_path, operator_reason, expected_base_hash, body_lines, raw_argument = _parse_command_preamble(argument)
@@ -369,6 +435,19 @@ def parse_write_command(argument: str) -> ParsedFileWriteCommand:
     )
 
 
+def parse_create_command(argument: str) -> ParsedFileCreateCommand:
+    relative_path, operator_reason, _, body_lines, raw_argument = _parse_command_preamble(argument)
+    if not body_lines or body_lines[0].strip() != _WRITE_CONTENT_MARKER:
+        raise FileMutatorError("missing_create_content", "Use @@ CONTENT followed by the full file content.")
+    new_content = "\n".join(body_lines[1:])
+    return ParsedFileCreateCommand(
+        relative_path=relative_path,
+        operator_reason=operator_reason,
+        new_content=new_content,
+        raw_argument=raw_argument,
+    )
+
+
 def summarize_patch_request(parsed: ParsedFilePatchCommand) -> str:
     count = len(parsed.operations)
     change_label = "replacement" if count == 1 else "replacements"
@@ -384,6 +463,11 @@ def summarize_write_request(parsed: ParsedFileWriteCommand) -> str:
     if parsed.expected_base_hash:
         summary = f"{summary}, base {parsed.expected_base_hash[:12].lower()}"
     return summary
+
+
+def summarize_create_request(parsed: ParsedFileCreateCommand) -> str:
+    line_count = parsed.new_content.count("\n") + 1
+    return f"create file with {line_count} lines"
 
 
 def _parse_command_preamble(argument: str) -> tuple[str, str, str, list[str], str]:

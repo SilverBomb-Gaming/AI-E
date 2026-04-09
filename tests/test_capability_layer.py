@@ -278,6 +278,21 @@ class CapabilityLayerTests(unittest.TestCase):
         self.assertEqual(run_eval.current_availability_state, "confirmation_required")
         self.assertEqual(run_eval.reason_code, "operator_confirmation_required")
 
+    def test_file_create_uses_local_readiness_not_network_readiness(self) -> None:
+        context = CapabilityContext(
+            **{
+                **self._context(network_readiness_state="not_ready").__dict__,
+                "file_allowed_roots": ("C:/repo",),
+                "file_scope_valid": True,
+                "file_message": "Allowed file directories are configured.",
+            }
+        )
+
+        evaluation = self.evaluator.evaluate("file.create.write", context)
+
+        self.assertEqual(evaluation.current_availability_state, "confirmation_required")
+        self.assertEqual(evaluation.reason_code, "operator_confirmation_required")
+
     def test_web_fetch_uses_network_readiness(self) -> None:
         evaluation = self.evaluator.evaluate(
             "web.fetch.read",

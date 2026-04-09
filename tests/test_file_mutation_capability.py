@@ -67,17 +67,135 @@ class FileMutationCapabilityTests(unittest.TestCase):
         return reply[start:].splitlines()[0].split()[0].strip()
 
     def test_file_mutation_manifests_are_scoped_mutating_and_confirmation_gated(self) -> None:
+        create_manifest = get_capability_manifest("file.create.write")
         patch_manifest = get_capability_manifest("file.patch.write")
         replace_manifest = get_capability_manifest("file.write.replace")
 
+        self.assertEqual(create_manifest.access_kind, "mutating")
         self.assertEqual(patch_manifest.access_kind, "mutating")
         self.assertEqual(replace_manifest.access_kind, "mutating")
+        self.assertEqual(create_manifest.scope_type, "filesystem")
         self.assertEqual(patch_manifest.scope_type, "filesystem")
         self.assertEqual(replace_manifest.scope_type, "filesystem")
+        self.assertEqual(create_manifest.access_mode, "write")
         self.assertEqual(patch_manifest.access_mode, "write")
         self.assertEqual(replace_manifest.access_mode, "write")
+        self.assertEqual(create_manifest.confirmation_sensitivity, "always")
         self.assertEqual(patch_manifest.confirmation_sensitivity, "always")
         self.assertEqual(replace_manifest.confirmation_sensitivity, "always")
+
+    def test_createfile_requires_confirmation_creates_file_and_audits_directories(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "workspace"
+            root.mkdir(parents=True, exist_ok=True)
+
+            create_tg = _FakeTelegramService(
+                update_batches=[
+                    (
+                        TelegramInboundMessage(
+                            update_id=600,
+                            chat_id="chat-1",
+                            text="/createfile ./scripts/test.py\nReason: add hello world\n@@ CONTENT\nprint(\"hello from AI-E\")",
+                            sender_label="@tester",
+                        ),
+                    )
+                ]
+            )
+            service, config_store, _, _ = self._make_service(tmp_dir=tmp, telegram_service=create_tg)
+            self._configure_file_root(service=service, config_store=config_store, root=root)
+
+            prompt_reply = self._run_single_update(service, create_tg)
+            confirmation_id = self._extract_confirmation_id(prompt_reply)
+
+            self.assertIn("Action requires confirmation.", prompt_reply)
+            self.assertIn("Preview: create file with 1 lines", prompt_reply)
+            self.assertIn("Will create directories: scripts", prompt_reply)
+            self.assertFalse((root / "scripts" / "test.py").exists())
+
+            confirm_tg = _FakeTelegramService(
+                update_batches=[
+                    (
+                        TelegramInboundMessage(
+                            update_id=601,
+                            chat_id="chat-1",
+                            text=f"/confirm {confirmation_id}",
+                            sender_label="@tester",
+                        ),
+                    )
+                ]
+            )
+            confirm_reply = self._run_single_update(service, confirm_tg)
+            latest = service._audit_store.latest()
+
+            self.assertEqual((root / "scripts" / "test.py").read_text(encoding="utf-8"), 'print("hello from AI-E")')
+            self.assertIn(f"Confirmation {confirmation_id} approved.", confirm_reply)
+            self.assertIn("Created: ./scripts/test.py", confirm_reply)
+            self.assertIn("Directories created: scripts", confirm_reply)
+            self.assertIn("Lines: 1", confirm_reply)
+            self.assertEqual(service._last_execution_result.capability_id, "file.create.write")
+            self.assertTrue(service._last_execution_result.confirmation_used)
+            self.assertIsNotNone(latest)
+            self.assertEqual(latest.capability_id, "file.create.write")
+            self.assertIn("create", latest.action_summary)
+            self.assertIn("scripts/test.py", latest.action_summary)
+
+    def test_createfile_blocks_when_file_already_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "workspace"
+            target = root / "docs" / "notes.txt"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("existing\n", encoding="utf-8")
+
+            telegram_service = _FakeTelegramService(
+                update_batches=[
+                    (
+                        TelegramInboundMessage(
+                            update_id=613,
+                            chat_id="chat-1",
+                            text="/createfile docs/notes.txt\n@@ CONTENT\nreplacement",
+                            sender_label="@tester",
+                        ),
+                    )
+                ]
+            )
+            service, config_store, _, _ = self._make_service(tmp_dir=tmp, telegram_service=telegram_service)
+            self._configure_file_root(service=service, config_store=config_store, root=root)
+
+            reply = self._run_single_update(service, telegram_service)
+
+            self.assertEqual(service._confirmation_store.pending_count(chat_id="chat-1"), 0)
+            self.assertEqual(service._last_execution_result.outcome_reason_code, "file_already_exists")
+            self.assertIn("Use /writefile or /patchfile", reply)
+            self.assertEqual(target.read_text(encoding="utf-8"), "existing\n")
+
+    def test_createfile_rejects_path_traversal_before_confirmation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "workspace"
+            root.mkdir(parents=True, exist_ok=True)
+            telegram_service = _FakeTelegramService(
+                update_batches=[
+                    (
+                        TelegramInboundMessage(
+                            update_id=614,
+                            chat_id="chat-1",
+                            text="/createfile ../secret.txt\n@@ CONTENT\nblocked",
+                            sender_label="@tester",
+                        ),
+                    )
+                ]
+            )
+            service, config_store, _, _ = self._make_service(tmp_dir=tmp, telegram_service=telegram_service)
+            self._configure_file_root(service=service, config_store=config_store, root=root)
+
+            reply = self._run_single_update(service, telegram_service)
+
+            self.assertEqual(service._confirmation_store.pending_count(chat_id="chat-1"), 0)
+            self.assertEqual(service._last_execution_result.outcome, "out_of_scope")
+            self.assertEqual(service._last_execution_result.outcome_reason_code, "target_path_not_allowed")
+            self.assertEqual(
+                reply,
+                "Action is out of scope.\nReason: File is outside allowed directories.\nNext: Use a relative path inside the allowed directories only.",
+            )
 
     def test_patchfile_requires_confirmation_applies_once_and_audits_result(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

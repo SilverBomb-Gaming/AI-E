@@ -14,11 +14,14 @@ from .execution_models import CapabilityExecutionRequest, CapabilityExecutionRes
 from .execution_models import LocalCommandExecutionRequest
 from .execution_runner import ExecutionRunnerError
 from .file_mutator import (
+    FileCreateWriteRequest,
     FileMutatorError,
     FilePatchMutationRequest,
     FileWriteReplaceRequest,
+    parse_create_command,
     parse_patch_command,
     parse_write_command,
+    summarize_create_request,
     summarize_patch_request,
     summarize_write_request,
 )
@@ -235,6 +238,8 @@ class CapabilityExecutor:
             return self._execute_repo_explain(update=update, snapshot=snapshot, argument=parsed_command.argument, batch_busy=batch_busy)
         if command == "/file":
             return self._execute_file_read(update=update, snapshot=snapshot, argument=parsed_command.argument)
+        if command == "/createfile":
+            return self._execute_file_create(update=update, snapshot=snapshot, argument=parsed_command.argument)
         if command == "/patchfile":
             return self._execute_file_patch(update=update, snapshot=snapshot, argument=parsed_command.argument)
         if command == "/writefile":
@@ -2060,6 +2065,42 @@ class CapabilityExecutor:
             expected_base_hash=parsed.expected_base_hash,
         )
 
+    def _execute_file_create(
+        self,
+        *,
+        update: TelegramInboundMessage,
+        snapshot: ControllerSnapshot,
+        argument: str,
+    ) -> CapabilityExecutionResult:
+        request = self._build_request(
+            capability_id="file.create.write",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/createfile",
+            parsed_arguments={},
+            metadata={"argument_summary": "/createfile [path hidden]"},
+        )
+        try:
+            parsed = parse_create_command(argument)
+        except FileMutatorError as exc:
+            return self._file_mutation_error_result(
+                request=request,
+                error=exc,
+                relative_path="",
+                command_label="/createfile",
+                confirmation_id="",
+            )
+
+        return self._execute_pending_file_creation(
+            update=update,
+            snapshot=snapshot,
+            relative_path=parsed.relative_path,
+            raw_argument=parsed.raw_argument,
+            confirmation_preview=summarize_create_request(parsed),
+            operator_reason=parsed.operator_reason,
+        )
+
     def _execute_file_replace(
         self,
         *,
@@ -2254,6 +2295,100 @@ class CapabilityExecutor:
             outcome="failed",
             reason_code="unexpected_execution_without_confirmation",
             reason="Bounded command execution should require confirmation before it can run.",
+            next_step="Resend the original command if you still want to request a confirmation.",
+            retryable=False,
+        )
+
+    def _execute_pending_file_creation(
+        self,
+        *,
+        update: TelegramInboundMessage,
+        snapshot: ControllerSnapshot,
+        relative_path: str,
+        raw_argument: str,
+        confirmation_preview: str,
+        operator_reason: str,
+    ) -> CapabilityExecutionResult:
+        relative_path, target_path, allowed_roots, missing_directories, resolve_code, resolve_message = self._service.resolve_file_creation_request(relative_path)
+        evaluation, context = self._service._evaluate_capability_id(
+            "file.create.write",
+            snapshot,
+            remember=True,
+        )
+        scope = ExecutionScope(
+            scope_type="filesystem",
+            access_mode="write",
+            allowed_paths=allowed_roots,
+            target_path=target_path,
+        )
+        preview_lines = [f"Preview: {confirmation_preview}"]
+        if missing_directories:
+            preview_lines.append(f"Will create directories: {', '.join(missing_directories)}")
+        request = self._build_request(
+            capability_id="file.create.write",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/createfile",
+            parsed_arguments={"relative_path": relative_path},
+            context=context,
+            metadata={
+                "argument_summary": f"/createfile {relative_path or '[missing]'}",
+                "confirmation_action_label": f"/createfile {relative_path or '[missing]'}",
+                "confirmation_preview_lines": tuple(preview_lines),
+                "confirmation_metadata": {
+                    "mutation_action_summary": f"{relative_path or 'unknown file'} | create",
+                    "target_path": relative_path,
+                    "mutation_operation": "create",
+                    "mutation_preview": confirmation_preview,
+                    "operator_reason": operator_reason,
+                    "created_directories": ",".join(missing_directories),
+                },
+            },
+            scope_override=scope,
+        )
+        if resolve_code in {
+            "missing_file_path",
+            "absolute_path_not_allowed",
+            "target_path_not_allowed",
+            "file_already_exists",
+            "file_target_is_directory",
+            "parent_not_directory",
+            "file_scope_ambiguous",
+        }:
+            return self._file_mutation_error_result(
+                request=request,
+                error=FileMutatorError(resolve_code, resolve_message),
+                relative_path=relative_path,
+                command_label="/createfile",
+                confirmation_id="",
+            )
+        if evaluation.current_availability_state == "confirmation_required":
+            return self._confirmation_required_result(
+                request=request,
+                evaluation=evaluation,
+                context=context,
+                snapshot=snapshot,
+                prompt=raw_argument,
+                response_style="concise",
+                chat_id=update.chat_id,
+                requester_label=update.sender_label,
+            )
+        if evaluation.current_availability_state != "allowed":
+            return self._file_mutation_blocked_result(
+                request=request,
+                evaluation=evaluation,
+                command_label="/createfile",
+            )
+        scope_failure = self._scope_failure_result(request, command_label="/createfile")
+        if scope_failure is not None:
+            return scope_failure
+        return self._confirmation_result(
+            request=request,
+            confirmation_id="pending",
+            outcome="failed",
+            reason_code="unexpected_mutation_without_confirmation",
+            reason="File mutation should require confirmation before execution.",
             next_step="Resend the original command if you still want to request a confirmation.",
             retryable=False,
         )
@@ -3041,9 +3176,14 @@ class CapabilityExecutor:
             "missing_mutation_body": f"Use {command_label} <relative_path> and include the required mutation body.",
             "missing_patch_sections": "Use @@ FIND and @@ REPLACE blocks for each bounded patch.",
             "missing_write_content": "Use @@ CONTENT followed by the full replacement file content.",
+            "missing_create_content": "Use @@ CONTENT followed by the full file content.",
             "absolute_path_not_allowed": f"Use {command_label} <relative_path> inside the allowed directories.",
             "target_path_not_allowed": "Use a relative path inside the allowed directories only.",
             "file_not_found": "Check the relative path and try again.",
+            "file_already_exists": "Use /writefile or /patchfile for existing files.",
+            "file_target_is_directory": "Choose a file path that does not already point to a directory.",
+            "parent_not_directory": "Choose a path whose parent is a directory inside the allowed roots.",
+            "file_scope_ambiguous": "Narrow the allowed file roots before creating a new file.",
             "file_type_not_supported": "Target a supported UTF-8 text file only.",
             "file_encoding_not_supported": "Target a UTF-8 text file only.",
             "file_too_large": "Target a smaller file or narrow the mutation request.",
@@ -3061,6 +3201,7 @@ class CapabilityExecutor:
             "missing_mutation_body",
             "missing_patch_sections",
             "missing_write_content",
+            "missing_create_content",
             "absolute_path_not_allowed",
             "invalid_base_hash",
         }
@@ -3101,7 +3242,7 @@ class CapabilityExecutor:
                 "display_path": relative_path,
                 "file_name": Path(relative_path).name if relative_path else "",
                 "file_status": error.message,
-                "file_summary": f"{relative_path or 'unknown file'} | {'patch' if request.capability_id == 'file.patch.write' else 'replace'} | {error.code}",
+                "file_summary": f"{relative_path or 'unknown file'} | {self._file_operation_label(request.capability_id)} | {error.code}",
             },
         )
 
@@ -3780,6 +3921,13 @@ class CapabilityExecutor:
                 snapshot=snapshot,
                 chat_id=chat_id,
             )
+        if confirmation.capability_id == "file.create.write":
+            return self._execute_confirmed_file_create(
+                request=request,
+                confirmation=confirmation,
+                snapshot=snapshot,
+                chat_id=chat_id,
+            )
         if confirmation.capability_id == "file.patch.write":
             return self._execute_confirmed_file_patch(
                 request=request,
@@ -3864,6 +4012,58 @@ class CapabilityExecutor:
                     operator_reason=parsed.operator_reason,
                     expected_base_hash=parsed.expected_base_hash,
                     operations=parsed.operations,
+                )
+            )
+        except FileMutatorError as exc:
+            return self._file_mutation_error_result(
+                request=mutation_request,
+                error=exc,
+                relative_path=relative_path,
+                command_label="/confirm",
+                confirmation_id=confirmation.confirmation_id,
+            )
+        return self._file_mutation_success_result(
+            request=mutation_request,
+            confirmation=confirmation,
+            mutation=result,
+        )
+
+    def _execute_confirmed_file_create(
+        self,
+        *,
+        request: CapabilityExecutionRequest,
+        confirmation: PendingConfirmation,
+        snapshot: ControllerSnapshot,
+        chat_id: str,
+    ) -> CapabilityExecutionResult:
+        try:
+            parsed = parse_create_command(confirmation.prompt_text)
+        except FileMutatorError as exc:
+            return self._file_mutation_error_result(
+                request=request,
+                error=exc,
+                relative_path="",
+                command_label="/confirm",
+                confirmation_id=confirmation.confirmation_id,
+            )
+        mutation_request, scope_failure, relative_path, missing_directories = self._prepare_confirmed_file_create_request(
+            confirmation=confirmation,
+            snapshot=snapshot,
+            chat_id=chat_id,
+            relative_path=parsed.relative_path,
+        )
+        if isinstance(mutation_request, CapabilityExecutionResult):
+            return mutation_request
+        if scope_failure is not None:
+            return scope_failure
+        try:
+            result = self._service._file_mutator.create_file(
+                FileCreateWriteRequest(
+                    target_path=mutation_request.scope.target_path,
+                    display_path=relative_path,
+                    operator_reason=parsed.operator_reason,
+                    new_content=parsed.new_content,
+                    allowed_parent_creations=missing_directories,
                 )
             )
         except FileMutatorError as exc:
@@ -3995,6 +4195,77 @@ class CapabilityExecutor:
                 relative_path,
             )
         return mutation_request, self._scope_failure_result(mutation_request, command_label="/confirm", confirmation_used=True), relative_path
+
+    def _prepare_confirmed_file_create_request(
+        self,
+        *,
+        confirmation: PendingConfirmation,
+        snapshot: ControllerSnapshot,
+        chat_id: str,
+        relative_path: str,
+    ) -> tuple[CapabilityExecutionRequest | CapabilityExecutionResult, CapabilityExecutionResult | None, str, tuple[str, ...]]:
+        evaluation, context = self._service._evaluate_capability_id(
+            confirmation.capability_id,
+            snapshot,
+            remember=True,
+            confirmation_granted=True,
+        )
+        relative_path, target_path, allowed_roots, missing_directories, resolve_code, resolve_message = self._service.resolve_file_creation_request(relative_path)
+        scope = ExecutionScope(
+            scope_type="filesystem",
+            access_mode="write",
+            allowed_paths=allowed_roots,
+            target_path=target_path,
+        )
+        mutation_request = self._build_request(
+            capability_id=evaluation.capability_id,
+            snapshot=snapshot,
+            chat_id=chat_id,
+            requester_label=confirmation.requester_label,
+            original_command="/confirm",
+            parsed_arguments={
+                "confirmation_id": confirmation.confirmation_id,
+                "relative_path": relative_path,
+            },
+            context=context,
+            confirmation_context=confirmation.evaluation_context,
+            metadata=self._confirmation_command_metadata(
+                command_label="/confirm",
+                confirmation_id=confirmation.confirmation_id,
+                confirmation=confirmation,
+            ),
+            scope_override=scope,
+        )
+        if evaluation.current_availability_state != "allowed":
+            return (
+                self._blocked_confirmation_from_evaluation(
+                    request=mutation_request,
+                    confirmation_id=confirmation.confirmation_id,
+                    evaluation=evaluation,
+                ),
+                None,
+                relative_path,
+                missing_directories,
+            )
+        if resolve_code != "file_create_ready":
+            return (
+                self._file_mutation_error_result(
+                    request=mutation_request,
+                    error=FileMutatorError(resolve_code, resolve_message),
+                    relative_path=relative_path,
+                    command_label="/confirm",
+                    confirmation_id=confirmation.confirmation_id,
+                ),
+                None,
+                relative_path,
+                missing_directories,
+            )
+        return (
+            mutation_request,
+            self._scope_failure_result(mutation_request, command_label="/confirm", confirmation_used=True),
+            relative_path,
+            missing_directories,
+        )
 
     def _execute_confirmed_run_command(
         self,
@@ -4132,14 +4403,25 @@ class CapabilityExecutor:
         self._service._last_confirmation_result = f"Confirmation {confirmation.confirmation_id} approved and completed via file mutation."
         lines = [
             f"Confirmation {confirmation.confirmation_id} approved.",
-            f"File: {mutation.display_path}",
+            f"Created: {mutation.display_path}" if mutation.operation_kind == "create" else f"File: {mutation.display_path}",
             f"Operation: {mutation.operation_kind}",
-            f"Changed lines: {mutation.changed_lines}",
-            f"Changes: {mutation.change_count}",
-            f"Base: {mutation.base_hash_before[:12]} -> {mutation.base_hash_after[:12]}",
         ]
+        if mutation.operation_kind == "create":
+            if mutation.created_directories:
+                lines.append(f"Directories created: {', '.join(mutation.created_directories)}")
+            lines.append(f"Lines: {mutation.changed_lines}")
+        else:
+            lines.extend(
+                (
+                    f"Changed lines: {mutation.changed_lines}",
+                    f"Changes: {mutation.change_count}",
+                    f"Base: {mutation.base_hash_before[:12]} -> {mutation.base_hash_after[:12]}",
+                )
+            )
         if mutation.operator_reason:
             lines.append(f"Reason: {mutation.operator_reason}")
+        if mutation.operation_kind == "create":
+            lines.append(f"Next: Use /run python {mutation.display_path}")
         return self._result(
             request,
             outcome="success",
@@ -4164,8 +4446,17 @@ class CapabilityExecutor:
                 "mutation_change_count": mutation.change_count,
                 "mutation_base_before": mutation.base_hash_before,
                 "mutation_base_after": mutation.base_hash_after,
+                "mutation_created_directories": ",".join(mutation.created_directories),
             },
         )
+
+    @staticmethod
+    def _file_operation_label(capability_id: str) -> str:
+        if capability_id == "file.create.write":
+            return "create"
+        if capability_id == "file.patch.write":
+            return "patch"
+        return "replace"
 
     @staticmethod
     def _confirmation_command_metadata(

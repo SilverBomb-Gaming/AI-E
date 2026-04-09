@@ -1758,13 +1758,19 @@ class TelegramCommandTests(unittest.TestCase):
             TelegramInboundMessage(
                 update_id=313,
                 chat_id="chat-1",
+                text="/createfile scripts/test.py\n@@ CONTENT\nprint(\"hello from AI-E\")",
+                sender_label="@tester",
+            ),
+            TelegramInboundMessage(
+                update_id=314,
+                chat_id="chat-1",
                 text="/patchfile docs/notes.txt\n@@ FIND\nbeta\n@@ REPLACE\nbeta updated",
                 sender_label="@tester",
             ),
-            TelegramInboundMessage(update_id=314, chat_id="chat-1", text="/run python validate_runtime.py", sender_label="@tester"),
-            TelegramInboundMessage(update_id=315, chat_id="chat-1", text="/test tests.test_telegram_commands", sender_label="@tester"),
-            TelegramInboundMessage(update_id=316, chat_id="chat-1", text="/web https://docs.openclaw.ai/guide", sender_label="@tester"),
-            TelegramInboundMessage(update_id=317, chat_id="chat-1", text="/ask hello", sender_label="@tester"),
+            TelegramInboundMessage(update_id=315, chat_id="chat-1", text="/run python validate_runtime.py", sender_label="@tester"),
+            TelegramInboundMessage(update_id=316, chat_id="chat-1", text="/test tests.test_telegram_commands", sender_label="@tester"),
+            TelegramInboundMessage(update_id=317, chat_id="chat-1", text="/web https://docs.openclaw.ai/guide", sender_label="@tester"),
+            TelegramInboundMessage(update_id=318, chat_id="chat-1", text="/ask hello", sender_label="@tester"),
         )
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp) / "workspace"
@@ -1804,18 +1810,19 @@ class TelegramCommandTests(unittest.TestCase):
             )
 
             service.start_telegram_loop()
-            self.assertTrue(_wait_until(lambda: len(telegram_service.sent_messages) == 9, timeout=2.0))
+            self.assertTrue(_wait_until(lambda: len(telegram_service.sent_messages) == 10, timeout=2.0))
             service.stop_telegram_loop()
 
             status_reply = telegram_service.sent_messages[0][1]
             repo_reply = telegram_service.sent_messages[1][1]
             chat_reply = telegram_service.sent_messages[2][1]
             file_reply = telegram_service.sent_messages[3][1]
-            patch_reply = telegram_service.sent_messages[4][1]
-            run_reply = telegram_service.sent_messages[5][1]
-            test_reply = telegram_service.sent_messages[6][1]
-            web_reply = telegram_service.sent_messages[7][1]
-            ask_reply = telegram_service.sent_messages[8][1]
+            create_reply = telegram_service.sent_messages[4][1]
+            patch_reply = telegram_service.sent_messages[5][1]
+            run_reply = telegram_service.sent_messages[6][1]
+            test_reply = telegram_service.sent_messages[7][1]
+            web_reply = telegram_service.sent_messages[8][1]
+            ask_reply = telegram_service.sent_messages[9][1]
 
             self.assertEqual(ollama.ask_calls, 0)
             self.assertEqual(openai.ask_calls, 0)
@@ -1827,6 +1834,9 @@ class TelegramCommandTests(unittest.TestCase):
             self.assertIn("Translation", chat_reply)
             self.assertIn("File: docs/notes.txt", file_reply)
             self.assertIn("Preview:", file_reply)
+            self.assertIn("Action requires confirmation.", create_reply)
+            self.assertIn("Capability: file.create.write", create_reply)
+            self.assertIn("Will create directories: scripts", create_reply)
             self.assertIn("Action requires confirmation.", patch_reply)
             self.assertIn("Preview: 1 replacement", patch_reply)
             self.assertIn("Action requires confirmation.", run_reply)

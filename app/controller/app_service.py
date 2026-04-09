@@ -92,6 +92,7 @@ _LOOP_ACTION_CAPABILITIES = frozenset(
     {
         "repo.status.read",
         "file.read",
+        "file.create.write",
         "file.patch.write",
         "file.write.replace",
         "shell.command.run",
@@ -939,6 +940,54 @@ class ControllerService:
             return requested_display, first_scoped_target, allowed_roots, "file_not_found", "File not found in allowed scope."
         return requested_display, "", allowed_roots, "target_path_not_allowed", "File is outside allowed directories."
 
+    def resolve_file_creation_request(self, relative_path: str) -> tuple[str, str, tuple[str, ...], tuple[str, ...], str, str]:
+        requested = relative_path.strip()
+        if not requested:
+            return "", "", (), (), "missing_file_path", "Use /createfile <relative_path>."
+        candidate_path = Path(requested)
+        if candidate_path.is_absolute():
+            return requested, "", (), (), "absolute_path_not_allowed", "Use /createfile <relative_path> inside the allowed directories."
+        if any(part == ".." for part in candidate_path.parts):
+            return requested.replace("\\", "/"), "", (), (), "target_path_not_allowed", "File is outside allowed directories."
+
+        allowed_roots, roots_valid, roots_message, roots_code = self._file_scope_state()
+        if not roots_valid:
+            return requested.replace("\\", "/"), "", allowed_roots, (), roots_code, roots_message
+
+        requested_display = requested.replace("\\", "/")
+        candidate_matches: list[tuple[str, tuple[str, ...]]] = []
+        for root in allowed_roots:
+            try:
+                resolved_root = Path(root).resolve()
+                target = (resolved_root / candidate_path).resolve(strict=False)
+                target.relative_to(resolved_root)
+            except (OSError, ValueError):
+                continue
+            if target.exists():
+                if target.is_file():
+                    return requested_display, str(target), allowed_roots, (), "file_already_exists", "File already exists. Use /writefile or /patchfile for existing files."
+                return requested_display, str(target), allowed_roots, (), "file_target_is_directory", "Target path already exists as a directory."
+            if target.parent.exists() and not target.parent.is_dir():
+                return requested_display, str(target), allowed_roots, (), "parent_not_directory", "Parent path is not a directory."
+
+            missing_directories: list[str] = []
+            current = target.parent
+            while current != resolved_root and not current.exists():
+                try:
+                    relative_parent = current.relative_to(resolved_root)
+                except ValueError:
+                    return requested_display, "", allowed_roots, (), "target_path_not_allowed", "File is outside allowed directories."
+                missing_directories.append(relative_parent.as_posix())
+                current = current.parent
+            candidate_matches.append((str(target), tuple(reversed(missing_directories))))
+
+        if not candidate_matches:
+            return requested_display, "", allowed_roots, (), "target_path_not_allowed", "File is outside allowed directories."
+        if len(candidate_matches) > 1:
+            return requested_display, "", allowed_roots, (), "file_scope_ambiguous", "File does not exist yet and multiple allowed roots are configured. Narrow the file scope before creating a new file."
+        target_path, missing_directories = candidate_matches[0]
+        return requested_display, target_path, allowed_roots, missing_directories, "file_create_ready", "Scoped file target is ready for creation."
+
     def read_file_preview(self, relative_path: str) -> FileReadSnapshot:
         display_path, target_path, _, reason_code, message = self.resolve_file_request(relative_path)
         if reason_code != "file_target_ready" or not target_path:
@@ -1450,7 +1499,7 @@ class ControllerService:
         self._last_repo_checked_at = result.finished_at or self._now_iso()
 
     def _remember_file_execution_result(self, result: CapabilityExecutionResult) -> None:
-        if result.capability_id not in {"file.read", "file.patch.write", "file.write.replace"}:
+        if result.capability_id not in {"file.read", "file.create.write", "file.patch.write", "file.write.replace"}:
             return
         file_name = str(result.telemetry.get("file_name") or "").strip()
         file_status = str(result.telemetry.get("file_status") or "").strip()
@@ -1494,12 +1543,12 @@ class ControllerService:
                 (
                     "Operator commands",
                     "Core: /chat /translate|/refine|/planbuild|/planstep|/planstepbundle",
-                    "Read: /repo|/file /planview|/planstatus /bundlestatus /contexts",
-                    "Run: /patchfile|/writefile /run|/test /planapprove|/bundleapprove",
+                    "Read: /repo|/file /planview|/planstatus /bundlestatus|/contexts",
+                    "Run: /createfile|/patchfile|/writefile /run|/test /planapprove|/bundleapprove",
                     "Reset: /translateclear|/planclear /planresetstep /bundlecancel|/bundlereset",
-                    "Trust: /capabilities /audit /clearcontext",
+                    "Trust: /capabilities|/audit /clearcontext",
                     "Ask: /ask /askd /asklast /askctx",
-                    "Analyze: /explainrepo|/explainfile|/summarizeweb",
+                    "Info: /explainrepo|/explainfile|/summarizeweb",
                     "Flow: /workflows|/workflowstatus|/cancelworkflow",
                 )
             ),
@@ -1513,7 +1562,7 @@ class ControllerService:
             lines = [
                 "Last action",
                 "No loop action is recorded yet.",
-                "Next: Use /repo or /file, then /patchfile, /writefile, /run, or /test explicitly.",
+                "Next: Use /repo or /file, then /createfile, /patchfile, /writefile, /run, or /test explicitly.",
             ]
             if workflow is not None:
                 lines.insert(2, f"Workflow: {workflow.workflow_id} {self._workflow_state_label(workflow)}")
@@ -1546,9 +1595,16 @@ class ControllerService:
                 f"File: {display_path}",
                 f"Summary: {self._summarize_text(status, limit=180)}",
             )
-        if capability_id in {"file.patch.write", "file.write.replace"}:
+        if capability_id in {"file.create.write", "file.patch.write", "file.write.replace"}:
             display_path = str(telemetry.get("display_path") or self._last_file_read or "unknown file")
-            operation = str(telemetry.get("mutation_operation") or ("patch" if capability_id == "file.patch.write" else "replace"))
+            operation = str(
+                telemetry.get("mutation_operation")
+                or (
+                    "create"
+                    if capability_id == "file.create.write"
+                    else ("patch" if capability_id == "file.patch.write" else "replace")
+                )
+            )
             status = str(telemetry.get("file_status") or result.internal_summary)
             return (
                 f"Action: {operation} {self._outcome_label(result.outcome)}",
@@ -1587,8 +1643,8 @@ class ControllerService:
                 return f"Use /workflowstatus or /confirm {pending_confirmation_id} explicitly."
             return "Use /workflowstatus or /cancelworkflow explicitly."
         if result.capability_id == "file.read":
-            return "Use /patchfile, /writefile, /run, or /test explicitly."
-        if result.capability_id in {"file.patch.write", "file.write.replace"} and result.outcome == "success":
+            return "Use /createfile, /patchfile, /writefile, /run, or /test explicitly."
+        if result.capability_id in {"file.create.write", "file.patch.write", "file.write.replace"} and result.outcome == "success":
             return "Run /test or /run explicitly if you want to validate the edit."
         if result.capability_id in {"shell.command.run", "test.command.run"}:
             return "Inspect with /file, patch with /patchfile, or run another bounded command explicitly."
@@ -1993,7 +2049,7 @@ class ControllerService:
     def _summarize_inbound_update(self, update: TelegramInboundMessage, command_label: str) -> str:
         if command_label in _PROVIDER_ASK_COMMANDS:
             return self._summarize_text(f"{update.sender_label}: {command_label} [prompt hidden]")
-        if command_label in {"/file", "/patchfile", "/writefile"}:
+        if command_label in {"/file", "/createfile", "/patchfile", "/writefile"}:
             return self._summarize_text(f"{update.sender_label}: {command_label} [path hidden]")
         if command_label in {"/run", "/test"}:
             return self._summarize_text(f"{update.sender_label}: {command_label} [command hidden]")
@@ -2019,7 +2075,7 @@ class ControllerService:
             return self._summarize_text(f"Sent non-text guidance reply to {update.sender_label}.")
         if plan.command_label == "parse_failure":
             return self._summarize_text(f"Sent command correction to {update.sender_label}.")
-        if plan.command_label in {"/file", "/patchfile", "/writefile", "/run", "/test"}:
+        if plan.command_label in {"/file", "/createfile", "/patchfile", "/writefile", "/run", "/test"}:
             return self._summarize_text(f"Sent {plan.command_label} reply to {update.sender_label}.")
         if plan.command_label == "/web":
             return self._summarize_text(f"Sent /web reply to {update.sender_label}.")
@@ -2065,6 +2121,7 @@ class ControllerService:
             "/models",
             "/repo",
             "/file",
+            "/createfile",
             "/patchfile",
             "/writefile",
             "/run",
@@ -2093,6 +2150,12 @@ class ControllerService:
                 command_label="parse_failure",
                 normalized_text=normalized_text,
                 usage_hint="Use /file <relative_path>.",
+            )
+        if command.startswith("/createfile"):
+            return _ParsedTelegramCommand(
+                command_label="parse_failure",
+                normalized_text=normalized_text,
+                usage_hint="Use /createfile <relative_path> with @@ CONTENT.",
             )
         if command.startswith("/patchfile"):
             return _ParsedTelegramCommand(
@@ -3128,7 +3191,7 @@ class ControllerService:
             action_summary = str(result.telemetry.get("repo_summary") or f"repo status for {self._repo_display_name()}")
         elif result.capability_id == "file.read":
             action_summary = str(result.telemetry.get("file_summary") or "file preview")
-        elif result.capability_id in {"file.patch.write", "file.write.replace"}:
+        elif result.capability_id in {"file.create.write", "file.patch.write", "file.write.replace"}:
             action_summary = str(result.telemetry.get("file_summary") or result.request.metadata.get("argument_summary") or "file mutation")
         elif result.capability_id in {"shell.command.run", "test.command.run"}:
             action_summary = str(result.telemetry.get("execution_summary") or result.request.metadata.get("argument_summary") or "bounded execution")

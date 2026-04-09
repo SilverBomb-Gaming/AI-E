@@ -171,7 +171,7 @@ class CapabilityEvaluator:
                 message="Scoped file preview is available inside the configured allowed roots.",
             )
 
-        if capability_id in {"file.patch.write", "file.write.replace"}:
+        if capability_id in {"file.create.write", "file.patch.write", "file.write.replace"}:
             if not context.file_scope_valid:
                 return self._result(
                     manifest,
