@@ -77,6 +77,12 @@ def parse_chat_command(*, text: str, has_text: bool = True) -> ParsedChatCommand
         "/evalruns",
         "/evalstart",
         "/evalstop",
+        "/chaincreate",
+        "/chains",
+        "/chainstatus",
+        "/chainsteps",
+        "/chainstart",
+        "/chainstop",
         "/web",
         "/contexts",
         "/clearcontext",
@@ -128,6 +134,18 @@ def parse_chat_command(*, text: str, has_text: bool = True) -> ParsedChatCommand
         return ParsedChatCommand(command_label="parse_failure", normalized_text=normalized_text, usage_hint="Use /evalstop <session_id>.")
     if command.startswith("/evals"):
         return ParsedChatCommand(command_label="parse_failure", normalized_text=normalized_text, usage_hint="Use /evals.")
+    if command.startswith("/chaincreate"):
+        return ParsedChatCommand(command_label="parse_failure", normalized_text=normalized_text, usage_hint="Use /chaincreate --title \"name\" --objective \"goal\" --type validate_then_report|feature_validate_loop|dispatch_validate_recover --command \"/test target\" --steps 3 [--failures 1] [--no-progress 1] [--target local|node:<id>|role:<role>] [--fallback stop|local|node:<id>|role:<role>].")
+    if command.startswith("/chainstatus"):
+        return ParsedChatCommand(command_label="parse_failure", normalized_text=normalized_text, usage_hint="Use /chainstatus <chain_id>.")
+    if command.startswith("/chainsteps"):
+        return ParsedChatCommand(command_label="parse_failure", normalized_text=normalized_text, usage_hint="Use /chainsteps <chain_id> [limit].")
+    if command.startswith("/chainstart"):
+        return ParsedChatCommand(command_label="parse_failure", normalized_text=normalized_text, usage_hint="Use /chainstart <chain_id>.")
+    if command.startswith("/chainstop"):
+        return ParsedChatCommand(command_label="parse_failure", normalized_text=normalized_text, usage_hint="Use /chainstop <chain_id>.")
+    if command.startswith("/chains"):
+        return ParsedChatCommand(command_label="parse_failure", normalized_text=normalized_text, usage_hint="Use /chains.")
     if command.startswith("/web"):
         return ParsedChatCommand(command_label="parse_failure", normalized_text=normalized_text, usage_hint="Use /web <https://allowed-domain/path>.")
     if command.startswith("/lastaction"):

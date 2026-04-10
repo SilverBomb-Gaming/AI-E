@@ -74,6 +74,10 @@ from .workflow_store import WorkflowStore
 from .repo_inspector import RepoInspectionSnapshot, RepoInspector, RepoInspectorError
 from .startup_diagnostics import StartupDiagnosticsFormatter, StartupDiagnosticsSnapshot
 from .telegram_service import TelegramApiError, TelegramChannelService, TelegramInboundMessage, mask_telegram_token
+from .task_chain_formatter import TaskChainFormatter
+from .task_chain_models import TaskChainRecord
+from .task_chain_runner import TaskChainRunner
+from .task_chain_store import TaskChainStore
 from ..platform.secrets import SecretStore, get_secret_store
 from ..providers import OllamaProviderAdapter, OpenAIProviderAdapter, ProviderReply, ProviderStatus, ProviderType as AdapterProviderType, mask_secret
 from ..runtime.manager import OpenClawRuntimeManager
@@ -282,6 +286,9 @@ class ControllerService:
         self._evaluation_store = EvaluationSessionStore(root_path=self._config_store.path.parent / "evaluation")
         self._evaluation_formatter = EvaluationFormatter()
         self._evaluation_runner = EvaluationRunner(self, self._evaluation_store)
+        self._task_chain_store = TaskChainStore(root_path=self._config_store.path.parent / "task_chains")
+        self._task_chain_formatter = TaskChainFormatter()
+        self._task_chain_runner = TaskChainRunner(self, self._task_chain_store)
         self._last_capability_evaluation: CapabilityEvaluation | None = None
         self._last_execution_result: CapabilityExecutionResult | None = None
         self._last_loop_result: CapabilityExecutionResult | None = None
@@ -720,6 +727,7 @@ class ControllerService:
     def shutdown(self) -> None:
         self.stop_telegram_loop()
         self._evaluation_runner.shutdown()
+        self._task_chain_runner.shutdown()
         self._runtime_active = False
         self._runtime_manager.stop_runtime()
 
@@ -1987,6 +1995,7 @@ class ControllerService:
                     "Feature: /featurestatus|featureapply",
                     "Exec: /startruntime /run|/test /dispatch|dispatchstatus /nodes|nodeview|nodeselect|nodeclear",
                     "Eval: /evalcreate|evals|evalstatus|evalruns|evalstart|evalstop",
+                    "Chain: /chaincreate|chains|chainstatus|chainsteps|chainstart|chainstop",
                     "Trust: /capabilities|audit|clearcontext /contexts",
                     "Ask: /ask|askd|asklast|askctx",
                     "Info: /explainrepo|explainfile|summarizeweb",
@@ -2697,6 +2706,81 @@ class ControllerService:
                 "operator_reason": local_request.operator_reason,
                 "expected_scope": local_request.expected_scope,
                 "argv": list(local_request.argv),
+            },
+        )
+
+    def create_task_chain(self, record: TaskChainRecord) -> TaskChainRecord:
+        return self._task_chain_store.create_chain(record)
+
+    def update_task_chain(self, record: TaskChainRecord) -> TaskChainRecord:
+        return self._task_chain_store.update_chain(record)
+
+    def get_task_chain(self, chain_id: str) -> TaskChainRecord | None:
+        return self._task_chain_store.get_chain(chain_id)
+
+    def list_task_chains(self) -> tuple[TaskChainRecord, ...]:
+        return self._task_chain_store.list_chains()
+
+    def task_chain_steps(self, chain_id: str, *, limit: int | None = None):
+        return self._task_chain_store.steps_for_chain(chain_id, limit=limit)
+
+    def next_task_chain_id(self) -> str:
+        return self._task_chain_store.generate_chain_id()
+
+    def start_task_chain(self, chain_id: str) -> TaskChainRecord:
+        return self._task_chain_runner.start_chain(chain_id)
+
+    def stop_task_chain(self, chain_id: str, *, reason: str) -> TaskChainRecord:
+        return self._task_chain_runner.stop_chain(chain_id, reason=reason)
+
+    def await_task_chain(self, chain_id: str, *, timeout_seconds: float) -> TaskChainRecord | None:
+        return self._task_chain_runner.await_chain(chain_id, timeout_seconds=timeout_seconds)
+
+    def is_task_chain_running(self, chain_id: str) -> bool:
+        return self._task_chain_runner.is_running(chain_id)
+
+    def build_chain_dispatch_record(
+        self,
+        *,
+        chain: TaskChainRecord,
+        target: NodeDispatchTarget,
+        local_request: LocalCommandExecutionRequest,
+        chat_id: str,
+    ) -> NodeDispatchRecord:
+        return NodeDispatchRecord(
+            job_id=self.next_dispatch_job_id(),
+            status="queued",
+            requested_capability_id=local_request.capability_id,
+            requested_command_label="/test" if local_request.command_kind == "test" else "/run",
+            requested_command_text=local_request.command_text,
+            requested_command_summary=local_request.command_summary,
+            target_selection_mode=target.selection_mode,
+            target_selector=target.target_value,
+            target_node_id=target.node.node_id,
+            target_node_role=target.node.role,
+            target_node_name=target.node.display_name,
+            routing_reason=target.routing_reason,
+            request_source="task-chain-runner",
+            requester_label=chain.owner_label,
+            chat_id=chat_id,
+            confirmation_required=False,
+            confirmation_id="",
+            queued_at=self._now_iso(),
+            result_summary="",
+            failure_reason="",
+            current_job_state="queued",
+            execution_payload={
+                "capability_id": local_request.capability_id,
+                "command_kind": local_request.command_kind,
+                "command_family": local_request.command_family,
+                "command_text": local_request.command_text,
+                "command_summary": local_request.command_summary,
+                "working_directory": local_request.working_directory,
+                "timeout_seconds": local_request.timeout_seconds,
+                "operator_reason": local_request.operator_reason,
+                "expected_scope": local_request.expected_scope,
+                "argv": list(local_request.argv),
+                "task_chain_id": chain.chain_id,
             },
         )
 

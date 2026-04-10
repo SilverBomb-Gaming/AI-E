@@ -36,6 +36,7 @@ from .file_reader import FileReaderError
 from .project_bootstrap_models import ProjectBootstrapExecutionRecord
 from .repo_inspector import RepoInspectorError
 from .scope_models import ExecutionScope
+from .task_chain_models import TaskChainRecord
 from .chat_command_parser import parse_chat_command
 from .telegram_service import TelegramInboundMessage
 from .web_fetcher import WebFetchError
@@ -183,6 +184,18 @@ class CapabilityExecutor:
             return self._execute_eval_start(update=update, snapshot=snapshot, argument=parsed_command.argument)
         if command == "/evalstop":
             return self._execute_eval_stop(update=update, snapshot=snapshot, argument=parsed_command.argument)
+        if command == "/chaincreate":
+            return self._execute_chain_create(update=update, snapshot=snapshot, argument=parsed_command.argument)
+        if command == "/chains":
+            return self._execute_chains(update=update, snapshot=snapshot)
+        if command == "/chainstatus":
+            return self._execute_chain_status(update=update, snapshot=snapshot, argument=parsed_command.argument)
+        if command == "/chainsteps":
+            return self._execute_chain_steps(update=update, snapshot=snapshot, argument=parsed_command.argument)
+        if command == "/chainstart":
+            return self._execute_chain_start(update=update, snapshot=snapshot, argument=parsed_command.argument)
+        if command == "/chainstop":
+            return self._execute_chain_stop(update=update, snapshot=snapshot, argument=parsed_command.argument)
         if command == "/status":
             return self._execute_status(update=update, snapshot=snapshot)
         if command == "/lastaction":
@@ -1064,6 +1077,261 @@ class CapabilityExecutor:
             activity_state="processing_command",
         )
 
+    def _execute_chain_create(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot, argument: str) -> CapabilityExecutionResult:
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="task.chain.create",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/chaincreate",
+            parsed_arguments={"raw": argument},
+            metadata={"argument_summary": "/chaincreate [definition hidden]"},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        parsed, error = self._parse_chain_create_argument(argument)
+        if error:
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="task_chain_parse_failed",
+                user_message=f"Couldn't create that task chain.\nReason: {error}\nNext: Use /chaincreate --title \"name\" --objective \"goal\" --type validate_then_report|feature_validate_loop|dispatch_validate_recover --command \"/test target\" --steps 3 [--failures 1] [--no-progress 1] [--target local|node:<id>|role:<role>] [--fallback stop|local|node:<id>|role:<role>] .",
+                internal_summary=f"task.chain.create rejected invalid syntax: {error}",
+                retryable=False,
+                command_label="/chaincreate",
+                activity_state="processing_command",
+            )
+        try:
+            chain = self._build_task_chain(parsed=parsed, chat_id=update.chat_id, requester_label=update.sender_label)
+        except ValueError as exc:
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="task_chain_invalid_definition",
+                user_message=f"Couldn't create that task chain.\nReason: {exc}\nNext: Adjust the chain type, target, or bounded command and retry.",
+                internal_summary=f"task.chain.create rejected invalid definition: {exc}",
+                retryable=False,
+                command_label="/chaincreate",
+                activity_state="processing_command",
+            )
+        created = self._service.create_task_chain(chain)
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=self._service._task_chain_formatter.format_chain_preview(chain=created),
+            internal_summary=f"task.chain.create stored {created.chain_id}.",
+            retryable=False,
+            command_label="/chaincreate",
+            activity_state="processing_command",
+            telemetry={"task_chain_id": created.chain_id, "task_chain_status": created.status},
+        )
+
+    def _execute_chains(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot) -> CapabilityExecutionResult:
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="task.chain.list",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/chains",
+            parsed_arguments={},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        chains = self._service.list_task_chains()
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=self._service._task_chain_formatter.format_chain_list(chains=chains),
+            internal_summary=f"task.chain.list returned {len(chains)} chain(s).",
+            retryable=False,
+            command_label="/chains",
+            activity_state="processing_command",
+        )
+
+    def _execute_chain_status(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot, argument: str) -> CapabilityExecutionResult:
+        chain_id = argument.strip().upper()
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="task.chain.status",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/chainstatus",
+            parsed_arguments={"chain_id": chain_id},
+            metadata={"argument_summary": f"/chainstatus {chain_id or '[missing]'}"},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        chain = self._service.get_task_chain(chain_id)
+        if chain is None:
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="task_chain_not_found",
+                user_message=f"Couldn't inspect task chain status.\nReason: No chain matches {chain_id or '[missing]'}.\nNext: Use /chains to list chains.",
+                internal_summary=f"task.chain.status rejected unknown chain id: {chain_id or '[missing]' }.",
+                retryable=False,
+                command_label="/chainstatus",
+                activity_state="processing_command",
+            )
+        steps = self._service.task_chain_steps(chain.chain_id, limit=5)
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=self._service._task_chain_formatter.format_chain_status(chain=chain, steps=steps),
+            internal_summary=f"task.chain.status returned {chain.chain_id}.",
+            retryable=False,
+            command_label="/chainstatus",
+            activity_state="processing_command",
+            telemetry={"task_chain_id": chain.chain_id, "task_chain_status": chain.status},
+        )
+
+    def _execute_chain_steps(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot, argument: str) -> CapabilityExecutionResult:
+        chain_id, limit = self._parse_chain_steps_argument(argument)
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="task.chain.steps",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/chainsteps",
+            parsed_arguments={"chain_id": chain_id, "limit": str(limit)},
+            metadata={"argument_summary": f"/chainsteps {chain_id or '[missing]'} {limit}"},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        chain = self._service.get_task_chain(chain_id)
+        if chain is None:
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="task_chain_not_found",
+                user_message=f"Couldn't inspect task chain steps.\nReason: No chain matches {chain_id or '[missing]'}.\nNext: Use /chains to list chains.",
+                internal_summary=f"task.chain.steps rejected unknown chain id: {chain_id or '[missing]' }.",
+                retryable=False,
+                command_label="/chainsteps",
+                activity_state="processing_command",
+            )
+        steps = self._service.task_chain_steps(chain.chain_id, limit=limit)
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=self._service._task_chain_formatter.format_chain_steps(chain=chain, steps=steps),
+            internal_summary=f"task.chain.steps returned {len(steps)} step(s) for {chain.chain_id}.",
+            retryable=False,
+            command_label="/chainsteps",
+            activity_state="processing_command",
+        )
+
+    def _execute_chain_start(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot, argument: str) -> CapabilityExecutionResult:
+        chain_id = argument.strip().upper()
+        chain = self._service.get_task_chain(chain_id)
+        request, evaluation, context, scope_failure = self._prepare_capability_request(
+            capability_id="task.chain.start",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/chainstart",
+            parsed_arguments={"chain_id": chain_id},
+            metadata={
+                "argument_summary": f"/chainstart {chain_id or '[missing]'}",
+                "confirmation_action_label": f"start task chain {chain_id or '[missing]'}",
+                "confirmation_preview_lines": tuple(
+                    (
+                        f"Chain: {chain.title}",
+                        f"Type: {chain.chain_type}",
+                        f"Command: {chain.command_label} {chain.command_argument}".strip(),
+                        f"Limits: {chain.max_steps} steps / {chain.max_failures} failures",
+                    )
+                ) if chain is not None else (),
+                "confirmation_metadata": {"task_chain_id": chain_id},
+            },
+        )
+        if scope_failure is not None:
+            return scope_failure
+        if chain is None:
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="task_chain_not_found",
+                user_message=f"Couldn't start that task chain.\nReason: No chain matches {chain_id or '[missing]'}.\nNext: Use /chains to list chains.",
+                internal_summary=f"task.chain.start rejected unknown chain id: {chain_id or '[missing]' }.",
+                retryable=False,
+                command_label="/chainstart",
+                activity_state="processing_command",
+            )
+        if chain.status == "running":
+            return self._result(
+                request,
+                outcome="success",
+                reason_code="ok",
+                user_message=f"Task chain {chain.chain_id} is already running.",
+                internal_summary=f"task.chain.start observed {chain.chain_id} already running.",
+                retryable=False,
+                command_label="/chainstart",
+                activity_state="processing_command",
+            )
+        if evaluation.current_availability_state in {"confirmation_required", "allowed"}:
+            return self._confirmation_required_result(
+                request=request,
+                evaluation=evaluation,
+                context=context,
+                snapshot=snapshot,
+                prompt=f"start task chain {chain.chain_id}",
+                response_style="concise",
+                chat_id=update.chat_id,
+                requester_label=update.sender_label,
+            )
+        return self._result(
+            request,
+            outcome="failed",
+            reason_code="task_chain_start_blocked",
+            user_message="Task chain start could not continue because approval was blocked.",
+            internal_summary=f"task.chain.start blocked for {chain.chain_id}.",
+            retryable=True,
+            command_label="/chainstart",
+            activity_state="processing_command",
+        )
+
+    def _execute_chain_stop(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot, argument: str) -> CapabilityExecutionResult:
+        chain_id = argument.strip().upper()
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="task.chain.stop",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/chainstop",
+            parsed_arguments={"chain_id": chain_id},
+            metadata={"argument_summary": f"/chainstop {chain_id or '[missing]'}"},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        chain = self._service.get_task_chain(chain_id)
+        if chain is None:
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="task_chain_not_found",
+                user_message=f"Couldn't stop that task chain.\nReason: No chain matches {chain_id or '[missing]'}.\nNext: Use /chains to list chains.",
+                internal_summary=f"task.chain.stop rejected unknown chain id: {chain_id or '[missing]' }.",
+                retryable=False,
+                command_label="/chainstop",
+                activity_state="processing_command",
+            )
+        stopped = self._service.stop_task_chain(chain.chain_id, reason="Stopped by operator.")
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=f"Task chain {stopped.chain_id} stopped.\nReason: {stopped.stop_reason or 'Stopped by operator.'}",
+            internal_summary=f"task.chain.stop marked {stopped.chain_id} as stopped.",
+            retryable=False,
+            command_label="/chainstop",
+            activity_state="processing_command",
+        )
+
     @staticmethod
     def _parse_dispatch_argument(argument: str) -> tuple[str, str]:
         stripped = argument.strip()
@@ -1116,6 +1384,108 @@ class CapabilityExecutor:
             except ValueError:
                 return session_id, 10
         return session_id, 10
+
+    def _parse_chain_create_argument(self, argument: str) -> tuple[dict[str, str], str]:
+        try:
+            tokens = shlex.split(argument)
+        except ValueError as exc:
+            return {}, str(exc)
+        if not tokens:
+            return {}, "Use --title, --objective, --type, --command, and --steps to define the chain."
+        parsed: dict[str, str] = {}
+        index = 0
+        while index < len(tokens):
+            token = tokens[index]
+            if not token.startswith("--"):
+                return {}, f"Unexpected token: {token}"
+            key = token[2:].strip().lower()
+            if not key:
+                return {}, "Empty option name is not allowed."
+            if index + 1 >= len(tokens):
+                return {}, f"Missing value for --{key}."
+            parsed[key] = tokens[index + 1].strip()
+            index += 2
+        for required in ("title", "objective", "type", "command", "steps"):
+            if not parsed.get(required):
+                return {}, f"Missing required option --{required}."
+        return parsed, ""
+
+    @staticmethod
+    def _parse_chain_steps_argument(argument: str) -> tuple[str, int]:
+        parts = argument.split()
+        chain_id = parts[0].strip().upper() if parts else ""
+        if len(parts) >= 2:
+            try:
+                return chain_id, max(1, min(25, int(parts[1])))
+            except ValueError:
+                return chain_id, 10
+        return chain_id, 10
+
+    @staticmethod
+    def _parse_chain_target(value: str) -> tuple[str, str, str, str]:
+        normalized = value.strip().lower() or "local"
+        if normalized == "local":
+            return "local", "", "local controller", "fallback_target"
+        if normalized.startswith("node:"):
+            selector = normalized.split(":", 1)[1].strip().lower()
+            return "node", selector, f"node {selector}", "fallback_target"
+        if normalized.startswith("role:"):
+            selector = normalized.split(":", 1)[1].strip().lower()
+            return "role", selector, f"role {selector}", "fallback_target"
+        raise ValueError("Target must be local, node:<id>, or role:<role>.")
+
+    def _build_task_chain(self, *, parsed: dict[str, str], chat_id: str, requester_label: str) -> TaskChainRecord:
+        chain_id = self._service.next_task_chain_id()
+        command_text = self._strip_wrapping_quotes(parsed.get("command", ""))
+        command = parse_chat_command(text=command_text, has_text=True)
+        if command.command_label not in {"/run", "/test"}:
+            raise ValueError("Only bounded /run and /test commands are supported inside task chains.")
+        chain_type = parsed.get("type", "").strip().lower()
+        if chain_type not in {"validate_then_report", "feature_validate_loop", "dispatch_validate_recover"}:
+            raise ValueError("Chain type must be validate_then_report, feature_validate_loop, or dispatch_validate_recover.")
+        primary_kind, primary_selector, primary_display, _ = self._parse_chain_target(parsed.get("target", "local"))
+        fallback_value = parsed.get("fallback", "stop").strip().lower() or "stop"
+        fallback_policy = "stop"
+        fallback_kind = "local"
+        fallback_selector = ""
+        fallback_display = "stop"
+        if fallback_value != "stop":
+            fallback_kind, fallback_selector, fallback_display, fallback_policy = self._parse_chain_target(fallback_value)
+        if chain_type == "dispatch_validate_recover" and primary_kind == "local":
+            raise ValueError("dispatch_validate_recover requires a node:<id> or role:<role> primary target.")
+        allowed_step_families: list[str] = ["test" if command.command_label == "/test" else "run", "report"]
+        if primary_kind in {"node", "role"} or fallback_kind in {"node", "role"}:
+            allowed_step_families.append("dispatch")
+        if chain_type == "feature_validate_loop":
+            allowed_step_families.append("feature_status")
+        return TaskChainRecord(
+            chain_id=chain_id,
+            title=parsed.get("title", "").strip(),
+            objective=parsed.get("objective", "").strip(),
+            chain_type=chain_type,  # type: ignore[arg-type]
+            created_at=self._service._now_iso(),
+            approved_at="",
+            status="created",
+            owner_label=requester_label,
+            source="telegram",
+            chat_id=chat_id,
+            command_text=command_text,
+            command_label=command.command_label,
+            command_argument=command.argument,
+            primary_target_kind=primary_kind,  # type: ignore[arg-type]
+            primary_target_selector=primary_selector,
+            primary_target_display=primary_display,
+            fallback_target_kind=fallback_kind,  # type: ignore[arg-type]
+            fallback_target_selector=fallback_selector,
+            fallback_target_display=fallback_display,
+            fallback_policy=fallback_policy,
+            allowed_step_families=tuple(dict.fromkeys(allowed_step_families)),  # type: ignore[arg-type]
+            max_steps=max(1, int(parsed.get("steps", "1"))),
+            max_failures=max(1, int(parsed.get("failures", "1"))),
+            max_no_progress=max(1, int(parsed.get("no-progress", parsed.get("no_progress", "1")))),
+            latest_summary="Chain created and waiting for approval.",
+            metadata={"stage": "validate" if chain_type == "validate_then_report" else ("primary_validate" if chain_type == "dispatch_validate_recover" else "")},
+        )
 
     def _build_evaluation_session(self, *, parsed: dict[str, str], chat_id: str, requester_label: str) -> EvaluationSessionRecord:
         session_id = self._service.next_evaluation_session_id()
@@ -6313,6 +6683,12 @@ class CapabilityExecutor:
                 confirmation=confirmation,
                 chat_id=chat_id,
             )
+        if confirmation.capability_id == "task.chain.start":
+            return self._execute_confirmed_chain_start(
+                request=request,
+                confirmation=confirmation,
+                chat_id=chat_id,
+            )
         if confirmation.capability_id == "shell.command.run":
             return self._execute_confirmed_run_command(
                 request=request,
@@ -6918,6 +7294,48 @@ class CapabilityExecutor:
                 "evaluation_session_id": started.session_id,
                 "evaluation_status": started.status,
             },
+        )
+
+    def _execute_confirmed_chain_start(
+        self,
+        *,
+        request: CapabilityExecutionRequest,
+        confirmation: PendingConfirmation,
+        chat_id: str,
+    ) -> CapabilityExecutionResult:
+        chain_id = str(confirmation.metadata.get("task_chain_id") or "").strip().upper()
+        chain = self._service.get_task_chain(chain_id)
+        if chain is None:
+            return self._result(
+                request,
+                outcome="failed",
+                reason_code="task_chain_not_found",
+                user_message="Task chain start could not continue because the chain no longer exists.",
+                internal_summary=f"task.chain.start failed because {chain_id or '[missing]'} no longer exists.",
+                retryable=False,
+                command_label="/confirm",
+                activity_state="processing_command",
+                confirmation_used=True,
+            )
+        started = self._service.start_task_chain(chain.chain_id)
+        self._service._last_confirmation_result = f"Confirmation {confirmation.confirmation_id} approved and started task chain {started.chain_id}."
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message="\n".join(
+                (
+                    f"Confirmation {confirmation.confirmation_id} approved.",
+                    f"Task chain {started.chain_id} started.",
+                    f"Next: Use /chainstatus {started.chain_id} while it runs.",
+                )
+            ),
+            internal_summary=self._service._last_confirmation_result,
+            retryable=False,
+            command_label="/confirm",
+            activity_state="processing_command",
+            confirmation_used=True,
+            telemetry={"task_chain_id": started.chain_id, "task_chain_status": started.status},
         )
 
     def _queue_selected_remote_command(
