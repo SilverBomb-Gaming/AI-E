@@ -5,12 +5,14 @@ from datetime import datetime
 import json
 from pathlib import Path
 import secrets
+import shlex
 from typing import TYPE_CHECKING, Protocol
 
 from ..providers.base import ProviderReply
 from .capability_models import CapabilityContext, CapabilityEvaluation
 from .confirmation_models import ConfirmationContextSnapshot, PendingConfirmation
 from .context_models import BufferedContext
+from .evaluation_session_models import EvaluationJobDefinition, EvaluationSessionRecord
 from .execution_models import CapabilityExecutionRequest, CapabilityExecutionResult, ProviderExecutionSnapshot
 from .execution_models import LocalCommandExecutionRequest
 from .execution_runner import ExecutionRunnerError
@@ -169,6 +171,18 @@ class CapabilityExecutor:
             return self._execute_dispatch(update=update, snapshot=snapshot, argument=parsed_command.argument)
         if command == "/dispatchstatus":
             return self._execute_dispatch_status(update=update, snapshot=snapshot, argument=parsed_command.argument)
+        if command == "/evalcreate":
+            return self._execute_eval_create(update=update, snapshot=snapshot, argument=parsed_command.argument)
+        if command == "/evals":
+            return self._execute_evals(update=update, snapshot=snapshot)
+        if command == "/evalstatus":
+            return self._execute_eval_status(update=update, snapshot=snapshot, argument=parsed_command.argument)
+        if command == "/evalruns":
+            return self._execute_eval_runs(update=update, snapshot=snapshot, argument=parsed_command.argument)
+        if command == "/evalstart":
+            return self._execute_eval_start(update=update, snapshot=snapshot, argument=parsed_command.argument)
+        if command == "/evalstop":
+            return self._execute_eval_stop(update=update, snapshot=snapshot, argument=parsed_command.argument)
         if command == "/status":
             return self._execute_status(update=update, snapshot=snapshot)
         if command == "/lastaction":
@@ -784,6 +798,272 @@ class CapabilityExecutor:
             },
         )
 
+    def _execute_eval_create(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot, argument: str) -> CapabilityExecutionResult:
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="evaluation.session.create",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/evalcreate",
+            parsed_arguments={},
+            metadata={"argument_summary": "/evalcreate [session definition]"},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        parsed, error = self._parse_eval_create_argument(argument)
+        if error:
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="evaluation_create_invalid",
+                user_message=f"Couldn't create that evaluation session.\nReason: {error}",
+                internal_summary="evaluation.session.create rejected invalid session arguments.",
+                retryable=False,
+                command_label="/evalcreate",
+                activity_state="processing_command",
+            )
+        try:
+            session = self._build_evaluation_session(parsed=parsed, chat_id=update.chat_id, requester_label=update.sender_label)
+        except ValueError as exc:
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="evaluation_create_invalid",
+                user_message=f"Couldn't create that evaluation session.\nReason: {exc}",
+                internal_summary="evaluation.session.create rejected invalid session arguments.",
+                retryable=False,
+                command_label="/evalcreate",
+                activity_state="processing_command",
+            )
+        stored = self._service.create_evaluation_session(session)
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message="\n".join(
+                (
+                    self._service._evaluation_formatter.format_session_preview(session=stored),
+                    f"Next: Use /evalstart {stored.session_id} to request approval and begin the loop.",
+                )
+            ),
+            internal_summary=f"evaluation.session.create stored {stored.session_id}.",
+            retryable=False,
+            command_label="/evalcreate",
+            activity_state="processing_command",
+            telemetry={
+                "evaluation_session_id": stored.session_id,
+                "evaluation_status": stored.status,
+            },
+        )
+
+    def _execute_evals(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot) -> CapabilityExecutionResult:
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="evaluation.session.list",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/evals",
+            parsed_arguments={},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        sessions = self._service.list_evaluation_sessions()
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=self._service._evaluation_formatter.format_session_list(sessions=sessions),
+            internal_summary=f"evaluation.session.list returned {len(sessions)} session(s).",
+            retryable=False,
+            command_label="/evals",
+            activity_state="processing_command",
+        )
+
+    def _execute_eval_status(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot, argument: str) -> CapabilityExecutionResult:
+        session_id = argument.strip().upper()
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="evaluation.session.status",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/evalstatus",
+            parsed_arguments={"session_id": session_id},
+            metadata={"argument_summary": f"/evalstatus {session_id or '[missing]'}"},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        session = self._service.get_evaluation_session(session_id)
+        if session is None:
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="evaluation_session_not_found",
+                user_message=f"Couldn't inspect evaluation status.\nReason: No session matches {session_id or '[missing]'}.\nNext: Use /evals to list sessions.",
+                internal_summary=f"evaluation.session.status rejected unknown session id: {session_id or '[missing]' }.",
+                retryable=False,
+                command_label="/evalstatus",
+                activity_state="processing_command",
+            )
+        runs = self._service.evaluation_runs_for_session(session.session_id, limit=5)
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=self._service._evaluation_formatter.format_session_status(session=session, runs=runs),
+            internal_summary=f"evaluation.session.status returned {session.session_id}.",
+            retryable=False,
+            command_label="/evalstatus",
+            activity_state="processing_command",
+            telemetry={
+                "evaluation_session_id": session.session_id,
+                "evaluation_status": session.status,
+            },
+        )
+
+    def _execute_eval_runs(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot, argument: str) -> CapabilityExecutionResult:
+        session_id, limit = self._parse_eval_runs_argument(argument)
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="evaluation.session.runs",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/evalruns",
+            parsed_arguments={"session_id": session_id, "limit": str(limit)},
+            metadata={"argument_summary": f"/evalruns {session_id or '[missing]'} {limit}"},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        session = self._service.get_evaluation_session(session_id)
+        if session is None:
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="evaluation_session_not_found",
+                user_message=f"Couldn't inspect evaluation runs.\nReason: No session matches {session_id or '[missing]'}.\nNext: Use /evals to list sessions.",
+                internal_summary=f"evaluation.session.runs rejected unknown session id: {session_id or '[missing]' }.",
+                retryable=False,
+                command_label="/evalruns",
+                activity_state="processing_command",
+            )
+        runs = self._service.evaluation_runs_for_session(session.session_id, limit=limit)
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=self._service._evaluation_formatter.format_session_runs(session=session, runs=runs),
+            internal_summary=f"evaluation.session.runs returned {len(runs)} run(s) for {session.session_id}.",
+            retryable=False,
+            command_label="/evalruns",
+            activity_state="processing_command",
+        )
+
+    def _execute_eval_start(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot, argument: str) -> CapabilityExecutionResult:
+        session_id = argument.strip().upper()
+        session = self._service.get_evaluation_session(session_id)
+        request, evaluation, context, scope_failure = self._prepare_capability_request(
+            capability_id="evaluation.session.start",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/evalstart",
+            parsed_arguments={"session_id": session_id},
+            metadata={
+                "argument_summary": f"/evalstart {session_id or '[missing]'}",
+                "confirmation_action_label": f"start evaluation session {session_id or '[missing]'}",
+                "confirmation_preview_lines": tuple(
+                    (
+                        f"Session: {session.title}",
+                        f"Job: {session.allowed_jobs[0].command_summary if session is not None and session.allowed_jobs else '-'}",
+                        f"Runs: {session.max_runs}",
+                        f"Interval: {session.interval_seconds}s",
+                    )
+                ) if session is not None else (),
+                "confirmation_metadata": {"evaluation_session_id": session_id},
+            },
+        )
+        if scope_failure is not None:
+            return scope_failure
+        if session is None:
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="evaluation_session_not_found",
+                user_message=f"Couldn't start that evaluation session.\nReason: No session matches {session_id or '[missing]'}.\nNext: Use /evals to list sessions.",
+                internal_summary=f"evaluation.session.start rejected unknown session id: {session_id or '[missing]' }.",
+                retryable=False,
+                command_label="/evalstart",
+                activity_state="processing_command",
+            )
+        if session.status == "running":
+            return self._result(
+                request,
+                outcome="success",
+                reason_code="ok",
+                user_message=f"Evaluation session {session.session_id} is already running.",
+                internal_summary=f"evaluation.session.start observed {session.session_id} already running.",
+                retryable=False,
+                command_label="/evalstart",
+                activity_state="processing_command",
+            )
+        if evaluation.current_availability_state in {"confirmation_required", "allowed"}:
+            return self._confirmation_required_result(
+                request=request,
+                evaluation=evaluation,
+                context=context,
+                snapshot=snapshot,
+                prompt=f"start evaluation session {session.session_id}",
+                response_style="concise",
+                chat_id=update.chat_id,
+                requester_label=update.sender_label,
+            )
+        return self._result(
+            request,
+            outcome="failed",
+            reason_code="evaluation_start_blocked",
+            user_message="Evaluation start could not continue because approval was blocked.",
+            internal_summary=f"evaluation.session.start blocked for {session.session_id}.",
+            retryable=True,
+            command_label="/evalstart",
+            activity_state="processing_command",
+        )
+
+    def _execute_eval_stop(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot, argument: str) -> CapabilityExecutionResult:
+        session_id = argument.strip().upper()
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="evaluation.session.stop",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/evalstop",
+            parsed_arguments={"session_id": session_id},
+            metadata={"argument_summary": f"/evalstop {session_id or '[missing]'}"},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        session = self._service.get_evaluation_session(session_id)
+        if session is None:
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="evaluation_session_not_found",
+                user_message=f"Couldn't stop that evaluation session.\nReason: No session matches {session_id or '[missing]'}.\nNext: Use /evals to list sessions.",
+                internal_summary=f"evaluation.session.stop rejected unknown session id: {session_id or '[missing]' }.",
+                retryable=False,
+                command_label="/evalstop",
+                activity_state="processing_command",
+            )
+        stopped = self._service.stop_evaluation_session(session.session_id, reason="Stopped by operator.")
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=f"Evaluation session {stopped.session_id} stopped.\nReason: {stopped.stop_reason or 'Stopped by operator.'}",
+            internal_summary=f"evaluation.session.stop marked {stopped.session_id} as stopped.",
+            retryable=False,
+            command_label="/evalstop",
+            activity_state="processing_command",
+        )
+
     @staticmethod
     def _parse_dispatch_argument(argument: str) -> tuple[str, str]:
         stripped = argument.strip()
@@ -800,6 +1080,99 @@ class CapabilityExecutor:
         if len(stripped) >= 2 and stripped[0] == stripped[-1] and stripped[0] in {'"', "'"}:
             return stripped[1:-1].strip()
         return stripped
+
+    def _parse_eval_create_argument(self, argument: str) -> tuple[dict[str, str], str]:
+        try:
+            tokens = shlex.split(argument)
+        except ValueError as exc:
+            return {}, str(exc)
+        if not tokens:
+            return {}, "Use --title, --command, --runs, and --interval to define the session."
+        parsed: dict[str, str] = {}
+        index = 0
+        while index < len(tokens):
+            token = tokens[index]
+            if not token.startswith("--"):
+                return {}, f"Unexpected token: {token}"
+            key = token[2:].strip().lower()
+            if not key:
+                return {}, "Empty option name is not allowed."
+            if index + 1 >= len(tokens):
+                return {}, f"Missing value for --{key}."
+            parsed[key] = tokens[index + 1].strip()
+            index += 2
+        for required in ("title", "command", "runs", "interval"):
+            if not parsed.get(required):
+                return {}, f"Missing required option --{required}."
+        return parsed, ""
+
+    @staticmethod
+    def _parse_eval_runs_argument(argument: str) -> tuple[str, int]:
+        parts = argument.split()
+        session_id = parts[0].strip().upper() if parts else ""
+        if len(parts) >= 2:
+            try:
+                return session_id, max(1, min(25, int(parts[1])))
+            except ValueError:
+                return session_id, 10
+        return session_id, 10
+
+    def _build_evaluation_session(self, *, parsed: dict[str, str], chat_id: str, requester_label: str) -> EvaluationSessionRecord:
+        session_id = self._service.next_evaluation_session_id()
+        command_text = self._strip_wrapping_quotes(parsed.get("command", ""))
+        command = parse_chat_command(text=command_text, has_text=True)
+        if command.command_label not in {"/run", "/test"}:
+            raise ValueError("Only bounded /run and /test commands are supported for evaluation sessions.")
+        target_value = parsed.get("target", "local").strip().lower() or "local"
+        target_kind = "local"
+        target_selector = ""
+        target_display = "local controller"
+        job_kind = "local_command"
+        if target_value.startswith("node:"):
+            job_kind = "node_dispatch"
+            target_kind = "node"
+            target_selector = target_value.split(":", 1)[1].strip().lower()
+            target_display = f"node {target_selector}"
+        elif target_value.startswith("role:"):
+            job_kind = "node_dispatch"
+            target_kind = "role"
+            target_selector = target_value.split(":", 1)[1].strip().lower()
+            target_display = f"role {target_selector}"
+        runs = max(1, int(parsed.get("runs", "1")))
+        failures = max(1, int(parsed.get("failures", "1")))
+        interval = max(0, int(parsed.get("interval", "0")))
+        dispatch_errors = max(1, int(parsed.get("dispatch-errors", parsed.get("dispatch_errors", "1"))))
+        job = EvaluationJobDefinition(
+            job_id="job-1",
+            command_label=command.command_label,
+            command_text=command_text,
+            command_argument=command.argument,
+            command_summary=f"{command.command_label} {command.argument}".strip(),
+            job_kind=job_kind,  # type: ignore[arg-type]
+            target_kind=target_kind,  # type: ignore[arg-type]
+            target_selector=target_selector,
+            target_display=target_display,
+            expected_scope=self._service._repo_display_name(),
+        )
+        return EvaluationSessionRecord(
+            session_id=session_id,
+            title=parsed.get("title", "").strip(),
+            purpose=parsed.get("purpose", "").strip(),
+            created_at=self._service._now_iso(),
+            approved_at="",
+            status="created",
+            owner_label=requester_label,
+            source="telegram",
+            chat_id=chat_id,
+            allowed_jobs=(job,),
+            interval_seconds=interval,
+            max_runs=runs,
+            max_failures=failures,
+            dispatch_error_threshold=dispatch_errors,
+            stop_conditions=("max_runs", "max_failures", "operator_stop"),
+            latest_summary="Session created and waiting for approval.",
+            metadata={"original_command": command_text},
+        )
 
     def _build_dispatch_local_request(self, *, target_node, inner_command_label: str, inner_argument: str) -> LocalCommandExecutionRequest:
         repo_root = target_node.repo_root.strip()
@@ -5934,6 +6307,12 @@ class CapabilityExecutor:
                 snapshot=snapshot,
                 chat_id=chat_id,
             )
+        if confirmation.capability_id == "evaluation.session.start":
+            return self._execute_confirmed_eval_start(
+                request=request,
+                confirmation=confirmation,
+                chat_id=chat_id,
+            )
         if confirmation.capability_id == "shell.command.run":
             return self._execute_confirmed_run_command(
                 request=request,
@@ -6269,7 +6648,9 @@ class CapabilityExecutor:
     ) -> CapabilityExecutionResult:
         target_node_id = str(confirmation.metadata.get("target_node_id") or "").strip().lower()
         target_node = self._service.get_registered_node(target_node_id) if target_node_id else None
-        repo_root = target_node.repo_root.strip() if target_node is not None and target_node.repo_root.strip() else self._service._repo_configuration_state()[0]
+        repo_root = self._service._repo_configuration_state()[0]
+        if target_node is not None and target_node.transport == "shared_directory" and target_node.repo_root.strip():
+            repo_root = target_node.repo_root.strip()
         try:
             local_request = self._service._execution_runner.build_run_request(
                 capability_id="shell.command.run",
@@ -6302,7 +6683,9 @@ class CapabilityExecutor:
     ) -> CapabilityExecutionResult:
         target_node_id = str(confirmation.metadata.get("target_node_id") or "").strip().lower()
         target_node = self._service.get_registered_node(target_node_id) if target_node_id else None
-        repo_root = target_node.repo_root.strip() if target_node is not None and target_node.repo_root.strip() else self._service._repo_configuration_state()[0]
+        repo_root = self._service._repo_configuration_state()[0]
+        if target_node is not None and target_node.transport == "shared_directory" and target_node.repo_root.strip():
+            repo_root = target_node.repo_root.strip()
         try:
             local_request = self._service._execution_runner.build_test_request(
                 capability_id="test.command.run",
@@ -6490,6 +6873,51 @@ class CapabilityExecutor:
             request=request,
             confirmation=confirmation,
             command_result=command_result,
+        )
+
+    def _execute_confirmed_eval_start(
+        self,
+        *,
+        request: CapabilityExecutionRequest,
+        confirmation: PendingConfirmation,
+        chat_id: str,
+    ) -> CapabilityExecutionResult:
+        session_id = str(confirmation.metadata.get("evaluation_session_id") or "").strip().upper()
+        session = self._service.get_evaluation_session(session_id)
+        if session is None:
+            return self._result(
+                request,
+                outcome="failed",
+                reason_code="evaluation_session_not_found",
+                user_message="Evaluation start could not continue because the session no longer exists.",
+                internal_summary=f"evaluation.session.start failed because {session_id or '[missing]'} no longer exists.",
+                retryable=False,
+                command_label="/confirm",
+                activity_state="processing_command",
+                confirmation_used=True,
+            )
+        started = self._service.start_evaluation_session(session.session_id)
+        self._service._last_confirmation_result = f"Confirmation {confirmation.confirmation_id} approved and started evaluation session {started.session_id}."
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message="\n".join(
+                (
+                    f"Confirmation {confirmation.confirmation_id} approved.",
+                    f"Evaluation session {started.session_id} started.",
+                    f"Next: Use /evalstatus {started.session_id} while it runs.",
+                )
+            ),
+            internal_summary=self._service._last_confirmation_result,
+            retryable=False,
+            command_label="/confirm",
+            activity_state="processing_command",
+            confirmation_used=True,
+            telemetry={
+                "evaluation_session_id": started.session_id,
+                "evaluation_status": started.status,
+            },
         )
 
     def _queue_selected_remote_command(

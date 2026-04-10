@@ -42,8 +42,12 @@ from .confirmation_models import ConfirmationContextSnapshot, PendingConfirmatio
 from .confirmation_store import ConfirmationStore
 from .channel_models import TelegramChannelStatus, TelegramLoopStatus
 from .diagnostic_models import DiagnosticReport
+from .evaluation_formatter import EvaluationFormatter
+from .evaluation_runner import EvaluationRunner
+from .evaluation_session_models import EvaluationSessionRecord
+from .evaluation_session_store import EvaluationSessionStore
 from .execution_runner import ExecutionRunner, ExecutionRunnerError
-from .execution_models import CapabilityExecutionResult
+from .execution_models import CapabilityExecutionResult, LocalCommandExecutionRequest
 from .file_mutator import FileMutator
 from .file_reader import FileReadSnapshot, FileReader, FileReaderError
 from .intent_formatter import IntentFormatter
@@ -275,6 +279,9 @@ class ControllerService:
         self._last_run_store = LastRunStore()
         self._plan_bridge_store = PlanBridgeStore()
         self._autonomy_bundle_store = AutonomyBundleStore()
+        self._evaluation_store = EvaluationSessionStore(root_path=self._config_store.path.parent / "evaluation")
+        self._evaluation_formatter = EvaluationFormatter()
+        self._evaluation_runner = EvaluationRunner(self, self._evaluation_store)
         self._last_capability_evaluation: CapabilityEvaluation | None = None
         self._last_execution_result: CapabilityExecutionResult | None = None
         self._last_loop_result: CapabilityExecutionResult | None = None
@@ -712,6 +719,7 @@ class ControllerService:
 
     def shutdown(self) -> None:
         self.stop_telegram_loop()
+        self._evaluation_runner.shutdown()
         self._runtime_active = False
         self._runtime_manager.stop_runtime()
 
@@ -1978,6 +1986,7 @@ class ControllerService:
                     "Files: /repo|file /createfile|patchlast|patchfile|/writefile",
                     "Feature: /featurestatus|featureapply",
                     "Exec: /startruntime /run|/test /dispatch|dispatchstatus /nodes|nodeview|nodeselect|nodeclear",
+                    "Eval: /evalcreate|evals|evalstatus|evalruns|evalstart|evalstop",
                     "Trust: /capabilities|audit|clearcontext /contexts",
                     "Ask: /ask|askd|asklast|askctx",
                     "Info: /explainrepo|explainfile|summarizeweb",
@@ -2616,6 +2625,80 @@ class ControllerService:
 
     def get_dispatch_job(self, job_id: str) -> NodeDispatchRecord | None:
         return self._node_dispatcher.get_job(job_id)
+
+    def create_evaluation_session(self, record: EvaluationSessionRecord) -> EvaluationSessionRecord:
+        return self._evaluation_store.create_session(record)
+
+    def update_evaluation_session(self, record: EvaluationSessionRecord) -> EvaluationSessionRecord:
+        return self._evaluation_store.update_session(record)
+
+    def get_evaluation_session(self, session_id: str) -> EvaluationSessionRecord | None:
+        return self._evaluation_store.get_session(session_id)
+
+    def list_evaluation_sessions(self) -> tuple[EvaluationSessionRecord, ...]:
+        return self._evaluation_store.list_sessions()
+
+    def evaluation_runs_for_session(self, session_id: str, *, limit: int | None = None):
+        return self._evaluation_store.runs_for_session(session_id, limit=limit)
+
+    def next_evaluation_session_id(self) -> str:
+        return self._evaluation_store.generate_session_id()
+
+    def start_evaluation_session(self, session_id: str) -> EvaluationSessionRecord:
+        return self._evaluation_runner.start_session(session_id)
+
+    def stop_evaluation_session(self, session_id: str, *, reason: str) -> EvaluationSessionRecord:
+        return self._evaluation_runner.stop_session(session_id, reason=reason)
+
+    def await_evaluation_session(self, session_id: str, *, timeout_seconds: float) -> EvaluationSessionRecord | None:
+        return self._evaluation_runner.await_session(session_id, timeout_seconds=timeout_seconds)
+
+    def is_evaluation_running(self, session_id: str) -> bool:
+        return self._evaluation_runner.is_running(session_id)
+
+    def build_eval_dispatch_record(
+        self,
+        *,
+        session: EvaluationSessionRecord,
+        target: NodeDispatchTarget,
+        local_request: LocalCommandExecutionRequest,
+        chat_id: str,
+    ) -> NodeDispatchRecord:
+        return NodeDispatchRecord(
+            job_id=self.next_dispatch_job_id(),
+            status="queued",
+            requested_capability_id=local_request.capability_id,
+            requested_command_label="/test" if local_request.command_kind == "test" else "/run",
+            requested_command_text=local_request.command_text,
+            requested_command_summary=local_request.command_summary,
+            target_selection_mode=target.selection_mode,
+            target_selector=target.target_value,
+            target_node_id=target.node.node_id,
+            target_node_role=target.node.role,
+            target_node_name=target.node.display_name,
+            routing_reason=target.routing_reason,
+            request_source="evaluation-runner",
+            requester_label=session.owner_label,
+            chat_id=chat_id,
+            confirmation_required=False,
+            confirmation_id="",
+            queued_at=self._now_iso(),
+            result_summary="",
+            failure_reason="",
+            current_job_state="queued",
+            execution_payload={
+                "capability_id": local_request.capability_id,
+                "command_kind": local_request.command_kind,
+                "command_family": local_request.command_family,
+                "command_text": local_request.command_text,
+                "command_summary": local_request.command_summary,
+                "working_directory": local_request.working_directory,
+                "timeout_seconds": local_request.timeout_seconds,
+                "operator_reason": local_request.operator_reason,
+                "expected_scope": local_request.expected_scope,
+                "argv": list(local_request.argv),
+            },
+        )
 
     def resolve_dispatch_target(self, *, selector: str, required_command_label: str, requested_command: str) -> tuple[NodeDispatchTarget | None, str, str]:
         normalized = selector.strip().lower()
