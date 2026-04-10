@@ -13,6 +13,7 @@ from .node_dispatcher import NodeDispatchError
 from .node_models import NodeDispatchRecord, NodeDispatchTarget
 from .node_router import NodeRoutingError
 from .task_chain_models import TaskChainRecord, TaskChainStepFamily, TaskChainStepRecord
+from .task_chain_policy import evaluate_chain_decision, report_status_for_decision
 from .task_chain_store import TaskChainStore
 
 if TYPE_CHECKING:
@@ -30,6 +31,8 @@ class TaskChainRunner:
     def start_chain(self, chain_id: str) -> TaskChainRecord:
         normalized = chain_id.strip().upper()
         chain = self._require_chain(normalized)
+        if chain.status == "paused":
+            raise ValueError(f"Task chain {normalized} is paused. Use /chainresume {normalized}.")
         with self._lock:
             existing = self._threads.get(normalized)
             if existing is not None and existing.is_alive():
@@ -51,6 +54,34 @@ class TaskChainRunner:
             worker.start()
             return started
 
+    def resume_chain(self, chain_id: str) -> TaskChainRecord:
+        normalized = chain_id.strip().upper()
+        chain = self._require_chain(normalized)
+        if chain.status != "paused":
+            raise ValueError(f"Task chain {normalized} is not paused.")
+        with self._lock:
+            existing = self._threads.get(normalized)
+            if existing is not None and existing.is_alive():
+                return chain
+            stop_event = Event()
+            resumed = replace(
+                chain,
+                status="running",
+                latest_summary=f"Chain resumed after pause. {chain.pause_reason}".strip(),
+                stop_reason="",
+                pause_reason="",
+                resume_count=chain.resume_count + 1,
+                progress_state="idle",
+                last_decision_summary="Operator resumed the chain after a bounded pause.",
+                finished_at="",
+            )
+            resumed = self._store.update_chain(resumed)
+            worker = Thread(target=self._run_chain_loop, args=(normalized, stop_event), daemon=True, name=f"chain-{normalized.lower()}")
+            self._stop_events[normalized] = stop_event
+            self._threads[normalized] = worker
+            worker.start()
+            return resumed
+
     def stop_chain(self, chain_id: str, *, reason: str) -> TaskChainRecord:
         normalized = chain_id.strip().upper()
         chain = self._require_chain(normalized)
@@ -58,7 +89,7 @@ class TaskChainRunner:
             stop_event = self._stop_events.get(normalized)
             if stop_event is not None:
                 stop_event.set()
-        if chain.status in {"completed", "failed", "stopped", "blocked"}:
+        if chain.status in {"completed", "failed", "stopped", "blocked", "paused"}:
             return chain
         updated = replace(
             chain,
@@ -76,7 +107,7 @@ class TaskChainRunner:
             chain = self._store.get_chain(normalized)
             if chain is None:
                 return None
-            if chain.status in {"completed", "failed", "stopped", "blocked"}:
+            if chain.status in {"completed", "failed", "stopped", "blocked", "paused"}:
                 return chain
             sleep(0.05)
         return self._store.get_chain(normalized)
@@ -120,18 +151,33 @@ class TaskChainRunner:
                     self._finish_chain(chain, status="failed", summary=chain.latest_summary or f"Stopped after {chain.failure_count} failures.")
                     return
                 if chain.no_progress_count >= chain.max_no_progress:
-                    self._finish_chain(chain, status="blocked", summary=f"Stopped after {chain.no_progress_count} no-progress steps.")
+                    if chain.chain_policy_version == "v2":
+                        self._store.update_chain(
+                            replace(
+                                chain,
+                                status="paused",
+                                pause_reason=f"Reached max_no_progress={chain.max_no_progress}.",
+                                stop_reason=f"Reached max_no_progress={chain.max_no_progress}.",
+                                latest_summary=f"Paused after {chain.no_progress_count} no-progress step(s).",
+                                final_summary=f"Paused after {chain.no_progress_count} no-progress step(s).",
+                                progress_state="paused",
+                                last_decision_summary="The chain paused because repeated no-progress outcomes reached the bounded limit.",
+                                finished_at=self._now_iso(),
+                            )
+                        )
+                    else:
+                        self._finish_chain(chain, status="blocked", summary=f"Stopped after {chain.no_progress_count} no-progress steps.")
                     return
                 next_family = self._next_step_family(chain)
                 if next_family is None:
                     self._finish_chain(chain, status="completed", summary=chain.final_summary or chain.latest_summary or "Chain completed.")
                     return
                 step = self._execute_step(chain=chain, family=next_family, step_number=chain.steps_completed + 1)
-                stored_step = self._store.append_step(step)
-                self._service.capture_task_chain_step_data(chain=chain, step=stored_step)
-                updated = self._apply_step_outcome(chain=chain, step=stored_step)
+                updated, finalized_step = self._apply_step_outcome(chain=chain, step=step)
+                stored_step = self._store.append_step(finalized_step)
+                self._service.capture_task_chain_step_data(chain=updated, step=stored_step)
                 updated = self._store.update_chain(updated)
-                if updated.status in {"completed", "failed", "stopped", "blocked"}:
+                if updated.status in {"completed", "failed", "stopped", "blocked", "paused"}:
                     return
             chain = self._store.get_chain(chain_id)
             if chain is not None and chain.status == "running":
@@ -142,6 +188,8 @@ class TaskChainRunner:
                 self._threads.pop(chain_id, None)
 
     def _next_step_family(self, chain: TaskChainRecord) -> TaskChainStepFamily | None:
+        if chain.chain_policy_version == "v2":
+            return self._next_step_family_v2(chain)
         stage = chain.metadata.get("stage", "")
         if chain.chain_type == "validate_then_report":
             if stage in {"", "validate"}:
@@ -167,6 +215,17 @@ class TaskChainRunner:
             if stage.startswith("report"):
                 return "report"
             return None
+        return None
+
+    def _next_step_family_v2(self, chain: TaskChainRecord) -> TaskChainStepFamily | None:
+        stage = chain.metadata.get("stage", "")
+        if stage in {"feature_gate_before", "feature_gate_after"}:
+            return "feature_status"
+        if stage == "report":
+            return "report"
+        if stage in {"validate_primary", "compare_target", "validate_fallback"}:
+            target_kind, _ = self._current_target_for_step(chain)
+            return self._validation_family_for_target(target_kind, chain.command_label)
         return None
 
     def _execute_step(self, *, chain: TaskChainRecord, family: TaskChainStepFamily, step_number: int) -> TaskChainStepRecord:
@@ -397,7 +456,24 @@ class TaskChainRunner:
             failure_reason=completed.failure_reason,
         )
 
-    def _apply_step_outcome(self, *, chain: TaskChainRecord, step: TaskChainStepRecord) -> TaskChainRecord:
+    def _apply_step_outcome(self, *, chain: TaskChainRecord, step: TaskChainStepRecord) -> tuple[TaskChainRecord, TaskChainStepRecord]:
+        if chain.chain_policy_version == "v2":
+            return self._apply_step_outcome_v2(chain=chain, step=step)
+        updated = self._apply_step_outcome_v1(chain=chain, step=step)
+        annotated = replace(
+            step,
+            previous_stage=chain.metadata.get("stage", ""),
+            next_stage=updated.metadata.get("stage", ""),
+            matched_rule_id="v1-stage-transition",
+            transition_reason=updated.metadata.get("report_status", "completed") if step.family == "report" else "stage_advanced",
+            decision_summary=updated.latest_summary,
+            next_action="stop" if updated.status in {"completed", "failed", "blocked", "stopped"} else updated.metadata.get("stage", "done"),
+            fallback_used=chain.chain_type == "dispatch_validate_recover" and updated.metadata.get("stage", "") == "fallback_validate",
+            progress_state="progress_made" if step.progress_made else "no_progress",
+        )
+        return updated, annotated
+
+    def _apply_step_outcome_v1(self, *, chain: TaskChainRecord, step: TaskChainStepRecord) -> TaskChainRecord:
         metadata = dict(chain.metadata)
         metadata["last_step_family"] = step.family
         metadata["last_step_status"] = step.status
@@ -459,6 +535,109 @@ class TaskChainRunner:
             )
         return updated
 
+    def _apply_step_outcome_v2(self, *, chain: TaskChainRecord, step: TaskChainStepRecord) -> tuple[TaskChainRecord, TaskChainStepRecord]:
+        if step.family == "report":
+            report_status = chain.metadata.get("report_status", "completed")
+            annotated_report = replace(
+                step,
+                previous_stage=chain.metadata.get("stage", ""),
+                next_stage="done",
+                matched_rule_id="report-finalize",
+                transition_reason=report_status,
+                decision_summary="Final report emitted from the supervised chain state.",
+                next_action="stop",
+                fallback_used=chain.metadata.get("last_fallback_action_id", "") != "",
+                progress_state="completed",
+            ).with_metadata(
+                report_status=report_status,
+                chain_policy_version=chain.chain_policy_version,
+            )
+            final_status = "completed" if report_status != "failed" else "failed"
+            return replace(
+                chain,
+                latest_step_id=step.step_id,
+                steps_completed=chain.steps_completed + 1,
+                success_count=chain.success_count + 1,
+                latest_summary=step.result_summary,
+                final_summary=step.result_summary,
+                stop_reason=step.result_summary,
+                metadata={**chain.metadata, "stage": "done", "last_step_family": step.family, "last_step_status": step.status},
+                status=final_status,  # type: ignore[arg-type]
+                finished_at=self._now_iso(),
+                progress_state="completed",
+                last_decision_summary="Final report emitted from the supervised chain state.",
+            ), annotated_report
+        decision = evaluate_chain_decision(chain=chain, step=step)
+        metadata = dict(chain.metadata)
+        metadata["last_step_family"] = step.family
+        metadata["last_step_status"] = step.status
+        metadata["last_rule_id"] = decision.matched_rule_id
+        metadata["stage"] = decision.next_stage
+        report_status = report_status_for_decision(chain=chain, step=step, decision=decision)
+        if report_status:
+            metadata["report_status"] = report_status
+        if decision.fallback_action_id:
+            metadata["last_fallback_action_id"] = decision.fallback_action_id
+        success_count = chain.success_count + (1 if step.status == "success" else 0)
+        failure_count = chain.failure_count + (0 if step.status == "success" else 1)
+        no_progress_count = 0 if step.progress_made else chain.no_progress_count + 1
+        latest_summary = self._step_summary(chain=chain, step=step)
+        annotated = replace(
+            step,
+            previous_stage=chain.metadata.get("stage", ""),
+            next_stage=decision.next_stage,
+            matched_rule_id=decision.matched_rule_id,
+            transition_reason=decision.transition_reason,
+            decision_summary=decision.summary,
+            next_action=decision.next_action,
+            fallback_used=bool(decision.fallback_action_id),
+            progress_state=decision.progress_state,
+        ).with_metadata(
+            report_status=report_status,
+            chain_policy_version=chain.chain_policy_version,
+        )
+        updated = replace(
+            chain,
+            latest_step_id=step.step_id,
+            steps_completed=chain.steps_completed + 1,
+            success_count=success_count,
+            failure_count=failure_count,
+            no_progress_count=no_progress_count,
+            last_failure_reason=step.failure_reason if step.status != "success" else chain.last_failure_reason,
+            latest_summary=latest_summary,
+            metadata=metadata,
+            progress_state=decision.progress_state,
+            last_decision_summary=decision.summary,
+        )
+        if decision.pause_reason:
+            return replace(
+                updated,
+                status="paused",
+                pause_reason=decision.pause_reason,
+                stop_reason=decision.pause_reason,
+                final_summary=decision.summary,
+                finished_at=self._now_iso(),
+                progress_state="paused",
+                last_decision_summary=decision.summary,
+            ), annotated
+        if updated.failure_count >= updated.max_failures:
+            return replace(
+                updated,
+                status="failed",
+                stop_reason=f"Reached max_failures={updated.max_failures}.",
+                final_summary=f"Stopped after reaching max_failures={updated.max_failures}.",
+                finished_at=self._now_iso(),
+            ), annotated
+        if decision.terminal_status:
+            return replace(
+                updated,
+                status=decision.terminal_status,  # type: ignore[arg-type]
+                final_summary=decision.summary,
+                stop_reason=decision.summary,
+                finished_at=self._now_iso(),
+            ), annotated
+        return updated, annotated
+
     def _advance_stage(self, *, chain: TaskChainRecord, step: TaskChainStepRecord, metadata: dict[str, str]) -> dict[str, str]:
         stage = chain.metadata.get("stage", "")
         if chain.chain_type == "validate_then_report":
@@ -505,6 +684,10 @@ class TaskChainRunner:
 
     def _current_target_for_step(self, chain: TaskChainRecord) -> tuple[str, str]:
         stage = chain.metadata.get("stage", "")
+        if chain.chain_policy_version == "v2":
+            if stage in {"validate_fallback", "compare_target"} and chain.fallback_target_display and chain.fallback_policy == "fallback_target":
+                return chain.fallback_target_kind, chain.fallback_target_selector
+            return chain.primary_target_kind, chain.primary_target_selector
         if chain.chain_type == "dispatch_validate_recover" and stage == "fallback_validate":
             return chain.fallback_target_kind, chain.fallback_target_selector
         return chain.primary_target_kind, chain.primary_target_selector

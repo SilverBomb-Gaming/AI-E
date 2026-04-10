@@ -2814,6 +2814,9 @@ class ControllerService:
     def start_task_chain(self, chain_id: str) -> TaskChainRecord:
         return self._task_chain_runner.start_chain(chain_id)
 
+    def resume_task_chain(self, chain_id: str) -> TaskChainRecord:
+        return self._task_chain_runner.resume_chain(chain_id)
+
     def stop_task_chain(self, chain_id: str, *, reason: str) -> TaskChainRecord:
         return self._task_chain_runner.stop_chain(chain_id, reason=reason)
 

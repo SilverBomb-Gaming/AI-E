@@ -37,6 +37,7 @@ from .project_bootstrap_models import ProjectBootstrapExecutionRecord
 from .repo_inspector import RepoInspectorError
 from .scope_models import ExecutionScope
 from .task_chain_models import TaskChainRecord
+from .task_chain_policy import build_chain_policy
 from .chat_command_parser import parse_chat_command
 from .telegram_service import TelegramInboundMessage
 from .web_fetcher import WebFetchError
@@ -194,8 +195,12 @@ class CapabilityExecutor:
             return self._execute_chain_steps(update=update, snapshot=snapshot, argument=parsed_command.argument)
         if command == "/chainstart":
             return self._execute_chain_start(update=update, snapshot=snapshot, argument=parsed_command.argument)
+        if command == "/chainresume":
+            return self._execute_chain_resume(update=update, snapshot=snapshot, argument=parsed_command.argument)
         if command == "/chainstop":
             return self._execute_chain_stop(update=update, snapshot=snapshot, argument=parsed_command.argument)
+        if command == "/chaindecision":
+            return self._execute_chain_decision(update=update, snapshot=snapshot, argument=parsed_command.argument)
         if command == "/status":
             return self._execute_status(update=update, snapshot=snapshot)
         if command == "/lastaction":
@@ -1099,7 +1104,7 @@ class CapabilityExecutor:
                 request,
                 outcome="invalid_request",
                 reason_code="task_chain_parse_failed",
-                user_message=f"Couldn't create that task chain.\nReason: {error}\nNext: Use /chaincreate --title \"name\" --type validate_then_report|feature_validate_loop|dispatch_validate_recover --command \"/run pytest tests/test_cli_chat.py::LocalCliChatTests::test_cli_debug_shows_shared_status_routing\" --steps 3 [--objective \"goal\"] [--retries 1] [--failures 2] [--no-progress 1] [--target local|node:<id>|role:<role>] [--fallback stop|local|node:<id>|role:<role>] .",
+                user_message=f"Couldn't create that task chain.\nReason: {error}\nNext: Use /chaincreate --title \"name\" --type validate_then_report|feature_validate_loop|dispatch_validate_recover|validate_with_fallback|validate_compare_report|dispatch_recover_resume|feature_validate_gate --command \"/run pytest tests/test_cli_chat.py::LocalCliChatTests::test_cli_debug_shows_shared_status_routing\" --steps 3 [--objective \"goal\"] [--retries 1] [--failures 2] [--no-progress 1] [--target local|node:<id>|role:<role>] [--fallback stop|local|node:<id>|role:<role>] .",
                 internal_summary=f"task.chain.create rejected invalid syntax: {error}",
                 retryable=False,
                 command_label="/chaincreate",
@@ -1266,6 +1271,17 @@ class CapabilityExecutor:
                 command_label="/chainstart",
                 activity_state="processing_command",
             )
+        if chain.status == "paused":
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="task_chain_paused",
+                user_message=f"Task chain {chain.chain_id} is paused.\nNext: Use /chaindecision {chain.chain_id} to inspect the last bounded decision, then /chainresume {chain.chain_id} if you want to continue.",
+                internal_summary=f"task.chain.start rejected paused chain {chain.chain_id}.",
+                retryable=False,
+                command_label="/chainstart",
+                activity_state="processing_command",
+            )
         if chain.status == "running":
             return self._result(
                 request,
@@ -1297,6 +1313,55 @@ class CapabilityExecutor:
             retryable=True,
             command_label="/chainstart",
             activity_state="processing_command",
+        )
+
+    def _execute_chain_resume(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot, argument: str) -> CapabilityExecutionResult:
+        chain_id = argument.strip().upper()
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="task.chain.resume",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/chainresume",
+            parsed_arguments={"chain_id": chain_id},
+            metadata={"argument_summary": f"/chainresume {chain_id or '[missing]'}"},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        chain = self._service.get_task_chain(chain_id)
+        if chain is None:
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="task_chain_not_found",
+                user_message=f"Couldn't resume that task chain.\nReason: No chain matches {chain_id or '[missing]'}.\nNext: Use /chains to list chains.",
+                internal_summary=f"task.chain.resume rejected unknown chain id: {chain_id or '[missing]' }.",
+                retryable=False,
+                command_label="/chainresume",
+                activity_state="processing_command",
+            )
+        if chain.status != "paused":
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="task_chain_not_paused",
+                user_message=f"Task chain {chain.chain_id} is not paused.\nNext: Use /chainstatus {chain.chain_id} to inspect its current state.",
+                internal_summary=f"task.chain.resume rejected non-paused chain {chain.chain_id}.",
+                retryable=False,
+                command_label="/chainresume",
+                activity_state="processing_command",
+            )
+        resumed = self._service.resume_task_chain(chain.chain_id)
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=f"Task chain {resumed.chain_id} resumed.\nNext: Use /chainstatus {resumed.chain_id} or /chaindecision {resumed.chain_id} while it runs.",
+            internal_summary=f"task.chain.resume resumed {resumed.chain_id}.",
+            retryable=False,
+            command_label="/chainresume",
+            activity_state="processing_command",
+            telemetry={"task_chain_id": resumed.chain_id, "task_chain_status": resumed.status},
         )
 
     def _execute_chain_stop(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot, argument: str) -> CapabilityExecutionResult:
@@ -1334,6 +1399,44 @@ class CapabilityExecutor:
             retryable=False,
             command_label="/chainstop",
             activity_state="processing_command",
+        )
+
+    def _execute_chain_decision(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot, argument: str) -> CapabilityExecutionResult:
+        chain_id = argument.strip().upper()
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="task.chain.decision",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/chaindecision",
+            parsed_arguments={"chain_id": chain_id},
+            metadata={"argument_summary": f"/chaindecision {chain_id or '[missing]'}"},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        chain = self._service.get_task_chain(chain_id)
+        if chain is None:
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="task_chain_not_found",
+                user_message=f"Couldn't inspect that task chain decision.\nReason: No chain matches {chain_id or '[missing]'}.\nNext: Use /chains to list chains.",
+                internal_summary=f"task.chain.decision rejected unknown chain id: {chain_id or '[missing]' }.",
+                retryable=False,
+                command_label="/chaindecision",
+                activity_state="processing_command",
+            )
+        steps = self._service.task_chain_steps(chain.chain_id, limit=5)
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=self._service._task_chain_formatter.format_chain_decision(chain=chain, steps=steps),
+            internal_summary=f"task.chain.decision returned {chain.chain_id}.",
+            retryable=False,
+            command_label="/chaindecision",
+            activity_state="processing_command",
+            telemetry={"task_chain_id": chain.chain_id, "task_chain_status": chain.status},
         )
 
     @staticmethod
@@ -1445,8 +1548,18 @@ class CapabilityExecutor:
         if command.command_label not in {"/run", "/test"}:
             raise ValueError("Only bounded /run and /test commands are supported inside task chains.")
         chain_type = parsed.get("type", "").strip().lower()
-        if chain_type not in {"validate_then_report", "feature_validate_loop", "dispatch_validate_recover"}:
-            raise ValueError("Chain type must be validate_then_report, feature_validate_loop, or dispatch_validate_recover.")
+        if chain_type not in {
+            "validate_then_report",
+            "feature_validate_loop",
+            "dispatch_validate_recover",
+            "validate_with_fallback",
+            "validate_compare_report",
+            "dispatch_recover_resume",
+            "feature_validate_gate",
+        }:
+            raise ValueError(
+                "Chain type must be validate_then_report, feature_validate_loop, dispatch_validate_recover, validate_with_fallback, validate_compare_report, dispatch_recover_resume, or feature_validate_gate."
+            )
         primary_kind, primary_selector, primary_display, _ = self._parse_chain_target(parsed.get("target", "local"))
         fallback_value = parsed.get("fallback", "stop").strip().lower() or "stop"
         fallback_policy = "stop"
@@ -1457,11 +1570,23 @@ class CapabilityExecutor:
             fallback_kind, fallback_selector, fallback_display, fallback_policy = self._parse_chain_target(fallback_value)
         if chain_type == "dispatch_validate_recover" and primary_kind == "local":
             raise ValueError("dispatch_validate_recover requires a node:<id> or role:<role> primary target.")
+        if chain_type == "dispatch_recover_resume" and primary_kind == "local":
+            raise ValueError("dispatch_recover_resume requires a node:<id> or role:<role> primary target.")
+        if chain_type in {"validate_with_fallback", "validate_compare_report", "dispatch_recover_resume"} and fallback_value == "stop":
+            raise ValueError(f"{chain_type} requires an explicit bounded fallback target.")
+        if chain_type == "validate_compare_report" and fallback_display == primary_display:
+            raise ValueError("validate_compare_report requires a comparison target that differs from the primary target.")
         allowed_step_families: list[str] = ["test" if command.command_label == "/test" else "run", "report"]
         if primary_kind in {"node", "role"} or fallback_kind in {"node", "role"}:
             allowed_step_families.append("dispatch")
-        if chain_type == "feature_validate_loop":
+        if chain_type in {"feature_validate_loop", "feature_validate_gate"}:
             allowed_step_families.append("feature_status")
+        chain_policy_version, initial_stage, branch_rules, fallback_actions, allowed_transition_reasons = build_chain_policy(
+            chain_type=chain_type,
+            fallback_kind=fallback_kind,
+            fallback_selector=fallback_selector,
+            fallback_display=fallback_display,
+        )
         return TaskChainRecord(
             chain_id=chain_id,
             title=parsed.get("title", "").strip(),
@@ -1487,9 +1612,15 @@ class CapabilityExecutor:
             max_steps=max(1, int(parsed.get("steps", "1"))),
             max_failures=max(1, int(parsed.get("failures", "1"))),
             max_no_progress=max(1, int(parsed.get("no-progress", parsed.get("no_progress", "1")))),
+            chain_policy_version=chain_policy_version,
+            branch_rules=branch_rules,
+            fallback_actions=fallback_actions,
+            allowed_transition_reasons=allowed_transition_reasons,
             latest_summary="Chain created and waiting for approval.",
+            progress_state="idle",
+            last_decision_summary="No supervised decision has been recorded yet.",
             metadata={
-                "stage": "validate" if chain_type == "validate_then_report" else ("primary_validate" if chain_type == "dispatch_validate_recover" else ""),
+                "stage": initial_stage,
                 "compat_retries": parsed.get("retries", "").strip(),
             },
         )

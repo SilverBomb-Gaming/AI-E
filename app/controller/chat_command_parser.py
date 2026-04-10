@@ -82,7 +82,9 @@ def parse_chat_command(*, text: str, has_text: bool = True) -> ParsedChatCommand
         "/chainstatus",
         "/chainsteps",
         "/chainstart",
+        "/chainresume",
         "/chainstop",
+        "/chaindecision",
         "/web",
         "/contexts",
         "/clearcontext",
@@ -137,15 +139,19 @@ def parse_chat_command(*, text: str, has_text: bool = True) -> ParsedChatCommand
     if command.startswith("/evals"):
         return ParsedChatCommand(command_label="parse_failure", normalized_text=normalized_text, usage_hint="Use /evals.")
     if command.startswith("/chaincreate"):
-        return ParsedChatCommand(command_label="parse_failure", normalized_text=normalized_text, usage_hint="Use /chaincreate --title \"name\" --type validate_then_report|feature_validate_loop|dispatch_validate_recover --command \"/run pytest tests/test_cli_chat.py::LocalCliChatTests::test_cli_debug_shows_shared_status_routing\" --steps 3 [--objective \"goal\"] [--retries 1] [--failures 2] [--no-progress 1] [--target local|node:<id>|role:<role>] [--fallback stop|local|node:<id>|role:<role>].")
+        return ParsedChatCommand(command_label="parse_failure", normalized_text=normalized_text, usage_hint="Use /chaincreate --title \"name\" --type validate_then_report|feature_validate_loop|dispatch_validate_recover|validate_with_fallback|validate_compare_report|dispatch_recover_resume|feature_validate_gate --command \"/run pytest tests/test_cli_chat.py::LocalCliChatTests::test_cli_debug_shows_shared_status_routing\" --steps 3 [--objective \"goal\"] [--retries 1] [--failures 2] [--no-progress 1] [--target local|node:<id>|role:<role>] [--fallback stop|local|node:<id>|role:<role>].")
     if command.startswith("/chainstatus"):
         return ParsedChatCommand(command_label="parse_failure", normalized_text=normalized_text, usage_hint="Use /chainstatus <chain_id>.")
     if command.startswith("/chainsteps"):
         return ParsedChatCommand(command_label="parse_failure", normalized_text=normalized_text, usage_hint="Use /chainsteps <chain_id> [limit].")
     if command.startswith("/chainstart"):
         return ParsedChatCommand(command_label="parse_failure", normalized_text=normalized_text, usage_hint="Use /chainstart <chain_id>.")
+    if command.startswith("/chainresume"):
+        return ParsedChatCommand(command_label="parse_failure", normalized_text=normalized_text, usage_hint="Use /chainresume <chain_id>.")
     if command.startswith("/chainstop"):
         return ParsedChatCommand(command_label="parse_failure", normalized_text=normalized_text, usage_hint="Use /chainstop <chain_id>.")
+    if command.startswith("/chaindecision"):
+        return ParsedChatCommand(command_label="parse_failure", normalized_text=normalized_text, usage_hint="Use /chaindecision <chain_id>.")
     if command.startswith("/chains"):
         return ParsedChatCommand(command_label="parse_failure", normalized_text=normalized_text, usage_hint="Use /chains.")
     if command.startswith("/web"):

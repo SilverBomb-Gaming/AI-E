@@ -97,14 +97,16 @@ class LocalCliChatTests(unittest.TestCase):
 
     def test_shared_parser_recognizes_task_chain_command_family(self) -> None:
         create = parse_chat_command(
-            text='/chaincreate --title cli_validator_chain --type validate_then_report --command "/run pytest tests/test_cli_chat.py::LocalCliChatTests::test_cli_debug_shows_shared_status_routing" --steps 3 --retries 1 --failures 2',
+            text='/chaincreate --title cli_validator_chain --type validate_compare_report --command "/run pytest tests/test_cli_chat.py::LocalCliChatTests::test_cli_debug_shows_shared_status_routing" --steps 3 --retries 1 --failures 2 --fallback local',
             has_text=True,
         )
         chains = parse_chat_command(text="/chains", has_text=True)
         status = parse_chat_command(text="/chainstatus CH-12345678", has_text=True)
         steps = parse_chat_command(text="/chainsteps CH-12345678 5", has_text=True)
         start = parse_chat_command(text="/chainstart CH-12345678", has_text=True)
+        resume = parse_chat_command(text="/chainresume CH-12345678", has_text=True)
         stop = parse_chat_command(text="/chainstop CH-12345678", has_text=True)
+        decision = parse_chat_command(text="/chaindecision CH-12345678", has_text=True)
 
         self.assertEqual(create.command_label, "/chaincreate")
         self.assertTrue(create.argument.startswith("--title cli_validator_chain"))
@@ -112,7 +114,9 @@ class LocalCliChatTests(unittest.TestCase):
         self.assertEqual(status.command_label, "/chainstatus")
         self.assertEqual(steps.command_label, "/chainsteps")
         self.assertEqual(start.command_label, "/chainstart")
+        self.assertEqual(resume.command_label, "/chainresume")
         self.assertEqual(stop.command_label, "/chainstop")
+        self.assertEqual(decision.command_label, "/chaindecision")
 
     def test_build_arg_parser_accepts_debug_routing_alias(self) -> None:
         parser = build_arg_parser()

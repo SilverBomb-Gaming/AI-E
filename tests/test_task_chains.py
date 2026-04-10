@@ -7,6 +7,7 @@ from pathlib import Path
 
 from app.controller.app_service import ControllerService
 from app.controller.execution_runner import ExecutionRunner
+from app.controller.feature_bundle_models import FeatureBundleFile, FeatureBundleRecord, FeatureValidationPlan
 from app.controller.profile_store import ControllerConfigStore
 from app.platform.secrets import InMemorySecretStore
 
@@ -153,6 +154,141 @@ class TaskChainTests(unittest.TestCase):
             self.assertEqual(blocked.status, "blocked")
             self.assertIn("max_no_progress", blocked.stop_reason)
             self.assertEqual(blocked.steps_completed, 1)
+
+    def test_validate_with_fallback_records_supervised_recovery(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "workspace"
+            root.mkdir(parents=True, exist_ok=True)
+            runner = _FakeCommandRunner(
+                subprocess.CompletedProcess(["python", "-m", "unittest"], 0, "Ran 1 test in 0.01s\n\nOK\n", ""),
+            )
+            service, config_store, _ = self._make_service(tmp_dir=tmp, command_runner=runner)
+            self._configure_repo_root(service=service, config_store=config_store, root=root)
+
+            def _fake_resolve_dispatch_target(*, selector: str, required_command_label: str, requested_command: str):
+                return None, "dispatch_role_unavailable", "No enabled validator node can accept /test."
+
+            service.resolve_dispatch_target = _fake_resolve_dispatch_target  # type: ignore[method-assign]
+
+            created = service.execute_local_chat_input(
+                text='/chaincreate --title "v2 fallback" --objective "recover with approved fallback" --type validate_with_fallback --command "/test tests.test_cli_chat.LocalCliChatTests.test_cli_debug_shows_shared_status_routing" --steps 3 --failures 3 --no-progress 2 --target role:validator --fallback local'
+            )
+            self.assertEqual(created.outcome, "success")
+            chain = service.list_task_chains()[0]
+
+            service.execute_local_chat_input(text=f"/chainstart {chain.chain_id}")
+            confirmation = service.latest_pending_confirmation_for_chat(chat_id="local-cli")
+            service.execute_local_chat_input(text=f"/confirm {confirmation.confirmation_id}")
+
+            completed = service.await_task_chain(chain.chain_id, timeout_seconds=2.0)
+            self.assertIsNotNone(completed)
+            self.assertEqual(completed.status, "completed")
+            self.assertEqual(completed.chain_policy_version, "v2")
+
+            recorded_steps = service.task_chain_steps(chain.chain_id)
+            self.assertEqual(recorded_steps[0].family, "dispatch")
+            self.assertEqual(recorded_steps[0].matched_rule_id, "validate-primary-fallback")
+            self.assertEqual(recorded_steps[1].family, "test")
+            self.assertTrue(recorded_steps[1].fallback_used)
+            self.assertIn("fallback", recorded_steps[1].decision_summary.lower())
+
+    def test_dispatch_recover_resume_pauses_and_can_resume(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "workspace"
+            root.mkdir(parents=True, exist_ok=True)
+            runner = _FakeCommandRunner(
+                subprocess.CompletedProcess(["python", "-m", "unittest"], 1, "FAILED\n", "assertion failed"),
+            )
+            service, config_store, _ = self._make_service(tmp_dir=tmp, command_runner=runner)
+            self._configure_repo_root(service=service, config_store=config_store, root=root)
+
+            def _fake_resolve_dispatch_target(*, selector: str, required_command_label: str, requested_command: str):
+                return None, "dispatch_role_unavailable", "No enabled validator node can accept /test."
+
+            service.resolve_dispatch_target = _fake_resolve_dispatch_target  # type: ignore[method-assign]
+
+            created = service.execute_local_chat_input(
+                text='/chaincreate --title "resume chain" --objective "pause and resume recovery" --type dispatch_recover_resume --command "/test tests.test_cli_chat.LocalCliChatTests.test_cli_debug_shows_shared_status_routing" --steps 4 --failures 4 --no-progress 3 --target role:validator --fallback local'
+            )
+            self.assertEqual(created.outcome, "success")
+            chain = service.list_task_chains()[0]
+
+            service.execute_local_chat_input(text=f"/chainstart {chain.chain_id}")
+            confirmation = service.latest_pending_confirmation_for_chat(chat_id="local-cli")
+            service.execute_local_chat_input(text=f"/confirm {confirmation.confirmation_id}")
+
+            paused = service.await_task_chain(chain.chain_id, timeout_seconds=2.0)
+            self.assertIsNotNone(paused)
+            self.assertEqual(paused.status, "paused")
+            self.assertTrue(paused.pause_reason)
+
+            decision = service.execute_local_chat_input(text=f"/chaindecision {chain.chain_id}")
+            self.assertEqual(decision.outcome, "success")
+            self.assertIn("fallback", decision.user_message.lower())
+
+            resumed = service.execute_local_chat_input(text=f"/chainresume {chain.chain_id}")
+            self.assertEqual(resumed.outcome, "success")
+            finished = service.await_task_chain(chain.chain_id, timeout_seconds=2.0)
+            self.assertIsNotNone(finished)
+            self.assertEqual(finished.status, "completed")
+            self.assertEqual(finished.resume_count, 1)
+
+    def test_feature_validate_gate_pauses_until_bundle_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "workspace"
+            root.mkdir(parents=True, exist_ok=True)
+            runner = _FakeCommandRunner(
+                subprocess.CompletedProcess(["python", "-m", "unittest"], 0, "Ran 1 test in 0.01s\n\nOK\n", ""),
+            )
+            service, config_store, _ = self._make_service(tmp_dir=tmp, command_runner=runner)
+            self._configure_repo_root(service=service, config_store=config_store, root=root)
+
+            created = service.execute_local_chat_input(
+                text='/chaincreate --title "gated chain" --objective "wait for feature bundle" --type feature_validate_gate --command "/test tests.test_cli_chat.LocalCliChatTests.test_cli_debug_shows_shared_status_routing" --steps 4 --failures 3 --no-progress 2'
+            )
+            self.assertEqual(created.outcome, "success")
+            chain = service.list_task_chains()[0]
+
+            service.execute_local_chat_input(text=f"/chainstart {chain.chain_id}")
+            confirmation = service.latest_pending_confirmation_for_chat(chat_id="local-cli")
+            service.execute_local_chat_input(text=f"/confirm {confirmation.confirmation_id}")
+
+            paused = service.await_task_chain(chain.chain_id, timeout_seconds=2.0)
+            self.assertIsNotNone(paused)
+            self.assertEqual(paused.status, "paused")
+            self.assertIn("feature bundle", paused.pause_reason.lower())
+
+            bundle = FeatureBundleRecord(
+                bundle_id="FB-GATE-001",
+                feature_request="Add gated validation",
+                feature_title="Gated validation",
+                intended_outcome="Resume supervised chains once bundle exists",
+                bundle_summary="Bundle present for gated chain",
+                files=(
+                    FeatureBundleFile(
+                        relative_path="app/controller/task_chain_runner.py",
+                        inclusion_reason="chain runtime",
+                        change_summary="add gated resume handling",
+                        editable=True,
+                        scope_confidence=0.95,
+                    ),
+                ),
+                assumptions=("bundle is local",),
+                risk_notes=("bundle could change during resume",),
+                validation_plan=FeatureValidationPlan(command_text="/test tests/test_task_chains.py", rationale="verify gated chain"),
+                state="applied",
+                validation_state="not_run",
+                created_at="2026-04-10T10:00:00Z",
+                updated_at="2026-04-10T10:00:00Z",
+                approval_required=True,
+            )
+            service.set_active_feature_bundle(chat_id="local-cli", bundle=bundle)
+
+            resumed = service.execute_local_chat_input(text=f"/chainresume {chain.chain_id}")
+            self.assertEqual(resumed.outcome, "success")
+            finished = service.await_task_chain(chain.chain_id, timeout_seconds=2.0)
+            self.assertIsNotNone(finished)
+            self.assertEqual(finished.status, "completed")
 
 
 if __name__ == "__main__":

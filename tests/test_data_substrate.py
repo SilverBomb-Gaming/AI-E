@@ -193,11 +193,51 @@ class DataSubstrateTests(unittest.TestCase):
             records = service.search_data_records(filters={"type": "chain_step", "chain_id": chain.chain_id}, limit=10)
             self.assertTrue(records)
             self.assertTrue(any(record.chain_id == chain.chain_id for record in records))
+            self.assertIn("progress_state", records[0].normalized_input)
+            self.assertIn("matched_rule_id", records[0].normalized_input)
+            self.assertIn("chain_policy_version", records[0].context_payload)
 
             self.assertTrue(cli.handle_line(f"/datasearch type=chain_step chain_id={chain.chain_id}"))
             joined = "\n".join(output)
             self.assertIn("Data search", joined)
             self.assertIn(chain.chain_id, joined)
+
+    def test_supervised_chain_records_include_decision_trace(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "workspace"
+            root.mkdir(parents=True, exist_ok=True)
+            runner = _FakeCommandRunner(
+                subprocess.CompletedProcess(["python", "-m", "pytest"], 1, "FAILED\n", "assertion failed"),
+            )
+            service, config_store, _ = self._make_service(tmp_dir=tmp, command_runner=runner)
+            self._configure_repo_root(service=service, config_store=config_store, root=root)
+
+            def _fake_resolve_dispatch_target(*, selector: str, required_command_label: str, requested_command: str):
+                return None, "dispatch_role_unavailable", "No enabled validator node can accept /test."
+
+            service.resolve_dispatch_target = _fake_resolve_dispatch_target  # type: ignore[method-assign]
+
+            created = service.execute_local_chat_input(
+                text='/chaincreate --title "substrate decision" --type dispatch_recover_resume --command "/test tests.test_cli_chat.LocalCliChatTests.test_cli_debug_shows_shared_status_routing" --steps 4 --failures 4 --no-progress 3 --target role:validator --fallback local'
+            )
+            self.assertEqual(created.outcome, "success")
+            chain = service.list_task_chains()[0]
+            service.execute_local_chat_input(text=f"/chainstart {chain.chain_id}")
+            confirmation = service.latest_pending_confirmation_for_chat(chat_id="local-cli")
+            self.assertIsNotNone(confirmation)
+            service.execute_local_chat_input(text=f"/confirm {confirmation.confirmation_id}")
+
+            paused = service.await_task_chain(chain.chain_id, timeout_seconds=2.0)
+            self.assertIsNotNone(paused)
+            self.assertEqual(paused.status, "paused")
+
+            records = service.search_data_records(filters={"type": "chain_step", "chain_id": chain.chain_id}, limit=10)
+            self.assertTrue(records)
+            decision_record = records[0]
+            self.assertEqual(decision_record.context_payload.get("chain_policy_version").lower(), "v2")
+            self.assertIn("decision_summary", decision_record.result_payload)
+            self.assertIn("transition_reason", decision_record.result_payload)
+            self.assertIn("next_stage", decision_record.result_payload)
 
     def test_feature_bundle_validation_capture_includes_bundle_provenance(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
