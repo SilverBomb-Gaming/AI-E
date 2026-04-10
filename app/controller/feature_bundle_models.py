@@ -27,6 +27,19 @@ class FeatureBundleFile:
             "scope_confidence": round(self.scope_confidence, 2),
         }
 
+    @staticmethod
+    def from_payload(payload: dict[str, object]) -> FeatureBundleFile:
+        confidence = payload.get("scope_confidence")
+        numeric_confidence = float(confidence) if isinstance(confidence, (int, float)) else 0.0
+        return FeatureBundleFile(
+            relative_path=str(payload.get("relative_path", "")).strip(),
+            inclusion_reason=str(payload.get("inclusion_reason", "")).strip(),
+            change_summary=str(payload.get("change_summary", "")).strip(),
+            editable=bool(payload.get("editable", False)),
+            scope_confidence=numeric_confidence,
+            patch_argument=str(payload.get("patch_argument", "")).strip(),
+        )
+
 
 @dataclass(frozen=True)
 class FeatureValidationPlan:
@@ -35,6 +48,13 @@ class FeatureValidationPlan:
 
     def to_payload(self) -> dict[str, str]:
         return {"command_text": self.command_text, "rationale": self.rationale}
+
+    @staticmethod
+    def from_payload(payload: dict[str, object]) -> FeatureValidationPlan:
+        return FeatureValidationPlan(
+            command_text=str(payload.get("command_text", "")).strip(),
+            rationale=str(payload.get("rationale", "")).strip(),
+        )
 
 
 @dataclass(frozen=True)
@@ -119,3 +139,31 @@ class FeatureBundleRecord:
             "validation_summary": self.validation_summary,
             "stop_reason": self.stop_reason,
         }
+
+    @staticmethod
+    def from_payload(payload: dict[str, object]) -> FeatureBundleRecord:
+        files = payload.get("files")
+        assumptions = payload.get("assumptions")
+        risk_notes = payload.get("risk_notes")
+        validation_plan = payload.get("validation_plan")
+        applied_files = payload.get("applied_files")
+        return FeatureBundleRecord(
+            bundle_id=str(payload.get("bundle_id", "")).strip(),
+            feature_request=str(payload.get("feature_request", "")).strip(),
+            feature_title=str(payload.get("feature_title", "")).strip(),
+            intended_outcome=str(payload.get("intended_outcome", "")).strip(),
+            bundle_summary=str(payload.get("bundle_summary", "")).strip(),
+            files=tuple(FeatureBundleFile.from_payload(item) for item in files or () if isinstance(item, dict)),
+            assumptions=tuple(str(item).strip() for item in assumptions or () if str(item).strip()),
+            risk_notes=tuple(str(item).strip() for item in risk_notes or () if str(item).strip()),
+            validation_plan=FeatureValidationPlan.from_payload(validation_plan) if isinstance(validation_plan, dict) else None,
+            state=str(payload.get("state", "proposed")).strip().lower() or "proposed",  # type: ignore[arg-type]
+            validation_state=str(payload.get("validation_state", "not_run")).strip().lower() or "not_run",  # type: ignore[arg-type]
+            created_at=str(payload.get("created_at", "")).strip(),
+            updated_at=str(payload.get("updated_at", "")).strip(),
+            approval_required=bool(payload.get("approval_required", False)),
+            applied_files=tuple(str(item).strip() for item in applied_files or () if str(item).strip()),
+            apply_summary=str(payload.get("apply_summary", "")).strip(),
+            validation_summary=str(payload.get("validation_summary", "")).strip(),
+            stop_reason=str(payload.get("stop_reason", "")).strip(),
+        )

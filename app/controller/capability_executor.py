@@ -288,6 +288,10 @@ class CapabilityExecutor:
             return self._execute_clear_context(update=update, snapshot=snapshot)
         if command == "/audit":
             return self._execute_audit(update=update, snapshot=snapshot, argument=parsed_command.argument)
+        if command == "/data":
+            return self._execute_data(update=update, snapshot=snapshot, argument=parsed_command.argument)
+        if command == "/datasearch":
+            return self._execute_data_search(update=update, snapshot=snapshot, argument=parsed_command.argument)
         if command == "/capabilities":
             return self._execute_capabilities(update=update, snapshot=snapshot)
         if command == "/ask":
@@ -5380,6 +5384,94 @@ class CapabilityExecutor:
             activity_state="processing_command",
         )
 
+    def _execute_data(
+        self,
+        *,
+        update: TelegramInboundMessage,
+        snapshot: ControllerSnapshot,
+        argument: str,
+    ) -> CapabilityExecutionResult:
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="data.read",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/data",
+            parsed_arguments={"argument": argument.strip()},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        value = argument.strip()
+        if not value:
+            reply = self._service._build_data_list_reply(limit=8).reply
+        elif value.isdigit():
+            limit = self._parse_data_limit(value)
+            if limit is None:
+                return self._result(
+                    request,
+                    outcome="invalid_request",
+                    reason_code="invalid_data_limit",
+                    user_message="Couldn't parse that data command.\nNext: Use /data, /data <record_id>, or /data <1-20>.",
+                    internal_summary="/data rejected because the limit argument was invalid.",
+                    retryable=False,
+                    command_label="/data",
+                    activity_state="processing_command",
+                )
+            reply = self._service._build_data_list_reply(limit=limit).reply
+        else:
+            reply = self._service._build_data_record_reply(record_id=value).reply
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=reply,
+            internal_summary="data.read returned durable captured data records.",
+            retryable=False,
+            command_label="/data",
+            activity_state="processing_command",
+        )
+
+    def _execute_data_search(
+        self,
+        *,
+        update: TelegramInboundMessage,
+        snapshot: ControllerSnapshot,
+        argument: str,
+    ) -> CapabilityExecutionResult:
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="data.search",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/datasearch",
+            parsed_arguments={"query": argument.strip()},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        filters, limit = self._parse_data_search(argument)
+        if filters is None:
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="invalid_data_search",
+                user_message="Couldn't parse that data search.\nNext: Use /datasearch type=command|evaluation_run|chain_step|feature_bundle [label=training-eligible|evaluation-only|discarded] [session_id=EV-...] [chain_id=CH-...] [bundle_id=...] [limit=8].",
+                internal_summary="/datasearch rejected because the filter argument was invalid.",
+                retryable=False,
+                command_label="/datasearch",
+                activity_state="processing_command",
+            )
+        reply = self._service._build_data_search_reply(filters=filters, limit=limit).reply
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=reply,
+            internal_summary="data.search returned filtered durable data records.",
+            retryable=False,
+            command_label="/datasearch",
+            activity_state="processing_command",
+        )
+
     def _repo_error_result(
         self,
         *,
@@ -8643,6 +8735,68 @@ class CapabilityExecutor:
         if limit < 1 or limit > 8:
             return None
         return limit
+
+    @staticmethod
+    def _parse_data_limit(argument: str) -> int | None:
+        value = argument.strip()
+        if not value or not value.isdigit():
+            return None
+        limit = int(value)
+        if limit < 1 or limit > 20:
+            return None
+        return limit
+
+    @classmethod
+    def _parse_data_search(cls, argument: str) -> tuple[dict[str, str] | None, int]:
+        tokens = [token for token in argument.split() if token.strip()]
+        if not tokens:
+            return None, 8
+        filters: dict[str, str] = {}
+        limit = 8
+        allowed_keys = {
+            "id",
+            "record_id",
+            "type",
+            "label",
+            "outcome",
+            "source",
+            "request_id",
+            "session_id",
+            "chain_id",
+            "step_id",
+            "run_id",
+            "bundle_id",
+            "chat_id",
+            "capability_id",
+            "command_label",
+            "limit",
+        }
+        type_aliases = {
+            "eval": "evaluation_run",
+            "evaluation": "evaluation_run",
+            "chain": "chain_step",
+            "bundle": "feature_bundle",
+        }
+        for token in tokens:
+            if "=" not in token:
+                return None, 8
+            key, value = token.split("=", 1)
+            normalized_key = key.strip().lower()
+            normalized_value = value.strip()
+            if not normalized_key or not normalized_value or normalized_key not in allowed_keys:
+                return None, 8
+            if normalized_key == "limit":
+                parsed_limit = cls._parse_data_limit(normalized_value)
+                if parsed_limit is None:
+                    return None, 8
+                limit = parsed_limit
+                continue
+            if normalized_key == "type":
+                normalized_value = type_aliases.get(normalized_value.lower(), normalized_value)
+            filters[normalized_key] = normalized_value
+        if not filters:
+            return None, 8
+        return filters, limit
 
     @staticmethod
     def _parse_context_prompt_argument(argument: str) -> tuple[str, str]:

@@ -86,6 +86,8 @@ def parse_chat_command(*, text: str, has_text: bool = True) -> ParsedChatCommand
         "/web",
         "/contexts",
         "/clearcontext",
+        "/data",
+        "/datasearch",
         "/capabilities",
         "/audit",
         "/confirm",
@@ -178,6 +180,10 @@ def parse_chat_command(*, text: str, has_text: bool = True) -> ParsedChatCommand
         return ParsedChatCommand(command_label="parse_failure", normalized_text=normalized_text, usage_hint="Use /repo or /repo status.")
     if command.startswith("/contexts") or command.startswith("/clearcontext"):
         return ParsedChatCommand(command_label="parse_failure", normalized_text=normalized_text, usage_hint="Use /contexts or /clearcontext.")
+    if command.startswith("/datasearch"):
+        return ParsedChatCommand(command_label="parse_failure", normalized_text=normalized_text, usage_hint="Use /datasearch type=command|evaluation_run|chain_step|feature_bundle [label=training-eligible|evaluation-only|discarded] [session_id=EV-...] [chain_id=CH-...] [bundle_id=...] [limit=8].")
+    if command.startswith("/data"):
+        return ParsedChatCommand(command_label="parse_failure", normalized_text=normalized_text, usage_hint="Use /data, /data <record_id>, or /data <1-20>.")
     if command.startswith("/asklast"):
         return ParsedChatCommand(command_label="parse_failure", normalized_text=normalized_text, usage_hint="Use /asklast <prompt>.")
     if command.startswith("/askctx"):

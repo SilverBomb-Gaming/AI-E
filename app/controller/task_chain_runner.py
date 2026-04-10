@@ -127,8 +127,9 @@ class TaskChainRunner:
                     self._finish_chain(chain, status="completed", summary=chain.final_summary or chain.latest_summary or "Chain completed.")
                     return
                 step = self._execute_step(chain=chain, family=next_family, step_number=chain.steps_completed + 1)
-                self._store.append_step(step)
-                updated = self._apply_step_outcome(chain=chain, step=step)
+                stored_step = self._store.append_step(step)
+                self._service.capture_task_chain_step_data(chain=chain, step=stored_step)
+                updated = self._apply_step_outcome(chain=chain, step=stored_step)
                 updated = self._store.update_chain(updated)
                 if updated.status in {"completed", "failed", "stopped", "blocked"}:
                     return

@@ -133,9 +133,10 @@ class EvaluationRunner:
                 current_iteration = session.runs_completed + 1
                 session = self._store.update_session(replace(session, last_started_at=self._now_iso(), next_run_at=""))
                 run = self._execute_run(session=session, iteration=current_iteration)
-                self._store.append_run(run)
+                stored_run = self._store.append_run(run)
+                self._service.capture_evaluation_run_data(session=session, run=stored_run)
                 runs = self._store.runs_for_session(session.session_id)
-                updated = self._apply_run_outcome(session=session, run=run, runs=runs)
+                updated = self._apply_run_outcome(session=session, run=stored_run, runs=runs)
                 updated = self._store.update_session(updated)
                 if updated.status in {"completed", "failed", "blocked", "stopped"}:
                     return

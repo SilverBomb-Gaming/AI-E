@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
+import json
 from pathlib import Path
 import secrets
 import threading
@@ -38,6 +39,9 @@ from .capability_models import CapabilityContext, CapabilityEvaluation, Capabili
 from .capability_registry import COMMAND_CAPABILITY_MAP, get_capability_manifest, list_summary_capabilities
 from .context_models import BufferedContext
 from .context_store import ContextStore
+from .data_capture import DataCapture
+from .data_record_models import DataRecord
+from .data_record_store import DataRecordStore
 from .confirmation_models import ConfirmationContextSnapshot, PendingConfirmation
 from .confirmation_store import ConfirmationStore
 from .channel_models import TelegramChannelStatus, TelegramLoopStatus
@@ -270,6 +274,8 @@ class ControllerService:
         )
         self._workflow_executor = WorkflowExecutor(self, self._capability_executor)
         self._audit_store = AuditStore(max_records=_AUDIT_LOG_MAX_RECORDS)
+        self._data_capture = DataCapture()
+        self._data_record_store = DataRecordStore(root_path=self._config_store.path.parent / "data_records")
         self._context_store = ContextStore(
             max_contexts_per_chat=_CONTEXT_BUFFER_MAX_ITEMS,
             lifetime_seconds=_CONTEXT_LIFETIME_SECONDS,
@@ -1445,6 +1451,15 @@ class ControllerService:
     def latest_run_for_chat(self, *, chat_id: str) -> LastRunRecord | None:
         return self._last_run_store.get_latest(chat_id=chat_id)
 
+    def list_data_records(self, *, limit: int = 8) -> tuple[DataRecord, ...]:
+        return self._data_record_store.list_records(limit=max(1, min(limit, 20)))
+
+    def get_data_record(self, record_id: str) -> DataRecord | None:
+        return self._data_record_store.get(record_id)
+
+    def search_data_records(self, *, filters: dict[str, str], limit: int = 8) -> tuple[DataRecord, ...]:
+        return self._data_record_store.search(filters=filters, limit=max(1, min(limit, 20)))
+
     def set_latest_run_for_chat(self, *, chat_id: str, record: LastRunRecord) -> None:
         self._last_run_store.set_latest(chat_id=chat_id, record=record)
 
@@ -1523,6 +1538,15 @@ class ControllerService:
             state=next_state,
         )
         self._feature_bundle_store.set_active(chat_id=chat_id, bundle=updated)
+        self.capture_feature_bundle_data(
+            chat_id=chat_id,
+            bundle=updated,
+            event_kind="validation",
+            command_text=command_text,
+            outcome=validation_state,
+            output_summary=summary,
+            first_issue=first_issue,
+        )
 
     def validate_main_run_target(self, *, target: str) -> tuple[str, bool, str]:
         normalized_target = " ".join(target.split())
@@ -1883,6 +1907,7 @@ class ControllerService:
         self._last_execution_result = result
         self._remember_loop_execution_result(result)
         self._remember_context_execution_result(result)
+        self.capture_command_data(result)
         self._audit_store.append(self._build_audit_record(result))
         self._remember_repo_execution_result(result)
         self._remember_file_execution_result(result)
@@ -1896,6 +1921,64 @@ class ControllerService:
             last_result_summary=self._summarize_text(result.internal_summary or result.user_message, limit=120),
             current_job_id="",
         )
+
+    def capture_command_data(self, result: CapabilityExecutionResult) -> None:
+        self._capture_data_record(self._data_capture.command_record(record_id=self._data_record_store.generate_record_id(), result=result))
+        bundle_record = DataCapture.feature_bundle_record_from_result(record_id=self._data_record_store.generate_record_id(), result=result)
+        if bundle_record is not None:
+            self._capture_data_record(bundle_record)
+
+    def capture_evaluation_run_data(self, *, session: EvaluationSessionRecord, run) -> None:
+        self._capture_data_record(
+            self._data_capture.evaluation_run_record(
+                record_id=self._data_record_store.generate_record_id(),
+                session=session,
+                run=run,
+            )
+        )
+
+    def capture_task_chain_step_data(self, *, chain: TaskChainRecord, step) -> None:
+        self._capture_data_record(
+            self._data_capture.chain_step_record(
+                record_id=self._data_record_store.generate_record_id(),
+                chain=chain,
+                step=step,
+            )
+        )
+
+    def capture_feature_bundle_data(
+        self,
+        *,
+        chat_id: str,
+        bundle: FeatureBundleRecord,
+        event_kind: str,
+        command_text: str,
+        outcome: str,
+        output_summary: str,
+        first_issue: str = "",
+    ) -> None:
+        self._capture_data_record(
+            self._data_capture.feature_bundle_record(
+                record_id=self._data_record_store.generate_record_id(),
+                bundle=bundle,
+                chat_id=chat_id,
+                event_kind=event_kind,
+                command_text=command_text,
+                outcome=outcome,
+                output_summary=output_summary,
+                first_issue=first_issue,
+            )
+        )
+
+    def _capture_data_record(self, record: DataRecord) -> None:
+        try:
+            self._data_record_store.append(record)
+        except Exception as exc:  # noqa: BLE001
+            self._emit_terminal_lines(
+                [
+                    f"[DATA] capture failed | {type(exc).__name__}: {self._summarize_text(str(exc), limit=140)}",
+                ]
+            )
 
     def _remember_loop_execution_result(self, result: CapabilityExecutionResult) -> None:
         if result.capability_id in _LOOP_ACTION_CAPABILITIES:
@@ -1996,6 +2079,7 @@ class ControllerService:
                     "Exec: /startruntime /run|/test /dispatch|dispatchstatus /nodes|nodeview|nodeselect|nodeclear",
                     "Eval: /evalcreate|evals|evalstatus|evalruns|evalstart|evalstop",
                     "Chain: /chaincreate --title ... --type ... --command ... --steps ... | /chains|chainstatus|chainsteps|chainstart|chainstop",
+                    "Data: /data|datasearch",
                     "Trust: /capabilities|audit|clearcontext /contexts",
                     "Ask: /ask|askd|asklast|askctx",
                     "Info: /explainrepo|explainfile|summarizeweb",
@@ -3027,6 +3111,89 @@ class ControllerService:
         return _TelegramResponsePlan(
             reply=chr(10).join(lines),
             command_label="/audit",
+        )
+
+    def _build_data_list_reply(self, *, limit: int = 8) -> _TelegramResponsePlan:
+        records = self.list_data_records(limit=limit)
+        if not records:
+            return _TelegramResponsePlan(
+                reply="Data records\nNo durable data records have been captured yet.",
+                command_label="/data",
+            )
+        lines = ["Data records"]
+        for record in records:
+            lines.append(self._format_data_record_summary(record))
+        lines.append("Next: use /data <record_id> to inspect one record or /datasearch type=chain_step to filter.")
+        return _TelegramResponsePlan(reply=chr(10).join(lines), command_label="/data")
+
+    def _build_data_record_reply(self, *, record_id: str) -> _TelegramResponsePlan:
+        record = self.get_data_record(record_id)
+        if record is None:
+            return _TelegramResponsePlan(
+                reply=chr(10).join(
+                    (
+                        "Data record",
+                        f"No record matched {record_id.strip().upper() or '(empty)'}.",
+                    )
+                ),
+                command_label="/data",
+            )
+        lines = [
+            f"Data record {record.record_id}",
+            f"Type: {record.record_type}",
+            f"Label: {record.label}",
+            f"Training eligible: {'yes' if record.training_eligible else 'no'}",
+            f"Outcome: {record.outcome}",
+            f"Title: {record.title}",
+            f"Captured: {record.captured_at}",
+            f"Source: {record.source}",
+        ]
+        grouping = [
+            f"request={record.request_id}" if record.request_id else "",
+            f"session={record.session_id}" if record.session_id else "",
+            f"chain={record.chain_id}" if record.chain_id else "",
+            f"step={record.step_id}" if record.step_id else "",
+            f"run={record.run_id}" if record.run_id else "",
+            f"bundle={record.bundle_id}" if record.bundle_id else "",
+            f"chat={record.chat_id}" if record.chat_id else "",
+        ]
+        grouping_line = " | ".join(item for item in grouping if item)
+        if grouping_line:
+            lines.append(f"Grouping: {grouping_line}")
+        if record.summary:
+            lines.append(f"Summary: {record.summary}")
+        if record.input_text:
+            lines.append(f"Input: {self._summarize_text(record.input_text, limit=200)}")
+        if record.output_text:
+            lines.append(f"Output: {self._summarize_text(record.output_text, limit=200)}")
+        lines.append(f"Normalized: {self._json_compact(record.normalized_input)}")
+        lines.append(f"Context: {self._json_compact(record.context_payload)}")
+        lines.append(f"Result: {self._json_compact(record.result_payload)}")
+        lines.append(f"Provenance: {self._json_compact(record.provenance_payload)}")
+        return _TelegramResponsePlan(reply=chr(10).join(lines), command_label="/data")
+
+    def _build_data_search_reply(self, *, filters: dict[str, str], limit: int = 8) -> _TelegramResponsePlan:
+        records = self.search_data_records(filters=filters, limit=limit)
+        if not records:
+            filter_summary = " ".join(f"{key}={value}" for key, value in filters.items()) or "(none)"
+            return _TelegramResponsePlan(
+                reply=chr(10).join(("Data search", f"No records matched: {filter_summary}")),
+                command_label="/datasearch",
+            )
+        lines = ["Data search", f"Filters: {' '.join(f'{key}={value}' for key, value in filters.items())}"]
+        for record in records:
+            lines.append(self._format_data_record_summary(record))
+        return _TelegramResponsePlan(reply=chr(10).join(lines), command_label="/datasearch")
+
+    @staticmethod
+    def _json_compact(payload: dict[str, object]) -> str:
+        return json.dumps(payload, ensure_ascii=True, sort_keys=True)
+
+    def _format_data_record_summary(self, record: DataRecord) -> str:
+        detail = record.command_label or record.capability_id or record.title
+        return self._summarize_text(
+            f"- {self._short_time(record.captured_at)} {record.record_id} | {record.record_type} | {record.label} | {record.outcome} | {detail}",
+            limit=140,
         )
 
     def _format_capability_summary_line(self, evaluation: CapabilityEvaluation) -> str:
