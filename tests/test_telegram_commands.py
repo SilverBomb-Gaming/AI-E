@@ -12,6 +12,7 @@ from app.controller.app_service import ControllerService
 from app.controller.channel_models import TelegramChannelStatus
 from app.controller.diagnostic_models import DiagnosticItem
 from app.controller.diagnostic_models import DiagnosticReport
+from app.controller.node_config import NodeConfigStore
 from app.controller.node_models import NodeDescriptor
 from app.controller.profile_store import ControllerConfigStore
 from app.controller.telegram_service import TelegramInboundMessage, mask_telegram_token
@@ -433,12 +434,17 @@ class TelegramCommandTests(unittest.TestCase):
             TelegramInboundMessage(update_id=37, chat_id="chat-1", text="/nodeclear", sender_label="@tester"),
         )
         with tempfile.TemporaryDirectory() as tmp:
+            node_config_store = NodeConfigStore(config_path=Path(tmp) / "node_config.json")
+            node_config = node_config_store.load()
+            node_config.registry_root = str((Path(tmp) / "registry").resolve())
+            node_config_store.save(node_config)
             telegram_service = _FakeTelegramService(update_batches=[updates])
             service, _, _, _, _, _ = self._make_service(tmp_dir=tmp, telegram_service=telegram_service)
             service._node_registry.register_node(
                 NodeDescriptor(
                     node_id="mock-gpu",
                     display_name="Bedroom GPU Rig",
+                    role="executor",
                     node_type="mock",
                     status="online",
                     transport="mock",
@@ -449,15 +455,16 @@ class TelegramCommandTests(unittest.TestCase):
             service.start_telegram_loop()
             self.assertTrue(_wait_until(lambda: len(telegram_service.sent_messages) == 4, timeout=2.0))
             snapshot = service.stop_telegram_loop()
-            self.assertIn("Nodes", telegram_service.sent_messages[0][1])
-            self.assertIn("local", telegram_service.sent_messages[0][1])
+            self.assertIn("[NODES]", telegram_service.sent_messages[0][1])
             self.assertIn("mock-gpu", telegram_service.sent_messages[0][1])
+            self.assertIn("Role: executor", telegram_service.sent_messages[0][1])
             self.assertEqual(
                 telegram_service.sent_messages[1][1],
                 "Selected node: mock-gpu | Bedroom GPU Rig | mock | online",
             )
-            self.assertIn("Node view", telegram_service.sent_messages[2][1])
+            self.assertIn("[NODE]", telegram_service.sent_messages[2][1])
             self.assertIn("ID: mock-gpu", telegram_service.sent_messages[2][1])
+            self.assertIn("Role: executor", telegram_service.sent_messages[2][1])
             self.assertIn("Commands: /run /test", telegram_service.sent_messages[2][1])
             self.assertEqual(
                 telegram_service.sent_messages[3][1],
@@ -468,6 +475,10 @@ class TelegramCommandTests(unittest.TestCase):
     def test_confirmed_run_uses_selected_mock_node_without_local_execution(self) -> None:
         first_update = TelegramInboundMessage(update_id=38, chat_id="chat-1", text="/run python validate_runtime.py", sender_label="@tester")
         with tempfile.TemporaryDirectory() as tmp:
+            node_config_store = NodeConfigStore(config_path=Path(tmp) / "node_config.json")
+            node_config = node_config_store.load()
+            node_config.registry_root = str((Path(tmp) / "registry").resolve())
+            node_config_store.save(node_config)
             create_service = _FakeTelegramService(update_batches=[(first_update,)])
             service, config_store, _, _, _, _ = self._make_service(tmp_dir=tmp, telegram_service=create_service)
             config = config_store.load()
@@ -481,6 +492,7 @@ class TelegramCommandTests(unittest.TestCase):
                 NodeDescriptor(
                     node_id="mock-gpu",
                     display_name="Bedroom GPU Rig",
+                    role="executor",
                     node_type="mock",
                     status="online",
                     transport="mock",

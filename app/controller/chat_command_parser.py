@@ -69,6 +69,8 @@ def parse_chat_command(*, text: str, has_text: bool = True) -> ParsedChatCommand
         "/featureapply",
         "/run",
         "/test",
+        "/dispatch",
+        "/dispatchstatus",
         "/web",
         "/contexts",
         "/clearcontext",
@@ -104,6 +106,10 @@ def parse_chat_command(*, text: str, has_text: bool = True) -> ParsedChatCommand
         return ParsedChatCommand(command_label="parse_failure", normalized_text=normalized_text, usage_hint="Use /run <bounded command>.")
     if command.startswith("/test"):
         return ParsedChatCommand(command_label="parse_failure", normalized_text=normalized_text, usage_hint="Use /test or /test <module_or_path>.")
+    if command.startswith("/dispatchstatus"):
+        return ParsedChatCommand(command_label="parse_failure", normalized_text=normalized_text, usage_hint="Use /dispatchstatus <job_id>.")
+    if command.startswith("/dispatch"):
+        return ParsedChatCommand(command_label="parse_failure", normalized_text=normalized_text, usage_hint="Use /dispatch <node_or_role> <bounded command>.")
     if command.startswith("/web"):
         return ParsedChatCommand(command_label="parse_failure", normalized_text=normalized_text, usage_hint="Use /web <https://allowed-domain/path>.")
     if command.startswith("/lastaction"):

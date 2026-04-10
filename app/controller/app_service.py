@@ -5,7 +5,6 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 import secrets
-import socket
 import threading
 import time
 from typing import Callable
@@ -51,7 +50,9 @@ from .intent_formatter import IntentFormatter
 from .intent_store import IntentStore
 from .intent_translator import IntentTranslator
 from .node_formatter import NodeFormatter
-from .node_models import NodeDescriptor, NodeResolution
+from .node_models import NodeDescriptor, NodeDispatchRecord, NodeDispatchTarget, NodeResolution
+from .node_config import NodeConfigStore, NodeLocalConfig
+from .node_dispatcher import NodeDispatcher
 from .node_registry import NodeRegistry
 from .node_router import NodeRouter
 from .diagnostics import ControllerDiagnosticsService
@@ -193,6 +194,7 @@ class ControllerService:
         self._runtime_manager = runtime_manager or OpenClawRuntimeManager()
         self._config_store = config_store or ControllerConfigStore()
         self._secret_store = secret_store or get_secret_store()
+        self._node_config_store = NodeConfigStore(config_path=self._config_store.path.with_name("node_config.json"))
         self._provider_adapters = provider_adapters or {
             "ollama": OllamaProviderAdapter(),
             "openai": OpenAIProviderAdapter(),
@@ -219,6 +221,7 @@ class ControllerService:
         self._chat_orchestrator = ChatOrchestrator()
         self._chat_ingress = ChatIngress()
         self._config = self._config_store.load()
+        self._node_config = self._node_config_store.load()
         self._normalize_repo_root_config()
         self._normalize_file_roots_config()
         self._normalize_web_domains_config()
@@ -237,7 +240,12 @@ class ControllerService:
         self._provider_cooldowns: dict[str, float] = {}
         self._startup_prewarm_attempted = False
         self._terminal_logger = terminal_logger or print
-        self._node_registry = NodeRegistry(local_node=self._build_local_node())
+        self._node_registry = NodeRegistry(
+            local_node=self._build_local_node(),
+            registry_root=self._node_config.registry_root,
+            stale_after_seconds=self._node_config.stale_after_seconds,
+        )
+        self._node_dispatcher = NodeDispatcher(registry_root=self._node_config.registry_root)
         self._node_router = NodeRouter(self._execution_runner)
         self._startup_diagnostics_formatter = StartupDiagnosticsFormatter()
         self._diagnostics_service = ControllerDiagnosticsService(
@@ -1864,6 +1872,14 @@ class ControllerService:
         self._remember_file_execution_result(result)
         self._remember_web_execution_result(result)
         self._last_message = result.internal_summary or self._last_message
+        local_status = "disabled" if not self._node_registry.local_node().enabled else "online"
+        self._node_registry.update_local_node(
+            status=local_status,
+            last_seen_at=self._now_iso(),
+            last_job_status=result.outcome,
+            last_result_summary=self._summarize_text(result.internal_summary or result.user_message, limit=120),
+            current_job_id="",
+        )
 
     def _remember_loop_execution_result(self, result: CapabilityExecutionResult) -> None:
         if result.capability_id in _LOOP_ACTION_CAPABILITIES:
@@ -1961,7 +1977,7 @@ class ControllerService:
                     "Boot: /bootstrapproject|view|/bootstrapapprove|reset",
                     "Files: /repo|file /createfile|patchlast|patchfile|/writefile",
                     "Feature: /featurestatus|featureapply",
-                    "Exec: /startruntime /run|/test /nodes|nodeview|nodeselect|nodeclear",
+                    "Exec: /startruntime /run|/test /dispatch|dispatchstatus /nodes|nodeview|nodeselect|nodeclear",
                     "Trust: /capabilities|audit|clearcontext /contexts",
                     "Ask: /ask|askd|asklast|askctx",
                     "Info: /explainrepo|explainfile|summarizeweb",
@@ -2570,21 +2586,11 @@ class ControllerService:
         return parse_chat_command(text=update.text, has_text=update.has_text)
 
     def _build_local_node(self) -> NodeDescriptor:
-        hostname = socket.gethostname().strip() or "local-machine"
-        repo_label = self._repo_display_name()
-        summary = f"Local controller node for {repo_label}." if repo_label and repo_label != "configured repo" else "Local controller node."
-        return NodeDescriptor(
-            node_id="local",
-            display_name=hostname,
-            node_type="local",
-            status="online",
-            transport="in_process",
-            summary=summary,
-            supports_bounded_execution=True,
-            is_default=True,
-            last_seen_at=datetime.now().astimezone().isoformat(timespec="seconds"),
-            capability_labels=("/run", "/test"),
-            metadata={"repo_root": self._config.repo_root.strip()},
+        local_config = self._node_config if self._node_config_store.exists() else NodeLocalConfig()
+        return NodeRegistry.build_configured_local_node(
+            controller_config=self._config,
+            node_config=local_config,
+            now_iso=self._now_iso(),
         )
 
     def list_registered_nodes(self) -> tuple[NodeDescriptor, ...]:
@@ -2601,6 +2607,71 @@ class ControllerService:
 
     def clear_execution_node(self) -> NodeResolution:
         return self._node_registry.clear_selection()
+
+    def next_dispatch_job_id(self) -> str:
+        return self._node_dispatcher.new_job_id()
+
+    def queue_dispatch_job(self, *, record: NodeDispatchRecord) -> NodeDispatchRecord:
+        return self._node_dispatcher.create_job(record=record)
+
+    def get_dispatch_job(self, job_id: str) -> NodeDispatchRecord | None:
+        return self._node_dispatcher.get_job(job_id)
+
+    def resolve_dispatch_target(self, *, selector: str, required_command_label: str, requested_command: str) -> tuple[NodeDispatchTarget | None, str, str]:
+        normalized = selector.strip().lower()
+        if not normalized:
+            return None, "dispatch_target_missing", "No node id or role was provided."
+        direct_node = self.get_registered_node(normalized)
+        if direct_node is not None:
+            validation_code, validation_message = self._validate_dispatch_node(node=direct_node, required_command_label=required_command_label)
+            if validation_code != "ok":
+                return None, validation_code, validation_message
+            return (
+                NodeDispatchTarget(
+                    selection_mode="node_id",
+                    target_value=normalized,
+                    required_command_label=required_command_label,
+                    requested_command=requested_command,
+                    routing_reason=f"explicit node {direct_node.node_id}",
+                    node=direct_node,
+                ),
+                "ok",
+                "",
+            )
+        if normalized in {"controller", "executor", "validator", "sandbox"}:
+            matches = self._node_registry.list_role_matches(role=normalized, required_command_label=required_command_label)
+            if not matches:
+                return None, "dispatch_role_unavailable", f"No enabled {normalized} node can accept {required_command_label}."
+            chosen = matches[0]
+            reason = f"role match {normalized}"
+            if len(matches) > 1:
+                reason = f"role match {normalized}; chose {chosen.node_id} deterministically"
+            return (
+                NodeDispatchTarget(
+                    selection_mode="role",
+                    target_value=normalized,
+                    required_command_label=required_command_label,
+                    requested_command=requested_command,
+                    routing_reason=reason,
+                    node=chosen,
+                ),
+                "ok",
+                "",
+            )
+        return None, "dispatch_target_unknown", f"No registered node or supported role matches {selector.strip()}."
+
+    def _validate_dispatch_node(self, *, node: NodeDescriptor, required_command_label: str) -> tuple[str, str]:
+        if not node.enabled or node.status == "disabled":
+            return "dispatch_node_disabled", f"Node {node.node_id} is disabled."
+        if node.status in {"offline", "stale"}:
+            return "dispatch_node_unavailable", f"Node {node.node_id} is {node.status}."
+        if node.status == "busy" or node.current_job_id:
+            return "dispatch_node_busy", f"Node {node.node_id} is already running {node.current_job_id or 'another job'}."
+        if not node.supports_command(required_command_label):
+            return "dispatch_capability_unsupported", f"Node {node.node_id} does not declare {required_command_label}."
+        if not node.repo_root.strip():
+            return "dispatch_repo_root_missing", f"Node {node.node_id} did not publish a repo root."
+        return "ok", ""
 
     def _run_provider_request(self, *, provider: str, chat_id: str, func) -> _ProviderCallResult:
         request_id = f"{chat_id}:{time.monotonic()}"
@@ -3485,6 +3556,14 @@ class ControllerService:
             target_node_id = str(result.telemetry.get("target_node_id") or "").strip()
             if target_node_id:
                 action_summary = f"{action_summary} | node {target_node_id}"
+        elif result.capability_id in {"node.dispatch.query", "node.dispatch.status.read"}:
+            action_summary = str(result.telemetry.get("execution_summary") or result.request.metadata.get("argument_summary") or "node dispatch")
+            dispatch_job_id = str(result.telemetry.get("dispatch_job_id") or "").strip()
+            target_node_id = str(result.telemetry.get("target_node_id") or "").strip()
+            if dispatch_job_id:
+                action_summary = f"{action_summary} | job {dispatch_job_id}"
+            if target_node_id:
+                action_summary = f"{action_summary} | node {target_node_id}"
         elif result.capability_id.startswith("build.bootstrap"):
             action_summary = str(result.telemetry.get("bootstrap_summary") or result.request.metadata.get("argument_summary") or "project bootstrap")
         elif result.capability_id == "web.fetch.read":
@@ -3582,7 +3661,7 @@ class ControllerService:
         if record.action_summary:
             node_fragment = ""
             for part in [segment.strip() for segment in record.action_summary.split("|")]:
-                if part.lower().startswith("node "):
+                if part.lower().startswith("node ") or part.lower().startswith("job "):
                     node_fragment = part
                     break
             if node_fragment and node_fragment not in detail:

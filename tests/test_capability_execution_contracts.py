@@ -6,6 +6,8 @@ from pathlib import Path
 
 from app.controller.app_service import ControllerService
 from app.controller.execution_models import CapabilityExecutionRequest, CapabilityExecutionResult
+from app.controller.node_config import NodeConfigStore
+from app.controller.node_models import NodeDescriptor
 from app.controller.profile_store import ControllerConfigStore
 from app.controller.telegram_service import TelegramInboundMessage
 from app.platform.secrets import InMemorySecretStore
@@ -28,6 +30,7 @@ class CapabilityExecutionContractTests(unittest.TestCase):
         *,
         tmp_dir: str,
         runtime_state: str = "running",
+        activate_runtime: bool = True,
         ollama_adapter: _FakeOllamaAdapter | None = None,
         openai_adapter: _FakeOpenAIAdapter | None = None,
         telegram_service: _FakeTelegramService | None = None,
@@ -51,6 +54,8 @@ class CapabilityExecutionContractTests(unittest.TestCase):
         service.test_telegram_connection()
         service._latest_health_report = _report("health", "ok", "info", "Healthy")
         service._latest_security_report = _report("security", "ok", "info", "Safe")
+        if activate_runtime:
+            service.activate_runtime_control_plane()
         return service, config_store, secret_store, tg, local_ollama, remote_openai
 
     def _run_single_update(self, service: ControllerService, telegram_service: _FakeTelegramService) -> tuple[object, str]:
@@ -324,6 +329,55 @@ class CapabilityExecutionContractTests(unittest.TestCase):
             self.assertEqual(result.user_message, reply)
             self.assertIn("Unavailable right now.", result.user_message)
 
+    def test_confirmed_run_carries_target_node_telemetry_and_audit_summary(self) -> None:
+        first_update = TelegramInboundMessage(update_id=103, chat_id="chat-1", text="/run python validate_runtime.py", sender_label="@tester")
+        with tempfile.TemporaryDirectory() as tmp:
+            node_config_store = NodeConfigStore(config_path=Path(tmp) / "node_config.json")
+            node_config = node_config_store.load()
+            node_config.registry_root = str((Path(tmp) / "registry").resolve())
+            node_config_store.save(node_config)
+            create_service = _FakeTelegramService(update_batches=[(first_update,)])
+            service, config_store, _, _, _, _ = self._make_service(tmp_dir=tmp, telegram_service=create_service)
+            config = config_store.load()
+            config.repo_root = tmp
+            config.file_allowed_roots = (tmp,)
+            config_store.save(config)
+            service._config = config_store.load()
+            service._normalize_repo_root_config()
+            service._normalize_file_roots_config()
+            service._node_registry.register_node(
+                NodeDescriptor(
+                    node_id="mock-gpu",
+                    display_name="Bedroom GPU Rig",
+                    role="executor",
+                    node_type="mock",
+                    status="online",
+                    transport="mock",
+                    summary="Simulated remote execution node for controller tests.",
+                    capability_labels=("/run", "/test"),
+                    metadata={"mock_output_summary": "Mock node executed validate_runtime.py", "mock_exit_code": 0},
+                )
+            )
+            service.select_execution_node("mock-gpu")
+            _, prompt_reply = self._run_single_update(service, create_service)
+            confirmation_id = prompt_reply.split("ID: ", 1)[1].splitlines()[0].strip()
+
+            confirm_service = _FakeTelegramService(
+                update_batches=[(TelegramInboundMessage(update_id=104, chat_id="chat-1", text=f"/confirm {confirmation_id}", sender_label="@tester"),)]
+            )
+            service._telegram_service = confirm_service
+            snapshot, _ = self._run_single_update(service, confirm_service)
+            result = self._last_result(service)
+            self.assertEqual(result.capability_id, "shell.command.run")
+            self.assertEqual(result.outcome, "success")
+            self.assertEqual(result.telemetry["target_node_id"], "mock-gpu")
+            self.assertEqual(result.telemetry["target_node_name"], "Bedroom GPU Rig")
+            self.assertEqual(result.telemetry["target_node_type"], "mock")
+            self.assertEqual(result.telemetry["target_node_transport"], "mock")
+            self.assertEqual(result.telemetry["execution_exit_code"], 0)
+            self.assertEqual(result.telemetry["execution_output_summary"], "Mock node executed validate_runtime.py")
+            self.assertIn("node mock-gpu", snapshot.last_audit_summary)
+
     def test_ask_provider_query_success_result_is_structured(self) -> None:
         update = TelegramInboundMessage(update_id=103, chat_id="chat-1", text="/ask hello", sender_label="@tester")
         with tempfile.TemporaryDirectory() as tmp:
@@ -363,6 +417,16 @@ class CapabilityExecutionContractTests(unittest.TestCase):
             self.assertTrue(result.retryable)
             self.assertEqual(result.user_message, reply)
             self.assertIn("timed out", result.ask_status)
+
+    def test_ask_provider_query_passes_extended_ollama_timeout(self) -> None:
+        update = TelegramInboundMessage(update_id=1041, chat_id="chat-1", text="/ask hello", sender_label="@tester")
+        with tempfile.TemporaryDirectory() as tmp:
+            telegram_service = _FakeTelegramService(update_batches=[(update,)])
+            service, _, _, _, ollama, _ = self._make_service(tmp_dir=tmp, telegram_service=telegram_service)
+
+            _, _ = self._run_single_update(service, telegram_service)
+
+            self.assertEqual(ollama.last_ask_kwargs.get("timeout_seconds"), 60.0)
 
     def test_confirmation_required_and_confirmed_results_are_structured(self) -> None:
         request_update = TelegramInboundMessage(update_id=105, chat_id="chat-1", text="/ask hello", sender_label="@tester")

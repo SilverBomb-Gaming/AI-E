@@ -80,6 +80,7 @@ class CapabilityEvaluator:
             "node.view.read",
             "node.select.query",
             "node.clear.query",
+            "node.dispatch.status.read",
             "status.read",
             "action.last.read",
             "chat.orchestrate.read",

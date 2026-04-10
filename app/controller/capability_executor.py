@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import json
 from pathlib import Path
 import secrets
 from typing import TYPE_CHECKING, Protocol
@@ -15,6 +16,7 @@ from .execution_models import LocalCommandExecutionRequest
 from .execution_runner import ExecutionRunnerError
 from .generated_project_models import GeneratedProjectRecord
 from .last_run_models import LastRunRecord
+from .node_dispatcher import NodeDispatchError
 from .node_router import NodeRoutingError
 from .file_mutator import (
     FileCreateWriteRequest,
@@ -32,6 +34,7 @@ from .file_reader import FileReaderError
 from .project_bootstrap_models import ProjectBootstrapExecutionRecord
 from .repo_inspector import RepoInspectorError
 from .scope_models import ExecutionScope
+from .chat_command_parser import parse_chat_command
 from .telegram_service import TelegramInboundMessage
 from .web_fetcher import WebFetchError
 
@@ -162,6 +165,10 @@ class CapabilityExecutor:
             return self._execute_node_select(update=update, snapshot=snapshot, argument=parsed_command.argument)
         if command == "/nodeclear":
             return self._execute_node_clear(update=update, snapshot=snapshot)
+        if command == "/dispatch":
+            return self._execute_dispatch(update=update, snapshot=snapshot, argument=parsed_command.argument)
+        if command == "/dispatchstatus":
+            return self._execute_dispatch_status(update=update, snapshot=snapshot, argument=parsed_command.argument)
         if command == "/status":
             return self._execute_status(update=update, snapshot=snapshot)
         if command == "/lastaction":
@@ -558,6 +565,272 @@ class CapabilityExecutor:
                 "target_node_summary": f"{resolution.node.display_name} ({resolution.source})",
             },
         )
+
+    def _execute_dispatch(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot, argument: str) -> CapabilityExecutionResult:
+        selector, raw_command = self._parse_dispatch_argument(argument)
+        if not selector or not raw_command:
+            request, _, _, scope_failure = self._prepare_capability_request(
+                capability_id="node.dispatch.query",
+                snapshot=snapshot,
+                chat_id=update.chat_id,
+                requester_label=update.sender_label,
+                original_command="/dispatch",
+                parsed_arguments={"selector": selector},
+                metadata={"argument_summary": "/dispatch [target] [command hidden]"},
+            )
+            if scope_failure is not None:
+                return scope_failure
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="dispatch_usage_invalid",
+                user_message="Couldn't queue that dispatch.\nReason: Use /dispatch <node_or_role> <bounded command>.",
+                internal_summary="node.dispatch.query rejected invalid operator syntax.",
+                retryable=False,
+                command_label="/dispatch",
+                activity_state="processing_command",
+            )
+        inner_text = self._strip_wrapping_quotes(raw_command)
+        inner_command = parse_chat_command(text=inner_text, has_text=True)
+        if inner_command.command_label not in {"/run", "/test"}:
+            request, _, _, scope_failure = self._prepare_capability_request(
+                capability_id="node.dispatch.query",
+                snapshot=snapshot,
+                chat_id=update.chat_id,
+                requester_label=update.sender_label,
+                original_command="/dispatch",
+                parsed_arguments={"selector": selector},
+                metadata={"argument_summary": f"/dispatch {selector} [command hidden]"},
+            )
+            if scope_failure is not None:
+                return scope_failure
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="dispatch_command_not_supported",
+                user_message="Couldn't queue that dispatch.\nReason: Only bounded /run and /test commands are supported for node dispatch right now.",
+                internal_summary="node.dispatch.query rejected a non-execution inner command.",
+                retryable=False,
+                command_label="/dispatch",
+                activity_state="processing_command",
+            )
+        target, target_code, target_message = self._service.resolve_dispatch_target(
+            selector=selector,
+            required_command_label=inner_command.command_label,
+            requested_command=inner_text,
+        )
+        if target is None:
+            request, _, _, scope_failure = self._prepare_capability_request(
+                capability_id="node.dispatch.query",
+                snapshot=snapshot,
+                chat_id=update.chat_id,
+                requester_label=update.sender_label,
+                original_command="/dispatch",
+                parsed_arguments={"selector": selector},
+                metadata={"argument_summary": f"/dispatch {selector} [command hidden]"},
+            )
+            if scope_failure is not None:
+                return scope_failure
+            outcome = "unavailable" if target_code in {"dispatch_node_unavailable", "dispatch_node_disabled", "dispatch_node_busy"} else "blocked"
+            if target_code == "dispatch_target_unknown":
+                outcome = "invalid_request"
+            return self._result(
+                request,
+                outcome=outcome,
+                reason_code=target_code,
+                user_message=f"Couldn't queue that dispatch.\nReason: {target_message}",
+                internal_summary=f"node.dispatch.query refused dispatch target: {target_code}.",
+                retryable=outcome != "invalid_request",
+                command_label="/dispatch",
+                activity_state="processing_command",
+            )
+        try:
+            local_request = self._build_dispatch_local_request(target_node=target.node, inner_command_label=inner_command.command_label, inner_argument=inner_command.argument)
+        except ExecutionRunnerError as exc:
+            request, _, _, scope_failure = self._prepare_capability_request(
+                capability_id="node.dispatch.query",
+                snapshot=snapshot,
+                chat_id=update.chat_id,
+                requester_label=update.sender_label,
+                original_command="/dispatch",
+                parsed_arguments={"selector": selector},
+                metadata={"argument_summary": f"/dispatch {selector} [command hidden]"},
+            )
+            if scope_failure is not None:
+                return scope_failure
+            return self._local_command_error_result(
+                request=request,
+                error=exc,
+                command_summary="",
+                command_label="/dispatch",
+                confirmation_id="",
+            )
+        evaluation, context = self._service._evaluate_capability_id("node.dispatch.query", snapshot, remember=True)
+        job_id = self._service.next_dispatch_job_id()
+        preview_lines = (
+            f"Preview: dispatch {local_request.command_summary}",
+            f"Target node: {target.node.node_id} | {target.node.display_name} | {target.node.role}",
+            f"Reason: {target.routing_reason}",
+            f"Scope: {self._service._repo_display_name(target.node.repo_root)} | timeout {int(local_request.timeout_seconds)}s",
+        )
+        request = self._build_request(
+            capability_id="node.dispatch.query",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/dispatch",
+            parsed_arguments={"selector": selector, "command": inner_command.command_label},
+            context=context,
+            metadata={
+                "argument_summary": f"/dispatch {selector} [command hidden]",
+                "confirmation_action_label": f"dispatch {local_request.command_summary} to {target.node.node_id}",
+                "confirmation_preview_lines": preview_lines,
+                "confirmation_metadata": {
+                    "dispatch_job_id": job_id,
+                    "dispatch_selection_mode": target.selection_mode,
+                    "dispatch_target_selector": target.target_value,
+                    "dispatch_requested_command_label": inner_command.command_label,
+                    "dispatch_requested_command_text": inner_text,
+                    "dispatch_requested_command_summary": local_request.command_summary,
+                    "dispatch_routing_reason": target.routing_reason,
+                    "dispatch_execution_payload_json": json.dumps(self._serialize_local_request(local_request)),
+                    "target_node_id": target.node.node_id,
+                    "target_node_name": target.node.display_name,
+                    "target_node_role": target.node.role,
+                    "target_node_type": target.node.node_type,
+                    "target_node_transport": target.node.transport,
+                },
+            },
+        )
+        scope_failure = self._scope_failure_result(request, command_label="/dispatch")
+        if scope_failure is not None:
+            return scope_failure
+        if evaluation.current_availability_state in {"confirmation_required", "allowed"}:
+            return self._confirmation_required_result(
+                request=request,
+                evaluation=evaluation,
+                context=context,
+                snapshot=snapshot,
+                prompt=inner_text,
+                response_style="concise",
+                chat_id=update.chat_id,
+                requester_label=update.sender_label,
+            )
+        if evaluation.current_availability_state != "allowed":
+            return self._local_command_blocked_result(request=request, evaluation=evaluation, command_label="/dispatch")
+        return self._result(
+            request,
+            outcome="failed",
+            reason_code="dispatch_confirmation_expected",
+            user_message="Dispatch could not continue because approval was expected before queueing the node job.",
+            internal_summary="node.dispatch.query expected confirmation before queueing a remote job.",
+            retryable=True,
+            command_label="/dispatch",
+            activity_state="processing_command",
+        )
+
+    def _execute_dispatch_status(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot, argument: str) -> CapabilityExecutionResult:
+        job_id = argument.strip().upper()
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="node.dispatch.status.read",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/dispatchstatus",
+            parsed_arguments={"job_id": job_id},
+            metadata={"argument_summary": f"/dispatchstatus {job_id or '[missing]'}"},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        if not job_id:
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="dispatch_job_missing",
+                user_message="Couldn't inspect dispatch status.\nReason: No job id was provided.\nNext: Use /dispatchstatus <job_id>.",
+                internal_summary="node.dispatch.status.read rejected because no job id was provided.",
+                retryable=False,
+                command_label="/dispatchstatus",
+                activity_state="processing_command",
+            )
+        record = self._service.get_dispatch_job(job_id)
+        if record is None:
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="dispatch_job_not_found",
+                user_message=f"Couldn't inspect dispatch status.\nReason: No job matches {job_id}.\nNext: Use /dispatch <node_or_role> <bounded command> to queue new work.",
+                internal_summary=f"node.dispatch.status.read rejected unknown job id: {job_id}.",
+                retryable=False,
+                command_label="/dispatchstatus",
+                activity_state="processing_command",
+            )
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=self._service._node_formatter.format_dispatch_status(record=record),
+            internal_summary=f"node.dispatch.status.read returned {record.job_id}.",
+            retryable=False,
+            command_label="/dispatchstatus",
+            activity_state="processing_command",
+            telemetry={
+                "dispatch_job_id": record.job_id,
+                "target_node_id": record.target_node_id,
+                "target_node_name": record.target_node_name,
+                "target_node_role": record.target_node_role,
+                "dispatch_status": record.status,
+                "dispatch_routing_reason": record.routing_reason,
+            },
+        )
+
+    @staticmethod
+    def _parse_dispatch_argument(argument: str) -> tuple[str, str]:
+        stripped = argument.strip()
+        if not stripped:
+            return "", ""
+        parts = stripped.split(None, 1)
+        selector = parts[0].strip().lower()
+        command = parts[1].strip() if len(parts) > 1 else ""
+        return selector, command
+
+    @staticmethod
+    def _strip_wrapping_quotes(text: str) -> str:
+        stripped = text.strip()
+        if len(stripped) >= 2 and stripped[0] == stripped[-1] and stripped[0] in {'"', "'"}:
+            return stripped[1:-1].strip()
+        return stripped
+
+    def _build_dispatch_local_request(self, *, target_node, inner_command_label: str, inner_argument: str) -> LocalCommandExecutionRequest:
+        repo_root = target_node.repo_root.strip()
+        if inner_command_label == "/run":
+            return self._service._execution_runner.build_run_request(
+                capability_id="shell.command.run",
+                repo_root=repo_root,
+                command_text=inner_argument,
+                expected_scope=self._service._repo_display_name(repo_root),
+            )
+        return self._service._execution_runner.build_test_request(
+            capability_id="test.command.run",
+            repo_root=repo_root,
+            target=inner_argument,
+            expected_scope=self._service._repo_display_name(repo_root),
+        )
+
+    @staticmethod
+    def _serialize_local_request(local_request: LocalCommandExecutionRequest) -> dict[str, object]:
+        return {
+            "capability_id": local_request.capability_id,
+            "command_kind": local_request.command_kind,
+            "command_family": local_request.command_family,
+            "command_text": local_request.command_text,
+            "command_summary": local_request.command_summary,
+            "working_directory": local_request.working_directory,
+            "timeout_seconds": local_request.timeout_seconds,
+            "operator_reason": local_request.operator_reason,
+            "expected_scope": local_request.expected_scope,
+            "argv": list(local_request.argv),
+        }
 
     def _execute_status(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot) -> CapabilityExecutionResult:
         request, _, _, scope_failure = self._prepare_capability_request(
@@ -5654,6 +5927,13 @@ class CapabilityExecutor:
                 confirmation=confirmation,
                 chat_id=chat_id,
             )
+        if confirmation.capability_id == "node.dispatch.query":
+            return self._execute_confirmed_dispatch_command(
+                request=request,
+                confirmation=confirmation,
+                snapshot=snapshot,
+                chat_id=chat_id,
+            )
         if confirmation.capability_id == "shell.command.run":
             return self._execute_confirmed_run_command(
                 request=request,
@@ -5987,7 +6267,9 @@ class CapabilityExecutor:
         snapshot: ControllerSnapshot,
         chat_id: str,
     ) -> CapabilityExecutionResult:
-        repo_root, _, _, _ = self._service._repo_configuration_state()
+        target_node_id = str(confirmation.metadata.get("target_node_id") or "").strip().lower()
+        target_node = self._service.get_registered_node(target_node_id) if target_node_id else None
+        repo_root = target_node.repo_root.strip() if target_node is not None and target_node.repo_root.strip() else self._service._repo_configuration_state()[0]
         try:
             local_request = self._service._execution_runner.build_run_request(
                 capability_id="shell.command.run",
@@ -6018,7 +6300,9 @@ class CapabilityExecutor:
         snapshot: ControllerSnapshot,
         chat_id: str,
     ) -> CapabilityExecutionResult:
-        repo_root, _, _, _ = self._service._repo_configuration_state()
+        target_node_id = str(confirmation.metadata.get("target_node_id") or "").strip().lower()
+        target_node = self._service.get_registered_node(target_node_id) if target_node_id else None
+        repo_root = target_node.repo_root.strip() if target_node is not None and target_node.repo_root.strip() else self._service._repo_configuration_state()[0]
         try:
             local_request = self._service._execution_runner.build_test_request(
                 capability_id="test.command.run",
@@ -6039,6 +6323,97 @@ class CapabilityExecutor:
             snapshot=snapshot,
             chat_id=chat_id,
             local_request=local_request,
+        )
+
+    def _execute_confirmed_dispatch_command(
+        self,
+        *,
+        request: CapabilityExecutionRequest,
+        confirmation: PendingConfirmation,
+        snapshot: ControllerSnapshot,
+        chat_id: str,
+    ) -> CapabilityExecutionResult:
+        payload_json = str(confirmation.metadata.get("dispatch_execution_payload_json") or "").strip()
+        target_node_id = str(confirmation.metadata.get("target_node_id") or "").strip().lower()
+        target_node = self._service.get_registered_node(target_node_id) if target_node_id else None
+        if target_node is None:
+            return self._result(
+                request,
+                outcome="failed",
+                reason_code="dispatch_target_missing",
+                user_message="Dispatch could not continue because the selected node is no longer registered.",
+                internal_summary="node.dispatch.query failed because the selected node was missing at approval time.",
+                retryable=True,
+                command_label="/confirm",
+                activity_state="processing_command",
+                confirmation_used=True,
+            )
+        try:
+            local_request = self._request_from_confirmation_payload(payload_json)
+        except (ValueError, json.JSONDecodeError):
+            return self._result(
+                request,
+                outcome="failed",
+                reason_code="dispatch_payload_invalid",
+                user_message="Dispatch could not continue because the queued execution payload was invalid.",
+                internal_summary="node.dispatch.query failed because the queued execution payload could not be reconstructed.",
+                retryable=False,
+                command_label="/confirm",
+                activity_state="processing_command",
+                confirmation_used=True,
+            )
+        job_id = str(confirmation.metadata.get("dispatch_job_id") or "").strip().upper()
+        record = self._build_dispatch_record_from_confirmation(
+            confirmation=confirmation,
+            target_node=target_node,
+            local_request=local_request,
+            job_id=job_id,
+            chat_id=chat_id,
+        )
+        try:
+            queued = self._service.queue_dispatch_job(record=record)
+        except NodeDispatchError as exc:
+            return self._result(
+                request,
+                outcome="failed",
+                reason_code=exc.code,
+                user_message=f"Dispatch could not be queued.\nReason: {exc.message}",
+                internal_summary=f"node.dispatch.query failed queueing {job_id}: {exc.code}.",
+                retryable=True,
+                command_label="/confirm",
+                activity_state="processing_command",
+                confirmation_used=True,
+            )
+        self._service._last_confirmation_result = f"Confirmation {confirmation.confirmation_id} approved and queued dispatch job {queued.job_id}."
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="dispatch_queued",
+            user_message="\n".join(
+                (
+                    f"Confirmation {confirmation.confirmation_id} approved.",
+                    f"Dispatch job: {queued.job_id}",
+                    f"Target node: {queued.target_node_id} | {queued.target_node_name}",
+                    f"Reason: {queued.routing_reason}",
+                    f"Command: {queued.requested_command_summary}",
+                    "Status: queued",
+                    f"Next: Use /dispatchstatus {queued.job_id} to inspect progress.",
+                )
+            ),
+            internal_summary=self._service._last_confirmation_result,
+            retryable=False,
+            command_label="/confirm",
+            activity_state="processing_command",
+            confirmation_used=True,
+            telemetry={
+                "dispatch_job_id": queued.job_id,
+                "dispatch_status": queued.status,
+                "dispatch_routing_reason": queued.routing_reason,
+                "target_node_id": queued.target_node_id,
+                "target_node_name": queued.target_node_name,
+                "target_node_role": queued.target_node_role,
+                "execution_summary": f"dispatch {queued.requested_command_summary} | queued",
+            },
         )
 
     def _execute_confirmed_local_command(
@@ -6093,6 +6468,14 @@ class CapabilityExecutor:
         target_node = self._service.get_registered_node(target_node_id) if target_node_id else None
         if target_node is None:
             target_node = self._service.resolve_execution_node().node
+        if target_node.transport == "shared_directory":
+            return self._queue_selected_remote_command(
+                confirmation=confirmation,
+                request=request,
+                local_request=local_request,
+                target_node=target_node,
+                chat_id=chat_id,
+            )
         try:
             command_result = self._service._node_router.execute(node=target_node, request=local_request)
         except (ExecutionRunnerError, NodeRoutingError) as exc:
@@ -6107,6 +6490,134 @@ class CapabilityExecutor:
             request=request,
             confirmation=confirmation,
             command_result=command_result,
+        )
+
+    def _queue_selected_remote_command(
+        self,
+        *,
+        confirmation: PendingConfirmation,
+        request: CapabilityExecutionRequest,
+        local_request: LocalCommandExecutionRequest,
+        target_node,
+        chat_id: str,
+    ) -> CapabilityExecutionResult:
+        job_id = self._service.next_dispatch_job_id()
+        record = self._build_dispatch_record_from_confirmation(
+            confirmation=confirmation,
+            target_node=target_node,
+            local_request=local_request,
+            job_id=job_id,
+            chat_id=chat_id,
+            selection_mode="node_id",
+            selector=target_node.node_id,
+            routing_reason=str(confirmation.metadata.get("dispatch_routing_reason") or f"selected node {target_node.node_id}").strip(),
+        )
+        try:
+            queued = self._service.queue_dispatch_job(record=record)
+        except NodeDispatchError as exc:
+            return self._result(
+                request,
+                outcome="failed",
+                reason_code=exc.code,
+                user_message=f"Dispatch could not be queued.\nReason: {exc.message}",
+                internal_summary=f"{request.capability_id} could not queue remote execution: {exc.code}.",
+                retryable=True,
+                command_label="/confirm",
+                activity_state="processing_command",
+                confirmation_used=True,
+            )
+        self._service._last_confirmation_result = f"Confirmation {confirmation.confirmation_id} approved and queued dispatch job {queued.job_id}."
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="dispatch_queued",
+            user_message="\n".join(
+                (
+                    f"Confirmation {confirmation.confirmation_id} approved.",
+                    f"Dispatch job: {queued.job_id}",
+                    f"Target node: {queued.target_node_id} | {queued.target_node_name}",
+                    f"Command: {queued.requested_command_summary}",
+                    f"Reason: {queued.routing_reason}",
+                    "Status: queued",
+                    f"Next: Use /dispatchstatus {queued.job_id} to inspect progress.",
+                )
+            ),
+            internal_summary=self._service._last_confirmation_result,
+            retryable=False,
+            command_label="/confirm",
+            activity_state="processing_command",
+            confirmation_used=True,
+            telemetry={
+                "dispatch_job_id": queued.job_id,
+                "dispatch_status": queued.status,
+                "dispatch_routing_reason": queued.routing_reason,
+                "target_node_id": queued.target_node_id,
+                "target_node_name": queued.target_node_name,
+                "target_node_role": queued.target_node_role,
+                "execution_summary": f"dispatch {queued.requested_command_summary} | queued",
+            },
+        )
+
+    def _build_dispatch_record_from_confirmation(
+        self,
+        *,
+        confirmation: PendingConfirmation,
+        target_node,
+        local_request: LocalCommandExecutionRequest,
+        job_id: str,
+        chat_id: str,
+        selection_mode: str | None = None,
+        selector: str | None = None,
+        routing_reason: str | None = None,
+    ):
+        normalized_job_id = job_id.strip().upper() or self._service.next_dispatch_job_id()
+        selection_mode_value = str(selection_mode or confirmation.metadata.get("dispatch_selection_mode") or "node_id").strip().lower()
+        selector_value = str(selector or confirmation.metadata.get("dispatch_target_selector") or target_node.node_id).strip().lower()
+        routing_reason_value = str(routing_reason or confirmation.metadata.get("dispatch_routing_reason") or f"explicit node {target_node.node_id}").strip()
+        from .node_models import NodeDispatchRecord
+
+        return NodeDispatchRecord(
+            job_id=normalized_job_id,
+            status="queued",
+            requested_capability_id=local_request.capability_id,
+            requested_command_label=str(confirmation.metadata.get("dispatch_requested_command_label") or ("/test" if local_request.command_kind == "test" else "/run")).strip(),
+            requested_command_text=str(confirmation.metadata.get("dispatch_requested_command_text") or local_request.command_text).strip(),
+            requested_command_summary=str(confirmation.metadata.get("dispatch_requested_command_summary") or local_request.command_summary).strip(),
+            target_selection_mode=selection_mode_value,
+            target_selector=selector_value,
+            target_node_id=target_node.node_id,
+            target_node_role=target_node.role,
+            target_node_name=target_node.display_name,
+            routing_reason=routing_reason_value,
+            request_source="operator-console",
+            requester_label=confirmation.requester_label,
+            chat_id=chat_id,
+            confirmation_required=True,
+            confirmation_id=confirmation.confirmation_id,
+            queued_at=self._service._now_iso(),
+            result_summary="",
+            failure_reason="",
+            current_job_state="queued",
+            execution_payload=self._serialize_local_request(local_request),
+        )
+
+    @staticmethod
+    def _request_from_confirmation_payload(payload_json: str) -> LocalCommandExecutionRequest:
+        payload = json.loads(payload_json)
+        if not isinstance(payload, dict):
+            raise ValueError("Dispatch payload must be a JSON object.")
+        argv = payload.get("argv")
+        return LocalCommandExecutionRequest(
+            capability_id=str(payload.get("capability_id", "")).strip(),
+            command_kind=str(payload.get("command_kind", "run")).strip(),  # type: ignore[arg-type]
+            command_family=str(payload.get("command_family", "generic")).strip(),  # type: ignore[arg-type]
+            command_text=str(payload.get("command_text", "")).strip(),
+            command_summary=str(payload.get("command_summary", "")).strip(),
+            working_directory=str(payload.get("working_directory", "")).strip(),
+            timeout_seconds=float(payload.get("timeout_seconds", 20.0) or 20.0),
+            operator_reason=str(payload.get("operator_reason", "")).strip(),
+            expected_scope=str(payload.get("expected_scope", "")).strip(),
+            argv=tuple(str(item) for item in (argv or ()) if str(item)),
         )
 
     def _file_mutation_success_result(
