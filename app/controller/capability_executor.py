@@ -14,6 +14,7 @@ from .execution_models import CapabilityExecutionRequest, CapabilityExecutionRes
 from .execution_models import LocalCommandExecutionRequest
 from .execution_runner import ExecutionRunnerError
 from .generated_project_models import GeneratedProjectRecord
+from .last_run_models import LastRunRecord
 from .node_router import NodeRoutingError
 from .file_mutator import (
     FileCreateWriteRequest,
@@ -3733,17 +3734,19 @@ class CapabilityExecutor:
         prompt: str,
         batch_busy: bool,
     ) -> CapabilityExecutionResult:
+        prompt = " ".join(prompt.split())
         context_entry = self._service.latest_context_for_chat(chat_id=update.chat_id)
+        last_run = self._service.latest_run_for_chat(chat_id=update.chat_id)
         request = self._build_request(
             capability_id="ask.provider_query",
             snapshot=snapshot,
             chat_id=update.chat_id,
             requester_label=update.sender_label,
             original_command="/asklast",
-            parsed_arguments={"prompt": " ".join(prompt.split())},
+            parsed_arguments={"prompt": prompt},
             metadata={"argument_summary": "/asklast [prompt hidden]", "response_style": "concise"},
         )
-        if not " ".join(prompt.split()):
+        if not prompt:
             return self._result(
                 request,
                 outcome="invalid_request",
@@ -3756,17 +3759,30 @@ class CapabilityExecutor:
                 ask_status="/asklast invalid: missing prompt.",
                 hide_content_in_summary=True,
             )
+        bounded_run_result = self._maybe_execute_bounded_last_run_edit_plan(
+            request=request,
+            update=update,
+            command_label="/asklast",
+            prompt=prompt,
+            last_run=last_run,
+        )
+        if bounded_run_result is not None:
+            return bounded_run_result
         if context_entry is None:
             return self._result(
                 request,
                 outcome="invalid_request",
                 reason_code="context_not_found",
-                user_message="No recent context is available in this chat.\nNext: Run /repo, /file, or /web first, then retry /asklast <prompt>.",
-                internal_summary="/asklast rejected because no recent context was available.",
+                user_message=(
+                    "Can't use /asklast right now.\n"
+                    "Reason: No recent run result is available for improvement and no buffered context is available.\n"
+                    "Next: Use /run <approved command> first or /askctx <context_id> <change request>."
+                ),
+                internal_summary="/asklast rejected because no recent run result or buffered context was available.",
                 retryable=False,
                 command_label="/asklast",
                 activity_state="processing_command",
-                ask_status="/asklast invalid: no recent context.",
+                ask_status="/asklast invalid: no recent run result or buffered context.",
                 hide_content_in_summary=True,
             )
         return self._execute_provider_query(
@@ -4256,12 +4272,17 @@ class CapabilityExecutor:
     ) -> CapabilityExecutionResult:
         repo_label = self._service._repo_display_name(command_result.request.working_directory)
         node_summary = f"{command_result.node.display_name} ({command_result.node.node_id})"
+        last_run_record = self._build_last_run_record(command_result=command_result)
         base_telemetry = {
             "execution_command": command_result.request.command_text,
             "execution_command_summary": command_result.request.command_summary,
             "execution_scope": command_result.request.working_directory,
             "execution_output_summary": command_result.output_summary,
             "execution_first_issue": command_result.first_issue,
+            "execution_target_root": last_run_record.target_root or "",
+            "execution_entrypoint_path": last_run_record.entrypoint_path or "",
+            "execution_stdout_preview": last_run_record.stdout_preview,
+            "execution_stderr_preview": last_run_record.stderr_preview,
             "target_node_id": command_result.node.node_id,
             "target_node_name": command_result.node.display_name,
             "target_node_type": command_result.node.node_type,
@@ -4270,12 +4291,15 @@ class CapabilityExecutor:
         }
         context_entry = None
         if command_result.timed_out:
+            if request.capability_id == "shell.command.run":
+                self._service.set_latest_run_for_chat(chat_id=request.chat_id, record=last_run_record)
             self._service._last_confirmation_result = f"Confirmation {confirmation.confirmation_id} timed out via bounded execution."
             lines = [
                 f"Confirmation {confirmation.confirmation_id} approved.",
                 f"Node: {node_summary}",
                 f"Scope: {repo_label}",
                 f"Command: {command_result.request.command_summary}",
+                *((f"Target: {last_run_record.target_root}",) if last_run_record.target_root else ()),
                 "Exit: timeout",
                 f"Summary: {command_result.output_summary}",
             ]
@@ -4302,11 +4326,14 @@ class CapabilityExecutor:
             f"Node: {node_summary}",
             f"Scope: {repo_label}",
             f"Command: {command_result.request.command_summary}",
+            *((f"Target: {last_run_record.target_root}",) if last_run_record.target_root else ()),
             f"Exit code: {command_result.exit_code}",
             f"Summary: {command_result.output_summary}",
         ]
         if command_result.first_issue:
             lines.append(f"First issue: {command_result.first_issue}")
+        if request.capability_id == "shell.command.run":
+            self._service.set_latest_run_for_chat(chat_id=request.chat_id, record=last_run_record)
         if outcome == "success" and request.capability_id == "shell.command.run" and command_result.request.command_summary.startswith("main"):
             context_content = "\n".join(lines[1:])
             context_entry = self._service.create_context_buffer(
@@ -4337,9 +4364,41 @@ class CapabilityExecutor:
                 **base_telemetry,
                 "execution_summary": f"{command_result.request.command_summary} | exit {command_result.exit_code}",
                 "execution_exit_code": command_result.exit_code,
+                "last_run_record": last_run_record.to_payload() if request.capability_id == "shell.command.run" else {},
                 "context_created_id": context_entry.context_id if context_entry is not None else "",
                 "context_source_summary": context_entry.source_summary if context_entry is not None else "",
             },
+        )
+
+    def _build_last_run_record(self, *, command_result) -> LastRunRecord:
+        command_summary = command_result.request.command_summary.strip()
+        command_label = command_summary.split(maxsplit=1)[0] if command_summary else ""
+        target_root: str | None = None
+        if len(command_result.request.argv) > 2:
+            target_root = str(command_result.request.argv[2]).strip().replace("\\", "/") or None
+        elif command_label == "main" and command_summary == "main .":
+            target_root = "."
+        entrypoint_path: str | None = None
+        if len(command_result.request.argv) > 1:
+            entrypoint_path = str(command_result.request.argv[1]).strip().replace("\\", "/") or None
+        stdout_preview = self._service._summarize_text(command_result.stdout.strip(), limit=240)
+        stderr_preview = self._service._summarize_text(command_result.stderr.strip(), limit=240)
+        is_patch_relevant = bool(
+            command_label == "main"
+            and entrypoint_path
+            and (entrypoint_path == "src/main.py" or entrypoint_path.lower().endswith("/src/main.py"))
+        )
+        return LastRunRecord(
+            command_label=command_label,
+            target_root=target_root,
+            entrypoint_path=entrypoint_path,
+            argv=[str(token) for token in command_result.request.argv],
+            exit_code=None if command_result.timed_out else command_result.exit_code,
+            stdout_preview=stdout_preview,
+            stderr_preview=stderr_preview,
+            summary=command_result.output_summary,
+            created_at_utc=command_result.completed_at,
+            is_patch_relevant=is_patch_relevant,
         )
 
     def _web_error_result(
@@ -4724,6 +4783,56 @@ class CapabilityExecutor:
             },
         )
 
+    def _maybe_execute_bounded_last_run_edit_plan(
+        self,
+        *,
+        request: CapabilityExecutionRequest,
+        update: TelegramInboundMessage,
+        command_label: str,
+        prompt: str,
+        last_run: LastRunRecord | None,
+    ) -> CapabilityExecutionResult | None:
+        if last_run is None or not last_run.is_patch_relevant:
+            return None
+        relative_path = (last_run.entrypoint_path or "").strip().replace("\\", "/")
+        if not relative_path:
+            return None
+        plan = self._build_bounded_cli_edit_plan_for_path(prompt=prompt, relative_path=relative_path)
+        if plan is None:
+            return None
+        _, prepared_argument, user_message, plan_summary = plan
+        response_lines = [f"Planned improvement for {relative_path}"]
+        if last_run.summary:
+            response_lines.extend(("Observed:", f"- last run: {last_run.summary}"))
+        response_lines.extend(user_message.splitlines()[1:])
+        self._service.save_pending_patch_draft(
+            chat_id=update.chat_id,
+            relative_path=relative_path,
+            raw_argument=prepared_argument,
+            summary=plan_summary,
+            source_kind="execution_result",
+            source_context_id="RUN",
+        )
+        ask_status = f"{command_label} prepared bounded patch for {relative_path} from the latest run."
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message="\n".join(response_lines),
+            internal_summary=ask_status,
+            retryable=False,
+            command_label=command_label,
+            activity_state="processing_command",
+            ask_status=ask_status,
+            hide_content_in_summary=True,
+            telemetry={
+                "last_run_command_label": last_run.command_label,
+                "last_run_target_root": last_run.target_root or "",
+                "last_run_entrypoint_path": relative_path,
+                "last_run_summary": last_run.summary,
+            },
+        )
+
     def _build_bounded_cli_edit_plan(
         self,
         *,
@@ -4731,6 +4840,14 @@ class CapabilityExecutor:
         context_entry: BufferedContext,
     ) -> tuple[str, str, str, str] | None:
         relative_path = self._bounded_main_path_from_context(context_entry)
+        return self._build_bounded_cli_edit_plan_for_path(prompt=prompt, relative_path=relative_path)
+
+    def _build_bounded_cli_edit_plan_for_path(
+        self,
+        *,
+        prompt: str,
+        relative_path: str,
+    ) -> tuple[str, str, str, str] | None:
         if not relative_path:
             return None
         current_content = self._read_repo_file_text(relative_path)
@@ -4739,7 +4856,7 @@ class CapabilityExecutor:
         lowered_prompt = prompt.lower()
         if "csv" in lowered_prompt:
             return self._build_csv_cli_edit_plan(relative_path=relative_path, current_content=current_content)
-        if "format" in lowered_prompt:
+        if any(token in lowered_prompt for token in ("format", "error", "message")):
             return self._build_formatting_cli_edit_plan(relative_path=relative_path, current_content=current_content)
         return None
 

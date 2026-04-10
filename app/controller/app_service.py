@@ -21,6 +21,8 @@ from .build_plan_store import BuildPlanStore
 from .build_planner import BuildPlanner
 from .generated_project_models import GeneratedProjectRecord
 from .generated_project_store import GeneratedProjectStore
+from .last_run_models import LastRunRecord
+from .last_run_store import LastRunStore
 from .project_bootstrap_formatter import ProjectBootstrapFormatter
 from .project_bootstrap_planner import ProjectBootstrapPlanner
 from .project_bootstrap_store import ProjectBootstrapStore
@@ -248,6 +250,7 @@ class ControllerService:
         self._build_plan_store = BuildPlanStore()
         self._project_bootstrap_store = ProjectBootstrapStore()
         self._generated_project_store = GeneratedProjectStore()
+        self._last_run_store = LastRunStore()
         self._plan_bridge_store = PlanBridgeStore()
         self._autonomy_bundle_store = AutonomyBundleStore()
         self._last_capability_evaluation: CapabilityEvaluation | None = None
@@ -1401,6 +1404,15 @@ class ControllerService:
     def clear_active_generated_project(self, *, chat_id: str) -> GeneratedProjectRecord | None:
         return self._generated_project_store.clear_active(chat_id=chat_id)
 
+    def latest_run_for_chat(self, *, chat_id: str) -> LastRunRecord | None:
+        return self._last_run_store.get_latest(chat_id=chat_id)
+
+    def set_latest_run_for_chat(self, *, chat_id: str, record: LastRunRecord) -> None:
+        self._last_run_store.set_latest(chat_id=chat_id, record=record)
+
+    def clear_latest_run_for_chat(self, *, chat_id: str) -> LastRunRecord | None:
+        return self._last_run_store.clear_latest(chat_id=chat_id)
+
     def _build_contexts_reply(self, *, chat_id: str, limit: int = 5) -> _TelegramResponsePlan:
         contexts = self.recent_contexts_for_chat(chat_id=chat_id, limit=max(1, min(limit, 6)))
         if not contexts:
@@ -1825,6 +1837,7 @@ class ControllerService:
     def _build_last_action_reply(self, *, chat_id: str) -> _TelegramResponsePlan:
         result = self._last_loop_result
         workflow = self.current_or_latest_workflow_for_chat(chat_id=chat_id)
+        last_run = self.latest_run_for_chat(chat_id=chat_id)
         if result is None:
             lines = [
                 "Last action",
@@ -1836,7 +1849,7 @@ class ControllerService:
             return _TelegramResponsePlan(reply=chr(10).join(lines), command_label="/lastaction")
 
         lines = ["Last action"]
-        lines.extend(self._last_action_lines(result=result))
+        lines.extend(self._last_action_lines(result=result, last_run=last_run))
         if workflow is not None:
             lines.append(f"Workflow: {workflow.workflow_id} {self._workflow_state_label(workflow)}")
         lines.append(f"Next: {self._last_action_next_step(result=result, workflow=workflow)}")
@@ -1845,7 +1858,7 @@ class ControllerService:
             command_label="/lastaction",
         )
 
-    def _last_action_lines(self, *, result: CapabilityExecutionResult) -> tuple[str, ...]:
+    def _last_action_lines(self, *, result: CapabilityExecutionResult, last_run: LastRunRecord | None) -> tuple[str, ...]:
         telemetry = result.telemetry
         capability_id = result.capability_id
         if capability_id == "repo.status.read":
@@ -1913,6 +1926,11 @@ class ControllerService:
                 f"Action: {('test' if capability_id == 'test.command.run' else 'run')} {self._outcome_label(result.outcome)}",
                 f"Command: {command_summary}",
             ]
+            target_root = str(telemetry.get("execution_target_root") or "").strip()
+            if not target_root and last_run is not None:
+                target_root = (last_run.target_root or "").strip()
+            if target_root:
+                lines.append(f"Target: {target_root}")
             node_summary = str(telemetry.get("target_node_summary") or "").strip()
             if node_summary:
                 lines.append(f"Node: {node_summary}")

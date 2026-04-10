@@ -58,8 +58,8 @@ class _FakeWebFetcher:
 
 
 class _RecordingOllamaAdapter(_FakeOllamaAdapter):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, **kwargs: object) -> None:
+        super().__init__(**kwargs)
         self.ask_prompts: list[str] = []
 
     def ask(self, **kwargs: object):
@@ -263,6 +263,33 @@ class ContextBridgingTests(unittest.TestCase):
             self.assertEqual(service._last_execution_result.outcome, "invalid_request")
             self.assertEqual(service._last_execution_result.outcome_reason_code, "context_not_found")
 
+    def test_repeated_askctx_calls_remain_stable_after_startup_prewarm(self) -> None:
+        updates = [
+            (TelegramInboundMessage(update_id=7101, chat_id="chat-1", text="/repo", sender_label="@tester"),),
+            (TelegramInboundMessage(update_id=7102, chat_id="chat-1", text="/askctx C1 summarize repo state", sender_label="@tester"),),
+            (TelegramInboundMessage(update_id=7103, chat_id="chat-1", text="/askctx C1 summarize repo state again", sender_label="@tester"),),
+        ]
+        ollama = _RecordingOllamaAdapter(require_prewarm_before_ask=True)
+        with tempfile.TemporaryDirectory() as tmp:
+            telegram_service = _FakeTelegramService(update_batches=updates)
+            service, config_store, _, _, offline = self._make_service(tmp_dir=tmp, telegram_service=telegram_service, ollama_adapter=ollama)
+            service._provider_ask_cooldown_seconds = 0.0
+            root = Path(tmp) / "workspace"
+            root.mkdir(parents=True, exist_ok=True)
+            config = config_store.load()
+            config.repo_root = str(root.resolve())
+            config_store.save(config)
+            service._config = config_store.load()
+
+            service.emit_startup_diagnostics_summary()
+            self._run_until(service, telegram_service, 3)
+
+            self.assertEqual(offline.prewarm_calls, 1)
+            self.assertEqual(offline.ask_calls, 2)
+            self.assertEqual(offline.last_ask_kwargs.get("timeout_seconds"), 60.0)
+            self.assertIn("Answer (Offline | Ollama", telegram_service.sent_messages[1][1])
+            self.assertIn("Answer (Offline | Ollama", telegram_service.sent_messages[2][1])
+
     def test_clearcontext_and_cross_chat_isolation_preserve_trust(self) -> None:
         updates = [
             (TelegramInboundMessage(update_id=712, chat_id="chat-1", text="/repo", sender_label="@tester"),),
@@ -286,7 +313,8 @@ class ContextBridgingTests(unittest.TestCase):
             contexts_reply = telegram_service.sent_messages[3][1]
             recent_audit = service._audit_store.recent(limit=2)
 
-            self.assertIn("No recent context is available in this chat.", missing_reply)
+            self.assertIn("Can't use /asklast right now.", missing_reply)
+            self.assertIn("No recent run result is available for improvement", missing_reply)
             self.assertEqual(clear_reply, "Cleared 1 context entry for this chat.")
             self.assertEqual(contexts_reply, "Contexts\nNo recent context is available in this chat.")
             self.assertEqual(snapshot.buffered_context_count, 0)

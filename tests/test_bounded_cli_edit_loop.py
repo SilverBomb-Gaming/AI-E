@@ -218,6 +218,7 @@ class BoundedCliEditLoopTests(unittest.TestCase):
             )
             self.assertIn("Action: run completed", run_lastaction)
             self.assertIn("Command: main .", run_lastaction)
+            self.assertIn("Target: .", run_lastaction)
             self.assertIn("Exit code: 0", run_lastaction)
 
     def test_asklast_after_run_prepares_csv_patch_without_autorun(self) -> None:
@@ -274,11 +275,89 @@ class BoundedCliEditLoopTests(unittest.TestCase):
                     ),
                 )]),
             )
-            self.assertIn("Planned update for src/main.py", asklast_reply)
+            self.assertIn("Planned improvement for src/main.py", asklast_reply)
+            self.assertIn("Observed:", asklast_reply)
+            self.assertIn("- last run: Scanning: .", asklast_reply)
             self.assertIn("- use /patchlast src/main.py to apply the update", asklast_reply)
             self.assertEqual(offline.ask_calls, 0)
             self.assertEqual(len(fake_runner.calls), 1)
             self.assertNotIn("summary.csv", target.read_text(encoding="utf-8"))
+
+    def test_asklast_after_failed_generated_run_stays_bounded_to_same_entrypoint(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "workspace"
+            target = root / "generated" / "GP-7A31C2" / "src" / "main.py"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(
+                "from pathlib import Path\n"
+                "import sys\n\n\n"
+                "def main() -> int:\n"
+                "    target = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(\".\")\n"
+                "    print(f\"Scanning: {target}\")\n"
+                "    return 1\n\n\n"
+                "if __name__ == \"__main__\":\n"
+                "    raise SystemExit(main())\n",
+                encoding="utf-8",
+            )
+            runner = _LoopCommandRunner(
+                subprocess.CompletedProcess(
+                    ["python", "generated/GP-7A31C2/src/main.py", "generated/GP-7A31C2"],
+                    1,
+                    "Scanning: generated/GP-7A31C2\n",
+                    "Target is not a directory: generated/GP-7A31C2\n",
+                )
+            )
+            service, config_store, _, _, fake_runner, offline = self._make_service(tmp_dir=tmp, command_runner=runner)
+            self._configure_scopes(service=service, config_store=config_store, root=root)
+
+            run_prompt = self._run_single_update(
+                service,
+                _FakeTelegramService(update_batches=[(
+                    TelegramInboundMessage(update_id=926, chat_id="chat-1", text="/run main generated/GP-7A31C2", sender_label="@tester"),
+                )]),
+            )
+            run_confirmation_id = self._extract_confirmation_id(run_prompt)
+            run_reply = self._run_single_update(
+                service,
+                _FakeTelegramService(update_batches=[(
+                    TelegramInboundMessage(update_id=927, chat_id="chat-1", text=f"/confirm {run_confirmation_id}", sender_label="@tester"),
+                )]),
+            )
+            self.assertIn("Exit code: 1", run_reply)
+            self.assertEqual(len(fake_runner.calls), 1)
+
+            asklast_reply = self._run_single_update(
+                service,
+                _FakeTelegramService(update_batches=[(
+                    TelegramInboundMessage(
+                        update_id=928,
+                        chat_id="chat-1",
+                        text="/asklast make the error message clearer",
+                        sender_label="@tester",
+                    ),
+                )]),
+            )
+            self.assertIn("Planned improvement for generated/GP-7A31C2/src/main.py", asklast_reply)
+            self.assertIn("- last run: Target is not a directory: generated/GP-7A31C2", asklast_reply)
+            self.assertIn("- use /patchlast generated/GP-7A31C2/src/main.py to apply the update", asklast_reply)
+            self.assertEqual(offline.ask_calls, 0)
+
+    def test_asklast_without_run_or_context_fails_cleanly(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "workspace"
+            root.mkdir(parents=True, exist_ok=True)
+            service, config_store, _, _, _, _ = self._make_service(tmp_dir=tmp)
+            self._configure_scopes(service=service, config_store=config_store, root=root)
+
+            reply = self._run_single_update(
+                service,
+                _FakeTelegramService(update_batches=[(
+                    TelegramInboundMessage(update_id=929, chat_id="chat-1", text="/asklast add CSV output", sender_label="@tester"),
+                )]),
+            )
+            self.assertIn("Can't use /asklast right now.", reply)
+            self.assertIn("No recent run result is available for improvement", reply)
+            self.assertIn("Use /run <approved command> first or /askctx <context_id> <change request>.", reply)
 
     def test_generated_project_file_context_edit_loop_patches_and_runs_isolated_cli(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -364,6 +443,7 @@ class BoundedCliEditLoopTests(unittest.TestCase):
                 )]),
             )
             self.assertIn("Command: main generated/GP-7A31C2", run_reply)
+            self.assertIn("Target: generated/GP-7A31C2", run_reply)
             self.assertEqual(len(fake_runner.calls), 1)
             self.assertEqual(fake_runner.calls[0][0][1:], ("generated/GP-7A31C2/src/main.py", "generated/GP-7A31C2"))
 

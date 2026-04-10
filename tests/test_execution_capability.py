@@ -277,9 +277,19 @@ class ExecutionCapabilityTests(unittest.TestCase):
                 )]
             )
             last_reply = self._run_single_update(service, last_tg)
+            last_run = service.latest_run_for_chat(chat_id="chat-1")
             self.assertIn("Action: run completed", last_reply)
             self.assertIn("Command: main .", last_reply)
+            self.assertIn("Target: .", last_reply)
             self.assertIn("Exit code: 0", last_reply)
+            self.assertIsNotNone(last_run)
+            self.assertEqual(last_run.command_label, "main")
+            self.assertEqual(last_run.target_root, ".")
+            self.assertEqual(last_run.entrypoint_path, "src/main.py")
+            self.assertEqual(last_run.exit_code, 0)
+            self.assertEqual(last_run.stdout_preview, "Scanning: .")
+            self.assertEqual(last_run.stderr_preview, "")
+            self.assertTrue(last_run.is_patch_relevant)
 
     def test_run_main_alias_without_argument_executes_expected_argv(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -350,11 +360,21 @@ class ExecutionCapabilityTests(unittest.TestCase):
                 )]
             )
             confirm_reply = self._run_single_update(service, confirm_tg)
+            last_run = service.latest_run_for_chat(chat_id="chat-1")
 
             self.assertEqual(len(fake_runner.calls), 1)
             self.assertEqual(fake_runner.calls[0][0][1:], ("generated/GP-7A31C2/src/main.py", "generated/GP-7A31C2"))
             self.assertIn("Command: main generated/GP-7A31C2", confirm_reply)
+            self.assertIn("Target: generated/GP-7A31C2", confirm_reply)
             self.assertIn("Summary: Scanning: generated/GP-7A31C2", confirm_reply)
+            self.assertIsNotNone(last_run)
+            self.assertEqual(last_run.command_label, "main")
+            self.assertEqual(last_run.target_root, "generated/GP-7A31C2")
+            self.assertEqual(last_run.entrypoint_path, "generated/GP-7A31C2/src/main.py")
+            self.assertEqual(last_run.exit_code, 0)
+            self.assertEqual(last_run.stdout_preview, "Scanning: generated/GP-7A31C2")
+            self.assertEqual(last_run.stderr_preview, "")
+            self.assertTrue(last_run.is_patch_relevant)
 
     def test_run_main_alias_rejects_missing_entrypoint_and_multiple_args(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
