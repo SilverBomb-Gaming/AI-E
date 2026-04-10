@@ -56,6 +56,8 @@ class AiEChatCli:
 
     def run(self) -> int:
         self._configure_history()
+        if self._debug:
+            self._write("Debug routing enabled.")
         self._write("AI-E CLI Chat initialized.")
         self._write("Type 'exit' to quit.")
         try:
@@ -166,11 +168,21 @@ class AiEChatCli:
         pending = self._service.latest_pending_confirmation_for_chat(chat_id=self._chat_id)
         if self._is_apply_request(lowered):
             if not self._working.last_patch_target:
+                bundle = self._service.active_feature_bundle_for_chat(chat_id=self._chat_id)
+                if bundle is not None and bundle.state == "proposed":
+                    result = self._service.execute_local_chat_input(
+                        text="/featureapply",
+                        chat_id=self._chat_id,
+                        sender_label=self._sender_label,
+                    )
+                    self._update_working_context(original_input=stripped, effective_input="/featureapply", result=result)
+                    self._display_result(result)
+                    return None
                 self._display_local_message(
                     heading="AI-E:",
                     lines=(
                         "No prepared patch target is set.",
-                        "Next: use /file <relative_path> and request a bounded change first.",
+                        "Next: use /file <relative_path> and request a bounded change first, or prepare a bounded multi-file feature bundle.",
                     ),
                 )
                 return None
@@ -247,12 +259,17 @@ class AiEChatCli:
     def _display_local_context(self) -> None:
         pending = self._service.latest_pending_confirmation_for_chat(chat_id=self._chat_id)
         patch = self._service.latest_pending_patch_draft_for_chat(chat_id=self._chat_id)
+        bundle = self._service.active_feature_bundle_for_chat(chat_id=self._chat_id)
         lines = ["CLI context"]
         lines.append(f"Working file: {self._working.working_file_path or '-'}")
         lines.append(f"Working file context: {self._working.working_file_context_id or '-'}")
         lines.append(f"Current run target: {self._working.current_run_target or '-'}")
         patch_target = self._working.last_patch_target or (patch.relative_path if patch is not None else "")
         lines.append(f"Last patch target: {patch_target or '-'}")
+        if bundle is None:
+            lines.append("Feature bundle: -")
+        else:
+            lines.append(f"Feature bundle: {bundle.bundle_id} {bundle.state}")
         lines.append(f"Last executable target: {self._working.last_executable_target or '-'}")
         lines.append(f"Last confirmed target: {self._working.last_confirmed_target or '-'}")
         if pending is None:
@@ -368,6 +385,10 @@ class AiEChatCli:
                 self._write(f"[CONFIDENCE: {confidence}]")
             if route:
                 self._write(f"[ROUTE: {route}]")
+            self._write(f"[COMMAND: {result.command_label}]")
+            routed_capability = self._routed_capability_label(result)
+            if routed_capability:
+                self._write(f"[ROUTED CAPABILITY: {routed_capability}]")
             self._write(f"[OUTCOME: {result.outcome} / {result.outcome_reason_code}]")
         self._write("")
 
@@ -416,7 +437,16 @@ class AiEChatCli:
         return route
 
     @staticmethod
+    def _routed_capability_label(result: CapabilityExecutionResult) -> str:
+        routed = str(result.telemetry.get("routed_capability_id") or "").strip()
+        if not routed or routed == result.capability_id:
+            return ""
+        return routed
+
+    @staticmethod
     def _action_tag(result: CapabilityExecutionResult, intent: str) -> str:
+        if result.telemetry.get("feature_bundle"):
+            return "FEATURE BUNDLE"
         routed_capability = str(result.telemetry.get("routed_capability_id") or result.capability_id)
         if result.outcome == "confirmation_required":
             if routed_capability in {"shell.command.run", "test.command.run"}:
@@ -437,6 +467,7 @@ class AiEChatCli:
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run the local AI-E CLI chat interface.")
     parser.add_argument("--debug", action="store_true", help="Show intent confidence, route decisions, and exception traces.")
+    parser.add_argument("--debug-routing", action="store_true", help="Alias for --debug focused on routed CLI diagnostics.")
     parser.add_argument("--chat-id", default="local-cli", help="Session chat id used for local context and confirmation tracking.")
     parser.add_argument("--sender-label", default="local-cli", help="Display label recorded for local requests.")
     return parser
@@ -452,5 +483,5 @@ def main(argv: list[str] | None = None, *, stdout: TextIO | None = None) -> int:
             return
         stdout.write(f"{line}\n")
 
-    cli = AiEChatCli(debug=args.debug, chat_id=args.chat_id, sender_label=args.sender_label, output_func=emit)
+    cli = AiEChatCli(debug=args.debug or args.debug_routing, chat_id=args.chat_id, sender_label=args.sender_label, output_func=emit)
     return cli.run()

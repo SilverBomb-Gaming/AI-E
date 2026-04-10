@@ -100,6 +100,8 @@ class CapabilityEvaluator:
             "build.bootstrap.propose.read",
             "build.bootstrap.view.read",
             "build.bootstrap.reset.query",
+            "build.feature.status.read",
+            "build.feature.apply.query",
             "build.plan.view.read",
             "build.plan.clear.read",
             "mode.read",

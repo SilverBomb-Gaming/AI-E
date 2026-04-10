@@ -228,6 +228,10 @@ class CapabilityExecutor:
             return self._execute_file_patch(update=update, snapshot=snapshot, argument=parsed_command.argument)
         if command == "/writefile":
             return self._execute_file_replace(update=update, snapshot=snapshot, argument=parsed_command.argument)
+        if command == "/featurestatus":
+            return self._execute_feature_status(update=update, snapshot=snapshot)
+        if command == "/featureapply":
+            return self._execute_feature_apply(update=update, snapshot=snapshot)
         if command == "/run":
             return self._execute_run_command(update=update, snapshot=snapshot, argument=parsed_command.argument)
         if command == "/test":
@@ -724,6 +728,44 @@ class CapabilityExecutor:
                 command_label=entry_command_label,
                 activity_state="processing_command",
             )
+        feature_decision = self._service.plan_feature_bundle_for_chat(chat_id=update.chat_id, prompt=prompt)
+        if feature_decision.kind == "planned" and feature_decision.bundle is not None:
+            bundle = feature_decision.bundle
+            return self._result(
+                request,
+                outcome="success",
+                reason_code="ok",
+                user_message=self._service._feature_bundle_formatter.format_proposal(bundle),
+                internal_summary=f"{entry_capability_id} prepared bounded feature bundle {bundle.bundle_id} for review.",
+                retryable=False,
+                command_label=entry_command_label,
+                activity_state="processing_command",
+                telemetry={
+                    "feature_bundle_id": bundle.bundle_id,
+                    "feature_bundle_state": bundle.state,
+                    "feature_bundle": bundle.to_payload(),
+                    "routed_capability_id": "build.feature.status.read",
+                    "routed_command_label": "/featurestatus",
+                },
+            )
+        if feature_decision.kind == "refused":
+            return self._result(
+                request,
+                outcome="success",
+                reason_code="feature_bundle_refused",
+                user_message=self._service._feature_bundle_formatter.format_refusal(
+                    reason=feature_decision.refusal_reason,
+                    next_step=feature_decision.next_step,
+                ),
+                internal_summary=f"{entry_capability_id} refused bounded multi-file planning: {feature_decision.refusal_reason}",
+                retryable=False,
+                command_label=entry_command_label,
+                activity_state="processing_command",
+                telemetry={
+                    "feature_bundle_refusal_reason": feature_decision.refusal_reason,
+                    "feature_bundle_next_step": feature_decision.next_step,
+                },
+            )
         session = self._service._intent_store.get_active(chat_id=update.chat_id)
         plan = self._service._build_plan_store.get_active(chat_id=update.chat_id)
         bridge_state = self._service._plan_bridge_store.get_active(chat_id=update.chat_id)
@@ -832,6 +874,233 @@ class CapabilityExecutor:
                 "routed_capability_id": inner_result.capability_id,
                 "routed_command_label": route_decision.route_command,
                 "routed_telemetry": dict(inner_result.telemetry),
+            },
+        )
+
+    def _execute_feature_status(
+        self,
+        *,
+        update: TelegramInboundMessage,
+        snapshot: ControllerSnapshot,
+    ) -> CapabilityExecutionResult:
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="build.feature.status.read",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/featurestatus",
+            parsed_arguments={},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        bundle = self._service.active_feature_bundle_for_chat(chat_id=update.chat_id)
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=self._service.feature_bundle_status_reply(chat_id=update.chat_id),
+            internal_summary="Returned active bounded feature bundle status." if bundle is not None else "No active bounded feature bundle is available.",
+            retryable=False,
+            command_label="/featurestatus",
+            activity_state="processing_command",
+            telemetry={
+                "feature_bundle_active": bool(bundle is not None),
+                "feature_bundle_id": bundle.bundle_id if bundle is not None else "",
+                "feature_bundle_state": bundle.state if bundle is not None else "",
+                "feature_bundle": bundle.to_payload() if bundle is not None else {},
+            },
+        )
+
+    def _execute_feature_apply(
+        self,
+        *,
+        update: TelegramInboundMessage,
+        snapshot: ControllerSnapshot,
+    ) -> CapabilityExecutionResult:
+        request, evaluation, context, scope_failure = self._prepare_capability_request(
+            capability_id="build.feature.apply.query",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/featureapply",
+            parsed_arguments={},
+            metadata={
+                "argument_summary": "/featureapply",
+            },
+        )
+        if scope_failure is not None:
+            return scope_failure
+        bundle = self._service.active_feature_bundle_for_chat(chat_id=update.chat_id)
+        if bundle is None:
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="no_active_feature_bundle",
+                user_message=self._service._feature_bundle_formatter.format_no_active_bundle(),
+                internal_summary="/featureapply rejected because no active feature bundle exists.",
+                retryable=False,
+                command_label="/featureapply",
+                activity_state="processing_command",
+            )
+        if bundle.state != "proposed":
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="feature_bundle_not_proposed",
+                user_message="\n".join(
+                    (
+                        f"Feature bundle {bundle.bundle_id} is not awaiting apply approval.",
+                        f"State: {bundle.state}",
+                        "Next: use /featurestatus to inspect the current bundle state or send a new bounded feature request.",
+                    )
+                ),
+                internal_summary=f"/featureapply rejected because feature bundle {bundle.bundle_id} is {bundle.state}.",
+                retryable=False,
+                command_label="/featureapply",
+                activity_state="processing_command",
+                telemetry={
+                    "feature_bundle_id": bundle.bundle_id,
+                    "feature_bundle_state": bundle.state,
+                },
+            )
+        editable_paths = tuple(item.relative_path for item in bundle.editable_files())
+        if not editable_paths:
+            return self._result(
+                request,
+                outcome="failed",
+                reason_code="feature_bundle_missing_editable_files",
+                user_message="Feature bundle has no editable files to apply.\nNext: send a fresh bounded feature request.",
+                internal_summary=f"/featureapply failed because bundle {bundle.bundle_id} had no editable files.",
+                retryable=False,
+                command_label="/featureapply",
+                activity_state="provider_failed",
+            )
+        request.metadata.update(
+            {
+                "confirmation_action_label": f"apply feature bundle {bundle.bundle_id} ({len(editable_paths)} files)",
+                "confirmation_preview_lines": [
+                    f"Bundle: {bundle.bundle_id}",
+                    f"Feature: {bundle.feature_title}",
+                    *(f"File: {path}" for path in editable_paths),
+                    *((f"Validation: {bundle.validation_plan.command_text}",) if bundle.validation_plan is not None else ()),
+                ],
+                "confirmation_metadata": {
+                    "feature_bundle_id": bundle.bundle_id,
+                    "feature_title": bundle.feature_title,
+                },
+            }
+        )
+        return self._confirmation_required_result(
+            request=request,
+            evaluation=evaluation,
+            context=context,
+            snapshot=snapshot,
+            prompt=bundle.bundle_id,
+            response_style="concise",
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+        )
+
+    def _execute_confirmed_feature_bundle_apply(
+        self,
+        *,
+        request: CapabilityExecutionRequest,
+        confirmation: PendingConfirmation,
+        chat_id: str,
+    ) -> CapabilityExecutionResult:
+        bundle_id = str(confirmation.metadata.get("feature_bundle_id") or confirmation.prompt_text).strip()
+        bundle = self._service.active_feature_bundle_for_chat(chat_id=chat_id)
+        if bundle is None or bundle.bundle_id != bundle_id:
+            return self._result(
+                request,
+                outcome="failed",
+                reason_code="feature_bundle_missing",
+                user_message="\n".join(
+                    (
+                        f"Feature bundle {bundle_id or confirmation.confirmation_id} could not be applied.",
+                        "Reason: The active bundle no longer matches the approved request.",
+                        "Next: use /featurestatus to inspect state or send the bounded feature request again.",
+                    )
+                ),
+                internal_summary=f"Confirmation {confirmation.confirmation_id} failed because feature bundle {bundle_id or '?'} was missing.",
+                retryable=False,
+                command_label="/confirm",
+                activity_state="provider_failed",
+                confirmation_used=True,
+            )
+        applying_bundle = bundle.with_state(
+            "applying",
+            updated_at=self._service._now_iso(),
+            apply_summary=f"Applying {len(bundle.editable_files())} editable files.",
+            stop_reason="",
+        )
+        self._service.set_active_feature_bundle(chat_id=chat_id, bundle=applying_bundle)
+        applied_files: list[str] = []
+        try:
+            for item in applying_bundle.editable_files():
+                parsed = parse_patch_command(item.patch_argument)
+                relative_path, target_path, _, resolve_code, resolve_message = self._service.resolve_file_request(parsed.relative_path)
+                if resolve_code != "file_target_ready":
+                    raise FileMutatorError(resolve_code, resolve_message)
+                self._service._file_mutator.apply_patch(
+                    FilePatchMutationRequest(
+                        target_path=target_path,
+                        display_path=relative_path,
+                        operator_reason=parsed.operator_reason,
+                        expected_base_hash=parsed.expected_base_hash,
+                        operations=parsed.operations,
+                    )
+                )
+                applied_files.append(relative_path)
+        except FileMutatorError as exc:
+            failed_bundle = applying_bundle.with_state(
+                "failed",
+                updated_at=self._service._now_iso(),
+                applied_files=tuple(applied_files),
+                apply_summary=f"Stopped after {len(applied_files)} editable files.",
+                stop_reason=exc.message,
+            )
+            self._service.set_active_feature_bundle(chat_id=chat_id, bundle=failed_bundle)
+            return self._result(
+                request,
+                outcome="failed",
+                reason_code=exc.code,
+                user_message=self._service._feature_bundle_formatter.format_apply_failure(
+                    failed_bundle,
+                    detail=f"{exc.code}: {exc.message}",
+                ),
+                internal_summary=f"Confirmation {confirmation.confirmation_id} failed while applying feature bundle {failed_bundle.bundle_id}: {exc.code}.",
+                retryable=False,
+                command_label="/confirm",
+                activity_state="provider_failed",
+                confirmation_used=True,
+                telemetry={
+                    "feature_bundle_id": failed_bundle.bundle_id,
+                    "feature_bundle_state": failed_bundle.state,
+                    "feature_bundle": failed_bundle.to_payload(),
+                },
+            )
+        applied_bundle = applying_bundle.with_state(
+            "applied",
+            updated_at=self._service._now_iso(),
+            applied_files=tuple(applied_files),
+            apply_summary=f"Applied {len(applied_files)} editable files.",
+        )
+        self._service.set_active_feature_bundle(chat_id=chat_id, bundle=applied_bundle)
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=self._service._feature_bundle_formatter.format_apply_success(applied_bundle),
+            internal_summary=f"Confirmation {confirmation.confirmation_id} applied feature bundle {applied_bundle.bundle_id}.",
+            retryable=False,
+            command_label="/confirm",
+            activity_state="processing_command",
+            confirmation_used=True,
+            telemetry={
+                "feature_bundle_id": applied_bundle.bundle_id,
+                "feature_bundle_state": applied_bundle.state,
+                "feature_bundle": applied_bundle.to_payload(),
             },
         )
 
@@ -4458,6 +4727,13 @@ class CapabilityExecutor:
         if command_result.timed_out:
             if request.capability_id == "shell.command.run":
                 self._service.set_latest_run_for_chat(chat_id=request.chat_id, record=last_run_record)
+            self._service.record_feature_bundle_validation_result(
+                chat_id=request.chat_id,
+                command_text=command_result.request.command_summary,
+                outcome="timed_out",
+                output_summary=command_result.output_summary,
+                first_issue=command_result.first_issue,
+            )
             self._service._last_confirmation_result = f"Confirmation {confirmation.confirmation_id} timed out via bounded execution."
             lines = [
                 f"Confirmation {confirmation.confirmation_id} approved.",
@@ -4499,6 +4775,13 @@ class CapabilityExecutor:
             lines.append(f"First issue: {command_result.first_issue}")
         if request.capability_id == "shell.command.run":
             self._service.set_latest_run_for_chat(chat_id=request.chat_id, record=last_run_record)
+        self._service.record_feature_bundle_validation_result(
+            chat_id=request.chat_id,
+            command_text=command_result.request.command_summary,
+            outcome=outcome,
+            output_summary=command_result.output_summary,
+            first_issue=command_result.first_issue,
+        )
         if outcome == "success" and request.capability_id == "shell.command.run" and command_result.request.command_summary.startswith("main"):
             context_content = "\n".join(lines[1:])
             context_entry = self._service.create_context_buffer(
@@ -5363,6 +5646,12 @@ class CapabilityExecutor:
                 request=request,
                 confirmation=confirmation,
                 snapshot=snapshot,
+                chat_id=chat_id,
+            )
+        if confirmation.capability_id == "build.feature.apply.query":
+            return self._execute_confirmed_feature_bundle_apply(
+                request=request,
+                confirmation=confirmation,
                 chat_id=chat_id,
             )
         if confirmation.capability_id == "shell.command.run":

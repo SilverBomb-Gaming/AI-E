@@ -23,6 +23,10 @@ from .generated_project_models import GeneratedProjectRecord
 from .generated_project_store import GeneratedProjectStore
 from .last_run_models import LastRunRecord
 from .last_run_store import LastRunStore
+from .feature_bundle_formatter import FeatureBundleFormatter
+from .feature_bundle_models import FeatureBundleRecord
+from .feature_bundle_store import FeatureBundleStore
+from .multi_file_feature_planner import FeaturePlanningDecision, MultiFileFeaturePlanner
 from .project_bootstrap_formatter import ProjectBootstrapFormatter
 from .project_bootstrap_planner import ProjectBootstrapPlanner
 from .project_bootstrap_store import ProjectBootstrapStore
@@ -206,6 +210,8 @@ class ControllerService:
         self._build_plan_formatter = BuildPlanFormatter()
         self._project_bootstrap_planner = ProjectBootstrapPlanner()
         self._project_bootstrap_formatter = ProjectBootstrapFormatter()
+        self._feature_bundle_planner = MultiFileFeaturePlanner()
+        self._feature_bundle_formatter = FeatureBundleFormatter()
         self._plan_bridge = PlanBridge()
         self._plan_bridge_formatter = PlanBridgeFormatter(self._plan_bridge)
         self._autonomy_bundle = AutonomyBundle(self._plan_bridge)
@@ -257,6 +263,7 @@ class ControllerService:
         self._build_plan_store = BuildPlanStore()
         self._project_bootstrap_store = ProjectBootstrapStore()
         self._generated_project_store = GeneratedProjectStore()
+        self._feature_bundle_store = FeatureBundleStore()
         self._last_run_store = LastRunStore()
         self._plan_bridge_store = PlanBridgeStore()
         self._autonomy_bundle_store = AutonomyBundleStore()
@@ -1432,6 +1439,67 @@ class ControllerService:
             created_at_utc=draft.created_at_utc,
         )
 
+    def active_feature_bundle_for_chat(self, *, chat_id: str) -> FeatureBundleRecord | None:
+        return self._feature_bundle_store.get_active(chat_id=chat_id)
+
+    def set_active_feature_bundle(self, *, chat_id: str, bundle: FeatureBundleRecord) -> None:
+        self._feature_bundle_store.set_active(chat_id=chat_id, bundle=bundle)
+
+    def clear_active_feature_bundle(self, *, chat_id: str) -> FeatureBundleRecord | None:
+        return self._feature_bundle_store.clear_active(chat_id=chat_id)
+
+    def plan_feature_bundle_for_chat(self, *, chat_id: str, prompt: str) -> FeaturePlanningDecision:
+        decision = self._feature_bundle_planner.plan(
+            bundle_id=self._generate_feature_bundle_id(),
+            prompt=prompt,
+            timestamp=self._now_iso(),
+            read_text=self._read_repo_text_for_feature_planner,
+            path_exists=self._repo_path_exists_for_feature_planner,
+        )
+        if decision.bundle is not None:
+            self._feature_bundle_store.set_active(chat_id=chat_id, bundle=decision.bundle)
+        return decision
+
+    def feature_bundle_status_reply(self, *, chat_id: str) -> str:
+        bundle = self.active_feature_bundle_for_chat(chat_id=chat_id)
+        if bundle is None:
+            return self._feature_bundle_formatter.format_no_active_bundle()
+        return self._feature_bundle_formatter.format_status(bundle)
+
+    def record_feature_bundle_validation_result(
+        self,
+        *,
+        chat_id: str,
+        command_text: str,
+        outcome: str,
+        output_summary: str,
+        first_issue: str = "",
+    ) -> None:
+        bundle = self.active_feature_bundle_for_chat(chat_id=chat_id)
+        if bundle is None or bundle.validation_plan is None:
+            return
+        if self._normalize_feature_validation_command(command_text) != self._normalize_feature_validation_command(bundle.validation_plan.command_text):
+            return
+        validation_state_map = {
+            "success": "passed",
+            "failed": "failed",
+            "timed_out": "timed_out",
+        }
+        validation_state = validation_state_map.get(outcome)
+        if validation_state is None:
+            return
+        summary = self._summarize_text(output_summary or first_issue or f"Validation {outcome}.", limit=180)
+        if first_issue:
+            summary = self._summarize_text(f"{summary} First issue: {first_issue}", limit=180)
+        next_state = "validated" if validation_state == "passed" else "invalidated"
+        updated = bundle.with_validation(
+            validation_state=validation_state,
+            updated_at=self._now_iso(),
+            validation_summary=summary,
+            state=next_state,
+        )
+        self._feature_bundle_store.set_active(chat_id=chat_id, bundle=updated)
+
     def validate_main_run_target(self, *, target: str) -> tuple[str, bool, str]:
         normalized_target = " ".join(target.split())
         if not normalized_target:
@@ -1892,6 +1960,7 @@ class ControllerService:
                     "Bundle: /planstepbundle /bundleapprove|status|cancel",
                     "Boot: /bootstrapproject|view|/bootstrapapprove|reset",
                     "Files: /repo|file /createfile|patchlast|patchfile|/writefile",
+                    "Feature: /featurestatus|featureapply",
                     "Exec: /startruntime /run|/test /nodes|nodeview|nodeselect|nodeclear",
                     "Trust: /capabilities|audit|clearcontext /contexts",
                     "Ask: /ask|askd|asklast|askctx",
@@ -1925,6 +1994,41 @@ class ControllerService:
             reply=chr(10).join(lines),
             command_label="/lastaction",
         )
+
+    def _generate_feature_bundle_id(self) -> str:
+        return f"FB-{secrets.token_hex(3).upper()}"
+
+    def _read_repo_text_for_feature_planner(self, relative_path: str) -> str | None:
+        resolved = self._resolve_repo_relative_path_for_feature_planner(relative_path)
+        if resolved is None or not resolved.exists() or not resolved.is_file():
+            return None
+        try:
+            return resolved.read_text(encoding="utf-8")
+        except OSError:
+            return None
+
+    def _repo_path_exists_for_feature_planner(self, relative_path: str) -> bool:
+        resolved = self._resolve_repo_relative_path_for_feature_planner(relative_path)
+        return bool(resolved is not None and resolved.exists())
+
+    def _resolve_repo_relative_path_for_feature_planner(self, relative_path: str) -> Path | None:
+        normalized = relative_path.strip().replace("\\", "/")
+        if not normalized:
+            return None
+        repo_root, repo_root_valid, _, _ = self._repo_configuration_state()
+        if not repo_root_valid:
+            return None
+        try:
+            resolved_root = Path(repo_root).resolve()
+            candidate = (resolved_root / normalized).resolve(strict=False)
+            candidate.relative_to(resolved_root)
+        except (OSError, ValueError):
+            return None
+        return candidate
+
+    @staticmethod
+    def _normalize_feature_validation_command(command_text: str) -> str:
+        return " ".join(command_text.strip().split()).lower()
 
     def _last_action_lines(self, *, result: CapabilityExecutionResult, last_run: LastRunRecord | None) -> tuple[str, ...]:
         telemetry = result.telemetry

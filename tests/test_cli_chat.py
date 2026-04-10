@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from app.cli.chat_cli import AiEChatCli
+from app.cli.chat_cli import AiEChatCli, build_arg_parser
 from app.controller.app_service import ControllerService
 from app.controller.execution_runner import ExecutionRunner
 from app.controller.last_run_models import LastRunRecord
@@ -65,6 +65,18 @@ class LocalCliChatTests(unittest.TestCase):
         config_store.save(config)
         service._config = config_store.load()
 
+    @staticmethod
+    def _build_feature_bundle_repo(root: Path) -> None:
+        source_root = Path(__file__).resolve().parents[1]
+        targets = (
+            (source_root / "app" / "cli" / "chat.py", root / "app" / "cli" / "chat.py"),
+            (source_root / "app" / "cli" / "chat_cli.py", root / "app" / "cli" / "chat_cli.py"),
+            (source_root / "tests" / "test_cli_chat.py", root / "tests" / "test_cli_chat.py"),
+        )
+        for source_path, destination_path in targets:
+            destination_path.parent.mkdir(parents=True, exist_ok=True)
+            destination_path.write_text(source_path.read_text(encoding="utf-8"), encoding="utf-8")
+
     def test_cli_debug_shows_shared_status_routing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             service, _, _ = self._make_service(tmp_dir=tmp)
@@ -78,7 +90,17 @@ class LocalCliChatTests(unittest.TestCase):
             joined = "\n".join(output)
             self.assertIn("[INTENT: STATUS_OR_CONTEXT]", joined)
             self.assertIn("[ROUTE: /status]", joined)
+            self.assertIn("[COMMAND: plain_text]", joined)
+            self.assertIn("[ROUTED CAPABILITY: status.read]", joined)
             self.assertIn("Readiness:", joined)
+
+    def test_build_arg_parser_accepts_debug_routing_alias(self) -> None:
+        parser = build_arg_parser()
+
+        args = parser.parse_args(["--debug-routing"])
+
+        self.assertFalse(args.debug)
+        self.assertTrue(args.debug_routing)
 
     def test_cli_execution_requests_confirmation_before_running(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -268,3 +290,39 @@ class LocalCliChatTests(unittest.TestCase):
             joined = "\n".join(output)
             self.assertIn("Execution is already pending for generated/GP-123.", joined)
             self.assertIn("type y to approve", joined.lower())
+
+    def test_cli_feature_bundle_plan_apply_and_validate_flow(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "workspace"
+            self._build_feature_bundle_repo(root)
+            runner = _FakeCommandRunner(
+                subprocess.CompletedProcess(
+                    ["pytest", "tests/test_cli_chat.py::LocalCliChatTests::test_cli_debug_shows_shared_status_routing"],
+                    0,
+                    "1 passed\n",
+                    "",
+                )
+            )
+            service, config_store, fake_runner = self._make_service(tmp_dir=tmp, command_runner=runner)
+            self._configure_repo_root(service=service, config_store=config_store, root=root)
+            output: list[str] = []
+            cli = AiEChatCli(service=service, input_func=_PromptDriver(), output_func=output.append, debug=True)
+
+            self.assertTrue(cli.handle_line("show feature bundle id in the cli debug output"))
+            self.assertTrue(cli.handle_line("apply it"))
+            self.assertTrue(cli.handle_line("y"))
+            self.assertTrue(cli.handle_line("/run pytest tests/test_cli_chat.py::LocalCliChatTests::test_cli_debug_shows_shared_status_routing"))
+            self.assertTrue(cli.handle_line("y"))
+            self.assertTrue(cli.handle_line("/featurestatus"))
+
+            joined = "\n".join(output)
+            self.assertIn("[FEATURE BUNDLE]", joined)
+            self.assertIn("Action requires confirmation.", joined)
+            self.assertIn("Feature bundle applied.", joined)
+            self.assertIn("Validation: passed", joined)
+            self.assertEqual(len(fake_runner.calls), 1)
+            updated_cli = (root / "app" / "cli" / "chat_cli.py").read_text(encoding="utf-8")
+            updated_tests = (root / "tests" / "test_cli_chat.py").read_text(encoding="utf-8")
+            self.assertIn("FEATURE BUNDLE ID", updated_cli)
+            self.assertIn("_feature_bundle_id_label", updated_cli)
+            self.assertIn("show feature bundle id in the cli debug output", updated_tests)

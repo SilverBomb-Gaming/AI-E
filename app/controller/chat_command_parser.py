@@ -65,6 +65,8 @@ def parse_chat_command(*, text: str, has_text: bool = True) -> ParsedChatCommand
         "/patchlast",
         "/patchfile",
         "/writefile",
+        "/featurestatus",
+        "/featureapply",
         "/run",
         "/test",
         "/web",
@@ -96,6 +98,8 @@ def parse_chat_command(*, text: str, has_text: bool = True) -> ParsedChatCommand
         return ParsedChatCommand(command_label="parse_failure", normalized_text=normalized_text, usage_hint="Use /patchfile <relative_path> with @@ FIND / @@ REPLACE blocks.")
     if command.startswith("/writefile"):
         return ParsedChatCommand(command_label="parse_failure", normalized_text=normalized_text, usage_hint="Use /writefile <relative_path> with @@ CONTENT.")
+    if command.startswith("/featurestatus") or command.startswith("/featureapply"):
+        return ParsedChatCommand(command_label="parse_failure", normalized_text=normalized_text, usage_hint="Use /featurestatus or /featureapply.")
     if command.startswith("/run"):
         return ParsedChatCommand(command_label="parse_failure", normalized_text=normalized_text, usage_hint="Use /run <bounded command>.")
     if command.startswith("/test"):
