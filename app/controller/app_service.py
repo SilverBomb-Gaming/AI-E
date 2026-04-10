@@ -52,6 +52,7 @@ from .node_registry import NodeRegistry
 from .node_router import NodeRouter
 from .diagnostics import ControllerDiagnosticsService
 from .chat_orchestrator import ChatOrchestrator
+from .chat_command_parser import ParsedChatCommand, parse_chat_command
 from .chat_ingress import ChatIngress
 from .models import ControllerSnapshot
 from .profile_store import ControllerConfig, ControllerConfigStore, Mode, Policy, ProviderType
@@ -138,12 +139,7 @@ class _TelegramResponsePlan:
     acknowledge_work: bool = False
 
 
-@dataclass(frozen=True)
-class _ParsedTelegramCommand:
-    command_label: str
-    argument: str = ""
-    normalized_text: str = ""
-    usage_hint: str = ""
+_ParsedTelegramCommand = ParsedChatCommand
 
 
 @dataclass(frozen=True)
@@ -1721,6 +1717,34 @@ class ControllerService:
         self._remember_execution_result(result)
         return self._plan_from_execution_result(result)
 
+    def execute_local_chat_input(
+        self,
+        *,
+        text: str,
+        chat_id: str = "local-cli",
+        sender_label: str = "local-cli",
+    ) -> CapabilityExecutionResult:
+        parsed = parse_chat_command(text=text, has_text=True)
+        update = TelegramInboundMessage(
+            update_id=0,
+            chat_id=chat_id,
+            text=text,
+            sender_label=sender_label,
+        )
+        batch_busy = parsed.command_label in _PROVIDER_ASK_COMMANDS and self._is_provider_chat_busy(chat_id)
+        result = self._capability_executor.execute_telegram(
+            update=update,
+            parsed_command=parsed,
+            snapshot=self.snapshot(),
+            batch_busy=batch_busy,
+        )
+        self._remember_execution_result(result)
+        self._log_command_processing(parsed=parsed, result=result)
+        return result
+
+    def latest_pending_confirmation_for_chat(self, *, chat_id: str) -> PendingConfirmation | None:
+        return self._confirmation_store.latest_pending(chat_id=chat_id)
+
     def _remember_execution_result(self, result: CapabilityExecutionResult) -> None:
         self._last_execution_result = result
         self._remember_loop_execution_result(result)
@@ -2397,286 +2421,7 @@ class ControllerService:
 
     @staticmethod
     def _parse_telegram_command(update: TelegramInboundMessage) -> _ParsedTelegramCommand:
-        if not update.has_text:
-            return _ParsedTelegramCommand(command_label="non_text")
-        text = update.text.strip()
-        if not text:
-            return _ParsedTelegramCommand(command_label="plain_text")
-        if not text.startswith("/"):
-            return _ParsedTelegramCommand(command_label="plain_text", normalized_text=" ".join(text.split()))
-        parts = text.split(None, 1)
-        command_token = parts[0]
-        argument = parts[1].strip() if len(parts) > 1 else ""
-        command = command_token.split("@", 1)[0].lower()
-        normalized_text = " ".join(text.split())
-        if command in {
-            "/start",
-            "/help",
-            "/startruntime",
-            "/nodes",
-            "/nodeview",
-            "/nodeselect",
-            "/nodeclear",
-            "/status",
-            "/lastaction",
-            "/chat",
-            "/translate",
-            "/refine",
-            "/translateview",
-            "/translateclear",
-            "/planbuild",
-            "/bootstrapproject",
-            "/bootstrapview",
-            "/bootstrapapprove",
-            "/bootstrapreset",
-            "/planstep",
-            "/planapprove",
-            "/planstatus",
-            "/planresetstep",
-            "/planstepbundle",
-            "/bundleapprove",
-            "/bundlestatus",
-            "/bundlecancel",
-            "/bundlereset",
-            "/planview",
-            "/planclear",
-            "/bootstrapproject",
-            "/bootstrapview",
-            "/bootstrapapprove",
-            "/bootstrapreset",
-            "/projectview",
-            "/mode",
-            "/models",
-            "/repo",
-            "/file",
-            "/createfile",
-            "/patchlast",
-            "/patchfile",
-            "/writefile",
-            "/run",
-            "/test",
-            "/web",
-            "/contexts",
-            "/clearcontext",
-            "/capabilities",
-            "/audit",
-            "/confirm",
-            "/deny",
-            "/ask",
-            "/askd",
-            "/asklast",
-            "/askctx",
-            "/explainrepo",
-            "/explainfile",
-            "/summarizeweb",
-            "/workflows",
-            "/workflowstatus",
-            "/cancelworkflow",
-        }:
-            return _ParsedTelegramCommand(command_label=command, argument=argument, normalized_text=normalized_text)
-        if command.startswith("/file"):
-            return _ParsedTelegramCommand(
-                command_label="parse_failure",
-                normalized_text=normalized_text,
-                usage_hint="Use /file <relative_path>.",
-            )
-        if command.startswith("/createfile"):
-            return _ParsedTelegramCommand(
-                command_label="parse_failure",
-                normalized_text=normalized_text,
-                usage_hint="Use /createfile <relative_path> with @@ CONTENT.",
-            )
-        if command.startswith("/patchlast"):
-            return _ParsedTelegramCommand(
-                command_label="parse_failure",
-                normalized_text=normalized_text,
-                usage_hint="Use /patchlast <relative_path>.",
-            )
-        if command.startswith("/patchfile"):
-            return _ParsedTelegramCommand(
-                command_label="parse_failure",
-                normalized_text=normalized_text,
-                usage_hint="Use /patchfile <relative_path> with @@ FIND / @@ REPLACE blocks.",
-            )
-        if command.startswith("/writefile"):
-            return _ParsedTelegramCommand(
-                command_label="parse_failure",
-                normalized_text=normalized_text,
-                usage_hint="Use /writefile <relative_path> with @@ CONTENT.",
-            )
-        if command.startswith("/run"):
-            return _ParsedTelegramCommand(
-                command_label="parse_failure",
-                normalized_text=normalized_text,
-                usage_hint="Use /run <bounded command>.",
-            )
-        if command.startswith("/test"):
-            return _ParsedTelegramCommand(
-                command_label="parse_failure",
-                normalized_text=normalized_text,
-                usage_hint="Use /test or /test <module_or_path>.",
-            )
-        if command.startswith("/web"):
-            return _ParsedTelegramCommand(
-                command_label="parse_failure",
-                normalized_text=normalized_text,
-                usage_hint="Use /web <https://allowed-domain/path>.",
-            )
-        if command.startswith("/lastaction"):
-            return _ParsedTelegramCommand(
-                command_label="parse_failure",
-                normalized_text=normalized_text,
-                usage_hint="Use /lastaction.",
-            )
-        if command.startswith("/nodes") or command.startswith("/nodeclear"):
-            return _ParsedTelegramCommand(
-                command_label="parse_failure",
-                normalized_text=normalized_text,
-                usage_hint="Use /nodes, /nodeview <id>, /nodeselect <id>, or /nodeclear.",
-            )
-        if command.startswith("/nodeview") or command.startswith("/nodeselect"):
-            return _ParsedTelegramCommand(
-                command_label="parse_failure",
-                normalized_text=normalized_text,
-                usage_hint="Use /nodeview <id> or /nodeselect <id>.",
-            )
-        if command.startswith("/translate"):
-            return _ParsedTelegramCommand(
-                command_label="parse_failure",
-                normalized_text=normalized_text,
-                usage_hint="Use /translate <idea or request>.",
-            )
-        if command.startswith("/chat"):
-            return _ParsedTelegramCommand(
-                command_label="parse_failure",
-                normalized_text=normalized_text,
-                usage_hint="Use /chat <message>.",
-            )
-        if command.startswith("/refine"):
-            return _ParsedTelegramCommand(
-                command_label="parse_failure",
-                normalized_text=normalized_text,
-                usage_hint="Use /refine <clarification>.",
-            )
-        if command.startswith("/planbuild"):
-            return _ParsedTelegramCommand(
-                command_label="parse_failure",
-                normalized_text=normalized_text,
-                usage_hint="Use /planbuild after /translate or /refine.",
-            )
-        if command.startswith("/planstep") or command.startswith("/planapprove") or command.startswith("/planstatus") or command.startswith("/planresetstep"):
-            return _ParsedTelegramCommand(
-                command_label="parse_failure",
-                normalized_text=normalized_text,
-                usage_hint="Use /planstep, /planapprove, /planstatus, or /planresetstep.",
-            )
-        if command.startswith("/bootstrapproject") or command.startswith("/bootstrapview") or command.startswith("/bootstrapapprove") or command.startswith("/bootstrapreset"):
-            return _ParsedTelegramCommand(
-                command_label="parse_failure",
-                normalized_text=normalized_text,
-                usage_hint="Use /bootstrapproject, /bootstrapview, /bootstrapapprove, or /bootstrapreset.",
-            )
-        if command.startswith("/projectview"):
-            return _ParsedTelegramCommand(
-                command_label="parse_failure",
-                normalized_text=normalized_text,
-                usage_hint="Use /projectview.",
-            )
-        if command.startswith("/planstepbundle") or command.startswith("/bundleapprove") or command.startswith("/bundlestatus") or command.startswith("/bundlecancel") or command.startswith("/bundlereset"):
-            return _ParsedTelegramCommand(
-                command_label="parse_failure",
-                normalized_text=normalized_text,
-                usage_hint="Use /planstepbundle, /bundleapprove, /bundlestatus, /bundlecancel, or /bundlereset.",
-            )
-        if command.startswith("/planview") or command.startswith("/planclear"):
-            return _ParsedTelegramCommand(
-                command_label="parse_failure",
-                normalized_text=normalized_text,
-                usage_hint="Use /planview or /planclear.",
-            )
-        if command.startswith("/translateview") or command.startswith("/translateclear"):
-            return _ParsedTelegramCommand(
-                command_label="parse_failure",
-                normalized_text=normalized_text,
-                usage_hint="Use /translateview or /translateclear.",
-            )
-        if command.startswith("/repo"):
-            return _ParsedTelegramCommand(
-                command_label="parse_failure",
-                normalized_text=normalized_text,
-                usage_hint="Use /repo or /repo status.",
-            )
-        if command.startswith("/contexts") or command.startswith("/clearcontext"):
-            return _ParsedTelegramCommand(
-                command_label="parse_failure",
-                normalized_text=normalized_text,
-                usage_hint="Use /contexts or /clearcontext.",
-            )
-        if command.startswith("/asklast"):
-            return _ParsedTelegramCommand(
-                command_label="parse_failure",
-                normalized_text=normalized_text,
-                usage_hint="Use /asklast <prompt>.",
-            )
-        if command.startswith("/askctx"):
-            return _ParsedTelegramCommand(
-                command_label="parse_failure",
-                normalized_text=normalized_text,
-                usage_hint="Use /askctx <context_id> <prompt>.",
-            )
-        if command.startswith("/ask"):
-            return _ParsedTelegramCommand(
-                command_label="parse_failure",
-                normalized_text=normalized_text,
-                usage_hint="Use /ask <prompt> or /askd <prompt>.",
-            )
-        if command.startswith("/explainrepo"):
-            return _ParsedTelegramCommand(
-                command_label="parse_failure",
-                normalized_text=normalized_text,
-                usage_hint="Use /explainrepo or /explainrepo <relative_path>.",
-            )
-        if command.startswith("/explainfile"):
-            return _ParsedTelegramCommand(
-                command_label="parse_failure",
-                normalized_text=normalized_text,
-                usage_hint="Use /explainfile <relative_path>.",
-            )
-        if command.startswith("/summarizeweb"):
-            return _ParsedTelegramCommand(
-                command_label="parse_failure",
-                normalized_text=normalized_text,
-                usage_hint="Use /summarizeweb <https://allowed-domain/path>.",
-            )
-        if command.startswith("/workflows"):
-            return _ParsedTelegramCommand(
-                command_label="parse_failure",
-                normalized_text=normalized_text,
-                usage_hint="Use /workflows.",
-            )
-        if command.startswith("/workflowstatus"):
-            return _ParsedTelegramCommand(
-                command_label="parse_failure",
-                normalized_text=normalized_text,
-                usage_hint="Use /workflowstatus or /workflowstatus <workflow_id>.",
-            )
-        if command.startswith("/cancelworkflow"):
-            return _ParsedTelegramCommand(
-                command_label="parse_failure",
-                normalized_text=normalized_text,
-                usage_hint="Use /cancelworkflow or /cancelworkflow <workflow_id>.",
-            )
-        if command.startswith("/confirm") or command.startswith("/deny"):
-            return _ParsedTelegramCommand(
-                command_label="parse_failure",
-                normalized_text=normalized_text,
-                usage_hint="Use /confirm <id> or /deny <id>.",
-            )
-        return _ParsedTelegramCommand(
-            command_label="parse_failure",
-            normalized_text=normalized_text,
-            usage_hint="Use /help to see supported commands.",
-        )
+        return parse_chat_command(text=update.text, has_text=update.has_text)
 
     def _build_local_node(self) -> NodeDescriptor:
         hostname = socket.gethostname().strip() or "local-machine"

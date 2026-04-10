@@ -147,6 +147,18 @@ class ConfirmationStore:
                 if confirmation.current_state == "pending" and (chat_id is None or confirmation.chat_id == chat_id)
             )
 
+    def latest_pending(self, *, chat_id: str | None = None) -> PendingConfirmation | None:
+        with self._lock:
+            self.cleanup_expired()
+            pending = [
+                confirmation
+                for confirmation in self._items.values()
+                if confirmation.current_state == "pending" and (chat_id is None or confirmation.chat_id == chat_id)
+            ]
+            if not pending:
+                return None
+            return max(pending, key=lambda confirmation: confirmation.timestamp_created)
+
     def cleanup_expired(self) -> int:
         with self._lock:
             now = self._now()

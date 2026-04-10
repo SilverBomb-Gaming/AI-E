@@ -1,0 +1,1 @@
+"""Local CLI chat interface for AI-E."""
