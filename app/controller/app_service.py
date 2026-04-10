@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 import secrets
 import socket
 import threading
 import time
+from typing import Callable
 from urllib.parse import urlparse
 
 from .audit_models import AuditRecord
@@ -56,6 +57,7 @@ from .workflow_executor import WorkflowExecutor
 from .workflow_models import WorkflowRecord
 from .workflow_store import WorkflowStore
 from .repo_inspector import RepoInspectionSnapshot, RepoInspector, RepoInspectorError
+from .startup_diagnostics import StartupDiagnosticsFormatter, StartupDiagnosticsSnapshot
 from .telegram_service import TelegramApiError, TelegramChannelService, TelegramInboundMessage, mask_telegram_token
 from ..platform.secrets import SecretStore, get_secret_store
 from ..providers import OllamaProviderAdapter, OpenAIProviderAdapter, ProviderReply, ProviderStatus, ProviderType as AdapterProviderType, mask_secret
@@ -68,7 +70,7 @@ _ASK_CONCISE_LIMIT = 700
 _ASK_DETAILED_LIMIT = 1500
 _PROVIDER_ASK_COMMANDS = frozenset({"/ask", "/askd", "/asklast", "/askctx"})
 _PROVIDER_ASK_COOLDOWN_SECONDS = 4.0
-_OLLAMA_ASK_TIMEOUT_SECONDS = 12.0
+_OLLAMA_ASK_TIMEOUT_SECONDS = 60.0
 _OPENAI_ASK_TIMEOUT_SECONDS = 18.0
 _CONFIRMATION_LIFETIME_SECONDS = 120.0
 _AUDIT_LOG_MAX_RECORDS = 50
@@ -110,6 +112,15 @@ _LOOP_ACTION_CAPABILITIES = frozenset(
         "test.command.run",
     }
 )
+_STARTUP_SUMMARY_CAPABILITIES: tuple[tuple[str, str], ...] = (
+    ("repo.status.read", "repo.read"),
+    ("file.create.write", "file.write"),
+    ("shell.command.run", "run"),
+    ("test.command.run", "test"),
+    ("ask.provider_query", "ask"),
+    ("web.fetch.read", "web.read"),
+    ("build.bootstrap.approve.query", "bootstrap"),
+)
 
 
 @dataclass(frozen=True)
@@ -137,6 +148,17 @@ class _ProviderCallResult:
     error_message: str = ""
 
 
+@dataclass(frozen=True)
+class _PendingPatchDraft:
+    relative_path: str
+    raw_argument: str
+    summary: str
+    source_kind: str = ""
+    source_context_id: str = ""
+    created_at_utc: str = ""
+    is_patch_eligible: bool = False
+
+
 class ControllerService:
     """Facade used by the UI to keep runtime orchestration simple."""
 
@@ -152,6 +174,7 @@ class ControllerService:
         file_mutator: FileMutator | None = None,
         execution_runner: ExecutionRunner | None = None,
         web_fetcher: WebFetcher | None = None,
+        terminal_logger: Callable[[str], None] | None = None,
     ) -> None:
         self._runtime_manager = runtime_manager or OpenClawRuntimeManager()
         self._config_store = config_store or ControllerConfigStore()
@@ -195,8 +218,11 @@ class ControllerService:
         self._provider_chat_lock = threading.RLock()
         self._active_provider_chats: dict[str, tuple[str, threading.Thread]] = {}
         self._provider_cooldowns: dict[str, float] = {}
+        self._startup_prewarm_attempted = False
+        self._terminal_logger = terminal_logger or print
         self._node_registry = NodeRegistry(local_node=self._build_local_node())
         self._node_router = NodeRouter(self._execution_runner)
+        self._startup_diagnostics_formatter = StartupDiagnosticsFormatter()
         self._diagnostics_service = ControllerDiagnosticsService(
             runtime_manager=self._runtime_manager,
             config_store=self._config_store,
@@ -215,6 +241,7 @@ class ControllerService:
             max_contexts_per_chat=_CONTEXT_BUFFER_MAX_ITEMS,
             lifetime_seconds=_CONTEXT_LIFETIME_SECONDS,
         )
+        self._pending_patch_drafts: dict[str, _PendingPatchDraft] = {}
         self._intent_store = IntentStore()
         self._build_plan_store = BuildPlanStore()
         self._project_bootstrap_store = ProjectBootstrapStore()
@@ -241,6 +268,7 @@ class ControllerService:
         self._latest_health_report: DiagnosticReport | None = None
         self._latest_security_report: DiagnosticReport | None = None
         self._last_message = "Controller ready."
+        self._startup_diagnostics_snapshot = self.build_startup_diagnostics_snapshot()
 
     def start_runtime(self) -> ControllerSnapshot:
         self._runtime_manager.start_runtime()
@@ -658,6 +686,157 @@ class ControllerService:
         self.stop_telegram_loop()
         self._runtime_active = False
         self._runtime_manager.stop_runtime()
+
+    def build_startup_diagnostics_snapshot(self) -> StartupDiagnosticsSnapshot:
+        status = self._runtime_manager.get_status()
+        telegram_status = self._reconcile_telegram_status(self._telegram_status)
+        offline_status = self._provider_status_cache.get("ollama") or self._default_provider_status("ollama")
+        online_status = self._provider_status_cache.get("openai") or self._default_provider_status("openai")
+        selected_provider_status = online_status if self._config.selected_provider == "openai" else offline_status
+        health_report = self._latest_health_report or self._diagnostics_service.run_startup_health_check(
+            self._config,
+            selected_provider_status,
+            telegram_recent_success=self._telegram_recent_success(),
+            telegram_last_success_at=self._telegram_loop_status.last_success_at,
+        )
+        security_report = self._latest_security_report or self._diagnostics_service.run_security_check(
+            self._config,
+            selected_provider_status,
+        )
+        readiness_state, readiness_message = self._compute_readiness_from_reports(
+            runtime_active=self._runtime_active,
+            telegram_status=telegram_status,
+            health_report=health_report,
+            security_report=security_report,
+        )
+        network_readiness_state, network_readiness_message = self._compute_network_readiness_from_reports(
+            runtime_active=self._runtime_active,
+            selected_provider_status=selected_provider_status,
+            telegram_status=telegram_status,
+            health_report=health_report,
+            security_report=security_report,
+        )
+        repo_root, repo_root_valid, repo_message, _ = self._repo_configuration_state()
+        file_allowed_roots, file_scope_valid, file_message, _ = self._file_scope_state()
+        web_allowed_domains, web_scope_valid, web_message, _ = self._web_scope_state()
+        current_node = self.resolve_execution_node()
+        context = CapabilityContext(
+            runtime_state=status.runtime_state,
+            readiness_state=readiness_state,  # type: ignore[arg-type]
+            network_readiness_state=network_readiness_state,  # type: ignore[arg-type]
+            network_readiness_message=network_readiness_message,
+            mode=self._config.current_mode,
+            selected_mode=self._config.selected_mode,
+            policy=self._config.policy,
+            active_provider=self._active_provider_for_mode(self._config.current_mode),
+            selected_provider=self._config.selected_provider,
+            health_status=health_report.overall_status,
+            safety_status=security_report.overall_status,
+            offline_provider_status=offline_status,
+            online_provider_status=online_status,
+            repo_root=repo_root,
+            repo_root_valid=repo_root_valid,
+            repo_message=repo_message,
+            file_allowed_roots=file_allowed_roots,
+            file_scope_valid=file_scope_valid,
+            file_message=file_message,
+            web_allowed_domains=web_allowed_domains,
+            web_scope_valid=web_scope_valid,
+            web_message=web_message,
+            runtime_active=self._runtime_active,
+        )
+        allowed_labels: list[str] = []
+        blocked_labels: list[str] = []
+        for capability_id, label in _STARTUP_SUMMARY_CAPABILITIES:
+            evaluation = self._capability_evaluator.evaluate(
+                capability_id,
+                context,
+                source="desktop",
+                confirmation_granted=False,
+            )
+            if evaluation.current_availability_state == "allowed":
+                allowed_labels.append(label)
+            else:
+                blocked_labels.append(label)
+        raw_repo_root = repo_root or self._config.repo_root.strip() or None
+        repo_label = self._repo_display_name(raw_repo_root or "") if raw_repo_root else None
+        snapshot = StartupDiagnosticsSnapshot(
+            health_status=health_report.overall_status,
+            security_status=security_report.overall_status,
+            readiness_status=readiness_state,
+            readiness_reason_summary=readiness_message,
+            blockers=self._startup_blockers(
+                health_report=health_report,
+                security_report=security_report,
+                readiness_state=readiness_state,
+                readiness_message=readiness_message,
+            ),
+            repo_root=raw_repo_root,
+            repo_label=repo_label,
+            repo_context_present=repo_root_valid,
+            selected_node=current_node.node.node_id,
+            selected_node_summary=f"{current_node.node.display_name} ({current_node.source})",
+            registered_node_count=len(self._node_registry.list_nodes()),
+            allowed_capabilities=tuple(dict.fromkeys(allowed_labels)),
+            blocked_capabilities=tuple(dict.fromkeys(blocked_labels)),
+            generated_at_utc=datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
+        )
+        self._startup_diagnostics_snapshot = snapshot
+        return snapshot
+
+    def emit_startup_diagnostics_summary(self) -> StartupDiagnosticsSnapshot:
+        self._maybe_prewarm_ollama_model()
+        snapshot = self.build_startup_diagnostics_snapshot()
+        self._emit_terminal_lines(self._startup_diagnostics_formatter.format_terminal(snapshot).splitlines())
+        return snapshot
+
+    def _maybe_prewarm_ollama_model(self) -> None:
+        if self._startup_prewarm_attempted:
+            return
+        self._startup_prewarm_attempted = True
+
+        if self._config.selected_provider != "ollama" and self._active_provider_for_mode(self._config.current_mode) != "ollama":
+            self._emit_terminal_lines(("[MODEL] Prewarm: skipped",))
+            return
+
+        validation = self._validate_provider(
+            provider="ollama",
+            preferred_ollama_model=self._config.preferred_ollama_model,
+            transient_openai_key="",
+        )
+        self._provider_status_cache["ollama"] = validation
+        self._persist_provider_status("ollama", validation)
+
+        model = validation.model or self._config.preferred_ollama_model.strip()
+        if model:
+            self._emit_terminal_lines((f"[MODEL] Using: {model}",))
+
+        if not validation.ready or not model:
+            self._emit_terminal_lines(("[MODEL] Prewarm: skipped",))
+            return
+
+        adapter = self._provider_adapters.get("ollama")
+        if adapter is None or not hasattr(adapter, "prewarm"):
+            self._emit_terminal_lines(("[MODEL] Prewarm: skipped",))
+            return
+
+        started = time.perf_counter()
+        try:
+            reply = adapter.prewarm(  # type: ignore[attr-defined]
+                runtime_status=self._runtime_manager.get_status(),
+                base_url=self._config.ollama_base_url,
+                preferred_model=model,
+                timeout_seconds=self._provider_timeout_seconds("ollama"),
+            )
+        except Exception:  # noqa: BLE001
+            self._emit_terminal_lines(("[MODEL] Prewarm: failed",))
+            return
+
+        elapsed = time.perf_counter() - started
+        if isinstance(reply, ProviderReply) and reply.ok:
+            self._emit_terminal_lines((f"[MODEL] Prewarm: success ({elapsed:.1f}s)",))
+            return
+        self._emit_terminal_lines(("[MODEL] Prewarm: failed",))
 
     def _validate_provider(
         self,
@@ -1171,6 +1350,45 @@ class ControllerService:
     def _context_ready_note(self, context: BufferedContext) -> str:
         return f"Context: {context.context_id} ready for /asklast or /askctx {context.context_id} <prompt>."
 
+    def save_pending_patch_draft(
+        self,
+        *,
+        chat_id: str,
+        relative_path: str,
+        raw_argument: str,
+        summary: str,
+        source_kind: str = "",
+        source_context_id: str = "",
+    ) -> None:
+        normalized_path = relative_path.strip().replace("\\", "/")
+        self._pending_patch_drafts[chat_id] = _PendingPatchDraft(
+            relative_path=normalized_path,
+            raw_argument=raw_argument,
+            summary=self._summarize_text(summary.strip() or normalized_path, limit=160),
+            source_kind=source_kind.strip(),
+            source_context_id=source_context_id.strip().upper(),
+            created_at_utc=self._now_iso(),
+            is_patch_eligible=True,
+        )
+
+    def clear_pending_patch_draft(self, *, chat_id: str) -> None:
+        self._pending_patch_drafts.pop(chat_id, None)
+
+    def consume_pending_patch_draft(self, *, chat_id: str, relative_path: str) -> str:
+        normalized_path = relative_path.strip().replace("\\", "/")
+        draft = self._pending_patch_drafts.get(chat_id)
+        if draft is None or draft.relative_path.lower() != normalized_path.lower():
+            return ""
+        self._pending_patch_drafts.pop(chat_id, None)
+        return draft.raw_argument
+
+    def pending_patch_draft_summary(self, *, chat_id: str, relative_path: str) -> str:
+        normalized_path = relative_path.strip().replace("\\", "/")
+        draft = self._pending_patch_drafts.get(chat_id)
+        if draft is None or not draft.is_patch_eligible or draft.relative_path.lower() != normalized_path.lower():
+            return ""
+        return draft.summary
+
     def _build_contexts_reply(self, *, chat_id: str, limit: int = 5) -> _TelegramResponsePlan:
         contexts = self.recent_contexts_for_chat(chat_id=chat_id, limit=max(1, min(limit, 6)))
         if not contexts:
@@ -1413,6 +1631,8 @@ class ControllerService:
             )
 
         plan = self._build_telegram_reply(update, parsed_command=parsed, batch_busy=batch_busy)
+        if self._last_execution_result is not None:
+            self._log_command_processing(parsed=parsed, result=self._last_execution_result)
         outbound_summary = self._outbound_summary_for_plan(update, plan)
         loop_message = f"Processed Telegram update {update.update_id}."
 
@@ -1575,13 +1795,12 @@ class ControllerService:
             reply=chr(10).join(
                 (
                     "Operator commands",
-                    "Core: /chat /translate|/refine|translateclear",
-                    "Plan: /planbuild|view|status /planstep|approve|resetstep",
+                    "Core: /chat /translate|/refine|clear",
+                    "Plan: /planbuild|view|status /planstep|approve|reset",
                     "Bundle: /planstepbundle /bundleapprove|status|cancel|reset",
-                    "Boot: /bootstrapproject|/bootstrapview|/bootstrapapprove|/bootstrapreset",
-                    "Control: /startruntime",
-                    "Files: /repo|file /createfile|patchfile|/writefile",
-                    "Exec: /run|/test /nodes|nodeview|nodeselect|nodeclear",
+                    "Boot: /bootstrapproject|view|/bootstrapapprove|reset",
+                    "Files: /repo|file /createfile|patchlast|patchfile|/writefile",
+                    "Exec: /startruntime /run|/test /run /nodes|nodeview|nodeselect|nodeclear",
                     "Trust: /capabilities|audit|clearcontext /contexts",
                     "Ask: /ask|askd|asklast|askctx",
                     "Info: /explainrepo|explainfile|summarizeweb",
@@ -1598,7 +1817,7 @@ class ControllerService:
             lines = [
                 "Last action",
                 "No loop action is recorded yet.",
-                "Next: Use /repo, /file, /bootstrapproject, /createfile, /patchfile, /writefile, /run, or /test explicitly.",
+                "Next: Use /repo, /file, /bootstrapproject, /createfile, /patchlast, /patchfile, /writefile, /run, or /test explicitly.",
             ]
             if workflow is not None:
                 lines.insert(2, f"Workflow: {workflow.workflow_id} {self._workflow_state_label(workflow)}")
@@ -1719,11 +1938,11 @@ class ControllerService:
         if result.capability_id == "build.bootstrap.reset.query":
             return "Use /bootstrapproject after /planbuild if you want a fresh starter scaffold."
         if result.capability_id == "file.read":
-            return "Use /createfile, /patchfile, /writefile, /run, or /test explicitly."
+            return "Use /createfile, /patchlast, /patchfile, /writefile, /run, or /test explicitly."
         if result.capability_id in {"file.create.write", "file.patch.write", "file.write.replace"} and result.outcome == "success":
             return "Run /test or /run explicitly if you want to validate the edit."
         if result.capability_id in {"shell.command.run", "test.command.run"}:
-            return "Inspect with /file, patch with /patchfile, or run another bounded command explicitly."
+            return "Inspect with /file, patch with /patchlast or /patchfile, or run another bounded command explicitly."
         return "Continue explicitly with the next operator command you want."
 
     @staticmethod
@@ -1739,23 +1958,9 @@ class ControllerService:
         }.get(outcome, outcome.replace("_", " "))
 
     def _build_status_reply(self, snapshot: ControllerSnapshot) -> _TelegramResponsePlan:
-        active_status = self._provider_status_for_mode(self._config.current_mode)
-        lines = [
-            "Status",
-            f"Runtime: {snapshot.runtime_state}",
-            f"Health: {self._health_label(snapshot.health_status)}",
-            f"Security: {self._safety_label(snapshot.safety_status)}",
-            f"Readiness: {self._readiness_label(snapshot.readiness_state)}",
-            f"Mode: {snapshot.mode}",
-            f"Policy: {self._policy_label(snapshot.policy)}",
-            f"Provider: {self._provider_label(snapshot.active_provider, active_status.model)}",
-            f"Telegram loop: {self._telegram_loop_label(snapshot.telegram_loop_state)}",
-            f"Loop activity: {self._telegram_loop_activity_label(snapshot.telegram_loop_activity)}",
-        ]
-        if snapshot.readiness_state != "ready":
-            lines.append(f"Note: {snapshot.readiness_message}")
+        startup_snapshot = self.build_startup_diagnostics_snapshot()
         return _TelegramResponsePlan(
-            reply=chr(10).join(lines),
+            reply=self._startup_diagnostics_formatter.format_telegram(startup_snapshot),
             command_label="/status",
         )
 
@@ -1922,6 +2127,7 @@ class ControllerService:
                     preferred_model=self._config.preferred_ollama_model,
                     prompt=prompt,
                     response_style=response_style,
+                    timeout_seconds=self._provider_timeout_seconds("ollama"),
                 ),
             )
             if result.state == "timeout":
@@ -2125,7 +2331,7 @@ class ControllerService:
     def _summarize_inbound_update(self, update: TelegramInboundMessage, command_label: str) -> str:
         if command_label in _PROVIDER_ASK_COMMANDS:
             return self._summarize_text(f"{update.sender_label}: {command_label} [prompt hidden]")
-        if command_label in {"/file", "/createfile", "/patchfile", "/writefile"}:
+        if command_label in {"/file", "/createfile", "/patchlast", "/patchfile", "/writefile"}:
             return self._summarize_text(f"{update.sender_label}: {command_label} [path hidden]")
         if command_label in {"/run", "/test"}:
             return self._summarize_text(f"{update.sender_label}: {command_label} [command hidden]")
@@ -2151,7 +2357,7 @@ class ControllerService:
             return self._summarize_text(f"Sent non-text guidance reply to {update.sender_label}.")
         if plan.command_label == "parse_failure":
             return self._summarize_text(f"Sent command correction to {update.sender_label}.")
-        if plan.command_label in {"/file", "/createfile", "/patchfile", "/writefile", "/run", "/test"}:
+        if plan.command_label in {"/file", "/createfile", "/patchlast", "/patchfile", "/writefile", "/run", "/test"}:
             return self._summarize_text(f"Sent {plan.command_label} reply to {update.sender_label}.")
         if plan.command_label == "/web":
             return self._summarize_text(f"Sent /web reply to {update.sender_label}.")
@@ -2211,6 +2417,7 @@ class ControllerService:
             "/repo",
             "/file",
             "/createfile",
+            "/patchlast",
             "/patchfile",
             "/writefile",
             "/run",
@@ -2245,6 +2452,12 @@ class ControllerService:
                 command_label="parse_failure",
                 normalized_text=normalized_text,
                 usage_hint="Use /createfile <relative_path> with @@ CONTENT.",
+            )
+        if command.startswith("/patchlast"):
+            return _ParsedTelegramCommand(
+                command_label="parse_failure",
+                normalized_text=normalized_text,
+                usage_hint="Use /patchlast <relative_path>.",
             )
         if command.startswith("/patchfile"):
             return _ParsedTelegramCommand(
@@ -2871,6 +3084,7 @@ class ControllerService:
                     preferred_model=self._config.preferred_ollama_model,
                     prompt=confirmation.prompt_text,
                     response_style=confirmation.response_style,
+                    timeout_seconds=self._provider_timeout_seconds("ollama"),
                 ),
             )
 
@@ -3356,7 +3570,7 @@ class ControllerService:
         used_context_ids = str(result.telemetry.get("context_used_ids") or "").strip()
         workflow_id = str(result.telemetry.get("workflow_id") or "").strip().upper()
         workflow_state = str(result.telemetry.get("workflow_state") or "").strip()
-        if created_context_id and result.capability_id in {"repo.status.read", "file.read", "web.fetch.read"}:
+        if created_context_id and result.capability_id in {"repo.status.read", "file.read", "web.fetch.read", "shell.command.run"}:
             action_summary = f"{action_summary} | created {created_context_id}"
         elif used_context_id and result.capability_id == "ask.provider_query":
             action_summary = f"{action_summary} | used {used_context_id}"
@@ -3449,6 +3663,52 @@ class ControllerService:
             limit=120,
         )
 
+    def _log_command_processing(self, *, parsed: _ParsedTelegramCommand, result: CapabilityExecutionResult) -> None:
+        diagnostics = self.build_startup_diagnostics_snapshot()
+        evaluation = self._last_capability_evaluation
+        capability_state = self._capability_state_from_result(result)
+        blocker = ""
+        if evaluation is not None and evaluation.capability_id == result.capability_id:
+            capability_state = evaluation.current_availability_state
+            if capability_state != "allowed":
+                blocker = evaluation.blocking_reason or evaluation.message
+        if not blocker and result.outcome in {"blocked", "degraded", "unavailable", "out_of_scope"}:
+            blocker = diagnostics.blockers[0] if diagnostics.blockers else ""
+        lines = [
+            f"[COMMAND] {self._command_log_label(parsed)}",
+            f"[READINESS] {self._startup_diagnostics_formatter._readiness_label(diagnostics.readiness_status)}",
+            f"[CAPABILITY] {result.capability_id} -> {capability_state}",
+        ]
+        if blocker:
+            lines.append(f"[BLOCKER] {self._summarize_text(blocker, limit=140)}")
+        lines.append(f"[RESULT] {result.internal_summary}")
+        self._emit_terminal_lines(lines)
+
+    def _emit_terminal_lines(self, lines: list[str] | tuple[str, ...]) -> None:
+        for line in lines:
+            self._terminal_logger(sanitize_log_text(line))
+
+    @staticmethod
+    def _capability_state_from_result(result: CapabilityExecutionResult) -> str:
+        if result.outcome == "success":
+            return "allowed"
+        if result.outcome == "confirmation_required":
+            return "confirmation_required"
+        if result.outcome == "degraded":
+            return "degraded"
+        if result.outcome == "unavailable":
+            return "unavailable"
+        return "blocked"
+
+    def _command_log_label(self, parsed: _ParsedTelegramCommand) -> str:
+        if parsed.command_label in _PROVIDER_ASK_COMMANDS:
+            return f"{parsed.command_label} [prompt hidden]"
+        if parsed.command_label in {"/file", "/createfile", "/patchlast", "/patchfile", "/writefile"}:
+            return f"{parsed.command_label} [path hidden]"
+        if parsed.command_label in {"/web", "/summarizeweb"}:
+            return f"{parsed.command_label} [url hidden]"
+        return parsed.normalized_text or parsed.command_label
+
     @staticmethod
     def _generate_audit_id() -> str:
         return f"AUD-{secrets.token_hex(4).upper()}"
@@ -3481,6 +3741,21 @@ class ControllerService:
         runtime_active: bool,
         telegram_status: TelegramChannelStatus,
     ) -> tuple[str, str]:
+        return self._compute_readiness_from_reports(
+            runtime_active=runtime_active,
+            telegram_status=telegram_status,
+            health_report=self._latest_health_report,
+            security_report=self._latest_security_report,
+        )
+
+    def _compute_readiness_from_reports(
+        self,
+        *,
+        runtime_active: bool,
+        telegram_status: TelegramChannelStatus,
+        health_report: DiagnosticReport | None,
+        security_report: DiagnosticReport | None,
+    ) -> tuple[str, str]:
         blocking: list[str] = []
         warnings: list[str] = []
 
@@ -3491,14 +3766,14 @@ class ControllerService:
             warnings.append("Current mode does not match the saved selection.")
 
         self._extend_readiness_from_report(
-            report=self._latest_health_report,
+            report=health_report,
             warnings=warnings,
             blocking=blocking,
             missing_message="Health check has not been run yet.",
             ignored_codes=_LOCAL_READINESS_HEALTH_IGNORED_CODES,
         )
         self._extend_readiness_from_report(
-            report=self._latest_security_report,
+            report=security_report,
             warnings=warnings,
             blocking=blocking,
             missing_message="Security check has not been run yet.",
@@ -3525,6 +3800,23 @@ class ControllerService:
         selected_provider_status: ProviderStatus,
         telegram_status: TelegramChannelStatus,
     ) -> tuple[str, str]:
+        return self._compute_network_readiness_from_reports(
+            runtime_active=runtime_active,
+            selected_provider_status=selected_provider_status,
+            telegram_status=telegram_status,
+            health_report=self._latest_health_report,
+            security_report=self._latest_security_report,
+        )
+
+    def _compute_network_readiness_from_reports(
+        self,
+        *,
+        runtime_active: bool,
+        selected_provider_status: ProviderStatus,
+        telegram_status: TelegramChannelStatus,
+        health_report: DiagnosticReport | None,
+        security_report: DiagnosticReport | None,
+    ) -> tuple[str, str]:
         blocking: list[str] = []
         warnings: list[str] = []
 
@@ -3545,18 +3837,18 @@ class ControllerService:
         if self._config.current_mode != self._config.selected_mode:
             warnings.append("Current mode does not match the saved selection.")
 
-        if self._latest_health_report is None:
+        if health_report is None:
             warnings.append("Health check has not been run yet.")
-        elif self._latest_health_report.overall_status == "blocked":
+        elif health_report.overall_status == "blocked":
             blocking.append("Health check reported blocking issues.")
-        elif self._latest_health_report.overall_status == "degraded":
+        elif health_report.overall_status == "degraded":
             warnings.append("Health check reported warnings.")
 
-        if self._latest_security_report is None:
+        if security_report is None:
             warnings.append("Security check has not been run yet.")
-        elif self._latest_security_report.overall_status == "blocked":
+        elif security_report.overall_status == "blocked":
             blocking.append("Security check reported blocking issues.")
-        elif self._latest_security_report.overall_status == "degraded":
+        elif security_report.overall_status == "degraded":
             warnings.append("Security check reported warnings.")
 
         if not telegram_status.token_present:
@@ -3571,6 +3863,25 @@ class ControllerService:
         if warnings:
             return "degraded", " ".join(warnings[:2])
         return "ready", "Execution, provider access, diagnostics, and Telegram are ready."
+
+    def _startup_blockers(
+        self,
+        *,
+        health_report: DiagnosticReport,
+        security_report: DiagnosticReport,
+        readiness_state: str,
+        readiness_message: str,
+    ) -> tuple[str, ...]:
+        blockers: list[str] = []
+        for report in (health_report, security_report):
+            for item in report.items:
+                if item.severity != "error":
+                    continue
+                if item.message not in blockers:
+                    blockers.append(item.message)
+        if readiness_state == "not_ready" and readiness_message and readiness_message not in blockers:
+            blockers.append(readiness_message)
+        return tuple(blockers)
 
     @staticmethod
     def _first_report_message(report: DiagnosticReport, *, severity: str, ignored_codes: frozenset[str]) -> str:
@@ -3597,9 +3908,17 @@ class ControllerService:
         if error_message:
             blocking.append(error_message)
             return
+        if report.overall_status == "blocked" and not report.items:
+            fallback = report.summary.strip() or f"{report.check_type.title()} check reported blocking issues."
+            blocking.append(fallback)
+            return
         warning_message = self._first_report_message(report, severity="warning", ignored_codes=ignored_codes)
         if warning_message:
             warnings.append(warning_message)
+            return
+        if report.overall_status == "degraded" and not report.items:
+            fallback = report.summary.strip() or f"{report.check_type.title()} check reported warnings."
+            warnings.append(fallback)
 
 
 

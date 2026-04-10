@@ -1014,6 +1014,7 @@ COMMAND_CAPABILITY_MAP: dict[str, str] = {
     "/repo": "repo.status.read",
     "/file": "file.read",
     "/createfile": "file.create.write",
+    "/patchlast": "file.patch.write",
     "/patchfile": "file.patch.write",
     "/writefile": "file.write.replace",
     "/run": "shell.command.run",

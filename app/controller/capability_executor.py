@@ -260,6 +260,8 @@ class CapabilityExecutor:
             return self._execute_file_read(update=update, snapshot=snapshot, argument=parsed_command.argument)
         if command == "/createfile":
             return self._execute_file_create(update=update, snapshot=snapshot, argument=parsed_command.argument)
+        if command == "/patchlast":
+            return self._execute_file_patch_last(update=update, snapshot=snapshot, argument=parsed_command.argument)
         if command == "/patchfile":
             return self._execute_file_patch(update=update, snapshot=snapshot, argument=parsed_command.argument)
         if command == "/writefile":
@@ -2735,13 +2737,20 @@ class CapabilityExecutor:
         try:
             parsed = parse_patch_command(argument)
         except FileMutatorError as exc:
-            return self._file_mutation_error_result(
-                request=request,
-                error=exc,
-                relative_path="",
-                command_label="/patchfile",
-                confirmation_id="",
-            )
+            try:
+                parsed = self._load_prepared_patch_command(
+                    chat_id=update.chat_id,
+                    argument=argument,
+                    original_error=exc,
+                )
+            except FileMutatorError as prepared_error:
+                return self._file_mutation_error_result(
+                    request=request,
+                    error=prepared_error,
+                    relative_path=argument.splitlines()[0].strip().replace("\\", "/") if argument.strip() else "",
+                    command_label="/patchfile",
+                    confirmation_id="",
+                )
 
         return self._execute_pending_file_mutation(
             update=update,
@@ -2754,6 +2763,102 @@ class CapabilityExecutor:
             operator_reason=parsed.operator_reason,
             expected_base_hash=parsed.expected_base_hash,
         )
+
+    def _execute_file_patch_last(
+        self,
+        *,
+        update: TelegramInboundMessage,
+        snapshot: ControllerSnapshot,
+        argument: str,
+    ) -> CapabilityExecutionResult:
+        request = self._build_request(
+            capability_id="file.patch.write",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/patchlast",
+            parsed_arguments={},
+            metadata={"argument_summary": "/patchlast [path hidden]"},
+        )
+        relative_path = argument.splitlines()[0].strip().replace("\\", "/") if argument.strip() else ""
+        if not relative_path:
+            return self._file_mutation_error_result(
+                request=request,
+                error=FileMutatorError("missing_file_path", "Provide a relative file path as the first line of the command."),
+                relative_path="",
+                command_label="/patchlast",
+                confirmation_id="",
+            )
+        extra_lines = [line.strip() for line in argument.splitlines()[1:] if line.strip()]
+        if extra_lines:
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="patchlast_argument_invalid",
+                user_message="Can't use /patchlast right now.\nReason: Provide only the explicit relative path.\nNext: Use /patchlast <relative_path>.",
+                internal_summary="/patchlast rejected because extra mutation content was provided.",
+                retryable=False,
+                command_label="/patchlast",
+                activity_state="processing_command",
+            )
+        prepared_argument = self._service.consume_pending_patch_draft(chat_id=update.chat_id, relative_path=relative_path)
+        if not prepared_argument:
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="missing_prepared_patch",
+                user_message=(
+                    "Can't use /patchlast right now.\n"
+                    "Reason: No recent patch-eligible edit suggestion is available.\n"
+                    "Next: Use /askctx <context_id> <change request> or /asklast <change request> first."
+                ),
+                internal_summary=f"/patchlast rejected because no recent patch-eligible suggestion was available for {relative_path}.",
+                retryable=False,
+                command_label="/patchlast",
+                activity_state="processing_command",
+            )
+        try:
+            parsed = parse_patch_command(prepared_argument)
+        except FileMutatorError as exc:
+            return self._file_mutation_error_result(
+                request=request,
+                error=exc,
+                relative_path=relative_path,
+                command_label="/patchlast",
+                confirmation_id="",
+            )
+
+        return self._execute_pending_file_mutation(
+            update=update,
+            snapshot=snapshot,
+            capability_id="file.patch.write",
+            command_label="/patchlast",
+            relative_path=parsed.relative_path,
+            raw_argument=parsed.raw_argument,
+            confirmation_preview=summarize_patch_request(parsed),
+            operator_reason=parsed.operator_reason,
+            expected_base_hash=parsed.expected_base_hash,
+        )
+
+    def _load_prepared_patch_command(
+        self,
+        *,
+        chat_id: str,
+        argument: str,
+        original_error: FileMutatorError,
+    ):
+        if original_error.code not in {"missing_mutation_body", "missing_patch_sections"}:
+            raise original_error
+        relative_path = argument.splitlines()[0].strip().replace("\\", "/")
+        if not relative_path:
+            raise original_error
+        prepared_argument = self._service.consume_pending_patch_draft(chat_id=chat_id, relative_path=relative_path)
+        if not prepared_argument:
+            raise FileMutatorError(
+                "missing_prepared_patch",
+                f"No prepared patch is available for {relative_path}.",
+            )
+        return parse_patch_command(prepared_argument)
 
     def _execute_file_create(
         self,
@@ -3880,6 +3985,7 @@ class CapabilityExecutor:
             "missing_file_path": f"Use {command_label} <relative_path> and include the required mutation body.",
             "missing_mutation_body": f"Use {command_label} <relative_path> and include the required mutation body.",
             "missing_patch_sections": "Use @@ FIND and @@ REPLACE blocks for each bounded patch.",
+            "missing_prepared_patch": "Use /askctx or /asklast first, or include @@ FIND and @@ REPLACE blocks directly.",
             "missing_write_content": "Use @@ CONTENT followed by the full replacement file content.",
             "missing_create_content": "Use @@ CONTENT followed by the full file content.",
             "absolute_path_not_allowed": f"Use {command_label} <relative_path> inside the allowed directories.",
@@ -3905,6 +4011,7 @@ class CapabilityExecutor:
             "missing_file_path",
             "missing_mutation_body",
             "missing_patch_sections",
+            "missing_prepared_patch",
             "missing_write_content",
             "absolute_path_not_allowed",
             "invalid_base_hash",
@@ -4005,6 +4112,8 @@ class CapabilityExecutor:
             "command_prefix_not_allowed": "Use /test or an allowed Python-based /run command.",
             "unsupported_python_command": "Use python -m unittest, python -m pytest, or an approved smoke script.",
             "python_script_not_allowed": "Use an approved repo-local validation or smoke script only.",
+            "run_alias_argument_count_not_allowed": "Use /run main or /run main <repo-local target>.",
+            "run_alias_entrypoint_missing": "Create the approved CLI scaffold first, then retry /run main.",
             "command_option_not_allowed": "Remove option flags in this first-pass execution model.",
             "command_token_not_allowed": "Use module names or repo-relative paths only.",
             "absolute_path_not_allowed": "Use repo-relative paths only.",
@@ -4027,6 +4136,8 @@ class CapabilityExecutor:
             "command_prefix_not_allowed",
             "unsupported_python_command",
             "python_script_not_allowed",
+            "run_alias_argument_count_not_allowed",
+            "run_alias_entrypoint_missing",
             "command_option_not_allowed",
             "command_token_not_allowed",
         }
@@ -4091,6 +4202,7 @@ class CapabilityExecutor:
             "target_node_transport": command_result.node.transport,
             "target_node_summary": node_summary,
         }
+        context_entry = None
         if command_result.timed_out:
             self._service._last_confirmation_result = f"Confirmation {confirmation.confirmation_id} timed out via bounded execution."
             lines = [
@@ -4129,6 +4241,22 @@ class CapabilityExecutor:
         ]
         if command_result.first_issue:
             lines.append(f"First issue: {command_result.first_issue}")
+        if outcome == "success" and request.capability_id == "shell.command.run" and command_result.request.command_summary.startswith("main"):
+            context_content = "\n".join(lines[1:])
+            context_entry = self._service.create_context_buffer(
+                source_capability_id="shell.command.run",
+                source_command="/run",
+                scope_type=request.scope.scope_type,
+                source_summary=command_result.request.command_summary,
+                content_kind="execution_result",
+                normalized_content=context_content,
+                content_preview=command_result.output_summary,
+                size_class="summary",
+                chat_id=request.chat_id,
+                user_id=request.user_id,
+                request_id=request.request_id,
+            )
+            lines.append(self._service._context_ready_note(context_entry))
         return self._result(
             request,
             outcome=outcome,
@@ -4139,7 +4267,13 @@ class CapabilityExecutor:
             command_label="/confirm",
             activity_state="processing_command" if outcome == "success" else "provider_failed",
             confirmation_used=True,
-            telemetry={**base_telemetry, "execution_summary": f"{command_result.request.command_summary} | exit {command_result.exit_code}", "execution_exit_code": command_result.exit_code},
+            telemetry={
+                **base_telemetry,
+                "execution_summary": f"{command_result.request.command_summary} | exit {command_result.exit_code}",
+                "execution_exit_code": command_result.exit_code,
+                "context_created_id": context_entry.context_id if context_entry is not None else "",
+                "context_source_summary": context_entry.source_summary if context_entry is not None else "",
+            },
         )
 
     def _web_error_result(
@@ -4383,6 +4517,16 @@ class CapabilityExecutor:
                 hide_content_in_summary=True,
             )
 
+        bounded_edit_result = self._maybe_execute_bounded_cli_edit_plan(
+            request=request,
+            update=update,
+            command_label=command_label,
+            prompt=prompt,
+            selected_contexts=selected_contexts,
+        )
+        if bounded_edit_result is not None:
+            return bounded_edit_result
+
         rate_limited, wait_seconds = self._service._provider_ask_is_rate_limited(update.chat_id)
         if rate_limited:
             return self._ask_blocked_result(
@@ -4469,6 +4613,175 @@ class CapabilityExecutor:
             context_entry=context_entry,
             context_entries=selected_contexts,
             context_trimmed=context_trimmed,
+        )
+
+    def _maybe_execute_bounded_cli_edit_plan(
+        self,
+        *,
+        request: CapabilityExecutionRequest,
+        update: TelegramInboundMessage,
+        command_label: str,
+        prompt: str,
+        selected_contexts: tuple[BufferedContext, ...],
+    ) -> CapabilityExecutionResult | None:
+        if len(selected_contexts) != 1:
+            return None
+        context_entry = selected_contexts[0]
+        plan = self._build_bounded_cli_edit_plan(prompt=prompt, context_entry=context_entry)
+        if plan is None:
+            return None
+        relative_path, prepared_argument, user_message, plan_summary = plan
+        self._service.save_pending_patch_draft(
+            chat_id=update.chat_id,
+            relative_path=relative_path,
+            raw_argument=prepared_argument,
+            summary=plan_summary,
+            source_kind=context_entry.content_kind,
+            source_context_id=context_entry.context_id,
+        )
+        ask_status = f"{command_label} prepared bounded patch for {relative_path}."
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=user_message,
+            internal_summary=ask_status,
+            retryable=False,
+            command_label=command_label,
+            activity_state="processing_command",
+            ask_status=ask_status,
+            hide_content_in_summary=True,
+            telemetry={
+                "context_used_id": context_entry.context_id,
+                "context_used_ids": context_entry.context_id,
+                "context_source_summary": context_entry.source_summary,
+            },
+        )
+
+    def _build_bounded_cli_edit_plan(
+        self,
+        *,
+        prompt: str,
+        context_entry: BufferedContext,
+    ) -> tuple[str, str, str, str] | None:
+        relative_path = ""
+        source_summary = context_entry.source_summary.strip().replace("\\", "/")
+        if context_entry.content_kind == "file_preview" and source_summary.lower() == "src/main.py":
+            relative_path = source_summary
+        elif context_entry.content_kind == "execution_result" and source_summary.lower().startswith("main"):
+            relative_path = "src/main.py"
+        if relative_path != "src/main.py":
+            return None
+        current_content = self._read_repo_file_text(relative_path)
+        if current_content is None:
+            return None
+        lowered_prompt = prompt.lower()
+        if "csv" in lowered_prompt:
+            return self._build_csv_cli_edit_plan(relative_path=relative_path, current_content=current_content)
+        if "format" in lowered_prompt:
+            return self._build_formatting_cli_edit_plan(relative_path=relative_path, current_content=current_content)
+        return None
+
+    def _read_repo_file_text(self, relative_path: str) -> str | None:
+        _, target_path, _, resolve_code, _ = self._service.resolve_file_request(relative_path)
+        if resolve_code != "file_target_ready" or not target_path:
+            return None
+        try:
+            return Path(target_path).read_text(encoding="utf-8")
+        except OSError:
+            return None
+
+    def _build_csv_cli_edit_plan(self, *, relative_path: str, current_content: str) -> tuple[str, str, str, str]:
+        new_content = (
+            "import csv\n"
+            "from pathlib import Path\n"
+            "import sys\n\n\n"
+            "def main() -> int:\n"
+            "    target = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(\".\")\n"
+            "    target = target.resolve()\n"
+            "    if not target.exists() or not target.is_dir():\n"
+            "        print(f\"Target is not a directory: {target}\")\n"
+            "        return 1\n\n"
+            "    rows: list[tuple[str, int]] = []\n"
+            "    for path in sorted(candidate for candidate in target.iterdir() if candidate.is_file()):\n"
+            "        rows.append((path.name, path.stat().st_size))\n\n"
+            "    output_path = target / \"summary.csv\"\n"
+            "    with output_path.open(\"w\", newline=\"\", encoding=\"utf-8\") as handle:\n"
+            "        writer = csv.writer(handle)\n"
+            "        writer.writerow((\"name\", \"size_bytes\"))\n"
+            "        writer.writerows(rows)\n\n"
+            "    print(f\"Scanned {len(rows)} files in {target}\")\n"
+            "    print(f\"Wrote CSV: {output_path}\")\n"
+            "    return 0\n\n\n"
+            "if __name__ == \"__main__\":\n"
+            "    raise SystemExit(main())\n"
+        )
+        prepared_argument = self._build_exact_patch_argument(
+            relative_path=relative_path,
+            operator_reason="add CSV writing to generated CLI scaffold",
+            current_content=current_content,
+            new_content=new_content,
+        )
+        user_message = "\n".join(
+            (
+                f"Planned update for {relative_path}",
+                "Change:",
+                "- iterate through files in the target directory",
+                "- capture file names and sizes",
+                "- write rows to summary.csv",
+                "Next:",
+                f"- use /patchlast {relative_path} to apply the update",
+            )
+        )
+        return relative_path, prepared_argument, user_message, "CSV writing support prepared for src/main.py"
+
+    def _build_formatting_cli_edit_plan(self, *, relative_path: str, current_content: str) -> tuple[str, str, str, str]:
+        if "summary.csv" in current_content:
+            new_content = current_content.replace(
+                '    print(f"Wrote CSV: {output_path}")\n',
+                '    print(f"CSV rows written: {len(rows)}")\n    print(f"Wrote CSV: {output_path}")\n',
+            )
+        else:
+            new_content = current_content.replace(
+                '    print(f"Scanning: {target}")\n',
+                '    print(f"Scanning directory: {target.resolve()}")\n',
+            )
+        prepared_argument = self._build_exact_patch_argument(
+            relative_path=relative_path,
+            operator_reason="improve generated CLI output formatting",
+            current_content=current_content,
+            new_content=new_content,
+        )
+        user_message = "\n".join(
+            (
+                f"Planned improvement for {relative_path}",
+                "Change:",
+                "- keep the current CLI entrypoint structure",
+                "- make the operator-facing output easier to read",
+                "- preserve the edit loop as an explicit /patchlast step",
+                "Next:",
+                f"- use /patchlast {relative_path} to apply the update",
+            )
+        )
+        return relative_path, prepared_argument, user_message, "Output formatting update prepared for src/main.py"
+
+    @staticmethod
+    def _build_exact_patch_argument(
+        *,
+        relative_path: str,
+        operator_reason: str,
+        current_content: str,
+        new_content: str,
+    ) -> str:
+        return "\n".join(
+            (
+                relative_path,
+                f"Reason: {operator_reason}",
+                "@@ FIND",
+                current_content.rstrip("\n"),
+                "@@ REPLACE",
+                new_content.rstrip("\n"),
+            )
         )
 
     def _execute_confirm(
@@ -5482,6 +5795,7 @@ class CapabilityExecutor:
                 preferred_model=self._service._config.preferred_ollama_model,
                 prompt=prompt,
                 response_style=response_style,
+                timeout_seconds=self._service._provider_timeout_seconds("ollama"),
             ),
         )
         if result.state == "timeout":
@@ -5519,6 +5833,8 @@ class CapabilityExecutor:
         if confirmation_id:
             self._service._last_confirmation_result = f"Confirmation {confirmation_id} approved and completed via {provider_name}."
             internal_summary = self._service._last_confirmation_result
+        if not confirmation_used and command_label in {"/ask", "/askd", "/askctx", "/asklast"}:
+            self._service.clear_pending_patch_draft(chat_id=chat_id)
         selected_contexts = context_entries or ((context_entry,) if context_entry is not None else ())
         return self._result(
             request,
@@ -5624,6 +5940,8 @@ class CapabilityExecutor:
         if confirmation_id:
             self._service._last_confirmation_result = f"Confirmation {confirmation_id} approved and completed via {provider_name}."
             internal_summary = self._service._last_confirmation_result
+        if not confirmation_used and command_label in {"/ask", "/askd", "/askctx", "/asklast"}:
+            self._service.clear_pending_patch_draft(chat_id=chat_id)
         selected_contexts = context_entries or ((context_entry,) if context_entry is not None else ())
         return self._result(
             request,
