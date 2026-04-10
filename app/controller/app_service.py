@@ -39,7 +39,7 @@ from .confirmation_models import ConfirmationContextSnapshot, PendingConfirmatio
 from .confirmation_store import ConfirmationStore
 from .channel_models import TelegramChannelStatus, TelegramLoopStatus
 from .diagnostic_models import DiagnosticReport
-from .execution_runner import ExecutionRunner
+from .execution_runner import ExecutionRunner, ExecutionRunnerError
 from .execution_models import CapabilityExecutionResult
 from .file_mutator import FileMutator
 from .file_reader import FileReadSnapshot, FileReader, FileReaderError
@@ -158,6 +158,15 @@ class _PendingPatchDraft:
     source_context_id: str = ""
     created_at_utc: str = ""
     is_patch_eligible: bool = False
+
+
+@dataclass(frozen=True)
+class PendingPatchDraftInfo:
+    relative_path: str
+    summary: str
+    source_kind: str
+    source_context_id: str
+    created_at_utc: str
 
 
 class ControllerService:
@@ -1410,6 +1419,39 @@ class ControllerService:
 
     def clear_latest_run_for_chat(self, *, chat_id: str) -> LastRunRecord | None:
         return self._last_run_store.clear_latest(chat_id=chat_id)
+
+    def latest_pending_patch_draft_for_chat(self, *, chat_id: str) -> PendingPatchDraftInfo | None:
+        draft = self._pending_patch_drafts.get(chat_id)
+        if draft is None or not draft.is_patch_eligible:
+            return None
+        return PendingPatchDraftInfo(
+            relative_path=draft.relative_path,
+            summary=draft.summary,
+            source_kind=draft.source_kind,
+            source_context_id=draft.source_context_id,
+            created_at_utc=draft.created_at_utc,
+        )
+
+    def validate_main_run_target(self, *, target: str) -> tuple[str, bool, str]:
+        normalized_target = " ".join(target.split())
+        if not normalized_target:
+            return "", False, "Use /main <relative_directory> or /run main <relative_directory>."
+        repo_root, repo_root_valid, repo_message, _ = self._repo_configuration_state()
+        if not repo_root_valid:
+            return normalized_target, False, repo_message
+        command_text = f"main {normalized_target}"
+        try:
+            request = self._execution_runner.build_run_request(
+                capability_id="shell.command.run",
+                repo_root=repo_root,
+                command_text=command_text,
+            )
+        except ExecutionRunnerError as exc:
+            return normalized_target, False, exc.message
+        resolved_target = "."
+        if len(request.argv) > 2:
+            resolved_target = str(request.argv[2]).strip().replace("\\", "/") or "."
+        return resolved_target, True, f"Run target ready: {resolved_target}"
 
     def _build_contexts_reply(self, *, chat_id: str, limit: int = 5) -> _TelegramResponsePlan:
         contexts = self.recent_contexts_for_chat(chat_id=chat_id, limit=max(1, min(limit, 6)))

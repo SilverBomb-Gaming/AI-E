@@ -106,7 +106,7 @@ class LocalCliChatTests(unittest.TestCase):
                     is_patch_relevant=True,
                 ),
             )
-            prompts = _PromptDriver("n")
+            prompts = _PromptDriver()
             output: list[str] = []
             cli = AiEChatCli(service=service, input_func=prompts, output_func=output.append)
 
@@ -116,9 +116,9 @@ class LocalCliChatTests(unittest.TestCase):
             self.assertIn("[RUN REQUEST]", joined)
             self.assertIn("[CONFIRMATION REQUIRED]", joined)
             self.assertIn("Action requires confirmation.", joined)
-            self.assertIn("Confirmation", joined)
+            self.assertIn("ID:", joined)
             self.assertEqual(len(fake_runner.calls), 0)
-            self.assertEqual(prompts.prompts, ["Confirm execution? (y/n): "])
+            self.assertEqual(prompts.prompts, [])
 
     def test_cli_fallback_does_not_crash_on_ambiguous_input(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -157,7 +157,7 @@ class LocalCliChatTests(unittest.TestCase):
                     is_patch_relevant=True,
                 ),
             )
-            prompts = _PromptDriver("n")
+            prompts = _PromptDriver()
             output: list[str] = []
             cli = AiEChatCli(service=service, input_func=prompts, output_func=output.append, chat_id="dev-shell")
 
@@ -165,4 +165,106 @@ class LocalCliChatTests(unittest.TestCase):
 
             joined = "\n".join(output)
             self.assertIn("Preview: run main generated/GP-7A31C2", joined)
-            self.assertIn("Confirmation", joined)
+            self.assertIn("ID:", joined)
+
+    def test_cli_file_context_bootstrap_and_apply_it_bind_to_sticky_target(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "workspace"
+            src = root / "src"
+            src.mkdir(parents=True, exist_ok=True)
+            target = src / "main.py"
+            target.write_text(
+                "from pathlib import Path\n"
+                "import sys\n\n\n"
+                "def main() -> int:\n"
+                "    target = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(\".\")\n"
+                "    print(f\"Scanning: {target}\")\n"
+                "    return 0\n\n\n"
+                "if __name__ == \"__main__\":\n"
+                "    raise SystemExit(main())\n",
+                encoding="utf-8",
+            )
+            service, config_store, _ = self._make_service(tmp_dir=tmp)
+            self._configure_repo_root(service=service, config_store=config_store, root=root)
+            cli = AiEChatCli(service=service, input_func=_PromptDriver("y"), output_func=lambda _: None)
+
+            self.assertTrue(cli.handle_line("/file src/main.py"))
+            self.assertTrue(cli.handle_line("improve the format of this file"))
+            self.assertTrue(cli.handle_line("apply it"))
+
+            updated = target.read_text(encoding="utf-8")
+            self.assertIn("Scanning directory:", updated)
+
+    def test_cli_file_context_bootstrap_supports_add_logging_prompt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "workspace"
+            src = root / "src"
+            src.mkdir(parents=True, exist_ok=True)
+            target = src / "main.py"
+            target.write_text(
+                "from pathlib import Path\n"
+                "import sys\n\n\n"
+                "def main() -> int:\n"
+                "    target = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(\".\")\n"
+                "    print(f\"Scanning: {target}\")\n"
+                "    return 0\n\n\n"
+                "if __name__ == \"__main__\":\n"
+                "    raise SystemExit(main())\n",
+                encoding="utf-8",
+            )
+            service, config_store, _ = self._make_service(tmp_dir=tmp)
+            self._configure_repo_root(service=service, config_store=config_store, root=root)
+            output: list[str] = []
+            cli = AiEChatCli(service=service, input_func=_PromptDriver("y"), output_func=output.append)
+
+            self.assertTrue(cli.handle_line("/file src/main.py"))
+            self.assertTrue(cli.handle_line("add logging to this file"))
+
+            joined = "\n".join(output)
+            self.assertIn("Planned update for src/main.py", joined)
+            self.assertIn("configure basic INFO logging", joined)
+
+    def test_cli_main_bootstrap_and_context_visibility(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "workspace"
+            generated_root = root / "generated" / "GP-123" / "src"
+            generated_root.mkdir(parents=True, exist_ok=True)
+            (generated_root / "main.py").write_text("print('generated')\n", encoding="utf-8")
+            service, config_store, _ = self._make_service(tmp_dir=tmp)
+            self._configure_repo_root(service=service, config_store=config_store, root=root)
+            output: list[str] = []
+            cli = AiEChatCli(service=service, input_func=_PromptDriver(), output_func=output.append)
+
+            self.assertTrue(cli.handle_line("/main generated/GP-123"))
+            self.assertTrue(cli.handle_line("/context"))
+
+            joined = "\n".join(output)
+            self.assertIn("Run target ready: generated/GP-123", joined)
+            self.assertIn("Current run target: generated/GP-123", joined)
+
+    def test_cli_yes_without_pending_confirmation_stays_safe(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            service, _, _ = self._make_service(tmp_dir=tmp)
+            output: list[str] = []
+            cli = AiEChatCli(service=service, input_func=_PromptDriver(), output_func=output.append)
+
+            self.assertTrue(cli.handle_line("y"))
+
+            self.assertIn("No confirmation is pending.", "\n".join(output))
+
+    def test_cli_run_it_reuses_existing_pending_execution_confirmation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "workspace"
+            (root / "generated" / "GP-123" / "src").mkdir(parents=True, exist_ok=True)
+            (root / "generated" / "GP-123" / "src" / "main.py").write_text("print('generated')\n", encoding="utf-8")
+            service, config_store, _ = self._make_service(tmp_dir=tmp)
+            self._configure_repo_root(service=service, config_store=config_store, root=root)
+            output: list[str] = []
+            cli = AiEChatCli(service=service, input_func=_PromptDriver(), output_func=output.append)
+
+            self.assertTrue(cli.handle_line("/run main generated/GP-123"))
+            self.assertTrue(cli.handle_line("run it"))
+
+            joined = "\n".join(output)
+            self.assertIn("Execution is already pending for generated/GP-123.", joined)
+            self.assertIn("type y to approve", joined.lower())

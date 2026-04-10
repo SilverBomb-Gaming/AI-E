@@ -4945,6 +4945,8 @@ class CapabilityExecutor:
                 "context_used_id": context_entry.context_id,
                 "context_used_ids": context_entry.context_id,
                 "context_source_summary": context_entry.source_summary,
+                "patch_target_path": relative_path,
+                "patch_plan_summary": plan_summary,
             },
         )
 
@@ -4995,6 +4997,8 @@ class CapabilityExecutor:
                 "last_run_target_root": last_run.target_root or "",
                 "last_run_entrypoint_path": relative_path,
                 "last_run_summary": last_run.summary,
+                "patch_target_path": relative_path,
+                "patch_plan_summary": plan_summary,
             },
         )
 
@@ -5019,6 +5023,8 @@ class CapabilityExecutor:
         if current_content is None:
             return None
         lowered_prompt = prompt.lower()
+        if "logging" in lowered_prompt:
+            return self._build_logging_cli_edit_plan(relative_path=relative_path, current_content=current_content)
         if "csv" in lowered_prompt:
             return self._build_csv_cli_edit_plan(relative_path=relative_path, current_content=current_content)
         if any(token in lowered_prompt for token in ("format", "error", "message")):
@@ -5098,6 +5104,40 @@ class CapabilityExecutor:
             )
         )
         return relative_path, prepared_argument, user_message, f"CSV writing support prepared for {relative_path}"
+
+    def _build_logging_cli_edit_plan(self, *, relative_path: str, current_content: str) -> tuple[str, str, str, str]:
+        new_content = (
+            "import logging\n"
+            "from pathlib import Path\n"
+            "import sys\n\n\n"
+            "logging.basicConfig(level=logging.INFO, format=\"[%(levelname)s] %(message)s\")\n"
+            "logger = logging.getLogger(__name__)\n\n\n"
+            "def main() -> int:\n"
+            "    target = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(\".\")\n"
+            "    logger.info(\"Scanning target: %s\", target.resolve())\n"
+            "    print(f\"Scanning: {target}\")\n"
+            "    return 0\n\n\n"
+            "if __name__ == \"__main__\":\n"
+            "    raise SystemExit(main())\n"
+        )
+        prepared_argument = self._build_exact_patch_argument(
+            relative_path=relative_path,
+            operator_reason="add bounded logging to generated CLI scaffold",
+            current_content=current_content,
+            new_content=new_content,
+        )
+        user_message = "\n".join(
+            (
+                f"Planned update for {relative_path}",
+                "Change:",
+                "- configure basic INFO logging",
+                "- log the resolved scan target before the existing print output",
+                "- preserve the current single-file CLI entrypoint structure",
+                "Next:",
+                f"- use /patchlast {relative_path} to apply the update",
+            )
+        )
+        return relative_path, prepared_argument, user_message, f"Logging support prepared for {relative_path}"
 
     def _build_formatting_cli_edit_plan(self, *, relative_path: str, current_content: str) -> tuple[str, str, str, str]:
         if "summary.csv" in current_content:
