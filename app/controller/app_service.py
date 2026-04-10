@@ -1995,7 +1995,7 @@ class ControllerService:
                     "Feature: /featurestatus|featureapply",
                     "Exec: /startruntime /run|/test /dispatch|dispatchstatus /nodes|nodeview|nodeselect|nodeclear",
                     "Eval: /evalcreate|evals|evalstatus|evalruns|evalstart|evalstop",
-                    "Chain: /chaincreate|chains|chainstatus|chainsteps|chainstart|chainstop",
+                    "Chain: /chaincreate --title ... --type ... --command ... --steps ... | /chains|chainstatus|chainsteps|chainstart|chainstop",
                     "Trust: /capabilities|audit|clearcontext /contexts",
                     "Ask: /ask|askd|asklast|askctx",
                     "Info: /explainrepo|explainfile|summarizeweb",

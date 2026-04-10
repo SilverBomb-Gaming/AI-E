@@ -1095,7 +1095,7 @@ class CapabilityExecutor:
                 request,
                 outcome="invalid_request",
                 reason_code="task_chain_parse_failed",
-                user_message=f"Couldn't create that task chain.\nReason: {error}\nNext: Use /chaincreate --title \"name\" --objective \"goal\" --type validate_then_report|feature_validate_loop|dispatch_validate_recover --command \"/test target\" --steps 3 [--failures 1] [--no-progress 1] [--target local|node:<id>|role:<role>] [--fallback stop|local|node:<id>|role:<role>] .",
+                user_message=f"Couldn't create that task chain.\nReason: {error}\nNext: Use /chaincreate --title \"name\" --type validate_then_report|feature_validate_loop|dispatch_validate_recover --command \"/run pytest tests/test_cli_chat.py::LocalCliChatTests::test_cli_debug_shows_shared_status_routing\" --steps 3 [--objective \"goal\"] [--retries 1] [--failures 2] [--no-progress 1] [--target local|node:<id>|role:<role>] [--fallback stop|local|node:<id>|role:<role>] .",
                 internal_summary=f"task.chain.create rejected invalid syntax: {error}",
                 retryable=False,
                 command_label="/chaincreate",
@@ -1391,7 +1391,7 @@ class CapabilityExecutor:
         except ValueError as exc:
             return {}, str(exc)
         if not tokens:
-            return {}, "Use --title, --objective, --type, --command, and --steps to define the chain."
+            return {}, "Use --title, --type, --command, and --steps to define the chain."
         parsed: dict[str, str] = {}
         index = 0
         while index < len(tokens):
@@ -1405,7 +1405,7 @@ class CapabilityExecutor:
                 return {}, f"Missing value for --{key}."
             parsed[key] = tokens[index + 1].strip()
             index += 2
-        for required in ("title", "objective", "type", "command", "steps"):
+        for required in ("title", "type", "command", "steps"):
             if not parsed.get(required):
                 return {}, f"Missing required option --{required}."
         return parsed, ""
@@ -1461,7 +1461,7 @@ class CapabilityExecutor:
         return TaskChainRecord(
             chain_id=chain_id,
             title=parsed.get("title", "").strip(),
-            objective=parsed.get("objective", "").strip(),
+            objective=parsed.get("objective", "").strip() or parsed.get("title", "").strip(),
             chain_type=chain_type,  # type: ignore[arg-type]
             created_at=self._service._now_iso(),
             approved_at="",
@@ -1484,7 +1484,10 @@ class CapabilityExecutor:
             max_failures=max(1, int(parsed.get("failures", "1"))),
             max_no_progress=max(1, int(parsed.get("no-progress", parsed.get("no_progress", "1")))),
             latest_summary="Chain created and waiting for approval.",
-            metadata={"stage": "validate" if chain_type == "validate_then_report" else ("primary_validate" if chain_type == "dispatch_validate_recover" else "")},
+            metadata={
+                "stage": "validate" if chain_type == "validate_then_report" else ("primary_validate" if chain_type == "dispatch_validate_recover" else ""),
+                "compat_retries": parsed.get("retries", "").strip(),
+            },
         )
 
     def _build_evaluation_session(self, *, parsed: dict[str, str], chat_id: str, requester_label: str) -> EvaluationSessionRecord:

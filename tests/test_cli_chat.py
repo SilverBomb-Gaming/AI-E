@@ -7,6 +7,7 @@ from pathlib import Path
 
 from app.cli.chat_cli import AiEChatCli, build_arg_parser
 from app.controller.app_service import ControllerService
+from app.controller.chat_command_parser import parse_chat_command
 from app.controller.execution_runner import ExecutionRunner
 from app.controller.last_run_models import LastRunRecord
 from app.controller.profile_store import ControllerConfigStore
@@ -94,6 +95,25 @@ class LocalCliChatTests(unittest.TestCase):
             self.assertIn("[ROUTED CAPABILITY: status.read]", joined)
             self.assertIn("Readiness:", joined)
 
+    def test_shared_parser_recognizes_task_chain_command_family(self) -> None:
+        create = parse_chat_command(
+            text='/chaincreate --title cli_validator_chain --type validate_then_report --command "/run pytest tests/test_cli_chat.py::LocalCliChatTests::test_cli_debug_shows_shared_status_routing" --steps 3 --retries 1 --failures 2',
+            has_text=True,
+        )
+        chains = parse_chat_command(text="/chains", has_text=True)
+        status = parse_chat_command(text="/chainstatus CH-12345678", has_text=True)
+        steps = parse_chat_command(text="/chainsteps CH-12345678 5", has_text=True)
+        start = parse_chat_command(text="/chainstart CH-12345678", has_text=True)
+        stop = parse_chat_command(text="/chainstop CH-12345678", has_text=True)
+
+        self.assertEqual(create.command_label, "/chaincreate")
+        self.assertTrue(create.argument.startswith("--title cli_validator_chain"))
+        self.assertEqual(chains.command_label, "/chains")
+        self.assertEqual(status.command_label, "/chainstatus")
+        self.assertEqual(steps.command_label, "/chainsteps")
+        self.assertEqual(start.command_label, "/chainstart")
+        self.assertEqual(stop.command_label, "/chainstop")
+
     def test_build_arg_parser_accepts_debug_routing_alias(self) -> None:
         parser = build_arg_parser()
 
@@ -141,6 +161,93 @@ class LocalCliChatTests(unittest.TestCase):
             self.assertIn("ID:", joined)
             self.assertEqual(len(fake_runner.calls), 0)
             self.assertEqual(prompts.prompts, [])
+
+    def test_cli_chaincreate_accepts_live_flag_syntax(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "workspace"
+            root.mkdir(parents=True, exist_ok=True)
+            runner = _FakeCommandRunner(
+                subprocess.CompletedProcess(
+                    ["python", "-m", "pytest", "tests/test_cli_chat.py::LocalCliChatTests::test_cli_debug_shows_shared_status_routing"],
+                    0,
+                    "1 passed\n",
+                    "",
+                )
+            )
+            service, config_store, _ = self._make_service(tmp_dir=tmp, command_runner=runner)
+            self._configure_repo_root(service=service, config_store=config_store, root=root)
+            output: list[str] = []
+            cli = AiEChatCli(service=service, input_func=_PromptDriver(), output_func=output.append, debug=True)
+
+            self.assertTrue(
+                cli.handle_line(
+                    '/chaincreate --title "cli validator chain" --type validate_then_report --command "/run pytest tests/test_cli_chat.py::LocalCliChatTests::test_cli_debug_shows_shared_status_routing" --steps 3 --retries 1 --failures 2'
+                )
+            )
+
+            joined = "\n".join(output)
+            self.assertIn("[TASK CHAIN]", joined)
+            self.assertIn("ID: CH-", joined)
+            self.assertNotIn("Couldn't parse that command.", joined)
+            chain = service.list_task_chains()[0]
+            self.assertEqual(chain.objective, "cli validator chain")
+            self.assertEqual(chain.metadata.get("compat_retries"), "1")
+
+    def test_cli_chaincreate_missing_required_fields_fails_clearly(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            service, _, _ = self._make_service(tmp_dir=tmp)
+            output: list[str] = []
+            cli = AiEChatCli(service=service, input_func=_PromptDriver(), output_func=output.append)
+
+            self.assertTrue(cli.handle_line('/chaincreate --title only-title'))
+
+            joined = "\n".join(output)
+            self.assertIn("Couldn't create that task chain.", joined)
+            self.assertIn("Missing required option --type.", joined)
+
+    def test_cli_task_chain_family_runs_end_to_end(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "workspace"
+            root.mkdir(parents=True, exist_ok=True)
+            runner = _FakeCommandRunner(
+                subprocess.CompletedProcess(
+                    ["python", "-m", "pytest", "tests/test_cli_chat.py::LocalCliChatTests::test_cli_debug_shows_shared_status_routing"],
+                    0,
+                    "1 passed\n",
+                    "",
+                )
+            )
+            service, config_store, _ = self._make_service(tmp_dir=tmp, command_runner=runner)
+            self._configure_repo_root(service=service, config_store=config_store, root=root)
+            output: list[str] = []
+            cli = AiEChatCli(service=service, input_func=_PromptDriver(), output_func=output.append)
+
+            self.assertTrue(
+                cli.handle_line(
+                    '/chaincreate --title cli_validator_chain --type validate_then_report --command "/run pytest tests/test_cli_chat.py::LocalCliChatTests::test_cli_debug_shows_shared_status_routing" --steps 3 --retries 1 --failures 2'
+                )
+            )
+            chain = service.list_task_chains()[0]
+            self.assertTrue(cli.handle_line("/chains"))
+            self.assertTrue(cli.handle_line(f"/chainstart {chain.chain_id}"))
+            confirmation = service.latest_pending_confirmation_for_chat(chat_id="local-cli")
+            self.assertIsNotNone(confirmation)
+            self.assertTrue(cli.handle_line(f"/confirm {confirmation.confirmation_id}"))
+            self.assertTrue(cli.handle_line(f"/chainstatus {chain.chain_id}"))
+            self.assertTrue(cli.handle_line(f"/chainsteps {chain.chain_id}"))
+
+            completed = service.await_task_chain(chain.chain_id, timeout_seconds=2.0)
+            self.assertIsNotNone(completed)
+            self.assertEqual(completed.status, "completed")
+
+            self.assertTrue(cli.handle_line(f"/chainstatus {chain.chain_id}"))
+            self.assertTrue(cli.handle_line(f"/chainsteps {chain.chain_id}"))
+
+            joined = "\n".join(output)
+            self.assertIn("[TASK CHAINS]", joined)
+            self.assertIn("Confirmation", joined)
+            self.assertIn("[TASK CHAIN STATUS]", joined)
+            self.assertIn("[TASK CHAIN STEPS]", joined)
 
     def test_cli_fallback_does_not_crash_on_ambiguous_input(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -135,7 +135,7 @@ def parse_chat_command(*, text: str, has_text: bool = True) -> ParsedChatCommand
     if command.startswith("/evals"):
         return ParsedChatCommand(command_label="parse_failure", normalized_text=normalized_text, usage_hint="Use /evals.")
     if command.startswith("/chaincreate"):
-        return ParsedChatCommand(command_label="parse_failure", normalized_text=normalized_text, usage_hint="Use /chaincreate --title \"name\" --objective \"goal\" --type validate_then_report|feature_validate_loop|dispatch_validate_recover --command \"/test target\" --steps 3 [--failures 1] [--no-progress 1] [--target local|node:<id>|role:<role>] [--fallback stop|local|node:<id>|role:<role>].")
+        return ParsedChatCommand(command_label="parse_failure", normalized_text=normalized_text, usage_hint="Use /chaincreate --title \"name\" --type validate_then_report|feature_validate_loop|dispatch_validate_recover --command \"/run pytest tests/test_cli_chat.py::LocalCliChatTests::test_cli_debug_shows_shared_status_routing\" --steps 3 [--objective \"goal\"] [--retries 1] [--failures 2] [--no-progress 1] [--target local|node:<id>|role:<role>] [--fallback stop|local|node:<id>|role:<role>].")
     if command.startswith("/chainstatus"):
         return ParsedChatCommand(command_label="parse_failure", normalized_text=normalized_text, usage_hint="Use /chainstatus <chain_id>.")
     if command.startswith("/chainsteps"):
