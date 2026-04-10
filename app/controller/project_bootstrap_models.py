@@ -78,10 +78,13 @@ class BootstrapResult:
 @dataclass(frozen=True)
 class ProjectBootstrapProposal:
     bootstrap_id: str
+    project_id: str
     translation_session_id: str
     plan_id: str
     intent_id: str
     project_type: ProjectBootstrapType
+    target_root: str
+    entrypoint_path: str
     title: str
     summary: str
     source_intent_summary: str
@@ -114,10 +117,13 @@ class ProjectBootstrapProposal:
     def to_payload(self) -> dict[str, object]:
         return {
             "bootstrap_id": self.bootstrap_id,
+            "project_id": self.project_id,
             "translation_session_id": self.translation_session_id,
             "plan_id": self.plan_id,
             "intent_id": self.intent_id,
             "project_type": self.project_type,
+            "target_root": self.target_root,
+            "entrypoint_path": self.entrypoint_path,
             "title": self.title,
             "summary": self.summary,
             "source_intent_summary": self.source_intent_summary,

@@ -24,20 +24,26 @@ class ProjectBootstrapPlanner:
         plan: BuildPlan,
         *,
         bootstrap_id: str,
+        project_id: str,
         created_at: str,
         repo_root: str = "",
     ) -> ProjectBootstrapProposal:
         project_type = self._classify_project_type(session=session, plan=plan)
         title = (plan.title or session.current_spec.title or "Project").strip() or "Project"
-        files = self._build_files(project_type=project_type)
-        follow_up_commands = self._follow_up_commands(project_type)
+        target_root = self._target_root(project_id)
+        files = self._build_files(project_type=project_type, target_root=target_root)
+        entrypoint_path = self._entrypoint_path(project_type=project_type, target_root=target_root)
+        follow_up_commands = self._follow_up_commands(project_type, target_root=target_root, entrypoint_path=entrypoint_path)
         source_intent_summary = (session.current_spec.summary or session.source_request or title).strip()
         return ProjectBootstrapProposal(
             bootstrap_id=bootstrap_id,
+            project_id=project_id,
             translation_session_id=session.translation_session_id,
             plan_id=plan.plan_id,
             intent_id=session.intent_id,
             project_type=project_type,
+            target_root=target_root,
+            entrypoint_path=entrypoint_path,
             title=title,
             summary=f"Minimal {project_type} starter scaffold.",
             source_intent_summary=source_intent_summary,
@@ -78,36 +84,48 @@ class ProjectBootstrapPlanner:
         ]
         return " ".join(value for value in values if value).lower()
 
-    def _build_files(self, *, project_type: ProjectBootstrapType) -> tuple[ProjectBootstrapFileSpec, ...]:
+    @staticmethod
+    def _target_root(project_id: str) -> str:
+        return f"generated/{project_id.strip().upper()}"
+
+    @staticmethod
+    def _entrypoint_path(*, project_type: ProjectBootstrapType, target_root: str) -> str:
+        if project_type == "python_cli":
+            return f"{target_root}/src/main.py"
+        if project_type in {"python_script", "desktop_app"}:
+            return f"{target_root}/main.py"
+        return ""
+
+    def _build_files(self, *, project_type: ProjectBootstrapType, target_root: str) -> tuple[ProjectBootstrapFileSpec, ...]:
         if project_type == "python_script":
             return (
-                ProjectBootstrapFileSpec("main.py", "starter entrypoint", self._script_main()),
+                ProjectBootstrapFileSpec(f"{target_root}/main.py", "starter entrypoint", self._script_main()),
             )
         if project_type == "python_cli":
             return (
-                ProjectBootstrapFileSpec("README.md", "project overview", self._cli_readme()),
-                ProjectBootstrapFileSpec("src/main.py", "CLI entrypoint", self._cli_main()),
+                ProjectBootstrapFileSpec(f"{target_root}/README.md", "project overview", self._cli_readme(target_root=target_root)),
+                ProjectBootstrapFileSpec(f"{target_root}/src/main.py", "CLI entrypoint", self._cli_main()),
             )
         if project_type == "desktop_app":
             return (
-                ProjectBootstrapFileSpec("README.md", "project overview", self._desktop_readme()),
-                ProjectBootstrapFileSpec("main.py", "desktop entrypoint", self._desktop_main()),
+                ProjectBootstrapFileSpec(f"{target_root}/README.md", "project overview", self._desktop_readme(target_root=target_root)),
+                ProjectBootstrapFileSpec(f"{target_root}/main.py", "desktop entrypoint", self._desktop_main()),
             )
         return (
-            ProjectBootstrapFileSpec("README.md", "project overview", self._library_readme()),
-            ProjectBootstrapFileSpec("src/__init__.py", "library exports", self._library_init()),
-            ProjectBootstrapFileSpec("src/core.py", "core library function", self._library_core()),
+            ProjectBootstrapFileSpec(f"{target_root}/README.md", "project overview", self._library_readme()),
+            ProjectBootstrapFileSpec(f"{target_root}/src/__init__.py", "library exports", self._library_init()),
+            ProjectBootstrapFileSpec(f"{target_root}/src/core.py", "core library function", self._library_core()),
         )
 
     @staticmethod
-    def _follow_up_commands(project_type: ProjectBootstrapType) -> tuple[str, ...]:
+    def _follow_up_commands(project_type: ProjectBootstrapType, *, target_root: str, entrypoint_path: str) -> tuple[str, ...]:
         if project_type == "python_script":
-            return ("/file main.py", "/run python main.py")
+            return (f"/file {entrypoint_path}", f"/run python {entrypoint_path}")
         if project_type == "python_cli":
-            return ("/file src/main.py", "/run python src/main.py")
+            return (f"/file {target_root}/README.md", f"/file {entrypoint_path}", f"/run main {target_root}")
         if project_type == "desktop_app":
-            return ("/file main.py", "/run python main.py")
-        return ("/file src/core.py", "/file src/__init__.py")
+            return (f"/file {entrypoint_path}", f"/run python {entrypoint_path}")
+        return (f"/file {target_root}/src/core.py", f"/file {target_root}/src/__init__.py")
 
     @staticmethod
     def _script_main() -> str:
@@ -123,7 +141,7 @@ class ProjectBootstrapPlanner:
         )
 
     @staticmethod
-    def _cli_readme() -> str:
+    def _cli_readme(*, target_root: str) -> str:
         return "\n".join(
             (
                 "# Project",
@@ -132,7 +150,7 @@ class ProjectBootstrapPlanner:
                 "",
                 "## Run",
                 "",
-                "python src/main.py",
+                f"/run main {target_root}",
             )
         )
 
@@ -156,7 +174,7 @@ class ProjectBootstrapPlanner:
         )
 
     @staticmethod
-    def _desktop_readme() -> str:
+    def _desktop_readme(*, target_root: str) -> str:
         return "\n".join(
             (
                 "# Project",
@@ -165,7 +183,7 @@ class ProjectBootstrapPlanner:
                 "Install PySide6 manually.",
                 "",
                 "Run:",
-                "python main.py",
+                f"python {target_root}/main.py",
             )
         )
 

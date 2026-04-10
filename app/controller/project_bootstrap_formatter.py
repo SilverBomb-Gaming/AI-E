@@ -8,7 +8,7 @@ class ProjectBootstrapFormatter:
     """Render bounded bootstrap proposals and results into concise Telegram replies."""
 
     def format_proposal(self, proposal: ProjectBootstrapProposal, *, heading: str) -> str:
-        lines = [heading, f"Type: {proposal.project_type}", "Files:"]
+        lines = [heading, f"Type: {proposal.project_type}", f"Target: {proposal.target_root}", "", "Files:"]
         lines.extend(f"- {file_spec.relative_path}" for file_spec in proposal.files)
         lines.append(f"Purpose: {proposal.summary}")
         if proposal.state == "proposed":
@@ -21,7 +21,7 @@ class ProjectBootstrapFormatter:
 
     def format_result(self, proposal: ProjectBootstrapProposal) -> str:
         created = tuple(record.relative_path for record in proposal.completed_files)
-        lines = ["Bootstrap completed", "Created:"]
+        lines = ["Bootstrap completed", f"Target: {proposal.target_root}", "Created:"]
         lines.extend(f"- {path}" for path in created)
         return "\n".join(lines)
 

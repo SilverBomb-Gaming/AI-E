@@ -35,6 +35,9 @@ _ALLOWED_PYTHON_EXECUTABLES = frozenset(
         Path(sys.executable).name.lower(),
     }
 )
+_APPROVED_RUN_ALIAS_ENTRYPOINTS: dict[str, tuple[str, ...]] = {
+    "main": ("src/main.py",),
+}
 
 
 class ExecutionRunner:
@@ -64,6 +67,17 @@ class ExecutionRunner:
         repo_root_text = self._validate_repo_root(repo_root)
         normalized = self._normalize_command_text(command_text)
         argv = self._split_command(normalized)
+        alias_request = self._build_run_alias_request(
+            capability_id=capability_id,
+            repo_root=repo_root_text,
+            argv=argv,
+            command_text=normalized,
+            operator_reason=operator_reason,
+            timeout_seconds=timeout_seconds,
+            expected_scope=expected_scope,
+        )
+        if alias_request is not None:
+            return alias_request
         executable = self._normalize_executable(argv[0])
 
         if executable in _ALLOWED_PYTHON_EXECUTABLES:
@@ -89,6 +103,64 @@ class ExecutionRunner:
         raise ExecutionRunnerError(
             "command_prefix_not_allowed",
             "Only bounded Python test and approved smoke commands are allowed in /run right now.",
+        )
+
+    def _build_run_alias_request(
+        self,
+        *,
+        capability_id: str,
+        repo_root: str,
+        argv: tuple[str, ...],
+        command_text: str,
+        operator_reason: str,
+        timeout_seconds: float | None,
+        expected_scope: str,
+    ) -> LocalCommandExecutionRequest | None:
+        alias = argv[0].strip().lower()
+        entrypoint = _APPROVED_RUN_ALIAS_ENTRYPOINTS.get(alias)
+        if entrypoint is None:
+            return None
+        if len(argv) > 2:
+            raise ExecutionRunnerError(
+                "run_alias_argument_count_not_allowed",
+                "The main run alias accepts zero or one repo-local target argument only.",
+            )
+        repo_root_path = Path(repo_root)
+        entrypoint_text = Path(*entrypoint).as_posix()
+        tail = argv[1:]
+        if tail:
+            self._validate_repo_relative_path(tail[0], repo_root_path)
+            target_path = (repo_root_path / Path(tail[0])).resolve()
+            if not target_path.is_dir():
+                raise ExecutionRunnerError(
+                    "run_alias_entrypoint_missing",
+                    f"Approved run alias 'main' is unavailable because {tail[0]}/src/main.py is missing in the configured repository root.",
+                )
+            if target_path == repo_root_path:
+                entrypoint_text = Path(*entrypoint).as_posix()
+            else:
+                relative_target = target_path.relative_to(repo_root_path).as_posix()
+                entrypoint_text = Path(relative_target, *entrypoint).as_posix()
+        entrypoint_path = repo_root_path / Path(entrypoint_text)
+        if not entrypoint_path.exists() or not entrypoint_path.is_file():
+            raise ExecutionRunnerError(
+                "run_alias_entrypoint_missing",
+                f"Approved run alias 'main' is unavailable because {entrypoint_text} is missing in the configured repository root.",
+            )
+        command_summary = alias
+        if tail:
+            command_summary = f"{command_summary} {tail[0]}"
+        return LocalCommandExecutionRequest(
+            capability_id=capability_id,
+            command_kind="run",
+            command_family="python_script",
+            command_text=command_text,
+            command_summary=command_summary,
+            working_directory=repo_root,
+            timeout_seconds=self._resolve_timeout(timeout_seconds),
+            operator_reason=operator_reason.strip(),
+            expected_scope=expected_scope,
+            argv=(sys.executable, entrypoint_text, *tail),
         )
 
     def build_test_request(

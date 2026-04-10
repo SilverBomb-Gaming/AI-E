@@ -19,6 +19,8 @@ from .autonomy_bundle_store import AutonomyBundleStore
 from .build_plan_formatter import BuildPlanFormatter
 from .build_plan_store import BuildPlanStore
 from .build_planner import BuildPlanner
+from .generated_project_models import GeneratedProjectRecord
+from .generated_project_store import GeneratedProjectStore
 from .project_bootstrap_formatter import ProjectBootstrapFormatter
 from .project_bootstrap_planner import ProjectBootstrapPlanner
 from .project_bootstrap_store import ProjectBootstrapStore
@@ -245,6 +247,7 @@ class ControllerService:
         self._intent_store = IntentStore()
         self._build_plan_store = BuildPlanStore()
         self._project_bootstrap_store = ProjectBootstrapStore()
+        self._generated_project_store = GeneratedProjectStore()
         self._plan_bridge_store = PlanBridgeStore()
         self._autonomy_bundle_store = AutonomyBundleStore()
         self._last_capability_evaluation: CapabilityEvaluation | None = None
@@ -1389,6 +1392,15 @@ class ControllerService:
             return ""
         return draft.summary
 
+    def active_generated_project_for_chat(self, *, chat_id: str) -> GeneratedProjectRecord | None:
+        return self._generated_project_store.get_active(chat_id=chat_id)
+
+    def set_active_generated_project(self, *, chat_id: str, project: GeneratedProjectRecord) -> None:
+        self._generated_project_store.set_active(chat_id=chat_id, project=project)
+
+    def clear_active_generated_project(self, *, chat_id: str) -> GeneratedProjectRecord | None:
+        return self._generated_project_store.clear_active(chat_id=chat_id)
+
     def _build_contexts_reply(self, *, chat_id: str, limit: int = 5) -> _TelegramResponsePlan:
         contexts = self.recent_contexts_for_chat(chat_id=chat_id, limit=max(1, min(limit, 6)))
         if not contexts:
@@ -1797,10 +1809,10 @@ class ControllerService:
                     "Operator commands",
                     "Core: /chat /translate|/refine|clear",
                     "Plan: /planbuild|view|status /planstep|approve|reset",
-                    "Bundle: /planstepbundle /bundleapprove|status|cancel|reset",
+                    "Bundle: /planstepbundle /bundleapprove|status|cancel",
                     "Boot: /bootstrapproject|view|/bootstrapapprove|reset",
                     "Files: /repo|file /createfile|patchlast|patchfile|/writefile",
-                    "Exec: /startruntime /run|/test /run /nodes|nodeview|nodeselect|nodeclear",
+                    "Exec: /startruntime /run|/test /nodes|nodeview|nodeselect|nodeclear",
                     "Trust: /capabilities|audit|clearcontext /contexts",
                     "Ask: /ask|askd|asklast|askctx",
                     "Info: /explainrepo|explainfile|summarizeweb",
@@ -2412,6 +2424,7 @@ class ControllerService:
             "/bootstrapview",
             "/bootstrapapprove",
             "/bootstrapreset",
+            "/projectview",
             "/mode",
             "/models",
             "/repo",
@@ -2542,6 +2555,12 @@ class ControllerService:
                 command_label="parse_failure",
                 normalized_text=normalized_text,
                 usage_hint="Use /bootstrapproject, /bootstrapview, /bootstrapapprove, or /bootstrapreset.",
+            )
+        if command.startswith("/projectview"):
+            return _ParsedTelegramCommand(
+                command_label="parse_failure",
+                normalized_text=normalized_text,
+                usage_hint="Use /projectview.",
             )
         if command.startswith("/planstepbundle") or command.startswith("/bundleapprove") or command.startswith("/bundlestatus") or command.startswith("/bundlecancel") or command.startswith("/bundlereset"):
             return _ParsedTelegramCommand(

@@ -127,7 +127,30 @@ class RuntimeActivationCommandTests(unittest.TestCase):
             self.assertIn("Runtime is not active", blocked_reply)
             self.assertIn("Runtime started", activation_reply)
             self.assertIn("Bootstrap completed", success_reply)
-            self.assertTrue((root / "main.py").exists())
+            proposal = service._project_bootstrap_store.get_active(chat_id="chat-1")
+            self.assertIsNotNone(proposal)
+            self.assertTrue((root / proposal.files[0].relative_path).exists())
+
+    def test_status_shows_health_ok_and_readiness_ready_after_activation(self) -> None:
+        updates = (
+            TelegramInboundMessage(update_id=920, chat_id="chat-1", text="/startruntime", sender_label="@tester"),
+            TelegramInboundMessage(update_id=921, chat_id="chat-1", text="/status", sender_label="@tester"),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "workspace"
+            root.mkdir(parents=True, exist_ok=True)
+            telegram_service = _FakeTelegramService(update_batches=[updates])
+            service, config_store, _ = self._make_service(tmp_dir=tmp, telegram_service=telegram_service)
+            self._configure_scopes(service=service, config_store=config_store, repo_root=root)
+
+            self._run_until(service, telegram_service, expected_messages=2)
+
+            status_reply = telegram_service.sent_messages[1][1]
+
+            self.assertIn("Health: OK", status_reply)
+            self.assertIn("Readiness: READY", status_reply)
+            self.assertNotIn("listener", status_reply.lower())
+            self.assertNotIn("liveness", status_reply.lower())
 
     def test_readiness_can_become_blocked_after_activation_if_health_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

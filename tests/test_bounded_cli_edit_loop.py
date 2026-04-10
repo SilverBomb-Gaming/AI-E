@@ -280,6 +280,93 @@ class BoundedCliEditLoopTests(unittest.TestCase):
             self.assertEqual(len(fake_runner.calls), 1)
             self.assertNotIn("summary.csv", target.read_text(encoding="utf-8"))
 
+    def test_generated_project_file_context_edit_loop_patches_and_runs_isolated_cli(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "workspace"
+            target = root / "generated" / "GP-7A31C2" / "src" / "main.py"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(
+                "from pathlib import Path\n"
+                "import sys\n\n\n"
+                "def main() -> int:\n"
+                "    target = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(\".\")\n"
+                "    print(f\"Scanning: {target}\")\n"
+                "    return 0\n\n\n"
+                "if __name__ == \"__main__\":\n"
+                "    raise SystemExit(main())\n",
+                encoding="utf-8",
+            )
+            runner = _LoopCommandRunner(
+                subprocess.CompletedProcess(
+                    ["python", "generated/GP-7A31C2/src/main.py", "generated/GP-7A31C2"],
+                    0,
+                    "Scanned 1 files in generated/GP-7A31C2\nWrote CSV: generated/GP-7A31C2/summary.csv\n",
+                    "",
+                )
+            )
+            service, config_store, _, _, fake_runner, offline = self._make_service(tmp_dir=tmp, command_runner=runner)
+            self._configure_scopes(service=service, config_store=config_store, root=root)
+
+            file_reply = self._run_single_update(
+                service,
+                _FakeTelegramService(update_batches=[(
+                    TelegramInboundMessage(update_id=920, chat_id="chat-1", text="/file generated/GP-7A31C2/src/main.py", sender_label="@tester"),
+                )]),
+            )
+            self.assertIn("Context: C1 ready for /asklast or /askctx C1 <prompt>.", file_reply)
+
+            ask_reply = self._run_single_update(
+                service,
+                _FakeTelegramService(update_batches=[(
+                    TelegramInboundMessage(
+                        update_id=921,
+                        chat_id="chat-1",
+                        text="/askctx C1 add CSV output so the generated CLI writes file sizes to summary.csv",
+                        sender_label="@tester",
+                    ),
+                )]),
+            )
+            self.assertIn("Planned update for generated/GP-7A31C2/src/main.py", ask_reply)
+            self.assertIn("- use /patchlast generated/GP-7A31C2/src/main.py to apply the update", ask_reply)
+            self.assertEqual(offline.ask_calls, 0)
+
+            patch_prompt = self._run_single_update(
+                service,
+                _FakeTelegramService(update_batches=[(
+                    TelegramInboundMessage(update_id=922, chat_id="chat-1", text="/patchlast generated/GP-7A31C2/src/main.py", sender_label="@tester"),
+                )]),
+            )
+            patch_confirmation_id = self._extract_confirmation_id(patch_prompt)
+            self.assertIn("Action requires confirmation.", patch_prompt)
+
+            patch_reply = self._run_single_update(
+                service,
+                _FakeTelegramService(update_batches=[(
+                    TelegramInboundMessage(update_id=923, chat_id="chat-1", text=f"/confirm {patch_confirmation_id}", sender_label="@tester"),
+                )]),
+            )
+            self.assertIn("Operation: patch", patch_reply)
+            self.assertIn("Wrote CSV", target.read_text(encoding="utf-8"))
+
+            run_prompt = self._run_single_update(
+                service,
+                _FakeTelegramService(update_batches=[(
+                    TelegramInboundMessage(update_id=924, chat_id="chat-1", text="/run main generated/GP-7A31C2", sender_label="@tester"),
+                )]),
+            )
+            run_confirmation_id = self._extract_confirmation_id(run_prompt)
+            self.assertIn("Action requires confirmation.", run_prompt)
+
+            run_reply = self._run_single_update(
+                service,
+                _FakeTelegramService(update_batches=[(
+                    TelegramInboundMessage(update_id=925, chat_id="chat-1", text=f"/confirm {run_confirmation_id}", sender_label="@tester"),
+                )]),
+            )
+            self.assertIn("Command: main generated/GP-7A31C2", run_reply)
+            self.assertEqual(len(fake_runner.calls), 1)
+            self.assertEqual(fake_runner.calls[0][0][1:], ("generated/GP-7A31C2/src/main.py", "generated/GP-7A31C2"))
+
     def test_patchlast_without_prepared_draft_fails_clearly(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "workspace"

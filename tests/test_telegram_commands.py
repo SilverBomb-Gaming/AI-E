@@ -12,6 +12,7 @@ from app.controller.app_service import ControllerService
 from app.controller.channel_models import TelegramChannelStatus
 from app.controller.diagnostic_models import DiagnosticItem
 from app.controller.diagnostic_models import DiagnosticReport
+from app.controller.node_models import NodeDescriptor
 from app.controller.profile_store import ControllerConfigStore
 from app.controller.telegram_service import TelegramInboundMessage, mask_telegram_token
 from app.platform.secrets import InMemorySecretStore
@@ -110,6 +111,10 @@ class _FakeOllamaAdapter:
         ask_reply: ProviderReply | None = None,
         ask_delay_seconds: float = 0.0,
         ask_exception_message: str = "",
+        prewarm_reply: ProviderReply | None = None,
+        prewarm_delay_seconds: float = 0.0,
+        prewarm_exception_message: str = "",
+        require_prewarm_before_ask: bool = False,
     ) -> None:
         self.validation_status = validation_status or ProviderStatus(
             provider="ollama",
@@ -130,10 +135,22 @@ class _FakeOllamaAdapter:
             message="Ollama replied successfully.",
             model="llama3.1:latest",
         )
+        self.prewarm_reply = prewarm_reply or ProviderReply(
+            provider="ollama",
+            ok=True,
+            text="pong",
+            message="Ollama prewarm completed.",
+            model="llama3.1:latest",
+        )
         self.ask_delay_seconds = ask_delay_seconds
         self.ask_exception_message = ask_exception_message
+        self.prewarm_delay_seconds = prewarm_delay_seconds
+        self.prewarm_exception_message = prewarm_exception_message
+        self.require_prewarm_before_ask = require_prewarm_before_ask
         self.ask_calls = 0
+        self.prewarm_calls = 0
         self.last_ask_kwargs: dict[str, object] = {}
+        self.last_prewarm_kwargs: dict[str, object] = {}
 
     def validate(self, **kwargs: object) -> ProviderStatus:
         return self.validation_status
@@ -141,11 +158,28 @@ class _FakeOllamaAdapter:
     def ask(self, **kwargs: object) -> ProviderReply:
         self.ask_calls += 1
         self.last_ask_kwargs = dict(kwargs)
+        if self.require_prewarm_before_ask and self.prewarm_calls == 0:
+            return ProviderReply(
+                provider="ollama",
+                ok=False,
+                text="",
+                message="Model was not prewarmed.",
+                model=self.validation_status.model,
+            )
         if self.ask_delay_seconds > 0:
             time.sleep(self.ask_delay_seconds)
         if self.ask_exception_message:
             raise RuntimeError(self.ask_exception_message)
         return self.ask_reply
+
+    def prewarm(self, **kwargs: object) -> ProviderReply:
+        self.prewarm_calls += 1
+        self.last_prewarm_kwargs = dict(kwargs)
+        if self.prewarm_delay_seconds > 0:
+            time.sleep(self.prewarm_delay_seconds)
+        if self.prewarm_exception_message:
+            raise RuntimeError(self.prewarm_exception_message)
+        return self.prewarm_reply
 
 
 class _FakeOpenAIAdapter:
@@ -296,6 +330,7 @@ class TelegramCommandTests(unittest.TestCase):
         *,
         tmp_dir: str,
         runtime_state: str = "running",
+        activate_runtime: bool = True,
         ollama_adapter: _FakeOllamaAdapter | None = None,
         openai_adapter: _FakeOpenAIAdapter | None = None,
         telegram_service: _FakeTelegramService | None = None,
@@ -319,6 +354,8 @@ class TelegramCommandTests(unittest.TestCase):
         service.test_telegram_connection()
         service._latest_health_report = _report("health", "ok", "info", "Healthy")
         service._latest_security_report = _report("security", "ok", "info", "Safe")
+        if activate_runtime:
+            service.activate_runtime_control_plane()
         return service, config_store, secret_store, tg, local_ollama, remote_openai
 
     def _run_single_update(self, service: ControllerService, telegram_service: _FakeTelegramService) -> tuple[object, str]:
@@ -377,12 +414,95 @@ class TelegramCommandTests(unittest.TestCase):
             self.assertIn("/createfile", lines[5])
             self.assertIn("/writefile", lines[5])
             self.assertIn("/run", lines[6])
+            self.assertIn("/nodes", lines[6])
             self.assertIn("/capabilities", lines[7])
             self.assertIn("/contexts", lines[7])
             self.assertIn("/ask", lines[8])
             self.assertIn("askctx", lines[8])
             self.assertIn("/explainrepo", lines[9])
+            self.assertIn("summarizeweb", lines[9])
+            self.assertIn("/workflows", lines[10])
             self.assertIn("cancelworkflow", lines[10])
+
+
+    def test_nodes_commands_list_select_view_and_clear_registered_nodes(self) -> None:
+        updates = (
+            TelegramInboundMessage(update_id=34, chat_id="chat-1", text="/nodes", sender_label="@tester"),
+            TelegramInboundMessage(update_id=35, chat_id="chat-1", text="/nodeselect mock-gpu", sender_label="@tester"),
+            TelegramInboundMessage(update_id=36, chat_id="chat-1", text="/nodeview mock-gpu", sender_label="@tester"),
+            TelegramInboundMessage(update_id=37, chat_id="chat-1", text="/nodeclear", sender_label="@tester"),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            telegram_service = _FakeTelegramService(update_batches=[updates])
+            service, _, _, _, _, _ = self._make_service(tmp_dir=tmp, telegram_service=telegram_service)
+            service._node_registry.register_node(
+                NodeDescriptor(
+                    node_id="mock-gpu",
+                    display_name="Bedroom GPU Rig",
+                    node_type="mock",
+                    status="online",
+                    transport="mock",
+                    summary="Simulated remote execution node for controller tests.",
+                    capability_labels=("/run", "/test"),
+                )
+            )
+            service.start_telegram_loop()
+            self.assertTrue(_wait_until(lambda: len(telegram_service.sent_messages) == 4, timeout=2.0))
+            snapshot = service.stop_telegram_loop()
+            self.assertIn("Nodes", telegram_service.sent_messages[0][1])
+            self.assertIn("local", telegram_service.sent_messages[0][1])
+            self.assertIn("mock-gpu", telegram_service.sent_messages[0][1])
+            self.assertEqual(
+                telegram_service.sent_messages[1][1],
+                "Selected node: mock-gpu | Bedroom GPU Rig | mock | online",
+            )
+            self.assertIn("Node view", telegram_service.sent_messages[2][1])
+            self.assertIn("ID: mock-gpu", telegram_service.sent_messages[2][1])
+            self.assertIn("Commands: /run /test", telegram_service.sent_messages[2][1])
+            self.assertEqual(
+                telegram_service.sent_messages[3][1],
+                f"Node selection cleared. Active node: local | {service.resolve_execution_node().node.display_name} | local | online",
+            )
+            self.assertEqual(snapshot.selected_node_id, "local")
+
+    def test_confirmed_run_uses_selected_mock_node_without_local_execution(self) -> None:
+        first_update = TelegramInboundMessage(update_id=38, chat_id="chat-1", text="/run python validate_runtime.py", sender_label="@tester")
+        with tempfile.TemporaryDirectory() as tmp:
+            create_service = _FakeTelegramService(update_batches=[(first_update,)])
+            service, config_store, _, _, _, _ = self._make_service(tmp_dir=tmp, telegram_service=create_service)
+            config = config_store.load()
+            config.repo_root = tmp
+            config.file_allowed_roots = (tmp,)
+            config_store.save(config)
+            service._config = config_store.load()
+            service._normalize_repo_root_config()
+            service._normalize_file_roots_config()
+            service._node_registry.register_node(
+                NodeDescriptor(
+                    node_id="mock-gpu",
+                    display_name="Bedroom GPU Rig",
+                    node_type="mock",
+                    status="online",
+                    transport="mock",
+                    summary="Simulated remote execution node for controller tests.",
+                    capability_labels=("/run", "/test"),
+                    metadata={"mock_output_summary": "Mock node executed validate_runtime.py", "mock_exit_code": 0},
+                )
+            )
+            service.select_execution_node("mock-gpu")
+            _, prompt_reply = self._run_single_update(service, create_service)
+            confirmation_id = self._extract_confirmation_id(prompt_reply)
+            self.assertIn("Node: Bedroom GPU Rig (mock-gpu) | mock", prompt_reply)
+
+            confirm_service = _FakeTelegramService(
+                update_batches=[(TelegramInboundMessage(update_id=39, chat_id="chat-1", text=f"/confirm {confirmation_id}", sender_label="@tester"),)]
+            )
+            service._telegram_service = confirm_service
+            _, confirm_reply = self._run_single_update(service, confirm_service)
+            self.assertIn(f"Confirmation {confirmation_id} approved.", confirm_reply)
+            self.assertIn("Node: Bedroom GPU Rig (mock-gpu)", confirm_reply)
+            self.assertIn("Summary: Mock node executed validate_runtime.py", confirm_reply)
+
     def test_status_command_is_mobile_readable_and_shows_loop_activity(self) -> None:
         update = TelegramInboundMessage(update_id=2, chat_id="chat-1", text="/status", sender_label="@tester")
         with tempfile.TemporaryDirectory() as tmp:
@@ -390,17 +510,15 @@ class TelegramCommandTests(unittest.TestCase):
             service, _, _, _, _, _ = self._make_service(tmp_dir=tmp, telegram_service=telegram_service)
             snapshot, reply = self._run_single_update(service, telegram_service)
             lines = reply.splitlines()
-            self.assertEqual(lines[0], "Status")
-            self.assertIn("Runtime: running", lines)
-            self.assertIn("Health: Healthy", lines)
-            self.assertIn("Security: Safe", lines)
-            self.assertIn("Readiness: Ready", lines)
-            self.assertIn("Mode: offline", lines)
-            self.assertIn("Policy: Ask Before Online", lines)
-            self.assertTrue(any(line.startswith("Provider: Ollama") for line in lines))
-            self.assertIn("Telegram loop: Running", lines)
-            self.assertTrue(any(line.startswith("Loop activity:") for line in lines))
-            self.assertLessEqual(len(lines), 11)
+            self.assertEqual(lines[0], "System status")
+            self.assertIn("Health: OK", lines)
+            self.assertIn("Security: OK", lines)
+            self.assertIn("Readiness: READY", lines)
+            self.assertTrue(any(line.startswith("Repo:") for line in lines))
+            self.assertIn("Node: local", lines)
+            self.assertTrue(any(line.startswith("Allowed:") for line in lines))
+            self.assertTrue(any(line.startswith("Blocked:") for line in lines))
+            self.assertLessEqual(len(lines), 12)
             self.assertEqual(snapshot.last_capability_id, "status.read")
             self.assertEqual(snapshot.last_capability_state, "allowed")
             self.assertIn("read-only | local | offline-safe", snapshot.last_capability_trust_summary)
@@ -1100,7 +1218,7 @@ class TelegramCommandTests(unittest.TestCase):
                 telegram_service.sent_messages[1][1],
                 "Can't run /ask right now.\nReason: Provider ask rate limit is active for this chat. Wait about 30.0s.\nNext: Wait a moment, then resend your ask command.",
             )
-            self.assertIn("Status", telegram_service.sent_messages[2][1])
+            self.assertIn("System status", telegram_service.sent_messages[2][1])
 
     def test_provider_unavailable_failure_remains_clear(self) -> None:
         update = TelegramInboundMessage(update_id=14, chat_id="chat-1", text="/ask hello", sender_label="@tester")
@@ -1654,9 +1772,10 @@ class TelegramCommandTests(unittest.TestCase):
             status_reply = telegram_service.sent_messages[0][1]
             help_reply = telegram_service.sent_messages[1][1]
 
-            self.assertIn("Status", status_reply)
-            self.assertIn("Readiness: Not Ready", status_reply)
-            self.assertLessEqual(len(status_reply.splitlines()), 11)
+            self.assertIn("System status", status_reply)
+            self.assertIn("Readiness: NOT READY", status_reply)
+            self.assertIn("Blockers:", status_reply)
+            self.assertLessEqual(len(status_reply.splitlines()), 14)
             self.assertIn("Operator commands", help_reply)
             self.assertIn("/chat", help_reply)
             self.assertIn("/planbuild", help_reply)
@@ -1745,9 +1864,11 @@ class TelegramCommandTests(unittest.TestCase):
 
             self.assertEqual(ollama.ask_calls, 0)
             self.assertEqual(openai.ask_calls, 0)
-            self.assertIn("Readiness: Ready", status_reply)
-            self.assertIn("Health: Blocked", status_reply)
-            self.assertIn("Security: Unsafe", status_reply)
+            self.assertIn("Readiness: READY", status_reply)
+            self.assertIn("Health: BLOCKED", status_reply)
+            self.assertIn("Security: BLOCKED", status_reply)
+            self.assertIn("Allowed:", status_reply)
+            self.assertIn("Blocked:", status_reply)
             self.assertIn("Repo:", repo_reply)
             self.assertIn("Branch:", repo_reply)
             self.assertIn("Translation", chat_reply)

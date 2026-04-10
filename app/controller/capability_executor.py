@@ -13,6 +13,7 @@ from .context_models import BufferedContext
 from .execution_models import CapabilityExecutionRequest, CapabilityExecutionResult, ProviderExecutionSnapshot
 from .execution_models import LocalCommandExecutionRequest
 from .execution_runner import ExecutionRunnerError
+from .generated_project_models import GeneratedProjectRecord
 from .node_router import NodeRoutingError
 from .file_mutator import (
     FileCreateWriteRequest,
@@ -246,6 +247,8 @@ class CapabilityExecutor:
             return self._execute_bootstrap_approve(update=update, snapshot=snapshot)
         if command == "/bootstrapreset":
             return self._execute_bootstrap_reset(update=update, snapshot=snapshot)
+        if command == "/projectview":
+            return self._execute_project_view(update=update, snapshot=snapshot)
         if command == "/bundlereset":
             return self._execute_bundle_reset(update=update, snapshot=snapshot)
         if command == "/mode":
@@ -1114,6 +1117,7 @@ class CapabilityExecutor:
                 session,
                 plan,
                 bootstrap_id=self._generate_bootstrap_id(),
+                project_id=self._generate_generated_project_id(),
                 created_at=self._service._now_iso(),
                 repo_root=repo_root if repo_root_valid else "",
             )
@@ -1151,8 +1155,56 @@ class CapabilityExecutor:
                 "bootstrap_file_count": len(proposal.files),
                 "bootstrap_follow_up": " | ".join(proposal.follow_up_commands[:2]),
                 "bootstrap_summary": proposal.summary,
+                "generated_project_id": proposal.project_id,
+                "generated_project_root": proposal.target_root,
+                "generated_entrypoint_path": proposal.entrypoint_path,
                 "bootstrap_proposal": proposal.to_payload(),
             },
+        )
+
+    def _execute_project_view(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot) -> CapabilityExecutionResult:
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="project.generated.view.read",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/projectview",
+            parsed_arguments={},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        project = self._service.active_generated_project_for_chat(chat_id=update.chat_id)
+        if project is None:
+            return self._result(
+                request,
+                outcome="success",
+                reason_code="no_active_generated_project",
+                user_message="No active generated project\nNext: Use /bootstrapproject and /bootstrapapprove to create one.",
+                internal_summary="project.generated.view.read found no active generated project.",
+                retryable=False,
+                command_label="/projectview",
+                activity_state="processing_command",
+                telemetry={"generated_project": None},
+            )
+        lines = [
+            "Active generated project",
+            "",
+            f"ID: {project.project_id}",
+            f"Type: {project.project_type}",
+            f"Root: {project.project_root}",
+        ]
+        if project.entrypoint_path:
+            lines.append(f"Entrypoint: {project.entrypoint_path}")
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message="\n".join(lines),
+            internal_summary=f"project.generated.view.read returned {project.project_id}.",
+            retryable=False,
+            command_label="/projectview",
+            activity_state="processing_command",
+            telemetry={"generated_project": project.to_payload()},
         )
 
     def _execute_bootstrap_view(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot) -> CapabilityExecutionResult:
@@ -1950,6 +2002,15 @@ class CapabilityExecutor:
             stop_reason="approved_bootstrap_completed",
         )
         self._service._project_bootstrap_store.set_active(chat_id=update.chat_id, proposal=completed)
+        generated_project = GeneratedProjectRecord(
+            project_id=completed.project_id,
+            project_type=completed.project_type,
+            project_root=completed.target_root,
+            entrypoint_path=completed.entrypoint_path,
+            created_at_utc=completed.updated_at,
+            status="active",
+        )
+        self._service.set_active_generated_project(chat_id=update.chat_id, project=generated_project)
         return self._result(
             request,
             outcome="success",
@@ -1971,6 +2032,7 @@ class CapabilityExecutor:
                 "bootstrap_created_count": len(completed.completed_files),
                 "bootstrap_follow_up": " | ".join(completed.follow_up_commands[:2]),
                 "bootstrap_summary": completed.summary,
+                "generated_project": generated_project.to_payload(),
                 "bootstrap_proposal": completed.to_payload(),
                 "executed_capability_ids": [record.capability_id for record in completed.completed_files],
             },
@@ -2077,6 +2139,10 @@ class CapabilityExecutor:
     @staticmethod
     def _generate_bootstrap_id() -> str:
         return f"BT-{secrets.token_hex(3).upper()}"
+
+    @staticmethod
+    def _generate_generated_project_id() -> str:
+        return f"GP-{secrets.token_hex(3).upper()}"
 
     @staticmethod
     def _generate_build_plan_id() -> str:
@@ -4664,13 +4730,8 @@ class CapabilityExecutor:
         prompt: str,
         context_entry: BufferedContext,
     ) -> tuple[str, str, str, str] | None:
-        relative_path = ""
-        source_summary = context_entry.source_summary.strip().replace("\\", "/")
-        if context_entry.content_kind == "file_preview" and source_summary.lower() == "src/main.py":
-            relative_path = source_summary
-        elif context_entry.content_kind == "execution_result" and source_summary.lower().startswith("main"):
-            relative_path = "src/main.py"
-        if relative_path != "src/main.py":
+        relative_path = self._bounded_main_path_from_context(context_entry)
+        if not relative_path:
             return None
         current_content = self._read_repo_file_text(relative_path)
         if current_content is None:
@@ -4681,6 +4742,27 @@ class CapabilityExecutor:
         if "format" in lowered_prompt:
             return self._build_formatting_cli_edit_plan(relative_path=relative_path, current_content=current_content)
         return None
+
+    @staticmethod
+    def _bounded_main_path_from_context(context_entry: BufferedContext) -> str:
+        source_summary = context_entry.source_summary.strip().replace("\\", "/")
+        lowered = source_summary.lower()
+        if context_entry.content_kind == "file_preview":
+            if lowered == "src/main.py":
+                return source_summary
+            if lowered.startswith("generated/") and lowered.endswith("/src/main.py"):
+                return source_summary
+            return ""
+        if context_entry.content_kind == "execution_result" and lowered.startswith("main"):
+            parts = source_summary.split(maxsplit=1)
+            if len(parts) == 1:
+                return "src/main.py"
+            project_root = parts[1].strip().replace("\\", "/")
+            if project_root == ".":
+                return "src/main.py"
+            if project_root.lower().startswith("generated/"):
+                return f"{project_root}/src/main.py"
+        return ""
 
     def _read_repo_file_text(self, relative_path: str) -> str | None:
         _, target_path, _, resolve_code, _ = self._service.resolve_file_request(relative_path)
@@ -4733,7 +4815,7 @@ class CapabilityExecutor:
                 f"- use /patchlast {relative_path} to apply the update",
             )
         )
-        return relative_path, prepared_argument, user_message, "CSV writing support prepared for src/main.py"
+        return relative_path, prepared_argument, user_message, f"CSV writing support prepared for {relative_path}"
 
     def _build_formatting_cli_edit_plan(self, *, relative_path: str, current_content: str) -> tuple[str, str, str, str]:
         if "summary.csv" in current_content:
@@ -4763,7 +4845,7 @@ class CapabilityExecutor:
                 f"- use /patchlast {relative_path} to apply the update",
             )
         )
-        return relative_path, prepared_argument, user_message, "Output formatting update prepared for src/main.py"
+        return relative_path, prepared_argument, user_message, f"Output formatting update prepared for {relative_path}"
 
     @staticmethod
     def _build_exact_patch_argument(
