@@ -66,6 +66,7 @@ from .node_router import NodeRouter
 from .diagnostics import ControllerDiagnosticsService
 from .chat_orchestrator import ChatOrchestrator
 from .chat_command_parser import ParsedChatCommand, parse_chat_command
+from .command_grammar import build_help_text
 from .chat_ingress import ChatIngress
 from .models import ControllerSnapshot
 from .profile_store import ControllerConfig, ControllerConfigStore, Mode, Policy, ProviderType
@@ -2067,25 +2068,7 @@ class ControllerService:
 
     def _build_help_reply(self) -> _TelegramResponsePlan:
         return _TelegramResponsePlan(
-            reply=chr(10).join(
-                (
-                    "Operator commands",
-                    "Core: /chat /translate|/refine|clear",
-                    "Plan: /planbuild|view|status /planstep|approve|reset",
-                    "Bundle: /planstepbundle /bundleapprove|status|cancel",
-                    "Boot: /bootstrapproject|view|/bootstrapapprove|reset",
-                    "Files: /repo|file /createfile|patchlast|patchfile|/writefile",
-                    "Feature: /featurestatus|featureapply",
-                    "Exec: /startruntime /run|/test /dispatch|dispatchstatus /nodes|nodeview|nodeselect|nodeclear",
-                    "Eval: /evalcreate|evals|evalstatus|evalruns|evalstart|evalstop",
-                    "Chain: /chaincreate --title ... --type ... --command ... --steps ... | /chains|chainstatus|chainsteps|chainstart|chainstop",
-                    "Data: /data|datasearch",
-                    "Trust: /capabilities|audit|clearcontext /contexts",
-                    "Ask: /ask|askd|asklast|askctx",
-                    "Info: /explainrepo|explainfile|summarizeweb",
-                    "Flow: /workflows|status|cancelworkflow",
-                )
-            ),
+            reply=build_help_text(),
             command_label="/help",
         )
 

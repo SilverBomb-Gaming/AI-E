@@ -69,11 +69,27 @@ class DataSubstrateTests(unittest.TestCase):
         data_list = parse_chat_command(text="/data", has_text=True)
         data_detail = parse_chat_command(text="/data DAT-ABC1234567", has_text=True)
         data_search = parse_chat_command(text="/datasearch type=chain_step chain_id=CH-12345678 limit=2", has_text=True)
+        named_data_search = parse_chat_command(text="/datasearch --type chain_step --chain-id CH-12345678 --limit 2", has_text=True)
 
         self.assertEqual(data_list.command_label, "/data")
         self.assertEqual(data_detail.command_label, "/data")
         self.assertEqual(data_search.command_label, "/datasearch")
         self.assertIn("type=chain_step", data_search.argument)
+        self.assertEqual(named_data_search.command_label, "/datasearch")
+        self.assertIn("--type chain_step", named_data_search.argument)
+
+    def test_datasearch_invalid_limit_returns_specific_message(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            service, config_store, _ = self._make_service(tmp_dir=tmp)
+            root = Path(tmp) / "workspace"
+            root.mkdir(parents=True, exist_ok=True)
+            self._configure_repo_root(service=service, config_store=config_store, root=root)
+            result = service.execute_local_chat_input(text="/datasearch --type chain_step --limit 99")
+
+            self.assertEqual(result.outcome, "invalid_request")
+            self.assertIn("Couldn't parse that data search.", result.user_message)
+            self.assertIn("Limit must be an integer from 1 to 20.", result.user_message)
+            self.assertIn("Next: Use /datasearch --type", result.user_message)
 
     def test_command_records_persist_and_can_be_inspected_from_cli(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -198,6 +214,7 @@ class DataSubstrateTests(unittest.TestCase):
             self.assertIn("chain_policy_version", records[0].context_payload)
 
             self.assertTrue(cli.handle_line(f"/datasearch type=chain_step chain_id={chain.chain_id}"))
+            self.assertTrue(cli.handle_line(f"/datasearch --type chain_step --chain-id {chain.chain_id} --limit 2"))
             joined = "\n".join(output)
             self.assertIn("Data search", joined)
             self.assertIn(chain.chain_id, joined)

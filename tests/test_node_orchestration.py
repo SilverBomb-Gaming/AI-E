@@ -255,6 +255,59 @@ class NodeOrchestrationTests(unittest.TestCase):
             audit = service.execute_local_chat_input(text="/audit")
             self.assertIn(job_id, audit.user_message)
 
+    def test_bounded_dispatch_accepts_named_flag_grammar(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            registry_root = root / "registry"
+            controller_dir = root / "controller"
+            validator_dir = root / "validator"
+            repo_root = Path("e:/AI projects 2025/AI-E")
+
+            self._bootstrap_node(
+                config_dir=controller_dir,
+                registry_root=registry_root,
+                role="controller",
+                display_name="Primary Controller",
+                repo_root=repo_root,
+                capabilities=("/run", "/test"),
+            )
+            self._bootstrap_node(
+                config_dir=validator_dir,
+                registry_root=registry_root,
+                role="validator",
+                display_name="Validator Node 01",
+                repo_root=repo_root,
+                capabilities=("/run", "/test"),
+            )
+
+            worker_runner = _FakeCommandRunner(
+                subprocess.CompletedProcess(["python", "-m", "unittest"], 0, "Ran 1 test in 0.01s\n\nOK\n", "")
+            )
+            worker = NodeWorker(
+                controller_config_store=ControllerConfigStore(config_path=validator_dir / "controller_config.json"),
+                node_config_store=NodeConfigStore(config_path=validator_dir / "node_config.json"),
+                execution_runner=ExecutionRunner(command_runner=worker_runner),
+            )
+            worker.run_once()
+
+            service = self._make_service(config_dir=controller_dir)
+            dispatch = service.execute_local_chat_input(
+                text='/dispatch --target validator --command "/test tests.test_cli_chat.LocalCliChatTests.test_cli_debug_shows_shared_status_routing"'
+            )
+            self.assertEqual(dispatch.outcome, "confirmation_required")
+            self.assertIn("Target node: validator-node-01", dispatch.user_message)
+
+    def test_dispatch_missing_command_returns_specific_message(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config_dir = Path(tmp)
+            service = self._make_service(config_dir=config_dir)
+            result = service.execute_local_chat_input(text="/dispatch --target validator")
+
+            self.assertEqual(result.outcome, "invalid_request")
+            self.assertIn("Couldn't queue that dispatch.", result.user_message)
+            self.assertIn("Missing required option --command.", result.user_message)
+            self.assertIn("Next: Use /dispatch --target <node_or_role> --command", result.user_message)
+
     def test_dispatch_refuses_when_role_has_no_supported_capability(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

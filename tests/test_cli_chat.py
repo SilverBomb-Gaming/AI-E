@@ -100,6 +100,10 @@ class LocalCliChatTests(unittest.TestCase):
             text='/chaincreate --title cli_validator_chain --type validate_compare_report --command "/run pytest tests/test_cli_chat.py::LocalCliChatTests::test_cli_debug_shows_shared_status_routing" --steps 3 --retries 1 --failures 2 --fallback local',
             has_text=True,
         )
+        dispatch = parse_chat_command(
+            text='/dispatch --target validator --command "/test tests.test_cli_chat.LocalCliChatTests.test_cli_debug_shows_shared_status_routing"',
+            has_text=True,
+        )
         chains = parse_chat_command(text="/chains", has_text=True)
         status = parse_chat_command(text="/chainstatus CH-12345678", has_text=True)
         steps = parse_chat_command(text="/chainsteps CH-12345678 5", has_text=True)
@@ -110,6 +114,8 @@ class LocalCliChatTests(unittest.TestCase):
 
         self.assertEqual(create.command_label, "/chaincreate")
         self.assertTrue(create.argument.startswith("--title cli_validator_chain"))
+        self.assertEqual(dispatch.command_label, "/dispatch")
+        self.assertIn("--target validator", dispatch.argument)
         self.assertEqual(chains.command_label, "/chains")
         self.assertEqual(status.command_label, "/chainstatus")
         self.assertEqual(steps.command_label, "/chainsteps")

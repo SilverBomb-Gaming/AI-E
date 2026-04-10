@@ -5,11 +5,17 @@ from datetime import datetime
 import json
 from pathlib import Path
 import secrets
-import shlex
 from typing import TYPE_CHECKING, Protocol
 
 from ..providers.base import ProviderReply
 from .capability_models import CapabilityContext, CapabilityEvaluation
+from .command_grammar import (
+    parse_chain_create_arguments,
+    parse_data_limit,
+    parse_data_search_arguments,
+    parse_dispatch_arguments,
+    parse_eval_create_arguments,
+)
 from .confirmation_models import ConfirmationContextSnapshot, PendingConfirmation
 from .context_models import BufferedContext
 from .evaluation_session_models import EvaluationJobDefinition, EvaluationSessionRecord
@@ -603,8 +609,10 @@ class CapabilityExecutor:
         )
 
     def _execute_dispatch(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot, argument: str) -> CapabilityExecutionResult:
-        selector, raw_command = self._parse_dispatch_argument(argument)
-        if not selector or not raw_command:
+        parsed_dispatch, error = parse_dispatch_arguments(argument)
+        selector = (parsed_dispatch or {}).get("selector", "")
+        raw_command = (parsed_dispatch or {}).get("command", "")
+        if error is not None or not selector or not raw_command:
             request, _, _, scope_failure = self._prepare_capability_request(
                 capability_id="node.dispatch.query",
                 snapshot=snapshot,
@@ -620,7 +628,13 @@ class CapabilityExecutor:
                 request,
                 outcome="invalid_request",
                 reason_code="dispatch_usage_invalid",
-                user_message="Couldn't queue that dispatch.\nReason: Use /dispatch <node_or_role> <bounded command>.",
+                user_message="\n".join(
+                    (
+                        "Couldn't queue that dispatch.",
+                        f"Reason: {(error.reason if error is not None else 'Missing required target and bounded command.')}",
+                        "Next: " + (error.next_step if error is not None else 'Use /dispatch --target <node_or_role> --command "/test ...".'),
+                    )
+                ),
                 internal_summary="node.dispatch.query rejected invalid operator syntax.",
                 retryable=False,
                 command_label="/dispatch",
@@ -832,13 +846,19 @@ class CapabilityExecutor:
         )
         if scope_failure is not None:
             return scope_failure
-        parsed, error = self._parse_eval_create_argument(argument)
-        if error:
+        parsed, error = parse_eval_create_arguments(argument)
+        if error is not None or parsed is None:
             return self._result(
                 request,
                 outcome="invalid_request",
                 reason_code="evaluation_create_invalid",
-                user_message=f"Couldn't create that evaluation session.\nReason: {error}",
+                user_message="\n".join(
+                    (
+                        "Couldn't create that evaluation session.",
+                        f"Reason: {(error.reason if error is not None else 'Invalid evaluation session arguments.')}",
+                        "Next: " + (error.next_step if error is not None else 'Use /evalcreate --title "name" --command "/test target" --runs 3 --interval 60.'),
+                    )
+                ),
                 internal_summary="evaluation.session.create rejected invalid session arguments.",
                 retryable=False,
                 command_label="/evalcreate",
@@ -1098,14 +1118,20 @@ class CapabilityExecutor:
         )
         if scope_failure is not None:
             return scope_failure
-        parsed, error = self._parse_chain_create_argument(argument)
-        if error:
+        parsed, error = parse_chain_create_arguments(argument)
+        if error is not None or parsed is None:
             return self._result(
                 request,
                 outcome="invalid_request",
                 reason_code="task_chain_parse_failed",
-                user_message=f"Couldn't create that task chain.\nReason: {error}\nNext: Use /chaincreate --title \"name\" --type validate_then_report|feature_validate_loop|dispatch_validate_recover|validate_with_fallback|validate_compare_report|dispatch_recover_resume|feature_validate_gate --command \"/run pytest tests/test_cli_chat.py::LocalCliChatTests::test_cli_debug_shows_shared_status_routing\" --steps 3 [--objective \"goal\"] [--retries 1] [--failures 2] [--no-progress 1] [--target local|node:<id>|role:<role>] [--fallback stop|local|node:<id>|role:<role>] .",
-                internal_summary=f"task.chain.create rejected invalid syntax: {error}",
+                user_message="\n".join(
+                    (
+                        "Couldn't create that task chain.",
+                        f"Reason: {(error.reason if error is not None else 'Invalid task-chain arguments.')}",
+                        "Next: " + (error.next_step if error is not None else 'Use /chaincreate --title "name" --type validate_then_report --command "/run pytest ..." --steps 3.'),
+                    )
+                ),
+                internal_summary=f"task.chain.create rejected invalid syntax: {(error.reason if error is not None else 'invalid task-chain arguments')}",
                 retryable=False,
                 command_label="/chaincreate",
                 activity_state="processing_command",
@@ -1441,13 +1467,10 @@ class CapabilityExecutor:
 
     @staticmethod
     def _parse_dispatch_argument(argument: str) -> tuple[str, str]:
-        stripped = argument.strip()
-        if not stripped:
+        parsed, _ = parse_dispatch_arguments(argument)
+        if parsed is None:
             return "", ""
-        parts = stripped.split(None, 1)
-        selector = parts[0].strip().lower()
-        command = parts[1].strip() if len(parts) > 1 else ""
-        return selector, command
+        return parsed.get("selector", ""), parsed.get("command", "")
 
     @staticmethod
     def _strip_wrapping_quotes(text: str) -> str:
@@ -1457,28 +1480,9 @@ class CapabilityExecutor:
         return stripped
 
     def _parse_eval_create_argument(self, argument: str) -> tuple[dict[str, str], str]:
-        try:
-            tokens = shlex.split(argument)
-        except ValueError as exc:
-            return {}, str(exc)
-        if not tokens:
-            return {}, "Use --title, --command, --runs, and --interval to define the session."
-        parsed: dict[str, str] = {}
-        index = 0
-        while index < len(tokens):
-            token = tokens[index]
-            if not token.startswith("--"):
-                return {}, f"Unexpected token: {token}"
-            key = token[2:].strip().lower()
-            if not key:
-                return {}, "Empty option name is not allowed."
-            if index + 1 >= len(tokens):
-                return {}, f"Missing value for --{key}."
-            parsed[key] = tokens[index + 1].strip()
-            index += 2
-        for required in ("title", "command", "runs", "interval"):
-            if not parsed.get(required):
-                return {}, f"Missing required option --{required}."
+        parsed, error = parse_eval_create_arguments(argument)
+        if error is not None or parsed is None:
+            return {}, error.reason if error is not None else "Invalid evaluation session arguments."
         return parsed, ""
 
     @staticmethod
@@ -1493,28 +1497,9 @@ class CapabilityExecutor:
         return session_id, 10
 
     def _parse_chain_create_argument(self, argument: str) -> tuple[dict[str, str], str]:
-        try:
-            tokens = shlex.split(argument)
-        except ValueError as exc:
-            return {}, str(exc)
-        if not tokens:
-            return {}, "Use --title, --type, --command, and --steps to define the chain."
-        parsed: dict[str, str] = {}
-        index = 0
-        while index < len(tokens):
-            token = tokens[index]
-            if not token.startswith("--"):
-                return {}, f"Unexpected token: {token}"
-            key = token[2:].strip().lower()
-            if not key:
-                return {}, "Empty option name is not allowed."
-            if index + 1 >= len(tokens):
-                return {}, f"Missing value for --{key}."
-            parsed[key] = tokens[index + 1].strip()
-            index += 2
-        for required in ("title", "type", "command", "steps"):
-            if not parsed.get(required):
-                return {}, f"Missing required option --{required}."
+        parsed, error = parse_chain_create_arguments(argument)
+        if error is not None or parsed is None:
+            return {}, error.reason if error is not None else "Invalid task-chain arguments."
         return parsed, ""
 
     @staticmethod
@@ -5579,13 +5564,19 @@ class CapabilityExecutor:
         )
         if scope_failure is not None:
             return scope_failure
-        filters, limit = self._parse_data_search(argument)
+        filters, limit, error = parse_data_search_arguments(argument)
         if filters is None:
             return self._result(
                 request,
                 outcome="invalid_request",
                 reason_code="invalid_data_search",
-                user_message="Couldn't parse that data search.\nNext: Use /datasearch type=command|evaluation_run|chain_step|feature_bundle [label=training-eligible|evaluation-only|discarded] [session_id=EV-...] [chain_id=CH-...] [bundle_id=...] [limit=8].",
+                user_message="\n".join(
+                    (
+                        "Couldn't parse that data search.",
+                        f"Reason: {(error.reason if error is not None else 'Invalid data-search filters.')}",
+                        f"Next: {(error.next_step if error is not None else 'Use /datasearch --type chain_step --chain-id CH-... [--limit 8].')}",
+                    )
+                ),
                 internal_summary="/datasearch rejected because the filter argument was invalid.",
                 retryable=False,
                 command_label="/datasearch",
@@ -8869,64 +8860,11 @@ class CapabilityExecutor:
 
     @staticmethod
     def _parse_data_limit(argument: str) -> int | None:
-        value = argument.strip()
-        if not value or not value.isdigit():
-            return None
-        limit = int(value)
-        if limit < 1 or limit > 20:
-            return None
-        return limit
+        return parse_data_limit(argument)
 
     @classmethod
     def _parse_data_search(cls, argument: str) -> tuple[dict[str, str] | None, int]:
-        tokens = [token for token in argument.split() if token.strip()]
-        if not tokens:
-            return None, 8
-        filters: dict[str, str] = {}
-        limit = 8
-        allowed_keys = {
-            "id",
-            "record_id",
-            "type",
-            "label",
-            "outcome",
-            "source",
-            "request_id",
-            "session_id",
-            "chain_id",
-            "step_id",
-            "run_id",
-            "bundle_id",
-            "chat_id",
-            "capability_id",
-            "command_label",
-            "limit",
-        }
-        type_aliases = {
-            "eval": "evaluation_run",
-            "evaluation": "evaluation_run",
-            "chain": "chain_step",
-            "bundle": "feature_bundle",
-        }
-        for token in tokens:
-            if "=" not in token:
-                return None, 8
-            key, value = token.split("=", 1)
-            normalized_key = key.strip().lower()
-            normalized_value = value.strip()
-            if not normalized_key or not normalized_value or normalized_key not in allowed_keys:
-                return None, 8
-            if normalized_key == "limit":
-                parsed_limit = cls._parse_data_limit(normalized_value)
-                if parsed_limit is None:
-                    return None, 8
-                limit = parsed_limit
-                continue
-            if normalized_key == "type":
-                normalized_value = type_aliases.get(normalized_value.lower(), normalized_value)
-            filters[normalized_key] = normalized_value
-        if not filters:
-            return None, 8
+        filters, limit, _ = parse_data_search_arguments(argument)
         return filters, limit
 
     @staticmethod
