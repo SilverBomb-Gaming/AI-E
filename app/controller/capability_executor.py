@@ -113,55 +113,13 @@ class CapabilityExecutor:
             )
 
         if command == "plain_text":
-            request = self._build_request(
-                capability_id="telegram.plain_text",
+            return self._execute_natural_chat_message(
+                update=update,
                 snapshot=snapshot,
-                chat_id=update.chat_id,
-                requester_label=update.sender_label,
-                original_command=parsed_command.normalized_text or "plain_text",
-                parsed_arguments={"text": parsed_command.normalized_text},
-                metadata={"argument_summary": "plain text message"},
-            )
-            scope_failure = self._scope_failure_result(request, command_label="plain_text")
-            if scope_failure is not None:
-                return scope_failure
-            if not snapshot.runtime_active:
-                return self._result(
-                    request,
-                    outcome="blocked",
-                    reason_code="runtime_not_active",
-                    user_message="Runtime is not active. Use /startruntime to enable execution first.",
-                    internal_summary="Plain text message blocked because runtime activation is disabled.",
-                    retryable=True,
-                    command_label="plain_text",
-                    activity_state="processing_command",
-                )
-            if snapshot.readiness_state == "not_ready":
-                return self._result(
-                    request,
-                    outcome="blocked",
-                    reason_code="readiness_not_ready",
-                    user_message="Operator console is not ready. Resolve blocking health or security issues in the operator console and try again.",
-                    internal_summary="Plain text message blocked because readiness is not ready.",
-                    retryable=True,
-                    command_label="plain_text",
-                    activity_state="processing_command",
-                )
-            return self._result(
-                request,
-                outcome="invalid_request",
-                reason_code="plain_text_not_supported",
-                user_message="\n".join(
-                    (
-                        self._service._operator_console_label(),
-                        "Use /help to see supported commands.",
-                        "Plain text is not treated as /ask automatically.",
-                    )
-                ),
-                internal_summary="Plain text message returned command guidance.",
-                retryable=False,
-                command_label="plain_text",
-                activity_state="processing_command",
+                message=parsed_command.normalized_text,
+                entry_capability_id="telegram.plain_text",
+                entry_command_label="plain_text",
+                batch_busy=batch_busy,
             )
 
         if command == "/start":
@@ -209,7 +167,7 @@ class CapabilityExecutor:
         if command == "/lastaction":
             return self._execute_last_action(update=update, snapshot=snapshot)
         if command == "/chat":
-            return self._execute_chat(update=update, snapshot=snapshot, argument=parsed_command.argument)
+            return self._execute_chat(update=update, snapshot=snapshot, argument=parsed_command.argument, batch_busy=batch_busy)
         if command == "/translate":
             return self._execute_translate(update=update, snapshot=snapshot, argument=parsed_command.argument)
         if command == "/refine":
@@ -720,6 +678,169 @@ class CapabilityExecutor:
         update: TelegramInboundMessage,
         snapshot: ControllerSnapshot,
         argument: str,
+        batch_busy: bool,
+    ) -> CapabilityExecutionResult:
+        return self._execute_natural_chat_message(
+            update=update,
+            snapshot=snapshot,
+            message=argument,
+            entry_capability_id="chat.orchestrate.read",
+            entry_command_label="/chat",
+            batch_busy=batch_busy,
+        )
+
+    def _execute_natural_chat_message(
+        self,
+        *,
+        update: TelegramInboundMessage,
+        snapshot: ControllerSnapshot,
+        message: str,
+        entry_capability_id: str,
+        entry_command_label: str,
+        batch_busy: bool,
+    ) -> CapabilityExecutionResult:
+        request = self._build_request(
+            capability_id=entry_capability_id,
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command=entry_command_label,
+            parsed_arguments={"message": " ".join(message.split())},
+            metadata={"argument_summary": f"{entry_command_label} [message hidden]"},
+        )
+        scope_failure = self._scope_failure_result(request, command_label=entry_command_label)
+        if scope_failure is not None:
+            return scope_failure
+        prompt = " ".join(message.split())
+        if not prompt:
+            guidance = "Use /chat <message>." if entry_command_label == "/chat" else "Send a natural-language request or use /help."
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="missing_chat_message",
+                user_message=f"Couldn't route that chat request.\nReason: No conversational message was provided.\nNext: {guidance}",
+                internal_summary=f"{entry_command_label} rejected because no conversational message was provided.",
+                retryable=False,
+                command_label=entry_command_label,
+                activity_state="processing_command",
+            )
+        session = self._service._intent_store.get_active(chat_id=update.chat_id)
+        plan = self._service._build_plan_store.get_active(chat_id=update.chat_id)
+        bridge_state = self._service._plan_bridge_store.get_active(chat_id=update.chat_id)
+        bundle_state = self._service._autonomy_bundle_store.get_active(chat_id=update.chat_id)
+        orchestration_context = self._service._chat_orchestrator.build_context(
+            snapshot=snapshot,
+            session=session,
+            plan=plan,
+            bridge_state=bridge_state,
+            bundle_state=bundle_state,
+        )
+        legacy_orchestration = self._service._chat_orchestrator.orchestrate(
+            prompt,
+            orchestration_id=self._generate_chat_orchestration_id(),
+            chat_id=update.chat_id,
+            context=orchestration_context,
+        )
+        natural_context = self._service._chat_ingress.build_context(service=self._service, snapshot=snapshot, chat_id=update.chat_id)
+        classification, route_decision = self._service._chat_ingress.classify_and_route(
+            message=prompt,
+            context=natural_context,
+            legacy_orchestration=legacy_orchestration,
+        )
+        telemetry_base = {
+            "natural_chat_message": prompt,
+            "natural_chat_context": natural_context.to_payload(),
+            "natural_chat_classification": classification.to_payload(),
+            "natural_chat_route": route_decision.to_payload(),
+            "orchestration_context": orchestration_context.to_payload(),
+            "orchestration_result": legacy_orchestration.to_payload(),
+            "natural_chat_summary": f"{classification.intent_label} {classification.confidence:.2f} -> {route_decision.selected_route or 'fallback'}",
+        }
+        if route_decision.route_kind == "legacy_chat":
+            inner_result = self._execute_legacy_chat_orchestration(update=update, snapshot=snapshot, argument=prompt)
+            return self._result(
+                request,
+                outcome=inner_result.outcome,
+                reason_code=inner_result.outcome_reason_code,
+                user_message=inner_result.user_message,
+                internal_summary=(
+                    f"{entry_capability_id} classified {classification.intent_label} ({classification.confidence:.2f}) and reused legacy /chat routing to "
+                    f"{legacy_orchestration.routed_action or 'clarification'}; inner outcome={inner_result.outcome}."
+                ),
+                retryable=inner_result.retryable,
+                command_label=entry_command_label,
+                activity_state="processing_command",
+                degraded=inner_result.degraded,
+                provider_used=inner_result.provider_used,
+                mode_used=inner_result.mode_used,
+                confirmation_used=inner_result.confirmation_used,
+                ask_status=inner_result.ask_status,
+                hide_content_in_summary=inner_result.hide_content_in_summary,
+                telemetry={
+                    **telemetry_base,
+                    "routed_capability_id": str(inner_result.telemetry.get("routed_capability_id") or inner_result.capability_id),
+                    "routed_command_label": str(inner_result.telemetry.get("routed_command_label") or legacy_orchestration.routed_action),
+                    "routed_telemetry": dict(inner_result.telemetry.get("routed_telemetry") or inner_result.telemetry),
+                },
+            )
+        if route_decision.route_kind == "fallback":
+            return self._result(
+                request,
+                outcome="success",
+                reason_code="needs_clarification",
+                user_message=self._service._chat_ingress.fallback_reply(
+                    classification=classification,
+                    route_decision=route_decision,
+                    context=natural_context,
+                ),
+                internal_summary=(
+                    f"{entry_capability_id} classified {classification.intent_label} ({classification.confidence:.2f}) and returned a safe fallback: "
+                    f"{route_decision.fallback_reason or classification.rationale}"
+                ),
+                retryable=False,
+                command_label=entry_command_label,
+                activity_state="processing_command",
+                telemetry=telemetry_base,
+            )
+        inner_result = self._dispatch_chat_routed_action(
+            update=update,
+            snapshot=snapshot,
+            routed_action=route_decision.route_command,
+            message=route_decision.route_argument or prompt,
+            batch_busy=batch_busy,
+        )
+        return self._result(
+            request,
+            outcome=inner_result.outcome,
+            reason_code=inner_result.outcome_reason_code,
+            user_message=inner_result.user_message,
+            internal_summary=(
+                f"{entry_capability_id} classified {classification.intent_label} ({classification.confidence:.2f}) and routed to "
+                f"{route_decision.selected_route}; inner outcome={inner_result.outcome}."
+            ),
+            retryable=inner_result.retryable,
+            command_label=entry_command_label,
+            activity_state="processing_command",
+            degraded=inner_result.degraded,
+            provider_used=inner_result.provider_used,
+            mode_used=inner_result.mode_used,
+            confirmation_used=inner_result.confirmation_used,
+            ask_status=inner_result.ask_status,
+            hide_content_in_summary=inner_result.hide_content_in_summary,
+            telemetry={
+                **telemetry_base,
+                "routed_capability_id": inner_result.capability_id,
+                "routed_command_label": route_decision.route_command,
+                "routed_telemetry": dict(inner_result.telemetry),
+            },
+        )
+
+    def _execute_legacy_chat_orchestration(
+        self,
+        *,
+        update: TelegramInboundMessage,
+        snapshot: ControllerSnapshot,
+        argument: str,
     ) -> CapabilityExecutionResult:
         request, _, _, scope_failure = self._prepare_capability_request(
             capability_id="chat.orchestrate.read",
@@ -789,6 +910,7 @@ class CapabilityExecutor:
             snapshot=snapshot,
             routed_action=orchestration.routed_action,
             message=prompt,
+            batch_busy=False,
         )
         return self._result(
             request,
@@ -2202,6 +2324,7 @@ class CapabilityExecutor:
         snapshot: ControllerSnapshot,
         routed_action: str,
         message: str,
+        batch_busy: bool,
     ) -> CapabilityExecutionResult:
         if routed_action == "/translate":
             return self._execute_translate(update=update, snapshot=snapshot, argument=message)
@@ -2225,6 +2348,48 @@ class CapabilityExecutor:
             return self._execute_last_action(update=update, snapshot=snapshot)
         if routed_action == "/status":
             return self._execute_status(update=update, snapshot=snapshot)
+        if routed_action == "/projectview":
+            return self._execute_project_view(update=update, snapshot=snapshot)
+        if routed_action == "/contexts":
+            return self._execute_contexts(update=update, snapshot=snapshot)
+        if routed_action == "/help":
+            return self._execute_help(update=update, snapshot=snapshot)
+        if routed_action == "/ask":
+            return self._execute_provider_query(
+                update=update,
+                snapshot=snapshot,
+                command_label="/ask",
+                prompt=message,
+                response_style="concise",
+                batch_busy=batch_busy,
+            )
+        if routed_action == "/askd":
+            return self._execute_provider_query(
+                update=update,
+                snapshot=snapshot,
+                command_label="/askd",
+                prompt=message,
+                response_style="detailed",
+                batch_busy=batch_busy,
+            )
+        if routed_action == "/asklast":
+            return self._execute_provider_query_with_latest_context(
+                update=update,
+                snapshot=snapshot,
+                prompt=message,
+                batch_busy=batch_busy,
+            )
+        if routed_action == "/askctx":
+            return self._execute_provider_query_with_selected_context(
+                update=update,
+                snapshot=snapshot,
+                argument=message,
+                batch_busy=batch_busy,
+            )
+        if routed_action == "/run":
+            return self._execute_run_command(update=update, snapshot=snapshot, argument=message)
+        if routed_action == "/test":
+            return self._execute_test_command(update=update, snapshot=snapshot, argument=message)
         request = self._build_request(
             capability_id="chat.orchestrate.read",
             snapshot=snapshot,

@@ -942,6 +942,81 @@ class TelegramCommandTests(unittest.TestCase):
             self.assertIn("Session: TR-", reply)
             self.assertLessEqual(len(reply), 700)
 
+    def test_plain_text_new_product_idea_routes_to_translation_flow(self) -> None:
+        update = TelegramInboundMessage(
+            update_id=2721,
+            chat_id="chat-1",
+            text="I have an idea for a local desktop milestone tracker that exports CSV.",
+            sender_label="@tester",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            telegram_service = _FakeTelegramService(update_batches=[(update,)])
+            service, _, _, _, ollama, openai = self._make_service(tmp_dir=tmp, telegram_service=telegram_service)
+            _, reply = self._run_single_update(service, telegram_service)
+            result = service._last_execution_result
+            self.assertEqual(ollama.ask_calls, 0)
+            self.assertEqual(openai.ask_calls, 0)
+            self.assertIn("Translation", reply)
+            self.assertIn("Session: TR-", reply)
+            self.assertEqual(result.capability_id, "telegram.plain_text")
+            self.assertEqual(result.telemetry["natural_chat_classification"]["intent_label"], "planning")
+            self.assertEqual(result.telemetry["natural_chat_route"]["route_kind"], "legacy_chat")
+
+    def test_plain_text_explanation_uses_latest_file_context(self) -> None:
+        updates = (
+            TelegramInboundMessage(update_id=2722, chat_id="chat-1", text="/file docs/notes.txt", sender_label="@tester"),
+            TelegramInboundMessage(update_id=2723, chat_id="chat-1", text="What does this file do?", sender_label="@tester"),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "workspace"
+            notes = root / "docs" / "notes.txt"
+            notes.parent.mkdir(parents=True, exist_ok=True)
+            notes.write_text("alpha\nbeta\ngamma\n", encoding="utf-8")
+            telegram_service = _FakeTelegramService(update_batches=[updates])
+            service, config_store, _, _, ollama, openai = self._make_service(tmp_dir=tmp, telegram_service=telegram_service)
+            config = config_store.load()
+            config.repo_root = str(root.resolve())
+            config.file_allowed_roots = (str(root.resolve()),)
+            config_store.save(config)
+            service._config = config_store.load()
+
+            self._run_until(service, telegram_service, expected_messages=2)
+            reply = telegram_service.sent_messages[1][1]
+            result = service._last_execution_result
+            self.assertEqual(ollama.ask_calls, 1)
+            self.assertEqual(openai.ask_calls, 0)
+            self.assertIn("Answer (Offline | Ollama", reply)
+            self.assertEqual(result.capability_id, "telegram.plain_text")
+            self.assertEqual(result.telemetry["natural_chat_classification"]["intent_label"], "explanation")
+            self.assertEqual(result.telemetry["natural_chat_route"]["route_command"], "/askctx")
+
+    def test_plain_text_planning_uses_bounded_contextual_ask(self) -> None:
+        updates = (
+            TelegramInboundMessage(update_id=2724, chat_id="chat-1", text="/file docs/notes.txt", sender_label="@tester"),
+            TelegramInboundMessage(update_id=2725, chat_id="chat-1", text="Give me a plan for adding CSV export here.", sender_label="@tester"),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "workspace"
+            notes = root / "docs" / "notes.txt"
+            notes.parent.mkdir(parents=True, exist_ok=True)
+            notes.write_text("alpha\nbeta\ngamma\n", encoding="utf-8")
+            telegram_service = _FakeTelegramService(update_batches=[updates])
+            service, config_store, _, _, ollama, openai = self._make_service(tmp_dir=tmp, telegram_service=telegram_service)
+            config = config_store.load()
+            config.repo_root = str(root.resolve())
+            config.file_allowed_roots = (str(root.resolve()),)
+            config_store.save(config)
+            service._config = config_store.load()
+
+            self._run_until(service, telegram_service, expected_messages=2)
+            reply = telegram_service.sent_messages[1][1]
+            result = service._last_execution_result
+            self.assertEqual(ollama.ask_calls, 1)
+            self.assertEqual(openai.ask_calls, 0)
+            self.assertIn("Answer (Offline | Ollama", reply)
+            self.assertEqual(result.telemetry["natural_chat_classification"]["intent_label"], "planning")
+            self.assertEqual(result.telemetry["natural_chat_route"]["route_command"], "/askctx")
+
     def test_chat_active_draft_clarification_routes_to_refinement_flow(self) -> None:
         updates = (
             TelegramInboundMessage(update_id=273, chat_id="chat-1", text="/chat I have an idea for a local desktop milestone tracker.", sender_label="@tester"),
@@ -1018,6 +1093,19 @@ class TelegramCommandTests(unittest.TestCase):
             self.assertIn("too ambiguous", reply)
             self.assertIn("Do you want to start a new idea", reply)
             self.assertLessEqual(len(reply), 260)
+
+    def test_plain_text_ambiguous_input_falls_back_safely(self) -> None:
+        update = TelegramInboundMessage(update_id=2861, chat_id="chat-1", text="maybe", sender_label="@tester")
+        with tempfile.TemporaryDirectory() as tmp:
+            telegram_service = _FakeTelegramService(update_batches=[(update,)])
+            service, _, _, _, _, _ = self._make_service(tmp_dir=tmp, telegram_service=telegram_service)
+            _, reply = self._run_single_update(service, telegram_service)
+            result = service._last_execution_result
+            self.assertIn("too ambiguous", reply)
+            self.assertIn("Do you want to start a new idea, ask for a plan, request a patch", reply)
+            self.assertEqual(result.capability_id, "telegram.plain_text")
+            self.assertEqual(result.telemetry["natural_chat_classification"]["intent_label"], "unknown_or_ambiguous")
+            self.assertEqual(result.telemetry["natural_chat_route"]["route_kind"], "fallback")
 
     def test_chat_go_ahead_with_next_step_proposes_without_executing(self) -> None:
         updates = (

@@ -376,6 +376,67 @@ class ExecutionCapabilityTests(unittest.TestCase):
             self.assertEqual(last_run.stderr_preview, "")
             self.assertTrue(last_run.is_patch_relevant)
 
+    def test_plain_text_run_request_reuses_latest_main_target_with_confirmation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "workspace"
+            generated_root = root / "generated" / "GP-7A31C2" / "src"
+            generated_root.mkdir(parents=True, exist_ok=True)
+            (generated_root / "main.py").write_text("print('hello')\n", encoding="utf-8")
+            runner = _FakeCommandRunner(
+                subprocess.CompletedProcess(
+                    ["python", "generated/GP-7A31C2/src/main.py", "generated/GP-7A31C2"],
+                    0,
+                    "Scanning: generated/GP-7A31C2\n",
+                    "",
+                ),
+                subprocess.CompletedProcess(
+                    ["python", "generated/GP-7A31C2/src/main.py", "generated/GP-7A31C2"],
+                    0,
+                    "Scanning: generated/GP-7A31C2\n",
+                    "",
+                ),
+            )
+            service, config_store, _, _, fake_runner = self._make_service(tmp_dir=tmp, command_runner=runner)
+            self._configure_repo_root(service=service, config_store=config_store, root=root)
+
+            first_prompt = self._run_single_update(
+                service,
+                _FakeTelegramService(update_batches=[(
+                    TelegramInboundMessage(update_id=7165, chat_id="chat-1", text="/run main generated/GP-7A31C2", sender_label="@tester"),
+                )]),
+            )
+            first_confirmation_id = self._extract_confirmation_id(first_prompt)
+            self._run_single_update(
+                service,
+                _FakeTelegramService(update_batches=[(
+                    TelegramInboundMessage(update_id=7166, chat_id="chat-1", text=f"/confirm {first_confirmation_id}", sender_label="@tester"),
+                )]),
+            )
+            self.assertEqual(len(fake_runner.calls), 1)
+
+            natural_reply = self._run_single_update(
+                service,
+                _FakeTelegramService(update_batches=[(
+                    TelegramInboundMessage(update_id=7167, chat_id="chat-1", text="Run it again.", sender_label="@tester"),
+                )]),
+            )
+            self.assertIn("Action requires confirmation.", natural_reply)
+            self.assertIn("Preview: run main generated/GP-7A31C2", natural_reply)
+            self.assertEqual(len(fake_runner.calls), 1)
+            self.assertEqual(service._last_execution_result.capability_id, "telegram.plain_text")
+            self.assertEqual(service._last_execution_result.telemetry["natural_chat_classification"]["intent_label"], "execution_request")
+            self.assertEqual(service._last_execution_result.telemetry["natural_chat_route"]["route_command"], "/run")
+
+            second_confirmation_id = self._extract_confirmation_id(natural_reply)
+            confirm_reply = self._run_single_update(
+                service,
+                _FakeTelegramService(update_batches=[(
+                    TelegramInboundMessage(update_id=7168, chat_id="chat-1", text=f"/confirm {second_confirmation_id}", sender_label="@tester"),
+                )]),
+            )
+            self.assertEqual(len(fake_runner.calls), 2)
+            self.assertIn("Command: main generated/GP-7A31C2", confirm_reply)
+
     def test_run_main_alias_rejects_missing_entrypoint_and_multiple_args(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "workspace"

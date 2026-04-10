@@ -342,6 +342,60 @@ class BoundedCliEditLoopTests(unittest.TestCase):
             self.assertIn("- use /patchlast generated/GP-7A31C2/src/main.py to apply the update", asklast_reply)
             self.assertEqual(offline.ask_calls, 0)
 
+    def test_plain_text_patch_request_after_generated_run_prepares_bounded_patch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "workspace"
+            target = root / "generated" / "GP-7A31C2" / "src" / "main.py"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(
+                "from pathlib import Path\n"
+                "import sys\n\n\n"
+                "def main() -> int:\n"
+                "    target = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(\".\")\n"
+                "    print(f\"Scanning: {target}\")\n"
+                "    return 0\n\n\n"
+                "if __name__ == \"__main__\":\n"
+                "    raise SystemExit(main())\n",
+                encoding="utf-8",
+            )
+            runner = _LoopCommandRunner(
+                subprocess.CompletedProcess(
+                    ["python", "generated/GP-7A31C2/src/main.py", "generated/GP-7A31C2"],
+                    0,
+                    "Scanning: generated/GP-7A31C2\n",
+                    "",
+                )
+            )
+            service, config_store, _, _, fake_runner, offline = self._make_service(tmp_dir=tmp, command_runner=runner)
+            self._configure_scopes(service=service, config_store=config_store, root=root)
+
+            run_prompt = self._run_single_update(
+                service,
+                _FakeTelegramService(update_batches=[(
+                    TelegramInboundMessage(update_id=930, chat_id="chat-1", text="/run main generated/GP-7A31C2", sender_label="@tester"),
+                )]),
+            )
+            run_confirmation_id = self._extract_confirmation_id(run_prompt)
+            self._run_single_update(
+                service,
+                _FakeTelegramService(update_batches=[(
+                    TelegramInboundMessage(update_id=931, chat_id="chat-1", text=f"/confirm {run_confirmation_id}", sender_label="@tester"),
+                )]),
+            )
+            self.assertEqual(len(fake_runner.calls), 1)
+
+            patch_reply = self._run_single_update(
+                service,
+                _FakeTelegramService(update_batches=[(
+                    TelegramInboundMessage(update_id=932, chat_id="chat-1", text="Add CSV output.", sender_label="@tester"),
+                )]),
+            )
+            self.assertIn("Planned improvement for generated/GP-7A31C2/src/main.py", patch_reply)
+            self.assertIn("- last run: Scanning: generated/GP-7A31C2", patch_reply)
+            self.assertIn("- use /patchlast generated/GP-7A31C2/src/main.py to apply the update", patch_reply)
+            self.assertEqual(offline.ask_calls, 0)
+            self.assertEqual(len(fake_runner.calls), 1)
+
     def test_asklast_without_run_or_context_fails_cleanly(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "workspace"

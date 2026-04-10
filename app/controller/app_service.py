@@ -52,6 +52,7 @@ from .node_registry import NodeRegistry
 from .node_router import NodeRouter
 from .diagnostics import ControllerDiagnosticsService
 from .chat_orchestrator import ChatOrchestrator
+from .chat_ingress import ChatIngress
 from .models import ControllerSnapshot
 from .profile_store import ControllerConfig, ControllerConfigStore, Mode, Policy, ProviderType
 from .scope_models import ExecutionScope, ScopeValidationResult
@@ -205,6 +206,7 @@ class ControllerService:
         self._autonomy_bundle = AutonomyBundle(self._plan_bridge)
         self._autonomy_bundle_formatter = AutonomyBundleFormatter()
         self._chat_orchestrator = ChatOrchestrator()
+        self._chat_ingress = ChatIngress()
         self._config = self._config_store.load()
         self._normalize_repo_root_config()
         self._normalize_file_roots_config()
@@ -2382,7 +2384,7 @@ class ControllerService:
         if plan.command_label in _PROVIDER_ASK_COMMANDS or (plan.command_label == "/confirm" and plan.ask_status):
             return self._summarize_text(plan.ask_status or f"Sent {plan.command_label} reply to {update.sender_label}.")
         if plan.command_label == "plain_text":
-            return self._summarize_text(f"Sent placeholder reply to {update.sender_label}.")
+            return self._summarize_text(f"Sent natural chat reply to {update.sender_label}.")
         if plan.command_label == "non_text":
             return self._summarize_text(f"Sent non-text guidance reply to {update.sender_label}.")
         if plan.command_label == "parse_failure":
@@ -3600,6 +3602,8 @@ class ControllerService:
             action_summary = str(result.telemetry.get("context_summary") or "context listing")
         elif result.capability_id == "context.clear":
             action_summary = str(result.telemetry.get("context_clear_summary") or "context buffer cleared")
+        elif result.capability_id in {"telegram.plain_text", "chat.orchestrate.read"}:
+            action_summary = str(result.telemetry.get("natural_chat_summary") or result.request.metadata.get("argument_summary") or result.command_label)
         else:
             action_summary = str(result.request.metadata.get("argument_summary") or result.command_label)
         created_context_id = str(result.telemetry.get("context_created_id") or "").strip()
