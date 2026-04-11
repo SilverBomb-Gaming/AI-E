@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
+from hashlib import sha256
 import json
 from pathlib import Path
 import secrets
@@ -23,6 +24,11 @@ from .generated_project_models import GeneratedProjectRecord
 from .generated_project_store import GeneratedProjectStore
 from .last_run_models import LastRunRecord
 from .last_run_store import LastRunStore
+from .model_advisory import CommandGrammarAdvisoryModel
+from .model_experiment_formatter import ModelExperimentFormatter
+from .model_experiment_models import ModelExperimentRecord, normalize_adaptation_method, normalize_baseline_kind, normalize_experiment_mode, normalize_integration_status, normalize_task_type
+from .model_experiment_runner import ModelExperimentError, ModelExperimentRunner
+from .model_experiment_store import ModelExperimentStore
 from .feature_bundle_formatter import FeatureBundleFormatter
 from .feature_bundle_models import FeatureBundleRecord
 from .feature_bundle_store import FeatureBundleStore
@@ -42,6 +48,10 @@ from .context_store import ContextStore
 from .data_capture import DataCapture
 from .data_record_models import DataRecord
 from .data_record_store import DataRecordStore
+from .dataset_export import DatasetExportError, DatasetExporter
+from .dataset_formatter import DatasetFormatter
+from .dataset_models import DatasetMembershipRecord, DatasetRecord, RecordLabelState, normalize_dataset_split, normalize_export_format, normalize_primary_label, normalize_tag
+from .dataset_store import DatasetStore
 from .confirmation_models import ConfirmationContextSnapshot, PendingConfirmation
 from .confirmation_store import ConfirmationStore
 from .channel_models import TelegramChannelStatus, TelegramLoopStatus
@@ -277,6 +287,12 @@ class ControllerService:
         self._audit_store = AuditStore(max_records=_AUDIT_LOG_MAX_RECORDS)
         self._data_capture = DataCapture()
         self._data_record_store = DataRecordStore(root_path=self._config_store.path.parent / "data_records")
+        self._dataset_store = DatasetStore(root_path=self._config_store.path.parent / "datasets")
+        self._dataset_formatter = DatasetFormatter()
+        self._dataset_exporter = DatasetExporter(store=self._dataset_store, formatter=self._dataset_formatter)
+        self._model_experiment_store = ModelExperimentStore(root_path=self._config_store.path.parent / "model_experiments")
+        self._model_experiment_formatter = ModelExperimentFormatter()
+        self._model_experiment_runner = ModelExperimentRunner()
         self._context_store = ContextStore(
             max_contexts_per_chat=_CONTEXT_BUFFER_MAX_ITEMS,
             lifetime_seconds=_CONTEXT_LIFETIME_SECONDS,
@@ -1455,11 +1471,621 @@ class ControllerService:
     def list_data_records(self, *, limit: int = 8) -> tuple[DataRecord, ...]:
         return self._data_record_store.list_records(limit=max(1, min(limit, 20)))
 
+    def list_all_data_records(self) -> tuple[DataRecord, ...]:
+        return self._data_record_store.iter_records(reverse=True)
+
     def get_data_record(self, record_id: str) -> DataRecord | None:
         return self._data_record_store.get(record_id)
 
     def search_data_records(self, *, filters: dict[str, str], limit: int = 8) -> tuple[DataRecord, ...]:
         return self._data_record_store.search(filters=filters, limit=max(1, min(limit, 20)))
+
+    def get_record_label_state(self, record_id: str) -> RecordLabelState | None:
+        return self._dataset_store.get_record_label_state(record_id)
+
+    def label_data_record(self, *, record_id: str, label: str) -> RecordLabelState:
+        record = self.get_data_record(record_id)
+        if record is None:
+            raise ValueError(f"No record matched {record_id.strip().upper() or '(empty)'}.")
+        normalized_label = normalize_primary_label(label)
+        if not normalized_label:
+            raise ValueError("Label must be one of training, evaluation_only, discarded, debug, or review_needed.")
+        existing = self.get_record_label_state(record.record_id)
+        state = RecordLabelState(
+            record_id=record.record_id,
+            primary_label=normalized_label,
+            tags=existing.tags if existing is not None else (),
+            updated_at=self._now_iso(),
+        )
+        stored = self._dataset_store.upsert_record_label_state(state)
+        self._refresh_all_dataset_memberships_for_record(record.record_id)
+        return stored
+
+    def unlabel_data_record(self, *, record_id: str, expected_label: str = "") -> RecordLabelState:
+        record = self.get_data_record(record_id)
+        if record is None:
+            raise ValueError(f"No record matched {record_id.strip().upper() or '(empty)'}.")
+        existing = self.get_record_label_state(record.record_id)
+        if existing is None or not existing.primary_label:
+            raise ValueError(f"Record {record.record_id} does not have a curation label yet.")
+        normalized_expected = normalize_primary_label(expected_label) if expected_label.strip() else ""
+        if normalized_expected and normalized_expected != existing.primary_label:
+            raise ValueError(f"Record {record.record_id} is labeled {existing.primary_label}, not {normalized_expected}.")
+        stored = self._dataset_store.upsert_record_label_state(
+            RecordLabelState(
+                record_id=record.record_id,
+                primary_label="",
+                tags=existing.tags,
+                updated_at=self._now_iso(),
+            )
+        )
+        self._refresh_all_dataset_memberships_for_record(record.record_id)
+        return stored
+
+    def tag_data_record(self, *, record_id: str, tag: str) -> RecordLabelState:
+        record = self.get_data_record(record_id)
+        if record is None:
+            raise ValueError(f"No record matched {record_id.strip().upper() or '(empty)'}.")
+        normalized_tag = normalize_tag(tag)
+        if not normalized_tag:
+            raise ValueError("Tag must contain at least one letter or digit.")
+        existing = self.get_record_label_state(record.record_id)
+        tags: list[str] = list(existing.tags if existing is not None else ())
+        if normalized_tag not in tags:
+            tags.append(normalized_tag)
+        stored = self._dataset_store.upsert_record_label_state(
+            RecordLabelState(
+                record_id=record.record_id,
+                primary_label=existing.primary_label if existing is not None else "",
+                tags=tuple(tags),
+                updated_at=self._now_iso(),
+            )
+        )
+        return stored
+
+    def list_datasets(self) -> tuple[DatasetRecord, ...]:
+        return tuple(self._refresh_dataset_record(record) for record in self._dataset_store.list_datasets())
+
+    def get_dataset(self, dataset_id: str) -> DatasetRecord | None:
+        dataset = self._dataset_store.get_dataset(dataset_id)
+        if dataset is None:
+            return None
+        return self._refresh_dataset_record(dataset)
+
+    def dataset_memberships(self, dataset_id: str) -> tuple[DatasetMembershipRecord, ...]:
+        dataset = self.get_dataset(dataset_id)
+        if dataset is None:
+            return ()
+        return self._dataset_store.memberships_for_dataset(dataset.dataset_id)
+
+    def create_dataset_from_filters(
+        self,
+        *,
+        title: str,
+        description: str,
+        filters: dict[str, str],
+        allow_empty: bool = False,
+    ) -> DatasetRecord:
+        normalized_title = " ".join(title.split())
+        if not normalized_title:
+            raise ValueError("Dataset title is required.")
+        normalized_filters = self._normalize_dataset_filters(filters)
+        if not normalized_filters:
+            raise ValueError("At least one dataset filter is required.")
+        matches = self._filter_records_for_dataset(filters=normalized_filters)
+        if not matches and not allow_empty:
+            raise ValueError("No records matched the provided filters. Use --allow-empty true to create an empty dataset.")
+        now = self._now_iso()
+        dataset = DatasetRecord(
+            dataset_id=self._dataset_store.generate_dataset_id(),
+            title=normalized_title,
+            description=" ".join(description.split()),
+            created_at=now,
+            updated_at=now,
+            source_scope=f"records matching {self._describe_dataset_filters(normalized_filters)}",
+            tags=tuple(item for item in (normalize_tag(normalized_filters.get("tag", "")),) if item),
+            selection_filters=normalized_filters,
+        )
+        memberships = tuple(
+            DatasetMembershipRecord(
+                dataset_id=dataset.dataset_id,
+                record_id=record.record_id,
+                inclusion_reason=self._describe_dataset_filters(normalized_filters),
+                label=self._current_curation_label(record.record_id),
+                split="",
+                added_at=now,
+            )
+            for record in sorted(matches, key=lambda item: (item.captured_at, item.record_id))
+        )
+        self._dataset_store.create_dataset(dataset)
+        self._dataset_store.replace_memberships(dataset.dataset_id, memberships)
+        return self.get_dataset(dataset.dataset_id) or dataset
+
+    def add_record_to_dataset(self, *, dataset_id: str, record_id: str) -> tuple[DatasetRecord, bool]:
+        dataset = self.get_dataset(dataset_id)
+        if dataset is None:
+            raise ValueError(f"No dataset matched {dataset_id.strip().upper() or '(empty)'}.")
+        record = self.get_data_record(record_id)
+        if record is None:
+            raise ValueError(f"No record matched {record_id.strip().upper() or '(empty)'}.")
+        membership, created = self._dataset_store.upsert_membership(
+            DatasetMembershipRecord(
+                dataset_id=dataset.dataset_id,
+                record_id=record.record_id,
+                inclusion_reason="manual add",
+                label=self._current_curation_label(record.record_id),
+                split="",
+                added_at=self._now_iso(),
+            )
+        )
+        if not created:
+            membership = DatasetMembershipRecord.from_payload({**membership.to_payload(), "inclusion_reason": membership.inclusion_reason or "manual add"})
+            self._dataset_store.upsert_membership(membership)
+        refreshed = self.get_dataset(dataset.dataset_id)
+        return refreshed or dataset, created
+
+    def remove_record_from_dataset(self, *, dataset_id: str, record_id: str) -> DatasetRecord:
+        dataset = self.get_dataset(dataset_id)
+        if dataset is None:
+            raise ValueError(f"No dataset matched {dataset_id.strip().upper() or '(empty)'}.")
+        removed = self._dataset_store.remove_membership(dataset.dataset_id, record_id)
+        if not removed:
+            raise ValueError(f"Record {record_id.strip().upper() or '(empty)'} is not in dataset {dataset.dataset_id}.")
+        return self.get_dataset(dataset.dataset_id) or dataset
+
+    def add_dataset_records_by_filter(self, *, dataset_id: str, filters: dict[str, str]) -> tuple[DatasetRecord, int]:
+        dataset = self.get_dataset(dataset_id)
+        if dataset is None:
+            raise ValueError(f"No dataset matched {dataset_id.strip().upper() or '(empty)'}.")
+        normalized_filters = self._normalize_dataset_filters(filters)
+        if not normalized_filters:
+            raise ValueError("At least one dataset filter is required.")
+        matches = self._filter_records_for_dataset(filters=normalized_filters)
+        if not matches:
+            raise ValueError("No records matched the provided filters.")
+        created_count = 0
+        reason = self._describe_dataset_filters(normalized_filters)
+        for record in matches:
+            _, created = self._dataset_store.upsert_membership(
+                DatasetMembershipRecord(
+                    dataset_id=dataset.dataset_id,
+                    record_id=record.record_id,
+                    inclusion_reason=reason,
+                    label=self._current_curation_label(record.record_id),
+                    split="",
+                    added_at=self._now_iso(),
+                )
+            )
+            if created:
+                created_count += 1
+        refreshed = self.get_dataset(dataset.dataset_id)
+        return refreshed or dataset, created_count
+
+    def label_dataset_records(self, *, dataset_id: str, label: str) -> tuple[DatasetRecord, int]:
+        dataset = self.get_dataset(dataset_id)
+        if dataset is None:
+            raise ValueError(f"No dataset matched {dataset_id.strip().upper() or '(empty)'}.")
+        memberships = self._dataset_store.memberships_for_dataset(dataset.dataset_id)
+        if not memberships:
+            raise ValueError(f"Dataset {dataset.dataset_id} has no records to label.")
+        count = 0
+        for membership in memberships:
+            self.label_data_record(record_id=membership.record_id, label=label)
+            count += 1
+        refreshed = self.get_dataset(dataset.dataset_id)
+        return refreshed or dataset, count
+
+    def assign_dataset_splits(
+        self,
+        *,
+        dataset_id: str,
+        mode: str,
+        train_percent: int,
+        eval_percent: int,
+        holdout_percent: int,
+    ) -> DatasetRecord:
+        dataset = self.get_dataset(dataset_id)
+        if dataset is None:
+            raise ValueError(f"No dataset matched {dataset_id.strip().upper() or '(empty)'}.")
+        normalized_mode = " ".join(mode.split()).lower() or "deterministic"
+        if normalized_mode != "deterministic":
+            raise ValueError("Only deterministic split mode is supported in v001.")
+        if min(train_percent, eval_percent, holdout_percent) < 0:
+            raise ValueError("Split percentages cannot be negative.")
+        if train_percent + eval_percent + holdout_percent != 100:
+            raise ValueError("Split percentages must add up to 100.")
+        memberships = list(self._dataset_store.memberships_for_dataset(dataset.dataset_id))
+        if not memberships:
+            raise ValueError(f"Dataset {dataset.dataset_id} has no records to split.")
+        ordered = sorted(memberships, key=lambda item: self._split_sort_key(dataset.dataset_id, item.record_id))
+        total = len(ordered)
+        train_count = (total * train_percent) // 100
+        eval_count = (total * eval_percent) // 100
+        holdout_count = total - train_count - eval_count
+        updated: list[DatasetMembershipRecord] = []
+        for index, membership in enumerate(ordered):
+            split = "holdout"
+            if index < train_count:
+                split = "train"
+            elif index < train_count + eval_count:
+                split = "eval"
+            elif holdout_count >= 0:
+                split = "holdout"
+            updated.append(replace(membership, split=split, label=self._current_curation_label(membership.record_id)))
+        self._dataset_store.replace_memberships(dataset.dataset_id, tuple(updated))
+        return self.get_dataset(dataset.dataset_id) or dataset
+
+    def export_dataset(self, *, dataset_id: str, export_format: str = "jsonl", split: str = ""):
+        dataset = self.get_dataset(dataset_id)
+        if dataset is None:
+            raise ValueError(f"No dataset matched {dataset_id.strip().upper() or '(empty)'}.")
+        memberships = self._dataset_store.memberships_for_dataset(dataset.dataset_id)
+        if not memberships:
+            raise ValueError(f"Dataset {dataset.dataset_id} has no records to export.")
+        normalized_format = normalize_export_format(export_format)
+        normalized_split = normalize_dataset_split(split)
+        records: list[DataRecord] = []
+        curations: dict[str, RecordLabelState] = {}
+        for membership in memberships:
+            if normalized_split and membership.split != normalized_split:
+                continue
+            record = self.get_data_record(membership.record_id)
+            if record is None:
+                continue
+            records.append(record)
+            curation = self.get_record_label_state(record.record_id)
+            if curation is not None:
+                curations[record.record_id] = curation
+        if not records:
+            split_message = f" for split {normalized_split}" if normalized_split else ""
+            raise ValueError(f"Dataset {dataset.dataset_id} has no exportable records{split_message}.")
+        export = self._dataset_exporter.export_dataset(
+            dataset=dataset,
+            memberships=memberships,
+            records=tuple(records),
+            curations=curations,
+            export_id=self._dataset_store.generate_export_id(),
+            exported_at=self._now_iso(),
+            export_format=normalized_format,
+            split=normalized_split,
+        )
+        self._dataset_store.append_export(export)
+        self._dataset_store.update_dataset(replace(dataset, updated_at=self._now_iso(), status="exported"))
+        return export
+
+    def dataset_records_with_membership(self, dataset_id: str) -> tuple[tuple[DatasetMembershipRecord, DataRecord, RecordLabelState | None], ...]:
+        dataset = self.get_dataset(dataset_id)
+        if dataset is None:
+            return ()
+        rows: list[tuple[DatasetMembershipRecord, DataRecord, RecordLabelState | None]] = []
+        for membership in self._dataset_store.memberships_for_dataset(dataset.dataset_id):
+            record = self.get_data_record(membership.record_id)
+            if record is None:
+                continue
+            rows.append((membership, record, self.get_record_label_state(record.record_id)))
+        return tuple(rows)
+
+    def summarize_dataset_composition(self, dataset_id: str) -> dict[str, dict[str, int]]:
+        dataset = self.get_dataset(dataset_id)
+        if dataset is None:
+            raise ValueError(f"No dataset matched {dataset_id.strip().upper() or '(empty)'}.")
+        type_counts: dict[str, int] = {}
+        source_counts: dict[str, int] = {}
+        for _, record, _ in self.dataset_records_with_membership(dataset.dataset_id):
+            type_counts[record.record_type] = type_counts.get(record.record_type, 0) + 1
+            source_counts[record.source] = source_counts.get(record.source, 0) + 1
+        return {
+            "types": type_counts,
+            "sources": source_counts,
+            "labels": dict(dataset.labels_summary),
+            "splits": dict(dataset.split_summary),
+        }
+
+    def list_model_experiments(self) -> tuple[ModelExperimentRecord, ...]:
+        return self._model_experiment_store.list_experiments()
+
+    def get_model_experiment(self, experiment_id: str) -> ModelExperimentRecord | None:
+        return self._model_experiment_store.get_experiment(experiment_id)
+
+    def create_model_experiment(
+        self,
+        *,
+        title: str,
+        task_type: str,
+        dataset_id: str,
+        baseline: str = "rules",
+        adaptation_method: str = "char_bigram_knn_v1",
+        base_model: str = "rules",
+        train_split: str = "train",
+        eval_split: str = "eval",
+        mode: str = "advisory",
+        notes: str = "",
+    ) -> ModelExperimentRecord:
+        dataset = self.get_dataset(dataset_id)
+        if dataset is None:
+            raise ValueError(f"No dataset matched {dataset_id.strip().upper() or '(empty)'}.")
+        normalized_title = " ".join(title.split())
+        if not normalized_title:
+            raise ValueError("Experiment title is required.")
+        normalized_task = normalize_task_type(task_type)
+        if normalized_task != "command_grammar_correction":
+            raise ValueError("Task must be one of: command_grammar_correction.")
+        now = self._now_iso()
+        experiment_id = self._model_experiment_store.generate_experiment_id()
+        record = ModelExperimentRecord(
+            experiment_id=experiment_id,
+            title=normalized_title,
+            task_type=normalized_task,
+            dataset_id=dataset.dataset_id,
+            created_at=now,
+            updated_at=now,
+            status="draft",
+            base_model=" ".join(base_model.split()) or "rules",
+            adaptation_method=normalize_adaptation_method(adaptation_method),
+            train_split=" ".join(train_split.split()) or "train",
+            eval_split=" ".join(eval_split.split()) or "eval",
+            notes=" ".join(notes.split()),
+            integration_status="draft",
+            baseline=normalize_baseline_kind(baseline),
+            mode=normalize_experiment_mode(mode),
+            label_filters=dict(dataset.selection_filters),
+            artifact_root=str(self._model_experiment_store.artifact_root(experiment_id)),
+        )
+        return self._model_experiment_store.create_experiment(record)
+
+    def run_model_experiment(self, *, experiment_id: str) -> ModelExperimentRecord:
+        experiment = self.get_model_experiment(experiment_id)
+        if experiment is None:
+            raise ValueError(f"No experiment matched {experiment_id.strip().upper() or '(empty)'}.")
+        if experiment.status == "running":
+            raise ValueError(f"Experiment {experiment.experiment_id} is already running.")
+        if experiment.task_type != "command_grammar_correction":
+            raise ValueError(f"Task {experiment.task_type or '(empty)'} is not supported in v001.")
+        started_at = self._now_iso()
+        running = self._model_experiment_store.update_experiment(
+            replace(
+                experiment,
+                status="running",
+                updated_at=started_at,
+                last_error="",
+                stop_requested=False,
+                artifact_root=experiment.artifact_root or str(self._model_experiment_store.artifact_root(experiment.experiment_id)),
+            )
+        )
+        try:
+            export = self.export_dataset(dataset_id=running.dataset_id, export_format="jsonl", split="")
+        except (ValueError, DatasetExportError) as exc:
+            return self._model_experiment_store.update_experiment(
+                replace(
+                    running,
+                    updated_at=self._now_iso(),
+                    status="failed",
+                    last_error=str(exc),
+                    stop_requested=False,
+                )
+            )
+        try:
+            result = self._model_experiment_runner.run(
+                experiment=running,
+                dataset_export_path=export.file_path,
+                artifact_root=running.artifact_root,
+                stop_requested=lambda: bool((self.get_model_experiment(running.experiment_id) or running).stop_requested),
+            )
+        except ModelExperimentError as exc:
+            refreshed = self.get_model_experiment(running.experiment_id) or running
+            stopped = refreshed.stop_requested and "stop requested" in str(exc).lower()
+            return self._model_experiment_store.update_experiment(
+                replace(
+                    refreshed,
+                    updated_at=self._now_iso(),
+                    status="stopped" if stopped else "failed",
+                    integration_status="draft" if stopped else refreshed.integration_status,
+                    dataset_export_id=export.export_id,
+                    dataset_export_path=export.file_path,
+                    last_error=str(exc),
+                )
+            )
+        return self._model_experiment_store.update_experiment(
+            replace(
+                running,
+                updated_at=self._now_iso(),
+                status=str(result.get("status", "evaluated")),
+                integration_status=str(result.get("integration_status", "evaluated")),
+                metrics=dict(result.get("metrics", {})),
+                artifact_paths={str(key): str(value) for key, value in dict(result.get("artifact_paths", {})).items()},
+                dataset_export_id=export.export_id,
+                dataset_export_path=export.file_path,
+                dataset_record_count=int(result.get("dataset_record_count", 0) or 0),
+                training_example_count=int(result.get("training_example_count", 0) or 0),
+                evaluation_example_count=int(result.get("evaluation_example_count", 0) or 0),
+                builder_name=str(result.get("builder_name", running.builder_name)),
+                last_error="",
+                stop_requested=False,
+            )
+        )
+
+    def stop_model_experiment(self, *, experiment_id: str) -> ModelExperimentRecord:
+        experiment = self.get_model_experiment(experiment_id)
+        if experiment is None:
+            raise ValueError(f"No experiment matched {experiment_id.strip().upper() or '(empty)'}.")
+        if experiment.status != "running":
+            raise ValueError(f"Experiment {experiment.experiment_id} is not currently running.")
+        return self._model_experiment_store.update_experiment(
+            replace(
+                experiment,
+                stop_requested=True,
+                updated_at=self._now_iso(),
+            )
+        )
+
+    def set_model_experiment_integration_status(self, *, experiment_id: str, integration_status: str) -> ModelExperimentRecord:
+        experiment = self.get_model_experiment(experiment_id)
+        if experiment is None:
+            raise ValueError(f"No experiment matched {experiment_id.strip().upper() or '(empty)'}.")
+        normalized_status = normalize_integration_status(integration_status)
+        if normalized_status not in {"approved_for_advisory_use", "rejected"}:
+            raise ValueError("Integration status must be approved_for_advisory_use or rejected.")
+        if normalized_status == "approved_for_advisory_use":
+            if experiment.status not in {"trained", "evaluated"}:
+                raise ValueError(f"Experiment {experiment.experiment_id} must be trained or evaluated before advisory approval.")
+            if not experiment.artifact_paths.get("model_artifact"):
+                raise ValueError(f"Experiment {experiment.experiment_id} does not have a model artifact to approve.")
+        return self._model_experiment_store.update_experiment(
+            replace(
+                experiment,
+                integration_status=normalized_status,
+                updated_at=self._now_iso(),
+            )
+        )
+
+    def command_grammar_advisory(self, *, text: str) -> tuple[str, ModelExperimentRecord | None, float]:
+        experiment = self._model_experiment_store.latest_approved_for_task(task_type="command_grammar_correction")
+        if experiment is None:
+            return "", None, 0.0
+        model_artifact_path = experiment.artifact_paths.get("model_artifact", "")
+        if not model_artifact_path:
+            return "", None, 0.0
+        try:
+            advisory = CommandGrammarAdvisoryModel.load(artifact_path=model_artifact_path)
+            suggestion, score = advisory.suggest(text=text)
+        except (OSError, ValueError, json.JSONDecodeError):
+            return "", None, 0.0
+        normalized_input = " ".join(text.split())
+        if not suggestion or suggestion == normalized_input:
+            return "", None, 0.0
+        if score < max(experiment.advisory_threshold, advisory.advisory_threshold):
+            return "", None, score
+        if parse_chat_command(text=suggestion, has_text=True).command_label == "parse_failure":
+            return "", None, score
+        return suggestion, experiment, score
+
+    def _refresh_all_dataset_memberships_for_record(self, record_id: str) -> None:
+        normalized = record_id.strip().upper()
+        for dataset in self._dataset_store.list_datasets():
+            memberships = list(self._dataset_store.memberships_for_dataset(dataset.dataset_id))
+            changed = False
+            for index, membership in enumerate(memberships):
+                if membership.record_id != normalized:
+                    continue
+                next_label = self._current_curation_label(normalized)
+                if membership.label != next_label:
+                    memberships[index] = replace(membership, label=next_label)
+                    changed = True
+            if changed:
+                self._dataset_store.replace_memberships(dataset.dataset_id, tuple(memberships))
+                self._refresh_dataset_record(dataset)
+
+    def _refresh_dataset_record(self, dataset: DatasetRecord) -> DatasetRecord:
+        memberships = list(self._dataset_store.memberships_for_dataset(dataset.dataset_id))
+        labels_summary: dict[str, int] = {}
+        split_summary: dict[str, int] = {}
+        changed_memberships = False
+        normalized_memberships: list[DatasetMembershipRecord] = []
+        for membership in memberships:
+            current_label = self._current_curation_label(membership.record_id)
+            next_membership = membership if membership.label == current_label else replace(membership, label=current_label)
+            changed_memberships = changed_memberships or (next_membership != membership)
+            normalized_memberships.append(next_membership)
+            label_key = next_membership.label or "unlabeled"
+            labels_summary[label_key] = labels_summary.get(label_key, 0) + 1
+            if next_membership.split:
+                split_summary[next_membership.split] = split_summary.get(next_membership.split, 0) + 1
+        if changed_memberships:
+            self._dataset_store.replace_memberships(dataset.dataset_id, tuple(normalized_memberships))
+        exports = self._dataset_store.list_exports(dataset.dataset_id)
+        next_status = "draft"
+        if normalized_memberships:
+            next_status = "curated"
+        if exports:
+            next_status = "exported"
+        refreshed = replace(
+            dataset,
+            updated_at=self._now_iso() if dataset.record_count != len(normalized_memberships) or dataset.labels_summary != labels_summary or dataset.split_summary != split_summary or dataset.status != next_status else dataset.updated_at,
+            record_count=len(normalized_memberships),
+            labels_summary=labels_summary,
+            split_summary=split_summary,
+            status=next_status,
+        )
+        if refreshed != dataset or changed_memberships:
+            self._dataset_store.update_dataset(refreshed)
+        return refreshed
+
+    def _filter_records_for_dataset(self, *, filters: dict[str, str]) -> tuple[DataRecord, ...]:
+        matches: list[DataRecord] = []
+        for record in self.list_all_data_records():
+            curation = self.get_record_label_state(record.record_id)
+            if self._record_matches_dataset_filters(record=record, curation=curation, filters=filters):
+                matches.append(record)
+        return tuple(matches)
+
+    def _record_matches_dataset_filters(
+        self,
+        *,
+        record: DataRecord,
+        curation: RecordLabelState | None,
+        filters: dict[str, str],
+    ) -> bool:
+        tag_values = set(record.tags)
+        if curation is not None:
+            tag_values.update(curation.tags)
+        expected_label = filters.get("label", "")
+        if expected_label and expected_label != (curation.primary_label if curation is not None else ""):
+            return False
+        expected_tag = filters.get("tag", "")
+        if expected_tag and expected_tag not in tag_values:
+            return False
+        haystacks = {
+            "id": record.record_id,
+            "record_id": record.record_id,
+            "type": record.record_type,
+            "status": record.outcome,
+            "source": record.source,
+            "session_id": record.session_id,
+            "chain_id": record.chain_id,
+            "bundle_id": record.bundle_id,
+        }
+        for key, expected in filters.items():
+            if key in {"label", "tag"}:
+                continue
+            actual = haystacks.get(key, "")
+            if actual.lower() != expected.lower():
+                return False
+        return True
+
+    @staticmethod
+    def _normalize_dataset_filters(filters: dict[str, str]) -> dict[str, str]:
+        normalized: dict[str, str] = {}
+        supported = {"id", "record_id", "source", "type", "label", "tag", "status", "session_id", "chain_id", "bundle_id"}
+        type_aliases = {"eval": "evaluation_run", "evaluation": "evaluation_run", "chain": "chain_step", "bundle": "feature_bundle"}
+        for key, value in filters.items():
+            normalized_key = str(key).strip().lower().replace("-", "_")
+            normalized_value = str(value).strip()
+            if not normalized_value or normalized_key not in supported:
+                continue
+            if normalized_key == "label":
+                normalized_value = normalize_primary_label(normalized_value)
+                if not normalized_value:
+                    raise ValueError("Label filters must use training, evaluation_only, discarded, debug, or review_needed.")
+            elif normalized_key == "tag":
+                normalized_value = normalize_tag(normalized_value)
+                if not normalized_value:
+                    raise ValueError("Tag filters must contain at least one letter or digit.")
+            elif normalized_key == "type":
+                normalized_value = type_aliases.get(normalized_value.lower(), normalized_value)
+            normalized[normalized_key] = normalized_value
+        return normalized
+
+    @staticmethod
+    def _describe_dataset_filters(filters: dict[str, str]) -> str:
+        return " ".join(f"{key}={value}" for key, value in filters.items()) or "manual selection"
+
+    def _current_curation_label(self, record_id: str) -> str:
+        state = self.get_record_label_state(record_id)
+        return state.primary_label if state is not None else ""
+
+    @staticmethod
+    def _split_sort_key(dataset_id: str, record_id: str) -> str:
+        return sha256(f"{dataset_id.strip().upper()}:{record_id.strip().upper()}".encode("utf-8")).hexdigest()
 
     def set_latest_run_for_chat(self, *, chat_id: str, record: LastRunRecord) -> None:
         self._last_run_store.set_latest(chat_id=chat_id, record=record)
@@ -3124,6 +3750,7 @@ class ControllerService:
                 ),
                 command_label="/data",
             )
+        curation = self.get_record_label_state(record.record_id)
         lines = [
             f"Data record {record.record_id}",
             f"Type: {record.record_type}",
@@ -3134,6 +3761,10 @@ class ControllerService:
             f"Captured: {record.captured_at}",
             f"Source: {record.source}",
         ]
+        if curation is not None and curation.primary_label:
+            lines.append(f"Curation label: {curation.primary_label}")
+        if curation is not None and curation.tags:
+            lines.append(f"Curation tags: {', '.join(curation.tags)}")
         grouping = [
             f"request={record.request_id}" if record.request_id else "",
             f"session={record.session_id}" if record.session_id else "",
@@ -3170,6 +3801,158 @@ class ControllerService:
         for record in records:
             lines.append(self._format_data_record_summary(record))
         return _TelegramResponsePlan(reply=chr(10).join(lines), command_label="/datasearch")
+
+    def _build_datasets_reply(self) -> _TelegramResponsePlan:
+        datasets = self.list_datasets()
+        if not datasets:
+            return _TelegramResponsePlan(
+                reply="Datasets\nNo curated datasets exist yet.",
+                command_label="/datasets",
+            )
+        lines = ["Datasets"]
+        for dataset in datasets[:12]:
+            lines.append(self._dataset_formatter.format_dataset_summary_line(dataset))
+        return _TelegramResponsePlan(reply=chr(10).join(lines), command_label="/datasets")
+
+    def _build_dataset_reply(self, *, dataset_id: str) -> _TelegramResponsePlan:
+        dataset = self.get_dataset(dataset_id)
+        if dataset is None:
+            return _TelegramResponsePlan(
+                reply=chr(10).join(("Dataset", f"No dataset matched {dataset_id.strip().upper() or '(empty)'}.")),
+                command_label="/dataset",
+            )
+        lines = [
+            f"Dataset {dataset.dataset_id}",
+            f"Title: {dataset.title}",
+            f"Status: {dataset.status}",
+            f"Records: {dataset.record_count}",
+            f"Created: {dataset.created_at}",
+            f"Updated: {dataset.updated_at}",
+            f"Source scope: {dataset.source_scope}",
+            f"Labels: {self._dataset_formatter.format_dataset_labels(dataset)}",
+            f"Splits: {self._dataset_formatter.format_dataset_splits(dataset)}",
+        ]
+        if dataset.description:
+            lines.append(f"Description: {dataset.description}")
+        if dataset.tags:
+            lines.append(f"Tags: {', '.join(dataset.tags)}")
+        if dataset.selection_filters:
+            lines.append(f"Filters: {self._describe_dataset_filters(dataset.selection_filters)}")
+        return _TelegramResponsePlan(reply=chr(10).join(lines), command_label="/dataset")
+
+    def _build_dataset_records_reply(self, *, dataset_id: str) -> _TelegramResponsePlan:
+        dataset = self.get_dataset(dataset_id)
+        if dataset is None:
+            return _TelegramResponsePlan(
+                reply=chr(10).join(("Dataset records", f"No dataset matched {dataset_id.strip().upper() or '(empty)'}.")),
+                command_label="/datasetrecords",
+            )
+        rows = self.dataset_records_with_membership(dataset.dataset_id)
+        if not rows:
+            return _TelegramResponsePlan(
+                reply=chr(10).join((f"Dataset records {dataset.dataset_id}", "No records are currently in this dataset.")),
+                command_label="/datasetrecords",
+            )
+        lines = [f"Dataset records {dataset.dataset_id}"]
+        for membership, record, curation in rows[:15]:
+            lines.append(
+                self._dataset_formatter.format_dataset_record_line(
+                    record=record,
+                    membership=membership,
+                    curation=curation,
+                )
+            )
+        return _TelegramResponsePlan(reply=chr(10).join(lines), command_label="/datasetrecords")
+
+    def _build_dataset_summary_reply(self, *, dataset_id: str) -> _TelegramResponsePlan:
+        dataset = self.get_dataset(dataset_id)
+        if dataset is None:
+            return _TelegramResponsePlan(
+                reply=chr(10).join(("Dataset summary", f"No dataset matched {dataset_id.strip().upper() or '(empty)'}.")),
+                command_label="/datasetsummary",
+            )
+        composition = self.summarize_dataset_composition(dataset.dataset_id)
+        lines = [
+            f"Dataset summary {dataset.dataset_id}",
+            f"Title: {dataset.title}",
+            f"Records: {dataset.record_count}",
+            f"Labels: {self._dataset_formatter.format_dataset_labels(dataset)}",
+            f"Splits: {self._dataset_formatter.format_dataset_splits(dataset)}",
+            f"Types: {', '.join(f'{key}={value}' for key, value in sorted(composition['types'].items())) or 'none'}",
+            f"Sources: {', '.join(f'{key}={value}' for key, value in sorted(composition['sources'].items())) or 'none'}",
+        ]
+        return _TelegramResponsePlan(reply=chr(10).join(lines), command_label="/datasetsummary")
+
+    def _build_model_experiments_reply(self) -> _TelegramResponsePlan:
+        experiments = self.list_model_experiments()
+        if not experiments:
+            return _TelegramResponsePlan(
+                reply="Model experiments\nNo model experiments exist yet.",
+                command_label="/modelexperiments",
+            )
+        lines = ["Model experiments"]
+        for experiment in experiments[:12]:
+            lines.append(self._model_experiment_formatter.format_experiment_summary_line(experiment))
+        return _TelegramResponsePlan(reply=chr(10).join(lines), command_label="/modelexperiments")
+
+    def _build_model_experiment_reply(self, *, experiment_id: str) -> _TelegramResponsePlan:
+        experiment = self.get_model_experiment(experiment_id)
+        if experiment is None:
+            return _TelegramResponsePlan(
+                reply=chr(10).join(("Model experiment", f"No experiment matched {experiment_id.strip().upper() or '(empty)'}.")),
+                command_label="/modelexperiment",
+            )
+        lines = [
+            f"Model experiment {experiment.experiment_id}",
+            f"Title: {experiment.title}",
+            f"Task: {experiment.task_type}",
+            f"Dataset: {experiment.dataset_id}",
+            f"Status: {experiment.status}",
+            f"Integration: {experiment.integration_status}",
+            f"Baseline: {experiment.baseline}",
+            f"Base model: {experiment.base_model}",
+            f"Method: {experiment.adaptation_method}",
+            f"Mode: {experiment.mode}",
+            f"Train split: {experiment.train_split}",
+            f"Eval split: {experiment.eval_split}",
+            f"Split policy: {experiment.split_policy}",
+            f"Created: {experiment.created_at}",
+            f"Updated: {experiment.updated_at}",
+            f"Dataset rows: {experiment.dataset_record_count}",
+            f"Training examples: {experiment.training_example_count}",
+            f"Evaluation examples: {experiment.evaluation_example_count}",
+        ]
+        if experiment.label_filters:
+            lines.append(f"Dataset filters: {self._describe_dataset_filters(experiment.label_filters)}")
+        if experiment.dataset_export_path:
+            lines.append(f"Dataset export: {experiment.dataset_export_path}")
+        if experiment.notes:
+            lines.append(f"Notes: {experiment.notes}")
+        if experiment.last_error:
+            lines.append(f"Last error: {experiment.last_error}")
+        return _TelegramResponsePlan(reply=chr(10).join(lines), command_label="/modelexperiment")
+
+    def _build_model_experiment_results_reply(self, *, experiment_id: str) -> _TelegramResponsePlan:
+        experiment = self.get_model_experiment(experiment_id)
+        if experiment is None:
+            return _TelegramResponsePlan(
+                reply=chr(10).join(("Model experiment results", f"No experiment matched {experiment_id.strip().upper() or '(empty)'}.")),
+                command_label="/modelexperimentresults",
+            )
+        lines = [
+            "[MODEL EXPERIMENT]",
+            f"Experiment: {experiment.title}",
+            f"Experiment ID: {experiment.experiment_id}",
+            f"Task: {experiment.task_type}",
+            f"Dataset: {experiment.dataset_id}",
+            f"Status: {experiment.status}",
+            f"Integration: {experiment.integration_status}",
+        ]
+        lines.extend(self._model_experiment_formatter.format_metrics(experiment))
+        lines.extend(self._model_experiment_formatter.format_artifacts(experiment))
+        if experiment.last_error:
+            lines.append(f"Last error: {experiment.last_error}")
+        return _TelegramResponsePlan(reply=chr(10).join(lines), command_label="/modelexperimentresults")
 
     @staticmethod
     def _json_compact(payload: dict[str, object]) -> str:

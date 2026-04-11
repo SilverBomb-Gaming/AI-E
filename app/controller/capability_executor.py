@@ -10,9 +10,21 @@ from typing import TYPE_CHECKING, Protocol
 from ..providers.base import ProviderReply
 from .capability_models import CapabilityContext, CapabilityEvaluation
 from .command_grammar import (
+    parse_data_label_arguments,
     parse_chain_create_arguments,
     parse_data_limit,
     parse_data_search_arguments,
+    parse_data_tag_arguments,
+    parse_data_unlabel_arguments,
+    parse_dataset_add_filter_arguments,
+    parse_dataset_create_arguments,
+    parse_dataset_export_arguments,
+    parse_dataset_id_argument,
+    parse_dataset_label_arguments,
+    parse_dataset_record_pair,
+    parse_dataset_split_arguments,
+    parse_model_experiment_create_arguments,
+    parse_model_experiment_id_argument,
     parse_dispatch_arguments,
     parse_eval_create_arguments,
 )
@@ -24,6 +36,7 @@ from .execution_models import LocalCommandExecutionRequest
 from .execution_runner import ExecutionRunnerError
 from .generated_project_models import GeneratedProjectRecord
 from .last_run_models import LastRunRecord
+from .dataset_export import DatasetExportError
 from .node_dispatcher import NodeDispatchError
 from .node_router import NodeRoutingError
 from .file_mutator import (
@@ -114,11 +127,16 @@ class CapabilityExecutor:
             if scope_failure is not None:
                 return scope_failure
             usage_hint = parsed_command.usage_hint or "Use /help to see supported commands."
+            suggestion, experiment, score = self._service.command_grammar_advisory(text=parsed_command.normalized_text)
+            lines = ["Couldn't parse that command.", f"Next: {usage_hint}"]
+            if suggestion and experiment is not None:
+                lines.append(f"Advisory suggestion: {suggestion}")
+                lines.append(f"Advisory model: {experiment.title} ({experiment.experiment_id}) score={score:.2f}")
             return self._result(
                 request,
                 outcome="invalid_request",
                 reason_code="parse_failure",
-                user_message="\n".join(("Couldn't parse that command.", f"Next: {usage_hint}")),
+                user_message="\n".join(lines),
                 internal_summary=f"Malformed Telegram command rejected: {parsed_command.normalized_text or 'unknown command'}.",
                 retryable=False,
                 command_label="parse_failure",
@@ -303,6 +321,50 @@ class CapabilityExecutor:
             return self._execute_data(update=update, snapshot=snapshot, argument=parsed_command.argument)
         if command == "/datasearch":
             return self._execute_data_search(update=update, snapshot=snapshot, argument=parsed_command.argument)
+        if command == "/datalabel":
+            return self._execute_data_label(update=update, snapshot=snapshot, argument=parsed_command.argument)
+        if command == "/dataunlabel":
+            return self._execute_data_unlabel(update=update, snapshot=snapshot, argument=parsed_command.argument)
+        if command == "/datatag":
+            return self._execute_data_tag(update=update, snapshot=snapshot, argument=parsed_command.argument)
+        if command == "/datasets":
+            return self._execute_datasets(update=update, snapshot=snapshot, argument=parsed_command.argument)
+        if command == "/dataset":
+            return self._execute_dataset(update=update, snapshot=snapshot, argument=parsed_command.argument)
+        if command == "/datasetrecords":
+            return self._execute_dataset_records(update=update, snapshot=snapshot, argument=parsed_command.argument)
+        if command == "/datasetsummary":
+            return self._execute_dataset_summary(update=update, snapshot=snapshot, argument=parsed_command.argument)
+        if command == "/datasetcreate":
+            return self._execute_dataset_create(update=update, snapshot=snapshot, argument=parsed_command.argument)
+        if command == "/datasetadd":
+            return self._execute_dataset_add(update=update, snapshot=snapshot, argument=parsed_command.argument)
+        if command == "/datasetremove":
+            return self._execute_dataset_remove(update=update, snapshot=snapshot, argument=parsed_command.argument)
+        if command == "/datasetlabel":
+            return self._execute_dataset_label(update=update, snapshot=snapshot, argument=parsed_command.argument)
+        if command == "/datasetaddfilter":
+            return self._execute_dataset_add_filter(update=update, snapshot=snapshot, argument=parsed_command.argument)
+        if command == "/datasetsplit":
+            return self._execute_dataset_split(update=update, snapshot=snapshot, argument=parsed_command.argument)
+        if command == "/datasetexport":
+            return self._execute_dataset_export(update=update, snapshot=snapshot, argument=parsed_command.argument)
+        if command == "/modelexperiments":
+            return self._execute_model_experiments(update=update, snapshot=snapshot)
+        if command == "/modelexperiment":
+            return self._execute_model_experiment_read_like(update=update, snapshot=snapshot, argument=parsed_command.argument, command_label="/modelexperiment")
+        if command == "/modelexperimentresults":
+            return self._execute_model_experiment_read_like(update=update, snapshot=snapshot, argument=parsed_command.argument, command_label="/modelexperimentresults")
+        if command == "/modelexperimentcreate":
+            return self._execute_model_experiment_create(update=update, snapshot=snapshot, argument=parsed_command.argument)
+        if command == "/modelexperimentstart":
+            return self._execute_model_experiment_control(update=update, snapshot=snapshot, argument=parsed_command.argument, command_label="/modelexperimentstart")
+        if command == "/modelexperimentstop":
+            return self._execute_model_experiment_control(update=update, snapshot=snapshot, argument=parsed_command.argument, command_label="/modelexperimentstop")
+        if command == "/modelexperimentapprove":
+            return self._execute_model_experiment_control(update=update, snapshot=snapshot, argument=parsed_command.argument, command_label="/modelexperimentapprove")
+        if command == "/modelexperimentreject":
+            return self._execute_model_experiment_control(update=update, snapshot=snapshot, argument=parsed_command.argument, command_label="/modelexperimentreject")
         if command == "/capabilities":
             return self._execute_capabilities(update=update, snapshot=snapshot)
         if command == "/ask":
@@ -5591,6 +5653,693 @@ class CapabilityExecutor:
             internal_summary="data.search returned filtered durable data records.",
             retryable=False,
             command_label="/datasearch",
+            activity_state="processing_command",
+        )
+
+    def _execute_data_label(
+        self,
+        *,
+        update: TelegramInboundMessage,
+        snapshot: ControllerSnapshot,
+        argument: str,
+    ) -> CapabilityExecutionResult:
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="data.curation.query",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/datalabel",
+            parsed_arguments={"argument": argument.strip()},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        parsed, error = parse_data_label_arguments(argument)
+        if parsed is None:
+            return self._invalid_dataset_request(request=request, command_label="/datalabel", title="Couldn't parse that data label.", error=error)
+        try:
+            state = self._service.label_data_record(record_id=parsed["record_id"], label=parsed["label"])
+        except ValueError as exc:
+            return self._invalid_dataset_request(request=request, command_label="/datalabel", title="Couldn't label that record.", reason=str(exc))
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=f"Record {state.record_id} labeled {state.primary_label}.",
+            internal_summary=f"data.curation labeled {state.record_id} as {state.primary_label}.",
+            retryable=False,
+            command_label="/datalabel",
+            activity_state="processing_command",
+        )
+
+    def _execute_data_unlabel(
+        self,
+        *,
+        update: TelegramInboundMessage,
+        snapshot: ControllerSnapshot,
+        argument: str,
+    ) -> CapabilityExecutionResult:
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="data.curation.query",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/dataunlabel",
+            parsed_arguments={"argument": argument.strip()},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        parsed, error = parse_data_unlabel_arguments(argument)
+        if parsed is None:
+            return self._invalid_dataset_request(request=request, command_label="/dataunlabel", title="Couldn't parse that data unlabel.", error=error)
+        try:
+            state = self._service.unlabel_data_record(record_id=parsed["record_id"], expected_label=parsed.get("label", ""))
+        except ValueError as exc:
+            return self._invalid_dataset_request(request=request, command_label="/dataunlabel", title="Couldn't clear that record label.", reason=str(exc))
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=f"Cleared curation label for {state.record_id}.",
+            internal_summary=f"data.curation cleared label for {state.record_id}.",
+            retryable=False,
+            command_label="/dataunlabel",
+            activity_state="processing_command",
+        )
+
+    def _execute_data_tag(
+        self,
+        *,
+        update: TelegramInboundMessage,
+        snapshot: ControllerSnapshot,
+        argument: str,
+    ) -> CapabilityExecutionResult:
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="data.curation.query",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/datatag",
+            parsed_arguments={"argument": argument.strip()},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        parsed, error = parse_data_tag_arguments(argument)
+        if parsed is None:
+            return self._invalid_dataset_request(request=request, command_label="/datatag", title="Couldn't parse that data tag.", error=error)
+        try:
+            state = self._service.tag_data_record(record_id=parsed["record_id"], tag=parsed["tag"])
+        except ValueError as exc:
+            return self._invalid_dataset_request(request=request, command_label="/datatag", title="Couldn't tag that record.", reason=str(exc))
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=f"Record {state.record_id} tagged: {', '.join(state.tags)}",
+            internal_summary=f"data.curation added tag to {state.record_id}.",
+            retryable=False,
+            command_label="/datatag",
+            activity_state="processing_command",
+        )
+
+    def _execute_datasets(
+        self,
+        *,
+        update: TelegramInboundMessage,
+        snapshot: ControllerSnapshot,
+        argument: str,
+    ) -> CapabilityExecutionResult:
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="dataset.read",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/datasets",
+            parsed_arguments={},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        if argument.strip():
+            return self._invalid_dataset_request(request=request, command_label="/datasets", title="Couldn't parse that datasets command.", reason="/datasets does not accept arguments.")
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=self._service._build_datasets_reply().reply,
+            internal_summary="dataset.read listed curated datasets.",
+            retryable=False,
+            command_label="/datasets",
+            activity_state="processing_command",
+        )
+
+    def _execute_dataset(
+        self,
+        *,
+        update: TelegramInboundMessage,
+        snapshot: ControllerSnapshot,
+        argument: str,
+    ) -> CapabilityExecutionResult:
+        return self._execute_dataset_read_like(update=update, snapshot=snapshot, argument=argument, command_label="/dataset")
+
+    def _execute_dataset_records(
+        self,
+        *,
+        update: TelegramInboundMessage,
+        snapshot: ControllerSnapshot,
+        argument: str,
+    ) -> CapabilityExecutionResult:
+        return self._execute_dataset_read_like(update=update, snapshot=snapshot, argument=argument, command_label="/datasetrecords")
+
+    def _execute_dataset_summary(
+        self,
+        *,
+        update: TelegramInboundMessage,
+        snapshot: ControllerSnapshot,
+        argument: str,
+    ) -> CapabilityExecutionResult:
+        return self._execute_dataset_read_like(update=update, snapshot=snapshot, argument=argument, command_label="/datasetsummary")
+
+    def _execute_dataset_read_like(
+        self,
+        *,
+        update: TelegramInboundMessage,
+        snapshot: ControllerSnapshot,
+        argument: str,
+        command_label: str,
+    ) -> CapabilityExecutionResult:
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="dataset.read",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command=command_label,
+            parsed_arguments={"argument": argument.strip()},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        dataset_id, error = parse_dataset_id_argument(argument, command=command_label)
+        if dataset_id is None:
+            return self._invalid_dataset_request(request=request, command_label=command_label, title=f"Couldn't parse that {command_label} command.", error=error)
+        if command_label == "/dataset":
+            reply = self._service._build_dataset_reply(dataset_id=dataset_id).reply
+        elif command_label == "/datasetrecords":
+            reply = self._service._build_dataset_records_reply(dataset_id=dataset_id).reply
+        else:
+            reply = self._service._build_dataset_summary_reply(dataset_id=dataset_id).reply
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=reply,
+            internal_summary=f"dataset.read handled {command_label} for {dataset_id}.",
+            retryable=False,
+            command_label=command_label,
+            activity_state="processing_command",
+        )
+
+    def _execute_dataset_create(
+        self,
+        *,
+        update: TelegramInboundMessage,
+        snapshot: ControllerSnapshot,
+        argument: str,
+    ) -> CapabilityExecutionResult:
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="dataset.curation.query",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/datasetcreate",
+            parsed_arguments={"argument": argument.strip()},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        parsed, error = parse_dataset_create_arguments(argument)
+        if parsed is None:
+            return self._invalid_dataset_request(request=request, command_label="/datasetcreate", title="Couldn't parse that dataset create.", error=error)
+        allow_empty = str(parsed.get("allow-empty", "")).strip().lower() in {"1", "true", "yes"}
+        filters = {key.replace("-", "_"): value for key, value in parsed.items() if key not in {"title", "description", "allow-empty"}}
+        try:
+            dataset = self._service.create_dataset_from_filters(
+                title=parsed.get("title", ""),
+                description=parsed.get("description", ""),
+                filters=filters,
+                allow_empty=allow_empty,
+            )
+        except ValueError as exc:
+            return self._invalid_dataset_request(request=request, command_label="/datasetcreate", title="Couldn't create that dataset.", reason=str(exc))
+        reply = self._service._build_dataset_reply(dataset_id=dataset.dataset_id).reply
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message="\n".join((reply, f"Next: Use /datasetrecords {dataset.dataset_id}, /datasetsummary {dataset.dataset_id}, /datasetsplit {dataset.dataset_id} --mode deterministic --train 80 --eval 20, or /datasetexport {dataset.dataset_id} --format jsonl.")),
+            internal_summary=f"dataset.curation created {dataset.dataset_id}.",
+            retryable=False,
+            command_label="/datasetcreate",
+            activity_state="processing_command",
+        )
+
+    def _execute_dataset_add(
+        self,
+        *,
+        update: TelegramInboundMessage,
+        snapshot: ControllerSnapshot,
+        argument: str,
+    ) -> CapabilityExecutionResult:
+        return self._execute_dataset_record_mutation(update=update, snapshot=snapshot, argument=argument, command_label="/datasetadd")
+
+    def _execute_dataset_remove(
+        self,
+        *,
+        update: TelegramInboundMessage,
+        snapshot: ControllerSnapshot,
+        argument: str,
+    ) -> CapabilityExecutionResult:
+        return self._execute_dataset_record_mutation(update=update, snapshot=snapshot, argument=argument, command_label="/datasetremove")
+
+    def _execute_dataset_record_mutation(
+        self,
+        *,
+        update: TelegramInboundMessage,
+        snapshot: ControllerSnapshot,
+        argument: str,
+        command_label: str,
+    ) -> CapabilityExecutionResult:
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="dataset.curation.query",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command=command_label,
+            parsed_arguments={"argument": argument.strip()},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        parsed, error = parse_dataset_record_pair(argument, command=command_label)
+        if parsed is None:
+            return self._invalid_dataset_request(request=request, command_label=command_label, title=f"Couldn't parse that {command_label} command.", error=error)
+        try:
+            if command_label == "/datasetadd":
+                dataset, created = self._service.add_record_to_dataset(dataset_id=parsed["dataset_id"], record_id=parsed["record_id"])
+                action = "Added" if created else "Record already present in"
+                reply = "\n".join((f"{action} {parsed['record_id']} to {dataset.dataset_id}.", self._service._build_dataset_summary_reply(dataset_id=dataset.dataset_id).reply))
+            else:
+                dataset = self._service.remove_record_from_dataset(dataset_id=parsed["dataset_id"], record_id=parsed["record_id"])
+                reply = "\n".join((f"Removed {parsed['record_id']} from {dataset.dataset_id}.", self._service._build_dataset_summary_reply(dataset_id=dataset.dataset_id).reply))
+        except ValueError as exc:
+            title = "Couldn't update that dataset membership."
+            return self._invalid_dataset_request(request=request, command_label=command_label, title=title, reason=str(exc))
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=reply,
+            internal_summary=f"dataset.curation handled {command_label} for {parsed['dataset_id']}.",
+            retryable=False,
+            command_label=command_label,
+            activity_state="processing_command",
+        )
+
+    def _execute_dataset_label(
+        self,
+        *,
+        update: TelegramInboundMessage,
+        snapshot: ControllerSnapshot,
+        argument: str,
+    ) -> CapabilityExecutionResult:
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="dataset.curation.query",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/datasetlabel",
+            parsed_arguments={"argument": argument.strip()},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        parsed, error = parse_dataset_label_arguments(argument)
+        if parsed is None:
+            return self._invalid_dataset_request(request=request, command_label="/datasetlabel", title="Couldn't parse that dataset label.", error=error)
+        try:
+            dataset, count = self._service.label_dataset_records(dataset_id=parsed["dataset_id"], label=parsed["label"])
+        except ValueError as exc:
+            return self._invalid_dataset_request(request=request, command_label="/datasetlabel", title="Couldn't label that dataset.", reason=str(exc))
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message="\n".join((f"Relabeled {count} record(s) in {dataset.dataset_id} as {parsed['label']}.", self._service._build_dataset_summary_reply(dataset_id=dataset.dataset_id).reply)),
+            internal_summary=f"dataset.curation relabeled members of {dataset.dataset_id}.",
+            retryable=False,
+            command_label="/datasetlabel",
+            activity_state="processing_command",
+        )
+
+    def _execute_dataset_add_filter(
+        self,
+        *,
+        update: TelegramInboundMessage,
+        snapshot: ControllerSnapshot,
+        argument: str,
+    ) -> CapabilityExecutionResult:
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="dataset.curation.query",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/datasetaddfilter",
+            parsed_arguments={"argument": argument.strip()},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        parsed, error = parse_dataset_add_filter_arguments(argument)
+        if parsed is None:
+            return self._invalid_dataset_request(request=request, command_label="/datasetaddfilter", title="Couldn't parse that dataset addfilter.", error=error)
+        dataset_id = parsed.pop("dataset_id", "")
+        filters = {key.replace("-", "_"): value for key, value in parsed.items()}
+        try:
+            dataset, added = self._service.add_dataset_records_by_filter(dataset_id=dataset_id, filters=filters)
+        except ValueError as exc:
+            return self._invalid_dataset_request(request=request, command_label="/datasetaddfilter", title="Couldn't add those filtered records.", reason=str(exc))
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message="\n".join((f"Added {added} record(s) to {dataset.dataset_id}.", self._service._build_dataset_summary_reply(dataset_id=dataset.dataset_id).reply)),
+            internal_summary=f"dataset.curation bulk-added records to {dataset.dataset_id}.",
+            retryable=False,
+            command_label="/datasetaddfilter",
+            activity_state="processing_command",
+        )
+
+    def _execute_dataset_split(
+        self,
+        *,
+        update: TelegramInboundMessage,
+        snapshot: ControllerSnapshot,
+        argument: str,
+    ) -> CapabilityExecutionResult:
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="dataset.split.query",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/datasetsplit",
+            parsed_arguments={"argument": argument.strip()},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        parsed, error = parse_dataset_split_arguments(argument)
+        if parsed is None:
+            return self._invalid_dataset_request(request=request, command_label="/datasetsplit", title="Couldn't parse that dataset split.", error=error)
+        train = self._parse_percentage(parsed.get("train", ""))
+        eval_percent = self._parse_percentage(parsed.get("eval", ""))
+        holdout = self._parse_percentage(parsed.get("holdout", ""), required=False)
+        if train is None or eval_percent is None:
+            return self._invalid_dataset_request(request=request, command_label="/datasetsplit", title="Couldn't parse that dataset split.", reason="Train and eval percentages must be integers from 0 to 100.")
+        holdout_percent = holdout if holdout is not None else max(0, 100 - train - eval_percent)
+        try:
+            dataset = self._service.assign_dataset_splits(
+                dataset_id=parsed.get("dataset_id", ""),
+                mode=parsed.get("mode", "deterministic"),
+                train_percent=train,
+                eval_percent=eval_percent,
+                holdout_percent=holdout_percent,
+            )
+        except ValueError as exc:
+            return self._invalid_dataset_request(request=request, command_label="/datasetsplit", title="Couldn't assign dataset splits.", reason=str(exc))
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message="\n".join((f"Assigned deterministic splits for {dataset.dataset_id}.", self._service._build_dataset_summary_reply(dataset_id=dataset.dataset_id).reply)),
+            internal_summary=f"dataset.split assigned deterministic splits for {dataset.dataset_id}.",
+            retryable=False,
+            command_label="/datasetsplit",
+            activity_state="processing_command",
+        )
+
+    def _execute_dataset_export(
+        self,
+        *,
+        update: TelegramInboundMessage,
+        snapshot: ControllerSnapshot,
+        argument: str,
+    ) -> CapabilityExecutionResult:
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="dataset.export.query",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/datasetexport",
+            parsed_arguments={"argument": argument.strip()},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        parsed, error = parse_dataset_export_arguments(argument)
+        if parsed is None:
+            return self._invalid_dataset_request(request=request, command_label="/datasetexport", title="Couldn't parse that dataset export.", error=error)
+        try:
+            export = self._service.export_dataset(
+                dataset_id=parsed.get("dataset_id", ""),
+                export_format=parsed.get("format", "jsonl"),
+                split=parsed.get("split", ""),
+            )
+        except (ValueError, DatasetExportError) as exc:
+            return self._invalid_dataset_request(request=request, command_label="/datasetexport", title="Couldn't export that dataset.", reason=str(exc))
+        lines = [
+            f"Exported {export.dataset_id} to {export.export_format.upper()}.",
+            f"Records: {export.record_count}",
+            f"Split: {export.split or 'all'}",
+            f"File: {export.file_path}",
+        ]
+        if export.view_shapes:
+            lines.append(f"Views: {', '.join(export.view_shapes)}")
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message="\n".join(lines),
+            internal_summary=f"dataset.export wrote {export.file_path}.",
+            retryable=False,
+            command_label="/datasetexport",
+            activity_state="processing_command",
+        )
+
+    def _execute_model_experiments(
+        self,
+        *,
+        update: TelegramInboundMessage,
+        snapshot: ControllerSnapshot,
+    ) -> CapabilityExecutionResult:
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="model.experiment.read",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/modelexperiments",
+            parsed_arguments={},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        reply = self._service._build_model_experiments_reply().reply
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=reply,
+            internal_summary="model.experiment.read listed local experiments.",
+            retryable=False,
+            command_label="/modelexperiments",
+            activity_state="processing_command",
+        )
+
+    def _execute_model_experiment_read_like(
+        self,
+        *,
+        update: TelegramInboundMessage,
+        snapshot: ControllerSnapshot,
+        argument: str,
+        command_label: str,
+    ) -> CapabilityExecutionResult:
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="model.experiment.read",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command=command_label,
+            parsed_arguments={"argument": argument.strip()},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        experiment_id, error = parse_model_experiment_id_argument(argument, command=command_label)
+        if experiment_id is None:
+            return self._invalid_model_experiment_request(request=request, command_label=command_label, title=f"Couldn't parse that {command_label} command.", error=error)
+        if command_label == "/modelexperiment":
+            reply = self._service._build_model_experiment_reply(experiment_id=experiment_id).reply
+        else:
+            reply = self._service._build_model_experiment_results_reply(experiment_id=experiment_id).reply
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=reply,
+            internal_summary=f"model.experiment.read handled {command_label} for {experiment_id}.",
+            retryable=False,
+            command_label=command_label,
+            activity_state="processing_command",
+        )
+
+    def _execute_model_experiment_create(
+        self,
+        *,
+        update: TelegramInboundMessage,
+        snapshot: ControllerSnapshot,
+        argument: str,
+    ) -> CapabilityExecutionResult:
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="model.experiment.query",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/modelexperimentcreate",
+            parsed_arguments={"argument": argument.strip()},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        parsed, error = parse_model_experiment_create_arguments(argument)
+        if parsed is None:
+            return self._invalid_model_experiment_request(request=request, command_label="/modelexperimentcreate", title="Couldn't parse that model experiment create.", error=error)
+        try:
+            experiment = self._service.create_model_experiment(
+                title=parsed.get("title", ""),
+                task_type=parsed.get("task", ""),
+                dataset_id=parsed.get("dataset", ""),
+                baseline=parsed.get("baseline", "rules"),
+                adaptation_method=parsed.get("method", "char_bigram_knn_v1"),
+                base_model=parsed.get("base-model", "rules"),
+                train_split=parsed.get("train-split", "train"),
+                eval_split=parsed.get("eval-split", "eval"),
+                mode=parsed.get("mode", "advisory"),
+                notes=parsed.get("notes", ""),
+            )
+        except ValueError as exc:
+            return self._invalid_model_experiment_request(request=request, command_label="/modelexperimentcreate", title="Couldn't create that model experiment.", reason=str(exc))
+        reply = self._service._build_model_experiment_reply(experiment_id=experiment.experiment_id).reply
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message="\n".join((reply, f"Next: Use /modelexperimentstart {experiment.experiment_id} or /modelexperimentresults {experiment.experiment_id}.")),
+            internal_summary=f"model.experiment.query created {experiment.experiment_id}.",
+            retryable=False,
+            command_label="/modelexperimentcreate",
+            activity_state="processing_command",
+        )
+
+    def _execute_model_experiment_control(
+        self,
+        *,
+        update: TelegramInboundMessage,
+        snapshot: ControllerSnapshot,
+        argument: str,
+        command_label: str,
+    ) -> CapabilityExecutionResult:
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="model.experiment.control",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command=command_label,
+            parsed_arguments={"argument": argument.strip()},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        experiment_id, error = parse_model_experiment_id_argument(argument, command=command_label)
+        if experiment_id is None:
+            return self._invalid_model_experiment_request(request=request, command_label=command_label, title=f"Couldn't parse that {command_label} command.", error=error)
+        try:
+            if command_label == "/modelexperimentstart":
+                experiment = self._service.run_model_experiment(experiment_id=experiment_id)
+                reply = self._service._build_model_experiment_results_reply(experiment_id=experiment.experiment_id).reply
+                message = "\n".join((f"Completed experiment {experiment.experiment_id}.", reply))
+            elif command_label == "/modelexperimentstop":
+                experiment = self._service.stop_model_experiment(experiment_id=experiment_id)
+                message = f"Stop requested for {experiment.experiment_id}."
+            elif command_label == "/modelexperimentapprove":
+                experiment = self._service.set_model_experiment_integration_status(experiment_id=experiment_id, integration_status="approved_for_advisory_use")
+                message = f"Approved {experiment.experiment_id} for advisory use."
+            else:
+                experiment = self._service.set_model_experiment_integration_status(experiment_id=experiment_id, integration_status="rejected")
+                message = f"Rejected {experiment.experiment_id} for advisory use."
+        except ValueError as exc:
+            return self._invalid_model_experiment_request(request=request, command_label=command_label, title=f"Couldn't complete {command_label}.", reason=str(exc))
+        if command_label in {"/modelexperimentapprove", "/modelexperimentreject", "/modelexperimentstop"}:
+            message = "\n".join((message, self._service._build_model_experiment_reply(experiment_id=experiment.experiment_id).reply))
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=message,
+            internal_summary=f"model.experiment.control handled {command_label} for {experiment.experiment_id}.",
+            retryable=False,
+            command_label=command_label,
+            activity_state="processing_command",
+        )
+
+    @staticmethod
+    def _parse_percentage(value: str, *, required: bool = True) -> int | None:
+        normalized = value.strip()
+        if not normalized:
+            return None if required else None
+        if not normalized.isdigit():
+            return None
+        parsed = int(normalized)
+        if parsed < 0 or parsed > 100:
+            return None
+        return parsed
+
+    def _invalid_dataset_request(
+        self,
+        *,
+        request: CapabilityExecutionRequest,
+        command_label: str,
+        title: str,
+        error=None,
+        reason: str = "",
+    ) -> CapabilityExecutionResult:
+        message_reason = reason or (error.reason if error is not None else "Invalid request.")
+        next_step = error.next_step if error is not None else "Use /help to see the supported dataset commands."
+        return self._result(
+            request,
+            outcome="invalid_request",
+            reason_code="invalid_dataset_request",
+            user_message="\n".join((title, f"Reason: {message_reason}", f"Next: {next_step}")),
+            internal_summary=f"{command_label} rejected because the dataset request was invalid.",
+            retryable=False,
+            command_label=command_label,
+            activity_state="processing_command",
+        )
+
+    def _invalid_model_experiment_request(
+        self,
+        *,
+        request: CapabilityExecutionRequest,
+        command_label: str,
+        title: str,
+        error=None,
+        reason: str = "",
+    ) -> CapabilityExecutionResult:
+        message_reason = reason or (error.reason if error is not None else "Invalid request.")
+        next_step = error.next_step if error is not None else "Use /help to see the supported model experiment commands."
+        return self._result(
+            request,
+            outcome="invalid_request",
+            reason_code="invalid_model_experiment_request",
+            user_message="\n".join((title, f"Reason: {message_reason}", f"Next: {next_step}")),
+            internal_summary=f"{command_label} rejected because the model experiment request was invalid.",
+            retryable=False,
+            command_label=command_label,
             activity_state="processing_command",
         )
 

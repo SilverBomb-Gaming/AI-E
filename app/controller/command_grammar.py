@@ -10,6 +10,11 @@ CHAIN_TYPE_USAGE = (
     "validate_with_fallback|validate_compare_report|dispatch_recover_resume|feature_validate_gate"
 )
 DATA_TYPE_USAGE = "command|evaluation_run|chain_step|feature_bundle"
+DATASET_LABEL_USAGE = "training|evaluation_only|discarded|debug|review_needed"
+DATASET_SPLIT_USAGE = "train|eval|holdout"
+MODEL_TASK_USAGE = "command_grammar_correction"
+MODEL_BASELINE_USAGE = "rules|none|previous_model"
+MODEL_METHOD_USAGE = "char_bigram_knn_v1"
 
 
 @dataclass(frozen=True)
@@ -83,6 +88,28 @@ COMMAND_USAGE: dict[str, str] = {
     "/clearcontext": "Use /clearcontext.",
     "/data": "Use /data, /data <record_id>, or /data <1-20>.",
     "/datasearch": f"Use /datasearch --type {DATA_TYPE_USAGE} [--label training-eligible|evaluation-only|discarded] [--session-id EV-...] [--chain-id CH-...] [--bundle-id FB-...] [--limit 8]. Compatibility: key=value filters still work.",
+    "/datalabel": f"Use /datalabel <record_id> <{DATASET_LABEL_USAGE}>.",
+    "/dataunlabel": "Use /dataunlabel <record_id> [label].",
+    "/datatag": "Use /datatag <record_id> <tag>.",
+    "/datasetcreate": f"Use /datasetcreate --title \"name\" [--description \"text\"] [--source local-cli] [--type {DATA_TYPE_USAGE}] [--label {DATASET_LABEL_USAGE}] [--tag chain_decision] [--status success] [--session-id EV-...] [--chain-id CH-...] [--bundle-id FB-...] [--allow-empty true].",
+    "/datasets": "Use /datasets.",
+    "/dataset": "Use /dataset <dataset_id>.",
+    "/datasetrecords": "Use /datasetrecords <dataset_id>.",
+    "/datasetadd": "Use /datasetadd <dataset_id> <record_id>.",
+    "/datasetremove": "Use /datasetremove <dataset_id> <record_id>.",
+    "/datasetsummary": "Use /datasetsummary <dataset_id>.",
+    "/datasetlabel": f"Use /datasetlabel <dataset_id> <{DATASET_LABEL_USAGE}>.",
+    "/datasetaddfilter": f"Use /datasetaddfilter <dataset_id> [--source local-cli] [--type {DATA_TYPE_USAGE}] [--label {DATASET_LABEL_USAGE}] [--tag chain_decision] [--status success] [--session-id EV-...] [--chain-id CH-...] [--bundle-id FB-...].",
+    "/datasetsplit": f"Use /datasetsplit <dataset_id> [--mode deterministic] --train 80 --eval 20 [--holdout 0]. Splits: {DATASET_SPLIT_USAGE}.",
+    "/datasetexport": "Use /datasetexport <dataset_id> [--split train|eval|holdout] [--format jsonl|json].",
+    "/modelexperiments": "Use /modelexperiments.",
+    "/modelexperiment": "Use /modelexperiment <experiment_id>.",
+    "/modelexperimentresults": "Use /modelexperimentresults <experiment_id>.",
+    "/modelexperimentstart": "Use /modelexperimentstart <experiment_id>.",
+    "/modelexperimentstop": "Use /modelexperimentstop <experiment_id>.",
+    "/modelexperimentapprove": "Use /modelexperimentapprove <experiment_id>.",
+    "/modelexperimentreject": "Use /modelexperimentreject <experiment_id>.",
+    "/modelexperimentcreate": f"Use /modelexperimentcreate --title \"name\" --task {MODEL_TASK_USAGE} --dataset DS-... [--baseline {MODEL_BASELINE_USAGE}] [--method {MODEL_METHOD_USAGE}] [--base-model rules] [--train-split train] [--eval-split eval] [--mode advisory] [--notes \"text\"].",
     "/capabilities": "Use /capabilities.",
     "/audit": "Use /audit or /audit <1-8>.",
     "/confirm": "Use /confirm <id>.",
@@ -110,9 +137,9 @@ HELP_LINES = (
     "Files: /repo|file /createfile|patch*|/writefile",
     "Exec: /run|/test /dispatch --target ... --command ... /nodes|node*",
     "Loops: /eval* /chain*",
-    "Trust: /data|search /capabilities /contexts|clearcontext",
+    "Trust: /data /capabilities /contexts /model*",
     "Ask: /ask|askd|asklast|askctx",
-    "Info: /explainrepo|file /summarizeweb",
+    "Info: /contexts /explainrepo /summarizeweb",
     "Flow: /workflows|status|cancelworkflow",
 )
 
@@ -332,3 +359,178 @@ def parse_data_search_arguments(argument: str) -> tuple[dict[str, str] | None, i
             normalized_value = type_aliases.get(value.lower(), value)
         filters[key.replace("-", "_")] = normalized_value
     return filters, limit, None
+
+
+def _parse_simple_record_target(argument: str, *, next_step: str, require_value: bool = True) -> tuple[list[str] | None, CommandParseError | None]:
+    tokens, error = _tokenize(argument, next_step=next_step)
+    if error is not None:
+        return None, error
+    if tokens is None or (require_value and not tokens):
+        return None, CommandParseError(reason="Missing required record id.", next_step=next_step)
+    return tokens, None
+
+
+def parse_data_label_arguments(argument: str) -> tuple[dict[str, str] | None, CommandParseError | None]:
+    next_step = usage_hint_for_command("/datalabel")
+    tokens, error = _parse_simple_record_target(argument, next_step=next_step)
+    if error is not None:
+        return None, error
+    if tokens is None or len(tokens) != 2:
+        return None, CommandParseError(reason="Expected a record id and one label.", next_step=next_step)
+    return {"record_id": tokens[0].strip().upper(), "label": tokens[1].strip().lower()}, None
+
+
+def parse_data_unlabel_arguments(argument: str) -> tuple[dict[str, str] | None, CommandParseError | None]:
+    next_step = usage_hint_for_command("/dataunlabel")
+    tokens, error = _parse_simple_record_target(argument, next_step=next_step)
+    if error is not None:
+        return None, error
+    if tokens is None or len(tokens) not in {1, 2}:
+        return None, CommandParseError(reason="Expected a record id and an optional label.", next_step=next_step)
+    parsed = {"record_id": tokens[0].strip().upper()}
+    if len(tokens) == 2:
+        parsed["label"] = tokens[1].strip().lower()
+    return parsed, None
+
+
+def parse_data_tag_arguments(argument: str) -> tuple[dict[str, str] | None, CommandParseError | None]:
+    next_step = usage_hint_for_command("/datatag")
+    tokens, error = _parse_simple_record_target(argument, next_step=next_step)
+    if error is not None:
+        return None, error
+    if tokens is None or len(tokens) != 2:
+        return None, CommandParseError(reason="Expected a record id and one tag.", next_step=next_step)
+    return {"record_id": tokens[0].strip().upper(), "tag": tokens[1].strip()}, None
+
+
+def parse_dataset_create_arguments(argument: str) -> tuple[dict[str, str] | None, CommandParseError | None]:
+    next_step = usage_hint_for_command("/datasetcreate")
+    tokens, error = _tokenize(argument, next_step=next_step)
+    if error is not None:
+        return None, error
+    if tokens is None or not tokens:
+        return None, CommandParseError(reason="Missing required option --title.", next_step=next_step)
+    return _parse_named_options(
+        tokens,
+        allowed_flags={"title", "description", "source", "type", "label", "tag", "status", "session-id", "chain-id", "bundle-id", "allow-empty"},
+        required_flags=("title",),
+        aliases={"session_id": "session-id", "chain_id": "chain-id", "bundle_id": "bundle-id", "allow_empty": "allow-empty"},
+        next_step=next_step,
+    )
+
+
+def parse_dataset_id_argument(argument: str, *, command: str) -> tuple[str | None, CommandParseError | None]:
+    next_step = usage_hint_for_command(command)
+    tokens, error = _tokenize(argument, next_step=next_step)
+    if error is not None:
+        return None, error
+    if tokens is None or len(tokens) != 1:
+        return None, CommandParseError(reason="Expected one dataset id.", next_step=next_step)
+    return tokens[0].strip().upper(), None
+
+
+def parse_dataset_record_pair(argument: str, *, command: str) -> tuple[dict[str, str] | None, CommandParseError | None]:
+    next_step = usage_hint_for_command(command)
+    tokens, error = _tokenize(argument, next_step=next_step)
+    if error is not None:
+        return None, error
+    if tokens is None or len(tokens) != 2:
+        return None, CommandParseError(reason="Expected a dataset id and one record id.", next_step=next_step)
+    return {"dataset_id": tokens[0].strip().upper(), "record_id": tokens[1].strip().upper()}, None
+
+
+def parse_dataset_label_arguments(argument: str) -> tuple[dict[str, str] | None, CommandParseError | None]:
+    next_step = usage_hint_for_command("/datasetlabel")
+    tokens, error = _tokenize(argument, next_step=next_step)
+    if error is not None:
+        return None, error
+    if tokens is None or len(tokens) != 2:
+        return None, CommandParseError(reason="Expected a dataset id and one label.", next_step=next_step)
+    return {"dataset_id": tokens[0].strip().upper(), "label": tokens[1].strip().lower()}, None
+
+
+def parse_dataset_add_filter_arguments(argument: str) -> tuple[dict[str, str] | None, CommandParseError | None]:
+    next_step = usage_hint_for_command("/datasetaddfilter")
+    tokens, error = _tokenize(argument, next_step=next_step)
+    if error is not None:
+        return None, error
+    if tokens is None or not tokens:
+        return None, CommandParseError(reason="Expected a dataset id followed by one or more filters.", next_step=next_step)
+    dataset_id = tokens[0].strip().upper()
+    parsed, error = _parse_named_options(
+        tokens[1:],
+        allowed_flags={"source", "type", "label", "tag", "status", "session-id", "chain-id", "bundle-id"},
+        aliases={"session_id": "session-id", "chain_id": "chain-id", "bundle_id": "bundle-id"},
+        next_step=next_step,
+    )
+    if error is not None or parsed is None:
+        return None, error
+    parsed["dataset_id"] = dataset_id
+    return parsed, None
+
+
+def parse_dataset_split_arguments(argument: str) -> tuple[dict[str, str] | None, CommandParseError | None]:
+    next_step = usage_hint_for_command("/datasetsplit")
+    tokens, error = _tokenize(argument, next_step=next_step)
+    if error is not None:
+        return None, error
+    if tokens is None or len(tokens) < 3:
+        return None, CommandParseError(reason="Expected a dataset id and split percentages.", next_step=next_step)
+    dataset_id = tokens[0].strip().upper()
+    parsed, error = _parse_named_options(
+        tokens[1:],
+        allowed_flags={"mode", "train", "eval", "holdout"},
+        required_flags=("train", "eval"),
+        next_step=next_step,
+    )
+    if error is not None or parsed is None:
+        return None, error
+    parsed["dataset_id"] = dataset_id
+    return parsed, None
+
+
+def parse_dataset_export_arguments(argument: str) -> tuple[dict[str, str] | None, CommandParseError | None]:
+    next_step = usage_hint_for_command("/datasetexport")
+    tokens, error = _tokenize(argument, next_step=next_step)
+    if error is not None:
+        return None, error
+    if tokens is None or not tokens:
+        return None, CommandParseError(reason="Expected a dataset id.", next_step=next_step)
+    dataset_id = tokens[0].strip().upper()
+    if len(tokens) == 1:
+        return {"dataset_id": dataset_id}, None
+    parsed, error = _parse_named_options(
+        tokens[1:],
+        allowed_flags={"split", "format"},
+        next_step=next_step,
+    )
+    if error is not None or parsed is None:
+        return None, error
+    parsed["dataset_id"] = dataset_id
+    return parsed, None
+
+
+def parse_model_experiment_create_arguments(argument: str) -> tuple[dict[str, str] | None, CommandParseError | None]:
+    next_step = usage_hint_for_command("/modelexperimentcreate")
+    tokens, error = _tokenize(argument, next_step=next_step)
+    if error is not None:
+        return None, error
+    if tokens is None or not tokens:
+        return None, CommandParseError(reason="Missing required options --title, --task, and --dataset.", next_step=next_step)
+    return _parse_named_options(
+        tokens,
+        allowed_flags={"title", "task", "dataset", "baseline", "method", "base-model", "train-split", "eval-split", "mode", "notes"},
+        required_flags=("title", "task", "dataset"),
+        aliases={"base_model": "base-model", "train_split": "train-split", "eval_split": "eval-split"},
+        next_step=next_step,
+    )
+
+
+def parse_model_experiment_id_argument(argument: str, *, command: str) -> tuple[str | None, CommandParseError | None]:
+    next_step = usage_hint_for_command(command)
+    tokens, error = _tokenize(argument, next_step=next_step)
+    if error is not None:
+        return None, error
+    if tokens is None or len(tokens) != 1:
+        return None, CommandParseError(reason="Expected one experiment id.", next_step=next_step)
+    return tokens[0].strip().upper(), None
