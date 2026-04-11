@@ -1,7 +1,7 @@
 """Operator-facing formatting for bounded multi-file feature bundles."""
 from __future__ import annotations
 
-from .feature_bundle_models import FeatureBundleRecord
+from .feature_bundle_models import FeatureBundlePrPlan, FeatureBundleRecord
 
 
 class FeatureBundleFormatter:
@@ -88,6 +88,45 @@ class FeatureBundleFormatter:
 
     def format_clarification(self, *, question: str, next_step: str) -> str:
         return f"Need clarification before planning that coding bundle.\nQuestion: {question}\nNext: {next_step}"
+
+    def format_pr_preview(self, plan: FeatureBundlePrPlan) -> str:
+        lines = [
+            "[FEATURE PR]",
+            f"Status: {plan.status}",
+            f"Mode: {plan.mode}",
+            f"Bundle: {plan.bundle_id}",
+            f"Feature: {plan.feature_title}",
+        ]
+        if plan.branch:
+            lines.append(f"Branch: {plan.branch}")
+        if plan.remote_name:
+            lines.append(f"Remote: {plan.remote_name}")
+        if plan.commit_sha:
+            lines.append(f"Commit: {plan.commit_sha}")
+        if plan.title:
+            lines.append(f"Title: {plan.title}")
+        if plan.summary:
+            lines.append(f"Summary: {plan.summary}")
+        lines.append(f"Merge readiness: {plan.merge_readiness}")
+        if plan.merge_readiness_reason:
+            lines.append(f"Merge readiness reason: {plan.merge_readiness_reason}")
+        if plan.changed_paths:
+            lines.append(f"Changed paths: {', '.join(plan.changed_paths)}")
+        if plan.validation_summary:
+            lines.append(f"Validation summary: {plan.validation_summary}")
+        if plan.validation_command:
+            lines.append(f"Validation command: {plan.validation_command}")
+        if plan.readme_note:
+            lines.append(f"README note: {plan.readme_note}")
+        if plan.playtest_required:
+            lines.append(f"Playtest required: yes - {plan.playtest_reason or 'Human verification is still required before merge.'}")
+        else:
+            lines.append("Playtest required: no")
+        if plan.next_steps:
+            lines.append("Next:")
+            for step in plan.next_steps:
+                lines.append(f"- {step}")
+        return "\n".join(lines)
 
     @staticmethod
     def _append_coding_plan(lines: list[str], bundle: FeatureBundleRecord) -> None:

@@ -9,6 +9,7 @@ from app.cli.chat_cli import AiEChatCli, build_arg_parser
 from app.controller.app_service import ControllerService
 from app.controller.chat_command_parser import parse_chat_command
 from app.controller.execution_runner import ExecutionRunner
+from app.controller.feature_bundle_models import FeatureBundleFile, FeatureBundleRecord, FeatureValidationPlan
 from app.controller.last_run_models import LastRunRecord
 from app.controller.profile_store import ControllerConfigStore
 from app.platform.secrets import InMemorySecretStore
@@ -473,3 +474,73 @@ class LocalCliChatTests(unittest.TestCase):
             self.assertIn("[FEATURE BUNDLE]", joined)
             self.assertIn("Coding plan:", joined)
             self.assertIn("formatter_output_update", joined)
+
+    def test_cli_feature_pr_preview_and_conversational_dev_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "workspace"
+            root.mkdir(parents=True, exist_ok=True)
+            (root / "app").mkdir(parents=True, exist_ok=True)
+            (root / "app" / "controller").mkdir(parents=True, exist_ok=True)
+            (root / "app" / "controller" / "repo_inspector.py").write_text("baseline\n", encoding="utf-8")
+            subprocess.run(["git", "init"], cwd=root, capture_output=True, text=True, check=True)
+            subprocess.run(["git", "config", "user.name", "Test User"], cwd=root, capture_output=True, text=True, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=root, capture_output=True, text=True, check=True)
+            subprocess.run(["git", "add", "."], cwd=root, capture_output=True, text=True, check=True)
+            subprocess.run(["git", "commit", "-m", "Initial"], cwd=root, capture_output=True, text=True, check=True)
+            subprocess.run(["git", "init", "--bare", str(root.parent / "origin.git")], capture_output=True, text=True, check=True)
+            subprocess.run(["git", "remote", "add", "origin", str(root.parent / "origin.git")], cwd=root, capture_output=True, text=True, check=True)
+            (root / "app" / "controller" / "repo_inspector.py").write_text("baseline\nupdated\n", encoding="utf-8")
+
+            service, config_store, _ = self._make_service(tmp_dir=tmp)
+            self._configure_repo_root(service=service, config_store=config_store, root=root)
+            bundle = service.attach_feature_bundle_completion_advisory(
+                bundle=FeatureBundleRecord(
+                    bundle_id="FB-TEST",
+                    feature_request="test bundle",
+                    feature_title="Test bundle",
+                    intended_outcome="Add scoped commit preparation coverage.",
+                    bundle_summary="Adds bounded commit preparation output for active feature bundles.",
+                    files=(
+                        FeatureBundleFile(
+                            relative_path="app/controller/repo_inspector.py",
+                            inclusion_reason="Target file for bounded milestone coverage.",
+                            change_summary="Update commit preparation behavior.",
+                            editable=True,
+                            scope_confidence=0.95,
+                        ),
+                    ),
+                    assumptions=(),
+                    risk_notes=(),
+                    validation_plan=FeatureValidationPlan(
+                        command_text="pytest tests/test_task_chains.py",
+                        rationale="Validate bounded commit packaging.",
+                    ),
+                    state="validated",
+                    validation_state="passed",
+                    created_at="2026-04-11T00:00:00+00:00",
+                    updated_at="2026-04-11T00:00:00+00:00",
+                    approval_required=True,
+                    applied_files=("app/controller/repo_inspector.py",),
+                    apply_summary="Applied 1 editable file.",
+                    validation_summary="Repo inspector coverage passed.",
+                )
+            )
+            service.set_active_feature_bundle(chat_id="local-cli", bundle=bundle)
+            self.assertEqual(service.execute_local_chat_input(text="/featurecommit execute").outcome, "confirmation_required")
+            commit_confirmation = service.latest_pending_confirmation_for_chat(chat_id="local-cli")
+            self.assertIsNotNone(commit_confirmation)
+            self.assertEqual(service.execute_local_chat_input(text=f"/confirm {commit_confirmation.confirmation_id}").outcome, "success")
+            self.assertEqual(service.execute_local_chat_input(text="/featurepush execute").outcome, "confirmation_required")
+            push_confirmation = service.latest_pending_confirmation_for_chat(chat_id="local-cli")
+            self.assertIsNotNone(push_confirmation)
+            self.assertEqual(service.execute_local_chat_input(text=f"/confirm {push_confirmation.confirmation_id}").outcome, "success")
+
+            output: list[str] = []
+            cli = AiEChatCli(service=service, input_func=_PromptDriver(), output_func=output.append, debug=True)
+
+            self.assertTrue(cli.handle_line("/featurepr"))
+            self.assertTrue(cli.handle_line("What would this PR say?"))
+
+            joined = "\n".join(output)
+            self.assertIn("[FEATURE PR]", joined)
+            self.assertIn("PR title:", joined)

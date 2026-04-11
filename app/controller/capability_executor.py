@@ -325,6 +325,8 @@ class CapabilityExecutor:
             return self._execute_feature_commit(update=update, snapshot=snapshot, argument=parsed_command.argument)
         if command == "/featurepush":
             return self._execute_feature_push(update=update, snapshot=snapshot, argument=parsed_command.argument)
+        if command == "/featurepr":
+            return self._execute_feature_pr(update=update, snapshot=snapshot, argument=parsed_command.argument)
         if command == "/run":
             return self._execute_run_command(update=update, snapshot=snapshot, argument=parsed_command.argument)
         if command == "/test":
@@ -2060,6 +2062,22 @@ class CapabilityExecutor:
                 },
             )
         execution_conversation = self._service.plan_task_execution_conversation(chat_id=update.chat_id, message=prompt)
+        conversational_dev = self._service.plan_conversational_dev_reply(chat_id=update.chat_id, message=prompt)
+        if conversational_dev.matched:
+            return self._result(
+                request,
+                outcome="success",
+                reason_code="ok",
+                user_message=conversational_dev.reply,
+                internal_summary=f"{entry_capability_id} answered a bounded conversational development question.",
+                retryable=False,
+                command_label=entry_command_label,
+                activity_state="processing_command",
+                telemetry={
+                    "conversational_dev_layer": True,
+                    **conversational_dev.telemetry,
+                },
+            )
         if execution_conversation.matched:
             if execution_conversation.request is not None and execution_conversation.request.requires_clarification:
                 return self._result(
@@ -2614,6 +2632,83 @@ class CapabilityExecutor:
             response_style="concise",
             chat_id=update.chat_id,
             requester_label=update.sender_label,
+        )
+
+    def _execute_feature_pr(
+        self,
+        *,
+        update: TelegramInboundMessage,
+        snapshot: ControllerSnapshot,
+        argument: str,
+    ) -> CapabilityExecutionResult:
+        normalized_mode = (argument.strip().lower() or "preview")
+        if normalized_mode not in {"preview", "execute"}:
+            request, _, _, scope_failure = self._prepare_capability_request(
+                capability_id="build.feature.pr.query",
+                snapshot=snapshot,
+                chat_id=update.chat_id,
+                requester_label=update.sender_label,
+                original_command="/featurepr",
+                parsed_arguments={"mode": normalized_mode},
+                metadata={"argument_summary": f"/featurepr {normalized_mode}".strip()},
+            )
+            if scope_failure is not None:
+                return scope_failure
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="feature_pr_mode_invalid",
+                user_message="Unsupported feature PR mode.\nNext: Use /featurepr [preview|execute].",
+                internal_summary=f"/featurepr rejected unsupported mode {normalized_mode}.",
+                retryable=False,
+                command_label="/featurepr",
+                activity_state="processing_command",
+            )
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="build.feature.pr.query",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/featurepr",
+            parsed_arguments={"mode": normalized_mode},
+            metadata={"argument_summary": f"/featurepr {normalized_mode}".strip()},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        plan = self._service.build_feature_bundle_pr_plan(chat_id=update.chat_id, mode=normalized_mode)
+        if normalized_mode == "execute":
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="feature_pr_manual_only",
+                user_message="\n".join(
+                    (
+                        self._service.feature_bundle_pr_preview_reply(plan=plan),
+                        "PR creation remains manual in v1.",
+                    )
+                ),
+                internal_summary="/featurepr execute rejected because PR creation is preview-only in v1.",
+                retryable=False,
+                command_label="/featurepr",
+                activity_state="processing_command",
+                telemetry={
+                    "feature_bundle_action": "pr_execute_blocked",
+                    "feature_pr_plan": plan.to_payload(),
+                },
+            )
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=self._service.feature_bundle_pr_preview_reply(plan=plan),
+            internal_summary=f"Returned bounded PR preview with status {plan.status}.",
+            retryable=False,
+            command_label="/featurepr",
+            activity_state="processing_command",
+            telemetry={
+                "feature_bundle_action": "pr_preview",
+                "feature_pr_plan": plan.to_payload(),
+            },
         )
 
     def _execute_confirmed_feature_bundle_apply(

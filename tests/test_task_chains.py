@@ -850,6 +850,112 @@ class TaskChainTests(unittest.TestCase):
             self.assertEqual(confirm.outcome_reason_code, "feature_push_drifted")
             self.assertIn("refresh the bounded push package", confirm.user_message)
 
+    def test_feature_pr_preview_reports_summary_after_push(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "workspace"
+            root.mkdir(parents=True, exist_ok=True)
+            self._write_repo_file(root, "app/controller/repo_inspector.py", "baseline\n")
+            self._write_repo_file(root, "README.md", "clean readme\n")
+            self._initialize_clean_git_repo(root)
+            self._create_bare_remote(root)
+            self._write_repo_file(root, "app/controller/repo_inspector.py", "baseline\nupdated\n")
+
+            service, config_store, _ = self._make_service(tmp_dir=tmp)
+            self._configure_repo_root(service=service, config_store=config_store, root=root)
+
+            bundle = service.attach_feature_bundle_completion_advisory(
+                bundle=self._make_bundle(
+                    path="app/controller/repo_inspector.py",
+                    state="validated",
+                    validation_state="passed",
+                    validation_summary="Repo inspector coverage passed.",
+                )
+            )
+            service.set_active_feature_bundle(chat_id="local-cli", bundle=bundle)
+
+            self.assertEqual(service.execute_local_chat_input(text="/featurecommit execute").outcome, "confirmation_required")
+            commit_confirmation = service.latest_pending_confirmation_for_chat(chat_id="local-cli")
+            self.assertIsNotNone(commit_confirmation)
+            self.assertEqual(service.execute_local_chat_input(text=f"/confirm {commit_confirmation.confirmation_id}").outcome, "success")
+
+            self.assertEqual(service.execute_local_chat_input(text="/featurepush execute").outcome, "confirmation_required")
+            push_confirmation = service.latest_pending_confirmation_for_chat(chat_id="local-cli")
+            self.assertIsNotNone(push_confirmation)
+            self.assertEqual(service.execute_local_chat_input(text=f"/confirm {push_confirmation.confirmation_id}").outcome, "success")
+
+            preview = service.execute_local_chat_input(text="/featurepr")
+
+            self.assertEqual(preview.outcome, "success")
+            self.assertEqual(preview.telemetry.get("feature_bundle_action"), "pr_preview")
+            self.assertIn("[FEATURE PR]", preview.user_message)
+            self.assertIn("Merge readiness: ready_for_review", preview.user_message)
+            self.assertIn("Validation summary: Repo inspector coverage passed.", preview.user_message)
+            self.assertIn("Changed paths: app/controller/repo_inspector.py", preview.user_message)
+
+    def test_conversational_dev_reply_explains_active_bundle_scope(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "workspace"
+            root.mkdir(parents=True, exist_ok=True)
+            self._write_repo_file(root, "app/controller/repo_inspector.py", "baseline\n")
+            self._initialize_clean_git_repo(root)
+
+            service, config_store, _ = self._make_service(tmp_dir=tmp)
+            self._configure_repo_root(service=service, config_store=config_store, root=root)
+            service.set_active_feature_bundle(
+                chat_id="local-cli",
+                bundle=self._make_bundle(
+                    path="app/controller/repo_inspector.py",
+                    state="proposed",
+                    validation_state="not_run",
+                ),
+            )
+
+            reply = service.execute_local_chat_input(text="What are we about to change?")
+
+            self.assertEqual(reply.outcome, "success")
+            self.assertTrue(reply.telemetry.get("conversational_dev_layer"))
+            self.assertIn("About to change: Test bundle.", reply.user_message)
+            self.assertIn("Files: app/controller/repo_inspector.py", reply.user_message)
+
+    def test_conversational_dev_reply_summarizes_pr_and_merge_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "workspace"
+            root.mkdir(parents=True, exist_ok=True)
+            self._write_repo_file(root, "app/controller/repo_inspector.py", "baseline\n")
+            self._initialize_clean_git_repo(root)
+            self._create_bare_remote(root)
+            self._write_repo_file(root, "app/controller/repo_inspector.py", "baseline\nupdated\n")
+
+            service, config_store, _ = self._make_service(tmp_dir=tmp)
+            self._configure_repo_root(service=service, config_store=config_store, root=root)
+            bundle = service.attach_feature_bundle_completion_advisory(
+                bundle=self._make_bundle(
+                    path="app/controller/repo_inspector.py",
+                    state="validated",
+                    validation_state="passed",
+                    validation_summary="Repo inspector coverage passed.",
+                )
+            )
+            service.set_active_feature_bundle(chat_id="local-cli", bundle=bundle)
+            self.assertEqual(service.execute_local_chat_input(text="/featurecommit execute").outcome, "confirmation_required")
+            commit_confirmation = service.latest_pending_confirmation_for_chat(chat_id="local-cli")
+            self.assertIsNotNone(commit_confirmation)
+            self.assertEqual(service.execute_local_chat_input(text=f"/confirm {commit_confirmation.confirmation_id}").outcome, "success")
+            self.assertEqual(service.execute_local_chat_input(text="/featurepush execute").outcome, "confirmation_required")
+            push_confirmation = service.latest_pending_confirmation_for_chat(chat_id="local-cli")
+            self.assertIsNotNone(push_confirmation)
+            self.assertEqual(service.execute_local_chat_input(text=f"/confirm {push_confirmation.confirmation_id}").outcome, "success")
+
+            pr_reply = service.execute_local_chat_input(text="What would this PR say?")
+            merge_reply = service.execute_local_chat_input(text="What still needs to happen before merge?")
+
+            self.assertEqual(pr_reply.outcome, "success")
+            self.assertTrue(pr_reply.telemetry.get("conversational_dev_layer"))
+            self.assertIn("PR title:", pr_reply.user_message)
+            self.assertIn("PR summary:", pr_reply.user_message)
+            self.assertEqual(merge_reply.outcome, "success")
+            self.assertIn("Merge readiness: ready_for_review", merge_reply.user_message)
+
     def test_dispatch_validate_recover_falls_back_to_local(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "workspace"

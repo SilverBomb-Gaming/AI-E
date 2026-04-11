@@ -25,6 +25,9 @@ FeatureBundleCommitReadiness = Literal[
 FeatureBundleCommitMode = Literal["preview", "execute"]
 FeatureBundlePushMode = Literal["preview", "execute"]
 FeatureBundlePushStatus = Literal["ready_to_push", "blocked", "pushed"]
+FeatureBundlePrMode = Literal["preview", "execute"]
+FeatureBundlePrStatus = Literal["ready_for_review", "blocked", "manual_only"]
+FeatureBundleMergeReadiness = Literal["ready_for_review", "blocked_pending_checks", "blocked_pending_playtest", "manual_pr_only"]
 FeatureBundleReadmeStatus = Literal[
     "clean",
     "relevant_and_includable",
@@ -286,6 +289,71 @@ class FeatureBundleCommitReceipt:
 
 
 @dataclass(frozen=True)
+class FeatureBundleMilestoneRecord:
+    bundle_id: str
+    feature_title: str
+    milestone_summary: str
+    branch: str
+    commit_sha: str
+    commit_message: str
+    committed_paths: tuple[str, ...]
+    validation_summary: str
+    validation_command: str
+    repo_status: str
+    readme_status: FeatureBundleReadmeStatus
+    readme_guidance: str
+    playtest_required: bool
+    playtest_reason: str
+    completion_summary: str = ""
+    push_remote_name: str = ""
+    pushed_at: str = ""
+
+    def to_payload(self) -> dict[str, object]:
+        return {
+            "bundle_id": self.bundle_id,
+            "feature_title": self.feature_title,
+            "milestone_summary": self.milestone_summary,
+            "branch": self.branch,
+            "commit_sha": self.commit_sha,
+            "commit_message": self.commit_message,
+            "committed_paths": list(self.committed_paths),
+            "validation_summary": self.validation_summary,
+            "validation_command": self.validation_command,
+            "repo_status": self.repo_status,
+            "readme_status": self.readme_status,
+            "readme_guidance": self.readme_guidance,
+            "playtest_required": self.playtest_required,
+            "playtest_reason": self.playtest_reason,
+            "completion_summary": self.completion_summary,
+            "push_remote_name": self.push_remote_name,
+            "pushed_at": self.pushed_at,
+        }
+
+    @staticmethod
+    def from_payload(payload: dict[str, object]) -> "FeatureBundleMilestoneRecord":
+        committed_paths = payload.get("committed_paths")
+        return FeatureBundleMilestoneRecord(
+            bundle_id=str(payload.get("bundle_id", "")).strip(),
+            feature_title=str(payload.get("feature_title", "")).strip(),
+            milestone_summary=str(payload.get("milestone_summary", "")).strip(),
+            branch=str(payload.get("branch", "")).strip(),
+            commit_sha=str(payload.get("commit_sha", "")).strip(),
+            commit_message=str(payload.get("commit_message", "")).strip(),
+            committed_paths=tuple(str(item).strip() for item in committed_paths or () if str(item).strip()),
+            validation_summary=str(payload.get("validation_summary", "")).strip(),
+            validation_command=str(payload.get("validation_command", "")).strip(),
+            repo_status=str(payload.get("repo_status", "")).strip(),
+            readme_status=str(payload.get("readme_status", "clean")).strip() or "clean",  # type: ignore[arg-type]
+            readme_guidance=str(payload.get("readme_guidance", "")).strip(),
+            playtest_required=bool(payload.get("playtest_required", False)),
+            playtest_reason=str(payload.get("playtest_reason", "")).strip(),
+            completion_summary=str(payload.get("completion_summary", "")).strip(),
+            push_remote_name=str(payload.get("push_remote_name", "")).strip(),
+            pushed_at=str(payload.get("pushed_at", "")).strip(),
+        )
+
+
+@dataclass(frozen=True)
 class FeatureBundlePushPlan:
     status: FeatureBundlePushStatus
     mode: FeatureBundlePushMode
@@ -309,6 +377,50 @@ class FeatureBundlePushPlan:
             "commit_sha": self.commit_sha,
             "reason": self.reason,
             "can_execute": self.can_execute,
+        }
+
+
+@dataclass(frozen=True)
+class FeatureBundlePrPlan:
+    status: FeatureBundlePrStatus
+    mode: FeatureBundlePrMode
+    bundle_id: str
+    feature_title: str
+    branch: str
+    commit_sha: str
+    title: str
+    summary: str
+    changed_paths: tuple[str, ...]
+    validation_summary: str
+    validation_command: str
+    merge_readiness: FeatureBundleMergeReadiness
+    merge_readiness_reason: str
+    readme_note: str
+    playtest_required: bool
+    playtest_reason: str
+    remote_name: str = ""
+    next_steps: tuple[str, ...] = ()
+
+    def to_payload(self) -> dict[str, object]:
+        return {
+            "status": self.status,
+            "mode": self.mode,
+            "bundle_id": self.bundle_id,
+            "feature_title": self.feature_title,
+            "branch": self.branch,
+            "commit_sha": self.commit_sha,
+            "title": self.title,
+            "summary": self.summary,
+            "changed_paths": list(self.changed_paths),
+            "validation_summary": self.validation_summary,
+            "validation_command": self.validation_command,
+            "merge_readiness": self.merge_readiness,
+            "merge_readiness_reason": self.merge_readiness_reason,
+            "readme_note": self.readme_note,
+            "playtest_required": self.playtest_required,
+            "playtest_reason": self.playtest_reason,
+            "remote_name": self.remote_name,
+            "next_steps": list(self.next_steps),
         }
 
 

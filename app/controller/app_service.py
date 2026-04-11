@@ -30,11 +30,13 @@ from .model_experiment_models import ModelExperimentRecord, normalize_adaptation
 from .model_experiment_runner import ModelExperimentError, ModelExperimentRunner
 from .model_experiment_store import ModelExperimentStore
 from .feature_bundle_formatter import FeatureBundleFormatter
-from .feature_bundle_models import FeatureBundleCommitPlan, FeatureBundleCommitReceipt, FeatureBundleCompletionAdvisory, FeatureBundlePushPlan, FeatureBundleRecord
+from .conversational_dev_planner import ConversationalDevPlanner, ConversationalDevReply
+from .feature_bundle_models import FeatureBundleCommitPlan, FeatureBundleCommitReceipt, FeatureBundleCompletionAdvisory, FeatureBundleMilestoneRecord, FeatureBundlePrPlan, FeatureBundlePushPlan, FeatureBundleRecord
 from .feature_bundle_store import FeatureBundleStore
 from .commit_execution import FeatureBundleCommitError, FeatureBundleCommitExecutionResult, FeatureBundleCommitExecutor
 from .push_execution import FeatureBundlePushError, FeatureBundlePushExecutionResult, FeatureBundlePushExecutor
 from .multi_file_feature_planner import FeaturePlanningDecision, MultiFileFeaturePlanner
+from .pr_review_planner import PrReviewPlanner
 from .project_bootstrap_formatter import ProjectBootstrapFormatter
 from .project_bootstrap_planner import ProjectBootstrapPlanner
 from .project_bootstrap_store import ProjectBootstrapStore
@@ -253,6 +255,8 @@ class ControllerService:
         self._feature_bundle_formatter = FeatureBundleFormatter()
         self._feature_commit_executor = FeatureBundleCommitExecutor()
         self._feature_push_executor = FeatureBundlePushExecutor()
+        self._pr_review_planner = PrReviewPlanner()
+        self._conversational_dev_planner = ConversationalDevPlanner()
         self._plan_bridge = PlanBridge()
         self._plan_bridge_formatter = PlanBridgeFormatter(self._plan_bridge)
         self._autonomy_bundle = AutonomyBundle(self._plan_bridge)
@@ -324,6 +328,7 @@ class ControllerService:
         self._generated_project_store = GeneratedProjectStore()
         self._feature_bundle_store = FeatureBundleStore()
         self._feature_bundle_commit_receipts: dict[str, FeatureBundleCommitReceipt] = {}
+        self._feature_bundle_milestones: dict[str, FeatureBundleMilestoneRecord] = {}
         self._last_run_store = LastRunStore()
         self._plan_bridge_store = PlanBridgeStore()
         self._autonomy_bundle_store = AutonomyBundleStore()
@@ -2456,6 +2461,9 @@ class ControllerService:
     def latest_feature_bundle_commit_receipt_for_chat(self, *, chat_id: str) -> FeatureBundleCommitReceipt | None:
         return self._feature_bundle_commit_receipts.get(chat_id)
 
+    def latest_feature_bundle_milestone_for_chat(self, *, chat_id: str) -> FeatureBundleMilestoneRecord | None:
+        return self._feature_bundle_milestones.get(chat_id)
+
     def plan_feature_bundle_for_chat(self, *, chat_id: str, prompt: str) -> FeaturePlanningDecision:
         decision = self._feature_bundle_planner.plan(
             bundle_id=self._generate_feature_bundle_id(),
@@ -2632,6 +2640,39 @@ class ControllerService:
             lines.append("Next: Resolve the blocked push condition before requesting /featurepush execute.")
         return "\n".join(lines)
 
+    def build_feature_bundle_pr_plan(
+        self,
+        *,
+        chat_id: str,
+        mode: str = "preview",
+    ) -> FeatureBundlePrPlan:
+        milestone = self.latest_feature_bundle_milestone_for_chat(chat_id=chat_id)
+        normalized_mode = "execute" if str(mode).strip().lower() == "execute" else "preview"
+        if milestone is None:
+            return FeatureBundlePrPlan(
+                status="blocked",
+                mode=normalized_mode,
+                bundle_id="",
+                feature_title="",
+                branch="",
+                commit_sha="",
+                title="",
+                summary="",
+                changed_paths=(),
+                validation_summary="",
+                validation_command="",
+                merge_readiness="blocked_pending_checks",
+                merge_readiness_reason="No pushed milestone is available for PR packaging yet.",
+                readme_note="",
+                playtest_required=False,
+                playtest_reason="",
+                next_steps=("Commit and push a bounded milestone before requesting /featurepr.",),
+            )
+        return self._pr_review_planner.build_plan(milestone=milestone, mode=normalized_mode)
+
+    def feature_bundle_pr_preview_reply(self, *, plan: FeatureBundlePrPlan) -> str:
+        return self._feature_bundle_formatter.format_pr_preview(plan)
+
     def execute_feature_bundle_commit(
         self,
         *,
@@ -2684,6 +2725,23 @@ class ControllerService:
             commit_message=plan.commit_message,
             expected_branch=expected_branch.strip() or plan.repo_branch,
         )
+        milestone = FeatureBundleMilestoneRecord(
+            bundle_id=bundle.bundle_id,
+            feature_title=bundle.feature_title,
+            milestone_summary=plan.milestone_summary,
+            branch=result.branch,
+            commit_sha=result.commit_sha,
+            commit_message=result.commit_message,
+            committed_paths=result.committed_paths,
+            validation_summary=bundle.validation_summary,
+            validation_command=bundle.validation_plan.command_text if bundle.validation_plan is not None else "",
+            repo_status=plan.repo_status,
+            readme_status=plan.readme_status,
+            readme_guidance=plan.readme_guidance,
+            playtest_required=plan.playtest_required,
+            playtest_reason=plan.playtest_reason,
+            completion_summary=bundle.completion_advisory.completion_summary if bundle.completion_advisory is not None else "",
+        )
         self._feature_bundle_commit_receipts[chat_id] = FeatureBundleCommitReceipt(
             bundle_id=bundle.bundle_id,
             branch=result.branch,
@@ -2693,6 +2751,7 @@ class ControllerService:
             repo_status_fingerprint=self._feature_push_executor.repo_status_fingerprint(repo_root),
             committed_at=self._now_iso(),
         )
+        self._feature_bundle_milestones[chat_id] = milestone
         self.clear_active_feature_bundle(chat_id=chat_id)
         return result
 
@@ -2729,7 +2788,25 @@ class ControllerService:
             remote_name=expected_remote_name.strip() or "origin",
         )
         self._feature_bundle_commit_receipts.pop(chat_id, None)
+        milestone = self._feature_bundle_milestones.get(chat_id)
+        if milestone is not None:
+            self._feature_bundle_milestones[chat_id] = replace(
+                milestone,
+                push_remote_name=result.remote_name,
+                pushed_at=self._now_iso(),
+            )
         return result
+
+    def plan_conversational_dev_reply(self, *, chat_id: str, message: str) -> ConversationalDevReply:
+        active_bundle = self.active_feature_bundle_for_chat(chat_id=chat_id)
+        latest_milestone = self.latest_feature_bundle_milestone_for_chat(chat_id=chat_id)
+        pr_plan = self.build_feature_bundle_pr_plan(chat_id=chat_id, mode="preview") if latest_milestone is not None else None
+        return self._conversational_dev_planner.plan(
+            message=message,
+            active_bundle=active_bundle,
+            latest_milestone=latest_milestone,
+            pr_plan=pr_plan,
+        )
 
     def attach_feature_bundle_completion_advisory(self, *, bundle: FeatureBundleRecord) -> FeatureBundleRecord:
         advisory = self._build_feature_bundle_completion_advisory(bundle)
