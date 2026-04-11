@@ -97,6 +97,23 @@ class FeatureBundleFormatter:
                 f"- Milestone: {advisory.milestone_log}",
             )
         )
+        lines.append(f"Commit prep: {advisory.commit_readiness_status}")
+        if advisory.commit_readiness_reason:
+            lines.append(f"Commit prep reason: {advisory.commit_readiness_reason}")
+        if advisory.milestone_summary:
+            lines.append(f"Milestone summary: {advisory.milestone_summary}")
+        lines.append(f"README status: {advisory.readme_status}")
+        if advisory.playtest_required:
+            detail = advisory.playtest_reason or "Human or runtime verification is still required before commit."
+            lines.append(f"Playtest required: yes - {detail}")
+        else:
+            lines.append("Playtest required: no")
+        if advisory.included_paths:
+            lines.append(f"Included paths: {', '.join(advisory.included_paths)}")
+        if advisory.excluded_paths:
+            lines.append(f"Excluded paths: {', '.join(advisory.excluded_paths)}")
+        if advisory.ambiguous_paths:
+            lines.append(f"Ambiguous paths: {', '.join(advisory.ambiguous_paths)}")
         if advisory.suggested_stage_paths:
             lines.append(f"Suggested stage: {', '.join(advisory.suggested_stage_paths)}")
         if advisory.suggested_commit_message:

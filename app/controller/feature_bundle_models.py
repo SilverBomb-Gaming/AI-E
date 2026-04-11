@@ -7,6 +7,19 @@ from typing import Literal
 
 FeatureBundleState = Literal["proposed", "applying", "applied", "validated", "failed", "invalidated"]
 FeatureBundleValidationState = Literal["not_run", "passed", "failed", "timed_out"]
+FeatureBundleCommitReadiness = Literal[
+    "safe_to_commit",
+    "blocked_pending_validation",
+    "blocked_pending_playtest",
+    "blocked_by_unrelated_changes",
+    "needs_human_review",
+]
+FeatureBundleReadmeStatus = Literal[
+    "clean",
+    "relevant_and_includable",
+    "dirty_but_unrelated",
+    "requires_isolated_follow_up",
+]
 
 
 @dataclass(frozen=True)
@@ -66,6 +79,15 @@ class FeatureBundleCompletionAdvisory:
     suggested_stage_paths: tuple[str, ...]
     suggested_commit_message: str
     readme_guidance: str
+    commit_readiness_status: FeatureBundleCommitReadiness = "needs_human_review"
+    commit_readiness_reason: str = ""
+    included_paths: tuple[str, ...] = ()
+    excluded_paths: tuple[str, ...] = ()
+    ambiguous_paths: tuple[str, ...] = ()
+    readme_status: FeatureBundleReadmeStatus = "clean"
+    playtest_required: bool = False
+    playtest_reason: str = ""
+    milestone_summary: str = ""
 
     def to_payload(self) -> dict[str, object]:
         return {
@@ -76,10 +98,22 @@ class FeatureBundleCompletionAdvisory:
             "suggested_stage_paths": list(self.suggested_stage_paths),
             "suggested_commit_message": self.suggested_commit_message,
             "readme_guidance": self.readme_guidance,
+            "commit_readiness_status": self.commit_readiness_status,
+            "commit_readiness_reason": self.commit_readiness_reason,
+            "included_paths": list(self.included_paths),
+            "excluded_paths": list(self.excluded_paths),
+            "ambiguous_paths": list(self.ambiguous_paths),
+            "readme_status": self.readme_status,
+            "playtest_required": self.playtest_required,
+            "playtest_reason": self.playtest_reason,
+            "milestone_summary": self.milestone_summary,
         }
 
     @staticmethod
     def from_payload(payload: dict[str, object]) -> "FeatureBundleCompletionAdvisory":
+        included_paths = payload.get("included_paths")
+        excluded_paths = payload.get("excluded_paths")
+        ambiguous_paths = payload.get("ambiguous_paths")
         stage_paths = payload.get("suggested_stage_paths")
         return FeatureBundleCompletionAdvisory(
             repo_branch=str(payload.get("repo_branch", "")).strip(),
@@ -89,6 +123,15 @@ class FeatureBundleCompletionAdvisory:
             suggested_stage_paths=tuple(str(item).strip() for item in stage_paths or () if str(item).strip()),
             suggested_commit_message=str(payload.get("suggested_commit_message", "")).strip(),
             readme_guidance=str(payload.get("readme_guidance", "")).strip(),
+            commit_readiness_status=str(payload.get("commit_readiness_status", "needs_human_review")).strip() or "needs_human_review",  # type: ignore[arg-type]
+            commit_readiness_reason=str(payload.get("commit_readiness_reason", "")).strip(),
+            included_paths=tuple(str(item).strip() for item in included_paths or () if str(item).strip()),
+            excluded_paths=tuple(str(item).strip() for item in excluded_paths or () if str(item).strip()),
+            ambiguous_paths=tuple(str(item).strip() for item in ambiguous_paths or () if str(item).strip()),
+            readme_status=str(payload.get("readme_status", "clean")).strip() or "clean",  # type: ignore[arg-type]
+            playtest_required=bool(payload.get("playtest_required", False)),
+            playtest_reason=str(payload.get("playtest_reason", "")).strip(),
+            milestone_summary=str(payload.get("milestone_summary", "")).strip(),
         )
 
 

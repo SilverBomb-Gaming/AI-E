@@ -82,6 +82,55 @@ class TaskChainTests(unittest.TestCase):
         self._run_git(root, "commit", "-m", "Initial feature bundle fixture")
         (root / "README.md").write_text("feature bundle fixture\nunrelated docs change\n", encoding="utf-8")
 
+    def _initialize_clean_git_repo(self, root: Path) -> None:
+        self._run_git(root, "init")
+        self._run_git(root, "config", "user.name", "Test User")
+        self._run_git(root, "config", "user.email", "test@example.com")
+        self._run_git(root, "add", ".")
+        self._run_git(root, "commit", "-m", "Initial feature bundle fixture")
+
+    def _write_repo_file(self, root: Path, relative_path: str, content: str) -> None:
+        file_path = root / relative_path
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_text(content, encoding="utf-8")
+
+    def _make_bundle(
+        self,
+        *,
+        path: str,
+        state: str,
+        validation_state: str,
+        validation_summary: str = "",
+        risk_notes: tuple[str, ...] = (),
+    ) -> FeatureBundleRecord:
+        return FeatureBundleRecord(
+            bundle_id="FB-TEST",
+            feature_request="test bundle",
+            feature_title="Test bundle",
+            intended_outcome="Add scoped commit preparation coverage.",
+            bundle_summary="Adds bounded commit preparation output for active feature bundles.",
+            files=(
+                FeatureBundleFile(
+                    relative_path=path,
+                    inclusion_reason="Target file for bounded milestone coverage.",
+                    change_summary="Update commit preparation behavior.",
+                    editable=True,
+                    scope_confidence=0.95,
+                ),
+            ),
+            assumptions=(),
+            risk_notes=risk_notes,
+            validation_plan=FeatureValidationPlan(command_text="pytest tests/test_task_chains.py", rationale="Validate bounded commit packaging."),
+            state=state,
+            validation_state=validation_state,
+            created_at="2026-04-11T00:00:00+00:00",
+            updated_at="2026-04-11T00:00:00+00:00",
+            approval_required=True,
+            applied_files=(path,),
+            apply_summary="Applied 1 editable file.",
+            validation_summary=validation_summary,
+        )
+
     def test_validate_then_report_chain_runs_and_records_steps(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "workspace"
@@ -216,6 +265,8 @@ class TaskChainTests(unittest.TestCase):
             self.assertIn("app/cli/chat_cli.py", applied_bundle.completion_advisory.suggested_stage_paths)
             self.assertIn("README.md already has unrelated changes", applied_bundle.completion_advisory.readme_guidance)
             self.assertIn("Apply bounded feature bundle", applied_bundle.completion_advisory.suggested_commit_message)
+            self.assertEqual(applied_bundle.completion_advisory.commit_readiness_status, "blocked_pending_validation")
+            self.assertTrue(applied_bundle.completion_advisory.playtest_required)
 
             validation_preview = service.execute_local_chat_input(text="validate it")
             self.assertEqual(validation_preview.outcome, "success")
@@ -245,11 +296,156 @@ class TaskChainTests(unittest.TestCase):
             self.assertIsNotNone(validated_bundle)
             self.assertEqual(validated_bundle.validation_state, "passed")
             self.assertIsNotNone(validated_bundle.completion_advisory)
-            self.assertIn("ready for a scoped milestone commit", validated_bundle.completion_advisory.completion_summary)
+            self.assertEqual(validated_bundle.completion_advisory.commit_readiness_status, "blocked_pending_playtest")
+            self.assertTrue(validated_bundle.completion_advisory.playtest_required)
+            self.assertIn("human review", validated_bundle.completion_advisory.playtest_reason.lower())
             status = service.execute_local_chat_input(text="/featurestatus")
+            self.assertIn("Commit prep:", status.user_message)
+            self.assertIn("Included paths:", status.user_message)
+            self.assertIn("README status:", status.user_message)
             self.assertIn("Suggested stage:", status.user_message)
             self.assertIn("Suggested commit message:", status.user_message)
             self.assertIn("README guidance:", status.user_message)
+
+    def test_commit_preparation_marks_validated_controller_change_safe_to_commit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "workspace"
+            root.mkdir(parents=True, exist_ok=True)
+            self._write_repo_file(root, "app/controller/repo_inspector.py", "baseline\n")
+            self._write_repo_file(root, "README.md", "clean readme\n")
+            self._initialize_clean_git_repo(root)
+            self._write_repo_file(root, "app/controller/repo_inspector.py", "baseline\nupdated\n")
+
+            service, config_store, _ = self._make_service(tmp_dir=tmp)
+            self._configure_repo_root(service=service, config_store=config_store, root=root)
+
+            advisory_bundle = service.attach_feature_bundle_completion_advisory(
+                bundle=self._make_bundle(
+                    path="app/controller/repo_inspector.py",
+                    state="validated",
+                    validation_state="passed",
+                    validation_summary="Repo inspector coverage passed.",
+                )
+            )
+
+            advisory = advisory_bundle.completion_advisory
+            self.assertIsNotNone(advisory)
+            self.assertEqual(advisory.commit_readiness_status, "safe_to_commit")
+            self.assertEqual(advisory.included_paths, ("app/controller/repo_inspector.py",))
+            self.assertEqual(advisory.excluded_paths, ())
+            self.assertFalse(advisory.playtest_required)
+            self.assertEqual(advisory.readme_status, "clean")
+
+    def test_commit_preparation_blocks_pending_validation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "workspace"
+            root.mkdir(parents=True, exist_ok=True)
+            self._write_repo_file(root, "app/controller/repo_inspector.py", "baseline\n")
+            self._write_repo_file(root, "README.md", "clean readme\n")
+            self._initialize_clean_git_repo(root)
+            self._write_repo_file(root, "app/controller/repo_inspector.py", "baseline\nupdated\n")
+
+            service, config_store, _ = self._make_service(tmp_dir=tmp)
+            self._configure_repo_root(service=service, config_store=config_store, root=root)
+
+            advisory = service.attach_feature_bundle_completion_advisory(
+                bundle=self._make_bundle(
+                    path="app/controller/repo_inspector.py",
+                    state="applied",
+                    validation_state="not_run",
+                )
+            ).completion_advisory
+
+            self.assertIsNotNone(advisory)
+            self.assertEqual(advisory.commit_readiness_status, "blocked_pending_validation")
+            self.assertTrue(advisory.playtest_required)
+            self.assertIn("validation", advisory.playtest_reason.lower())
+
+    def test_commit_preparation_blocks_pending_playtest_for_user_facing_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "workspace"
+            root.mkdir(parents=True, exist_ok=True)
+            self._write_repo_file(root, "app/cli/chat_cli.py", "baseline\n")
+            self._write_repo_file(root, "README.md", "clean readme\n")
+            self._initialize_clean_git_repo(root)
+            self._write_repo_file(root, "app/cli/chat_cli.py", "baseline\nupdated\n")
+
+            service, config_store, _ = self._make_service(tmp_dir=tmp)
+            self._configure_repo_root(service=service, config_store=config_store, root=root)
+
+            advisory = service.attach_feature_bundle_completion_advisory(
+                bundle=self._make_bundle(
+                    path="app/cli/chat_cli.py",
+                    state="validated",
+                    validation_state="passed",
+                    validation_summary="CLI coverage passed.",
+                )
+            ).completion_advisory
+
+            self.assertIsNotNone(advisory)
+            self.assertEqual(advisory.commit_readiness_status, "blocked_pending_playtest")
+            self.assertTrue(advisory.playtest_required)
+            self.assertIn("human review", advisory.playtest_reason.lower())
+
+    def test_commit_preparation_blocks_interfering_unrelated_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "workspace"
+            root.mkdir(parents=True, exist_ok=True)
+            self._write_repo_file(root, "app/controller/repo_inspector.py", "baseline\n")
+            self._write_repo_file(root, "app/controller/window.py", "baseline\n")
+            self._write_repo_file(root, "README.md", "clean readme\n")
+            self._initialize_clean_git_repo(root)
+            self._write_repo_file(root, "app/controller/repo_inspector.py", "baseline\nupdated\n")
+            self._write_repo_file(root, "app/controller/window.py", "baseline\nunrelated\n")
+
+            service, config_store, _ = self._make_service(tmp_dir=tmp)
+            self._configure_repo_root(service=service, config_store=config_store, root=root)
+
+            advisory = service.attach_feature_bundle_completion_advisory(
+                bundle=self._make_bundle(
+                    path="app/controller/repo_inspector.py",
+                    state="validated",
+                    validation_state="passed",
+                    validation_summary="Repo inspector coverage passed.",
+                )
+            ).completion_advisory
+
+            self.assertIsNotNone(advisory)
+            self.assertEqual(advisory.commit_readiness_status, "blocked_by_unrelated_changes")
+            self.assertIn("app/controller/window.py", advisory.excluded_paths)
+            self.assertIn("overlap", advisory.commit_readiness_reason.lower())
+
+    def test_commit_preparation_excludes_dirty_readme_without_blocking_safe_scope(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "workspace"
+            root.mkdir(parents=True, exist_ok=True)
+            self._write_repo_file(root, "app/controller/repo_inspector.py", "baseline\n")
+            self._write_repo_file(root, "README.md", "clean readme\n")
+            self._run_git(root, "init")
+            self._run_git(root, "config", "user.name", "Test User")
+            self._run_git(root, "config", "user.email", "test@example.com")
+            self._run_git(root, "add", ".")
+            self._run_git(root, "commit", "-m", "Initial feature bundle fixture")
+            self._write_repo_file(root, "app/controller/repo_inspector.py", "baseline\nupdated\n")
+            self._write_repo_file(root, "README.md", "clean readme\nunrelated docs change\n")
+
+            service, config_store, _ = self._make_service(tmp_dir=tmp)
+            self._configure_repo_root(service=service, config_store=config_store, root=root)
+
+            advisory = service.attach_feature_bundle_completion_advisory(
+                bundle=self._make_bundle(
+                    path="app/controller/repo_inspector.py",
+                    state="validated",
+                    validation_state="passed",
+                    validation_summary="Repo inspector coverage passed.",
+                )
+            ).completion_advisory
+
+            self.assertIsNotNone(advisory)
+            self.assertEqual(advisory.commit_readiness_status, "safe_to_commit")
+            self.assertIn("README.md", advisory.excluded_paths)
+            self.assertEqual(advisory.readme_status, "dirty_but_unrelated")
+            self.assertIn("keep it out", advisory.readme_guidance)
 
     def test_dispatch_validate_recover_falls_back_to_local(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

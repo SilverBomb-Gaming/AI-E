@@ -2524,31 +2524,60 @@ class ControllerService:
             snapshot = self.inspect_repo_status()
         except RepoInspectorError:
             snapshot = None
-        stage_paths = bundle.applied_files or tuple(item.relative_path for item in bundle.editable_files())
+        changed_paths = snapshot.changed_paths if snapshot is not None else ()
+        included_paths = self._feature_bundle_included_paths(bundle=bundle, changed_paths=changed_paths)
+        ambiguous_paths = self._feature_bundle_ambiguous_paths(bundle=bundle, included_paths=included_paths, changed_paths=changed_paths)
+        excluded_paths = self._feature_bundle_excluded_paths(
+            included_paths=included_paths,
+            ambiguous_paths=ambiguous_paths,
+            changed_paths=changed_paths,
+        )
+        readme_status = self._feature_bundle_readme_status(
+            bundle=bundle,
+            included_paths=included_paths,
+            changed_paths=changed_paths,
+        )
+        playtest_required, playtest_reason = self._feature_bundle_playtest_signal(
+            bundle=bundle,
+            included_paths=included_paths,
+        )
+        commit_readiness_status, commit_readiness_reason = self._feature_bundle_commit_readiness(
+            bundle=bundle,
+            included_paths=included_paths,
+            excluded_paths=excluded_paths,
+            ambiguous_paths=ambiguous_paths,
+            playtest_required=playtest_required,
+        )
         repo_branch = snapshot.branch if snapshot is not None else "unknown"
         repo_status = snapshot.audit_summary if snapshot is not None else "Repository inspection unavailable"
-        if bundle.validation_state == "passed":
-            completion_summary = "Bundle validated and ready for a scoped milestone commit."
-        elif bundle.state == "applied":
-            completion_summary = "Bundle applied. Run the suggested validation before preparing a milestone commit."
-        elif bundle.validation_state in {"failed", "timed_out"} or bundle.state == "invalidated":
-            completion_summary = "Bundle changes are present, but validation is not yet passing."
-        else:
-            completion_summary = "Bundle completion guidance is available after apply or validation."
+        completion_summary = self._feature_bundle_completion_summary(
+            commit_readiness_status=commit_readiness_status,
+            playtest_required=playtest_required,
+        )
         milestone_parts = [bundle.feature_title, f"state={bundle.state}", f"validation={bundle.validation_state}"]
         if bundle.validation_summary:
             milestone_parts.append(self._summarize_text(bundle.validation_summary, limit=100))
         milestone_log = " | ".join(part for part in milestone_parts if part)
         commit_message = self._feature_bundle_commit_message(bundle)
-        readme_guidance = self._feature_bundle_readme_guidance(bundle=bundle, changed_paths=snapshot.changed_paths if snapshot is not None else ())
+        readme_guidance = self._feature_bundle_readme_guidance(readme_status=readme_status)
+        milestone_summary = self._feature_bundle_milestone_summary(bundle)
         return FeatureBundleCompletionAdvisory(
             repo_branch=repo_branch,
             repo_status=repo_status,
             completion_summary=completion_summary,
             milestone_log=milestone_log,
-            suggested_stage_paths=stage_paths,
+            suggested_stage_paths=included_paths,
             suggested_commit_message=commit_message,
             readme_guidance=readme_guidance,
+            commit_readiness_status=commit_readiness_status,
+            commit_readiness_reason=commit_readiness_reason,
+            included_paths=included_paths,
+            excluded_paths=excluded_paths,
+            ambiguous_paths=ambiguous_paths,
+            readme_status=readme_status,
+            playtest_required=playtest_required,
+            playtest_reason=playtest_reason,
+            milestone_summary=milestone_summary,
         )
 
     def _feature_bundle_commit_message(self, bundle: FeatureBundleRecord) -> str:
@@ -2560,13 +2589,183 @@ class ControllerService:
         return f"Update bounded feature bundle: {normalized_title}"
 
     @staticmethod
-    def _feature_bundle_readme_guidance(*, bundle: FeatureBundleRecord, changed_paths: tuple[str, ...]) -> str:
-        normalized_paths = {path.replace('\\', '/').strip() for path in changed_paths if path.strip()}
-        staged_paths = {path.replace('\\', '/').strip() for path in bundle.applied_files if path.strip()}
-        if "README.md" in staged_paths:
+    def _normalize_paths(paths: tuple[str, ...]) -> tuple[str, ...]:
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for raw_path in paths:
+            cleaned = raw_path.replace('\\', '/').strip()
+            if not cleaned or cleaned in seen:
+                continue
+            normalized.append(cleaned)
+            seen.add(cleaned)
+        return tuple(normalized)
+
+    def _feature_bundle_included_paths(self, *, bundle: FeatureBundleRecord, changed_paths: tuple[str, ...]) -> tuple[str, ...]:
+        candidate_paths = self._normalize_paths(bundle.applied_files or tuple(item.relative_path for item in bundle.editable_files()))
+        changed_set = set(self._normalize_paths(changed_paths))
+        if not changed_set:
+            return candidate_paths
+        included = tuple(path for path in candidate_paths if path in changed_set)
+        return included or candidate_paths
+
+    def _feature_bundle_ambiguous_paths(
+        self,
+        *,
+        bundle: FeatureBundleRecord,
+        included_paths: tuple[str, ...],
+        changed_paths: tuple[str, ...],
+    ) -> tuple[str, ...]:
+        changed_set = set(self._normalize_paths(changed_paths))
+        bundle_paths = set(self._normalize_paths(bundle.file_paths()))
+        included_set = set(included_paths)
+        ambiguous = tuple(path for path in self._normalize_paths(changed_paths) if path in bundle_paths and path not in included_set)
+        return ambiguous
+
+    def _feature_bundle_excluded_paths(
+        self,
+        *,
+        included_paths: tuple[str, ...],
+        ambiguous_paths: tuple[str, ...],
+        changed_paths: tuple[str, ...],
+    ) -> tuple[str, ...]:
+        included_set = set(included_paths)
+        ambiguous_set = set(ambiguous_paths)
+        return tuple(
+            path
+            for path in self._normalize_paths(changed_paths)
+            if path not in included_set and path not in ambiguous_set
+        )
+
+    def _feature_bundle_readme_status(
+        self,
+        *,
+        bundle: FeatureBundleRecord,
+        included_paths: tuple[str, ...],
+        changed_paths: tuple[str, ...],
+    ) -> str:
+        bundle_paths = set(self._normalize_paths(bundle.file_paths()))
+        changed_set = set(self._normalize_paths(changed_paths))
+        if "README.md" in included_paths:
+            return "relevant_and_includable"
+        if "README.md" not in changed_set:
+            return "clean"
+        if "README.md" in bundle_paths:
+            return "requires_isolated_follow_up"
+        return "dirty_but_unrelated"
+
+    def _feature_bundle_playtest_signal(
+        self,
+        *,
+        bundle: FeatureBundleRecord,
+        included_paths: tuple[str, ...],
+    ) -> tuple[bool, str]:
+        if bundle.validation_state == "not_run":
+            return True, "Validation chain not yet run."
+        if bundle.validation_state in {"failed", "timed_out"}:
+            return True, "Validation is not yet passing for this milestone."
+        normalized_risks = " ".join(bundle.risk_notes).lower()
+        if any(token in normalized_risks for token in ("playtest", "manual review", "human review")):
+            return True, "Risk notes require manual or playtest review before commit."
+        sensitive_prefixes = (
+            "app/cli/",
+            "app/ui",
+            "app/main.py",
+            "app/window",
+            "app/home_surface",
+            "assets/",
+            "packages/",
+            "projectsettings/",
+        )
+        lower_paths = tuple(path.lower() for path in included_paths)
+        if any(path.startswith(sensitive_prefixes) for path in lower_paths):
+            return True, "User-facing or runtime behavior changed and still needs human review."
+        return False, ""
+
+    def _feature_bundle_commit_readiness(
+        self,
+        *,
+        bundle: FeatureBundleRecord,
+        included_paths: tuple[str, ...],
+        excluded_paths: tuple[str, ...],
+        ambiguous_paths: tuple[str, ...],
+        playtest_required: bool,
+    ) -> tuple[str, str]:
+        if not included_paths:
+            return "needs_human_review", "No milestone files were resolved for commit packaging."
+        if bundle.validation_state == "not_run":
+            return "blocked_pending_validation", "Validation must run before this milestone is commit-ready."
+        if bundle.validation_state in {"failed", "timed_out"}:
+            return "needs_human_review", "Validation is not passing, so the milestone should not be packaged yet."
+        if ambiguous_paths:
+            return "needs_human_review", f"Review ambiguous bundle paths: {', '.join(ambiguous_paths)}"
+        interfering_paths = self._feature_bundle_interfering_unrelated_paths(
+            included_paths=included_paths,
+            excluded_paths=excluded_paths,
+        )
+        if interfering_paths:
+            return "blocked_by_unrelated_changes", f"Unrelated changes overlap the milestone area: {', '.join(interfering_paths)}"
+        if playtest_required:
+            return "blocked_pending_playtest", "Runtime or human review is still required before commit."
+        return "safe_to_commit", "Milestone files are scoped, validated, and ready for commit packaging."
+
+    @staticmethod
+    def _feature_bundle_scope_root(path: str) -> str:
+        segments = [segment for segment in path.replace('\\', '/').split('/') if segment]
+        if not segments:
+            return ""
+        if len(segments) >= 2 and segments[0] in {"app", "tests", "assets", "Packages", "ProjectSettings", "orchestrator_lane"}:
+            return "/".join(segments[:2])
+        return segments[0]
+
+    def _feature_bundle_interfering_unrelated_paths(
+        self,
+        *,
+        included_paths: tuple[str, ...],
+        excluded_paths: tuple[str, ...],
+    ) -> tuple[str, ...]:
+        included_roots = {
+            self._feature_bundle_scope_root(path)
+            for path in included_paths
+            if self._feature_bundle_scope_root(path)
+        }
+        if not included_roots:
+            return ()
+        return tuple(
+            path
+            for path in excluded_paths
+            if path != "README.md" and self._feature_bundle_scope_root(path) in included_roots
+        )
+
+    @staticmethod
+    def _feature_bundle_completion_summary(*, commit_readiness_status: str, playtest_required: bool) -> str:
+        if commit_readiness_status == "safe_to_commit":
+            return "Bundle validated and scoped packaging is ready for a milestone commit."
+        if commit_readiness_status == "blocked_pending_validation":
+            return "Bundle applied, but validation must run before commit packaging is ready."
+        if commit_readiness_status == "blocked_pending_playtest":
+            return "Validation passed, but playtesting or human review still blocks commit packaging."
+        if commit_readiness_status == "blocked_by_unrelated_changes":
+            return "Unrelated changes are interfering with this milestone's scoped commit package."
+        if playtest_required:
+            return "Commit preparation needs human review before this milestone should be recorded."
+        return "Commit preparation needs human review before this milestone should be recorded."
+
+    def _feature_bundle_milestone_summary(self, bundle: FeatureBundleRecord) -> str:
+        summary = self._summarize_text(bundle.bundle_summary or bundle.intended_outcome or bundle.feature_request, limit=140)
+        if bundle.validation_state == "passed":
+            return summary
+        if bundle.validation_state == "not_run":
+            return self._summarize_text(f"{summary} Validation still pending.", limit=140)
+        return self._summarize_text(f"{summary} Validation needs follow-up.", limit=140)
+
+    @staticmethod
+    def _feature_bundle_readme_guidance(*, readme_status: str) -> str:
+        if readme_status == "relevant_and_includable":
             return "README.md is part of the bounded change set; include it only if the documentation update belongs to this feature."
-        if "README.md" in normalized_paths:
+        if readme_status == "dirty_but_unrelated":
             return "README.md already has unrelated changes; keep it out of this milestone commit unless this feature intentionally changed it."
+        if readme_status == "requires_isolated_follow_up":
+            return "README.md needs a separate follow-up commit so milestone documentation stays isolated from unrelated changes."
         return "README.md is not part of this bounded bundle; leave docs unstaged unless you intentionally updated them."
 
     def validate_main_run_target(self, *, target: str) -> tuple[str, bool, str]:
