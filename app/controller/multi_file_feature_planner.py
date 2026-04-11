@@ -4,10 +4,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable, Literal
 
+from .coding_task_planner import CodingTaskPlanner
 from .feature_bundle_models import FeatureBundleFile, FeatureBundleRecord, FeatureValidationPlan
 
 
-FeaturePlanningDecisionKind = Literal["planned", "refused", "not_applicable"]
+FeaturePlanningDecisionKind = Literal["planned", "refused", "needs_clarification", "not_applicable"]
 
 
 @dataclass(frozen=True)
@@ -15,10 +16,14 @@ class FeaturePlanningDecision:
     kind: FeaturePlanningDecisionKind
     bundle: FeatureBundleRecord | None = None
     refusal_reason: str = ""
+    clarification_question: str = ""
     next_step: str = ""
 
 
 class MultiFileFeaturePlanner:
+    def __init__(self) -> None:
+        self._coding_task_planner = CodingTaskPlanner()
+
     def plan(
         self,
         *,
@@ -35,6 +40,21 @@ class MultiFileFeaturePlanner:
                 kind="refused",
                 refusal_reason=broad_reason,
                 next_step="Ask for one bounded slice such as 'show feature bundle id in the CLI debug output'.",
+            )
+        coding_decision = self._coding_task_planner.plan(
+            bundle_id=bundle_id,
+            prompt=prompt,
+            timestamp=timestamp,
+            read_text=read_text,
+            path_exists=path_exists,
+        )
+        if coding_decision.kind != "not_applicable":
+            return FeaturePlanningDecision(
+                kind=coding_decision.kind,
+                bundle=coding_decision.bundle,
+                refusal_reason=coding_decision.refusal_reason,
+                clarification_question=coding_decision.clarification_question,
+                next_step=coding_decision.next_step,
             )
         if self._matches_cli_debug_bundle(lowered):
             bundle = self._plan_cli_debug_bundle(

@@ -2023,6 +2023,24 @@ class CapabilityExecutor:
                     "routed_command_label": "/featurestatus",
                 },
             )
+        if feature_decision.kind == "needs_clarification":
+            return self._result(
+                request,
+                outcome="success",
+                reason_code="needs_clarification",
+                user_message=self._service._feature_bundle_formatter.format_clarification(
+                    question=feature_decision.clarification_question,
+                    next_step=feature_decision.next_step,
+                ),
+                internal_summary=f"{entry_capability_id} requested clarification before bounded coding planning.",
+                retryable=False,
+                command_label=entry_command_label,
+                activity_state="processing_command",
+                telemetry={
+                    "feature_bundle_clarification_question": feature_decision.clarification_question,
+                    "feature_bundle_next_step": feature_decision.next_step,
+                },
+            )
         if feature_decision.kind == "refused":
             return self._result(
                 request,

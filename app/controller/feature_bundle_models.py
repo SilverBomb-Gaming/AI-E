@@ -7,6 +7,14 @@ from typing import Literal
 
 FeatureBundleState = Literal["proposed", "applying", "applied", "validated", "failed", "invalidated"]
 FeatureBundleValidationState = Literal["not_run", "passed", "failed", "timed_out"]
+CodingTaskType = Literal[
+    "controller_logic_update",
+    "model_field_extension",
+    "formatter_output_update",
+    "test_alignment_update",
+    "bounded_refactor",
+]
+CodingTaskPlanStatus = Literal["proposal_ready", "needs_clarification"]
 FeatureBundleCommitReadiness = Literal[
     "safe_to_commit",
     "blocked_pending_validation",
@@ -70,6 +78,51 @@ class FeatureValidationPlan:
         return FeatureValidationPlan(
             command_text=str(payload.get("command_text", "")).strip(),
             rationale=str(payload.get("rationale", "")).strip(),
+        )
+
+
+@dataclass(frozen=True)
+class CodingTaskPlan:
+    task_type: CodingTaskType
+    status: CodingTaskPlanStatus
+    target_files: tuple[str, ...]
+    intended_change_type: str
+    expected_test_impact: str
+    affected_tests: tuple[str, ...]
+    validation_command: str
+    clarification_needed: bool
+    playtest_required: bool
+    clarification_question: str = ""
+
+    def to_payload(self) -> dict[str, object]:
+        return {
+            "task_type": self.task_type,
+            "status": self.status,
+            "target_files": list(self.target_files),
+            "intended_change_type": self.intended_change_type,
+            "expected_test_impact": self.expected_test_impact,
+            "affected_tests": list(self.affected_tests),
+            "validation_command": self.validation_command,
+            "clarification_needed": self.clarification_needed,
+            "playtest_required": self.playtest_required,
+            "clarification_question": self.clarification_question,
+        }
+
+    @staticmethod
+    def from_payload(payload: dict[str, object]) -> "CodingTaskPlan":
+        target_files = payload.get("target_files")
+        affected_tests = payload.get("affected_tests")
+        return CodingTaskPlan(
+            task_type=str(payload.get("task_type", "bounded_refactor")).strip() or "bounded_refactor",  # type: ignore[arg-type]
+            status=str(payload.get("status", "proposal_ready")).strip() or "proposal_ready",  # type: ignore[arg-type]
+            target_files=tuple(str(item).strip() for item in target_files or () if str(item).strip()),
+            intended_change_type=str(payload.get("intended_change_type", "")).strip(),
+            expected_test_impact=str(payload.get("expected_test_impact", "")).strip(),
+            affected_tests=tuple(str(item).strip() for item in affected_tests or () if str(item).strip()),
+            validation_command=str(payload.get("validation_command", "")).strip(),
+            clarification_needed=bool(payload.get("clarification_needed", False)),
+            playtest_required=bool(payload.get("playtest_required", False)),
+            clarification_question=str(payload.get("clarification_question", "")).strip(),
         )
 
 
@@ -280,6 +333,7 @@ class FeatureBundleRecord:
     validation_summary: str = ""
     stop_reason: str = ""
     completion_advisory: FeatureBundleCompletionAdvisory | None = None
+    coding_task_plan: CodingTaskPlan | None = None
 
     def editable_files(self) -> tuple[FeatureBundleFile, ...]:
         return tuple(item for item in self.files if item.editable)
@@ -350,6 +404,7 @@ class FeatureBundleRecord:
             "validation_summary": self.validation_summary,
             "stop_reason": self.stop_reason,
             "completion_advisory": self.completion_advisory.to_payload() if self.completion_advisory is not None else None,
+            "coding_task_plan": self.coding_task_plan.to_payload() if self.coding_task_plan is not None else None,
         }
 
     @staticmethod
@@ -360,6 +415,7 @@ class FeatureBundleRecord:
         validation_plan = payload.get("validation_plan")
         applied_files = payload.get("applied_files")
         completion_advisory = payload.get("completion_advisory")
+        coding_task_plan = payload.get("coding_task_plan")
         return FeatureBundleRecord(
             bundle_id=str(payload.get("bundle_id", "")).strip(),
             feature_request=str(payload.get("feature_request", "")).strip(),
@@ -380,4 +436,5 @@ class FeatureBundleRecord:
             validation_summary=str(payload.get("validation_summary", "")).strip(),
             stop_reason=str(payload.get("stop_reason", "")).strip(),
             completion_advisory=FeatureBundleCompletionAdvisory.from_payload(completion_advisory) if isinstance(completion_advisory, dict) else None,
+            coding_task_plan=CodingTaskPlan.from_payload(coding_task_plan) if isinstance(coding_task_plan, dict) else None,
         )

@@ -78,6 +78,18 @@ class LocalCliChatTests(unittest.TestCase):
             destination_path.parent.mkdir(parents=True, exist_ok=True)
             destination_path.write_text(source_path.read_text(encoding="utf-8"), encoding="utf-8")
 
+    @staticmethod
+    def _build_coding_feature_bundle_repo(root: Path) -> None:
+        source_root = Path(__file__).resolve().parents[1]
+        targets = (
+            (source_root / "app" / "controller" / "feature_bundle_models.py", root / "app" / "controller" / "feature_bundle_models.py"),
+            (source_root / "app" / "controller" / "feature_bundle_formatter.py", root / "app" / "controller" / "feature_bundle_formatter.py"),
+            (source_root / "tests" / "test_task_chains.py", root / "tests" / "test_task_chains.py"),
+        )
+        for source_path, destination_path in targets:
+            destination_path.parent.mkdir(parents=True, exist_ok=True)
+            destination_path.write_text(source_path.read_text(encoding="utf-8"), encoding="utf-8")
+
     def test_cli_debug_shows_shared_status_routing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             service, _, _ = self._make_service(tmp_dir=tmp)
@@ -443,3 +455,21 @@ class LocalCliChatTests(unittest.TestCase):
             self.assertIn("FEATURE BUNDLE ID", updated_cli)
             self.assertIn("_feature_bundle_id_label", updated_cli)
             self.assertIn("show feature bundle id in the cli debug output", updated_tests)
+
+    def test_cli_coding_bundle_plan_shows_structured_coding_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "workspace"
+            self._build_coding_feature_bundle_repo(root)
+            service, config_store, _ = self._make_service(tmp_dir=tmp)
+            self._configure_repo_root(service=service, config_store=config_store, root=root)
+            output: list[str] = []
+            cli = AiEChatCli(service=service, input_func=_PromptDriver(), output_func=output.append, debug=True)
+
+            self.assertTrue(
+                cli.handle_line("Add a helper that formats feature bundle commit summaries and update the related tests.")
+            )
+
+            joined = "\n".join(output)
+            self.assertIn("[FEATURE BUNDLE]", joined)
+            self.assertIn("Coding plan:", joined)
+            self.assertIn("formatter_output_update", joined)

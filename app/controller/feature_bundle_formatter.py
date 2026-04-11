@@ -11,8 +11,9 @@ class FeatureBundleFormatter:
             f"Bundle: {bundle.bundle_id} proposed",
             f"Feature: {bundle.feature_title}",
             f"Outcome: {bundle.intended_outcome}",
-            "Files:",
         ]
+        self._append_coding_plan(lines, bundle)
+        lines.append("Files:")
         for item in bundle.files:
             mode = "edit" if item.editable else "context"
             lines.append(f"- {item.relative_path} [{mode}, {item.scope_confidence:.2f}]")
@@ -47,6 +48,7 @@ class FeatureBundleFormatter:
             lines.append(f"Apply: {bundle.apply_summary}")
         if bundle.validation_summary:
             lines.append(f"Validation summary: {bundle.validation_summary}")
+        self._append_coding_plan(lines, bundle)
         lines.append("Files:")
         for item in bundle.files:
             mode = "edit" if item.editable else "context"
@@ -83,6 +85,32 @@ class FeatureBundleFormatter:
 
     def format_refusal(self, *, reason: str, next_step: str) -> str:
         return f"Couldn't plan that feature bundle.\nReason: {reason}\nNext: {next_step}"
+
+    def format_clarification(self, *, question: str, next_step: str) -> str:
+        return f"Need clarification before planning that coding bundle.\nQuestion: {question}\nNext: {next_step}"
+
+    @staticmethod
+    def _append_coding_plan(lines: list[str], bundle: FeatureBundleRecord) -> None:
+        plan = bundle.coding_task_plan
+        if plan is None:
+            return
+        lines.extend(
+            (
+                "Coding plan:",
+                f"- Type: {plan.task_type}",
+                f"- Status: {plan.status}",
+                f"- Change: {plan.intended_change_type}",
+                f"- Test impact: {plan.expected_test_impact}",
+                f"- Validation: {plan.validation_command}",
+                f"- Playtest required: {'yes' if plan.playtest_required else 'no'}",
+            )
+        )
+        if plan.target_files:
+            lines.append(f"- Targets: {', '.join(plan.target_files)}")
+        if plan.affected_tests:
+            lines.append(f"- Tests: {', '.join(plan.affected_tests)}")
+        if plan.clarification_needed and plan.clarification_question:
+            lines.append(f"- Clarification: {plan.clarification_question}")
 
     @staticmethod
     def _append_completion_advisory(lines: list[str], bundle: FeatureBundleRecord) -> None:
