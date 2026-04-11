@@ -11,6 +11,7 @@ if __package__ in {None, ""}:
 
 from accessibility.interpreter import interpret_input
 from accessibility.refiner import refine_request
+from accessibility.schemas import ClarificationNeededError, IngestionRequest
 from accessibility.validator import validate_request
 from ingestion.chunker import chunk_text
 from ingestion.cleaner import clean_content
@@ -145,6 +146,18 @@ def ingest_from_conversation(user_input: str, *, root_path: str | Path | None = 
     return ingest_source(refined.source, root_path=root_path)
 
 
+def continue_conversation(
+    user_input: str,
+    *,
+    previous_request: IngestionRequest,
+    root_path: str | Path | None = None,
+) -> dict[str, object]:
+    parsed = interpret_input(user_input, previous_request=previous_request)
+    refined = refine_request(parsed)
+    validate_request(refined)
+    return ingest_source(refined.source, root_path=root_path)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = list(argv if argv is not None else sys.argv[1:])
     if len(args) != 1:
@@ -157,6 +170,9 @@ def main(argv: list[str] | None = None) -> int:
             result = ingest_source(request, root_path=root)
         else:
             result = ingest_from_conversation(request, root_path=root)
+    except ClarificationNeededError as exc:
+        print(json.dumps(exc.to_payload(), indent=2))
+        return 1
     except Exception as exc:
         print(f"Ingestion failed: {exc}")
         return 1
