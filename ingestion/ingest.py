@@ -9,11 +9,14 @@ import sys
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from accessibility.interpreter import interpret_input
+from accessibility.refiner import refine_request
+from accessibility.validator import validate_request
 from ingestion.chunker import chunk_text
 from ingestion.cleaner import clean_content
 from ingestion.fetcher import fetch_source
 from ingestion.metadata import generate_metadata, utc_now_iso
-from ingestion.policy_check import DEFAULT_ROOT, policy_decision_for_source
+from ingestion.policy_check import DEFAULT_ROOT, is_url, policy_decision_for_source
 
 
 def _ensure_json_file(path: Path, *, default_payload: object) -> None:
@@ -39,6 +42,24 @@ def register_dataset(*, root_path: Path, record: dict[str, object]) -> list[dict
     registry.append(record)
     _write_json(registry_path, registry)
     return registry
+
+
+def _looks_like_direct_source(value: str, *, root_path: Path) -> bool:
+    stripped = value.strip()
+    if not stripped:
+        return False
+
+    if is_url(stripped):
+        return True
+
+    candidate = Path(stripped)
+    if candidate.exists():
+        return True
+
+    if not candidate.is_absolute() and (root_path / candidate).exists():
+        return True
+
+    return any(separator in stripped for separator in {"\\", "/"}) or bool(candidate.suffix)
 
 
 def ingest_source(source: str, *, root_path: str | Path | None = None) -> dict[str, object]:
@@ -117,13 +138,25 @@ def ingest_source(source: str, *, root_path: str | Path | None = None) -> dict[s
     }
 
 
+def ingest_from_conversation(user_input: str, *, root_path: str | Path | None = None) -> dict[str, object]:
+    parsed = interpret_input(user_input)
+    refined = refine_request(parsed)
+    validate_request(refined)
+    return ingest_source(refined.source, root_path=root_path)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = list(argv if argv is not None else sys.argv[1:])
     if len(args) != 1:
-        print("Usage: python ingestion/ingest.py <url-or-file>")
+        print("Usage: python ingestion/ingest.py <url-or-file-or-natural-language-request>")
         return 1
     try:
-        result = ingest_source(args[0])
+        root = Path(DEFAULT_ROOT)
+        request = args[0]
+        if _looks_like_direct_source(request, root_path=root):
+            result = ingest_source(request, root_path=root)
+        else:
+            result = ingest_from_conversation(request, root_path=root)
     except Exception as exc:
         print(f"Ingestion failed: {exc}")
         return 1
