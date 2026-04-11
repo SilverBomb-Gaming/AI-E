@@ -447,6 +447,141 @@ class TaskChainTests(unittest.TestCase):
             self.assertEqual(advisory.readme_status, "dirty_but_unrelated")
             self.assertIn("keep it out", advisory.readme_guidance)
 
+    def test_feature_commit_preview_reports_safe_package(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "workspace"
+            root.mkdir(parents=True, exist_ok=True)
+            self._write_repo_file(root, "app/controller/repo_inspector.py", "baseline\n")
+            self._write_repo_file(root, "README.md", "clean readme\n")
+            self._initialize_clean_git_repo(root)
+            self._write_repo_file(root, "app/controller/repo_inspector.py", "baseline\nupdated\n")
+
+            service, config_store, _ = self._make_service(tmp_dir=tmp)
+            self._configure_repo_root(service=service, config_store=config_store, root=root)
+
+            bundle = service.attach_feature_bundle_completion_advisory(
+                bundle=self._make_bundle(
+                    path="app/controller/repo_inspector.py",
+                    state="validated",
+                    validation_state="passed",
+                    validation_summary="Repo inspector coverage passed.",
+                )
+            )
+            service.set_active_feature_bundle(chat_id="local-cli", bundle=bundle)
+
+            preview = service.execute_local_chat_input(text="/featurecommit")
+
+            self.assertEqual(preview.outcome, "success")
+            self.assertEqual(preview.telemetry.get("feature_bundle_action"), "commit_preview")
+            self.assertIn("[FEATURE COMMIT]", preview.user_message)
+            self.assertIn("Commit readiness: safe_to_commit", preview.user_message)
+            self.assertIn("Commit message:", preview.user_message)
+            self.assertIn("Included paths: app/controller/repo_inspector.py", preview.user_message)
+
+    def test_feature_commit_execute_blocks_when_bundle_not_ready(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "workspace"
+            root.mkdir(parents=True, exist_ok=True)
+            self._write_repo_file(root, "app/controller/repo_inspector.py", "baseline\n")
+            self._write_repo_file(root, "README.md", "clean readme\n")
+            self._initialize_clean_git_repo(root)
+            self._write_repo_file(root, "app/controller/repo_inspector.py", "baseline\nupdated\n")
+
+            service, config_store, _ = self._make_service(tmp_dir=tmp)
+            self._configure_repo_root(service=service, config_store=config_store, root=root)
+
+            bundle = service.attach_feature_bundle_completion_advisory(
+                bundle=self._make_bundle(
+                    path="app/controller/repo_inspector.py",
+                    state="applied",
+                    validation_state="not_run",
+                )
+            )
+            service.set_active_feature_bundle(chat_id="local-cli", bundle=bundle)
+
+            blocked = service.execute_local_chat_input(text="/featurecommit execute")
+
+            self.assertEqual(blocked.outcome, "invalid_request")
+            self.assertEqual(blocked.outcome_reason_code, "feature_commit_not_ready")
+            self.assertIn("Commit execution is blocked", blocked.user_message)
+
+    def test_feature_commit_execute_creates_bounded_commit_after_confirmation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "workspace"
+            root.mkdir(parents=True, exist_ok=True)
+            self._write_repo_file(root, "app/controller/repo_inspector.py", "baseline\n")
+            self._write_repo_file(root, "README.md", "clean readme\n")
+            self._initialize_clean_git_repo(root)
+            self._write_repo_file(root, "app/controller/repo_inspector.py", "baseline\nupdated\n")
+            self._write_repo_file(root, "README.md", "clean readme\nunrelated docs change\n")
+
+            service, config_store, _ = self._make_service(tmp_dir=tmp)
+            self._configure_repo_root(service=service, config_store=config_store, root=root)
+
+            bundle = service.attach_feature_bundle_completion_advisory(
+                bundle=self._make_bundle(
+                    path="app/controller/repo_inspector.py",
+                    state="validated",
+                    validation_state="passed",
+                    validation_summary="Repo inspector coverage passed.",
+                )
+            )
+            service.set_active_feature_bundle(chat_id="local-cli", bundle=bundle)
+
+            request = service.execute_local_chat_input(text="/featurecommit execute")
+
+            self.assertEqual(request.outcome, "confirmation_required")
+            confirmation = service.latest_pending_confirmation_for_chat(chat_id="local-cli")
+            self.assertIsNotNone(confirmation)
+
+            confirm = service.execute_local_chat_input(text=f"/confirm {confirmation.confirmation_id}")
+
+            self.assertEqual(confirm.outcome, "success")
+            self.assertIn("Push: not performed in v1.", confirm.user_message)
+            self.assertIn("app/controller/repo_inspector.py", confirm.user_message)
+            self.assertIsNone(service.active_feature_bundle_for_chat(chat_id="local-cli"))
+            log = self._run_git(root, "log", "--oneline", "-n", "1")
+            self.assertIn("Complete bounded feature bundle: Test bundle", log.stdout)
+            status = self._run_git(root, "status", "--short")
+            self.assertIn(" README.md", status.stdout)
+            self.assertNotIn("app/controller/repo_inspector.py", status.stdout)
+
+    def test_feature_commit_execute_detects_scope_drift_before_commit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "workspace"
+            root.mkdir(parents=True, exist_ok=True)
+            self._write_repo_file(root, "app/controller/repo_inspector.py", "baseline\n")
+            self._write_repo_file(root, "README.md", "clean readme\n")
+            self._initialize_clean_git_repo(root)
+            self._write_repo_file(root, "app/controller/repo_inspector.py", "baseline\nupdated\n")
+
+            service, config_store, _ = self._make_service(tmp_dir=tmp)
+            self._configure_repo_root(service=service, config_store=config_store, root=root)
+
+            bundle = service.attach_feature_bundle_completion_advisory(
+                bundle=self._make_bundle(
+                    path="app/controller/repo_inspector.py",
+                    state="validated",
+                    validation_state="passed",
+                    validation_summary="Repo inspector coverage passed.",
+                )
+            )
+            service.set_active_feature_bundle(chat_id="local-cli", bundle=bundle)
+
+            request = service.execute_local_chat_input(text="/featurecommit execute")
+            self.assertEqual(request.outcome, "confirmation_required")
+            confirmation = service.latest_pending_confirmation_for_chat(chat_id="local-cli")
+            self.assertIsNotNone(confirmation)
+
+            self._write_repo_file(root, "app/controller/repo_inspector.py", "baseline\nupdated again\n")
+            confirm = service.execute_local_chat_input(text=f"/confirm {confirmation.confirmation_id}")
+
+            self.assertEqual(confirm.outcome, "failed")
+            self.assertEqual(confirm.outcome_reason_code, "feature_commit_scope_drifted")
+            self.assertIn("refresh the bounded commit package", confirm.user_message)
+            log = self._run_git(root, "log", "--oneline", "-n", "1")
+            self.assertNotIn("Complete bounded feature bundle: Test bundle", log.stdout)
+
     def test_dispatch_validate_recover_falls_back_to_local(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "workspace"

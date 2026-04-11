@@ -321,6 +321,8 @@ class CapabilityExecutor:
             return self._execute_feature_status(update=update, snapshot=snapshot)
         if command == "/featureapply":
             return self._execute_feature_apply(update=update, snapshot=snapshot)
+        if command == "/featurecommit":
+            return self._execute_feature_commit(update=update, snapshot=snapshot, argument=parsed_command.argument)
         if command == "/run":
             return self._execute_run_command(update=update, snapshot=snapshot, argument=parsed_command.argument)
         if command == "/test":
@@ -2349,6 +2351,140 @@ class CapabilityExecutor:
             requester_label=update.sender_label,
         )
 
+    def _execute_feature_commit(
+        self,
+        *,
+        update: TelegramInboundMessage,
+        snapshot: ControllerSnapshot,
+        argument: str,
+    ) -> CapabilityExecutionResult:
+        normalized_mode = (argument.strip().lower() or "preview")
+        if normalized_mode not in {"preview", "execute"}:
+            request, _, _, scope_failure = self._prepare_capability_request(
+                capability_id="build.feature.commit.query",
+                snapshot=snapshot,
+                chat_id=update.chat_id,
+                requester_label=update.sender_label,
+                original_command="/featurecommit",
+                parsed_arguments={"mode": normalized_mode},
+                metadata={"argument_summary": f"/featurecommit {normalized_mode}".strip()},
+            )
+            if scope_failure is not None:
+                return scope_failure
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="feature_commit_mode_invalid",
+                user_message="Unsupported feature commit mode.\nNext: Use /featurecommit [preview|execute].",
+                internal_summary=f"/featurecommit rejected unsupported mode {normalized_mode}.",
+                retryable=False,
+                command_label="/featurecommit",
+                activity_state="processing_command",
+            )
+        request, evaluation, context, scope_failure = self._prepare_capability_request(
+            capability_id="build.feature.commit.query",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/featurecommit",
+            parsed_arguments={"mode": normalized_mode},
+            metadata={"argument_summary": f"/featurecommit {normalized_mode}".strip()},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        bundle = self._service.active_feature_bundle_for_chat(chat_id=update.chat_id)
+        if bundle is None:
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="no_active_feature_bundle",
+                user_message=self._service._feature_bundle_formatter.format_no_active_bundle(),
+                internal_summary="/featurecommit rejected because no active feature bundle exists.",
+                retryable=False,
+                command_label="/featurecommit",
+                activity_state="processing_command",
+            )
+        plan = self._service.build_feature_bundle_commit_plan(chat_id=update.chat_id, mode=normalized_mode)
+        if plan is None:
+            return self._result(
+                request,
+                outcome="failed",
+                reason_code="feature_commit_plan_missing",
+                user_message="Feature commit preview could not be built for the active bundle.\nNext: Use /featurestatus to inspect the bundle and try again.",
+                internal_summary=f"/featurecommit failed because bundle {bundle.bundle_id} had no commit plan.",
+                retryable=True,
+                command_label="/featurecommit",
+                activity_state="provider_failed",
+            )
+        if normalized_mode == "preview":
+            return self._result(
+                request,
+                outcome="success",
+                reason_code="ok",
+                user_message=self._service.feature_bundle_commit_preview_reply(plan=plan),
+                internal_summary=f"Returned bounded commit preview for feature bundle {plan.bundle_id}.",
+                retryable=False,
+                command_label="/featurecommit",
+                activity_state="processing_command",
+                telemetry={
+                    "feature_bundle_action": "commit_preview",
+                    "feature_bundle_id": plan.bundle_id,
+                    "feature_bundle_state": bundle.state,
+                    "feature_commit_plan": plan.to_payload(),
+                },
+            )
+        if not plan.can_execute:
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="feature_commit_not_ready",
+                user_message="\n".join(
+                    (
+                        self._service.feature_bundle_commit_preview_reply(plan=plan),
+                        "Commit execution is blocked until the readiness state is safe_to_commit.",
+                    )
+                ),
+                internal_summary=f"/featurecommit execute rejected because bundle {plan.bundle_id} is {plan.commit_readiness_status}.",
+                retryable=False,
+                command_label="/featurecommit",
+                activity_state="processing_command",
+                telemetry={
+                    "feature_bundle_action": "commit_execute_blocked",
+                    "feature_bundle_id": plan.bundle_id,
+                    "feature_bundle_state": bundle.state,
+                    "feature_commit_plan": plan.to_payload(),
+                },
+            )
+        request.metadata.update(
+            {
+                "confirmation_action_label": f"commit feature bundle {plan.bundle_id} ({len(plan.included_paths)} paths)",
+                "confirmation_preview_lines": [
+                    f"Bundle: {plan.bundle_id}",
+                    f"Feature: {plan.feature_title}",
+                    f"Branch: {plan.repo_branch}",
+                    f"Commit: {plan.commit_message}",
+                    *(f"Path: {path}" for path in plan.included_paths),
+                ],
+                "confirmation_metadata": {
+                    "feature_bundle_id": plan.bundle_id,
+                    "feature_commit_branch": plan.repo_branch,
+                    "feature_commit_message": plan.commit_message,
+                    "feature_commit_paths_json": json.dumps(list(plan.included_paths), ensure_ascii=True, sort_keys=True),
+                    "feature_commit_scope_fingerprint": plan.scope_fingerprint,
+                },
+            }
+        )
+        return self._confirmation_required_result(
+            request=request,
+            evaluation=evaluation,
+            context=context,
+            snapshot=snapshot,
+            prompt=plan.bundle_id,
+            response_style="concise",
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+        )
+
     def _execute_confirmed_feature_bundle_apply(
         self,
         *,
@@ -2450,6 +2586,83 @@ class CapabilityExecutor:
                 "feature_bundle_id": applied_bundle.bundle_id,
                 "feature_bundle_state": applied_bundle.state,
                 "feature_bundle": applied_bundle.to_payload(),
+            },
+        )
+
+    def _execute_confirmed_feature_bundle_commit(
+        self,
+        *,
+        request: CapabilityExecutionRequest,
+        confirmation: PendingConfirmation,
+        chat_id: str,
+    ) -> CapabilityExecutionResult:
+        bundle_id = str(confirmation.metadata.get("feature_bundle_id") or confirmation.prompt_text).strip()
+        paths_json = str(confirmation.metadata.get("feature_commit_paths_json") or "[]").strip()
+        approved_commit_message = str(confirmation.metadata.get("feature_commit_message") or "").strip()
+        approved_branch = str(confirmation.metadata.get("feature_commit_branch") or "").strip()
+        approved_scope_fingerprint = str(confirmation.metadata.get("feature_commit_scope_fingerprint") or "").strip()
+        try:
+            raw_paths = json.loads(paths_json)
+        except json.JSONDecodeError:
+            raw_paths = []
+        approved_paths = tuple(str(item).strip() for item in raw_paths if str(item).strip()) if isinstance(raw_paths, list) else ()
+        try:
+            execution = self._service.execute_feature_bundle_commit(
+                chat_id=chat_id,
+                bundle_id=bundle_id,
+                expected_branch=approved_branch,
+                approved_paths=approved_paths,
+                approved_commit_message=approved_commit_message,
+                approved_scope_fingerprint=approved_scope_fingerprint,
+            )
+        except Exception as exc:
+            code = getattr(exc, "code", "feature_commit_failed")
+            message = getattr(exc, "message", str(exc))
+            return self._result(
+                request,
+                outcome="failed",
+                reason_code=code,
+                user_message="\n".join(
+                    (
+                        f"Feature bundle {bundle_id or confirmation.confirmation_id} could not be committed.",
+                        f"Reason: {message}",
+                        "Next: Use /featurecommit preview to refresh the bounded commit package.",
+                    )
+                ),
+                internal_summary=f"Confirmation {confirmation.confirmation_id} failed bounded commit execution: {code}.",
+                retryable=True,
+                command_label="/confirm",
+                activity_state="provider_failed",
+                confirmation_used=True,
+            )
+        self._service._last_confirmation_result = (
+            f"Confirmation {confirmation.confirmation_id} approved and created bounded commit {execution.commit_sha}."
+        )
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message="\n".join(
+                (
+                    f"Confirmation {confirmation.confirmation_id} approved.",
+                    f"Commit: {execution.commit_sha}",
+                    f"Branch: {execution.branch}",
+                    f"Message: {execution.commit_message}",
+                    f"Paths: {', '.join(execution.committed_paths)}",
+                    "Push: not performed in v1.",
+                )
+            ),
+            internal_summary=self._service._last_confirmation_result,
+            retryable=False,
+            command_label="/confirm",
+            activity_state="processing_command",
+            confirmation_used=True,
+            telemetry={
+                "feature_bundle_action": "commit_execute",
+                "feature_bundle_id": bundle_id,
+                "commit_sha": execution.commit_sha,
+                "commit_message": execution.commit_message,
+                "committed_paths": list(execution.committed_paths),
             },
         )
 
@@ -8503,6 +8716,12 @@ class CapabilityExecutor:
             )
         if confirmation.capability_id == "build.feature.apply.query":
             return self._execute_confirmed_feature_bundle_apply(
+                request=request,
+                confirmation=confirmation,
+                chat_id=chat_id,
+            )
+        if confirmation.capability_id == "build.feature.commit.query":
+            return self._execute_confirmed_feature_bundle_commit(
                 request=request,
                 confirmation=confirmation,
                 chat_id=chat_id,

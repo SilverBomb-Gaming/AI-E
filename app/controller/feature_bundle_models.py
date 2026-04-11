@@ -14,6 +14,7 @@ FeatureBundleCommitReadiness = Literal[
     "blocked_by_unrelated_changes",
     "needs_human_review",
 ]
+FeatureBundleCommitMode = Literal["preview", "execute"]
 FeatureBundleReadmeStatus = Literal[
     "clean",
     "relevant_and_includable",
@@ -132,6 +133,78 @@ class FeatureBundleCompletionAdvisory:
             playtest_required=bool(payload.get("playtest_required", False)),
             playtest_reason=str(payload.get("playtest_reason", "")).strip(),
             milestone_summary=str(payload.get("milestone_summary", "")).strip(),
+        )
+
+
+@dataclass(frozen=True)
+class FeatureBundleCommitPlan:
+    bundle_id: str
+    feature_title: str
+    mode: FeatureBundleCommitMode
+    repo_branch: str
+    repo_status: str
+    milestone_summary: str
+    commit_message: str
+    commit_readiness_status: FeatureBundleCommitReadiness
+    commit_readiness_reason: str
+    included_paths: tuple[str, ...]
+    excluded_paths: tuple[str, ...]
+    ambiguous_paths: tuple[str, ...]
+    readme_status: FeatureBundleReadmeStatus
+    readme_guidance: str
+    playtest_required: bool
+    playtest_reason: str
+    scope_fingerprint: str = ""
+
+    @property
+    def can_execute(self) -> bool:
+        return self.commit_readiness_status == "safe_to_commit"
+
+    def to_payload(self) -> dict[str, object]:
+        return {
+            "bundle_id": self.bundle_id,
+            "feature_title": self.feature_title,
+            "mode": self.mode,
+            "repo_branch": self.repo_branch,
+            "repo_status": self.repo_status,
+            "milestone_summary": self.milestone_summary,
+            "commit_message": self.commit_message,
+            "commit_readiness_status": self.commit_readiness_status,
+            "commit_readiness_reason": self.commit_readiness_reason,
+            "included_paths": list(self.included_paths),
+            "excluded_paths": list(self.excluded_paths),
+            "ambiguous_paths": list(self.ambiguous_paths),
+            "readme_status": self.readme_status,
+            "readme_guidance": self.readme_guidance,
+            "playtest_required": self.playtest_required,
+            "playtest_reason": self.playtest_reason,
+            "scope_fingerprint": self.scope_fingerprint,
+            "can_execute": self.can_execute,
+        }
+
+    @staticmethod
+    def from_payload(payload: dict[str, object]) -> "FeatureBundleCommitPlan":
+        included_paths = payload.get("included_paths")
+        excluded_paths = payload.get("excluded_paths")
+        ambiguous_paths = payload.get("ambiguous_paths")
+        return FeatureBundleCommitPlan(
+            bundle_id=str(payload.get("bundle_id", "")).strip(),
+            feature_title=str(payload.get("feature_title", "")).strip(),
+            mode=str(payload.get("mode", "preview")).strip() or "preview",  # type: ignore[arg-type]
+            repo_branch=str(payload.get("repo_branch", "")).strip(),
+            repo_status=str(payload.get("repo_status", "")).strip(),
+            milestone_summary=str(payload.get("milestone_summary", "")).strip(),
+            commit_message=str(payload.get("commit_message", "")).strip(),
+            commit_readiness_status=str(payload.get("commit_readiness_status", "needs_human_review")).strip() or "needs_human_review",  # type: ignore[arg-type]
+            commit_readiness_reason=str(payload.get("commit_readiness_reason", "")).strip(),
+            included_paths=tuple(str(item).strip() for item in included_paths or () if str(item).strip()),
+            excluded_paths=tuple(str(item).strip() for item in excluded_paths or () if str(item).strip()),
+            ambiguous_paths=tuple(str(item).strip() for item in ambiguous_paths or () if str(item).strip()),
+            readme_status=str(payload.get("readme_status", "clean")).strip() or "clean",  # type: ignore[arg-type]
+            readme_guidance=str(payload.get("readme_guidance", "")).strip(),
+            playtest_required=bool(payload.get("playtest_required", False)),
+            playtest_reason=str(payload.get("playtest_reason", "")).strip(),
+            scope_fingerprint=str(payload.get("scope_fingerprint", "")).strip(),
         )
 
 

@@ -30,8 +30,9 @@ from .model_experiment_models import ModelExperimentRecord, normalize_adaptation
 from .model_experiment_runner import ModelExperimentError, ModelExperimentRunner
 from .model_experiment_store import ModelExperimentStore
 from .feature_bundle_formatter import FeatureBundleFormatter
-from .feature_bundle_models import FeatureBundleCompletionAdvisory, FeatureBundleRecord
+from .feature_bundle_models import FeatureBundleCommitPlan, FeatureBundleCompletionAdvisory, FeatureBundleRecord
 from .feature_bundle_store import FeatureBundleStore
+from .commit_execution import FeatureBundleCommitError, FeatureBundleCommitExecutionResult, FeatureBundleCommitExecutor
 from .multi_file_feature_planner import FeaturePlanningDecision, MultiFileFeaturePlanner
 from .project_bootstrap_formatter import ProjectBootstrapFormatter
 from .project_bootstrap_planner import ProjectBootstrapPlanner
@@ -249,6 +250,7 @@ class ControllerService:
         self._project_bootstrap_formatter = ProjectBootstrapFormatter()
         self._feature_bundle_planner = MultiFileFeaturePlanner()
         self._feature_bundle_formatter = FeatureBundleFormatter()
+        self._feature_commit_executor = FeatureBundleCommitExecutor()
         self._plan_bridge = PlanBridge()
         self._plan_bridge_formatter = PlanBridgeFormatter(self._plan_bridge)
         self._autonomy_bundle = AutonomyBundle(self._plan_bridge)
@@ -2465,6 +2467,137 @@ class ControllerService:
         if bundle is None:
             return self._feature_bundle_formatter.format_no_active_bundle()
         return self._feature_bundle_formatter.format_status(bundle)
+
+    def build_feature_bundle_commit_plan(
+        self,
+        *,
+        chat_id: str,
+        mode: str = "preview",
+    ) -> FeatureBundleCommitPlan | None:
+        bundle = self.active_feature_bundle_for_chat(chat_id=chat_id)
+        if bundle is None:
+            return None
+        updated_bundle = self.attach_feature_bundle_completion_advisory(bundle=bundle)
+        if updated_bundle != bundle:
+            self.set_active_feature_bundle(chat_id=chat_id, bundle=updated_bundle)
+        advisory = updated_bundle.completion_advisory
+        if advisory is None:
+            return None
+        repo_root, repo_root_valid, _, _ = self._repo_configuration_state()
+        scope_fingerprint = ""
+        if repo_root_valid and advisory.included_paths:
+            try:
+                scope_fingerprint = self._feature_commit_executor.scope_fingerprint(repo_root, paths=advisory.included_paths)
+            except FeatureBundleCommitError:
+                scope_fingerprint = ""
+        return FeatureBundleCommitPlan(
+            bundle_id=updated_bundle.bundle_id,
+            feature_title=updated_bundle.feature_title,
+            mode="execute" if str(mode).strip().lower() == "execute" else "preview",
+            repo_branch=advisory.repo_branch,
+            repo_status=advisory.repo_status,
+            milestone_summary=advisory.milestone_summary,
+            commit_message=advisory.suggested_commit_message,
+            commit_readiness_status=advisory.commit_readiness_status,
+            commit_readiness_reason=advisory.commit_readiness_reason,
+            included_paths=advisory.included_paths,
+            excluded_paths=advisory.excluded_paths,
+            ambiguous_paths=advisory.ambiguous_paths,
+            readme_status=advisory.readme_status,
+            readme_guidance=advisory.readme_guidance,
+            playtest_required=advisory.playtest_required,
+            playtest_reason=advisory.playtest_reason,
+            scope_fingerprint=scope_fingerprint,
+        )
+
+    def feature_bundle_commit_preview_reply(self, *, plan: FeatureBundleCommitPlan) -> str:
+        lines = [
+            "[FEATURE COMMIT]",
+            f"Bundle: {plan.bundle_id}",
+            f"Feature: {plan.feature_title}",
+            f"Mode: {plan.mode}",
+            f"Repo: {plan.repo_status}",
+            f"Commit readiness: {plan.commit_readiness_status}",
+        ]
+        if plan.commit_readiness_reason:
+            lines.append(f"Commit readiness reason: {plan.commit_readiness_reason}")
+        if plan.milestone_summary:
+            lines.append(f"Milestone summary: {plan.milestone_summary}")
+        if plan.commit_message:
+            lines.append(f"Commit message: {plan.commit_message}")
+        lines.append(f"README status: {plan.readme_status}")
+        if plan.playtest_required:
+            lines.append(f"Playtest required: yes - {plan.playtest_reason or 'Human or runtime verification is still required before commit.'}")
+        else:
+            lines.append("Playtest required: no")
+        if plan.included_paths:
+            lines.append(f"Included paths: {', '.join(plan.included_paths)}")
+        if plan.excluded_paths:
+            lines.append(f"Excluded paths: {', '.join(plan.excluded_paths)}")
+        if plan.ambiguous_paths:
+            lines.append(f"Ambiguous paths: {', '.join(plan.ambiguous_paths)}")
+        if plan.readme_guidance:
+            lines.append(f"README guidance: {plan.readme_guidance}")
+        if plan.can_execute:
+            lines.append("Next: Use /featurecommit execute to request one-shot approval for the bounded commit.")
+        else:
+            lines.append("Next: Resolve the blocked readiness condition before requesting /featurecommit execute.")
+        return "\n".join(lines)
+
+    def execute_feature_bundle_commit(
+        self,
+        *,
+        chat_id: str,
+        bundle_id: str,
+        expected_branch: str,
+        approved_paths: tuple[str, ...],
+        approved_commit_message: str,
+        approved_scope_fingerprint: str,
+    ) -> FeatureBundleCommitExecutionResult:
+        bundle = self.active_feature_bundle_for_chat(chat_id=chat_id)
+        if bundle is None or bundle.bundle_id != bundle_id.strip():
+            raise FeatureBundleCommitError(
+                "feature_commit_bundle_missing",
+                "The active feature bundle no longer matches the approved commit request.",
+            )
+        plan = self.build_feature_bundle_commit_plan(chat_id=chat_id, mode="execute")
+        if plan is None or plan.bundle_id != bundle.bundle_id:
+            raise FeatureBundleCommitError(
+                "feature_commit_plan_missing",
+                "The bounded commit preview could not be rebuilt for the active feature bundle.",
+            )
+        if plan.commit_readiness_status != "safe_to_commit":
+            raise FeatureBundleCommitError(
+                "feature_commit_not_ready",
+                f"Commit readiness is {plan.commit_readiness_status}: {plan.commit_readiness_reason or 'refresh the preview before committing.'}",
+            )
+        normalized_approved_paths = self._normalize_paths(approved_paths)
+        if normalized_approved_paths != plan.included_paths:
+            raise FeatureBundleCommitError(
+                "feature_commit_scope_drifted",
+                "The approved milestone paths changed since preview; refresh the preview before committing.",
+            )
+        if approved_commit_message.strip() != plan.commit_message:
+            raise FeatureBundleCommitError(
+                "feature_commit_message_drifted",
+                "The suggested commit message changed since preview; refresh the preview before committing.",
+            )
+        if approved_scope_fingerprint.strip() and approved_scope_fingerprint.strip() != plan.scope_fingerprint:
+            raise FeatureBundleCommitError(
+                "feature_commit_scope_drifted",
+                "Approved milestone changes drifted after preview; refresh the preview before committing.",
+            )
+        repo_root, repo_root_valid, repo_message, _ = self._repo_configuration_state()
+        if not repo_root_valid:
+            raise FeatureBundleCommitError("feature_commit_repo_root_invalid", repo_message)
+        result = self._feature_commit_executor.commit_paths(
+            repo_root,
+            paths=plan.included_paths,
+            commit_message=plan.commit_message,
+            expected_branch=expected_branch.strip() or plan.repo_branch,
+        )
+        self.clear_active_feature_bundle(chat_id=chat_id)
+        return result
 
     def attach_feature_bundle_completion_advisory(self, *, bundle: FeatureBundleRecord) -> FeatureBundleRecord:
         advisory = self._build_feature_bundle_completion_advisory(bundle)
