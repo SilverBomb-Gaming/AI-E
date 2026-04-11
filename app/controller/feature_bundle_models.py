@@ -15,6 +15,8 @@ FeatureBundleCommitReadiness = Literal[
     "needs_human_review",
 ]
 FeatureBundleCommitMode = Literal["preview", "execute"]
+FeatureBundlePushMode = Literal["preview", "execute"]
+FeatureBundlePushStatus = Literal["ready_to_push", "blocked", "pushed"]
 FeatureBundleReadmeStatus = Literal[
     "clean",
     "relevant_and_includable",
@@ -206,6 +208,55 @@ class FeatureBundleCommitPlan:
             playtest_reason=str(payload.get("playtest_reason", "")).strip(),
             scope_fingerprint=str(payload.get("scope_fingerprint", "")).strip(),
         )
+
+
+@dataclass(frozen=True)
+class FeatureBundleCommitReceipt:
+    bundle_id: str
+    branch: str
+    commit_sha: str
+    commit_message: str
+    committed_paths: tuple[str, ...]
+    repo_status_fingerprint: str
+    committed_at: str
+
+    def to_payload(self) -> dict[str, object]:
+        return {
+            "bundle_id": self.bundle_id,
+            "branch": self.branch,
+            "commit_sha": self.commit_sha,
+            "commit_message": self.commit_message,
+            "committed_paths": list(self.committed_paths),
+            "repo_status_fingerprint": self.repo_status_fingerprint,
+            "committed_at": self.committed_at,
+        }
+
+
+@dataclass(frozen=True)
+class FeatureBundlePushPlan:
+    status: FeatureBundlePushStatus
+    mode: FeatureBundlePushMode
+    branch: str
+    remote_name: str
+    command_text: str
+    commit_sha: str
+    reason: str = ""
+
+    @property
+    def can_execute(self) -> bool:
+        return self.status == "ready_to_push"
+
+    def to_payload(self) -> dict[str, object]:
+        return {
+            "status": self.status,
+            "mode": self.mode,
+            "branch": self.branch,
+            "remote_name": self.remote_name,
+            "command_text": self.command_text,
+            "commit_sha": self.commit_sha,
+            "reason": self.reason,
+            "can_execute": self.can_execute,
+        }
 
 
 @dataclass(frozen=True)

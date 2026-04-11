@@ -65,6 +65,23 @@ class RepoInspectorTests(unittest.TestCase):
             self.assertEqual(context.exception.code, "not_git_repository")
             self.assertEqual(context.exception.message, "Not a valid git repository.")
 
+    def test_inspect_reports_remote_head_commit_and_detached_state(self) -> None:
+        repo_root = self._create_repo()
+        remote_root = repo_root.parent / "origin.git"
+        self._run_git(repo_root.parent, "init", "--bare", str(remote_root))
+        self._run_git(repo_root, "remote", "add", "origin", str(remote_root))
+        self._run_git(repo_root, "checkout", "HEAD~0")
+
+        inspector = RepoInspector(timeout_seconds=4.0)
+        snapshot = inspector.inspect(str(repo_root))
+
+        self.assertTrue(snapshot.head_commit)
+        self.assertTrue(snapshot.is_detached)
+        self.assertIn("origin", snapshot.remotes)
+        self.assertEqual(snapshot.upstream_branch, "")
+        self.assertFalse(snapshot.merge_in_progress)
+        self.assertFalse(snapshot.rebase_in_progress)
+
 
 if __name__ == "__main__":
     unittest.main()

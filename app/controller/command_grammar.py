@@ -77,6 +77,7 @@ COMMAND_USAGE: dict[str, str] = {
     "/featurestatus": "Use /featurestatus.",
     "/featureapply": "Use /featureapply.",
     "/featurecommit": "Use /featurecommit [preview|execute].",
+    "/featurepush": "Use /featurepush [preview|execute].",
     "/run": "Use /run <bounded command>.",
     "/test": "Use /test or /test <module_or_path>.",
     "/dispatch": "Use /dispatch --target <node_or_role> --command \"/test ...\". Compatibility: /dispatch <node_or_role> <bounded command>.",

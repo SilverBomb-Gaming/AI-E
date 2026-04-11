@@ -13,11 +13,18 @@ class RepoInspectionSnapshot:
     repo_root: str
     repo_name: str
     branch: str
+    head_commit: str
     is_dirty: bool
     changed_count: int
     recent_commits: tuple[str, ...]
     inspected_at: str
     changed_paths: tuple[str, ...] = ()
+    remotes: tuple[str, ...] = ()
+    upstream_branch: str = ""
+    is_detached: bool = False
+    has_conflicts: bool = False
+    merge_in_progress: bool = False
+    rebase_in_progress: bool = False
 
     @property
     def status_label(self) -> str:
@@ -67,30 +74,48 @@ class RepoInspector:
 
         branch_result = self._run_git(["branch", "--show-current"], repo_root=repo_root_text)
         branch = self._sanitize_text(branch_result.stdout.strip(), limit=64)
+        is_detached = False
         if not branch:
             detached = self._run_git(["rev-parse", "--short", "HEAD"], repo_root=repo_root_text)
             detached_ref = self._sanitize_text(detached.stdout.strip(), limit=16)
             branch = f"detached@{detached_ref}" if detached_ref else "detached"
+            is_detached = True
+        head_result = self._run_git(["rev-parse", "--short", "HEAD"], repo_root=repo_root_text)
+        head_commit = self._sanitize_text(head_result.stdout.strip(), limit=16)
 
         status_result = self._run_git(["status", "--short", "--untracked-files=all"], repo_root=repo_root_text)
         status_lines = [line for line in status_result.stdout.splitlines() if line.strip()]
         changed_count = len(status_lines)
+        has_conflicts = any(self._is_conflict_status(line) for line in status_lines)
         changed_paths = tuple(
             parsed_path
             for parsed_path in (self._parse_changed_path(line) for line in status_lines)
             if parsed_path
         )
+        remotes_result = self._run_git(["remote"], repo_root=repo_root_text)
+        remotes = tuple(self._sanitize_text(line.strip(), limit=64) for line in remotes_result.stdout.splitlines() if line.strip())
+        upstream_branch = self._read_upstream_branch(repo_root_text)
+        git_dir = self._resolve_git_dir(repo_root_text)
+        merge_in_progress = (git_dir / "MERGE_HEAD").exists()
+        rebase_in_progress = (git_dir / "rebase-merge").exists() or (git_dir / "rebase-apply").exists()
 
         commits = self._read_recent_commits(repo_root_text, limit=max(1, min(commit_limit, 5)))
         return RepoInspectionSnapshot(
             repo_root=repo_root_text,
             repo_name=repo_name,
             branch=branch,
+            head_commit=head_commit,
             is_dirty=changed_count > 0,
             changed_count=changed_count,
             recent_commits=commits,
             inspected_at=datetime.now().astimezone().isoformat(timespec="seconds"),
             changed_paths=changed_paths,
+            remotes=remotes,
+            upstream_branch=upstream_branch,
+            is_detached=is_detached,
+            has_conflicts=has_conflicts,
+            merge_in_progress=merge_in_progress,
+            rebase_in_progress=rebase_in_progress,
         )
 
     def _read_recent_commits(self, repo_root: str, *, limit: int) -> tuple[str, ...]:
@@ -122,6 +147,24 @@ class RepoInspector:
 
         message = self._sanitize_text(result.stderr or result.stdout or "Git command failed.", limit=120)
         raise RepoInspectorError("git_command_failed", message)
+
+    def _read_upstream_branch(self, repo_root: str) -> str:
+        result = self._command_runner(
+            ["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
+            repo_root,
+            self._timeout_seconds,
+        )
+        if result.returncode != 0:
+            return ""
+        return self._sanitize_text(result.stdout.strip(), limit=96)
+
+    def _resolve_git_dir(self, repo_root: str) -> Path:
+        git_dir_result = self._run_git(["rev-parse", "--git-dir"], repo_root=repo_root)
+        raw_path = git_dir_result.stdout.strip()
+        candidate = Path(raw_path)
+        if not candidate.is_absolute():
+            candidate = (Path(repo_root) / candidate).resolve()
+        return candidate.resolve()
 
     @staticmethod
     def _default_command_runner(args: list[str], repo_root: str | None, timeout_seconds: float) -> subprocess.CompletedProcess[str]:
@@ -166,3 +209,10 @@ class RepoInspector:
         if " -> " in candidate:
             candidate = candidate.split(" -> ", 1)[1].strip()
         return candidate.replace("\\", "/")
+
+    @staticmethod
+    def _is_conflict_status(status_line: str) -> bool:
+        if len(status_line) < 2:
+            return False
+        xy = status_line[:2]
+        return "U" in xy or xy in {"AA", "DD"}

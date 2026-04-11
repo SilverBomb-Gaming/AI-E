@@ -104,6 +104,7 @@ class CapabilityEvaluator:
             "build.feature.status.read",
             "build.feature.apply.query",
             "build.feature.commit.query",
+            "build.feature.push.query",
             "build.plan.view.read",
             "build.plan.clear.read",
             "mode.read",

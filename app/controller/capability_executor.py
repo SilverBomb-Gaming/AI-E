@@ -323,6 +323,8 @@ class CapabilityExecutor:
             return self._execute_feature_apply(update=update, snapshot=snapshot)
         if command == "/featurecommit":
             return self._execute_feature_commit(update=update, snapshot=snapshot, argument=parsed_command.argument)
+        if command == "/featurepush":
+            return self._execute_feature_push(update=update, snapshot=snapshot, argument=parsed_command.argument)
         if command == "/run":
             return self._execute_run_command(update=update, snapshot=snapshot, argument=parsed_command.argument)
         if command == "/test":
@@ -2485,6 +2487,117 @@ class CapabilityExecutor:
             requester_label=update.sender_label,
         )
 
+    def _execute_feature_push(
+        self,
+        *,
+        update: TelegramInboundMessage,
+        snapshot: ControllerSnapshot,
+        argument: str,
+    ) -> CapabilityExecutionResult:
+        normalized_mode = (argument.strip().lower() or "preview")
+        if normalized_mode not in {"preview", "execute"}:
+            request, _, _, scope_failure = self._prepare_capability_request(
+                capability_id="build.feature.push.query",
+                snapshot=snapshot,
+                chat_id=update.chat_id,
+                requester_label=update.sender_label,
+                original_command="/featurepush",
+                parsed_arguments={"mode": normalized_mode},
+                metadata={"argument_summary": f"/featurepush {normalized_mode}".strip()},
+            )
+            if scope_failure is not None:
+                return scope_failure
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="feature_push_mode_invalid",
+                user_message="Unsupported feature push mode.\nNext: Use /featurepush [preview|execute].",
+                internal_summary=f"/featurepush rejected unsupported mode {normalized_mode}.",
+                retryable=False,
+                command_label="/featurepush",
+                activity_state="processing_command",
+            )
+        request, evaluation, context, scope_failure = self._prepare_capability_request(
+            capability_id="build.feature.push.query",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/featurepush",
+            parsed_arguments={"mode": normalized_mode},
+            metadata={"argument_summary": f"/featurepush {normalized_mode}".strip()},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        plan = self._service.build_feature_bundle_push_plan(chat_id=update.chat_id, mode=normalized_mode)
+        if normalized_mode == "preview":
+            return self._result(
+                request,
+                outcome="success",
+                reason_code="ok",
+                user_message=self._service.feature_bundle_push_preview_reply(plan=plan),
+                internal_summary=f"Returned bounded push preview with status {plan.status}.",
+                retryable=False,
+                command_label="/featurepush",
+                activity_state="processing_command",
+                telemetry={
+                    "feature_bundle_action": "push_preview",
+                    "feature_push_plan": plan.to_payload(),
+                },
+            )
+        if not plan.can_execute:
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="feature_push_not_ready",
+                user_message="\n".join(
+                    (
+                        self._service.feature_bundle_push_preview_reply(plan=plan),
+                        "Push execution is blocked until the readiness state is ready_to_push.",
+                    )
+                ),
+                internal_summary=f"/featurepush execute rejected because push status is {plan.status}.",
+                retryable=False,
+                command_label="/featurepush",
+                activity_state="processing_command",
+                telemetry={
+                    "feature_bundle_action": "push_execute_blocked",
+                    "feature_push_plan": plan.to_payload(),
+                },
+            )
+        request.metadata.update(
+            {
+                "confirmation_action_label": f"push branch {plan.branch} to {plan.remote_name}",
+                "confirmation_preview_lines": [
+                    f"Branch: {plan.branch}",
+                    f"Remote: {plan.remote_name}",
+                    f"Action: {plan.command_text}",
+                    f"Commit: {plan.commit_sha}",
+                ],
+                "confirmation_metadata": {
+                    "feature_push_branch": plan.branch,
+                    "feature_push_remote_name": plan.remote_name,
+                    "feature_push_command_text": plan.command_text,
+                    "feature_push_commit_sha": plan.commit_sha,
+                    "feature_push_status": plan.status,
+                    "feature_push_status_fingerprint": str(
+                        self._service.latest_feature_bundle_commit_receipt_for_chat(chat_id=update.chat_id).repo_status_fingerprint
+                        if self._service.latest_feature_bundle_commit_receipt_for_chat(chat_id=update.chat_id) is not None
+                        else ""
+                    ),
+                },
+            }
+        )
+        return self._confirmation_required_result(
+            request=request,
+            evaluation=evaluation,
+            context=context,
+            snapshot=snapshot,
+            prompt=plan.branch,
+            response_style="concise",
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+        )
+
     def _execute_confirmed_feature_bundle_apply(
         self,
         *,
@@ -2663,6 +2776,75 @@ class CapabilityExecutor:
                 "commit_sha": execution.commit_sha,
                 "commit_message": execution.commit_message,
                 "committed_paths": list(execution.committed_paths),
+            },
+        )
+
+    def _execute_confirmed_feature_bundle_push(
+        self,
+        *,
+        request: CapabilityExecutionRequest,
+        confirmation: PendingConfirmation,
+        chat_id: str,
+    ) -> CapabilityExecutionResult:
+        approved_branch = str(confirmation.metadata.get("feature_push_branch") or confirmation.prompt_text).strip()
+        approved_remote_name = str(confirmation.metadata.get("feature_push_remote_name") or "origin").strip()
+        approved_commit_sha = str(confirmation.metadata.get("feature_push_commit_sha") or "").strip()
+        approved_status_fingerprint = str(confirmation.metadata.get("feature_push_status_fingerprint") or "").strip()
+        try:
+            execution = self._service.execute_feature_bundle_push(
+                chat_id=chat_id,
+                expected_branch=approved_branch,
+                expected_commit=approved_commit_sha,
+                expected_status_fingerprint=approved_status_fingerprint,
+                expected_remote_name=approved_remote_name,
+            )
+        except Exception as exc:
+            code = getattr(exc, "code", "feature_push_failed")
+            message = getattr(exc, "message", str(exc))
+            return self._result(
+                request,
+                outcome="failed",
+                reason_code=code,
+                user_message="\n".join(
+                    (
+                        f"Branch {approved_branch or confirmation.confirmation_id} could not be pushed.",
+                        f"Reason: {message}",
+                        "Next: Use /featurepush preview to refresh the bounded push package.",
+                    )
+                ),
+                internal_summary=f"Confirmation {confirmation.confirmation_id} failed bounded push execution: {code}.",
+                retryable=True,
+                command_label="/confirm",
+                activity_state="provider_failed",
+                confirmation_used=True,
+            )
+        self._service._last_confirmation_result = (
+            f"Confirmation {confirmation.confirmation_id} approved and pushed {execution.branch} to {execution.remote_name}."
+        )
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message="\n".join(
+                (
+                    f"Confirmation {confirmation.confirmation_id} approved.",
+                    f"Branch: {execution.branch}",
+                    f"Remote: {execution.remote_name}",
+                    f"Action: {execution.command_text}",
+                    f"Commit: {execution.pushed_commit}",
+                )
+            ),
+            internal_summary=self._service._last_confirmation_result,
+            retryable=False,
+            command_label="/confirm",
+            activity_state="processing_command",
+            confirmation_used=True,
+            telemetry={
+                "feature_bundle_action": "push_execute",
+                "branch": execution.branch,
+                "remote_name": execution.remote_name,
+                "push_command": execution.command_text,
+                "commit_sha": execution.pushed_commit,
             },
         )
 
@@ -8722,6 +8904,12 @@ class CapabilityExecutor:
             )
         if confirmation.capability_id == "build.feature.commit.query":
             return self._execute_confirmed_feature_bundle_commit(
+                request=request,
+                confirmation=confirmation,
+                chat_id=chat_id,
+            )
+        if confirmation.capability_id == "build.feature.push.query":
+            return self._execute_confirmed_feature_bundle_push(
                 request=request,
                 confirmation=confirmation,
                 chat_id=chat_id,

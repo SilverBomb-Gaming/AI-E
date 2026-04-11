@@ -30,9 +30,10 @@ from .model_experiment_models import ModelExperimentRecord, normalize_adaptation
 from .model_experiment_runner import ModelExperimentError, ModelExperimentRunner
 from .model_experiment_store import ModelExperimentStore
 from .feature_bundle_formatter import FeatureBundleFormatter
-from .feature_bundle_models import FeatureBundleCommitPlan, FeatureBundleCompletionAdvisory, FeatureBundleRecord
+from .feature_bundle_models import FeatureBundleCommitPlan, FeatureBundleCommitReceipt, FeatureBundleCompletionAdvisory, FeatureBundlePushPlan, FeatureBundleRecord
 from .feature_bundle_store import FeatureBundleStore
 from .commit_execution import FeatureBundleCommitError, FeatureBundleCommitExecutionResult, FeatureBundleCommitExecutor
+from .push_execution import FeatureBundlePushError, FeatureBundlePushExecutionResult, FeatureBundlePushExecutor
 from .multi_file_feature_planner import FeaturePlanningDecision, MultiFileFeaturePlanner
 from .project_bootstrap_formatter import ProjectBootstrapFormatter
 from .project_bootstrap_planner import ProjectBootstrapPlanner
@@ -251,6 +252,7 @@ class ControllerService:
         self._feature_bundle_planner = MultiFileFeaturePlanner()
         self._feature_bundle_formatter = FeatureBundleFormatter()
         self._feature_commit_executor = FeatureBundleCommitExecutor()
+        self._feature_push_executor = FeatureBundlePushExecutor()
         self._plan_bridge = PlanBridge()
         self._plan_bridge_formatter = PlanBridgeFormatter(self._plan_bridge)
         self._autonomy_bundle = AutonomyBundle(self._plan_bridge)
@@ -321,6 +323,7 @@ class ControllerService:
         self._project_bootstrap_store = ProjectBootstrapStore()
         self._generated_project_store = GeneratedProjectStore()
         self._feature_bundle_store = FeatureBundleStore()
+        self._feature_bundle_commit_receipts: dict[str, FeatureBundleCommitReceipt] = {}
         self._last_run_store = LastRunStore()
         self._plan_bridge_store = PlanBridgeStore()
         self._autonomy_bundle_store = AutonomyBundleStore()
@@ -2450,6 +2453,9 @@ class ControllerService:
     def clear_active_feature_bundle(self, *, chat_id: str) -> FeatureBundleRecord | None:
         return self._feature_bundle_store.clear_active(chat_id=chat_id)
 
+    def latest_feature_bundle_commit_receipt_for_chat(self, *, chat_id: str) -> FeatureBundleCommitReceipt | None:
+        return self._feature_bundle_commit_receipts.get(chat_id)
+
     def plan_feature_bundle_for_chat(self, *, chat_id: str, prompt: str) -> FeaturePlanningDecision:
         decision = self._feature_bundle_planner.plan(
             bundle_id=self._generate_feature_bundle_id(),
@@ -2544,6 +2550,88 @@ class ControllerService:
             lines.append("Next: Resolve the blocked readiness condition before requesting /featurecommit execute.")
         return "\n".join(lines)
 
+    def build_feature_bundle_push_plan(
+        self,
+        *,
+        chat_id: str,
+        mode: str = "preview",
+    ) -> FeatureBundlePushPlan:
+        receipt = self.latest_feature_bundle_commit_receipt_for_chat(chat_id=chat_id)
+        normalized_mode = "execute" if str(mode).strip().lower() == "execute" else "preview"
+        if receipt is None:
+            return FeatureBundlePushPlan(
+                status="blocked",
+                mode=normalized_mode,
+                branch="",
+                remote_name="origin",
+                command_text="",
+                commit_sha="",
+                reason="No new commit to push.",
+            )
+        repo_root, repo_root_valid, repo_message, _ = self._repo_configuration_state()
+        if not repo_root_valid:
+            return FeatureBundlePushPlan(
+                status="blocked",
+                mode=normalized_mode,
+                branch=receipt.branch,
+                remote_name="origin",
+                command_text=self._feature_push_executor.build_push_command(remote_name="origin", branch=receipt.branch),
+                commit_sha=receipt.commit_sha,
+                reason=repo_message,
+            )
+        snapshot = self.inspect_repo_status()
+        remote_name = "origin"
+        command_text = self._feature_push_executor.build_push_command(remote_name=remote_name, branch=receipt.branch)
+        try:
+            branch, head_commit, command_text = self._feature_push_executor.validate_push_readiness(
+                repo_root,
+                expected_branch=receipt.branch,
+                expected_commit=receipt.commit_sha,
+                expected_status_fingerprint=receipt.repo_status_fingerprint,
+                remote_name=remote_name,
+            )
+        except FeatureBundlePushError as exc:
+            return FeatureBundlePushPlan(
+                status="blocked",
+                mode=normalized_mode,
+                branch=receipt.branch or snapshot.branch,
+                remote_name=remote_name,
+                command_text=command_text,
+                commit_sha=receipt.commit_sha,
+                reason=exc.message,
+            )
+        return FeatureBundlePushPlan(
+            status="ready_to_push",
+            mode=normalized_mode,
+            branch=branch,
+            remote_name=remote_name,
+            command_text=command_text,
+            commit_sha=head_commit,
+            reason="",
+        )
+
+    def feature_bundle_push_preview_reply(self, *, plan: FeatureBundlePushPlan) -> str:
+        lines = [
+            "[FEATURE PUSH]",
+            f"Status: {plan.status}",
+            f"Mode: {plan.mode}",
+        ]
+        if plan.branch:
+            lines.append(f"Branch: {plan.branch}")
+        if plan.remote_name:
+            lines.append(f"Remote: {plan.remote_name}")
+        if plan.command_text:
+            lines.append(f"Action: {plan.command_text}")
+        if plan.commit_sha:
+            lines.append(f"Commit: {plan.commit_sha}")
+        if plan.reason:
+            lines.append(f"Reason: {plan.reason}")
+        if plan.can_execute:
+            lines.append("Next: Use /featurepush execute to request one-shot approval for the bounded push.")
+        else:
+            lines.append("Next: Resolve the blocked push condition before requesting /featurepush execute.")
+        return "\n".join(lines)
+
     def execute_feature_bundle_commit(
         self,
         *,
@@ -2596,7 +2684,51 @@ class ControllerService:
             commit_message=plan.commit_message,
             expected_branch=expected_branch.strip() or plan.repo_branch,
         )
+        self._feature_bundle_commit_receipts[chat_id] = FeatureBundleCommitReceipt(
+            bundle_id=bundle.bundle_id,
+            branch=result.branch,
+            commit_sha=result.commit_sha,
+            commit_message=result.commit_message,
+            committed_paths=result.committed_paths,
+            repo_status_fingerprint=self._feature_push_executor.repo_status_fingerprint(repo_root),
+            committed_at=self._now_iso(),
+        )
         self.clear_active_feature_bundle(chat_id=chat_id)
+        return result
+
+    def execute_feature_bundle_push(
+        self,
+        *,
+        chat_id: str,
+        expected_branch: str,
+        expected_commit: str,
+        expected_status_fingerprint: str,
+        expected_remote_name: str,
+    ) -> FeatureBundlePushExecutionResult:
+        receipt = self.latest_feature_bundle_commit_receipt_for_chat(chat_id=chat_id)
+        if receipt is None:
+            raise FeatureBundlePushError("feature_push_receipt_missing", "No new commit to push.")
+        if receipt.branch != expected_branch.strip() or receipt.commit_sha != expected_commit.strip():
+            raise FeatureBundlePushError(
+                "feature_push_receipt_mismatch",
+                "The approved push target no longer matches the latest bounded commit receipt.",
+            )
+        if receipt.repo_status_fingerprint != expected_status_fingerprint.strip():
+            raise FeatureBundlePushError(
+                "feature_push_drifted",
+                "Repository state changed after push approval; refresh the push preview before pushing.",
+            )
+        repo_root, repo_root_valid, repo_message, _ = self._repo_configuration_state()
+        if not repo_root_valid:
+            raise FeatureBundlePushError("feature_push_repo_root_invalid", repo_message)
+        result = self._feature_push_executor.push_branch(
+            repo_root,
+            expected_branch=receipt.branch,
+            expected_commit=receipt.commit_sha,
+            expected_status_fingerprint=receipt.repo_status_fingerprint,
+            remote_name=expected_remote_name.strip() or "origin",
+        )
+        self._feature_bundle_commit_receipts.pop(chat_id, None)
         return result
 
     def attach_feature_bundle_completion_advisory(self, *, bundle: FeatureBundleRecord) -> FeatureBundleRecord:
