@@ -4,3 +4,5 @@ psutil==5.9.8
 pynput==1.7.7
 sounddevice==0.4.6
 mss==9.0.1
+requests==2.32.3
+beautifulsoup4==4.12.3

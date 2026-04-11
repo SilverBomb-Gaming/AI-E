@@ -1,0 +1,18 @@
+{
+  "default_usage_class": "retrieval_only",
+  "default_review_status": "approved",
+  "default_review_required": false,
+  "allow_local_files": true,
+  "local_file_usage_class": "evaluation_only",
+  "local_file_review_status": "approved",
+  "local_file_review_required": false,
+  "chunk_size": 500,
+  "timeout_seconds": 10,
+  "rate_limit_seconds": 1.0,
+  "provenance_requirements": [
+    "must retain original URL or local source path",
+    "must retain fetch or acquisition timestamp",
+    "must retain source identifier on every derived chunk",
+    "must preserve lineage into processed datasets and registry entries"
+  ]
+}
