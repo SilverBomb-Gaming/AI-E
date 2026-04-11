@@ -100,6 +100,19 @@ class LocalCliChatTests(unittest.TestCase):
             destination_path.parent.mkdir(parents=True, exist_ok=True)
             destination_path.write_text(source_path.read_text(encoding="utf-8"), encoding="utf-8")
 
+    @staticmethod
+    def _build_autonomous_dev_bundle_repo(root: Path) -> None:
+        source_root = Path(__file__).resolve().parents[1]
+        targets = (
+            (source_root / "app" / "controller" / "autonomous_dev_models.py", root / "app" / "controller" / "autonomous_dev_models.py"),
+            (source_root / "app" / "controller" / "feature_bundle_formatter.py", root / "app" / "controller" / "feature_bundle_formatter.py"),
+            (source_root / "tests" / "test_task_chains.py", root / "tests" / "test_task_chains.py"),
+            (source_root / "tests" / "test_cli_chat.py", root / "tests" / "test_cli_chat.py"),
+        )
+        for source_path, destination_path in targets:
+            destination_path.parent.mkdir(parents=True, exist_ok=True)
+            destination_path.write_text(source_path.read_text(encoding="utf-8"), encoding="utf-8")
+
     def _initialize_git_repo(self, root: Path) -> None:
         (root / "README.md").write_text("feature bundle fixture\n", encoding="utf-8")
         self._run_git(root, "init")
@@ -577,6 +590,29 @@ class LocalCliChatTests(unittest.TestCase):
             self.assertIn("[FEATURE BUNDLE]", joined)
             self.assertIn("Coding plan:", joined)
             self.assertIn("formatter_output_update", joined)
+            self.assertIn("Category: helper_extraction", joined)
+            self.assertIn("feature_bundle_formatter.py", joined)
+            self.assertIn("Extract commit summary line formatting", joined)
+
+    def test_cli_capability_wiring_request_clarifies_with_bounded_module_cluster(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "workspace"
+            root.mkdir(parents=True, exist_ok=True)
+            service, config_store, _ = self._make_service(tmp_dir=tmp)
+            self._configure_repo_root(service=service, config_store=config_store, root=root)
+            output: list[str] = []
+            cli = AiEChatCli(service=service, input_func=_PromptDriver(), output_func=output.append, debug=True)
+
+            self.assertTrue(
+                cli.handle_line("Add a new bounded controller capability and wire it through grammar, registry, executor, and tests.")
+            )
+
+            joined = "\n".join(output)
+            self.assertIn("Need clarification before planning that coding bundle.", joined)
+            self.assertIn("command_grammar.py", joined)
+            self.assertIn("capability_registry.py", joined)
+            self.assertIn("capability_executor.py", joined)
+            self.assertIn("what command or capability name should be wired", joined.lower())
 
     def test_cli_feature_pr_preview_and_conversational_dev_summary(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

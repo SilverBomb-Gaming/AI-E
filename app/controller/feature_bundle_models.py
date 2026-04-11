@@ -12,6 +12,11 @@ CodingTaskType = Literal[
     "model_field_extension",
     "formatter_output_update",
     "test_alignment_update",
+    "helper_extraction",
+    "capability_wiring_update",
+    "controller_state_alignment",
+    "formatter_model_executor_alignment",
+    "test_repair_alignment",
     "bounded_refactor",
 ]
 CodingTaskPlanStatus = Literal["proposal_ready", "needs_clarification"]
@@ -85,6 +90,36 @@ class FeatureValidationPlan:
 
 
 @dataclass(frozen=True)
+class CodingTaskFilePlan:
+    relative_path: str
+    reason: str
+    change_type: str
+    editable: bool
+    scope_confidence: float
+
+    def to_payload(self) -> dict[str, object]:
+        return {
+            "relative_path": self.relative_path,
+            "reason": self.reason,
+            "change_type": self.change_type,
+            "editable": self.editable,
+            "scope_confidence": round(self.scope_confidence, 2),
+        }
+
+    @staticmethod
+    def from_payload(payload: dict[str, object]) -> "CodingTaskFilePlan":
+        confidence = payload.get("scope_confidence")
+        numeric_confidence = float(confidence) if isinstance(confidence, (int, float)) else 0.0
+        return CodingTaskFilePlan(
+            relative_path=str(payload.get("relative_path", "")).strip(),
+            reason=str(payload.get("reason", "")).strip(),
+            change_type=str(payload.get("change_type", "")).strip(),
+            editable=bool(payload.get("editable", False)),
+            scope_confidence=numeric_confidence,
+        )
+
+
+@dataclass(frozen=True)
 class CodingTaskPlan:
     task_type: CodingTaskType
     status: CodingTaskPlanStatus
@@ -95,6 +130,9 @@ class CodingTaskPlan:
     validation_command: str
     clarification_needed: bool
     playtest_required: bool
+    task_category: str = ""
+    validation_rationale: str = ""
+    file_plans: tuple[CodingTaskFilePlan, ...] = ()
     clarification_question: str = ""
 
     def to_payload(self) -> dict[str, object]:
@@ -108,6 +146,9 @@ class CodingTaskPlan:
             "validation_command": self.validation_command,
             "clarification_needed": self.clarification_needed,
             "playtest_required": self.playtest_required,
+            "task_category": self.task_category,
+            "validation_rationale": self.validation_rationale,
+            "file_plans": [item.to_payload() for item in self.file_plans],
             "clarification_question": self.clarification_question,
         }
 
@@ -115,6 +156,7 @@ class CodingTaskPlan:
     def from_payload(payload: dict[str, object]) -> "CodingTaskPlan":
         target_files = payload.get("target_files")
         affected_tests = payload.get("affected_tests")
+        file_plans = payload.get("file_plans")
         return CodingTaskPlan(
             task_type=str(payload.get("task_type", "bounded_refactor")).strip() or "bounded_refactor",  # type: ignore[arg-type]
             status=str(payload.get("status", "proposal_ready")).strip() or "proposal_ready",  # type: ignore[arg-type]
@@ -125,6 +167,9 @@ class CodingTaskPlan:
             validation_command=str(payload.get("validation_command", "")).strip(),
             clarification_needed=bool(payload.get("clarification_needed", False)),
             playtest_required=bool(payload.get("playtest_required", False)),
+            task_category=str(payload.get("task_category", "")).strip(),
+            validation_rationale=str(payload.get("validation_rationale", "")).strip(),
+            file_plans=tuple(CodingTaskFilePlan.from_payload(item) for item in file_plans or () if isinstance(item, dict)),
             clarification_question=str(payload.get("clarification_question", "")).strip(),
         )
 

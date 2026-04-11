@@ -2,12 +2,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Literal
+from typing import Callable
 
-from .feature_bundle_models import CodingTaskPlan, FeatureBundleFile, FeatureBundleRecord, FeatureValidationPlan
+from .feature_bundle_models import (
+    CodingTaskFilePlan,
+    CodingTaskPlan,
+    FeatureBundleFile,
+    FeatureBundleRecord,
+    FeatureValidationPlan,
+)
+from .repo_task_routing import RepoTaskRoute, RepoTaskRouter
 
 
-CodingTaskPlanningKind = Literal["planned", "refused", "needs_clarification", "not_applicable"]
+CodingTaskPlanningKind = str
 
 
 @dataclass(frozen=True)
@@ -20,7 +27,10 @@ class CodingTaskPlanningDecision:
 
 
 class CodingTaskPlanner:
-    """Convert a narrow coding allowlist into bounded feature-bundle proposals."""
+    """Convert a bounded coding allowlist into grounded feature-bundle proposals."""
+
+    def __init__(self) -> None:
+        self._repo_task_router = RepoTaskRouter()
 
     def plan(
         self,
@@ -31,147 +41,102 @@ class CodingTaskPlanner:
         read_text: Callable[[str], str | None],
         path_exists: Callable[[str], bool],
     ) -> CodingTaskPlanningDecision:
-        lowered = " ".join(prompt.lower().replace(".", " ").replace(",", " ").split())
-        if not self._looks_like_coding_request(lowered):
+        route = self._repo_task_router.plan(prompt)
+        if route.kind == "not_applicable":
             return CodingTaskPlanningDecision(kind="not_applicable")
-        clarification_question = self._clarification_question(lowered)
-        if clarification_question:
+        if route.kind == "needs_clarification":
             return CodingTaskPlanningDecision(
                 kind="needs_clarification",
-                clarification_question=clarification_question,
-                next_step="Reply with the intended controller, formatter, model, or test surface so I can keep the coding bundle bounded.",
+                clarification_question=route.clarification_question,
+                next_step=route.next_step,
             )
-        if self._matches_commit_summary_helper_request(lowered):
-            bundle = self._plan_commit_summary_helper_bundle(
-                bundle_id=bundle_id,
-                prompt=prompt,
-                timestamp=timestamp,
-                read_text=read_text,
-                path_exists=path_exists,
+        bundle = self._build_bundle_from_route(
+            route=route,
+            bundle_id=bundle_id,
+            prompt=prompt,
+            timestamp=timestamp,
+            read_text=read_text,
+            path_exists=path_exists,
+        )
+        if bundle is None:
+            return CodingTaskPlanningDecision(
+                kind="refused",
+                refusal_reason="The bounded coding bundle could not be prepared because one or more required files were missing or changed unexpectedly.",
+                next_step="Use /file to inspect the targeted controller, formatter, model, or test files, then retry the bounded coding request.",
             )
-            if bundle is None:
-                return CodingTaskPlanningDecision(
-                    kind="refused",
-                    refusal_reason="The bounded coding bundle could not be prepared because one or more required files were missing or changed unexpectedly.",
-                    next_step="Use /file to inspect the formatter and task-chain files, then retry the bounded coding request.",
-                )
-            return CodingTaskPlanningDecision(kind="planned", bundle=bundle)
-        return CodingTaskPlanningDecision(
-            kind="refused",
-            refusal_reason="That coding request is outside the current bounded coding allowlist.",
-            next_step="Tighten the request to a supported slice such as 'Add a helper that formats feature bundle commit summaries and update the related tests.'",
-        )
+        return CodingTaskPlanningDecision(kind="planned", bundle=bundle)
 
-    @staticmethod
-    def _looks_like_coding_request(prompt: str) -> bool:
-        primary_markers = (
-            "helper",
-            "function",
-            "method",
-            "formatter",
-            "controller",
-            "model field",
-            "refactor",
-            "code",
-            "coding",
-            "extend",
-        )
-        if any(marker in prompt for marker in primary_markers):
-            return True
-        if "bundle logic" in prompt:
-            return True
-        if "related tests" in prompt or "update tests" in prompt:
-            return True
-        return False
-
-    @staticmethod
-    def _clarification_question(prompt: str) -> str:
-        if prompt in {"update the bundle logic", "update bundle logic", "update the bundle", "update bundle"}:
-            return "Which bundle behavior should be updated: apply, validation tracking, commit prep, or push flow?"
-        if "controller" in prompt and "feature bundle" in prompt and "formatter" not in prompt and "tests" not in prompt:
-            return "Which controller should I extend, and should this update also change tests?"
-        if "refactor" in prompt and "tests" not in prompt and "behavior" not in prompt:
-            return "Is this a refactor only, or should the bounded coding bundle also update behavior and tests?"
-        return ""
-
-    @staticmethod
-    def _matches_commit_summary_helper_request(prompt: str) -> bool:
-        has_helper = "helper" in prompt or "format" in prompt or "formatter" in prompt
-        has_commit_summary = "feature bundle commit summar" in prompt
-        has_tests = "test" in prompt
-        return has_helper and has_commit_summary and has_tests
-
-    def _plan_commit_summary_helper_bundle(
+    def _build_bundle_from_route(
         self,
         *,
+        route: RepoTaskRoute,
         bundle_id: str,
         prompt: str,
         timestamp: str,
         read_text: Callable[[str], str | None],
         path_exists: Callable[[str], bool],
     ) -> FeatureBundleRecord | None:
-        formatter_text = read_text("app/controller/feature_bundle_formatter.py")
-        task_chain_tests = read_text("tests/test_task_chains.py")
-        if formatter_text is None or task_chain_tests is None or not path_exists("app/controller/feature_bundle_models.py"):
+        patch_arguments: dict[str, str] = {}
+        if route.route_key == "commit_summary_helper":
+            patch_arguments = self._build_commit_summary_helper_patches(read_text=read_text, path_exists=path_exists)
+        elif route.route_key == "autonomous_dev_step_refactor":
+            patch_arguments = self._build_autonomous_dev_refactor_patches(read_text=read_text, path_exists=path_exists)
+        else:
             return None
-        formatter_patch = self._build_formatter_patch(formatter_text)
-        tests_patch = self._build_task_chain_tests_patch(task_chain_tests)
-        if formatter_patch is None or tests_patch is None:
+        if patch_arguments is None:
             return None
+        files: list[FeatureBundleFile] = []
+        for item in route.files:
+            if not path_exists(item.relative_path):
+                return None
+            patch_argument = patch_arguments.get(item.relative_path, "")
+            if item.editable and not patch_argument:
+                return None
+            files.append(
+                FeatureBundleFile(
+                    relative_path=item.relative_path,
+                    inclusion_reason=item.inclusion_reason,
+                    change_summary=item.change_type,
+                    editable=item.editable,
+                    scope_confidence=item.scope_confidence,
+                    patch_argument=patch_argument,
+                )
+            )
         coding_plan = CodingTaskPlan(
-            task_type="formatter_output_update",
+            task_type=route.task_type,
             status="proposal_ready",
-            target_files=("app/controller/feature_bundle_formatter.py", "tests/test_task_chains.py"),
-            intended_change_type="Add a helper that formats feature bundle commit summary lines and align the task-chain coverage.",
-            expected_test_impact="Feature bundle status coverage gains an explicit commit-prep-reason assertion without widening runtime scope.",
-            affected_tests=("tests/test_task_chains.py",),
-            validation_command="python -m pytest tests/test_task_chains.py",
+            target_files=tuple(item.relative_path for item in route.files),
+            intended_change_type=route.intended_outcome,
+            expected_test_impact=route.expected_test_impact,
+            affected_tests=route.affected_tests,
+            validation_command=route.validation_command,
             clarification_needed=False,
-            playtest_required=False,
-        )
-        files = (
-            FeatureBundleFile(
-                relative_path="app/controller/feature_bundle_models.py",
-                inclusion_reason="Model metadata anchors the bounded coding surface without mutating it in this recipe.",
-                change_summary="Keep the coding bundle scoped to formatter output and task-chain coverage.",
-                editable=False,
-                scope_confidence=0.68,
-            ),
-            FeatureBundleFile(
-                relative_path="app/controller/feature_bundle_formatter.py",
-                inclusion_reason="Formatter commit summary lines are the direct implementation surface for this helper extraction.",
-                change_summary="Extract commit summary line formatting into a dedicated helper used by completion advisory rendering.",
-                editable=True,
-                scope_confidence=0.97,
-                patch_argument=formatter_patch,
-            ),
-            FeatureBundleFile(
-                relative_path="tests/test_task_chains.py",
-                inclusion_reason="Task-chain feature bundle assertions are the focused regression surface for this formatter change.",
-                change_summary="Add a bounded assertion for the commit prep reason line to keep formatter output covered.",
-                editable=True,
-                scope_confidence=0.95,
-                patch_argument=tests_patch,
+            playtest_required=route.playtest_required,
+            task_category=route.task_category,
+            validation_rationale=route.validation_rationale,
+            file_plans=tuple(
+                CodingTaskFilePlan(
+                    relative_path=item.relative_path,
+                    reason=item.inclusion_reason,
+                    change_type=item.change_type,
+                    editable=item.editable,
+                    scope_confidence=item.scope_confidence,
+                )
+                for item in route.files
             ),
         )
         return FeatureBundleRecord(
             bundle_id=bundle_id,
             feature_request=prompt,
-            feature_title="Add helper for feature bundle commit summary formatting",
-            intended_outcome="Extract bounded formatter logic for feature bundle commit summaries and keep the existing task-chain coverage aligned.",
-            bundle_summary="Bounded coding bundle for formatter output refinement plus focused regression alignment.",
-            files=files,
-            assumptions=(
-                "The change remains inside the existing formatter and task-chain surfaces.",
-                "The helper extraction should not alter feature-bundle apply, commit, or push behavior.",
-            ),
-            risk_notes=(
-                "The coding bundle is patch-based and fails closed if the formatter or test snippets drift.",
-                "No runtime playtest is required because the change is formatter-only and covered by existing task-chain assertions.",
-            ),
+            feature_title=route.feature_title,
+            intended_outcome=route.intended_outcome,
+            bundle_summary=route.bundle_summary,
+            files=tuple(files),
+            assumptions=route.assumptions,
+            risk_notes=route.risk_notes,
             validation_plan=FeatureValidationPlan(
-                command_text="python -m pytest tests/test_task_chains.py",
-                rationale="The bounded coding change only affects formatter output and task-chain feature-bundle assertions.",
+                command_text=route.validation_command,
+                rationale=route.validation_rationale,
             ),
             state="proposed",
             validation_state="not_run",
@@ -180,6 +145,51 @@ class CodingTaskPlanner:
             approval_required=True,
             coding_task_plan=coding_plan,
         )
+
+    def _build_commit_summary_helper_patches(
+        self,
+        *,
+        read_text: Callable[[str], str | None],
+        path_exists: Callable[[str], bool],
+    ) -> dict[str, str] | None:
+        formatter_path = "app/controller/feature_bundle_formatter.py"
+        tests_path = "tests/test_task_chains.py"
+        if not path_exists("app/controller/feature_bundle_models.py") or not path_exists(formatter_path) or not path_exists(tests_path):
+            return None
+        formatter_text = read_text(formatter_path)
+        task_chain_tests = read_text(tests_path)
+        if formatter_text is None or task_chain_tests is None:
+            return None
+        formatter_patch = self._build_formatter_patch(formatter_text)
+        tests_patch = self._build_task_chain_tests_patch(task_chain_tests)
+        if formatter_patch is None or tests_patch is None:
+            return None
+        return {
+            formatter_path: formatter_patch,
+            tests_path: tests_patch,
+        }
+
+    def _build_autonomous_dev_refactor_patches(
+        self,
+        *,
+        read_text: Callable[[str], str | None],
+        path_exists: Callable[[str], bool],
+    ) -> dict[str, str] | None:
+        required_paths = (
+            "app/controller/autonomous_dev_models.py",
+            "app/controller/feature_bundle_formatter.py",
+            "tests/test_task_chains.py",
+            "tests/test_cli_chat.py",
+        )
+        if any(not path_exists(relative_path) for relative_path in required_paths):
+            return None
+        formatter_text = read_text("app/controller/feature_bundle_formatter.py")
+        if formatter_text is None:
+            return None
+        formatter_patch = self._build_autonomous_formatter_patch(formatter_text)
+        if formatter_patch is None:
+            return None
+        return {"app/controller/feature_bundle_formatter.py": formatter_patch}
 
     def _build_formatter_patch(self, current_text: str) -> str | None:
         replacements = (
@@ -209,6 +219,24 @@ class CodingTaskPlanner:
         return self._build_patch_argument(
             relative_path="tests/test_task_chains.py",
             operator_reason="align task-chain coverage with commit summary helper extraction",
+            current_text=current_text,
+            replacements=replacements,
+        )
+
+    def _build_autonomous_formatter_patch(self, current_text: str) -> str | None:
+        replacements = (
+            (
+                "            for step in chain.steps:\n                lines.append(\n                    f\"- {step.name}: {step.status} | confirmation={'yes' if step.confirmation_required else 'no'} | eligible={'yes' if step.next_step_eligible else 'no'}\"\n                )\n                if step.prerequisites:\n                    lines.append(f\"  Prerequisites: {', '.join(step.prerequisites)}\")\n                if step.result_summary:\n                    lines.append(f\"  Result: {step.result_summary}\")\n",
+                "            for step in chain.steps:\n                lines.extend(FeatureBundleFormatter._autonomous_dev_step_lines(step))\n",
+            ),
+            (
+                "    def format_no_autonomous_dev_chain(self) -> str:\n",
+                "    @staticmethod\n    def _autonomous_dev_step_lines(step) -> tuple[str, ...]:\n        lines = [\n            f\"- {step.name}: {step.status} | confirmation={'yes' if step.confirmation_required else 'no'} | eligible={'yes' if step.next_step_eligible else 'no'}\"\n        ]\n        if step.prerequisites:\n            lines.append(f\"  Prerequisites: {', '.join(step.prerequisites)}\")\n        if step.result_summary:\n            lines.append(f\"  Result: {step.result_summary}\")\n        return tuple(lines)\n\n    def format_no_autonomous_dev_chain(self) -> str:\n",
+            ),
+        )
+        return self._build_patch_argument(
+            relative_path="app/controller/feature_bundle_formatter.py",
+            operator_reason="extract autonomous dev loop step formatting helper",
             current_text=current_text,
             replacements=replacements,
         )

@@ -174,17 +174,28 @@ class FeatureBundleFormatter:
             (
                 "Coding plan:",
                 f"- Type: {plan.task_type}",
+                f"- Category: {plan.task_category or plan.task_type}",
                 f"- Status: {plan.status}",
                 f"- Change: {plan.intended_change_type}",
                 f"- Test impact: {plan.expected_test_impact}",
                 f"- Validation: {plan.validation_command}",
                 f"- Playtest required: {'yes' if plan.playtest_required else 'no'}",
+                f"- Clarification needed: {'yes' if plan.clarification_needed else 'no'}",
             )
         )
         if plan.target_files:
             lines.append(f"- Targets: {', '.join(plan.target_files)}")
         if plan.affected_tests:
             lines.append(f"- Tests: {', '.join(plan.affected_tests)}")
+        if plan.validation_rationale:
+            lines.append(f"- Validation why: {plan.validation_rationale}")
+        if plan.file_plans:
+            lines.append("- File plan:")
+            for file_plan in plan.file_plans:
+                mode = "edit" if file_plan.editable else "context"
+                lines.append(f"  - {file_plan.relative_path} [{mode}, {file_plan.scope_confidence:.2f}]")
+                lines.append(f"    Change: {file_plan.change_type}")
+                lines.append(f"    Reason: {file_plan.reason}")
         if plan.clarification_needed and plan.clarification_question:
             lines.append(f"- Clarification: {plan.clarification_question}")
 

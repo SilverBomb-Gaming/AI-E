@@ -85,6 +85,19 @@ class TaskChainTests(unittest.TestCase):
             destination_path.parent.mkdir(parents=True, exist_ok=True)
             destination_path.write_text(source_path.read_text(encoding="utf-8"), encoding="utf-8")
 
+    @staticmethod
+    def _build_autonomous_dev_bundle_repo(root: Path) -> None:
+        source_root = Path(__file__).resolve().parents[1]
+        targets = (
+            (source_root / "app" / "controller" / "autonomous_dev_models.py", root / "app" / "controller" / "autonomous_dev_models.py"),
+            (source_root / "app" / "controller" / "feature_bundle_formatter.py", root / "app" / "controller" / "feature_bundle_formatter.py"),
+            (source_root / "tests" / "test_task_chains.py", root / "tests" / "test_task_chains.py"),
+            (source_root / "tests" / "test_cli_chat.py", root / "tests" / "test_cli_chat.py"),
+        )
+        for source_path, destination_path in targets:
+            destination_path.parent.mkdir(parents=True, exist_ok=True)
+            destination_path.write_text(source_path.read_text(encoding="utf-8"), encoding="utf-8")
+
     def _initialize_git_repo(self, root: Path) -> None:
         (root / "README.md").write_text("feature bundle fixture\n", encoding="utf-8")
         self._run_git(root, "init")
@@ -350,12 +363,21 @@ class TaskChainTests(unittest.TestCase):
             self.assertEqual(bundle.coding_task_plan.status, "proposal_ready")
             self.assertEqual(
                 bundle.coding_task_plan.target_files,
-                ("app/controller/feature_bundle_formatter.py", "tests/test_task_chains.py"),
+                (
+                    "app/controller/feature_bundle_models.py",
+                    "app/controller/feature_bundle_formatter.py",
+                    "tests/test_task_chains.py",
+                ),
             )
+            self.assertEqual(bundle.coding_task_plan.task_category, "helper_extraction")
             self.assertEqual(bundle.coding_task_plan.validation_command, "python -m pytest tests/test_task_chains.py")
             self.assertFalse(bundle.coding_task_plan.playtest_required)
+            self.assertEqual(len(bundle.coding_task_plan.file_plans), 3)
             self.assertIn("Coding plan:", planned.user_message)
             self.assertIn("formatter_output_update", planned.user_message)
+            self.assertIn("Category: helper_extraction", planned.user_message)
+            self.assertIn("feature_bundle_formatter.py", planned.user_message)
+            self.assertIn("Extract commit summary line formatting", planned.user_message)
 
     def test_bounded_coding_request_clarifies_instead_of_guessing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -371,6 +393,79 @@ class TaskChainTests(unittest.TestCase):
             self.assertEqual(clarification.outcome_reason_code, "needs_clarification")
             self.assertIn("Which bundle behavior should be updated", clarification.user_message)
             self.assertIsNone(service.active_feature_bundle_for_chat(chat_id="local-cli"))
+
+    def test_capability_wiring_request_clarifies_with_bounded_module_cluster(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "workspace"
+            root.mkdir(parents=True, exist_ok=True)
+            service, config_store, _ = self._make_service(tmp_dir=tmp)
+            self._configure_repo_root(service=service, config_store=config_store, root=root)
+
+            clarification = service.execute_local_chat_input(
+                text="Add a new bounded controller capability and wire it through grammar, registry, executor, and tests."
+            )
+
+            self.assertEqual(clarification.outcome, "success")
+            self.assertEqual(clarification.outcome_reason_code, "needs_clarification")
+            self.assertIn("command_grammar.py", clarification.user_message)
+            self.assertIn("capability_registry.py", clarification.user_message)
+            self.assertIn("capability_executor.py", clarification.user_message)
+            self.assertIn("what command or capability name should be wired", clarification.user_message.lower())
+            self.assertIsNone(service.active_feature_bundle_for_chat(chat_id="local-cli"))
+
+    def test_autonomous_dev_refactor_request_becomes_structured_bundle_proposal(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "workspace"
+            root.mkdir(parents=True, exist_ok=True)
+            self._build_autonomous_dev_bundle_repo(root)
+            service, config_store, _ = self._make_service(tmp_dir=tmp)
+            self._configure_repo_root(service=service, config_store=config_store, root=root)
+
+            planned = service.execute_local_chat_input(
+                text="Refactor the autonomous dev loop step formatting into a helper and keep the task-chain and CLI tests aligned."
+            )
+
+            self.assertEqual(planned.outcome, "success")
+            bundle = service.active_feature_bundle_for_chat(chat_id="local-cli")
+            self.assertIsNotNone(bundle)
+            self.assertIsNotNone(bundle.coding_task_plan)
+            self.assertEqual(bundle.coding_task_plan.task_type, "bounded_refactor")
+            self.assertEqual(bundle.coding_task_plan.task_category, "autonomous_dev_loop_refactor")
+            self.assertEqual(
+                bundle.coding_task_plan.target_files,
+                (
+                    "app/controller/autonomous_dev_models.py",
+                    "app/controller/feature_bundle_formatter.py",
+                    "tests/test_task_chains.py",
+                    "tests/test_cli_chat.py",
+                ),
+            )
+            self.assertEqual(
+                bundle.coding_task_plan.validation_command,
+                "python -m pytest tests/test_task_chains.py tests/test_cli_chat.py",
+            )
+            self.assertEqual(
+                bundle.coding_task_plan.affected_tests,
+                ("tests/test_task_chains.py", "tests/test_cli_chat.py"),
+            )
+            self.assertIn("bounded_refactor", planned.user_message)
+            self.assertIn("autonomous_dev_loop_refactor", planned.user_message)
+            self.assertIn("feature_bundle_formatter.py", planned.user_message)
+            self.assertIn("tests/test_cli_chat.py", planned.user_message)
+
+    def test_dev_loop_refactor_clarifies_scope_instead_of_guessing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "workspace"
+            root.mkdir(parents=True, exist_ok=True)
+            service, config_store, _ = self._make_service(tmp_dir=tmp)
+            self._configure_repo_root(service=service, config_store=config_store, root=root)
+
+            clarification = service.execute_local_chat_input(text="Refactor the dev loop.")
+
+            self.assertEqual(clarification.outcome, "success")
+            self.assertEqual(clarification.outcome_reason_code, "needs_clarification")
+            self.assertIn("autonomous-dev loop only", clarification.user_message)
+            self.assertIn("commit/push/PR planning and tests", clarification.user_message)
 
     def test_bounded_coding_bundle_apply_flow_reuses_existing_feature_bundle_execution(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -401,6 +496,34 @@ class TaskChainTests(unittest.TestCase):
             updated_tests = (root / "tests" / "test_task_chains.py").read_text(encoding="utf-8")
             self.assertIn("def _commit_summary_lines", updated_formatter)
             self.assertIn("Commit prep reason:", updated_tests)
+
+    def test_autonomous_dev_refactor_bundle_apply_flow_reuses_existing_feature_bundle_execution(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "workspace"
+            root.mkdir(parents=True, exist_ok=True)
+            self._build_autonomous_dev_bundle_repo(root)
+            self._initialize_clean_git_repo(root)
+            service, config_store, _ = self._make_service(tmp_dir=tmp)
+            self._configure_repo_root(service=service, config_store=config_store, root=root)
+
+            planned = service.execute_local_chat_input(
+                text="Refactor the autonomous dev loop step formatting into a helper and keep the task-chain and CLI tests aligned."
+            )
+            self.assertEqual(planned.outcome, "success")
+            bundle = service.active_feature_bundle_for_chat(chat_id="local-cli")
+            self.assertIsNotNone(bundle)
+            self.assertEqual(bundle.state, "proposed")
+
+            apply_request = service.execute_local_chat_input(text="apply it")
+            self.assertEqual(apply_request.outcome, "confirmation_required")
+            confirmation = service.latest_pending_confirmation_for_chat(chat_id="local-cli")
+            self.assertIsNotNone(confirmation)
+
+            apply_result = service.execute_local_chat_input(text=f"/confirm {confirmation.confirmation_id}")
+            self.assertEqual(apply_result.outcome, "success")
+
+            updated_formatter = (root / "app" / "controller" / "feature_bundle_formatter.py").read_text(encoding="utf-8")
+            self.assertIn("def _autonomous_dev_step_lines", updated_formatter)
 
     def test_commit_preparation_marks_validated_controller_change_safe_to_commit(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
