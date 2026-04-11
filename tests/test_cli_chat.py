@@ -31,6 +31,15 @@ class _PromptDriver:
 
 
 class LocalCliChatTests(unittest.TestCase):
+    def _run_git(self, repo_root: Path, *args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["git", *args],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+
     def _make_service(
         self,
         *,
@@ -90,6 +99,26 @@ class LocalCliChatTests(unittest.TestCase):
         for source_path, destination_path in targets:
             destination_path.parent.mkdir(parents=True, exist_ok=True)
             destination_path.write_text(source_path.read_text(encoding="utf-8"), encoding="utf-8")
+
+    def _initialize_git_repo(self, root: Path) -> None:
+        (root / "README.md").write_text("feature bundle fixture\n", encoding="utf-8")
+        self._run_git(root, "init")
+        self._run_git(root, "config", "user.name", "Test User")
+        self._run_git(root, "config", "user.email", "test@example.com")
+        self._run_git(root, "add", ".")
+        self._run_git(root, "commit", "-m", "Initial feature bundle fixture")
+        (root / "README.md").write_text("feature bundle fixture\nunrelated docs change\n", encoding="utf-8")
+
+    def _create_bare_remote(self, root: Path, name: str = "origin") -> Path:
+        remote_root = root.parent / f"{name}.git"
+        subprocess.run(
+            ["git", "init", "--bare", str(remote_root)],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        self._run_git(root, "remote", "add", name, str(remote_root))
+        return remote_root
 
     def test_cli_debug_shows_shared_status_routing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -271,6 +300,80 @@ class LocalCliChatTests(unittest.TestCase):
             self.assertIn("Confirmation", joined)
             self.assertIn("[TASK CHAIN STATUS]", joined)
             self.assertIn("[TASK CHAIN STEPS]", joined)
+
+    def test_cli_conversational_autonomous_dev_status_and_stop(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "workspace"
+            root.mkdir(parents=True, exist_ok=True)
+            self._build_feature_bundle_repo(root)
+            self._initialize_git_repo(root)
+
+            service, config_store, _ = self._make_service(tmp_dir=tmp)
+            self._configure_repo_root(service=service, config_store=config_store, root=root)
+            self.assertEqual(
+                service.execute_local_chat_input(
+                    text="show feature bundle id in the cli debug output then finish the workflow"
+                ).outcome,
+                "confirmation_required",
+            )
+
+            output: list[str] = []
+            cli = AiEChatCli(service=service, input_func=_PromptDriver(), output_func=output.append, debug=True)
+
+            self.assertTrue(cli.handle_line("What step is AI-E on?"))
+            self.assertTrue(cli.handle_line("stop here"))
+
+            joined = "\n".join(output)
+            self.assertIn("Current step: feature_apply", joined)
+            self.assertIn("Stopping the bounded autonomous dev chain", joined)
+            self.assertIn("[AUTONOMOUS DEV LOOP]", joined)
+            chain = service.active_autonomous_dev_chain_for_chat(chat_id="local-cli")
+            self.assertIsNotNone(chain)
+            self.assertEqual(chain.status, "stopped")
+
+    def test_cli_conversational_autonomous_dev_resume_routes_to_commit_boundary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "workspace"
+            root.mkdir(parents=True, exist_ok=True)
+            self._build_coding_feature_bundle_repo(root)
+            self._initialize_git_repo(root)
+            self._create_bare_remote(root)
+            runner = _FakeCommandRunner(
+                subprocess.CompletedProcess(
+                    ["python", "-m", "pytest", "tests/test_task_chains.py"],
+                    0,
+                    "1 passed\n",
+                    "",
+                ),
+            )
+            service, config_store, _ = self._make_service(tmp_dir=tmp, command_runner=runner)
+            self._configure_repo_root(service=service, config_store=config_store, root=root)
+            self.assertEqual(
+                service.execute_local_chat_input(
+                    text="Add a helper that formats feature bundle commit summaries and update the related tests, then finish the workflow"
+                ).outcome,
+                "confirmation_required",
+            )
+            apply_confirmation = service.latest_pending_confirmation_for_chat(chat_id="local-cli")
+            self.assertIsNotNone(apply_confirmation)
+            self.assertEqual(
+                service.execute_local_chat_input(text=f"/confirm {apply_confirmation.confirmation_id}").outcome,
+                "success",
+            )
+
+            output: list[str] = []
+            cli = AiEChatCli(service=service, input_func=_PromptDriver(), output_func=output.append, debug=True)
+
+            self.assertTrue(cli.handle_line("resume the chain"))
+
+            joined = "\n".join(output)
+            self.assertIn("Resuming the bounded autonomous dev chain.", joined)
+            self.assertIn("[CONFIRMATION REQUIRED]", joined)
+            self.assertIn("Action: commit feature bundle", joined)
+            chain = service.active_autonomous_dev_chain_for_chat(chat_id="local-cli")
+            self.assertIsNotNone(chain)
+            self.assertEqual(chain.status, "awaiting_confirmation")
+            self.assertEqual(chain.current_step, "commit_execute")
 
     def test_cli_fallback_does_not_crash_on_ambiguous_input(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

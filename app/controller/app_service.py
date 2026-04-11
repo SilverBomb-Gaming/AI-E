@@ -14,6 +14,8 @@ from urllib.parse import urlparse
 
 from .audit_models import AuditRecord
 from .audit_store import AuditStore
+from .autonomous_dev_loop import AutonomousDevLoop
+from .autonomous_dev_models import AutonomousDevAdvanceDecision, AutonomousDevChainRecord, AutonomousDevPlanningDecision, AutonomousDevValidationResult
 from .autonomy_bundle import AutonomyBundle
 from .autonomy_bundle_formatter import AutonomyBundleFormatter
 from .autonomy_bundle_store import AutonomyBundleStore
@@ -158,6 +160,7 @@ _LOOP_ACTION_CAPABILITIES = frozenset(
         "build.bootstrap.propose.read",
         "build.bootstrap.approve.query",
         "build.bootstrap.reset.query",
+        "build.autonomous.dev.query",
         "shell.command.run",
         "test.command.run",
     }
@@ -252,6 +255,7 @@ class ControllerService:
         self._project_bootstrap_planner = ProjectBootstrapPlanner()
         self._project_bootstrap_formatter = ProjectBootstrapFormatter()
         self._feature_bundle_planner = MultiFileFeaturePlanner()
+        self._autonomous_dev_loop = AutonomousDevLoop()
         self._feature_bundle_formatter = FeatureBundleFormatter()
         self._feature_commit_executor = FeatureBundleCommitExecutor()
         self._feature_push_executor = FeatureBundlePushExecutor()
@@ -329,6 +333,7 @@ class ControllerService:
         self._feature_bundle_store = FeatureBundleStore()
         self._feature_bundle_commit_receipts: dict[str, FeatureBundleCommitReceipt] = {}
         self._feature_bundle_milestones: dict[str, FeatureBundleMilestoneRecord] = {}
+        self._autonomous_dev_chains: dict[str, AutonomousDevChainRecord] = {}
         self._last_run_store = LastRunStore()
         self._plan_bridge_store = PlanBridgeStore()
         self._autonomy_bundle_store = AutonomyBundleStore()
@@ -2452,6 +2457,9 @@ class ControllerService:
     def active_feature_bundle_for_chat(self, *, chat_id: str) -> FeatureBundleRecord | None:
         return self._feature_bundle_store.get_active(chat_id=chat_id)
 
+    def active_autonomous_dev_chain_for_chat(self, *, chat_id: str) -> AutonomousDevChainRecord | None:
+        return self._autonomous_dev_chains.get(chat_id)
+
     def set_active_feature_bundle(self, *, chat_id: str, bundle: FeatureBundleRecord) -> None:
         self._feature_bundle_store.set_active(chat_id=chat_id, bundle=bundle)
 
@@ -2463,6 +2471,194 @@ class ControllerService:
 
     def latest_feature_bundle_milestone_for_chat(self, *, chat_id: str) -> FeatureBundleMilestoneRecord | None:
         return self._feature_bundle_milestones.get(chat_id)
+
+    def plan_autonomous_dev_chain_for_chat(self, *, chat_id: str, prompt: str) -> tuple[AutonomousDevPlanningDecision, FeaturePlanningDecision | None]:
+        planning = self._autonomous_dev_loop.plan_request(prompt=prompt, active_chain=self.active_autonomous_dev_chain_for_chat(chat_id=chat_id))
+        if planning.kind != "planned":
+            return planning, None
+        feature_decision = self._feature_bundle_planner.plan(
+            bundle_id=self._generate_feature_bundle_id(),
+            prompt=planning.cleaned_prompt,
+            timestamp=self._now_iso(),
+            read_text=self._read_repo_text_for_feature_planner,
+            path_exists=self._repo_path_exists_for_feature_planner,
+        )
+        if feature_decision.bundle is not None:
+            self._feature_bundle_store.set_active(chat_id=chat_id, bundle=feature_decision.bundle)
+            self._autonomous_dev_chains[chat_id] = self._autonomous_dev_loop.build_chain(
+                chain_id=self._generate_autonomous_dev_chain_id(),
+                prompt=prompt,
+                cleaned_prompt=planning.cleaned_prompt,
+                bundle=feature_decision.bundle,
+                timestamp=self._now_iso(),
+            )
+        return planning, feature_decision
+
+    def autonomous_dev_chain_status_reply(self, *, chat_id: str, include_plan: bool = False) -> str:
+        chain = self.active_autonomous_dev_chain_for_chat(chat_id=chat_id)
+        if chain is None:
+            return self._feature_bundle_formatter.format_no_autonomous_dev_chain()
+        return self._feature_bundle_formatter.format_autonomous_dev_chain(chain, include_plan=include_plan)
+
+    def stop_autonomous_dev_chain(self, *, chat_id: str, reason: str) -> AutonomousDevChainRecord | None:
+        chain = self.active_autonomous_dev_chain_for_chat(chat_id=chat_id)
+        if chain is None:
+            return None
+        pending = self.latest_pending_confirmation_for_chat(chat_id=chat_id)
+        if pending is not None and str(pending.metadata.get("autonomous_dev_chain_id") or "").strip() == chain.chain_id:
+            self._confirmation_store.expire(pending.confirmation_id)
+        updated = self._autonomous_dev_loop.mark_stopped(chain, reason=reason, updated_at=self._now_iso())
+        self._autonomous_dev_chains[chat_id] = updated
+        return updated
+
+    def resume_autonomous_dev_chain(self, *, chat_id: str) -> AutonomousDevAdvanceDecision:
+        chain = self.active_autonomous_dev_chain_for_chat(chat_id=chat_id)
+        if chain is None:
+            return AutonomousDevAdvanceDecision(
+                matched=False,
+                reply=self._feature_bundle_formatter.format_no_autonomous_dev_chain(),
+                summary="No active autonomous dev chain.",
+            )
+        if chain.status == "stopped":
+            return AutonomousDevAdvanceDecision(matched=True, chain=chain, reply=self.autonomous_dev_chain_status_reply(chat_id=chat_id, include_plan=False), summary="Autonomous dev chain is stopped.")
+        if chain.status == "completed":
+            return AutonomousDevAdvanceDecision(matched=True, chain=chain, reply=self.autonomous_dev_chain_status_reply(chat_id=chat_id, include_plan=True), summary="Autonomous dev chain already completed.")
+        pending = self.latest_pending_confirmation_for_chat(chat_id=chat_id)
+        if pending is not None and str(pending.metadata.get("autonomous_dev_chain_id") or "").strip() == chain.chain_id:
+            return AutonomousDevAdvanceDecision(
+                matched=True,
+                chain=chain,
+                reply="\n".join((self.autonomous_dev_chain_status_reply(chat_id=chat_id, include_plan=False), f"Awaiting confirmation: {pending.confirmation_id}")),
+                summary="Autonomous dev chain is waiting for a pending confirmation.",
+            )
+        while True:
+            chain = self.active_autonomous_dev_chain_for_chat(chat_id=chat_id) or chain
+            step_name = chain.current_step
+            routed_command = self._autonomous_dev_loop.next_command_for_step(step_name)
+            if routed_command:
+                updated = self._autonomous_dev_loop.mark_awaiting_confirmation(
+                    chain,
+                    step_name=step_name,
+                    summary=f"{step_name} is ready and waiting for approval.",
+                    updated_at=self._now_iso(),
+                )
+                self._autonomous_dev_chains[chat_id] = updated
+                return AutonomousDevAdvanceDecision(
+                    matched=True,
+                    chain=updated,
+                    routed_command=routed_command,
+                    current_step=step_name,
+                    reply=self.autonomous_dev_chain_status_reply(chat_id=chat_id, include_plan=False),
+                    summary=f"Autonomous dev chain reached {step_name} and requires confirmation.",
+                    telemetry={"autonomous_dev_chain_id": updated.chain_id, "autonomous_dev_step": step_name},
+                )
+            if step_name == "validation":
+                validation = self._run_autonomous_dev_validation(chat_id=chat_id)
+                if validation is None:
+                    blocked = self._autonomous_dev_loop.mark_blocked(chain, step_name="validation", reason="The active feature bundle no longer has a bounded validation command.", updated_at=self._now_iso())
+                    self._autonomous_dev_chains[chat_id] = blocked
+                    return AutonomousDevAdvanceDecision(matched=True, chain=blocked, reply=self.autonomous_dev_chain_status_reply(chat_id=chat_id, include_plan=True), summary="Autonomous dev validation could not run.")
+                if validation.outcome != "success":
+                    blocked = self._autonomous_dev_loop.mark_blocked(chain, step_name="validation", reason=validation.summary, updated_at=self._now_iso())
+                    self._autonomous_dev_chains[chat_id] = blocked
+                    return AutonomousDevAdvanceDecision(matched=True, chain=blocked, reply=self.autonomous_dev_chain_status_reply(chat_id=chat_id, include_plan=True), summary="Autonomous dev chain stopped at validation.")
+                updated = self._autonomous_dev_loop.mark_completed(
+                    chain,
+                    step_name="validation",
+                    summary=validation.summary,
+                    updated_at=self._now_iso(),
+                    next_step="commit_prepare",
+                )
+                self._autonomous_dev_chains[chat_id] = updated
+                continue
+            if step_name == "commit_prepare":
+                plan = self.build_feature_bundle_commit_plan(chat_id=chat_id, mode="preview")
+                if plan is None:
+                    blocked = self._autonomous_dev_loop.mark_blocked(chain, step_name="commit_prepare", reason="The bounded commit preview could not be rebuilt for the active feature bundle.", updated_at=self._now_iso())
+                    self._autonomous_dev_chains[chat_id] = blocked
+                    return AutonomousDevAdvanceDecision(matched=True, chain=blocked, reply=self.autonomous_dev_chain_status_reply(chat_id=chat_id, include_plan=True), summary="Autonomous dev chain stopped at commit preparation.")
+                if not plan.can_execute:
+                    blocked = self._autonomous_dev_loop.mark_blocked(
+                        chain,
+                        step_name="commit_prepare",
+                        reason=plan.commit_readiness_reason or f"Commit readiness is {plan.commit_readiness_status}.",
+                        updated_at=self._now_iso(),
+                    )
+                    self._autonomous_dev_chains[chat_id] = blocked
+                    return AutonomousDevAdvanceDecision(matched=True, chain=blocked, reply="\n\n".join((self.autonomous_dev_chain_status_reply(chat_id=chat_id, include_plan=True), self.feature_bundle_commit_preview_reply(plan=plan))), summary="Autonomous dev chain stopped at commit preparation.")
+                updated = self._autonomous_dev_loop.mark_completed(
+                    chain,
+                    step_name="commit_prepare",
+                    summary=plan.milestone_summary or plan.commit_message,
+                    updated_at=self._now_iso(),
+                    next_step="commit_execute",
+                )
+                self._autonomous_dev_chains[chat_id] = updated
+                continue
+            if step_name == "pr_preview":
+                plan = self.build_feature_bundle_pr_plan(chat_id=chat_id, mode="preview")
+                updated = self._autonomous_dev_loop.mark_completed_terminal(
+                    chain,
+                    step_name="pr_preview",
+                    summary=plan.summary or "PR preview prepared.",
+                    updated_at=self._now_iso(),
+                )
+                updated = replace(updated, latest_pr_title=plan.title)
+                self._autonomous_dev_chains[chat_id] = updated
+                return AutonomousDevAdvanceDecision(
+                    matched=True,
+                    chain=updated,
+                    reply="\n\n".join((self.autonomous_dev_chain_status_reply(chat_id=chat_id, include_plan=True), self.feature_bundle_pr_preview_reply(plan=plan))),
+                    summary="Autonomous dev chain completed at PR preview.",
+                    telemetry={"autonomous_dev_chain_id": updated.chain_id, "autonomous_dev_completed": True},
+                )
+            return AutonomousDevAdvanceDecision(matched=True, chain=chain, reply=self.autonomous_dev_chain_status_reply(chat_id=chat_id, include_plan=True), summary="Autonomous dev chain status returned.")
+
+    def attach_autonomous_dev_confirmation(self, *, chat_id: str, step_name: str) -> PendingConfirmation | None:
+        chain = self.active_autonomous_dev_chain_for_chat(chat_id=chat_id)
+        pending = self.latest_pending_confirmation_for_chat(chat_id=chat_id)
+        if chain is None or pending is None:
+            return pending
+        self._confirmation_store.update_metadata(
+            pending.confirmation_id,
+            metadata={
+                "autonomous_dev_chain_id": chain.chain_id,
+                "autonomous_dev_step": step_name,
+            },
+        )
+        return self._confirmation_store.get(pending.confirmation_id)
+
+    def record_autonomous_dev_step_success(
+        self,
+        *,
+        chat_id: str,
+        step_name: str,
+        summary: str,
+        next_step: str,
+        branch: str = "",
+        commit_sha: str = "",
+    ) -> AutonomousDevChainRecord | None:
+        chain = self.active_autonomous_dev_chain_for_chat(chat_id=chat_id)
+        if chain is None or chain.current_step != step_name:
+            return chain
+        updated = self._autonomous_dev_loop.mark_completed(
+            chain,
+            step_name=step_name,  # type: ignore[arg-type]
+            summary=summary,
+            updated_at=self._now_iso(),
+            next_step=next_step,  # type: ignore[arg-type]
+        )
+        updated = replace(updated, latest_branch=branch or updated.latest_branch, latest_commit_sha=commit_sha or updated.latest_commit_sha)
+        self._autonomous_dev_chains[chat_id] = updated
+        return updated
+
+    def record_autonomous_dev_step_failure(self, *, chat_id: str, step_name: str, reason: str) -> AutonomousDevChainRecord | None:
+        chain = self.active_autonomous_dev_chain_for_chat(chat_id=chat_id)
+        if chain is None:
+            return None
+        updated = self._autonomous_dev_loop.mark_blocked(chain, step_name=step_name, reason=reason, updated_at=self._now_iso())  # type: ignore[arg-type]
+        self._autonomous_dev_chains[chat_id] = updated
+        return updated
 
     def plan_feature_bundle_for_chat(self, *, chat_id: str, prompt: str) -> FeaturePlanningDecision:
         decision = self._feature_bundle_planner.plan(
@@ -2673,6 +2869,34 @@ class ControllerService:
     def feature_bundle_pr_preview_reply(self, *, plan: FeatureBundlePrPlan) -> str:
         return self._feature_bundle_formatter.format_pr_preview(plan)
 
+    def _run_autonomous_dev_validation(self, *, chat_id: str) -> AutonomousDevValidationResult | None:
+        bundle = self.active_feature_bundle_for_chat(chat_id=chat_id)
+        if bundle is None or bundle.validation_plan is None or not bundle.validation_plan.command_text.strip():
+            return None
+        repo_root, repo_root_valid, repo_message, _ = self._repo_configuration_state()
+        if not repo_root_valid:
+            return AutonomousDevValidationResult(outcome="failed", summary=repo_message)
+        try:
+            request = self._execution_runner.build_run_request(
+                capability_id="build.autonomous.dev.query",
+                repo_root=repo_root,
+                command_text=bundle.validation_plan.command_text,
+                operator_reason="autonomous dev validation",
+                expected_scope=self._repo_display_name(repo_root),
+            )
+            execution = self._execution_runner.execute(request)
+        except ExecutionRunnerError as exc:
+            return AutonomousDevValidationResult(outcome="failed", summary=exc.message)
+        outcome = "timed_out" if execution.timed_out else ("success" if execution.exit_code == 0 else "failed")
+        self.record_feature_bundle_validation_result(
+            chat_id=chat_id,
+            command_text=bundle.validation_plan.command_text,
+            outcome=outcome,
+            output_summary=execution.output_summary,
+            first_issue=execution.first_issue,
+        )
+        return AutonomousDevValidationResult(outcome=outcome, summary=execution.output_summary, first_issue=execution.first_issue)
+
     def execute_feature_bundle_commit(
         self,
         *,
@@ -2801,11 +3025,13 @@ class ControllerService:
         active_bundle = self.active_feature_bundle_for_chat(chat_id=chat_id)
         latest_milestone = self.latest_feature_bundle_milestone_for_chat(chat_id=chat_id)
         pr_plan = self.build_feature_bundle_pr_plan(chat_id=chat_id, mode="preview") if latest_milestone is not None else None
+        active_chain = self.active_autonomous_dev_chain_for_chat(chat_id=chat_id)
         return self._conversational_dev_planner.plan(
             message=message,
             active_bundle=active_bundle,
             latest_milestone=latest_milestone,
             pr_plan=pr_plan,
+            active_chain=active_chain,
         )
 
     def attach_feature_bundle_completion_advisory(self, *, bundle: FeatureBundleRecord) -> FeatureBundleRecord:
@@ -3006,7 +3232,14 @@ class ControllerService:
         if bundle.validation_state in {"failed", "timed_out"}:
             return True, "Validation is not yet passing for this milestone."
         normalized_risks = " ".join(bundle.risk_notes).lower()
-        if any(token in normalized_risks for token in ("playtest", "manual review", "human review")):
+        if any(token in normalized_risks for token in ("manual review", "human review")):
+            return True, "Risk notes require manual or playtest review before commit."
+        negated_playtest_markers = (
+            "no runtime playtest is required",
+            "no playtest required",
+            "playtest is not required",
+        )
+        if "playtest" in normalized_risks and not any(marker in normalized_risks for marker in negated_playtest_markers):
             return True, "Risk notes require manual or playtest review before commit."
         sensitive_prefixes = (
             "app/cli/",
@@ -3659,6 +3892,9 @@ class ControllerService:
 
     def _generate_feature_bundle_id(self) -> str:
         return f"FB-{secrets.token_hex(3).upper()}"
+
+    def _generate_autonomous_dev_chain_id(self) -> str:
+        return f"AD-{secrets.token_hex(3).upper()}"
 
     def _read_repo_text_for_feature_planner(self, relative_path: str) -> str | None:
         resolved = self._resolve_repo_relative_path_for_feature_planner(relative_path)

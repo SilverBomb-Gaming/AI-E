@@ -892,6 +892,126 @@ class TaskChainTests(unittest.TestCase):
             self.assertIn("Validation summary: Repo inspector coverage passed.", preview.user_message)
             self.assertIn("Changed paths: app/controller/repo_inspector.py", preview.user_message)
 
+    def test_autonomous_dev_chain_runs_full_supervised_workflow(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "workspace"
+            root.mkdir(parents=True, exist_ok=True)
+            self._build_coding_feature_bundle_repo(root)
+            self._initialize_git_repo(root)
+            self._create_bare_remote(root)
+            runner = _FakeCommandRunner(
+                subprocess.CompletedProcess(
+                    ["python", "-m", "pytest", "tests/test_task_chains.py"],
+                    0,
+                    "1 passed\n",
+                    "",
+                ),
+            )
+            service, config_store, fake_runner = self._make_service(tmp_dir=tmp, command_runner=runner)
+            self._configure_repo_root(service=service, config_store=config_store, root=root)
+
+            created = service.execute_local_chat_input(
+                text="Add a helper that formats feature bundle commit summaries and update the related tests, then finish the workflow"
+            )
+
+            self.assertEqual(created.outcome, "confirmation_required")
+            self.assertTrue(created.telemetry.get("autonomous_dev_chain"))
+            self.assertIn("[AUTONOMOUS DEV LOOP]", created.user_message)
+            chain = service.active_autonomous_dev_chain_for_chat(chat_id="local-cli")
+            self.assertIsNotNone(chain)
+            self.assertEqual(chain.status, "awaiting_confirmation")
+            self.assertEqual(chain.current_step, "feature_apply")
+
+            apply_confirmation = service.latest_pending_confirmation_for_chat(chat_id="local-cli")
+            self.assertIsNotNone(apply_confirmation)
+            apply_result = service.execute_local_chat_input(text=f"/confirm {apply_confirmation.confirmation_id}")
+
+            self.assertEqual(apply_result.outcome, "success")
+            chain = service.active_autonomous_dev_chain_for_chat(chat_id="local-cli")
+            self.assertIsNotNone(chain)
+            self.assertEqual(chain.status, "chain_ready")
+            self.assertEqual(chain.current_step, "validation")
+
+            commit_boundary = service.execute_local_chat_input(text="/devchain resume")
+
+            self.assertEqual(commit_boundary.outcome, "confirmation_required")
+            chain = service.active_autonomous_dev_chain_for_chat(chat_id="local-cli")
+            self.assertIsNotNone(chain)
+            self.assertEqual(chain.status, "awaiting_confirmation")
+            self.assertEqual(chain.current_step, "commit_execute")
+            self.assertEqual(len(fake_runner.calls), 1)
+
+            commit_confirmation = service.latest_pending_confirmation_for_chat(chat_id="local-cli")
+            self.assertIsNotNone(commit_confirmation)
+            commit_result = service.execute_local_chat_input(text=f"/confirm {commit_confirmation.confirmation_id}")
+
+            self.assertEqual(commit_result.outcome, "success")
+            chain = service.active_autonomous_dev_chain_for_chat(chat_id="local-cli")
+            self.assertIsNotNone(chain)
+            self.assertEqual(chain.current_step, "push_execute")
+
+            push_boundary = service.execute_local_chat_input(text="/devchain resume")
+
+            self.assertEqual(push_boundary.outcome, "confirmation_required")
+            push_confirmation = service.latest_pending_confirmation_for_chat(chat_id="local-cli")
+            self.assertIsNotNone(push_confirmation)
+            push_result = service.execute_local_chat_input(text=f"/confirm {push_confirmation.confirmation_id}")
+
+            self.assertEqual(push_result.outcome, "success")
+            chain = service.active_autonomous_dev_chain_for_chat(chat_id="local-cli")
+            self.assertIsNotNone(chain)
+            self.assertEqual(chain.current_step, "pr_preview")
+
+            completed = service.execute_local_chat_input(text="/devchain resume")
+
+            self.assertEqual(completed.outcome, "success")
+            self.assertIn("[FEATURE PR]", completed.user_message)
+            chain = service.active_autonomous_dev_chain_for_chat(chat_id="local-cli")
+            self.assertIsNotNone(chain)
+            self.assertEqual(chain.status, "completed")
+            self.assertEqual(chain.current_step, "pr_preview")
+            self.assertTrue(chain.latest_pr_title)
+
+    def test_autonomous_dev_chain_blocks_on_validation_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "workspace"
+            root.mkdir(parents=True, exist_ok=True)
+            self._build_feature_bundle_repo(root)
+            self._initialize_git_repo(root)
+            runner = _FakeCommandRunner(
+                subprocess.CompletedProcess(
+                    ["pytest", "tests/test_cli_chat.py::LocalCliChatTests::test_cli_debug_shows_shared_status_routing"],
+                    1,
+                    "",
+                    "validation failed\n",
+                ),
+            )
+            service, config_store, fake_runner = self._make_service(tmp_dir=tmp, command_runner=runner)
+            self._configure_repo_root(service=service, config_store=config_store, root=root)
+
+            created = service.execute_local_chat_input(
+                text="show feature bundle id in the cli debug output then finish the workflow"
+            )
+            self.assertEqual(created.outcome, "confirmation_required")
+
+            apply_confirmation = service.latest_pending_confirmation_for_chat(chat_id="local-cli")
+            self.assertIsNotNone(apply_confirmation)
+            self.assertEqual(
+                service.execute_local_chat_input(text=f"/confirm {apply_confirmation.confirmation_id}").outcome,
+                "success",
+            )
+
+            blocked = service.execute_local_chat_input(text="/devchain resume")
+
+            self.assertEqual(blocked.outcome, "success")
+            self.assertIn("Status: blocked", blocked.user_message)
+            chain = service.active_autonomous_dev_chain_for_chat(chat_id="local-cli")
+            self.assertIsNotNone(chain)
+            self.assertEqual(chain.status, "blocked")
+            self.assertEqual(chain.current_step, "validation")
+            self.assertIn("validation failed", chain.blocked_reason)
+            self.assertEqual(len(fake_runner.calls), 1)
+
     def test_conversational_dev_reply_explains_active_bundle_scope(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "workspace"

@@ -327,6 +327,8 @@ class CapabilityExecutor:
             return self._execute_feature_push(update=update, snapshot=snapshot, argument=parsed_command.argument)
         if command == "/featurepr":
             return self._execute_feature_pr(update=update, snapshot=snapshot, argument=parsed_command.argument)
+        if command == "/devchain":
+            return self._execute_devchain(update=update, snapshot=snapshot, argument=parsed_command.argument)
         if command == "/run":
             return self._execute_run_command(update=update, snapshot=snapshot, argument=parsed_command.argument)
         if command == "/test":
@@ -2005,6 +2007,77 @@ class CapabilityExecutor:
                     "routed_telemetry": dict(production_outcome.telemetry or {}),
                 },
             )
+        autonomous_decision, autonomous_feature_decision = self._service.plan_autonomous_dev_chain_for_chat(chat_id=update.chat_id, prompt=prompt)
+        if autonomous_decision.kind == "planned" and autonomous_feature_decision is not None and autonomous_feature_decision.bundle is not None:
+            inner_result = self.execute_telegram(
+                update=TelegramInboundMessage(
+                    update_id=update.update_id,
+                    chat_id=update.chat_id,
+                    text="/devchain resume",
+                    sender_label=update.sender_label,
+                ),
+                parsed_command=parse_chat_command(text="/devchain resume", has_text=True),
+                snapshot=snapshot,
+                batch_busy=False,
+            )
+            user_message = "\n\n".join(
+                section
+                for section in (
+                    self._service.autonomous_dev_chain_status_reply(chat_id=update.chat_id, include_plan=True),
+                    inner_result.user_message,
+                )
+                if section
+            )
+            return self._result(
+                request,
+                outcome=inner_result.outcome,
+                reason_code=inner_result.outcome_reason_code,
+                user_message=user_message,
+                internal_summary=f"{entry_capability_id} created an autonomous dev chain and advanced it to the next trust boundary.",
+                retryable=inner_result.retryable,
+                command_label=entry_command_label,
+                activity_state="processing_command",
+                degraded=inner_result.degraded,
+                provider_used=inner_result.provider_used,
+                mode_used=inner_result.mode_used,
+                confirmation_used=inner_result.confirmation_used,
+                ask_status=inner_result.ask_status,
+                hide_content_in_summary=inner_result.hide_content_in_summary,
+                telemetry={
+                    "autonomous_dev_chain": True,
+                    "routed_capability_id": inner_result.capability_id,
+                    "routed_command_label": "/devchain",
+                    "routed_telemetry": dict(inner_result.telemetry),
+                },
+            )
+        if autonomous_decision.kind == "needs_clarification":
+            return self._result(
+                request,
+                outcome="success",
+                reason_code="needs_clarification",
+                user_message=self._service._feature_bundle_formatter.format_clarification(
+                    question=autonomous_decision.clarification_question,
+                    next_step=autonomous_decision.next_step,
+                ),
+                internal_summary=f"{entry_capability_id} requested clarification before autonomous dev planning.",
+                retryable=False,
+                command_label=entry_command_label,
+                activity_state="processing_command",
+            )
+        if autonomous_decision.kind == "refused":
+            return self._result(
+                request,
+                outcome="success",
+                reason_code="autonomous_dev_refused",
+                user_message=self._service._feature_bundle_formatter.format_refusal(
+                    reason=autonomous_decision.refusal_reason,
+                    next_step=autonomous_decision.next_step,
+                ),
+                internal_summary=f"{entry_capability_id} refused autonomous dev chain planning.",
+                retryable=False,
+                command_label=entry_command_label,
+                activity_state="processing_command",
+            )
         feature_decision = self._service.plan_feature_bundle_for_chat(chat_id=update.chat_id, prompt=prompt)
         if feature_decision.kind == "planned" and feature_decision.bundle is not None:
             bundle = feature_decision.bundle
@@ -2064,6 +2137,42 @@ class CapabilityExecutor:
         execution_conversation = self._service.plan_task_execution_conversation(chat_id=update.chat_id, message=prompt)
         conversational_dev = self._service.plan_conversational_dev_reply(chat_id=update.chat_id, message=prompt)
         if conversational_dev.matched:
+            if conversational_dev.routed_command:
+                inner_result = self.execute_telegram(
+                    update=TelegramInboundMessage(
+                        update_id=update.update_id,
+                        chat_id=update.chat_id,
+                        text=conversational_dev.routed_command,
+                        sender_label=update.sender_label,
+                    ),
+                    parsed_command=parse_chat_command(text=conversational_dev.routed_command, has_text=True),
+                    snapshot=snapshot,
+                    batch_busy=False,
+                )
+                user_message = "\n\n".join(section for section in (conversational_dev.reply, inner_result.user_message) if section)
+                return self._result(
+                    request,
+                    outcome=inner_result.outcome,
+                    reason_code=inner_result.outcome_reason_code,
+                    user_message=user_message,
+                    internal_summary=f"{entry_capability_id} routed a conversational autonomous dev control request.",
+                    retryable=inner_result.retryable,
+                    command_label=entry_command_label,
+                    activity_state="processing_command",
+                    degraded=inner_result.degraded,
+                    provider_used=inner_result.provider_used,
+                    mode_used=inner_result.mode_used,
+                    confirmation_used=inner_result.confirmation_used,
+                    ask_status=inner_result.ask_status,
+                    hide_content_in_summary=inner_result.hide_content_in_summary,
+                    telemetry={
+                        "conversational_dev_layer": True,
+                        **conversational_dev.telemetry,
+                        "routed_capability_id": inner_result.capability_id,
+                        "routed_command_label": conversational_dev.routed_command,
+                        "routed_telemetry": dict(inner_result.telemetry),
+                    },
+                )
             return self._result(
                 request,
                 outcome="success",
@@ -2711,6 +2820,142 @@ class CapabilityExecutor:
             },
         )
 
+    def _execute_devchain(
+        self,
+        *,
+        update: TelegramInboundMessage,
+        snapshot: ControllerSnapshot,
+        argument: str,
+    ) -> CapabilityExecutionResult:
+        normalized_mode = (argument.strip().lower() or "status")
+        if normalized_mode not in {"status", "plan", "resume", "stop"}:
+            request, _, _, scope_failure = self._prepare_capability_request(
+                capability_id="build.autonomous.dev.query",
+                snapshot=snapshot,
+                chat_id=update.chat_id,
+                requester_label=update.sender_label,
+                original_command="/devchain",
+                parsed_arguments={"mode": normalized_mode},
+                metadata={"argument_summary": f"/devchain {normalized_mode}".strip()},
+            )
+            if scope_failure is not None:
+                return scope_failure
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="autonomous_dev_mode_invalid",
+                user_message="Unsupported autonomous dev loop mode.\nNext: Use /devchain [status|plan|resume|stop].",
+                internal_summary=f"/devchain rejected unsupported mode {normalized_mode}.",
+                retryable=False,
+                command_label="/devchain",
+                activity_state="processing_command",
+            )
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="build.autonomous.dev.query",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/devchain",
+            parsed_arguments={"mode": normalized_mode},
+            metadata={"argument_summary": f"/devchain {normalized_mode}".strip()},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        if normalized_mode in {"status", "plan"}:
+            chain = self._service.active_autonomous_dev_chain_for_chat(chat_id=update.chat_id)
+            include_plan = normalized_mode == "plan"
+            return self._result(
+                request,
+                outcome="success",
+                reason_code="ok" if chain is not None else "no_active_autonomous_dev_chain",
+                user_message=self._service.autonomous_dev_chain_status_reply(chat_id=update.chat_id, include_plan=include_plan),
+                internal_summary="Returned autonomous dev chain state." if chain is not None else "No active autonomous dev chain is available.",
+                retryable=False,
+                command_label="/devchain",
+                activity_state="processing_command",
+                telemetry={"autonomous_dev_chain": chain.to_payload() if chain is not None else {}},
+            )
+        if normalized_mode == "stop":
+            chain = self._service.stop_autonomous_dev_chain(chat_id=update.chat_id, reason="Stopped by operator request.")
+            return self._result(
+                request,
+                outcome="success",
+                reason_code="ok" if chain is not None else "no_active_autonomous_dev_chain",
+                user_message=self._service.autonomous_dev_chain_status_reply(chat_id=update.chat_id, include_plan=True),
+                internal_summary="Stopped the autonomous dev chain." if chain is not None else "No active autonomous dev chain is available.",
+                retryable=False,
+                command_label="/devchain",
+                activity_state="processing_command",
+                telemetry={"autonomous_dev_chain": chain.to_payload() if chain is not None else {}},
+            )
+        advance = self._service.resume_autonomous_dev_chain(chat_id=update.chat_id)
+        if not advance.matched:
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="no_active_autonomous_dev_chain",
+                user_message=advance.reply,
+                internal_summary="/devchain resume rejected because no autonomous dev chain exists.",
+                retryable=False,
+                command_label="/devchain",
+                activity_state="processing_command",
+            )
+        if advance.routed_command:
+            inner_result = self.execute_telegram(
+                update=TelegramInboundMessage(
+                    update_id=update.update_id,
+                    chat_id=update.chat_id,
+                    text=advance.routed_command,
+                    sender_label=update.sender_label,
+                ),
+                parsed_command=parse_chat_command(text=advance.routed_command, has_text=True),
+                snapshot=snapshot,
+                batch_busy=False,
+            )
+            if inner_result.outcome == "confirmation_required" and advance.current_step:
+                self._service.attach_autonomous_dev_confirmation(chat_id=update.chat_id, step_name=advance.current_step)
+            elif inner_result.outcome in {"failed", "invalid_request", "blocked"} and advance.current_step:
+                self._service.record_autonomous_dev_step_failure(
+                    chat_id=update.chat_id,
+                    step_name=advance.current_step,
+                    reason=inner_result.user_message,
+                )
+            chain = self._service.active_autonomous_dev_chain_for_chat(chat_id=update.chat_id)
+            user_message = "\n\n".join(section for section in (advance.reply, inner_result.user_message) if section)
+            return self._result(
+                request,
+                outcome=inner_result.outcome,
+                reason_code=inner_result.outcome_reason_code,
+                user_message=user_message,
+                internal_summary=advance.summary or inner_result.internal_summary,
+                retryable=inner_result.retryable,
+                command_label="/devchain",
+                activity_state="processing_command",
+                degraded=inner_result.degraded,
+                provider_used=inner_result.provider_used,
+                mode_used=inner_result.mode_used,
+                confirmation_used=inner_result.confirmation_used,
+                ask_status=inner_result.ask_status,
+                hide_content_in_summary=inner_result.hide_content_in_summary,
+                telemetry={
+                    "autonomous_dev_chain": chain.to_payload() if chain is not None else {},
+                    "routed_capability_id": inner_result.capability_id,
+                    "routed_command_label": advance.routed_command,
+                    "routed_telemetry": dict(inner_result.telemetry),
+                },
+            )
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=advance.reply,
+            internal_summary=advance.summary,
+            retryable=False,
+            command_label="/devchain",
+            activity_state="processing_command",
+            telemetry={"autonomous_dev_chain": advance.chain.to_payload() if advance.chain is not None else {}},
+        )
+
     def _execute_confirmed_feature_bundle_apply(
         self,
         *,
@@ -2721,16 +2966,30 @@ class CapabilityExecutor:
         bundle_id = str(confirmation.metadata.get("feature_bundle_id") or confirmation.prompt_text).strip()
         bundle = self._service.active_feature_bundle_for_chat(chat_id=chat_id)
         if bundle is None or bundle.bundle_id != bundle_id:
+            autonomous_chain = None
+            if str(confirmation.metadata.get("autonomous_dev_chain_id") or "").strip():
+                autonomous_chain = self._service.record_autonomous_dev_step_failure(
+                    chat_id=chat_id,
+                    step_name="feature_apply",
+                    reason="The active bundle no longer matches the approved request.",
+                )
             return self._result(
                 request,
                 outcome="failed",
                 reason_code="feature_bundle_missing",
-                user_message="\n".join(
-                    (
-                        f"Feature bundle {bundle_id or confirmation.confirmation_id} could not be applied.",
-                        "Reason: The active bundle no longer matches the approved request.",
-                        "Next: use /featurestatus to inspect state or send the bounded feature request again.",
+                user_message="\n\n".join(
+                    section
+                    for section in (
+                        "\n".join(
+                            (
+                                f"Feature bundle {bundle_id or confirmation.confirmation_id} could not be applied.",
+                                "Reason: The active bundle no longer matches the approved request.",
+                                "Next: use /featurestatus to inspect state or send the bounded feature request again.",
+                            )
+                        ),
+                        self._service.autonomous_dev_chain_status_reply(chat_id=chat_id, include_plan=False) if autonomous_chain is not None else "",
                     )
+                    if section
                 ),
                 internal_summary=f"Confirmation {confirmation.confirmation_id} failed because feature bundle {bundle_id or '?'} was missing.",
                 retryable=False,
@@ -2771,13 +3030,27 @@ class CapabilityExecutor:
                 stop_reason=exc.message,
             )
             self._service.set_active_feature_bundle(chat_id=chat_id, bundle=failed_bundle)
+            autonomous_chain = None
+            if str(confirmation.metadata.get("autonomous_dev_chain_id") or "").strip():
+                autonomous_chain = self._service.record_autonomous_dev_step_failure(
+                    chat_id=chat_id,
+                    step_name="feature_apply",
+                    reason=f"{exc.code}: {exc.message}",
+                )
             return self._result(
                 request,
                 outcome="failed",
                 reason_code=exc.code,
-                user_message=self._service._feature_bundle_formatter.format_apply_failure(
-                    failed_bundle,
-                    detail=f"{exc.code}: {exc.message}",
+                user_message="\n\n".join(
+                    section
+                    for section in (
+                        self._service._feature_bundle_formatter.format_apply_failure(
+                            failed_bundle,
+                            detail=f"{exc.code}: {exc.message}",
+                        ),
+                        self._service.autonomous_dev_chain_status_reply(chat_id=chat_id, include_plan=False) if autonomous_chain is not None else "",
+                    )
+                    if section
                 ),
                 internal_summary=f"Confirmation {confirmation.confirmation_id} failed while applying feature bundle {failed_bundle.bundle_id}: {exc.code}.",
                 retryable=False,
@@ -2798,11 +3071,26 @@ class CapabilityExecutor:
         )
         applied_bundle = self._service.attach_feature_bundle_completion_advisory(bundle=applied_bundle)
         self._service.set_active_feature_bundle(chat_id=chat_id, bundle=applied_bundle)
+        autonomous_chain = None
+        if str(confirmation.metadata.get("autonomous_dev_chain_id") or "").strip():
+            autonomous_chain = self._service.record_autonomous_dev_step_success(
+                chat_id=chat_id,
+                step_name="feature_apply",
+                summary=applied_bundle.apply_summary or f"Applied {len(applied_bundle.applied_files)} editable files.",
+                next_step="validation",
+            )
         return self._result(
             request,
             outcome="success",
             reason_code="ok",
-            user_message=self._service._feature_bundle_formatter.format_apply_success(applied_bundle),
+            user_message="\n\n".join(
+                section
+                for section in (
+                    self._service._feature_bundle_formatter.format_apply_success(applied_bundle),
+                    self._service.autonomous_dev_chain_status_reply(chat_id=chat_id, include_plan=False) if autonomous_chain is not None else "",
+                )
+                if section
+            ),
             internal_summary=f"Confirmation {confirmation.confirmation_id} applied feature bundle {applied_bundle.bundle_id}.",
             retryable=False,
             command_label="/confirm",
@@ -2844,16 +3132,30 @@ class CapabilityExecutor:
         except Exception as exc:
             code = getattr(exc, "code", "feature_commit_failed")
             message = getattr(exc, "message", str(exc))
+            autonomous_chain = None
+            if str(confirmation.metadata.get("autonomous_dev_chain_id") or "").strip():
+                autonomous_chain = self._service.record_autonomous_dev_step_failure(
+                    chat_id=chat_id,
+                    step_name="commit_execute",
+                    reason=message,
+                )
             return self._result(
                 request,
                 outcome="failed",
                 reason_code=code,
-                user_message="\n".join(
-                    (
-                        f"Feature bundle {bundle_id or confirmation.confirmation_id} could not be committed.",
-                        f"Reason: {message}",
-                        "Next: Use /featurecommit preview to refresh the bounded commit package.",
+                user_message="\n\n".join(
+                    section
+                    for section in (
+                        "\n".join(
+                            (
+                                f"Feature bundle {bundle_id or confirmation.confirmation_id} could not be committed.",
+                                f"Reason: {message}",
+                                "Next: Use /featurecommit preview to refresh the bounded commit package.",
+                            )
+                        ),
+                        self._service.autonomous_dev_chain_status_reply(chat_id=chat_id, include_plan=False) if autonomous_chain is not None else "",
                     )
+                    if section
                 ),
                 internal_summary=f"Confirmation {confirmation.confirmation_id} failed bounded commit execution: {code}.",
                 retryable=True,
@@ -2864,19 +3166,36 @@ class CapabilityExecutor:
         self._service._last_confirmation_result = (
             f"Confirmation {confirmation.confirmation_id} approved and created bounded commit {execution.commit_sha}."
         )
+        autonomous_chain = None
+        if str(confirmation.metadata.get("autonomous_dev_chain_id") or "").strip():
+            autonomous_chain = self._service.record_autonomous_dev_step_success(
+                chat_id=chat_id,
+                step_name="commit_execute",
+                summary=f"Committed {execution.commit_sha} on {execution.branch}.",
+                next_step="push_execute",
+                branch=execution.branch,
+                commit_sha=execution.commit_sha,
+            )
         return self._result(
             request,
             outcome="success",
             reason_code="ok",
-            user_message="\n".join(
-                (
-                    f"Confirmation {confirmation.confirmation_id} approved.",
-                    f"Commit: {execution.commit_sha}",
-                    f"Branch: {execution.branch}",
-                    f"Message: {execution.commit_message}",
-                    f"Paths: {', '.join(execution.committed_paths)}",
-                    "Push: not performed in v1.",
+            user_message="\n\n".join(
+                section
+                for section in (
+                    "\n".join(
+                        (
+                            f"Confirmation {confirmation.confirmation_id} approved.",
+                            f"Commit: {execution.commit_sha}",
+                            f"Branch: {execution.branch}",
+                            f"Message: {execution.commit_message}",
+                            f"Paths: {', '.join(execution.committed_paths)}",
+                            "Push: not performed in v1.",
+                        )
+                    ),
+                    self._service.autonomous_dev_chain_status_reply(chat_id=chat_id, include_plan=False) if autonomous_chain is not None else "",
                 )
+                if section
             ),
             internal_summary=self._service._last_confirmation_result,
             retryable=False,
@@ -2914,16 +3233,30 @@ class CapabilityExecutor:
         except Exception as exc:
             code = getattr(exc, "code", "feature_push_failed")
             message = getattr(exc, "message", str(exc))
+            autonomous_chain = None
+            if str(confirmation.metadata.get("autonomous_dev_chain_id") or "").strip():
+                autonomous_chain = self._service.record_autonomous_dev_step_failure(
+                    chat_id=chat_id,
+                    step_name="push_execute",
+                    reason=message,
+                )
             return self._result(
                 request,
                 outcome="failed",
                 reason_code=code,
-                user_message="\n".join(
-                    (
-                        f"Branch {approved_branch or confirmation.confirmation_id} could not be pushed.",
-                        f"Reason: {message}",
-                        "Next: Use /featurepush preview to refresh the bounded push package.",
+                user_message="\n\n".join(
+                    section
+                    for section in (
+                        "\n".join(
+                            (
+                                f"Branch {approved_branch or confirmation.confirmation_id} could not be pushed.",
+                                f"Reason: {message}",
+                                "Next: Use /featurepush preview to refresh the bounded push package.",
+                            )
+                        ),
+                        self._service.autonomous_dev_chain_status_reply(chat_id=chat_id, include_plan=False) if autonomous_chain is not None else "",
                     )
+                    if section
                 ),
                 internal_summary=f"Confirmation {confirmation.confirmation_id} failed bounded push execution: {code}.",
                 retryable=True,
@@ -2934,18 +3267,35 @@ class CapabilityExecutor:
         self._service._last_confirmation_result = (
             f"Confirmation {confirmation.confirmation_id} approved and pushed {execution.branch} to {execution.remote_name}."
         )
+        autonomous_chain = None
+        if str(confirmation.metadata.get("autonomous_dev_chain_id") or "").strip():
+            autonomous_chain = self._service.record_autonomous_dev_step_success(
+                chat_id=chat_id,
+                step_name="push_execute",
+                summary=f"Pushed {execution.branch} to {execution.remote_name}.",
+                next_step="pr_preview",
+                branch=execution.branch,
+                commit_sha=execution.pushed_commit,
+            )
         return self._result(
             request,
             outcome="success",
             reason_code="ok",
-            user_message="\n".join(
-                (
-                    f"Confirmation {confirmation.confirmation_id} approved.",
-                    f"Branch: {execution.branch}",
-                    f"Remote: {execution.remote_name}",
-                    f"Action: {execution.command_text}",
-                    f"Commit: {execution.pushed_commit}",
+            user_message="\n\n".join(
+                section
+                for section in (
+                    "\n".join(
+                        (
+                            f"Confirmation {confirmation.confirmation_id} approved.",
+                            f"Branch: {execution.branch}",
+                            f"Remote: {execution.remote_name}",
+                            f"Action: {execution.command_text}",
+                            f"Commit: {execution.pushed_commit}",
+                        )
+                    ),
+                    self._service.autonomous_dev_chain_status_reply(chat_id=chat_id, include_plan=False) if autonomous_chain is not None else "",
                 )
+                if section
             ),
             internal_summary=self._service._last_confirmation_result,
             retryable=False,

@@ -1,6 +1,7 @@
 """Operator-facing formatting for bounded multi-file feature bundles."""
 from __future__ import annotations
 
+from .autonomous_dev_models import AutonomousDevChainRecord
 from .feature_bundle_models import FeatureBundlePrPlan, FeatureBundleRecord
 
 
@@ -127,6 +128,42 @@ class FeatureBundleFormatter:
             for step in plan.next_steps:
                 lines.append(f"- {step}")
         return "\n".join(lines)
+
+    def format_autonomous_dev_chain(self, chain: AutonomousDevChainRecord, *, include_plan: bool) -> str:
+        lines = [
+            "[AUTONOMOUS DEV LOOP]",
+            f"Chain: {chain.chain_id}",
+            f"Status: {chain.status}",
+            f"Feature: {chain.feature_title}",
+            f"Bundle: {chain.bundle_id}",
+            f"Current step: {chain.current_step}",
+        ]
+        if chain.blocked_reason:
+            lines.append(f"Blocked reason: {chain.blocked_reason}")
+        if chain.final_outcome:
+            lines.append(f"Outcome: {chain.final_outcome}")
+        if chain.latest_summary:
+            lines.append(f"Latest: {chain.latest_summary}")
+        if chain.latest_branch:
+            lines.append(f"Branch: {chain.latest_branch}")
+        if chain.latest_commit_sha:
+            lines.append(f"Commit: {chain.latest_commit_sha}")
+        if chain.latest_pr_title:
+            lines.append(f"PR title: {chain.latest_pr_title}")
+        if include_plan:
+            lines.append("Steps:")
+            for step in chain.steps:
+                lines.append(
+                    f"- {step.name}: {step.status} | confirmation={'yes' if step.confirmation_required else 'no'} | eligible={'yes' if step.next_step_eligible else 'no'}"
+                )
+                if step.prerequisites:
+                    lines.append(f"  Prerequisites: {', '.join(step.prerequisites)}")
+                if step.result_summary:
+                    lines.append(f"  Result: {step.result_summary}")
+        return "\n".join(lines)
+
+    def format_no_autonomous_dev_chain(self) -> str:
+        return "No active autonomous dev chain.\nNext: send a bounded coding request that also asks AI-E to finish the workflow."
 
     @staticmethod
     def _append_coding_plan(lines: list[str], bundle: FeatureBundleRecord) -> None:
