@@ -53,6 +53,7 @@ class FeatureBundleFormatter:
             lines.append(f"- {item.relative_path} [{mode}] {item.inclusion_reason}")
         if bundle.validation_plan is not None:
             lines.append(f"Validation command: {bundle.validation_plan.command_text}")
+        self._append_completion_advisory(lines, bundle)
         return "\n".join(lines)
 
     def format_no_active_bundle(self) -> str:
@@ -67,6 +68,7 @@ class FeatureBundleFormatter:
         ]
         if bundle.validation_plan is not None:
             lines.append(f"Suggested validation: /run {bundle.validation_plan.command_text}")
+        self._append_completion_advisory(lines, bundle)
         return "\n".join(lines)
 
     def format_apply_failure(self, bundle: FeatureBundleRecord, *, detail: str) -> str:
@@ -81,3 +83,23 @@ class FeatureBundleFormatter:
 
     def format_refusal(self, *, reason: str, next_step: str) -> str:
         return f"Couldn't plan that feature bundle.\nReason: {reason}\nNext: {next_step}"
+
+    @staticmethod
+    def _append_completion_advisory(lines: list[str], bundle: FeatureBundleRecord) -> None:
+        advisory = bundle.completion_advisory
+        if advisory is None:
+            return
+        lines.extend(
+            (
+                "Completion:",
+                f"- {advisory.completion_summary}",
+                f"- Repo: {advisory.repo_status}",
+                f"- Milestone: {advisory.milestone_log}",
+            )
+        )
+        if advisory.suggested_stage_paths:
+            lines.append(f"Suggested stage: {', '.join(advisory.suggested_stage_paths)}")
+        if advisory.suggested_commit_message:
+            lines.append(f"Suggested commit message: {advisory.suggested_commit_message}")
+        if advisory.readme_guidance:
+            lines.append(f"README guidance: {advisory.readme_guidance}")

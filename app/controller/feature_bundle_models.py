@@ -58,6 +58,41 @@ class FeatureValidationPlan:
 
 
 @dataclass(frozen=True)
+class FeatureBundleCompletionAdvisory:
+    repo_branch: str
+    repo_status: str
+    completion_summary: str
+    milestone_log: str
+    suggested_stage_paths: tuple[str, ...]
+    suggested_commit_message: str
+    readme_guidance: str
+
+    def to_payload(self) -> dict[str, object]:
+        return {
+            "repo_branch": self.repo_branch,
+            "repo_status": self.repo_status,
+            "completion_summary": self.completion_summary,
+            "milestone_log": self.milestone_log,
+            "suggested_stage_paths": list(self.suggested_stage_paths),
+            "suggested_commit_message": self.suggested_commit_message,
+            "readme_guidance": self.readme_guidance,
+        }
+
+    @staticmethod
+    def from_payload(payload: dict[str, object]) -> "FeatureBundleCompletionAdvisory":
+        stage_paths = payload.get("suggested_stage_paths")
+        return FeatureBundleCompletionAdvisory(
+            repo_branch=str(payload.get("repo_branch", "")).strip(),
+            repo_status=str(payload.get("repo_status", "")).strip(),
+            completion_summary=str(payload.get("completion_summary", "")).strip(),
+            milestone_log=str(payload.get("milestone_log", "")).strip(),
+            suggested_stage_paths=tuple(str(item).strip() for item in stage_paths or () if str(item).strip()),
+            suggested_commit_message=str(payload.get("suggested_commit_message", "")).strip(),
+            readme_guidance=str(payload.get("readme_guidance", "")).strip(),
+        )
+
+
+@dataclass(frozen=True)
 class FeatureBundleRecord:
     bundle_id: str
     feature_request: str
@@ -77,6 +112,7 @@ class FeatureBundleRecord:
     apply_summary: str = ""
     validation_summary: str = ""
     stop_reason: str = ""
+    completion_advisory: FeatureBundleCompletionAdvisory | None = None
 
     def editable_files(self) -> tuple[FeatureBundleFile, ...]:
         return tuple(item for item in self.files if item.editable)
@@ -118,6 +154,14 @@ class FeatureBundleRecord:
             state=self.state if state is None else state,
         )
 
+    def with_completion_advisory(
+        self,
+        advisory: FeatureBundleCompletionAdvisory,
+        *,
+        updated_at: str,
+    ) -> FeatureBundleRecord:
+        return replace(self, completion_advisory=advisory, updated_at=updated_at)
+
     def to_payload(self) -> dict[str, object]:
         return {
             "bundle_id": self.bundle_id,
@@ -138,6 +182,7 @@ class FeatureBundleRecord:
             "apply_summary": self.apply_summary,
             "validation_summary": self.validation_summary,
             "stop_reason": self.stop_reason,
+            "completion_advisory": self.completion_advisory.to_payload() if self.completion_advisory is not None else None,
         }
 
     @staticmethod
@@ -147,6 +192,7 @@ class FeatureBundleRecord:
         risk_notes = payload.get("risk_notes")
         validation_plan = payload.get("validation_plan")
         applied_files = payload.get("applied_files")
+        completion_advisory = payload.get("completion_advisory")
         return FeatureBundleRecord(
             bundle_id=str(payload.get("bundle_id", "")).strip(),
             feature_request=str(payload.get("feature_request", "")).strip(),
@@ -166,4 +212,5 @@ class FeatureBundleRecord:
             apply_summary=str(payload.get("apply_summary", "")).strip(),
             validation_summary=str(payload.get("validation_summary", "")).strip(),
             stop_reason=str(payload.get("stop_reason", "")).strip(),
+            completion_advisory=FeatureBundleCompletionAdvisory.from_payload(completion_advisory) if isinstance(completion_advisory, dict) else None,
         )

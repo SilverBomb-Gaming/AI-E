@@ -44,6 +44,7 @@ class RepoInspectorTests(unittest.TestCase):
         self.assertTrue(snapshot.branch)
         self.assertTrue(snapshot.is_dirty)
         self.assertGreaterEqual(snapshot.changed_count, 1)
+        self.assertIn("README.md", snapshot.changed_paths)
         self.assertTrue(snapshot.recent_commits)
         self.assertIn("Initial commit", snapshot.recent_commits[0])
         self.assertIn(snapshot.repo_name, snapshot.audit_summary)

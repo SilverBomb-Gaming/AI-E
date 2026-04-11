@@ -17,6 +17,7 @@ class RepoInspectionSnapshot:
     changed_count: int
     recent_commits: tuple[str, ...]
     inspected_at: str
+    changed_paths: tuple[str, ...] = ()
 
     @property
     def status_label(self) -> str:
@@ -74,6 +75,11 @@ class RepoInspector:
         status_result = self._run_git(["status", "--short", "--untracked-files=all"], repo_root=repo_root_text)
         status_lines = [line for line in status_result.stdout.splitlines() if line.strip()]
         changed_count = len(status_lines)
+        changed_paths = tuple(
+            parsed_path
+            for parsed_path in (self._parse_changed_path(line) for line in status_lines)
+            if parsed_path
+        )
 
         commits = self._read_recent_commits(repo_root_text, limit=max(1, min(commit_limit, 5)))
         return RepoInspectionSnapshot(
@@ -84,6 +90,7 @@ class RepoInspector:
             changed_count=changed_count,
             recent_commits=commits,
             inspected_at=datetime.now().astimezone().isoformat(timespec="seconds"),
+            changed_paths=changed_paths,
         )
 
     def _read_recent_commits(self, repo_root: str, *, limit: int) -> tuple[str, ...]:
@@ -150,3 +157,12 @@ class RepoInspector:
         if " " in truncated:
             truncated = truncated.rsplit(" ", 1)[0]
         return f"{truncated}..."
+
+    @staticmethod
+    def _parse_changed_path(status_line: str) -> str:
+        if len(status_line) < 4:
+            return ""
+        candidate = status_line[3:].strip()
+        if " -> " in candidate:
+            candidate = candidate.split(" -> ", 1)[1].strip()
+        return candidate.replace("\\", "/")

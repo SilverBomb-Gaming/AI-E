@@ -16,6 +16,15 @@ from tests.test_telegram_commands import VALID_TOKEN, _FakeOllamaAdapter, _FakeO
 
 
 class TaskChainTests(unittest.TestCase):
+    def _run_git(self, repo_root: Path, *args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["git", *args],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+
     def _make_service(
         self,
         *,
@@ -63,6 +72,15 @@ class TaskChainTests(unittest.TestCase):
         for source_path, destination_path in targets:
             destination_path.parent.mkdir(parents=True, exist_ok=True)
             destination_path.write_text(source_path.read_text(encoding="utf-8"), encoding="utf-8")
+
+    def _initialize_git_repo(self, root: Path) -> None:
+        (root / "README.md").write_text("feature bundle fixture\n", encoding="utf-8")
+        self._run_git(root, "init")
+        self._run_git(root, "config", "user.name", "Test User")
+        self._run_git(root, "config", "user.email", "test@example.com")
+        self._run_git(root, "add", ".")
+        self._run_git(root, "commit", "-m", "Initial feature bundle fixture")
+        (root / "README.md").write_text("feature bundle fixture\nunrelated docs change\n", encoding="utf-8")
 
     def test_validate_then_report_chain_runs_and_records_steps(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -162,7 +180,9 @@ class TaskChainTests(unittest.TestCase):
     def test_plain_text_feature_bundle_apply_and_validate_chain_flow(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "workspace"
+            root.mkdir(parents=True, exist_ok=True)
             self._build_feature_bundle_repo(root)
+            self._initialize_git_repo(root)
             runner = _FakeCommandRunner(
                 subprocess.CompletedProcess(
                     ["pytest", "tests/test_cli_chat.py::LocalCliChatTests::test_cli_debug_shows_shared_status_routing"],
@@ -192,6 +212,10 @@ class TaskChainTests(unittest.TestCase):
             applied_bundle = service.active_feature_bundle_for_chat(chat_id="local-cli")
             self.assertIsNotNone(applied_bundle)
             self.assertEqual(applied_bundle.state, "applied")
+            self.assertIsNotNone(applied_bundle.completion_advisory)
+            self.assertIn("app/cli/chat_cli.py", applied_bundle.completion_advisory.suggested_stage_paths)
+            self.assertIn("README.md already has unrelated changes", applied_bundle.completion_advisory.readme_guidance)
+            self.assertIn("Apply bounded feature bundle", applied_bundle.completion_advisory.suggested_commit_message)
 
             validation_preview = service.execute_local_chat_input(text="validate it")
             self.assertEqual(validation_preview.outcome, "success")
@@ -220,6 +244,12 @@ class TaskChainTests(unittest.TestCase):
             validated_bundle = service.active_feature_bundle_for_chat(chat_id="local-cli")
             self.assertIsNotNone(validated_bundle)
             self.assertEqual(validated_bundle.validation_state, "passed")
+            self.assertIsNotNone(validated_bundle.completion_advisory)
+            self.assertIn("ready for a scoped milestone commit", validated_bundle.completion_advisory.completion_summary)
+            status = service.execute_local_chat_input(text="/featurestatus")
+            self.assertIn("Suggested stage:", status.user_message)
+            self.assertIn("Suggested commit message:", status.user_message)
+            self.assertIn("README guidance:", status.user_message)
 
     def test_dispatch_validate_recover_falls_back_to_local(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

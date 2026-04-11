@@ -2434,6 +2434,7 @@ class CapabilityExecutor:
             applied_files=tuple(applied_files),
             apply_summary=f"Applied {len(applied_files)} editable files.",
         )
+        applied_bundle = self._service.attach_feature_bundle_completion_advisory(bundle=applied_bundle)
         self._service.set_active_feature_bundle(chat_id=chat_id, bundle=applied_bundle)
         return self._result(
             request,

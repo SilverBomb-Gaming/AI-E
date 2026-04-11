@@ -30,7 +30,7 @@ from .model_experiment_models import ModelExperimentRecord, normalize_adaptation
 from .model_experiment_runner import ModelExperimentError, ModelExperimentRunner
 from .model_experiment_store import ModelExperimentStore
 from .feature_bundle_formatter import FeatureBundleFormatter
-from .feature_bundle_models import FeatureBundleRecord
+from .feature_bundle_models import FeatureBundleCompletionAdvisory, FeatureBundleRecord
 from .feature_bundle_store import FeatureBundleStore
 from .multi_file_feature_planner import FeaturePlanningDecision, MultiFileFeaturePlanner
 from .project_bootstrap_formatter import ProjectBootstrapFormatter
@@ -2466,6 +2466,12 @@ class ControllerService:
             return self._feature_bundle_formatter.format_no_active_bundle()
         return self._feature_bundle_formatter.format_status(bundle)
 
+    def attach_feature_bundle_completion_advisory(self, *, bundle: FeatureBundleRecord) -> FeatureBundleRecord:
+        advisory = self._build_feature_bundle_completion_advisory(bundle)
+        if advisory is None:
+            return bundle
+        return bundle.with_completion_advisory(advisory, updated_at=self._now_iso())
+
     def record_feature_bundle_validation_result(
         self,
         *,
@@ -2498,6 +2504,7 @@ class ControllerService:
             validation_summary=summary,
             state=next_state,
         )
+        updated = self.attach_feature_bundle_completion_advisory(bundle=updated)
         self._feature_bundle_store.set_active(chat_id=chat_id, bundle=updated)
         self.capture_feature_bundle_data(
             chat_id=chat_id,
@@ -2508,6 +2515,59 @@ class ControllerService:
             output_summary=summary,
             first_issue=first_issue,
         )
+
+    def _build_feature_bundle_completion_advisory(
+        self,
+        bundle: FeatureBundleRecord,
+    ) -> FeatureBundleCompletionAdvisory | None:
+        try:
+            snapshot = self.inspect_repo_status()
+        except RepoInspectorError:
+            snapshot = None
+        stage_paths = bundle.applied_files or tuple(item.relative_path for item in bundle.editable_files())
+        repo_branch = snapshot.branch if snapshot is not None else "unknown"
+        repo_status = snapshot.audit_summary if snapshot is not None else "Repository inspection unavailable"
+        if bundle.validation_state == "passed":
+            completion_summary = "Bundle validated and ready for a scoped milestone commit."
+        elif bundle.state == "applied":
+            completion_summary = "Bundle applied. Run the suggested validation before preparing a milestone commit."
+        elif bundle.validation_state in {"failed", "timed_out"} or bundle.state == "invalidated":
+            completion_summary = "Bundle changes are present, but validation is not yet passing."
+        else:
+            completion_summary = "Bundle completion guidance is available after apply or validation."
+        milestone_parts = [bundle.feature_title, f"state={bundle.state}", f"validation={bundle.validation_state}"]
+        if bundle.validation_summary:
+            milestone_parts.append(self._summarize_text(bundle.validation_summary, limit=100))
+        milestone_log = " | ".join(part for part in milestone_parts if part)
+        commit_message = self._feature_bundle_commit_message(bundle)
+        readme_guidance = self._feature_bundle_readme_guidance(bundle=bundle, changed_paths=snapshot.changed_paths if snapshot is not None else ())
+        return FeatureBundleCompletionAdvisory(
+            repo_branch=repo_branch,
+            repo_status=repo_status,
+            completion_summary=completion_summary,
+            milestone_log=milestone_log,
+            suggested_stage_paths=stage_paths,
+            suggested_commit_message=commit_message,
+            readme_guidance=readme_guidance,
+        )
+
+    def _feature_bundle_commit_message(self, bundle: FeatureBundleRecord) -> str:
+        normalized_title = self._summarize_text(bundle.feature_title, limit=72)
+        if bundle.validation_state == "passed":
+            return f"Complete bounded feature bundle: {normalized_title}"
+        if bundle.state == "applied":
+            return f"Apply bounded feature bundle: {normalized_title}"
+        return f"Update bounded feature bundle: {normalized_title}"
+
+    @staticmethod
+    def _feature_bundle_readme_guidance(*, bundle: FeatureBundleRecord, changed_paths: tuple[str, ...]) -> str:
+        normalized_paths = {path.replace('\\', '/').strip() for path in changed_paths if path.strip()}
+        staged_paths = {path.replace('\\', '/').strip() for path in bundle.applied_files if path.strip()}
+        if "README.md" in staged_paths:
+            return "README.md is part of the bounded change set; include it only if the documentation update belongs to this feature."
+        if "README.md" in normalized_paths:
+            return "README.md already has unrelated changes; keep it out of this milestone commit unless this feature intentionally changed it."
+        return "README.md is not part of this bounded bundle; leave docs unstaged unless you intentionally updated them."
 
     def validate_main_run_target(self, *, target: str) -> tuple[str, bool, str]:
         normalized_target = " ".join(target.split())
