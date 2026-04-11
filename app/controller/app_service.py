@@ -100,6 +100,11 @@ from .task_chain_formatter import TaskChainFormatter
 from .task_chain_models import TaskChainRecord
 from .task_chain_runner import TaskChainRunner
 from .task_chain_store import TaskChainStore
+from .task_execution_conversation import (
+    TaskExecutionConversationOutcome,
+    TaskExecutionConversationPlanner,
+    TaskExecutionConversationRequest,
+)
 from ..platform.secrets import SecretStore, get_secret_store
 from ..providers import OllamaProviderAdapter, OpenAIProviderAdapter, ProviderReply, ProviderStatus, ProviderType as AdapterProviderType, mask_secret
 from ..runtime.manager import OpenClawRuntimeManager
@@ -268,6 +273,7 @@ class ControllerService:
         self._provider_chat_lock = threading.RLock()
         self._active_provider_chats: dict[str, tuple[str, threading.Thread]] = {}
         self._provider_cooldowns: dict[str, float] = {}
+        self._task_execution_conversation_lock = threading.RLock()
         self._startup_prewarm_attempted = False
         self._terminal_logger = terminal_logger or print
         self._node_registry = NodeRegistry(
@@ -322,6 +328,8 @@ class ControllerService:
         self._task_chain_store = TaskChainStore(root_path=self._config_store.path.parent / "task_chains")
         self._task_chain_formatter = TaskChainFormatter()
         self._task_chain_runner = TaskChainRunner(self, self._task_chain_store)
+        self._task_execution_conversation_planner = TaskExecutionConversationPlanner()
+        self._task_execution_conversation_requests: dict[str, TaskExecutionConversationRequest] = {}
         self._production_state_store = ProductionStateStore(root_path=self._config_store.path.parent / "production_state")
         self._production_summary_formatter = ProductionSummaryFormatter()
         self._production_orchestrator = ProductionOrchestrator(
@@ -3766,6 +3774,21 @@ class ControllerService:
 
     def is_task_chain_running(self, chain_id: str) -> bool:
         return self._task_chain_runner.is_running(chain_id)
+
+    def plan_task_execution_conversation(self, *, chat_id: str, message: str) -> TaskExecutionConversationOutcome:
+        with self._task_execution_conversation_lock:
+            previous_request = self._task_execution_conversation_requests.get(chat_id)
+            outcome = self._task_execution_conversation_planner.plan(
+                message=message,
+                previous_request=previous_request,
+            )
+            if not outcome.matched:
+                return outcome
+            if outcome.request is not None and outcome.request.requires_clarification:
+                self._task_execution_conversation_requests[chat_id] = outcome.request
+            else:
+                self._task_execution_conversation_requests.pop(chat_id, None)
+            return outcome
 
     def list_pending_confirmations(self, *, chat_id: str | None = None) -> tuple[PendingConfirmation, ...]:
         return self._confirmation_store.list_pending(chat_id=chat_id)

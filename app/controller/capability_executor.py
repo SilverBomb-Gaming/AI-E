@@ -2037,6 +2037,73 @@ class CapabilityExecutor:
                     "feature_bundle_next_step": feature_decision.next_step,
                 },
             )
+        execution_conversation = self._service.plan_task_execution_conversation(chat_id=update.chat_id, message=prompt)
+        if execution_conversation.matched:
+            if execution_conversation.request is not None and execution_conversation.request.requires_clarification:
+                return self._result(
+                    request,
+                    outcome="success",
+                    reason_code="needs_clarification",
+                    user_message=execution_conversation.reply,
+                    internal_summary=f"{entry_capability_id} requested bounded execution clarification.",
+                    retryable=False,
+                    command_label=entry_command_label,
+                    activity_state="processing_command",
+                    telemetry={
+                        "task_execution_conversation": True,
+                        **execution_conversation.telemetry,
+                    },
+                )
+            inner_command = execution_conversation.chain_create_command
+            parsed_inner = parse_chat_command(text=inner_command, has_text=True)
+            inner_update = TelegramInboundMessage(
+                update_id=update.update_id,
+                chat_id=update.chat_id,
+                text=inner_command,
+                sender_label=update.sender_label,
+            )
+            inner_result = self.execute_telegram(
+                update=inner_update,
+                parsed_command=parsed_inner,
+                snapshot=snapshot,
+                batch_busy=False,
+            )
+            chain_id = str(inner_result.telemetry.get("task_chain_id") or "").strip().upper()
+            user_message = inner_result.user_message
+            if chain_id:
+                user_message = "\n\n".join(
+                    (
+                        execution_conversation.reply,
+                        inner_result.user_message,
+                        f"Next: Use /chainstart {chain_id} when you want to request one-shot approval for execution.",
+                    )
+                )
+            return self._result(
+                request,
+                outcome=inner_result.outcome,
+                reason_code=inner_result.outcome_reason_code,
+                user_message=user_message,
+                internal_summary=(
+                    f"{entry_capability_id} compiled a conversational execution request into task chain {chain_id or 'preview'}; "
+                    f"inner outcome={inner_result.outcome}."
+                ),
+                retryable=inner_result.retryable,
+                command_label=entry_command_label,
+                activity_state="processing_command",
+                degraded=inner_result.degraded,
+                provider_used=inner_result.provider_used,
+                mode_used=inner_result.mode_used,
+                confirmation_used=inner_result.confirmation_used,
+                ask_status=inner_result.ask_status,
+                hide_content_in_summary=inner_result.hide_content_in_summary,
+                telemetry={
+                    "task_execution_conversation": True,
+                    **execution_conversation.telemetry,
+                    "routed_capability_id": inner_result.capability_id,
+                    "routed_command_label": "/chaincreate",
+                    "routed_telemetry": dict(inner_result.telemetry),
+                },
+            )
         session = self._service._intent_store.get_active(chat_id=update.chat_id)
         plan = self._service._build_plan_store.get_active(chat_id=update.chat_id)
         bridge_state = self._service._plan_bridge_store.get_active(chat_id=update.chat_id)

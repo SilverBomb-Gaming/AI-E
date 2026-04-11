@@ -88,6 +88,65 @@ class TaskChainTests(unittest.TestCase):
             self.assertIn("Steps completed: 2/2", status.user_message)
             self.assertIn("Step 2", steps.user_message)
 
+    def test_plain_text_validation_request_creates_and_runs_task_chain(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "workspace"
+            root.mkdir(parents=True, exist_ok=True)
+            runner = _FakeCommandRunner(
+                subprocess.CompletedProcess(["python", "-m", "unittest"], 0, "Ran 19 tests in 0.03s\n\nOK\n", ""),
+            )
+            service, config_store, fake_runner = self._make_service(tmp_dir=tmp, command_runner=runner)
+            self._configure_repo_root(service=service, config_store=config_store, root=root)
+
+            created = service.execute_local_chat_input(text="validate the full conversational ingestion stack")
+
+            self.assertEqual(created.outcome, "success")
+            self.assertTrue(created.telemetry.get("task_execution_conversation"))
+            self.assertIn("[TASK CHAIN]", created.user_message)
+
+            chain = service.list_task_chains()[0]
+            self.assertEqual(chain.chain_type, "validate_then_report")
+            self.assertIn("tests.test_policy_aware_ingestion", chain.command_text)
+            self.assertIn("tests.test_conversational_ingestion", chain.command_text)
+            self.assertIn(f"/chainstart {chain.chain_id}", created.user_message)
+
+            start = service.execute_local_chat_input(text=f"/chainstart {chain.chain_id}")
+            self.assertEqual(start.outcome, "confirmation_required")
+            confirmation = service.latest_pending_confirmation_for_chat(chat_id="local-cli")
+            self.assertIsNotNone(confirmation)
+
+            confirm = service.execute_local_chat_input(text=f"/confirm {confirmation.confirmation_id}")
+            self.assertEqual(confirm.outcome, "success")
+
+            completed = service.await_task_chain(chain.chain_id, timeout_seconds=2.0)
+            self.assertIsNotNone(completed)
+            self.assertEqual(completed.status, "completed")
+            self.assertEqual(completed.steps_completed, 2)
+            self.assertEqual(len(fake_runner.calls), 1)
+
+    def test_plain_text_validation_request_clarifies_then_creates_targeted_chain(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "workspace"
+            root.mkdir(parents=True, exist_ok=True)
+            service, config_store, _ = self._make_service(tmp_dir=tmp)
+            self._configure_repo_root(service=service, config_store=config_store, root=root)
+
+            clarification = service.execute_local_chat_input(text="run the validation loop")
+
+            self.assertEqual(clarification.outcome, "success")
+            self.assertTrue(clarification.telemetry.get("task_execution_conversation"))
+            self.assertTrue(clarification.telemetry.get("requires_clarification"))
+            self.assertIn("What should I validate", clarification.user_message)
+
+            created = service.execute_local_chat_input(text="the conversational ingestion tests")
+
+            self.assertEqual(created.outcome, "success")
+            self.assertIn("[TASK CHAIN]", created.user_message)
+
+            chain = service.list_task_chains()[0]
+            self.assertIn("tests.test_conversational_ingestion", chain.command_text)
+            self.assertNotIn("tests.test_policy_aware_ingestion tests.test_conversational_ingestion", chain.command_text)
+
     def test_dispatch_validate_recover_falls_back_to_local(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "workspace"
