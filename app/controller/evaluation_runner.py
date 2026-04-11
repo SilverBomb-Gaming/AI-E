@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import datetime, timedelta
 import re
-from threading import Event, RLock, Thread
+from threading import Event, RLock, Thread, current_thread
 from time import sleep
 from typing import TYPE_CHECKING
 
@@ -151,12 +151,17 @@ class EvaluationRunner:
                 next_run_at = (datetime.now().astimezone() + timedelta(seconds=updated.interval_seconds)).isoformat(timespec="seconds")
                 self._store.update_session(replace(updated, next_run_at=next_run_at))
                 if stop_event.wait(updated.interval_seconds):
-                    self._finish_session(self._require_session(session_id), status="stopped", summary="Stopped by operator.")
+                    latest = self._store.get_session(session_id)
+                    if latest is not None:
+                        summary = latest.stop_reason or latest.final_summary or latest.latest_summary or "Stopped by operator."
+                        self._finish_session(latest, status="stopped", summary=summary)
                     return
         finally:
             with self._lock:
-                self._stop_events.pop(session_id, None)
-                self._threads.pop(session_id, None)
+                if self._stop_events.get(session_id) is stop_event:
+                    self._stop_events.pop(session_id, None)
+                if self._threads.get(session_id) is current_thread():
+                    self._threads.pop(session_id, None)
 
     def _execute_run(self, *, session: EvaluationSessionRecord, iteration: int) -> EvaluationRunRecord:
         job = session.allowed_jobs[0]
