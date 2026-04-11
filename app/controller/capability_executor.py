@@ -16,6 +16,13 @@ from .command_grammar import (
     parse_data_search_arguments,
     parse_data_tag_arguments,
     parse_data_unlabel_arguments,
+    parse_datasource_allow_arguments,
+    parse_datasource_block_arguments,
+    parse_datasource_create_arguments,
+    parse_datasource_id_argument,
+    parse_datasource_query_arguments,
+    parse_datasource_review_arguments,
+    parse_datasource_update_arguments,
     parse_dataset_add_filter_arguments,
     parse_dataset_create_arguments,
     parse_dataset_export_arguments,
@@ -27,6 +34,11 @@ from .command_grammar import (
     parse_model_experiment_id_argument,
     parse_dispatch_arguments,
     parse_eval_create_arguments,
+    parse_prod_assign_arguments,
+    parse_prod_pause_resume_arguments,
+    parse_prod_priority_arguments,
+    parse_prod_project_arguments,
+    parse_prod_status_arguments,
 )
 from .confirmation_models import ConfirmationContextSnapshot, PendingConfirmation
 from .context_models import BufferedContext
@@ -271,6 +283,20 @@ class CapabilityExecutor:
             return self._execute_bootstrap_reset(update=update, snapshot=snapshot)
         if command == "/projectview":
             return self._execute_project_view(update=update, snapshot=snapshot)
+        if command == "/prodproject":
+            return self._execute_prod_project(update=update, snapshot=snapshot, argument=parsed_command.argument)
+        if command == "/prodstatus":
+            return self._execute_prod_status(update=update, snapshot=snapshot, argument=parsed_command.argument)
+        if command == "/prodmobile":
+            return self._execute_prod_mobile(update=update, snapshot=snapshot)
+        if command == "/prodpriority":
+            return self._execute_prod_priority(update=update, snapshot=snapshot, argument=parsed_command.argument)
+        if command == "/prodpause":
+            return self._execute_prod_pause(update=update, snapshot=snapshot, argument=parsed_command.argument)
+        if command == "/prodresume":
+            return self._execute_prod_resume(update=update, snapshot=snapshot, argument=parsed_command.argument)
+        if command == "/prodassign":
+            return self._execute_prod_assign(update=update, snapshot=snapshot, argument=parsed_command.argument)
         if command == "/bundlereset":
             return self._execute_bundle_reset(update=update, snapshot=snapshot)
         if command == "/mode":
@@ -349,6 +375,26 @@ class CapabilityExecutor:
             return self._execute_dataset_split(update=update, snapshot=snapshot, argument=parsed_command.argument)
         if command == "/datasetexport":
             return self._execute_dataset_export(update=update, snapshot=snapshot, argument=parsed_command.argument)
+        if command == "/datasources":
+            return self._execute_datasources(update=update, snapshot=snapshot, argument=parsed_command.argument)
+        if command == "/datasource":
+            return self._execute_datasource_read_like(update=update, snapshot=snapshot, argument=parsed_command.argument, command_label="/datasource")
+        if command == "/datasourcepolicy":
+            return self._execute_datasource_read_like(update=update, snapshot=snapshot, argument=parsed_command.argument, command_label="/datasourcepolicy")
+        if command == "/datasourcesummary":
+            return self._execute_datasource_summary(update=update, snapshot=snapshot, argument=parsed_command.argument)
+        if command == "/datasourcequery":
+            return self._execute_datasource_query(update=update, snapshot=snapshot, argument=parsed_command.argument)
+        if command == "/datasourcecreate":
+            return self._execute_datasource_create(update=update, snapshot=snapshot, argument=parsed_command.argument)
+        if command == "/datasourceupdate":
+            return self._execute_datasource_update(update=update, snapshot=snapshot, argument=parsed_command.argument)
+        if command == "/datasourcereview":
+            return self._execute_datasource_review(update=update, snapshot=snapshot, argument=parsed_command.argument)
+        if command == "/datasourceblock":
+            return self._execute_datasource_block(update=update, snapshot=snapshot, argument=parsed_command.argument)
+        if command == "/datasourceallow":
+            return self._execute_datasource_allow(update=update, snapshot=snapshot, argument=parsed_command.argument)
         if command == "/modelexperiments":
             return self._execute_model_experiments(update=update, snapshot=snapshot)
         if command == "/modelexperiment":
@@ -1929,6 +1975,30 @@ class CapabilityExecutor:
                 command_label=entry_command_label,
                 activity_state="processing_command",
             )
+        production_outcome = self._service.handle_production_conversation(chat_id=update.chat_id, message=prompt)
+        if production_outcome.matched:
+            routed_capability_id = "production.read" if production_outcome.routed_action.startswith("status_") or production_outcome.routed_action == "clarify" else "production.control.query"
+            return self._result(
+                request,
+                outcome="success",
+                reason_code="ok" if not production_outcome.clarification else "needs_clarification",
+                user_message=production_outcome.reply,
+                internal_summary=(
+                    f"{entry_capability_id} recognized production intent and routed to {production_outcome.routed_action or 'production'}"
+                ),
+                retryable=False,
+                command_label=entry_command_label,
+                activity_state="processing_command",
+                telemetry={
+                    "production_conversation": True,
+                    "production_summary": production_outcome.summary,
+                    "production_context_used": True,
+                    "production_clarification": production_outcome.clarification,
+                    "routed_capability_id": routed_capability_id,
+                    "routed_command_label": production_outcome.routed_action,
+                    "routed_telemetry": dict(production_outcome.telemetry or {}),
+                },
+            )
         feature_decision = self._service.plan_feature_bundle_for_chat(chat_id=update.chat_id, prompt=prompt)
         if feature_decision.kind == "planned" and feature_decision.bundle is not None:
             bundle = feature_decision.bundle
@@ -2798,6 +2868,313 @@ class CapabilityExecutor:
             command_label="/projectview",
             activity_state="processing_command",
             telemetry={"generated_project": project.to_payload()},
+        )
+
+    def _execute_prod_project(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot, argument: str) -> CapabilityExecutionResult:
+        parsed, error = parse_prod_project_arguments(argument)
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="production.project.query",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/prodproject",
+            parsed_arguments=dict(parsed or {}),
+            metadata={"argument_summary": "/prodproject [context]"},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        if error is not None or parsed is None:
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="production_project_usage_invalid",
+                user_message="\n".join(
+                    (
+                        "Couldn't set production project context.",
+                        f"Reason: {error.reason if error is not None else 'Missing required context.'}",
+                        "Next: " + (error.next_step if error is not None else 'Use /prodproject --title "name".'),
+                    )
+                ),
+                internal_summary="production.project.query rejected invalid project-context syntax.",
+                retryable=False,
+                command_label="/prodproject",
+                activity_state="processing_command",
+            )
+        project = self._service.establish_production_project(
+            chat_id=update.chat_id,
+            title=parsed.get("title", ""),
+            engine_family=parsed.get("engine", "unknown"),
+            milestone=parsed.get("milestone", "active production"),
+        )
+        reply = self._service.production_status_reply(chat_id=update.chat_id, mobile=True)
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message="\n".join((f"Production project set to {project.project_title}.", reply)),
+            internal_summary=f"production.project.query established project context {project.project_id}.",
+            retryable=False,
+            command_label="/prodproject",
+            activity_state="processing_command",
+            telemetry={
+                "production_project_id": project.project_id,
+                "production_project": project.to_payload(),
+                "routed_capability_id": "production.project.query",
+                "routed_command_label": "/prodproject",
+            },
+        )
+
+    def _execute_prod_status(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot, argument: str) -> CapabilityExecutionResult:
+        parsed, error = parse_prod_status_arguments(argument)
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="production.read",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/prodstatus",
+            parsed_arguments=dict(parsed or {}),
+        )
+        if scope_failure is not None:
+            return scope_failure
+        if error is not None or parsed is None:
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="production_status_usage_invalid",
+                user_message="\n".join(
+                    (
+                        "Couldn't summarize production state.",
+                        f"Reason: {error.reason if error is not None else 'Unsupported focus.'}",
+                        "Next: " + (error.next_step if error is not None else "Use /prodstatus [overview|blocked|changes|nodes|attention]."),
+                    )
+                ),
+                internal_summary="production.read rejected invalid status syntax.",
+                retryable=False,
+                command_label="/prodstatus",
+                activity_state="processing_command",
+            )
+        focus = parsed.get("focus", "overview")
+        reply = self._service.production_status_reply(chat_id=update.chat_id, focus=focus)
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=reply,
+            internal_summary=f"production.read returned {focus} production status.",
+            retryable=False,
+            command_label="/prodstatus",
+            activity_state="processing_command",
+            telemetry={"production_focus": focus, "routed_capability_id": "production.read", "routed_command_label": "/prodstatus"},
+        )
+
+    def _execute_prod_mobile(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot) -> CapabilityExecutionResult:
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="production.read",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/prodmobile",
+            parsed_arguments={"mobile": True},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        reply = self._service.production_status_reply(chat_id=update.chat_id, mobile=True)
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=reply,
+            internal_summary="production.read returned mobile production status.",
+            retryable=False,
+            command_label="/prodmobile",
+            activity_state="processing_command",
+            telemetry={"production_mobile": True, "routed_capability_id": "production.read", "routed_command_label": "/prodmobile"},
+        )
+
+    def _execute_prod_priority(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot, argument: str) -> CapabilityExecutionResult:
+        parsed, error = parse_prod_priority_arguments(argument)
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="production.control.query",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/prodpriority",
+            parsed_arguments=dict(parsed or {}),
+            metadata={"argument_summary": "/prodpriority [focus]"},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        if error is not None or parsed is None:
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="production_priority_usage_invalid",
+                user_message="\n".join(
+                    (
+                        "Couldn't update the production priority.",
+                        f"Reason: {error.reason if error is not None else 'Missing priority title.'}",
+                        "Next: " + (error.next_step if error is not None else 'Use /prodpriority --title "focus".'),
+                    )
+                ),
+                internal_summary="production.control.query rejected invalid priority syntax.",
+                retryable=False,
+                command_label="/prodpriority",
+                activity_state="processing_command",
+            )
+        project = self._service.set_production_priority(
+            chat_id=update.chat_id,
+            title=parsed.get("title", ""),
+            category=parsed.get("category", "systems_tools"),
+            node_hint=parsed.get("node", ""),
+        )
+        reply = self._service.production_status_reply(chat_id=update.chat_id, mobile=True)
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message="\n".join((f"Updated production priority to {parsed.get('title', '')}.", reply)),
+            internal_summary=f"production.control.query updated priority for project {project.project_id}.",
+            retryable=False,
+            command_label="/prodpriority",
+            activity_state="processing_command",
+            telemetry={
+                "production_action": "set_priority",
+                "production_category": parsed.get("category", "systems_tools"),
+                "routed_capability_id": "production.control.query",
+                "routed_command_label": "/prodpriority",
+            },
+        )
+
+    def _execute_prod_pause(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot, argument: str) -> CapabilityExecutionResult:
+        parsed, error = parse_prod_pause_resume_arguments(argument, command="/prodpause")
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="production.control.query",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/prodpause",
+            parsed_arguments=dict(parsed or {}),
+        )
+        if scope_failure is not None:
+            return scope_failure
+        if error is not None or parsed is None:
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="production_pause_usage_invalid",
+                user_message="\n".join(
+                    (
+                        "Couldn't pause that production target.",
+                        f"Reason: {error.reason if error is not None else 'Missing target.'}",
+                        "Next: " + (error.next_step if error is not None else "Use /prodpause [validation|followup|category]."),
+                    )
+                ),
+                internal_summary="production.control.query rejected invalid pause syntax.",
+                retryable=False,
+                command_label="/prodpause",
+                activity_state="processing_command",
+            )
+        reply = self._service.pause_production_target(chat_id=update.chat_id, target=parsed.get("target", "validation"))
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=reply,
+            internal_summary=f"production.control.query paused target {parsed.get('target', 'validation')}.",
+            retryable=False,
+            command_label="/prodpause",
+            activity_state="processing_command",
+            telemetry={"production_action": "pause", "production_target": parsed.get("target", "validation"), "routed_capability_id": "production.control.query", "routed_command_label": "/prodpause"},
+        )
+
+    def _execute_prod_resume(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot, argument: str) -> CapabilityExecutionResult:
+        parsed, error = parse_prod_pause_resume_arguments(argument, command="/prodresume")
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="production.control.query",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/prodresume",
+            parsed_arguments=dict(parsed or {}),
+        )
+        if scope_failure is not None:
+            return scope_failure
+        if error is not None or parsed is None:
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="production_resume_usage_invalid",
+                user_message="\n".join(
+                    (
+                        "Couldn't resume that production target.",
+                        f"Reason: {error.reason if error is not None else 'Missing target.'}",
+                        "Next: " + (error.next_step if error is not None else "Use /prodresume [validation|followup|category]."),
+                    )
+                ),
+                internal_summary="production.control.query rejected invalid resume syntax.",
+                retryable=False,
+                command_label="/prodresume",
+                activity_state="processing_command",
+            )
+        reply = self._service.resume_production_target(chat_id=update.chat_id, target=parsed.get("target", "validation"))
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=reply,
+            internal_summary=f"production.control.query resumed target {parsed.get('target', 'validation')}.",
+            retryable=False,
+            command_label="/prodresume",
+            activity_state="processing_command",
+            telemetry={"production_action": "resume", "production_target": parsed.get("target", "validation"), "routed_capability_id": "production.control.query", "routed_command_label": "/prodresume"},
+        )
+
+    def _execute_prod_assign(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot, argument: str) -> CapabilityExecutionResult:
+        parsed, error = parse_prod_assign_arguments(argument)
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="production.control.query",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/prodassign",
+            parsed_arguments=dict(parsed or {}),
+            metadata={"argument_summary": "/prodassign [assignment]"},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        if error is not None or parsed is None:
+            return self._result(
+                request,
+                outcome="invalid_request",
+                reason_code="production_assign_usage_invalid",
+                user_message="\n".join(
+                    (
+                        "Couldn't assign that production work.",
+                        f"Reason: {error.reason if error is not None else 'Missing target.'}",
+                        "Next: " + (error.next_step if error is not None else "Use /prodassign --target <node|validator|another>."),
+                    )
+                ),
+                internal_summary="production.control.query rejected invalid assign syntax.",
+                retryable=False,
+                command_label="/prodassign",
+                activity_state="processing_command",
+            )
+        reply = self._service.assign_production_work(
+            chat_id=update.chat_id,
+            target=parsed.get("target", "validator"),
+            category=parsed.get("category", ""),
+            title=parsed.get("title", ""),
+        )
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=reply,
+            internal_summary=f"production.control.query assigned work using target {parsed.get('target', 'validator')}.",
+            retryable=False,
+            command_label="/prodassign",
+            activity_state="processing_command",
+            telemetry={"production_action": "assign", "production_target": parsed.get("target", "validator"), "routed_capability_id": "production.control.query", "routed_command_label": "/prodassign"},
         )
 
     def _execute_bootstrap_view(self, *, update: TelegramInboundMessage, snapshot: ControllerSnapshot) -> CapabilityExecutionResult:
@@ -6126,6 +6503,377 @@ class CapabilityExecutor:
             activity_state="processing_command",
         )
 
+    def _execute_datasources(
+        self,
+        *,
+        update: TelegramInboundMessage,
+        snapshot: ControllerSnapshot,
+        argument: str,
+    ) -> CapabilityExecutionResult:
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="datasource.read",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/datasources",
+            parsed_arguments={},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        if argument.strip():
+            return self._invalid_datasource_request(request=request, command_label="/datasources", title="Couldn't parse that datasources command.", reason="/datasources does not accept arguments.")
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=self._service._build_datasources_reply().reply,
+            internal_summary="datasource.read listed datasource policy records.",
+            retryable=False,
+            command_label="/datasources",
+            activity_state="processing_command",
+        )
+
+    def _execute_datasource_read_like(
+        self,
+        *,
+        update: TelegramInboundMessage,
+        snapshot: ControllerSnapshot,
+        argument: str,
+        command_label: str,
+    ) -> CapabilityExecutionResult:
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="datasource.read",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command=command_label,
+            parsed_arguments={"argument": argument.strip()},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        source_id, error = parse_datasource_id_argument(argument, command=command_label)
+        if source_id is None:
+            return self._invalid_datasource_request(request=request, command_label=command_label, title=f"Couldn't parse that {command_label} command.", error=error)
+        reply = self._service._build_datasource_reply(source_id=source_id).reply
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=reply,
+            internal_summary=f"datasource.read handled {command_label} for {source_id}.",
+            retryable=False,
+            command_label=command_label,
+            activity_state="processing_command",
+        )
+
+    def _execute_datasource_summary(
+        self,
+        *,
+        update: TelegramInboundMessage,
+        snapshot: ControllerSnapshot,
+        argument: str,
+    ) -> CapabilityExecutionResult:
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="datasource.read",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/datasourcesummary",
+            parsed_arguments={},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        if argument.strip():
+            return self._invalid_datasource_request(request=request, command_label="/datasourcesummary", title="Couldn't parse that datasource summary command.", reason="/datasourcesummary does not accept arguments.")
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=self._service._build_datasource_summary_reply().reply,
+            internal_summary="datasource.read summarized datasource policy state.",
+            retryable=False,
+            command_label="/datasourcesummary",
+            activity_state="processing_command",
+        )
+
+    def _execute_datasource_query(
+        self,
+        *,
+        update: TelegramInboundMessage,
+        snapshot: ControllerSnapshot,
+        argument: str,
+    ) -> CapabilityExecutionResult:
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="datasource.policy.query",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/datasourcequery",
+            parsed_arguments={"argument": argument.strip()},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        parsed, error = parse_datasource_query_arguments(argument)
+        if parsed is None:
+            return self._invalid_datasource_request(request=request, command_label="/datasourcequery", title="Couldn't parse that datasource query.", error=error)
+        rows = self._service.list_source_policies(
+            usage_class=parsed.get("usage", ""),
+            review_status=parsed.get("review", ""),
+            status=parsed.get("status", ""),
+            source_type=parsed.get("type", ""),
+            tag=parsed.get("tag", ""),
+            operation=parsed.get("operation", ""),
+        )
+        if not rows:
+            details = " ".join(f"{key}={value}" for key, value in parsed.items()) or "no filters"
+            message = "\n".join(("Datasource query", f"No datasource policies matched: {details}"))
+        else:
+            message = self._service._build_datasources_reply(records=rows).reply
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=message,
+            internal_summary=f"datasource.policy.query filtered {len(rows)} datasource record(s).",
+            retryable=False,
+            command_label="/datasourcequery",
+            activity_state="processing_command",
+        )
+
+    def _execute_datasource_create(
+        self,
+        *,
+        update: TelegramInboundMessage,
+        snapshot: ControllerSnapshot,
+        argument: str,
+    ) -> CapabilityExecutionResult:
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="datasource.policy.query",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/datasourcecreate",
+            parsed_arguments={"argument": argument.strip()},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        parsed, error = parse_datasource_create_arguments(argument)
+        if parsed is None:
+            return self._invalid_datasource_request(request=request, command_label="/datasourcecreate", title="Couldn't parse that datasource create.", error=error)
+        try:
+            record = self._service.create_source_policy(
+                source_name=parsed.get("name", ""),
+                source_type=parsed.get("type", ""),
+                source_locator=parsed.get("locator", ""),
+                usage_class=parsed.get("usage", "requires_review"),
+                status=parsed.get("status", "draft"),
+                review_status=parsed.get("review", "draft"),
+                owner=parsed.get("owner", ""),
+                source_scope=parsed.get("scope", ""),
+                collection_method_class=parsed.get("collection", "manual_declaration"),
+                policy_notes=parsed.get("note", ""),
+                content_license_note=parsed.get("license-note", ""),
+                robots_note=parsed.get("robots-note", ""),
+                terms_note=parsed.get("terms-note", ""),
+                retention_policy=parsed.get("retention", ""),
+                training_eligibility_reason=parsed.get("training-reason", ""),
+                blocked_reason=parsed.get("blocked-reason", ""),
+                review_required=self._parse_bool(parsed.get("review-required", "true"), default=True),
+                tags=self._split_csv(parsed.get("tags", "")),
+                provenance_requirements=self._split_pipe(parsed.get("provenance", "")),
+                allowed_operations=self._split_csv(parsed.get("operations", "")),
+            )
+        except ValueError as exc:
+            return self._invalid_datasource_request(request=request, command_label="/datasourcecreate", title="Couldn't create that datasource policy.", reason=str(exc))
+        reply = self._service._build_datasource_reply(source_id=record.source_id).reply
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message="\n".join((reply, f"Next: Use /datasourcereview {record.source_id} pending_review, /datasourceallow {record.source_id} retrieval_only, or /datasourceblock {record.source_id} --reason \"text\".")),
+            internal_summary=f"datasource.policy.query created {record.source_id}.",
+            retryable=False,
+            command_label="/datasourcecreate",
+            activity_state="processing_command",
+        )
+
+    def _execute_datasource_update(
+        self,
+        *,
+        update: TelegramInboundMessage,
+        snapshot: ControllerSnapshot,
+        argument: str,
+    ) -> CapabilityExecutionResult:
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="datasource.policy.query",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/datasourceupdate",
+            parsed_arguments={"argument": argument.strip()},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        parsed, error = parse_datasource_update_arguments(argument)
+        if parsed is None:
+            return self._invalid_datasource_request(request=request, command_label="/datasourceupdate", title="Couldn't parse that datasource update.", error=error)
+        try:
+            record = self._service.update_source_policy(
+                source_id=parsed.get("source_id", ""),
+                source_name=parsed.get("name"),
+                source_type=parsed.get("type"),
+                source_locator=parsed.get("locator"),
+                usage_class=parsed.get("usage"),
+                status=parsed.get("status"),
+                owner=parsed.get("owner"),
+                source_scope=parsed.get("scope"),
+                collection_method_class=parsed.get("collection"),
+                policy_notes=parsed.get("note"),
+                content_license_note=parsed.get("license-note"),
+                robots_note=parsed.get("robots-note"),
+                terms_note=parsed.get("terms-note"),
+                retention_policy=parsed.get("retention"),
+                training_eligibility_reason=parsed.get("training-reason"),
+                blocked_reason=parsed.get("blocked-reason"),
+                review_required=self._parse_optional_bool(parsed.get("review-required")),
+                tags=self._split_csv(parsed.get("tags", "")) if "tags" in parsed else None,
+                provenance_requirements=self._split_pipe(parsed.get("provenance", "")) if "provenance" in parsed else None,
+                allowed_operations=self._split_csv(parsed.get("operations", "")) if "operations" in parsed else None,
+            )
+        except ValueError as exc:
+            return self._invalid_datasource_request(request=request, command_label="/datasourceupdate", title="Couldn't update that datasource policy.", reason=str(exc))
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=self._service._build_datasource_reply(source_id=record.source_id).reply,
+            internal_summary=f"datasource.policy.query updated {record.source_id}.",
+            retryable=False,
+            command_label="/datasourceupdate",
+            activity_state="processing_command",
+        )
+
+    def _execute_datasource_review(
+        self,
+        *,
+        update: TelegramInboundMessage,
+        snapshot: ControllerSnapshot,
+        argument: str,
+    ) -> CapabilityExecutionResult:
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="datasource.policy.query",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/datasourcereview",
+            parsed_arguments={"argument": argument.strip()},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        parsed, error = parse_datasource_review_arguments(argument)
+        if parsed is None:
+            return self._invalid_datasource_request(request=request, command_label="/datasourcereview", title="Couldn't parse that datasource review.", error=error)
+        try:
+            record = self._service.review_source_policy(
+                source_id=parsed.get("source_id", ""),
+                review_status=parsed.get("review", ""),
+                reviewer=parsed.get("reviewer", ""),
+                note=parsed.get("note", ""),
+            )
+        except ValueError as exc:
+            return self._invalid_datasource_request(request=request, command_label="/datasourcereview", title="Couldn't review that datasource policy.", reason=str(exc))
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=self._service._build_datasource_reply(source_id=record.source_id).reply,
+            internal_summary=f"datasource.policy.query reviewed {record.source_id}.",
+            retryable=False,
+            command_label="/datasourcereview",
+            activity_state="processing_command",
+        )
+
+    def _execute_datasource_block(
+        self,
+        *,
+        update: TelegramInboundMessage,
+        snapshot: ControllerSnapshot,
+        argument: str,
+    ) -> CapabilityExecutionResult:
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="datasource.policy.query",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/datasourceblock",
+            parsed_arguments={"argument": argument.strip()},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        parsed, error = parse_datasource_block_arguments(argument)
+        if parsed is None:
+            return self._invalid_datasource_request(request=request, command_label="/datasourceblock", title="Couldn't parse that datasource block.", error=error)
+        try:
+            record = self._service.block_source_policy(
+                source_id=parsed.get("source_id", ""),
+                reason=parsed.get("reason", ""),
+                reviewer=parsed.get("reviewer", ""),
+                note=parsed.get("note", ""),
+            )
+        except ValueError as exc:
+            return self._invalid_datasource_request(request=request, command_label="/datasourceblock", title="Couldn't block that datasource policy.", reason=str(exc))
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=self._service._build_datasource_reply(source_id=record.source_id).reply,
+            internal_summary=f"datasource.policy.query blocked {record.source_id}.",
+            retryable=False,
+            command_label="/datasourceblock",
+            activity_state="processing_command",
+        )
+
+    def _execute_datasource_allow(
+        self,
+        *,
+        update: TelegramInboundMessage,
+        snapshot: ControllerSnapshot,
+        argument: str,
+    ) -> CapabilityExecutionResult:
+        request, _, _, scope_failure = self._prepare_capability_request(
+            capability_id="datasource.policy.query",
+            snapshot=snapshot,
+            chat_id=update.chat_id,
+            requester_label=update.sender_label,
+            original_command="/datasourceallow",
+            parsed_arguments={"argument": argument.strip()},
+        )
+        if scope_failure is not None:
+            return scope_failure
+        parsed, error = parse_datasource_allow_arguments(argument)
+        if parsed is None:
+            return self._invalid_datasource_request(request=request, command_label="/datasourceallow", title="Couldn't parse that datasource allow command.", error=error)
+        try:
+            record = self._service.set_source_policy_usage(
+                source_id=parsed.get("source_id", ""),
+                usage_class=parsed.get("usage", ""),
+                reviewer=parsed.get("reviewer", ""),
+                note=parsed.get("note", ""),
+                training_eligibility_reason=parsed.get("training-reason"),
+            )
+        except ValueError as exc:
+            return self._invalid_datasource_request(request=request, command_label="/datasourceallow", title="Couldn't update datasource usage.", reason=str(exc))
+        return self._result(
+            request,
+            outcome="success",
+            reason_code="ok",
+            user_message=self._service._build_datasource_reply(source_id=record.source_id).reply,
+            internal_summary=f"datasource.policy.query set usage for {record.source_id}.",
+            retryable=False,
+            command_label="/datasourceallow",
+            activity_state="processing_command",
+        )
+
     def _execute_model_experiments(
         self,
         *,
@@ -6321,6 +7069,28 @@ class CapabilityExecutor:
             activity_state="processing_command",
         )
 
+    def _invalid_datasource_request(
+        self,
+        *,
+        request: CapabilityExecutionRequest,
+        command_label: str,
+        title: str,
+        error=None,
+        reason: str = "",
+    ) -> CapabilityExecutionResult:
+        message_reason = reason or (error.reason if error is not None else "Invalid request.")
+        next_step = error.next_step if error is not None else "Use /help to see the supported datasource commands."
+        return self._result(
+            request,
+            outcome="invalid_request",
+            reason_code="invalid_datasource_request",
+            user_message="\n".join((title, f"Reason: {message_reason}", f"Next: {next_step}")),
+            internal_summary=f"{command_label} rejected because the datasource request was invalid.",
+            retryable=False,
+            command_label=command_label,
+            activity_state="processing_command",
+        )
+
     def _invalid_model_experiment_request(
         self,
         *,
@@ -6342,6 +7112,29 @@ class CapabilityExecutor:
             command_label=command_label,
             activity_state="processing_command",
         )
+
+    @staticmethod
+    def _split_csv(value: str) -> tuple[str, ...]:
+        return tuple(item.strip() for item in value.split(",") if item.strip())
+
+    @staticmethod
+    def _split_pipe(value: str) -> tuple[str, ...]:
+        return tuple(item.strip() for item in value.split("|") if item.strip())
+
+    @staticmethod
+    def _parse_bool(value: str, *, default: bool) -> bool:
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+        return default
+
+    @classmethod
+    def _parse_optional_bool(cls, value: str | None) -> bool | None:
+        if value is None:
+            return None
+        return cls._parse_bool(value, default=True)
 
     def _repo_error_result(
         self,

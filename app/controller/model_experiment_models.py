@@ -120,6 +120,7 @@ class ModelExperimentRecord:
     training_example_count: int = 0
     evaluation_example_count: int = 0
     label_filters: dict[str, str] = field(default_factory=dict)
+    source_policy_ids: tuple[str, ...] = field(default_factory=tuple)
     split_policy: str = "hash_80_20"
     builder_name: str = "command_grammar_correction_v1"
     artifact_root: str = ""
@@ -152,6 +153,7 @@ class ModelExperimentRecord:
             "training_example_count": self.training_example_count,
             "evaluation_example_count": self.evaluation_example_count,
             "label_filters": dict(self.label_filters),
+            "source_policy_ids": list(self.source_policy_ids),
             "split_policy": self.split_policy,
             "builder_name": self.builder_name,
             "artifact_root": self.artifact_root,
@@ -186,6 +188,7 @@ class ModelExperimentRecord:
             training_example_count=max(0, int(payload.get("training_example_count", 0) or 0)),
             evaluation_example_count=max(0, int(payload.get("evaluation_example_count", 0) or 0)),
             label_filters=_normalize_string_map(payload.get("label_filters")),
+            source_policy_ids=tuple(str(item).strip().upper() for item in (payload.get("source_policy_ids") or ()) if str(item).strip()),
             split_policy=" ".join(str(payload.get("split_policy", "hash_80_20")).split()) or "hash_80_20",
             builder_name=" ".join(str(payload.get("builder_name", "command_grammar_correction_v1")).split()) or "command_grammar_correction_v1",
             artifact_root=str(payload.get("artifact_root", "")).strip(),

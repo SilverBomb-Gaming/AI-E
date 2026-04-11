@@ -15,6 +15,10 @@ DATASET_SPLIT_USAGE = "train|eval|holdout"
 MODEL_TASK_USAGE = "command_grammar_correction"
 MODEL_BASELINE_USAGE = "rules|none|previous_model"
 MODEL_METHOD_USAGE = "char_bigram_knn_v1"
+DATASOURCE_USAGE_CLASS_USAGE = "requires_review|retrieval_only|evaluation_only|training_allowed|blocked|archival_only|internal_only"
+DATASOURCE_REVIEW_USAGE = "draft|pending_review|approved|rejected|suspended"
+DATASOURCE_STATUS_USAGE = "draft|active|blocked|suspended|archived"
+DATASOURCE_TYPE_USAGE = "web_domain|website_section|api_source|internal_dataset|file_bundle|exported_dataset|manual_import|document_collection|repo_source"
 
 
 @dataclass(frozen=True)
@@ -55,6 +59,13 @@ COMMAND_USAGE: dict[str, str] = {
     "/planview": "Use /planview.",
     "/planclear": "Use /planclear.",
     "/projectview": "Use /projectview.",
+    "/prodproject": "Use /prodproject --title \"name\" [--engine unity|godot|unreal|custom] [--milestone \"text\"].",
+    "/prodstatus": "Use /prodstatus [overview|blocked|changes|nodes|attention].",
+    "/prodmobile": "Use /prodmobile.",
+    "/prodpriority": "Use /prodpriority --title \"focus\" [--category gameplay|ai_behavior|ui_ux|systems_tools|animation|audio|content_pipeline|performance|build_release|qa_validation|research_modeling] [--node <id>].",
+    "/prodpause": "Use /prodpause [validation|followup|category].",
+    "/prodresume": "Use /prodresume [validation|followup|category].",
+    "/prodassign": "Use /prodassign --target <node|validator|another> [--category gameplay|ai_behavior|ui_ux|systems_tools|animation|audio|content_pipeline|performance|build_release|qa_validation|research_modeling] [--title \"work\"].",
     "/mode": "Use /mode.",
     "/models": "Use /models.",
     "/repo": "Use /repo or /repo status.",
@@ -102,6 +113,16 @@ COMMAND_USAGE: dict[str, str] = {
     "/datasetaddfilter": f"Use /datasetaddfilter <dataset_id> [--source local-cli] [--type {DATA_TYPE_USAGE}] [--label {DATASET_LABEL_USAGE}] [--tag chain_decision] [--status success] [--session-id EV-...] [--chain-id CH-...] [--bundle-id FB-...].",
     "/datasetsplit": f"Use /datasetsplit <dataset_id> [--mode deterministic] --train 80 --eval 20 [--holdout 0]. Splits: {DATASET_SPLIT_USAGE}.",
     "/datasetexport": "Use /datasetexport <dataset_id> [--split train|eval|holdout] [--format jsonl|json].",
+    "/datasources": "Use /datasources.",
+    "/datasource": "Use /datasource <source_id>.",
+    "/datasourcepolicy": "Use /datasourcepolicy <source_id>.",
+    "/datasourcesummary": "Use /datasourcesummary.",
+    "/datasourcequery": "Use /datasourcequery [--usage requires_review|retrieval_only|evaluation_only|training_allowed|blocked|archival_only|internal_only] [--review draft|pending_review|approved|rejected|suspended] [--status draft|active|blocked|suspended|archived] [--type web_domain|website_section|api_source|internal_dataset|file_bundle|exported_dataset|manual_import|document_collection|repo_source] [--tag governance] [--operation metadata_only|retrieval|evaluation|training|export_reference|blocked].",
+    "/datasourcecreate": f"Use /datasourcecreate --name \"source\" --type {DATASOURCE_TYPE_USAGE} --locator \"https://example.com/path\" [--usage {DATASOURCE_USAGE_CLASS_USAGE}] [--status {DATASOURCE_STATUS_USAGE}] [--review {DATASOURCE_REVIEW_USAGE}] [--owner \"name\"] [--scope \"text\"] [--collection manual_declaration] [--tags compliance,training] [--operations metadata_only,retrieval] [--provenance \"req 1|req 2\"] [--note \"text\"] [--license-note \"text\"] [--robots-note \"text\"] [--terms-note \"text\"] [--retention \"text\"] [--training-reason \"text\"] [--review-required true|false].",
+    "/datasourceupdate": "Use /datasourceupdate <source_id> [--name \"source\"] [--type web_domain|website_section|api_source|internal_dataset|file_bundle|exported_dataset|manual_import|document_collection|repo_source] [--locator \"https://example.com/path\"] [--usage requires_review|retrieval_only|evaluation_only|training_allowed|blocked|archival_only|internal_only] [--status draft|active|blocked|suspended|archived] [--owner \"name\"] [--scope \"text\"] [--collection manual_declaration] [--tags compliance,training] [--operations metadata_only,retrieval] [--provenance \"req 1|req 2\"] [--note \"text\"] [--license-note \"text\"] [--robots-note \"text\"] [--terms-note \"text\"] [--retention \"text\"] [--training-reason \"text\"] [--blocked-reason \"text\"] [--review-required true|false].",
+    "/datasourcereview": f"Use /datasourcereview <source_id> <{DATASOURCE_REVIEW_USAGE}> [--reviewer \"name\"] [--note \"text\"].",
+    "/datasourceblock": "Use /datasourceblock <source_id> --reason \"text\" [--reviewer \"name\"] [--note \"text\"].",
+    "/datasourceallow": f"Use /datasourceallow <source_id> <{DATASOURCE_USAGE_CLASS_USAGE}> [--reviewer \"name\"] [--note \"text\"] [--training-reason \"text\"].",
     "/modelexperiments": "Use /modelexperiments.",
     "/modelexperiment": "Use /modelexperiment <experiment_id>.",
     "/modelexperimentresults": "Use /modelexperimentresults <experiment_id>.",
@@ -133,7 +154,7 @@ HELP_LINES = (
     "Core: /chat /translate|/refine",
     "Plan: /planbuild /planstep|approve|status|reset",
     "Bundle: /planstepbundle /bundleapprove|status|cancel",
-    "Boot: /bootstrapproject|/bootstrapapprove|reset",
+    "Boot: /bootstrapproject|/bootstrapapprove|reset /prod*",
     "Files: /repo|file /createfile|patch*|/writefile",
     "Exec: /run|/test /dispatch --target ... --command ... /nodes|node*",
     "Loops: /eval* /chain*",
@@ -267,6 +288,78 @@ def parse_chain_create_arguments(argument: str) -> tuple[dict[str, str] | None, 
         allowed_flags={"title", "type", "command", "steps", "objective", "retries", "failures", "no-progress", "target", "fallback"},
         required_flags=("title", "type", "command", "steps"),
         aliases={"no_progress": "no-progress"},
+        next_step=next_step,
+    )
+
+
+def parse_prod_project_arguments(argument: str) -> tuple[dict[str, str] | None, CommandParseError | None]:
+    next_step = usage_hint_for_command("/prodproject")
+    tokens, error = _tokenize(argument, next_step=next_step)
+    if error is not None:
+        return None, error
+    if not tokens:
+        return None, CommandParseError(reason="Missing required option --title.", next_step=next_step)
+    return _parse_named_options(
+        tokens,
+        allowed_flags={"title", "engine", "milestone"},
+        required_flags=("title",),
+        next_step=next_step,
+    )
+
+
+def parse_prod_status_arguments(argument: str) -> tuple[dict[str, str] | None, CommandParseError | None]:
+    next_step = usage_hint_for_command("/prodstatus")
+    tokens, error = _tokenize(argument, next_step=next_step)
+    if error is not None:
+        return None, error
+    if not tokens:
+        return {"focus": "overview"}, None
+    if len(tokens) != 1:
+        return None, CommandParseError(reason="Expected at most one focus value.", next_step=next_step)
+    focus = tokens[0].strip().lower()
+    if focus not in {"overview", "blocked", "changes", "nodes", "attention"}:
+        return None, CommandParseError(reason=f"Unsupported production focus {tokens[0]}.", next_step=next_step)
+    return {"focus": focus}, None
+
+
+def parse_prod_priority_arguments(argument: str) -> tuple[dict[str, str] | None, CommandParseError | None]:
+    next_step = usage_hint_for_command("/prodpriority")
+    tokens, error = _tokenize(argument, next_step=next_step)
+    if error is not None:
+        return None, error
+    if not tokens:
+        return None, CommandParseError(reason="Missing required option --title.", next_step=next_step)
+    return _parse_named_options(
+        tokens,
+        allowed_flags={"title", "category", "node"},
+        required_flags=("title",),
+        next_step=next_step,
+    )
+
+
+def parse_prod_pause_resume_arguments(argument: str, *, command: str) -> tuple[dict[str, str] | None, CommandParseError | None]:
+    next_step = usage_hint_for_command(command)
+    tokens, error = _tokenize(argument, next_step=next_step)
+    if error is not None:
+        return None, error
+    if not tokens:
+        return {"target": "validation"}, None
+    if len(tokens) != 1:
+        return None, CommandParseError(reason="Expected one target value.", next_step=next_step)
+    return {"target": tokens[0].strip().lower()}, None
+
+
+def parse_prod_assign_arguments(argument: str) -> tuple[dict[str, str] | None, CommandParseError | None]:
+    next_step = usage_hint_for_command("/prodassign")
+    tokens, error = _tokenize(argument, next_step=next_step)
+    if error is not None:
+        return None, error
+    if not tokens:
+        return None, CommandParseError(reason="Missing required option --target.", next_step=next_step)
+    return _parse_named_options(
+        tokens,
+        allowed_flags={"target", "category", "title"},
+        required_flags=("target",),
         next_step=next_step,
     )
 
@@ -507,6 +600,129 @@ def parse_dataset_export_arguments(argument: str) -> tuple[dict[str, str] | None
     if error is not None or parsed is None:
         return None, error
     parsed["dataset_id"] = dataset_id
+    return parsed, None
+
+
+def parse_datasource_id_argument(argument: str, *, command: str) -> tuple[str | None, CommandParseError | None]:
+    next_step = usage_hint_for_command(command)
+    tokens, error = _tokenize(argument, next_step=next_step)
+    if error is not None:
+        return None, error
+    if tokens is None or len(tokens) != 1:
+        return None, CommandParseError(reason="Expected one datasource id.", next_step=next_step)
+    return tokens[0].strip().upper(), None
+
+
+def parse_datasource_query_arguments(argument: str) -> tuple[dict[str, str] | None, CommandParseError | None]:
+    next_step = usage_hint_for_command("/datasourcequery")
+    tokens, error = _tokenize(argument, next_step=next_step)
+    if error is not None:
+        return None, error
+    if not tokens:
+        return {}, None
+    return _parse_named_options(
+        tokens,
+        allowed_flags={"usage", "review", "status", "type", "tag", "operation"},
+        next_step=next_step,
+    )
+
+
+def parse_datasource_create_arguments(argument: str) -> tuple[dict[str, str] | None, CommandParseError | None]:
+    next_step = usage_hint_for_command("/datasourcecreate")
+    tokens, error = _tokenize(argument, next_step=next_step)
+    if error is not None:
+        return None, error
+    if tokens is None or not tokens:
+        return None, CommandParseError(reason="Missing required options --name, --type, and --locator.", next_step=next_step)
+    return _parse_named_options(
+        tokens,
+        allowed_flags={"name", "type", "locator", "usage", "status", "review", "owner", "scope", "collection", "tags", "operations", "provenance", "note", "license-note", "robots-note", "terms-note", "retention", "training-reason", "review-required", "blocked-reason"},
+        required_flags=("name", "type", "locator"),
+        aliases={"license_note": "license-note", "robots_note": "robots-note", "terms_note": "terms-note", "training_reason": "training-reason", "review_required": "review-required", "blocked_reason": "blocked-reason"},
+        next_step=next_step,
+    )
+
+
+def parse_datasource_update_arguments(argument: str) -> tuple[dict[str, str] | None, CommandParseError | None]:
+    next_step = usage_hint_for_command("/datasourceupdate")
+    tokens, error = _tokenize(argument, next_step=next_step)
+    if error is not None:
+        return None, error
+    if tokens is None or len(tokens) < 2:
+        return None, CommandParseError(reason="Expected a datasource id followed by one or more options.", next_step=next_step)
+    source_id = tokens[0].strip().upper()
+    parsed, error = _parse_named_options(
+        tokens[1:],
+        allowed_flags={"name", "type", "locator", "usage", "status", "owner", "scope", "collection", "tags", "operations", "provenance", "note", "license-note", "robots-note", "terms-note", "retention", "training-reason", "review-required", "blocked-reason"},
+        aliases={"license_note": "license-note", "robots_note": "robots-note", "terms_note": "terms-note", "training_reason": "training-reason", "review_required": "review-required", "blocked_reason": "blocked-reason"},
+        next_step=next_step,
+    )
+    if error is not None or parsed is None:
+        return None, error
+    parsed["source_id"] = source_id
+    return parsed, None
+
+
+def parse_datasource_review_arguments(argument: str) -> tuple[dict[str, str] | None, CommandParseError | None]:
+    next_step = usage_hint_for_command("/datasourcereview")
+    tokens, error = _tokenize(argument, next_step=next_step)
+    if error is not None:
+        return None, error
+    if tokens is None or len(tokens) < 2:
+        return None, CommandParseError(reason="Expected a datasource id and review state.", next_step=next_step)
+    parsed = {"source_id": tokens[0].strip().upper(), "review": tokens[1].strip().lower()}
+    if len(tokens) == 2:
+        return parsed, None
+    options, error = _parse_named_options(
+        tokens[2:],
+        allowed_flags={"reviewer", "note"},
+        next_step=next_step,
+    )
+    if error is not None or options is None:
+        return None, error
+    parsed.update(options)
+    return parsed, None
+
+
+def parse_datasource_block_arguments(argument: str) -> tuple[dict[str, str] | None, CommandParseError | None]:
+    next_step = usage_hint_for_command("/datasourceblock")
+    tokens, error = _tokenize(argument, next_step=next_step)
+    if error is not None:
+        return None, error
+    if tokens is None or len(tokens) < 3:
+        return None, CommandParseError(reason="Expected a datasource id and --reason.", next_step=next_step)
+    source_id = tokens[0].strip().upper()
+    parsed, error = _parse_named_options(
+        tokens[1:],
+        allowed_flags={"reason", "reviewer", "note"},
+        required_flags=("reason",),
+        next_step=next_step,
+    )
+    if error is not None or parsed is None:
+        return None, error
+    parsed["source_id"] = source_id
+    return parsed, None
+
+
+def parse_datasource_allow_arguments(argument: str) -> tuple[dict[str, str] | None, CommandParseError | None]:
+    next_step = usage_hint_for_command("/datasourceallow")
+    tokens, error = _tokenize(argument, next_step=next_step)
+    if error is not None:
+        return None, error
+    if tokens is None or len(tokens) < 2:
+        return None, CommandParseError(reason="Expected a datasource id and usage class.", next_step=next_step)
+    parsed = {"source_id": tokens[0].strip().upper(), "usage": tokens[1].strip().lower()}
+    if len(tokens) == 2:
+        return parsed, None
+    options, error = _parse_named_options(
+        tokens[2:],
+        allowed_flags={"reviewer", "note", "training-reason"},
+        aliases={"training_reason": "training-reason"},
+        next_step=next_step,
+    )
+    if error is not None or options is None:
+        return None, error
+    parsed.update(options)
     return parsed, None
 
 

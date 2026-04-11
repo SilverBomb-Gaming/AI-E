@@ -36,6 +36,9 @@ from .multi_file_feature_planner import FeaturePlanningDecision, MultiFileFeatur
 from .project_bootstrap_formatter import ProjectBootstrapFormatter
 from .project_bootstrap_planner import ProjectBootstrapPlanner
 from .project_bootstrap_store import ProjectBootstrapStore
+from .production_orchestrator import ProductionConversationOutcome, ProductionOrchestrator
+from .production_state_store import ProductionStateStore
+from .production_summary import ProductionSummaryFormatter
 from .plan_bridge import PlanBridge
 from .plan_bridge_formatter import PlanBridgeFormatter
 from .plan_bridge_store import PlanBridgeStore
@@ -46,6 +49,10 @@ from .capability_registry import COMMAND_CAPABILITY_MAP, get_capability_manifest
 from .context_models import BufferedContext
 from .context_store import ContextStore
 from .data_capture import DataCapture
+from .data_policy_formatter import DataPolicyFormatter
+from .data_policy_models import SourcePolicyApprovalRecord, SourcePolicyRecord, normalize_allowed_operation, normalize_policy_tag, normalize_review_status, normalize_source_policy_status, normalize_source_type, normalize_usage_class
+from .data_policy_rules import DataPolicyRules
+from .data_policy_store import DataPolicyStore
 from .data_record_models import DataRecord
 from .data_record_store import DataRecordStore
 from .dataset_export import DatasetExportError, DatasetExporter
@@ -287,6 +294,9 @@ class ControllerService:
         self._audit_store = AuditStore(max_records=_AUDIT_LOG_MAX_RECORDS)
         self._data_capture = DataCapture()
         self._data_record_store = DataRecordStore(root_path=self._config_store.path.parent / "data_records")
+        self._data_policy_store = DataPolicyStore(root_path=self._config_store.path.parent / "data_policy")
+        self._data_policy_formatter = DataPolicyFormatter()
+        self._data_policy_rules = DataPolicyRules()
         self._dataset_store = DatasetStore(root_path=self._config_store.path.parent / "datasets")
         self._dataset_formatter = DatasetFormatter()
         self._dataset_exporter = DatasetExporter(store=self._dataset_store, formatter=self._dataset_formatter)
@@ -312,6 +322,12 @@ class ControllerService:
         self._task_chain_store = TaskChainStore(root_path=self._config_store.path.parent / "task_chains")
         self._task_chain_formatter = TaskChainFormatter()
         self._task_chain_runner = TaskChainRunner(self, self._task_chain_store)
+        self._production_state_store = ProductionStateStore(root_path=self._config_store.path.parent / "production_state")
+        self._production_summary_formatter = ProductionSummaryFormatter()
+        self._production_orchestrator = ProductionOrchestrator(
+            store=self._production_state_store,
+            summary_formatter=self._production_summary_formatter,
+        )
         self._last_capability_evaluation: CapabilityEvaluation | None = None
         self._last_execution_result: CapabilityExecutionResult | None = None
         self._last_loop_result: CapabilityExecutionResult | None = None
@@ -1765,6 +1781,284 @@ class ControllerService:
             rows.append((membership, record, self.get_record_label_state(record.record_id)))
         return tuple(rows)
 
+    def list_source_policies(
+        self,
+        *,
+        usage_class: str = "",
+        review_status: str = "",
+        status: str = "",
+        source_type: str = "",
+        tag: str = "",
+        operation: str = "",
+    ) -> tuple[SourcePolicyRecord, ...]:
+        usage_filter = normalize_usage_class(usage_class) if usage_class.strip() else ""
+        review_filter = normalize_review_status(review_status) if review_status.strip() else ""
+        status_filter = normalize_source_policy_status(status) if status.strip() else ""
+        type_filter = normalize_source_type(source_type) if source_type.strip() else ""
+        tag_filter = normalize_policy_tag(tag) if tag.strip() else ""
+        operation_filter = normalize_allowed_operation(operation) if operation.strip() else ""
+        rows: list[SourcePolicyRecord] = []
+        for record in self._data_policy_store.list_source_policies():
+            normalized = self._data_policy_rules.normalize_record(record)
+            if usage_filter and normalized.usage_class != usage_filter:
+                continue
+            if review_filter and normalized.review_status != review_filter:
+                continue
+            if status_filter and normalized.status != status_filter:
+                continue
+            if type_filter and normalized.source_type != type_filter:
+                continue
+            if tag_filter and tag_filter not in normalized.tags:
+                continue
+            if operation_filter and operation_filter not in normalized.allowed_operations:
+                continue
+            rows.append(normalized)
+        return tuple(rows)
+
+    def get_source_policy(self, source_id: str) -> SourcePolicyRecord | None:
+        record = self._data_policy_store.get_source_policy(source_id)
+        if record is None:
+            return None
+        return self._data_policy_rules.normalize_record(record)
+
+    def create_source_policy(
+        self,
+        *,
+        source_name: str,
+        source_type: str,
+        source_locator: str,
+        usage_class: str = "requires_review",
+        status: str = "draft",
+        review_status: str = "draft",
+        owner: str = "",
+        source_scope: str = "",
+        collection_method_class: str = "manual_declaration",
+        policy_notes: str = "",
+        content_license_note: str = "",
+        robots_note: str = "",
+        terms_note: str = "",
+        retention_policy: str = "",
+        training_eligibility_reason: str = "",
+        blocked_reason: str = "",
+        review_required: bool = True,
+        reviewer: str = "",
+        tags: tuple[str, ...] = (),
+        provenance_requirements: tuple[str, ...] = (),
+        allowed_operations: tuple[str, ...] = (),
+    ) -> SourcePolicyRecord:
+        normalized_name = " ".join(source_name.split())
+        normalized_locator = source_locator.strip()
+        if not normalized_name:
+            raise ValueError("Datasource name is required.")
+        if not normalized_locator:
+            raise ValueError("Datasource locator is required.")
+        now = self._now_iso()
+        record = SourcePolicyRecord(
+            source_id=self._data_policy_store.generate_source_id(),
+            source_name=normalized_name,
+            source_type=normalize_source_type(source_type),
+            source_locator=normalized_locator,
+            created_at=now,
+            updated_at=now,
+            usage_class=normalize_usage_class(usage_class),
+            status=normalize_source_policy_status(status),
+            review_status=normalize_review_status(review_status),
+            owner=" ".join(owner.split()),
+            source_scope=" ".join(source_scope.split()),
+            collection_method_class="_".join(collection_method_class.strip().lower().replace("-", "_").split()) or "manual_declaration",
+            policy_notes=" ".join(policy_notes.split()),
+            content_license_note=" ".join(content_license_note.split()),
+            robots_note=" ".join(robots_note.split()),
+            terms_note=" ".join(terms_note.split()),
+            retention_policy=" ".join(retention_policy.split()),
+            training_eligibility_reason=" ".join(training_eligibility_reason.split()),
+            blocked_reason=" ".join(blocked_reason.split()),
+            review_required=review_required,
+            reviewer=" ".join(reviewer.split()),
+            reviewed_at=now if reviewer.strip() and normalize_review_status(review_status) in {"approved", "rejected", "suspended"} else "",
+            tags=tuple(normalize_policy_tag(item) for item in tags if normalize_policy_tag(item)),
+            provenance_requirements=tuple(" ".join(item.split()) for item in provenance_requirements if " ".join(item.split())),
+            allowed_operations=tuple(normalized for item in allowed_operations if (normalized := normalize_allowed_operation(item))),
+        )
+        normalized_record = self._data_policy_rules.normalize_record(record)
+        return self._data_policy_store.save_source_policy(normalized_record)
+
+    def update_source_policy(
+        self,
+        *,
+        source_id: str,
+        source_name: str | None = None,
+        source_type: str | None = None,
+        source_locator: str | None = None,
+        usage_class: str | None = None,
+        status: str | None = None,
+        owner: str | None = None,
+        source_scope: str | None = None,
+        collection_method_class: str | None = None,
+        policy_notes: str | None = None,
+        content_license_note: str | None = None,
+        robots_note: str | None = None,
+        terms_note: str | None = None,
+        retention_policy: str | None = None,
+        training_eligibility_reason: str | None = None,
+        blocked_reason: str | None = None,
+        review_required: bool | None = None,
+        tags: tuple[str, ...] | None = None,
+        provenance_requirements: tuple[str, ...] | None = None,
+        allowed_operations: tuple[str, ...] | None = None,
+    ) -> SourcePolicyRecord:
+        record = self.get_source_policy(source_id)
+        if record is None:
+            raise ValueError(f"No datasource matched {source_id.strip().upper() or '(empty)'}.")
+        updated = replace(
+            record,
+            source_name=" ".join(source_name.split()) if source_name is not None else record.source_name,
+            source_type=normalize_source_type(source_type) if source_type is not None else record.source_type,
+            source_locator=source_locator.strip() if source_locator is not None else record.source_locator,
+            usage_class=normalize_usage_class(usage_class) if usage_class is not None else record.usage_class,
+            status=normalize_source_policy_status(status) if status is not None else record.status,
+            owner=" ".join(owner.split()) if owner is not None else record.owner,
+            source_scope=" ".join(source_scope.split()) if source_scope is not None else record.source_scope,
+            collection_method_class=("_".join(collection_method_class.strip().lower().replace("-", "_").split()) or "manual_declaration") if collection_method_class is not None else record.collection_method_class,
+            policy_notes=" ".join(policy_notes.split()) if policy_notes is not None else record.policy_notes,
+            content_license_note=" ".join(content_license_note.split()) if content_license_note is not None else record.content_license_note,
+            robots_note=" ".join(robots_note.split()) if robots_note is not None else record.robots_note,
+            terms_note=" ".join(terms_note.split()) if terms_note is not None else record.terms_note,
+            retention_policy=" ".join(retention_policy.split()) if retention_policy is not None else record.retention_policy,
+            training_eligibility_reason=" ".join(training_eligibility_reason.split()) if training_eligibility_reason is not None else record.training_eligibility_reason,
+            blocked_reason=" ".join(blocked_reason.split()) if blocked_reason is not None else record.blocked_reason,
+            review_required=review_required if review_required is not None else record.review_required,
+            tags=tuple(normalize_policy_tag(item) for item in tags if normalize_policy_tag(item)) if tags is not None else record.tags,
+            provenance_requirements=tuple(" ".join(item.split()) for item in provenance_requirements if " ".join(item.split())) if provenance_requirements is not None else record.provenance_requirements,
+            allowed_operations=tuple(normalized for item in allowed_operations if (normalized := normalize_allowed_operation(item))) if allowed_operations is not None else record.allowed_operations,
+            updated_at=self._now_iso(),
+        )
+        normalized = self._data_policy_rules.normalize_record(updated)
+        return self._data_policy_store.save_source_policy(normalized)
+
+    def review_source_policy(
+        self,
+        *,
+        source_id: str,
+        review_status: str,
+        reviewer: str = "",
+        note: str = "",
+    ) -> SourcePolicyRecord:
+        record = self.get_source_policy(source_id)
+        if record is None:
+            raise ValueError(f"No datasource matched {source_id.strip().upper() or '(empty)'}.")
+        normalized_review = normalize_review_status(review_status)
+        reviewed_at = self._now_iso()
+        history = list(record.approval_history)
+        history.append(
+            SourcePolicyApprovalRecord(
+                review_status=normalized_review,
+                reviewer=" ".join(reviewer.split()),
+                note=" ".join(note.split()),
+                reviewed_at=reviewed_at,
+            )
+        )
+        updated = replace(
+            record,
+            review_status=normalized_review,
+            reviewer=" ".join(reviewer.split()),
+            reviewed_at=reviewed_at,
+            approval_history=tuple(history),
+            updated_at=reviewed_at,
+            status="active" if normalized_review == "approved" and record.status == "draft" else record.status,
+        )
+        normalized = self._data_policy_rules.normalize_record(updated)
+        return self._data_policy_store.save_source_policy(normalized)
+
+    def set_source_policy_usage(
+        self,
+        *,
+        source_id: str,
+        usage_class: str,
+        reviewer: str = "",
+        note: str = "",
+        training_eligibility_reason: str | None = None,
+    ) -> SourcePolicyRecord:
+        record = self.get_source_policy(source_id)
+        if record is None:
+            raise ValueError(f"No datasource matched {source_id.strip().upper() or '(empty)'}.")
+        updated = replace(
+            record,
+            usage_class=normalize_usage_class(usage_class),
+            allowed_operations=(),
+            reviewer=" ".join(reviewer.split()) or record.reviewer,
+            training_eligibility_reason=(" ".join(training_eligibility_reason.split()) if training_eligibility_reason is not None else record.training_eligibility_reason),
+            policy_notes=" ".join(part for part in (record.policy_notes, " ".join(note.split())) if part),
+            updated_at=self._now_iso(),
+        )
+        normalized = self._data_policy_rules.normalize_record(updated)
+        return self._data_policy_store.save_source_policy(normalized)
+
+    def block_source_policy(
+        self,
+        *,
+        source_id: str,
+        reason: str,
+        reviewer: str = "",
+        note: str = "",
+    ) -> SourcePolicyRecord:
+        normalized_reason = " ".join(reason.split())
+        if not normalized_reason:
+            raise ValueError("Blocked datasources require a reason.")
+        record = self.get_source_policy(source_id)
+        if record is None:
+            raise ValueError(f"No datasource matched {source_id.strip().upper() or '(empty)'}.")
+        updated = replace(
+            record,
+            status="blocked",
+            usage_class="blocked",
+            blocked_reason=normalized_reason,
+            reviewer=" ".join(reviewer.split()) or record.reviewer,
+            reviewed_at=self._now_iso(),
+            policy_notes=" ".join(part for part in (record.policy_notes, " ".join(note.split())) if part),
+            updated_at=self._now_iso(),
+        )
+        normalized = self._data_policy_rules.normalize_record(updated)
+        return self._data_policy_store.save_source_policy(normalized)
+
+    def link_source_policies_to_dataset(self, *, dataset_id: str, source_policy_ids: tuple[str, ...]) -> DatasetRecord:
+        dataset = self.get_dataset(dataset_id)
+        if dataset is None:
+            raise ValueError(f"No dataset matched {dataset_id.strip().upper() or '(empty)'}.")
+        normalized_ids = self._normalize_source_policy_ids(source_policy_ids)
+        updated_dataset = replace(dataset, source_policy_ids=normalized_ids, updated_at=self._now_iso())
+        self._dataset_store.update_dataset(updated_dataset)
+        for source_id in normalized_ids:
+            record = self.get_source_policy(source_id)
+            if record is None:
+                continue
+            linked = list(record.linked_dataset_ids)
+            if updated_dataset.dataset_id not in linked:
+                linked.append(updated_dataset.dataset_id)
+                self._data_policy_store.save_source_policy(
+                    self._data_policy_rules.normalize_record(
+                        replace(record, linked_dataset_ids=tuple(linked), updated_at=self._now_iso())
+                    )
+                )
+        return self.get_dataset(updated_dataset.dataset_id) or updated_dataset
+
+    def summarize_source_policies(self) -> dict[str, dict[str, int]]:
+        usage_counts: dict[str, int] = {}
+        review_counts: dict[str, int] = {}
+        status_counts: dict[str, int] = {}
+        type_counts: dict[str, int] = {}
+        for record in self.list_source_policies():
+            usage_counts[record.usage_class] = usage_counts.get(record.usage_class, 0) + 1
+            review_counts[record.review_status] = review_counts.get(record.review_status, 0) + 1
+            status_counts[record.status] = status_counts.get(record.status, 0) + 1
+            type_counts[record.source_type] = type_counts.get(record.source_type, 0) + 1
+        return {
+            "usage_classes": usage_counts,
+            "review_statuses": review_counts,
+            "statuses": status_counts,
+            "source_types": type_counts,
+        }
+
     def summarize_dataset_composition(self, dataset_id: str) -> dict[str, dict[str, int]]:
         dataset = self.get_dataset(dataset_id)
         if dataset is None:
@@ -1830,8 +2124,11 @@ class ControllerService:
             mode=normalize_experiment_mode(mode),
             label_filters=dict(dataset.selection_filters),
             artifact_root=str(self._model_experiment_store.artifact_root(experiment_id)),
+            source_policy_ids=tuple(dataset.source_policy_ids),
         )
-        return self._model_experiment_store.create_experiment(record)
+        stored = self._model_experiment_store.create_experiment(record)
+        self._link_source_policies_to_experiment(experiment_id=stored.experiment_id, source_policy_ids=stored.source_policy_ids)
+        return stored
 
     def run_model_experiment(self, *, experiment_id: str) -> ModelExperimentRecord:
         experiment = self.get_model_experiment(experiment_id)
@@ -2009,6 +2306,35 @@ class ControllerService:
         if refreshed != dataset or changed_memberships:
             self._dataset_store.update_dataset(refreshed)
         return refreshed
+
+    def _normalize_source_policy_ids(self, source_policy_ids: tuple[str, ...] | list[str]) -> tuple[str, ...]:
+        normalized: list[str] = []
+        for source_id in source_policy_ids:
+            candidate = str(source_id).strip().upper()
+            if not candidate:
+                continue
+            if self.get_source_policy(candidate) is None:
+                raise ValueError(f"No datasource matched {candidate}.")
+            if candidate not in normalized:
+                normalized.append(candidate)
+        return tuple(normalized)
+
+    def _link_source_policies_to_experiment(self, *, experiment_id: str, source_policy_ids: tuple[str, ...]) -> None:
+        normalized_ids = self._normalize_source_policy_ids(source_policy_ids)
+        if not normalized_ids:
+            return
+        for source_id in normalized_ids:
+            record = self.get_source_policy(source_id)
+            if record is None:
+                continue
+            linked = list(record.linked_experiment_ids)
+            if experiment_id not in linked:
+                linked.append(experiment_id)
+                self._data_policy_store.save_source_policy(
+                    self._data_policy_rules.normalize_record(
+                        replace(record, linked_experiment_ids=tuple(linked), updated_at=self._now_iso())
+                    )
+                )
 
     def _filter_records_for_dataset(self, *, filters: dict[str, str]) -> tuple[DataRecord, ...]:
         matches: list[DataRecord] = []
@@ -3328,6 +3654,9 @@ class ControllerService:
     def get_dispatch_job(self, job_id: str) -> NodeDispatchRecord | None:
         return self._node_dispatcher.get_job(job_id)
 
+    def list_dispatch_jobs(self) -> tuple[NodeDispatchRecord, ...]:
+        return self._node_dispatcher.list_jobs()
+
     def create_evaluation_session(self, record: EvaluationSessionRecord) -> EvaluationSessionRecord:
         return self._evaluation_store.create_session(record)
 
@@ -3426,6 +3755,9 @@ class ControllerService:
     def resume_task_chain(self, chain_id: str) -> TaskChainRecord:
         return self._task_chain_runner.resume_chain(chain_id)
 
+    def pause_task_chain(self, chain_id: str, *, reason: str) -> TaskChainRecord:
+        return self._task_chain_runner.pause_chain(chain_id, reason=reason)
+
     def stop_task_chain(self, chain_id: str, *, reason: str) -> TaskChainRecord:
         return self._task_chain_runner.stop_chain(chain_id, reason=reason)
 
@@ -3434,6 +3766,64 @@ class ControllerService:
 
     def is_task_chain_running(self, chain_id: str) -> bool:
         return self._task_chain_runner.is_running(chain_id)
+
+    def list_pending_confirmations(self, *, chat_id: str | None = None) -> tuple[PendingConfirmation, ...]:
+        return self._confirmation_store.list_pending(chat_id=chat_id)
+
+    def handle_production_conversation(self, *, chat_id: str, message: str) -> ProductionConversationOutcome:
+        return self._production_orchestrator.handle_message(service=self, chat_id=chat_id, message=message)
+
+    def ensure_production_project(
+        self,
+        *,
+        chat_id: str,
+        project_title: str = "",
+        engine_family: str = "",
+        milestone: str = "",
+    ):
+        return self._production_orchestrator.ensure_project(
+            service=self,
+            chat_id=chat_id,
+            project_title=project_title,
+            engine_family=engine_family,
+            milestone=milestone,
+        )
+
+    def establish_production_project(self, *, chat_id: str, title: str, engine_family: str, milestone: str):
+        return self._production_orchestrator.establish_project(
+            service=self,
+            chat_id=chat_id,
+            title=title,
+            engine_family=engine_family,
+            milestone=milestone,
+        )
+
+    def production_status_reply(self, *, chat_id: str, mobile: bool = False, focus: str = "overview") -> str:
+        return self._production_orchestrator.status_reply(service=self, chat_id=chat_id, mobile=mobile, focus=focus)
+
+    def set_production_priority(self, *, chat_id: str, title: str, category: str, node_hint: str = ""):
+        return self._production_orchestrator.set_priority(
+            service=self,
+            chat_id=chat_id,
+            title=title,
+            category=category,
+            node_hint=node_hint,
+        )
+
+    def pause_production_target(self, *, chat_id: str, target: str) -> str:
+        return self._production_orchestrator.pause_target(service=self, chat_id=chat_id, target=target)
+
+    def resume_production_target(self, *, chat_id: str, target: str) -> str:
+        return self._production_orchestrator.resume_target(service=self, chat_id=chat_id, target=target)
+
+    def assign_production_work(self, *, chat_id: str, target: str, category: str, title: str) -> str:
+        return self._production_orchestrator.assign_work(
+            service=self,
+            chat_id=chat_id,
+            target=target,
+            category=category,
+            title=title,
+        )
 
     def build_chain_dispatch_record(
         self,
@@ -3814,6 +4204,76 @@ class ControllerService:
             lines.append(self._dataset_formatter.format_dataset_summary_line(dataset))
         return _TelegramResponsePlan(reply=chr(10).join(lines), command_label="/datasets")
 
+    def _build_datasources_reply(self, *, records: tuple[SourcePolicyRecord, ...] | None = None) -> _TelegramResponsePlan:
+        rows = records if records is not None else self.list_source_policies()
+        if not rows:
+            return _TelegramResponsePlan(
+                reply="Datasources\nNo controlled datasources exist yet.",
+                command_label="/datasources",
+            )
+        lines = ["Datasources"]
+        for record in rows[:12]:
+            lines.append(self._data_policy_formatter.format_summary_line(record))
+        return _TelegramResponsePlan(reply=chr(10).join(lines), command_label="/datasources")
+
+    def _build_datasource_reply(self, *, source_id: str) -> _TelegramResponsePlan:
+        record = self.get_source_policy(source_id)
+        if record is None:
+            return _TelegramResponsePlan(
+                reply=chr(10).join(("Datasource", f"No datasource matched {source_id.strip().upper() or '(empty)'}.")),
+                command_label="/datasource",
+            )
+        lines = [
+            f"Datasource {record.source_id}",
+            f"Name: {record.source_name}",
+            f"Type: {record.source_type}",
+            f"Locator: {record.source_locator}",
+            f"Status: {record.status}",
+            f"Usage: {record.usage_class}",
+            f"Review: {record.review_status}",
+            f"Review required: {'yes' if record.review_required else 'no'}",
+            f"Operations: {self._data_policy_formatter.format_operations(record)}",
+            f"Provenance: {self._data_policy_formatter.format_provenance(record)}",
+            f"Created: {record.created_at}",
+            f"Updated: {record.updated_at}",
+        ]
+        if record.owner:
+            lines.append(f"Owner: {record.owner}")
+        if record.source_scope:
+            lines.append(f"Scope: {record.source_scope}")
+        if record.collection_method_class:
+            lines.append(f"Collection: {record.collection_method_class}")
+        if record.tags:
+            lines.append(f"Tags: {self._data_policy_formatter.format_tags(record)}")
+        if record.training_eligibility_reason:
+            lines.append(f"Training rationale: {record.training_eligibility_reason}")
+        if record.blocked_reason:
+            lines.append(f"Blocked reason: {record.blocked_reason}")
+        if record.policy_notes:
+            lines.append(f"Notes: {record.policy_notes}")
+        if record.reviewer:
+            lines.append(f"Reviewer: {record.reviewer}")
+        if record.reviewed_at:
+            lines.append(f"Reviewed at: {record.reviewed_at}")
+        if record.linked_dataset_ids:
+            lines.append(f"Linked datasets: {', '.join(record.linked_dataset_ids)}")
+        if record.linked_experiment_ids:
+            lines.append(f"Linked experiments: {', '.join(record.linked_experiment_ids)}")
+        return _TelegramResponsePlan(reply=chr(10).join(lines), command_label="/datasource")
+
+    def _build_datasource_summary_reply(self) -> _TelegramResponsePlan:
+        counts = self.summarize_source_policies()
+        total = len(self.list_source_policies())
+        lines = [
+            "Datasource summary",
+            f"Total: {total}",
+            f"Usage classes: {self._data_policy_formatter.format_counts(counts['usage_classes'])}",
+            f"Review states: {self._data_policy_formatter.format_counts(counts['review_statuses'])}",
+            f"Statuses: {self._data_policy_formatter.format_counts(counts['statuses'])}",
+            f"Types: {self._data_policy_formatter.format_counts(counts['source_types'])}",
+        ]
+        return _TelegramResponsePlan(reply=chr(10).join(lines), command_label="/datasourcesummary")
+
     def _build_dataset_reply(self, *, dataset_id: str) -> _TelegramResponsePlan:
         dataset = self.get_dataset(dataset_id)
         if dataset is None:
@@ -3838,6 +4298,8 @@ class ControllerService:
             lines.append(f"Tags: {', '.join(dataset.tags)}")
         if dataset.selection_filters:
             lines.append(f"Filters: {self._describe_dataset_filters(dataset.selection_filters)}")
+        if dataset.source_policy_ids:
+            lines.append(f"Source policies: {', '.join(dataset.source_policy_ids)}")
         return _TelegramResponsePlan(reply=chr(10).join(lines), command_label="/dataset")
 
     def _build_dataset_records_reply(self, *, dataset_id: str) -> _TelegramResponsePlan:
@@ -3924,6 +4386,8 @@ class ControllerService:
         ]
         if experiment.label_filters:
             lines.append(f"Dataset filters: {self._describe_dataset_filters(experiment.label_filters)}")
+        if experiment.source_policy_ids:
+            lines.append(f"Source policies: {', '.join(experiment.source_policy_ids)}")
         if experiment.dataset_export_path:
             lines.append(f"Dataset export: {experiment.dataset_export_path}")
         if experiment.notes:
