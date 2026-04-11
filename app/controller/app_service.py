@@ -3778,9 +3778,11 @@ class ControllerService:
     def plan_task_execution_conversation(self, *, chat_id: str, message: str) -> TaskExecutionConversationOutcome:
         with self._task_execution_conversation_lock:
             previous_request = self._task_execution_conversation_requests.get(chat_id)
+            active_feature_bundle = self.active_feature_bundle_for_chat(chat_id=chat_id)
             outcome = self._task_execution_conversation_planner.plan(
                 message=message,
                 previous_request=previous_request,
+                active_feature_bundle=active_feature_bundle,
             )
             if not outcome.matched:
                 return outcome

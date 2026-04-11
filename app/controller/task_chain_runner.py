@@ -82,6 +82,24 @@ class TaskChainRunner:
             worker.start()
             return resumed
 
+    def pause_chain(self, chain_id: str, *, reason: str) -> TaskChainRecord:
+        normalized = chain_id.strip().upper()
+        chain = self._require_chain(normalized)
+        with self._lock:
+            stop_event = self._stop_events.get(normalized)
+            if stop_event is not None:
+                stop_event.set()
+        if chain.status in {"completed", "failed", "stopped", "blocked", "paused"}:
+            return chain
+        paused = replace(
+            chain,
+            status="paused",
+            pause_reason=reason.strip(),
+            latest_summary=reason.strip() or chain.latest_summary,
+            finished_at=self._now_iso(),
+        )
+        return self._store.update_chain(paused)
+
     def stop_chain(self, chain_id: str, *, reason: str) -> TaskChainRecord:
         normalized = chain_id.strip().upper()
         chain = self._require_chain(normalized)
@@ -306,6 +324,13 @@ class TaskChainRunner:
         try:
             command_result = self._service._node_router.execute(node=target_node, request=request)
             status = "timed_out" if command_result.timed_out else ("success" if command_result.exit_code == 0 else "failed")
+            self._service.record_feature_bundle_validation_result(
+                chat_id=chain.chat_id,
+                command_text=request.command_summary,
+                outcome=status,
+                output_summary=command_result.output_summary,
+                first_issue=command_result.first_issue,
+            )
             return TaskChainStepRecord(
                 step_id=self._store.generate_step_id(),
                 chain_id=chain.chain_id,

@@ -2054,7 +2054,22 @@ class CapabilityExecutor:
                         **execution_conversation.telemetry,
                     },
                 )
-            inner_command = execution_conversation.chain_create_command
+            if not execution_conversation.routed_command:
+                return self._result(
+                    request,
+                    outcome="success",
+                    reason_code="ok",
+                    user_message=execution_conversation.reply,
+                    internal_summary=f"{entry_capability_id} handled a bounded conversational execution follow-up.",
+                    retryable=False,
+                    command_label=entry_command_label,
+                    activity_state="processing_command",
+                    telemetry={
+                        "task_execution_conversation": True,
+                        **execution_conversation.telemetry,
+                    },
+                )
+            inner_command = execution_conversation.routed_command
             parsed_inner = parse_chat_command(text=inner_command, has_text=True)
             inner_update = TelegramInboundMessage(
                 update_id=update.update_id,
@@ -2069,22 +2084,17 @@ class CapabilityExecutor:
                 batch_busy=False,
             )
             chain_id = str(inner_result.telemetry.get("task_chain_id") or "").strip().upper()
-            user_message = inner_result.user_message
-            if chain_id:
-                user_message = "\n\n".join(
-                    (
-                        execution_conversation.reply,
-                        inner_result.user_message,
-                        f"Next: Use /chainstart {chain_id} when you want to request one-shot approval for execution.",
-                    )
-                )
+            user_sections = [execution_conversation.reply, inner_result.user_message]
+            if parsed_inner.command_label == "/chaincreate" and chain_id:
+                user_sections.append(f"Next: Use /chainstart {chain_id} when you want to request one-shot approval for execution.")
+            user_message = "\n\n".join(section for section in user_sections if section)
             return self._result(
                 request,
                 outcome=inner_result.outcome,
                 reason_code=inner_result.outcome_reason_code,
                 user_message=user_message,
                 internal_summary=(
-                    f"{entry_capability_id} compiled a conversational execution request into task chain {chain_id or 'preview'}; "
+                    f"{entry_capability_id} compiled a conversational execution request into {parsed_inner.command_label} {chain_id or 'preview'}; "
                     f"inner outcome={inner_result.outcome}."
                 ),
                 retryable=inner_result.retryable,
@@ -2100,7 +2110,7 @@ class CapabilityExecutor:
                     "task_execution_conversation": True,
                     **execution_conversation.telemetry,
                     "routed_capability_id": inner_result.capability_id,
-                    "routed_command_label": "/chaincreate",
+                    "routed_command_label": parsed_inner.command_label,
                     "routed_telemetry": dict(inner_result.telemetry),
                 },
             )

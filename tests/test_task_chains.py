@@ -52,6 +52,18 @@ class TaskChainTests(unittest.TestCase):
         config_store.save(config)
         service._config = config_store.load()
 
+    @staticmethod
+    def _build_feature_bundle_repo(root: Path) -> None:
+        source_root = Path(__file__).resolve().parents[1]
+        targets = (
+            (source_root / "app" / "cli" / "chat.py", root / "app" / "cli" / "chat.py"),
+            (source_root / "app" / "cli" / "chat_cli.py", root / "app" / "cli" / "chat_cli.py"),
+            (source_root / "tests" / "test_cli_chat.py", root / "tests" / "test_cli_chat.py"),
+        )
+        for source_path, destination_path in targets:
+            destination_path.parent.mkdir(parents=True, exist_ok=True)
+            destination_path.write_text(source_path.read_text(encoding="utf-8"), encoding="utf-8")
+
     def test_validate_then_report_chain_runs_and_records_steps(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "workspace"
@@ -146,6 +158,68 @@ class TaskChainTests(unittest.TestCase):
             chain = service.list_task_chains()[0]
             self.assertIn("tests.test_conversational_ingestion", chain.command_text)
             self.assertNotIn("tests.test_policy_aware_ingestion tests.test_conversational_ingestion", chain.command_text)
+
+    def test_plain_text_feature_bundle_apply_and_validate_chain_flow(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "workspace"
+            self._build_feature_bundle_repo(root)
+            runner = _FakeCommandRunner(
+                subprocess.CompletedProcess(
+                    ["pytest", "tests/test_cli_chat.py::LocalCliChatTests::test_cli_debug_shows_shared_status_routing"],
+                    0,
+                    "1 passed\n",
+                    "",
+                ),
+            )
+            service, config_store, fake_runner = self._make_service(tmp_dir=tmp, command_runner=runner)
+            self._configure_repo_root(service=service, config_store=config_store, root=root)
+
+            planned = service.execute_local_chat_input(text="show feature bundle id in the cli debug output")
+            self.assertEqual(planned.outcome, "success")
+            bundle = service.active_feature_bundle_for_chat(chat_id="local-cli")
+            self.assertIsNotNone(bundle)
+            self.assertEqual(bundle.state, "proposed")
+
+            apply_request = service.execute_local_chat_input(text="apply it")
+            self.assertEqual(apply_request.outcome, "confirmation_required")
+            self.assertTrue(apply_request.telemetry.get("task_execution_conversation"))
+            self.assertEqual(apply_request.telemetry.get("feature_bundle_action"), "apply")
+            apply_confirmation = service.latest_pending_confirmation_for_chat(chat_id="local-cli")
+            self.assertIsNotNone(apply_confirmation)
+
+            apply_result = service.execute_local_chat_input(text=f"/confirm {apply_confirmation.confirmation_id}")
+            self.assertEqual(apply_result.outcome, "success")
+            applied_bundle = service.active_feature_bundle_for_chat(chat_id="local-cli")
+            self.assertIsNotNone(applied_bundle)
+            self.assertEqual(applied_bundle.state, "applied")
+
+            validation_preview = service.execute_local_chat_input(text="validate it")
+            self.assertEqual(validation_preview.outcome, "success")
+            self.assertTrue(validation_preview.telemetry.get("task_execution_conversation"))
+            self.assertEqual(validation_preview.telemetry.get("feature_bundle_action"), "validate")
+            self.assertIn("[TASK CHAIN]", validation_preview.user_message)
+
+            chain = service.list_task_chains()[0]
+            self.assertEqual(chain.chain_type, "feature_validate_gate")
+            self.assertIn("/run pytest tests/test_cli_chat.py::LocalCliChatTests::test_cli_debug_shows_shared_status_routing", chain.command_text)
+
+            start = service.execute_local_chat_input(text=f"/chainstart {chain.chain_id}")
+            self.assertEqual(start.outcome, "confirmation_required")
+            start_confirmation = service.latest_pending_confirmation_for_chat(chat_id="local-cli")
+            self.assertIsNotNone(start_confirmation)
+
+            confirm = service.execute_local_chat_input(text=f"/confirm {start_confirmation.confirmation_id}")
+            self.assertEqual(confirm.outcome, "success")
+
+            completed = service.await_task_chain(chain.chain_id, timeout_seconds=2.0)
+            self.assertIsNotNone(completed)
+            self.assertEqual(completed.status, "completed")
+            self.assertEqual(completed.steps_completed, 4)
+            self.assertEqual(len(fake_runner.calls), 1)
+
+            validated_bundle = service.active_feature_bundle_for_chat(chat_id="local-cli")
+            self.assertIsNotNone(validated_bundle)
+            self.assertEqual(validated_bundle.validation_state, "passed")
 
     def test_dispatch_validate_recover_falls_back_to_local(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
