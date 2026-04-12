@@ -5,6 +5,8 @@ from pathlib import Path
 from aie.core.models import (
     ConstraintReport,
     ConstraintRouterHandoff,
+    DependencyBlockReason,
+    DependencyStatus,
     ExecutionPlan,
     ExecutorStatus,
     IntentSpec,
@@ -14,7 +16,9 @@ from aie.core.models import (
     MultiTaskSessionRecord,
     MultiTaskSessionStatus,
     ResumeRequest,
+    SessionDependency,
     SessionSelectionReason,
+    TaskExecutionResult,
     TaskChain,
     TaskStep,
 )
@@ -254,6 +258,26 @@ def _completed_record(
     )
 
 
+def _failed_record(
+    orchestrator: MultiTaskOrchestrator,
+    session_id: str,
+    *,
+    last_updated: str,
+) -> MultiTaskSessionRecord:
+    handoff = _handoff(session_id, (_step(f"{session_id}-analyze", "analyze"),))
+    prior_result = TaskExecutionResult(
+        status=ExecutorStatus.FAILED,
+        summary_notes=("Executor failed for test setup.",),
+    )
+    return orchestrator.build_session_record(
+        session_id=session_id,
+        priority=MultiTaskPriority.NORMAL,
+        router_handoff=handoff,
+        prior_execution_result=prior_result,
+        last_updated=last_updated,
+    )
+
+
 def test_multi_task_orchestrator_registers_and_inspects_multiple_sessions() -> None:
     orchestrator = MultiTaskOrchestrator()
     ready = _ready_record(orchestrator, "session-ready", MultiTaskPriority.NORMAL, last_updated="2026-04-12T10:00:00+00:00")
@@ -282,6 +306,30 @@ def test_multi_task_orchestrator_registers_and_inspects_multiple_sessions() -> N
     assert result.decision.actionable_session_ids == ("session-ready",)
     assert result.decision.waiting_session_ids == ("session-waiting",)
     assert result.decision.blocked_session_ids == ("session-blocked",)
+
+
+def test_multi_task_orchestrator_registers_dependencies_and_blocks_downstream_session() -> None:
+    orchestrator = MultiTaskOrchestrator()
+    session_a = _ready_record(orchestrator, "session-a", MultiTaskPriority.LOW, last_updated="2026-04-12T10:00:00+00:00")
+    session_b = _ready_record(orchestrator, "session-b", MultiTaskPriority.URGENT, last_updated="2026-04-12T10:05:00+00:00")
+
+    result = orchestrator.orchestrate(
+        MultiTaskOrchestrationRequest(
+            requested_action=MultiTaskAction.INSPECT_SESSIONS,
+            sessions_to_register=(session_a, session_b),
+            dependencies_to_register=(SessionDependency(session_id="session-b", prerequisite_session_id="session-a"),),
+        )
+    )
+
+    records = {record.session_id: record for record in result.session_registry}
+
+    assert result.registered_dependencies[0].session_id == "session-b"
+    assert records["session-a"].dependency_status == DependencyStatus.NO_DEPENDENCIES
+    assert records["session-b"].dependency_status == DependencyStatus.BLOCKED_BY_DEPENDENCY
+    assert records["session-b"].dependency_block_reasons == (DependencyBlockReason.PREREQUISITE_NOT_COMPLETED,)
+    assert records["session-b"].blocked_by_session_ids == ("session-a",)
+    assert records["session-b"].session_status == MultiTaskSessionStatus.BLOCKED
+    assert result.decision.dependency_blocked_session_ids == ("session-b",)
 
 
 def test_multi_task_orchestrator_selects_highest_priority_resumable_session() -> None:
@@ -344,6 +392,30 @@ def test_multi_task_orchestrator_handles_no_actionable_sessions() -> None:
     assert result.decision.selection_reason == SessionSelectionReason.NO_ACTIONABLE_SESSIONS
 
 
+def test_multi_task_orchestrator_unblocks_dependent_session_after_prerequisite_completion() -> None:
+    orchestrator = MultiTaskOrchestrator()
+    session_a = _ready_record(orchestrator, "session-a", MultiTaskPriority.LOW, last_updated="2026-04-12T10:00:00+00:00")
+    session_b = _ready_record(orchestrator, "session-b", MultiTaskPriority.URGENT, last_updated="2026-04-12T10:05:00+00:00")
+    dependency = SessionDependency(session_id="session-b", prerequisite_session_id="session-a")
+
+    initial = orchestrator.orchestrate(
+        MultiTaskOrchestrationRequest(
+            requested_action=MultiTaskAction.EXECUTE_SELECTED,
+            sessions_to_register=(session_a, session_b),
+            dependencies_to_register=(dependency,),
+            selected_session_id="session-a",
+        )
+    )
+
+    records = {record.session_id: record for record in initial.session_registry}
+
+    assert initial.selected_session_result is not None
+    assert initial.selected_session_result.final_executor_status == ExecutorStatus.COMPLETED
+    assert records["session-a"].session_status == MultiTaskSessionStatus.COMPLETED
+    assert records["session-b"].dependency_status == DependencyStatus.DEPENDENCY_READY
+    assert records["session-b"].session_status == MultiTaskSessionStatus.READY
+
+
 def test_multi_task_orchestrator_uses_oldest_last_updated_tiebreaker() -> None:
     orchestrator = MultiTaskOrchestrator()
     older = _ready_record(orchestrator, "session-older", MultiTaskPriority.NORMAL, last_updated="2026-04-12T09:00:00+00:00")
@@ -358,6 +430,107 @@ def test_multi_task_orchestrator_uses_oldest_last_updated_tiebreaker() -> None:
 
     assert result.decision.selected_session_id == "session-older"
     assert result.decision.selection_reason == SessionSelectionReason.STABLE_TIEBREAKER
+
+
+def test_multi_task_orchestrator_handles_failed_prerequisite() -> None:
+    orchestrator = MultiTaskOrchestrator()
+    failed = _failed_record(orchestrator, "session-failed", last_updated="2026-04-12T10:00:00+00:00")
+    dependent = _ready_record(orchestrator, "session-dependent", MultiTaskPriority.URGENT, last_updated="2026-04-12T10:05:00+00:00")
+
+    result = orchestrator.orchestrate(
+        MultiTaskOrchestrationRequest(
+            requested_action=MultiTaskAction.INSPECT_SESSIONS,
+            sessions_to_register=(failed, dependent),
+            dependencies_to_register=(
+                SessionDependency(session_id="session-dependent", prerequisite_session_id="session-failed"),
+            ),
+        )
+    )
+
+    records = {record.session_id: record for record in result.session_registry}
+
+    assert records["session-dependent"].dependency_status == DependencyStatus.BLOCKED_BY_DEPENDENCY
+    assert records["session-dependent"].dependency_block_reasons == (DependencyBlockReason.PREREQUISITE_FAILED,)
+    assert records["session-dependent"].blocked_by_session_ids == ("session-failed",)
+
+
+def test_multi_task_orchestrator_handles_missing_prerequisite_session() -> None:
+    orchestrator = MultiTaskOrchestrator()
+    dependent = _ready_record(orchestrator, "session-dependent", MultiTaskPriority.NORMAL, last_updated="2026-04-12T10:00:00+00:00")
+
+    result = orchestrator.orchestrate(
+        MultiTaskOrchestrationRequest(
+            requested_action=MultiTaskAction.INSPECT_SESSIONS,
+            sessions_to_register=(dependent,),
+            dependencies_to_register=(SessionDependency(session_id="session-dependent", prerequisite_session_id="session-z"),),
+        )
+    )
+
+    record = result.session_registry[0]
+
+    assert record.dependency_status == DependencyStatus.INVALID_DEPENDENCY
+    assert record.dependency_block_reasons == (DependencyBlockReason.MISSING_PREREQUISITE_SESSION,)
+    assert record.invalid_dependency is True
+    assert record.session_status == MultiTaskSessionStatus.INVALID
+
+
+def test_multi_task_orchestrator_rejects_self_dependency() -> None:
+    orchestrator = MultiTaskOrchestrator()
+    dependent = _ready_record(orchestrator, "session-self", MultiTaskPriority.NORMAL, last_updated="2026-04-12T10:00:00+00:00")
+
+    result = orchestrator.orchestrate(
+        MultiTaskOrchestrationRequest(
+            requested_action=MultiTaskAction.INSPECT_SESSIONS,
+            sessions_to_register=(dependent,),
+            dependencies_to_register=(SessionDependency(session_id="session-self", prerequisite_session_id="session-self"),),
+        )
+    )
+
+    record = result.session_registry[0]
+
+    assert record.dependency_status == DependencyStatus.INVALID_DEPENDENCY
+    assert DependencyBlockReason.INVALID_DEPENDENCY_REFERENCE in record.dependency_block_reasons
+
+
+def test_multi_task_orchestrator_detects_dependency_cycle() -> None:
+    orchestrator = MultiTaskOrchestrator()
+    session_a = _ready_record(orchestrator, "session-a", MultiTaskPriority.NORMAL, last_updated="2026-04-12T10:00:00+00:00")
+    session_b = _ready_record(orchestrator, "session-b", MultiTaskPriority.NORMAL, last_updated="2026-04-12T10:05:00+00:00")
+
+    result = orchestrator.orchestrate(
+        MultiTaskOrchestrationRequest(
+            requested_action=MultiTaskAction.INSPECT_SESSIONS,
+            sessions_to_register=(session_a, session_b),
+            dependencies_to_register=(
+                SessionDependency(session_id="session-a", prerequisite_session_id="session-b"),
+                SessionDependency(session_id="session-b", prerequisite_session_id="session-a"),
+            ),
+        )
+    )
+
+    records = {record.session_id: record for record in result.session_registry}
+
+    assert records["session-a"].dependency_status == DependencyStatus.INVALID_DEPENDENCY
+    assert records["session-b"].dependency_status == DependencyStatus.INVALID_DEPENDENCY
+    assert DependencyBlockReason.CYCLIC_DEPENDENCY in records["session-a"].dependency_block_reasons
+    assert DependencyBlockReason.CYCLIC_DEPENDENCY in records["session-b"].dependency_block_reasons
+
+
+def test_multi_task_orchestrator_prefers_dependency_eligible_session_over_higher_priority_blocked_session() -> None:
+    orchestrator = MultiTaskOrchestrator()
+    session_a = _ready_record(orchestrator, "session-a", MultiTaskPriority.LOW, last_updated="2026-04-12T10:00:00+00:00")
+    session_b = _ready_record(orchestrator, "session-b", MultiTaskPriority.URGENT, last_updated="2026-04-12T10:05:00+00:00")
+
+    result = orchestrator.orchestrate(
+        MultiTaskOrchestrationRequest(
+            requested_action=MultiTaskAction.SELECT_NEXT_SESSION,
+            sessions_to_register=(session_a, session_b),
+            dependencies_to_register=(SessionDependency(session_id="session-b", prerequisite_session_id="session-a"),),
+        )
+    )
+
+    assert result.decision.selected_session_id == "session-a"
+    assert result.decision.selection_reason == SessionSelectionReason.HIGHEST_PRIORITY_READY
 
 
 def test_multi_task_orchestrator_routes_selected_ready_session_through_execution_orchestrator() -> None:
@@ -379,6 +552,24 @@ def test_multi_task_orchestrator_routes_selected_ready_session_through_execution
     assert result.selected_session_result.final_executor_status == ExecutorStatus.COMPLETED
     assert updated.session_status == MultiTaskSessionStatus.COMPLETED
     assert updated.persisted_session is None
+
+
+def test_multi_task_orchestrator_blocks_explicit_selection_when_dependency_not_ready() -> None:
+    orchestrator = MultiTaskOrchestrator()
+    session_a = _ready_record(orchestrator, "session-a", MultiTaskPriority.LOW, last_updated="2026-04-12T10:00:00+00:00")
+    session_b = _ready_record(orchestrator, "session-b", MultiTaskPriority.URGENT, last_updated="2026-04-12T10:05:00+00:00")
+
+    result = orchestrator.orchestrate(
+        MultiTaskOrchestrationRequest(
+            requested_action=MultiTaskAction.EXECUTE_SELECTED,
+            sessions_to_register=(session_a, session_b),
+            dependencies_to_register=(SessionDependency(session_id="session-b", prerequisite_session_id="session-a"),),
+            selected_session_id="session-b",
+        )
+    )
+
+    assert result.decision.chosen_action == MultiTaskAction.REJECT
+    assert result.decision.selection_reason == SessionSelectionReason.INVALID_SELECTION
 
 
 def test_multi_task_orchestrator_preserves_session_isolation_when_resuming_selected_session() -> None:
@@ -476,3 +667,4 @@ def test_multi_task_orchestrator_returns_structured_result() -> None:
     assert payload["decision"]["selected_session_id"] == "session-ready"
     assert payload["decision"]["selection_reason"] == "highest_priority_ready"
     assert payload["session_registry"][0]["session_status"] == "ready"
+    assert payload["session_registry"][0]["dependency_status"] == "no_dependencies"

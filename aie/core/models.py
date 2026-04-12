@@ -560,6 +560,71 @@ class SessionSelectionReason(str, Enum):
     INVALID_SELECTION = "invalid_selection"
 
 
+class DependencyStatus(str, Enum):
+    NO_DEPENDENCIES = "no_dependencies"
+    DEPENDENCY_READY = "dependency_ready"
+    BLOCKED_BY_DEPENDENCY = "blocked_by_dependency"
+    INVALID_DEPENDENCY = "invalid_dependency"
+    DEPENDENCY_COMPLETED = "dependency_completed"
+
+
+class DependencyBlockReason(str, Enum):
+    PREREQUISITE_NOT_COMPLETED = "prerequisite_not_completed"
+    PREREQUISITE_FAILED = "prerequisite_failed"
+    PREREQUISITE_BLOCKED = "prerequisite_blocked"
+    MISSING_PREREQUISITE_SESSION = "missing_prerequisite_session"
+    CYCLIC_DEPENDENCY = "cyclic_dependency"
+    INVALID_DEPENDENCY_REFERENCE = "invalid_dependency_reference"
+
+
+@dataclass(frozen=True)
+class SessionDependency:
+    session_id: str
+    prerequisite_session_id: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "session_id": self.session_id,
+            "prerequisite_session_id": self.prerequisite_session_id,
+        }
+
+
+@dataclass(frozen=True)
+class DependencyGraphRecord:
+    session_id: str
+    prerequisite_session_ids: tuple[str, ...] = ()
+    dependent_session_ids: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "session_id": self.session_id,
+            "prerequisite_session_ids": list(self.prerequisite_session_ids),
+            "dependent_session_ids": list(self.dependent_session_ids),
+        }
+
+
+@dataclass(frozen=True)
+class DependencyEvaluationResult:
+    session_id: str
+    dependency_status: DependencyStatus
+    block_reasons: tuple[DependencyBlockReason, ...] = ()
+    blocked_by_session_ids: tuple[str, ...] = ()
+    dependency_notes: tuple[str, ...] = ()
+    dependency_ready: bool = False
+    invalid_dependency: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "session_id": self.session_id,
+            "dependency_status": self.dependency_status.value,
+            "block_reasons": [reason.value for reason in self.block_reasons],
+            "blocked_by_session_ids": list(self.blocked_by_session_ids),
+            "dependency_notes": list(self.dependency_notes),
+            "dependency_ready": self.dependency_ready,
+            "invalid_dependency": self.invalid_dependency,
+        }
+
+
 @dataclass(frozen=True)
 class MultiTaskSessionRecord:
     session_id: str
@@ -599,10 +664,108 @@ class MultiTaskSessionRecord:
 
 
 @dataclass(frozen=True)
+class DependencyAwareSessionRecord:
+    base_record: MultiTaskSessionRecord
+    prerequisite_session_ids: tuple[str, ...] = ()
+    dependent_session_ids: tuple[str, ...] = ()
+    dependency_status: DependencyStatus = DependencyStatus.NO_DEPENDENCIES
+    dependency_block_reasons: tuple[DependencyBlockReason, ...] = ()
+    blocked_by_session_ids: tuple[str, ...] = ()
+    dependency_notes: tuple[str, ...] = ()
+    dependency_ready: bool = False
+    invalid_dependency: bool = False
+    effective_session_status: MultiTaskSessionStatus = MultiTaskSessionStatus.INVALID
+
+    @property
+    def session_id(self) -> str:
+        return self.base_record.session_id
+
+    @property
+    def priority(self) -> MultiTaskPriority:
+        return self.base_record.priority
+
+    @property
+    def lifecycle_state(self) -> LifecycleState:
+        return self.base_record.lifecycle_state
+
+    @property
+    def base_session_status(self) -> MultiTaskSessionStatus:
+        return self.base_record.session_status
+
+    @property
+    def session_status(self) -> MultiTaskSessionStatus:
+        return self.effective_session_status
+
+    @property
+    def last_executor_status(self) -> ExecutorStatus | None:
+        return self.base_record.last_executor_status
+
+    @property
+    def required_human_action(self) -> str | None:
+        return self.base_record.required_human_action
+
+    @property
+    def resumable(self) -> bool:
+        return self.base_record.resumable
+
+    @property
+    def blocked(self) -> bool:
+        return self.session_status == MultiTaskSessionStatus.BLOCKED
+
+    @property
+    def last_updated(self) -> str:
+        return self.base_record.last_updated
+
+    @property
+    def router_handoff(self) -> ConstraintRouterHandoff | None:
+        return self.base_record.router_handoff
+
+    @property
+    def prior_execution_result(self) -> TaskExecutionResult | None:
+        return self.base_record.prior_execution_result
+
+    @property
+    def orchestration_result(self) -> OrchestrationResult | None:
+        return self.base_record.orchestration_result
+
+    @property
+    def persisted_session(self) -> PersistedExecutionSession | None:
+        return self.base_record.persisted_session
+
+    @property
+    def resume_request(self) -> ResumeRequest | None:
+        return self.base_record.resume_request
+
+    @property
+    def notes(self) -> tuple[str, ...]:
+        return self.base_record.notes
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = self.base_record.to_dict()
+        payload.update(
+            {
+                "base_session_status": self.base_session_status.value,
+                "session_status": self.session_status.value,
+                "prerequisite_session_ids": list(self.prerequisite_session_ids),
+                "dependent_session_ids": list(self.dependent_session_ids),
+                "dependency_status": self.dependency_status.value,
+                "dependency_block_reasons": [reason.value for reason in self.dependency_block_reasons],
+                "blocked_by_session_ids": list(self.blocked_by_session_ids),
+                "dependency_notes": list(self.dependency_notes),
+                "dependency_ready": self.dependency_ready,
+                "invalid_dependency": self.invalid_dependency,
+            }
+        )
+        return payload
+
+
+@dataclass(frozen=True)
 class MultiTaskOrchestrationRequest:
     requested_action: MultiTaskAction = MultiTaskAction.INSPECT_SESSIONS
     session_registry: tuple[MultiTaskSessionRecord, ...] = ()
     sessions_to_register: tuple[MultiTaskSessionRecord, ...] = ()
+    dependency_graph: tuple[SessionDependency, ...] = ()
+    dependencies_to_register: tuple[SessionDependency, ...] = ()
     selected_session_id: str | None = None
     notes: tuple[str, ...] = ()
 
@@ -611,6 +774,8 @@ class MultiTaskOrchestrationRequest:
             "requested_action": self.requested_action.value,
             "session_registry": [record.to_dict() for record in self.session_registry],
             "sessions_to_register": [record.to_dict() for record in self.sessions_to_register],
+            "dependency_graph": [dependency.to_dict() for dependency in self.dependency_graph],
+            "dependencies_to_register": [dependency.to_dict() for dependency in self.dependencies_to_register],
             "selected_session_id": self.selected_session_id,
             "notes": list(self.notes),
         }
@@ -626,6 +791,8 @@ class MultiTaskDecision:
     blocked_session_ids: tuple[str, ...] = ()
     completed_session_ids: tuple[str, ...] = ()
     invalid_session_ids: tuple[str, ...] = ()
+    dependency_blocked_session_ids: tuple[str, ...] = ()
+    invalid_dependency_session_ids: tuple[str, ...] = ()
     decision_notes: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
@@ -638,6 +805,8 @@ class MultiTaskDecision:
             "blocked_session_ids": list(self.blocked_session_ids),
             "completed_session_ids": list(self.completed_session_ids),
             "invalid_session_ids": list(self.invalid_session_ids),
+            "dependency_blocked_session_ids": list(self.dependency_blocked_session_ids),
+            "invalid_dependency_session_ids": list(self.invalid_dependency_session_ids),
             "decision_notes": list(self.decision_notes),
         }
 
@@ -656,5 +825,27 @@ class MultiTaskOrchestrationResult:
             "session_registry": [record.to_dict() for record in self.session_registry],
             "selected_session_result": self.selected_session_result.to_dict() if self.selected_session_result else None,
             "registered_session_ids": list(self.registered_session_ids),
+            "notes": list(self.notes),
+        }
+
+
+@dataclass(frozen=True)
+class DependencyAwareMultiTaskResult:
+    decision: MultiTaskDecision
+    session_registry: tuple[DependencyAwareSessionRecord, ...]
+    dependency_graph: tuple[DependencyGraphRecord, ...] = ()
+    selected_session_result: OrchestrationResult | None = None
+    registered_session_ids: tuple[str, ...] = ()
+    registered_dependencies: tuple[SessionDependency, ...] = ()
+    notes: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "decision": self.decision.to_dict(),
+            "session_registry": [record.to_dict() for record in self.session_registry],
+            "dependency_graph": [record.to_dict() for record in self.dependency_graph],
+            "selected_session_result": self.selected_session_result.to_dict() if self.selected_session_result else None,
+            "registered_session_ids": list(self.registered_session_ids),
+            "registered_dependencies": [dependency.to_dict() for dependency in self.registered_dependencies],
             "notes": list(self.notes),
         }
