@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import datetime, timezone
 
+from .execution_history import ExecutionHistory
 from .execution_orchestrator import ExecutionOrchestrator
 from .models import (
     ArtifactAwareMultiTaskResult,
@@ -12,6 +13,7 @@ from .models import (
     ArtifactRequirementEvaluationResult,
     ArtifactRequirementStatus,
     ArtifactStatus,
+    AuditEventType,
     ConstraintRouterHandoff,
     DependencyAwareSessionRecord,
     DependencyBlockReason,
@@ -51,8 +53,13 @@ class MultiTaskOrchestrator:
         (MultiTaskPriority.LOW, MultiTaskSessionStatus.READY),
     )
 
-    def __init__(self, execution_orchestrator: ExecutionOrchestrator | None = None) -> None:
+    def __init__(
+        self,
+        execution_orchestrator: ExecutionOrchestrator | None = None,
+        execution_history: ExecutionHistory | None = None,
+    ) -> None:
         self._execution_orchestrator = execution_orchestrator or ExecutionOrchestrator()
+        self._execution_history = execution_history
 
     def build_session_record(
         self,
@@ -722,6 +729,12 @@ class MultiTaskOrchestrator:
 
             selected_result = self.orchestrate_selected_session(selected)
             updated_record = self.update_session_record(selected.base_record.base_record, selected_result)
+            self._record_selected_action(
+                selected.base_record.base_record,
+                updated_record,
+                request.requested_action,
+                cycle_index=request.cycle_index,
+            )
             updated_base_registry = tuple(
                 updated_record if record.session_id == updated_record.session_id else record.base_record.base_record
                 for record in registry
@@ -774,6 +787,40 @@ class MultiTaskOrchestrator:
             registered_artifact_requirements=registered_artifact_requirements,
             notes=request.notes,
         )
+
+    def _record_selected_action(
+        self,
+        previous_record: MultiTaskSessionRecord,
+        updated_record: MultiTaskSessionRecord,
+        action: MultiTaskAction,
+        cycle_index: int | None = None,
+    ) -> None:
+        if self._execution_history is None:
+            return
+        self._execution_history.record_event(
+            event_type=AuditEventType.ACTION_EXECUTED,
+            session_id=updated_record.session_id,
+            cycle_index=cycle_index,
+            action_type=action.value,
+            previous_state=previous_record.lifecycle_state.value,
+            new_state=updated_record.lifecycle_state.value,
+            source_component="multi_task_orchestrator",
+            notes=(f"Executed {action.value} for session {updated_record.session_id}.",),
+        )
+        if previous_record.lifecycle_state != updated_record.lifecycle_state:
+            self._execution_history.record_event(
+                event_type=AuditEventType.SESSION_STATE_CHANGED,
+                session_id=updated_record.session_id,
+                cycle_index=cycle_index,
+                action_type=action.value,
+                previous_state=previous_record.lifecycle_state.value,
+                new_state=updated_record.lifecycle_state.value,
+                source_component="multi_task_orchestrator",
+                notes=(
+                    f"Session {updated_record.session_id} changed state from {previous_record.lifecycle_state.value} "
+                    f"to {updated_record.lifecycle_state.value}.",
+                ),
+            )
 
     def orchestrate_selected_session(
         self,

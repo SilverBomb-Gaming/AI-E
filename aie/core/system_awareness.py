@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+from .execution_history import ExecutionHistory
 from .models import (
     ActivitySummary,
     ArtifactAwareSessionRecord,
     ArtifactRequirement,
     ArtifactRequirementStatus,
+    AuditRecord,
     AwarenessBlockerKind,
     AwarenessRequest,
     AwarenessResult,
@@ -32,8 +34,13 @@ from .multi_task_orchestrator import MultiTaskOrchestrator
 class SystemAwareness:
     """Build deterministic, read-only awareness summaries for bounded execution state."""
 
-    def __init__(self, multi_task_orchestrator: MultiTaskOrchestrator | None = None) -> None:
+    def __init__(
+        self,
+        multi_task_orchestrator: MultiTaskOrchestrator | None = None,
+        execution_history: ExecutionHistory | None = None,
+    ) -> None:
         self._multi_task_orchestrator = multi_task_orchestrator or MultiTaskOrchestrator()
+        self._execution_history = execution_history
 
     def build_awareness_result(self, request: AwarenessRequest) -> AwarenessResult:
         (
@@ -111,7 +118,13 @@ class SystemAwareness:
             system_notes=system_notes,
             active_policy_profile=self._resolve_active_policy_profile(request),
             last_policy_decision=request.latest_loop_result.last_policy_decision if request.latest_loop_result else None,
+            recent_audit_records=self._recent_audit_records(),
         )
+
+    def _recent_audit_records(self) -> tuple[AuditRecord, ...]:
+        if self._execution_history is None:
+            return ()
+        return self._execution_history.get_recent_events(limit=5).records
 
     @staticmethod
     def _resolve_active_policy_profile(request: AwarenessRequest):

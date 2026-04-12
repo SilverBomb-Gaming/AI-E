@@ -3,9 +3,11 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import datetime, timezone
 
+from .execution_history import ExecutionHistory
 from .models import (
     ActivePolicyProfile,
     ArtifactRequirementStatus,
+    AuditEventType,
     AutonomyActionType,
     AutonomyPolicyContext,
     AutonomyPolicyDecision,
@@ -50,63 +52,98 @@ class AutonomyPolicy:
         *,
         active_policy_profile: ActivePolicyProfile | None = None,
         policy_config_loader: PolicyConfigLoader | None = None,
+        execution_history: ExecutionHistory | None = None,
     ) -> None:
         self._policy_config_loader = policy_config_loader or PolicyConfigLoader()
         self._active_policy_profile = active_policy_profile or self._policy_config_loader.load_profile("standard")
+        self._execution_history = execution_history
 
     def evaluate(self, context: AutonomyPolicyContext) -> PolicyEvaluationResult:
         action_type = self._normalize_action_type(context.action_type)
         active_profile = context.active_policy_profile or self._active_policy_profile
         context = replace(context, active_policy_profile=active_profile)
         if action_type is None:
-            return self._build_invalid_decision(
+            result = self._build_invalid_decision(
                 context=context,
                 reasons=(AutonomyPolicyReason.POLICY_DISALLOWS_ACTION_TYPE,),
                 note="The requested autonomy action type is not recognized.",
             )
+            self._record_policy_decision(result)
+            return result
         if context.awareness_snapshot is None:
-            return self._build_invalid_decision(
+            result = self._build_invalid_decision(
                 context=context,
                 action_type=action_type,
                 reasons=(AutonomyPolicyReason.UNSAFE_STATE,),
                 note="Policy evaluation requires an awareness snapshot derived from current system truth.",
             )
+            self._record_policy_decision(result)
+            return result
         if active_profile.status not in {PolicyConfigStatus.LOADED, PolicyConfigStatus.FALLBACK_DEFAULT}:
-            return self._build_invalid_decision(
+            result = self._build_invalid_decision(
                 context=context,
                 action_type=action_type,
                 reasons=(AutonomyPolicyReason.UNSAFE_STATE,),
                 note="Policy evaluation requires a valid active policy configuration profile.",
             )
+            self._record_policy_decision(result)
+            return result
         if action_type not in self._SUPPORTED_ACTIONS:
-            return self._build_unsupported_decision(
+            result = self._build_unsupported_decision(
                 context=context,
                 action_type=action_type,
                 reasons=(AutonomyPolicyReason.UNSUPPORTED_IN_V1,),
                 note=f"Action type {action_type.value} is outside the bounded autonomy policy v1 surface.",
             )
+            self._record_policy_decision(result)
+            return result
         if action_type == AutonomyActionType.INSPECT_ONLY:
             if not active_profile.effective_flags.allow_inspection_commands:
-                return self._build_blocked_decision(
+                result = self._build_blocked_decision(
                     context=context,
                     action_type=action_type,
                     reasons=(AutonomyPolicyReason.POLICY_DISALLOWS_ACTION_TYPE,),
                     note=f"Policy profile {active_profile.profile_name.value} disables inspection commands.",
                 )
+                self._record_policy_decision(result)
+                return result
             reason = (
                 AutonomyPolicyReason.OPERATOR_COMMAND_PRESENT
                 if context.operator_command_present
                 else AutonomyPolicyReason.SELF_INITIATED_ACTION_ALLOWED
             )
-            return self._build_allowed_decision(
+            result = self._build_allowed_decision(
                 context=context,
                 action_type=action_type,
                 reasons=(reason,),
                 note="Inspect-only actions are always allowed because they do not mutate bounded execution state.",
             )
+            self._record_policy_decision(result)
+            return result
         if context.operator_command_present:
-            return self._evaluate_operator_command(context, action_type)
-        return self._evaluate_self_initiated_action(context, action_type)
+            result = self._evaluate_operator_command(context, action_type)
+        else:
+            result = self._evaluate_self_initiated_action(context, action_type)
+        self._record_policy_decision(result)
+        return result
+
+    def _record_policy_decision(self, result: PolicyEvaluationResult) -> None:
+        if self._execution_history is None:
+            return
+        reason = result.decision.reasons[0].value if result.decision.reasons else None
+        self._execution_history.record_event(
+            event_type=AuditEventType.POLICY_DECISION_MADE,
+            session_id=result.decision.target_session_id,
+            action_type=(
+                result.decision.action_type.value
+                if hasattr(result.decision.action_type, "value")
+                else str(result.decision.action_type)
+            ),
+            policy_decision=result.decision.decision_status.value,
+            reason=reason,
+            source_component="autonomy_policy",
+            notes=result.decision.policy_notes,
+        )
 
     def _evaluate_operator_command(
         self,

@@ -1008,6 +1008,7 @@ class MultiTaskOrchestrationRequest:
     artifact_requirements: tuple[ArtifactRequirement, ...] = ()
     artifact_requirements_to_register: tuple[ArtifactRequirement, ...] = ()
     selected_session_id: str | None = None
+    cycle_index: int | None = None
     notes: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
@@ -1022,6 +1023,7 @@ class MultiTaskOrchestrationRequest:
             "artifact_requirements": [artifact.to_dict() for artifact in self.artifact_requirements],
             "artifact_requirements_to_register": [artifact.to_dict() for artifact in self.artifact_requirements_to_register],
             "selected_session_id": self.selected_session_id,
+            "cycle_index": self.cycle_index,
             "notes": list(self.notes),
         }
 
@@ -1234,6 +1236,122 @@ class PolicyConfigSource(str, Enum):
     BUILTIN_PROFILE = "builtin_profile"
     EXPLICIT_MAPPING = "explicit_mapping"
     FALLBACK_DEFAULT = "fallback_default"
+
+
+class AuditEventType(str, Enum):
+    LOOP_CYCLE_STARTED = "loop_cycle_started"
+    LOOP_CYCLE_COMPLETED = "loop_cycle_completed"
+    SESSION_SELECTED = "session_selected"
+    ACTION_EXECUTED = "action_executed"
+    ACTION_BLOCKED = "action_blocked"
+    OPERATOR_COMMAND_RECEIVED = "operator_command_received"
+    OPERATOR_COMMAND_EXECUTED = "operator_command_executed"
+    OPERATOR_COMMAND_REJECTED = "operator_command_rejected"
+    POLICY_DECISION_MADE = "policy_decision_made"
+    STATE_PERSISTED = "state_persisted"
+    SESSION_STATE_CHANGED = "session_state_changed"
+
+
+@dataclass(frozen=True)
+class AuditContext:
+    cycle_index: int | None = None
+    session_id: str | None = None
+    operator_command_id: str | None = None
+    action_type: str | None = None
+    source_component: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "cycle_index": self.cycle_index,
+            "session_id": self.session_id,
+            "operator_command_id": self.operator_command_id,
+            "action_type": self.action_type,
+            "source_component": self.source_component,
+        }
+
+
+@dataclass(frozen=True)
+class AuditEvent:
+    timestamp: str
+    event_type: AuditEventType
+    session_id: str | None = None
+    cycle_index: int | None = None
+    action_type: str | None = None
+    policy_decision: str | None = None
+    previous_state: str | None = None
+    new_state: str | None = None
+    operator_command: str | None = None
+    reason: str | None = None
+    notes: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "timestamp": self.timestamp,
+            "event_type": self.event_type.value,
+            "session_id": self.session_id,
+            "cycle_index": self.cycle_index,
+            "action_type": self.action_type,
+            "policy_decision": self.policy_decision,
+            "previous_state": self.previous_state,
+            "new_state": self.new_state,
+            "operator_command": self.operator_command,
+            "reason": self.reason,
+            "notes": list(self.notes),
+        }
+
+
+@dataclass(frozen=True)
+class AuditRecord:
+    event_id: str
+    event: AuditEvent
+    context: AuditContext
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "event_id": self.event_id,
+            "event": self.event.to_dict(),
+            "context": self.context.to_dict(),
+        }
+
+
+@dataclass(frozen=True)
+class AuditLog:
+    records: tuple[AuditRecord, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "records": [record.to_dict() for record in self.records],
+        }
+
+
+@dataclass(frozen=True)
+class AuditQuery:
+    limit: int | None = None
+    session_id: str | None = None
+    cycle_index: int | None = None
+    event_type: AuditEventType | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "limit": self.limit,
+            "session_id": self.session_id,
+            "cycle_index": self.cycle_index,
+            "event_type": self.event_type.value if self.event_type else None,
+        }
+
+
+@dataclass(frozen=True)
+class AuditQueryResult:
+    query: AuditQuery
+    records: tuple[AuditRecord, ...] = ()
+    total_matches: int = 0
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "query": self.query.to_dict(),
+            "records": [record.to_dict() for record in self.records],
+            "total_matches": self.total_matches,
+        }
 
 
 @dataclass(frozen=True)
@@ -1697,6 +1815,7 @@ class AwarenessResult:
     system_notes: tuple[str, ...] = ()
     active_policy_profile: ActivePolicyProfile | None = None
     last_policy_decision: PolicyEvaluationResult | None = None
+    recent_audit_records: tuple[AuditRecord, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -1710,6 +1829,7 @@ class AwarenessResult:
             "system_notes": list(self.system_notes),
             "active_policy_profile": self.active_policy_profile.to_dict() if self.active_policy_profile else None,
             "last_policy_decision": self.last_policy_decision.to_dict() if self.last_policy_decision else None,
+            "recent_audit_records": [record.to_dict() for record in self.recent_audit_records],
         }
 
 

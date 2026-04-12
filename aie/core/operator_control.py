@@ -4,11 +4,13 @@ from dataclasses import replace
 from datetime import datetime, timezone
 
 from .autonomy_policy import AutonomyPolicy
+from .execution_history import ExecutionHistory
 from .execution_loop_engine import ExecutionLoopEngine
 from .models import (
     ActivePolicyProfile,
     AwarenessRequest,
     AwarenessResult,
+    AuditEventType,
     AutonomyActionType,
     AutonomyPolicyContext,
     AutonomyPolicyReason,
@@ -60,22 +62,34 @@ class OperatorControl:
         autonomy_policy: AutonomyPolicy | None = None,
         active_policy_profile: ActivePolicyProfile | None = None,
         policy_config_loader: PolicyConfigLoader | None = None,
+        execution_history: ExecutionHistory | None = None,
     ) -> None:
-        self._multi_task_orchestrator = multi_task_orchestrator or MultiTaskOrchestrator()
-        self._awareness = awareness or SystemAwareness(self._multi_task_orchestrator)
+        self._execution_history = execution_history or getattr(multi_task_orchestrator, "_execution_history", None) or ExecutionHistory()
+        self._multi_task_orchestrator = multi_task_orchestrator or MultiTaskOrchestrator(execution_history=self._execution_history)
+        self._awareness = awareness or SystemAwareness(self._multi_task_orchestrator, self._execution_history)
         self._policy_config_loader = policy_config_loader or PolicyConfigLoader()
         self._active_policy_profile = active_policy_profile or self._policy_config_loader.load_profile("standard")
         self._loop_engine = loop_engine or ExecutionLoopEngine(
             self._multi_task_orchestrator,
             active_policy_profile=self._active_policy_profile,
             policy_config_loader=self._policy_config_loader,
+            execution_history=self._execution_history,
         )
         self._autonomy_policy = autonomy_policy or AutonomyPolicy(
             active_policy_profile=self._active_policy_profile,
             policy_config_loader=self._policy_config_loader,
+            execution_history=self._execution_history,
         )
 
     def handle_command(self, request: OperatorCommandRequest) -> OperatorCommandResult:
+        self._execution_history.record_event(
+            event_type=AuditEventType.OPERATOR_COMMAND_RECEIVED,
+            session_id=request.target_session_id,
+            operator_command=(request.command_type.value if hasattr(request.command_type, "value") else str(request.command_type)),
+            operator_command_id=request.command_id,
+            source_component="operator_control",
+            notes=request.notes,
+        )
         command_type = self._normalize_command_type(request.command_type)
         target_type = self._normalize_target_type(request.target_type)
         if command_type is None:
@@ -161,6 +175,35 @@ class OperatorControl:
             return self._handle_reprioritize_session(request, awareness_snapshot, policy_evaluation)
         return self._handle_select_session(request, awareness_snapshot, policy_evaluation)
 
+    def _record_command_outcome(
+        self,
+        request: OperatorCommandRequest,
+        result: OperatorCommandResult,
+    ) -> None:
+        event_type = (
+            AuditEventType.OPERATOR_COMMAND_REJECTED
+            if result.decision.command_status in {
+                OperatorCommandStatus.REJECTED,
+                OperatorCommandStatus.INVALID_REQUEST,
+                OperatorCommandStatus.BLOCKED,
+            }
+            else AuditEventType.OPERATOR_COMMAND_EXECUTED
+        )
+        self._execution_history.record_event(
+            event_type=event_type,
+            session_id=request.target_session_id,
+            operator_command=(request.command_type.value if hasattr(request.command_type, "value") else str(request.command_type)),
+            operator_command_id=request.command_id,
+            action_type=(
+                result.decision.command_type.value
+                if hasattr(result.decision.command_type, "value")
+                else str(result.decision.command_type)
+            ),
+            reason=result.decision.rejection_reason.value if result.decision.rejection_reason else None,
+            source_component="operator_control",
+            notes=(result.decision.effect_summary,),
+        )
+
     def _handle_inspect_system(
         self,
         request: OperatorCommandRequest,
@@ -176,7 +219,7 @@ class OperatorControl:
             effect_summary="Returned the current bounded system awareness snapshot without mutating state.",
             operator_notes=request.notes,
         )
-        return OperatorCommandResult(
+        result = OperatorCommandResult(
             decision=decision,
             awareness_snapshot_used=awareness_snapshot,
             resulting_awareness=awareness_snapshot,
@@ -185,6 +228,8 @@ class OperatorControl:
             blocker_summaries=awareness_snapshot.blocker_summaries,
             executed_at=self._timestamp(),
         )
+        self._record_command_outcome(request, result)
+        return result
 
     def _handle_inspect_session(
         self,
@@ -206,7 +251,7 @@ class OperatorControl:
             effect_summary=f"Returned the current summary for session {request.target_session_id} without mutating state.",
             operator_notes=request.notes,
         )
-        return OperatorCommandResult(
+        result = OperatorCommandResult(
             decision=decision,
             awareness_snapshot_used=awareness_snapshot,
             resulting_awareness=awareness_snapshot,
@@ -217,6 +262,8 @@ class OperatorControl:
             resulting_session_status=summary.session_status if summary else None,
             executed_at=self._timestamp(),
         )
+        self._record_command_outcome(request, result)
+        return result
 
     def _handle_run_loop(
         self,
@@ -269,7 +316,7 @@ class OperatorControl:
             effect_summary=effect_summary,
             operator_notes=request.notes + loop_result.notes,
         )
-        return OperatorCommandResult(
+        result = OperatorCommandResult(
             decision=decision,
             awareness_snapshot_used=awareness_snapshot,
             resulting_awareness=resulting_awareness,
@@ -280,6 +327,8 @@ class OperatorControl:
             resulting_loop_status=loop_result.status,
             executed_at=self._timestamp(),
         )
+        self._record_command_outcome(request, result)
+        return result
 
     def _handle_approve_gate(
         self,
@@ -339,7 +388,7 @@ class OperatorControl:
             effect_summary=self._gate_approval_summary(request.target_session_id, gate_type, updated_summary),
             operator_notes=request.notes,
         )
-        return OperatorCommandResult(
+        result = OperatorCommandResult(
             decision=decision,
             awareness_snapshot_used=awareness_snapshot,
             resulting_awareness=resulting_awareness,
@@ -352,6 +401,8 @@ class OperatorControl:
             resulting_session_status=updated_summary.session_status if updated_summary else None,
             executed_at=self._timestamp(),
         )
+        self._record_command_outcome(request, result)
+        return result
 
     def _handle_reprioritize_session(
         self,
@@ -382,7 +433,7 @@ class OperatorControl:
                 effect_summary=f"Session {request.target_session_id} already has priority {new_priority.value}.",
                 operator_notes=request.notes,
             )
-            return OperatorCommandResult(
+            result = OperatorCommandResult(
                 decision=decision,
                 awareness_snapshot_used=awareness_snapshot,
                 resulting_awareness=awareness_snapshot,
@@ -392,6 +443,8 @@ class OperatorControl:
                 resulting_session_status=summary.session_status if summary else None,
                 executed_at=self._timestamp(),
             )
+            self._record_command_outcome(request, result)
+            return result
         updated_record = replace(current_record, priority=new_priority, last_updated=self._timestamp())
         updated_registry = self._replace_session(request.session_registry, updated_record)
         resulting_awareness = self._awareness.build_awareness_result(
@@ -416,7 +469,7 @@ class OperatorControl:
             effect_summary=f"Updated session {request.target_session_id} priority to {new_priority.value}.",
             operator_notes=request.notes,
         )
-        return OperatorCommandResult(
+        result = OperatorCommandResult(
             decision=decision,
             awareness_snapshot_used=awareness_snapshot,
             resulting_awareness=resulting_awareness,
@@ -426,6 +479,8 @@ class OperatorControl:
             resulting_session_status=updated_summary.session_status if updated_summary else None,
             executed_at=self._timestamp(),
         )
+        self._record_command_outcome(request, result)
+        return result
 
     def _handle_select_session(
         self,
@@ -447,7 +502,7 @@ class OperatorControl:
             ),
             operator_notes=request.notes,
         )
-        return OperatorCommandResult(
+        result = OperatorCommandResult(
             decision=decision,
             awareness_snapshot_used=awareness_snapshot,
             resulting_awareness=awareness_snapshot,
@@ -457,6 +512,8 @@ class OperatorControl:
             resulting_session_status=summary.session_status if summary else None,
             executed_at=self._timestamp(),
         )
+        self._record_command_outcome(request, result)
+        return result
 
     def _evaluate_policy(
         self,
@@ -732,7 +789,7 @@ class OperatorControl:
             effect_summary=effect_summary,
             operator_notes=request.notes,
         )
-        return OperatorCommandResult(
+        result = OperatorCommandResult(
             decision=decision,
             awareness_snapshot_used=awareness_snapshot,
             resulting_awareness=awareness_snapshot,
@@ -740,6 +797,8 @@ class OperatorControl:
             updated_session_registry=request.session_registry,
             executed_at=self._timestamp(),
         )
+        self._record_command_outcome(request, result)
+        return result
 
     @staticmethod
     def _timestamp() -> str:

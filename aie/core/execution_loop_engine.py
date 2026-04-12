@@ -3,12 +3,14 @@ from __future__ import annotations
 from pathlib import Path
 
 from .autonomy_policy import AutonomyPolicy
+from .execution_history import ExecutionHistory
 from .models import (
     ActivePolicyProfile,
     ArtifactAwareMultiTaskResult,
     ArtifactAwareSessionRecord,
     ArtifactRequirement,
     ArtifactRequirementStatus,
+    AuditEventType,
     AutonomyPolicyContext,
     AutonomyPolicyStatus,
     AwarenessRequest,
@@ -48,15 +50,18 @@ class ExecutionLoopEngine:
         autonomy_policy: AutonomyPolicy | None = None,
         active_policy_profile: ActivePolicyProfile | None = None,
         policy_config_loader: PolicyConfigLoader | None = None,
+        execution_history: ExecutionHistory | None = None,
     ) -> None:
-        self._multi_task_orchestrator = multi_task_orchestrator or MultiTaskOrchestrator()
+        self._execution_history = execution_history or getattr(multi_task_orchestrator, "_execution_history", None) or ExecutionHistory()
+        self._multi_task_orchestrator = multi_task_orchestrator or MultiTaskOrchestrator(execution_history=self._execution_history)
         self._state_persistence = state_persistence or StatePersistence()
-        self._awareness = awareness or SystemAwareness(self._multi_task_orchestrator)
+        self._awareness = awareness or SystemAwareness(self._multi_task_orchestrator, self._execution_history)
         self._policy_config_loader = policy_config_loader or PolicyConfigLoader()
         self._active_policy_profile = active_policy_profile or self._policy_config_loader.load_profile("standard")
         self._autonomy_policy = autonomy_policy or AutonomyPolicy(
             active_policy_profile=self._active_policy_profile,
             policy_config_loader=self._policy_config_loader,
+            execution_history=self._execution_history,
         )
 
     def run_cycle(self, request: LoopEngineRequest) -> LoopCycleResult:
@@ -162,6 +167,13 @@ class ExecutionLoopEngine:
             artifact_registry=artifact_registry,
             artifact_requirements=artifact_requirements,
         )
+        self._execution_history.record_event(
+            event_type=AuditEventType.LOOP_CYCLE_STARTED,
+            cycle_index=cycle_index,
+            action_type=(request.policy_action_type.value if hasattr(request.policy_action_type, "value") else str(request.policy_action_type)),
+            source_component="execution_loop_engine",
+            notes=(f"Started loop cycle {cycle_index}.",),
+        )
         awareness_snapshot = self._awareness.build_awareness_result(
             AwarenessRequest(
                 session_registry=session_registry,
@@ -184,6 +196,15 @@ class ExecutionLoopEngine:
             )
         )
         if policy_evaluation.decision.decision_status != AutonomyPolicyStatus.ALLOWED:
+            self._execution_history.record_event(
+                event_type=AuditEventType.ACTION_BLOCKED,
+                cycle_index=cycle_index,
+                action_type=(request.policy_action_type.value if hasattr(request.policy_action_type, "value") else str(request.policy_action_type)),
+                policy_decision=policy_evaluation.decision.decision_status.value,
+                reason=policy_evaluation.decision.reasons[0].value if policy_evaluation.decision.reasons else None,
+                source_component="execution_loop_engine",
+                notes=policy_evaluation.decision.policy_notes,
+            )
             cycle = self._policy_denied_cycle(
                 cycle_index=cycle_index,
                 inspect_result=inspect_result,
@@ -199,6 +220,15 @@ class ExecutionLoopEngine:
 
         if selected_session is None:
             status, reason, termination_reason, action, notes = self._classify_registry_state(inspect_result.session_registry)
+            self._execution_history.record_event(
+                event_type=AuditEventType.ACTION_BLOCKED,
+                cycle_index=cycle_index,
+                action_type=action.value,
+                policy_decision=policy_evaluation.decision.decision_status.value,
+                reason=reason.value,
+                source_component="execution_loop_engine",
+                notes=notes,
+            )
             cycle = LoopCycleResult(
                 cycle_index=cycle_index,
                 status=status,
@@ -219,6 +249,14 @@ class ExecutionLoopEngine:
             if selected_session.session_status == MultiTaskSessionStatus.RESUMABLE
             else MultiTaskAction.EXECUTE_SELECTED
         )
+        self._execution_history.record_event(
+            event_type=AuditEventType.SESSION_SELECTED,
+            session_id=selected_session.session_id,
+            cycle_index=cycle_index,
+            action_type=selected_action.value,
+            source_component="execution_loop_engine",
+            notes=(f"Selected session {selected_session.session_id} for {selected_action.value}.",),
+        )
         action_result = self._multi_task_orchestrator.orchestrate(
             MultiTaskOrchestrationRequest(
                 requested_action=selected_action,
@@ -227,6 +265,7 @@ class ExecutionLoopEngine:
                 artifact_registry=artifact_registry,
                 artifact_requirements=artifact_requirements,
                 selected_session_id=selected_session.session_id,
+                cycle_index=cycle_index,
             )
         )
         updated_selected = next(
@@ -238,6 +277,15 @@ class ExecutionLoopEngine:
             note for result in persistence_results for note in result.notes
         )
         if persistence_failed:
+            self._execution_history.record_event(
+                event_type=AuditEventType.ACTION_BLOCKED,
+                session_id=selected_session.session_id,
+                cycle_index=cycle_index,
+                action_type=selected_action.value,
+                reason=LoopCycleReason.PERSISTENCE_FAILED.value,
+                source_component="execution_loop_engine",
+                notes=cycle_notes,
+            )
             cycle = LoopCycleResult(
                 cycle_index=cycle_index,
                 status=LoopEngineStatus.FAILED,
@@ -256,6 +304,15 @@ class ExecutionLoopEngine:
             )
             return cycle, action_result.session_registry, action_result.dependency_graph, action_result.artifact_registry
 
+        self._execution_history.record_event(
+            event_type=AuditEventType.STATE_PERSISTED,
+            session_id=selected_session.session_id,
+            cycle_index=cycle_index,
+            action_type=selected_action.value,
+            source_component="execution_loop_engine",
+            notes=tuple(note for result in persistence_results for note in result.notes),
+        )
+
         termination_reason, termination_notes = self._post_action_termination(action_result.session_registry)
         cycle = LoopCycleResult(
             cycle_index=cycle_index,
@@ -272,6 +329,15 @@ class ExecutionLoopEngine:
             actions_run_count=1,
             multi_task_result=action_result,
             policy_evaluation=policy_evaluation,
+        )
+        self._execution_history.record_event(
+            event_type=AuditEventType.LOOP_CYCLE_COMPLETED,
+            session_id=selected_session.session_id,
+            cycle_index=cycle_index,
+            action_type=selected_action.value,
+            reason=termination_reason.value if termination_reason else LoopCycleReason.SELECTED_ACTIONABLE_SESSION.value,
+            source_component="execution_loop_engine",
+            notes=cycle.cycle_notes,
         )
         return cycle, action_result.session_registry, action_result.dependency_graph, action_result.artifact_registry
 
