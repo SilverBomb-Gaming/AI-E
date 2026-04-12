@@ -83,6 +83,19 @@
     "request_review",
     "request_playtest"
   ],
+  "resume_allowed_statuses": [
+    "awaiting_confirmation",
+    "awaiting_review",
+    "awaiting_playtest",
+    "partially_completed"
+  ],
+  "resumable_stop_reasons": [
+    "confirmation_required",
+    "review_required",
+    "playtest_required"
+  ],
+  "replay_completed_steps": false,
+  "requires_explicit_clearance": true,
   "commit_preparation_rules": {
     "allow_when_supported_statuses": ["supported_ready", "supported_with_warnings"],
     "deny_when_scaffold_only": true,

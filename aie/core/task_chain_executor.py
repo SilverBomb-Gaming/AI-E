@@ -106,6 +106,8 @@ class TaskChainExecutor:
                     deferred_step_ids=tuple(deferred_step_ids),
                     step_runs=tuple(step_runs),
                     next_human_action=eligibility.human_action_required,
+                    stop_reason=eligibility.stop_reason,
+                    blocked_step_id=step.step_id,
                     summary_notes=tuple(dict.fromkeys(summary_notes)),
                 )
 
@@ -140,6 +142,8 @@ class TaskChainExecutor:
                     deferred_step_ids=tuple(deferred_step_ids),
                     step_runs=tuple(step_runs),
                     next_human_action=None,
+                    stop_reason=StopReason.EXECUTION_ERROR,
+                    blocked_step_id=step.step_id,
                     summary_notes=tuple(dict.fromkeys(summary_notes)),
                 )
 
@@ -169,6 +173,8 @@ class TaskChainExecutor:
                 deferred_step_ids=tuple(deferred_step_ids),
                 step_runs=tuple(step_runs),
                 next_human_action=step_run.human_action_required,
+                stop_reason=step_run.stop_reason,
+                blocked_step_id=step.step_id,
                 summary_notes=tuple(dict.fromkeys(summary_notes)),
             )
 
@@ -180,6 +186,8 @@ class TaskChainExecutor:
             deferred_step_ids=(),
             step_runs=tuple(step_runs),
             next_human_action=None,
+            stop_reason=None,
+            blocked_step_id=None,
             summary_notes=tuple(dict.fromkeys(summary_notes)),
         )
 

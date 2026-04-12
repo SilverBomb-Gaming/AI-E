@@ -217,6 +217,8 @@ class TaskExecutionResult:
     deferred_step_ids: tuple[str, ...] = ()
     step_runs: tuple[TaskStepRun, ...] = ()
     next_human_action: str | None = None
+    stop_reason: StopReason | None = None
+    blocked_step_id: str | None = None
     summary_notes: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
@@ -227,5 +229,120 @@ class TaskExecutionResult:
             "deferred_step_ids": list(self.deferred_step_ids),
             "step_runs": [step_run.to_dict() for step_run in self.step_runs],
             "next_human_action": self.next_human_action,
+            "stop_reason": self.stop_reason.value if self.stop_reason else None,
+            "blocked_step_id": self.blocked_step_id,
             "summary_notes": list(self.summary_notes),
+        }
+
+
+class ResumeEligibility(str, Enum):
+    RESUMABLE = "resumable"
+    NOT_RESUMABLE = "not_resumable"
+
+
+class ResumeReason(str, Enum):
+    CONFIRMATION_CLEARED = "confirmation_cleared"
+    REVIEW_CLEARED = "review_cleared"
+    PLAYTEST_CLEARED = "playtest_cleared"
+    PRIOR_PARTIAL_COMPLETION = "prior_partial_completion"
+    INVALID_RESUME_REQUEST = "invalid_resume_request"
+    BLOCKER_UNRESOLVED = "blocker_unresolved"
+    UNSUPPORTED_PRIOR_STOP = "unsupported_prior_stop"
+    INCONSISTENT_PRIOR_STATE = "inconsistent_prior_state"
+
+
+class ReentryStatus(str, Enum):
+    RESUMABLE = "resumable"
+    NOT_RESUMABLE = "not_resumable"
+    RESUMED = "resumed"
+    FAILED = "failed"
+
+
+@dataclass(frozen=True)
+class ResumeRequest:
+    prior_executor_status: ExecutorStatus
+    stop_reason: StopReason | None = None
+    blocked_step_id: str | None = None
+    human_action_cleared: bool = False
+    confirmation_cleared: bool = False
+    review_cleared: bool = False
+    playtest_cleared: bool = False
+
+    @classmethod
+    def from_execution_result(
+        cls,
+        execution_result: TaskExecutionResult,
+        *,
+        human_action_cleared: bool = False,
+        confirmation_cleared: bool = False,
+        review_cleared: bool = False,
+        playtest_cleared: bool = False,
+    ) -> "ResumeRequest":
+        return cls(
+            prior_executor_status=execution_result.status,
+            stop_reason=execution_result.stop_reason,
+            blocked_step_id=execution_result.blocked_step_id,
+            human_action_cleared=human_action_cleared,
+            confirmation_cleared=confirmation_cleared,
+            review_cleared=review_cleared,
+            playtest_cleared=playtest_cleared,
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "prior_executor_status": self.prior_executor_status.value,
+            "stop_reason": self.stop_reason.value if self.stop_reason else None,
+            "blocked_step_id": self.blocked_step_id,
+            "human_action_cleared": self.human_action_cleared,
+            "confirmation_cleared": self.confirmation_cleared,
+            "review_cleared": self.review_cleared,
+            "playtest_cleared": self.playtest_cleared,
+        }
+
+
+@dataclass(frozen=True)
+class ResumeDecision:
+    eligibility: ResumeEligibility
+    reason: ResumeReason
+    prior_executor_status: ExecutorStatus
+    stop_reason: StopReason | None = None
+    blocked_step_id: str | None = None
+    next_resumable_step_id: str | None = None
+    human_action_cleared: bool = False
+    confirmation_cleared: bool = False
+    review_cleared: bool = False
+    playtest_cleared: bool = False
+    resume_allowed: bool = False
+    resume_notes: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "eligibility": self.eligibility.value,
+            "reason": self.reason.value,
+            "prior_executor_status": self.prior_executor_status.value,
+            "stop_reason": self.stop_reason.value if self.stop_reason else None,
+            "blocked_step_id": self.blocked_step_id,
+            "next_resumable_step_id": self.next_resumable_step_id,
+            "human_action_cleared": self.human_action_cleared,
+            "confirmation_cleared": self.confirmation_cleared,
+            "review_cleared": self.review_cleared,
+            "playtest_cleared": self.playtest_cleared,
+            "resume_allowed": self.resume_allowed,
+            "resume_notes": list(self.resume_notes),
+        }
+
+
+@dataclass(frozen=True)
+class ResumeResult:
+    status: ReentryStatus
+    decision: ResumeDecision
+    execution_result: TaskExecutionResult | None = None
+    resume_notes: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "status": self.status.value,
+            "decision": self.decision.to_dict(),
+            "execution_result": self.execution_result.to_dict() if self.execution_result else None,
+            "resume_notes": list(self.resume_notes),
         }
