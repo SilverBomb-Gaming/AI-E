@@ -5,8 +5,14 @@ from datetime import datetime, timezone
 
 from .execution_orchestrator import ExecutionOrchestrator
 from .models import (
+    ArtifactAwareMultiTaskResult,
+    ArtifactAwareSessionRecord,
+    ArtifactBlockReason,
+    ArtifactRequirement,
+    ArtifactRequirementEvaluationResult,
+    ArtifactRequirementStatus,
+    ArtifactStatus,
     ConstraintRouterHandoff,
-    DependencyAwareMultiTaskResult,
     DependencyAwareSessionRecord,
     DependencyBlockReason,
     DependencyEvaluationResult,
@@ -23,6 +29,8 @@ from .models import (
     OrchestrationResult,
     PersistedExecutionSession,
     ResumeRequest,
+    SessionArtifact,
+    SessionArtifactRegistryRecord,
     SessionDependency,
     SessionSelectionReason,
     TaskExecutionResult,
@@ -30,7 +38,7 @@ from .models import (
 
 
 class MultiTaskOrchestrator:
-    """Coordinate multiple bounded sessions without merging their execution state."""
+    """Coordinate bounded sessions through lifecycle, dependency, and artifact gates."""
 
     _SELECTION_BUCKETS: tuple[tuple[MultiTaskPriority, MultiTaskSessionStatus], ...] = (
         (MultiTaskPriority.URGENT, MultiTaskSessionStatus.RESUMABLE),
@@ -137,23 +145,78 @@ class MultiTaskOrchestrator:
             registered.append(registered_dependency)
         return updated_graph, tuple(registered)
 
+    def register_produced_artifact(
+        self,
+        artifact_registry: tuple[SessionArtifact, ...],
+        artifact: SessionArtifact,
+    ) -> tuple[tuple[SessionArtifact, ...], SessionArtifact]:
+        updated_registry = list(artifact_registry)
+        if artifact not in updated_registry:
+            updated_registry.append(artifact)
+        return tuple(updated_registry), artifact
+
+    def register_produced_artifacts(
+        self,
+        artifact_registry: tuple[SessionArtifact, ...],
+        artifacts: tuple[SessionArtifact, ...],
+    ) -> tuple[tuple[SessionArtifact, ...], tuple[SessionArtifact, ...]]:
+        updated_registry = artifact_registry
+        registered: list[SessionArtifact] = []
+        for artifact in artifacts:
+            updated_registry, registered_artifact = self.register_produced_artifact(updated_registry, artifact)
+            registered.append(registered_artifact)
+        return updated_registry, tuple(registered)
+
+    def register_required_artifact(
+        self,
+        artifact_requirements: tuple[ArtifactRequirement, ...],
+        requirement: ArtifactRequirement,
+    ) -> tuple[tuple[ArtifactRequirement, ...], ArtifactRequirement]:
+        updated_requirements = list(artifact_requirements)
+        if requirement not in updated_requirements:
+            updated_requirements.append(requirement)
+        return tuple(updated_requirements), requirement
+
+    def register_artifact_requirements(
+        self,
+        artifact_requirements: tuple[ArtifactRequirement, ...],
+        requirements: tuple[ArtifactRequirement, ...],
+    ) -> tuple[tuple[ArtifactRequirement, ...], tuple[ArtifactRequirement, ...]]:
+        updated_requirements = artifact_requirements
+        registered: list[ArtifactRequirement] = []
+        for requirement in requirements:
+            updated_requirements, registered_requirement = self.register_required_artifact(updated_requirements, requirement)
+            registered.append(registered_requirement)
+        return updated_requirements, tuple(registered)
+
     def list_sessions(
         self,
         registry: tuple[MultiTaskSessionRecord, ...],
         dependency_graph: tuple[SessionDependency, ...] = (),
-    ) -> tuple[tuple[DependencyAwareSessionRecord, ...], tuple[DependencyGraphRecord, ...]]:
+        artifact_registry: tuple[SessionArtifact, ...] = (),
+        artifact_requirements: tuple[ArtifactRequirement, ...] = (),
+    ) -> tuple[
+        tuple[ArtifactAwareSessionRecord, ...],
+        tuple[DependencyGraphRecord, ...],
+        tuple[SessionArtifactRegistryRecord, ...],
+    ]:
         normalized_registry = tuple(self._normalize_record(record) for record in registry)
-        graph_records, evaluations = self.validate_dependency_graph(normalized_registry, dependency_graph)
-        graph_records_by_id = {graph_record.session_id: graph_record for graph_record in graph_records}
-        dependency_aware_registry = tuple(
-            self.build_dependency_aware_session_record(
-                record=record,
-                graph_record=graph_records_by_id[record.session_id],
-                evaluation=evaluations[record.session_id],
-            )
-            for record in normalized_registry
+        dependency_registry, graph_records = self._list_dependency_aware_sessions(normalized_registry, dependency_graph)
+        artifact_registry_records, artifact_evaluations = self.validate_artifact_registry(
+            dependency_registry,
+            artifact_registry,
+            artifact_requirements,
         )
-        return dependency_aware_registry, graph_records
+        artifact_registry_by_id = {record.session_id: record for record in artifact_registry_records}
+        artifact_aware_registry = tuple(
+            self.build_artifact_aware_session_record(
+                record=record,
+                artifact_record=artifact_registry_by_id[record.session_id],
+                evaluation=artifact_evaluations[record.session_id],
+            )
+            for record in dependency_registry
+        )
+        return artifact_aware_registry, graph_records, artifact_registry_records
 
     @staticmethod
     def classify_session_status(lifecycle_state: LifecycleState) -> MultiTaskSessionStatus:
@@ -187,7 +250,27 @@ class MultiTaskOrchestrator:
             dependency_notes=evaluation.dependency_notes,
             dependency_ready=evaluation.dependency_ready,
             invalid_dependency=evaluation.invalid_dependency,
-            effective_session_status=self._effective_session_status(record=record, evaluation=evaluation),
+            effective_session_status=self._effective_dependency_status(record=record, evaluation=evaluation),
+        )
+
+    def build_artifact_aware_session_record(
+        self,
+        *,
+        record: DependencyAwareSessionRecord,
+        artifact_record: SessionArtifactRegistryRecord,
+        evaluation: ArtifactRequirementEvaluationResult,
+    ) -> ArtifactAwareSessionRecord:
+        return ArtifactAwareSessionRecord(
+            base_record=record,
+            produced_artifacts=artifact_record.produced_artifacts,
+            required_artifacts=artifact_record.required_artifacts,
+            requirement_status=evaluation.requirement_status,
+            artifact_block_reasons=evaluation.block_reasons,
+            blocked_by_artifact_ids=evaluation.blocked_by_artifact_ids,
+            artifact_notes=evaluation.artifact_notes,
+            artifact_ready=evaluation.artifact_ready,
+            invalid_requirement_reference=evaluation.invalid_requirement_reference,
+            effective_session_status=self._effective_artifact_status(record=record, evaluation=evaluation),
         )
 
     def validate_dependency_graph(
@@ -200,12 +283,10 @@ class MultiTaskOrchestrator:
         dependent_map = {record.session_id: [] for record in registry}
 
         for dependency in dependency_graph:
-            if dependency.session_id in prerequisite_map:
-                if dependency.prerequisite_session_id not in prerequisite_map[dependency.session_id]:
-                    prerequisite_map[dependency.session_id].append(dependency.prerequisite_session_id)
-            if dependency.prerequisite_session_id in dependent_map:
-                if dependency.session_id not in dependent_map[dependency.prerequisite_session_id]:
-                    dependent_map[dependency.prerequisite_session_id].append(dependency.session_id)
+            if dependency.session_id in prerequisite_map and dependency.prerequisite_session_id not in prerequisite_map[dependency.session_id]:
+                prerequisite_map[dependency.session_id].append(dependency.prerequisite_session_id)
+            if dependency.prerequisite_session_id in dependent_map and dependency.session_id not in dependent_map[dependency.prerequisite_session_id]:
+                dependent_map[dependency.prerequisite_session_id].append(dependency.session_id)
 
         cycle_nodes = self._detect_cycle_nodes(prerequisite_map)
         graph_records = tuple(
@@ -320,26 +401,174 @@ class MultiTaskOrchestrator:
 
         return graph_records, evaluations
 
+    def validate_artifact_registry(
+        self,
+        registry: tuple[DependencyAwareSessionRecord, ...],
+        artifact_registry: tuple[SessionArtifact, ...],
+        artifact_requirements: tuple[ArtifactRequirement, ...],
+    ) -> tuple[tuple[SessionArtifactRegistryRecord, ...], dict[str, ArtifactRequirementEvaluationResult]]:
+        session_ids = {record.session_id for record in registry}
+        artifacts_by_producer: dict[str, list[SessionArtifact]] = {session_id: [] for session_id in session_ids}
+        requirements_by_consumer: dict[str, list[ArtifactRequirement]] = {session_id: [] for session_id in session_ids}
+
+        for artifact in artifact_registry:
+            if artifact.producer_session_id in artifacts_by_producer:
+                artifacts_by_producer[artifact.producer_session_id].append(artifact)
+
+        for requirement in artifact_requirements:
+            if requirement.consumer_session_id in requirements_by_consumer:
+                requirements_by_consumer[requirement.consumer_session_id].append(requirement)
+
+        registry_records = tuple(
+            SessionArtifactRegistryRecord(
+                session_id=record.session_id,
+                produced_artifacts=tuple(artifacts_by_producer[record.session_id]),
+                required_artifacts=tuple(requirements_by_consumer[record.session_id]),
+            )
+            for record in registry
+        )
+
+        evaluations: dict[str, ArtifactRequirementEvaluationResult] = {}
+        for record in registry:
+            required_artifacts = tuple(requirements_by_consumer[record.session_id])
+            if not required_artifacts:
+                evaluations[record.session_id] = ArtifactRequirementEvaluationResult(
+                    session_id=record.session_id,
+                    requirement_status=ArtifactRequirementStatus.NO_REQUIREMENTS,
+                    artifact_notes=("Session has no required artifacts.",),
+                    artifact_ready=True,
+                    invalid_requirement_reference=False,
+                )
+                continue
+
+            artifact_notes: list[str] = []
+            block_reasons: list[ArtifactBlockReason] = []
+            blocked_by_artifact_ids: list[str] = []
+
+            for requirement in required_artifacts:
+                if not requirement.required_artifact_name.strip():
+                    block_reasons.append(ArtifactBlockReason.INVALID_ARTIFACT_REFERENCE)
+                    artifact_notes.append("Required artifact name must be explicit and non-empty.")
+                    continue
+
+                if requirement.producer_session_id not in session_ids:
+                    block_reasons.extend(
+                        (
+                            ArtifactBlockReason.INVALID_ARTIFACT_REFERENCE,
+                            ArtifactBlockReason.ARTIFACT_FROM_UNKNOWN_SESSION,
+                        )
+                    )
+                    artifact_notes.append(
+                        f"Artifact producer session {requirement.producer_session_id} is not present in the registry."
+                    )
+                    continue
+
+                named_artifacts = [
+                    artifact
+                    for artifact in artifacts_by_producer[requirement.producer_session_id]
+                    if artifact.artifact_name == requirement.required_artifact_name
+                ]
+                if not named_artifacts:
+                    block_reasons.append(ArtifactBlockReason.MISSING_REQUIRED_ARTIFACT)
+                    artifact_notes.append(
+                        f"Required artifact {requirement.required_artifact_name} has not been published by {requirement.producer_session_id}."
+                    )
+                    continue
+
+                typed_artifacts = [
+                    artifact for artifact in named_artifacts if artifact.artifact_type == requirement.required_artifact_type
+                ]
+                if not typed_artifacts:
+                    block_reasons.append(ArtifactBlockReason.INCOMPATIBLE_ARTIFACT_TYPE)
+                    blocked_by_artifact_ids.extend(artifact.artifact_id for artifact in named_artifacts)
+                    artifact_notes.append(
+                        f"Required artifact {requirement.required_artifact_name} exists but does not match type {requirement.required_artifact_type.value}."
+                    )
+                    continue
+
+                produced_artifacts = [
+                    artifact for artifact in typed_artifacts if artifact.artifact_status == ArtifactStatus.PRODUCED
+                ]
+                if not produced_artifacts:
+                    block_reasons.append(ArtifactBlockReason.ARTIFACT_NOT_PRODUCED)
+                    blocked_by_artifact_ids.extend(artifact.artifact_id for artifact in typed_artifacts)
+                    artifact_notes.append(
+                        f"Required artifact {requirement.required_artifact_name} is registered but not in produced status."
+                    )
+
+            unique_reasons = tuple(dict.fromkeys(block_reasons))
+            unique_artifact_ids = tuple(dict.fromkeys(blocked_by_artifact_ids))
+            unique_notes = tuple(dict.fromkeys(artifact_notes))
+            invalid_requirement_reference = any(
+                reason in {
+                    ArtifactBlockReason.INVALID_ARTIFACT_REFERENCE,
+                    ArtifactBlockReason.ARTIFACT_FROM_UNKNOWN_SESSION,
+                }
+                for reason in unique_reasons
+            )
+
+            if not unique_reasons:
+                evaluations[record.session_id] = ArtifactRequirementEvaluationResult(
+                    session_id=record.session_id,
+                    requirement_status=ArtifactRequirementStatus.REQUIREMENTS_SATISFIED,
+                    artifact_notes=("All required artifacts are present and type-compatible.",),
+                    artifact_ready=True,
+                    invalid_requirement_reference=False,
+                )
+                continue
+
+            if invalid_requirement_reference:
+                requirement_status = ArtifactRequirementStatus.INVALID_REQUIREMENT_REFERENCE
+            elif any(
+                reason in {
+                    ArtifactBlockReason.INCOMPATIBLE_ARTIFACT_TYPE,
+                    ArtifactBlockReason.ARTIFACT_NOT_PRODUCED,
+                }
+                for reason in unique_reasons
+            ):
+                requirement_status = ArtifactRequirementStatus.BLOCKED_BY_INVALID_ARTIFACT
+            else:
+                requirement_status = ArtifactRequirementStatus.BLOCKED_BY_MISSING_ARTIFACT
+
+            evaluations[record.session_id] = ArtifactRequirementEvaluationResult(
+                session_id=record.session_id,
+                requirement_status=requirement_status,
+                block_reasons=unique_reasons,
+                blocked_by_artifact_ids=unique_artifact_ids,
+                artifact_notes=unique_notes,
+                artifact_ready=False,
+                invalid_requirement_reference=invalid_requirement_reference,
+            )
+
+        return registry_records, evaluations
+
     def select_next_session(
         self,
         registry: tuple[MultiTaskSessionRecord, ...],
         *,
         dependency_graph: tuple[SessionDependency, ...] = (),
+        artifact_registry: tuple[SessionArtifact, ...] = (),
+        artifact_requirements: tuple[ArtifactRequirement, ...] = (),
         allowed_statuses: tuple[MultiTaskSessionStatus, ...] = (
             MultiTaskSessionStatus.RESUMABLE,
             MultiTaskSessionStatus.READY,
         ),
-    ) -> tuple[DependencyAwareSessionRecord | None, SessionSelectionReason, tuple[str, ...]]:
-        dependency_aware_registry, _ = self.list_sessions(registry, dependency_graph)
+    ) -> tuple[ArtifactAwareSessionRecord | None, SessionSelectionReason, tuple[str, ...]]:
+        artifact_aware_registry, _, _ = self.list_sessions(
+            registry,
+            dependency_graph,
+            artifact_registry,
+            artifact_requirements,
+        )
         actionable_ids = tuple(
-            record.session_id for record in dependency_aware_registry if record.session_status in allowed_statuses
+            record.session_id for record in artifact_aware_registry if record.session_status in allowed_statuses
         )
         for priority, session_status in self._SELECTION_BUCKETS:
             if session_status not in allowed_statuses:
                 continue
             candidates = [
                 (index, record)
-                for index, record in enumerate(dependency_aware_registry)
+                for index, record in enumerate(artifact_aware_registry)
                 if record.priority == priority and record.session_status == session_status
             ]
             if not candidates:
@@ -352,7 +581,7 @@ class MultiTaskOrchestrator:
             return chosen, SessionSelectionReason.HIGHEST_PRIORITY_READY, actionable_ids
         return None, SessionSelectionReason.NO_ACTIONABLE_SESSIONS, actionable_ids
 
-    def orchestrate(self, request: MultiTaskOrchestrationRequest) -> DependencyAwareMultiTaskResult:
+    def orchestrate(self, request: MultiTaskOrchestrationRequest) -> ArtifactAwareMultiTaskResult:
         registry, registered_session_ids = self._apply_registrations(
             registry=request.session_registry,
             sessions_to_register=request.sessions_to_register,
@@ -361,7 +590,20 @@ class MultiTaskOrchestrator:
             request.dependency_graph,
             request.dependencies_to_register,
         )
-        registry, graph_records = self.list_sessions(registry, dependency_graph)
+        artifact_registry, registered_artifacts = self.register_produced_artifacts(
+            request.artifact_registry,
+            request.artifacts_to_register,
+        )
+        artifact_requirements, registered_artifact_requirements = self.register_artifact_requirements(
+            request.artifact_requirements,
+            request.artifact_requirements_to_register,
+        )
+        registry, graph_records, artifact_registry_records = self.list_sessions(
+            registry,
+            dependency_graph,
+            artifact_registry,
+            artifact_requirements,
+        )
         buckets = self._bucket_session_ids(registry)
 
         if request.requested_action == MultiTaskAction.REGISTER_SESSION:
@@ -371,15 +613,18 @@ class MultiTaskOrchestrator:
                 selection_reason=SessionSelectionReason.NO_ACTIONABLE_SESSIONS,
                 actionable_session_ids=buckets["actionable"],
                 buckets=buckets,
-                decision_notes=("Registered bounded sessions without routing execution.",),
+                decision_notes=("Registered bounded sessions, dependencies, and artifact contracts without routing execution.",),
             )
             return self._build_result(
                 decision=decision,
                 registry=registry,
                 graph_records=graph_records,
+                artifact_registry_records=artifact_registry_records,
                 selected_session_result=None,
                 registered_session_ids=registered_session_ids,
                 registered_dependencies=registered_dependencies,
+                registered_artifacts=registered_artifacts,
+                registered_artifact_requirements=registered_artifact_requirements,
                 notes=request.notes,
             )
 
@@ -390,22 +635,27 @@ class MultiTaskOrchestrator:
                 selection_reason=SessionSelectionReason.NO_ACTIONABLE_SESSIONS,
                 actionable_session_ids=buckets["actionable"],
                 buckets=buckets,
-                decision_notes=("Inspected bounded multi-session registry state.",),
+                decision_notes=("Inspected bounded multi-session registry state including dependency and artifact readiness.",),
             )
             return self._build_result(
                 decision=decision,
                 registry=registry,
                 graph_records=graph_records,
+                artifact_registry_records=artifact_registry_records,
                 selected_session_result=None,
                 registered_session_ids=registered_session_ids,
                 registered_dependencies=registered_dependencies,
+                registered_artifacts=registered_artifacts,
+                registered_artifact_requirements=registered_artifact_requirements,
                 notes=request.notes,
             )
 
         if request.requested_action == MultiTaskAction.SELECT_NEXT_SESSION:
             selected, selection_reason, actionable_ids = self.select_next_session(
-                tuple(record.base_record for record in registry),
+                tuple(record.base_record.base_record for record in registry),
                 dependency_graph=dependency_graph,
+                artifact_registry=artifact_registry,
+                artifact_requirements=artifact_requirements,
             )
             chosen_action = MultiTaskAction.SELECT_NEXT_SESSION if selected is not None else self._idle_action(registry)
             decision = self._build_decision(
@@ -420,9 +670,12 @@ class MultiTaskOrchestrator:
                 decision=decision,
                 registry=registry,
                 graph_records=graph_records,
+                artifact_registry_records=artifact_registry_records,
                 selected_session_result=None,
                 registered_session_ids=registered_session_ids,
                 registered_dependencies=registered_dependencies,
+                registered_artifacts=registered_artifacts,
+                registered_artifact_requirements=registered_artifact_requirements,
                 notes=request.notes,
             )
 
@@ -435,6 +688,8 @@ class MultiTaskOrchestrator:
             selected, selection_reason, actionable_ids = self._resolve_selected_session(
                 registry=registry,
                 dependency_graph=dependency_graph,
+                artifact_registry=artifact_registry,
+                artifact_requirements=artifact_requirements,
                 selected_session_id=request.selected_session_id,
                 target_status=target_status,
             )
@@ -456,19 +711,27 @@ class MultiTaskOrchestrator:
                     decision=decision,
                     registry=registry,
                     graph_records=graph_records,
+                    artifact_registry_records=artifact_registry_records,
                     selected_session_result=None,
                     registered_session_ids=registered_session_ids,
                     registered_dependencies=registered_dependencies,
+                    registered_artifacts=registered_artifacts,
+                    registered_artifact_requirements=registered_artifact_requirements,
                     notes=request.notes,
                 )
 
             selected_result = self.orchestrate_selected_session(selected)
-            updated_record = self.update_session_record(selected.base_record, selected_result)
+            updated_record = self.update_session_record(selected.base_record.base_record, selected_result)
             updated_base_registry = tuple(
-                updated_record if record.session_id == updated_record.session_id else record.base_record
+                updated_record if record.session_id == updated_record.session_id else record.base_record.base_record
                 for record in registry
             )
-            updated_registry, updated_graph_records = self.list_sessions(updated_base_registry, dependency_graph)
+            updated_registry, updated_graph_records, updated_artifact_registry_records = self.list_sessions(
+                updated_base_registry,
+                dependency_graph,
+                artifact_registry,
+                artifact_requirements,
+            )
             updated_buckets = self._bucket_session_ids(updated_registry)
             decision = self._build_decision(
                 chosen_action=request.requested_action,
@@ -482,9 +745,12 @@ class MultiTaskOrchestrator:
                 decision=decision,
                 registry=updated_registry,
                 graph_records=updated_graph_records,
+                artifact_registry_records=updated_artifact_registry_records,
                 selected_session_result=selected_result,
                 registered_session_ids=registered_session_ids,
                 registered_dependencies=registered_dependencies,
+                registered_artifacts=registered_artifacts,
+                registered_artifact_requirements=registered_artifact_requirements,
                 notes=request.notes,
             )
 
@@ -500,17 +766,25 @@ class MultiTaskOrchestrator:
             decision=decision,
             registry=registry,
             graph_records=graph_records,
+            artifact_registry_records=artifact_registry_records,
             selected_session_result=None,
             registered_session_ids=registered_session_ids,
             registered_dependencies=registered_dependencies,
+            registered_artifacts=registered_artifacts,
+            registered_artifact_requirements=registered_artifact_requirements,
             notes=request.notes,
         )
 
     def orchestrate_selected_session(
         self,
-        session: MultiTaskSessionRecord | DependencyAwareSessionRecord,
+        session: MultiTaskSessionRecord | DependencyAwareSessionRecord | ArtifactAwareSessionRecord,
     ) -> OrchestrationResult:
-        base_record = session.base_record if isinstance(session, DependencyAwareSessionRecord) else session
+        if isinstance(session, ArtifactAwareSessionRecord):
+            base_record = session.base_record.base_record
+        elif isinstance(session, DependencyAwareSessionRecord):
+            base_record = session.base_record
+        else:
+            base_record = session
         return self._execution_orchestrator.orchestrate(
             OrchestrationRequest(
                 handoff=base_record.router_handoff,
@@ -535,6 +809,23 @@ class MultiTaskOrchestrator:
             last_updated=self._timestamp(),
             notes=session.notes,
         )
+
+    def _list_dependency_aware_sessions(
+        self,
+        registry: tuple[MultiTaskSessionRecord, ...],
+        dependency_graph: tuple[SessionDependency, ...],
+    ) -> tuple[tuple[DependencyAwareSessionRecord, ...], tuple[DependencyGraphRecord, ...]]:
+        graph_records, evaluations = self.validate_dependency_graph(registry, dependency_graph)
+        graph_records_by_id = {graph_record.session_id: graph_record for graph_record in graph_records}
+        dependency_registry = tuple(
+            self.build_dependency_aware_session_record(
+                record=record,
+                graph_record=graph_records_by_id[record.session_id],
+                evaluation=evaluations[record.session_id],
+            )
+            for record in registry
+        )
+        return dependency_registry, graph_records
 
     def _apply_registrations(
         self,
@@ -566,11 +857,13 @@ class MultiTaskOrchestrator:
     def _resolve_selected_session(
         self,
         *,
-        registry: tuple[DependencyAwareSessionRecord, ...],
+        registry: tuple[ArtifactAwareSessionRecord, ...],
         dependency_graph: tuple[SessionDependency, ...],
+        artifact_registry: tuple[SessionArtifact, ...],
+        artifact_requirements: tuple[ArtifactRequirement, ...],
         selected_session_id: str | None,
         target_status: MultiTaskSessionStatus,
-    ) -> tuple[DependencyAwareSessionRecord | None, SessionSelectionReason, tuple[str, ...]]:
+    ) -> tuple[ArtifactAwareSessionRecord | None, SessionSelectionReason, tuple[str, ...]]:
         actionable_ids = tuple(record.session_id for record in registry if record.session_status == target_status)
         if selected_session_id is not None:
             for record in registry:
@@ -581,14 +874,16 @@ class MultiTaskOrchestrator:
             return None, SessionSelectionReason.INVALID_SELECTION, actionable_ids
 
         selected, reason, _ = self.select_next_session(
-            tuple(record.base_record for record in registry),
+            tuple(record.base_record.base_record for record in registry),
             dependency_graph=dependency_graph,
+            artifact_registry=artifact_registry,
+            artifact_requirements=artifact_requirements,
             allowed_statuses=(target_status,),
         )
         return selected, reason, actionable_ids
 
     @staticmethod
-    def _bucket_session_ids(registry: tuple[DependencyAwareSessionRecord, ...]) -> dict[str, tuple[str, ...]]:
+    def _bucket_session_ids(registry: tuple[ArtifactAwareSessionRecord, ...]) -> dict[str, tuple[str, ...]]:
         actionable = tuple(
             record.session_id
             for record in registry
@@ -612,6 +907,19 @@ class MultiTaskOrchestrator:
             for record in registry
             if record.dependency_status == DependencyStatus.INVALID_DEPENDENCY
         )
+        artifact_blocked = tuple(
+            record.session_id
+            for record in registry
+            if record.requirement_status in {
+                ArtifactRequirementStatus.BLOCKED_BY_MISSING_ARTIFACT,
+                ArtifactRequirementStatus.BLOCKED_BY_INVALID_ARTIFACT,
+            }
+        )
+        invalid_artifact = tuple(
+            record.session_id
+            for record in registry
+            if record.requirement_status == ArtifactRequirementStatus.INVALID_REQUIREMENT_REFERENCE
+        )
         return {
             "actionable": actionable,
             "waiting": waiting,
@@ -620,10 +928,12 @@ class MultiTaskOrchestrator:
             "invalid": invalid,
             "dependency_blocked": dependency_blocked,
             "invalid_dependency": invalid_dependency,
+            "artifact_blocked": artifact_blocked,
+            "invalid_artifact": invalid_artifact,
         }
 
     @staticmethod
-    def _idle_action(registry: tuple[DependencyAwareSessionRecord, ...]) -> MultiTaskAction:
+    def _idle_action(registry: tuple[ArtifactAwareSessionRecord, ...]) -> MultiTaskAction:
         if any(record.session_status == MultiTaskSessionStatus.WAITING for record in registry):
             return MultiTaskAction.WAIT
         return MultiTaskAction.STOP
@@ -631,7 +941,7 @@ class MultiTaskOrchestrator:
     @staticmethod
     def _selection_notes(
         *,
-        selected: DependencyAwareSessionRecord | None,
+        selected: ArtifactAwareSessionRecord | None,
         selection_reason: SessionSelectionReason,
     ) -> tuple[str, ...]:
         if selection_reason == SessionSelectionReason.NO_ACTIONABLE_SESSIONS:
@@ -669,6 +979,8 @@ class MultiTaskOrchestrator:
             invalid_session_ids=buckets["invalid"],
             dependency_blocked_session_ids=buckets["dependency_blocked"],
             invalid_dependency_session_ids=buckets["invalid_dependency"],
+            artifact_blocked_session_ids=buckets["artifact_blocked"],
+            invalid_artifact_session_ids=buckets["invalid_artifact"],
             decision_notes=decision_notes,
         )
 
@@ -676,20 +988,26 @@ class MultiTaskOrchestrator:
     def _build_result(
         *,
         decision: MultiTaskDecision,
-        registry: tuple[DependencyAwareSessionRecord, ...],
+        registry: tuple[ArtifactAwareSessionRecord, ...],
         graph_records: tuple[DependencyGraphRecord, ...],
+        artifact_registry_records: tuple[SessionArtifactRegistryRecord, ...],
         selected_session_result: OrchestrationResult | None,
         registered_session_ids: tuple[str, ...],
         registered_dependencies: tuple[SessionDependency, ...],
+        registered_artifacts: tuple[SessionArtifact, ...],
+        registered_artifact_requirements: tuple[ArtifactRequirement, ...],
         notes: tuple[str, ...],
-    ) -> DependencyAwareMultiTaskResult:
-        return DependencyAwareMultiTaskResult(
+    ) -> ArtifactAwareMultiTaskResult:
+        return ArtifactAwareMultiTaskResult(
             decision=decision,
             session_registry=registry,
             dependency_graph=graph_records,
+            artifact_registry=artifact_registry_records,
             selected_session_result=selected_session_result,
             registered_session_ids=registered_session_ids,
             registered_dependencies=registered_dependencies,
+            registered_artifacts=registered_artifacts,
+            registered_artifact_requirements=registered_artifact_requirements,
             notes=notes,
         )
 
@@ -730,7 +1048,7 @@ class MultiTaskOrchestrator:
         return cycle_nodes
 
     @staticmethod
-    def _effective_session_status(
+    def _effective_dependency_status(
         *,
         record: MultiTaskSessionRecord,
         evaluation: DependencyEvaluationResult,
@@ -744,5 +1062,28 @@ class MultiTaskOrchestrator:
         if evaluation.dependency_status == DependencyStatus.INVALID_DEPENDENCY:
             return MultiTaskSessionStatus.INVALID
         if evaluation.dependency_status == DependencyStatus.BLOCKED_BY_DEPENDENCY:
+            return MultiTaskSessionStatus.BLOCKED
+        return record.session_status
+
+    @staticmethod
+    def _effective_artifact_status(
+        *,
+        record: DependencyAwareSessionRecord,
+        evaluation: ArtifactRequirementEvaluationResult,
+    ) -> MultiTaskSessionStatus:
+        if record.session_status in {
+            MultiTaskSessionStatus.COMPLETED,
+            MultiTaskSessionStatus.FAILED,
+            MultiTaskSessionStatus.INVALID,
+        }:
+            return record.session_status
+        if evaluation.requirement_status == ArtifactRequirementStatus.INVALID_REQUIREMENT_REFERENCE:
+            return MultiTaskSessionStatus.INVALID
+        if record.session_status in {MultiTaskSessionStatus.WAITING, MultiTaskSessionStatus.BLOCKED}:
+            return record.session_status
+        if evaluation.requirement_status in {
+            ArtifactRequirementStatus.BLOCKED_BY_MISSING_ARTIFACT,
+            ArtifactRequirementStatus.BLOCKED_BY_INVALID_ARTIFACT,
+        }:
             return MultiTaskSessionStatus.BLOCKED
         return record.session_status

@@ -625,6 +625,115 @@ class DependencyEvaluationResult:
         }
 
 
+class ArtifactType(str, Enum):
+    DESIGN_SPEC = "design_spec"
+    BALANCE_DATA = "balance_data"
+    TEXT_NOTE = "text_note"
+    TEST_REPORT = "test_report"
+    VALIDATION_REPORT = "validation_report"
+    IMPLEMENTATION_PATCH = "implementation_patch"
+    ASSET_REFERENCE = "asset_reference"
+
+
+class ArtifactStatus(str, Enum):
+    PRODUCED = "produced"
+    MISSING = "missing"
+    INVALID = "invalid"
+    SUPERSEDED = "superseded"
+
+
+class ArtifactRequirementStatus(str, Enum):
+    NO_REQUIREMENTS = "no_requirements"
+    REQUIREMENTS_SATISFIED = "requirements_satisfied"
+    BLOCKED_BY_MISSING_ARTIFACT = "blocked_by_missing_artifact"
+    BLOCKED_BY_INVALID_ARTIFACT = "blocked_by_invalid_artifact"
+    INVALID_REQUIREMENT_REFERENCE = "invalid_requirement_reference"
+
+
+class ArtifactBlockReason(str, Enum):
+    MISSING_REQUIRED_ARTIFACT = "missing_required_artifact"
+    INVALID_ARTIFACT_REFERENCE = "invalid_artifact_reference"
+    INCOMPATIBLE_ARTIFACT_TYPE = "incompatible_artifact_type"
+    ARTIFACT_NOT_PRODUCED = "artifact_not_produced"
+    ARTIFACT_FROM_UNKNOWN_SESSION = "artifact_from_unknown_session"
+
+
+@dataclass(frozen=True)
+class SessionArtifact:
+    artifact_id: str
+    producer_session_id: str
+    artifact_name: str
+    artifact_type: ArtifactType
+    artifact_status: ArtifactStatus = ArtifactStatus.PRODUCED
+    artifact_metadata: dict[str, Any] | None = None
+    artifact_notes: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "artifact_id": self.artifact_id,
+            "producer_session_id": self.producer_session_id,
+            "artifact_name": self.artifact_name,
+            "artifact_type": self.artifact_type.value,
+            "artifact_status": self.artifact_status.value,
+            "artifact_metadata": dict(self.artifact_metadata or {}),
+            "artifact_notes": list(self.artifact_notes),
+        }
+
+
+@dataclass(frozen=True)
+class ArtifactRequirement:
+    consumer_session_id: str
+    producer_session_id: str
+    required_artifact_name: str
+    required_artifact_type: ArtifactType
+    artifact_notes: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "consumer_session_id": self.consumer_session_id,
+            "producer_session_id": self.producer_session_id,
+            "required_artifact_name": self.required_artifact_name,
+            "required_artifact_type": self.required_artifact_type.value,
+            "artifact_notes": list(self.artifact_notes),
+        }
+
+
+@dataclass(frozen=True)
+class SessionArtifactRegistryRecord:
+    session_id: str
+    produced_artifacts: tuple[SessionArtifact, ...] = ()
+    required_artifacts: tuple[ArtifactRequirement, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "session_id": self.session_id,
+            "produced_artifacts": [artifact.to_dict() for artifact in self.produced_artifacts],
+            "required_artifacts": [artifact.to_dict() for artifact in self.required_artifacts],
+        }
+
+
+@dataclass(frozen=True)
+class ArtifactRequirementEvaluationResult:
+    session_id: str
+    requirement_status: ArtifactRequirementStatus
+    block_reasons: tuple[ArtifactBlockReason, ...] = ()
+    blocked_by_artifact_ids: tuple[str, ...] = ()
+    artifact_notes: tuple[str, ...] = ()
+    artifact_ready: bool = False
+    invalid_requirement_reference: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "session_id": self.session_id,
+            "requirement_status": self.requirement_status.value,
+            "block_reasons": [reason.value for reason in self.block_reasons],
+            "blocked_by_artifact_ids": list(self.blocked_by_artifact_ids),
+            "artifact_notes": list(self.artifact_notes),
+            "artifact_ready": self.artifact_ready,
+            "invalid_requirement_reference": self.invalid_requirement_reference,
+        }
+
+
 @dataclass(frozen=True)
 class MultiTaskSessionRecord:
     session_id: str
@@ -760,12 +869,144 @@ class DependencyAwareSessionRecord:
 
 
 @dataclass(frozen=True)
+class ArtifactAwareSessionRecord:
+    base_record: DependencyAwareSessionRecord
+    produced_artifacts: tuple[SessionArtifact, ...] = ()
+    required_artifacts: tuple[ArtifactRequirement, ...] = ()
+    requirement_status: ArtifactRequirementStatus = ArtifactRequirementStatus.NO_REQUIREMENTS
+    artifact_block_reasons: tuple[ArtifactBlockReason, ...] = ()
+    blocked_by_artifact_ids: tuple[str, ...] = ()
+    artifact_notes: tuple[str, ...] = ()
+    artifact_ready: bool = False
+    invalid_requirement_reference: bool = False
+    effective_session_status: MultiTaskSessionStatus = MultiTaskSessionStatus.INVALID
+
+    @property
+    def session_id(self) -> str:
+        return self.base_record.session_id
+
+    @property
+    def priority(self) -> MultiTaskPriority:
+        return self.base_record.priority
+
+    @property
+    def lifecycle_state(self) -> LifecycleState:
+        return self.base_record.lifecycle_state
+
+    @property
+    def base_session_status(self) -> MultiTaskSessionStatus:
+        return self.base_record.session_status
+
+    @property
+    def dependency_status(self) -> DependencyStatus:
+        return self.base_record.dependency_status
+
+    @property
+    def dependency_block_reasons(self) -> tuple[DependencyBlockReason, ...]:
+        return self.base_record.dependency_block_reasons
+
+    @property
+    def blocked_by_session_ids(self) -> tuple[str, ...]:
+        return self.base_record.blocked_by_session_ids
+
+    @property
+    def prerequisite_session_ids(self) -> tuple[str, ...]:
+        return self.base_record.prerequisite_session_ids
+
+    @property
+    def dependent_session_ids(self) -> tuple[str, ...]:
+        return self.base_record.dependent_session_ids
+
+    @property
+    def dependency_notes(self) -> tuple[str, ...]:
+        return self.base_record.dependency_notes
+
+    @property
+    def dependency_ready(self) -> bool:
+        return self.base_record.dependency_ready
+
+    @property
+    def invalid_dependency(self) -> bool:
+        return self.base_record.invalid_dependency
+
+    @property
+    def session_status(self) -> MultiTaskSessionStatus:
+        return self.effective_session_status
+
+    @property
+    def last_executor_status(self) -> ExecutorStatus | None:
+        return self.base_record.last_executor_status
+
+    @property
+    def required_human_action(self) -> str | None:
+        return self.base_record.required_human_action
+
+    @property
+    def resumable(self) -> bool:
+        return self.base_record.resumable
+
+    @property
+    def blocked(self) -> bool:
+        return self.session_status == MultiTaskSessionStatus.BLOCKED
+
+    @property
+    def last_updated(self) -> str:
+        return self.base_record.last_updated
+
+    @property
+    def router_handoff(self) -> ConstraintRouterHandoff | None:
+        return self.base_record.router_handoff
+
+    @property
+    def prior_execution_result(self) -> TaskExecutionResult | None:
+        return self.base_record.prior_execution_result
+
+    @property
+    def orchestration_result(self) -> OrchestrationResult | None:
+        return self.base_record.orchestration_result
+
+    @property
+    def persisted_session(self) -> PersistedExecutionSession | None:
+        return self.base_record.persisted_session
+
+    @property
+    def resume_request(self) -> ResumeRequest | None:
+        return self.base_record.resume_request
+
+    @property
+    def notes(self) -> tuple[str, ...]:
+        return self.base_record.notes
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = self.base_record.to_dict()
+        payload.update(
+            {
+                "base_session_status": self.base_session_status.value,
+                "session_status": self.session_status.value,
+                "produced_artifacts": [artifact.to_dict() for artifact in self.produced_artifacts],
+                "required_artifacts": [artifact.to_dict() for artifact in self.required_artifacts],
+                "requirement_status": self.requirement_status.value,
+                "artifact_block_reasons": [reason.value for reason in self.artifact_block_reasons],
+                "blocked_by_artifact_ids": list(self.blocked_by_artifact_ids),
+                "artifact_notes": list(self.artifact_notes),
+                "artifact_ready": self.artifact_ready,
+                "invalid_requirement_reference": self.invalid_requirement_reference,
+            }
+        )
+        return payload
+
+
+@dataclass(frozen=True)
 class MultiTaskOrchestrationRequest:
     requested_action: MultiTaskAction = MultiTaskAction.INSPECT_SESSIONS
     session_registry: tuple[MultiTaskSessionRecord, ...] = ()
     sessions_to_register: tuple[MultiTaskSessionRecord, ...] = ()
     dependency_graph: tuple[SessionDependency, ...] = ()
     dependencies_to_register: tuple[SessionDependency, ...] = ()
+    artifact_registry: tuple[SessionArtifact, ...] = ()
+    artifacts_to_register: tuple[SessionArtifact, ...] = ()
+    artifact_requirements: tuple[ArtifactRequirement, ...] = ()
+    artifact_requirements_to_register: tuple[ArtifactRequirement, ...] = ()
     selected_session_id: str | None = None
     notes: tuple[str, ...] = ()
 
@@ -776,6 +1017,10 @@ class MultiTaskOrchestrationRequest:
             "sessions_to_register": [record.to_dict() for record in self.sessions_to_register],
             "dependency_graph": [dependency.to_dict() for dependency in self.dependency_graph],
             "dependencies_to_register": [dependency.to_dict() for dependency in self.dependencies_to_register],
+            "artifact_registry": [artifact.to_dict() for artifact in self.artifact_registry],
+            "artifacts_to_register": [artifact.to_dict() for artifact in self.artifacts_to_register],
+            "artifact_requirements": [artifact.to_dict() for artifact in self.artifact_requirements],
+            "artifact_requirements_to_register": [artifact.to_dict() for artifact in self.artifact_requirements_to_register],
             "selected_session_id": self.selected_session_id,
             "notes": list(self.notes),
         }
@@ -793,6 +1038,8 @@ class MultiTaskDecision:
     invalid_session_ids: tuple[str, ...] = ()
     dependency_blocked_session_ids: tuple[str, ...] = ()
     invalid_dependency_session_ids: tuple[str, ...] = ()
+    artifact_blocked_session_ids: tuple[str, ...] = ()
+    invalid_artifact_session_ids: tuple[str, ...] = ()
     decision_notes: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
@@ -807,6 +1054,8 @@ class MultiTaskDecision:
             "invalid_session_ids": list(self.invalid_session_ids),
             "dependency_blocked_session_ids": list(self.dependency_blocked_session_ids),
             "invalid_dependency_session_ids": list(self.invalid_dependency_session_ids),
+            "artifact_blocked_session_ids": list(self.artifact_blocked_session_ids),
+            "invalid_artifact_session_ids": list(self.invalid_artifact_session_ids),
             "decision_notes": list(self.decision_notes),
         }
 
@@ -847,5 +1096,33 @@ class DependencyAwareMultiTaskResult:
             "selected_session_result": self.selected_session_result.to_dict() if self.selected_session_result else None,
             "registered_session_ids": list(self.registered_session_ids),
             "registered_dependencies": [dependency.to_dict() for dependency in self.registered_dependencies],
+            "notes": list(self.notes),
+        }
+
+
+@dataclass(frozen=True)
+class ArtifactAwareMultiTaskResult:
+    decision: MultiTaskDecision
+    session_registry: tuple[ArtifactAwareSessionRecord, ...]
+    dependency_graph: tuple[DependencyGraphRecord, ...] = ()
+    artifact_registry: tuple[SessionArtifactRegistryRecord, ...] = ()
+    selected_session_result: OrchestrationResult | None = None
+    registered_session_ids: tuple[str, ...] = ()
+    registered_dependencies: tuple[SessionDependency, ...] = ()
+    registered_artifacts: tuple[SessionArtifact, ...] = ()
+    registered_artifact_requirements: tuple[ArtifactRequirement, ...] = ()
+    notes: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "decision": self.decision.to_dict(),
+            "session_registry": [record.to_dict() for record in self.session_registry],
+            "dependency_graph": [record.to_dict() for record in self.dependency_graph],
+            "artifact_registry": [record.to_dict() for record in self.artifact_registry],
+            "selected_session_result": self.selected_session_result.to_dict() if self.selected_session_result else None,
+            "registered_session_ids": list(self.registered_session_ids),
+            "registered_dependencies": [dependency.to_dict() for dependency in self.registered_dependencies],
+            "registered_artifacts": [artifact.to_dict() for artifact in self.registered_artifacts],
+            "registered_artifact_requirements": [artifact.to_dict() for artifact in self.registered_artifact_requirements],
             "notes": list(self.notes),
         }

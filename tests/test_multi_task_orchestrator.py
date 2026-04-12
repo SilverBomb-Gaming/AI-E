@@ -3,6 +3,11 @@ from __future__ import annotations
 from pathlib import Path
 
 from aie.core.models import (
+    ArtifactBlockReason,
+    ArtifactRequirement,
+    ArtifactRequirementStatus,
+    ArtifactStatus,
+    ArtifactType,
     ConstraintReport,
     ConstraintRouterHandoff,
     DependencyBlockReason,
@@ -16,6 +21,7 @@ from aie.core.models import (
     MultiTaskSessionRecord,
     MultiTaskSessionStatus,
     ResumeRequest,
+    SessionArtifact,
     SessionDependency,
     SessionSelectionReason,
     TaskExecutionResult,
@@ -278,6 +284,38 @@ def _failed_record(
     )
 
 
+def _artifact(
+    artifact_id: str,
+    producer_session_id: str,
+    artifact_name: str,
+    artifact_type: ArtifactType,
+    *,
+    artifact_status: ArtifactStatus = ArtifactStatus.PRODUCED,
+) -> SessionArtifact:
+    return SessionArtifact(
+        artifact_id=artifact_id,
+        producer_session_id=producer_session_id,
+        artifact_name=artifact_name,
+        artifact_type=artifact_type,
+        artifact_status=artifact_status,
+        artifact_metadata={"source": producer_session_id},
+    )
+
+
+def _artifact_requirement(
+    consumer_session_id: str,
+    producer_session_id: str,
+    artifact_name: str,
+    artifact_type: ArtifactType,
+) -> ArtifactRequirement:
+    return ArtifactRequirement(
+        consumer_session_id=consumer_session_id,
+        producer_session_id=producer_session_id,
+        required_artifact_name=artifact_name,
+        required_artifact_type=artifact_type,
+    )
+
+
 def test_multi_task_orchestrator_registers_and_inspects_multiple_sessions() -> None:
     orchestrator = MultiTaskOrchestrator()
     ready = _ready_record(orchestrator, "session-ready", MultiTaskPriority.NORMAL, last_updated="2026-04-12T10:00:00+00:00")
@@ -330,6 +368,33 @@ def test_multi_task_orchestrator_registers_dependencies_and_blocks_downstream_se
     assert records["session-b"].blocked_by_session_ids == ("session-a",)
     assert records["session-b"].session_status == MultiTaskSessionStatus.BLOCKED
     assert result.decision.dependency_blocked_session_ids == ("session-b",)
+
+
+def test_multi_task_orchestrator_registers_produced_and_required_artifacts() -> None:
+    orchestrator = MultiTaskOrchestrator()
+    producer = _completed_record(orchestrator, "session-a", last_updated="2026-04-12T10:00:00+00:00")
+    consumer = _ready_record(orchestrator, "session-b", MultiTaskPriority.NORMAL, last_updated="2026-04-12T10:05:00+00:00")
+
+    result = orchestrator.orchestrate(
+        MultiTaskOrchestrationRequest(
+            requested_action=MultiTaskAction.INSPECT_SESSIONS,
+            sessions_to_register=(producer, consumer),
+            artifacts_to_register=(
+                _artifact("artifact-combat-schema", "session-a", "combat-schema", ArtifactType.DESIGN_SPEC),
+            ),
+            artifact_requirements_to_register=(
+                _artifact_requirement("session-b", "session-a", "combat-schema", ArtifactType.DESIGN_SPEC),
+            ),
+        )
+    )
+
+    records = {record.session_id: record for record in result.session_registry}
+
+    assert result.registered_artifacts[0].artifact_id == "artifact-combat-schema"
+    assert result.registered_artifact_requirements[0].consumer_session_id == "session-b"
+    assert records["session-a"].produced_artifacts[0].artifact_name == "combat-schema"
+    assert records["session-b"].required_artifacts[0].required_artifact_name == "combat-schema"
+    assert records["session-b"].requirement_status == ArtifactRequirementStatus.REQUIREMENTS_SATISFIED
 
 
 def test_multi_task_orchestrator_selects_highest_priority_resumable_session() -> None:
@@ -414,6 +479,102 @@ def test_multi_task_orchestrator_unblocks_dependent_session_after_prerequisite_c
     assert records["session-a"].session_status == MultiTaskSessionStatus.COMPLETED
     assert records["session-b"].dependency_status == DependencyStatus.DEPENDENCY_READY
     assert records["session-b"].session_status == MultiTaskSessionStatus.READY
+
+
+def test_multi_task_orchestrator_unblocks_session_when_required_artifact_exists() -> None:
+    orchestrator = MultiTaskOrchestrator()
+    producer = _completed_record(orchestrator, "session-a", last_updated="2026-04-12T10:00:00+00:00")
+    consumer = _ready_record(orchestrator, "session-b", MultiTaskPriority.HIGH, last_updated="2026-04-12T10:05:00+00:00")
+
+    result = orchestrator.orchestrate(
+        MultiTaskOrchestrationRequest(
+            requested_action=MultiTaskAction.SELECT_NEXT_SESSION,
+            sessions_to_register=(producer, consumer),
+            artifacts_to_register=(
+                _artifact("artifact-combat-schema", "session-a", "combat-schema", ArtifactType.DESIGN_SPEC),
+            ),
+            artifact_requirements_to_register=(
+                _artifact_requirement("session-b", "session-a", "combat-schema", ArtifactType.DESIGN_SPEC),
+            ),
+            selected_session_id=None,
+        )
+    )
+
+    records = {record.session_id: record for record in result.session_registry}
+
+    assert records["session-b"].requirement_status == ArtifactRequirementStatus.REQUIREMENTS_SATISFIED
+    assert records["session-b"].artifact_ready is True
+    assert result.decision.selected_session_id == "session-b"
+
+
+def test_multi_task_orchestrator_blocks_session_when_required_artifact_is_missing() -> None:
+    orchestrator = MultiTaskOrchestrator()
+    producer = _completed_record(orchestrator, "session-a", last_updated="2026-04-12T10:00:00+00:00")
+    consumer = _ready_record(orchestrator, "session-b", MultiTaskPriority.URGENT, last_updated="2026-04-12T10:05:00+00:00")
+
+    result = orchestrator.orchestrate(
+        MultiTaskOrchestrationRequest(
+            requested_action=MultiTaskAction.INSPECT_SESSIONS,
+            sessions_to_register=(producer, consumer),
+            artifact_requirements_to_register=(
+                _artifact_requirement("session-b", "session-a", "enemy-balance-table", ArtifactType.BALANCE_DATA),
+            ),
+        )
+    )
+
+    record = {entry.session_id: entry for entry in result.session_registry}["session-b"]
+
+    assert record.requirement_status == ArtifactRequirementStatus.BLOCKED_BY_MISSING_ARTIFACT
+    assert record.artifact_block_reasons == (ArtifactBlockReason.MISSING_REQUIRED_ARTIFACT,)
+    assert record.session_status == MultiTaskSessionStatus.BLOCKED
+    assert result.decision.artifact_blocked_session_ids == ("session-b",)
+
+
+def test_multi_task_orchestrator_blocks_session_when_artifact_type_is_incompatible() -> None:
+    orchestrator = MultiTaskOrchestrator()
+    producer = _completed_record(orchestrator, "session-a", last_updated="2026-04-12T10:00:00+00:00")
+    consumer = _ready_record(orchestrator, "session-b", MultiTaskPriority.URGENT, last_updated="2026-04-12T10:05:00+00:00")
+
+    result = orchestrator.orchestrate(
+        MultiTaskOrchestrationRequest(
+            requested_action=MultiTaskAction.INSPECT_SESSIONS,
+            sessions_to_register=(producer, consumer),
+            artifacts_to_register=(
+                _artifact("artifact-combat-note", "session-a", "combat-schema", ArtifactType.TEXT_NOTE),
+            ),
+            artifact_requirements_to_register=(
+                _artifact_requirement("session-b", "session-a", "combat-schema", ArtifactType.DESIGN_SPEC),
+            ),
+        )
+    )
+
+    record = {entry.session_id: entry for entry in result.session_registry}["session-b"]
+
+    assert record.requirement_status == ArtifactRequirementStatus.BLOCKED_BY_INVALID_ARTIFACT
+    assert record.artifact_block_reasons == (ArtifactBlockReason.INCOMPATIBLE_ARTIFACT_TYPE,)
+    assert record.blocked_by_artifact_ids == ("artifact-combat-note",)
+
+
+def test_multi_task_orchestrator_flags_unknown_artifact_producer_reference() -> None:
+    orchestrator = MultiTaskOrchestrator()
+    consumer = _ready_record(orchestrator, "session-b", MultiTaskPriority.NORMAL, last_updated="2026-04-12T10:05:00+00:00")
+
+    result = orchestrator.orchestrate(
+        MultiTaskOrchestrationRequest(
+            requested_action=MultiTaskAction.INSPECT_SESSIONS,
+            sessions_to_register=(consumer,),
+            artifact_requirements_to_register=(
+                _artifact_requirement("session-b", "session-z", "combat-schema", ArtifactType.DESIGN_SPEC),
+            ),
+        )
+    )
+
+    record = result.session_registry[0]
+
+    assert record.requirement_status == ArtifactRequirementStatus.INVALID_REQUIREMENT_REFERENCE
+    assert ArtifactBlockReason.INVALID_ARTIFACT_REFERENCE in record.artifact_block_reasons
+    assert ArtifactBlockReason.ARTIFACT_FROM_UNKNOWN_SESSION in record.artifact_block_reasons
+    assert record.session_status == MultiTaskSessionStatus.INVALID
 
 
 def test_multi_task_orchestrator_uses_oldest_last_updated_tiebreaker() -> None:
@@ -533,6 +694,25 @@ def test_multi_task_orchestrator_prefers_dependency_eligible_session_over_higher
     assert result.decision.selection_reason == SessionSelectionReason.HIGHEST_PRIORITY_READY
 
 
+def test_multi_task_orchestrator_prefers_artifact_ready_session_over_higher_priority_blocked_session() -> None:
+    orchestrator = MultiTaskOrchestrator()
+    session_a = _ready_record(orchestrator, "session-a", MultiTaskPriority.NORMAL, last_updated="2026-04-12T10:00:00+00:00")
+    session_b = _ready_record(orchestrator, "session-b", MultiTaskPriority.URGENT, last_updated="2026-04-12T10:05:00+00:00")
+
+    result = orchestrator.orchestrate(
+        MultiTaskOrchestrationRequest(
+            requested_action=MultiTaskAction.SELECT_NEXT_SESSION,
+            sessions_to_register=(session_a, session_b),
+            artifact_requirements_to_register=(
+                _artifact_requirement("session-b", "session-a", "combat-schema", ArtifactType.DESIGN_SPEC),
+            ),
+        )
+    )
+
+    assert result.decision.selected_session_id == "session-a"
+    assert result.decision.artifact_blocked_session_ids == ("session-b",)
+
+
 def test_multi_task_orchestrator_routes_selected_ready_session_through_execution_orchestrator() -> None:
     orchestrator = MultiTaskOrchestrator()
     ready = _ready_record(orchestrator, "session-ready", MultiTaskPriority.HIGH, last_updated="2026-04-12T10:00:00+00:00")
@@ -554,6 +734,33 @@ def test_multi_task_orchestrator_routes_selected_ready_session_through_execution
     assert updated.persisted_session is None
 
 
+def test_multi_task_orchestrator_routes_artifact_ready_session_through_execution_orchestrator() -> None:
+    orchestrator = MultiTaskOrchestrator()
+    producer = _completed_record(orchestrator, "session-a", last_updated="2026-04-12T10:00:00+00:00")
+    consumer = _ready_record(orchestrator, "session-b", MultiTaskPriority.HIGH, last_updated="2026-04-12T10:05:00+00:00")
+
+    result = orchestrator.orchestrate(
+        MultiTaskOrchestrationRequest(
+            requested_action=MultiTaskAction.EXECUTE_SELECTED,
+            sessions_to_register=(producer, consumer),
+            artifacts_to_register=(
+                _artifact("artifact-combat-schema", "session-a", "combat-schema", ArtifactType.DESIGN_SPEC),
+            ),
+            artifact_requirements_to_register=(
+                _artifact_requirement("session-b", "session-a", "combat-schema", ArtifactType.DESIGN_SPEC),
+            ),
+            selected_session_id="session-b",
+        )
+    )
+
+    updated = {record.session_id: record for record in result.session_registry}["session-b"]
+
+    assert result.selected_session_result is not None
+    assert result.selected_session_result.final_executor_status == ExecutorStatus.COMPLETED
+    assert updated.requirement_status == ArtifactRequirementStatus.REQUIREMENTS_SATISFIED
+    assert updated.session_status == MultiTaskSessionStatus.COMPLETED
+
+
 def test_multi_task_orchestrator_blocks_explicit_selection_when_dependency_not_ready() -> None:
     orchestrator = MultiTaskOrchestrator()
     session_a = _ready_record(orchestrator, "session-a", MultiTaskPriority.LOW, last_updated="2026-04-12T10:00:00+00:00")
@@ -570,6 +777,32 @@ def test_multi_task_orchestrator_blocks_explicit_selection_when_dependency_not_r
 
     assert result.decision.chosen_action == MultiTaskAction.REJECT
     assert result.decision.selection_reason == SessionSelectionReason.INVALID_SELECTION
+
+
+def test_multi_task_orchestrator_handles_dependency_and_artifact_unlock_together() -> None:
+    orchestrator = MultiTaskOrchestrator()
+    producer = _ready_record(orchestrator, "session-a", MultiTaskPriority.LOW, last_updated="2026-04-12T10:00:00+00:00")
+    consumer = _ready_record(orchestrator, "session-b", MultiTaskPriority.URGENT, last_updated="2026-04-12T10:05:00+00:00")
+    dependency = SessionDependency(session_id="session-b", prerequisite_session_id="session-a")
+    artifact = _artifact("artifact-combat-schema", "session-a", "combat-schema", ArtifactType.DESIGN_SPEC)
+    requirement = _artifact_requirement("session-b", "session-a", "combat-schema", ArtifactType.DESIGN_SPEC)
+
+    initial = orchestrator.orchestrate(
+        MultiTaskOrchestrationRequest(
+            requested_action=MultiTaskAction.EXECUTE_SELECTED,
+            sessions_to_register=(producer, consumer),
+            dependencies_to_register=(dependency,),
+            artifacts_to_register=(artifact,),
+            artifact_requirements_to_register=(requirement,),
+            selected_session_id="session-a",
+        )
+    )
+
+    records = {record.session_id: record for record in initial.session_registry}
+
+    assert records["session-b"].dependency_status == DependencyStatus.DEPENDENCY_READY
+    assert records["session-b"].requirement_status == ArtifactRequirementStatus.REQUIREMENTS_SATISFIED
+    assert records["session-b"].session_status == MultiTaskSessionStatus.READY
 
 
 def test_multi_task_orchestrator_preserves_session_isolation_when_resuming_selected_session() -> None:
@@ -668,3 +901,4 @@ def test_multi_task_orchestrator_returns_structured_result() -> None:
     assert payload["decision"]["selection_reason"] == "highest_priority_ready"
     assert payload["session_registry"][0]["session_status"] == "ready"
     assert payload["session_registry"][0]["dependency_status"] == "no_dependencies"
+    assert payload["session_registry"][0]["requirement_status"] == "no_requirements"
