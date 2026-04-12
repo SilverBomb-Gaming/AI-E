@@ -1418,6 +1418,119 @@ class AuditLoadResult:
         }
 
 
+class ReplayStatus(str, Enum):
+    REPLAYED = "replayed"
+    PARTIAL = "partial"
+    INVALID = "invalid"
+    FAILED = "failed"
+    UNSUPPORTED_SCOPE = "unsupported_scope"
+
+
+class ReplayScope(str, Enum):
+    FULL_LOG = "full_log"
+    SESSION = "session"
+    CYCLE = "cycle"
+    EVENT_RANGE = "event_range"
+
+
+class ReplayFailureReason(str, Enum):
+    MISSING_EVENTS = "missing_events"
+    INVALID_EVENT_ORDER = "invalid_event_order"
+    UNKNOWN_CYCLE = "unknown_cycle"
+    UNKNOWN_SESSION = "unknown_session"
+    MALFORMED_HISTORY = "malformed_history"
+    UNSUPPORTED_SCOPE = "unsupported_scope"
+    INCONSISTENT_TIMELINE = "inconsistent_timeline"
+
+
+@dataclass(frozen=True)
+class ReplayRequest:
+    scope: ReplayScope
+    target_session_id: str | None = None
+    target_cycle_id: int | None = None
+    event_ids: tuple[str, ...] = ()
+    replay_id: str | None = None
+    replay_notes: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "scope": self.scope.value,
+            "target_session_id": self.target_session_id,
+            "target_cycle_id": self.target_cycle_id,
+            "event_ids": list(self.event_ids),
+            "replay_id": self.replay_id,
+            "replay_notes": list(self.replay_notes),
+        }
+
+
+@dataclass(frozen=True)
+class ReplayStep:
+    sequence_index: int
+    event_id: str
+    timestamp: str
+    event_type: AuditEventType
+    summary: str
+    record: AuditRecord
+    replay_notes: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "sequence_index": self.sequence_index,
+            "event_id": self.event_id,
+            "timestamp": self.timestamp,
+            "event_type": self.event_type.value,
+            "summary": self.summary,
+            "record": self.record.to_dict(),
+            "replay_notes": list(self.replay_notes),
+        }
+
+
+@dataclass(frozen=True)
+class ReplayTimeline:
+    scope: ReplayScope
+    event_ids: tuple[str, ...] = ()
+    reconstructed_steps: tuple[ReplayStep, ...] = ()
+    start_timestamp: str | None = None
+    end_timestamp: str | None = None
+    derived_outcomes: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "scope": self.scope.value,
+            "event_ids": list(self.event_ids),
+            "reconstructed_steps": [step.to_dict() for step in self.reconstructed_steps],
+            "start_timestamp": self.start_timestamp,
+            "end_timestamp": self.end_timestamp,
+            "derived_outcomes": list(self.derived_outcomes),
+        }
+
+
+@dataclass(frozen=True)
+class ReplayResult:
+    replay_id: str
+    status: ReplayStatus
+    scope: ReplayScope
+    timeline: ReplayTimeline | None = None
+    target_session_id: str | None = None
+    target_cycle_id: int | None = None
+    replay_notes: tuple[str, ...] = ()
+    derived_outcomes: tuple[str, ...] = ()
+    failure_reason: ReplayFailureReason | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "replay_id": self.replay_id,
+            "status": self.status.value,
+            "scope": self.scope.value,
+            "timeline": self.timeline.to_dict() if self.timeline else None,
+            "target_session_id": self.target_session_id,
+            "target_cycle_id": self.target_cycle_id,
+            "replay_notes": list(self.replay_notes),
+            "derived_outcomes": list(self.derived_outcomes),
+            "failure_reason": self.failure_reason.value if self.failure_reason else None,
+        }
+
+
 @dataclass(frozen=True)
 class AuditQuery:
     limit: int | None = None
