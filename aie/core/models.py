@@ -346,3 +346,90 @@ class ResumeResult:
             "execution_result": self.execution_result.to_dict() if self.execution_result else None,
             "resume_notes": list(self.resume_notes),
         }
+
+
+class LifecycleState(str, Enum):
+    READY_TO_EXECUTE = "ready_to_execute"
+    AWAITING_CONFIRMATION = "awaiting_confirmation"
+    AWAITING_REVIEW = "awaiting_review"
+    AWAITING_PLAYTEST = "awaiting_playtest"
+    RESUMABLE = "resumable"
+    BLOCKED = "blocked"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    INVALID_REQUEST = "invalid_request"
+
+
+class OrchestrationStatus(str, Enum):
+    READY_TO_EXECUTE = "ready_to_execute"
+    EXECUTING = "executing"
+    AWAITING_CONFIRMATION = "awaiting_confirmation"
+    AWAITING_REVIEW = "awaiting_review"
+    AWAITING_PLAYTEST = "awaiting_playtest"
+    RESUMABLE = "resumable"
+    BLOCKED = "blocked"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    INVALID_REQUEST = "invalid_request"
+
+
+class OrchestrationAction(str, Enum):
+    EXECUTE = "execute"
+    RESUME = "resume"
+    WAIT = "wait"
+    STOP = "stop"
+    REJECT = "reject"
+
+
+@dataclass(frozen=True)
+class OrchestrationRequest:
+    handoff: ConstraintRouterHandoff | None = None
+    prior_execution_result: TaskExecutionResult | None = None
+    resume_request: ResumeRequest | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "handoff": self.handoff.to_dict() if self.handoff else None,
+            "prior_execution_result": self.prior_execution_result.to_dict() if self.prior_execution_result else None,
+            "resume_request": self.resume_request.to_dict() if self.resume_request else None,
+        }
+
+
+@dataclass(frozen=True)
+class OrchestrationDecision:
+    lifecycle_state: LifecycleState
+    chosen_action: OrchestrationAction
+    prior_executor_status: ExecutorStatus | None = None
+    resume_allowed: bool = False
+    required_human_action: str | None = None
+    orchestration_notes: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "lifecycle_state": self.lifecycle_state.value,
+            "chosen_action": self.chosen_action.value,
+            "prior_executor_status": self.prior_executor_status.value if self.prior_executor_status else None,
+            "resume_allowed": self.resume_allowed,
+            "required_human_action": self.required_human_action,
+            "orchestration_notes": list(self.orchestration_notes),
+        }
+
+
+@dataclass(frozen=True)
+class OrchestrationResult:
+    status: OrchestrationStatus
+    decision: OrchestrationDecision
+    execution_result: TaskExecutionResult | None = None
+    resume_result: ResumeResult | None = None
+    final_executor_status: ExecutorStatus | None = None
+    orchestration_notes: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "status": self.status.value,
+            "decision": self.decision.to_dict(),
+            "execution_result": self.execution_result.to_dict() if self.execution_result else None,
+            "resume_result": self.resume_result.to_dict() if self.resume_result else None,
+            "final_executor_status": self.final_executor_status.value if self.final_executor_status else None,
+            "orchestration_notes": list(self.orchestration_notes),
+        }
