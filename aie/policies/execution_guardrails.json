@@ -73,6 +73,16 @@
       "requires_human_review": true
     }
   ],
+  "executor_supported_step_types": [
+    "analyze",
+    "scaffold",
+    "implement",
+    "validate",
+    "document",
+    "prepare_commit",
+    "request_review",
+    "request_playtest"
+  ],
   "commit_preparation_rules": {
     "allow_when_supported_statuses": ["supported_ready", "supported_with_warnings"],
     "deny_when_scaffold_only": true,

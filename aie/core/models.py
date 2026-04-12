@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from enum import Enum
 from typing import Any, Literal
 
 
@@ -152,4 +153,79 @@ class ConstraintRouterHandoff:
             "confirmation_requirements": list(self.confirmation_requirements),
             "requires_playtest": self.requires_playtest,
             "requires_human_review": self.requires_human_review,
+        }
+
+
+class ExecutorStatus(str, Enum):
+    COMPLETED = "completed"
+    PARTIALLY_COMPLETED = "partially_completed"
+    BLOCKED = "blocked"
+    AWAITING_CONFIRMATION = "awaiting_confirmation"
+    AWAITING_REVIEW = "awaiting_review"
+    AWAITING_PLAYTEST = "awaiting_playtest"
+    UNSUPPORTED = "unsupported"
+    FAILED = "failed"
+
+
+class StopReason(str, Enum):
+    DEPENDENCY_INCOMPLETE = "dependency_incomplete"
+    CONFIRMATION_REQUIRED = "confirmation_required"
+    REVIEW_REQUIRED = "review_required"
+    PLAYTEST_REQUIRED = "playtest_required"
+    BLOCKED_BY_POLICY = "blocked_by_policy"
+    BLOCKED_BY_ASSUMPTION = "blocked_by_assumption"
+    UNSUPPORTED_STEP_TYPE = "unsupported_step_type"
+    EXECUTION_ERROR = "execution_error"
+
+
+class TaskStepExecutionStatus(str, Enum):
+    COMPLETED = "completed"
+    BLOCKED = "blocked"
+    AWAITING_HUMAN = "awaiting_human"
+    DEFERRED = "deferred"
+    UNSUPPORTED = "unsupported"
+    FAILED = "failed"
+
+
+@dataclass(frozen=True)
+class TaskStepRun:
+    step_id: str
+    step_type: str
+    status: TaskStepExecutionStatus
+    stop_reason: StopReason | None = None
+    notes: tuple[str, ...] = ()
+    human_action_required: str | None = None
+    depends_on_satisfied: bool = True
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "step_id": self.step_id,
+            "step_type": self.step_type,
+            "status": self.status.value,
+            "stop_reason": self.stop_reason.value if self.stop_reason else None,
+            "notes": list(self.notes),
+            "human_action_required": self.human_action_required,
+            "depends_on_satisfied": self.depends_on_satisfied,
+        }
+
+
+@dataclass(frozen=True)
+class TaskExecutionResult:
+    status: ExecutorStatus
+    completed_step_ids: tuple[str, ...] = ()
+    blocked_step_ids: tuple[str, ...] = ()
+    deferred_step_ids: tuple[str, ...] = ()
+    step_runs: tuple[TaskStepRun, ...] = ()
+    next_human_action: str | None = None
+    summary_notes: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "status": self.status.value,
+            "completed_step_ids": list(self.completed_step_ids),
+            "blocked_step_ids": list(self.blocked_step_ids),
+            "deferred_step_ids": list(self.deferred_step_ids),
+            "step_runs": [step_run.to_dict() for step_run in self.step_runs],
+            "next_human_action": self.next_human_action,
+            "summary_notes": list(self.summary_notes),
         }
