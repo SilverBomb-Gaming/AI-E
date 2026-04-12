@@ -1126,3 +1126,136 @@ class ArtifactAwareMultiTaskResult:
             "registered_artifact_requirements": [artifact.to_dict() for artifact in self.registered_artifact_requirements],
             "notes": list(self.notes),
         }
+
+
+class LoopEngineStatus(str, Enum):
+    RAN_ACTION = "ran_action"
+    WAITING = "waiting"
+    STOPPED = "stopped"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    NO_ACTIONABLE_SESSIONS = "no_actionable_sessions"
+    MAX_CYCLES_REACHED = "max_cycles_reached"
+    INVALID_REQUEST = "invalid_request"
+
+
+class LoopCycleAction(str, Enum):
+    INSPECT = "inspect"
+    EXECUTE_SELECTED = "execute_selected"
+    RESUME_SELECTED = "resume_selected"
+    PERSIST_STATE = "persist_state"
+    WAIT = "wait"
+    STOP = "stop"
+    REJECT = "reject"
+
+
+class LoopCycleReason(str, Enum):
+    SELECTED_ACTIONABLE_SESSION = "selected_actionable_session"
+    NO_ACTIONABLE_SESSIONS = "no_actionable_sessions"
+    WAITING_ON_HUMAN_GATE = "waiting_on_human_gate"
+    BLOCKED_BY_DEPENDENCY = "blocked_by_dependency"
+    BLOCKED_BY_ARTIFACT = "blocked_by_artifact"
+    PERSISTENCE_FAILED = "persistence_failed"
+    EXECUTION_FAILED = "execution_failed"
+    ALL_SESSIONS_COMPLETED = "all_sessions_completed"
+    INVALID_STATE = "invalid_state"
+    MAX_CYCLES_REACHED = "max_cycles_reached"
+
+
+class LoopTerminationReason(str, Enum):
+    NO_ACTIONABLE_SESSIONS = "no_actionable_sessions"
+    HUMAN_GATE_REQUIRED = "human_gate_required"
+    BLOCKED_BY_DEPENDENCIES = "blocked_by_dependencies"
+    BLOCKED_BY_ARTIFACTS = "blocked_by_artifacts"
+    COMPLETED_ALL_SESSIONS = "completed_all_sessions"
+    MAX_CYCLES_REACHED = "max_cycles_reached"
+    INVALID_STATE = "invalid_state"
+    EXECUTION_ERROR = "execution_error"
+    PERSISTENCE_FAILED = "persistence_failed"
+
+
+@dataclass(frozen=True)
+class LoopEngineRequest:
+    session_registry: tuple[MultiTaskSessionRecord, ...] = ()
+    dependency_graph: tuple[SessionDependency, ...] = ()
+    artifact_registry: tuple[SessionArtifact, ...] = ()
+    artifact_requirements: tuple[ArtifactRequirement, ...] = ()
+    max_cycles: int = 1
+    session_storage_directory: str | None = None
+    session_file_paths: tuple[tuple[str, str], ...] = ()
+    notes: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "session_registry": [record.to_dict() for record in self.session_registry],
+            "dependency_graph": [dependency.to_dict() for dependency in self.dependency_graph],
+            "artifact_registry": [artifact.to_dict() for artifact in self.artifact_registry],
+            "artifact_requirements": [artifact.to_dict() for artifact in self.artifact_requirements],
+            "max_cycles": self.max_cycles,
+            "session_storage_directory": self.session_storage_directory,
+            "session_file_paths": [
+                {"session_id": session_id, "path": path}
+                for session_id, path in self.session_file_paths
+            ],
+            "notes": list(self.notes),
+        }
+
+
+@dataclass(frozen=True)
+class LoopCycleResult:
+    cycle_index: int
+    status: LoopEngineStatus
+    selected_action: LoopCycleAction
+    reason: LoopCycleReason
+    selected_session_id: str | None = None
+    lifecycle_state_before: LifecycleState | None = None
+    lifecycle_state_after: LifecycleState | None = None
+    persisted_after_cycle: bool = False
+    persistence_results: tuple[SaveResult, ...] = ()
+    cycle_notes: tuple[str, ...] = ()
+    termination_reason: LoopTerminationReason | None = None
+    actions_run_count: int = 0
+    multi_task_result: ArtifactAwareMultiTaskResult | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "cycle_index": self.cycle_index,
+            "status": self.status.value,
+            "selected_action": self.selected_action.value,
+            "reason": self.reason.value,
+            "selected_session_id": self.selected_session_id,
+            "lifecycle_state_before": self.lifecycle_state_before.value if self.lifecycle_state_before else None,
+            "lifecycle_state_after": self.lifecycle_state_after.value if self.lifecycle_state_after else None,
+            "persisted_after_cycle": self.persisted_after_cycle,
+            "persistence_results": [result.to_dict() for result in self.persistence_results],
+            "cycle_notes": list(self.cycle_notes),
+            "termination_reason": self.termination_reason.value if self.termination_reason else None,
+            "actions_run_count": self.actions_run_count,
+            "multi_task_result": self.multi_task_result.to_dict() if self.multi_task_result else None,
+        }
+
+
+@dataclass(frozen=True)
+class LoopEngineResult:
+    status: LoopEngineStatus
+    cycles: tuple[LoopCycleResult, ...]
+    final_registry: tuple[ArtifactAwareSessionRecord, ...] = ()
+    dependency_graph: tuple[DependencyGraphRecord, ...] = ()
+    artifact_registry: tuple[SessionArtifactRegistryRecord, ...] = ()
+    termination_reason: LoopTerminationReason | None = None
+    actions_run_count: int = 0
+    max_cycles: int = 1
+    notes: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "status": self.status.value,
+            "cycles": [cycle.to_dict() for cycle in self.cycles],
+            "final_registry": [record.to_dict() for record in self.final_registry],
+            "dependency_graph": [record.to_dict() for record in self.dependency_graph],
+            "artifact_registry": [record.to_dict() for record in self.artifact_registry],
+            "termination_reason": self.termination_reason.value if self.termination_reason else None,
+            "actions_run_count": self.actions_run_count,
+            "max_cycles": self.max_cycles,
+            "notes": list(self.notes),
+        }

@@ -6,8 +6,10 @@ from pathlib import Path
 from typing import Any
 
 from .models import (
+    ArtifactAwareSessionRecord,
     ConstraintReport,
     ConstraintRouterHandoff,
+    DependencyAwareSessionRecord,
     ExecutionPlan,
     ExecutorStatus,
     IntentSpec,
@@ -88,6 +90,51 @@ class StatePersistence:
                 session_id=session.session_id,
                 notes=(f"Failed to save session: {exc}",),
             )
+
+    def build_session_from_record(
+        self,
+        record: PersistedExecutionSession | ArtifactAwareSessionRecord | DependencyAwareSessionRecord,
+        *,
+        notes: tuple[str, ...] = (),
+        saved_at: str | None = None,
+    ) -> PersistedExecutionSession:
+        if isinstance(record, PersistedExecutionSession):
+            merged_notes = tuple(dict.fromkeys(record.notes + notes))
+            return PersistedExecutionSession(
+                session_id=record.session_id,
+                schema_version=record.schema_version,
+                saved_at=saved_at or self._timestamp(),
+                router_handoff=record.router_handoff,
+                orchestration_result=record.orchestration_result,
+                task_execution_result=record.task_execution_result,
+                lifecycle_snapshot=record.lifecycle_snapshot,
+                notes=merged_notes,
+            )
+
+        if isinstance(record, ArtifactAwareSessionRecord):
+            base_record = record.base_record.base_record
+        else:
+            base_record = record.base_record
+
+        if base_record.router_handoff is None:
+            raise ValueError("Cannot persist a session record without router handoff context.")
+
+        orchestration_result = base_record.orchestration_result
+        task_execution_result = (
+            orchestration_result.execution_result if orchestration_result and orchestration_result.execution_result else base_record.prior_execution_result
+        )
+        if orchestration_result is None or task_execution_result is None:
+            raise ValueError("Cannot persist a session record without orchestration and execution results.")
+
+        merged_notes = tuple(dict.fromkeys(base_record.notes + notes))
+        return self.build_session(
+            session_id=base_record.session_id,
+            router_handoff=base_record.router_handoff,
+            orchestration_result=orchestration_result,
+            task_execution_result=task_execution_result,
+            notes=merged_notes,
+            saved_at=saved_at,
+        )
 
     def load_session(self, path: str | Path) -> LoadResult:
         target = Path(path)
