@@ -377,21 +377,35 @@ class TaskChainTests(unittest.TestCase):
             self.assertEqual(bundle.coding_task_plan.validation_command, "python -m pytest tests/test_task_chains.py tests/test_cli_chat.py")
             self.assertFalse(bundle.coding_task_plan.playtest_required)
             self.assertEqual(bundle.coding_task_plan.module_clusters, ("bundle_cluster", "test_cluster"))
+            self.assertEqual(bundle.coding_task_plan.scope_type, "multi_cluster")
+            self.assertEqual(bundle.coding_task_plan.risk_level, "medium")
             self.assertEqual(bundle.coding_task_plan.confidence, "high")
+            self.assertEqual(
+                tuple(item.cluster_id for item in bundle.coding_task_plan.cluster_plans),
+                ("bundle_cluster", "test_cluster"),
+            )
             self.assertEqual(bundle.coding_task_plan.impact_analysis.upstream, ("app/controller/feature_bundle_models.py",))
             self.assertEqual(bundle.coding_task_plan.impact_analysis.downstream, ("app/controller/feature_bundle_formatter.py",))
             self.assertEqual(
                 bundle.coding_task_plan.impact_analysis.tests,
                 ("tests/test_task_chains.py", "tests/test_cli_chat.py"),
             )
+            self.assertEqual(
+                bundle.coding_task_plan.impact_analysis.interaction_points,
+                ("bundle model -> formatter -> tests",),
+            )
             self.assertIn("tests/test_cli_chat.py", bundle.coding_task_plan.expansion_summary)
             self.assertEqual(len(bundle.coding_task_plan.file_plans), 4)
             self.assertIn("Coding plan:", planned.user_message)
             self.assertIn("formatter_output_update", planned.user_message)
+            self.assertIn("Scope: multi_cluster", planned.user_message)
+            self.assertIn("Risk: medium", planned.user_message)
             self.assertIn("Category: helper_extraction", planned.user_message)
             self.assertIn("Confidence: high", planned.user_message)
             self.assertIn("Clusters: bundle_cluster, test_cluster", planned.user_message)
+            self.assertIn("Cluster reasoning:", planned.user_message)
             self.assertIn("Impact tests: tests/test_task_chains.py, tests/test_cli_chat.py", planned.user_message)
+            self.assertIn("Interaction points: bundle model -> formatter -> tests", planned.user_message)
             self.assertIn("feature_bundle_formatter.py", planned.user_message)
             self.assertIn("Extract commit summary line formatting", planned.user_message)
 
@@ -471,13 +485,18 @@ class TaskChainTests(unittest.TestCase):
                 bundle.coding_task_plan.module_clusters,
                 ("autonomous_dev_cluster", "bundle_cluster", "test_cluster"),
             )
+            self.assertEqual(bundle.coding_task_plan.scope_type, "multi_cluster")
+            self.assertEqual(bundle.coding_task_plan.risk_level, "medium")
             self.assertEqual(bundle.coding_task_plan.confidence, "high")
             self.assertIn("feature_bundle_models.py", bundle.coding_task_plan.expansion_summary)
             self.assertIn("bounded_refactor", planned.user_message)
             self.assertIn("autonomous_dev_loop_refactor", planned.user_message)
+            self.assertIn("Scope: multi_cluster", planned.user_message)
+            self.assertIn("Risk: medium", planned.user_message)
             self.assertIn("feature_bundle_formatter.py", planned.user_message)
             self.assertIn("tests/test_cli_chat.py", planned.user_message)
             self.assertIn("Impact upstream: app/controller/autonomous_dev_models.py, app/controller/feature_bundle_models.py", planned.user_message)
+            self.assertIn("Interaction points:", planned.user_message)
 
 
     def test_execution_flow_refactor_clarifies_with_execution_cluster(self) -> None:
@@ -488,8 +507,11 @@ class TaskChainTests(unittest.TestCase):
         self.assertEqual(route.kind, "needs_clarification")
         self.assertEqual(route.task_category, "execution_flow_refactor")
         self.assertEqual(route.cluster_ids, ("execution_cluster", "bundle_cluster", "test_cluster"))
+        self.assertEqual(route.scope_type, "multi_cluster")
+        self.assertEqual(route.risk_level, "medium")
         self.assertEqual(route.confidence, "medium")
         self.assertEqual(route.impact_analysis.upstream, ("app/controller/app_service.py", "app/controller/feature_bundle_models.py"))
+        self.assertIn("execution output -> bundle formatter", route.impact_analysis.interaction_points)
         self.assertIn("execution cluster", route.clarification_question)
         self.assertIn("app/controller/task_execution_conversation.py", route.clarification_question)
 
@@ -500,6 +522,8 @@ class TaskChainTests(unittest.TestCase):
 
         self.assertEqual(route.kind, "proposal_ready")
         self.assertEqual(route.cluster_ids, ("bundle_cluster", "test_cluster"))
+        self.assertEqual(route.scope_type, "multi_cluster")
+        self.assertEqual(route.risk_level, "medium")
         self.assertEqual(route.confidence, "high")
         self.assertEqual(
             tuple(item.relative_path for item in route.files),
@@ -512,6 +536,50 @@ class TaskChainTests(unittest.TestCase):
         )
         self.assertIn("tests/test_cli_chat.py", route.expansion_summary)
         self.assertEqual(route.impact_analysis.tests, ("tests/test_task_chains.py", "tests/test_cli_chat.py"))
+        self.assertEqual(route.impact_analysis.interaction_points, ("bundle model -> formatter -> tests",))
+
+    def test_execution_output_formatting_route_creates_multi_cluster_proposal(self) -> None:
+        router = RepoTaskRouter()
+
+        route = router.plan("Update execution output formatting")
+
+        self.assertEqual(route.kind, "proposal_ready")
+        self.assertEqual(route.task_type, "formatter_model_executor_alignment")
+        self.assertEqual(route.scope_type, "multi_cluster")
+        self.assertEqual(route.risk_level, "medium")
+        self.assertEqual(route.cluster_ids, ("execution_cluster", "bundle_cluster", "test_cluster"))
+        self.assertEqual(
+            tuple(item.cluster_id for item in route.cluster_reasons),
+            ("execution_cluster", "bundle_cluster", "test_cluster"),
+        )
+        self.assertIn("execution output -> bundle formatter", route.impact_analysis.interaction_points)
+        self.assertIn("bundle model -> formatter -> tests", route.impact_analysis.interaction_points)
+        self.assertEqual(
+            tuple(item.relative_path for item in route.files),
+            (
+                "app/controller/app_service.py",
+                "app/controller/task_execution_conversation.py",
+                "app/controller/multi_file_feature_planner.py",
+                "app/controller/feature_bundle_models.py",
+                "app/controller/feature_bundle_formatter.py",
+                "tests/test_task_chains.py",
+                "tests/test_cli_chat.py",
+            ),
+        )
+
+    def test_wide_scope_request_is_blocked_with_high_risk_clarification(self) -> None:
+        router = RepoTaskRouter()
+
+        route = router.plan("Refactor the entire system")
+
+        self.assertEqual(route.kind, "needs_clarification")
+        self.assertEqual(route.scope_type, "ambiguous")
+        self.assertEqual(route.risk_level, "high")
+        self.assertEqual(
+            route.cluster_ids,
+            ("capability_cluster", "execution_cluster", "bundle_cluster", "autonomous_dev_cluster", "test_cluster"),
+        )
+        self.assertIn("too broad", route.clarification_question.lower())
 
     def test_dev_loop_refactor_clarifies_scope_instead_of_guessing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -4,7 +4,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
-from .repo_structure_map import RepoImpactAnalysis, RepoStructureMap, RepoTaskConfidence
+from .repo_structure_map import (
+    RepoClusterReason,
+    RepoImpactAnalysis,
+    RepoStructureMap,
+    RepoTaskConfidence,
+    RepoTaskRiskLevel,
+    RepoTaskScopeType,
+)
 
 
 RepoTaskRouteKind = Literal["proposal_ready", "needs_clarification", "not_applicable"]
@@ -47,7 +54,10 @@ class RepoTaskRoute:
     playtest_required: bool = False
     route_key: str = ""
     cluster_ids: tuple[str, ...] = ()
+    cluster_reasons: tuple[RepoClusterReason, ...] = ()
     impact_analysis: RepoImpactAnalysis = field(default_factory=RepoImpactAnalysis)
+    scope_type: RepoTaskScopeType = "ambiguous"
+    risk_level: RepoTaskRiskLevel = "high"
     confidence: RepoTaskConfidence = "low"
     selection_summary: str = ""
     expansion_summary: str = ""
@@ -59,6 +69,7 @@ class RepoTaskRouter:
         "function",
         "method",
         "formatter",
+        "formatting",
         "controller",
         "model",
         "state",
@@ -91,8 +102,21 @@ class RepoTaskRouter:
                 clarification_question="Which bundle behavior should be updated: apply, validation tracking, commit prep, or push flow?",
                 next_step="Reply with the intended bundle slice so I can keep the coding plan inside the current feature-bundle surfaces.",
             )
+        if self._matches_execution_output_formatting_request(normalized):
+            return self._execution_output_formatting_route()
         if not self._looks_like_coding_request(normalized):
             return RepoTaskRoute(kind="not_applicable")
+        if self._matches_wide_scope_request(normalized):
+            return self._clarification_route(
+                task_type="bounded_refactor",
+                task_category="wide_scope_refactor",
+                cluster_ids=("capability_cluster", "execution_cluster", "bundle_cluster", "autonomous_dev_cluster", "test_cluster"),
+                confidence="low",
+                risk_level="high",
+                scope_type="ambiguous",
+                clarification_question="This request spans multiple clusters and is too broad. Which specific subsystem should be targeted?",
+                next_step="Reply with one bounded subsystem or one known cross-feature interaction so I can keep the plan inside the current repo map.",
+            )
         if self._matches_commit_summary_helper_request(normalized):
             return self._commit_summary_helper_route()
         if self._matches_autonomous_dev_refactor_request(normalized):
@@ -180,6 +204,8 @@ class RepoTaskRouter:
             return True
         if cls._needs_bundle_logic_clarification(prompt):
             return True
+        if cls._matches_execution_output_formatting_request(prompt):
+            return True
         return cls._matches_test_repair_request(prompt)
 
     @staticmethod
@@ -196,6 +222,14 @@ class RepoTaskRouter:
         has_commit_summary = "feature bundle commit summar" in prompt
         has_tests = "test" in prompt
         return has_helper and has_commit_summary and has_tests
+
+    @staticmethod
+    def _matches_execution_output_formatting_request(prompt: str) -> bool:
+        return (
+            "execution" in prompt
+            and any(marker in prompt for marker in ("output format", "output formatting", "formatting", "format"))
+            and any(marker in prompt for marker in ("update", "change", "align"))
+        )
 
     @staticmethod
     def _matches_autonomous_dev_refactor_request(prompt: str) -> bool:
@@ -245,6 +279,20 @@ class RepoTaskRouter:
             marker in prompt for marker in ("controller", "formatter", "capability", "bundle", "autonomous", "execution")
         )
 
+    @staticmethod
+    def _matches_wide_scope_request(prompt: str) -> bool:
+        return any(
+            marker in prompt
+            for marker in (
+                "entire system",
+                "whole system",
+                "entire repo",
+                "whole repo",
+                "everything",
+                "all clusters",
+            )
+        )
+
     def _cluster_ids_for_test_repair(self, prompt: str) -> tuple[str, ...]:
         if "capability" in prompt:
             return ("capability_cluster", "test_cluster")
@@ -261,10 +309,18 @@ class RepoTaskRouter:
         task_category: str,
         cluster_ids: tuple[str, ...],
         confidence: RepoTaskConfidence,
+        risk_level: RepoTaskRiskLevel | None = None,
+        scope_type: RepoTaskScopeType | None = None,
         clarification_question: str,
         next_step: str,
     ) -> RepoTaskRoute:
-        selection = self._build_selection(cluster_ids=cluster_ids, confidence=confidence, seed_paths=())
+        selection = self._build_selection(
+            cluster_ids=cluster_ids,
+            confidence=confidence,
+            risk_level=risk_level,
+            scope_type=scope_type,
+            seed_paths=(),
+        )
         return RepoTaskRoute(
             kind="needs_clarification",
             task_type=task_type,
@@ -272,7 +328,10 @@ class RepoTaskRouter:
             clarification_question=clarification_question,
             next_step=next_step,
             cluster_ids=selection.cluster_ids,
+            cluster_reasons=selection.cluster_reasons,
             impact_analysis=selection.impact_analysis,
+            scope_type=selection.scope_type,
+            risk_level=selection.risk_level,
             confidence=selection.confidence,
             selection_summary=selection.selection_summary,
             expansion_summary=selection.expansion_summary,
@@ -283,6 +342,8 @@ class RepoTaskRouter:
         *,
         cluster_ids: tuple[str, ...],
         confidence: RepoTaskConfidence,
+        risk_level: RepoTaskRiskLevel | None = None,
+        scope_type: RepoTaskScopeType | None = None,
         seed_paths: tuple[str, ...],
     ):
         selection_summary = self._structure_map.selection_summary_for_clusters(cluster_ids)
@@ -296,6 +357,8 @@ class RepoTaskRouter:
         return self._structure_map.build_selection(
             cluster_ids=cluster_ids,
             confidence=confidence,
+            risk_level=risk_level,
+            scope_type=scope_type,
             selection_summary=selection_summary,
             expansion_summary=expansion_summary,
         )
@@ -349,9 +412,17 @@ class RepoTaskRouter:
         risk_notes: tuple[str, ...],
         route_key: str,
         playtest_required: bool = False,
+        risk_level: RepoTaskRiskLevel | None = None,
+        scope_type: RepoTaskScopeType | None = None,
     ) -> RepoTaskRoute:
         seed_paths = tuple(file_overrides)
-        selection = self._build_selection(cluster_ids=cluster_ids, confidence="high", seed_paths=seed_paths)
+        selection = self._build_selection(
+            cluster_ids=cluster_ids,
+            confidence="high",
+            risk_level=risk_level,
+            scope_type=scope_type,
+            seed_paths=seed_paths,
+        )
         files = tuple(
             self._build_route_file(relative_path=relative_path, cluster_ids=selection.cluster_ids, file_overrides=file_overrides)
             for relative_path in selection.target_files
@@ -373,10 +444,88 @@ class RepoTaskRouter:
             playtest_required=playtest_required,
             route_key=route_key,
             cluster_ids=selection.cluster_ids,
+            cluster_reasons=selection.cluster_reasons,
             impact_analysis=selection.impact_analysis,
+            scope_type=selection.scope_type,
+            risk_level=selection.risk_level,
             confidence=selection.confidence,
             selection_summary=selection.selection_summary,
             expansion_summary=selection.expansion_summary,
+        )
+
+    def _execution_output_formatting_route(self) -> RepoTaskRoute:
+        return self._proposal_route(
+            task_type="formatter_model_executor_alignment",
+            task_category="execution_output_formatting",
+            feature_title="Align execution output formatting across controller, bundle formatter, and focused tests",
+            intended_outcome="Keep execution-flow output formatting aligned across controller entrypoints, bundle formatting, and focused regression coverage.",
+            bundle_summary="Cross-feature coding bundle for execution output formatting across the execution, bundle, and test clusters.",
+            cluster_ids=("execution_cluster", "bundle_cluster", "test_cluster"),
+            file_overrides={
+                "app/controller/app_service.py": RepoTaskRouteFile(
+                    relative_path="app/controller/app_service.py",
+                    inclusion_reason="Controller entrypoints produce the execution-flow messages that feed bundle and CLI output.",
+                    change_type="Context only: preserve the execution entrypoints that define the upstream output contract.",
+                    editable=False,
+                    scope_confidence=0.83,
+                ),
+                "app/controller/task_execution_conversation.py": RepoTaskRouteFile(
+                    relative_path="app/controller/task_execution_conversation.py",
+                    inclusion_reason="Conversational execution flow consumes controller status and shapes the operator-facing output path.",
+                    change_type="Context only: keep the execution conversation path visible while aligning output formatting.",
+                    editable=False,
+                    scope_confidence=0.81,
+                ),
+                "app/controller/multi_file_feature_planner.py": RepoTaskRouteFile(
+                    relative_path="app/controller/multi_file_feature_planner.py",
+                    inclusion_reason="Multi-file planning ties execution flow to bundle formatting, so it stays in scope as a bounded interaction point.",
+                    change_type="Context only: preserve planner-to-bundle integration while the output formatting change stays downstream.",
+                    editable=False,
+                    scope_confidence=0.79,
+                ),
+                "app/controller/feature_bundle_models.py": RepoTaskRouteFile(
+                    relative_path="app/controller/feature_bundle_models.py",
+                    inclusion_reason="Bundle models define the payload contract that formatter output must continue to honor.",
+                    change_type="Context only: preserve the bundle model contract that downstream formatting reads from.",
+                    editable=False,
+                    scope_confidence=0.84,
+                ),
+                "app/controller/feature_bundle_formatter.py": RepoTaskRouteFile(
+                    relative_path="app/controller/feature_bundle_formatter.py",
+                    inclusion_reason="Bundle formatter is the direct implementation surface for operator-facing execution output formatting.",
+                    change_type="Edit the formatter output so cross-feature coding scope, risk, and interaction lines stay consistent and readable.",
+                    editable=False,
+                    scope_confidence=0.9,
+                ),
+                "tests/test_task_chains.py": RepoTaskRouteFile(
+                    relative_path="tests/test_task_chains.py",
+                    inclusion_reason="Task-chain coverage validates execution and bundle output alignment across the bounded coding flow.",
+                    change_type="Validation surface only: confirm task-chain output still reflects the aligned execution formatting contract.",
+                    editable=False,
+                    scope_confidence=0.85,
+                ),
+                "tests/test_cli_chat.py": RepoTaskRouteFile(
+                    relative_path="tests/test_cli_chat.py",
+                    inclusion_reason="CLI chat coverage validates operator-facing output when execution and bundle formatting move together.",
+                    change_type="Validation surface only: confirm CLI output still reads cleanly after the cross-feature formatting alignment.",
+                    editable=False,
+                    scope_confidence=0.85,
+                ),
+            },
+            validation_command="python -m pytest tests/test_task_chains.py tests/test_cli_chat.py",
+            validation_rationale="The known cross-feature pattern spans execution, bundle formatting, and focused tests, so the existing task-chain and CLI coverage remain the smallest safe regression package.",
+            expected_test_impact="Task-chain and CLI coverage should confirm the execution-to-bundle output contract still reads consistently after the cross-feature formatting alignment.",
+            assumptions=(
+                "The change stays within the known execution, bundle, and focused test clusters.",
+                "No capability routing or autonomous-dev behavior is widened beyond the current cross-feature output path.",
+            ),
+            risk_notes=(
+                "This is a known multi-cluster pattern, so the plan highlights execution-to-bundle interaction points before any apply step.",
+                "The route stays bounded by the current repo structure map and fails closed if an unknown subsystem is requested.",
+            ),
+            route_key="",
+            risk_level="medium",
+            scope_type="multi_cluster",
         )
 
     def _commit_summary_helper_route(self) -> RepoTaskRoute:

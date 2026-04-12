@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from .feature_bundle_models import (
+    CodingTaskClusterPlan,
     CodingTaskFilePlan,
     CodingTaskImpactAnalysis,
     CodingTaskPlan,
@@ -126,11 +127,19 @@ class CodingTaskPlanner:
                 for item in route.files
             ),
             module_clusters=route.cluster_ids,
+            cluster_plans=tuple(
+                CodingTaskClusterPlan(cluster_id=item.cluster_id, reason=item.reason)
+                for item in route.cluster_reasons
+            ),
             impact_analysis=CodingTaskImpactAnalysis(
+                clusters=route.impact_analysis.clusters,
                 upstream=route.impact_analysis.upstream,
                 downstream=route.impact_analysis.downstream,
                 tests=route.impact_analysis.tests,
+                interaction_points=route.impact_analysis.interaction_points,
             ),
+            scope_type=route.scope_type,
+            risk_level=route.risk_level,
             confidence=route.confidence,
             selection_summary=route.selection_summary,
             expansion_summary=route.expansion_summary,

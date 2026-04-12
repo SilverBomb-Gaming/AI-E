@@ -592,10 +592,14 @@ class LocalCliChatTests(unittest.TestCase):
             self.assertIn("[FEATURE BUNDLE]", joined)
             self.assertIn("Coding plan:", joined)
             self.assertIn("formatter_output_update", joined)
+            self.assertIn("Scope: multi_cluster", joined)
+            self.assertIn("Risk: medium", joined)
             self.assertIn("Category: helper_extraction", joined)
             self.assertIn("Confidence: high", joined)
             self.assertIn("Clusters: bundle_cluster, test_cluster", joined)
+            self.assertIn("Cluster reasoning:", joined)
             self.assertIn("Impact tests: tests/test_task_chains.py, tests/test_cli_chat.py", joined)
+            self.assertIn("Interaction points: bundle model -> formatter -> tests", joined)
             self.assertIn("feature_bundle_formatter.py", joined)
             self.assertIn("Extract commit summary line formatting", joined)
 
@@ -638,6 +642,7 @@ class LocalCliChatTests(unittest.TestCase):
             self.assertIn("execution cluster", joined)
             self.assertIn("app/controller/task_execution_conversation.py", joined)
             self.assertIn("full execution flow", joined)
+
 
     def test_cli_feature_pr_preview_and_conversational_dev_summary(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

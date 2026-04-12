@@ -174,6 +174,8 @@ class FeatureBundleFormatter:
             (
                 "Coding plan:",
                 f"- Type: {plan.task_type}",
+                f"- Scope: {plan.scope_type}",
+                f"- Risk: {plan.risk_level}",
                 f"- Category: {plan.task_category or plan.task_type}",
                 f"- Confidence: {plan.confidence}",
                 f"- Status: {plan.status}",
@@ -186,6 +188,10 @@ class FeatureBundleFormatter:
         )
         if plan.module_clusters:
             lines.append(f"- Clusters: {', '.join(plan.module_clusters)}")
+        if plan.cluster_plans:
+            lines.append("- Cluster reasoning:")
+            for cluster_plan in plan.cluster_plans:
+                lines.append(f"  - {cluster_plan.cluster_id}: {cluster_plan.reason}")
         if plan.selection_summary:
             lines.append(f"- Selection: {plan.selection_summary}")
         if plan.expansion_summary:
@@ -200,6 +206,8 @@ class FeatureBundleFormatter:
             lines.append(f"- Impact downstream: {', '.join(plan.impact_analysis.downstream)}")
         if plan.impact_analysis.tests:
             lines.append(f"- Impact tests: {', '.join(plan.impact_analysis.tests)}")
+        if plan.impact_analysis.interaction_points:
+            lines.append(f"- Interaction points: {'; '.join(plan.impact_analysis.interaction_points)}")
         if plan.validation_rationale:
             lines.append(f"- Validation why: {plan.validation_rationale}")
         if plan.file_plans:

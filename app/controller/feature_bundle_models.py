@@ -21,6 +21,8 @@ CodingTaskType = Literal[
 ]
 CodingTaskPlanStatus = Literal["proposal_ready", "needs_clarification"]
 CodingTaskPlanConfidence = Literal["high", "medium", "low"]
+CodingTaskPlanScopeType = Literal["single_cluster", "multi_cluster", "ambiguous"]
+CodingTaskPlanRiskLevel = Literal["low", "medium", "high"]
 FeatureBundleCommitReadiness = Literal[
     "safe_to_commit",
     "blocked_pending_validation",
@@ -121,27 +123,51 @@ class CodingTaskFilePlan:
 
 
 @dataclass(frozen=True)
+class CodingTaskClusterPlan:
+    cluster_id: str
+    reason: str
+
+    def to_payload(self) -> dict[str, str]:
+        return {"cluster_id": self.cluster_id, "reason": self.reason}
+
+    @staticmethod
+    def from_payload(payload: dict[str, object]) -> "CodingTaskClusterPlan":
+        return CodingTaskClusterPlan(
+            cluster_id=str(payload.get("cluster_id", "")).strip(),
+            reason=str(payload.get("reason", "")).strip(),
+        )
+
+
+@dataclass(frozen=True)
 class CodingTaskImpactAnalysis:
+    clusters: tuple[str, ...] = ()
     upstream: tuple[str, ...] = ()
     downstream: tuple[str, ...] = ()
     tests: tuple[str, ...] = ()
+    interaction_points: tuple[str, ...] = ()
 
     def to_payload(self) -> dict[str, object]:
         return {
+            "clusters": list(self.clusters),
             "upstream": list(self.upstream),
             "downstream": list(self.downstream),
             "tests": list(self.tests),
+            "interaction_points": list(self.interaction_points),
         }
 
     @staticmethod
     def from_payload(payload: dict[str, object]) -> "CodingTaskImpactAnalysis":
+        clusters = payload.get("clusters")
         upstream = payload.get("upstream")
         downstream = payload.get("downstream")
         tests = payload.get("tests")
+        interaction_points = payload.get("interaction_points")
         return CodingTaskImpactAnalysis(
+            clusters=tuple(str(item).strip() for item in clusters or () if str(item).strip()),
             upstream=tuple(str(item).strip() for item in upstream or () if str(item).strip()),
             downstream=tuple(str(item).strip() for item in downstream or () if str(item).strip()),
             tests=tuple(str(item).strip() for item in tests or () if str(item).strip()),
+            interaction_points=tuple(str(item).strip() for item in interaction_points or () if str(item).strip()),
         )
 
 
@@ -161,7 +187,10 @@ class CodingTaskPlan:
     file_plans: tuple[CodingTaskFilePlan, ...] = ()
     clarification_question: str = ""
     module_clusters: tuple[str, ...] = ()
+    cluster_plans: tuple[CodingTaskClusterPlan, ...] = ()
     impact_analysis: CodingTaskImpactAnalysis = field(default_factory=CodingTaskImpactAnalysis)
+    scope_type: CodingTaskPlanScopeType = "ambiguous"
+    risk_level: CodingTaskPlanRiskLevel = "high"
     confidence: CodingTaskPlanConfidence = "low"
     selection_summary: str = ""
     expansion_summary: str = ""
@@ -182,7 +211,10 @@ class CodingTaskPlan:
             "file_plans": [item.to_payload() for item in self.file_plans],
             "clarification_question": self.clarification_question,
             "module_clusters": list(self.module_clusters),
+            "cluster_plans": [item.to_payload() for item in self.cluster_plans],
             "impact_analysis": self.impact_analysis.to_payload(),
+            "scope_type": self.scope_type,
+            "risk_level": self.risk_level,
             "confidence": self.confidence,
             "selection_summary": self.selection_summary,
             "expansion_summary": self.expansion_summary,
@@ -194,6 +226,7 @@ class CodingTaskPlan:
         affected_tests = payload.get("affected_tests")
         file_plans = payload.get("file_plans")
         module_clusters = payload.get("module_clusters")
+        cluster_plans = payload.get("cluster_plans")
         impact_analysis = payload.get("impact_analysis")
         return CodingTaskPlan(
             task_type=str(payload.get("task_type", "bounded_refactor")).strip() or "bounded_refactor",  # type: ignore[arg-type]
@@ -210,7 +243,10 @@ class CodingTaskPlan:
             file_plans=tuple(CodingTaskFilePlan.from_payload(item) for item in file_plans or () if isinstance(item, dict)),
             clarification_question=str(payload.get("clarification_question", "")).strip(),
             module_clusters=tuple(str(item).strip() for item in module_clusters or () if str(item).strip()),
+            cluster_plans=tuple(CodingTaskClusterPlan.from_payload(item) for item in cluster_plans or () if isinstance(item, dict)),
             impact_analysis=CodingTaskImpactAnalysis.from_payload(impact_analysis) if isinstance(impact_analysis, dict) else CodingTaskImpactAnalysis(),
+            scope_type=str(payload.get("scope_type", "ambiguous")).strip() or "ambiguous",  # type: ignore[arg-type]
+            risk_level=str(payload.get("risk_level", "high")).strip() or "high",  # type: ignore[arg-type]
             confidence=str(payload.get("confidence", "low")).strip() or "low",  # type: ignore[arg-type]
             selection_summary=str(payload.get("selection_summary", "")).strip(),
             expansion_summary=str(payload.get("expansion_summary", "")).strip(),
