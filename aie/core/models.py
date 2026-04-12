@@ -1473,3 +1473,160 @@ class AwarenessResult:
             "next_action_candidates": [candidate.to_dict() for candidate in self.next_action_candidates],
             "system_notes": list(self.system_notes),
         }
+
+
+class OperatorCommandType(str, Enum):
+    INSPECT_SYSTEM = "inspect_system"
+    INSPECT_SESSION = "inspect_session"
+    RUN_SINGLE_CYCLE = "run_single_cycle"
+    RUN_BOUNDED_LOOP = "run_bounded_loop"
+    APPROVE_GATE = "approve_gate"
+    REJECT_GATE = "reject_gate"
+    PAUSE_SESSION = "pause_session"
+    RESUME_SESSION = "resume_session"
+    REPRIORITIZE_SESSION = "reprioritize_session"
+    SELECT_SESSION = "select_session"
+    STOP_LOOP = "stop_loop"
+    CLEAR_SELECTION = "clear_selection"
+    REJECT_COMMAND = "reject_command"
+
+
+class OperatorCommandStatus(str, Enum):
+    ACCEPTED = "accepted"
+    EXECUTED = "executed"
+    REJECTED = "rejected"
+    NO_OP = "no_op"
+    INVALID_REQUEST = "invalid_request"
+    BLOCKED = "blocked"
+
+
+class OperatorActionEffect(str, Enum):
+    INSPECTED_SYSTEM = "inspected_system"
+    INSPECTED_SESSION = "inspected_session"
+    LOOP_CYCLE_REQUESTED = "loop_cycle_requested"
+    BOUNDED_LOOP_REQUESTED = "bounded_loop_requested"
+    GATE_APPROVED = "gate_approved"
+    PRIORITY_UPDATED = "priority_updated"
+    SESSION_SELECTION_VALIDATED = "session_selection_validated"
+    NO_CHANGE = "no_change"
+    COMMAND_REJECTED = "command_rejected"
+
+
+class OperatorRejectionReason(str, Enum):
+    UNKNOWN_COMMAND = "unknown_command"
+    INVALID_TARGET = "invalid_target"
+    SESSION_NOT_FOUND = "session_not_found"
+    SESSION_NOT_ACTIONABLE = "session_not_actionable"
+    GATE_NOT_CLEARABLE = "gate_not_clearable"
+    UNSAFE_COMMAND = "unsafe_command"
+    INVALID_STATE_TRANSITION = "invalid_state_transition"
+    UNSUPPORTED_IN_V1 = "unsupported_in_v1"
+    COMMAND_CONFLICTS_WITH_SYSTEM_STATE = "command_conflicts_with_system_state"
+
+
+class OperatorTargetType(str, Enum):
+    SYSTEM = "system"
+    SESSION = "session"
+    GATE = "gate"
+    LOOP = "loop"
+
+
+class OperatorGateType(str, Enum):
+    CONFIRMATION = "confirmation"
+    REVIEW = "review"
+    PLAYTEST = "playtest"
+
+
+@dataclass(frozen=True)
+class OperatorCommandRequest:
+    command_id: str
+    command_type: OperatorCommandType | str
+    target_type: OperatorTargetType | str = OperatorTargetType.SYSTEM
+    target_session_id: str | None = None
+    session_registry: tuple[MultiTaskSessionRecord, ...] = ()
+    dependency_graph: tuple[SessionDependency, ...] = ()
+    artifact_registry: tuple[SessionArtifact, ...] = ()
+    artifact_requirements: tuple[ArtifactRequirement, ...] = ()
+    latest_loop_result: LoopEngineResult | None = None
+    gate_type: OperatorGateType | str | None = None
+    new_priority: MultiTaskPriority | str | None = None
+    max_cycles: int = 1
+    session_storage_directory: str | None = None
+    session_file_paths: tuple[tuple[str, str], ...] = ()
+    notes: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "command_id": self.command_id,
+            "command_type": self.command_type.value if isinstance(self.command_type, Enum) else self.command_type,
+            "target_type": self.target_type.value if isinstance(self.target_type, Enum) else self.target_type,
+            "target_session_id": self.target_session_id,
+            "session_registry": [record.to_dict() for record in self.session_registry],
+            "dependency_graph": [dependency.to_dict() for dependency in self.dependency_graph],
+            "artifact_registry": [artifact.to_dict() for artifact in self.artifact_registry],
+            "artifact_requirements": [artifact.to_dict() for artifact in self.artifact_requirements],
+            "latest_loop_result": self.latest_loop_result.to_dict() if self.latest_loop_result else None,
+            "gate_type": self.gate_type.value if isinstance(self.gate_type, Enum) else self.gate_type,
+            "new_priority": self.new_priority.value if isinstance(self.new_priority, Enum) else self.new_priority,
+            "max_cycles": self.max_cycles,
+            "session_storage_directory": self.session_storage_directory,
+            "session_file_paths": [
+                {"session_id": session_id, "path": path}
+                for session_id, path in self.session_file_paths
+            ],
+            "notes": list(self.notes),
+        }
+
+
+@dataclass(frozen=True)
+class OperatorCommandDecision:
+    command_id: str
+    command_type: OperatorCommandType | str
+    target_type: OperatorTargetType | str
+    target_session_id: str | None = None
+    command_status: OperatorCommandStatus = OperatorCommandStatus.ACCEPTED
+    action_effect: OperatorActionEffect = OperatorActionEffect.NO_CHANGE
+    rejection_reason: OperatorRejectionReason | None = None
+    effect_summary: str = ""
+    operator_notes: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "command_id": self.command_id,
+            "command_type": self.command_type.value if isinstance(self.command_type, Enum) else self.command_type,
+            "target_type": self.target_type.value if isinstance(self.target_type, Enum) else self.target_type,
+            "target_session_id": self.target_session_id,
+            "command_status": self.command_status.value,
+            "action_effect": self.action_effect.value,
+            "rejection_reason": self.rejection_reason.value if self.rejection_reason else None,
+            "effect_summary": self.effect_summary,
+            "operator_notes": list(self.operator_notes),
+        }
+
+
+@dataclass(frozen=True)
+class OperatorCommandResult:
+    decision: OperatorCommandDecision
+    awareness_snapshot_used: AwarenessResult | None = None
+    resulting_awareness: AwarenessResult | None = None
+    loop_result: LoopEngineResult | None = None
+    updated_session_registry: tuple[MultiTaskSessionRecord, ...] = ()
+    session_summary: SessionHealthSummary | None = None
+    blocker_summaries: tuple[BlockerSummary, ...] = ()
+    resulting_loop_status: LoopEngineStatus | None = None
+    resulting_session_status: MultiTaskSessionStatus | None = None
+    executed_at: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "decision": self.decision.to_dict(),
+            "awareness_snapshot_used": self.awareness_snapshot_used.to_dict() if self.awareness_snapshot_used else None,
+            "resulting_awareness": self.resulting_awareness.to_dict() if self.resulting_awareness else None,
+            "loop_result": self.loop_result.to_dict() if self.loop_result else None,
+            "updated_session_registry": [record.to_dict() for record in self.updated_session_registry],
+            "session_summary": self.session_summary.to_dict() if self.session_summary else None,
+            "blocker_summaries": [summary.to_dict() for summary in self.blocker_summaries],
+            "resulting_loop_status": self.resulting_loop_status.value if self.resulting_loop_status else None,
+            "resulting_session_status": self.resulting_session_status.value if self.resulting_session_status else None,
+            "executed_at": self.executed_at,
+        }
