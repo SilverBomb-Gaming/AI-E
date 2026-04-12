@@ -16,8 +16,8 @@ from .models import (
 class ExecutionHistory:
     """Append-only in-memory audit store for bounded execution history."""
 
-    def __init__(self) -> None:
-        self._records: list[AuditRecord] = []
+    def __init__(self, records: tuple[AuditRecord, ...] = ()) -> None:
+        self._records: list[AuditRecord] = list(records)
 
     def record_event(
         self,
@@ -59,8 +59,24 @@ class ExecutionHistory:
                 source_component=source_component,
             ),
         )
-        self._records.append(record)
-        return record
+        return self._append_record(record)
+
+    @classmethod
+    def from_records(cls, records: tuple[AuditRecord, ...]) -> "ExecutionHistory":
+        return cls(records=records)
+
+    def export_log(self) -> AuditLog:
+        return self.snapshot()
+
+    def ingest_log(self, audit_log: AuditLog, *, replace: bool = False) -> AuditLog:
+        if replace:
+            self._records = list(audit_log.records)
+        else:
+            self._records.extend(audit_log.records)
+        return self.snapshot()
+
+    def ingest_records(self, records: tuple[AuditRecord, ...], *, replace: bool = False) -> AuditLog:
+        return self.ingest_log(AuditLog(records=records), replace=replace)
 
     def snapshot(self) -> AuditLog:
         return AuditLog(records=tuple(self._records))
@@ -101,6 +117,10 @@ class ExecutionHistory:
         if audit_query.event_type is not None:
             filtered = [record for record in filtered if record.event.event_type == audit_query.event_type]
         return filtered
+
+    def _append_record(self, record: AuditRecord) -> AuditRecord:
+        self._records.append(record)
+        return record
 
     @staticmethod
     def _timestamp() -> str:

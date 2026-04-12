@@ -1252,6 +1252,18 @@ class AuditEventType(str, Enum):
     SESSION_STATE_CHANGED = "session_state_changed"
 
 
+class AuditPersistenceStatus(str, Enum):
+    SAVED = "saved"
+    LOADED = "loaded"
+    INVALID = "invalid"
+    VERSION_MISMATCH = "version_mismatch"
+    FAILED = "failed"
+
+
+class AuditLogRecordVersion(IntEnum):
+    V1 = 1
+
+
 @dataclass(frozen=True)
 class AuditContext:
     cycle_index: int | None = None
@@ -1321,6 +1333,88 @@ class AuditLog:
     def to_dict(self) -> dict[str, Any]:
         return {
             "records": [record.to_dict() for record in self.records],
+        }
+
+
+@dataclass(frozen=True)
+class PersistedAuditLog:
+    schema_version: int
+    saved_at: str
+    event_count: int
+    events: tuple[AuditRecord, ...] = ()
+    notes: tuple[str, ...] = ()
+    storage_path: str | None = None
+    last_event_id: str | None = None
+    validation_errors: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "saved_at": self.saved_at,
+            "event_count": self.event_count,
+            "events": [event.to_dict() for event in self.events],
+            "notes": list(self.notes),
+            "storage_path": self.storage_path,
+            "last_event_id": self.last_event_id,
+            "validation_errors": list(self.validation_errors),
+        }
+
+
+@dataclass(frozen=True)
+class AuditPersistenceSnapshot:
+    schema_version: int | None = None
+    saved_at: str | None = None
+    event_count: int = 0
+    storage_path: str | None = None
+    last_event_id: str | None = None
+    notes: tuple[str, ...] = ()
+    validation_errors: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "saved_at": self.saved_at,
+            "event_count": self.event_count,
+            "storage_path": self.storage_path,
+            "last_event_id": self.last_event_id,
+            "notes": list(self.notes),
+            "validation_errors": list(self.validation_errors),
+        }
+
+
+@dataclass(frozen=True)
+class AuditSaveResult:
+    status: AuditPersistenceStatus
+    persisted_log: PersistedAuditLog | None = None
+    snapshot: AuditPersistenceSnapshot | None = None
+    notes: tuple[str, ...] = ()
+    validation_errors: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "status": self.status.value,
+            "persisted_log": self.persisted_log.to_dict() if self.persisted_log else None,
+            "snapshot": self.snapshot.to_dict() if self.snapshot else None,
+            "notes": list(self.notes),
+            "validation_errors": list(self.validation_errors),
+        }
+
+
+@dataclass(frozen=True)
+class AuditLoadResult:
+    status: AuditPersistenceStatus
+    persisted_log: PersistedAuditLog | None = None
+    snapshot: AuditPersistenceSnapshot | None = None
+    notes: tuple[str, ...] = ()
+    validation_errors: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "status": self.status.value,
+            "persisted_log": self.persisted_log.to_dict() if self.persisted_log else None,
+            "snapshot": self.snapshot.to_dict() if self.snapshot else None,
+            "notes": list(self.notes),
+            "validation_errors": list(self.validation_errors),
         }
 
 
