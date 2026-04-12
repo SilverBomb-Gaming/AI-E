@@ -8,6 +8,7 @@ from pathlib import Path
 from app.controller.app_service import ControllerService
 from app.controller.execution_runner import ExecutionRunner
 from app.controller.feature_bundle_models import FeatureBundleFile, FeatureBundleRecord, FeatureValidationPlan
+from app.controller.pattern_registry import PatternRegistry
 from app.controller.repo_task_routing import RepoTaskRouter
 from app.controller.profile_store import ControllerConfigStore
 from app.platform.secrets import InMemorySecretStore
@@ -380,6 +381,9 @@ class TaskChainTests(unittest.TestCase):
             self.assertEqual(bundle.coding_task_plan.scope_type, "multi_cluster")
             self.assertEqual(bundle.coding_task_plan.risk_level, "medium")
             self.assertEqual(bundle.coding_task_plan.confidence, "high")
+            self.assertEqual(bundle.coding_task_plan.pattern_used, "commit_summary_helper_v1")
+            self.assertEqual(bundle.coding_task_plan.pattern_confidence, "high")
+            self.assertIn("Reused commit_summary_helper_v1", bundle.coding_task_plan.pattern_summary)
             self.assertEqual(
                 tuple(item.cluster_id for item in bundle.coding_task_plan.cluster_plans),
                 ("bundle_cluster", "test_cluster"),
@@ -402,6 +406,8 @@ class TaskChainTests(unittest.TestCase):
             self.assertIn("Risk: medium", planned.user_message)
             self.assertIn("Category: helper_extraction", planned.user_message)
             self.assertIn("Confidence: high", planned.user_message)
+            self.assertIn("Pattern: commit_summary_helper_v1", planned.user_message)
+            self.assertIn("Pattern confidence: high", planned.user_message)
             self.assertIn("Clusters: bundle_cluster, test_cluster", planned.user_message)
             self.assertIn("Cluster reasoning:", planned.user_message)
             self.assertIn("Impact tests: tests/test_task_chains.py, tests/test_cli_chat.py", planned.user_message)
@@ -488,16 +494,31 @@ class TaskChainTests(unittest.TestCase):
             self.assertEqual(bundle.coding_task_plan.scope_type, "multi_cluster")
             self.assertEqual(bundle.coding_task_plan.risk_level, "medium")
             self.assertEqual(bundle.coding_task_plan.confidence, "high")
+            self.assertEqual(bundle.coding_task_plan.pattern_used, "autonomous_dev_formatter_refactor_v1")
+            self.assertEqual(bundle.coding_task_plan.pattern_confidence, "high")
             self.assertIn("feature_bundle_models.py", bundle.coding_task_plan.expansion_summary)
             self.assertIn("bounded_refactor", planned.user_message)
             self.assertIn("autonomous_dev_loop_refactor", planned.user_message)
             self.assertIn("Scope: multi_cluster", planned.user_message)
             self.assertIn("Risk: medium", planned.user_message)
+            self.assertIn("Pattern: autonomous_dev_formatter_refactor_v1", planned.user_message)
             self.assertIn("feature_bundle_formatter.py", planned.user_message)
             self.assertIn("tests/test_cli_chat.py", planned.user_message)
             self.assertIn("Impact upstream: app/controller/autonomous_dev_models.py, app/controller/feature_bundle_models.py", planned.user_message)
             self.assertIn("Interaction points:", planned.user_message)
 
+
+
+    def test_pattern_registry_matches_known_capability_wiring_family(self) -> None:
+        registry = PatternRegistry()
+
+        match = registry.match("Add a new capability for feature bundling")
+
+        self.assertIsNotNone(match)
+        assert match is not None
+        self.assertEqual(match.pattern.pattern_id, "capability_wiring_v1")
+        self.assertEqual(match.pattern.cluster_ids, ("capability_cluster", "test_cluster"))
+        self.assertEqual(match.confidence, "medium")
 
     def test_execution_flow_refactor_clarifies_with_execution_cluster(self) -> None:
         router = RepoTaskRouter()
@@ -509,6 +530,8 @@ class TaskChainTests(unittest.TestCase):
         self.assertEqual(route.cluster_ids, ("execution_cluster", "bundle_cluster", "test_cluster"))
         self.assertEqual(route.scope_type, "multi_cluster")
         self.assertEqual(route.risk_level, "medium")
+        self.assertEqual(route.pattern_used, "execution_output_formatting_v1")
+        self.assertEqual(route.pattern_confidence, "high")
         self.assertEqual(route.confidence, "medium")
         self.assertEqual(route.impact_analysis.upstream, ("app/controller/app_service.py", "app/controller/feature_bundle_models.py"))
         self.assertIn("execution output -> bundle formatter", route.impact_analysis.interaction_points)
@@ -524,6 +547,8 @@ class TaskChainTests(unittest.TestCase):
         self.assertEqual(route.cluster_ids, ("bundle_cluster", "test_cluster"))
         self.assertEqual(route.scope_type, "multi_cluster")
         self.assertEqual(route.risk_level, "medium")
+        self.assertEqual(route.pattern_used, "commit_summary_helper_v1")
+        self.assertEqual(route.pattern_confidence, "high")
         self.assertEqual(route.confidence, "high")
         self.assertEqual(
             tuple(item.relative_path for item in route.files),
@@ -566,6 +591,18 @@ class TaskChainTests(unittest.TestCase):
                 "tests/test_cli_chat.py",
             ),
         )
+
+
+    def test_capability_wiring_pattern_reuses_known_structure_for_similar_prompt(self) -> None:
+        router = RepoTaskRouter()
+
+        route = router.plan("Add a new capability for feature bundling")
+
+        self.assertEqual(route.kind, "needs_clarification")
+        self.assertEqual(route.pattern_used, "capability_wiring_v1")
+        self.assertEqual(route.pattern_confidence, "medium")
+        self.assertEqual(route.cluster_ids, ("capability_cluster", "test_cluster"))
+        self.assertIn("What command or capability name should be wired?", route.clarification_question)
 
     def test_wide_scope_request_is_blocked_with_high_risk_clarification(self) -> None:
         router = RepoTaskRouter()

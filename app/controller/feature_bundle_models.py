@@ -192,6 +192,9 @@ class CodingTaskPlan:
     scope_type: CodingTaskPlanScopeType = "ambiguous"
     risk_level: CodingTaskPlanRiskLevel = "high"
     confidence: CodingTaskPlanConfidence = "low"
+    pattern_used: str = ""
+    pattern_confidence: CodingTaskPlanConfidence = "low"
+    pattern_summary: str = ""
     selection_summary: str = ""
     expansion_summary: str = ""
 
@@ -216,6 +219,9 @@ class CodingTaskPlan:
             "scope_type": self.scope_type,
             "risk_level": self.risk_level,
             "confidence": self.confidence,
+            "pattern_used": self.pattern_used,
+            "pattern_confidence": self.pattern_confidence,
+            "pattern_summary": self.pattern_summary,
             "selection_summary": self.selection_summary,
             "expansion_summary": self.expansion_summary,
         }
@@ -248,6 +254,9 @@ class CodingTaskPlan:
             scope_type=str(payload.get("scope_type", "ambiguous")).strip() or "ambiguous",  # type: ignore[arg-type]
             risk_level=str(payload.get("risk_level", "high")).strip() or "high",  # type: ignore[arg-type]
             confidence=str(payload.get("confidence", "low")).strip() or "low",  # type: ignore[arg-type]
+            pattern_used=str(payload.get("pattern_used", "")).strip(),
+            pattern_confidence=str(payload.get("pattern_confidence", "low")).strip() or "low",  # type: ignore[arg-type]
+            pattern_summary=str(payload.get("pattern_summary", "")).strip(),
             selection_summary=str(payload.get("selection_summary", "")).strip(),
             expansion_summary=str(payload.get("expansion_summary", "")).strip(),
         )

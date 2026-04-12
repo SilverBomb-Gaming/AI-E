@@ -596,6 +596,8 @@ class LocalCliChatTests(unittest.TestCase):
             self.assertIn("Risk: medium", joined)
             self.assertIn("Category: helper_extraction", joined)
             self.assertIn("Confidence: high", joined)
+            self.assertIn("Pattern: commit_summary_helper_v1", joined)
+            self.assertIn("Pattern confidence: high", joined)
             self.assertIn("Clusters: bundle_cluster, test_cluster", joined)
             self.assertIn("Cluster reasoning:", joined)
             self.assertIn("Impact tests: tests/test_task_chains.py, tests/test_cli_chat.py", joined)
@@ -643,6 +645,23 @@ class LocalCliChatTests(unittest.TestCase):
             self.assertIn("app/controller/task_execution_conversation.py", joined)
             self.assertIn("full execution flow", joined)
 
+
+
+    def test_cli_capability_wiring_pattern_reuse_clarifies_with_known_structure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "workspace"
+            root.mkdir(parents=True, exist_ok=True)
+            service, config_store, _ = self._make_service(tmp_dir=tmp)
+            self._configure_repo_root(service=service, config_store=config_store, root=root)
+            output: list[str] = []
+            cli = AiEChatCli(service=service, input_func=_PromptDriver(), output_func=output.append, debug=True)
+
+            self.assertTrue(cli.handle_line("Add a new capability for feature bundling"))
+
+            joined = "\n".join(output)
+            self.assertIn("Need clarification before planning that coding bundle.", joined)
+            self.assertIn("capability cluster", joined)
+            self.assertIn("what command or capability name should be wired", joined.lower())
 
     def test_cli_feature_pr_preview_and_conversational_dev_summary(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

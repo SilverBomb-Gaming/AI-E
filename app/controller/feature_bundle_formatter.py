@@ -188,6 +188,11 @@ class FeatureBundleFormatter:
         )
         if plan.module_clusters:
             lines.append(f"- Clusters: {', '.join(plan.module_clusters)}")
+        if plan.pattern_used:
+            lines.append(f"- Pattern: {plan.pattern_used}")
+            lines.append(f"- Pattern confidence: {plan.pattern_confidence}")
+        if plan.pattern_summary:
+            lines.append(f"- Pattern summary: {plan.pattern_summary}")
         if plan.cluster_plans:
             lines.append("- Cluster reasoning:")
             for cluster_plan in plan.cluster_plans:

@@ -1,9 +1,10 @@
 """Deterministic routing for bounded coding-task families across known repo clusters."""
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Literal
 
+from .pattern_registry import CodingPatternMatch, PatternRegistry
 from .repo_structure_map import (
     RepoClusterReason,
     RepoImpactAnalysis,
@@ -59,6 +60,9 @@ class RepoTaskRoute:
     scope_type: RepoTaskScopeType = "ambiguous"
     risk_level: RepoTaskRiskLevel = "high"
     confidence: RepoTaskConfidence = "low"
+    pattern_used: str = ""
+    pattern_confidence: RepoTaskConfidence = "low"
+    pattern_summary: str = ""
     selection_summary: str = ""
     expansion_summary: str = ""
 
@@ -89,19 +93,28 @@ class RepoTaskRouter:
     )
 
     def __init__(self) -> None:
+        self._pattern_registry = PatternRegistry()
         self._structure_map = RepoStructureMap()
 
     def plan(self, prompt: str) -> RepoTaskRoute:
         normalized = self._normalize(prompt)
+        pattern_match = self._pattern_registry.match(normalized)
         if self._needs_bundle_logic_clarification(normalized):
-            return self._clarification_route(
+            return self._apply_pattern_match(
+                self._clarification_route(
                 task_type="controller_state_alignment",
                 task_category="feature_bundle_scope_selection",
                 cluster_ids=("bundle_cluster", "test_cluster"),
                 confidence="low",
                 clarification_question="Which bundle behavior should be updated: apply, validation tracking, commit prep, or push flow?",
                 next_step="Reply with the intended bundle slice so I can keep the coding plan inside the current feature-bundle surfaces.",
+                ),
+                pattern_match,
             )
+        if pattern_match is not None:
+            matched_route = self._route_for_pattern(pattern_match, normalized)
+            if matched_route is not None:
+                return matched_route
         if self._matches_execution_output_formatting_request(normalized):
             return self._execution_output_formatting_route()
         if not self._looks_like_coding_request(normalized):
@@ -134,19 +147,7 @@ class RepoTaskRouter:
                 next_step="Reply with the command or capability id plus whether this is wiring-only or a behavior change.",
             )
         if self._matches_execution_flow_refactor_request(normalized):
-            return self._clarification_route(
-                task_type="bounded_refactor",
-                task_category="execution_flow_refactor",
-                cluster_ids=("execution_cluster", "bundle_cluster", "test_cluster"),
-                confidence="medium",
-                clarification_question=(
-                    "This may affect the execution cluster "
-                    "(app/controller/app_service.py, app/controller/task_execution_conversation.py, "
-                    "app/controller/multi_file_feature_planner.py). Should the refactor stay within one file, "
-                    "or align the full execution flow plus formatter and focused tests?"
-                ),
-                next_step="Reply with whether this should stay inside a single execution file or align the broader execution cluster.",
-            )
+            return self._execution_flow_refactor_route()
         if self._matches_controller_state_request(normalized):
             return self._clarification_route(
                 task_type="controller_state_alignment",
@@ -196,6 +197,48 @@ class RepoTaskRouter:
                 "or autonomous dev cluster?"
             ),
             next_step="Reply with the bounded repo slice plus whether this is a behavior change, test repair, or refactor only.",
+        )
+
+    def _route_for_pattern(self, pattern_match: CodingPatternMatch, normalized_prompt: str) -> RepoTaskRoute | None:
+        route_family = pattern_match.pattern.route_family
+        if route_family == "commit_summary_helper":
+            return self._apply_pattern_match(self._commit_summary_helper_route(), pattern_match)
+        if route_family == "autonomous_dev_refactor":
+            return self._apply_pattern_match(self._autonomous_dev_refactor_route(), pattern_match)
+        if route_family == "execution_output_formatting":
+            if self._matches_execution_flow_refactor_request(normalized_prompt):
+                return self._apply_pattern_match(self._execution_flow_refactor_route(), pattern_match)
+            return self._apply_pattern_match(self._execution_output_formatting_route(), pattern_match)
+        if route_family == "capability_wiring":
+            return self._apply_pattern_match(
+                self._clarification_route(
+                    task_type="capability_wiring_update",
+                    task_category="capability_wiring_update",
+                    cluster_ids=pattern_match.pattern.cluster_ids,
+                    confidence="high" if pattern_match.confidence == "high" else "medium",
+                    clarification_question=(
+                        f"{self._structure_map.clarification_for_clusters(pattern_match.pattern.cluster_ids, action='update capability routing')} "
+                        "What command or capability name should be wired?"
+                    ),
+                    next_step="Reply with the command or capability id plus whether this is wiring-only or a behavior change.",
+                ),
+                pattern_match,
+            )
+        return None
+
+    def _execution_flow_refactor_route(self) -> RepoTaskRoute:
+        return self._clarification_route(
+            task_type="bounded_refactor",
+            task_category="execution_flow_refactor",
+            cluster_ids=("execution_cluster", "bundle_cluster", "test_cluster"),
+            confidence="medium",
+            clarification_question=(
+                "This may affect the execution cluster "
+                "(app/controller/app_service.py, app/controller/task_execution_conversation.py, "
+                "app/controller/multi_file_feature_planner.py). Should the refactor stay within one file, "
+                "or align the full execution flow plus formatter and focused tests?"
+            ),
+            next_step="Reply with whether this should stay inside a single execution file or align the broader execution cluster.",
         )
 
     @classmethod
@@ -335,6 +378,22 @@ class RepoTaskRouter:
             confidence=selection.confidence,
             selection_summary=selection.selection_summary,
             expansion_summary=selection.expansion_summary,
+        )
+
+    @staticmethod
+    def _apply_pattern_match(route: RepoTaskRoute, pattern_match: CodingPatternMatch | None) -> RepoTaskRoute:
+        if pattern_match is None:
+            return route
+        return replace(
+            route,
+            pattern_used=pattern_match.pattern.pattern_id,
+            pattern_confidence=pattern_match.confidence,
+            pattern_summary=pattern_match.adaptation_summary,
+            confidence=(
+                "high"
+                if pattern_match.confidence == "high" and route.kind == "proposal_ready"
+                else route.confidence
+            ),
         )
 
     def _build_selection(

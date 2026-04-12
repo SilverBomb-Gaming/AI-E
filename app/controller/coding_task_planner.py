@@ -141,6 +141,9 @@ class CodingTaskPlanner:
             scope_type=route.scope_type,
             risk_level=route.risk_level,
             confidence=route.confidence,
+            pattern_used=route.pattern_used,
+            pattern_confidence=route.pattern_confidence,
+            pattern_summary=route.pattern_summary,
             selection_summary=route.selection_summary,
             expansion_summary=route.expansion_summary,
         )
