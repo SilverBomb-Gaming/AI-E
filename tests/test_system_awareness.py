@@ -391,6 +391,7 @@ def test_system_awareness_surfaces_recent_loop_activity_from_latest_result(tmp_p
     assert result.recent_activity.cycle_index == 1
     assert result.recent_activity.selected_session_id == "session-ready"
     assert result.recent_activity.selected_action == LoopCycleAction.EXECUTE_SELECTED
+    assert result.last_policy_decision is not None
     assert result.recent_activity.latest_cycle_status == LoopEngineStatus.RAN_ACTION
     assert result.recent_activity.latest_termination_reason == LoopTerminationReason.COMPLETED_ALL_SESSIONS
 

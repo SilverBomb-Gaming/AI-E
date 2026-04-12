@@ -109,6 +109,7 @@ class SystemAwareness:
             recent_activity=recent_activity,
             next_action_candidates=next_action_candidates,
             system_notes=system_notes,
+            last_policy_decision=request.latest_loop_result.last_policy_decision if request.latest_loop_result else None,
         )
 
     def summarize_session(

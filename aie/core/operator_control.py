@@ -3,10 +3,15 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import datetime, timezone
 
+from .autonomy_policy import AutonomyPolicy
 from .execution_loop_engine import ExecutionLoopEngine
 from .models import (
     AwarenessRequest,
     AwarenessResult,
+    AutonomyActionType,
+    AutonomyPolicyContext,
+    AutonomyPolicyReason,
+    AutonomyPolicyStatus,
     LifecycleState,
     LoopEngineRequest,
     LoopEngineResult,
@@ -23,6 +28,7 @@ from .models import (
     OperatorGateType,
     OperatorRejectionReason,
     OperatorTargetType,
+    PolicyEvaluationResult,
     ResumeRequest,
     SessionHealthSummary,
 )
@@ -49,10 +55,12 @@ class OperatorControl:
         awareness: SystemAwareness | None = None,
         loop_engine: ExecutionLoopEngine | None = None,
         multi_task_orchestrator: MultiTaskOrchestrator | None = None,
+        autonomy_policy: AutonomyPolicy | None = None,
     ) -> None:
         self._multi_task_orchestrator = multi_task_orchestrator or MultiTaskOrchestrator()
         self._awareness = awareness or SystemAwareness(self._multi_task_orchestrator)
         self._loop_engine = loop_engine or ExecutionLoopEngine(self._multi_task_orchestrator)
+        self._autonomy_policy = autonomy_policy or AutonomyPolicy()
 
     def handle_command(self, request: OperatorCommandRequest) -> OperatorCommandResult:
         command_type = self._normalize_command_type(request.command_type)
@@ -91,12 +99,22 @@ class OperatorControl:
                 notes=request.notes,
             )
         )
+        policy_evaluation = self._evaluate_policy(request, command_type, awareness_snapshot)
+        if policy_evaluation.decision.decision_status != AutonomyPolicyStatus.ALLOWED:
+            return self._policy_rejected_result(
+                request=request,
+                awareness_snapshot=awareness_snapshot,
+                command_type=command_type,
+                target_type=target_type,
+                policy_evaluation=policy_evaluation,
+            )
         validation = self._validate_command(request, command_type, target_type, awareness_snapshot)
         if validation is not None:
             rejection_reason, effect_summary = validation
             return self._rejected_result(
                 request=request,
                 awareness_snapshot=awareness_snapshot,
+                policy_evaluation=policy_evaluation,
                 command_type=command_type,
                 target_type=target_type,
                 rejection_reason=rejection_reason,
@@ -104,28 +122,36 @@ class OperatorControl:
             )
 
         if command_type == OperatorCommandType.INSPECT_SYSTEM:
-            return self._handle_inspect_system(request, awareness_snapshot)
+            return self._handle_inspect_system(request, awareness_snapshot, policy_evaluation)
         if command_type == OperatorCommandType.INSPECT_SESSION:
-            return self._handle_inspect_session(request, awareness_snapshot)
+            return self._handle_inspect_session(request, awareness_snapshot, policy_evaluation)
         if command_type == OperatorCommandType.RUN_SINGLE_CYCLE:
-            return self._handle_run_loop(request, awareness_snapshot, max_cycles=1, action_effect=OperatorActionEffect.LOOP_CYCLE_REQUESTED)
+            return self._handle_run_loop(
+                request,
+                awareness_snapshot,
+                policy_evaluation,
+                max_cycles=1,
+                action_effect=OperatorActionEffect.LOOP_CYCLE_REQUESTED,
+            )
         if command_type == OperatorCommandType.RUN_BOUNDED_LOOP:
             return self._handle_run_loop(
                 request,
                 awareness_snapshot,
+                policy_evaluation,
                 max_cycles=request.max_cycles,
                 action_effect=OperatorActionEffect.BOUNDED_LOOP_REQUESTED,
             )
         if command_type == OperatorCommandType.APPROVE_GATE:
-            return self._handle_approve_gate(request, awareness_snapshot)
+            return self._handle_approve_gate(request, awareness_snapshot, policy_evaluation)
         if command_type == OperatorCommandType.REPRIORITIZE_SESSION:
-            return self._handle_reprioritize_session(request, awareness_snapshot)
-        return self._handle_select_session(request, awareness_snapshot)
+            return self._handle_reprioritize_session(request, awareness_snapshot, policy_evaluation)
+        return self._handle_select_session(request, awareness_snapshot, policy_evaluation)
 
     def _handle_inspect_system(
         self,
         request: OperatorCommandRequest,
         awareness_snapshot: AwarenessResult,
+        policy_evaluation: PolicyEvaluationResult,
     ) -> OperatorCommandResult:
         decision = OperatorCommandDecision(
             command_id=request.command_id,
@@ -140,6 +166,7 @@ class OperatorControl:
             decision=decision,
             awareness_snapshot_used=awareness_snapshot,
             resulting_awareness=awareness_snapshot,
+            policy_evaluation=policy_evaluation,
             updated_session_registry=request.session_registry,
             blocker_summaries=awareness_snapshot.blocker_summaries,
             executed_at=self._timestamp(),
@@ -149,6 +176,7 @@ class OperatorControl:
         self,
         request: OperatorCommandRequest,
         awareness_snapshot: AwarenessResult,
+        policy_evaluation: PolicyEvaluationResult,
     ) -> OperatorCommandResult:
         summary = self._find_session_summary(awareness_snapshot, request.target_session_id)
         blocker_summaries = tuple(
@@ -168,6 +196,7 @@ class OperatorControl:
             decision=decision,
             awareness_snapshot_used=awareness_snapshot,
             resulting_awareness=awareness_snapshot,
+            policy_evaluation=policy_evaluation,
             updated_session_registry=request.session_registry,
             session_summary=summary,
             blocker_summaries=blocker_summaries,
@@ -179,6 +208,7 @@ class OperatorControl:
         self,
         request: OperatorCommandRequest,
         awareness_snapshot: AwarenessResult,
+        policy_evaluation: PolicyEvaluationResult,
         *,
         max_cycles: int,
         action_effect: OperatorActionEffect,
@@ -192,6 +222,12 @@ class OperatorControl:
                 max_cycles=max_cycles,
                 session_storage_directory=request.session_storage_directory,
                 session_file_paths=request.session_file_paths,
+                policy_action_type=(
+                    AutonomyActionType.RUN_SINGLE_CYCLE
+                    if max_cycles == 1
+                    else AutonomyActionType.RUN_BOUNDED_LOOP
+                ),
+                operator_command_present=True,
                 notes=request.notes,
             )
         )
@@ -222,6 +258,7 @@ class OperatorControl:
             awareness_snapshot_used=awareness_snapshot,
             resulting_awareness=resulting_awareness,
             loop_result=loop_result,
+            policy_evaluation=policy_evaluation,
             updated_session_registry=updated_registry,
             blocker_summaries=resulting_awareness.blocker_summaries,
             resulting_loop_status=loop_result.status,
@@ -232,6 +269,7 @@ class OperatorControl:
         self,
         request: OperatorCommandRequest,
         awareness_snapshot: AwarenessResult,
+        policy_evaluation: PolicyEvaluationResult,
     ) -> OperatorCommandResult:
         gate_type = self._normalize_gate_type(request.gate_type)
         current_record = self._find_session_record(request.session_registry, request.target_session_id)
@@ -288,6 +326,7 @@ class OperatorControl:
             decision=decision,
             awareness_snapshot_used=awareness_snapshot,
             resulting_awareness=resulting_awareness,
+            policy_evaluation=policy_evaluation,
             updated_session_registry=updated_registry,
             session_summary=updated_summary,
             blocker_summaries=tuple(
@@ -301,6 +340,7 @@ class OperatorControl:
         self,
         request: OperatorCommandRequest,
         awareness_snapshot: AwarenessResult,
+        policy_evaluation: PolicyEvaluationResult,
     ) -> OperatorCommandResult:
         new_priority = self._normalize_priority(request.new_priority)
         current_record = self._find_session_record(request.session_registry, request.target_session_id)
@@ -329,6 +369,7 @@ class OperatorControl:
                 decision=decision,
                 awareness_snapshot_used=awareness_snapshot,
                 resulting_awareness=awareness_snapshot,
+                policy_evaluation=policy_evaluation,
                 updated_session_registry=request.session_registry,
                 session_summary=summary,
                 resulting_session_status=summary.session_status if summary else None,
@@ -361,6 +402,7 @@ class OperatorControl:
             decision=decision,
             awareness_snapshot_used=awareness_snapshot,
             resulting_awareness=resulting_awareness,
+            policy_evaluation=policy_evaluation,
             updated_session_registry=updated_registry,
             session_summary=updated_summary,
             resulting_session_status=updated_summary.session_status if updated_summary else None,
@@ -371,6 +413,7 @@ class OperatorControl:
         self,
         request: OperatorCommandRequest,
         awareness_snapshot: AwarenessResult,
+        policy_evaluation: PolicyEvaluationResult,
     ) -> OperatorCommandResult:
         summary = self._find_session_summary(awareness_snapshot, request.target_session_id)
         decision = OperatorCommandDecision(
@@ -390,11 +433,89 @@ class OperatorControl:
             decision=decision,
             awareness_snapshot_used=awareness_snapshot,
             resulting_awareness=awareness_snapshot,
+            policy_evaluation=policy_evaluation,
             updated_session_registry=request.session_registry,
             session_summary=summary,
             resulting_session_status=summary.session_status if summary else None,
             executed_at=self._timestamp(),
         )
+
+    def _evaluate_policy(
+        self,
+        request: OperatorCommandRequest,
+        command_type: OperatorCommandType,
+        awareness_snapshot: AwarenessResult,
+    ) -> PolicyEvaluationResult:
+        return self._autonomy_policy.evaluate(
+            AutonomyPolicyContext(
+                action_type=self._policy_action_type(command_type),
+                awareness_snapshot=awareness_snapshot,
+                latest_loop_result=request.latest_loop_result,
+                operator_command_present=True,
+                target_session_id=request.target_session_id,
+                requested_max_cycles=(
+                    request.max_cycles
+                    if command_type in {OperatorCommandType.RUN_SINGLE_CYCLE, OperatorCommandType.RUN_BOUNDED_LOOP}
+                    else None
+                ),
+                notes=request.notes,
+            )
+        )
+
+    @staticmethod
+    def _policy_action_type(command_type: OperatorCommandType) -> AutonomyActionType:
+        mapping = {
+            OperatorCommandType.INSPECT_SYSTEM: AutonomyActionType.INSPECT_ONLY,
+            OperatorCommandType.INSPECT_SESSION: AutonomyActionType.INSPECT_ONLY,
+            OperatorCommandType.RUN_SINGLE_CYCLE: AutonomyActionType.RUN_SINGLE_CYCLE,
+            OperatorCommandType.RUN_BOUNDED_LOOP: AutonomyActionType.RUN_BOUNDED_LOOP,
+            OperatorCommandType.APPROVE_GATE: AutonomyActionType.APPROVE_GATE,
+            OperatorCommandType.REPRIORITIZE_SESSION: AutonomyActionType.REPRIORITIZE_SESSION,
+            OperatorCommandType.SELECT_SESSION: AutonomyActionType.SELECT_SESSION,
+        }
+        return mapping[command_type]
+
+    def _policy_rejected_result(
+        self,
+        *,
+        request: OperatorCommandRequest,
+        awareness_snapshot: AwarenessResult,
+        command_type: OperatorCommandType,
+        target_type: OperatorTargetType,
+        policy_evaluation: PolicyEvaluationResult,
+    ) -> OperatorCommandResult:
+        rejection_reason = self._policy_rejection_reason(policy_evaluation)
+        command_status = self._policy_command_status(policy_evaluation.decision.decision_status)
+        effect_summary = policy_evaluation.decision.policy_notes[0] if policy_evaluation.decision.policy_notes else "Policy blocked the requested command."
+        return self._rejected_result(
+            request=request,
+            awareness_snapshot=awareness_snapshot,
+            policy_evaluation=policy_evaluation,
+            command_type=command_type,
+            target_type=target_type,
+            rejection_reason=rejection_reason,
+            effect_summary=effect_summary,
+            command_status=command_status,
+        )
+
+    @staticmethod
+    def _policy_command_status(policy_status: AutonomyPolicyStatus) -> OperatorCommandStatus:
+        if policy_status == AutonomyPolicyStatus.INVALID_REQUEST:
+            return OperatorCommandStatus.INVALID_REQUEST
+        if policy_status == AutonomyPolicyStatus.UNSUPPORTED:
+            return OperatorCommandStatus.REJECTED
+        return OperatorCommandStatus.BLOCKED
+
+    @staticmethod
+    def _policy_rejection_reason(policy_evaluation: PolicyEvaluationResult) -> OperatorRejectionReason:
+        reasons = set(policy_evaluation.decision.reasons)
+        if AutonomyPolicyReason.SESSION_NOT_ACTIONABLE in reasons:
+            return OperatorRejectionReason.SESSION_NOT_ACTIONABLE
+        if policy_evaluation.decision.decision_status == AutonomyPolicyStatus.UNSUPPORTED:
+            return OperatorRejectionReason.UNSUPPORTED_IN_V1
+        if policy_evaluation.decision.decision_status == AutonomyPolicyStatus.INVALID_REQUEST:
+            return OperatorRejectionReason.INVALID_TARGET
+        return OperatorRejectionReason.COMMAND_CONFLICTS_WITH_SYSTEM_STATE
 
     def _validate_command(
         self,
@@ -571,15 +692,18 @@ class OperatorControl:
         rejection_reason: OperatorRejectionReason,
         effect_summary: str,
         awareness_snapshot: AwarenessResult | None = None,
+        policy_evaluation: PolicyEvaluationResult | None = None,
         command_type: OperatorCommandType | str | None = None,
         target_type: OperatorTargetType | str | None = None,
+        command_status: OperatorCommandStatus | None = None,
     ) -> OperatorCommandResult:
         decision = OperatorCommandDecision(
             command_id=request.command_id,
             command_type=command_type or request.command_type,
             target_type=target_type or request.target_type,
             target_session_id=request.target_session_id,
-            command_status=(
+            command_status=command_status
+            or (
                 OperatorCommandStatus.INVALID_REQUEST
                 if rejection_reason in {OperatorRejectionReason.UNKNOWN_COMMAND, OperatorRejectionReason.INVALID_TARGET}
                 else OperatorCommandStatus.REJECTED
@@ -593,6 +717,7 @@ class OperatorControl:
             decision=decision,
             awareness_snapshot_used=awareness_snapshot,
             resulting_awareness=awareness_snapshot,
+            policy_evaluation=policy_evaluation,
             updated_session_registry=request.session_registry,
             executed_at=self._timestamp(),
         )

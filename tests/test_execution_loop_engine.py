@@ -7,6 +7,8 @@ from aie.core.models import (
     ArtifactRequirement,
     ArtifactStatus,
     ArtifactType,
+    AutonomyPolicyReason,
+    AutonomyPolicyStatus,
     ConstraintReport,
     ConstraintRouterHandoff,
     ExecutionPlan,
@@ -318,6 +320,8 @@ def test_execution_loop_engine_runs_single_cycle_for_ready_session(tmp_path: Pat
     assert cycle.lifecycle_state_before == LifecycleState.READY_TO_EXECUTE
     assert cycle.lifecycle_state_after == LifecycleState.COMPLETED
     assert cycle.persisted_after_cycle is True
+    assert cycle.policy_evaluation is not None
+    assert cycle.policy_evaluation.decision.decision_status == AutonomyPolicyStatus.ALLOWED
     assert reloaded.status.value == "loaded"
     assert reloaded.session is not None
     assert reloaded.session.task_execution_result.status == ExecutorStatus.COMPLETED
@@ -364,6 +368,9 @@ def test_execution_loop_engine_reports_waiting_human_gate() -> None:
     assert cycle.selected_action == LoopCycleAction.WAIT
     assert cycle.reason == LoopCycleReason.WAITING_ON_HUMAN_GATE
     assert cycle.termination_reason == LoopTerminationReason.HUMAN_GATE_REQUIRED
+    assert cycle.policy_evaluation is not None
+    assert cycle.policy_evaluation.decision.decision_status == AutonomyPolicyStatus.REQUIRES_OPERATOR_APPROVAL
+    assert AutonomyPolicyReason.WAITING_ON_HUMAN_GATE in cycle.policy_evaluation.decision.reasons
 
 
 def test_execution_loop_engine_reports_dependency_blocking() -> None:

@@ -2,11 +2,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from .autonomy_policy import AutonomyPolicy
 from .models import (
     ArtifactAwareMultiTaskResult,
     ArtifactAwareSessionRecord,
     ArtifactRequirement,
     ArtifactRequirementStatus,
+    AutonomyPolicyContext,
+    AutonomyPolicyStatus,
+    AwarenessRequest,
     DependencyStatus,
     LifecycleState,
     LoopCycleAction,
@@ -28,6 +32,7 @@ from .models import (
 )
 from .multi_task_orchestrator import MultiTaskOrchestrator
 from .state_persistence import StatePersistence
+from .system_awareness import SystemAwareness
 
 
 class ExecutionLoopEngine:
@@ -37,9 +42,13 @@ class ExecutionLoopEngine:
         self,
         multi_task_orchestrator: MultiTaskOrchestrator | None = None,
         state_persistence: StatePersistence | None = None,
+        awareness: SystemAwareness | None = None,
+        autonomy_policy: AutonomyPolicy | None = None,
     ) -> None:
         self._multi_task_orchestrator = multi_task_orchestrator or MultiTaskOrchestrator()
         self._state_persistence = state_persistence or StatePersistence()
+        self._awareness = awareness or SystemAwareness(self._multi_task_orchestrator)
+        self._autonomy_policy = autonomy_policy or AutonomyPolicy()
 
     def run_cycle(self, request: LoopEngineRequest) -> LoopCycleResult:
         cycle, _, _, _ = self._run_single_cycle(
@@ -70,6 +79,7 @@ class ExecutionLoopEngine:
                 actions_run_count=0,
                 max_cycles=request.max_cycles,
                 notes=request.notes + ("max_cycles must be at least 1.",),
+                last_policy_decision=None,
             )
 
         session_registry = request.session_registry
@@ -106,6 +116,7 @@ class ExecutionLoopEngine:
                     actions_run_count=actions_run_count,
                     max_cycles=request.max_cycles,
                     notes=request.notes + cycle.cycle_notes,
+                    last_policy_decision=cycle.policy_evaluation,
                 )
 
         return LoopEngineResult(
@@ -118,6 +129,7 @@ class ExecutionLoopEngine:
             actions_run_count=actions_run_count,
             max_cycles=request.max_cycles,
             notes=request.notes + ("Loop stopped after reaching the configured max cycle count.",),
+            last_policy_decision=cycles[-1].policy_evaluation if cycles else None,
         )
 
     def _run_single_cycle(
@@ -141,6 +153,32 @@ class ExecutionLoopEngine:
             artifact_registry=artifact_registry,
             artifact_requirements=artifact_requirements,
         )
+        awareness_snapshot = self._awareness.build_awareness_result(
+            AwarenessRequest(
+                session_registry=session_registry,
+                dependency_graph=dependency_graph,
+                artifact_registry=artifact_registry,
+                artifact_requirements=artifact_requirements,
+                notes=request.notes,
+            )
+        )
+        policy_evaluation = self._autonomy_policy.evaluate(
+            AutonomyPolicyContext(
+                action_type=request.policy_action_type,
+                awareness_snapshot=awareness_snapshot,
+                operator_command_present=request.operator_command_present,
+                current_cycle_index=cycle_index - 1,
+                requested_max_cycles=request.max_cycles,
+                notes=request.notes,
+            )
+        )
+        if policy_evaluation.decision.decision_status != AutonomyPolicyStatus.ALLOWED:
+            cycle = self._policy_denied_cycle(
+                cycle_index=cycle_index,
+                inspect_result=inspect_result,
+                policy_evaluation=policy_evaluation,
+            )
+            return cycle, inspect_result.session_registry, inspect_result.dependency_graph, inspect_result.artifact_registry
         selected_session, _, _ = self._multi_task_orchestrator.select_next_session(
             session_registry,
             dependency_graph=dependency_graph,
@@ -161,6 +199,7 @@ class ExecutionLoopEngine:
                 termination_reason=termination_reason,
                 actions_run_count=0,
                 multi_task_result=inspect_result,
+                policy_evaluation=policy_evaluation,
             )
             return cycle, inspect_result.session_registry, inspect_result.dependency_graph, inspect_result.artifact_registry
 
@@ -202,6 +241,7 @@ class ExecutionLoopEngine:
                 termination_reason=LoopTerminationReason.PERSISTENCE_FAILED,
                 actions_run_count=1,
                 multi_task_result=action_result,
+                policy_evaluation=policy_evaluation,
             )
             return cycle, action_result.session_registry, action_result.dependency_graph, action_result.artifact_registry
 
@@ -220,8 +260,46 @@ class ExecutionLoopEngine:
             termination_reason=termination_reason,
             actions_run_count=1,
             multi_task_result=action_result,
+            policy_evaluation=policy_evaluation,
         )
         return cycle, action_result.session_registry, action_result.dependency_graph, action_result.artifact_registry
+
+    def _policy_denied_cycle(
+        self,
+        *,
+        cycle_index: int,
+        inspect_result: ArtifactAwareMultiTaskResult,
+        policy_evaluation,
+    ) -> LoopCycleResult:
+        if policy_evaluation.decision.decision_status == AutonomyPolicyStatus.INVALID_REQUEST:
+            return LoopCycleResult(
+                cycle_index=cycle_index,
+                status=LoopEngineStatus.INVALID_REQUEST,
+                selected_action=LoopCycleAction.REJECT,
+                reason=LoopCycleReason.INVALID_STATE,
+                persisted_after_cycle=False,
+                persistence_results=(),
+                cycle_notes=policy_evaluation.decision.policy_notes,
+                termination_reason=LoopTerminationReason.INVALID_STATE,
+                actions_run_count=0,
+                multi_task_result=inspect_result,
+                policy_evaluation=policy_evaluation,
+            )
+
+        status, reason, termination_reason, action, notes = self._classify_registry_state(inspect_result.session_registry)
+        return LoopCycleResult(
+            cycle_index=cycle_index,
+            status=status,
+            selected_action=action,
+            reason=reason,
+            persisted_after_cycle=False,
+            persistence_results=(),
+            cycle_notes=tuple(dict.fromkeys(policy_evaluation.decision.policy_notes + notes)),
+            termination_reason=termination_reason,
+            actions_run_count=0,
+            multi_task_result=inspect_result,
+            policy_evaluation=policy_evaluation,
+        )
 
     def _inspect_registry(
         self,

@@ -8,6 +8,7 @@ from aie.core.models import (
     ArtifactStatus,
     ArtifactType,
     AwarenessStatus,
+    AutonomyPolicyStatus,
     ConstraintReport,
     ConstraintRouterHandoff,
     ExecutionPlan,
@@ -221,6 +222,8 @@ def test_operator_control_inspect_system_is_read_only() -> None:
     assert result.decision.command_status == OperatorCommandStatus.EXECUTED
     assert result.awareness_snapshot_used is not None
     assert result.resulting_awareness is not None
+    assert result.policy_evaluation is not None
+    assert result.policy_evaluation.decision.decision_status == AutonomyPolicyStatus.ALLOWED
     assert result.resulting_awareness.status == AwarenessStatus.HEALTHY
     assert ready.to_dict() == original
 
@@ -388,6 +391,32 @@ def test_operator_control_select_session_validates_actionable_session_without_mu
     assert result.session_summary is not None
     assert result.session_summary.actionable is True
     assert ready.to_dict() == original
+
+
+def test_operator_control_blocks_policy_disallowed_non_actionable_selection() -> None:
+    orchestrator = MultiTaskOrchestrator()
+    control = OperatorControl(multi_task_orchestrator=orchestrator)
+    waiting = _waiting_review_record(
+        orchestrator,
+        "session-waiting",
+        MultiTaskPriority.NORMAL,
+        last_updated="2026-04-12T10:05:00+00:00",
+    )
+
+    result = control.handle_command(
+        OperatorCommandRequest(
+            command_id="cmd-select-waiting",
+            command_type=OperatorCommandType.SELECT_SESSION,
+            target_type=OperatorTargetType.SESSION,
+            target_session_id="session-waiting",
+            session_registry=(waiting,),
+        )
+    )
+
+    assert result.decision.command_status == OperatorCommandStatus.BLOCKED
+    assert result.decision.rejection_reason == OperatorRejectionReason.SESSION_NOT_ACTIONABLE
+    assert result.policy_evaluation is not None
+    assert result.policy_evaluation.decision.decision_status == AutonomyPolicyStatus.BLOCKED
 
 
 def test_operator_control_rejects_unknown_command() -> None:

@@ -1174,6 +1174,110 @@ class LoopTerminationReason(str, Enum):
     PERSISTENCE_FAILED = "persistence_failed"
 
 
+class AutonomyActionType(str, Enum):
+    RUN_SINGLE_CYCLE = "run_single_cycle"
+    RUN_BOUNDED_LOOP = "run_bounded_loop"
+    RESUME_SESSION = "resume_session"
+    APPROVE_GATE = "approve_gate"
+    REPRIORITIZE_SESSION = "reprioritize_session"
+    INSPECT_ONLY = "inspect_only"
+    SELECT_SESSION = "select_session"
+    SELF_INITIATED_LOOP_ADVANCE = "self_initiated_loop_advance"
+
+
+class AutonomyPolicyStatus(str, Enum):
+    ALLOWED = "allowed"
+    BLOCKED = "blocked"
+    REQUIRES_OPERATOR_APPROVAL = "requires_operator_approval"
+    UNSUPPORTED = "unsupported"
+    INVALID_REQUEST = "invalid_request"
+
+
+class AutonomyPolicyReason(str, Enum):
+    OPERATOR_COMMAND_PRESENT = "operator_command_present"
+    SELF_INITIATED_ACTION_ALLOWED = "self_initiated_action_allowed"
+    SELF_INITIATED_ACTION_BLOCKED = "self_initiated_action_blocked"
+    WAITING_ON_HUMAN_GATE = "waiting_on_human_gate"
+    BLOCKED_BY_DEPENDENCY = "blocked_by_dependency"
+    BLOCKED_BY_ARTIFACT = "blocked_by_artifact"
+    SESSION_NOT_ACTIONABLE = "session_not_actionable"
+    POLICY_DISALLOWS_ACTION_TYPE = "policy_disallows_action_type"
+    LOOP_BUDGET_EXCEEDED = "loop_budget_exceeded"
+    MISSING_REQUIRED_APPROVAL = "missing_required_approval"
+    UNSAFE_STATE = "unsafe_state"
+    UNSUPPORTED_IN_V1 = "unsupported_in_v1"
+
+
+class PolicyGateRequirement(str, Enum):
+    NONE = "none"
+    OPERATOR_COMMAND = "operator_command"
+    CONFIRMATION = "confirmation"
+    REVIEW = "review"
+    PLAYTEST = "playtest"
+
+
+@dataclass(frozen=True)
+class AutonomyPolicyContext:
+    action_type: AutonomyActionType | str
+    awareness_snapshot: "AwarenessResult" | None = None
+    latest_loop_result: "LoopEngineResult" | None = None
+    operator_command_present: bool = False
+    target_session_id: str | None = None
+    current_cycle_index: int = 0
+    requested_max_cycles: int | None = None
+    notes: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "action_type": self.action_type.value if isinstance(self.action_type, Enum) else self.action_type,
+            "awareness_snapshot": self.awareness_snapshot.to_dict() if self.awareness_snapshot else None,
+            "latest_loop_result": self.latest_loop_result.to_dict() if self.latest_loop_result else None,
+            "operator_command_present": self.operator_command_present,
+            "target_session_id": self.target_session_id,
+            "current_cycle_index": self.current_cycle_index,
+            "requested_max_cycles": self.requested_max_cycles,
+            "notes": list(self.notes),
+        }
+
+
+@dataclass(frozen=True)
+class AutonomyPolicyDecision:
+    action_type: AutonomyActionType | str
+    target_session_id: str | None
+    decision_status: AutonomyPolicyStatus
+    reasons: tuple[AutonomyPolicyReason, ...] = ()
+    operator_approval_required: bool = False
+    gate_requirement: PolicyGateRequirement = PolicyGateRequirement.NONE
+    policy_notes: tuple[str, ...] = ()
+    evaluation_time: str | None = None
+    context_summary: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "action_type": self.action_type.value if isinstance(self.action_type, Enum) else self.action_type,
+            "target_session_id": self.target_session_id,
+            "decision_status": self.decision_status.value,
+            "reasons": [reason.value for reason in self.reasons],
+            "operator_approval_required": self.operator_approval_required,
+            "gate_requirement": self.gate_requirement.value,
+            "policy_notes": list(self.policy_notes),
+            "evaluation_time": self.evaluation_time,
+            "context_summary": self.context_summary,
+        }
+
+
+@dataclass(frozen=True)
+class PolicyEvaluationResult:
+    context: AutonomyPolicyContext
+    decision: AutonomyPolicyDecision
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "context": self.context.to_dict(),
+            "decision": self.decision.to_dict(),
+        }
+
+
 @dataclass(frozen=True)
 class LoopEngineRequest:
     session_registry: tuple[MultiTaskSessionRecord, ...] = ()
@@ -1183,6 +1287,8 @@ class LoopEngineRequest:
     max_cycles: int = 1
     session_storage_directory: str | None = None
     session_file_paths: tuple[tuple[str, str], ...] = ()
+    policy_action_type: AutonomyActionType | str = AutonomyActionType.SELF_INITIATED_LOOP_ADVANCE
+    operator_command_present: bool = False
     notes: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
@@ -1197,6 +1303,8 @@ class LoopEngineRequest:
                 {"session_id": session_id, "path": path}
                 for session_id, path in self.session_file_paths
             ],
+            "policy_action_type": self.policy_action_type.value if isinstance(self.policy_action_type, Enum) else self.policy_action_type,
+            "operator_command_present": self.operator_command_present,
             "notes": list(self.notes),
         }
 
@@ -1216,6 +1324,7 @@ class LoopCycleResult:
     termination_reason: LoopTerminationReason | None = None
     actions_run_count: int = 0
     multi_task_result: ArtifactAwareMultiTaskResult | None = None
+    policy_evaluation: PolicyEvaluationResult | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -1232,6 +1341,7 @@ class LoopCycleResult:
             "termination_reason": self.termination_reason.value if self.termination_reason else None,
             "actions_run_count": self.actions_run_count,
             "multi_task_result": self.multi_task_result.to_dict() if self.multi_task_result else None,
+            "policy_evaluation": self.policy_evaluation.to_dict() if self.policy_evaluation else None,
         }
 
 
@@ -1246,6 +1356,7 @@ class LoopEngineResult:
     actions_run_count: int = 0
     max_cycles: int = 1
     notes: tuple[str, ...] = ()
+    last_policy_decision: PolicyEvaluationResult | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -1258,6 +1369,7 @@ class LoopEngineResult:
             "actions_run_count": self.actions_run_count,
             "max_cycles": self.max_cycles,
             "notes": list(self.notes),
+            "last_policy_decision": self.last_policy_decision.to_dict() if self.last_policy_decision else None,
         }
 
 
@@ -1461,6 +1573,7 @@ class AwarenessResult:
     recent_activity: ActivitySummary | None = None
     next_action_candidates: tuple[NextActionCandidate, ...] = ()
     system_notes: tuple[str, ...] = ()
+    last_policy_decision: PolicyEvaluationResult | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -1472,6 +1585,7 @@ class AwarenessResult:
             "recent_activity": self.recent_activity.to_dict() if self.recent_activity else None,
             "next_action_candidates": [candidate.to_dict() for candidate in self.next_action_candidates],
             "system_notes": list(self.system_notes),
+            "last_policy_decision": self.last_policy_decision.to_dict() if self.last_policy_decision else None,
         }
 
 
@@ -1610,6 +1724,7 @@ class OperatorCommandResult:
     awareness_snapshot_used: AwarenessResult | None = None
     resulting_awareness: AwarenessResult | None = None
     loop_result: LoopEngineResult | None = None
+    policy_evaluation: PolicyEvaluationResult | None = None
     updated_session_registry: tuple[MultiTaskSessionRecord, ...] = ()
     session_summary: SessionHealthSummary | None = None
     blocker_summaries: tuple[BlockerSummary, ...] = ()
@@ -1623,6 +1738,7 @@ class OperatorCommandResult:
             "awareness_snapshot_used": self.awareness_snapshot_used.to_dict() if self.awareness_snapshot_used else None,
             "resulting_awareness": self.resulting_awareness.to_dict() if self.resulting_awareness else None,
             "loop_result": self.loop_result.to_dict() if self.loop_result else None,
+            "policy_evaluation": self.policy_evaluation.to_dict() if self.policy_evaluation else None,
             "updated_session_registry": [record.to_dict() for record in self.updated_session_registry],
             "session_summary": self.session_summary.to_dict() if self.session_summary else None,
             "blocker_summaries": [summary.to_dict() for summary in self.blocker_summaries],
