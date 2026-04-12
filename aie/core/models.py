@@ -1259,3 +1259,217 @@ class LoopEngineResult:
             "max_cycles": self.max_cycles,
             "notes": list(self.notes),
         }
+
+
+class AwarenessStatus(str, Enum):
+    HEALTHY = "healthy"
+    WAITING = "waiting"
+    BLOCKED = "blocked"
+    ACTIVE = "active"
+    COMPLETED = "completed"
+    MIXED = "mixed"
+    INVALID_STATE = "invalid_state"
+
+
+class SystemHealthState(str, Enum):
+    ACTIONABLE = "actionable"
+    PARTIALLY_BLOCKED = "partially_blocked"
+    FULLY_BLOCKED = "fully_blocked"
+    WAITING_ON_HUMANS = "waiting_on_humans"
+    COMPLETED = "completed"
+    DEGRADED = "degraded"
+
+
+class AwarenessBlockerKind(str, Enum):
+    WAITING_ON_CONFIRMATION = "waiting_on_confirmation"
+    WAITING_ON_REVIEW = "waiting_on_review"
+    WAITING_ON_PLAYTEST = "waiting_on_playtest"
+    BLOCKED_BY_EXECUTION_STATE = "blocked_by_execution_state"
+    BLOCKED_BY_DEPENDENCY = "blocked_by_dependency"
+    BLOCKED_BY_ARTIFACT = "blocked_by_artifact"
+    FAILED_SESSION = "failed_session"
+    INVALID_DEPENDENCY_CONFIGURATION = "invalid_dependency_configuration"
+    INVALID_ARTIFACT_REQUIREMENT = "invalid_artifact_requirement"
+    INVALID_SESSION_STATE = "invalid_session_state"
+
+
+@dataclass(frozen=True)
+class SessionHealthSummary:
+    session_id: str
+    priority: MultiTaskPriority
+    lifecycle_state: LifecycleState
+    session_status: MultiTaskSessionStatus
+    dependency_status: DependencyStatus
+    requirement_status: ArtifactRequirementStatus
+    effective_status: AwarenessStatus
+    actionable: bool = False
+    required_human_action: str | None = None
+    last_executor_status: ExecutorStatus | None = None
+    last_orchestration_status: OrchestrationStatus | None = None
+    last_orchestration_action: OrchestrationAction | None = None
+    notes: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "session_id": self.session_id,
+            "priority": self.priority.value,
+            "lifecycle_state": self.lifecycle_state.value,
+            "session_status": self.session_status.value,
+            "dependency_status": self.dependency_status.value,
+            "requirement_status": self.requirement_status.value,
+            "effective_status": self.effective_status.value,
+            "actionable": self.actionable,
+            "required_human_action": self.required_human_action,
+            "last_executor_status": self.last_executor_status.value if self.last_executor_status else None,
+            "last_orchestration_status": self.last_orchestration_status.value if self.last_orchestration_status else None,
+            "last_orchestration_action": self.last_orchestration_action.value if self.last_orchestration_action else None,
+            "notes": list(self.notes),
+        }
+
+
+@dataclass(frozen=True)
+class BlockerSummary:
+    blocker_kind: AwarenessBlockerKind
+    message: str
+    session_id: str | None = None
+    related_session_ids: tuple[str, ...] = ()
+    related_artifact_ids: tuple[str, ...] = ()
+    notes: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "blocker_kind": self.blocker_kind.value,
+            "message": self.message,
+            "session_id": self.session_id,
+            "related_session_ids": list(self.related_session_ids),
+            "related_artifact_ids": list(self.related_artifact_ids),
+            "notes": list(self.notes),
+        }
+
+
+@dataclass(frozen=True)
+class ActivitySummary:
+    cycle_index: int | None = None
+    selected_session_id: str | None = None
+    selected_action: LoopCycleAction | None = None
+    latest_cycle_status: LoopEngineStatus | None = None
+    latest_cycle_reason: LoopCycleReason | None = None
+    latest_termination_reason: LoopTerminationReason | None = None
+    persisted_after_cycle: bool | None = None
+    persistence_statuses: tuple[PersistenceStatus, ...] = ()
+    actions_run_count: int = 0
+    activity_notes: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "cycle_index": self.cycle_index,
+            "selected_session_id": self.selected_session_id,
+            "selected_action": self.selected_action.value if self.selected_action else None,
+            "latest_cycle_status": self.latest_cycle_status.value if self.latest_cycle_status else None,
+            "latest_cycle_reason": self.latest_cycle_reason.value if self.latest_cycle_reason else None,
+            "latest_termination_reason": self.latest_termination_reason.value if self.latest_termination_reason else None,
+            "persisted_after_cycle": self.persisted_after_cycle,
+            "persistence_statuses": [status.value for status in self.persistence_statuses],
+            "actions_run_count": self.actions_run_count,
+            "activity_notes": list(self.activity_notes),
+        }
+
+
+@dataclass(frozen=True)
+class NextActionCandidate:
+    session_id: str
+    priority: MultiTaskPriority
+    session_status: MultiTaskSessionStatus
+    actionable: bool
+    selected_next: bool = False
+    selection_reason: SessionSelectionReason | None = None
+    ineligible_reason: str | None = None
+    notes: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "session_id": self.session_id,
+            "priority": self.priority.value,
+            "session_status": self.session_status.value,
+            "actionable": self.actionable,
+            "selected_next": self.selected_next,
+            "selection_reason": self.selection_reason.value if self.selection_reason else None,
+            "ineligible_reason": self.ineligible_reason,
+            "notes": list(self.notes),
+        }
+
+
+@dataclass(frozen=True)
+class SystemSnapshot:
+    generated_at: str
+    total_sessions: int
+    ready_session_ids: tuple[str, ...] = ()
+    resumable_session_ids: tuple[str, ...] = ()
+    active_session_ids: tuple[str, ...] = ()
+    waiting_session_ids: tuple[str, ...] = ()
+    blocked_session_ids: tuple[str, ...] = ()
+    completed_session_ids: tuple[str, ...] = ()
+    failed_session_ids: tuple[str, ...] = ()
+    invalid_session_ids: tuple[str, ...] = ()
+    latest_cycle_status: LoopEngineStatus | None = None
+    latest_termination_reason: LoopTerminationReason | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "generated_at": self.generated_at,
+            "total_sessions": self.total_sessions,
+            "ready_session_ids": list(self.ready_session_ids),
+            "resumable_session_ids": list(self.resumable_session_ids),
+            "active_session_ids": list(self.active_session_ids),
+            "waiting_session_ids": list(self.waiting_session_ids),
+            "blocked_session_ids": list(self.blocked_session_ids),
+            "completed_session_ids": list(self.completed_session_ids),
+            "failed_session_ids": list(self.failed_session_ids),
+            "invalid_session_ids": list(self.invalid_session_ids),
+            "latest_cycle_status": self.latest_cycle_status.value if self.latest_cycle_status else None,
+            "latest_termination_reason": self.latest_termination_reason.value if self.latest_termination_reason else None,
+        }
+
+
+@dataclass(frozen=True)
+class AwarenessRequest:
+    session_registry: tuple[MultiTaskSessionRecord, ...] = ()
+    dependency_graph: tuple[SessionDependency, ...] = ()
+    artifact_registry: tuple[SessionArtifact, ...] = ()
+    artifact_requirements: tuple[ArtifactRequirement, ...] = ()
+    latest_loop_result: LoopEngineResult | None = None
+    notes: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "session_registry": [record.to_dict() for record in self.session_registry],
+            "dependency_graph": [dependency.to_dict() for dependency in self.dependency_graph],
+            "artifact_registry": [artifact.to_dict() for artifact in self.artifact_registry],
+            "artifact_requirements": [artifact.to_dict() for artifact in self.artifact_requirements],
+            "latest_loop_result": self.latest_loop_result.to_dict() if self.latest_loop_result else None,
+            "notes": list(self.notes),
+        }
+
+
+@dataclass(frozen=True)
+class AwarenessResult:
+    status: AwarenessStatus
+    system_health_state: SystemHealthState
+    snapshot: SystemSnapshot
+    session_summaries: tuple[SessionHealthSummary, ...] = ()
+    blocker_summaries: tuple[BlockerSummary, ...] = ()
+    recent_activity: ActivitySummary | None = None
+    next_action_candidates: tuple[NextActionCandidate, ...] = ()
+    system_notes: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "status": self.status.value,
+            "system_health_state": self.system_health_state.value,
+            "snapshot": self.snapshot.to_dict(),
+            "session_summaries": [summary.to_dict() for summary in self.session_summaries],
+            "blocker_summaries": [summary.to_dict() for summary in self.blocker_summaries],
+            "recent_activity": self.recent_activity.to_dict() if self.recent_activity else None,
+            "next_action_candidates": [candidate.to_dict() for candidate in self.next_action_candidates],
+            "system_notes": list(self.system_notes),
+        }
