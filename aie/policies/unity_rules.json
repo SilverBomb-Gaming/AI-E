@@ -1,0 +1,67 @@
+{
+  "engine_aliases": {
+    "unity": ["unity", "unity3d", "unity engine"]
+  },
+  "unsupported_engines": {
+    "unreal": ["unreal", "unreal engine", "ue5", "ue4"],
+    "godot": ["godot", "godot engine", "godot 4"]
+  },
+  "bounded_task_categories": [
+    "controller_scaffold",
+    "inventory_scaffold",
+    "camera_scaffold",
+    "ui_scaffold",
+    "movement_scaffold"
+  ],
+  "scaffold_first_assumptions": [
+    "Prefer script-level scaffolds over scene or prefab automation.",
+    "Prefer one mechanic slice before full gameplay systems."
+  ],
+  "unity_specific_warnings": [
+    "Constraint Router v1 does not edit scenes, prefabs, or project settings directly.",
+    "Keep the first Unity slice inspector-driven and easy for an operator to wire manually."
+  ],
+  "default_verification_guidance": [
+    "Open the Unity project and confirm scripts compile cleanly.",
+    "Enter Play Mode and verify the targeted mechanic in isolation.",
+    "Document any manual inspector or scene wiring still required."
+  ],
+  "feature_file_hints": {
+    "third_person_controller": [
+      {
+        "action": "create_or_update",
+        "path": "Assets/Scripts/Player/ThirdPersonController.cs",
+        "reason": "Core bounded controller scaffold."
+      },
+      {
+        "action": "create_or_update",
+        "path": "Assets/Scripts/Player/CameraFollow.cs",
+        "reason": "Minimal third-person camera follow stub."
+      }
+    ],
+    "inventory": [
+      {
+        "action": "create_or_update",
+        "path": "Assets/Scripts/Inventory/InventoryService.cs",
+        "reason": "Inventory data and slot management scaffold."
+      },
+      {
+        "action": "create_or_update",
+        "path": "Assets/Scripts/Inventory/InventoryItem.cs",
+        "reason": "Minimal item model or ScriptableObject wrapper."
+      },
+      {
+        "action": "create_or_update",
+        "path": "Assets/Scripts/UI/InventoryPanelPresenter.cs",
+        "reason": "Minimal UI binding surface."
+      }
+    ],
+    "generic_unity_feature": [
+      {
+        "action": "inspect",
+        "path": "Assets/Scripts",
+        "reason": "Locate the closest bounded Unity script surface before applying changes."
+      }
+    ]
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "downgrade_conditions": [
+    {
+      "field": "engine_target",
+      "reason": "Engine target is missing; keep the plan draft-only."
+    },
+    {
+      "field": "scope",
+      "reason": "Implementation scope is incomplete; keep the first pass scaffold-level."
+    },
+    {
+      "field": "features",
+      "reason": "Feature detail is incomplete; avoid pretending the full system is specified."
+    }
+  ],
+  "ambiguity_notes": [
+    "Requests without an explicit engine stay draft-only.",
+    "Broad feature requests should become scaffold-level plans, not full-system promises."
+  ],
+  "blocked_conditions": [
+    {
+      "keywords": ["edit scenes", "edit unity scenes", "modify scenes", "scene mutation"],
+      "reason": "Direct scene mutation is outside Constraint Router v1 scope."
+    },
+    {
+      "keywords": ["prefab edit", "edit prefab", "prefab editing"],
+      "reason": "Prefab editing is outside Constraint Router v1 scope."
+    },
+    {
+      "keywords": ["build pipeline", "full build", "build automation", "ship the build"],
+      "reason": "Build pipeline automation is outside Constraint Router v1 scope."
+    },
+    {
+      "keywords": ["autonomous", "fully automatic", "do everything automatically"],
+      "reason": "Autonomous execution is outside Constraint Router v1 scope."
+    }
+  ],
+  "overpromising_prevention": [
+    "Do not promise full game systems from vague requests.",
+    "Prefer scaffold-level tasks with explicit missing inputs."
+  ],
+  "unsupported_target_message": "Unity is the only implemented engine adapter in Constraint Router v1.",
+  "bounded_draft_note": "Produce the safest bounded draft instead of refusing a vague but non-unsafe request."
+}
