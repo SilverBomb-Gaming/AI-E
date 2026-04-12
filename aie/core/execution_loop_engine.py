@@ -4,6 +4,7 @@ from pathlib import Path
 
 from .autonomy_policy import AutonomyPolicy
 from .models import (
+    ActivePolicyProfile,
     ArtifactAwareMultiTaskResult,
     ArtifactAwareSessionRecord,
     ArtifactRequirement,
@@ -31,6 +32,7 @@ from .models import (
     SessionDependency,
 )
 from .multi_task_orchestrator import MultiTaskOrchestrator
+from .policy_config import PolicyConfigLoader
 from .state_persistence import StatePersistence
 from .system_awareness import SystemAwareness
 
@@ -44,11 +46,18 @@ class ExecutionLoopEngine:
         state_persistence: StatePersistence | None = None,
         awareness: SystemAwareness | None = None,
         autonomy_policy: AutonomyPolicy | None = None,
+        active_policy_profile: ActivePolicyProfile | None = None,
+        policy_config_loader: PolicyConfigLoader | None = None,
     ) -> None:
         self._multi_task_orchestrator = multi_task_orchestrator or MultiTaskOrchestrator()
         self._state_persistence = state_persistence or StatePersistence()
         self._awareness = awareness or SystemAwareness(self._multi_task_orchestrator)
-        self._autonomy_policy = autonomy_policy or AutonomyPolicy()
+        self._policy_config_loader = policy_config_loader or PolicyConfigLoader()
+        self._active_policy_profile = active_policy_profile or self._policy_config_loader.load_profile("standard")
+        self._autonomy_policy = autonomy_policy or AutonomyPolicy(
+            active_policy_profile=self._active_policy_profile,
+            policy_config_loader=self._policy_config_loader,
+        )
 
     def run_cycle(self, request: LoopEngineRequest) -> LoopCycleResult:
         cycle, _, _, _ = self._run_single_cycle(
@@ -159,6 +168,7 @@ class ExecutionLoopEngine:
                 dependency_graph=dependency_graph,
                 artifact_registry=artifact_registry,
                 artifact_requirements=artifact_requirements,
+                active_policy_profile=request.active_policy_profile or self._active_policy_profile,
                 notes=request.notes,
             )
         )
@@ -166,6 +176,7 @@ class ExecutionLoopEngine:
             AutonomyPolicyContext(
                 action_type=request.policy_action_type,
                 awareness_snapshot=awareness_snapshot,
+                active_policy_profile=request.active_policy_profile or self._active_policy_profile,
                 operator_command_present=request.operator_command_present,
                 current_cycle_index=cycle_index - 1,
                 requested_max_cycles=request.max_cycles,

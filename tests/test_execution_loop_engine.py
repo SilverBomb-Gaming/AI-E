@@ -23,6 +23,7 @@ from aie.core.models import (
     MultiTaskPriority,
     MultiTaskSessionRecord,
     MultiTaskSessionStatus,
+    PolicyProfileName,
     ResumeRequest,
     SessionArtifact,
     SessionDependency,
@@ -30,6 +31,7 @@ from aie.core.models import (
     TaskStep,
 )
 from aie.core.multi_task_orchestrator import MultiTaskOrchestrator
+from aie.core.policy_config import PolicyConfigLoader
 from aie.core.state_persistence import StatePersistence
 from aie.core.task_chain_executor import TaskChainExecutor
 
@@ -371,6 +373,31 @@ def test_execution_loop_engine_reports_waiting_human_gate() -> None:
     assert cycle.policy_evaluation is not None
     assert cycle.policy_evaluation.decision.decision_status == AutonomyPolicyStatus.REQUIRES_OPERATOR_APPROVAL
     assert AutonomyPolicyReason.WAITING_ON_HUMAN_GATE in cycle.policy_evaluation.decision.reasons
+
+
+def test_execution_loop_engine_respects_operator_only_profile_for_self_initiated_work() -> None:
+    orchestrator = MultiTaskOrchestrator()
+    loader = PolicyConfigLoader()
+    operator_only = loader.load_profile(PolicyProfileName.OPERATOR_ONLY)
+    engine = ExecutionLoopEngine(
+        orchestrator,
+        StatePersistence(),
+        active_policy_profile=operator_only,
+        policy_config_loader=loader,
+    )
+    ready = _ready_record(orchestrator, "session-ready", MultiTaskPriority.HIGH, last_updated="2026-04-12T10:00:00+00:00")
+
+    cycle = engine.run_cycle(
+        LoopEngineRequest(
+            session_registry=(ready,),
+            active_policy_profile=operator_only,
+            max_cycles=1,
+        )
+    )
+
+    assert cycle.policy_evaluation is not None
+    assert cycle.policy_evaluation.decision.decision_status == AutonomyPolicyStatus.REQUIRES_OPERATOR_APPROVAL
+    assert AutonomyPolicyReason.POLICY_DISALLOWS_ACTION_TYPE in cycle.policy_evaluation.decision.reasons
 
 
 def test_execution_loop_engine_reports_dependency_blocking() -> None:

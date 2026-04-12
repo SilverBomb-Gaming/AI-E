@@ -17,12 +17,14 @@ from aie.core.models import (
     MultiTaskPriority,
     MultiTaskSessionRecord,
     PolicyGateRequirement,
+    PolicyProfileName,
     SessionArtifact,
     SessionDependency,
     TaskChain,
     TaskStep,
 )
 from aie.core.multi_task_orchestrator import MultiTaskOrchestrator
+from aie.core.policy_config import PolicyConfigLoader
 from aie.core.system_awareness import SystemAwareness
 from aie.core.task_chain_executor import TaskChainExecutor
 
@@ -262,6 +264,7 @@ def _build_awareness(
     dependency_graph: tuple[SessionDependency, ...] = (),
     artifact_registry: tuple[SessionArtifact, ...] = (),
     artifact_requirements: tuple[ArtifactRequirement, ...] = (),
+    active_policy_profile=None,
 ):
     return SystemAwareness(orchestrator).build_awareness_result(
         AwarenessRequest(
@@ -269,6 +272,7 @@ def _build_awareness(
             dependency_graph=dependency_graph,
             artifact_registry=artifact_registry,
             artifact_requirements=artifact_requirements,
+            active_policy_profile=active_policy_profile,
         )
     )
 
@@ -447,3 +451,55 @@ def test_autonomy_policy_rejects_unsupported_v1_action() -> None:
 
     assert result.decision.decision_status == AutonomyPolicyStatus.UNSUPPORTED
     assert result.decision.reasons == (AutonomyPolicyReason.UNSUPPORTED_IN_V1,)
+
+
+def test_autonomy_policy_blocks_self_initiated_action_under_operator_only_profile() -> None:
+    orchestrator = MultiTaskOrchestrator()
+    loader = PolicyConfigLoader()
+    active_profile = loader.load_profile(PolicyProfileName.OPERATOR_ONLY)
+    policy = AutonomyPolicy(active_policy_profile=active_profile, policy_config_loader=loader)
+    ready = _ready_record(orchestrator, "session-ready", MultiTaskPriority.HIGH, last_updated="2026-04-12T10:00:00+00:00")
+    awareness = _build_awareness(
+        orchestrator,
+        session_registry=(ready,),
+        active_policy_profile=active_profile,
+    )
+
+    result = policy.evaluate(
+        AutonomyPolicyContext(
+            action_type=AutonomyActionType.SELF_INITIATED_LOOP_ADVANCE,
+            awareness_snapshot=awareness,
+            active_policy_profile=active_profile,
+            requested_max_cycles=1,
+            current_cycle_index=0,
+        )
+    )
+
+    assert result.decision.decision_status == AutonomyPolicyStatus.REQUIRES_OPERATOR_APPROVAL
+    assert AutonomyPolicyReason.POLICY_DISALLOWS_ACTION_TYPE in result.decision.reasons
+
+
+def test_autonomy_policy_blocks_operator_loop_above_strict_cap() -> None:
+    orchestrator = MultiTaskOrchestrator()
+    loader = PolicyConfigLoader()
+    active_profile = loader.load_profile(PolicyProfileName.STRICT)
+    policy = AutonomyPolicy(active_policy_profile=active_profile, policy_config_loader=loader)
+    ready = _ready_record(orchestrator, "session-ready", MultiTaskPriority.HIGH, last_updated="2026-04-12T10:00:00+00:00")
+    awareness = _build_awareness(
+        orchestrator,
+        session_registry=(ready,),
+        active_policy_profile=active_profile,
+    )
+
+    result = policy.evaluate(
+        AutonomyPolicyContext(
+            action_type=AutonomyActionType.RUN_BOUNDED_LOOP,
+            awareness_snapshot=awareness,
+            active_policy_profile=active_profile,
+            operator_command_present=True,
+            requested_max_cycles=5,
+        )
+    )
+
+    assert result.decision.decision_status == AutonomyPolicyStatus.BLOCKED
+    assert result.decision.reasons == (AutonomyPolicyReason.LOOP_BUDGET_EXCEEDED,)

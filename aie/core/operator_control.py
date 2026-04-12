@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from .autonomy_policy import AutonomyPolicy
 from .execution_loop_engine import ExecutionLoopEngine
 from .models import (
+    ActivePolicyProfile,
     AwarenessRequest,
     AwarenessResult,
     AutonomyActionType,
@@ -33,6 +34,7 @@ from .models import (
     SessionHealthSummary,
 )
 from .multi_task_orchestrator import MultiTaskOrchestrator
+from .policy_config import PolicyConfigLoader
 from .system_awareness import SystemAwareness
 
 
@@ -56,11 +58,22 @@ class OperatorControl:
         loop_engine: ExecutionLoopEngine | None = None,
         multi_task_orchestrator: MultiTaskOrchestrator | None = None,
         autonomy_policy: AutonomyPolicy | None = None,
+        active_policy_profile: ActivePolicyProfile | None = None,
+        policy_config_loader: PolicyConfigLoader | None = None,
     ) -> None:
         self._multi_task_orchestrator = multi_task_orchestrator or MultiTaskOrchestrator()
         self._awareness = awareness or SystemAwareness(self._multi_task_orchestrator)
-        self._loop_engine = loop_engine or ExecutionLoopEngine(self._multi_task_orchestrator)
-        self._autonomy_policy = autonomy_policy or AutonomyPolicy()
+        self._policy_config_loader = policy_config_loader or PolicyConfigLoader()
+        self._active_policy_profile = active_policy_profile or self._policy_config_loader.load_profile("standard")
+        self._loop_engine = loop_engine or ExecutionLoopEngine(
+            self._multi_task_orchestrator,
+            active_policy_profile=self._active_policy_profile,
+            policy_config_loader=self._policy_config_loader,
+        )
+        self._autonomy_policy = autonomy_policy or AutonomyPolicy(
+            active_policy_profile=self._active_policy_profile,
+            policy_config_loader=self._policy_config_loader,
+        )
 
     def handle_command(self, request: OperatorCommandRequest) -> OperatorCommandResult:
         command_type = self._normalize_command_type(request.command_type)
@@ -96,6 +109,7 @@ class OperatorControl:
                 artifact_registry=request.artifact_registry,
                 artifact_requirements=request.artifact_requirements,
                 latest_loop_result=request.latest_loop_result,
+                active_policy_profile=request.active_policy_profile or self._active_policy_profile,
                 notes=request.notes,
             )
         )
@@ -227,6 +241,7 @@ class OperatorControl:
                     if max_cycles == 1
                     else AutonomyActionType.RUN_BOUNDED_LOOP
                 ),
+                active_policy_profile=request.active_policy_profile or self._active_policy_profile,
                 operator_command_present=True,
                 notes=request.notes,
             )
@@ -239,6 +254,7 @@ class OperatorControl:
                 artifact_registry=request.artifact_registry,
                 artifact_requirements=request.artifact_requirements,
                 latest_loop_result=loop_result,
+                active_policy_profile=request.active_policy_profile or self._active_policy_profile,
                 notes=request.notes,
             )
         )
@@ -308,6 +324,7 @@ class OperatorControl:
                 artifact_registry=request.artifact_registry,
                 artifact_requirements=request.artifact_requirements,
                 latest_loop_result=request.latest_loop_result,
+                active_policy_profile=request.active_policy_profile or self._active_policy_profile,
                 notes=request.notes,
             )
         )
@@ -384,6 +401,7 @@ class OperatorControl:
                 artifact_registry=request.artifact_registry,
                 artifact_requirements=request.artifact_requirements,
                 latest_loop_result=request.latest_loop_result,
+                active_policy_profile=request.active_policy_profile or self._active_policy_profile,
                 notes=request.notes,
             )
         )
@@ -451,6 +469,7 @@ class OperatorControl:
                 action_type=self._policy_action_type(command_type),
                 awareness_snapshot=awareness_snapshot,
                 latest_loop_result=request.latest_loop_result,
+                active_policy_profile=request.active_policy_profile or self._active_policy_profile,
                 operator_command_present=True,
                 target_session_id=request.target_session_id,
                 requested_max_cycles=(

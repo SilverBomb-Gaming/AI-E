@@ -109,8 +109,17 @@ class SystemAwareness:
             recent_activity=recent_activity,
             next_action_candidates=next_action_candidates,
             system_notes=system_notes,
+            active_policy_profile=self._resolve_active_policy_profile(request),
             last_policy_decision=request.latest_loop_result.last_policy_decision if request.latest_loop_result else None,
         )
+
+    @staticmethod
+    def _resolve_active_policy_profile(request: AwarenessRequest):
+        if request.active_policy_profile is not None:
+            return request.active_policy_profile
+        if request.latest_loop_result and request.latest_loop_result.last_policy_decision:
+            return request.latest_loop_result.last_policy_decision.context.active_policy_profile
+        return None
 
     def summarize_session(
         self,

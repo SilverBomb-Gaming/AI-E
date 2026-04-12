@@ -20,6 +20,7 @@ from aie.core.models import (
     LoopTerminationReason,
     MultiTaskPriority,
     MultiTaskSessionRecord,
+    PolicyProfileName,
     ResumeRequest,
     SessionArtifact,
     SessionDependency,
@@ -29,6 +30,7 @@ from aie.core.models import (
     LoopEngineRequest,
 )
 from aie.core.multi_task_orchestrator import MultiTaskOrchestrator
+from aie.core.policy_config import PolicyConfigLoader
 from aie.core.state_persistence import StatePersistence
 from aie.core.system_awareness import SystemAwareness
 from aie.core.task_chain_executor import TaskChainExecutor
@@ -458,3 +460,21 @@ def test_system_awareness_is_read_only() -> None:
     assert registry[1].to_dict() == original_waiting
     assert registry[0].lifecycle_state == LifecycleState.READY_TO_EXECUTE
     assert registry[1].lifecycle_state == LifecycleState.AWAITING_REVIEW
+
+
+def test_system_awareness_surfaces_active_policy_profile() -> None:
+    orchestrator = MultiTaskOrchestrator()
+    loader = PolicyConfigLoader()
+    strict_profile = loader.load_profile(PolicyProfileName.STRICT)
+    awareness = SystemAwareness(orchestrator)
+    ready = _ready_record(orchestrator, "session-ready", MultiTaskPriority.HIGH, last_updated="2026-04-12T10:00:00+00:00")
+
+    result = awareness.build_awareness_result(
+        AwarenessRequest(
+            session_registry=(ready,),
+            active_policy_profile=strict_profile,
+        )
+    )
+
+    assert result.active_policy_profile is not None
+    assert result.active_policy_profile.profile_name == PolicyProfileName.STRICT

@@ -1216,11 +1216,128 @@ class PolicyGateRequirement(str, Enum):
     PLAYTEST = "playtest"
 
 
+class PolicyProfileName(str, Enum):
+    SAFE_DEFAULT = "safe_default"
+    STANDARD = "standard"
+    STRICT = "strict"
+    OPERATOR_ONLY = "operator_only"
+
+
+class PolicyConfigStatus(str, Enum):
+    LOADED = "loaded"
+    INVALID = "invalid"
+    UNSUPPORTED = "unsupported"
+    FALLBACK_DEFAULT = "fallback_default"
+
+
+class PolicyConfigSource(str, Enum):
+    BUILTIN_PROFILE = "builtin_profile"
+    EXPLICIT_MAPPING = "explicit_mapping"
+    FALLBACK_DEFAULT = "fallback_default"
+
+
+@dataclass(frozen=True)
+class PolicyProfileLimits:
+    max_bounded_loop_cycles: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "max_bounded_loop_cycles": self.max_bounded_loop_cycles,
+        }
+
+
+@dataclass(frozen=True)
+class PolicyProfileFlags:
+    allow_self_initiated_loop_advance: bool = True
+    require_operator_for_gate_approval: bool = True
+    allow_operator_reprioritization: bool = True
+    allow_select_session_validation: bool = True
+    allow_inspection_commands: bool = True
+    allow_operator_run_loop: bool = True
+    allow_operator_run_single_cycle: bool = True
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "allow_self_initiated_loop_advance": self.allow_self_initiated_loop_advance,
+            "require_operator_for_gate_approval": self.require_operator_for_gate_approval,
+            "allow_operator_reprioritization": self.allow_operator_reprioritization,
+            "allow_select_session_validation": self.allow_select_session_validation,
+            "allow_inspection_commands": self.allow_inspection_commands,
+            "allow_operator_run_loop": self.allow_operator_run_loop,
+            "allow_operator_run_single_cycle": self.allow_operator_run_single_cycle,
+        }
+
+
+@dataclass(frozen=True)
+class PolicyConfig:
+    profile_name: PolicyProfileName | str
+    source: PolicyConfigSource = PolicyConfigSource.BUILTIN_PROFILE
+    requested_limits: PolicyProfileLimits | None = None
+    requested_flags: PolicyProfileFlags | None = None
+    notes: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "profile_name": self.profile_name.value if isinstance(self.profile_name, Enum) else self.profile_name,
+            "source": self.source.value,
+            "requested_limits": self.requested_limits.to_dict() if self.requested_limits else None,
+            "requested_flags": self.requested_flags.to_dict() if self.requested_flags else None,
+            "notes": list(self.notes),
+        }
+
+
+@dataclass(frozen=True)
+class PolicyConfigValidationResult:
+    profile_name: PolicyProfileName | str | None
+    source: PolicyConfigSource
+    status: PolicyConfigStatus
+    validation_errors: tuple[str, ...] = ()
+    effective_limits: PolicyProfileLimits | None = None
+    effective_flags: PolicyProfileFlags | None = None
+    notes: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "profile_name": self.profile_name.value if isinstance(self.profile_name, Enum) else self.profile_name,
+            "source": self.source.value,
+            "status": self.status.value,
+            "validation_errors": list(self.validation_errors),
+            "effective_limits": self.effective_limits.to_dict() if self.effective_limits else None,
+            "effective_flags": self.effective_flags.to_dict() if self.effective_flags else None,
+            "notes": list(self.notes),
+        }
+
+
+@dataclass(frozen=True)
+class ActivePolicyProfile:
+    profile_name: PolicyProfileName
+    source: PolicyConfigSource
+    status: PolicyConfigStatus
+    effective_limits: PolicyProfileLimits
+    effective_flags: PolicyProfileFlags
+    validation_errors: tuple[str, ...] = ()
+    loaded_at: str | None = None
+    notes: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "profile_name": self.profile_name.value,
+            "source": self.source.value,
+            "status": self.status.value,
+            "effective_limits": self.effective_limits.to_dict(),
+            "effective_flags": self.effective_flags.to_dict(),
+            "validation_errors": list(self.validation_errors),
+            "loaded_at": self.loaded_at,
+            "notes": list(self.notes),
+        }
+
+
 @dataclass(frozen=True)
 class AutonomyPolicyContext:
     action_type: AutonomyActionType | str
     awareness_snapshot: "AwarenessResult" | None = None
     latest_loop_result: "LoopEngineResult" | None = None
+    active_policy_profile: ActivePolicyProfile | None = None
     operator_command_present: bool = False
     target_session_id: str | None = None
     current_cycle_index: int = 0
@@ -1232,6 +1349,7 @@ class AutonomyPolicyContext:
             "action_type": self.action_type.value if isinstance(self.action_type, Enum) else self.action_type,
             "awareness_snapshot": self.awareness_snapshot.to_dict() if self.awareness_snapshot else None,
             "latest_loop_result": self.latest_loop_result.to_dict() if self.latest_loop_result else None,
+            "active_policy_profile": self.active_policy_profile.to_dict() if self.active_policy_profile else None,
             "operator_command_present": self.operator_command_present,
             "target_session_id": self.target_session_id,
             "current_cycle_index": self.current_cycle_index,
@@ -1288,6 +1406,7 @@ class LoopEngineRequest:
     session_storage_directory: str | None = None
     session_file_paths: tuple[tuple[str, str], ...] = ()
     policy_action_type: AutonomyActionType | str = AutonomyActionType.SELF_INITIATED_LOOP_ADVANCE
+    active_policy_profile: ActivePolicyProfile | None = None
     operator_command_present: bool = False
     notes: tuple[str, ...] = ()
 
@@ -1304,6 +1423,7 @@ class LoopEngineRequest:
                 for session_id, path in self.session_file_paths
             ],
             "policy_action_type": self.policy_action_type.value if isinstance(self.policy_action_type, Enum) else self.policy_action_type,
+            "active_policy_profile": self.active_policy_profile.to_dict() if self.active_policy_profile else None,
             "operator_command_present": self.operator_command_present,
             "notes": list(self.notes),
         }
@@ -1550,6 +1670,7 @@ class AwarenessRequest:
     artifact_registry: tuple[SessionArtifact, ...] = ()
     artifact_requirements: tuple[ArtifactRequirement, ...] = ()
     latest_loop_result: LoopEngineResult | None = None
+    active_policy_profile: ActivePolicyProfile | None = None
     notes: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
@@ -1559,6 +1680,7 @@ class AwarenessRequest:
             "artifact_registry": [artifact.to_dict() for artifact in self.artifact_registry],
             "artifact_requirements": [artifact.to_dict() for artifact in self.artifact_requirements],
             "latest_loop_result": self.latest_loop_result.to_dict() if self.latest_loop_result else None,
+            "active_policy_profile": self.active_policy_profile.to_dict() if self.active_policy_profile else None,
             "notes": list(self.notes),
         }
 
@@ -1573,6 +1695,7 @@ class AwarenessResult:
     recent_activity: ActivitySummary | None = None
     next_action_candidates: tuple[NextActionCandidate, ...] = ()
     system_notes: tuple[str, ...] = ()
+    active_policy_profile: ActivePolicyProfile | None = None
     last_policy_decision: PolicyEvaluationResult | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -1585,6 +1708,7 @@ class AwarenessResult:
             "recent_activity": self.recent_activity.to_dict() if self.recent_activity else None,
             "next_action_candidates": [candidate.to_dict() for candidate in self.next_action_candidates],
             "system_notes": list(self.system_notes),
+            "active_policy_profile": self.active_policy_profile.to_dict() if self.active_policy_profile else None,
             "last_policy_decision": self.last_policy_decision.to_dict() if self.last_policy_decision else None,
         }
 
@@ -1662,6 +1786,7 @@ class OperatorCommandRequest:
     artifact_registry: tuple[SessionArtifact, ...] = ()
     artifact_requirements: tuple[ArtifactRequirement, ...] = ()
     latest_loop_result: LoopEngineResult | None = None
+    active_policy_profile: ActivePolicyProfile | None = None
     gate_type: OperatorGateType | str | None = None
     new_priority: MultiTaskPriority | str | None = None
     max_cycles: int = 1
@@ -1680,6 +1805,7 @@ class OperatorCommandRequest:
             "artifact_registry": [artifact.to_dict() for artifact in self.artifact_registry],
             "artifact_requirements": [artifact.to_dict() for artifact in self.artifact_requirements],
             "latest_loop_result": self.latest_loop_result.to_dict() if self.latest_loop_result else None,
+            "active_policy_profile": self.active_policy_profile.to_dict() if self.active_policy_profile else None,
             "gate_type": self.gate_type.value if isinstance(self.gate_type, Enum) else self.gate_type,
             "new_priority": self.new_priority.value if isinstance(self.new_priority, Enum) else self.new_priority,
             "max_cycles": self.max_cycles,

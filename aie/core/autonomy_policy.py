@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timezone
 
 from .models import (
+    ActivePolicyProfile,
     ArtifactRequirementStatus,
     AutonomyActionType,
     AutonomyPolicyContext,
@@ -13,10 +15,12 @@ from .models import (
     DependencyStatus,
     LifecycleState,
     MultiTaskSessionStatus,
+    PolicyConfigStatus,
     PolicyEvaluationResult,
     PolicyGateRequirement,
     SessionHealthSummary,
 )
+from .policy_config import PolicyConfigLoader
 
 
 class AutonomyPolicy:
@@ -41,8 +45,19 @@ class AutonomyPolicy:
         AutonomyActionType.SELECT_SESSION,
     }
 
+    def __init__(
+        self,
+        *,
+        active_policy_profile: ActivePolicyProfile | None = None,
+        policy_config_loader: PolicyConfigLoader | None = None,
+    ) -> None:
+        self._policy_config_loader = policy_config_loader or PolicyConfigLoader()
+        self._active_policy_profile = active_policy_profile or self._policy_config_loader.load_profile("standard")
+
     def evaluate(self, context: AutonomyPolicyContext) -> PolicyEvaluationResult:
         action_type = self._normalize_action_type(context.action_type)
+        active_profile = context.active_policy_profile or self._active_policy_profile
+        context = replace(context, active_policy_profile=active_profile)
         if action_type is None:
             return self._build_invalid_decision(
                 context=context,
@@ -56,6 +71,13 @@ class AutonomyPolicy:
                 reasons=(AutonomyPolicyReason.UNSAFE_STATE,),
                 note="Policy evaluation requires an awareness snapshot derived from current system truth.",
             )
+        if active_profile.status not in {PolicyConfigStatus.LOADED, PolicyConfigStatus.FALLBACK_DEFAULT}:
+            return self._build_invalid_decision(
+                context=context,
+                action_type=action_type,
+                reasons=(AutonomyPolicyReason.UNSAFE_STATE,),
+                note="Policy evaluation requires a valid active policy configuration profile.",
+            )
         if action_type not in self._SUPPORTED_ACTIONS:
             return self._build_unsupported_decision(
                 context=context,
@@ -64,6 +86,13 @@ class AutonomyPolicy:
                 note=f"Action type {action_type.value} is outside the bounded autonomy policy v1 surface.",
             )
         if action_type == AutonomyActionType.INSPECT_ONLY:
+            if not active_profile.effective_flags.allow_inspection_commands:
+                return self._build_blocked_decision(
+                    context=context,
+                    action_type=action_type,
+                    reasons=(AutonomyPolicyReason.POLICY_DISALLOWS_ACTION_TYPE,),
+                    note=f"Policy profile {active_profile.profile_name.value} disables inspection commands.",
+                )
             reason = (
                 AutonomyPolicyReason.OPERATOR_COMMAND_PRESENT
                 if context.operator_command_present
@@ -84,6 +113,7 @@ class AutonomyPolicy:
         context: AutonomyPolicyContext,
         action_type: AutonomyActionType,
     ) -> PolicyEvaluationResult:
+        active_profile = context.active_policy_profile or self._active_policy_profile
         if action_type not in self._SUPPORTED_OPERATOR_ACTIONS:
             return self._build_unsupported_decision(
                 context=context,
@@ -99,6 +129,44 @@ class AutonomyPolicy:
                     reasons=(AutonomyPolicyReason.LOOP_BUDGET_EXCEEDED,),
                     note="Loop commands require a positive bounded cycle budget.",
                 )
+            if context.requested_max_cycles is not None and context.requested_max_cycles > active_profile.effective_limits.max_bounded_loop_cycles:
+                return self._build_blocked_decision(
+                    context=context,
+                    action_type=action_type,
+                    reasons=(AutonomyPolicyReason.LOOP_BUDGET_EXCEEDED,),
+                    note=(
+                        f"Policy profile {active_profile.profile_name.value} caps bounded loop requests at "
+                        f"{active_profile.effective_limits.max_bounded_loop_cycles} cycle(s)."
+                    ),
+                )
+        if action_type == AutonomyActionType.RUN_SINGLE_CYCLE and not active_profile.effective_flags.allow_operator_run_single_cycle:
+            return self._build_blocked_decision(
+                context=context,
+                action_type=action_type,
+                reasons=(AutonomyPolicyReason.POLICY_DISALLOWS_ACTION_TYPE,),
+                note=f"Policy profile {active_profile.profile_name.value} disables operator single-cycle execution.",
+            )
+        if action_type == AutonomyActionType.RUN_BOUNDED_LOOP and not active_profile.effective_flags.allow_operator_run_loop:
+            return self._build_blocked_decision(
+                context=context,
+                action_type=action_type,
+                reasons=(AutonomyPolicyReason.POLICY_DISALLOWS_ACTION_TYPE,),
+                note=f"Policy profile {active_profile.profile_name.value} disables operator bounded-loop execution.",
+            )
+        if action_type == AutonomyActionType.REPRIORITIZE_SESSION and not active_profile.effective_flags.allow_operator_reprioritization:
+            return self._build_blocked_decision(
+                context=context,
+                action_type=action_type,
+                reasons=(AutonomyPolicyReason.POLICY_DISALLOWS_ACTION_TYPE,),
+                note=f"Policy profile {active_profile.profile_name.value} disables operator reprioritization.",
+            )
+        if action_type == AutonomyActionType.SELECT_SESSION and not active_profile.effective_flags.allow_select_session_validation:
+            return self._build_blocked_decision(
+                context=context,
+                action_type=action_type,
+                reasons=(AutonomyPolicyReason.POLICY_DISALLOWS_ACTION_TYPE,),
+                note=f"Policy profile {active_profile.profile_name.value} disables session selection validation.",
+            )
 
         target_summary = self._find_session_summary(context)
         if target_summary is not None and target_summary.session_status in {
@@ -135,6 +203,7 @@ class AutonomyPolicy:
         context: AutonomyPolicyContext,
         action_type: AutonomyActionType,
     ) -> PolicyEvaluationResult:
+        active_profile = context.active_policy_profile or self._active_policy_profile
         if action_type != AutonomyActionType.SELF_INITIATED_LOOP_ADVANCE:
             return self._build_requires_approval_decision(
                 context=context,
@@ -145,6 +214,32 @@ class AutonomyPolicy:
                 ),
                 gate_requirement=PolicyGateRequirement.OPERATOR_COMMAND,
                 note=f"Action {action_type.value} requires an explicit operator command in autonomy policy v1.",
+            )
+
+        if not active_profile.effective_flags.allow_self_initiated_loop_advance:
+            return self._build_requires_approval_decision(
+                context=context,
+                action_type=action_type,
+                reasons=(
+                    AutonomyPolicyReason.POLICY_DISALLOWS_ACTION_TYPE,
+                    AutonomyPolicyReason.MISSING_REQUIRED_APPROVAL,
+                ),
+                gate_requirement=PolicyGateRequirement.OPERATOR_COMMAND,
+                note=f"Policy profile {active_profile.profile_name.value} disables self-initiated loop advancement.",
+            )
+
+        if (
+            context.requested_max_cycles is not None
+            and context.requested_max_cycles > active_profile.effective_limits.max_bounded_loop_cycles
+        ):
+            return self._build_blocked_decision(
+                context=context,
+                action_type=action_type,
+                reasons=(AutonomyPolicyReason.LOOP_BUDGET_EXCEEDED,),
+                note=(
+                    f"Policy profile {active_profile.profile_name.value} caps bounded loop requests at "
+                    f"{active_profile.effective_limits.max_bounded_loop_cycles} cycle(s)."
+                ),
             )
 
         if context.requested_max_cycles is not None and context.current_cycle_index >= context.requested_max_cycles:
@@ -441,12 +536,14 @@ class AutonomyPolicy:
     def _context_summary(context: AutonomyPolicyContext) -> str:
         if context.awareness_snapshot is None:
             return (
+                f"policy_profile={context.active_policy_profile.profile_name.value if context.active_policy_profile else 'none'}; "
                 f"operator_command_present={context.operator_command_present}; "
                 f"requested_max_cycles={context.requested_max_cycles}; "
                 f"current_cycle_index={context.current_cycle_index}"
             )
         snapshot = context.awareness_snapshot.snapshot
         return (
+            f"policy_profile={context.active_policy_profile.profile_name.value if context.active_policy_profile else 'none'}; "
             f"operator_command_present={context.operator_command_present}; "
             f"active={len(snapshot.active_session_ids)}; waiting={len(snapshot.waiting_session_ids)}; "
             f"blocked={len(snapshot.blocked_session_ids)}; failed={len(snapshot.failed_session_ids)}; "

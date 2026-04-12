@@ -23,6 +23,7 @@ from aie.core.models import (
     OperatorGateType,
     OperatorRejectionReason,
     OperatorTargetType,
+    PolicyProfileName,
     ResumeRequest,
     SessionArtifact,
     SessionDependency,
@@ -31,6 +32,7 @@ from aie.core.models import (
     TaskStep,
 )
 from aie.core.multi_task_orchestrator import MultiTaskOrchestrator
+from aie.core.policy_config import PolicyConfigLoader
 from aie.core.task_chain_executor import TaskChainExecutor
 
 
@@ -456,3 +458,30 @@ def test_operator_control_returns_structured_result_payload() -> None:
     assert payload["decision"]["command_type"] == "inspect_system"
     assert payload["decision"]["command_status"] == "executed"
     assert payload["awareness_snapshot_used"]["snapshot"]["total_sessions"] == 1
+
+
+def test_operator_control_respects_strict_loop_cap() -> None:
+    orchestrator = MultiTaskOrchestrator()
+    loader = PolicyConfigLoader()
+    strict_profile = loader.load_profile(PolicyProfileName.STRICT)
+    control = OperatorControl(
+        multi_task_orchestrator=orchestrator,
+        active_policy_profile=strict_profile,
+        policy_config_loader=loader,
+    )
+    ready = _ready_record(orchestrator, "session-ready", MultiTaskPriority.HIGH, last_updated="2026-04-12T10:00:00+00:00")
+
+    result = control.handle_command(
+        OperatorCommandRequest(
+            command_id="cmd-strict-loop",
+            command_type=OperatorCommandType.RUN_BOUNDED_LOOP,
+            target_type=OperatorTargetType.LOOP,
+            session_registry=(ready,),
+            active_policy_profile=strict_profile,
+            max_cycles=5,
+        )
+    )
+
+    assert result.decision.command_status == OperatorCommandStatus.BLOCKED
+    assert result.policy_evaluation is not None
+    assert result.policy_evaluation.decision.decision_status == AutonomyPolicyStatus.BLOCKED
