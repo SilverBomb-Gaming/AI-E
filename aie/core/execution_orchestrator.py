@@ -8,6 +8,7 @@ from .models import (
     OrchestrationRequest,
     OrchestrationResult,
     OrchestrationStatus,
+    PersistedExecutionSession,
     ResumeRequest,
     StopReason,
 )
@@ -39,6 +40,20 @@ class ExecutionOrchestrator:
         if decision.chosen_action == OrchestrationAction.STOP:
             return self._build_stop_result(request=request, decision=decision)
         return self._build_reject_result(request=request, decision=decision)
+
+    def orchestrate_persisted_session(
+        self,
+        session: PersistedExecutionSession,
+        *,
+        resume_request: ResumeRequest | None = None,
+    ) -> OrchestrationResult:
+        return self.orchestrate(
+            OrchestrationRequest(
+                handoff=session.router_handoff,
+                prior_execution_result=session.task_execution_result,
+                resume_request=resume_request,
+            )
+        )
 
     def _classify_lifecycle_state(self, request: OrchestrationRequest) -> tuple[LifecycleState, tuple[str, ...]]:
         handoff = request.handoff

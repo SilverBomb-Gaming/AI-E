@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from enum import Enum
+from enum import Enum, IntEnum
 from typing import Any, Literal
 
 
@@ -432,4 +432,92 @@ class OrchestrationResult:
             "resume_result": self.resume_result.to_dict() if self.resume_result else None,
             "final_executor_status": self.final_executor_status.value if self.final_executor_status else None,
             "orchestration_notes": list(self.orchestration_notes),
+        }
+
+
+class PersistenceStatus(str, Enum):
+    SAVED = "saved"
+    LOADED = "loaded"
+    INVALID = "invalid"
+    VERSION_MISMATCH = "version_mismatch"
+    FAILED = "failed"
+
+
+class PersistenceRecordVersion(IntEnum):
+    V1 = 1
+
+
+@dataclass(frozen=True)
+class PersistedLifecycleSnapshot:
+    last_lifecycle_state: LifecycleState
+    last_required_human_action: str | None = None
+    final_executor_status: ExecutorStatus | None = None
+    stop_reason: StopReason | None = None
+    blocked_step_id: str | None = None
+    resumable_state_present: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "last_lifecycle_state": self.last_lifecycle_state.value,
+            "last_required_human_action": self.last_required_human_action,
+            "final_executor_status": self.final_executor_status.value if self.final_executor_status else None,
+            "stop_reason": self.stop_reason.value if self.stop_reason else None,
+            "blocked_step_id": self.blocked_step_id,
+            "resumable_state_present": self.resumable_state_present,
+        }
+
+
+@dataclass(frozen=True)
+class PersistedExecutionSession:
+    session_id: str
+    schema_version: int
+    saved_at: str
+    router_handoff: ConstraintRouterHandoff
+    orchestration_result: OrchestrationResult
+    task_execution_result: TaskExecutionResult
+    lifecycle_snapshot: PersistedLifecycleSnapshot
+    notes: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "session_id": self.session_id,
+            "schema_version": self.schema_version,
+            "saved_at": self.saved_at,
+            "router_handoff": self.router_handoff.to_dict(),
+            "orchestration_result": self.orchestration_result.to_dict(),
+            "task_execution_result": self.task_execution_result.to_dict(),
+            "lifecycle_snapshot": self.lifecycle_snapshot.to_dict(),
+            "notes": list(self.notes),
+        }
+
+
+@dataclass(frozen=True)
+class SaveResult:
+    status: PersistenceStatus
+    path: str | None = None
+    session_id: str | None = None
+    notes: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "status": self.status.value,
+            "path": self.path,
+            "session_id": self.session_id,
+            "notes": list(self.notes),
+        }
+
+
+@dataclass(frozen=True)
+class LoadResult:
+    status: PersistenceStatus
+    path: str | None = None
+    session: PersistedExecutionSession | None = None
+    notes: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "status": self.status.value,
+            "path": self.path,
+            "session": self.session.to_dict() if self.session else None,
+            "notes": list(self.notes),
         }
