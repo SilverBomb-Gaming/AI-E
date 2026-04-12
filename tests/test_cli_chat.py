@@ -95,6 +95,7 @@ class LocalCliChatTests(unittest.TestCase):
             (source_root / "app" / "controller" / "feature_bundle_models.py", root / "app" / "controller" / "feature_bundle_models.py"),
             (source_root / "app" / "controller" / "feature_bundle_formatter.py", root / "app" / "controller" / "feature_bundle_formatter.py"),
             (source_root / "tests" / "test_task_chains.py", root / "tests" / "test_task_chains.py"),
+            (source_root / "tests" / "test_cli_chat.py", root / "tests" / "test_cli_chat.py"),
         )
         for source_path, destination_path in targets:
             destination_path.parent.mkdir(parents=True, exist_ok=True)
@@ -105,6 +106,7 @@ class LocalCliChatTests(unittest.TestCase):
         source_root = Path(__file__).resolve().parents[1]
         targets = (
             (source_root / "app" / "controller" / "autonomous_dev_models.py", root / "app" / "controller" / "autonomous_dev_models.py"),
+            (source_root / "app" / "controller" / "feature_bundle_models.py", root / "app" / "controller" / "feature_bundle_models.py"),
             (source_root / "app" / "controller" / "feature_bundle_formatter.py", root / "app" / "controller" / "feature_bundle_formatter.py"),
             (source_root / "tests" / "test_task_chains.py", root / "tests" / "test_task_chains.py"),
             (source_root / "tests" / "test_cli_chat.py", root / "tests" / "test_cli_chat.py"),
@@ -591,6 +593,9 @@ class LocalCliChatTests(unittest.TestCase):
             self.assertIn("Coding plan:", joined)
             self.assertIn("formatter_output_update", joined)
             self.assertIn("Category: helper_extraction", joined)
+            self.assertIn("Confidence: high", joined)
+            self.assertIn("Clusters: bundle_cluster, test_cluster", joined)
+            self.assertIn("Impact tests: tests/test_task_chains.py, tests/test_cli_chat.py", joined)
             self.assertIn("feature_bundle_formatter.py", joined)
             self.assertIn("Extract commit summary line formatting", joined)
 
@@ -609,10 +614,30 @@ class LocalCliChatTests(unittest.TestCase):
 
             joined = "\n".join(output)
             self.assertIn("Need clarification before planning that coding bundle.", joined)
+            self.assertIn("capability cluster", joined)
             self.assertIn("command_grammar.py", joined)
             self.assertIn("capability_registry.py", joined)
             self.assertIn("capability_executor.py", joined)
+            self.assertIn("full cluster", joined.lower())
             self.assertIn("what command or capability name should be wired", joined.lower())
+
+
+    def test_cli_execution_flow_refactor_clarifies_with_structure_aware_question(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "workspace"
+            root.mkdir(parents=True, exist_ok=True)
+            service, config_store, _ = self._make_service(tmp_dir=tmp)
+            self._configure_repo_root(service=service, config_store=config_store, root=root)
+            output: list[str] = []
+            cli = AiEChatCli(service=service, input_func=_PromptDriver(), output_func=output.append, debug=True)
+
+            self.assertTrue(cli.handle_line("Refactor execution flow"))
+
+            joined = "\n".join(output)
+            self.assertIn("Need clarification before planning that coding bundle.", joined)
+            self.assertIn("execution cluster", joined)
+            self.assertIn("app/controller/task_execution_conversation.py", joined)
+            self.assertIn("full execution flow", joined)
 
     def test_cli_feature_pr_preview_and_conversational_dev_summary(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

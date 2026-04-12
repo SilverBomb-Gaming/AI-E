@@ -1,8 +1,10 @@
 """Deterministic routing for bounded coding-task families across known repo clusters."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
+
+from .repo_structure_map import RepoImpactAnalysis, RepoStructureMap, RepoTaskConfidence
 
 
 RepoTaskRouteKind = Literal["proposal_ready", "needs_clarification", "not_applicable"]
@@ -44,6 +46,11 @@ class RepoTaskRoute:
     next_step: str = ""
     playtest_required: bool = False
     route_key: str = ""
+    cluster_ids: tuple[str, ...] = ()
+    impact_analysis: RepoImpactAnalysis = field(default_factory=RepoImpactAnalysis)
+    confidence: RepoTaskConfidence = "low"
+    selection_summary: str = ""
+    expansion_summary: str = ""
 
 
 class RepoTaskRouter:
@@ -60,34 +67,27 @@ class RepoTaskRouter:
         "coding",
         "extend",
         "wire",
+        "routing",
+        "route",
         "capability",
         "executor",
         "grammar",
         "registry",
+        "planner",
+        "execution flow",
     )
-    _CAPABILITY_CLUSTER = (
-        "app/controller/command_grammar.py",
-        "app/controller/capability_registry.py",
-        "app/controller/capability_evaluator.py",
-        "app/controller/capability_executor.py",
-        "tests/test_task_chains.py",
-        "tests/test_cli_chat.py",
-    )
-    _CONTROLLER_STATE_CLUSTER = (
-        "app/controller/app_service.py",
-        "app/controller/feature_bundle_models.py",
-        "app/controller/feature_bundle_formatter.py",
-        "tests/test_task_chains.py",
-        "tests/test_cli_chat.py",
-    )
+
+    def __init__(self) -> None:
+        self._structure_map = RepoStructureMap()
 
     def plan(self, prompt: str) -> RepoTaskRoute:
         normalized = self._normalize(prompt)
         if self._needs_bundle_logic_clarification(normalized):
-            return RepoTaskRoute(
-                kind="needs_clarification",
+            return self._clarification_route(
                 task_type="controller_state_alignment",
                 task_category="feature_bundle_scope_selection",
+                cluster_ids=("bundle_cluster", "test_cluster"),
+                confidence="low",
                 clarification_question="Which bundle behavior should be updated: apply, validation tracking, commit prep, or push flow?",
                 next_step="Reply with the intended bundle slice so I can keep the coding plan inside the current feature-bundle surfaces.",
             )
@@ -98,50 +98,79 @@ class RepoTaskRouter:
         if self._matches_autonomous_dev_refactor_request(normalized):
             return self._autonomous_dev_refactor_route()
         if self._matches_capability_wiring_request(normalized):
-            return RepoTaskRoute(
-                kind="needs_clarification",
+            return self._clarification_route(
                 task_type="capability_wiring_update",
                 task_category="capability_wiring_update",
+                cluster_ids=("capability_cluster", "test_cluster"),
+                confidence="medium",
                 clarification_question=(
-                    "Should this stay within "
-                    f"{', '.join(self._CAPABILITY_CLUSTER[:-1])}, and the focused tests {self._CAPABILITY_CLUSTER[-2]} and {self._CAPABILITY_CLUSTER[-1]} only? "
+                    f"{self._structure_map.clarification_for_clusters(('capability_cluster', 'test_cluster'), action='update capability routing')} "
                     "Also, what command or capability name should be wired?"
                 ),
                 next_step="Reply with the command or capability id plus whether this is wiring-only or a behavior change.",
             )
+        if self._matches_execution_flow_refactor_request(normalized):
+            return self._clarification_route(
+                task_type="bounded_refactor",
+                task_category="execution_flow_refactor",
+                cluster_ids=("execution_cluster", "bundle_cluster", "test_cluster"),
+                confidence="medium",
+                clarification_question=(
+                    "This may affect the execution cluster "
+                    "(app/controller/app_service.py, app/controller/task_execution_conversation.py, "
+                    "app/controller/multi_file_feature_planner.py). Should the refactor stay within one file, "
+                    "or align the full execution flow plus formatter and focused tests?"
+                ),
+                next_step="Reply with whether this should stay inside a single execution file or align the broader execution cluster.",
+            )
         if self._matches_controller_state_request(normalized):
-            return RepoTaskRoute(
-                kind="needs_clarification",
+            return self._clarification_route(
                 task_type="controller_state_alignment",
                 task_category="controller_state_alignment",
+                cluster_ids=("execution_cluster", "bundle_cluster", "test_cluster"),
+                confidence="medium",
                 clarification_question=(
-                    "Should I update only "
-                    f"{self._CONTROLLER_STATE_CLUSTER[0]}, or also propagate the state through "
-                    f"{self._CONTROLLER_STATE_CLUSTER[1]}, {self._CONTROLLER_STATE_CLUSTER[2]}, and the focused tests?"
+                    f"{self._structure_map.clarification_for_clusters(('execution_cluster', 'bundle_cluster', 'test_cluster'), action='align controller state flow')} "
+                    "Should I update only the controller entrypoints, or also propagate the change through bundle formatting and focused tests?"
                 ),
                 next_step="Reply with the module cluster this should stay within and whether the change should also touch tests and formatter output.",
             )
         if self._matches_dev_loop_refactor_request(normalized):
-            return RepoTaskRoute(
-                kind="needs_clarification",
+            return self._clarification_route(
                 task_type="bounded_refactor",
                 task_category="autonomous_dev_loop_refactor",
-                clarification_question="Should this stay within the autonomous-dev loop only, or also update commit/push/PR planning and tests?",
+                cluster_ids=("autonomous_dev_cluster", "bundle_cluster", "test_cluster"),
+                confidence="medium",
+                clarification_question=(
+                    "This may affect the autonomous dev cluster "
+                    "(app/controller/autonomous_dev_models.py), the bundle formatter surface, "
+                    "and the focused task-chain and CLI tests. Should the refactor stay inside the formatter, "
+                    "or align the full loop output and tests?"
+                ),
                 next_step="Reply with the narrow loop slice to refactor so I can keep the patch inside one bounded module cluster.",
             )
         if self._matches_test_repair_request(normalized):
-            return RepoTaskRoute(
-                kind="needs_clarification",
+            cluster_ids = self._cluster_ids_for_test_repair(normalized)
+            return self._clarification_route(
                 task_type="test_repair_alignment",
                 task_category="test_repair_alignment",
-                clarification_question="Should I repair only the focused task-chain and CLI tests, or also update the controller or formatter logic that made them drift?",
+                cluster_ids=cluster_ids,
+                confidence="medium",
+                clarification_question=(
+                    f"{self._structure_map.clarification_for_clusters(cluster_ids, action='repair the drifting validation path')} "
+                    "Should I repair only the tests, or also align the underlying controller or formatter logic?"
+                ),
                 next_step="Reply with the smallest module cluster to keep the repair bounded.",
             )
-        return RepoTaskRoute(
-            kind="needs_clarification",
+        return self._clarification_route(
             task_type="bounded_refactor",
             task_category="bounded_repo_task",
-            clarification_question="Which module cluster should this stay within: capability wiring, controller state flow, feature-bundle formatting, or autonomous-dev loop refactor?",
+            cluster_ids=("capability_cluster", "execution_cluster", "bundle_cluster", "autonomous_dev_cluster", "test_cluster"),
+            confidence="low",
+            clarification_question=(
+                "Which module cluster should this stay within: capability cluster, execution cluster, bundle cluster, "
+                "or autonomous dev cluster?"
+            ),
             next_step="Reply with the bounded repo slice plus whether this is a behavior change, test repair, or refactor only.",
         )
 
@@ -181,7 +210,7 @@ class RepoTaskRouter:
 
     @staticmethod
     def _matches_capability_wiring_request(prompt: str) -> bool:
-        wiring_markers = ("wire", "wiring", "grammar", "registry", "executor", "evaluator", "capability")
+        wiring_markers = ("wire", "wiring", "grammar", "registry", "executor", "evaluator", "capability", "routing", "route")
         return "capability" in prompt and any(marker in prompt for marker in wiring_markers)
 
     @staticmethod
@@ -200,112 +229,249 @@ class RepoTaskRouter:
         )
 
     @staticmethod
+    def _matches_execution_flow_refactor_request(prompt: str) -> bool:
+        return "refactor" in prompt and any(
+            marker in prompt
+            for marker in ("execution flow", "execution cluster", "task execution", "multi file planner", "planner flow")
+        )
+
+    @staticmethod
     def _matches_dev_loop_refactor_request(prompt: str) -> bool:
         return "refactor" in prompt and any(marker in prompt for marker in ("dev loop", "autonomous dev", "devchain", "/devchain"))
 
     @staticmethod
     def _matches_test_repair_request(prompt: str) -> bool:
         return any(marker in prompt for marker in ("repair tests", "fix tests", "test repair", "update tests")) and any(
-            marker in prompt for marker in ("controller", "formatter", "capability", "bundle", "autonomous")
+            marker in prompt for marker in ("controller", "formatter", "capability", "bundle", "autonomous", "execution")
         )
 
-    @staticmethod
-    def _commit_summary_helper_route() -> RepoTaskRoute:
+    def _cluster_ids_for_test_repair(self, prompt: str) -> tuple[str, ...]:
+        if "capability" in prompt:
+            return ("capability_cluster", "test_cluster")
+        if "autonomous" in prompt or "dev loop" in prompt:
+            return ("autonomous_dev_cluster", "bundle_cluster", "test_cluster")
+        if "execution" in prompt or "controller" in prompt:
+            return ("execution_cluster", "bundle_cluster", "test_cluster")
+        return ("bundle_cluster", "test_cluster")
+
+    def _clarification_route(
+        self,
+        *,
+        task_type: RepoTaskType,
+        task_category: str,
+        cluster_ids: tuple[str, ...],
+        confidence: RepoTaskConfidence,
+        clarification_question: str,
+        next_step: str,
+    ) -> RepoTaskRoute:
+        selection = self._build_selection(cluster_ids=cluster_ids, confidence=confidence, seed_paths=())
+        return RepoTaskRoute(
+            kind="needs_clarification",
+            task_type=task_type,
+            task_category=task_category,
+            clarification_question=clarification_question,
+            next_step=next_step,
+            cluster_ids=selection.cluster_ids,
+            impact_analysis=selection.impact_analysis,
+            confidence=selection.confidence,
+            selection_summary=selection.selection_summary,
+            expansion_summary=selection.expansion_summary,
+        )
+
+    def _build_selection(
+        self,
+        *,
+        cluster_ids: tuple[str, ...],
+        confidence: RepoTaskConfidence,
+        seed_paths: tuple[str, ...],
+    ):
+        selection_summary = self._structure_map.selection_summary_for_clusters(cluster_ids)
+        missing_paths = self._structure_map.partial_cluster_gaps(seed_paths) if seed_paths else ()
+        if missing_paths:
+            expansion_summary = f"Expanded the plan to keep cluster integrity: {', '.join(missing_paths)}"
+        elif seed_paths:
+            expansion_summary = f"Seed files already cover the full {selection_summary}."
+        else:
+            expansion_summary = f"Cluster-aware clarification is anchored to the full {selection_summary}."
+        return self._structure_map.build_selection(
+            cluster_ids=cluster_ids,
+            confidence=confidence,
+            selection_summary=selection_summary,
+            expansion_summary=expansion_summary,
+        )
+
+    def _build_route_file(
+        self,
+        *,
+        relative_path: str,
+        cluster_ids: tuple[str, ...],
+        file_overrides: dict[str, RepoTaskRouteFile],
+    ) -> RepoTaskRouteFile:
+        existing = file_overrides.get(relative_path)
+        if existing is not None:
+            return existing
+        cluster_titles = [
+            self._structure_map.cluster(cluster_id).title
+            for cluster_id in cluster_ids
+            if relative_path in self._structure_map.cluster(cluster_id).files
+        ]
+        joined_titles = ", ".join(cluster_titles) or "selected cluster"
+        if relative_path.startswith("tests/"):
+            return RepoTaskRouteFile(
+                relative_path=relative_path,
+                inclusion_reason=f"Included to keep the focused regression package aligned with the {joined_titles}.",
+                change_type="Validation surface only: keep the broader regression package intact for the selected repo slice.",
+                editable=False,
+                scope_confidence=0.84,
+            )
+        return RepoTaskRouteFile(
+            relative_path=relative_path,
+            inclusion_reason=f"Included to keep the {joined_titles} intact so the plan does not drift into a partial multi-file update.",
+            change_type=f"Context only: preserve {joined_titles} integrity while the editable change stays in the primary implementation file.",
+            editable=False,
+            scope_confidence=0.8,
+        )
+
+    def _proposal_route(
+        self,
+        *,
+        task_type: RepoTaskType,
+        task_category: str,
+        feature_title: str,
+        intended_outcome: str,
+        bundle_summary: str,
+        cluster_ids: tuple[str, ...],
+        file_overrides: dict[str, RepoTaskRouteFile],
+        validation_command: str,
+        validation_rationale: str,
+        expected_test_impact: str,
+        assumptions: tuple[str, ...],
+        risk_notes: tuple[str, ...],
+        route_key: str,
+        playtest_required: bool = False,
+    ) -> RepoTaskRoute:
+        seed_paths = tuple(file_overrides)
+        selection = self._build_selection(cluster_ids=cluster_ids, confidence="high", seed_paths=seed_paths)
+        files = tuple(
+            self._build_route_file(relative_path=relative_path, cluster_ids=selection.cluster_ids, file_overrides=file_overrides)
+            for relative_path in selection.target_files
+        )
         return RepoTaskRoute(
             kind="proposal_ready",
+            task_type=task_type,
+            task_category=task_category,
+            feature_title=feature_title,
+            intended_outcome=intended_outcome,
+            bundle_summary=bundle_summary,
+            files=files,
+            affected_tests=selection.impact_analysis.tests,
+            validation_command=validation_command,
+            validation_rationale=validation_rationale,
+            expected_test_impact=expected_test_impact,
+            assumptions=assumptions,
+            risk_notes=risk_notes,
+            playtest_required=playtest_required,
+            route_key=route_key,
+            cluster_ids=selection.cluster_ids,
+            impact_analysis=selection.impact_analysis,
+            confidence=selection.confidence,
+            selection_summary=selection.selection_summary,
+            expansion_summary=selection.expansion_summary,
+        )
+
+    def _commit_summary_helper_route(self) -> RepoTaskRoute:
+        return self._proposal_route(
             task_type="formatter_output_update",
             task_category="helper_extraction",
             feature_title="Add helper for feature bundle commit summary formatting",
-            intended_outcome="Extract bounded formatter logic for feature bundle commit summaries and keep the focused task-chain coverage aligned.",
-            bundle_summary="Bounded coding bundle for feature-bundle formatter helper extraction plus focused regression alignment.",
-            files=(
-                RepoTaskRouteFile(
+            intended_outcome="Extract bounded formatter logic for feature bundle commit summaries and keep the focused task-chain and CLI coverage aligned.",
+            bundle_summary="Bounded coding bundle for feature-bundle formatter helper extraction plus cluster-aware regression alignment.",
+            cluster_ids=("bundle_cluster", "test_cluster"),
+            file_overrides={
+                "app/controller/feature_bundle_models.py": RepoTaskRouteFile(
                     relative_path="app/controller/feature_bundle_models.py",
-                    inclusion_reason="Model metadata anchors the bounded feature-bundle formatter surface and keeps the plan grounded in the existing contract.",
+                    inclusion_reason="Model metadata anchors the bundle cluster contract and keeps the formatter helper extraction grounded in the current feature-bundle payload shape.",
                     change_type="Context only: keep the coding bundle tied to the existing feature-bundle models.",
                     editable=False,
-                    scope_confidence=0.72,
+                    scope_confidence=0.79,
                 ),
-                RepoTaskRouteFile(
+                "app/controller/feature_bundle_formatter.py": RepoTaskRouteFile(
                     relative_path="app/controller/feature_bundle_formatter.py",
                     inclusion_reason="Formatter commit summary lines are the direct implementation surface for the helper extraction.",
                     change_type="Extract commit summary line formatting into a dedicated helper used by completion advisory rendering.",
                     editable=True,
                     scope_confidence=0.97,
                 ),
-                RepoTaskRouteFile(
+                "tests/test_task_chains.py": RepoTaskRouteFile(
                     relative_path="tests/test_task_chains.py",
-                    inclusion_reason="Task-chain feature bundle assertions are the smallest stable regression surface for the formatter change.",
-                    change_type="Update bounded task-chain coverage to assert the extracted commit prep reason line.",
+                    inclusion_reason="Task-chain assertions are the tightest regression surface for the feature-bundle formatter output.",
+                    change_type="Update task-chain coverage to assert the extracted commit prep reason line and richer coding-plan metadata.",
                     editable=True,
                     scope_confidence=0.95,
                 ),
-            ),
-            affected_tests=("tests/test_task_chains.py",),
-            validation_command="python -m pytest tests/test_task_chains.py",
-            validation_rationale="The bounded change stays inside feature-bundle formatter output and its focused task-chain assertions.",
-            expected_test_impact="Task-chain coverage gains an explicit commit-prep-reason assertion without widening runtime scope.",
+            },
+            validation_command="python -m pytest tests/test_task_chains.py tests/test_cli_chat.py",
+            validation_rationale="The change stays inside the bundle formatter surface, but the full bundle and test clusters keep both task-chain and CLI operator output aligned.",
+            expected_test_impact="Task-chain coverage gains an explicit commit-prep-reason assertion while CLI chat confirms the broader formatter contract still reads cleanly.",
             assumptions=(
-                "The change remains inside the existing formatter and task-chain surfaces.",
+                "The change remains inside the existing formatter and focused test surfaces.",
                 "The helper extraction should not alter feature-bundle apply, commit, or push behavior.",
             ),
             risk_notes=(
-                "The coding bundle is patch-based and fails closed if the formatter or task-chain snippets drift.",
-                "No runtime playtest is required because the change is formatter-only and covered by existing task-chain assertions.",
+                "The coding bundle is patch-based and fails closed if the formatter or focused regression snippets drift.",
+                "Cluster expansion adds CLI chat as context so the plan does not stop at a partial formatter-only view of the operator output.",
             ),
             route_key="commit_summary_helper",
         )
 
-    @staticmethod
-    def _autonomous_dev_refactor_route() -> RepoTaskRoute:
-        return RepoTaskRoute(
-            kind="proposal_ready",
+    def _autonomous_dev_refactor_route(self) -> RepoTaskRoute:
+        return self._proposal_route(
             task_type="bounded_refactor",
             task_category="autonomous_dev_loop_refactor",
             feature_title="Refactor autonomous dev loop step formatting into a helper",
             intended_outcome="Keep autonomous dev loop status rendering in the formatter while extracting repeated step-line construction into a dedicated helper.",
-            bundle_summary="Bounded refactor for autonomous dev loop step formatting plus focused regression validation.",
-            files=(
-                RepoTaskRouteFile(
+            bundle_summary="Bounded refactor for autonomous dev loop step formatting plus cluster-aware regression validation.",
+            cluster_ids=("autonomous_dev_cluster", "bundle_cluster", "test_cluster"),
+            file_overrides={
+                "app/controller/autonomous_dev_models.py": RepoTaskRouteFile(
                     relative_path="app/controller/autonomous_dev_models.py",
                     inclusion_reason="The formatter step helper still renders autonomous dev step metadata defined by the current model contract.",
                     change_type="Context only: keep the refactor anchored to the existing autonomous step model fields.",
                     editable=False,
-                    scope_confidence=0.74,
+                    scope_confidence=0.82,
                 ),
-                RepoTaskRouteFile(
+                "app/controller/feature_bundle_formatter.py": RepoTaskRouteFile(
                     relative_path="app/controller/feature_bundle_formatter.py",
                     inclusion_reason="Autonomous dev chain step rendering is implemented here, so the refactor stays inside the current formatter layer.",
                     change_type="Extract repeated autonomous dev step-line formatting into a dedicated helper without changing behavior.",
                     editable=True,
                     scope_confidence=0.96,
                 ),
-                RepoTaskRouteFile(
+                "tests/test_task_chains.py": RepoTaskRouteFile(
                     relative_path="tests/test_task_chains.py",
                     inclusion_reason="Task-chain coverage already exercises the autonomous dev loop and is part of the smallest stable regression set.",
                     change_type="Validation surface only: confirm the autonomous dev workflow still reads cleanly after the formatter refactor.",
                     editable=False,
-                    scope_confidence=0.83,
+                    scope_confidence=0.85,
                 ),
-                RepoTaskRouteFile(
+                "tests/test_cli_chat.py": RepoTaskRouteFile(
                     relative_path="tests/test_cli_chat.py",
-                    inclusion_reason="CLI chat coverage already hits the conversational autonomous loop summaries and keeps the refactor grounded in operator-facing output.",
+                    inclusion_reason="CLI chat coverage exercises conversational autonomous loop summaries and completes the operator-facing regression package.",
                     change_type="Validation surface only: confirm the CLI conversational layer still presents the loop status correctly.",
                     editable=False,
-                    scope_confidence=0.81,
+                    scope_confidence=0.84,
                 ),
-            ),
-            affected_tests=("tests/test_task_chains.py", "tests/test_cli_chat.py"),
+            },
             validation_command="python -m pytest tests/test_task_chains.py tests/test_cli_chat.py",
-            validation_rationale="Task-chain and CLI chat coverage already exercise the autonomous dev loop output, so they are the smallest stable regression package for this refactor.",
-            expected_test_impact="No behavior change is intended; the focused task-chain and CLI chat coverage confirm the loop status output still reads the same.",
+            validation_rationale="Task-chain and CLI chat coverage already exercise the autonomous dev loop output, and the bundle cluster keeps the formatter contract from drifting.",
+            expected_test_impact="No behavior change is intended; the focused task-chain and CLI chat coverage confirm the loop status output still reads the same after cluster-aware expansion.",
             assumptions=(
                 "The refactor stays inside the existing autonomous dev formatter surface.",
                 "Step ordering, confirmation gates, and chain state transitions remain unchanged.",
             ),
             risk_notes=(
                 "The patch is formatter-only and fails closed if the expected autonomous step-formatting block drifts.",
-                "Validation should stay on task-chain and CLI chat coverage because they already exercise the bounded autonomous dev loop output.",
+                "Cluster expansion keeps the broader formatter contract visible so the refactor does not silently ignore bundle-model coupling.",
             ),
             route_key="autonomous_dev_step_refactor",
         )

@@ -6,6 +6,7 @@ from typing import Callable
 
 from .feature_bundle_models import (
     CodingTaskFilePlan,
+    CodingTaskImpactAnalysis,
     CodingTaskPlan,
     FeatureBundleFile,
     FeatureBundleRecord,
@@ -124,6 +125,15 @@ class CodingTaskPlanner:
                 )
                 for item in route.files
             ),
+            module_clusters=route.cluster_ids,
+            impact_analysis=CodingTaskImpactAnalysis(
+                upstream=route.impact_analysis.upstream,
+                downstream=route.impact_analysis.downstream,
+                tests=route.impact_analysis.tests,
+            ),
+            confidence=route.confidence,
+            selection_summary=route.selection_summary,
+            expansion_summary=route.expansion_summary,
         )
         return FeatureBundleRecord(
             bundle_id=bundle_id,

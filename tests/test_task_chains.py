@@ -8,6 +8,7 @@ from pathlib import Path
 from app.controller.app_service import ControllerService
 from app.controller.execution_runner import ExecutionRunner
 from app.controller.feature_bundle_models import FeatureBundleFile, FeatureBundleRecord, FeatureValidationPlan
+from app.controller.repo_task_routing import RepoTaskRouter
 from app.controller.profile_store import ControllerConfigStore
 from app.platform.secrets import InMemorySecretStore
 
@@ -80,6 +81,7 @@ class TaskChainTests(unittest.TestCase):
             (source_root / "app" / "controller" / "feature_bundle_models.py", root / "app" / "controller" / "feature_bundle_models.py"),
             (source_root / "app" / "controller" / "feature_bundle_formatter.py", root / "app" / "controller" / "feature_bundle_formatter.py"),
             (source_root / "tests" / "test_task_chains.py", root / "tests" / "test_task_chains.py"),
+            (source_root / "tests" / "test_cli_chat.py", root / "tests" / "test_cli_chat.py"),
         )
         for source_path, destination_path in targets:
             destination_path.parent.mkdir(parents=True, exist_ok=True)
@@ -90,6 +92,7 @@ class TaskChainTests(unittest.TestCase):
         source_root = Path(__file__).resolve().parents[1]
         targets = (
             (source_root / "app" / "controller" / "autonomous_dev_models.py", root / "app" / "controller" / "autonomous_dev_models.py"),
+            (source_root / "app" / "controller" / "feature_bundle_models.py", root / "app" / "controller" / "feature_bundle_models.py"),
             (source_root / "app" / "controller" / "feature_bundle_formatter.py", root / "app" / "controller" / "feature_bundle_formatter.py"),
             (source_root / "tests" / "test_task_chains.py", root / "tests" / "test_task_chains.py"),
             (source_root / "tests" / "test_cli_chat.py", root / "tests" / "test_cli_chat.py"),
@@ -367,15 +370,28 @@ class TaskChainTests(unittest.TestCase):
                     "app/controller/feature_bundle_models.py",
                     "app/controller/feature_bundle_formatter.py",
                     "tests/test_task_chains.py",
+                    "tests/test_cli_chat.py",
                 ),
             )
             self.assertEqual(bundle.coding_task_plan.task_category, "helper_extraction")
-            self.assertEqual(bundle.coding_task_plan.validation_command, "python -m pytest tests/test_task_chains.py")
+            self.assertEqual(bundle.coding_task_plan.validation_command, "python -m pytest tests/test_task_chains.py tests/test_cli_chat.py")
             self.assertFalse(bundle.coding_task_plan.playtest_required)
-            self.assertEqual(len(bundle.coding_task_plan.file_plans), 3)
+            self.assertEqual(bundle.coding_task_plan.module_clusters, ("bundle_cluster", "test_cluster"))
+            self.assertEqual(bundle.coding_task_plan.confidence, "high")
+            self.assertEqual(bundle.coding_task_plan.impact_analysis.upstream, ("app/controller/feature_bundle_models.py",))
+            self.assertEqual(bundle.coding_task_plan.impact_analysis.downstream, ("app/controller/feature_bundle_formatter.py",))
+            self.assertEqual(
+                bundle.coding_task_plan.impact_analysis.tests,
+                ("tests/test_task_chains.py", "tests/test_cli_chat.py"),
+            )
+            self.assertIn("tests/test_cli_chat.py", bundle.coding_task_plan.expansion_summary)
+            self.assertEqual(len(bundle.coding_task_plan.file_plans), 4)
             self.assertIn("Coding plan:", planned.user_message)
             self.assertIn("formatter_output_update", planned.user_message)
             self.assertIn("Category: helper_extraction", planned.user_message)
+            self.assertIn("Confidence: high", planned.user_message)
+            self.assertIn("Clusters: bundle_cluster, test_cluster", planned.user_message)
+            self.assertIn("Impact tests: tests/test_task_chains.py, tests/test_cli_chat.py", planned.user_message)
             self.assertIn("feature_bundle_formatter.py", planned.user_message)
             self.assertIn("Extract commit summary line formatting", planned.user_message)
 
@@ -407,9 +423,11 @@ class TaskChainTests(unittest.TestCase):
 
             self.assertEqual(clarification.outcome, "success")
             self.assertEqual(clarification.outcome_reason_code, "needs_clarification")
+            self.assertIn("capability cluster", clarification.user_message)
             self.assertIn("command_grammar.py", clarification.user_message)
             self.assertIn("capability_registry.py", clarification.user_message)
             self.assertIn("capability_executor.py", clarification.user_message)
+            self.assertIn("full cluster", clarification.user_message.lower())
             self.assertIn("what command or capability name should be wired", clarification.user_message.lower())
             self.assertIsNone(service.active_feature_bundle_for_chat(chat_id="local-cli"))
 
@@ -435,6 +453,7 @@ class TaskChainTests(unittest.TestCase):
                 bundle.coding_task_plan.target_files,
                 (
                     "app/controller/autonomous_dev_models.py",
+                    "app/controller/feature_bundle_models.py",
                     "app/controller/feature_bundle_formatter.py",
                     "tests/test_task_chains.py",
                     "tests/test_cli_chat.py",
@@ -448,10 +467,51 @@ class TaskChainTests(unittest.TestCase):
                 bundle.coding_task_plan.affected_tests,
                 ("tests/test_task_chains.py", "tests/test_cli_chat.py"),
             )
+            self.assertEqual(
+                bundle.coding_task_plan.module_clusters,
+                ("autonomous_dev_cluster", "bundle_cluster", "test_cluster"),
+            )
+            self.assertEqual(bundle.coding_task_plan.confidence, "high")
+            self.assertIn("feature_bundle_models.py", bundle.coding_task_plan.expansion_summary)
             self.assertIn("bounded_refactor", planned.user_message)
             self.assertIn("autonomous_dev_loop_refactor", planned.user_message)
             self.assertIn("feature_bundle_formatter.py", planned.user_message)
             self.assertIn("tests/test_cli_chat.py", planned.user_message)
+            self.assertIn("Impact upstream: app/controller/autonomous_dev_models.py, app/controller/feature_bundle_models.py", planned.user_message)
+
+
+    def test_execution_flow_refactor_clarifies_with_execution_cluster(self) -> None:
+        router = RepoTaskRouter()
+
+        route = router.plan("Refactor execution flow")
+
+        self.assertEqual(route.kind, "needs_clarification")
+        self.assertEqual(route.task_category, "execution_flow_refactor")
+        self.assertEqual(route.cluster_ids, ("execution_cluster", "bundle_cluster", "test_cluster"))
+        self.assertEqual(route.confidence, "medium")
+        self.assertEqual(route.impact_analysis.upstream, ("app/controller/app_service.py", "app/controller/feature_bundle_models.py"))
+        self.assertIn("execution cluster", route.clarification_question)
+        self.assertIn("app/controller/task_execution_conversation.py", route.clarification_question)
+
+    def test_commit_summary_route_expands_partial_cluster_deterministically(self) -> None:
+        router = RepoTaskRouter()
+
+        route = router.plan("Add a helper that formats feature bundle commit summaries and update the related tests.")
+
+        self.assertEqual(route.kind, "proposal_ready")
+        self.assertEqual(route.cluster_ids, ("bundle_cluster", "test_cluster"))
+        self.assertEqual(route.confidence, "high")
+        self.assertEqual(
+            tuple(item.relative_path for item in route.files),
+            (
+                "app/controller/feature_bundle_models.py",
+                "app/controller/feature_bundle_formatter.py",
+                "tests/test_task_chains.py",
+                "tests/test_cli_chat.py",
+            ),
+        )
+        self.assertIn("tests/test_cli_chat.py", route.expansion_summary)
+        self.assertEqual(route.impact_analysis.tests, ("tests/test_task_chains.py", "tests/test_cli_chat.py"))
 
     def test_dev_loop_refactor_clarifies_scope_instead_of_guessing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -464,8 +524,9 @@ class TaskChainTests(unittest.TestCase):
 
             self.assertEqual(clarification.outcome, "success")
             self.assertEqual(clarification.outcome_reason_code, "needs_clarification")
-            self.assertIn("autonomous-dev loop only", clarification.user_message)
-            self.assertIn("commit/push/PR planning and tests", clarification.user_message)
+            self.assertIn("autonomous dev cluster", clarification.user_message)
+            self.assertIn("align the full loop output and tests", clarification.user_message)
+            self.assertIn("focused task-chain and CLI tests", clarification.user_message)
 
     def test_bounded_coding_bundle_apply_flow_reuses_existing_feature_bundle_execution(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

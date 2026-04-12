@@ -1,7 +1,7 @@
 """Bounded multi-file feature bundle models."""
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import Literal
 
 
@@ -20,6 +20,7 @@ CodingTaskType = Literal[
     "bounded_refactor",
 ]
 CodingTaskPlanStatus = Literal["proposal_ready", "needs_clarification"]
+CodingTaskPlanConfidence = Literal["high", "medium", "low"]
 FeatureBundleCommitReadiness = Literal[
     "safe_to_commit",
     "blocked_pending_validation",
@@ -120,6 +121,31 @@ class CodingTaskFilePlan:
 
 
 @dataclass(frozen=True)
+class CodingTaskImpactAnalysis:
+    upstream: tuple[str, ...] = ()
+    downstream: tuple[str, ...] = ()
+    tests: tuple[str, ...] = ()
+
+    def to_payload(self) -> dict[str, object]:
+        return {
+            "upstream": list(self.upstream),
+            "downstream": list(self.downstream),
+            "tests": list(self.tests),
+        }
+
+    @staticmethod
+    def from_payload(payload: dict[str, object]) -> "CodingTaskImpactAnalysis":
+        upstream = payload.get("upstream")
+        downstream = payload.get("downstream")
+        tests = payload.get("tests")
+        return CodingTaskImpactAnalysis(
+            upstream=tuple(str(item).strip() for item in upstream or () if str(item).strip()),
+            downstream=tuple(str(item).strip() for item in downstream or () if str(item).strip()),
+            tests=tuple(str(item).strip() for item in tests or () if str(item).strip()),
+        )
+
+
+@dataclass(frozen=True)
 class CodingTaskPlan:
     task_type: CodingTaskType
     status: CodingTaskPlanStatus
@@ -134,6 +160,11 @@ class CodingTaskPlan:
     validation_rationale: str = ""
     file_plans: tuple[CodingTaskFilePlan, ...] = ()
     clarification_question: str = ""
+    module_clusters: tuple[str, ...] = ()
+    impact_analysis: CodingTaskImpactAnalysis = field(default_factory=CodingTaskImpactAnalysis)
+    confidence: CodingTaskPlanConfidence = "low"
+    selection_summary: str = ""
+    expansion_summary: str = ""
 
     def to_payload(self) -> dict[str, object]:
         return {
@@ -150,6 +181,11 @@ class CodingTaskPlan:
             "validation_rationale": self.validation_rationale,
             "file_plans": [item.to_payload() for item in self.file_plans],
             "clarification_question": self.clarification_question,
+            "module_clusters": list(self.module_clusters),
+            "impact_analysis": self.impact_analysis.to_payload(),
+            "confidence": self.confidence,
+            "selection_summary": self.selection_summary,
+            "expansion_summary": self.expansion_summary,
         }
 
     @staticmethod
@@ -157,6 +193,8 @@ class CodingTaskPlan:
         target_files = payload.get("target_files")
         affected_tests = payload.get("affected_tests")
         file_plans = payload.get("file_plans")
+        module_clusters = payload.get("module_clusters")
+        impact_analysis = payload.get("impact_analysis")
         return CodingTaskPlan(
             task_type=str(payload.get("task_type", "bounded_refactor")).strip() or "bounded_refactor",  # type: ignore[arg-type]
             status=str(payload.get("status", "proposal_ready")).strip() or "proposal_ready",  # type: ignore[arg-type]
@@ -171,6 +209,11 @@ class CodingTaskPlan:
             validation_rationale=str(payload.get("validation_rationale", "")).strip(),
             file_plans=tuple(CodingTaskFilePlan.from_payload(item) for item in file_plans or () if isinstance(item, dict)),
             clarification_question=str(payload.get("clarification_question", "")).strip(),
+            module_clusters=tuple(str(item).strip() for item in module_clusters or () if str(item).strip()),
+            impact_analysis=CodingTaskImpactAnalysis.from_payload(impact_analysis) if isinstance(impact_analysis, dict) else CodingTaskImpactAnalysis(),
+            confidence=str(payload.get("confidence", "low")).strip() or "low",  # type: ignore[arg-type]
+            selection_summary=str(payload.get("selection_summary", "")).strip(),
+            expansion_summary=str(payload.get("expansion_summary", "")).strip(),
         )
 
 

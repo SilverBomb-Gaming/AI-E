@@ -175,6 +175,7 @@ class FeatureBundleFormatter:
                 "Coding plan:",
                 f"- Type: {plan.task_type}",
                 f"- Category: {plan.task_category or plan.task_type}",
+                f"- Confidence: {plan.confidence}",
                 f"- Status: {plan.status}",
                 f"- Change: {plan.intended_change_type}",
                 f"- Test impact: {plan.expected_test_impact}",
@@ -183,10 +184,22 @@ class FeatureBundleFormatter:
                 f"- Clarification needed: {'yes' if plan.clarification_needed else 'no'}",
             )
         )
+        if plan.module_clusters:
+            lines.append(f"- Clusters: {', '.join(plan.module_clusters)}")
+        if plan.selection_summary:
+            lines.append(f"- Selection: {plan.selection_summary}")
+        if plan.expansion_summary:
+            lines.append(f"- Expansion: {plan.expansion_summary}")
         if plan.target_files:
             lines.append(f"- Targets: {', '.join(plan.target_files)}")
         if plan.affected_tests:
             lines.append(f"- Tests: {', '.join(plan.affected_tests)}")
+        if plan.impact_analysis.upstream:
+            lines.append(f"- Impact upstream: {', '.join(plan.impact_analysis.upstream)}")
+        if plan.impact_analysis.downstream:
+            lines.append(f"- Impact downstream: {', '.join(plan.impact_analysis.downstream)}")
+        if plan.impact_analysis.tests:
+            lines.append(f"- Impact tests: {', '.join(plan.impact_analysis.tests)}")
         if plan.validation_rationale:
             lines.append(f"- Validation why: {plan.validation_rationale}")
         if plan.file_plans:
