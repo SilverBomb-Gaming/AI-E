@@ -2,6 +2,31 @@
 
 Controlled execution surface for supported projects. AI-E turns a bounded request into a real, reviewable result with guardrails, live status, proof summaries, and saved history.
 
+## Constraint Router
+
+Build the system that uses everything else, safely.
+
+AI-E is a constraint-aware orchestration and execution layer that translates human intent into safe, bounded, environment-aware plans. The new Constraint Router is the first engine-facing proof of that positioning: it takes a messy game-development request, parses what is actually present, resolves engine and safety constraints, produces a bounded scaffold-first plan, and emits a Unity-first handoff without pretending the request is more complete than it is.
+
+What the Constraint Router does:
+
+- parses natural-language game requests into a typed intent model
+- resolves explicit constraints, ambiguities, unsupported targets, and blocked actions before planning
+- produces bounded scaffold-level execution plans instead of overpromising full systems
+- emits Unity-first structured JSON and Codex-ready handoff text for practical execution
+
+Why Unity is first:
+
+- Unity is the first implemented engine adapter, not the center of the architecture
+- the core parser, constraint resolver, and plan builder stay engine-agnostic so later adapters can reuse the same contract
+- Unity support is intentionally bounded to planning and handoff generation rather than scene mutation, prefab editing, or build automation
+
+Current limitations:
+
+- only Unity is implemented today; Unreal and Godot return clean unsupported-target results
+- vague requests downgrade to bounded draft plans with explicit missing inputs instead of hidden guesses
+- this layer does not automate engines, mutate scenes, edit prefabs, or run build pipelines
+- the first pass is scaffold-first and operator-reviewed by design
 ## Windows OpenClaw Operator Console Status
 
 The current active operator-console surface in this repo is the Windows-first OpenClaw controller shell. The known-good checkpoint is:
