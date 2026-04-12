@@ -39,6 +39,45 @@
     "Do not promise full game systems from vague requests.",
     "Prefer scaffold-level tasks with explicit missing inputs."
   ],
+  "scaffold_only_rules": [
+    {
+      "scope": "gameplay_system",
+      "reason": "Broad gameplay systems stay scaffold-first until the first slice is reviewed."
+    }
+  ],
+  "confirmation_rules": {
+    "default_implementation_requires_confirmation": true,
+    "prepare_commit_requires_confirmation": true
+  },
+  "playtest_rules": [
+    {
+      "scope": "gameplay_mechanic",
+      "requires_playtest": true
+    },
+    {
+      "scope": "gameplay_system",
+      "requires_playtest": true
+    }
+  ],
+  "human_review_rules": [
+    {
+      "status": "bounded_draft_only",
+      "requires_human_review": true
+    },
+    {
+      "scope": "gameplay_system",
+      "requires_human_review": true
+    },
+    {
+      "tone": "polished",
+      "requires_human_review": true
+    }
+  ],
+  "commit_preparation_rules": {
+    "allow_when_supported_statuses": ["supported_ready", "supported_with_warnings"],
+    "deny_when_scaffold_only": true,
+    "deny_when_human_review_required": false
+  },
   "unsupported_target_message": "Unity is the only implemented engine adapter in Constraint Router v1.",
   "bounded_draft_note": "Produce the safest bounded draft instead of refusing a vague but non-unsafe request."
 }

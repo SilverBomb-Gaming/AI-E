@@ -49,6 +49,15 @@ class PlanBuilder:
                 warnings=report.warnings,
                 codex_handoff_ready=False,
                 limitations=("Only the Unity adapter is implemented in v1.",),
+                open_assumptions=("Retarget the request to Unity before trying to execute implementation work.",),
+                blocked_items=("Execution cannot proceed for unsupported engine targets.",),
+                implementation_allowed=False,
+                scaffold_only=True,
+                confirmation_required=False,
+                playtest_required=False,
+                human_review_required=True,
+                commit_preparation_allowed=False,
+                task_chain_ready=True,
             )
         if report.status == "blocked_unsafe":
             return ExecutionPlan(
@@ -69,6 +78,15 @@ class PlanBuilder:
                 warnings=report.warnings + report.blocked_actions,
                 codex_handoff_ready=False,
                 limitations=("Scene, prefab, and build automation remain outside v1 scope.",),
+                open_assumptions=("Reduce the request to script-level or planning-level work before retrying.",),
+                blocked_items=report.blocked_actions,
+                implementation_allowed=False,
+                scaffold_only=True,
+                confirmation_required=False,
+                playtest_required=False,
+                human_review_required=True,
+                commit_preparation_allowed=False,
+                task_chain_ready=True,
             )
         if report.status == "bounded_draft_only":
             return self._build_draft_plan(intent, report)
@@ -77,27 +95,56 @@ class PlanBuilder:
     def _build_unity_plan(self, intent: IntentSpec, report: ConstraintReport) -> ExecutionPlan:
         feature_key = self._primary_feature(intent.features)
         feature_title = self._FEATURE_TITLES.get(feature_key, "Unity gameplay feature")
-        summary = f"Bounded Unity scaffold plan for {feature_title}."
-        tasks = (
-            {
-                "id": "inspect-surface",
-                "title": "Inspect the closest Unity gameplay script surface",
-                "detail": "Locate the current player, camera, or gameplay entrypoint before adding new code.",
-                "bounded": True,
-            },
-            {
-                "id": "add-scaffold",
-                "title": f"Add a minimal {feature_title} scaffold",
-                "detail": "Implement the smallest usable script slice before layering polish or content.",
-                "bounded": True,
-            },
-            {
-                "id": "document-hooks",
-                "title": "Document manual scene and inspector hooks",
-                "detail": "Leave explicit notes for any Unity wiring the operator must complete manually.",
-                "bounded": True,
-            },
-        )
+        if report.scaffold_only:
+            summary = f"Bounded Unity scaffold-first plan for {feature_title}."
+            tasks = (
+                {
+                    "id": "inspect-surface",
+                    "title": "Inspect the closest Unity gameplay script surface",
+                    "detail": "Locate the current gameplay entrypoint before expanding the feature.",
+                    "bounded": True,
+                },
+                {
+                    "id": "scaffold-minimal-slice",
+                    "title": f"Scaffold the first minimal {feature_title} slice",
+                    "detail": "Keep the first pass to one reviewed gameplay slice instead of the whole system.",
+                    "bounded": True,
+                },
+                {
+                    "id": "document-hooks",
+                    "title": "Document manual scene and inspector hooks",
+                    "detail": "Leave explicit notes for any Unity wiring the operator must complete manually.",
+                    "bounded": True,
+                },
+            )
+            open_assumptions = (
+                f"The first pass will stay scaffold-first for {feature_title} rather than attempting the full system.",
+            )
+        else:
+            summary = f"Bounded Unity scaffold plan for {feature_title}."
+            tasks = (
+                {
+                    "id": "inspect-surface",
+                    "title": "Inspect the closest Unity gameplay script surface",
+                    "detail": "Locate the current player, camera, or gameplay entrypoint before adding new code.",
+                    "bounded": True,
+                },
+                {
+                    "id": "add-scaffold",
+                    "title": f"Add a minimal {feature_title} scaffold",
+                    "detail": "Implement the smallest usable script slice before layering polish or content.",
+                    "bounded": True,
+                },
+                {
+                    "id": "document-hooks",
+                    "title": "Document manual scene and inspector hooks",
+                    "detail": "Leave explicit notes for any Unity wiring the operator must complete manually.",
+                    "bounded": True,
+                },
+            )
+            open_assumptions = (
+                "Manual Unity scene or inspector wiring will still be completed by an operator.",
+            )
         file_operations = tuple(self._feature_file_hints(feature_key))
         verification_steps = tuple(self._unity_rules.get("default_verification_guidance", []))
         limitations = tuple(report.guardrail_notes)
@@ -112,6 +159,15 @@ class PlanBuilder:
             warnings=report.warnings,
             codex_handoff_ready=report.status in {"supported_ready", "supported_with_warnings"},
             limitations=limitations,
+            open_assumptions=open_assumptions,
+            blocked_items=report.blocked_actions,
+            implementation_allowed=report.implementation_allowed,
+            scaffold_only=report.scaffold_only,
+            confirmation_required=report.confirmation_required,
+            playtest_required=report.playtest_required,
+            human_review_required=report.human_review_required,
+            commit_preparation_allowed=report.commit_preparation_allowed,
+            task_chain_ready=True,
         )
 
     def _build_draft_plan(self, intent: IntentSpec, report: ConstraintReport) -> ExecutionPlan:
@@ -158,6 +214,15 @@ class PlanBuilder:
         )
         limitations = tuple(report.guardrail_notes) + ("Draft-only until the missing inputs are confirmed.",)
         summary = f"Draft-only bounded plan for {feature_title}; missing inputs prevent engine-bound execution."
+        open_assumptions = tuple(
+            dict.fromkeys(
+                (
+                    f"The current request is treated as a bounded draft for {feature_title}.",
+                    "Implementation waits until the missing inputs are confirmed.",
+                )
+            )
+        )
+        blocked_items = tuple(dict.fromkeys(report.missing_inputs))
         return ExecutionPlan(
             status=report.status,
             summary=summary,
@@ -169,6 +234,15 @@ class PlanBuilder:
             warnings=report.warnings + report.ambiguities,
             codex_handoff_ready=False,
             limitations=limitations,
+            open_assumptions=open_assumptions,
+            blocked_items=blocked_items,
+            implementation_allowed=report.implementation_allowed,
+            scaffold_only=report.scaffold_only,
+            confirmation_required=report.confirmation_required,
+            playtest_required=report.playtest_required,
+            human_review_required=report.human_review_required,
+            commit_preparation_allowed=report.commit_preparation_allowed,
+            task_chain_ready=True,
         )
 
     def _primary_feature(self, features: tuple[str, ...]) -> str:
