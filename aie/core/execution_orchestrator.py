@@ -28,8 +28,7 @@ class ExecutionOrchestrator:
         self._resume_coordinator = resume_coordinator or TaskChainResumeCoordinator(self._executor)
 
     def orchestrate(self, request: OrchestrationRequest) -> OrchestrationResult:
-        lifecycle_state, lifecycle_notes = self._classify_lifecycle_state(request)
-        decision = self._choose_action(request=request, lifecycle_state=lifecycle_state, lifecycle_notes=lifecycle_notes)
+        decision = self.inspect(request)
 
         if decision.chosen_action == OrchestrationAction.EXECUTE:
             return self._orchestrate_fresh_execution(request=request, decision=decision)
@@ -40,6 +39,10 @@ class ExecutionOrchestrator:
         if decision.chosen_action == OrchestrationAction.STOP:
             return self._build_stop_result(request=request, decision=decision)
         return self._build_reject_result(request=request, decision=decision)
+
+    def inspect(self, request: OrchestrationRequest) -> OrchestrationDecision:
+        lifecycle_state, lifecycle_notes = self._classify_lifecycle_state(request)
+        return self._choose_action(request=request, lifecycle_state=lifecycle_state, lifecycle_notes=lifecycle_notes)
 
     def orchestrate_persisted_session(
         self,

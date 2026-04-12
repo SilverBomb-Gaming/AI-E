@@ -521,3 +521,140 @@ class LoadResult:
             "session": self.session.to_dict() if self.session else None,
             "notes": list(self.notes),
         }
+
+
+class MultiTaskSessionStatus(str, Enum):
+    READY = "ready"
+    WAITING = "waiting"
+    RESUMABLE = "resumable"
+    BLOCKED = "blocked"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    INVALID = "invalid"
+
+
+class MultiTaskPriority(str, Enum):
+    LOW = "low"
+    NORMAL = "normal"
+    HIGH = "high"
+    URGENT = "urgent"
+
+
+class MultiTaskAction(str, Enum):
+    REGISTER_SESSION = "register_session"
+    INSPECT_SESSIONS = "inspect_sessions"
+    SELECT_NEXT_SESSION = "select_next_session"
+    EXECUTE_SELECTED = "execute_selected"
+    RESUME_SELECTED = "resume_selected"
+    WAIT = "wait"
+    STOP = "stop"
+    REJECT = "reject"
+
+
+class SessionSelectionReason(str, Enum):
+    HIGHEST_PRIORITY_RESUMABLE = "highest_priority_resumable"
+    HIGHEST_PRIORITY_READY = "highest_priority_ready"
+    STABLE_TIEBREAKER = "stable_tiebreaker"
+    EXPLICIT_SELECTION = "explicit_selection"
+    NO_ACTIONABLE_SESSIONS = "no_actionable_sessions"
+    INVALID_SELECTION = "invalid_selection"
+
+
+@dataclass(frozen=True)
+class MultiTaskSessionRecord:
+    session_id: str
+    priority: MultiTaskPriority
+    lifecycle_state: LifecycleState
+    session_status: MultiTaskSessionStatus
+    last_executor_status: ExecutorStatus | None = None
+    required_human_action: str | None = None
+    resumable: bool = False
+    blocked: bool = False
+    last_updated: str = ""
+    router_handoff: ConstraintRouterHandoff | None = None
+    prior_execution_result: TaskExecutionResult | None = None
+    orchestration_result: OrchestrationResult | None = None
+    persisted_session: PersistedExecutionSession | None = None
+    resume_request: ResumeRequest | None = None
+    notes: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "session_id": self.session_id,
+            "priority": self.priority.value,
+            "lifecycle_state": self.lifecycle_state.value,
+            "session_status": self.session_status.value,
+            "last_executor_status": self.last_executor_status.value if self.last_executor_status else None,
+            "required_human_action": self.required_human_action,
+            "resumable": self.resumable,
+            "blocked": self.blocked,
+            "last_updated": self.last_updated,
+            "router_handoff": self.router_handoff.to_dict() if self.router_handoff else None,
+            "prior_execution_result": self.prior_execution_result.to_dict() if self.prior_execution_result else None,
+            "orchestration_result": self.orchestration_result.to_dict() if self.orchestration_result else None,
+            "persisted_session": self.persisted_session.to_dict() if self.persisted_session else None,
+            "resume_request": self.resume_request.to_dict() if self.resume_request else None,
+            "notes": list(self.notes),
+        }
+
+
+@dataclass(frozen=True)
+class MultiTaskOrchestrationRequest:
+    requested_action: MultiTaskAction = MultiTaskAction.INSPECT_SESSIONS
+    session_registry: tuple[MultiTaskSessionRecord, ...] = ()
+    sessions_to_register: tuple[MultiTaskSessionRecord, ...] = ()
+    selected_session_id: str | None = None
+    notes: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "requested_action": self.requested_action.value,
+            "session_registry": [record.to_dict() for record in self.session_registry],
+            "sessions_to_register": [record.to_dict() for record in self.sessions_to_register],
+            "selected_session_id": self.selected_session_id,
+            "notes": list(self.notes),
+        }
+
+
+@dataclass(frozen=True)
+class MultiTaskDecision:
+    chosen_action: MultiTaskAction
+    selected_session_id: str | None = None
+    selection_reason: SessionSelectionReason = SessionSelectionReason.NO_ACTIONABLE_SESSIONS
+    actionable_session_ids: tuple[str, ...] = ()
+    waiting_session_ids: tuple[str, ...] = ()
+    blocked_session_ids: tuple[str, ...] = ()
+    completed_session_ids: tuple[str, ...] = ()
+    invalid_session_ids: tuple[str, ...] = ()
+    decision_notes: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "chosen_action": self.chosen_action.value,
+            "selected_session_id": self.selected_session_id,
+            "selection_reason": self.selection_reason.value,
+            "actionable_session_ids": list(self.actionable_session_ids),
+            "waiting_session_ids": list(self.waiting_session_ids),
+            "blocked_session_ids": list(self.blocked_session_ids),
+            "completed_session_ids": list(self.completed_session_ids),
+            "invalid_session_ids": list(self.invalid_session_ids),
+            "decision_notes": list(self.decision_notes),
+        }
+
+
+@dataclass(frozen=True)
+class MultiTaskOrchestrationResult:
+    decision: MultiTaskDecision
+    session_registry: tuple[MultiTaskSessionRecord, ...]
+    selected_session_result: OrchestrationResult | None = None
+    registered_session_ids: tuple[str, ...] = ()
+    notes: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "decision": self.decision.to_dict(),
+            "session_registry": [record.to_dict() for record in self.session_registry],
+            "selected_session_result": self.selected_session_result.to_dict() if self.selected_session_result else None,
+            "registered_session_ids": list(self.registered_session_ids),
+            "notes": list(self.notes),
+        }
