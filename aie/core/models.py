@@ -1579,6 +1579,12 @@ class DebugTraceStep:
     event_id: str
     event_type: AuditEventType
     timestamp: str
+    session_id: str | None = None
+    cycle_index: int | None = None
+    action_type: str | None = None
+    policy_decision: str | None = None
+    operator_command: str | None = None
+    reason: str | None = None
     step_notes: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
@@ -1589,6 +1595,12 @@ class DebugTraceStep:
             "event_id": self.event_id,
             "event_type": self.event_type.value,
             "timestamp": self.timestamp,
+            "session_id": self.session_id,
+            "cycle_index": self.cycle_index,
+            "action_type": self.action_type,
+            "policy_decision": self.policy_decision,
+            "operator_command": self.operator_command,
+            "reason": self.reason,
             "step_notes": list(self.step_notes),
         }
 
@@ -1736,6 +1748,7 @@ class DebugToolResult:
     action: DebugToolAction
     scope: DebugTraceScope
     view: DebugToolView | None = None
+    source_trace_id: str | None = None
     target_session_id: str | None = None
     target_cycle_id: int | None = None
     applied_filters: DebugToolFilter | None = None
@@ -1749,12 +1762,161 @@ class DebugToolResult:
             "action": self.action.value,
             "scope": self.scope.value,
             "view": self.view.to_dict() if self.view else None,
+            "source_trace_id": self.source_trace_id,
             "target_session_id": self.target_session_id,
             "target_cycle_id": self.target_cycle_id,
             "applied_filters": self.applied_filters.to_dict() if self.applied_filters else None,
             "status": self.status.value,
             "failure_reason": self.failure_reason.value if self.failure_reason else None,
             "notes": list(self.notes),
+        }
+
+
+class InsightStatus(str, Enum):
+    GENERATED = "generated"
+    PARTIAL = "partial"
+    INVALID = "invalid"
+    FAILED = "failed"
+    UNSUPPORTED_SCOPE = "unsupported_scope"
+
+
+class InsightScope(str, Enum):
+    FULL_LOG = "full_log"
+    SESSION = "session"
+    CYCLE = "cycle"
+
+
+class InsightCategory(str, Enum):
+    STOP_POINT = "stop_point"
+    WAIT_POINT = "wait_point"
+    RESUME_POINT = "resume_point"
+    POLICY_TRANSITION = "policy_transition"
+    OPERATOR_TRANSITION = "operator_transition"
+    SELECTION_TRANSITION = "selection_transition"
+    PERSISTENCE_MILESTONE = "persistence_milestone"
+    BLOCKER = "blocker"
+    COMPLETION = "completion"
+
+
+class InsightFailureReason(str, Enum):
+    MISSING_TRACE_DATA = "missing_trace_data"
+    MALFORMED_TRACE = "malformed_trace"
+    UNKNOWN_SCOPE_TARGET = "unknown_scope_target"
+    INCONSISTENT_INSIGHT_SOURCE = "inconsistent_insight_source"
+    UNSUPPORTED_SCOPE = "unsupported_scope"
+
+
+@dataclass(frozen=True)
+class InsightItem:
+    category: InsightCategory
+    event_id: str
+    event_type: AuditEventType
+    timestamp: str
+    sequence_index: int
+    title: str
+    detail: str
+    session_id: str | None = None
+    cycle_index: int | None = None
+    related_event_id: str | None = None
+    tags: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "category": self.category.value,
+            "event_id": self.event_id,
+            "event_type": self.event_type.value,
+            "timestamp": self.timestamp,
+            "sequence_index": self.sequence_index,
+            "title": self.title,
+            "detail": self.detail,
+            "session_id": self.session_id,
+            "cycle_index": self.cycle_index,
+            "related_event_id": self.related_event_id,
+            "tags": list(self.tags),
+        }
+
+
+@dataclass(frozen=True)
+class InsightSummary:
+    main_outcome: str | None = None
+    first_stop_point: str | None = None
+    latest_wait_point: str | None = None
+    progress_resumed: bool = False
+    terminal_blocker: str | None = None
+    completion_state: str | None = None
+    next_inspection_hint: str | None = None
+    summary_notes: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "main_outcome": self.main_outcome,
+            "first_stop_point": self.first_stop_point,
+            "latest_wait_point": self.latest_wait_point,
+            "progress_resumed": self.progress_resumed,
+            "terminal_blocker": self.terminal_blocker,
+            "completion_state": self.completion_state,
+            "next_inspection_hint": self.next_inspection_hint,
+            "summary_notes": list(self.summary_notes),
+        }
+
+
+@dataclass(frozen=True)
+class InsightRequest:
+    scope: InsightScope
+    target_session_id: str | None = None
+    target_cycle_id: int | None = None
+    source_trace_id: str | None = None
+    source_debug_request_id: str | None = None
+    request_id: str | None = None
+    notes: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "scope": self.scope.value,
+            "target_session_id": self.target_session_id,
+            "target_cycle_id": self.target_cycle_id,
+            "source_trace_id": self.source_trace_id,
+            "source_debug_request_id": self.source_debug_request_id,
+            "request_id": self.request_id,
+            "notes": list(self.notes),
+        }
+
+
+@dataclass(frozen=True)
+class InsightResult:
+    insight_id: str
+    status: InsightStatus
+    scope: InsightScope
+    summary: InsightSummary | None = None
+    items: tuple[InsightItem, ...] = ()
+    top_blockers: tuple[InsightItem, ...] = ()
+    top_transitions: tuple[InsightItem, ...] = ()
+    final_outcome: str | None = None
+    source_trace_id: str | None = None
+    target_session_id: str | None = None
+    target_cycle_id: int | None = None
+    notes: tuple[str, ...] = ()
+    start_timestamp: str | None = None
+    end_timestamp: str | None = None
+    failure_reason: InsightFailureReason | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "insight_id": self.insight_id,
+            "status": self.status.value,
+            "scope": self.scope.value,
+            "summary": self.summary.to_dict() if self.summary else None,
+            "items": [item.to_dict() for item in self.items],
+            "top_blockers": [item.to_dict() for item in self.top_blockers],
+            "top_transitions": [item.to_dict() for item in self.top_transitions],
+            "final_outcome": self.final_outcome,
+            "source_trace_id": self.source_trace_id,
+            "target_session_id": self.target_session_id,
+            "target_cycle_id": self.target_cycle_id,
+            "notes": list(self.notes),
+            "start_timestamp": self.start_timestamp,
+            "end_timestamp": self.end_timestamp,
+            "failure_reason": self.failure_reason.value if self.failure_reason else None,
         }
 
 

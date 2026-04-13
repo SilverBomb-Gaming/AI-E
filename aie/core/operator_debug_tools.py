@@ -96,6 +96,7 @@ class OperatorDebugTools:
             action=request.action,
             scope=request.scope,
             view=view,
+            source_trace_id=built_trace.trace_id,
             target_session_id=request.target_session_id,
             target_cycle_id=request.target_cycle_id,
             applied_filters=request.applied_filters,
@@ -291,6 +292,7 @@ class OperatorDebugTools:
             action=request.action,
             scope=request.scope,
             view=None,
+            source_trace_id=None,
             target_session_id=request.target_session_id,
             target_cycle_id=request.target_cycle_id,
             applied_filters=request.applied_filters,
@@ -298,6 +300,7 @@ class OperatorDebugTools:
             failure_reason=failure_reason,
             notes=request.notes + notes,
         )
+
 
     @staticmethod
     def _build_request_id() -> str:

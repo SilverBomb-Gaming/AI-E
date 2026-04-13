@@ -130,6 +130,12 @@ class ExecutionDebugTrace:
                 event_id=step.event_id,
                 event_type=step.event_type,
                 timestamp=step.timestamp,
+                session_id=step.record.event.session_id or step.record.context.session_id,
+                cycle_index=step.record.event.cycle_index if step.record.event.cycle_index is not None else step.record.context.cycle_index,
+                action_type=step.record.event.action_type or step.record.context.action_type,
+                policy_decision=step.record.event.policy_decision,
+                operator_command=step.record.event.operator_command,
+                reason=step.record.event.reason,
                 step_notes=step.replay_notes,
             )
             for step in replay_steps
