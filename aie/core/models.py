@@ -1531,6 +1531,120 @@ class ReplayResult:
         }
 
 
+class DebugTraceStatus(str, Enum):
+    BUILT = "built"
+    PARTIAL = "partial"
+    INVALID = "invalid"
+    FAILED = "failed"
+    UNSUPPORTED_SCOPE = "unsupported_scope"
+
+
+class DebugTraceScope(str, Enum):
+    FULL_LOG = "full_log"
+    SESSION = "session"
+    CYCLE = "cycle"
+
+
+class DebugTraceFailureReason(str, Enum):
+    MISSING_REPLAY_DATA = "missing_replay_data"
+    MALFORMED_REPLAY = "malformed_replay"
+    UNKNOWN_SCOPE_TARGET = "unknown_scope_target"
+    INCONSISTENT_TRACE = "inconsistent_trace"
+    UNSUPPORTED_SCOPE = "unsupported_scope"
+
+
+@dataclass(frozen=True)
+class DebugTraceRequest:
+    scope: DebugTraceScope
+    target_session_id: str | None = None
+    target_cycle_id: int | None = None
+    source_replay_id: str | None = None
+    trace_notes: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "scope": self.scope.value,
+            "target_session_id": self.target_session_id,
+            "target_cycle_id": self.target_cycle_id,
+            "source_replay_id": self.source_replay_id,
+            "trace_notes": list(self.trace_notes),
+        }
+
+
+@dataclass(frozen=True)
+class DebugTraceStep:
+    sequence_index: int
+    title: str
+    explanation: str
+    event_id: str
+    event_type: AuditEventType
+    timestamp: str
+    step_notes: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "sequence_index": self.sequence_index,
+            "title": self.title,
+            "explanation": self.explanation,
+            "event_id": self.event_id,
+            "event_type": self.event_type.value,
+            "timestamp": self.timestamp,
+            "step_notes": list(self.step_notes),
+        }
+
+
+@dataclass(frozen=True)
+class DebugTraceSummary:
+    start_timestamp: str | None = None
+    end_timestamp: str | None = None
+    final_outcome: str | None = None
+    stop_reason: str | None = None
+    wait_reason: str | None = None
+    summary_notes: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "start_timestamp": self.start_timestamp,
+            "end_timestamp": self.end_timestamp,
+            "final_outcome": self.final_outcome,
+            "stop_reason": self.stop_reason,
+            "wait_reason": self.wait_reason,
+            "summary_notes": list(self.summary_notes),
+        }
+
+
+@dataclass(frozen=True)
+class DebugTraceResult:
+    trace_id: str
+    status: DebugTraceStatus
+    scope: DebugTraceScope
+    summary: DebugTraceSummary | None = None
+    ordered_steps: tuple[DebugTraceStep, ...] = ()
+    target_session_id: str | None = None
+    target_cycle_id: int | None = None
+    source_replay_id: str | None = None
+    start_timestamp: str | None = None
+    end_timestamp: str | None = None
+    trace_notes: tuple[str, ...] = ()
+    failure_reason: DebugTraceFailureReason | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "trace_id": self.trace_id,
+            "status": self.status.value,
+            "scope": self.scope.value,
+            "summary": self.summary.to_dict() if self.summary else None,
+            "ordered_steps": [step.to_dict() for step in self.ordered_steps],
+            "target_session_id": self.target_session_id,
+            "target_cycle_id": self.target_cycle_id,
+            "source_replay_id": self.source_replay_id,
+            "start_timestamp": self.start_timestamp,
+            "end_timestamp": self.end_timestamp,
+            "trace_notes": list(self.trace_notes),
+            "failure_reason": self.failure_reason.value if self.failure_reason else None,
+        }
+
+
 @dataclass(frozen=True)
 class AuditQuery:
     limit: int | None = None
