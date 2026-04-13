@@ -1645,6 +1645,119 @@ class DebugTraceResult:
         }
 
 
+class DebugToolAction(str, Enum):
+    INSPECT_FULL_LOG = "inspect_full_log"
+    INSPECT_SESSION = "inspect_session"
+    INSPECT_CYCLE = "inspect_cycle"
+    LIST_KEY_EVENTS = "list_key_events"
+    FILTER_TRACE_STEPS = "filter_trace_steps"
+    SUMMARIZE_STOP_POINTS = "summarize_stop_points"
+    SUMMARIZE_WAIT_POINTS = "summarize_wait_points"
+
+
+class DebugToolStatus(str, Enum):
+    COMPLETED = "completed"
+    PARTIAL = "partial"
+    INVALID = "invalid"
+    FAILED = "failed"
+    UNSUPPORTED_REQUEST = "unsupported_request"
+
+
+class DebugToolFailureReason(str, Enum):
+    UNKNOWN_SCOPE_TARGET = "unknown_scope_target"
+    INVALID_FILTER = "invalid_filter"
+    UNSUPPORTED_ACTION = "unsupported_action"
+    MISSING_TRACE_DATA = "missing_trace_data"
+    MALFORMED_REPLAY_INPUT = "malformed_replay_input"
+    INCONSISTENT_TRACE = "inconsistent_trace"
+
+
+@dataclass(frozen=True)
+class DebugToolFilter:
+    event_types: tuple[AuditEventType, ...] = ()
+    include_stop_related: bool = False
+    include_wait_related: bool = False
+    include_policy_decisions: bool = False
+    include_operator_commands: bool = False
+    include_persistence_steps: bool = False
+    include_session_selection_steps: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "event_types": [event_type.value for event_type in self.event_types],
+            "include_stop_related": self.include_stop_related,
+            "include_wait_related": self.include_wait_related,
+            "include_policy_decisions": self.include_policy_decisions,
+            "include_operator_commands": self.include_operator_commands,
+            "include_persistence_steps": self.include_persistence_steps,
+            "include_session_selection_steps": self.include_session_selection_steps,
+        }
+
+
+@dataclass(frozen=True)
+class DebugToolRequest:
+    action: DebugToolAction
+    scope: DebugTraceScope
+    target_session_id: str | None = None
+    target_cycle_id: int | None = None
+    applied_filters: DebugToolFilter | None = None
+    request_id: str | None = None
+    notes: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "action": self.action.value,
+            "scope": self.scope.value,
+            "target_session_id": self.target_session_id,
+            "target_cycle_id": self.target_cycle_id,
+            "applied_filters": self.applied_filters.to_dict() if self.applied_filters else None,
+            "request_id": self.request_id,
+            "notes": list(self.notes),
+        }
+
+
+@dataclass(frozen=True)
+class DebugToolView:
+    returned_steps: tuple[DebugTraceStep, ...] = ()
+    key_events: tuple[DebugTraceStep, ...] = ()
+    summary: DebugTraceSummary | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "returned_steps": [step.to_dict() for step in self.returned_steps],
+            "key_events": [step.to_dict() for step in self.key_events],
+            "summary": self.summary.to_dict() if self.summary else None,
+        }
+
+
+@dataclass(frozen=True)
+class DebugToolResult:
+    request_id: str
+    action: DebugToolAction
+    scope: DebugTraceScope
+    view: DebugToolView | None = None
+    target_session_id: str | None = None
+    target_cycle_id: int | None = None
+    applied_filters: DebugToolFilter | None = None
+    status: DebugToolStatus = DebugToolStatus.COMPLETED
+    failure_reason: DebugToolFailureReason | None = None
+    notes: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "request_id": self.request_id,
+            "action": self.action.value,
+            "scope": self.scope.value,
+            "view": self.view.to_dict() if self.view else None,
+            "target_session_id": self.target_session_id,
+            "target_cycle_id": self.target_cycle_id,
+            "applied_filters": self.applied_filters.to_dict() if self.applied_filters else None,
+            "status": self.status.value,
+            "failure_reason": self.failure_reason.value if self.failure_reason else None,
+            "notes": list(self.notes),
+        }
+
+
 @dataclass(frozen=True)
 class AuditQuery:
     limit: int | None = None
