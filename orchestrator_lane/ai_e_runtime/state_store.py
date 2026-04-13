@@ -82,6 +82,15 @@ class StateStore:
             "top_candidates": [],
             "excluded_tasks": [],
             "selection_timestamp": None,
+            "session_tuning_history": [],
+            "session_tuning_state": {},
+            "experiment_tracking": {},
+            "latest_experiment_variant": {},
+            "platformer_layout_correction_history": [],
+            "latest_platformer_layout_correction": {},
+            "result_state_history": [],
+            "result_evaluation_history": [],
+            "latest_result_evaluation": {},
         }
         state.update(phase_payload("intake", waiting_reason="Waiting for new task intake."))
         self.save(state)
@@ -128,6 +137,15 @@ class StateStore:
         state.setdefault("top_candidates", [])
         state.setdefault("excluded_tasks", [])
         state.setdefault("selection_timestamp", None)
+        state.setdefault("session_tuning_history", [])
+        state.setdefault("session_tuning_state", {})
+        state.setdefault("experiment_tracking", {})
+        state.setdefault("latest_experiment_variant", {})
+        state.setdefault("platformer_layout_correction_history", [])
+        state.setdefault("latest_platformer_layout_correction", {})
+        state.setdefault("result_state_history", [])
+        state.setdefault("result_evaluation_history", [])
+        state.setdefault("latest_result_evaluation", {})
         state.setdefault("session_phase", "intake")
         state.setdefault("phase_index", 1)
         state.setdefault("phase_total", 7)
@@ -213,16 +231,47 @@ class StateStore:
         final_status: str,
         artifact_paths: List[str],
         note: str,
+        attempt_metadata: Dict[str, Any] | None = None,
     ) -> Dict[str, Any]:
         attempted = list(state.get("tasks_attempted", []))
-        attempted.append(
-            {
-                "task_id": task_id,
-                "final_status": final_status,
-                "note": note,
-                "timestamp": self._iso_now(),
-            }
-        )
+        attempted_entry = {
+            "task_id": task_id,
+            "final_status": final_status,
+            "note": note,
+            "timestamp": self._iso_now(),
+        }
+        if isinstance(attempt_metadata, dict) and attempt_metadata:
+            attempted_entry.update(
+                {
+                    "auto_iteration_enabled": bool(attempt_metadata.get("enabled", False)),
+                    "auto_iteration_max_attempts": int(attempt_metadata.get("max_attempts") or 0),
+                    "auto_iteration_attempt_count": int(attempt_metadata.get("attempt_count") or 0),
+                    "auto_iteration_accepted_attempt": attempt_metadata.get("accepted_attempt"),
+                    "auto_iteration_exhausted": bool(attempt_metadata.get("exhausted", False)),
+                    "auto_iteration_summary": str(attempt_metadata.get("summary") or ""),
+                    "auto_iteration_valid_candidate_count": int(attempt_metadata.get("valid_candidate_count") or 0),
+                    "auto_iteration_valid_candidate_ids": [
+                        str(item) for item in attempt_metadata.get("valid_candidate_ids", []) if str(item).strip()
+                    ],
+                    "auto_iteration_result_set": str(attempt_metadata.get("result_set_presentation") or ""),
+                    "auto_iteration_build_parameter_families": [
+                        str(item) for item in attempt_metadata.get("autonomous_build_parameter_families", []) if str(item).strip()
+                    ],
+                    "auto_iteration_build_complete": str(attempt_metadata.get("autonomous_build_complete") or ""),
+                    "auto_iteration_valid_candidates": [
+                        dict(entry) for entry in attempt_metadata.get("valid_candidates", []) if isinstance(entry, dict)
+                    ],
+                    "auto_iteration_candidate_set": {
+                        str(key): dict(value)
+                        for key, value in dict(attempt_metadata.get("candidate_set") or {}).items()
+                        if str(key).strip() and isinstance(value, dict)
+                    },
+                    "auto_iteration_attempts": [
+                        dict(entry) for entry in attempt_metadata.get("attempts", []) if isinstance(entry, dict)
+                    ],
+                }
+            )
+        attempted.append(attempted_entry)
         state["tasks_attempted"] = attempted
         state["current_task"] = None
         state["current_plan_step"] = None
@@ -458,6 +507,53 @@ class StateStore:
         if changed:
             normalized_issue = normalized_issue or "invalid_shape"
             mark_invalid("excluded_tasks")
+
+        state["session_tuning_history"], changed = self._normalize_mapping_list(state.get("session_tuning_history"))
+        if changed:
+            normalized_issue = normalized_issue or "invalid_shape"
+            mark_invalid("session_tuning_history")
+
+        if "session_tuning_state" in state and not isinstance(state.get("session_tuning_state"), dict):
+            state["session_tuning_state"] = {}
+            normalized_issue = normalized_issue or "invalid_shape"
+            mark_invalid("session_tuning_state")
+
+        if "experiment_tracking" in state and not isinstance(state.get("experiment_tracking"), dict):
+            state["experiment_tracking"] = {}
+            normalized_issue = normalized_issue or "invalid_shape"
+            mark_invalid("experiment_tracking")
+
+        if "latest_experiment_variant" in state and not isinstance(state.get("latest_experiment_variant"), dict):
+            state["latest_experiment_variant"] = {}
+            normalized_issue = normalized_issue or "invalid_shape"
+            mark_invalid("latest_experiment_variant")
+
+        state["platformer_layout_correction_history"], changed = self._normalize_mapping_list(
+            state.get("platformer_layout_correction_history")
+        )
+        if changed:
+            normalized_issue = normalized_issue or "invalid_shape"
+            mark_invalid("platformer_layout_correction_history")
+
+        if "latest_platformer_layout_correction" in state and not isinstance(state.get("latest_platformer_layout_correction"), dict):
+            state["latest_platformer_layout_correction"] = {}
+            normalized_issue = normalized_issue or "invalid_shape"
+            mark_invalid("latest_platformer_layout_correction")
+
+        state["result_state_history"], changed = self._normalize_mapping_list(state.get("result_state_history"))
+        if changed:
+            normalized_issue = normalized_issue or "invalid_shape"
+            mark_invalid("result_state_history")
+
+        state["result_evaluation_history"], changed = self._normalize_mapping_list(state.get("result_evaluation_history"))
+        if changed:
+            normalized_issue = normalized_issue or "invalid_shape"
+            mark_invalid("result_evaluation_history")
+
+        if "latest_result_evaluation" in state and not isinstance(state.get("latest_result_evaluation"), dict):
+            state["latest_result_evaluation"] = {}
+            normalized_issue = normalized_issue or "invalid_shape"
+            mark_invalid("latest_result_evaluation")
 
         state["tasks_completed"], changed = self._normalize_string_list(state.get("tasks_completed"))
         if changed:

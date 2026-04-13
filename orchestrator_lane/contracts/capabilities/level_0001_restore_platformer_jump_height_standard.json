@@ -1,0 +1,28 @@
+{
+  "capability_id": "level_0001_restore_platformer_jump_height_standard",
+  "title": "LEVEL_0001 restore platformer jump height standard",
+  "intent": "mutate",
+  "target_level": "LEVEL_0001",
+  "target_scene": "Assets/AI_E_TestScenes/entity_test.unity",
+  "requested_execution_lane": "approval_required_mutation",
+  "handler_name": "level_0001_entity_transform_handler",
+  "agent_type": "level_0001_entity_transform_mutation_agent",
+  "approval_required": true,
+  "eligible_for_auto": false,
+  "evidence_state": "experimental",
+  "safety_class": "approval_gated_automation",
+  "content_tags": {
+    "violence_level": "none",
+    "blood_level": "none",
+    "gore_level": "none",
+    "dismemberment": false,
+    "horror_intensity": "none",
+    "language_level": "none",
+    "sexual_content_level": "none",
+    "nudity_level": "none",
+    "substance_reference_level": "none",
+    "gambling_reference_level": "none"
+  },
+  "match_terms": ["jump", "standard"],
+  "match_verbs": ["restore"]
+}

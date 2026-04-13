@@ -4,6 +4,9 @@ import re
 from dataclasses import dataclass
 from typing import Iterable, List
 
+from .goal_composition import resolve_goal_composition_prompt
+from .goal_intent_mapping import resolve_goal_intent_prompt
+from .predefined_plans import match_predefined_plan
 
 @dataclass(frozen=True)
 class PlanStep:
@@ -13,6 +16,7 @@ class PlanStep:
     component_key: str
     priority: int
     execution_mode: str = "bounded_read_only"
+    operator_prompt: str = ""
 
     def to_payload(self) -> dict[str, object]:
         return {
@@ -22,6 +26,7 @@ class PlanStep:
             "component_key": self.component_key,
             "priority": self.priority,
             "execution_mode": self.execution_mode,
+            "operator_prompt": self.operator_prompt,
         }
 
 
@@ -32,10 +37,12 @@ class PlanResult:
     target_repo: str
     operator_prompt: str
     steps: List[PlanStep]
+    title: str = "Plan"
+    expected_outcome: str = ""
 
     @property
     def is_composite(self) -> bool:
-        return self.request_type == "COMPOSITE_REQUEST"
+        return self.request_type in {"COMPOSITE_REQUEST", "PREDEFINED_MUTATION_PLAN"}
 
     def plan_step_titles(self) -> List[str]:
         return [step.title for step in self.steps]
@@ -52,6 +59,8 @@ class PlanResult:
             "request_type": self.request_type,
             "target_repo": self.target_repo,
             "operator_prompt": self.operator_prompt,
+            "title": self.title,
+            "expected_outcome": self.expected_outcome,
             "is_composite": self.is_composite,
             "steps": [step.to_payload() for step in self.steps],
             "summary_text": self.summary_text(),
@@ -147,15 +156,49 @@ class RuleBasedPlanner:
         normalized_prompt = self._normalize(operator_prompt)
         if not normalized_prompt:
             raise ValueError("operator prompt must not be empty")
-        request_type = self.classify_request(normalized_prompt)
-        components = self.extract_components(normalized_prompt)
-        steps = self._build_steps(normalized_prompt, request_type, components)
+
+        planning_prompt = normalized_prompt
+        goal_intent_resolution = resolve_goal_intent_prompt(planning_prompt)
+        if goal_intent_resolution is not None:
+            planning_prompt = goal_intent_resolution.canonical_prompt
+        goal_composition_resolution = resolve_goal_composition_prompt(planning_prompt)
+        if goal_composition_resolution is not None:
+            planning_prompt = goal_composition_resolution.canonical_prompt
+
+        predefined_plan = match_predefined_plan(planning_prompt)
+        if predefined_plan is not None:
+            steps = [
+                PlanStep(
+                    step_index=step.step_index,
+                    title=step.title,
+                    task_type=step.task_type,
+                    component_key=predefined_plan.plan_key,
+                    priority=step.priority,
+                    execution_mode=step.execution_mode,
+                    operator_prompt=step.operator_prompt,
+                )
+                for step in predefined_plan.steps
+            ]
+            return PlanResult(
+                plan_id=f"PLAN_{request_id.split('_', 1)[1]}",
+                request_type="PREDEFINED_MUTATION_PLAN",
+                target_repo=target_repo,
+                operator_prompt=planning_prompt,
+                steps=steps,
+                title=predefined_plan.title,
+                expected_outcome=predefined_plan.expected_outcome,
+            )
+        request_type = self.classify_request(planning_prompt)
+        components = self.extract_components(planning_prompt)
+        steps = self._build_steps(planning_prompt, request_type, components)
         return PlanResult(
             plan_id=f"PLAN_{request_id.split('_', 1)[1]}",
             request_type=request_type,
             target_repo=target_repo,
-            operator_prompt=normalized_prompt,
+            operator_prompt=planning_prompt,
             steps=steps,
+            title="Plan",
+            expected_outcome="",
         )
 
     def classify_request(self, operator_prompt: str) -> str:

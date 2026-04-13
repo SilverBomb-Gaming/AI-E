@@ -1,0 +1,13 @@
+{
+  "runtime_task": {
+    "task_id": "map_design_1_expand_2",
+    "title": "Refine gameplay flow for map_design_1",
+    "agent_type": "read_only_inspector_agent",
+    "result_payload": {
+      "source": "continuation_engine_v1",
+      "description": "refine gameplay flow for map_design_1",
+      "selected_task_id": "map_design_1",
+      "compare_group": "game_design_map_variations"
+    }
+  }
+}

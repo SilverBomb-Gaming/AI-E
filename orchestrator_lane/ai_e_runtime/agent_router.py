@@ -5,7 +5,9 @@ from pathlib import Path
 from time import sleep
 from typing import Any, Callable, Dict
 
+from .level_0001_entity_transform_mutation import run_level_0001_entity_transform_mutation
 from .level_0001_grass_mutation import run_level_0001_grass_mutation
+from .platformer_layout_corrections import merge_platformer_layout_correction_payload
 from orchestrator.entity_runner import run_monitored_powershell_step
 
 
@@ -23,6 +25,7 @@ class AgentRouter:
             "read_only_inspector_agent": self._run_read_only_inspector_agent,
             "external_process_agent": self._run_external_process_agent,
             "level_0001_grass_mutation_agent": run_level_0001_grass_mutation,
+            "level_0001_entity_transform_mutation_agent": run_level_0001_entity_transform_mutation,
             "validator_agent": self._run_validator_agent,
             "unity_control_agent": self._run_unity_control_agent,
             "artifact_summarizer_agent": self._run_artifact_summarizer_agent,
@@ -236,6 +239,26 @@ class AgentRouter:
         )
         details = dict(command_result)
         details["unity_script_path"] = str(script_path)
+        payload_path_value = (
+            task.get("unity_result_json_path")
+            or task.get("layout_correction_payload_path")
+            or task.get("unity_layout_correction_payload_path")
+        )
+        if payload_path_value:
+            details, payload_issue = merge_platformer_layout_correction_payload(
+                details,
+                payload_path_value=payload_path_value,
+                base_dir=task.get("unity_working_directory") or task.get("target_repo") or task.get("project_path"),
+            )
+            if payload_issue:
+                if bool(task.get("require_unity_result_json") or task.get("require_layout_correction_payload")):
+                    return {
+                        "status": "blocked",
+                        "summary": f"unity_control_agent failed {title}",
+                        "error": payload_issue,
+                        "details": details,
+                    }
+                details["unity_layout_correction_payload_issue"] = payload_issue
         if command_result.get("interrupted"):
             return {
                 "status": "interrupted_unity_process",
@@ -244,6 +267,16 @@ class AgentRouter:
             }
         if command_result.get("timed_out"):
             timeout_seconds = int(task.get("unity_timeout_seconds", task.get("timeout_seconds", 900)) or 900)
+            return {
+                "status": "timed_out_unity_process",
+                "summary": f"unity_control_agent timed out {title}",
+                "error": f"Unity/tool runner timed out after {timeout_seconds} seconds.",
+                "details": details,
+            }
+        if self._unity_launcher_timed_out(command_result):
+            timeout_seconds = int(task.get("unity_timeout_seconds", task.get("timeout_seconds", 900)) or 900)
+            details["timed_out"] = True
+            details["returncode"] = -1
             return {
                 "status": "timed_out_unity_process",
                 "summary": f"unity_control_agent timed out {title}",
@@ -277,6 +310,26 @@ class AgentRouter:
             "summary": f"unity_control_agent completed {title}",
             "details": details,
         }
+
+    def _unity_launcher_timed_out(self, command_result: Dict[str, Any]) -> bool:
+        timeout_markers = (
+            "unity process exceeded timeout",
+            "unity/tool runner timed out after",
+        )
+        for key in ("stdout_log", "stderr_log"):
+            path_value = command_result.get(key)
+            if not path_value:
+                continue
+            path = Path(str(path_value))
+            if not path.exists():
+                continue
+            try:
+                text = path.read_text(encoding="utf-8", errors="replace").lower()
+            except OSError:
+                continue
+            if any(marker in text for marker in timeout_markers):
+                return True
+        return False
 
     def _run_artifact_summarizer_agent(self, task: Dict[str, Any]) -> Dict[str, Any]:
         artifacts = list(task.get("artifacts") or [])

@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
+import json
 from pathlib import Path
 from typing import Any, Dict, List
 
 from orchestrator.config import OrchestratorConfig
 from orchestrator.utils import ensure_dir, read_json, write_json
+
+from .environment_theme_action_normalization import canonicalize_environment_theme_action_prompt
+from .platformer_action_normalization import canonicalize_platformer_action_prompt
 
 
 _DEFAULT_CAPABILITY = {
@@ -165,6 +169,11 @@ class CapabilityRegistry:
 
     def match(self, prompt: str) -> RuntimeCapability | None:
         normalized = " ".join(str(prompt or "").strip().lower().split())
+        normalized = (
+            canonicalize_environment_theme_action_prompt(normalized)
+            or canonicalize_platformer_action_prompt(normalized)
+            or normalized
+        )
         for capability in self.all_capabilities():
             if self._matches_capability(normalized, capability):
                 return capability
@@ -335,12 +344,43 @@ class CapabilityEvidenceStore:
         return current
 
     def _artifact_summary(self, capability_id: str) -> Dict[str, Any]:
-        return {
+        summary = {
             "real_target_verified": False,
             "rollback_verified": False,
             "last_validation_result": "none",
             "last_rollback_result": "none",
         }
+        if self.runs_dir is None or not self.runs_dir.exists():
+            return summary
+
+        validation_reports = sorted(self.runs_dir.rglob("real_target_validation_report.json"))
+        rollback_reports = sorted(self.runs_dir.rglob("rollback_validation_report.json"))
+
+        for report_path in validation_reports:
+            try:
+                payload = json.loads(report_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if str(payload.get("capability_id") or "") != capability_id:
+                continue
+            validation_result = str(payload.get("validation_result") or "none")
+            summary["last_validation_result"] = validation_result
+            if validation_result == "passed":
+                summary["real_target_verified"] = True
+
+        for report_path in rollback_reports:
+            try:
+                payload = json.loads(report_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if str(payload.get("capability_id") or "") != capability_id:
+                continue
+            rollback_result = str(payload.get("rollback_validation_result") or "none")
+            summary["last_rollback_result"] = rollback_result
+            if rollback_result == "passed":
+                summary["rollback_verified"] = True
+
+        return summary
 
     def _derive_maturity_state(self, entry: Dict[str, Any]) -> str:
         if bool(entry.get("eligible_for_auto", False)):

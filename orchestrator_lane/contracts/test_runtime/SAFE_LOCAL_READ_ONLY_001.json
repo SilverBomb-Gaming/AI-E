@@ -1,0 +1,18 @@
+{
+  "runtime_task": {
+    "task_id": "SAFE_LOCAL_READ_ONLY_001",
+    "title": "Local read-only execution validation",
+    "contract_type": "read_only_capability",
+    "agent_type": "read_only_inspector_agent",
+    "execution_seconds": 1,
+    "result_payload": {
+      "validation_mode": "local_only",
+      "scope": "AI-E/orchestrator_lane",
+      "intent": "execution_validation",
+      "notes": [
+        "Safe bounded supervisor execution check.",
+        "No Unity, BABYLON, external repo, or protected-path mutation."
+      ]
+    }
+  }
+}

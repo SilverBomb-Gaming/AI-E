@@ -1,11 +1,11 @@
-"""Entry point for AI-E Control Panel."""
+"""Entry point for the OpenClaw controller foundation app."""
 from __future__ import annotations
 
-from .ui import launch_ui
+from .controller.window import launch_controller_app
 
 
 def main() -> None:
-    launch_ui()
+    launch_controller_app()
 
 
 if __name__ == "__main__":

@@ -1,0 +1,12 @@
+{
+  "active_profile": "default",
+  "profiles": {
+    "default": {
+      "babylon_exe_path": "",
+      "last_selected_map": "001",
+      "record_input": false,
+      "record_mic": false,
+      "push_to_talk": false
+    }
+  }
+}

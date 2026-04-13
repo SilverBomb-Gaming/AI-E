@@ -1,0 +1,19 @@
+{
+  "runtime_task": {
+    "task_id": "SAFE_LOCAL_FAILURE_001",
+    "title": "Local retryable failure validation",
+    "agent_type": "copilot_coder_agent",
+    "execution_seconds": 1,
+    "simulated_outcome": "retryable_failure",
+    "error": "Deterministic local retryable failure for supervisor validation.",
+    "result_payload": {
+      "validation_mode": "local_only",
+      "scope": "AI-E/orchestrator_lane",
+      "intent": "non_success_validation",
+      "notes": [
+        "Safe bounded non-success supervisor execution check.",
+        "No Unity, BABYLON, external repo, or protected-path mutation."
+      ]
+    }
+  }
+}

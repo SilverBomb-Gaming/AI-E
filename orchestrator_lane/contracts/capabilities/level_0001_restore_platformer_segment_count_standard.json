@@ -1,0 +1,16 @@
+{
+  "capability_id": "level_0001_restore_platformer_segment_count_standard",
+  "title": "LEVEL_0001 restore platformer segment count standard",
+  "intent": "mutate",
+  "target_level": "LEVEL_0001",
+  "target_scene": "Assets/AI_E_TestScenes/entity_test.unity",
+  "requested_execution_lane": "approval_required_mutation",
+  "handler_name": "level_0001_entity_transform_handler",
+  "agent_type": "level_0001_entity_transform_mutation_agent",
+  "approval_required": true,
+  "eligible_for_auto": false,
+  "evidence_state": "experimental",
+  "safety_class": "approval_gated_automation",
+  "match_terms": ["segment", "count", "standard"],
+  "match_verbs": ["restore"]
+}

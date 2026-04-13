@@ -7,32 +7,66 @@ from typing import Any, Dict, List
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from . import config, dependencies
+from . import config, dependencies, home_surface
 from .runner import RunSession, update_saved_state
 
 
 class ControlPanel(QtWidgets.QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("AI-E Control Panel v5")
+        self.setWindowTitle("AI-E v1")
         self._configure_window_metrics()
         self.profile_name = config.get_active_profile_name()
         self.state = config.load_state(self.profile_name)
         self.session = RunSession()
+        self.intake_preview_bridge = home_surface.IntakePreviewBridge()
+        self.supported_projects: List[home_surface.SupportedProject] = []
+        self.current_prepared_prompt: home_surface.PreparedPromptPreview | None = None
+        self.current_review_surface: home_surface.ReviewSurface | None = None
+        self.current_live_status: home_surface.LiveStatusSurface | None = None
+        self.current_proof_surface: home_surface.ProofResultSurface | None = None
+        self.history_entries: List[home_surface.HistoryEntry] = []
+        self._tracked_status_request_id = ""
+        self._tracked_status_task_id = ""
+        self._tracked_status_session_id = ""
+        self._submitted_prompt_key: tuple[str, str] | None = None
         self._profile_selection_busy = False
+        self._onboarding_force_visible = False
+        self._section_highlight_timers: Dict[str, QtCore.QTimer] = {}
+        self._next_step_highlight_timer: QtCore.QTimer | None = None
+        self._next_step_primary_button: QtWidgets.QPushButton | None = None
+        self._onboarding_example_prompts = [
+            "make zombie faster",
+            "make runner faster",
+            "make zombie more dangerous",
+        ]
         self._build_ui()
         self._build_menu_bar()
         self._duration_timer = QtCore.QTimer(self)
         self._duration_timer.setInterval(1000)
         self._duration_timer.timeout.connect(self._update_duration_label)
         self._duration_timer.start()
+        self._live_status_timer = QtCore.QTimer(self)
+        self._live_status_timer.setInterval(3000)
+        self._live_status_timer.timeout.connect(self._poll_live_status)
+        self._live_status_timer.start()
         self._reload_profiles()
+        self._reload_supported_projects()
         self._apply_state()
-        self._update_status_panel("Ready")
         self._update_session_review_panel()
+        self._refresh_recent_runs()
+        if self.state.staged_prompt.strip():
+            self._render_prepared_prompt(
+                self.intake_preview_bridge.prepare_prompt(self.state.staged_prompt, self._selected_project())
+            )
+        else:
+            self._reset_intake_decision()
+        self._reset_live_status()
+        self._reset_proof_result()
         self._refresh_dependency_label()
         self._update_duration_label()
         self._refresh_buttons()
+        self._update_status_panel(self._startup_status_message())
 
     # -----------------
     # UI construction
@@ -47,12 +81,14 @@ class ControlPanel(QtWidgets.QMainWindow):
         scroll_area.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
         scroll_area.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         scroll_area.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.main_scroll_area = scroll_area
         self.setCentralWidget(scroll_area)
 
         content = QtWidgets.QWidget()
         content_layout = QtWidgets.QVBoxLayout(content)
         content_layout.setSpacing(12)
         content_layout.setContentsMargins(12, 12, 12, 12)
+        content_layout.addWidget(self._build_home_panel())
         content_layout.addWidget(self._build_header_widget())
         content_layout.addWidget(self._build_profile_panel())
         content_layout.addWidget(self._build_target_panel())
@@ -67,7 +103,7 @@ class ControlPanel(QtWidgets.QMainWindow):
         layout = QtWidgets.QVBoxLayout(container)
         layout.setSpacing(12)
 
-        header = QtWidgets.QLabel("AI-E Control Panel v5")
+        header = QtWidgets.QLabel("AI-E Workspace")
         header.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         header.setStyleSheet("font-size: 20px; font-weight: 600;")
         layout.addWidget(header)
@@ -75,10 +111,641 @@ class ControlPanel(QtWidgets.QMainWindow):
         layout.addWidget(self._build_status_panel())
         return container
 
+    def _build_home_panel(self) -> QtWidgets.QGroupBox:
+        group = QtWidgets.QGroupBox("AI-E Home")
+        layout = QtWidgets.QVBoxLayout(group)
+        layout.setSpacing(10)
+
+        title = QtWidgets.QLabel("Turn intent into verifiable results.")
+        title.setStyleSheet("font-size: 22px; font-weight: 600;")
+        layout.addWidget(title)
+
+        subtitle = QtWidgets.QLabel(
+            "Select a supported project, prepare a request, confirm the supported target if needed, run it safely, and iterate from the result."
+        )
+        subtitle.setWordWrap(True)
+        subtitle.setStyleSheet("color: #555;")
+        layout.addWidget(subtitle)
+
+        layout.addWidget(self._build_onboarding_panel())
+
+        badge_row = QtWidgets.QHBoxLayout()
+        badge_row.setSpacing(8)
+        badge_row.addWidget(self._build_guardrail_badge("Supported scope only", "#eff6ff", "#1d4ed8"))
+        badge_row.addWidget(self._build_guardrail_badge("External access off", "#f3f4f6", "#374151"))
+        badge_row.addWidget(self._build_guardrail_badge("Mutations reviewed", "#fef3c7", "#92400e"))
+        badge_row.addStretch(1)
+        layout.addLayout(badge_row)
+
+        project_layout = QtWidgets.QGridLayout()
+        self.project_combo = QtWidgets.QComboBox()
+        self.project_combo.currentTextChanged.connect(self._handle_project_changed)
+        self.workspace_value_label = QtWidgets.QLabel("No supported workspace selected.")
+        self.workspace_value_label.setWordWrap(True)
+        self.workspace_value_label.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
+        project_layout.addWidget(QtWidgets.QLabel("Project"), 0, 0)
+        project_layout.addWidget(self.project_combo, 0, 1)
+        project_layout.addWidget(QtWidgets.QLabel("Active Workspace"), 1, 0)
+        project_layout.addWidget(self.workspace_value_label, 1, 1)
+        layout.addLayout(project_layout)
+
+        prompt_group = QtWidgets.QGroupBox("Prompt Intake")
+        self.prompt_group = prompt_group
+        prompt_layout = QtWidgets.QVBoxLayout(prompt_group)
+        prompt_hint = QtWidgets.QLabel(
+            "Start here after choosing a prompt. Try a direct request like \"make zombie faster\" or \"make runner faster\". If you use a generalized term like \"enemy\" or \"character\", AI-E will stop and ask you to name the supported target explicitly instead of guessing."
+        )
+        prompt_hint.setWordWrap(True)
+        prompt_hint.setStyleSheet("color: #555;")
+        prompt_layout.addWidget(prompt_hint)
+
+        self.prompt_input = QtWidgets.QTextEdit()
+        self.prompt_input.setPlaceholderText("Describe the bounded result you want AI-E to prepare.")
+        self.prompt_input.setFixedHeight(88)
+        self.prompt_input.textChanged.connect(self._handle_prompt_changed)
+        prompt_layout.addWidget(self.prompt_input)
+
+        self.prepare_prompt_button = QtWidgets.QPushButton("Prepare Request")
+        self.prepare_prompt_button.setStyleSheet(
+            "background: #1d4ed8; color: white; border: 1px solid #1e40af; "
+            "border-radius: 6px; padding: 6px 14px; font-weight: 600;"
+        )
+        self.prepare_prompt_button.clicked.connect(self._handle_prepare_prompt)
+        prompt_layout.addWidget(self.prepare_prompt_button, alignment=QtCore.Qt.AlignmentFlag.AlignLeft)
+
+        decision_group = QtWidgets.QGroupBox("Intake Decision")
+        decision_layout = QtWidgets.QVBoxLayout(decision_group)
+        decision_layout.setSpacing(8)
+
+        self.intake_state_badge = QtWidgets.QLabel("Awaiting prompt")
+        self.intake_state_badge.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        decision_layout.addWidget(self.intake_state_badge, alignment=QtCore.Qt.AlignmentFlag.AlignLeft)
+
+        detail_layout = QtWidgets.QFormLayout()
+        self.intake_normalized_value = QtWidgets.QLabel("-")
+        self.intake_normalized_value.setWordWrap(True)
+        self.intake_target_value = QtWidgets.QLabel("-")
+        self.intake_target_value.setWordWrap(True)
+        self.intake_action_value = QtWidgets.QLabel("-")
+        self.intake_action_value.setWordWrap(True)
+        self.intake_decision_value = QtWidgets.QLabel("-")
+        self.intake_reason_value = QtWidgets.QLabel("Prepare a prompt to see the intake decision.")
+        self.intake_reason_value.setWordWrap(True)
+        self.intake_plan_title_value = QtWidgets.QLabel("No predefined plan for this request.")
+        self.intake_plan_title_value.setWordWrap(True)
+        self.intake_plan_steps_list = QtWidgets.QListWidget()
+        self.intake_plan_steps_list.setAlternatingRowColors(True)
+        self.intake_plan_steps_list.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.NoSelection)
+        self.intake_plan_steps_list.setMaximumHeight(90)
+        self.intake_plan_expected_value = QtWidgets.QLabel("-")
+        self.intake_plan_expected_value.setWordWrap(True)
+        self.intake_plan_mode_value = QtWidgets.QLabel("-")
+        self.intake_plan_mode_value.setWordWrap(True)
+        detail_layout.addRow("Normalized Prompt:", self.intake_normalized_value)
+        detail_layout.addRow("Target Workspace:", self.intake_target_value)
+        detail_layout.addRow("Detected Action:", self.intake_action_value)
+        detail_layout.addRow("Decision State:", self.intake_decision_value)
+        detail_layout.addRow("Reason:", self.intake_reason_value)
+        detail_layout.addRow("Plan:", self.intake_plan_title_value)
+        detail_layout.addRow("Plan Steps:", self.intake_plan_steps_list)
+        detail_layout.addRow("Expected Outcome:", self.intake_plan_expected_value)
+        detail_layout.addRow("Execution Mode:", self.intake_plan_mode_value)
+        decision_layout.addLayout(detail_layout)
+
+        self.intake_action_button = QtWidgets.QPushButton("Prepare a prompt")
+        self.intake_action_button.clicked.connect(self._handle_intake_next_action)
+        self.intake_action_button.setEnabled(False)
+        decision_layout.addWidget(self.intake_action_button, alignment=QtCore.Qt.AlignmentFlag.AlignLeft)
+
+        self.intake_feedback_label = QtWidgets.QLabel("Requests remain staged until you choose a next action.")
+        self.intake_feedback_label.setWordWrap(True)
+        self.intake_feedback_label.setStyleSheet("color: #555;")
+        decision_layout.addWidget(self.intake_feedback_label)
+        prompt_layout.addWidget(decision_group)
+
+        review_group = QtWidgets.QGroupBox("Approval Review (when needed)")
+        self.approval_review_group = review_group
+        review_layout = QtWidgets.QVBoxLayout(review_group)
+        review_layout.setSpacing(8)
+
+        review_hint = QtWidgets.QLabel(
+            "Review explains requests that need approval in clear, user-facing terms."
+        )
+        review_hint.setWordWrap(True)
+        review_hint.setStyleSheet("color: #555;")
+        review_layout.addWidget(review_hint)
+
+        self.approval_review_status_badge = QtWidgets.QLabel("Review not available")
+        self.approval_review_status_badge.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        review_layout.addWidget(self.approval_review_status_badge, alignment=QtCore.Qt.AlignmentFlag.AlignLeft)
+
+        review_detail_layout = QtWidgets.QFormLayout()
+        self.approval_review_summary_value = QtWidgets.QLabel("-")
+        self.approval_review_summary_value.setWordWrap(True)
+        self.approval_review_prompt_value = QtWidgets.QLabel("-")
+        self.approval_review_prompt_value.setWordWrap(True)
+        self.approval_review_target_value = QtWidgets.QLabel("-")
+        self.approval_review_target_value.setWordWrap(True)
+        self.approval_review_action_value = QtWidgets.QLabel("-")
+        self.approval_review_action_value.setWordWrap(True)
+        self.approval_review_reason_value = QtWidgets.QLabel("Open review for a request that needs approval.")
+        self.approval_review_reason_value.setWordWrap(True)
+        self.approval_review_scope_value = QtWidgets.QLabel("-")
+        self.approval_review_scope_value.setWordWrap(True)
+        self.approval_review_validation_value = QtWidgets.QLabel("-")
+        self.approval_review_validation_value.setWordWrap(True)
+        self.approval_review_risk_value = QtWidgets.QLabel("-")
+        self.approval_review_risk_value.setWordWrap(True)
+        review_detail_layout.addRow("Request Summary:", self.approval_review_summary_value)
+        review_detail_layout.addRow("Normalized Prompt:", self.approval_review_prompt_value)
+        review_detail_layout.addRow("Target Workspace:", self.approval_review_target_value)
+        review_detail_layout.addRow("Detected Action:", self.approval_review_action_value)
+        review_detail_layout.addRow("Why Approval Is Required:", self.approval_review_reason_value)
+        review_detail_layout.addRow("Expected Change Scope:", self.approval_review_scope_value)
+        review_detail_layout.addRow("Validation Intent:", self.approval_review_validation_value)
+        review_detail_layout.addRow("Risk / Guardrails:", self.approval_review_risk_value)
+        review_layout.addLayout(review_detail_layout)
+
+        review_action_row = QtWidgets.QHBoxLayout()
+        review_action_row.setSpacing(8)
+        self.approval_review_approve_button = QtWidgets.QPushButton("Approve once")
+        self.approval_review_approve_button.clicked.connect(lambda: self._handle_request_review_action("approve_once"))
+        self.approval_review_reject_button = QtWidgets.QPushButton("Reject")
+        self.approval_review_reject_button.clicked.connect(lambda: self._handle_request_review_action("reject"))
+        self.approval_review_sandbox_button = QtWidgets.QPushButton("Run in sandbox first")
+        self.approval_review_sandbox_button.clicked.connect(lambda: self._handle_request_review_action("sandbox_first"))
+        review_action_row.addWidget(self.approval_review_approve_button)
+        review_action_row.addWidget(self.approval_review_reject_button)
+        review_action_row.addWidget(self.approval_review_sandbox_button)
+        review_action_row.addStretch(1)
+        review_layout.addLayout(review_action_row)
+
+        self.approval_review_feedback_label = QtWidgets.QLabel(
+            "Approval actions stay inactive until you open a request that needs approval."
+        )
+        self.approval_review_feedback_label.setWordWrap(True)
+        self.approval_review_feedback_label.setStyleSheet("color: #555;")
+        review_layout.addWidget(self.approval_review_feedback_label)
+        prompt_layout.addWidget(review_group)
+
+        live_status_group = QtWidgets.QGroupBox("Live Run Status (after submit)")
+        self.live_status_group = live_status_group
+        live_status_layout = QtWidgets.QVBoxLayout(live_status_group)
+        live_status_layout.setSpacing(8)
+
+        live_status_hint = QtWidgets.QLabel(
+            "After you submit or approve a request, track its progress here and open the result when it finishes."
+        )
+        live_status_hint.setWordWrap(True)
+        live_status_hint.setStyleSheet("color: #555;")
+        live_status_layout.addWidget(live_status_hint)
+
+        self.live_status_badge = QtWidgets.QLabel("Status not available")
+        self.live_status_badge.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        live_status_layout.addWidget(self.live_status_badge, alignment=QtCore.Qt.AlignmentFlag.AlignLeft)
+
+        live_status_detail_layout = QtWidgets.QFormLayout()
+        self.live_status_session_value = QtWidgets.QLabel("-")
+        self.live_status_phase_value = QtWidgets.QLabel("-")
+        self.live_status_current_task_value = QtWidgets.QLabel("-")
+        self.live_status_current_task_value.setWordWrap(True)
+        self.live_status_queue_value = QtWidgets.QLabel("-")
+        self.live_status_heartbeat_value = QtWidgets.QLabel("-")
+        self.live_status_heartbeat_value.setWordWrap(True)
+        self.live_status_waiting_value = QtWidgets.QLabel("Submit or approve a request to start tracking live status.")
+        self.live_status_waiting_value.setWordWrap(True)
+        self.live_status_approval_value = QtWidgets.QLabel("-")
+        self.live_status_approval_value.setWordWrap(True)
+        self.live_status_final_value = QtWidgets.QLabel("-")
+        self.live_status_final_value.setWordWrap(True)
+        live_status_detail_layout.addRow("Run / Session ID:", self.live_status_session_value)
+        live_status_detail_layout.addRow("Current Phase:", self.live_status_phase_value)
+        live_status_detail_layout.addRow("Current Task:", self.live_status_current_task_value)
+        live_status_detail_layout.addRow("Work Remaining:", self.live_status_queue_value)
+        live_status_detail_layout.addRow("Heartbeat / Active:", self.live_status_heartbeat_value)
+        live_status_detail_layout.addRow("Waiting / Pause Reason:", self.live_status_waiting_value)
+        live_status_detail_layout.addRow("Approval State:", self.live_status_approval_value)
+        live_status_detail_layout.addRow("Final State:", self.live_status_final_value)
+        live_status_layout.addLayout(live_status_detail_layout)
+
+        live_status_action_row = QtWidgets.QHBoxLayout()
+        live_status_action_row.setSpacing(8)
+        self.live_status_refresh_button = QtWidgets.QPushButton("Refresh status")
+        self.live_status_refresh_button.clicked.connect(self._handle_refresh_live_status)
+        self.live_status_open_result_button = QtWidgets.QPushButton("Open result")
+        self.live_status_open_result_button.clicked.connect(self._handle_open_live_result)
+        live_status_action_row.addWidget(self.live_status_refresh_button)
+        live_status_action_row.addWidget(self.live_status_open_result_button)
+        live_status_action_row.addStretch(1)
+        live_status_layout.addLayout(live_status_action_row)
+
+        self.live_status_feedback_label = QtWidgets.QLabel("No request is being followed yet.")
+        self.live_status_feedback_label.setWordWrap(True)
+        self.live_status_feedback_label.setStyleSheet("color: #555;")
+        live_status_layout.addWidget(self.live_status_feedback_label)
+        prompt_layout.addWidget(live_status_group)
+
+        proof_group = QtWidgets.QGroupBox("Result Summary (after completion)")
+        self.proof_result_group = proof_group
+        proof_layout = QtWidgets.QVBoxLayout(proof_group)
+        proof_layout.setSpacing(8)
+
+        proof_hint = QtWidgets.QLabel(
+            "Open a finished run to see what AI-E did, what changed, and whether checks passed. Supporting files stay secondary."
+        )
+        proof_hint.setWordWrap(True)
+        proof_hint.setStyleSheet("color: #555;")
+        proof_layout.addWidget(proof_hint)
+
+        self.proof_result_badge = QtWidgets.QLabel("Result not available")
+        self.proof_result_badge.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        proof_layout.addWidget(self.proof_result_badge, alignment=QtCore.Qt.AlignmentFlag.AlignLeft)
+
+        proof_detail_layout = QtWidgets.QFormLayout()
+        self.proof_result_title_value = QtWidgets.QLabel("-")
+        self.proof_result_title_value.setWordWrap(True)
+        self.proof_result_original_value = QtWidgets.QLabel("-")
+        self.proof_result_original_value.setWordWrap(True)
+        self.proof_result_normalized_value = QtWidgets.QLabel("-")
+        self.proof_result_normalized_value.setWordWrap(True)
+        self.proof_result_target_value = QtWidgets.QLabel("-")
+        self.proof_result_target_value.setWordWrap(True)
+        self.proof_result_action_value = QtWidgets.QLabel("-")
+        self.proof_result_action_value.setWordWrap(True)
+        self.proof_result_verdict_value = QtWidgets.QLabel("Open a finished run from Live Run Status or History.")
+        self.proof_result_verdict_value.setWordWrap(True)
+        self.proof_result_change_value = QtWidgets.QLabel("-")
+        self.proof_result_change_value.setWordWrap(True)
+        self.proof_result_before_after_value = QtWidgets.QLabel("-")
+        self.proof_result_before_after_value.setWordWrap(True)
+        self.proof_result_validation_value = QtWidgets.QLabel("-")
+        self.proof_result_validation_value.setWordWrap(True)
+        self.proof_result_status_value = QtWidgets.QLabel("-")
+        self.proof_result_status_value.setWordWrap(True)
+        self.proof_result_timestamp_value = QtWidgets.QLabel("-")
+        self.proof_result_timestamp_value.setWordWrap(True)
+        proof_detail_layout.addRow("Run Title:", self.proof_result_title_value)
+        proof_detail_layout.addRow("Original Request:", self.proof_result_original_value)
+        proof_detail_layout.addRow("Normalized Request:", self.proof_result_normalized_value)
+        proof_detail_layout.addRow("Target Workspace:", self.proof_result_target_value)
+        proof_detail_layout.addRow("Detected Action:", self.proof_result_action_value)
+        proof_detail_layout.addRow("Final Verdict:", self.proof_result_verdict_value)
+        proof_layout.addLayout(proof_detail_layout)
+
+        self.proof_result_next_step_frame = QtWidgets.QFrame()
+        self.proof_result_next_step_frame.setFrameShape(QtWidgets.QFrame.Shape.StyledPanel)
+        self.proof_result_next_step_frame.setFrameShadow(QtWidgets.QFrame.Shadow.Plain)
+        next_step_layout = QtWidgets.QVBoxLayout(self.proof_result_next_step_frame)
+        next_step_layout.setContentsMargins(12, 12, 12, 12)
+        next_step_layout.setSpacing(10)
+
+        next_step_title = QtWidgets.QLabel("What would you like to do next?")
+        next_step_title.setStyleSheet("font-weight: 700; font-size: 14px; color: #1e3a8a;")
+        next_step_layout.addWidget(next_step_title)
+
+        self.proof_result_next_step_hint = QtWidgets.QLabel(
+            "Open a finished run to refine it, try a variation, or review the proof here."
+        )
+        self.proof_result_next_step_hint.setWordWrap(True)
+        self.proof_result_next_step_hint.setStyleSheet("color: #334155;")
+        next_step_layout.addWidget(self.proof_result_next_step_hint)
+
+        self.proof_result_next_step_grid = QtWidgets.QGridLayout()
+        self.proof_result_next_step_grid.setHorizontalSpacing(10)
+        self.proof_result_next_step_grid.setVerticalSpacing(10)
+        self.proof_result_next_prepare_button = QtWidgets.QPushButton("Try a variation")
+        self.proof_result_next_prepare_button.clicked.connect(self._handle_next_step_prepare_similar)
+        self.proof_result_next_modify_button = QtWidgets.QPushButton("Modify and test again")
+        self.proof_result_next_modify_button.clicked.connect(self._handle_next_step_modify_again)
+        self.proof_result_next_supporting_button = QtWidgets.QPushButton("Open supporting files")
+        self.proof_result_next_supporting_button.clicked.connect(self._handle_open_proof_artifact)
+        self.proof_result_next_revise_button = QtWidgets.QPushButton("Revise request")
+        self.proof_result_next_revise_button.clicked.connect(self._handle_next_step_revise_request)
+        self.proof_result_next_review_button = QtWidgets.QPushButton("Open review")
+        self.proof_result_next_review_button.clicked.connect(self._handle_next_step_open_review)
+        for button in (
+            self.proof_result_next_prepare_button,
+            self.proof_result_next_modify_button,
+            self.proof_result_next_supporting_button,
+            self.proof_result_next_revise_button,
+            self.proof_result_next_review_button,
+        ):
+            button.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+            button.setVisible(False)
+            button.setEnabled(False)
+        next_step_layout.addLayout(self.proof_result_next_step_grid)
+        proof_layout.addWidget(self.proof_result_next_step_frame)
+
+        self.proof_result_evaluation_frame = QtWidgets.QFrame()
+        self.proof_result_evaluation_frame.setFrameShape(QtWidgets.QFrame.Shape.StyledPanel)
+        self.proof_result_evaluation_frame.setFrameShadow(QtWidgets.QFrame.Shadow.Plain)
+        proof_evaluation_layout = QtWidgets.QVBoxLayout(self.proof_result_evaluation_frame)
+        proof_evaluation_layout.setContentsMargins(12, 12, 12, 12)
+        proof_evaluation_layout.setSpacing(8)
+
+        proof_evaluation_title = QtWidgets.QLabel("Evaluation Summary")
+        proof_evaluation_title.setStyleSheet("font-weight: 700; color: #1f2937;")
+        proof_evaluation_layout.addWidget(proof_evaluation_title)
+
+        self.proof_result_evaluation_summary_value = QtWidgets.QLabel("-")
+        self.proof_result_evaluation_summary_value.setWordWrap(True)
+        proof_evaluation_layout.addWidget(self.proof_result_evaluation_summary_value)
+
+        self.proof_result_evaluation_list = QtWidgets.QListWidget()
+        self.proof_result_evaluation_list.setAlternatingRowColors(True)
+        self.proof_result_evaluation_list.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.NoSelection)
+        self.proof_result_evaluation_list.setMaximumHeight(96)
+        proof_evaluation_layout.addWidget(self.proof_result_evaluation_list)
+
+        self.proof_result_evaluation_suggestion_value = QtWidgets.QLabel("")
+        self.proof_result_evaluation_suggestion_value.setWordWrap(True)
+        self.proof_result_evaluation_suggestion_value.setStyleSheet("color: #1d4ed8;")
+        proof_evaluation_layout.addWidget(self.proof_result_evaluation_suggestion_value)
+        self.proof_result_evaluation_frame.setVisible(False)
+        proof_layout.addWidget(self.proof_result_evaluation_frame)
+
+        self.proof_result_experiment_frame = QtWidgets.QFrame()
+        self.proof_result_experiment_frame.setFrameShape(QtWidgets.QFrame.Shape.StyledPanel)
+        self.proof_result_experiment_frame.setFrameShadow(QtWidgets.QFrame.Shadow.Plain)
+        proof_experiment_layout = QtWidgets.QVBoxLayout(self.proof_result_experiment_frame)
+        proof_experiment_layout.setContentsMargins(12, 12, 12, 12)
+        proof_experiment_layout.setSpacing(8)
+
+        proof_experiment_title = QtWidgets.QLabel("Experiment Variant")
+        proof_experiment_title.setStyleSheet("font-weight: 700; color: #1f2937;")
+        proof_experiment_layout.addWidget(proof_experiment_title)
+
+        proof_experiment_detail_layout = QtWidgets.QFormLayout()
+        self.proof_result_experiment_id_value = QtWidgets.QLabel("-")
+        self.proof_result_variant_id_value = QtWidgets.QLabel("-")
+        self.proof_result_compared_variant_value = QtWidgets.QLabel("-")
+        self.proof_result_baseline_variant_value = QtWidgets.QLabel("-")
+        self.proof_result_variant_kind_value = QtWidgets.QLabel("-")
+        self.proof_result_experiment_summary_value = QtWidgets.QLabel("-")
+        self.proof_result_experiment_summary_value.setWordWrap(True)
+        proof_experiment_detail_layout.addRow("Experiment ID:", self.proof_result_experiment_id_value)
+        proof_experiment_detail_layout.addRow("Current Variant:", self.proof_result_variant_id_value)
+        proof_experiment_detail_layout.addRow("Compared Against:", self.proof_result_compared_variant_value)
+        proof_experiment_detail_layout.addRow("Baseline Variant:", self.proof_result_baseline_variant_value)
+        proof_experiment_detail_layout.addRow("Variant Type:", self.proof_result_variant_kind_value)
+        proof_experiment_detail_layout.addRow("Summary:", self.proof_result_experiment_summary_value)
+        proof_experiment_layout.addLayout(proof_experiment_detail_layout)
+        self.proof_result_experiment_frame.setVisible(False)
+        proof_layout.addWidget(self.proof_result_experiment_frame)
+
+        self.proof_result_decision_frame = QtWidgets.QFrame()
+        self.proof_result_decision_frame.setFrameShape(QtWidgets.QFrame.Shape.StyledPanel)
+        self.proof_result_decision_frame.setFrameShadow(QtWidgets.QFrame.Shadow.Plain)
+        proof_decision_layout = QtWidgets.QVBoxLayout(self.proof_result_decision_frame)
+        proof_decision_layout.setContentsMargins(12, 12, 12, 12)
+        proof_decision_layout.setSpacing(8)
+
+        proof_decision_title = QtWidgets.QLabel("Experiment Decisions")
+        proof_decision_title.setStyleSheet("font-weight: 700; color: #1f2937;")
+        proof_decision_layout.addWidget(proof_decision_title)
+
+        proof_decision_detail_layout = QtWidgets.QFormLayout()
+        self.proof_result_decision_status_value = QtWidgets.QLabel("-")
+        self.proof_result_decision_preferred_baseline_value = QtWidgets.QLabel("-")
+        self.proof_result_decision_latest_value = QtWidgets.QLabel("-")
+        self.proof_result_decision_latest_value.setWordWrap(True)
+        proof_decision_detail_layout.addRow("Current Decision:", self.proof_result_decision_status_value)
+        proof_decision_detail_layout.addRow("Preferred Baseline:", self.proof_result_decision_preferred_baseline_value)
+        proof_decision_detail_layout.addRow("Latest Explicit Decision:", self.proof_result_decision_latest_value)
+        proof_decision_layout.addLayout(proof_decision_detail_layout)
+        self.proof_result_decision_frame.setVisible(False)
+        proof_layout.addWidget(self.proof_result_decision_frame)
+
+        proof_secondary_detail_layout = QtWidgets.QFormLayout()
+        proof_secondary_detail_layout.addRow("What Changed:", self.proof_result_change_value)
+        proof_secondary_detail_layout.addRow("Before / After:", self.proof_result_before_after_value)
+        proof_secondary_detail_layout.addRow("Validation Outcome:", self.proof_result_validation_value)
+        proof_secondary_detail_layout.addRow("Result Status:", self.proof_result_status_value)
+        proof_secondary_detail_layout.addRow("Timestamp:", self.proof_result_timestamp_value)
+        proof_layout.addLayout(proof_secondary_detail_layout)
+
+        proof_steps_label = QtWidgets.QLabel("Key Execution Steps")
+        proof_steps_label.setStyleSheet("font-weight: 600;")
+        proof_layout.addWidget(proof_steps_label)
+        self.proof_result_steps_list = QtWidgets.QListWidget()
+        self.proof_result_steps_list.setAlternatingRowColors(True)
+        self.proof_result_steps_list.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.NoSelection)
+        self.proof_result_steps_list.setMaximumHeight(120)
+        proof_layout.addWidget(self.proof_result_steps_list)
+
+        proof_validations_label = QtWidgets.QLabel("Validation Checks")
+        proof_validations_label.setStyleSheet("font-weight: 600;")
+        proof_layout.addWidget(proof_validations_label)
+        self.proof_result_validations_list = QtWidgets.QListWidget()
+        self.proof_result_validations_list.setAlternatingRowColors(True)
+        self.proof_result_validations_list.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.NoSelection)
+        self.proof_result_validations_list.setMaximumHeight(120)
+        proof_layout.addWidget(self.proof_result_validations_list)
+
+        proof_artifacts_label = QtWidgets.QLabel("Supporting Files")
+        proof_artifacts_label.setStyleSheet("font-weight: 600;")
+        proof_layout.addWidget(proof_artifacts_label)
+        self.proof_result_artifacts_tree = QtWidgets.QTreeWidget()
+        self.proof_result_artifacts_tree.setColumnCount(2)
+        self.proof_result_artifacts_tree.setHeaderLabels(["Artifact", "Type"])
+        self.proof_result_artifacts_tree.setRootIsDecorated(False)
+        self.proof_result_artifacts_tree.setAlternatingRowColors(True)
+        self.proof_result_artifacts_tree.setUniformRowHeights(True)
+        self.proof_result_artifacts_tree.header().setStretchLastSection(False)
+        self.proof_result_artifacts_tree.header().setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Stretch)
+        self.proof_result_artifacts_tree.header().setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+        proof_layout.addWidget(self.proof_result_artifacts_tree)
+
+        proof_action_row = QtWidgets.QHBoxLayout()
+        proof_action_row.setSpacing(8)
+        self.proof_result_back_button = QtWidgets.QPushButton("Back to home")
+        self.proof_result_back_button.clicked.connect(self._handle_back_to_home_from_proof)
+        self.proof_result_open_artifacts_button = QtWidgets.QPushButton("Open supporting files")
+        self.proof_result_open_artifacts_button.clicked.connect(self._handle_open_proof_artifact)
+        self.proof_result_rerun_button = QtWidgets.QPushButton("Prepare same request")
+        self.proof_result_rerun_button.clicked.connect(self._handle_rerun_same_request)
+        proof_action_row.addWidget(self.proof_result_back_button)
+        proof_action_row.addWidget(self.proof_result_open_artifacts_button)
+        proof_action_row.addWidget(self.proof_result_rerun_button)
+        proof_action_row.addStretch(1)
+        proof_layout.addLayout(proof_action_row)
+
+        self.proof_result_feedback_label = QtWidgets.QLabel("Open a finished run from Live Run Status or History.")
+        self.proof_result_feedback_label.setWordWrap(True)
+        self.proof_result_feedback_label.setStyleSheet("color: #555;")
+        proof_layout.addWidget(self.proof_result_feedback_label)
+
+        self._apply_next_step_frame_style()
+        self._apply_next_step_button_styles(primary_button=None)
+        prompt_layout.addWidget(proof_group)
+        layout.addWidget(prompt_group)
+
+        history_group = QtWidgets.QGroupBox("Project / Session History")
+        history_layout = QtWidgets.QVBoxLayout(history_group)
+        history_hint = QtWidgets.QLabel(
+            "Browse saved results and sessions. Open a result, review a saved session, or prepare the same request again when it is available."
+        )
+        history_hint.setWordWrap(True)
+        history_hint.setStyleSheet("color: #555;")
+        history_layout.addWidget(history_hint)
+
+        history_filter_row = QtWidgets.QHBoxLayout()
+        history_filter_row.setSpacing(8)
+        self.history_project_filter = QtWidgets.QComboBox()
+        self.history_project_filter.currentTextChanged.connect(self._apply_history_filters)
+        self.history_status_filter = QtWidgets.QComboBox()
+        self.history_status_filter.addItems(["All statuses", "Passed", "Blocked", "Failed", "Saved"])
+        self.history_status_filter.currentTextChanged.connect(self._apply_history_filters)
+        self.history_search_input = QtWidgets.QLineEdit()
+        self.history_search_input.setPlaceholderText("Filter by request, action, or summary")
+        self.history_search_input.textChanged.connect(self._apply_history_filters)
+        history_filter_row.addWidget(QtWidgets.QLabel("Project"))
+        history_filter_row.addWidget(self.history_project_filter)
+        history_filter_row.addWidget(QtWidgets.QLabel("Status"))
+        history_filter_row.addWidget(self.history_status_filter)
+        history_filter_row.addWidget(self.history_search_input, stretch=1)
+        history_layout.addLayout(history_filter_row)
+
+        self.recent_runs_tree = QtWidgets.QTreeWidget()
+        self.recent_runs_tree.itemDoubleClicked.connect(self._handle_recent_run_open)
+        self.recent_runs_tree.itemSelectionChanged.connect(self._handle_history_selection_changed)
+        self.recent_runs_tree.setColumnCount(6)
+        self.recent_runs_tree.setHeaderLabels(["Name", "Project", "Source", "Status", "Updated", "Summary"])
+        self.recent_runs_tree.setRootIsDecorated(False)
+        self.recent_runs_tree.setAlternatingRowColors(True)
+        self.recent_runs_tree.setUniformRowHeights(True)
+        self.recent_runs_tree.header().setStretchLastSection(False)
+        self.recent_runs_tree.header().setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+        self.recent_runs_tree.header().setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+        self.recent_runs_tree.header().setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+        self.recent_runs_tree.header().setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+        self.recent_runs_tree.header().setSectionResizeMode(4, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+        self.recent_runs_tree.header().setSectionResizeMode(5, QtWidgets.QHeaderView.ResizeMode.Stretch)
+        history_layout.addWidget(self.recent_runs_tree)
+
+        history_action_row = QtWidgets.QHBoxLayout()
+        history_action_row.setSpacing(8)
+        self.history_open_result_button = QtWidgets.QPushButton("Open result")
+        self.history_open_result_button.clicked.connect(self._handle_open_history_result)
+        self.history_open_session_button = QtWidgets.QPushButton("Reopen session summary")
+        self.history_open_session_button.clicked.connect(self._handle_open_history_session_summary)
+        self.history_restage_button = QtWidgets.QPushButton("Prepare same request")
+        self.history_restage_button.clicked.connect(self._handle_restage_history_request)
+        history_action_row.addWidget(self.history_open_result_button)
+        history_action_row.addWidget(self.history_open_session_button)
+        history_action_row.addWidget(self.history_restage_button)
+        history_action_row.addStretch(1)
+        history_layout.addLayout(history_action_row)
+
+        self.history_feedback_label = QtWidgets.QLabel("Select a saved result or session to open it here.")
+        self.history_feedback_label.setWordWrap(True)
+        self.history_feedback_label.setStyleSheet("color: #555;")
+        history_layout.addWidget(self.history_feedback_label)
+        layout.addWidget(history_group)
+
+        return group
+
+    def _build_onboarding_panel(self) -> QtWidgets.QFrame:
+        group = QtWidgets.QFrame()
+        group.setObjectName("onboardingPanel")
+        group.setFrameShape(QtWidgets.QFrame.Shape.StyledPanel)
+        group.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Expanding,
+            QtWidgets.QSizePolicy.Policy.Maximum,
+        )
+        group.setStyleSheet(
+            "QFrame#onboardingPanel { background: #eff6ff; border: 1px solid #93c5fd; border-radius: 8px; }"
+        )
+        layout = QtWidgets.QVBoxLayout(group)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(8)
+
+        heading = QtWidgets.QLabel("Getting Started: Start Here")
+        heading.setStyleSheet("font-size: 16px; font-weight: 600; color: #1e3a8a;")
+        layout.addWidget(heading)
+
+        self.onboarding_intro_label = QtWidgets.QLabel(
+            "AI-E turns a supported request into a real result you can review."
+        )
+        self.onboarding_intro_label.setWordWrap(True)
+        layout.addWidget(self.onboarding_intro_label)
+
+        self.onboarding_start_label = QtWidgets.QLabel("")
+        self.onboarding_start_label.setWordWrap(True)
+        self.onboarding_start_label.setStyleSheet("font-weight: 600; color: #1e3a8a;")
+        layout.addWidget(self.onboarding_start_label)
+
+        self.onboarding_support_label = QtWidgets.QLabel("Start with a supported project like BABYLON VER 2.")
+        self.onboarding_support_label.setWordWrap(True)
+        layout.addWidget(self.onboarding_support_label)
+
+        self.onboarding_guardrail_label = QtWidgets.QLabel(
+            "Guardrails keep work within supported scope, keep external access off, and require review when needed."
+        )
+        self.onboarding_guardrail_label.setWordWrap(True)
+        layout.addWidget(self.onboarding_guardrail_label)
+
+        prompt_label = QtWidgets.QLabel("Try one of these prompts:")
+        prompt_label.setStyleSheet("font-weight: 600;")
+        layout.addWidget(prompt_label)
+
+        prompt_row = QtWidgets.QHBoxLayout()
+        prompt_row.setSpacing(8)
+        self.onboarding_prompt_buttons: List[QtWidgets.QPushButton] = []
+        for prompt_text in self._onboarding_example_prompts:
+            button = QtWidgets.QPushButton(prompt_text)
+            button.clicked.connect(lambda _checked=False, text=prompt_text: self._handle_use_onboarding_example(text))
+            self.onboarding_prompt_buttons.append(button)
+            prompt_row.addWidget(button)
+        prompt_row.addStretch(1)
+        layout.addLayout(prompt_row)
+
+        self.onboarding_path_label = QtWidgets.QLabel("")
+        self.onboarding_path_label.setWordWrap(True)
+        layout.addWidget(self.onboarding_path_label)
+
+        self.onboarding_reopen_hint_label = QtWidgets.QLabel("You can reopen these tips from Help > Getting Started.")
+        self.onboarding_reopen_hint_label.setWordWrap(True)
+        self.onboarding_reopen_hint_label.setStyleSheet("color: #555;")
+        layout.addWidget(self.onboarding_reopen_hint_label)
+
+        action_row = QtWidgets.QHBoxLayout()
+        action_row.setSpacing(8)
+        self.onboarding_use_first_prompt_button = QtWidgets.QPushButton("Use recommended first request")
+        self.onboarding_use_first_prompt_button.setStyleSheet(
+            "background: #dbeafe; color: #1d4ed8; border: 1px solid #60a5fa; "
+            "border-radius: 6px; padding: 6px 12px; font-weight: 600;"
+        )
+        self.onboarding_use_first_prompt_button.clicked.connect(
+            lambda: self._handle_use_onboarding_example(self._onboarding_example_prompts[0])
+        )
+        self.onboarding_dismiss_button = QtWidgets.QPushButton("Hide tips")
+        self.onboarding_dismiss_button.clicked.connect(self._handle_dismiss_onboarding)
+        action_row.addWidget(self.onboarding_use_first_prompt_button)
+        action_row.addWidget(self.onboarding_dismiss_button)
+        action_row.addStretch(1)
+        layout.addLayout(action_row)
+
+        group.setVisible(False)
+        self.onboarding_group = group
+        return group
+
+    @staticmethod
+    def _build_guardrail_badge(text: str, background: str, foreground: str) -> QtWidgets.QLabel:
+        badge = QtWidgets.QLabel(text)
+        badge.setStyleSheet(
+            f"background: {background}; color: {foreground}; border: 1px solid {foreground}; "
+            "border-radius: 12px; padding: 4px 10px; font-weight: 600;"
+        )
+        return badge
+
     def _build_menu_bar(self) -> None:
         menu_bar = self.menuBar()
         help_menu = menu_bar.addMenu("&Help")
-        tests_action = QtGui.QAction("Acceptance Tests…", self)
+        getting_started_action = QtGui.QAction("Getting Started", self)
+        getting_started_action.triggered.connect(self._handle_reopen_onboarding)
+        help_menu.addAction(getting_started_action)
+        tests_action = QtGui.QAction("Demo Checklist...", self)
         tests_action.triggered.connect(self._show_acceptance_tests)
         help_menu.addAction(tests_action)
 
@@ -194,7 +861,7 @@ class ControlPanel(QtWidgets.QMainWindow):
         self.duration_label = QtWidgets.QLabel("00:00")
         self.artifacts_label = QtWidgets.QLabel(str(self.session.artifacts_root))
         self.artifacts_label.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
-        self.dependency_label = QtWidgets.QLabel("Checking…")
+        self.dependency_label = QtWidgets.QLabel("Checking optional setup...")
         self.dependency_label.setWordWrap(True)
 
         layout.addRow("Connection:", self.connection_label)
@@ -203,7 +870,7 @@ class ControlPanel(QtWidgets.QMainWindow):
         layout.addRow("Last Action:", self.last_action_label)
         layout.addRow("Run Folder:", self.run_folder_label)
         layout.addRow("Artifacts:", self.artifacts_label)
-        layout.addRow("System Warnings:", self.dependency_label)
+        layout.addRow("Optional Setup:", self.dependency_label)
         return group
 
     def _build_review_panel(self) -> QtWidgets.QGroupBox:
@@ -245,6 +912,12 @@ class ControlPanel(QtWidgets.QMainWindow):
         self.record_mic_checkbox.setChecked(self.state.record_mic)
         self.push_to_talk_checkbox.setChecked(self.state.push_to_talk)
         self.push_to_talk_checkbox.setEnabled(self.state.record_mic)
+        self.prompt_input.blockSignals(True)
+        self.prompt_input.setPlainText(self.state.staged_prompt)
+        self.prompt_input.blockSignals(False)
+        self._select_active_project()
+        self._update_active_workspace_label()
+        self._refresh_onboarding_panel()
 
     def _persist_state(self) -> None:
         self.state.babylon_exe_path = self.exe_path_edit.text().strip()
@@ -252,6 +925,10 @@ class ControlPanel(QtWidgets.QMainWindow):
         self.state.record_input = self.record_input_checkbox.isChecked()
         self.state.record_mic = self.record_mic_checkbox.isChecked()
         self.state.push_to_talk = self.push_to_talk_checkbox.isChecked()
+        project = self._selected_project()
+        self.state.active_project_name = project.name if project else ""
+        self.state.active_project_path = str(project.path) if project else ""
+        self.state.staged_prompt = self.prompt_input.toPlainText().strip()
         update_saved_state(self.state, profile_name=self.profile_name)
 
     def _reload_profiles(self) -> None:
@@ -272,14 +949,901 @@ class ControlPanel(QtWidgets.QMainWindow):
     def _update_profile_status_label(self) -> None:
         self.profile_status_label.setText(f"Active profile: {self.profile_name}")
 
+    def _reload_supported_projects(self) -> None:
+        self.supported_projects = home_surface.load_supported_projects()
+        self.project_combo.blockSignals(True)
+        self.project_combo.clear()
+        for project in self.supported_projects:
+            self.project_combo.addItem(project.name)
+        self.project_combo.blockSignals(False)
+        self._select_active_project()
+        self._update_active_workspace_label()
+        self._refresh_onboarding_panel()
+
+    def _select_active_project(self) -> None:
+        if not self.supported_projects:
+            return
+        desired_path = self.state.active_project_path.strip().lower()
+        desired_name = self.state.active_project_name.strip().lower()
+        selected_index = self._recommended_project_index()
+        for index, project in enumerate(self.supported_projects):
+            project_path = str(project.path).lower()
+            if desired_path and project_path == desired_path:
+                selected_index = index
+                break
+            if desired_name and project.name.lower() == desired_name:
+                selected_index = index
+        self.project_combo.blockSignals(True)
+        self.project_combo.setCurrentIndex(selected_index)
+        self.project_combo.blockSignals(False)
+
+    def _selected_project(self) -> home_surface.SupportedProject | None:
+        index = self.project_combo.currentIndex()
+        if index < 0 or index >= len(self.supported_projects):
+            return None
+        return self.supported_projects[index]
+
+    def _recommended_supported_project_name(self) -> str:
+        for project in self.supported_projects:
+            if project.name.strip().lower() == "babylon ver 2":
+                return project.name
+        if self.supported_projects:
+            return self.supported_projects[0].name
+        return "BABYLON VER 2"
+
+    def _recommended_project_index(self) -> int:
+        desired_name = self._recommended_supported_project_name().strip().lower()
+        for index, project in enumerate(self.supported_projects):
+            if project.name.strip().lower() == desired_name:
+                return index
+        return 0
+
+    def _supported_project_guidance(self) -> str:
+        if self.supported_projects:
+            return f"Select a supported project like {self._recommended_supported_project_name()} to start your first result."
+        return "No supported projects are available yet. Add one, then return here to continue."
+
+    def _recommended_first_prompt(self) -> str:
+        return self._onboarding_example_prompts[0]
+
+    def _is_clean_profile_launch(self) -> bool:
+        return (
+            not self.state.onboarding_dismissed
+            and not self.state.babylon_exe_path.strip()
+            and not self.state.active_project_name.strip()
+            and not self.state.active_project_path.strip()
+            and not self.state.staged_prompt.strip()
+        )
+
+    def _should_show_onboarding(self) -> bool:
+        if self._onboarding_force_visible:
+            return True
+        if self.state.onboarding_dismissed:
+            return False
+        return self._is_clean_profile_launch() or not self.history_entries
+
+    def _refresh_onboarding_panel(self) -> None:
+        if not hasattr(self, "onboarding_group"):
+            return
+        project_name = self._recommended_supported_project_name()
+        self.onboarding_start_label.setText(
+            f"Start here: choose \"{self._recommended_first_prompt()}\", then click Prepare Request."
+        )
+        self.onboarding_support_label.setText(f"Start with a supported project like {project_name}.")
+        self.onboarding_path_label.setText(
+            "\n".join(
+                [
+                    f"Recommended first result: choose {project_name}, then use \"{self._recommended_first_prompt()}\".",
+                    "1. Select a supported project.",
+                    "2. Prepare the request.",
+                    "3. Submit it when Ready, or open review if approval is needed.",
+                    "4. Open the result summary to confirm what changed.",
+                ]
+            )
+        )
+        visible = self._should_show_onboarding()
+        self.onboarding_group.setVisible(visible)
+        if visible and not self.prompt_input.toPlainText().strip():
+            QtCore.QTimer.singleShot(0, self.onboarding_use_first_prompt_button.setFocus)
+
+    def _startup_status_message(self) -> str:
+        if not self.supported_projects:
+            return "No supported projects are available yet. Add a supported project, then relaunch AI-E."
+        project_name = self._selected_project().name if self._selected_project() else self._recommended_supported_project_name()
+        preview = self.current_prepared_prompt
+        if preview and preview.normalized_prompt:
+            if preview.decision_state == "Ready":
+                return f"Prepared request is ready in {project_name}. Submit it to continue."
+            if preview.decision_state == "Needs approval":
+                return f"Prepared request needs review in {project_name}. Open review to continue safely."
+            if preview.decision_state == "Sandbox first":
+                return "Prepared request should run in sandbox first. Keep it staged or revise it to stay within supported scope."
+            if preview.decision_state == "Blocked":
+                return "Prepared request is blocked. Revise it to stay within supported scope, then prepare it again."
+        if not self.history_entries:
+            return f"Start with {project_name} and try \"{self._recommended_first_prompt()}\"."
+        return f"Ready in {project_name}. Prepare a request or reopen a saved result."
+
+    def _select_recommended_project(self) -> None:
+        if not self.supported_projects:
+            return
+        desired_name = self._recommended_supported_project_name()
+        index = self.project_combo.findText(desired_name)
+        if index < 0:
+            index = 0
+        if self.project_combo.currentIndex() != index:
+            self.project_combo.setCurrentIndex(index)
+
+    def _handle_use_onboarding_example(self, prompt_text: str) -> None:
+        if self.supported_projects and self._selected_project() is None:
+            self._select_recommended_project()
+        self.prompt_input.setPlainText(prompt_text)
+        self.prompt_input.setFocus()
+        cursor = self.prompt_input.textCursor()
+        cursor.movePosition(QtGui.QTextCursor.MoveOperation.End)
+        self.prompt_input.setTextCursor(cursor)
+        message = "Example request added. Choose Prepare Request, then follow the decision AI-E shows."
+        self.intake_feedback_label.setText(message)
+        self._update_status_panel(message)
+
+    def _handle_dismiss_onboarding(self) -> None:
+        self.state.onboarding_dismissed = True
+        self._onboarding_force_visible = False
+        self._persist_state()
+        self._refresh_onboarding_panel()
+        self._update_status_panel("Getting Started hidden. Reopen it from Help when you need it.")
+
+    def _handle_reopen_onboarding(self) -> None:
+        self._onboarding_force_visible = True
+        self._refresh_onboarding_panel()
+        self._update_status_panel("Getting Started opened")
+
+    def _update_active_workspace_label(self) -> None:
+        project = self._selected_project()
+        if project is None:
+            self.workspace_value_label.setText(self._supported_project_guidance())
+            return
+        self.workspace_value_label.setText(f"{project.name} ({project.project_type})")
+
+    def _refresh_recent_runs(self) -> None:
+        self.history_entries = home_surface.load_history_entries(supported_projects=self.supported_projects)
+        self._refresh_history_filter_options()
+        self._apply_history_filters()
+        self._refresh_onboarding_panel()
+
+    def _refresh_history_filter_options(self) -> None:
+        current_project = self.history_project_filter.currentText() if hasattr(self, "history_project_filter") else ""
+        projects = ["All projects"]
+        projects.extend(
+            sorted(
+                {
+                    entry.project_display
+                    for entry in self.history_entries
+                    if str(entry.project_display or "").strip()
+                }
+            )
+        )
+        self.history_project_filter.blockSignals(True)
+        self.history_project_filter.clear()
+        self.history_project_filter.addItems(projects)
+        if current_project and current_project in projects:
+            self.history_project_filter.setCurrentText(current_project)
+        self.history_project_filter.blockSignals(False)
+
+    def _apply_history_filters(self) -> None:
+        self.recent_runs_tree.clear()
+        project_filter = self.history_project_filter.currentText().strip() if hasattr(self, "history_project_filter") else ""
+        status_filter = self.history_status_filter.currentText().strip() if hasattr(self, "history_status_filter") else ""
+        search_text = self.history_search_input.text().strip().lower() if hasattr(self, "history_search_input") else ""
+
+        filtered = []
+        for entry in self.history_entries:
+            if project_filter and project_filter != "All projects" and entry.project_display != project_filter:
+                continue
+            if status_filter and status_filter != "All statuses" and entry.final_status != status_filter:
+                continue
+            if search_text:
+                haystack = " ".join(
+                    [
+                        entry.title,
+                        entry.summary,
+                        entry.source,
+                        entry.project_display,
+                    ]
+                ).lower()
+                if search_text not in haystack:
+                    continue
+            filtered.append(entry)
+
+        if not filtered:
+            empty_title = "No saved history yet" if not self.history_entries else "No matching history entries"
+            item = QtWidgets.QTreeWidgetItem([empty_title, "-", "-", "-", "-", "-"])
+            self.recent_runs_tree.addTopLevelItem(item)
+            if not self.history_entries:
+                project = self._selected_project()
+                if project is not None:
+                    self.history_feedback_label.setText(
+                        f"No saved runs or sessions yet. Prepare a request in {project.name} to create your first result."
+                    )
+                else:
+                    self.history_feedback_label.setText(self._supported_project_guidance())
+            else:
+                self.history_feedback_label.setText(
+                    "No saved runs or sessions match these filters. Clear the filters or choose another project."
+                )
+            self._handle_history_selection_changed()
+            return
+
+        for entry in filtered:
+            item = QtWidgets.QTreeWidgetItem(
+                [
+                    entry.title,
+                    entry.project_display,
+                    entry.source,
+                    entry.final_status,
+                    entry.updated_label,
+                    entry.summary,
+                ]
+            )
+            payload = {
+                "path": str(entry.path),
+                "session_summary_path": str(entry.session_summary_path) if entry.session_summary_path else "",
+                "rerun_prompt": entry.rerun_prompt,
+                "rerun_project_path": entry.rerun_project_path,
+                "summary": entry.summary,
+            }
+            for column in range(6):
+                item.setToolTip(column, entry.summary or entry.title)
+            item.setData(0, QtCore.Qt.ItemDataRole.UserRole, payload)
+            self.recent_runs_tree.addTopLevelItem(item)
+
+        if self.recent_runs_tree.topLevelItemCount() > 0:
+            self.recent_runs_tree.setCurrentItem(self.recent_runs_tree.topLevelItem(0))
+        self.history_feedback_label.setText(
+            f"Showing {len(filtered)} saved entr{'y' if len(filtered) == 1 else 'ies'}."
+        )
+        self._handle_history_selection_changed()
+
+    def _selected_history_payload(self) -> Dict[str, str]:
+        item = self.recent_runs_tree.currentItem()
+        if item is None:
+            return {}
+        payload = item.data(0, QtCore.Qt.ItemDataRole.UserRole)
+        return dict(payload) if isinstance(payload, dict) else {}
+
+    def _handle_history_selection_changed(self) -> None:
+        payload = self._selected_history_payload()
+        has_path = bool(str(payload.get("path") or "").strip())
+        has_session_summary = bool(str(payload.get("session_summary_path") or "").strip())
+        has_rerun = bool(str(payload.get("rerun_prompt") or "").strip())
+        self.history_open_result_button.setEnabled(has_path)
+        self.history_open_session_button.setEnabled(has_session_summary)
+        self.history_restage_button.setEnabled(has_rerun)
+        if not payload:
+            if self.recent_runs_tree.topLevelItemCount():
+                if self.history_entries:
+                    self.history_feedback_label.setText(
+                        "Select a saved result to open it, or prepare the same request again when it is available."
+                    )
+            return
+        summary = str(payload.get("summary") or "").strip()
+        if summary:
+            self.history_feedback_label.setText(summary)
+
+    def _render_prepared_prompt(self, preview: home_surface.PreparedPromptPreview) -> None:
+        self.current_prepared_prompt = preview
+        self.intake_normalized_value.setText(preview.normalized_prompt or "-")
+        self.intake_target_value.setText(preview.target_display or "-")
+        self.intake_action_value.setText(preview.detected_action or "-")
+        self.intake_decision_value.setText(preview.decision_state or "-")
+        self.intake_reason_value.setText(preview.decision_reason or preview.status_message)
+        self.intake_plan_title_value.setText(preview.plan_title or "No predefined plan for this request.")
+        self.intake_plan_steps_list.clear()
+        for step in preview.plan_steps or ["No multi-step plan is attached to this request."]:
+            self.intake_plan_steps_list.addItem(step)
+        self.intake_plan_expected_value.setText(preview.plan_expected_outcome or "-")
+        self.intake_plan_mode_value.setText(preview.plan_execution_mode or "-")
+        self.intake_action_button.setText(preview.next_action_label)
+        self.intake_action_button.setEnabled(bool(preview.normalized_prompt))
+        self.intake_feedback_label.setText(preview.status_message)
+        self._apply_decision_state_style(preview.decision_state)
+
+        submitted_key = (preview.normalized_prompt, preview.target_repo)
+        if self._submitted_prompt_key == submitted_key and preview.decision_state == "Ready":
+            self.intake_action_button.setEnabled(False)
+
+        if preview.decision_state == "Needs approval":
+            review = self.intake_preview_bridge.build_review_surface(preview, self._selected_project())
+            self._render_request_review(review)
+        else:
+            self._reset_request_review()
+
+    def _reset_intake_decision(self, message: str = "Type a request, then choose Prepare Request to see whether AI-E is ready, needs approval, or is blocked.") -> None:
+        self.current_prepared_prompt = None
+        self.intake_state_badge.setText("Awaiting prompt")
+        self.intake_state_badge.setStyleSheet(
+            "background: #f3f4f6; color: #374151; border: 1px solid #9ca3af; "
+            "border-radius: 12px; padding: 4px 10px; font-weight: 600;"
+        )
+        self.intake_normalized_value.setText("-")
+        self.intake_target_value.setText(self._selected_project().name if self._selected_project() else "-")
+        self.intake_action_value.setText("-")
+        self.intake_decision_value.setText("-")
+        self.intake_reason_value.setText(message)
+        self.intake_plan_title_value.setText("No predefined plan for this request.")
+        self.intake_plan_steps_list.clear()
+        self.intake_plan_steps_list.addItem("Prepare a supported request to see any multi-step plan details here.")
+        self.intake_plan_expected_value.setText("-")
+        self.intake_plan_mode_value.setText("-")
+        self.intake_action_button.setText("Prepare a prompt")
+        self.intake_action_button.setEnabled(False)
+        if self._selected_project() is None:
+            self.intake_feedback_label.setText(self._supported_project_guidance())
+        else:
+            self.intake_feedback_label.setText("Requests stay prepared until you choose the next step.")
+        self._reset_request_review()
+
+    def _apply_decision_state_style(self, decision_state: str) -> None:
+        styles = {
+            "Ready": ("#dcfce7", "#166534"),
+            "Needs confirmation": ("#dbeafe", "#1d4ed8"),
+            "Needs approval": ("#fef3c7", "#92400e"),
+            "Sandbox first": ("#dbeafe", "#1d4ed8"),
+            "Review only": ("#e0f2fe", "#0f766e"),
+            "Blocked": ("#fee2e2", "#b91c1c"),
+        }
+        background, foreground = styles.get(decision_state, ("#f3f4f6", "#374151"))
+        self.intake_state_badge.setText(decision_state or "Awaiting prompt")
+        self.intake_state_badge.setStyleSheet(
+            f"background: {background}; color: {foreground}; border: 1px solid {foreground}; "
+            "border-radius: 12px; padding: 4px 10px; font-weight: 600;"
+        )
+
+    def _render_request_review(self, review: home_surface.ReviewSurface) -> None:
+        self.current_review_surface = review
+        self.approval_review_summary_value.setText(review.request_summary or "-")
+        self.approval_review_prompt_value.setText(review.normalized_prompt or "-")
+        self.approval_review_target_value.setText(review.target_display or "-")
+        self.approval_review_action_value.setText(review.detected_action or "-")
+        self.approval_review_reason_value.setText(review.approval_reason or "-")
+        self.approval_review_scope_value.setText(review.expected_change_scope or "-")
+        self.approval_review_validation_value.setText(review.validation_intent or "-")
+        self.approval_review_risk_value.setText(review.risk_guardrail_status or "-")
+        self.approval_review_feedback_label.setText(review.status_message)
+        self._apply_request_review_style(review)
+        self.approval_review_approve_button.setEnabled(review.approve_enabled and not self.session.is_running)
+        self.approval_review_reject_button.setEnabled(review.reject_enabled and not self.session.is_running)
+        self.approval_review_sandbox_button.setEnabled(review.sandbox_enabled and not self.session.is_running)
+
+    def _reset_request_review(self, message: str = "Prepare a request that needs approval to open review.") -> None:
+        self.current_review_surface = None
+        self.approval_review_summary_value.setText("-")
+        self.approval_review_prompt_value.setText("-")
+        self.approval_review_target_value.setText(self._selected_project().name if self._selected_project() else "-")
+        self.approval_review_action_value.setText("-")
+        self.approval_review_reason_value.setText(message)
+        self.approval_review_scope_value.setText("-")
+        self.approval_review_validation_value.setText("-")
+        self.approval_review_risk_value.setText("Review opens only for requests that need approval.")
+        if self._selected_project() is None:
+            self.approval_review_feedback_label.setText(self._supported_project_guidance())
+        else:
+            self.approval_review_feedback_label.setText(
+                "Approval actions stay inactive until you open a request that needs approval."
+            )
+        self._set_request_review_badge("Review not available", "#f3f4f6", "#374151")
+        self.approval_review_approve_button.setEnabled(False)
+        self.approval_review_reject_button.setEnabled(False)
+        self.approval_review_sandbox_button.setEnabled(False)
+
+    def _apply_request_review_style(self, review: home_surface.ReviewSurface) -> None:
+        if not review.available:
+            self._set_request_review_badge("Review not available", "#f3f4f6", "#374151")
+            return
+        if review.queue_status == "pending" and not review.action_required:
+            self._set_request_review_badge("Approved once", "#dcfce7", "#166534")
+            return
+        if review.queue_status == "blocked":
+            self._set_request_review_badge("Blocked", "#fee2e2", "#b91c1c")
+            return
+        if review.queue_status == "needs_approval":
+            self._set_request_review_badge("Awaiting approval", "#fef3c7", "#92400e")
+            return
+        self._set_request_review_badge("Ready for review", "#fef3c7", "#92400e")
+
+    def _set_request_review_badge(self, text: str, background: str, foreground: str) -> None:
+        self.approval_review_status_badge.setText(text)
+        self.approval_review_status_badge.setStyleSheet(
+            f"background: {background}; color: {foreground}; border: 1px solid {foreground}; "
+            "border-radius: 12px; padding: 4px 10px; font-weight: 600;"
+        )
+
+    def _set_live_status_target(
+        self,
+        *,
+        request_id: str = "",
+        task_id: str = "",
+        session_id: str = "",
+    ) -> None:
+        if request_id:
+            self._tracked_status_request_id = request_id
+        if task_id:
+            self._tracked_status_task_id = task_id
+        if session_id:
+            self._tracked_status_session_id = session_id
+
+    def _refresh_live_status(self) -> None:
+        status = self.intake_preview_bridge.load_live_status(
+            request_id=self._tracked_status_request_id,
+            task_id=self._tracked_status_task_id,
+            session_id=self._tracked_status_session_id,
+        )
+        self._render_live_status(status)
+
+    def _poll_live_status(self) -> None:
+        if not any([self._tracked_status_request_id, self._tracked_status_task_id, self._tracked_status_session_id]):
+            return
+        self._refresh_live_status()
+
+    def _render_live_status(self, status: home_surface.LiveStatusSurface) -> None:
+        self.current_live_status = status
+        self.live_status_session_value.setText(status.session_id or "-")
+        self.live_status_phase_value.setText(status.current_phase or "-")
+        self.live_status_current_task_value.setText(status.current_task or "-")
+        self.live_status_queue_value.setText(status.queue_remaining or "-")
+        self.live_status_heartbeat_value.setText(status.heartbeat_status or "-")
+        self.live_status_waiting_value.setText(status.waiting_reason or "-")
+        self.live_status_approval_value.setText(status.approval_status or "-")
+        self.live_status_final_value.setText(status.final_state or "-")
+        self.live_status_feedback_label.setText(f"{status.status_message} {status.poll_mode}".strip())
+        self._apply_live_status_style(status)
+        self.live_status_open_result_button.setEnabled(bool(status.result_ready and status.result_path))
+        if status.request_id:
+            self._tracked_status_request_id = status.request_id
+        if status.task_id:
+            self._tracked_status_task_id = status.task_id
+        if status.available and status.session_id not in {"", "-", "Not started yet"}:
+            self._tracked_status_session_id = status.session_id
+        self._update_section_emphasis()
+
+    def _reset_live_status(self, message: str = "Submit or approve a request to track it here. You can also open History to review earlier results.") -> None:
+        self.current_live_status = None
+        self.live_status_session_value.setText("-")
+        self.live_status_phase_value.setText("-")
+        self.live_status_current_task_value.setText("-")
+        self.live_status_queue_value.setText("-")
+        self.live_status_heartbeat_value.setText("-")
+        self.live_status_waiting_value.setText(message)
+        self.live_status_approval_value.setText("-")
+        self.live_status_final_value.setText("-")
+        self.live_status_feedback_label.setText(
+            "No request is being followed yet. Submit or approve a request, or open History to review earlier results."
+        )
+        self.live_status_open_result_button.setEnabled(False)
+        self._set_live_status_badge("Status not available", "#f3f4f6", "#374151")
+        self._update_section_emphasis()
+
+    def _apply_live_status_style(self, status: home_surface.LiveStatusSurface) -> None:
+        if not status.available:
+            self._set_live_status_badge("Status not available", "#f3f4f6", "#374151")
+            return
+        badge_map = {
+            "Running": ("#dcfce7", "#166534"),
+            "Waiting": ("#dbeafe", "#1d4ed8"),
+            "Waiting to run": ("#e0f2fe", "#0369a1"),
+            "Awaiting approval": ("#fef3c7", "#92400e"),
+            "Completed": ("#dcfce7", "#166534"),
+            "Blocked": ("#fee2e2", "#b91c1c"),
+            "Failed": ("#fee2e2", "#b91c1c"),
+            "Status available": ("#f3f4f6", "#374151"),
+        }
+        background, foreground = badge_map.get(status.status_badge, ("#f3f4f6", "#374151"))
+        self._set_live_status_badge(status.status_badge, background, foreground)
+
+    def _set_live_status_badge(self, text: str, background: str, foreground: str) -> None:
+        self.live_status_badge.setText(text)
+        self.live_status_badge.setStyleSheet(
+            f"background: {background}; color: {foreground}; border: 1px solid {foreground}; "
+            "border-radius: 12px; padding: 4px 10px; font-weight: 600;"
+        )
+
+    def _open_proof_result_from_path(self, path: Path | str) -> None:
+        proof = home_surface.load_proof_result_surface(path, supported_projects=self.supported_projects)
+        self._render_proof_result(proof)
+        self._focus_proof_result_section()
+        self._highlight_section_temporarily("proof")
+        self._highlight_next_step_temporarily()
+
+    def _render_proof_result(self, proof: home_surface.ProofResultSurface) -> None:
+        self.current_proof_surface = proof
+        self.proof_result_title_value.setText(proof.title or "-")
+        self.proof_result_original_value.setText(proof.original_request or "-")
+        self.proof_result_normalized_value.setText(proof.normalized_request or "-")
+        self.proof_result_target_value.setText(proof.target_display or "-")
+        self.proof_result_action_value.setText(proof.detected_action or "-")
+        self.proof_result_verdict_value.setText(proof.final_verdict or "-")
+        self.proof_result_change_value.setText(proof.change_summary or "-")
+        self.proof_result_before_after_value.setText(proof.before_after_summary or "-")
+        self.proof_result_validation_value.setText(proof.validation_outcome or "-")
+        self.proof_result_status_value.setText(proof.proof_status or "-")
+        self.proof_result_timestamp_value.setText(proof.timestamp_label or "-")
+        self.proof_result_evaluation_summary_value.setText(proof.evaluation_summary or "-")
+        self.proof_result_evaluation_list.clear()
+        for item in proof.evaluation_differences or ["No comparison details are shown for this result."]:
+            self.proof_result_evaluation_list.addItem(item)
+        self.proof_result_evaluation_suggestion_value.setText(
+            f"Suggestion: {proof.evaluation_suggestion}" if proof.evaluation_suggestion else ""
+        )
+        self.proof_result_evaluation_frame.setVisible(proof.evaluation_available)
+        self.proof_result_experiment_id_value.setText(proof.experiment_id or "-")
+        self.proof_result_variant_id_value.setText(proof.variant_id or "-")
+        self.proof_result_compared_variant_value.setText(proof.compared_variant_id or "-")
+        self.proof_result_baseline_variant_value.setText(proof.baseline_variant_id or "-")
+        self.proof_result_decision_preferred_baseline_value.setText(proof.preferred_baseline_variant_id or "-")
+        variant_kind = proof.variant_kind.replace("_", " ") if proof.variant_kind else ""
+        if proof.baseline_marker and variant_kind:
+            variant_kind = f"{variant_kind} (baseline)"
+        elif proof.baseline_marker:
+            variant_kind = "baseline"
+        self.proof_result_variant_kind_value.setText(variant_kind or "-")
+        self.proof_result_experiment_summary_value.setText(proof.experiment_summary or "-")
+        self.proof_result_experiment_frame.setVisible(proof.experiment_available)
+        decision_status = proof.decision_status.replace("_", " ") if proof.decision_status else ""
+        self.proof_result_decision_status_value.setText(decision_status or "undecided")
+        self.proof_result_decision_latest_value.setText(proof.latest_decision_summary or "-")
+        self.proof_result_decision_frame.setVisible(proof.experiment_available)
+        self.proof_result_steps_list.clear()
+        for step in proof.key_steps or ["No step summary is shown for this result."]:
+            self.proof_result_steps_list.addItem(step)
+        self.proof_result_validations_list.clear()
+        for item in proof.validation_checks or ["No validation details are shown for this result."]:
+            self.proof_result_validations_list.addItem(item)
+        self.proof_result_artifacts_tree.clear()
+        for artifact in proof.raw_artifacts:
+            item = QtWidgets.QTreeWidgetItem([artifact.label, artifact.kind])
+            item.setData(0, QtCore.Qt.ItemDataRole.UserRole, str(artifact.path))
+            self.proof_result_artifacts_tree.addTopLevelItem(item)
+        self.proof_result_feedback_label.setText(proof.status_message)
+        self._apply_proof_result_style(proof)
+        self.proof_result_open_artifacts_button.setEnabled(bool(proof.raw_artifacts or proof.primary_artifact_path))
+        self.proof_result_rerun_button.setEnabled(bool(proof.rerun_prompt.strip()))
+        self.proof_result_back_button.setEnabled(True)
+        self._update_proof_next_steps(proof)
+        self._update_section_emphasis()
+
+    def _reset_proof_result(self, message: str = "No result is open yet. Open a finished run from Live Run Status or History, or prepare a new request.") -> None:
+        self.current_proof_surface = None
+        self.proof_result_title_value.setText("-")
+        self.proof_result_original_value.setText("-")
+        self.proof_result_normalized_value.setText("-")
+        self.proof_result_target_value.setText("-")
+        self.proof_result_action_value.setText("-")
+        self.proof_result_verdict_value.setText(message)
+        self.proof_result_change_value.setText("-")
+        self.proof_result_before_after_value.setText("-")
+        self.proof_result_validation_value.setText("-")
+        self.proof_result_status_value.setText("-")
+        self.proof_result_timestamp_value.setText("-")
+        self.proof_result_evaluation_summary_value.setText("-")
+        self.proof_result_evaluation_list.clear()
+        self.proof_result_evaluation_list.addItem("Evaluation details appear here after AI-E can compare this result with a previous supported result.")
+        self.proof_result_evaluation_suggestion_value.setText("")
+        self.proof_result_evaluation_frame.setVisible(False)
+        self.proof_result_experiment_id_value.setText("-")
+        self.proof_result_variant_id_value.setText("-")
+        self.proof_result_compared_variant_value.setText("-")
+        self.proof_result_baseline_variant_value.setText("-")
+        self.proof_result_decision_preferred_baseline_value.setText("-")
+        self.proof_result_variant_kind_value.setText("-")
+        self.proof_result_experiment_summary_value.setText("-")
+        self.proof_result_experiment_frame.setVisible(False)
+        self.proof_result_decision_status_value.setText("-")
+        self.proof_result_decision_latest_value.setText("-")
+        self.proof_result_decision_frame.setVisible(False)
+        self.proof_result_steps_list.clear()
+        self.proof_result_steps_list.addItem("Open a finished run to see its result summary, or prepare a new request.")
+        self.proof_result_validations_list.clear()
+        self.proof_result_validations_list.addItem("Validation details appear here after you open a finished run.")
+        self.proof_result_artifacts_tree.clear()
+        self.proof_result_feedback_label.setText(message)
+        self._set_proof_result_badge("Result not available", "#f3f4f6", "#374151")
+        self.proof_result_open_artifacts_button.setEnabled(False)
+        self.proof_result_rerun_button.setEnabled(False)
+        self.proof_result_back_button.setEnabled(False)
+        self._update_proof_next_steps(None)
+        self._update_section_emphasis()
+
+    def _apply_proof_result_style(self, proof: home_surface.ProofResultSurface) -> None:
+        if not proof.available:
+            self._set_proof_result_badge("Result not available", "#f3f4f6", "#374151")
+            return
+        badge_map = {
+            "Passed": ("#dcfce7", "#166534"),
+            "Completed": ("#dcfce7", "#166534"),
+            "Blocked": ("#fee2e2", "#b91c1c"),
+            "Failed": ("#fee2e2", "#b91c1c"),
+            "Saved": ("#dbeafe", "#1d4ed8"),
+        }
+        background, foreground = badge_map.get(proof.proof_status, ("#dbeafe", "#1d4ed8"))
+        self._set_proof_result_badge(proof.proof_status or "Saved", background, foreground)
+
+    def _set_proof_result_badge(self, text: str, background: str, foreground: str) -> None:
+        self.proof_result_badge.setText(text)
+        self.proof_result_badge.setStyleSheet(
+            f"background: {background}; color: {foreground}; border: 1px solid {foreground}; "
+            "border-radius: 12px; padding: 4px 10px; font-weight: 600;"
+        )
+
+    def _update_proof_next_steps(self, proof: home_surface.ProofResultSurface | None) -> None:
+        self._apply_next_step_frame_style()
+        self._next_step_primary_button = None
+        buttons = self._next_step_buttons()
+        for button in buttons:
+            button.setVisible(False)
+            button.setEnabled(False)
+
+        if proof is None or not proof.available:
+            self.proof_result_next_step_hint.setText(
+                "Open a finished run to refine it, try a variation, or review the proof here."
+            )
+            self._rebuild_next_step_button_grid([])
+            self._apply_next_step_button_styles(primary_button=None)
+            return
+
+        if self._proof_result_needs_recovery(proof):
+            self.proof_result_next_step_hint.setText(
+                "This result needs follow-up. Revise the request, adjust it, then open review if the updated request needs approval."
+            )
+            prompt_available = bool(self._proof_result_prompt_candidate(proof))
+            self.proof_result_next_revise_button.setVisible(True)
+            self.proof_result_next_revise_button.setEnabled(prompt_available)
+            self.proof_result_next_review_button.setVisible(True)
+            self.proof_result_next_review_button.setEnabled(prompt_available)
+            self._next_step_primary_button = self.proof_result_next_revise_button if prompt_available else None
+            self._rebuild_next_step_button_grid(
+                [
+                    self.proof_result_next_revise_button,
+                    self.proof_result_next_review_button,
+                ]
+            )
+            self._apply_next_step_button_styles(primary_button=self._next_step_primary_button)
+            return
+
+        self.proof_result_next_step_hint.setText(
+            "This run finished cleanly. Refine it, try a variation, or open supporting files for proof."
+        )
+        modify_enabled = bool(self._proof_result_prompt_candidate(proof))
+        prepare_enabled = bool(proof.rerun_prompt.strip())
+        supporting_enabled = bool(proof.raw_artifacts or proof.primary_artifact_path)
+        self.proof_result_next_modify_button.setVisible(True)
+        self.proof_result_next_modify_button.setEnabled(modify_enabled)
+        self.proof_result_next_prepare_button.setVisible(True)
+        self.proof_result_next_prepare_button.setEnabled(prepare_enabled)
+        self.proof_result_next_supporting_button.setVisible(True)
+        self.proof_result_next_supporting_button.setEnabled(supporting_enabled)
+        if modify_enabled:
+            self._next_step_primary_button = self.proof_result_next_modify_button
+        self._rebuild_next_step_button_grid(
+            [
+                self.proof_result_next_modify_button,
+                self.proof_result_next_prepare_button,
+                self.proof_result_next_supporting_button,
+            ]
+        )
+        self._apply_next_step_button_styles(primary_button=self._next_step_primary_button)
+
+    def _next_step_buttons(self) -> tuple[QtWidgets.QPushButton, ...]:
+        return (
+            self.proof_result_next_prepare_button,
+            self.proof_result_next_modify_button,
+            self.proof_result_next_supporting_button,
+            self.proof_result_next_revise_button,
+            self.proof_result_next_review_button,
+        )
+
+    @staticmethod
+    def _proof_result_needs_recovery(proof: home_surface.ProofResultSurface) -> bool:
+        status = str(proof.proof_status or "").strip().lower()
+        verdict = str(proof.final_verdict or "").strip().lower()
+        return status in {"blocked", "failed"} or verdict.startswith("blocked") or verdict.startswith("failed")
+
+    @staticmethod
+    def _proof_result_prompt_candidate(proof: home_surface.ProofResultSurface) -> str:
+        for candidate in (proof.rerun_prompt, proof.normalized_request, proof.original_request):
+            text = str(candidate or "").strip()
+            if text:
+                return text
+        return ""
+
+    def _rebuild_next_step_button_grid(self, ordered_buttons: List[QtWidgets.QPushButton]) -> None:
+        while self.proof_result_next_step_grid.count():
+            item = self.proof_result_next_step_grid.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.setParent(self.proof_result_next_step_frame)
+        visible_buttons = [button for button in ordered_buttons if button.isVisible()]
+        for index, button in enumerate(visible_buttons):
+            row = index // 3
+            column = index % 3
+            self.proof_result_next_step_grid.addWidget(button, row, column)
+
+    def _apply_next_step_button_styles(self, *, primary_button: QtWidgets.QPushButton | None) -> None:
+        primary_style = (
+            "QPushButton {"
+            "background: #1d4ed8;"
+            "color: white;"
+            "border: 1px solid #1e40af;"
+            "border-radius: 6px;"
+            "padding: 8px 16px;"
+            "font-weight: 700;"
+            "}"
+            "QPushButton:hover { background: #1e40af; }"
+            "QPushButton:disabled { background: #93c5fd; color: #eff6ff; border: 1px solid #93c5fd; }"
+        )
+        secondary_style = (
+            "QPushButton {"
+            "background: #ffffff;"
+            "color: #1f2937;"
+            "border: 1px solid #94a3b8;"
+            "border-radius: 6px;"
+            "padding: 6px 12px;"
+            "font-weight: 600;"
+            "}"
+            "QPushButton:hover { background: #f8fafc; border: 1px solid #64748b; }"
+            "QPushButton:disabled { background: #f8fafc; color: #94a3b8; border: 1px solid #cbd5e1; }"
+        )
+        for button in self._next_step_buttons():
+            if button is primary_button:
+                button.setStyleSheet(primary_style)
+                button.setMinimumHeight(38)
+            else:
+                button.setStyleSheet(secondary_style)
+                button.setMinimumHeight(32)
+
+    def _apply_next_step_frame_style(self, *, emphasized: bool = False) -> None:
+        background = "#dbeafe" if emphasized else "#eff6ff"
+        border = "#1d4ed8" if emphasized else "#93c5fd"
+        self.proof_result_next_step_frame.setStyleSheet(
+            "QFrame {"
+            f"background: {background};"
+            f"border: 1px solid {border};"
+            "border-radius: 8px;"
+            "}"
+        )
+
+    def _highlight_next_step_temporarily(self, *, duration_ms: int = 2000) -> None:
+        self._apply_next_step_frame_style(emphasized=True)
+        if self._next_step_highlight_timer is not None:
+            self._next_step_highlight_timer.stop()
+        timer = QtCore.QTimer(self)
+        timer.setSingleShot(True)
+        timer.timeout.connect(self._apply_next_step_frame_style)
+        timer.start(duration_ms)
+        self._next_step_highlight_timer = timer
+
+    def _focus_proof_result_section(self) -> None:
+        self._scroll_to_widget_top(self.proof_result_group)
+        if hasattr(self, "main_scroll_area"):
+            QtCore.QTimer.singleShot(
+                0,
+                lambda: self.main_scroll_area.ensureWidgetVisible(self.proof_result_next_step_frame, 0, 32),
+            )
+        QtCore.QTimer.singleShot(0, self._focus_first_visible_next_step_button)
+
+    def _focus_first_visible_next_step_button(self) -> None:
+        if (
+            self._next_step_primary_button is not None
+            and self._next_step_primary_button.isVisible()
+            and self._next_step_primary_button.isEnabled()
+        ):
+            self._next_step_primary_button.setFocus(QtCore.Qt.FocusReason.OtherFocusReason)
+            return
+        for button in self._next_step_buttons():
+            if button.isVisible() and button.isEnabled():
+                button.setFocus(QtCore.Qt.FocusReason.OtherFocusReason)
+                return
+
+    def _update_section_emphasis(self) -> None:
+        self._apply_section_style(
+            self.live_status_group,
+            accent="#1d4ed8" if self._live_status_is_active() else "",
+            temporary=False,
+        )
+        self._apply_section_style(
+            self.proof_result_group,
+            accent="#166534" if self._proof_result_is_available() else "",
+            temporary=False,
+        )
+
+    def _live_status_is_active(self) -> bool:
+        status = self.current_live_status
+        if status is None or not status.available:
+            return False
+        return status.status_badge in {"Running", "Waiting", "Waiting to run", "Awaiting approval"}
+
+    def _proof_result_is_available(self) -> bool:
+        proof = self.current_proof_surface
+        return bool(proof is not None and proof.available)
+
+    def _apply_section_style(self, group: QtWidgets.QGroupBox, *, accent: str, temporary: bool) -> None:
+        if not accent:
+            group.setStyleSheet("")
+            return
+        border_width = "2px" if temporary else "1px"
+        background = "#eff6ff" if accent == "#1d4ed8" else "#f0fdf4"
+        if temporary:
+            background = "#dbeafe" if accent == "#1d4ed8" else "#dcfce7"
+        group.setStyleSheet(
+            "QGroupBox {"
+            f"border: {border_width} solid {accent};"
+            "border-radius: 8px;"
+            "margin-top: 10px;"
+            f"background: {background};"
+            "}"
+            "QGroupBox::title {"
+            "subcontrol-origin: margin;"
+            "left: 10px;"
+            "padding: 0 4px;"
+            "}"
+        )
+
+    def _highlight_section_temporarily(self, section: str, *, duration_ms: int = 2000) -> None:
+        group = self._group_for_section(section)
+        if group is None:
+            return
+        accent = self._accent_for_section(section)
+        self._apply_section_style(group, accent=accent, temporary=True)
+        existing_timer = self._section_highlight_timers.get(section)
+        if existing_timer is not None:
+            existing_timer.stop()
+        timer = QtCore.QTimer(self)
+        timer.setSingleShot(True)
+        timer.timeout.connect(self._update_section_emphasis)
+        timer.start(duration_ms)
+        self._section_highlight_timers[section] = timer
+
+    def _group_for_section(self, section: str) -> QtWidgets.QGroupBox | None:
+        if section == "live":
+            return getattr(self, "live_status_group", None)
+        if section == "proof":
+            return getattr(self, "proof_result_group", None)
+        return None
+
+    @staticmethod
+    def _accent_for_section(section: str) -> str:
+        if section == "live":
+            return "#1d4ed8"
+        if section == "proof":
+            return "#166534"
+        return "#1d4ed8"
+
+    def _scroll_to_widget(self, widget: QtWidgets.QWidget | None) -> None:
+        if widget is None or not hasattr(self, "main_scroll_area"):
+            return
+        QtCore.QTimer.singleShot(0, lambda: self.main_scroll_area.ensureWidgetVisible(widget, 0, 24))
+
+    def _scroll_to_widget_top(self, widget: QtWidgets.QWidget | None, *, margin: int = 12) -> None:
+        if widget is None or not hasattr(self, "main_scroll_area"):
+            return
+
+        def _scroll() -> None:
+            content = self.main_scroll_area.widget()
+            if content is None:
+                return
+            top = widget.mapTo(content, QtCore.QPoint(0, 0)).y()
+            self.main_scroll_area.verticalScrollBar().setValue(max(0, top - margin))
+
+        QtCore.QTimer.singleShot(0, _scroll)
+
     def _refresh_dependency_label(self) -> None:
         summary = dependencies.dependency_summary_text()
         warnings = dependencies.dependency_warnings()
         if warnings:
-            self.dependency_label.setStyleSheet("color: #a94442;")
+            self.dependency_label.setStyleSheet("color: #92400e;")
+            self.dependency_label.setText(f"Optional setup for capture features:\n{summary}")
         else:
             self.dependency_label.setStyleSheet("color: #2f8f2f;")
-        self.dependency_label.setText(summary)
+            self.dependency_label.setText("Optional capture setup is complete.")
 
     def _update_session_review_panel(self) -> None:
         if self.session.is_running:
@@ -349,7 +1913,14 @@ class ControlPanel(QtWidgets.QMainWindow):
             self.profile_name = name
             config.set_active_profile(name)
             self.state = config.load_state(name)
+            self._onboarding_force_visible = False
             self._apply_state()
+            if self.state.staged_prompt.strip():
+                self._render_prepared_prompt(
+                    self.intake_preview_bridge.prepare_prompt(self.state.staged_prompt, self._selected_project())
+                )
+            else:
+                self._reset_intake_decision()
             self._reload_profiles()
             self._update_status_panel(f"Profile switched to {name}")
         finally:
@@ -373,9 +1944,418 @@ class ControlPanel(QtWidgets.QMainWindow):
         self._persist_state()
         self.state = config.ensure_profile(clean, initial_state=self.state)
         self.profile_name = clean
+        self._onboarding_force_visible = False
         self._reload_profiles()
         self._apply_state()
+        if self.state.staged_prompt.strip():
+            self._render_prepared_prompt(
+                self.intake_preview_bridge.prepare_prompt(self.state.staged_prompt, self._selected_project())
+            )
+        else:
+            self._reset_intake_decision()
         self._update_status_panel(f"Profile created: {clean}")
+
+    def _handle_project_changed(self, _: str) -> None:
+        self._update_active_workspace_label()
+        self._persist_state()
+        project = self._selected_project()
+        if project is None:
+            message = self._supported_project_guidance()
+            self._reset_intake_decision(message)
+            self._reset_live_status(message)
+            self._reset_proof_result(message)
+            self._update_status_panel(message)
+            return
+        prompt_text = self.prompt_input.toPlainText().strip()
+        if prompt_text:
+            self._render_prepared_prompt(
+                self.intake_preview_bridge.prepare_prompt(prompt_text, project)
+            )
+        else:
+            self._reset_intake_decision()
+        self._update_status_panel(f"Active workspace set: {project.name}")
+
+    def _handle_prompt_changed(self) -> None:
+        self._submitted_prompt_key = None
+        self._persist_state()
+        if self.prompt_input.toPlainText().strip():
+            self._reset_intake_decision(
+                "Request updated. Choose Prepare Request to review the decision before AI-E runs anything."
+            )
+        else:
+            self._reset_intake_decision()
+
+    def _handle_prepare_prompt(self) -> None:
+        preview = self.intake_preview_bridge.prepare_prompt(self.prompt_input.toPlainText().strip(), self._selected_project())
+        self._persist_state()
+        self._render_prepared_prompt(preview)
+        self._update_status_panel(preview.status_message)
+
+    def _handle_intake_next_action(self) -> None:
+        preview = self.current_prepared_prompt
+        if preview is None:
+            self.prompt_input.setFocus()
+            return
+
+        if preview.confirmation_required and preview.confirmation_prompt:
+            self.prompt_input.setPlainText(preview.confirmation_prompt)
+            refreshed = self.intake_preview_bridge.prepare_prompt(preview.confirmation_prompt, self._selected_project())
+            self._persist_state()
+            self._render_prepared_prompt(refreshed)
+            if preview.plan_steps:
+                message = "AI-E confirmed the supported multi-step plan. Review the staged plan before continuing."
+            else:
+                message = "AI-E updated the request to the supported target. Review the updated decision before continuing."
+            self.intake_feedback_label.setText(message)
+            self._update_status_panel(message)
+            return
+
+        if preview.decision_state == "Ready":
+            result = self.intake_preview_bridge.submit_prompt(preview, self._selected_project())
+            self.intake_feedback_label.setText(result.message)
+            self._update_status_panel(result.message)
+            if result.ok:
+                self._submitted_prompt_key = (preview.normalized_prompt, preview.target_repo)
+                self.intake_action_button.setEnabled(False)
+                self._set_live_status_target(request_id=result.request_id, task_id=result.task_id, session_id="")
+                self._refresh_live_status()
+            return
+
+        if preview.decision_state == "Needs approval":
+            review = self.intake_preview_bridge.build_review_surface(preview, self._selected_project())
+            self._render_request_review(review)
+            message = (
+                review.status_message
+                if review.available
+                else "Review is not available for this request yet. Revise the request or choose a supported project."
+            )
+            self.intake_feedback_label.setText(message)
+            self._update_status_panel("Approval review loaded")
+            if review.available and review.queue_status:
+                self._set_live_status_target(request_id=review.request_id, session_id="")
+                self._refresh_live_status()
+            return
+
+        if preview.decision_state == "Sandbox first":
+            result = self.intake_preview_bridge.run_sandbox_prompt(
+                preview,
+                project=self._selected_project(),
+                approved_by=self.profile_name,
+            )
+            self.intake_feedback_label.setText(result.message)
+            self._update_status_panel(result.message)
+            if result.ok and result.wired and not result.staged_only:
+                self._submitted_prompt_key = (preview.normalized_prompt, preview.target_repo)
+                self.intake_action_button.setEnabled(False)
+                self._set_live_status_target(request_id=result.request_id, task_id=result.task_id, session_id="")
+                self._refresh_live_status()
+            return
+
+        if preview.decision_state == "Review only":
+            if preview.recommended_action == "record_experiment_decision":
+                result = self.intake_preview_bridge.apply_experiment_review_prompt(preview)
+                self.intake_feedback_label.setText(result.message)
+                self._update_status_panel(result.message)
+                if result.ok:
+                    summary_prompt = "show current experiment decisions"
+                    refreshed = self.intake_preview_bridge.prepare_prompt(summary_prompt, self._selected_project())
+                    self.prompt_input.setPlainText(summary_prompt)
+                    self._persist_state()
+                    self._render_prepared_prompt(refreshed)
+                return
+            refreshed = self.intake_preview_bridge.prepare_prompt(preview.prompt_text, self._selected_project())
+            self._persist_state()
+            self._render_prepared_prompt(refreshed)
+            message = "Experiment summary refreshed. No execution started."
+            self.intake_feedback_label.setText(message)
+            self._update_status_panel(message)
+            return
+
+        message = "AI-E is not proceeding with this request. Revise it to stay within supported scope, then prepare it again."
+        self.intake_feedback_label.setText(message)
+        self._update_status_panel(message)
+        self.prompt_input.setFocus()
+        cursor = self.prompt_input.textCursor()
+        cursor.select(QtGui.QTextCursor.SelectionType.Document)
+        self.prompt_input.setTextCursor(cursor)
+
+    def _handle_request_review_action(self, action: str) -> None:
+        review = self.current_review_surface
+        if review is None:
+            message = "No review is open yet. Prepare a request that needs approval, then open review."
+            self.approval_review_feedback_label.setText(message)
+            self._update_status_panel(message)
+            self.prompt_input.setFocus()
+            return
+        result = self.intake_preview_bridge.apply_review_action(
+            review,
+            action=action,
+            project=self._selected_project(),
+            approved_by=self.profile_name,
+        )
+        self.approval_review_feedback_label.setText(result.message)
+        self.intake_feedback_label.setText(result.message)
+        self._update_status_panel(result.message)
+
+        if result.ok and result.wired and not result.staged_only:
+            self._set_live_status_target(
+                request_id=result.request_id or review.request_id,
+                task_id=result.task_id,
+                session_id="",
+            )
+            if self.current_prepared_prompt is not None:
+                refreshed = self.intake_preview_bridge.build_review_surface(
+                    self.current_prepared_prompt,
+                    self._selected_project(),
+                )
+                self._render_request_review(refreshed)
+                self.approval_review_feedback_label.setText(result.message)
+                if result.action == "sandbox_first":
+                    self._submitted_prompt_key = (
+                        self.current_prepared_prompt.normalized_prompt,
+                        self.current_prepared_prompt.target_repo,
+                    )
+                    self.intake_action_button.setEnabled(False)
+            self._refresh_live_status()
+            return
+
+        if result.ok and result.staged_only:
+            if result.action == "reject":
+                self._set_request_review_badge("Rejected (staged)", "#fee2e2", "#b91c1c")
+            elif result.action == "sandbox_first":
+                self._set_request_review_badge("Sandbox first (staged)", "#dbeafe", "#1d4ed8")
+            if review.queue_status:
+                self._set_live_status_target(request_id=review.request_id, session_id="")
+                self._refresh_live_status()
+
+    def _handle_refresh_live_status(self) -> None:
+        request_id = ""
+        if self.current_live_status is not None:
+            request_id = str(self.current_live_status.request_id or "").strip()
+        if not request_id:
+            request_id = str(getattr(self, "_tracked_status_request_id", "") or "").strip()
+        print(f"Refresh clicked -> request_id={request_id}", flush=True)
+        self.live_status_feedback_label.setText("Refreshing status...")
+        self.live_status_refresh_button.setEnabled(False)
+        QtCore.QTimer.singleShot(0, self._complete_live_status_refresh)
+
+    def _complete_live_status_refresh(self) -> None:
+        self._refresh_live_status()
+        self.live_status_feedback_label.setText("Status updated just now")
+        self.live_status_refresh_button.setEnabled(True)
+        if self.current_live_status is not None:
+            if self.current_live_status.available:
+                self._highlight_section_temporarily("live")
+            self._update_status_panel("Live status refreshed")
+
+    def _handle_open_live_result(self) -> None:
+        status = self.current_live_status
+        if status is None or not status.result_ready or status.result_path is None:
+            message = "No finished result is ready to open here yet. Refresh status, or open History to review earlier results."
+            self.live_status_feedback_label.setText(message)
+            self._update_status_panel(message)
+            return
+        session_id = str(status.session_id or "").strip()
+        print(f"Open result clicked -> session_id={session_id}", flush=True)
+        self._open_proof_result_from_path(status.result_path)
+        self.live_status_feedback_label.setText("Result opened below.")
+        self._update_status_panel("Opened result summary")
+
+    def _handle_recent_run_open(self, item: QtWidgets.QTreeWidgetItem, _column: int) -> None:
+        payload = item.data(0, QtCore.Qt.ItemDataRole.UserRole)
+        path_text = str((payload or {}).get("path") or "").strip() if isinstance(payload, dict) else ""
+        if not path_text:
+            message = "This row does not have a result to open. Prepare a new request, or choose another saved entry."
+            self.history_feedback_label.setText(message)
+            self._update_status_panel(message)
+            return
+        self._open_proof_result_from_path(Path(path_text))
+        self._update_status_panel("Opened result summary")
+
+    def _handle_back_to_home_from_proof(self) -> None:
+        self._reset_proof_result()
+        self.prompt_input.setFocus()
+        self._update_status_panel("Returned to home surface")
+
+    def _handle_open_proof_artifact(self) -> None:
+        proof = self.current_proof_surface
+        if proof is None:
+            message = "No result is open yet. Open a finished run first, then open supporting files if you need more detail."
+            self.proof_result_feedback_label.setText(message)
+            self._update_status_panel(message)
+            return
+        selected_item = self.proof_result_artifacts_tree.currentItem()
+        selected_path = ""
+        if selected_item is not None:
+            selected_path = str(selected_item.data(0, QtCore.Qt.ItemDataRole.UserRole) or "").strip()
+        target = Path(selected_path) if selected_path else proof.primary_artifact_path
+        if target is None or not target.exists():
+            self.proof_result_feedback_label.setText(
+                "Supporting files are not available for this result. Open another finished run or return home and prepare a new request."
+            )
+            self._update_status_panel("Supporting files are not available")
+            return
+        QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(str(target)))
+        self._update_status_panel("Opened supporting file")
+
+    def _handle_rerun_same_request(self) -> None:
+        proof = self.current_proof_surface
+        if proof is None or not proof.rerun_prompt.strip():
+            message = "This result cannot prepare the same request again. Open another saved result, or type a new request on the home screen."
+            self.proof_result_feedback_label.setText(message)
+            self._update_status_panel(message)
+            return
+        self._restage_existing_request(
+            prompt_text=proof.rerun_prompt,
+            project_path=proof.rerun_project_path,
+            feedback_message="Prepared the same request from this result. Review the intake decision before submitting it again.",
+            status_message="Prepared same request from result summary",
+        )
+
+    def _handle_next_step_prepare_similar(self) -> None:
+        self._handle_rerun_same_request()
+
+    def _handle_next_step_modify_again(self) -> None:
+        proof = self.current_proof_surface
+        prompt_text = self._proof_result_prompt_candidate(proof) if proof is not None else ""
+        if not prompt_text:
+            message = "This result does not include a request to adjust. Open another saved result, or type a new request on the home screen."
+            self.proof_result_feedback_label.setText(message)
+            self._update_status_panel(message)
+            return
+        project_path = proof.rerun_project_path if proof is not None else ""
+        self._restage_existing_request(
+            prompt_text=prompt_text,
+            project_path=project_path,
+            feedback_message="Prepared this request for editing. Adjust it, then prepare it again to review the next decision.",
+            status_message="Prepared request for editing from result summary",
+        )
+        self.prompt_input.setFocus()
+        self.prompt_input.selectAll()
+        self._scroll_to_widget(self.prompt_group)
+
+    def _handle_next_step_revise_request(self) -> None:
+        proof = self.current_proof_surface
+        prompt_text = self._proof_result_prompt_candidate(proof) if proof is not None else ""
+        if not prompt_text:
+            message = "This result does not include a request to revise. Type a new request on the home screen."
+            self.proof_result_feedback_label.setText(message)
+            self._update_status_panel(message)
+            return
+        project_path = proof.rerun_project_path if proof is not None else ""
+        self._restage_existing_request(
+            prompt_text=prompt_text,
+            project_path=project_path,
+            feedback_message="Prepared this request so you can revise it. Update the wording, then prepare it again before AI-E runs anything.",
+            status_message="Prepared request for revision from result summary",
+        )
+        self.prompt_input.setFocus()
+        self.prompt_input.selectAll()
+        self._scroll_to_widget(self.prompt_group)
+
+    def _handle_next_step_open_review(self) -> None:
+        proof = self.current_proof_surface
+        prompt_text = self._proof_result_prompt_candidate(proof) if proof is not None else ""
+        if not prompt_text:
+            message = "This result does not include a request to review. Type a new request on the home screen."
+            self.proof_result_feedback_label.setText(message)
+            self._update_status_panel(message)
+            return
+        project_path = proof.rerun_project_path if proof is not None else ""
+        if project_path.strip():
+            self._select_project_by_path(project_path)
+        self.prompt_input.setPlainText(prompt_text)
+        preview = self.intake_preview_bridge.prepare_prompt(prompt_text, self._selected_project())
+        self._render_prepared_prompt(preview)
+        self._reset_proof_result(
+            "Prepared this request again. Check the intake decision and open review if approval is required."
+        )
+        if preview.decision_state == "Needs approval":
+            self.proof_result_feedback_label.setText(
+                "Review is ready below. Confirm the request details before you approve or reject it."
+            )
+            self._scroll_to_widget(self.approval_review_group)
+            self._update_status_panel("Opened review from result summary")
+            return
+        self.proof_result_feedback_label.setText(
+            "This updated request does not need review right now. Check the intake decision to continue."
+        )
+        self._scroll_to_widget(self.prompt_group)
+        self._update_status_panel("Prepared request from result summary")
+
+    def _handle_open_history_result(self) -> None:
+        payload = self._selected_history_payload()
+        path_text = str(payload.get("path") or "").strip()
+        if not path_text:
+            message = "No result is available for this entry. Choose another saved entry, or prepare a new request."
+            self.history_feedback_label.setText(message)
+            self._update_status_panel(message)
+            return
+        self._open_proof_result_from_path(Path(path_text))
+        self.history_feedback_label.setText("Opened the selected history result.")
+        self._update_status_panel("Opened result summary")
+
+    def _handle_open_history_session_summary(self) -> None:
+        payload = self._selected_history_payload()
+        summary_path = str(payload.get("session_summary_path") or "").strip()
+        if not summary_path:
+            message = "This entry does not have a saved session summary. Open the result instead, or choose another saved entry."
+            self.history_feedback_label.setText(message)
+            self._update_status_panel(message)
+            return
+        target = Path(summary_path)
+        if not target.exists():
+            message = "The saved session summary is not available right now. Open the result instead, or choose another saved entry."
+            self.history_feedback_label.setText(message)
+            self._update_status_panel(message)
+            return
+        QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(str(target)))
+        self.history_feedback_label.setText("Opened the selected session summary.")
+        self._update_status_panel("Opened session summary")
+
+    def _handle_restage_history_request(self) -> None:
+        payload = self._selected_history_payload()
+        prompt_text = str(payload.get("rerun_prompt") or "").strip()
+        if not prompt_text:
+            message = "This entry cannot prepare the same request again. Open the result for details, or type a new request."
+            self.history_feedback_label.setText(message)
+            self._update_status_panel(message)
+            return
+        self._restage_existing_request(
+            prompt_text=prompt_text,
+            project_path=str(payload.get("rerun_project_path") or "").strip(),
+            feedback_message="Prepared the same request from history. Review the intake decision before submitting it again.",
+            status_message="Prepared same request from history",
+        )
+
+    def _select_project_by_path(self, project_path: str) -> None:
+        normalized = str(project_path or "").strip().lower()
+        if not normalized:
+            return
+        for index, project in enumerate(self.supported_projects):
+            if str(project.path).lower() != normalized:
+                continue
+            if self.project_combo.currentIndex() != index:
+                self.project_combo.setCurrentIndex(index)
+            return
+
+    def _restage_existing_request(
+        self,
+        *,
+        prompt_text: str,
+        project_path: str,
+        feedback_message: str,
+        status_message: str,
+    ) -> None:
+        if project_path.strip():
+            self._select_project_by_path(project_path)
+        self.prompt_input.setPlainText(prompt_text)
+        self._render_prepared_prompt(
+            self.intake_preview_bridge.prepare_prompt(prompt_text, self._selected_project())
+        )
+        self._reset_proof_result(feedback_message)
+        self.history_feedback_label.setText(feedback_message)
+        self._update_status_panel(status_message)
 
     def _handle_browse(self) -> None:
         path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Select BABYLON executable", str(Path.home()))
@@ -423,6 +2403,7 @@ class ControlPanel(QtWidgets.QMainWindow):
         try:
             run_dir = self.session.stop_run()
             self._update_status_panel(f"Run stopped: {run_dir.name}")
+            self._refresh_recent_runs()
             self._refresh_buttons()
             self._update_session_review_panel()
         except Exception as exc:  # noqa: BLE001
@@ -469,7 +2450,35 @@ class ControlPanel(QtWidgets.QMainWindow):
         self.push_to_talk_checkbox.setEnabled(self.record_mic_checkbox.isChecked() and not running)
         self.profile_combo.setEnabled(not running)
         self.profile_new_button.setEnabled(not running)
+        self.project_combo.setEnabled(not running and bool(self.supported_projects))
+        self.prepare_prompt_button.setEnabled(bool(self.supported_projects))
         self.open_run_button.setEnabled(self.session.last_run_dir is not None)
+        self.live_status_refresh_button.setEnabled(True)
+        self.live_status_open_result_button.setEnabled(
+            self.current_live_status is not None
+            and bool(self.current_live_status.result_ready and self.current_live_status.result_path)
+        )
+        self.proof_result_back_button.setEnabled(self.current_proof_surface is not None)
+        self.proof_result_open_artifacts_button.setEnabled(
+            self.current_proof_surface is not None
+            and bool(self.current_proof_surface.raw_artifacts or self.current_proof_surface.primary_artifact_path)
+        )
+        self.proof_result_rerun_button.setEnabled(
+            self.current_proof_surface is not None
+            and bool(self.current_proof_surface.rerun_prompt.strip())
+        )
+        history_payload = self._selected_history_payload()
+        self.history_open_result_button.setEnabled(bool(str(history_payload.get("path") or "").strip()))
+        self.history_open_session_button.setEnabled(bool(str(history_payload.get("session_summary_path") or "").strip()))
+        self.history_restage_button.setEnabled(bool(str(history_payload.get("rerun_prompt") or "").strip()))
+        if self.current_review_surface is None:
+            self.approval_review_approve_button.setEnabled(False)
+            self.approval_review_reject_button.setEnabled(False)
+            self.approval_review_sandbox_button.setEnabled(False)
+        else:
+            self.approval_review_approve_button.setEnabled(self.current_review_surface.approve_enabled and not running)
+            self.approval_review_reject_button.setEnabled(self.current_review_surface.reject_enabled and not running)
+            self.approval_review_sandbox_button.setEnabled(self.current_review_surface.sandbox_enabled and not running)
         self._update_action_panel()
 
     def _handle_mic_toggle(self, checked: bool) -> None:
@@ -482,20 +2491,21 @@ class ControlPanel(QtWidgets.QMainWindow):
     # -----------------
     def _show_acceptance_tests(self) -> None:
         dialog = QtWidgets.QDialog(self)
-        dialog.setWindowTitle("AI-E Acceptance Tests")
+        dialog.setWindowTitle("AI-E Demo Checklist")
         layout = QtWidgets.QVBoxLayout(dialog)
-        intro = QtWidgets.QLabel("Run this quick checklist before capturing a session:")
+        intro = QtWidgets.QLabel("Run this quick checklist to show the AI-E loop: conversational request, confirmation, safe execution, proof, and fast iteration.")
         intro.setWordWrap(True)
         layout.addWidget(intro)
 
         checklist = QtWidgets.QListWidget()
         checklist.setAlternatingRowColors(True)
         steps = [
-            ("A", "AI-E.exe opens"),
-            ("B", "Browse → set BABYLON exe path"),
-            ("C", "Launch → Attach shows Connected"),
-            ("D", "Start Run → two screenshots within 30 seconds"),
-            ("E", "Stop Run → run folder has meta + summary + events log"),
+            ("A", "Launch AI-E and confirm the Home screen and guardrails are visible"),
+            ("B", "Confirm a supported project is selected, such as BABYLON VER 2"),
+            ("C", "Use a direct bounded prompt like \"make zombie more dangerous\" and choose Prepare Request"),
+            ("D", "Run the supported request in sandbox and show the result summary"),
+            ("E", "Open Result Summary and point out the proof-backed outcome"),
+            ("F", "Choose \"Modify and test again\" or \"Try a variation\" to show the next quick iteration"),
         ]
         for label, text in steps:
             item = QtWidgets.QListWidgetItem(f"{label}. {text}")
@@ -570,8 +2580,23 @@ class ControlPanel(QtWidgets.QMainWindow):
         self.action_request_button.setEnabled(not self.session.is_running)
 
 
-def launch_ui() -> None:
-    app = QtWidgets.QApplication(sys.argv)
+def launch_ui() -> int:
+    app = QtWidgets.QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QtWidgets.QApplication(sys.argv)
     window = ControlPanel()
     window.show()
-    sys.exit(app.exec())
+    window.raise_()
+    window.activateWindow()
+    if owns_app:
+        return int(app.exec())
+    return 0
+
+
+def main() -> None:
+    raise SystemExit(launch_ui())
+
+
+if __name__ == "__main__":
+    main()

@@ -6,7 +6,11 @@
       "last_selected_map": "001",
       "record_input": false,
       "record_mic": false,
-      "push_to_talk": false
+      "push_to_talk": false,
+      "active_project_name": "",
+      "active_project_path": "",
+      "staged_prompt": "",
+      "onboarding_dismissed": false
     }
   }
 }

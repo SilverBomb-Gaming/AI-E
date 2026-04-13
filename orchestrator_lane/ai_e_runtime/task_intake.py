@@ -8,9 +8,52 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from .autonomous_decision import DecisionRuntimeContext, evaluate_autonomous_decision
+from .barrel_action_normalization import canonicalize_barrel_action_prompt
 from .capability_intelligence import assess_capability_intelligence, assess_mutation_without_capability
 from .capability_registry import CapabilityRegistry, RuntimeCapability
+from .clarification_guidance import (
+    clarification_options_for_prompt,
+    clarification_options_for_session_followup,
+)
 from .content_policy import ensure_project_content_profile, evaluate_content_policy, load_project_content_profile
+from .experiment_tracking import (
+    EXPERIMENT_DECISION_RESOLUTION,
+    EXPERIMENT_NAVIGATION_RESOLUTION,
+    EXPERIMENT_REVIEW_RESOLUTION,
+    build_experiment_navigation_preview,
+    build_current_experiment_decisions,
+    build_current_experiment_review,
+    build_experiment_decision_preview,
+    is_experiment_decision_prompt,
+    is_experiment_decisions_prompt,
+    is_experiment_navigation_prompt,
+    is_experiment_review_prompt,
+)
+from .environment_theme_multi_intent_plans import (
+    ENVIRONMENT_THEME_MULTI_INTENT_RESOLUTION,
+    EnvironmentThemeMultiIntentPlanResolution,
+    resolve_environment_theme_multi_intent_plan,
+    unsupported_environment_theme_multi_intent_message,
+)
+from .environment_theme_action_normalization import canonicalize_environment_theme_action_prompt
+from .generic_capabilities import generic_capability_definition_for_capability_id
+from .goal_composition import (
+    GOAL_COMPOSITION_RESOLUTION,
+    GoalCompositionResolution,
+    resolve_goal_composition_prompt,
+    unsupported_goal_composition_message,
+)
+from .goal_intent_mapping import (
+    GOAL_INTENT_MAPPING_RESOLUTION,
+    GoalIntentResolution,
+    resolve_goal_intent_prompt,
+    unsupported_goal_intent_message,
+)
+from .intent_normalizer import entity_confirmation_message, normalize_prompt, resolve_prompt
+from .level_0001_entity_transform_mutation import (
+    resolve_entity_transform_route,
+    unsupported_entity_transform_prompt_message,
+)
 from .progress import phase_payload
 from orchestrator.architecture_blueprint import ConversationalRequest
 from orchestrator.config import OrchestratorConfig
@@ -19,6 +62,21 @@ from orchestrator.utils import ensure_dir, read_json, write_json
 
 from .planner import RuleBasedPlanner
 from .planner_task_graph import build_plan_task_graph
+from .platformer_action_normalization import canonicalize_platformer_action_prompt
+from .platformer_multi_intent_plans import (
+    PLATFORMER_MULTI_INTENT_RESOLUTION,
+    PlatformerMultiIntentPlanResolution,
+    resolve_platformer_multi_intent_plan,
+    unsupported_platformer_multi_intent_message,
+)
+from .predefined_plans import match_predefined_plan, unsupported_predefined_plan_message
+from .session_tuning import (
+    DIRECT_PROMPT_RESOLUTION,
+    SESSION_FOLLOWUP_RESOLUTION,
+    SessionFollowUpResolution,
+    is_session_followup_prompt,
+    resolve_session_followup_prompt,
+)
 from .state_store import StateStore
 from .time_utils import get_current_timestamp
 
@@ -57,7 +115,9 @@ class IntakeRouting:
     mutation_capable: bool
     capability_id: str | None = None
     capability_title: str | None = None
+    generic_capability_definition: Dict[str, Any] | None = None
     handler_name: str | None = None
+    agent_type: str | None = None
     target_level: str | None = None
     target_scene: str | None = None
     trust_score: int = 0
@@ -100,6 +160,27 @@ class IntakeRouting:
     capability_supported: bool = False
     promotion_basis: str | None = None
     fail_closed_reason: str | None = None
+    mapped_prompt: str | None = None
+    entity_mapping_applied: bool = False
+    entity_mapping_sources: List[str] | None = None
+    confirmation_required: bool = False
+    confirmation_message: str | None = None
+    clarification_options: List[str] | None = None
+    plan_key: str | None = None
+    plan_title: str | None = None
+    plan_step_titles: List[str] | None = None
+    plan_step_prompts: List[str] | None = None
+    plan_expected_outcome: str | None = None
+    plan_execution_mode: str | None = None
+    resolution_source: str | None = None
+    resolved_from_prompt: str | None = None
+    session_resolution_note: str | None = None
+    goal_components: List[str] | None = None
+    state_family: str | None = None
+    previous_tier: str | None = None
+    requested_tier: str | None = None
+    revert_requested: bool = False
+    revert_summary: str | None = None
 
     def to_payload(self) -> Dict[str, Any]:
         return {
@@ -113,7 +194,9 @@ class IntakeRouting:
             "mutation_capable": self.mutation_capable,
             "capability_id": self.capability_id,
             "capability_title": self.capability_title,
+            "generic_capability_definition": dict(self.generic_capability_definition or {}),
             "handler_name": self.handler_name,
+            "agent_type": self.agent_type,
             "target_level": self.target_level,
             "target_scene": self.target_scene,
             "trust_score": self.trust_score,
@@ -156,6 +239,27 @@ class IntakeRouting:
             "capability_supported": self.capability_supported,
             "promotion_basis": self.promotion_basis,
             "fail_closed_reason": self.fail_closed_reason,
+            "mapped_prompt": self.mapped_prompt,
+            "entity_mapping_applied": self.entity_mapping_applied,
+            "entity_mapping_sources": list(self.entity_mapping_sources or []),
+            "confirmation_required": self.confirmation_required,
+            "confirmation_message": self.confirmation_message,
+            "clarification_options": list(self.clarification_options or []),
+            "plan_key": self.plan_key,
+            "plan_title": self.plan_title,
+            "plan_step_titles": list(self.plan_step_titles or []),
+            "plan_step_prompts": list(self.plan_step_prompts or []),
+            "plan_expected_outcome": self.plan_expected_outcome,
+            "plan_execution_mode": self.plan_execution_mode,
+            "resolution_source": self.resolution_source,
+            "resolved_from_prompt": self.resolved_from_prompt,
+            "session_resolution_note": self.session_resolution_note,
+            "goal_components": list(self.goal_components or []),
+            "state_family": self.state_family,
+            "previous_tier": self.previous_tier,
+            "requested_tier": self.requested_tier,
+            "revert_requested": self.revert_requested,
+            "revert_summary": self.revert_summary,
         }
 
 
@@ -185,6 +289,9 @@ class ConversationalTaskIntake:
     """Converts operator messages into deterministic, runnable queue tasks."""
 
     _TASK_REQUEST_VERBS = (
+        "increase",
+        "decrease",
+        "reduce",
         "stabilize",
         "fix",
         "restore",
@@ -213,6 +320,9 @@ class ConversationalTaskIntake:
         "brainstorm",
     )
     _MUTATION_REQUEST_VERBS = (
+        "increase",
+        "decrease",
+        "reduce",
         "stabilize",
         "fix",
         "restore",
@@ -228,6 +338,42 @@ class ConversationalTaskIntake:
         "place",
         "patch",
         "modify",
+    )
+    _WORLD_MUTATION_ACTION_HINTS = (
+        "move",
+        "reposition",
+        "shift",
+        "nudge",
+        "translate",
+        "faster",
+        "slower",
+        "remove",
+        "delete",
+        "clear",
+    )
+    _WORLD_MUTATION_DOMAIN_HINTS = (
+        "level_0001",
+        "babylon",
+        "zombie",
+        "runner",
+        "encounter",
+        "spawn",
+        "spawner",
+        "enemy",
+        "character",
+        "player",
+        "weapon",
+        "scene",
+        "arena",
+        "unity",
+    )
+    _WORLD_MUTATION_DIRECTION_HINTS = (
+        "forward",
+        "backward",
+        "left",
+        "right",
+        "up",
+        "down",
     )
 
     def __init__(self, config: OrchestratorConfig) -> None:
@@ -254,7 +400,8 @@ class ConversationalTaskIntake:
 
         self._record_session_progress(session_id, **phase_payload("intake"))
         resolved_target_repo = target_repo or self._derive_target_repo(normalized_prompt)
-        routing = self._resolve_intake_routing(normalized_prompt, session_id=session_id)
+        routing = self._resolve_intake_routing(normalized_prompt, session_id=session_id, target_repo=resolved_target_repo)
+        execution_prompt = self._execution_prompt_for_routing(normalized_prompt, routing=routing)
         self._record_session_progress(session_id, **phase_payload("policy_check"))
         task_type = self._derive_task_type(normalized_prompt, routing=routing)
         request_id = self._derive_request_id(normalized_prompt, resolved_target_repo, task_type)
@@ -266,11 +413,11 @@ class ConversationalTaskIntake:
             channel=channel,
             target_repo=resolved_target_repo,
             task_type=task_type,
-                routing=routing,
+            routing=routing,
         )
         request = validate_request_payload(request_payload)
         plan = self.planner.plan(
-            request.operator_prompt,
+            execution_prompt,
             target_repo=resolved_target_repo,
             request_id=request_id,
         )
@@ -293,18 +440,18 @@ class ConversationalTaskIntake:
         queue_entries: List[Dict[str, Any]] = []
         created = False
         single_step = len(task_graph.nodes) == 1
-        queue_status = "blocked" if routing.decision == "block" else (
+        initial_queue_status = "blocked" if routing.decision == "block" else (
             "needs_approval" if routing.decision in {"require_approval", "sandbox_first", "require_review"} and routing.execution_lane == "approval_required_mutation" else "pending"
         )
-        auto_execution_enabled = routing.auto_execution_enabled and routing.decision == "auto_execute"
-        approval_state = "blocked" if queue_status == "blocked" else (
-            "awaiting_approval" if queue_status == "needs_approval" else ("auto_approved" if auto_execution_enabled else "not_required")
+        initial_auto_execution_enabled = routing.auto_execution_enabled and routing.decision == "auto_execute"
+        initial_approval_state = "blocked" if initial_queue_status == "blocked" else (
+            "awaiting_approval" if initial_queue_status == "needs_approval" else ("auto_approved" if initial_auto_execution_enabled else "not_required")
         )
         waiting_reason = None
         blocked_reason = None
-        if queue_status == "needs_approval":
+        if initial_queue_status == "needs_approval":
             waiting_reason = "Waiting for operator approval."
-        elif queue_status == "blocked":
+        elif initial_queue_status == "blocked":
             blocked_reason = routing.content_policy_summary or "Blocked before execution."
         self._record_session_progress(
             session_id,
@@ -314,10 +461,82 @@ class ConversationalTaskIntake:
                 blocked_reason=blocked_reason,
             ),
         )
-        approved_by = "system_intelligence_v1" if auto_execution_enabled else None
-        approved_at = get_current_timestamp() if auto_execution_enabled else None
-        approval_notes = routing.auto_execution_reason if auto_execution_enabled else ""
+        approved_by = "system_intelligence_v1" if initial_auto_execution_enabled else None
+        approved_at = get_current_timestamp() if initial_auto_execution_enabled else None
+        approval_notes = routing.auto_execution_reason if initial_auto_execution_enabled else ""
         for node in task_graph.nodes:
+            step_prompt = str(getattr(node, "operator_prompt", "") or normalized_prompt).strip() or normalized_prompt
+            preserve_request_resolution = str(routing.resolution_source or "") in {
+                SESSION_FOLLOWUP_RESOLUTION,
+                GOAL_INTENT_MAPPING_RESOLUTION,
+                GOAL_COMPOSITION_RESOLUTION,
+                ENVIRONMENT_THEME_MULTI_INTENT_RESOLUTION,
+                PLATFORMER_MULTI_INTENT_RESOLUTION,
+            }
+            if len(task_graph.nodes) > 1 or (step_prompt != normalized_prompt and not preserve_request_resolution):
+                step_routing = self._resolve_intake_routing(
+                    step_prompt,
+                    session_id=session_id,
+                    target_repo=resolved_target_repo,
+                )
+                step_task_type = self._derive_task_type(step_prompt, routing=step_routing)
+            else:
+                step_routing = routing
+                step_task_type = task_type
+            if preserve_request_resolution and step_routing is not routing:
+                step_routing = replace(
+                    step_routing,
+                    mapped_prompt=routing.mapped_prompt,
+                    resolution_source=routing.resolution_source,
+                    resolved_from_prompt=routing.resolved_from_prompt,
+                    session_resolution_note=routing.session_resolution_note,
+                    goal_components=list(routing.goal_components or []),
+                    plan_key=routing.plan_key,
+                    plan_title=routing.plan_title,
+                    plan_step_titles=list(routing.plan_step_titles or []),
+                    plan_step_prompts=list(routing.plan_step_prompts or []),
+                    plan_expected_outcome=routing.plan_expected_outcome,
+                    plan_execution_mode=routing.plan_execution_mode,
+                )
+            if routing.confirmation_required:
+                confirmation_message = routing.confirmation_message or routing.decision_summary or "Confirmation is required before AI-E can continue."
+                step_routing = replace(
+                    step_routing,
+                    execution_decision="blocked",
+                    recommended_action=routing.recommended_action or "confirm_supported_target",
+                    decision="block",
+                    decision_reason="confirmation_required",
+                    decision_summary=confirmation_message,
+                    decision_blocked=True,
+                    fail_closed_reason=confirmation_message,
+                    mutation_capable=False,
+                    approval_required=False,
+                    sandbox_first_required=False,
+                    auto_execution_enabled=False,
+                    auto_execution_reason=None,
+                    capability_supported=True,
+                    confirmation_required=True,
+                    confirmation_message=confirmation_message,
+                    mapped_prompt=routing.mapped_prompt,
+                    entity_mapping_applied=routing.entity_mapping_applied,
+                    entity_mapping_sources=routing.entity_mapping_sources,
+                    resolution_source=routing.resolution_source,
+                    resolved_from_prompt=routing.resolved_from_prompt,
+                    session_resolution_note=routing.session_resolution_note,
+                    goal_components=routing.goal_components,
+                    state_family=routing.state_family,
+                    previous_tier=routing.previous_tier,
+                    requested_tier=routing.requested_tier,
+                    revert_requested=routing.revert_requested,
+                    revert_summary=routing.revert_summary,
+                )
+            queue_status = "blocked" if step_routing.decision == "block" else (
+                "needs_approval" if step_routing.decision in {"require_approval", "sandbox_first", "require_review"} and step_routing.execution_lane == "approval_required_mutation" else "pending"
+            )
+            auto_execution_enabled = step_routing.auto_execution_enabled and step_routing.decision == "auto_execute"
+            approval_state = "blocked" if queue_status == "blocked" else (
+                "awaiting_approval" if queue_status == "needs_approval" else ("auto_approved" if auto_execution_enabled else "not_required")
+            )
             runtime_task_payload_path = self.runtime_tasks_dir / f"{node.task_id}.json"
             runtime_task_payload_paths.append(runtime_task_payload_path)
             runtime_task_wrapper = {
@@ -325,74 +544,91 @@ class ConversationalTaskIntake:
                     "task_id": node.task_id,
                     "request_id": request_id,
                     "plan_id": plan.plan_id,
+                    "plan_key": routing.plan_key,
                     "plan_step_index": node.step_index,
                     "plan_step_title": node.title,
                     "plan_total_steps": len(plan.steps),
                     "plan_summary": plan.summary_text(),
+                    "plan_title": plan.title,
+                    "plan_expected_outcome": plan.expected_outcome,
                     "title": title if single_step else node.title,
-                    "task_type": task_type if single_step else node.task_type,
+                    "task_type": task_type if single_step else step_task_type,
+                    "source_prompt": normalized_prompt,
+                    "session_context_id": session_id,
                     "target_repo": resolved_target_repo,
-                    "agent_type": routing.handler_name and "level_0001_grass_mutation_agent" or "read_only_inspector_agent",
-                    "execution_mode": routing.execution_lane if routing.requested_intent == "mutate" or routing.mutation_capable else node.execution_mode,
-                    "requested_intent": routing.requested_intent,
-                    "resolved_intent": routing.resolved_intent,
-                    "requested_execution_lane": routing.requested_execution_lane,
-                    "execution_lane": routing.execution_lane,
-                    "downgraded": routing.downgraded,
-                    "downgrade_reason": routing.downgrade_reason,
-                    "approval_required": routing.approval_required,
-                    "mutation_capable": routing.mutation_capable,
-                    "capability_id": routing.capability_id,
-                    "capability_title": routing.capability_title,
-                    "handler_name": routing.handler_name,
-                    "maturity_stage": routing.maturity_stage or routing.evidence_state,
-                    "trust_score": routing.trust_score,
-                    "trust_band": routing.trust_band,
-                    "policy_state": routing.policy_state,
-                    "execution_decision": routing.execution_decision,
-                    "recommended_action": routing.recommended_action,
-                    "sandbox_first_required": routing.sandbox_first_required,
-                    "auto_execution_enabled": routing.auto_execution_enabled,
-                    "auto_execution_reason": routing.auto_execution_reason,
-                    "missing_evidence": list(routing.missing_evidence or []),
-                    "intelligence_summary": routing.intelligence_summary,
-                    "evidence_state": routing.evidence_state,
-                    "eligible_for_auto": routing.eligible_for_auto,
-                    "times_attempted": routing.times_attempted,
-                    "times_passed": routing.times_passed,
-                    "last_validation_result": routing.last_validation_result,
-                    "last_rollback_result": routing.last_rollback_result,
-                    "sandbox_verified": routing.sandbox_verified,
-                    "real_target_verified": routing.real_target_verified,
-                    "rollback_verified": routing.rollback_verified,
-                    "rating_system": routing.rating_system,
-                    "rating_target": routing.rating_target,
-                    "rating_locked": routing.rating_locked,
-                    "content_policy_match": routing.content_policy_match,
-                    "content_policy_decision": routing.content_policy_decision,
-                    "required_rating_upgrade": routing.required_rating_upgrade,
-                    "requested_content_dimensions": dict(routing.requested_content_dimensions or {}),
-                    "content_policy_summary": routing.content_policy_summary,
-                    "decision": routing.decision,
-                    "decision_reason": routing.decision_reason,
-                    "decision_summary": routing.decision_summary,
-                    "decision_auto_execute": routing.decision_auto_execute,
-                    "decision_approval_required": routing.decision_approval_required,
-                    "decision_sandbox_first": routing.decision_sandbox_first,
-                    "decision_review_required": routing.decision_review_required,
-                    "decision_blocked": routing.decision_blocked,
-                    "content_policy_block": routing.content_policy_block,
-                    "capability_supported": routing.capability_supported,
-                    "promotion_basis": routing.promotion_basis,
-                    "fail_closed_reason": routing.fail_closed_reason,
+                    "agent_type": step_routing.agent_type if step_routing.mutation_capable and step_routing.agent_type else "read_only_inspector_agent",
+                    "execution_mode": step_routing.execution_lane if step_routing.requested_intent == "mutate" or step_routing.mutation_capable else node.execution_mode,
+                    "requested_intent": step_routing.requested_intent,
+                    "resolved_intent": step_routing.resolved_intent,
+                    "requested_execution_lane": step_routing.requested_execution_lane,
+                    "execution_lane": step_routing.execution_lane,
+                    "downgraded": step_routing.downgraded,
+                    "downgrade_reason": step_routing.downgrade_reason,
+                    "approval_required": step_routing.approval_required,
+                    "mutation_capable": step_routing.mutation_capable,
+                    "capability_id": step_routing.capability_id,
+                    "capability_title": step_routing.capability_title,
+                    "generic_capability_definition": dict(step_routing.generic_capability_definition or {}),
+                    "handler_name": step_routing.handler_name,
+                    "maturity_stage": step_routing.maturity_stage or step_routing.evidence_state,
+                    "trust_score": step_routing.trust_score,
+                    "trust_band": step_routing.trust_band,
+                    "policy_state": step_routing.policy_state,
+                    "execution_decision": step_routing.execution_decision,
+                    "recommended_action": step_routing.recommended_action,
+                    "sandbox_first_required": step_routing.sandbox_first_required,
+                    "auto_execution_enabled": step_routing.auto_execution_enabled,
+                    "auto_execution_reason": step_routing.auto_execution_reason,
+                    "missing_evidence": list(step_routing.missing_evidence or []),
+                    "intelligence_summary": step_routing.intelligence_summary,
+                    "evidence_state": step_routing.evidence_state,
+                    "eligible_for_auto": step_routing.eligible_for_auto,
+                    "times_attempted": step_routing.times_attempted,
+                    "times_passed": step_routing.times_passed,
+                    "last_validation_result": step_routing.last_validation_result,
+                    "last_rollback_result": step_routing.last_rollback_result,
+                    "sandbox_verified": step_routing.sandbox_verified,
+                    "real_target_verified": step_routing.real_target_verified,
+                    "rollback_verified": step_routing.rollback_verified,
+                    "rating_system": step_routing.rating_system,
+                    "rating_target": step_routing.rating_target,
+                    "rating_locked": step_routing.rating_locked,
+                    "content_policy_match": step_routing.content_policy_match,
+                    "content_policy_decision": step_routing.content_policy_decision,
+                    "required_rating_upgrade": step_routing.required_rating_upgrade,
+                    "requested_content_dimensions": dict(step_routing.requested_content_dimensions or {}),
+                    "content_policy_summary": step_routing.content_policy_summary,
+                    "decision": step_routing.decision,
+                    "decision_reason": step_routing.decision_reason,
+                    "decision_summary": step_routing.decision_summary,
+                    "decision_auto_execute": step_routing.decision_auto_execute,
+                    "decision_approval_required": step_routing.decision_approval_required,
+                    "decision_sandbox_first": step_routing.decision_sandbox_first,
+                    "decision_review_required": step_routing.decision_review_required,
+                    "decision_blocked": step_routing.decision_blocked,
+                    "content_policy_block": step_routing.content_policy_block,
+                    "capability_supported": step_routing.capability_supported,
+                    "promotion_basis": step_routing.promotion_basis,
+                    "fail_closed_reason": step_routing.fail_closed_reason,
+                    "clarification_options": list(step_routing.clarification_options or []),
                     "approval_state": approval_state,
                     "approved_by": approved_by,
                     "approved_at": approved_at,
                     "approval_notes": approval_notes,
-                    "target_level": routing.target_level,
-                    "target_scene": routing.target_scene,
+                    "target_level": step_routing.target_level,
+                    "target_scene": step_routing.target_scene,
+                    "resolution_source": step_routing.resolution_source or DIRECT_PROMPT_RESOLUTION,
+                    "resolved_from_prompt": step_routing.resolved_from_prompt,
+                    "session_resolution_note": step_routing.session_resolution_note,
+                    "goal_components": list(step_routing.goal_components or []),
+                    "state_family": step_routing.state_family,
+                    "previous_tier": step_routing.previous_tier,
+                    "requested_tier": step_routing.requested_tier,
+                    "revert_requested": step_routing.revert_requested,
+                    "revert_summary": step_routing.revert_summary,
+                    "mapped_prompt": step_routing.mapped_prompt,
                     "capability_evidence_path": str(self.capability_registry.evidence_path),
-                    "operator_prompt": normalized_prompt,
+                    "operator_prompt": step_prompt,
                     "created_at": get_current_timestamp(),
                     "requested_artifacts": list(_DEFAULT_REQUESTED_ARTIFACTS),
                     "task_graph_path": self._relative(task_graph_path),
@@ -407,7 +643,7 @@ class ConversationalTaskIntake:
                 task_id=node.task_id,
                 request=request,
                 title=title if single_step else node.title,
-                task_type=task_type if single_step else node.task_type,
+                task_type=task_type if single_step else step_task_type,
                 target_repo=resolved_target_repo,
                 runtime_task_payload_path=runtime_task_payload_path,
                 request_path=request_path,
@@ -418,7 +654,7 @@ class ConversationalTaskIntake:
                 plan_step_title=node.title,
                 dependencies=node.dependencies,
                 priority=self._derive_priority(task_type, request.operator_prompt) if single_step else node.priority,
-                routing=routing,
+                routing=step_routing,
                 status=queue_status,
             )
 
@@ -461,14 +697,57 @@ class ConversationalTaskIntake:
         )
 
     def classify_message(self, operator_message: str) -> str:
-        normalized = self._normalize_prompt(operator_message).lower()
-        if not normalized:
+        raw_message = str(operator_message or "").strip()
+        if not raw_message:
             return "empty"
-        if normalized.endswith("?"):
+        if raw_message.endswith("?"):
             return "not_task_request"
+        normalized = self._normalize_prompt(raw_message).lower()
+        if not normalized:
+            return "not_task_request"
+        if is_experiment_decision_prompt(normalized) or is_experiment_decisions_prompt(normalized):
+            return "task_request"
+        if is_experiment_review_prompt(normalized):
+            return "task_request"
+        if is_experiment_navigation_prompt(normalized):
+            return "task_request"
+        if is_session_followup_prompt(normalized):
+            return "task_request"
         if normalized.startswith(self._TASK_REQUEST_VERBS):
             return "task_request"
-        if any(token in normalized for token in ("level_0001", "zombie", "kbm", "weapon", "babylon", "unity")):
+        lookup_prompt = resolve_prompt(normalized).lookup_prompt
+        if match_predefined_plan(lookup_prompt) is not None:
+            return "task_request"
+        if canonicalize_barrel_action_prompt(lookup_prompt):
+            return "task_request"
+        if canonicalize_environment_theme_action_prompt(lookup_prompt):
+            return "task_request"
+        if self._looks_like_world_mutation_request(lookup_prompt):
+            return "task_request"
+        if any(
+            token in lookup_prompt
+            for token in (
+                "level_0001",
+                "zombie",
+                "runner",
+                "barrel",
+                "explosive",
+                "encounter",
+                "spawn",
+                "spawner",
+                "racer",
+                "platformer",
+                "jump",
+                "gravity",
+                "monkee",
+                "enemy",
+                "character",
+                "kbm",
+                "weapon",
+                "babylon",
+                "unity",
+            )
+        ):
             return "task_request"
         return "not_task_request"
 
@@ -490,11 +769,12 @@ class ConversationalTaskIntake:
             "operator_prompt": normalized_prompt,
             "created_at": get_current_timestamp(),
             "intent": task_type,
-            "clarification_needed": False,
+            "clarification_needed": routing.confirmation_required,
             "context": {
                 "target_repo": target_repo,
                 "execution_mode": routing.execution_lane if routing.requested_intent == "mutate" or routing.mutation_capable else "bounded_read_only",
                 "source": "ai_e_runtime.task_intake",
+                "resolved_execution_prompt": self._execution_prompt_for_routing(normalized_prompt, routing=routing),
                 "routing": routing.to_payload(),
             },
             "constraints": [
@@ -533,9 +813,9 @@ class ConversationalTaskIntake:
             "status": status,
             "priority": priority,
             "target_repo": target_repo,
-            "agent_type": "level_0001_grass_mutation_agent" if routing.mutation_capable else "read_only_inspector_agent",
+            "agent_type": routing.agent_type if routing.mutation_capable and routing.agent_type else "read_only_inspector_agent",
             "agents": [
-                "level_0001_grass_mutation_agent" if routing.mutation_capable else "read_only_inspector_agent",
+                routing.agent_type if routing.mutation_capable and routing.agent_type else "read_only_inspector_agent",
                 "validator_agent",
                 "artifact_summarizer_agent",
             ],
@@ -543,6 +823,7 @@ class ConversationalTaskIntake:
             "request_payload_path": self._relative(request_path),
             "task_graph_path": self._relative(task_graph_path),
             "request_id": request.request_id,
+            "source_prompt": request.operator_prompt,
             "request_fingerprint": self._prompt_fingerprint(request.operator_prompt, target_repo, task_type),
             "execution_mode": routing.execution_lane if routing.requested_intent == "mutate" or routing.mutation_capable else "bounded_read_only",
             "requested_intent": routing.requested_intent,
@@ -555,6 +836,7 @@ class ConversationalTaskIntake:
             "mutation_capable": routing.mutation_capable,
             "capability_id": routing.capability_id,
             "capability_title": routing.capability_title,
+            "generic_capability_definition": dict(routing.generic_capability_definition or {}),
             "handler_name": routing.handler_name,
             "trust_score": routing.trust_score,
             "trust_band": routing.trust_band,
@@ -596,6 +878,7 @@ class ConversationalTaskIntake:
             "capability_supported": routing.capability_supported,
             "promotion_basis": routing.promotion_basis,
             "fail_closed_reason": routing.fail_closed_reason,
+            "clarification_options": list(routing.clarification_options or []),
             "approval_state": "blocked" if status == "blocked" else ("awaiting_approval" if status == "needs_approval" else ("auto_approved" if routing.auto_execution_enabled and routing.decision == "auto_execute" else "not_required")),
             "approved_by": "system_intelligence_v1" if routing.auto_execution_enabled and routing.decision == "auto_execute" else None,
             "approved_at": get_current_timestamp() if routing.auto_execution_enabled and routing.decision == "auto_execute" else None,
@@ -639,14 +922,37 @@ class ConversationalTaskIntake:
         return text[:85].rstrip() + "..."
 
     def _derive_target_repo(self, prompt: str) -> str:
-        lower = prompt.lower()
-        babylon_markers = ("level_0001", "babylon", "zombie", "kbm", "weapon", "unity")
+        lower = resolve_prompt(prompt).lookup_prompt.lower()
+        babylon_markers = (
+            "level_0001",
+            "babylon",
+            "zombie",
+            "runner",
+            "encounter",
+            "spawn",
+            "spawner",
+            "enemy",
+            "character",
+            "kbm",
+            "weapon",
+            "unity",
+        )
         if any(token in lower for token in babylon_markers):
             return resolve_default_target_repo(self.config, prompt=prompt)
         return str(self.config.root_dir).replace("\\", "/")
 
     def _derive_task_type(self, prompt: str, *, routing: IntakeRouting | None = None) -> str:
+        if routing is not None and str(routing.resolution_source or "") in {
+            EXPERIMENT_REVIEW_RESOLUTION,
+            EXPERIMENT_DECISION_RESOLUTION,
+            EXPERIMENT_NAVIGATION_RESOLUTION,
+        }:
+            return "experiment_review_request"
+        if routing is not None and routing.plan_key:
+            return "mutation_plan_request"
         if routing is not None and routing.mutation_capable:
+            return "mutation_request"
+        if routing is not None and routing.requested_intent == "mutate" and routing.resolved_intent == "mutate":
             return "mutation_request"
         lower = prompt.lower()
         if any(token in lower for token in ("stabilize", "fix", "restore", "repair")):
@@ -657,16 +963,602 @@ class ConversationalTaskIntake:
             return "bounded_activation_request"
         return "general_request"
 
-    def _resolve_intake_routing(self, prompt: str, *, session_id: str) -> IntakeRouting:
-        normalized = self._normalize_prompt(prompt).lower()
-        requested_intent = self._classify_requested_intent(normalized)
+    def _resolve_intake_routing(self, prompt: str, *, session_id: str, target_repo: str | None = None) -> IntakeRouting:
+        resolution = resolve_prompt(prompt)
+        normalized = resolution.normalized_prompt.lower()
+        lookup_prompt = resolution.lookup_prompt.lower()
+        mapping_sources = [mapping.source_term for mapping in resolution.applied_entity_mappings]
+        session_state = self._load_session_followup_state(session_id)
+        if is_experiment_navigation_prompt(normalized):
+            navigation_preview = build_experiment_navigation_preview(normalized, session_state) or {}
+            overview = str(navigation_preview.get("overview") or "").strip()
+            plan_title = str(navigation_preview.get("title") or "Experiment navigation").strip()
+            plan_steps = [
+                str(item).strip()
+                for item in (navigation_preview.get("lines") or [])
+                if str(item).strip()
+            ]
+            decision_reason = str(navigation_preview.get("decision_reason") or "experiment_navigation").strip()
+            blocked = bool(navigation_preview.get("blocked"))
+            return IntakeRouting(
+                requested_intent="inspect",
+                resolved_intent="inspect",
+                requested_execution_lane="read_only_inspection",
+                execution_lane="read_only_inspection",
+                downgraded=False,
+                downgrade_reason=None,
+                approval_required=False,
+                mutation_capable=False,
+                intelligence_summary=overview,
+                decision="block",
+                decision_reason=decision_reason,
+                decision_summary=overview,
+                decision_blocked=blocked,
+                mapped_prompt=lookup_prompt,
+                entity_mapping_applied=resolution.entity_mapping_applied,
+                entity_mapping_sources=mapping_sources,
+                recommended_action=str(navigation_preview.get("recommended_action") or "refresh_summary").strip(),
+                clarification_options=[
+                    str(item).strip()
+                    for item in (navigation_preview.get("clarification_options") or [])
+                    if str(item).strip()
+                ],
+                plan_title=plan_title,
+                plan_step_titles=plan_steps,
+                plan_expected_outcome=str(navigation_preview.get("expected_outcome") or "Review only. No execution will start.").strip(),
+                plan_execution_mode=str(navigation_preview.get("plan_execution_mode") or "Explicit experiment navigation").strip(),
+                resolution_source=EXPERIMENT_NAVIGATION_RESOLUTION,
+                resolved_from_prompt=normalized,
+                session_resolution_note=overview,
+                fail_closed_reason=overview if blocked else None,
+            )
+        if is_experiment_decision_prompt(normalized):
+            decision_preview, review_block_message = build_experiment_decision_preview(normalized, session_state)
+            if review_block_message is not None:
+                return IntakeRouting(
+                    requested_intent="inspect",
+                    resolved_intent="inspect",
+                    requested_execution_lane="read_only_inspection",
+                    execution_lane="read_only_inspection",
+                    downgraded=False,
+                    downgrade_reason=None,
+                    approval_required=False,
+                    mutation_capable=False,
+                    intelligence_summary=review_block_message,
+                    decision="block",
+                    decision_reason="no_active_experiment",
+                    decision_summary=review_block_message,
+                    decision_blocked=True,
+                    mapped_prompt=lookup_prompt,
+                    entity_mapping_applied=resolution.entity_mapping_applied,
+                    entity_mapping_sources=mapping_sources,
+                    plan_title="Experiment decision",
+                    plan_step_titles=[],
+                    plan_expected_outcome="Review only. No execution will start.",
+                    plan_execution_mode="Current session decision update",
+                    resolution_source=EXPERIMENT_DECISION_RESOLUTION,
+                    resolved_from_prompt=normalized,
+                    session_resolution_note=review_block_message,
+                    fail_closed_reason=review_block_message,
+                )
+            decision_preview = decision_preview or {}
+            overview = str(decision_preview.get("overview") or "").strip()
+            return IntakeRouting(
+                requested_intent="inspect",
+                resolved_intent="inspect",
+                requested_execution_lane="read_only_inspection",
+                execution_lane="read_only_inspection",
+                downgraded=False,
+                downgrade_reason=None,
+                approval_required=False,
+                mutation_capable=False,
+                intelligence_summary=overview,
+                decision="block",
+                decision_reason="experiment_decision_update",
+                decision_summary=overview,
+                mapped_prompt=lookup_prompt,
+                entity_mapping_applied=resolution.entity_mapping_applied,
+                entity_mapping_sources=mapping_sources,
+                recommended_action="record_experiment_decision",
+                plan_title=str(decision_preview.get("title") or "Experiment decision").strip(),
+                plan_step_titles=[
+                    str(item).strip()
+                    for item in (decision_preview.get("variant_lines") or [])
+                    if str(item).strip()
+                ],
+                plan_expected_outcome="Review only. No execution will start.",
+                plan_execution_mode="Current session decision update",
+                resolution_source=EXPERIMENT_DECISION_RESOLUTION,
+                resolved_from_prompt=normalized,
+                session_resolution_note=overview,
+            )
+        if is_experiment_decisions_prompt(normalized):
+            experiment_review, review_block_message = build_current_experiment_decisions(session_state)
+            if review_block_message is not None:
+                return IntakeRouting(
+                    requested_intent="inspect",
+                    resolved_intent="inspect",
+                    requested_execution_lane="read_only_inspection",
+                    execution_lane="read_only_inspection",
+                    downgraded=False,
+                    downgrade_reason=None,
+                    approval_required=False,
+                    mutation_capable=False,
+                    intelligence_summary=review_block_message,
+                    decision="block",
+                    decision_reason="no_active_experiment",
+                    decision_summary=review_block_message,
+                    decision_blocked=True,
+                    mapped_prompt=lookup_prompt,
+                    entity_mapping_applied=resolution.entity_mapping_applied,
+                    entity_mapping_sources=mapping_sources,
+                    plan_title="Current experiment decisions",
+                    plan_step_titles=[],
+                    plan_expected_outcome="Review only. No execution will start.",
+                    plan_execution_mode="Current session summary",
+                    resolution_source=EXPERIMENT_DECISION_RESOLUTION,
+                    resolved_from_prompt=normalized,
+                    session_resolution_note=review_block_message,
+                    fail_closed_reason=review_block_message,
+                )
+            experiment_review = experiment_review or {}
+            overview = str(experiment_review.get("overview") or "").strip()
+            return IntakeRouting(
+                requested_intent="inspect",
+                resolved_intent="inspect",
+                requested_execution_lane="read_only_inspection",
+                execution_lane="read_only_inspection",
+                downgraded=False,
+                downgrade_reason=None,
+                approval_required=False,
+                mutation_capable=False,
+                intelligence_summary=overview,
+                decision="block",
+                decision_reason="experiment_decision_summary",
+                decision_summary=overview,
+                mapped_prompt=lookup_prompt,
+                entity_mapping_applied=resolution.entity_mapping_applied,
+                entity_mapping_sources=mapping_sources,
+                recommended_action="refresh_summary",
+                plan_title="Current experiment decisions",
+                plan_step_titles=[
+                    str(item).strip()
+                    for item in (experiment_review.get("variant_lines") or [])
+                    if str(item).strip()
+                ],
+                plan_expected_outcome="Review only. No execution will start.",
+                plan_execution_mode="Current session summary",
+                resolution_source=EXPERIMENT_DECISION_RESOLUTION,
+                resolved_from_prompt=normalized,
+                session_resolution_note=overview,
+            )
+        if is_experiment_review_prompt(normalized):
+            experiment_review, review_block_message = build_current_experiment_review(session_state)
+            if review_block_message is not None:
+                return IntakeRouting(
+                    requested_intent="inspect",
+                    resolved_intent="inspect",
+                    requested_execution_lane="read_only_inspection",
+                    execution_lane="read_only_inspection",
+                    downgraded=False,
+                    downgrade_reason=None,
+                    approval_required=False,
+                    mutation_capable=False,
+                    intelligence_summary=review_block_message,
+                    decision="block",
+                    decision_reason="no_active_experiment",
+                    decision_summary=review_block_message,
+                    decision_blocked=True,
+                    fail_closed_reason=review_block_message,
+                    mapped_prompt=lookup_prompt,
+                    entity_mapping_applied=resolution.entity_mapping_applied,
+                    entity_mapping_sources=mapping_sources,
+                    plan_title="Current experiment variants",
+                    plan_step_titles=[],
+                    plan_expected_outcome="Review only. No execution will start.",
+                    plan_execution_mode="Current session summary",
+                    resolution_source=EXPERIMENT_REVIEW_RESOLUTION,
+                    resolved_from_prompt=normalized,
+                    session_resolution_note=review_block_message,
+                )
+            experiment_review = experiment_review or {}
+            overview = str(experiment_review.get("overview") or "").strip()
+            return IntakeRouting(
+                requested_intent="inspect",
+                resolved_intent="inspect",
+                requested_execution_lane="read_only_inspection",
+                execution_lane="read_only_inspection",
+                downgraded=False,
+                downgrade_reason=None,
+                approval_required=False,
+                mutation_capable=False,
+                intelligence_summary=overview,
+                decision="block",
+                decision_reason="experiment_review",
+                decision_summary=overview,
+                mapped_prompt=lookup_prompt,
+                entity_mapping_applied=resolution.entity_mapping_applied,
+                entity_mapping_sources=mapping_sources,
+                recommended_action="refresh_summary",
+                plan_title="Current experiment variants",
+                plan_step_titles=[
+                    str(item).strip()
+                    for item in (experiment_review.get("variant_lines") or [])
+                    if str(item).strip()
+                ],
+                plan_expected_outcome="Review only. No execution will start.",
+                plan_execution_mode="Current session summary",
+                resolution_source=EXPERIMENT_REVIEW_RESOLUTION,
+                resolved_from_prompt=normalized,
+                session_resolution_note=overview,
+            )
+        followup_resolution, followup_block_message = resolve_session_followup_prompt(
+            normalized,
+            session_state=session_state,
+        )
+        if followup_block_message is not None:
+            return self._blocked_mutation_route_routing(
+                requested_execution_lane="approval_required_mutation",
+                session_id=session_id,
+                route_issue=followup_block_message,
+                mapped_prompt=lookup_prompt,
+                entity_mapping_applied=resolution.entity_mapping_applied,
+                entity_mapping_sources=mapping_sources,
+                clarification_options=clarification_options_for_session_followup(
+                    normalized,
+                    session_state=session_state,
+                ),
+            )
+        effective_lookup_prompt = (
+            followup_resolution.canonical_prompt.lower().strip()
+            if followup_resolution is not None
+            else lookup_prompt
+        )
+        goal_intent_resolution = resolve_goal_intent_prompt(effective_lookup_prompt)
+        if goal_intent_resolution is not None:
+            effective_lookup_prompt = goal_intent_resolution.canonical_prompt.lower().strip()
+        goal_composition_resolution = None
+        goal_composition_block_message = None
+        environment_theme_multi_intent_resolution = None
+        environment_theme_multi_intent_block_message = None
+        platformer_multi_intent_resolution = None
+        platformer_multi_intent_block_message = None
+        if goal_intent_resolution is None:
+            goal_composition_resolution = resolve_goal_composition_prompt(effective_lookup_prompt)
+            if goal_composition_resolution is not None:
+                effective_lookup_prompt = goal_composition_resolution.canonical_prompt.lower().strip()
+            else:
+                goal_composition_block_message = unsupported_goal_composition_message(effective_lookup_prompt)
+        if goal_intent_resolution is None and goal_composition_resolution is None:
+            environment_theme_multi_intent_resolution = resolve_environment_theme_multi_intent_plan(effective_lookup_prompt)
+            if environment_theme_multi_intent_resolution is not None:
+                goal_composition_block_message = None
+                effective_lookup_prompt = environment_theme_multi_intent_resolution.canonical_prompt.lower().strip()
+            else:
+                environment_theme_multi_intent_block_message = unsupported_environment_theme_multi_intent_message(
+                    effective_lookup_prompt
+                )
+        if goal_intent_resolution is None and goal_composition_resolution is None and environment_theme_multi_intent_resolution is None:
+            platformer_multi_intent_resolution = resolve_platformer_multi_intent_plan(effective_lookup_prompt)
+            if platformer_multi_intent_resolution is not None:
+                goal_composition_block_message = None
+                effective_lookup_prompt = platformer_multi_intent_resolution.canonical_prompt.lower().strip()
+            else:
+                platformer_multi_intent_block_message = unsupported_platformer_multi_intent_message(effective_lookup_prompt)
+        effective_lookup_prompt = canonicalize_platformer_action_prompt(effective_lookup_prompt) or effective_lookup_prompt
+        if goal_intent_resolution is None and platformer_multi_intent_resolution is None:
+            late_platformer_multi_intent_resolution = resolve_platformer_multi_intent_plan(effective_lookup_prompt)
+            if late_platformer_multi_intent_resolution is not None:
+                platformer_multi_intent_resolution = late_platformer_multi_intent_resolution
+                platformer_multi_intent_block_message = None
+                goal_composition_block_message = None
+                effective_lookup_prompt = late_platformer_multi_intent_resolution.canonical_prompt.lower().strip()
+            elif platformer_multi_intent_block_message is None:
+                platformer_multi_intent_block_message = unsupported_platformer_multi_intent_message(effective_lookup_prompt)
+        effective_lookup_prompt = (
+            canonicalize_barrel_action_prompt(effective_lookup_prompt)
+            or canonicalize_environment_theme_action_prompt(effective_lookup_prompt)
+            or canonicalize_platformer_action_prompt(effective_lookup_prompt)
+            or effective_lookup_prompt
+        )
+        requested_intent = self._classify_requested_intent(effective_lookup_prompt)
         requested_execution_lane = self._requested_lane_for_intent(requested_intent)
-        capability = self.capability_registry.match(normalized)
+        if goal_composition_block_message is not None and requested_intent == "mutate":
+            return self._blocked_mutation_route_routing(
+                requested_execution_lane=requested_execution_lane,
+                session_id=session_id,
+                route_issue=goal_composition_block_message,
+                mapped_prompt=effective_lookup_prompt,
+                entity_mapping_applied=resolution.entity_mapping_applied,
+                entity_mapping_sources=mapping_sources,
+                clarification_options=clarification_options_for_prompt(lookup_prompt),
+            )
+        if platformer_multi_intent_block_message is not None and requested_intent == "mutate":
+            return self._blocked_mutation_route_routing(
+                requested_execution_lane=requested_execution_lane,
+                session_id=session_id,
+                route_issue=platformer_multi_intent_block_message,
+                mapped_prompt=effective_lookup_prompt,
+                entity_mapping_applied=resolution.entity_mapping_applied,
+                entity_mapping_sources=mapping_sources,
+                clarification_options=clarification_options_for_prompt(lookup_prompt),
+            )
+        if environment_theme_multi_intent_block_message is not None and requested_intent == "mutate":
+            return self._blocked_mutation_route_routing(
+                requested_execution_lane=requested_execution_lane,
+                session_id=session_id,
+                route_issue=environment_theme_multi_intent_block_message,
+                mapped_prompt=effective_lookup_prompt,
+                entity_mapping_applied=resolution.entity_mapping_applied,
+                entity_mapping_sources=mapping_sources,
+                clarification_options=clarification_options_for_prompt(lookup_prompt),
+            )
+        predefined_plan = (
+            environment_theme_multi_intent_resolution.plan
+            if environment_theme_multi_intent_resolution is not None
+            else (
+                platformer_multi_intent_resolution.plan
+                if platformer_multi_intent_resolution is not None
+                else match_predefined_plan(effective_lookup_prompt)
+            )
+        )
+        if predefined_plan is not None:
+            step_capabilities: List[RuntimeCapability] = []
+            step_titles = [step.title for step in predefined_plan.steps]
+            step_prompts = [step.operator_prompt for step in predefined_plan.steps]
+            for step in predefined_plan.steps:
+                step_lookup_prompt = (
+                    canonicalize_barrel_action_prompt(step.operator_prompt)
+                    or canonicalize_barrel_action_prompt(step.title)
+                    or canonicalize_environment_theme_action_prompt(step.operator_prompt)
+                    or canonicalize_environment_theme_action_prompt(step.title)
+                    or canonicalize_platformer_action_prompt(step.operator_prompt)
+                    or canonicalize_platformer_action_prompt(step.title)
+                    or step.operator_prompt
+                )
+                capability = self.capability_registry.match(step_lookup_prompt)
+                if capability is None:
+                    return self._blocked_mutation_route_routing(
+                        requested_execution_lane=requested_execution_lane,
+                        session_id=session_id,
+                        route_issue=(
+                            f"AI-E could not build the '{predefined_plan.title}' plan because "
+                            f"step {step.step_index} '{step.title}' is not supported yet."
+                        ),
+                        mapped_prompt=predefined_plan.canonical_prompt,
+                        entity_mapping_applied=resolution.entity_mapping_applied,
+                        entity_mapping_sources=mapping_sources,
+                        clarification_options=clarification_options_for_prompt(lookup_prompt),
+                    )
+                preflight_issue = self._resolve_mutation_route_issue(
+                    prompt=step_lookup_prompt,
+                    capability=capability,
+                    target_repo=target_repo,
+                )
+                if preflight_issue is not None:
+                    return self._blocked_mutation_route_routing(
+                        requested_execution_lane=requested_execution_lane,
+                        session_id=session_id,
+                        route_issue=(
+                            f"AI-E could not build the '{predefined_plan.title}' plan because "
+                            f"step {step.step_index} '{step.title}' is unavailable: {preflight_issue}"
+                        ),
+                        mapped_prompt=predefined_plan.canonical_prompt,
+                        entity_mapping_applied=resolution.entity_mapping_applied,
+                        entity_mapping_sources=mapping_sources,
+                        clarification_options=clarification_options_for_prompt(lookup_prompt),
+                    )
+                step_capabilities.append(capability)
+
+            primary_capability = step_capabilities[0]
+            routing = replace(
+                self._routing_for_capability(primary_capability),
+                capability_title=predefined_plan.title,
+                mapped_prompt=predefined_plan.canonical_prompt,
+                plan_key=predefined_plan.plan_key,
+                plan_title=predefined_plan.title,
+                plan_step_titles=step_titles,
+                plan_step_prompts=step_prompts,
+                plan_expected_outcome=predefined_plan.expected_outcome,
+                plan_execution_mode=predefined_plan.execution_mode_label,
+                intelligence_summary=predefined_plan.expected_outcome,
+                entity_mapping_applied=resolution.entity_mapping_applied,
+                entity_mapping_sources=mapping_sources,
+            )
+            routing = self._apply_resolution_metadata(
+                routing,
+                followup_resolution=followup_resolution,
+                goal_intent_resolution=goal_intent_resolution,
+                goal_composition_resolution=goal_composition_resolution,
+                environment_theme_multi_intent_resolution=environment_theme_multi_intent_resolution,
+                platformer_multi_intent_resolution=platformer_multi_intent_resolution,
+                mapped_prompt=predefined_plan.canonical_prompt,
+            )
+            routing = self._apply_content_policy(
+                prompt=effective_lookup_prompt,
+                routing=routing,
+                capability=primary_capability,
+                session_id=session_id,
+            )
+            autonomy_review_prefix = ""
+            if (
+                self._routes_through_platformer_autonomy_review(routing, primary_capability)
+                and str(routing.decision or "").strip().lower() in {"require_approval", "require_review"}
+            ):
+                autonomy_review_prefix = self._platformer_autonomy_review_summary(routing) + " "
+            routing = replace(
+                routing,
+                decision_summary=(
+                    autonomy_review_prefix
+                    +
+                    (
+                        (str(routing.session_resolution_note or "").strip() + " ")
+                        if str(routing.resolution_source or "") in {
+                            SESSION_FOLLOWUP_RESOLUTION,
+                            GOAL_INTENT_MAPPING_RESOLUTION,
+                            GOAL_COMPOSITION_RESOLUTION,
+                            ENVIRONMENT_THEME_MULTI_INTENT_RESOLUTION,
+                            PLATFORMER_MULTI_INTENT_RESOLUTION,
+                        }
+                        else ""
+                    )
+                    + f"{predefined_plan.title} will run {len(step_titles)} bounded step(s) in "
+                    f"{predefined_plan.execution_mode_label.lower()}: "
+                    + " ".join(f"{index + 1}. {title}." for index, title in enumerate(step_titles))
+                    + f" Expected outcome: {predefined_plan.expected_outcome}"
+                ),
+            )
+            confirmation_message = entity_confirmation_message(resolution)
+            if confirmation_message:
+                return replace(
+                    routing,
+                    execution_decision="blocked",
+                    recommended_action="confirm_plan",
+                    decision="block",
+                    decision_reason="confirmation_required",
+                    decision_summary=confirmation_message,
+                    decision_blocked=True,
+                    fail_closed_reason=confirmation_message,
+                    mutation_capable=False,
+                    approval_required=False,
+                    sandbox_first_required=False,
+                    auto_execution_enabled=False,
+                    auto_execution_reason=None,
+                    capability_supported=True,
+                    confirmation_required=True,
+                    confirmation_message=confirmation_message,
+                    mapped_prompt=predefined_plan.canonical_prompt,
+                )
+            return routing
+        capability = self.capability_registry.match(effective_lookup_prompt)
         if capability is not None:
-            return self._apply_content_policy(prompt=normalized, routing=self._routing_for_capability(capability), capability=capability, session_id=session_id)
+            preflight_issue = self._resolve_mutation_route_issue(
+                prompt=effective_lookup_prompt,
+                capability=capability,
+                target_repo=target_repo,
+            )
+            if preflight_issue is not None:
+                return self._blocked_mutation_route_routing(
+                    requested_execution_lane=requested_execution_lane,
+                    session_id=session_id,
+                    route_issue=preflight_issue,
+                    mapped_prompt=effective_lookup_prompt,
+                    entity_mapping_applied=resolution.entity_mapping_applied,
+                    entity_mapping_sources=mapping_sources,
+                    clarification_options=clarification_options_for_prompt(lookup_prompt),
+                )
+            routing = replace(
+                self._routing_for_capability(capability),
+                mapped_prompt=effective_lookup_prompt,
+                entity_mapping_applied=resolution.entity_mapping_applied,
+                entity_mapping_sources=mapping_sources,
+            )
+            routing = self._apply_resolution_metadata(
+                routing,
+                followup_resolution=followup_resolution,
+                goal_intent_resolution=goal_intent_resolution,
+                goal_composition_resolution=goal_composition_resolution,
+                environment_theme_multi_intent_resolution=environment_theme_multi_intent_resolution,
+                platformer_multi_intent_resolution=platformer_multi_intent_resolution,
+                mapped_prompt=effective_lookup_prompt,
+            )
+            confirmation_message = entity_confirmation_message(resolution)
+            if confirmation_message:
+                return replace(
+                    routing,
+                    execution_decision="blocked",
+                    recommended_action="confirm_supported_target",
+                    decision="block",
+                    decision_reason="confirmation_required",
+                    decision_summary=confirmation_message,
+                    decision_blocked=True,
+                    fail_closed_reason=confirmation_message,
+                    mutation_capable=False,
+                    approval_required=False,
+                    sandbox_first_required=False,
+                    auto_execution_enabled=False,
+                    auto_execution_reason=None,
+                    capability_supported=True,
+                    confirmation_required=True,
+                    confirmation_message=confirmation_message,
+                )
+            routing = self._apply_content_policy(
+                prompt=effective_lookup_prompt,
+                routing=routing,
+                capability=capability,
+                session_id=session_id,
+            )
+            if (
+                str(routing.resolution_source or "") in {
+                    SESSION_FOLLOWUP_RESOLUTION,
+                    GOAL_INTENT_MAPPING_RESOLUTION,
+                    GOAL_COMPOSITION_RESOLUTION,
+                    ENVIRONMENT_THEME_MULTI_INTENT_RESOLUTION,
+                    PLATFORMER_MULTI_INTENT_RESOLUTION,
+                }
+                and routing.session_resolution_note
+            ):
+                return replace(
+                    routing,
+                    decision_summary=f"{routing.session_resolution_note} {routing.decision_summary or ''}".strip(),
+                )
+            return routing
         if requested_intent == "mutate":
+            if goal_composition_block_message is not None:
+                return self._blocked_mutation_route_routing(
+                    requested_execution_lane=requested_execution_lane,
+                    session_id=session_id,
+                    route_issue=goal_composition_block_message,
+                    mapped_prompt=effective_lookup_prompt,
+                    entity_mapping_applied=resolution.entity_mapping_applied,
+                    entity_mapping_sources=mapping_sources,
+                    clarification_options=clarification_options_for_prompt(lookup_prompt),
+                )
+            if environment_theme_multi_intent_block_message is not None:
+                return self._blocked_mutation_route_routing(
+                    requested_execution_lane=requested_execution_lane,
+                    session_id=session_id,
+                    route_issue=environment_theme_multi_intent_block_message,
+                    mapped_prompt=effective_lookup_prompt,
+                    entity_mapping_applied=resolution.entity_mapping_applied,
+                    entity_mapping_sources=mapping_sources,
+                    clarification_options=clarification_options_for_prompt(lookup_prompt),
+                )
+            goal_block_message = unsupported_goal_intent_message(lookup_prompt)
+            if goal_block_message is not None:
+                return self._blocked_mutation_route_routing(
+                    requested_execution_lane=requested_execution_lane,
+                    session_id=session_id,
+                    route_issue=goal_block_message,
+                    mapped_prompt=effective_lookup_prompt,
+                    entity_mapping_applied=resolution.entity_mapping_applied,
+                    entity_mapping_sources=mapping_sources,
+                    clarification_options=clarification_options_for_prompt(lookup_prompt),
+                )
+            unsupported_plan_message = unsupported_predefined_plan_message(effective_lookup_prompt)
+            if unsupported_plan_message is not None:
+                return self._blocked_mutation_route_routing(
+                    requested_execution_lane=requested_execution_lane,
+                    session_id=session_id,
+                    route_issue=unsupported_plan_message,
+                    mapped_prompt=effective_lookup_prompt,
+                    entity_mapping_applied=resolution.entity_mapping_applied,
+                    entity_mapping_sources=mapping_sources,
+                    clarification_options=clarification_options_for_prompt(lookup_prompt),
+                )
+            unsupported_message = unsupported_entity_transform_prompt_message(effective_lookup_prompt)
+            if unsupported_message is not None:
+                return self._blocked_mutation_route_routing(
+                    requested_execution_lane=requested_execution_lane,
+                    session_id=session_id,
+                    route_issue=unsupported_message,
+                    mapped_prompt=effective_lookup_prompt,
+                    entity_mapping_applied=resolution.entity_mapping_applied,
+                    entity_mapping_sources=mapping_sources,
+                    clarification_options=clarification_options_for_prompt(lookup_prompt),
+                )
             intelligence = assess_mutation_without_capability()
-            return self._apply_content_policy(prompt=normalized, routing=IntakeRouting(
+            routing = self._apply_content_policy(prompt=effective_lookup_prompt, routing=IntakeRouting(
                 requested_intent="mutate",
                 resolved_intent="mutate",
                 requested_execution_lane=requested_execution_lane,
@@ -685,9 +1577,37 @@ class ConversationalTaskIntake:
                 auto_execution_reason=intelligence.auto_execution_reason,
                 missing_evidence=list(intelligence.missing_evidence),
                 intelligence_summary=intelligence.summary,
+                mapped_prompt=effective_lookup_prompt,
+                entity_mapping_applied=resolution.entity_mapping_applied,
+                entity_mapping_sources=mapping_sources,
             ), session_id=session_id)
+            routing = self._apply_resolution_metadata(
+                routing,
+                followup_resolution=followup_resolution,
+                goal_intent_resolution=goal_intent_resolution,
+                goal_composition_resolution=goal_composition_resolution,
+                environment_theme_multi_intent_resolution=environment_theme_multi_intent_resolution,
+                platformer_multi_intent_resolution=platformer_multi_intent_resolution,
+                mapped_prompt=effective_lookup_prompt,
+            )
+            if (
+                str(routing.resolution_source or "") in {
+                    SESSION_FOLLOWUP_RESOLUTION,
+                    GOAL_INTENT_MAPPING_RESOLUTION,
+                    GOAL_COMPOSITION_RESOLUTION,
+                    ENVIRONMENT_THEME_MULTI_INTENT_RESOLUTION,
+                    PLATFORMER_MULTI_INTENT_RESOLUTION,
+                }
+                and routing.session_resolution_note
+            ):
+                return replace(
+                    routing,
+                    intelligence_summary=routing.session_resolution_note,
+                    decision_summary=f"{routing.session_resolution_note} {routing.decision_summary or ''}".strip(),
+                )
+            return routing
         if requested_intent == "plan":
-            return self._apply_content_policy(prompt=normalized, routing=IntakeRouting(
+            return self._apply_content_policy(prompt=effective_lookup_prompt, routing=IntakeRouting(
                 requested_intent="plan",
                 resolved_intent="inspect",
                 requested_execution_lane=requested_execution_lane,
@@ -696,9 +1616,12 @@ class ConversationalTaskIntake:
                 downgrade_reason="No dedicated plan-only execution lane is available in the current runtime; routing to bounded read-only inspection.",
                 approval_required=False,
                 mutation_capable=False,
+                mapped_prompt=effective_lookup_prompt,
+                entity_mapping_applied=resolution.entity_mapping_applied,
+                entity_mapping_sources=mapping_sources,
             ), session_id=session_id)
         if requested_intent == "inspect":
-            return self._apply_content_policy(prompt=normalized, routing=IntakeRouting(
+            return self._apply_content_policy(prompt=effective_lookup_prompt, routing=IntakeRouting(
                 requested_intent="inspect",
                 resolved_intent="inspect",
                 requested_execution_lane="read_only_inspection",
@@ -707,8 +1630,11 @@ class ConversationalTaskIntake:
                 downgrade_reason=None,
                 approval_required=False,
                 mutation_capable=False,
+                mapped_prompt=effective_lookup_prompt,
+                entity_mapping_applied=resolution.entity_mapping_applied,
+                entity_mapping_sources=mapping_sources,
             ), session_id=session_id)
-        return self._apply_content_policy(prompt=normalized, routing=IntakeRouting(
+        return self._apply_content_policy(prompt=effective_lookup_prompt, routing=IntakeRouting(
             requested_intent="ambiguous",
             resolved_intent="inspect",
             requested_execution_lane="read_only_inspection",
@@ -717,6 +1643,9 @@ class ConversationalTaskIntake:
             downgrade_reason=None,
             approval_required=False,
             mutation_capable=False,
+            mapped_prompt=effective_lookup_prompt,
+            entity_mapping_applied=resolution.entity_mapping_applied,
+            entity_mapping_sources=mapping_sources,
         ), session_id=session_id)
 
     def _routing_for_capability(self, capability: RuntimeCapability) -> IntakeRouting:
@@ -737,7 +1666,9 @@ class ConversationalTaskIntake:
             mutation_capable=True,
             capability_id=capability.capability_id,
             capability_title=capability.title,
+            generic_capability_definition=generic_capability_definition_for_capability_id(capability.capability_id),
             handler_name=capability.handler_name,
+            agent_type=capability.agent_type,
             target_level=capability.target_level,
             target_scene=capability.target_scene,
             trust_score=intelligence.trust_score,
@@ -762,6 +1693,37 @@ class ConversationalTaskIntake:
             rollback_verified=capability.rollback_verified,
         )
 
+    @staticmethod
+    def _routes_through_platformer_autonomy_review(
+        routing: IntakeRouting,
+        capability: RuntimeCapability | None,
+    ) -> bool:
+        if not (routing.requested_intent == "mutate" or routing.mutation_capable):
+            return False
+        if str(routing.plan_key or "").strip().lower().startswith("platformer_"):
+            return True
+
+        capability_id = str(
+            (capability.capability_id if capability is not None else routing.capability_id) or ""
+        ).strip().lower()
+        if "_platformer_" in capability_id:
+            return True
+
+        generic_definition = dict(routing.generic_capability_definition or {})
+        if capability is not None and not generic_definition:
+            generic_definition = generic_capability_definition_for_capability_id(capability.capability_id)
+        return str(generic_definition.get("target_context") or "").strip().lower() == "platformer"
+
+    @staticmethod
+    def _platformer_autonomy_review_summary(routing: IntakeRouting) -> str:
+        mapped_prompt = str(routing.mapped_prompt or routing.plan_title or routing.capability_title or "").strip()
+        bounded_target = mapped_prompt or "this bounded platformer mutation"
+        return (
+            f"Platformer request '{bounded_target}' routes through the bounded autonomy pipeline: "
+            "AI-E will generate and validate candidate variations, build a candidate set for review, "
+            "and require explicit approval before applying any user-selected outcome."
+        )
+
     def _apply_content_policy(
         self,
         *,
@@ -782,6 +1744,10 @@ class ConversationalTaskIntake:
         approval_required = routing.approval_required
         auto_execution_enabled = routing.auto_execution_enabled
         auto_execution_reason = routing.auto_execution_reason
+        eligible_for_auto = routing.eligible_for_auto
+        intelligence_summary = routing.intelligence_summary
+        decision_missing_evidence = list(routing.missing_evidence or [])
+        platformer_autonomy_review = self._routes_through_platformer_autonomy_review(routing, capability)
 
         if routing.requested_intent == "mutate" or routing.mutation_capable:
             if assessment.content_policy_decision == "requires_review":
@@ -796,6 +1762,15 @@ class ConversationalTaskIntake:
                 approval_required = False
                 auto_execution_enabled = False
                 auto_execution_reason = None
+            elif platformer_autonomy_review:
+                execution_decision = "approval_required"
+                recommended_action = "approval_required"
+                approval_required = True
+                auto_execution_enabled = False
+                auto_execution_reason = None
+                eligible_for_auto = False
+                intelligence_summary = self._platformer_autonomy_review_summary(routing)
+                decision_missing_evidence = []
 
         runtime_context = self._load_runtime_context(session_id)
         decision = evaluate_autonomous_decision(
@@ -803,12 +1778,12 @@ class ConversationalTaskIntake:
             resolved_intent=routing.resolved_intent,
             mutation_capable=routing.mutation_capable,
             capability_supported=capability is not None or routing.requested_intent != "mutate",
-            eligible_for_auto=routing.eligible_for_auto,
+            eligible_for_auto=eligible_for_auto,
             approval_required_by_capability=approval_required,
             intelligence_execution_decision=execution_decision,
-            intelligence_summary=routing.intelligence_summary,
+            intelligence_summary=intelligence_summary,
             auto_execution_reason=auto_execution_reason,
-            missing_evidence=list(routing.missing_evidence or []),
+            missing_evidence=decision_missing_evidence,
             content_policy_decision=assessment.content_policy_decision,
             content_policy_summary=assessment.summary,
             rating_locked=assessment.rating_locked,
@@ -851,6 +1826,8 @@ class ConversationalTaskIntake:
             recommended_action=recommended_action,
             auto_execution_enabled=auto_execution_enabled,
             auto_execution_reason=auto_execution_reason,
+            intelligence_summary=intelligence_summary,
+            eligible_for_auto=eligible_for_auto,
             rating_system=assessment.rating_system,
             rating_target=assessment.rating_target,
             rating_locked=assessment.rating_locked,
@@ -871,6 +1848,81 @@ class ConversationalTaskIntake:
             capability_supported=decision.capability_supported,
             promotion_basis=decision.promotion_basis,
             fail_closed_reason=decision.fail_closed_reason,
+        )
+
+    def _resolve_mutation_route_issue(
+        self,
+        *,
+        prompt: str,
+        capability: RuntimeCapability,
+        target_repo: str | None,
+    ) -> str | None:
+        if capability.agent_type != "level_0001_entity_transform_mutation_agent":
+            return None
+        resolved_target_repo = str(target_repo or self._derive_target_repo(prompt) or "").strip()
+        if not resolved_target_repo:
+            return "No deterministic entity-transform route matched the prompt because no supported project path was selected."
+        _, route_issue = resolve_entity_transform_route(Path(resolved_target_repo), prompt)
+        return route_issue
+
+    def _blocked_mutation_route_routing(
+        self,
+        *,
+        requested_execution_lane: str,
+        session_id: str,
+        route_issue: str,
+        mapped_prompt: str | None = None,
+        entity_mapping_applied: bool = False,
+        entity_mapping_sources: List[str] | None = None,
+        clarification_options: List[str] | None = None,
+    ) -> IntakeRouting:
+        intelligence = assess_mutation_without_capability()
+        normalized_options = [str(option).strip() for option in (clarification_options or []) if str(option).strip()]
+        routing = self._apply_content_policy(
+            prompt=mapped_prompt or "",
+            routing=IntakeRouting(
+                requested_intent="mutate",
+                resolved_intent="mutate",
+                requested_execution_lane=requested_execution_lane,
+                execution_lane=requested_execution_lane,
+                downgraded=False,
+                downgrade_reason=None,
+                approval_required=False,
+                mutation_capable=False,
+                trust_score=intelligence.trust_score,
+                trust_band=intelligence.trust_band,
+                policy_state=intelligence.policy_state,
+                execution_decision=intelligence.execution_decision,
+                recommended_action=intelligence.recommended_action,
+                sandbox_first_required=intelligence.sandbox_first_required,
+                auto_execution_enabled=intelligence.auto_execution_enabled,
+                auto_execution_reason=intelligence.auto_execution_reason,
+                missing_evidence=list(intelligence.missing_evidence),
+                intelligence_summary=route_issue,
+                mapped_prompt=mapped_prompt,
+                entity_mapping_applied=entity_mapping_applied,
+                entity_mapping_sources=entity_mapping_sources,
+                clarification_options=normalized_options,
+            ),
+            session_id=session_id,
+        )
+        return replace(
+            routing,
+            intelligence_summary=route_issue,
+            decision="block",
+            decision_reason="clarification_required" if normalized_options else "route_missing",
+            decision_summary=f"Decision: block - {route_issue}",
+            fail_closed_reason=route_issue,
+            clarification_options=normalized_options,
+            recommended_action="clarify_request" if normalized_options else routing.recommended_action,
+            plan_title="Clarify target" if normalized_options else routing.plan_title,
+            plan_step_titles=normalized_options if normalized_options else routing.plan_step_titles,
+            plan_expected_outcome=(
+                "Clarification only. No execution will start until you choose one explicit supported request."
+                if normalized_options
+                else routing.plan_expected_outcome
+            ),
+            plan_execution_mode="Clarification required" if normalized_options else routing.plan_execution_mode,
         )
 
     def _load_runtime_context(self, session_id: str) -> DecisionRuntimeContext:
@@ -895,13 +1947,31 @@ class ConversationalTaskIntake:
         state_store.save(state)
 
     def _classify_requested_intent(self, normalized_prompt: str) -> str:
+        if is_experiment_decision_prompt(normalized_prompt) or is_experiment_decisions_prompt(normalized_prompt):
+            return "inspect"
+        if is_experiment_review_prompt(normalized_prompt):
+            return "inspect"
+        if is_session_followup_prompt(normalized_prompt):
+            return "mutate"
+        if match_predefined_plan(normalized_prompt) is not None:
+            return "mutate"
         if any(self._contains_phrase(normalized_prompt, phrase) for phrase in self._PLAN_REQUEST_VERBS):
             return "plan"
         if any(self._contains_phrase(normalized_prompt, phrase) for phrase in self._MUTATION_REQUEST_VERBS):
             return "mutate"
+        if self._looks_like_world_mutation_request(normalized_prompt):
+            return "mutate"
         if any(self._contains_phrase(normalized_prompt, phrase) for phrase in ("inspect", "audit", "review", "report", "investigate", "analyze", "validate", "check")):
             return "inspect"
         return "ambiguous"
+
+    def _looks_like_world_mutation_request(self, normalized_prompt: str) -> bool:
+        has_action_hint = any(self._contains_phrase(normalized_prompt, phrase) for phrase in self._WORLD_MUTATION_ACTION_HINTS)
+        if not has_action_hint:
+            return False
+        has_domain_hint = any(hint in normalized_prompt for hint in self._WORLD_MUTATION_DOMAIN_HINTS)
+        has_direction_hint = any(self._contains_phrase(normalized_prompt, phrase) for phrase in self._WORLD_MUTATION_DIRECTION_HINTS)
+        return has_domain_hint or has_direction_hint
 
     def _requested_lane_for_intent(self, requested_intent: str) -> str:
         if requested_intent == "mutate":
@@ -934,7 +2004,150 @@ class ConversationalTaskIntake:
         return None
 
     def _normalize_prompt(self, operator_message: str) -> str:
-        return re.sub(r"\s+", " ", str(operator_message or "")).strip()
+        return normalize_prompt(operator_message)
+
+    def _execution_prompt_for_routing(self, original_prompt: str, *, routing: IntakeRouting) -> str:
+        mapped_prompt = str(getattr(routing, "mapped_prompt", "") or "").strip()
+        if mapped_prompt and str(getattr(routing, "resolution_source", "") or "") in {
+            SESSION_FOLLOWUP_RESOLUTION,
+            GOAL_INTENT_MAPPING_RESOLUTION,
+            GOAL_COMPOSITION_RESOLUTION,
+            ENVIRONMENT_THEME_MULTI_INTENT_RESOLUTION,
+            PLATFORMER_MULTI_INTENT_RESOLUTION,
+        }:
+            return mapped_prompt
+        if mapped_prompt and bool(getattr(routing, "mutation_capable", False)):
+            return mapped_prompt
+        return original_prompt
+
+    def _load_session_followup_state(self, session_id: str) -> Dict[str, Any]:
+        state_store = StateStore(self.config.runs_dir, session_id)
+        if not state_store.state_path.exists():
+            return {}
+        return state_store.load()
+
+    def _apply_resolution_metadata(
+        self,
+        routing: IntakeRouting,
+        *,
+        followup_resolution: SessionFollowUpResolution | None,
+        goal_intent_resolution: GoalIntentResolution | None,
+        goal_composition_resolution: GoalCompositionResolution | None,
+        environment_theme_multi_intent_resolution: EnvironmentThemeMultiIntentPlanResolution | None,
+        platformer_multi_intent_resolution: PlatformerMultiIntentPlanResolution | None,
+        mapped_prompt: str,
+    ) -> IntakeRouting:
+        if followup_resolution is not None:
+            if environment_theme_multi_intent_resolution is not None:
+                return replace(
+                    routing,
+                    mapped_prompt=mapped_prompt,
+                    resolution_source=environment_theme_multi_intent_resolution.resolution_source,
+                    resolved_from_prompt=environment_theme_multi_intent_resolution.original_prompt,
+                    session_resolution_note=environment_theme_multi_intent_resolution.resolution_note,
+                    goal_components=list(environment_theme_multi_intent_resolution.goal_components),
+                    state_family=followup_resolution.state_family,
+                    previous_tier=followup_resolution.previous_tier,
+                    requested_tier=followup_resolution.requested_tier,
+                    revert_requested=followup_resolution.revert_requested,
+                    revert_summary=followup_resolution.revert_summary,
+                )
+            if platformer_multi_intent_resolution is not None:
+                return replace(
+                    routing,
+                    mapped_prompt=mapped_prompt,
+                    resolution_source=platformer_multi_intent_resolution.resolution_source,
+                    resolved_from_prompt=platformer_multi_intent_resolution.original_prompt,
+                    session_resolution_note=platformer_multi_intent_resolution.resolution_note,
+                    goal_components=list(platformer_multi_intent_resolution.goal_components),
+                    state_family=followup_resolution.state_family,
+                    previous_tier=followup_resolution.previous_tier,
+                    requested_tier=followup_resolution.requested_tier,
+                    revert_requested=followup_resolution.revert_requested,
+                    revert_summary=followup_resolution.revert_summary,
+                )
+            return replace(
+                routing,
+                mapped_prompt=mapped_prompt,
+                resolution_source=followup_resolution.resolution_source,
+                resolved_from_prompt=followup_resolution.original_prompt,
+                session_resolution_note=followup_resolution.resolution_note,
+                goal_components=None,
+                state_family=followup_resolution.state_family,
+                previous_tier=followup_resolution.previous_tier,
+                requested_tier=followup_resolution.requested_tier,
+                revert_requested=followup_resolution.revert_requested,
+                revert_summary=followup_resolution.revert_summary,
+            )
+        if goal_intent_resolution is not None:
+            return replace(
+                routing,
+                mapped_prompt=mapped_prompt,
+                resolution_source=goal_intent_resolution.resolution_source,
+                resolved_from_prompt=goal_intent_resolution.original_prompt,
+                session_resolution_note=goal_intent_resolution.resolution_note,
+                goal_components=list(goal_intent_resolution.goal_components),
+                state_family=None,
+                previous_tier=None,
+                requested_tier=None,
+                revert_requested=False,
+                revert_summary=None,
+            )
+        if goal_composition_resolution is not None:
+            return replace(
+                routing,
+                mapped_prompt=mapped_prompt,
+                resolution_source=goal_composition_resolution.resolution_source,
+                resolved_from_prompt=goal_composition_resolution.original_prompt,
+                session_resolution_note=goal_composition_resolution.resolution_note,
+                goal_components=list(goal_composition_resolution.goal_components),
+                state_family=None,
+                previous_tier=None,
+                requested_tier=None,
+                revert_requested=False,
+                revert_summary=None,
+            )
+        if environment_theme_multi_intent_resolution is not None:
+            return replace(
+                routing,
+                mapped_prompt=mapped_prompt,
+                resolution_source=environment_theme_multi_intent_resolution.resolution_source,
+                resolved_from_prompt=environment_theme_multi_intent_resolution.original_prompt,
+                session_resolution_note=environment_theme_multi_intent_resolution.resolution_note,
+                goal_components=list(environment_theme_multi_intent_resolution.goal_components),
+                state_family=None,
+                previous_tier=None,
+                requested_tier=None,
+                revert_requested=False,
+                revert_summary=None,
+            )
+        if platformer_multi_intent_resolution is not None:
+            return replace(
+                routing,
+                mapped_prompt=mapped_prompt,
+                resolution_source=platformer_multi_intent_resolution.resolution_source,
+                resolved_from_prompt=platformer_multi_intent_resolution.original_prompt,
+                session_resolution_note=platformer_multi_intent_resolution.resolution_note,
+                goal_components=list(platformer_multi_intent_resolution.goal_components),
+                state_family=None,
+                previous_tier=None,
+                requested_tier=None,
+                revert_requested=False,
+                revert_summary=None,
+            )
+        return replace(
+            routing,
+            mapped_prompt=mapped_prompt,
+            resolution_source=DIRECT_PROMPT_RESOLUTION,
+            resolved_from_prompt="",
+            session_resolution_note="",
+            goal_components=None,
+            state_family=None,
+            previous_tier=None,
+            requested_tier=None,
+            revert_requested=False,
+            revert_summary=None,
+        )
 
     def _resolve_simulated_delay_seconds(self, simulated_delay_seconds: float | None) -> float:
         if simulated_delay_seconds is not None:

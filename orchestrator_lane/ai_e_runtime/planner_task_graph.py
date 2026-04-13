@@ -17,6 +17,7 @@ class PlanTaskNode:
     execution_mode: str
     plan_id: str
     step_index: int
+    operator_prompt: str
 
     def to_payload(self) -> dict[str, object]:
         return {
@@ -29,6 +30,7 @@ class PlanTaskNode:
             "execution_mode": self.execution_mode,
             "plan_id": self.plan_id,
             "step_index": self.step_index,
+            "operator_prompt": self.operator_prompt,
         }
 
 
@@ -70,6 +72,7 @@ def build_plan_task_graph(plan: PlanResult, *, request_id: str, task_id_prefix: 
                 execution_mode=step.execution_mode,
                 plan_id=plan.plan_id,
                 step_index=step.step_index,
+                operator_prompt=step.operator_prompt or plan.operator_prompt,
             )
         )
         previous_task_id = task_id

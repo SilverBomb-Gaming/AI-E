@@ -46,6 +46,11 @@ orchestrator_lane/*.egg-info/
 # Planned orchestrator lane queue and intake residue
 orchestrator_lane/backlog/*.bak.*
 orchestrator_lane/contracts/intake/
+orchestrator_lane/backlog/approvals.json
+tmp_intake_debug/
+tmp_intake_debug_after/
+tmp_runner_followup_debug/
+Sentinel/
 
 # Future local-only state split for AI-E root
 app_state.local.json
