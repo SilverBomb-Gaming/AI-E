@@ -1920,6 +1920,125 @@ class InsightResult:
         }
 
 
+class WorkflowStatus(str, Enum):
+    GENERATED = "generated"
+    PARTIAL = "partial"
+    INVALID = "invalid"
+    FAILED = "failed"
+    UNSUPPORTED_SCOPE = "unsupported_scope"
+
+
+class WorkflowStepType(str, Enum):
+    INSPECT = "inspect"
+    VALIDATE = "validate"
+    RERUN = "rerun"
+    CONFIRM = "confirm"
+    REVIEW = "review"
+    CHECK_DEPENDENCY = "check_dependency"
+    CHECK_ARTIFACT = "check_artifact"
+    CHECK_POLICY = "check_policy"
+
+
+class WorkflowFailureReason(str, Enum):
+    MISSING_INSIGHT_INPUT = "missing_insight_input"
+    MALFORMED_INSIGHT = "malformed_insight"
+    UNKNOWN_SCOPE_TARGET = "unknown_scope_target"
+    INCONSISTENT_WORKFLOW_SOURCE = "inconsistent_workflow_source"
+    UNSUPPORTED_SCOPE = "unsupported_scope"
+
+
+@dataclass(frozen=True)
+class WorkflowStep:
+    step_id: str
+    step_type: WorkflowStepType
+    description: str
+    related_insight_id: str
+    recommended_action: str
+    context_reference: str
+    priority_order: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "step_id": self.step_id,
+            "step_type": self.step_type.value,
+            "description": self.description,
+            "related_insight_id": self.related_insight_id,
+            "recommended_action": self.recommended_action,
+            "context_reference": self.context_reference,
+            "priority_order": self.priority_order,
+        }
+
+
+@dataclass(frozen=True)
+class WorkflowSuggestion:
+    title: str
+    linked_step_id: str | None = None
+    detail: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "title": self.title,
+            "linked_step_id": self.linked_step_id,
+            "detail": self.detail,
+        }
+
+
+@dataclass(frozen=True)
+class WorkflowRequest:
+    scope: InsightScope
+    target_session_id: str | None = None
+    target_cycle_id: int | None = None
+    source_insight_id: str | None = None
+    source_trace_id: str | None = None
+    request_id: str | None = None
+    notes: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "scope": self.scope.value,
+            "target_session_id": self.target_session_id,
+            "target_cycle_id": self.target_cycle_id,
+            "source_insight_id": self.source_insight_id,
+            "source_trace_id": self.source_trace_id,
+            "request_id": self.request_id,
+            "notes": list(self.notes),
+        }
+
+
+@dataclass(frozen=True)
+class WorkflowResult:
+    workflow_id: str
+    scope: InsightScope
+    steps: tuple[WorkflowStep, ...] = ()
+    linked_insights: tuple[str, ...] = ()
+    priority_order: tuple[str, ...] = ()
+    summary: WorkflowSuggestion | None = None
+    status: WorkflowStatus = WorkflowStatus.GENERATED
+    failure_reason: WorkflowFailureReason | None = None
+    source_insight_id: str | None = None
+    source_trace_id: str | None = None
+    target_session_id: str | None = None
+    target_cycle_id: int | None = None
+    notes: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "workflow_id": self.workflow_id,
+            "scope": self.scope.value,
+            "steps": [step.to_dict() for step in self.steps],
+            "linked_insights": list(self.linked_insights),
+            "priority_order": list(self.priority_order),
+            "summary": self.summary.to_dict() if self.summary else None,
+            "status": self.status.value,
+            "failure_reason": self.failure_reason.value if self.failure_reason else None,
+            "source_insight_id": self.source_insight_id,
+            "source_trace_id": self.source_trace_id,
+            "target_session_id": self.target_session_id,
+            "target_cycle_id": self.target_cycle_id,
+            "notes": list(self.notes),
+        }
+
+
 @dataclass(frozen=True)
 class AuditQuery:
     limit: int | None = None
