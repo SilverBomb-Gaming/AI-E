@@ -359,6 +359,7 @@ Nothing outside these pillars is part of v5.
 
 - Lane separation: [docs/architecture/ai_e_lane_separation.md](docs/architecture/ai_e_lane_separation.md) - Defines separation between product UI, raw dev testing, and execution layers
 - Finalized prompt behavior to prevent inferred Rigidbody parameter diagnoses and enforce structural root-cause identification
+- Improved diagnosis accuracy by prioritizing code-level interaction issues when snippets are provided
 
 ```
 app/
