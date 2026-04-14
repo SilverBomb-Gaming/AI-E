@@ -23,12 +23,190 @@ type OpenAIAnalysisResponse = {
   whatToDoNext?: unknown;
 };
 
+const GENERIC_SCENARIO_TOKENS = new Set([
+  "unity",
+  "gameobject",
+  "transform",
+  "component",
+  "components",
+  "object",
+  "objects",
+  "script",
+  "scripts",
+  "scene",
+  "scenes",
+  "project",
+  "player",
+  "manager",
+  "monoBehaviour",
+  "monobehaviour",
+  "prefab",
+  "console",
+  "error",
+  "warning",
+]);
+
+function trimSentence(value: string, maxLength: number): string {
+  const normalized = normalizeText(value);
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, maxLength - 3).trimEnd()}...`;
+}
+
+function dedupeLines(values: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+
+  for (const value of values) {
+    const key = value.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    result.push(value);
+  }
+
+  return result;
+}
+
+function splitIntoClauses(value: string): string[] {
+  return value
+    .split(/[.!?\n;]+/)
+    .map((entry) => normalizeText(entry))
+    .filter(Boolean);
+}
+
+function inferUserIntent(input: AnalysisInput): string {
+  const combined = [input.problemDescription, input.errorMessage, input.context, input.codeSnippet]
+    .map((value) => normalizeText(value))
+    .join(" ")
+    .toLowerCase();
+
+  if (/(move|movement|jump|dash|walk|run|locomotion|controller)/.test(combined)) {
+    return "movement / locomotion";
+  }
+  if (/(button|canvas|panel|hud|menu|ui|tooltip|inventory ui)/.test(combined)) {
+    return "UI flow / player interface";
+  }
+  if (/(enemy|spawn|wave|ai|navmesh|pathfind|patrol)/.test(combined)) {
+    return "enemy behavior / spawning";
+  }
+  if (/(animator|animation|state machine|blend tree)/.test(combined)) {
+    return "animation state flow";
+  }
+  if (/(camera|cinemachine|follow|lookat)/.test(combined)) {
+    return "camera behavior";
+  }
+  if (/(input|key|mouse|controller|gamepad)/.test(combined)) {
+    return "input handling";
+  }
+  if (/(save|load|serialize|json|playerprefs)/.test(combined)) {
+    return "save / load state";
+  }
+  if (/(rigidbody|collider|trigger|physics|raycast)/.test(combined)) {
+    return "physics interaction";
+  }
+
+  return "general gameplay or runtime behavior";
+}
+
+function inferPrimarySymptom(input: AnalysisInput): string {
+  const candidates = [input.problemDescription, input.errorMessage, input.context]
+    .map((value) => normalizeText(value))
+    .filter(Boolean);
+
+  for (const candidate of candidates) {
+    const firstClause = splitIntoClauses(candidate)[0];
+    if (firstClause) {
+      return trimSentence(firstClause, 140);
+    }
+  }
+
+  return "No primary symptom stated.";
+}
+
+function extractScenarioAnchors(input: AnalysisInput): string[] {
+  const rawTexts = [input.problemDescription, input.errorMessage, input.context, input.codeSnippet]
+    .map((value) => String(value ?? ""));
+
+  const candidates = rawTexts.flatMap((text) => {
+    const quoted = Array.from(text.matchAll(/"([^"]{2,40})"|'([^']{2,40})'/g)).map(
+      (match) => match[1] ?? match[2] ?? "",
+    );
+    const identifiers = Array.from(text.matchAll(/\b[A-Z][A-Za-z0-9_]{2,30}\b/g)).map((match) => match[0]);
+    return [...quoted, ...identifiers];
+  });
+
+  return dedupeLines(
+    candidates
+      .map((value) => normalizeText(value))
+      .filter((value) => value.length >= 3 && value.length <= 40)
+      .filter((value) => !GENERIC_SCENARIO_TOKENS.has(value.toLowerCase()))
+      .map((value) => trimSentence(value, 40)),
+  ).slice(0, 4);
+}
+
+function inferUnitySurface(input: AnalysisInput): string {
+  const combined = [input.problemDescription, input.errorMessage, input.context, input.codeSnippet]
+    .map((value) => normalizeText(value))
+    .join(" ")
+    .toLowerCase();
+
+  if (/(nullreference|missingreference|serializefield|reference not set|prefab)/.test(combined)) {
+    return "runtime references / prefab wiring";
+  }
+  if (/(cs\d{4}|namespace|assembly definition|compile|cannot convert|method|signature)/.test(combined)) {
+    return "compile-time API or assembly boundaries";
+  }
+  if (/(build failed|gradle|il2cpp|addressables|player build|android|ios)/.test(combined)) {
+    return "build pipeline or platform packaging";
+  }
+  if (/(shader|material|urp|hdrp|lighting|pink|render pipeline)/.test(combined)) {
+    return "rendering / pipeline configuration";
+  }
+  if (/(rigidbody|collider|trigger|raycast|physics)/.test(combined)) {
+    return "physics / collision flow";
+  }
+  if (/(fps|stutter|lag|memory|gc|spike|performance)/.test(combined)) {
+    return "performance hotspots";
+  }
+
+  return "general Unity runtime behavior";
+}
+
+function buildSignalSummary(input: AnalysisInput): string[] {
+  const scenarioAnchors = extractScenarioAnchors(input);
+
+  return [
+    `Primary symptom: ${inferPrimarySymptom(input)}`,
+    `User intent area: ${inferUserIntent(input)}`,
+    `Likely failure surface: ${inferUnitySurface(input)}`,
+    scenarioAnchors.length > 0
+      ? `Scenario anchors: ${scenarioAnchors.join(", ")}`
+      : "Scenario anchors: none extracted from the report",
+    normalizeText(input.errorMessage)
+      ? `Concrete error available: ${trimSentence(input.errorMessage ?? "", 140)}`
+      : "Concrete error available: no",
+    normalizeText(input.codeSnippet)
+      ? `Code snippet provided: yes (${Math.min(normalizeText(input.codeSnippet).length, 220)} chars of signal)`
+      : "Code snippet provided: no",
+    normalizeText(input.context)
+      ? `Extra context: ${trimSentence(input.context ?? "", 140)}`
+      : "Extra context: no",
+  ];
+}
+
 function normalizeModelList(value: unknown, fallback: string[]): string[] {
   if (Array.isArray(value)) {
-    const cleaned = value
+    const cleaned = dedupeLines(
+      value
       .map((entry) => normalizeText(String(entry ?? "")))
       .filter(Boolean)
-      .slice(0, 5);
+      .map((entry) => trimSentence(entry, 180)),
+    ).slice(0, 5);
     return cleaned.length > 0 ? cleaned : fallback;
   }
 
@@ -43,7 +221,7 @@ function normalizeModelList(value: unknown, fallback: string[]): string[] {
 function toFreeAnalysisResponse(payload: OpenAIAnalysisResponse): FreeAnalysisResponse {
   return {
     what_happened:
-      normalizeText(String(payload.whatHappened ?? "")) ||
+      trimSentence(String(payload.whatHappened ?? ""), 220) ||
       "AI-E found enough signal to outline the Unity issue, but the root cause still needs a closer debugging pass.",
     what_matters: normalizeModelList(payload.whatMatters, [
       "The issue description contains enough signal to narrow the likely failure surface.",
@@ -64,25 +242,86 @@ function buildOpenAISystemPrompt(): string {
   return [
     "You are an expert Unity debugging assistant.",
     "Analyze Unity bugs, runtime failures, editor errors, build problems, render issues, and gameplay blockers.",
+    "Act like a senior Unity engineer doing a first debugging pass on a real project report.",
+    "Your job is to identify the single most likely cause of the issue and guide the user to verify and fix it.",
     "Return specific, non-generic advice grounded in the provided issue details.",
+    "Be decisive and practical.",
+    "Tie your diagnosis directly to the described behavior, object names, systems, or runtime symptoms from the report.",
+    "Your diagnosis must explain a cause-to-effect chain: what is wrong, why it produces the symptom, and what that affects.",
     "Do not return paragraphs of generic troubleshooting.",
+    "Do not give broad checklists.",
+    "Do not suggest large refactors or architecture changes.",
+    "Return exactly ONE primary likely cause.",
+    "Do not list alternatives, secondary causes, or multiple equal possibilities.",
+    "Do not hedge with phrases like 'could be', 'might be', 'possibly', or similar.",
+    "Do not attribute the issue to multiple tunable parameters (e.g., gravity, force, speed, mass). If multiple parameters could explain the symptom, choose the single most likely root cause and commit to it. Do not present parameter adjustment as a diagnosis.",
+    "Prefer structural or logical causes (e.g., overwritten velocity, incorrect condition, missing reference) over parameter tuning unless the input explicitly indicates a parameter misconfiguration.",
+    "Do not infer a specific tunable parameter (e.g., mass, drag, gravity, force) from the presence or introduction of a component. If the input only indicates that a component (such as Rigidbody2D) was added or changed, diagnose the most likely structural or logic issue introduced by that change (e.g., conflicting movement systems, overwritten values, incorrect update usage), not internal parameter settings. Only diagnose a parameter misconfiguration if the input explicitly references that parameter or clearly indicates a tuning issue.",
+    "Use Unity-specific reasoning when relevant: prefab references, serialized fields, scene wiring, MonoBehaviour lifecycle, assembly definitions, packages, player settings, build targets, shaders, URP/HDRP, colliders, Rigidbody state, triggers, Profiler, and console errors.",
+    "If the report contains an error string, code snippet, or context, anchor your reasoning to those signals instead of giving generic Unity advice.",
+    "The next steps must feel like a practical debugging sequence that a Unity developer can execute in order.",
     "Respond with JSON only using this exact shape:",
     '{"whatHappened":"...","whatMatters":["..."],"whatToDoNext":["...","...","..."]}',
     "Rules:",
-    "- whatHappened: one concise diagnosis summary",
-    "- whatMatters: 3 to 5 concrete observations about the likely fault line",
-    "- whatToDoNext: 3 to 5 ordered, bounded next debugging steps",
+    "- whatHappened: state the single most likely underlying issue in the project, not the symptom",
+    "- whatHappened must include a cause -> effect explanation, not just a description",
+    "- whatHappened must reference at least one specific object, script, or system mentioned in the input if any are present",
+    "- whatHappened must not stop at a broad category like physics, rendering, or references; it must name the specific likely failure inside that category",
+    "- Avoid generic phrases like 'a GameObject', 'an object', or 'something' when concrete names are available",
+    "- If scenario anchors are provided, you MUST reference at least one of them in whatHappened unless it is clearly irrelevant",
+    "- whatMatters: justify why this is the most likely cause using only clues from the user's input",
+    "- whatMatters: the first item should reinforce the primary cause, and the remaining items can support or validate it",
+    "- whatMatters: prefer the explanation that accounts for the symptom with the fewest assumptions",
+    "- whatMatters: do not introduce speculative systems or unrelated mechanics",
+    "- whatToDoNext: provide 3 to 5 ordered steps that directly verify, isolate, or disprove the suspected cause",
+    "- whatToDoNext: start with the fastest, highest-signal checks",
+    "- whatToDoNext: every step must be specific to the issue described, not generic maintenance advice",
     "- Avoid vague advice like 'check your code' or 'debug further'",
+    "- Avoid generic advice like 'Check the Inspector', 'Look at logs', or 'Verify everything is set correctly'",
+    "- Avoid filler phrases like 'there may be an issue' or 'consider investigating'",
+    "- If object names, systems, or symptoms are present, mention them directly instead of replacing them with generic nouns",
+    "- Prefer imperative next steps such as inspect, verify, reproduce, compare, isolate, rebuild, or profile",
+    "- Do not name a cause unless there is at least one concrete reason from the input to suspect it",
+    "- The diagnosis must explain the observed behavior better than other possibilities",
+    "- Keep the output short, high-signal, and product-ready",
     "- Assume the reader wants the fastest safe path to isolate the Unity issue",
   ].join(" ");
 }
 
 function buildOpenAIUserPrompt(input: AnalysisInput): string {
+  const scenarioAnchors = extractScenarioAnchors(input);
+
   return [
-    `Problem: ${normalizeText(input.problemDescription) || "None provided."}`,
-    `Code: ${normalizeText(input.codeSnippet) || "None provided."}`,
-    `Error: ${normalizeText(input.errorMessage) || "None provided."}`,
-    `Context: ${normalizeText(input.context) || "None provided."}`,
+    "Analyze this Unity issue report.",
+    "Identify the single most likely cause supported by the evidence below.",
+    "Do not list alternative causes or equal hypotheses.",
+    "Base your diagnosis only on evidence present in the report.",
+    "Your answer should feel like it is reacting to this specific scenario, not to a generic Unity bug template.",
+    "",
+    "Issue report:",
+    `- Problem description: ${normalizeText(input.problemDescription) || "None provided."}`,
+    `- Error message: ${normalizeText(input.errorMessage) || "None provided."}`,
+    `- Code snippet: ${normalizeText(input.codeSnippet) || "None provided."}`,
+    `- Context: ${normalizeText(input.context) || "None provided."}`,
+    "",
+    "Scenario framing:",
+    `- Primary symptom: ${inferPrimarySymptom(input)}`,
+    `- User intent area: ${inferUserIntent(input)}`,
+    `- Scenario anchors: ${scenarioAnchors.length > 0 ? scenarioAnchors.join(", ") : "None extracted."}`,
+    ...(scenarioAnchors.length > 0 ? [`- Preferred anchor: ${scenarioAnchors[0]}`] : []),
+    `- Likely failure surface: ${inferUnitySurface(input)}`,
+    "",
+    "High-signal summary:",
+    ...buildSignalSummary(input).map((line) => `- ${line}`),
+    "",
+    "Output requirements:",
+    "- Make whatHappened a concrete Unity root-cause diagnosis, not a symptom summary",
+    "- Mention the most relevant object, system, or behavior from the report if one is available",
+    "- You must incorporate at least one scenario anchor into your diagnosis if any are present",
+    "- Do not stop at a broad subsystem label; name the specific likely fault inside it",
+    "- Explain the cause -> effect chain: what is wrong, why it causes the behavior, and what that affects",
+    "- Make whatMatters justify this diagnosis using only clues from the report",
+    "- Make whatToDoNext a short step-by-step debugging sequence that directly tests the suspected cause",
   ].join("\n");
 }
 
