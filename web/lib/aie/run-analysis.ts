@@ -23,8 +23,6 @@ type OpenAIAnalysisResponse = {
   whatToDoNext?: unknown;
 };
 
-const PARAMETER_TUNING_TOKENS = ["mass", "drag", "gravity", "jumpforce", "weight"];
-
 const GENERIC_SCENARIO_TOKENS = new Set([
   "unity",
   "gameobject",
@@ -218,77 +216,6 @@ function normalizeModelList(value: unknown, fallback: string[]): string[] {
   }
 
   return fallback;
-}
-
-function mentionsExplicitParameterEvidence(input: AnalysisInput): boolean {
-  const evidenceText = [input.problemDescription, input.errorMessage, input.context]
-    .map((value) => normalizeText(value))
-    .join(" ")
-    .toLowerCase();
-
-  return PARAMETER_TUNING_TOKENS.some((token) => evidenceText.includes(token));
-}
-
-function looksLikePermanentFixSuggestion(step: string): boolean {
-  const normalized = normalizeText(step).toLowerCase();
-  return /^(add|modify|change|assign|update|replace|set|fix|adjust)\b/.test(normalized);
-}
-
-function buildConfirmationStep(input: AnalysisInput): string {
-  const codeSnippet = normalizeText(input.codeSnippet).toLowerCase();
-  const context = normalizeText(input.context).toLowerCase();
-
-  if (codeSnippet.includes("rb.velocity") && codeSnippet.includes("addforce")) {
-    return "Temporarily comment out the line that sets rb.velocity each frame and test whether the jump starts working again.";
-  }
-
-  if (codeSnippet.includes("camerafollow") && codeSnippet.includes("instantiate") && codeSnippet.includes("target")) {
-    return "Log CameraFollow.target immediately after the Player is instantiated to confirm whether it is still null or pointing at the removed scene Player.";
-  }
-
-  if (codeSnippet.includes("ontriggerenter2d") && codeSnippet.includes("turnpoint") && context.includes("extra child trigger collider")) {
-    return "Temporarily disable the extra child trigger collider and retest one TurnPoint pass to confirm that collider is the source of the bad turn events.";
-  }
-
-  const anchors = extractScenarioAnchors(input);
-  if (anchors.length > 0) {
-    return `Log or inspect ${anchors[0]} directly during reproduction to confirm it matches the suspected cause before changing the implementation.`;
-  }
-
-  return "Add one focused debug log or inspection point on the suspected failure path to confirm the diagnosis before changing the implementation.";
-}
-
-function buildCodeFocusedFallbackStep(input: AnalysisInput): string {
-  const anchors = extractScenarioAnchors(input);
-  if (anchors.length > 0) {
-    return `After the confirmation check, isolate the code path around ${anchors[0]} and verify it is the only logic changing the failing behavior.`;
-  }
-
-  return "After the confirmation check, isolate the exact code path tied to the failing behavior and verify it is the only logic changing that state.";
-}
-
-function sanitizeGuidedResponse(input: AnalysisInput, response: FreeAnalysisResponse): FreeAnalysisResponse {
-  const steps = [...response.what_to_do_next];
-
-  if (steps.length === 0) {
-    steps.push(buildConfirmationStep(input));
-  } else if (looksLikePermanentFixSuggestion(steps[0])) {
-    steps[0] = buildConfirmationStep(input);
-  }
-
-  if (input.codeSnippet && !mentionsExplicitParameterEvidence(input)) {
-    for (let index = 1; index < steps.length; index += 1) {
-      const normalized = normalizeText(steps[index]).toLowerCase();
-      if (PARAMETER_TUNING_TOKENS.some((token) => normalized.includes(token))) {
-        steps[index] = buildCodeFocusedFallbackStep(input);
-      }
-    }
-  }
-
-  return {
-    ...response,
-    what_to_do_next: dedupeLines(steps).slice(0, 5),
-  };
 }
 
 function toFreeAnalysisResponse(payload: OpenAIAnalysisResponse): FreeAnalysisResponse {
@@ -512,7 +439,7 @@ async function callOpenAIAnalysis(input: AnalysisInput): Promise<FreeAnalysisRes
     );
   }
 
-  return sanitizeGuidedResponse(input, toFreeAnalysisResponse(parsed));
+  return toFreeAnalysisResponse(parsed);
 }
 
 function classifyIssue(input: AnalysisInput):
@@ -654,13 +581,13 @@ function buildFallbackAnalysis(input: AnalysisInput): FreeAnalysisResponse {
     ],
   };
 
-  return sanitizeGuidedResponse(input, {
+  return {
     what_happened: happenedByType[issueType],
     what_matters: matters,
     what_to_do_next: nextStepsByType[issueType],
     upgrade_hint:
       "Upgrade for guided debugging workflows, richer follow-up, saved results, and a deeper issue breakdown.",
-  });
+  };
 }
 
 export async function runAnalysis(input: AnalysisInput): Promise<FreeAnalysisResponse> {
