@@ -238,6 +238,37 @@ function toFreeAnalysisResponse(payload: OpenAIAnalysisResponse): FreeAnalysisRe
   };
 }
 
+const DIRECT_FIX_STEP_PATTERN = /^(?:temporarily\s+)?(move|change|rewrite|switch|remove|replace|modify|yield)\b/i;
+
+function ensureConfirmationFirstStep(response: FreeAnalysisResponse): FreeAnalysisResponse {
+  const firstStep = response.what_to_do_next[0];
+  if (!firstStep || !DIRECT_FIX_STEP_PATTERN.test(firstStep)) {
+    return response;
+  }
+
+  let rewrittenStep = normalizeText(firstStep)
+    .replace(/^temporarily\b/i, "Temporarily")
+    .replace(/\bto (?:see|check|confirm) if\b/i, "and confirm whether")
+    .replace(/\bto confirm whether\b/i, "and confirm whether")
+    .replace(/\bto ensure\b.*$/i, "and see whether the issue changes")
+    .replace(/\.$/, "");
+
+  if (!/^temporarily\b/i.test(rewrittenStep)) {
+    rewrittenStep = rewrittenStep.replace(/^([A-Z])/, (_, letter: string) => `Temporarily ${letter.toLowerCase()}`);
+  }
+
+  if (!/\b(confirm|observe|check)\b/i.test(rewrittenStep)) {
+    rewrittenStep = `${rewrittenStep} and see whether the issue changes`;
+  }
+
+  rewrittenStep = trimSentence(`${rewrittenStep}.`, 180);
+
+  return {
+    ...response,
+    what_to_do_next: [rewrittenStep, ...response.what_to_do_next.slice(1)],
+  };
+}
+
 function buildOpenAISystemPrompt(): string {
   return [
     "You are an expert Unity debugging assistant.",
@@ -439,7 +470,7 @@ async function callOpenAIAnalysis(input: AnalysisInput): Promise<FreeAnalysisRes
     );
   }
 
-  return toFreeAnalysisResponse(parsed);
+  return ensureConfirmationFirstStep(toFreeAnalysisResponse(parsed));
 }
 
 function classifyIssue(input: AnalysisInput):
