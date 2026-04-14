@@ -357,6 +357,8 @@ Nothing outside these pillars is part of v5.
 
 ## Architecture Overview
 
+- Lane separation: [docs/architecture/ai_e_lane_separation.md](docs/architecture/ai_e_lane_separation.md) - Defines separation between product UI, raw dev testing, and execution layers
+
 ```
 app/
   actions.py      # Action interface abstractions (locked by default)
