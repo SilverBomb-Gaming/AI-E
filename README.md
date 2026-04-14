@@ -236,6 +236,7 @@ This is the current strategic model for AI-E. It separates the already-shippable
 - Includes: follow-up questioning, narrowing the cause, branching debug paths, preserving issue context through a session, step-by-step user guidance
 - Long-term weight: 25%
 - Current completion estimate: 10% to 15%
+- Current minimal shipped behavior: the first guided debugging step in the product diagnosis flow is now forced to be the highest-signal confirmation check for the primary cause before broader debugging begins
 
 ### Layer 3 — Execution / Verification
 
@@ -411,6 +412,7 @@ Nothing outside these pillars is part of v5.
 - Finalized prompt behavior to prevent inferred Rigidbody parameter diagnoses and enforce structural root-cause identification
 - Improved diagnosis accuracy by prioritizing code-level interaction issues when snippets are provided
 - Current MVP baseline: the product-layer prompt now achieves MVP-quality first-pass diagnosis on the validated jump case by selecting the code interaction bug over parameter tuning
+- Minimal Layer 2 behavior is now present in the product lane: the first guided step is required to be the single highest-signal confirmation check for the primary diagnosis
 
 ```
 app/
