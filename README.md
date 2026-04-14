@@ -219,6 +219,46 @@ Example flows:
 - `compare level set a and level set b`
   - returns a review-only platformer layout/profile comparison without starting execution
 
+## AI-E 4-Layer Operating Model
+
+This is the current strategic model for AI-E. It separates the already-shippable MVP-quality surface from the deeper intelligence and autonomy layers that still need to be built.
+
+### Layer 1 — Trustable Intelligence Output
+
+- Purpose: produce credible, specific, useful first-pass diagnosis
+- Includes: one likely cause, evidence-backed reasoning, code-aware diagnosis, actionable next steps, stable output formatting
+- Long-term weight: 20%
+- Current completion estimate: 85% to 90%
+
+### Layer 2 — Guided Debugging System
+
+- Purpose: turn diagnosis into a guided debugging workflow
+- Includes: follow-up questioning, narrowing the cause, branching debug paths, preserving issue context through a session, step-by-step user guidance
+- Long-term weight: 25%
+- Current completion estimate: 10% to 15%
+
+### Layer 3 — Execution / Verification
+
+- Purpose: validate whether a diagnosis is true instead of only sounding convincing
+- Includes: dry-run plans, execution checks, verification receipts, deterministic validation logic, eventually bounded real actions
+- Long-term weight: 25%
+- Current completion estimate: 20% to 25%
+
+### Layer 4 — Deep / Autonomous Intelligence
+
+- Purpose: achieve the long-term AI-E vision of powerful cross-project reasoning and bounded autonomy
+- Includes: persistent project understanding, multi-step problem solving, evolving internal models, cross-session continuity, bounded autonomy, eventually studio-operation capability
+- Long-term weight: 30%
+- Current completion estimate: 3% to 5%
+
+### Interpretation
+
+- Deep intelligence is the destination, not the first shippable layer.
+- Layer 1 proves credibility.
+- Layer 2 proves workflow value.
+- Layer 3 proves trust through validation.
+- Layer 4 is the long-term moat.
+
 ## Design References
 
 - Milestone summary: [docs/milestones/ai_e_bounded_experimentation.md](docs/milestones/ai_e_bounded_experimentation.md)
