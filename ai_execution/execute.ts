@@ -9,6 +9,22 @@ type ExecutionPlan = {
   requiresApproval: boolean;
 };
 
+type ExecutionReceipt = {
+  status: "invalid" | "awaiting_approval" | "approved_for_dry_run";
+  receiptId: string;
+  receiptTimestamp: string;
+  approvalId?: string;
+  reason?: string;
+  plan: ExecutionPlan;
+};
+
+type ApprovalState = "pending" | "approved";
+
+const ALLOWED_ACTIONS = ["inspect_codebase", "target_engine", "check_null_references"];
+
+const approvalState: ApprovalState = "pending";
+const receiptId = "receipt_local_0001";
+const receiptTimestamp = "2026-04-14T09:00:00Z";
 const input = "Analyze a Unity null reference issue before making any changes.";
 
 function buildPlan(request: string): ExecutionPlan {
@@ -34,6 +50,73 @@ function buildPlan(request: string): ExecutionPlan {
   };
 }
 
-const plan = buildPlan(input);
+function validatePlan(plan: ExecutionPlan): { valid: boolean; reason?: string } {
+  for (const action of plan.actions) {
+    if (!action || typeof action.type !== "string") {
+      return {
+        valid: false,
+        reason: "Action is missing a valid type.",
+      };
+    }
 
-console.log(JSON.stringify(plan, null, 2));
+    if (!ALLOWED_ACTIONS.includes(action.type)) {
+      return {
+        valid: false,
+        reason: `Action type is not allowed: ${action.type}`,
+      };
+    }
+
+    if (action.type === "target_engine" && !action.target) {
+      return {
+        valid: false,
+        reason: "target_engine actions must include a target.",
+      };
+    }
+  }
+
+  return {
+    valid: true,
+  };
+}
+
+function buildReceipt(plan: ExecutionPlan, approvalState: ApprovalState): ExecutionReceipt {
+  const validation = validatePlan(plan);
+
+  if (!validation.valid) {
+    return {
+      status: "invalid",
+      receiptId,
+      receiptTimestamp,
+      reason: validation.reason,
+      plan,
+    };
+  }
+
+  if (plan.requiresApproval && approvalState === "pending") {
+    return {
+      status: "awaiting_approval",
+      receiptId,
+      receiptTimestamp,
+      approvalId: "approval_local_0001",
+      plan,
+    };
+  }
+
+  return {
+    status: "approved_for_dry_run",
+    receiptId,
+    receiptTimestamp,
+    plan,
+  };
+}
+
+const plan = buildPlan(input);
+const receipt = buildReceipt(plan, approvalState);
+
+console.log(JSON.stringify(receipt, null, 2));
+
+if (receipt.status === "invalid") {
+  process.exit(1);
+}
+
+process.exit(0);
