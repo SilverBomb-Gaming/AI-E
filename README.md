@@ -320,6 +320,16 @@ These requests remain intentionally blocked because backward zombie movement is 
 - Result guidance validated: result opening, next-step guidance, and supporting-file access are visible and usable after completion.
 - Honest failure boundary validated: unsupported deterministic requests now fail with explicit, trustworthy guidance instead of generic or misleading fallback behavior.
 
+### Product-Layer Prompt MVP Baseline
+
+- MVP-ready baseline confirmed for the validated jump-case first-pass diagnosis.
+- Passing regression standard:
+  - exactly one primary cause
+  - code-first diagnosis anchored to the velocity write / jump-force interaction
+  - no fallback to mass, drag, gravity, or jumpForce tuning
+  - next steps stay targeted to verifying that one code-level cause
+- Baseline evidence: the validated jump case now diagnoses the per-frame `rb.velocity` write in `HeroController` as the cause that suppresses the upward `AddForce` result after the movement path changed to Rigidbody2D velocity.
+
 ## What Remains Deferred to V2
 
 - broader structured intent parsing beyond the minimal normalization layer
@@ -360,6 +370,7 @@ Nothing outside these pillars is part of v5.
 - Lane separation: [docs/architecture/ai_e_lane_separation.md](docs/architecture/ai_e_lane_separation.md) - Defines separation between product UI, raw dev testing, and execution layers
 - Finalized prompt behavior to prevent inferred Rigidbody parameter diagnoses and enforce structural root-cause identification
 - Improved diagnosis accuracy by prioritizing code-level interaction issues when snippets are provided
+- Current MVP baseline: the product-layer prompt now achieves MVP-quality first-pass diagnosis on the validated jump case by selecting the code interaction bug over parameter tuning
 
 ```
 app/
