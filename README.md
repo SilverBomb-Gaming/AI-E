@@ -246,6 +246,30 @@ This is the current strategic model for AI-E. It separates the already-shippable
 - Product boundary for this loop: this is one follow-up cycle only, not a general conversation system
 - Out of scope for now: memory, long-running session state, autonomous multi-step planning, execution behavior, hidden wiring, prompt/schema/API changes, or any new architecture layer beyond the current UI design target
 
+#### Bounded Verification Model (Layer 2 -> Layer 3 Bridge)
+
+- Purpose: define how AI-E should interpret the user's observation after a confirmation step without expanding beyond the current stateless loop
+- Verification result types:
+  - `Confirmed`: the observation supports the current diagnosis
+  - `Falsified`: the observation disproves the current diagnosis
+  - `Inconclusive`: the observation changes behavior partially or does not isolate the cause clearly
+- Expected AI-E behavior:
+  - `Confirmed`: narrow further or move toward fix guidance
+  - `Falsified`: drop the disproven cause and re-center on the next strongest grounded cause
+  - `Inconclusive`: preserve the best grounded cause but suggest a more discriminating next check later
+- Verification quality principles:
+  - prefer observations that isolate one system
+  - prefer reversible checks over permanent changes
+  - treat `symptom A changed but symptom B remained` as especially valuable evidence
+  - do not confuse reduced severity with full confirmation
+  - do not treat broad reverts as strong proof
+- Out of scope:
+  - no memory model
+  - no multi-step planner
+  - no execution engine
+  - no hidden state
+  - no autonomous chaining
+
 ### Layer 3 — Execution / Verification
 
 - Purpose: validate whether a diagnosis is true instead of only sounding convincing
