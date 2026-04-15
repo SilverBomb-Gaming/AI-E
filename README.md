@@ -238,6 +238,14 @@ This is the current strategic model for AI-E. It separates the already-shippable
 - Current completion estimate: 10% to 15%
 - Current minimal shipped behavior: the first guided debugging step in the product diagnosis flow is now forced to be the highest-signal confirmation check for the primary cause before broader debugging begins
 
+#### Layer 2 Follow-Up Loop (Planned)
+
+- Trigger: after the user tries step 1, they can enter a short observation in response to `After you try the first step, what did you observe?`
+- Expected observation shape: one brief concrete result such as `the error changed`, `nothing changed`, `the object is missing`, `the warning disappeared`, or `a different step now fails`
+- Future desired behavior: AI-E should treat that observation as the result of the first confirmation check and respond with one bounded follow-up turn that either confirms the current diagnosis, refines it, or redirects the user to the next most relevant check
+- Product boundary for this loop: this is one follow-up cycle only, not a general conversation system
+- Out of scope for now: memory, long-running session state, autonomous multi-step planning, execution behavior, hidden wiring, prompt/schema/API changes, or any new architecture layer beyond the current UI design target
+
 ### Layer 3 — Execution / Verification
 
 - Purpose: validate whether a diagnosis is true instead of only sounding convincing
