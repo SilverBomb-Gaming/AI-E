@@ -25,11 +25,15 @@ const GENERIC_DIAGNOSIS_PATTERN =
 const CONCRETE_ANCHOR_PATTERN =
   /\b(?:Rigidbody2D|NavMeshAgent|Cinemachine|Animator|CanvasGroup|SceneManager|NullReferenceException|MissingReferenceException|Transform|Button|Slider|Image|Update|Start|Awake|FixedUpdate|MovePosition|AddForce|onClick|FadeOut)\b|[A-Za-z_]+\.[A-Za-z_]+/;
 const CONFIRMATION_SIGNAL_PATTERN =
-  /works? again|behaves? normally|returned to normal|fixed|resolved|disappear(?:ed|s)?|went away|stops? (?:happening|flickering|crashing)|regains? control|starts? working|lets? .*run normally|makes? .*disappear/i;
+  /works? again|behaves? normally|returned to normal|fixed|resolved|disappear(?:ed|s)?|went away|stops? (?:happening|flickering|crashing)|regains? control|starts? working|lets? .*run normally|makes? .*disappear|removes? .*completely/i;
 const FALSIFICATION_SIGNAL_PATTERN =
   /nothing changed|no change|same issue|same behavior|still broken the same|did not help|did nothing|doesn't help|no effect|unchanged|still happens exactly the same/i;
 const PARTIAL_SIGNAL_PATTERN =
   /\bbut\b|partially|reduced|less severe|less often|smaller|improved?.*\bstill\b|fixed.*\bbut\b|stops?.*\bbut\b/i;
+const ACTIONABLE_CONFIRMATION_STEP_PATTERN =
+  /\b(?:disable|turn off|remove|bypass|force|toggle|clear|delay|comment out|skip|pause)\b/i;
+const WEAK_CONFIRMATION_STEP_PATTERN =
+  /^(?:temporarily\s+)?(?:add a debug log|log\b|inspect\b|check\b|verify\b|look at\b)/i;
 
 const STOP_WORDS = new Set([
   "about",
@@ -103,6 +107,92 @@ function calculateSimilarity(left: Set<string>, right: Set<string>): number {
   }
 
   return sharedTerms / new Set([...left, ...right]).size;
+}
+
+function trimLeadingArticle(text: string): string {
+  return text.replace(/^(?:the|a|an)\s+/i, "").trim();
+}
+
+function trimTrailingPunctuation(text: string): string {
+  return text.replace(/[.?!,;:]+$/g, "").trim();
+}
+
+function capitalizeSentence(text: string): string {
+  if (!text) {
+    return text;
+  }
+
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+function lowerFirstCharacter(text: string): string {
+  if (!text) {
+    return text;
+  }
+
+  return text.charAt(0).toLowerCase() + text.slice(1);
+}
+
+function normalizeEvidenceClause(text: string): string {
+  return trimTrailingPunctuation(text).replace(/[.?!]+\s*/g, ", ").replace(/\s+,/g, ",").replace(/\s+/g, " ").trim();
+}
+
+function cleanFocusPhrase(text: string): string | null {
+  const cleaned = trimLeadingArticle(trimTrailingPunctuation(text)).replace(/\s+/g, " ");
+  if (!cleaned) {
+    return null;
+  }
+
+  return cleaned.split(" ").slice(0, 6).join(" ");
+}
+
+function extractFocusPhrase(text: string): string | null {
+  const actionableMatch = text.match(
+    /\b(?:disable|disabling|turn off|turning off|remove|removing|bypass|bypassing|force|forcing|clear|clearing|delay|delaying|skip|skipping|pause|pausing|comment out|commenting out)\s+(?:the\s+)?([^.,;]+?)(?:\s+(?:to|lets?|makes?|causes?|restores?|returns?|fixes?|resolves?|stops?)\b|[.,;]|$)/i,
+  );
+  if (actionableMatch) {
+    return cleanFocusPhrase(actionableMatch[1]);
+  }
+
+  const nounPhraseMatch = text.match(/\b(?:the|a|an)\s+([^.,;]+?)(?:\s+(?:is|are|was|were|to|before|after|during|when)\b|[.,;]|$)/i);
+  if (nounPhraseMatch) {
+    return cleanFocusPhrase(nounPhraseMatch[1]);
+  }
+
+  return null;
+}
+
+function strengthenConfirmationStep(step: string | undefined, diagnosis: string): string | undefined {
+  if (!step) {
+    return step;
+  }
+
+  if (ACTIONABLE_CONFIRMATION_STEP_PATTERN.test(step) || !WEAK_CONFIRMATION_STEP_PATTERN.test(step)) {
+    return step;
+  }
+
+  const focus = extractFocusPhrase(step) ?? extractFocusPhrase(diagnosis) ?? "suspected system";
+  return `Temporarily disable or bypass the ${focus} once and compare the behavior before and after. If the issue changes immediately, that supports this diagnosis. If nothing changes, it points elsewhere.`;
+}
+
+function buildFalsifiedDiagnosis(params: {
+  originalResult: FreeAnalysisResponse;
+  nextResult: FreeAnalysisResponse;
+  observation: string;
+}): string {
+  const firstStep = params.originalResult.what_to_do_next[0] ?? "";
+  const noEffectClause = params.observation.split(/\bbut\b/i)[0]?.trim() ?? "";
+  const alternativeClause = params.observation.split(/\bbut\b/i)[1]?.trim() ?? params.observation.trim();
+  const originalFocus =
+    extractFocusPhrase(firstStep) ?? extractFocusPhrase(params.originalResult.what_happened) ?? "the original suspected system";
+  const alternativeFocus =
+    extractFocusPhrase(alternativeClause) ?? extractFocusPhrase(params.nextResult.what_happened) ?? "a different system";
+  const noEffectSummary = noEffectClause
+    ? lowerFirstCharacter(normalizeEvidenceClause(noEffectClause)).replace(/,\s+([A-Z])/g, (_, character: string) => `, ${character.toLowerCase()}`)
+    : `changing ${trimLeadingArticle(originalFocus)} had no effect`;
+  const alternativeEvidence = capitalizeSentence(normalizeEvidenceClause(alternativeClause));
+
+  return `Since ${noEffectSummary}, the issue is more likely driven by ${trimLeadingArticle(alternativeFocus)} than ${trimLeadingArticle(originalFocus)}. ${alternativeEvidence}.`;
 }
 
 function classifyFollowUpResult(params: {
@@ -202,6 +292,7 @@ export function AnalysisResult({
   onResultChange,
 }: AnalysisResultProps) {
   const [confirmFirstStep, ...followUpSteps] = result.what_to_do_next;
+  const displayedConfirmFirstStep = strengthenConfirmationStep(confirmFirstStep, result.what_happened);
   const showLowEvidenceCue = shouldShowLowEvidenceCue(result);
   const [observation, setObservation] = useState("");
   const [isSubmittingFollowUp, setIsSubmittingFollowUp] = useState(false);
@@ -243,14 +334,27 @@ export function AnalysisResult({
         return;
       }
 
-      onResultChange?.({
-        result: payload,
+      const verificationState = classifyFollowUpResult({
+        originalResult: result,
+        nextResult: payload,
         observation: submittedObservation,
-        verificationState: classifyFollowUpResult({
-          originalResult: result,
-          nextResult: payload,
-          observation: submittedObservation,
-        }),
+      });
+      const nextResult =
+        verificationState === "falsified"
+          ? {
+              ...payload,
+              what_happened: buildFalsifiedDiagnosis({
+                originalResult: result,
+                nextResult: payload,
+                observation: submittedObservation,
+              }),
+            }
+          : payload;
+
+      onResultChange?.({
+        result: nextResult,
+        observation: submittedObservation,
+        verificationState,
       });
       setObservation("");
     } catch {
@@ -306,10 +410,10 @@ export function AnalysisResult({
       <section className="glass-card rounded-[1.75rem] p-6 shadow-float sm:p-7">
         <p className="section-label">What to do next</p>
         <p className="mt-3 text-sm leading-7 body-muted">Start with the first check before making broader changes.</p>
-        {confirmFirstStep ? (
+        {displayedConfirmFirstStep ? (
           <div className="mt-4 rounded-[1.25rem] border border-ocean/15 bg-ocean/5 p-4">
             <p className="section-label">Confirm first</p>
-            <p className="mt-2 text-sm leading-7 text-ink/90 sm:text-base">1. {confirmFirstStep}</p>
+            <p className="mt-2 text-sm leading-7 text-ink/90 sm:text-base">1. {displayedConfirmFirstStep}</p>
           </div>
         ) : null}
         {followUpSteps.length > 0 ? (

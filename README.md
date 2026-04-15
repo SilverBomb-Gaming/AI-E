@@ -280,6 +280,14 @@ This is the current strategic model for AI-E. It separates the already-shippable
 - Recommended next move: treat the current interpretation loop as the new stable baseline and proceed to the next small bounded Layer 3 refinement
 - Remaining weakness: the next smallest failure source appears to be first-step and second-pass diagnosis quality in weak-evidence cases, not the current verification-state classifier
 
+#### Confirmation-Step And Falsification Re-centering Refinement (2026-04-15)
+
+- What changed: the client-side result renderer now rewrites passive confirmation-first steps into reversible before/after checks, and falsified follow-up results are displayed with a re-centered diagnosis that explicitly names the newly indicated lever instead of leading with the disproven cause
+- Why it was needed: the stable interpretation baseline still showed two product weaknesses in playtesting, weak inspection-style first steps and falsified cases where the badge changed faster than the diagnosis copy
+- Expected effect: users should get sharper step-1 evidence and clearer visible redirection when the first hypothesis fails
+- Targeted validation status: one decisive falsification case re-centered correctly, both weak-evidence cases showed stronger confirmation steps while remaining `Inconclusive`, and one mixed-system falsification probe still stayed `Inconclusive`
+- Next validation move: keep this out of full playtest for now and re-check falsification behavior on a broader mixed-system subset before rerunning the full 10-case audit
+
 ### Layer 3 — Execution / Verification
 
 - Purpose: validate whether a diagnosis is true instead of only sounding convincing
