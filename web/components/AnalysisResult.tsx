@@ -170,6 +170,19 @@ function getVerificationClassName(verificationState: FollowUpVerificationState |
   }
 }
 
+function getVerificationHint(verificationState: FollowUpVerificationState | undefined): string | null {
+  switch (verificationState) {
+    case "confirmed":
+      return "This supports the current diagnosis. Continue with the next steps.";
+    case "falsified":
+      return "This suggests a different cause. Focus on the updated diagnosis.";
+    case "inconclusive":
+      return "This result is not definitive. Try a more isolating check.";
+    default:
+      return null;
+  }
+}
+
 export function AnalysisResult({
   result,
   input,
@@ -181,7 +194,6 @@ export function AnalysisResult({
   const [confirmFirstStep, ...followUpSteps] = result.what_to_do_next;
   const showLowEvidenceCue = shouldShowLowEvidenceCue(result);
   const [observation, setObservation] = useState("");
-  const [lastSubmittedObservation, setLastSubmittedObservation] = useState<string | null>(null);
   const [isSubmittingFollowUp, setIsSubmittingFollowUp] = useState(false);
   const [followUpError, setFollowUpError] = useState<string | null>(null);
   const trimmedObservation = useMemo(() => observation.trim(), [observation]);
@@ -221,7 +233,6 @@ export function AnalysisResult({
         return;
       }
 
-      onResultChange?.(payload);
       onResultChange?.({
         result: payload,
         observation: submittedObservation,
@@ -261,6 +272,9 @@ export function AnalysisResult({
               <p className="text-xs leading-6 body-muted sm:text-sm">
                 You observed: &quot;{lastObservation}&quot;
               </p>
+            ) : null}
+            {getVerificationHint(verificationState) ? (
+              <p className="text-xs leading-6 body-muted sm:text-sm">{getVerificationHint(verificationState)}</p>
             ) : null}
           </div>
         ) : null}
