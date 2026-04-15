@@ -288,6 +288,14 @@ This is the current strategic model for AI-E. It separates the already-shippable
 - Targeted validation status: one decisive falsification case re-centered correctly, both weak-evidence cases showed stronger confirmation steps while remaining `Inconclusive`, and one mixed-system falsification probe still stayed `Inconclusive`
 - Next validation move: keep this out of full playtest for now and re-check falsification behavior on a broader mixed-system subset before rerunning the full 10-case audit
 
+#### Alternate Lever Dominance Refinement (2026-04-15)
+
+- What changed: the client-side renderer now treats `first step had no effect` plus `a different action clearly fixed or removed the issue` as alternate-lever dominance, even when the refined diagnosis text does not independently re-center fast enough
+- Why it was needed: mixed-system falsification cases were still sticking in `Inconclusive` when the user observation clearly showed that another lever dominated the result
+- Expected effect: mixed-system follow-ups should classify as `Falsified` more reliably and route the visible diagnosis toward the effective lever
+- Targeted validation status: two mixed-system falsification probes now classified as `Falsified` with visible re-centering, while two weak-evidence controls remained `Inconclusive`
+- Next validation move: this passes the targeted gate for mixed-system falsification behavior, but the loop is still not full playtest-ready until the broader 10-case audit is rerun against the new baseline
+
 ### Layer 3 — Execution / Verification
 
 - Purpose: validate whether a diagnosis is true instead of only sounding convincing

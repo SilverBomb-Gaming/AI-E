@@ -27,7 +27,7 @@ const CONCRETE_ANCHOR_PATTERN =
 const CONFIRMATION_SIGNAL_PATTERN =
   /works? again|behaves? normally|returned to normal|fixed|resolved|disappear(?:ed|s)?|went away|stops? (?:happening|flickering|crashing)|regains? control|starts? working|lets? .*run normally|makes? .*disappear|removes? .*completely/i;
 const FALSIFICATION_SIGNAL_PATTERN =
-  /nothing changed|no change|same issue|same behavior|still broken the same|did not help|did nothing|doesn't help|no effect|unchanged|still happens exactly the same/i;
+  /nothing changed|changes nothing|no change|same issue|same behavior|still broken the same|did not help|did nothing|doesn't help|no effect|unchanged|still happens exactly the same/i;
 const PARTIAL_SIGNAL_PATTERN =
   /\bbut\b|partially|reduced|less severe|less often|smaller|improved?.*\bstill\b|fixed.*\bbut\b|stops?.*\bbut\b/i;
 const ACTIONABLE_CONFIRMATION_STEP_PATTERN =
@@ -137,6 +137,24 @@ function normalizeEvidenceClause(text: string): string {
   return trimTrailingPunctuation(text).replace(/[.?!]+\s*/g, ", ").replace(/\s+,/g, ",").replace(/\s+/g, " ").trim();
 }
 
+function normalizeFocusKey(text: string | null): string | null {
+  if (!text) {
+    return null;
+  }
+
+  return trimLeadingArticle(text.toLowerCase()).replace(/[^a-z0-9\s-]/g, " ").replace(/\s+/g, " ").trim() || null;
+}
+
+function hasDistinctAlternateLever(originalFocus: string | null, alternativeFocus: string | null): boolean {
+  const originalKey = normalizeFocusKey(originalFocus);
+  const alternativeKey = normalizeFocusKey(alternativeFocus);
+  if (!originalKey || !alternativeKey) {
+    return false;
+  }
+
+  return originalKey !== alternativeKey && !originalKey.includes(alternativeKey) && !alternativeKey.includes(originalKey);
+}
+
 function cleanFocusPhrase(text: string): string | null {
   const cleaned = trimLeadingArticle(trimTrailingPunctuation(text)).replace(/\s+/g, " ");
   if (!cleaned) {
@@ -211,6 +229,8 @@ function classifyFollowUpResult(params: {
   const firstStepTerms = extractComparableTerms(firstStep);
   const observationTerms = extractComparableTerms(observation);
   const alternativeTerms = extractComparableTerms(alternativeObservationText);
+  const originalFocus = extractFocusPhrase(firstStep) ?? extractFocusPhrase(params.originalResult.what_happened);
+  const alternativeFocus = extractFocusPhrase(alternativeObservationText);
   const similarity = calculateSimilarity(originalTerms, nextTerms);
   const sharedTerms = [...originalTerms].filter((term) => nextTerms.has(term)).length;
   const stepAlignmentCount = [...firstStepTerms].filter((term) => observationTerms.has(term)).length;
@@ -220,16 +240,16 @@ function classifyFollowUpResult(params: {
   const hasFalsificationSignal = FALSIFICATION_SIGNAL_PATTERN.test(observation);
   const hasPartialSignal = PARTIAL_SIGNAL_PATTERN.test(observation);
   const alternativeEffectSignal = CONFIRMATION_SIGNAL_PATTERN.test(alternativeObservationText);
+  const alternateLeverDominance =
+    hasFalsificationSignal &&
+    alternativeEffectSignal &&
+    (hasDistinctAlternateLever(originalFocus, alternativeFocus) || [...alternativeTerms].some((term) => !firstStepTerms.has(term)));
 
   const sameGroundedCause = sharedTerms >= 3 || similarity >= 0.3;
   const shiftedGroundedCause = sharedTerms === 0 && similarity <= 0.12;
   const directStepRecovery = stepAlignmentCount >= 2 && hasConfirmationSignal;
-  const decisiveAlternativeShift =
-    hasFalsificationSignal &&
-    alternativeEffectSignal &&
-    [...alternativeTerms].some((term) => !firstStepTerms.has(term));
 
-  if (hasFalsificationSignal && (shiftedGroundedCause || alternativeAligned || decisiveAlternativeShift)) {
+  if (hasFalsificationSignal && (shiftedGroundedCause || alternativeAligned || alternateLeverDominance)) {
     return "falsified";
   }
 
