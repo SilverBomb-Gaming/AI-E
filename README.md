@@ -270,6 +270,16 @@ This is the current strategic model for AI-E. It separates the already-shippable
   - no hidden state
   - no autonomous chaining
 
+#### 10-Case Audit Rerun (2026-04-15)
+
+- Audit scope: reran the same 10-case full-loop validation after the client-side interpretation refinement in `AnalysisResult.tsx`
+- Result: `Pass 7`, `Borderline 2`, `Fail 1`
+- Stability threshold: met the `7/10 pass` gate for the current bounded Layer 3 loop
+- What improved: decisive falsification and decisive confirmation cases no longer default to `Inconclusive` when the follow-up evidence is clear
+- Regression check: messy, partial, and ambiguous cases remained appropriately conservative and did not show a new over-classification pattern
+- Recommended next move: treat the current interpretation loop as the new stable baseline and proceed to the next small bounded Layer 3 refinement
+- Remaining weakness: the next smallest failure source appears to be first-step and second-pass diagnosis quality in weak-evidence cases, not the current verification-state classifier
+
 ### Layer 3 — Execution / Verification
 
 - Purpose: validate whether a diagnosis is true instead of only sounding convincing
