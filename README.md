@@ -296,6 +296,15 @@ This is the current strategic model for AI-E. It separates the already-shippable
 - Targeted validation status: two mixed-system falsification probes now classified as `Falsified` with visible re-centering, while two weak-evidence controls remained `Inconclusive`
 - Next validation move: this passes the targeted gate for mixed-system falsification behavior, but the loop is still not full playtest-ready until the broader 10-case audit is rerun against the new baseline
 
+#### Full 10-Case Audit After Mixed-System Refinement (2026-04-15)
+
+- Audit scope: reran the established 10-case full-loop audit against the current shipped renderer behavior after decisive-evidence interpretation, confirmation-step sharpening, falsification re-centering, and alternate-lever dominance refinements
+- Result: `Pass 7`, `Borderline 2`, `Fail 1`
+- Threshold result: the loop still clears the `7/10 pass` stability gate and remains suitable as the current bounded Layer 3 baseline
+- Mixed-system result: no ambiguity regression appeared in the mixed-system audit cases, and the targeted mixed-system falsification probes already validated the new alternate-lever recentring path
+- Remaining weakness: the next smallest issue is still first-step quality in low-evidence runtime and messy-input cases, not broad verification-state collapse
+- Recommended next move: adopt the current Layer 3 loop as the stable baseline and treat any further work as a small bounded refinement on top of it rather than an architectural expansion
+
 ### Layer 3 — Execution / Verification
 
 - Purpose: validate whether a diagnosis is true instead of only sounding convincing
