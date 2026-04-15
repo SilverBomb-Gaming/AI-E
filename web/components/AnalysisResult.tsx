@@ -43,6 +43,7 @@ export function AnalysisResult({ result, input, isRefined = false, onResultChang
   const [confirmFirstStep, ...followUpSteps] = result.what_to_do_next;
   const showLowEvidenceCue = shouldShowLowEvidenceCue(result);
   const [observation, setObservation] = useState("");
+  const [lastSubmittedObservation, setLastSubmittedObservation] = useState<string | null>(null);
   const [isSubmittingFollowUp, setIsSubmittingFollowUp] = useState(false);
   const [followUpError, setFollowUpError] = useState<string | null>(null);
   const trimmedObservation = useMemo(() => observation.trim(), [observation]);
@@ -52,6 +53,8 @@ export function AnalysisResult({ result, input, isRefined = false, onResultChang
     if (!input?.problemDescription || !trimmedObservation || isSubmittingFollowUp) {
       return;
     }
+
+    const submittedObservation = trimmedObservation;
 
     setFollowUpError(null);
     setIsSubmittingFollowUp(true);
@@ -81,6 +84,7 @@ export function AnalysisResult({ result, input, isRefined = false, onResultChang
       }
 
       onResultChange?.(payload);
+      setLastSubmittedObservation(submittedObservation);
       setObservation("");
     } catch {
       setFollowUpError("We couldn't generate an analysis right now. Please try again.");
@@ -94,9 +98,16 @@ export function AnalysisResult({ result, input, isRefined = false, onResultChang
       <section className="glass-card rounded-[1.75rem] p-6 shadow-float sm:p-7">
         <p className="section-label">Diagnosis</p>
         {isRefined ? (
-          <p className="mt-2 inline-flex rounded-full border border-ocean/15 bg-ocean/5 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-ocean">
-            Refined based on your observation
-          </p>
+          <div className="mt-2 space-y-2">
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-ocean/80">
+              Refined based on your observation
+            </p>
+            {lastSubmittedObservation ? (
+              <p className="text-xs leading-6 body-muted sm:text-sm">
+                You observed: &quot;{lastSubmittedObservation}&quot;
+              </p>
+            ) : null}
+          </div>
         ) : null}
         {showLowEvidenceCue ? (
           <p className="mt-2 text-xs leading-6 body-muted sm:text-sm">
