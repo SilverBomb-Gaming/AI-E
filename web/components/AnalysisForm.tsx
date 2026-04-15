@@ -7,6 +7,12 @@ import type { AnalysisInput, FreeAnalysisResponse } from "@/lib/aie/types";
 
 const STORAGE_KEY = "aie-free-analysis-result";
 
+export type StoredAnalysisState = {
+  input?: AnalysisInput;
+  result: FreeAnalysisResponse;
+  refinedFromObservation?: boolean;
+};
+
 const initialForm: AnalysisInput = {
   problemDescription: "",
   codeSnippet: "",
@@ -49,7 +55,14 @@ export function AnalysisForm() {
         return;
       }
 
-      window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+      window.sessionStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({
+          input: form,
+          result: payload,
+          refinedFromObservation: false,
+        } satisfies StoredAnalysisState),
+      );
       router.push("/result");
     } catch {
       setErrorMessage("We couldn't generate an analysis right now. Please try again.");

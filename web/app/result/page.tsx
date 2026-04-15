@@ -4,12 +4,66 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { AnalysisResult } from "@/components/AnalysisResult";
+import { resultStorageKey, type StoredAnalysisState } from "@/components/AnalysisForm";
 import { UpgradeCard } from "@/components/UpgradeCard";
-import { resultStorageKey } from "@/components/AnalysisForm";
-import type { FreeAnalysisResponse } from "@/lib/aie/types";
+import type { AnalysisInput, FreeAnalysisResponse } from "@/lib/aie/types";
+
+function isFreeAnalysisResponse(value: unknown): value is FreeAnalysisResponse {
+  const source = value as Record<string, unknown>;
+
+  return (
+    typeof source?.what_happened === "string" &&
+    Array.isArray(source?.what_matters) &&
+    Array.isArray(source?.what_to_do_next) &&
+    typeof source?.upgrade_hint === "string"
+  );
+}
+
+function normalizeAnalysisInput(value: unknown): AnalysisInput | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+
+  const source = value as Record<string, unknown>;
+  const problemDescription = String(source.problemDescription ?? "").trim();
+  if (!problemDescription) {
+    return undefined;
+  }
+
+  return {
+    problemDescription,
+    codeSnippet: String(source.codeSnippet ?? "").trim(),
+    errorMessage: String(source.errorMessage ?? "").trim(),
+    context: String(source.context ?? "").trim(),
+  };
+}
+
+function normalizeStoredAnalysisState(value: unknown): StoredAnalysisState | null {
+  if (isFreeAnalysisResponse(value)) {
+    return {
+      result: value,
+      refinedFromObservation: false,
+    };
+  }
+
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const source = value as Record<string, unknown>;
+  if (!isFreeAnalysisResponse(source.result)) {
+    return null;
+  }
+
+  return {
+    input: normalizeAnalysisInput(source.input),
+    result: source.result,
+    refinedFromObservation: Boolean(source.refinedFromObservation),
+  };
+}
 
 export default function ResultPage() {
-  const [result, setResult] = useState<FreeAnalysisResponse | null>(null);
+  const [storedState, setStoredState] = useState<StoredAnalysisState | null>(null);
 
   useEffect(() => {
     const raw = window.sessionStorage.getItem(resultStorageKey);
@@ -18,13 +72,19 @@ export default function ResultPage() {
     }
 
     try {
-      setResult(JSON.parse(raw) as FreeAnalysisResponse);
+      const nextState = normalizeStoredAnalysisState(JSON.parse(raw));
+      if (!nextState) {
+        window.sessionStorage.removeItem(resultStorageKey);
+        return;
+      }
+
+      setStoredState(nextState);
     } catch {
       window.sessionStorage.removeItem(resultStorageKey);
     }
   }, []);
 
-  if (!result) {
+  if (!storedState) {
     return (
       <main className="page-shell mx-auto max-w-4xl px-6 py-12 lg:px-10">
         <div className="glass-card rounded-[2rem] p-8 shadow-float">
@@ -63,11 +123,31 @@ export default function ResultPage() {
         </div>
       </div>
       <div className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
-        <AnalysisResult result={result} />
+        <AnalysisResult
+          result={storedState.result}
+          input={storedState.input}
+          isRefined={Boolean(storedState.refinedFromObservation)}
+          onResultChange={(nextResult) => {
+            setStoredState((current) => {
+              if (!current) {
+                return current;
+              }
+
+              const nextState = {
+                ...current,
+                result: nextResult,
+                refinedFromObservation: true,
+              } satisfies StoredAnalysisState;
+
+              window.sessionStorage.setItem(resultStorageKey, JSON.stringify(nextState));
+              return nextState;
+            });
+          }}
+        />
         <div className="space-y-6">
           <div className="glass-card rounded-[1.75rem] p-6 shadow-float">
             <p className="section-label">Upgrade hint</p>
-            <p className="mt-3 text-sm leading-7 text-ink/90">{result.upgrade_hint}</p>
+            <p className="mt-3 text-sm leading-7 text-ink/90">{storedState.result.upgrade_hint}</p>
           </div>
           <UpgradeCard compact />
         </div>

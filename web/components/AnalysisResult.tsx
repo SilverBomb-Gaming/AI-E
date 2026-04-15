@@ -1,7 +1,14 @@
-import type { FreeAnalysisResponse } from "@/lib/aie/types";
+"use client";
+
+import { useMemo, useState } from "react";
+
+import type { AnalysisInput, FreeAnalysisResponse } from "@/lib/aie/types";
 
 type AnalysisResultProps = {
   result: FreeAnalysisResponse;
+  input?: AnalysisInput;
+  isRefined?: boolean;
+  onResultChange?: (result: FreeAnalysisResponse) => void;
 };
 
 const EVIDENCE_GAP_PATTERN =
@@ -21,14 +28,76 @@ function shouldShowLowEvidenceCue(result: FreeAnalysisResponse): boolean {
   return hasEvidenceGapSignal || hasGenericDiagnosisSignal || (hedgedDiagnosis && !hasConcreteAnchor);
 }
 
-export function AnalysisResult({ result }: AnalysisResultProps) {
+function buildFollowUpProblemDescription(problemDescription: string, observation: string): string {
+  const trimmedDescription = problemDescription.trim();
+  const trimmedObservation = observation.trim();
+  if (!trimmedObservation) {
+    return trimmedDescription;
+  }
+
+  const separator = /[.!?]$/.test(trimmedDescription) ? " " : ". ";
+  return `${trimmedDescription}${separator}After trying the first step: ${trimmedObservation}`;
+}
+
+export function AnalysisResult({ result, input, isRefined = false, onResultChange }: AnalysisResultProps) {
   const [confirmFirstStep, ...followUpSteps] = result.what_to_do_next;
   const showLowEvidenceCue = shouldShowLowEvidenceCue(result);
+  const [observation, setObservation] = useState("");
+  const [isSubmittingFollowUp, setIsSubmittingFollowUp] = useState(false);
+  const [followUpError, setFollowUpError] = useState<string | null>(null);
+  const trimmedObservation = useMemo(() => observation.trim(), [observation]);
+  const canSubmitFollowUp = Boolean(input?.problemDescription && trimmedObservation && !isSubmittingFollowUp);
+
+  const handleFollowUpSubmit = async () => {
+    if (!input?.problemDescription || !trimmedObservation || isSubmittingFollowUp) {
+      return;
+    }
+
+    setFollowUpError(null);
+    setIsSubmittingFollowUp(true);
+
+    try {
+      const response = await fetch("/api/analyze", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          problemDescription: buildFollowUpProblemDescription(input.problemDescription, trimmedObservation),
+          errorMessage: input.errorMessage ?? "",
+          context: input.context ?? "",
+          codeSnippet: input.codeSnippet ?? "",
+        } satisfies AnalysisInput),
+      });
+
+      const payload = (await response.json()) as FreeAnalysisResponse | { error?: string };
+      if (!response.ok) {
+        setFollowUpError(
+          payload && "error" in payload
+            ? payload.error || "We couldn't generate an analysis right now. Please try again."
+            : "We couldn't generate an analysis right now. Please try again.",
+        );
+        return;
+      }
+
+      onResultChange?.(payload);
+      setObservation("");
+    } catch {
+      setFollowUpError("We couldn't generate an analysis right now. Please try again.");
+    } finally {
+      setIsSubmittingFollowUp(false);
+    }
+  };
 
   return (
     <div className="grid gap-5">
       <section className="glass-card rounded-[1.75rem] p-6 shadow-float sm:p-7">
         <p className="section-label">Diagnosis</p>
+        {isRefined ? (
+          <p className="mt-2 inline-flex rounded-full border border-ocean/15 bg-ocean/5 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-ocean">
+            Refined based on your observation
+          </p>
+        ) : null}
         {showLowEvidenceCue ? (
           <p className="mt-2 text-xs leading-6 body-muted sm:text-sm">
             Given the current details, this is the most likely explanation.
@@ -68,9 +137,25 @@ export function AnalysisResult({ result }: AnalysisResultProps) {
           <input
             type="text"
             aria-label="Optional follow-up observation"
+            value={observation}
+            onChange={(event) => setObservation(event.target.value)}
             placeholder="Optional note for your next debugging pass"
             className="mt-3 w-full rounded-[1rem] border border-ink/10 bg-white/70 px-4 py-3 text-sm text-ink outline-none placeholder:text-slate"
           />
+          <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-xs leading-6 body-muted">
+              AI-E will re-run the same analysis using your observation as additional context.
+            </p>
+            <button
+              type="button"
+              onClick={handleFollowUpSubmit}
+              disabled={!canSubmitFollowUp}
+              className="rounded-full bg-ink px-5 py-3 text-sm font-semibold text-white transition hover:-translate-y-0.5 hover:bg-slate disabled:cursor-not-allowed disabled:opacity-70"
+            >
+              {isSubmittingFollowUp ? "Re-running..." : "Re-run analysis with observation"}
+            </button>
+          </div>
+          {followUpError ? <p className="mt-3 rounded-2xl bg-coral/10 px-4 py-3 text-sm text-ember">{followUpError}</p> : null}
         </div>
       </section>
     </div>
