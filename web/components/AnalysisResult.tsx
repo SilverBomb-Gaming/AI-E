@@ -2,13 +2,20 @@
 
 import { useMemo, useState } from "react";
 
+import type { FollowUpVerificationState } from "@/components/AnalysisForm";
 import type { AnalysisInput, FreeAnalysisResponse } from "@/lib/aie/types";
 
 type AnalysisResultProps = {
   result: FreeAnalysisResponse;
   input?: AnalysisInput;
   isRefined?: boolean;
-  onResultChange?: (result: FreeAnalysisResponse) => void;
+  lastObservation?: string;
+  verificationState?: FollowUpVerificationState;
+  onResultChange?: (update: {
+    result: FreeAnalysisResponse;
+    observation: string;
+    verificationState: FollowUpVerificationState;
+  }) => void;
 };
 
 const EVIDENCE_GAP_PATTERN =
@@ -17,6 +24,42 @@ const GENERIC_DIAGNOSIS_PATTERN =
   /component or object|critical object or component|missing or incorrect reference|missing reference|misconfiguration|disconnection|state management|physics settings|collision detection logic/i;
 const CONCRETE_ANCHOR_PATTERN =
   /\b(?:Rigidbody2D|NavMeshAgent|Cinemachine|Animator|CanvasGroup|SceneManager|NullReferenceException|MissingReferenceException|Transform|Button|Slider|Image|Update|Start|Awake|FixedUpdate|MovePosition|AddForce|onClick|FadeOut)\b|[A-Za-z_]+\.[A-Za-z_]+/;
+const CONFIRMATION_SIGNAL_PATTERN =
+  /works? again|behaves? normally|returned to normal|fixed|resolved|disappeared|went away|stops? (?:happening|flickering|crashing)|regains? control|starts? working/i;
+const FALSIFICATION_SIGNAL_PATTERN =
+  /nothing changed|no change|same issue|same behavior|still broken the same|did not help|doesn't help|no effect|unchanged|still happens exactly the same/i;
+const PARTIAL_SIGNAL_PATTERN =
+  /\bbut\b|partially|reduced|less severe|less often|smaller|improved?.*\bstill\b|fixed.*\bbut\b|stops?.*\bbut\b/i;
+
+const STOP_WORDS = new Set([
+  "about",
+  "after",
+  "again",
+  "because",
+  "before",
+  "being",
+  "between",
+  "caused",
+  "cause",
+  "character",
+  "clearly",
+  "during",
+  "feature",
+  "issue",
+  "likely",
+  "player",
+  "script",
+  "scene",
+  "still",
+  "system",
+  "their",
+  "there",
+  "these",
+  "this",
+  "trying",
+  "when",
+  "with",
+]);
 
 function shouldShowLowEvidenceCue(result: FreeAnalysisResponse): boolean {
   const supportingText = [result.what_happened, ...result.what_matters].join(" ");
@@ -39,7 +82,102 @@ function buildFollowUpProblemDescription(problemDescription: string, observation
   return `${trimmedDescription}${separator}After trying the first step: ${trimmedObservation}`;
 }
 
-export function AnalysisResult({ result, input, isRefined = false, onResultChange }: AnalysisResultProps) {
+function extractComparableTerms(text: string): Set<string> {
+  return new Set(
+    (text.toLowerCase().match(/[a-z0-9][a-z0-9-]+/g) ?? []).filter(
+      (token) => token.length >= 4 && !STOP_WORDS.has(token),
+    ),
+  );
+}
+
+function calculateSimilarity(left: Set<string>, right: Set<string>): number {
+  if (!left.size || !right.size) {
+    return 0;
+  }
+
+  let sharedTerms = 0;
+  for (const term of left) {
+    if (right.has(term)) {
+      sharedTerms += 1;
+    }
+  }
+
+  return sharedTerms / new Set([...left, ...right]).size;
+}
+
+function classifyFollowUpResult(params: {
+  originalResult: FreeAnalysisResponse;
+  nextResult: FreeAnalysisResponse;
+  observation: string;
+}): FollowUpVerificationState {
+  const observation = params.observation.trim();
+  const originalSummary = `${params.originalResult.what_happened} ${params.originalResult.what_to_do_next[0] ?? ""}`;
+  const nextSummary = `${params.nextResult.what_happened} ${params.nextResult.what_to_do_next[0] ?? ""}`;
+  const alternativeObservationText = observation.split(/\bbut\b/i)[1] ?? "";
+
+  const originalTerms = extractComparableTerms(originalSummary);
+  const nextTerms = extractComparableTerms(nextSummary);
+  const alternativeTerms = extractComparableTerms(alternativeObservationText);
+  const similarity = calculateSimilarity(originalTerms, nextTerms);
+  const sharedTerms = [...originalTerms].filter((term) => nextTerms.has(term)).length;
+  const alternativeAligned = [...alternativeTerms].some((term) => nextTerms.has(term) && !originalTerms.has(term));
+
+  const hasConfirmationSignal = CONFIRMATION_SIGNAL_PATTERN.test(observation);
+  const hasFalsificationSignal = FALSIFICATION_SIGNAL_PATTERN.test(observation);
+  const hasPartialSignal = PARTIAL_SIGNAL_PATTERN.test(observation);
+
+  const sameGroundedCause = sharedTerms >= 3 || similarity >= 0.3;
+  const shiftedGroundedCause = sharedTerms === 0 && similarity <= 0.12;
+
+  if (hasFalsificationSignal && (shiftedGroundedCause || alternativeAligned)) {
+    return "falsified";
+  }
+
+  if (hasPartialSignal) {
+    return "inconclusive";
+  }
+
+  if (hasConfirmationSignal && sameGroundedCause) {
+    return "confirmed";
+  }
+
+  return "inconclusive";
+}
+
+function getVerificationLabel(verificationState: FollowUpVerificationState | undefined): string | null {
+  if (!verificationState) {
+    return null;
+  }
+
+  switch (verificationState) {
+    case "confirmed":
+      return "Confirmed";
+    case "falsified":
+      return "Falsified";
+    case "inconclusive":
+      return "Inconclusive";
+  }
+}
+
+function getVerificationClassName(verificationState: FollowUpVerificationState | undefined): string {
+  switch (verificationState) {
+    case "confirmed":
+      return "border-emerald-200 bg-emerald-50 text-emerald-700";
+    case "falsified":
+      return "border-coral/20 bg-coral/10 text-ember";
+    default:
+      return "border-ink/10 bg-white/70 text-ink/70";
+  }
+}
+
+export function AnalysisResult({
+  result,
+  input,
+  isRefined = false,
+  lastObservation,
+  verificationState,
+  onResultChange,
+}: AnalysisResultProps) {
   const [confirmFirstStep, ...followUpSteps] = result.what_to_do_next;
   const showLowEvidenceCue = shouldShowLowEvidenceCue(result);
   const [observation, setObservation] = useState("");
@@ -84,7 +222,15 @@ export function AnalysisResult({ result, input, isRefined = false, onResultChang
       }
 
       onResultChange?.(payload);
-      setLastSubmittedObservation(submittedObservation);
+      onResultChange?.({
+        result: payload,
+        observation: submittedObservation,
+        verificationState: classifyFollowUpResult({
+          originalResult: result,
+          nextResult: payload,
+          observation: submittedObservation,
+        }),
+      });
       setObservation("");
     } catch {
       setFollowUpError("We couldn't generate an analysis right now. Please try again.");
@@ -99,12 +245,21 @@ export function AnalysisResult({ result, input, isRefined = false, onResultChang
         <p className="section-label">Diagnosis</p>
         {isRefined ? (
           <div className="mt-2 space-y-2">
-            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-ocean/80">
-              Refined based on your observation
-            </p>
-            {lastSubmittedObservation ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-ocean/80">
+                Refined based on your observation
+              </p>
+              {getVerificationLabel(verificationState) ? (
+                <span
+                  className={`inline-flex rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] ${getVerificationClassName(verificationState)}`}
+                >
+                  {getVerificationLabel(verificationState)}
+                </span>
+              ) : null}
+            </div>
+            {lastObservation ? (
               <p className="text-xs leading-6 body-muted sm:text-sm">
-                You observed: &quot;{lastSubmittedObservation}&quot;
+                You observed: &quot;{lastObservation}&quot;
               </p>
             ) : null}
           </div>

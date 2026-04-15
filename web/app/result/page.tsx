@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { AnalysisResult } from "@/components/AnalysisResult";
-import { resultStorageKey, type StoredAnalysisState } from "@/components/AnalysisForm";
+import { resultStorageKey, type FollowUpVerificationState, type StoredAnalysisState } from "@/components/AnalysisForm";
 import { UpgradeCard } from "@/components/UpgradeCard";
 import type { AnalysisInput, FreeAnalysisResponse } from "@/lib/aie/types";
 
@@ -59,6 +59,11 @@ function normalizeStoredAnalysisState(value: unknown): StoredAnalysisState | nul
     input: normalizeAnalysisInput(source.input),
     result: source.result,
     refinedFromObservation: Boolean(source.refinedFromObservation),
+    lastObservation: typeof source.lastObservation === "string" ? source.lastObservation.trim() || undefined : undefined,
+    verificationState:
+      source.verificationState === "confirmed" || source.verificationState === "falsified" || source.verificationState === "inconclusive"
+        ? (source.verificationState as FollowUpVerificationState)
+        : undefined,
   };
 }
 
@@ -127,7 +132,9 @@ export default function ResultPage() {
           result={storedState.result}
           input={storedState.input}
           isRefined={Boolean(storedState.refinedFromObservation)}
-          onResultChange={(nextResult) => {
+          lastObservation={storedState.lastObservation}
+          verificationState={storedState.verificationState}
+          onResultChange={({ result: nextResult, observation, verificationState }) => {
             setStoredState((current) => {
               if (!current) {
                 return current;
@@ -137,6 +144,8 @@ export default function ResultPage() {
                 ...current,
                 result: nextResult,
                 refinedFromObservation: true,
+                lastObservation: observation,
+                verificationState,
               } satisfies StoredAnalysisState;
 
               window.sessionStorage.setItem(resultStorageKey, JSON.stringify(nextState));

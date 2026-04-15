@@ -7,10 +7,14 @@ import type { AnalysisInput, FreeAnalysisResponse } from "@/lib/aie/types";
 
 const STORAGE_KEY = "aie-free-analysis-result";
 
+export type FollowUpVerificationState = "confirmed" | "falsified" | "inconclusive";
+
 export type StoredAnalysisState = {
   input?: AnalysisInput;
   result: FreeAnalysisResponse;
   refinedFromObservation?: boolean;
+  lastObservation?: string;
+  verificationState?: FollowUpVerificationState;
 };
 
 const initialForm: AnalysisInput = {
@@ -61,6 +65,8 @@ export function AnalysisForm() {
           input: form,
           result: payload,
           refinedFromObservation: false,
+          lastObservation: undefined,
+          verificationState: undefined,
         } satisfies StoredAnalysisState),
       );
       router.push("/result");
