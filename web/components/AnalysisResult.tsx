@@ -63,6 +63,15 @@ export function AnalysisResult({ result }: AnalysisResultProps) {
             </ol>
           </div>
         ) : null}
+        <div className="mt-5 rounded-[1.25rem] border border-ink/10 bg-white/40 p-4">
+          <p className="text-sm leading-7 text-ink/90 sm:text-base">After you try the first step, what did you observe?</p>
+          <input
+            type="text"
+            aria-label="Optional follow-up observation"
+            placeholder="Optional note for your next debugging pass"
+            className="mt-3 w-full rounded-[1rem] border border-ink/10 bg-white/70 px-4 py-3 text-sm text-ink outline-none placeholder:text-slate"
+          />
+        </div>
       </section>
     </div>
   );
