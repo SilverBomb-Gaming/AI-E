@@ -25,9 +25,9 @@ const GENERIC_DIAGNOSIS_PATTERN =
 const CONCRETE_ANCHOR_PATTERN =
   /\b(?:Rigidbody2D|NavMeshAgent|Cinemachine|Animator|CanvasGroup|SceneManager|NullReferenceException|MissingReferenceException|Transform|Button|Slider|Image|Update|Start|Awake|FixedUpdate|MovePosition|AddForce|onClick|FadeOut)\b|[A-Za-z_]+\.[A-Za-z_]+/;
 const CONFIRMATION_SIGNAL_PATTERN =
-  /works? again|behaves? normally|returned to normal|fixed|resolved|disappeared|went away|stops? (?:happening|flickering|crashing)|regains? control|starts? working/i;
+  /works? again|behaves? normally|returned to normal|fixed|resolved|disappear(?:ed|s)?|went away|stops? (?:happening|flickering|crashing)|regains? control|starts? working|lets? .*run normally|makes? .*disappear/i;
 const FALSIFICATION_SIGNAL_PATTERN =
-  /nothing changed|no change|same issue|same behavior|still broken the same|did not help|doesn't help|no effect|unchanged|still happens exactly the same/i;
+  /nothing changed|no change|same issue|same behavior|still broken the same|did not help|did nothing|doesn't help|no effect|unchanged|still happens exactly the same/i;
 const PARTIAL_SIGNAL_PATTERN =
   /\bbut\b|partially|reduced|less severe|less often|smaller|improved?.*\bstill\b|fixed.*\bbut\b|stops?.*\bbut\b/i;
 
@@ -111,25 +111,35 @@ function classifyFollowUpResult(params: {
   observation: string;
 }): FollowUpVerificationState {
   const observation = params.observation.trim();
-  const originalSummary = `${params.originalResult.what_happened} ${params.originalResult.what_to_do_next[0] ?? ""}`;
+  const firstStep = params.originalResult.what_to_do_next[0] ?? "";
+  const originalSummary = `${params.originalResult.what_happened} ${firstStep}`;
   const nextSummary = `${params.nextResult.what_happened} ${params.nextResult.what_to_do_next[0] ?? ""}`;
   const alternativeObservationText = observation.split(/\bbut\b/i)[1] ?? "";
 
   const originalTerms = extractComparableTerms(originalSummary);
   const nextTerms = extractComparableTerms(nextSummary);
+  const firstStepTerms = extractComparableTerms(firstStep);
+  const observationTerms = extractComparableTerms(observation);
   const alternativeTerms = extractComparableTerms(alternativeObservationText);
   const similarity = calculateSimilarity(originalTerms, nextTerms);
   const sharedTerms = [...originalTerms].filter((term) => nextTerms.has(term)).length;
+  const stepAlignmentCount = [...firstStepTerms].filter((term) => observationTerms.has(term)).length;
   const alternativeAligned = [...alternativeTerms].some((term) => nextTerms.has(term) && !originalTerms.has(term));
 
   const hasConfirmationSignal = CONFIRMATION_SIGNAL_PATTERN.test(observation);
   const hasFalsificationSignal = FALSIFICATION_SIGNAL_PATTERN.test(observation);
   const hasPartialSignal = PARTIAL_SIGNAL_PATTERN.test(observation);
+  const alternativeEffectSignal = CONFIRMATION_SIGNAL_PATTERN.test(alternativeObservationText);
 
   const sameGroundedCause = sharedTerms >= 3 || similarity >= 0.3;
   const shiftedGroundedCause = sharedTerms === 0 && similarity <= 0.12;
+  const directStepRecovery = stepAlignmentCount >= 2 && hasConfirmationSignal;
+  const decisiveAlternativeShift =
+    hasFalsificationSignal &&
+    alternativeEffectSignal &&
+    [...alternativeTerms].some((term) => !firstStepTerms.has(term));
 
-  if (hasFalsificationSignal && (shiftedGroundedCause || alternativeAligned)) {
+  if (hasFalsificationSignal && (shiftedGroundedCause || alternativeAligned || decisiveAlternativeShift)) {
     return "falsified";
   }
 
@@ -137,7 +147,7 @@ function classifyFollowUpResult(params: {
     return "inconclusive";
   }
 
-  if (hasConfirmationSignal && sameGroundedCause) {
+  if (hasConfirmationSignal && (sameGroundedCause || directStepRecovery)) {
     return "confirmed";
   }
 
