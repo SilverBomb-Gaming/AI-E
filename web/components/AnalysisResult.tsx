@@ -19,6 +19,7 @@ type AnalysisResultProps = {
 };
 
 type LoopTerminationStatus = "resolved" | "converging" | "stuck";
+type EscalationStrategy = "minimal-repro" | "logging" | "single-system-rebuild" | "clean-environment";
 
 const EVIDENCE_GAP_PATTERN =
   /absence of error messages|lack of error messages|without an error message|no obvious console errors|no error messages|not a runtime exception/i;
@@ -468,6 +469,86 @@ function hasGuidedProgression(stepStack: string[]): boolean {
   });
 }
 
+function countDistinctStepFocuses(stepStack: string[]): number {
+  return new Set(stepStack.map((step) => normalizeFocusKey(extractFocusPhrase(step))).filter(Boolean)).size;
+}
+
+function hasSceneEnvironmentSignal(text: string | undefined): boolean {
+  if (!text) {
+    return false;
+  }
+
+  return /\bscene|environment|bootstrap|loading overlay|timeline|camera|menu|ui flow|singleton|prefab|project settings|handoff\b/i.test(text);
+}
+
+function hasBroadSystemMixSignal(text: string | undefined): boolean {
+  if (!text) {
+    return false;
+  }
+
+  return /\b(?:slopes|dash|friction|camera|ground|audio|ui|bootstrap|pooling|pathfinding|state machine|animation events|timeline)\b.*\b(?:slopes|dash|friction|camera|ground|audio|ui|bootstrap|pooling|pathfinding|state machine|animation events|timeline)\b/i.test(
+    text,
+  );
+}
+
+function isEscalationMeaningfullyDifferent(strategy: EscalationStrategy, priorSteps: string[]): boolean {
+  const escalationTextByStrategy: Record<EscalationStrategy, string> = {
+    "minimal-repro":
+      "Isolate to minimal reproduction. Strip the failure down to the smallest reproducible setup that still breaks, then add surrounding pieces back one at a time only after the core symptom is stable.",
+    logging:
+      "Switch to logging/debug instrumentation. Pause the current swap-and-compare loop and add focused logs or debugger breakpoints around the state change that should happen.",
+    "single-system-rebuild":
+      "Disable all but one system and rebuild. Turn off every related system except one core path, confirm the base behavior, then re-enable the surrounding systems one by one until the failure returns.",
+    "clean-environment":
+      "Test in a clean scene or environment. Recreate the failing setup in a clean scene or isolated environment with fresh defaults to separate scene wiring from the local step you just tested.",
+  };
+
+  return priorSteps.every((step) => !hasHighPhraseOverlap(step, escalationTextByStrategy[strategy]));
+}
+
+function getSuggestedEscalationStrategy(params: {
+  status: LoopTerminationStatus | null;
+  guidedStepStack: string[];
+  observation: string | undefined;
+  problemDescription: string | undefined;
+}): EscalationStrategy | null {
+  if (params.status !== "stuck") {
+    return null;
+  }
+
+  const combinedContext = [params.problemDescription, params.observation].filter(Boolean).join(" ");
+  const distinctFocusCount = countDistinctStepFocuses(params.guidedStepStack);
+  const activeInterventionCount = params.guidedStepStack.filter((step) => extractStepMethod(step) !== "inspect").length;
+  const latestStep = params.guidedStepStack[0] ?? "";
+  const latestSceneFocusedStep = hasSceneEnvironmentSignal(`${extractFocusPhrase(latestStep) ?? ""} ${latestStep}`);
+  const candidateStrategies: EscalationStrategy[] = [];
+
+  if (hasSceneEnvironmentSignal(combinedContext) && latestSceneFocusedStep) {
+    candidateStrategies.push("logging");
+  }
+
+  if (hasSceneEnvironmentSignal(combinedContext)) {
+    candidateStrategies.push("clean-environment");
+  }
+
+  if (distinctFocusCount >= 2 || hasBroadSystemMixSignal(params.problemDescription)) {
+    candidateStrategies.push("single-system-rebuild");
+  }
+
+  if (activeInterventionCount >= Math.min(2, params.guidedStepStack.length)) {
+    candidateStrategies.push("logging");
+  }
+
+  candidateStrategies.push("minimal-repro");
+
+  const orderedCandidates = [
+    ...candidateStrategies,
+    ...(["minimal-repro", "logging", "single-system-rebuild", "clean-environment"] as EscalationStrategy[]),
+  ].filter((strategy, index, values) => values.indexOf(strategy) === index);
+
+  return orderedCandidates.find((strategy) => isEscalationMeaningfullyDifferent(strategy, params.guidedStepStack)) ?? orderedCandidates[0] ?? null;
+}
+
 function classifyLoopTerminationStatus(params: {
   isRefined: boolean;
   verificationState: FollowUpVerificationState | undefined;
@@ -642,6 +723,36 @@ function getLoopTerminationStatusHint(status: LoopTerminationStatus | null): str
   }
 }
 
+function getEscalationStrategyTitle(strategy: EscalationStrategy | null): string | null {
+  switch (strategy) {
+    case "minimal-repro":
+      return "Isolate to minimal reproduction";
+    case "logging":
+      return "Switch to logging/debug instrumentation";
+    case "single-system-rebuild":
+      return "Disable all but one system and rebuild";
+    case "clean-environment":
+      return "Test in a clean scene or environment";
+    default:
+      return null;
+  }
+}
+
+function getEscalationStrategyGuidance(strategy: EscalationStrategy | null): string | null {
+  switch (strategy) {
+    case "minimal-repro":
+      return "Strip the failure down to the smallest reproducible setup that still breaks, then add surrounding pieces back one at a time only after the core symptom is stable.";
+    case "logging":
+      return "Pause the current swap-and-compare loop and add focused logs or debugger breakpoints around the state change that should happen, so you can see the exact branch, value, or event flow at the moment the symptom appears.";
+    case "single-system-rebuild":
+      return "Turn off every related system except one core path, confirm the base behavior, then re-enable the surrounding systems one by one until the failure returns. That reintroduction order is the new signal.";
+    case "clean-environment":
+      return "Recreate the failing setup in a clean scene or isolated environment with fresh defaults. If the issue disappears there, the problem is likely in scene wiring, initialization order, or project-level state rather than the local step you just tested.";
+    default:
+      return null;
+  }
+}
+
 export function AnalysisResult({
   result,
   input,
@@ -674,6 +785,12 @@ export function AnalysisResult({
     guidedStepStack,
     nextStepGuidance,
     reachedGuidedStepLimit,
+  });
+  const suggestedEscalationStrategy = getSuggestedEscalationStrategy({
+    status: loopTerminationStatus,
+    guidedStepStack,
+    observation: lastObservation,
+    problemDescription: input?.problemDescription,
   });
   const showLowEvidenceCue = shouldShowLowEvidenceCue(result);
   const [observation, setObservation] = useState("");
@@ -850,10 +967,21 @@ export function AnalysisResult({
             </ol>
           </div>
         ) : null}
-        {isGuidedLoopActive && nextStepGuidance ? (
+        {isGuidedLoopActive && nextStepGuidance && loopTerminationStatus !== "stuck" ? (
           <div className="mt-4 rounded-[1.25rem] border border-ink/10 bg-white/50 p-4">
             <p className="section-label">Next focused step</p>
             <p className="mt-2 text-sm leading-7 text-ink/90 sm:text-base">{displayedGuidedSteps.length + 1}. {nextStepGuidance}</p>
+          </div>
+        ) : null}
+        {getEscalationStrategyTitle(suggestedEscalationStrategy) ? (
+          <div className="mt-4 rounded-[1.25rem] border border-coral/20 bg-coral/5 p-4">
+            <p className="section-label">Suggested escalation</p>
+            <p className="mt-2 text-sm font-semibold leading-7 text-ink/90 sm:text-base">
+              {getEscalationStrategyTitle(suggestedEscalationStrategy)}
+            </p>
+            {getEscalationStrategyGuidance(suggestedEscalationStrategy) ? (
+              <p className="mt-2 text-sm leading-7 text-ink/90 sm:text-base">{getEscalationStrategyGuidance(suggestedEscalationStrategy)}</p>
+            ) : null}
           </div>
         ) : null}
         {reachedGuidedStepLimit ? (

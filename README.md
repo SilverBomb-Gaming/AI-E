@@ -325,6 +325,17 @@ This is the current strategic model for AI-E. It separates the already-shippable
 - Regression check: the same validation run reported `MISMATCHES: None` and `PASSIVE: None`, so the status layer did not interfere with existing guided-step generation or reintroduce passive phrasing
 - Remaining edge case: structural variation alone is not treated as progress anymore at the step-3 boundary, so intentionally bounded-loop exhaustion is now the deciding signal when the chain is still unresolved
 
+#### Stuck Loop Escalation Strategies (2026-04-16)
+
+- What changed: when the renderer classifies a refined debugging chain as `Stuck`, it now shows a small `Suggested escalation` block instead of continuing to surface another normal focused step
+- Escalation boundary: this only appears for `Stuck` chains and stays renderer-only, with no backend, schema, API, or persistence changes
+- Strategy rule: the escalation must shift to a higher-level recovery move rather than suggest a minor variation of the same step pattern
+- Available strategies: `Isolate to minimal reproduction`, `Switch to logging/debug instrumentation`, `Disable all but one system and rebuild`, and `Test in a clean scene or environment`
+- Selection rule: the renderer chooses among those strategies from the current stuck context, prior guided steps, and broad problem signals so scene/bootstrap-style failures bias toward clean-environment checks while mixed-system churn biases toward single-system rebuild isolation
+- UI effect: `Next focused step` is suppressed for stuck chains so the user sees the escalation strategy as the next move instead of another bounded-loop micro-step
+- Targeted validation status: two known stuck chains were re-run against the live analyzer and both kept `Current status = Stuck` while the escalation output remained actionable and materially different from the prior guided steps
+- Regression check: the stuck validation did not change the existing loop classifier or step-generation path for non-stuck chains, and both checked escalations passed the difference check against the latest guided step
+
 #### Second-Step Progression And Non-Repetition Guard (2026-04-15)
 
 - What changed: the renderer now applies a small coherence guard before showing the second debugging step, rejecting candidates that reuse the same action pattern, stay on the same lever without narrowing, or overlap too heavily with the first step
