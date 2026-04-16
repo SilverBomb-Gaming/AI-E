@@ -36,6 +36,7 @@ const WEAK_CONFIRMATION_STEP_PATTERN =
   /^(?:temporarily\s+)?(?:add a debug log|log\b|inspect\b|check\b|verify\b|look at\b)/i;
 const GENERIC_FOCUS_PATTERN =
   /\b(?:issue|problem|symptom|behavior|weirdness|feels wrong|same slowdown|snap back|run normally|changes made|current suspected system)\b/i;
+const MAX_GUIDED_STEPS = 3;
 
 const STOP_WORDS = new Set([
   "about",
@@ -77,7 +78,16 @@ function shouldShowLowEvidenceCue(result: FreeAnalysisResponse): boolean {
   return hasEvidenceGapSignal || hasGenericDiagnosisSignal || (hedgedDiagnosis && !hasConcreteAnchor);
 }
 
-function buildFollowUpProblemDescription(problemDescription: string, observation: string): string {
+function summarizeStepForPrompt(step: string | undefined): string | null {
+  if (!step) {
+    return null;
+  }
+
+  const summarized = trimTrailingPunctuation(step).split(/\s+/).slice(0, 18).join(" ");
+  return summarized || null;
+}
+
+function buildFollowUpProblemDescription(problemDescription: string, observation: string, attemptedStep?: string, stepNumber?: number): string {
   const trimmedDescription = problemDescription.trim();
   const trimmedObservation = observation.trim();
   if (!trimmedObservation) {
@@ -85,7 +95,11 @@ function buildFollowUpProblemDescription(problemDescription: string, observation
   }
 
   const separator = /[.!?]$/.test(trimmedDescription) ? " " : ". ";
-  return `${trimmedDescription}${separator}After trying the first step: ${trimmedObservation}`;
+  const stepSummary = summarizeStepForPrompt(attemptedStep);
+  const stepLabel = stepNumber ? `step ${stepNumber}` : "the current step";
+  const stepContext = stepSummary ? `After trying ${stepLabel} (${stepSummary}): ${trimmedObservation}` : `After trying ${stepLabel}: ${trimmedObservation}`;
+
+  return `${trimmedDescription}${separator}${stepContext}`;
 }
 
 function extractComparableTerms(text: string): Set<string> {
@@ -201,6 +215,28 @@ function extractFocusPhrase(text: string): string | null {
   return null;
 }
 
+function extractObservationAnchor(text: string): string | null {
+  const anchorPatterns = [
+    /\b(?:still happens on|still appears on|shows up on)\s+([^.,;]+?)(?:[.,;]|$)/i,
+    /\b(?:when|during|while|between|around)\s+([^.,;]+?)(?:[.,;]|$)/i,
+    /\b(?:overlap|overlaps|overlapping)\s+([^.,;]+?)(?:[.,;]|$)/i,
+  ];
+
+  for (const pattern of anchorPatterns) {
+    const match = text.match(pattern);
+    if (!match) {
+      continue;
+    }
+
+    const focus = cleanFocusPhrase(match[1].replace(/^(?:some|the)\s+/i, ""));
+    if (!isWeakFocusPhrase(focus)) {
+      return focus;
+    }
+  }
+
+  return null;
+}
+
 function strengthenConfirmationStep(step: string | undefined, diagnosis: string): string | undefined {
   if (!step) {
     return step;
@@ -219,11 +255,11 @@ function buildFalsifiedDiagnosis(params: {
   nextResult: FreeAnalysisResponse;
   observation: string;
 }): string {
-  const firstStep = params.originalResult.what_to_do_next[0] ?? "";
+  const attemptedStep = params.originalResult.what_to_do_next[0] ?? "";
   const noEffectClause = params.observation.split(/\bbut\b/i)[0]?.trim() ?? "";
   const alternativeClause = params.observation.split(/\bbut\b/i)[1]?.trim() ?? params.observation.trim();
   const originalFocus =
-    extractFocusPhrase(firstStep) ?? extractFocusPhrase(params.originalResult.what_happened) ?? "the original suspected system";
+    extractFocusPhrase(attemptedStep) ?? extractFocusPhrase(params.originalResult.what_happened) ?? "the original suspected system";
   const alternativeFocus =
     extractFocusPhrase(alternativeClause) ?? extractFocusPhrase(params.nextResult.what_happened) ?? "a different system";
   const noEffectSummary = noEffectClause
@@ -307,52 +343,65 @@ function buildActionableSecondStep(method: StepMethod, focus: string, verificati
 }
 
 function isMeaningfullyProgressed(params: {
-  firstStep: string;
+  priorSteps: string[];
   candidateStep: string;
   candidateFocus: string | null;
 }): boolean {
-  const firstFocus = extractFocusPhrase(params.firstStep);
-  const firstMethod = extractStepMethod(params.firstStep);
+  const latestStep = params.priorSteps[0] ?? "";
+  const latestFocus = extractFocusPhrase(latestStep);
+  const latestMethod = extractStepMethod(latestStep);
   const candidateMethod = extractStepMethod(params.candidateStep);
-  const differentLever = hasDistinctAlternateLever(firstFocus, params.candidateFocus);
-  const narrowerScope = isNarrowerScope(firstFocus, params.candidateFocus);
-  const differentMethod = firstMethod !== candidateMethod && candidateMethod !== "unknown";
-  const sameSystem = !differentLever && !narrowerScope;
+  const differentLever = hasDistinctAlternateLever(latestFocus, params.candidateFocus);
+  const narrowerScope = isNarrowerScope(latestFocus, params.candidateFocus);
+  const differentMethod = latestMethod !== candidateMethod && candidateMethod !== "unknown";
 
-  if (hasHighPhraseOverlap(params.firstStep, params.candidateStep)) {
+  if (params.priorSteps.some((step) => hasHighPhraseOverlap(step, params.candidateStep))) {
     return false;
   }
 
-  if (sameSystem && firstMethod === candidateMethod) {
+  if (!(differentLever || narrowerScope || differentMethod)) {
     return false;
   }
 
-  return differentLever || narrowerScope || differentMethod;
+  return params.priorSteps.every((step) => {
+    const priorFocus = extractFocusPhrase(step);
+    const priorMethod = extractStepMethod(step);
+
+    return (
+      hasDistinctAlternateLever(priorFocus, params.candidateFocus) ||
+      isNarrowerScope(priorFocus, params.candidateFocus) ||
+      (priorMethod !== candidateMethod && candidateMethod !== "unknown")
+    );
+  });
 }
 
-function buildSecondStepGuidance(params: {
+function buildNextStepGuidance(params: {
   verificationState: FollowUpVerificationState | undefined;
   currentResult: FreeAnalysisResponse;
   observation: string | undefined;
+  priorSteps: string[];
 }): string | null {
-  if (!params.verificationState || !params.observation?.trim()) {
+  if (!params.verificationState || !params.observation?.trim() || params.verificationState === "confirmed") {
     return null;
   }
 
-  const currentFirstStep = params.currentResult.what_to_do_next[0] ?? "";
-  const strengthenedCurrentStep = strengthenConfirmationStep(currentFirstStep, params.currentResult.what_happened) ?? currentFirstStep;
+  if (params.priorSteps.length >= MAX_GUIDED_STEPS) {
+    return null;
+  }
+
+  const currentStep = params.priorSteps[0] ?? "";
   const alternativeClause = params.observation.split(/\bbut\b/i)[1]?.trim() ?? params.observation.trim();
   const diagnosisFocus = extractFocusPhrase(params.currentResult.what_happened);
-  const observationFocus = extractFocusPhrase(params.observation);
+  const observationFocus = extractObservationAnchor(params.observation) ?? extractFocusPhrase(params.observation);
   const currentFocus =
-    (extractFocusPhrase(strengthenedCurrentStep) ??
-      (WEAK_CONFIRMATION_STEP_PATTERN.test(currentFirstStep) ? extractFocusPhrase(params.currentResult.what_happened) : null) ??
+    (extractFocusPhrase(currentStep) ??
+      (WEAK_CONFIRMATION_STEP_PATTERN.test(currentStep) ? extractFocusPhrase(params.currentResult.what_happened) : null) ??
       extractFocusPhrase(params.currentResult.what_happened)) ??
     "current suspected system";
-  const alternateFocus = extractFocusPhrase(alternativeClause) ?? observationFocus ?? diagnosisFocus ?? currentFocus;
+  const alternateFocus = extractObservationAnchor(alternativeClause) ?? extractFocusPhrase(alternativeClause) ?? observationFocus ?? diagnosisFocus ?? currentFocus;
   const focusCandidates = [
-    params.verificationState === "falsified" ? alternateFocus : diagnosisFocus,
-    params.verificationState === "falsified" ? diagnosisFocus : observationFocus,
+    params.verificationState === "falsified" ? alternateFocus : observationFocus,
+    params.verificationState === "falsified" ? diagnosisFocus : diagnosisFocus,
     params.verificationState === "falsified" ? observationFocus : alternateFocus,
     currentFocus,
   ].filter((focus, index, values): focus is string => Boolean(focus?.trim()) && values.indexOf(focus) === index);
@@ -360,23 +409,45 @@ function buildSecondStepGuidance(params: {
     ...focusCandidates.filter((focus) => !isWeakFocusPhrase(focus)),
     ...focusCandidates.filter((focus) => isWeakFocusPhrase(focus)),
   ].filter((focus, index, values) => values.indexOf(focus) === index);
-  const methodCandidates: StepMethod[] =
+  const baseMethodCandidates: StepMethod[] =
     params.verificationState === "falsified" ? ["disable", "isolate", "replace", "force"] : ["isolate", "replace", "force", "disable"];
+  const latestMethod = extractStepMethod(currentStep);
+  const methodCandidates = [...baseMethodCandidates.filter((method) => method !== latestMethod), ...baseMethodCandidates.filter((method) => method === latestMethod)];
 
   for (const focus of orderedFocusCandidates) {
     for (const method of methodCandidates) {
       const step = buildActionableSecondStep(method, focus, params.verificationState);
-      if (step === strengthenedCurrentStep) {
+      if (params.priorSteps.includes(step)) {
         continue;
       }
 
-      if (isMeaningfullyProgressed({ firstStep: strengthenedCurrentStep, candidateStep: step, candidateFocus: focus })) {
+      if (isMeaningfullyProgressed({ priorSteps: params.priorSteps, candidateStep: step, candidateFocus: focus })) {
         return step;
       }
     }
   }
 
   return null;
+}
+
+function getGuidedStepStack(params: {
+  result: FreeAnalysisResponse;
+  isRefined: boolean;
+}): string[] {
+  if (params.isRefined) {
+    return params.result.what_to_do_next.filter(Boolean).slice(0, MAX_GUIDED_STEPS);
+  }
+
+  const firstStep = strengthenConfirmationStep(params.result.what_to_do_next[0], params.result.what_happened);
+  return firstStep ? [firstStep] : [];
+}
+
+function buildGuidedStepStack(nextStep: string | null, priorSteps: string[]): string[] {
+  if (!nextStep) {
+    return priorSteps.slice(0, MAX_GUIDED_STEPS);
+  }
+
+  return [nextStep, ...priorSteps].filter((step, index, values) => Boolean(step) && values.indexOf(step) === index).slice(0, MAX_GUIDED_STEPS);
 }
 
 function classifyFollowUpResult(params: {
@@ -477,21 +548,29 @@ export function AnalysisResult({
   verificationState,
   onResultChange,
 }: AnalysisResultProps) {
-  const [confirmFirstStep, ...followUpSteps] = result.what_to_do_next;
-  const displayedConfirmFirstStep = strengthenConfirmationStep(confirmFirstStep, result.what_happened);
-  const secondStepGuidance = isRefined
-    ? buildSecondStepGuidance({
+  const [initialConfirmFirstStep, ...initialFollowUpSteps] = result.what_to_do_next;
+  const displayedConfirmFirstStep = strengthenConfirmationStep(initialConfirmFirstStep, result.what_happened);
+  const isGuidedLoopActive = isRefined && verificationState !== "confirmed";
+  const guidedStepStack = isGuidedLoopActive ? getGuidedStepStack({ result, isRefined }) : displayedConfirmFirstStep ? [displayedConfirmFirstStep] : [];
+  const displayedGuidedSteps = [...guidedStepStack].reverse();
+  const currentGuidedStep = guidedStepStack[0] ?? null;
+  const currentGuidedStepNumber = guidedStepStack.length;
+  const nextStepGuidance = isGuidedLoopActive
+    ? buildNextStepGuidance({
         verificationState,
         currentResult: result,
         observation: lastObservation,
+        priorSteps: guidedStepStack,
       })
     : null;
+  const reachedGuidedStepLimit = isGuidedLoopActive && guidedStepStack.length >= MAX_GUIDED_STEPS;
+  const canContinueGuidedLoop = !reachedGuidedStepLimit;
   const showLowEvidenceCue = shouldShowLowEvidenceCue(result);
   const [observation, setObservation] = useState("");
   const [isSubmittingFollowUp, setIsSubmittingFollowUp] = useState(false);
   const [followUpError, setFollowUpError] = useState<string | null>(null);
   const trimmedObservation = useMemo(() => observation.trim(), [observation]);
-  const canSubmitFollowUp = Boolean(input?.problemDescription && trimmedObservation && !isSubmittingFollowUp);
+  const canSubmitFollowUp = Boolean(input?.problemDescription && trimmedObservation && !isSubmittingFollowUp && canContinueGuidedLoop);
 
   const handleFollowUpSubmit = async () => {
     if (!input?.problemDescription || !trimmedObservation || isSubmittingFollowUp) {
@@ -510,7 +589,12 @@ export function AnalysisResult({
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          problemDescription: buildFollowUpProblemDescription(input.problemDescription, trimmedObservation),
+          problemDescription: buildFollowUpProblemDescription(
+            input.problemDescription,
+            trimmedObservation,
+            currentGuidedStep ?? undefined,
+            currentGuidedStepNumber || undefined,
+          ),
           errorMessage: input.errorMessage ?? "",
           context: input.context ?? "",
           codeSnippet: input.codeSnippet ?? "",
@@ -532,7 +616,7 @@ export function AnalysisResult({
         nextResult: payload,
         observation: submittedObservation,
       });
-      const nextResult =
+      const refinedPayload =
         verificationState === "falsified"
           ? {
               ...payload,
@@ -543,6 +627,19 @@ export function AnalysisResult({
               }),
             }
           : payload;
+      const nextGuidedStep = buildNextStepGuidance({
+        verificationState,
+        currentResult: refinedPayload,
+        observation: submittedObservation,
+        priorSteps: guidedStepStack,
+      });
+      const nextResult =
+        verificationState === "confirmed"
+          ? refinedPayload
+          : {
+              ...refinedPayload,
+              what_to_do_next: buildGuidedStepStack(nextGuidedStep, guidedStepStack),
+            };
 
       onResultChange?.({
         result: nextResult,
@@ -609,35 +706,57 @@ export function AnalysisResult({
             <p className="mt-2 text-sm leading-7 text-ink/90 sm:text-base">1. {displayedConfirmFirstStep}</p>
           </div>
         ) : null}
-        {followUpSteps.length > 0 ? (
+        {isGuidedLoopActive ? (
           <div className="mt-4">
             <p className="section-label">Then continue</p>
             <ol className="mt-3 space-y-3 text-sm leading-7 text-ink/90 sm:text-base">
-              {followUpSteps.map((item, index) => (
+              {displayedGuidedSteps.slice(1).map((item, index) => (
+                <li key={item}>{index + 2}. {item}</li>
+              ))}
+            </ol>
+          </div>
+        ) : initialFollowUpSteps.length > 0 ? (
+          <div className="mt-4">
+            <p className="section-label">Then continue</p>
+            <ol className="mt-3 space-y-3 text-sm leading-7 text-ink/90 sm:text-base">
+              {initialFollowUpSteps.map((item, index) => (
                 <li key={item}>{index + 2}. {item}</li>
               ))}
             </ol>
           </div>
         ) : null}
-        {isRefined && secondStepGuidance && verificationState !== "confirmed" ? (
+        {isGuidedLoopActive && nextStepGuidance ? (
           <div className="mt-4 rounded-[1.25rem] border border-ink/10 bg-white/50 p-4">
             <p className="section-label">Next focused step</p>
-            <p className="mt-2 text-sm leading-7 text-ink/90 sm:text-base">2. {secondStepGuidance}</p>
+            <p className="mt-2 text-sm leading-7 text-ink/90 sm:text-base">{displayedGuidedSteps.length + 1}. {nextStepGuidance}</p>
+          </div>
+        ) : null}
+        {reachedGuidedStepLimit ? (
+          <div className="mt-4 rounded-[1.25rem] border border-ink/10 bg-white/50 p-4">
+            <p className="section-label">Guided loop limit</p>
+            <p className="mt-2 text-sm leading-7 text-ink/90 sm:text-base">
+              The bounded guided loop now stops at step 3. Try the current step, then restart a fresh analysis if you need a wider debugging pass.
+            </p>
           </div>
         ) : null}
         <div className="mt-5 rounded-[1.25rem] border border-ink/10 bg-white/40 p-4">
-          <p className="text-sm leading-7 text-ink/90 sm:text-base">After you try the first step, what did you observe?</p>
+          <p className="text-sm leading-7 text-ink/90 sm:text-base">
+            After you try {currentGuidedStepNumber > 1 ? `step ${currentGuidedStepNumber}` : "the first step"}, what did you observe?
+          </p>
           <input
             type="text"
             aria-label="Optional follow-up observation"
             value={observation}
             onChange={(event) => setObservation(event.target.value)}
             placeholder="Optional note for your next debugging pass"
+            disabled={!canContinueGuidedLoop}
             className="mt-3 w-full rounded-[1rem] border border-ink/10 bg-white/70 px-4 py-3 text-sm text-ink outline-none placeholder:text-slate"
           />
           <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-xs leading-6 body-muted">
-              AI-E will re-run the same analysis using your observation as additional context.
+              {canContinueGuidedLoop
+                ? "AI-E will re-run the same analysis using your latest step outcome as additional context."
+                : "This bounded guided loop stops at three steps to avoid drifting into unreviewed chained reasoning."}
             </p>
             <button
               type="button"

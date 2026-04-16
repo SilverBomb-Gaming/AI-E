@@ -304,6 +304,16 @@ This is the current strategic model for AI-E. It separates the already-shippable
 - Targeted validation status: two falsification probes produced relevant second steps aimed at the alternate lever (`stamina limiter`, `timeline handoff`), and two inconclusive probes produced system-focused second steps (`slope handling code`, `audio singleton implementation`) without any classification regression in the subset
 - Implementation boundary: this remains a renderer-only refinement in `AnalysisResult.tsx` and does not change prompts, API shape, persistence, or autonomous behavior
 
+#### Third-Step Continuation For Non-Confirmed Follow-Ups (2026-04-16)
+
+- What changed: the client-side renderer now extends the same stateless guided-debugging pattern one step further, allowing a third focused probe when the second-step follow-up still lands in `Falsified` or `Inconclusive`
+- Loop boundary: confirmed second-step outcomes continue to use the normal backend-provided next steps, while non-confirmed refined outcomes can generate one more bounded renderer-side step and then stop at step 3
+- Stateless implementation: the guided chain is preserved only inside the existing `what_to_do_next` payload so the renderer can compare the current candidate against both prior steps without adding backend state, schema fields, API changes, or local memory
+- Progression rule: the third step must still differ from both earlier steps by shifting lever, scope, or method, and the renderer rejects candidates that collapse back into the same action pattern or heavily overlap prior wording
+- Targeted validation status: a live 2-chain subset covering `falsified -> falsified` and `inconclusive -> inconclusive` follow-up paths produced coherent 3-step sequences with no passive phrasing, low overlap between steps, and visible progression across the chain
+- Remaining edge case: later-step focus extraction is structurally stable but can still inherit awkward wording from noisy observation text, so some step-3 phrases are less clean than the underlying lever shift even when the progression guard is doing the right thing
+- Implementation boundary: this remains a renderer-only refinement in `AnalysisResult.tsx`, deliberately capped at three total guided steps, and is meant to validate chained reasoning stability rather than introduce open-ended autonomy
+
 #### Second-Step Progression And Non-Repetition Guard (2026-04-15)
 
 - What changed: the renderer now applies a small coherence guard before showing the second debugging step, rejecting candidates that reuse the same action pattern, stay on the same lever without narrowing, or overlap too heavily with the first step
