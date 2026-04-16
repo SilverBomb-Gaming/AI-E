@@ -42,6 +42,14 @@ const WEAK_CONFIRMATION_STEP_PATTERN =
   /^(?:temporarily\s+)?(?:add a debug log|log\b|inspect\b|check\b|verify\b|look at\b)/i;
 const GENERIC_FOCUS_PATTERN =
   /\b(?:issue|problem|symptom|behavior|weirdness|feels wrong|same slowdown|snap back|run normally|changes made|current suspected system)\b/i;
+const OUTCOME_FOCUS_PATTERN =
+  /\b(?:moves? normally|move normally|responds?(?: normally)?|works? again|working again|behaves? normally|run normally|running normally|fixed|resolved|disappear(?:ed|s)?|went away|back to normal|better now|worse now|same behavior|no obvious change)\b/i;
+const PROCESS_FOCUS_PATTERN =
+  /\b(?:different systems one by one|one by one|before and after|first thing|next thing|next step|current step|same weird behavior|same issue|same problem|different system|suspected system)\b/i;
+const CONVERSATIONAL_FRAGMENT_PATTERN =
+  /\b(?:can(?:not|'t) tell what|can(?:not|'t) tell what'?s|kind of|sort of|place and i can(?:not|'t)|what'?s wrong|i am not sure|i'm not sure)\b/i;
+const COMPONENT_LIKE_FOCUS_PATTERN =
+  /\b(?:animator|animation|speed sync|sync|limiter|stamina|controller|state machine|pathfinding|pool|reference|target reference|overlay|bootstrap|singleton|timeline|handoff|priority|camera|recenter|rigidbody|velocity|wall-jump|jump script|audio|button|canvas|input|friction|slope|dash|ground|menu|scene|ui flow|event|transition|prefab|component|manager|handler|script|system)\b/i;
 const MAX_GUIDED_STEPS = 3;
 
 const STOP_WORDS = new Set([
@@ -181,6 +189,7 @@ function cleanFocusPhrase(text: string): string | null {
   const cleaned = trimLeadingArticle(trimTrailingPunctuation(text))
     .replace(/^(?:or\s+)?(?:disable|turn off|remove|bypass|force|clear|delay|skip|pause|comment out)\s+(?:the\s+)?/i, "")
     .replace(/^(?:most likely cause of|likely cause of|cause of|changes made to)\s+/i, "")
+    .replace(/\s+and\s+one\s+related\s+variable\b.*$/i, "")
     .replace(/\s+(?:lets?|makes?|removes?|fixes?|resolves?|stops?|worked|solved)\b.*$/i, "")
     .replace(/\s+/g, " ");
   if (!cleaned) {
@@ -188,6 +197,61 @@ function cleanFocusPhrase(text: string): string | null {
   }
 
   return cleaned.split(" ").slice(0, 6).join(" ");
+}
+
+function isPronounHeavyFocusPhrase(text: string | null): boolean {
+  if (!text) {
+    return true;
+  }
+
+  const tokens = text.toLowerCase().match(/[a-z']+/g) ?? [];
+  if (!tokens.length) {
+    return true;
+  }
+
+  const pronounCount = tokens.filter((token) => /^(?:i|me|my|mine|you|your|yours|we|our|ours|they|their|theirs|it|its|this|that|these|those|what|which)$/.test(token)).length;
+  return pronounCount >= 2 || pronounCount >= Math.ceil(tokens.length / 3);
+}
+
+function isClauseHeavyFocusPhrase(text: string | null): boolean {
+  if (!text) {
+    return true;
+  }
+
+  const clauseCount = (text.match(/\b(?:and|but|because|which|that|while|when|where|what)\b/gi) ?? []).length;
+  return clauseCount >= 2 || (clauseCount >= 1 && text.split(/\s+/).length > 5);
+}
+
+function isBlockedFocusPhrase(text: string | null, source: "general" | "observation"): boolean {
+  if (!text) {
+    return true;
+  }
+
+  if (/\bnext likely system\b/i.test(text)) {
+    return true;
+  }
+
+  if (OUTCOME_FOCUS_PATTERN.test(text) || PROCESS_FOCUS_PATTERN.test(text) || CONVERSATIONAL_FRAGMENT_PATTERN.test(text)) {
+    return true;
+  }
+
+  if (isPronounHeavyFocusPhrase(text) || isClauseHeavyFocusPhrase(text)) {
+    return true;
+  }
+
+  if (source === "observation") {
+    return !CONCRETE_ANCHOR_PATTERN.test(text) && !COMPONENT_LIKE_FOCUS_PATTERN.test(text);
+  }
+
+  return false;
+}
+
+function getSanitizedFocusPhrase(text: string | null, source: "general" | "observation" = "general"): string | null {
+  if (!text || isWeakFocusPhrase(text) || isBlockedFocusPhrase(text, source)) {
+    return null;
+  }
+
+  return text;
 }
 
 function isWeakFocusPhrase(text: string | null): boolean {
@@ -204,16 +268,43 @@ function extractFocusPhrase(text: string): string | null {
     /\b(?:temporarily\s+)?(?:disable|disabling|turn off|turning off|remove|removing|bypass|bypassing|force|forcing|clear|clearing|delay|delaying|skip|skipping|pause|pausing|comment out|commenting out)(?:\s+or\s+(?:disable|turn off|remove|bypass|force|clear|delay|skip|pause|comment out))?\s+(?:the\s+)?([^.,;]+?)(?:\s+(?:once|immediately|to|and compare|lets?|makes?|causes?|restores?|returns?|removes?|fixes?|resolves?|stops?|supports?)\b|[.,;]|$)/i,
   );
   if (actionableMatch) {
-    const focus = cleanFocusPhrase(actionableMatch[1]);
-    if (!isWeakFocusPhrase(focus)) {
+    const focus = getSanitizedFocusPhrase(cleanFocusPhrase(actionableMatch[1]));
+    if (focus) {
       return focus;
     }
   }
 
   const nounPhraseMatches = text.matchAll(/\b(?:the|a|an)\s+([^.,;]+?)(?:\s+(?:is|are|was|were|to|before|after|during|when|that|which)\b|[.,;]|$)/gi);
   for (const match of nounPhraseMatches) {
-    const focus = cleanFocusPhrase(match[1]);
-    if (!isWeakFocusPhrase(focus)) {
+    const focus = getSanitizedFocusPhrase(cleanFocusPhrase(match[1]));
+    if (focus) {
+      return focus;
+    }
+  }
+
+  return null;
+}
+
+function extractObservationFocus(text: string): string | null {
+  const anchorFocus = extractObservationAnchor(text);
+  if (anchorFocus) {
+    return anchorFocus;
+  }
+
+  const actionableMatch = text.match(
+    /\b(?:temporarily\s+)?(?:disable|disabling|turn off|turning off|remove|removing|bypass|bypassing|force|forcing|clear|clearing|delay|delaying|skip|skipping|pause|pausing|comment out|commenting out)(?:\s+or\s+(?:disable|turn off|remove|bypass|force|clear|delay|skip|pause|comment out))?\s+(?:the\s+)?([^.,;]+?)(?:\s+(?:once|immediately|to|and compare|lets?|makes?|causes?|restores?|returns?|removes?|fixes?|resolves?|stops?|supports?)\b|[.,;]|$)/i,
+  );
+  if (actionableMatch) {
+    const focus = getSanitizedFocusPhrase(cleanFocusPhrase(actionableMatch[1]), "observation");
+    if (focus) {
+      return focus;
+    }
+  }
+
+  const nounPhraseMatches = text.matchAll(/\b(?:the|a|an)\s+([^.,;]+?)(?:\s+(?:is|are|was|were|to|before|after|during|when|that|which)\b|[.,;]|$)/gi);
+  for (const match of nounPhraseMatches) {
+    const focus = getSanitizedFocusPhrase(cleanFocusPhrase(match[1]), "observation");
+    if (focus) {
       return focus;
     }
   }
@@ -234,8 +325,8 @@ function extractObservationAnchor(text: string): string | null {
       continue;
     }
 
-    const focus = cleanFocusPhrase(match[1].replace(/^(?:some|the)\s+/i, ""));
-    if (!isWeakFocusPhrase(focus)) {
+    const focus = getSanitizedFocusPhrase(cleanFocusPhrase(match[1].replace(/^(?:some|the)\s+/i, "")), "observation");
+    if (focus) {
       return focus;
     }
   }
@@ -267,7 +358,7 @@ function buildFalsifiedDiagnosis(params: {
   const originalFocus =
     extractFocusPhrase(attemptedStep) ?? extractFocusPhrase(params.originalResult.what_happened) ?? "the original suspected system";
   const alternativeFocus =
-    extractFocusPhrase(alternativeClause) ?? extractFocusPhrase(params.nextResult.what_happened) ?? "a different system";
+    extractObservationFocus(alternativeClause) ?? extractFocusPhrase(params.nextResult.what_happened) ?? "a different system";
   const noEffectSummary = noEffectClause
     ? lowerFirstCharacter(normalizeEvidenceClause(noEffectClause)).replace(/,\s+([A-Z])/g, (_, character: string) => `, ${character.toLowerCase()}`)
     : `changing ${trimLeadingArticle(originalFocus)} had no effect`;
@@ -398,17 +489,18 @@ function buildNextStepGuidance(params: {
   const currentStep = params.priorSteps[0] ?? "";
   const alternativeClause = params.observation.split(/\bbut\b/i)[1]?.trim() ?? params.observation.trim();
   const diagnosisFocus = extractFocusPhrase(params.currentResult.what_happened);
-  const observationFocus = extractObservationAnchor(params.observation) ?? extractFocusPhrase(params.observation);
+  const observationFocus = extractObservationFocus(params.observation);
   const currentFocus =
     (extractFocusPhrase(currentStep) ??
       (WEAK_CONFIRMATION_STEP_PATTERN.test(currentStep) ? extractFocusPhrase(params.currentResult.what_happened) : null) ??
       extractFocusPhrase(params.currentResult.what_happened)) ??
     "current suspected system";
-  const alternateFocus = extractObservationAnchor(alternativeClause) ?? extractFocusPhrase(alternativeClause) ?? observationFocus ?? diagnosisFocus ?? currentFocus;
+  const alternateFocus = extractObservationFocus(alternativeClause) ?? diagnosisFocus ?? currentFocus;
   const focusCandidates = [
-    params.verificationState === "falsified" ? alternateFocus : observationFocus,
-    params.verificationState === "falsified" ? diagnosisFocus : diagnosisFocus,
-    params.verificationState === "falsified" ? observationFocus : alternateFocus,
+    params.verificationState === "falsified" ? alternateFocus : diagnosisFocus,
+    params.verificationState === "falsified" ? diagnosisFocus : currentFocus,
+    params.verificationState === "falsified" ? currentFocus : alternateFocus,
+    observationFocus,
     currentFocus,
   ].filter((focus, index, values): focus is string => Boolean(focus?.trim()) && values.indexOf(focus) === index);
   const orderedFocusCandidates = [
@@ -614,7 +706,7 @@ function classifyFollowUpResult(params: {
   const observationTerms = extractComparableTerms(observation);
   const alternativeTerms = extractComparableTerms(alternativeObservationText);
   const originalFocus = extractFocusPhrase(firstStep) ?? extractFocusPhrase(params.originalResult.what_happened);
-  const alternativeFocus = extractFocusPhrase(alternativeObservationText);
+  const alternativeFocus = extractObservationFocus(alternativeObservationText);
   const similarity = calculateSimilarity(originalTerms, nextTerms);
   const sharedTerms = [...originalTerms].filter((term) => nextTerms.has(term)).length;
   const stepAlignmentCount = [...firstStepTerms].filter((term) => observationTerms.has(term)).length;

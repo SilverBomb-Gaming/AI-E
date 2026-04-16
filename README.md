@@ -347,6 +347,14 @@ This is the current strategic model for AI-E. It separates the already-shippable
 - Targeted validation status: two sparse multi-turn scenarios were re-run against the live analyzer with threaded context, and both continuation turns retained the prior debugging frame instead of dropping back to a generic cold-start diagnosis
 - Regression check: the existing bounded follow-up loop remains renderer-driven, and the threading change only affects new analyze submissions plus client-side session payload shaping
 
+#### Observation Focus Sanitization For Threaded Follow-Ups (2026-04-16)
+
+- Observed issue: live threaded follow-ups could still promote raw observation fragments into malformed step targets such as outcome phrases, vague process wording, or conversational leftovers instead of concrete system anchors
+- What changed: the result renderer now sanitizes focus phrases more aggressively, strips helper-clause tails like `and one related variable`, blocks generic instructional fallbacks such as `next likely system`, and only accepts observation-derived anchors when they remain concrete and component-like
+- Fallback rule: when the latest observation does not yield a safe focus, the renderer now falls back to diagnosis and prior-step system anchors rather than surfacing a malformed follow-up target
+- Targeted validation status: the same 4 live playtest cases were rerun against the local analyzer route after the patch, and all four kept concrete second-step focuses (`stamina limiter`, `timeline handoff`, `slope handling logic or friction settings`, `audio singleton`) with `MALFORMED = None`, `PASSIVE = None`, and `WORKFLOW_REGRESSION = None`
+- Remaining note: workflow suggestions still vary by case because they depend on the live analyzer wording, but the malformed focus leakage is now closed in the renderer path that feeds threaded follow-up guidance
+
 #### Second-Step Progression And Non-Repetition Guard (2026-04-15)
 
 - What changed: the renderer now applies a small coherence guard before showing the second debugging step, rejecting candidates that reuse the same action pattern, stay on the same lever without narrowing, or overlap too heavily with the first step
