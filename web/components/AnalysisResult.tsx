@@ -22,6 +22,7 @@ type AnalysisResultProps = {
 
 type LoopTerminationStatus = StoredLoopTerminationStatus;
 type EscalationStrategy = "minimal-repro" | "logging" | "single-system-rebuild" | "clean-environment";
+type SuggestedNextAction = "continue-thread" | "restart-fresh" | "stop" | "escalate";
 
 const EVIDENCE_GAP_PATTERN =
   /absence of error messages|lack of error messages|without an error message|no obvious console errors|no error messages|not a runtime exception/i;
@@ -725,6 +726,85 @@ function getLoopTerminationStatusHint(status: LoopTerminationStatus | null): str
   }
 }
 
+function getSuggestedNextAction(params: {
+  loopTerminationStatus: LoopTerminationStatus | null;
+  isRefined: boolean;
+  verificationState: FollowUpVerificationState | undefined;
+  nextStepGuidance: string | null;
+  showLowEvidenceCue: boolean;
+  hasGuidedStep: boolean;
+}): SuggestedNextAction {
+  if (params.loopTerminationStatus === "resolved") {
+    return "stop";
+  }
+
+  if (params.loopTerminationStatus === "stuck") {
+    return "escalate";
+  }
+
+  const hasMessySignals =
+    params.showLowEvidenceCue ||
+    (params.isRefined && params.verificationState === "inconclusive" && !params.nextStepGuidance && !params.hasGuidedStep) ||
+    (!params.isRefined && !params.hasGuidedStep);
+
+  if (hasMessySignals) {
+    return "restart-fresh";
+  }
+
+  if (params.loopTerminationStatus === "converging") {
+    return "continue-thread";
+  }
+
+  if (!params.isRefined) {
+    return "continue-thread";
+  }
+
+  if (params.verificationState === "falsified" || params.verificationState === "inconclusive") {
+    return "continue-thread";
+  }
+
+  return "restart-fresh";
+}
+
+function getSuggestedNextActionLabel(action: SuggestedNextAction): string {
+  switch (action) {
+    case "continue-thread":
+      return "Continue debugging (use threaded context)";
+    case "restart-fresh":
+      return "Restart fresh (ignore previous context)";
+    case "stop":
+      return "Stop (issue appears resolved)";
+    case "escalate":
+      return "Escalate";
+  }
+}
+
+function getSuggestedNextActionClassName(action: SuggestedNextAction): string {
+  switch (action) {
+    case "continue-thread":
+      return "border-ocean/20 bg-ocean/10 text-ocean";
+    case "restart-fresh":
+      return "border-ink/10 bg-white/70 text-ink/80";
+    case "stop":
+      return "border-emerald-200 bg-emerald-50 text-emerald-700";
+    case "escalate":
+      return "border-coral/20 bg-coral/10 text-ember";
+  }
+}
+
+function getSuggestedNextActionHint(action: SuggestedNextAction): string {
+  switch (action) {
+    case "continue-thread":
+      return "Keep the current debugging thread. The latest result is still narrowing the likely cause, so carry this context into the next turn.";
+    case "restart-fresh":
+      return "The current signal is too mixed or underspecified to keep threading confidently. Start a fresh analysis without previous context to reset the frame.";
+    case "stop":
+      return "The latest observation strongly supports resolution. Verify the fix in your project, then stop the current thread unless the symptom returns.";
+    case "escalate":
+      return "Do not continue the same bounded thread unchanged. Use the escalation path below to switch to a broader recovery move.";
+  }
+}
+
 function getEscalationStrategyTitle(strategy: EscalationStrategy | null): string | null {
   switch (strategy) {
     case "minimal-repro":
@@ -795,6 +875,14 @@ export function AnalysisResult({
     problemDescription: input?.problemDescription,
   });
   const showLowEvidenceCue = shouldShowLowEvidenceCue(result);
+  const suggestedNextAction = getSuggestedNextAction({
+    loopTerminationStatus,
+    isRefined,
+    verificationState,
+    nextStepGuidance,
+    showLowEvidenceCue,
+    hasGuidedStep: Boolean(currentGuidedStep),
+  });
   const [observation, setObservation] = useState("");
   const [isSubmittingFollowUp, setIsSubmittingFollowUp] = useState(false);
   const [followUpError, setFollowUpError] = useState<string | null>(null);
@@ -942,6 +1030,17 @@ export function AnalysisResult({
                 {getLoopTerminationStatusHint(loopTerminationStatus) ? (
                   <p className="mt-2 text-xs leading-6 body-muted sm:text-sm">{getLoopTerminationStatusHint(loopTerminationStatus)}</p>
                 ) : null}
+                <div className="mt-3 rounded-[1rem] border border-ink/10 bg-white/50 p-3">
+                  <p className="section-label">Suggested next action</p>
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <span
+                      className={`inline-flex rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] ${getSuggestedNextActionClassName(suggestedNextAction)}`}
+                    >
+                      {getSuggestedNextActionLabel(suggestedNextAction)}
+                    </span>
+                  </div>
+                  <p className="mt-2 text-xs leading-6 body-muted sm:text-sm">{getSuggestedNextActionHint(suggestedNextAction)}</p>
+                </div>
               </div>
             ) : null}
           </div>
