@@ -336,6 +336,16 @@ This is the current strategic model for AI-E. It separates the already-shippable
 - Targeted validation status: two known stuck chains were re-run against the live analyzer and both kept `Current status = Stuck` while the escalation output remained actionable and materially different from the prior guided steps
 - Regression check: the stuck validation did not change the existing loop classifier or step-generation path for non-stuck chains, and both checked escalations passed the difference check against the latest guided step
 
+#### Lightweight Session Threading For Debugging Continuation (2026-04-16)
+
+- What changed: the analyze form can now opt into a lightweight session thread that passes the last stored diagnosis, most recent attempted step, and latest `Resolved` / `Converging` / `Stuck` status into the next analysis request as structured client-side context
+- Threading boundary: this remains stateless at the backend level, uses only the existing browser session storage entry, and does not add persistent storage, agents, background loops, or a redesigned API contract
+- Continuation rule: the new turn still requires fresh user input, but when session threading is enabled the next `/api/analyze` request includes a compact continuation block in `context` so the model starts from the previous debugging position instead of a fresh generic first pass
+- UI effect: the analyze page now shows a `Session threading` card when a prior result exists, lets the user toggle continuation on or off, and the result page adds a direct `Continue this debugging flow` path back into the analyze form
+- Stored thread state: refined result updates now persist the last attempted step plus the latest loop-status label alongside the existing result payload so the next turn has concrete continuity anchors
+- Targeted validation status: two sparse multi-turn scenarios were re-run against the live analyzer with threaded context, and both continuation turns retained the prior debugging frame instead of dropping back to a generic cold-start diagnosis
+- Regression check: the existing bounded follow-up loop remains renderer-driven, and the threading change only affects new analyze submissions plus client-side session payload shaping
+
 #### Second-Step Progression And Non-Repetition Guard (2026-04-15)
 
 - What changed: the renderer now applies a small coherence guard before showing the second debugging step, rejecting candidates that reuse the same action pattern, stay on the same lever without narrowing, or overlap too heavily with the first step

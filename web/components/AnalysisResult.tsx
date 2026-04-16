@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 
-import type { FollowUpVerificationState } from "@/components/AnalysisForm";
+import type { FollowUpVerificationState, StoredLoopTerminationStatus } from "@/components/AnalysisForm";
 import type { AnalysisInput, FreeAnalysisResponse } from "@/lib/aie/types";
 
 type AnalysisResultProps = {
@@ -15,10 +15,12 @@ type AnalysisResultProps = {
     result: FreeAnalysisResponse;
     observation: string;
     verificationState: FollowUpVerificationState;
+    attemptedStep?: string;
+    loopTerminationStatus: StoredLoopTerminationStatus | null;
   }) => void;
 };
 
-type LoopTerminationStatus = "resolved" | "converging" | "stuck";
+type LoopTerminationStatus = StoredLoopTerminationStatus;
 type EscalationStrategy = "minimal-repro" | "logging" | "single-system-rebuild" | "clean-environment";
 
 const EVIDENCE_GAP_PATTERN =
@@ -860,18 +862,38 @@ export function AnalysisResult({
         observation: submittedObservation,
         priorSteps: guidedStepStack,
       });
+      const nextGuidedStepStack = verificationState === "confirmed" ? guidedStepStack : buildGuidedStepStack(nextGuidedStep, guidedStepStack);
+      const upcomingNextStepGuidance =
+        verificationState === "confirmed"
+          ? null
+          : buildNextStepGuidance({
+              verificationState,
+              currentResult: refinedPayload,
+              observation: submittedObservation,
+              priorSteps: nextGuidedStepStack,
+            });
+      const nextLoopTerminationStatus = classifyLoopTerminationStatus({
+        isRefined: true,
+        verificationState,
+        observation: submittedObservation,
+        guidedStepStack: nextGuidedStepStack,
+        nextStepGuidance: upcomingNextStepGuidance,
+        reachedGuidedStepLimit: verificationState === "confirmed" ? false : nextGuidedStepStack.length >= MAX_GUIDED_STEPS,
+      });
       const nextResult =
         verificationState === "confirmed"
           ? refinedPayload
           : {
               ...refinedPayload,
-              what_to_do_next: buildGuidedStepStack(nextGuidedStep, guidedStepStack),
+              what_to_do_next: nextGuidedStepStack,
             };
 
       onResultChange?.({
         result: nextResult,
         observation: submittedObservation,
         verificationState,
+        attemptedStep: currentGuidedStep ?? undefined,
+        loopTerminationStatus: nextLoopTerminationStatus,
       });
       setObservation("");
     } catch {

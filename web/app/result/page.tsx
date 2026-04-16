@@ -4,68 +4,8 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { AnalysisResult } from "@/components/AnalysisResult";
-import { resultStorageKey, type FollowUpVerificationState, type StoredAnalysisState } from "@/components/AnalysisForm";
+import { normalizeStoredAnalysisState, resultStorageKey, type StoredAnalysisState } from "@/components/AnalysisForm";
 import { UpgradeCard } from "@/components/UpgradeCard";
-import type { AnalysisInput, FreeAnalysisResponse } from "@/lib/aie/types";
-
-function isFreeAnalysisResponse(value: unknown): value is FreeAnalysisResponse {
-  const source = value as Record<string, unknown>;
-
-  return (
-    typeof source?.what_happened === "string" &&
-    Array.isArray(source?.what_matters) &&
-    Array.isArray(source?.what_to_do_next) &&
-    typeof source?.upgrade_hint === "string"
-  );
-}
-
-function normalizeAnalysisInput(value: unknown): AnalysisInput | undefined {
-  if (!value || typeof value !== "object") {
-    return undefined;
-  }
-
-  const source = value as Record<string, unknown>;
-  const problemDescription = String(source.problemDescription ?? "").trim();
-  if (!problemDescription) {
-    return undefined;
-  }
-
-  return {
-    problemDescription,
-    codeSnippet: String(source.codeSnippet ?? "").trim(),
-    errorMessage: String(source.errorMessage ?? "").trim(),
-    context: String(source.context ?? "").trim(),
-  };
-}
-
-function normalizeStoredAnalysisState(value: unknown): StoredAnalysisState | null {
-  if (isFreeAnalysisResponse(value)) {
-    return {
-      result: value,
-      refinedFromObservation: false,
-    };
-  }
-
-  if (!value || typeof value !== "object") {
-    return null;
-  }
-
-  const source = value as Record<string, unknown>;
-  if (!isFreeAnalysisResponse(source.result)) {
-    return null;
-  }
-
-  return {
-    input: normalizeAnalysisInput(source.input),
-    result: source.result,
-    refinedFromObservation: Boolean(source.refinedFromObservation),
-    lastObservation: typeof source.lastObservation === "string" ? source.lastObservation.trim() || undefined : undefined,
-    verificationState:
-      source.verificationState === "confirmed" || source.verificationState === "falsified" || source.verificationState === "inconclusive"
-        ? (source.verificationState as FollowUpVerificationState)
-        : undefined,
-  };
-}
 
 export default function ResultPage() {
   const [storedState, setStoredState] = useState<StoredAnalysisState | null>(null);
@@ -119,6 +59,9 @@ export default function ResultPage() {
           <h1 className="headline mt-2 text-4xl font-semibold">A structured first pass on your Unity issue.</h1>
         </div>
         <div className="flex gap-3">
+          <Link href="/analyze" className="rounded-full bg-ink px-5 py-3 text-sm font-semibold text-white">
+            Continue this debugging flow
+          </Link>
           <Link href="/analyze" className="rounded-full border border-ink/10 px-5 py-3 text-sm font-semibold text-ink">
             Analyze another issue
           </Link>
@@ -134,7 +77,7 @@ export default function ResultPage() {
           isRefined={Boolean(storedState.refinedFromObservation)}
           lastObservation={storedState.lastObservation}
           verificationState={storedState.verificationState}
-          onResultChange={({ result: nextResult, observation, verificationState }) => {
+          onResultChange={({ result: nextResult, observation, verificationState, attemptedStep, loopTerminationStatus }) => {
             setStoredState((current) => {
               if (!current) {
                 return current;
@@ -146,6 +89,8 @@ export default function ResultPage() {
                 refinedFromObservation: true,
                 lastObservation: observation,
                 verificationState,
+                lastAttemptedStep: attemptedStep,
+                loopTerminationStatus: loopTerminationStatus ?? undefined,
               } satisfies StoredAnalysisState;
 
               window.sessionStorage.setItem(resultStorageKey, JSON.stringify(nextState));
