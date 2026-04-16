@@ -156,7 +156,10 @@ function hasDistinctAlternateLever(originalFocus: string | null, alternativeFocu
 }
 
 function cleanFocusPhrase(text: string): string | null {
-  const cleaned = trimLeadingArticle(trimTrailingPunctuation(text)).replace(/\s+/g, " ");
+  const cleaned = trimLeadingArticle(trimTrailingPunctuation(text))
+    .replace(/^(?:or\s+)?(?:disable|turn off|remove|bypass|force|clear|delay|skip|pause|comment out)\s+(?:the\s+)?/i, "")
+    .replace(/^(?:most likely cause of|likely cause of|cause of|changes made to)\s+/i, "")
+    .replace(/\s+/g, " ");
   if (!cleaned) {
     return null;
   }
@@ -166,7 +169,7 @@ function cleanFocusPhrase(text: string): string | null {
 
 function extractFocusPhrase(text: string): string | null {
   const actionableMatch = text.match(
-    /\b(?:disable|disabling|turn off|turning off|remove|removing|bypass|bypassing|force|forcing|clear|clearing|delay|delaying|skip|skipping|pause|pausing|comment out|commenting out)\s+(?:the\s+)?([^.,;]+?)(?:\s+(?:to|lets?|makes?|causes?|restores?|returns?|fixes?|resolves?|stops?)\b|[.,;]|$)/i,
+    /\b(?:temporarily\s+)?(?:disable|disabling|turn off|turning off|remove|removing|bypass|bypassing|force|forcing|clear|clearing|delay|delaying|skip|skipping|pause|pausing|comment out|commenting out)(?:\s+or\s+(?:disable|turn off|remove|bypass|force|clear|delay|skip|pause|comment out))?\s+(?:the\s+)?([^.,;]+?)(?:\s+(?:once|immediately|to|and compare|lets?|makes?|causes?|restores?|returns?|fixes?|resolves?|stops?|supports?)\b|[.,;]|$)/i,
   );
   if (actionableMatch) {
     return cleanFocusPhrase(actionableMatch[1]);
@@ -211,6 +214,39 @@ function buildFalsifiedDiagnosis(params: {
   const alternativeEvidence = capitalizeSentence(normalizeEvidenceClause(alternativeClause));
 
   return `Since ${noEffectSummary}, the issue is more likely driven by ${trimLeadingArticle(alternativeFocus)} than ${trimLeadingArticle(originalFocus)}. ${alternativeEvidence}.`;
+}
+
+function buildSecondStepGuidance(params: {
+  verificationState: FollowUpVerificationState | undefined;
+  currentResult: FreeAnalysisResponse;
+  observation: string | undefined;
+}): string | null {
+  if (!params.verificationState || !params.observation?.trim()) {
+    return null;
+  }
+
+  const currentFirstStep = params.currentResult.what_to_do_next[0] ?? "";
+  const strengthenedCurrentStep = strengthenConfirmationStep(currentFirstStep, params.currentResult.what_happened) ?? currentFirstStep;
+  const alternativeClause = params.observation.split(/\bbut\b/i)[1]?.trim() ?? params.observation.trim();
+  const currentFocus =
+    (extractFocusPhrase(strengthenedCurrentStep) ??
+      (WEAK_CONFIRMATION_STEP_PATTERN.test(currentFirstStep) ? extractFocusPhrase(params.currentResult.what_happened) : null) ??
+      extractFocusPhrase(params.currentResult.what_happened)) ??
+    "current suspected system";
+  const alternateFocus = extractFocusPhrase(alternativeClause) ?? currentFocus;
+
+  if (params.verificationState === "falsified") {
+    const step = `Temporarily disable or bypass the ${trimLeadingArticle(alternateFocus)} and compare the behavior immediately before and after. If the issue changes right away, that confirms the updated diagnosis.`;
+    return step !== strengthenedCurrentStep ? step : null;
+  }
+
+  if (params.verificationState === "inconclusive") {
+    const focus = trimLeadingArticle(currentFocus);
+    const step = `Temporarily isolate only the ${focus} and one related variable, then compare whether the symptom changes immediately. If nothing changes, move to the next likely system instead of broadening the test.`;
+    return step !== strengthenedCurrentStep ? step : null;
+  }
+
+  return null;
 }
 
 function classifyFollowUpResult(params: {
@@ -313,6 +349,13 @@ export function AnalysisResult({
 }: AnalysisResultProps) {
   const [confirmFirstStep, ...followUpSteps] = result.what_to_do_next;
   const displayedConfirmFirstStep = strengthenConfirmationStep(confirmFirstStep, result.what_happened);
+  const secondStepGuidance = isRefined
+    ? buildSecondStepGuidance({
+        verificationState,
+        currentResult: result,
+        observation: lastObservation,
+      })
+    : null;
   const showLowEvidenceCue = shouldShowLowEvidenceCue(result);
   const [observation, setObservation] = useState("");
   const [isSubmittingFollowUp, setIsSubmittingFollowUp] = useState(false);
@@ -444,6 +487,12 @@ export function AnalysisResult({
                 <li key={item}>{index + 2}. {item}</li>
               ))}
             </ol>
+          </div>
+        ) : null}
+        {isRefined && secondStepGuidance && verificationState !== "confirmed" ? (
+          <div className="mt-4 rounded-[1.25rem] border border-ink/10 bg-white/50 p-4">
+            <p className="section-label">Next focused step</p>
+            <p className="mt-2 text-sm leading-7 text-ink/90 sm:text-base">2. {secondStepGuidance}</p>
           </div>
         ) : null}
         <div className="mt-5 rounded-[1.25rem] border border-ink/10 bg-white/40 p-4">

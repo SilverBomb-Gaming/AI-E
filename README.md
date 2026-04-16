@@ -296,6 +296,14 @@ This is the current strategic model for AI-E. It separates the already-shippable
 - Targeted validation status: two mixed-system falsification probes now classified as `Falsified` with visible re-centering, while two weak-evidence controls remained `Inconclusive`
 - Next validation move: this passes the targeted gate for mixed-system falsification behavior, but the loop is still not full playtest-ready until the broader 10-case audit is rerun against the new baseline
 
+#### Second-Step Guidance For Falsified And Inconclusive Outcomes (2026-04-15)
+
+- What changed: the client-side renderer now adds a small `Next focused step` block for non-confirmed refined results, deriving a second guided check from the current refined diagnosis plus the latest observation without expanding backend state or schema
+- Why it was needed: the bounded Layer 3 loop could now classify follow-up evidence more reliably, but falsified and inconclusive outcomes still stopped one step too early and left the user to invent the next probe alone
+- Expected effect: falsified outcomes should immediately point to the newly indicated lever, while inconclusive outcomes should narrow the next probe to one concrete system variable instead of broadening the search
+- Targeted validation status: two falsification probes produced relevant second steps aimed at the alternate lever (`stamina limiter`, `timeline handoff`), and two inconclusive probes produced system-focused second steps (`slope handling code`, `audio singleton implementation`) without any classification regression in the subset
+- Implementation boundary: this remains a renderer-only refinement in `AnalysisResult.tsx` and does not change prompts, API shape, persistence, or autonomous behavior
+
 #### Full 10-Case Audit After Mixed-System Refinement (2026-04-15)
 
 - Audit scope: reran the established 10-case full-loop audit against the current shipped renderer behavior after decisive-evidence interpretation, confirmation-step sharpening, falsification re-centering, and alternate-lever dominance refinements
