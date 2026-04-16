@@ -36,6 +36,14 @@ const FALSIFICATION_SIGNAL_PATTERN =
   /nothing changed|changes nothing|no change|same issue|same behavior|still broken the same|did not help|did nothing|doesn't help|no effect|unchanged|still happens exactly the same/i;
 const PARTIAL_SIGNAL_PATTERN =
   /\bbut\b|partially|reduced|less severe|less often|smaller|improved?.*\bstill\b|fixed.*\bbut\b|stops?.*\bbut\b/i;
+const STRONG_RESOLVED_SIGNAL_PATTERN =
+  /works? normally|moves? normally|responds? to input again|fixed it|resolved|gone now|issue disappeared|now works?|back to normal|behaves? normally|working again/i;
+const STRONG_STUCK_SIGNAL_PATTERN =
+  /nothing clearly fixed (?:the )?issue|no obvious change|still happen(?:s)? inconsistently|still occurs? inconsistently|still all over the place|can(?:not|'t) tell (?:what'?s )?related to what|tried (?:a few|several|different) (?:things|systems).*nothing (?:really )?changed/i;
+const DEAD_END_STUCK_SIGNAL_PATTERN =
+  /nothing clearly fixed (?:the )?issue|no obvious change|still happen(?:s)? inconsistently|still occurs? inconsistently|tried (?:a few|several|different) (?:things|systems).*nothing (?:really )?changed/i;
+const LOW_SIGNAL_RESET_PATTERN =
+  /still all over the place|can(?:not|'t) tell (?:what'?s )?related to what|everything seems broken|not sure where to start/i;
 const ACTIONABLE_CONFIRMATION_STEP_PATTERN =
   /\b(?:disable|turn off|remove|bypass|force|toggle|clear|delay|comment out|skip|pause)\b/i;
 const WEAK_CONFIRMATION_STEP_PATTERN =
@@ -137,6 +145,18 @@ function calculateSimilarity(left: Set<string>, right: Set<string>): number {
   }
 
   return sharedTerms / new Set([...left, ...right]).size;
+}
+
+function countSharedTerms(left: Set<string>, right: Set<string>): number {
+  let sharedTerms = 0;
+
+  for (const term of left) {
+    if (right.has(term)) {
+      sharedTerms += 1;
+    }
+  }
+
+  return sharedTerms;
 }
 
 function trimLeadingArticle(text: string): string {
@@ -332,6 +352,31 @@ function extractObservationAnchor(text: string): string | null {
   }
 
   return null;
+}
+
+function hasStrongResolvedRecovery(observation: string, latestStep: string | undefined): boolean {
+  const trimmedObservation = observation.trim();
+  if (!trimmedObservation || !STRONG_RESOLVED_SIGNAL_PATTERN.test(trimmedObservation)) {
+    return false;
+  }
+
+  const latestStepTerms = extractComparableTerms(latestStep ?? "");
+  const observationTerms = extractComparableTerms(trimmedObservation);
+  const sharedTerms = countSharedTerms(latestStepTerms, observationTerms);
+
+  return sharedTerms >= 1 || ACTIONABLE_CONFIRMATION_STEP_PATTERN.test(trimmedObservation);
+}
+
+function hasStrongStuckObservation(observation: string): boolean {
+  return STRONG_STUCK_SIGNAL_PATTERN.test(observation.trim());
+}
+
+function shouldEscalateFromObservation(observation: string | undefined): boolean {
+  return Boolean(observation?.trim() && DEAD_END_STUCK_SIGNAL_PATTERN.test(observation));
+}
+
+function shouldRestartFreshFromObservation(observation: string | undefined): boolean {
+  return Boolean(observation?.trim() && LOW_SIGNAL_RESET_PATTERN.test(observation));
 }
 
 function strengthenConfirmationStep(step: string | undefined, diagnosis: string): string | undefined {
@@ -664,8 +709,18 @@ function classifyLoopTerminationStatus(params: {
   const nextFocus = extractFocusPhrase(params.nextStepGuidance ?? "");
   const hasClearLever = !isWeakFocusPhrase(currentFocus) || !isWeakFocusPhrase(nextFocus);
   const hasMeaningfulShift = progressionAcrossChain || Boolean(params.nextStepGuidance && hasClearLever);
+  const strongResolvedOverride = !hasPartialSignal && hasStrongResolvedRecovery(trimmedObservation, params.guidedStepStack[0]);
+  const strongStuckOverride = hasStrongStuckObservation(trimmedObservation);
 
-  if (params.verificationState === "confirmed" && hasConfirmationSignal) {
+  if (strongResolvedOverride) {
+    return "resolved";
+  }
+
+  if (strongStuckOverride) {
+    return "stuck";
+  }
+
+  if (params.verificationState === "confirmed") {
     return "resolved";
   }
 
@@ -715,6 +770,7 @@ function classifyFollowUpResult(params: {
   const hasConfirmationSignal = CONFIRMATION_SIGNAL_PATTERN.test(observation);
   const hasFalsificationSignal = FALSIFICATION_SIGNAL_PATTERN.test(observation);
   const hasPartialSignal = PARTIAL_SIGNAL_PATTERN.test(observation);
+  const hasStrongResolvedOverride = !hasPartialSignal && hasStrongResolvedRecovery(observation, firstStep);
   const alternativeEffectSignal = CONFIRMATION_SIGNAL_PATTERN.test(alternativeObservationText);
   const alternateLeverDominance =
     hasFalsificationSignal &&
@@ -731,6 +787,10 @@ function classifyFollowUpResult(params: {
 
   if (hasPartialSignal) {
     return "inconclusive";
+  }
+
+  if (hasStrongResolvedOverride) {
+    return "confirmed";
   }
 
   if (hasConfirmationSignal && (sameGroundedCause || directStepRecovery)) {
@@ -825,26 +885,28 @@ function getSuggestedNextAction(params: {
   nextStepGuidance: string | null;
   showLowEvidenceCue: boolean;
   hasGuidedStep: boolean;
+  observation: string | undefined;
 }): SuggestedNextAction {
   if (params.loopTerminationStatus === "resolved") {
     return "stop";
   }
 
   if (params.loopTerminationStatus === "stuck") {
-    return "escalate";
+    return shouldRestartFreshFromObservation(params.observation) ? "restart-fresh" : "escalate";
+  }
+
+  if (params.loopTerminationStatus === "converging") {
+    return "continue-thread";
   }
 
   const hasMessySignals =
     params.showLowEvidenceCue ||
+    shouldRestartFreshFromObservation(params.observation) ||
     (params.isRefined && params.verificationState === "inconclusive" && !params.nextStepGuidance && !params.hasGuidedStep) ||
     (!params.isRefined && !params.hasGuidedStep);
 
   if (hasMessySignals) {
     return "restart-fresh";
-  }
-
-  if (params.loopTerminationStatus === "converging") {
-    return "continue-thread";
   }
 
   if (!params.isRefined) {
@@ -974,6 +1036,7 @@ export function AnalysisResult({
     nextStepGuidance,
     showLowEvidenceCue,
     hasGuidedStep: Boolean(currentGuidedStep),
+    observation: lastObservation,
   });
   const [observation, setObservation] = useState("");
   const [isSubmittingFollowUp, setIsSubmittingFollowUp] = useState(false);
@@ -1186,7 +1249,7 @@ export function AnalysisResult({
             <p className="mt-2 text-sm leading-7 text-ink/90 sm:text-base">{displayedGuidedSteps.length + 1}. {nextStepGuidance}</p>
           </div>
         ) : null}
-        {getEscalationStrategyTitle(suggestedEscalationStrategy) ? (
+        {suggestedNextAction === "escalate" && getEscalationStrategyTitle(suggestedEscalationStrategy) ? (
           <div className="mt-4 rounded-[1.25rem] border border-coral/20 bg-coral/5 p-4">
             <p className="section-label">Suggested escalation</p>
             <p className="mt-2 text-sm font-semibold leading-7 text-ink/90 sm:text-base">

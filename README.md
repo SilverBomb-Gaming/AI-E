@@ -317,11 +317,12 @@ This is the current strategic model for AI-E. It separates the already-shippable
 #### Loop Termination Classification For Guided Debugging (2026-04-16)
 
 - What changed: the renderer now derives a small `Current status` block for refined follow-ups, classifying the bounded guided-debugging chain as `Resolved`, `Converging`, or `Stuck` without changing prompts, API shape, persistence, or backend behavior
-- Status rule: `Resolved` requires a confirmed follow-up plus a strong confirmation signal that the issue is clearly fixed or gone
+- Status rule: refined follow-ups that classify as `confirmed` now terminate cleanly as `Resolved`, and strong recovery wording in the latest observation can still force `Resolved` when the user clearly reports that the issue is fixed, gone, or back to normal
 - Status rule: `Converging` covers partial improvement, clearer narrowing, or a meaningful next lever before the bounded loop is exhausted
-- Status rule: `Stuck` covers repeated unresolved outcomes with no partial-improvement signal, and step-3 exhaustion now wins over structural-looking progression so an unresolved capped loop surfaces as stuck instead of optimistic
+- Status rule: `Stuck` covers repeated unresolved outcomes with no partial-improvement signal, and strong dead-end observation wording now also forces `Stuck` for mixed, inconsistent, or no-clear-change outcomes even before the bounded loop is exhausted
 - UI effect: refined results now show `Current status` alongside the existing refined diagnosis messaging so the user can tell whether the loop appears solved, still narrowing, or no longer moving
 - Targeted validation status: the requested live 6-case matrix passed in full against `/api/analyze` with `2 resolved`, `2 converging`, and `2 stuck` chains matching expected status labels
+- Targeted validation status: a follow-up 4-case live rerun for the threaded override pass also passed in full against the local analyzer route, with `Resolved + Stop`, `Converging + Continue debugging`, `Stuck + Escalate`, and `Stuck + Restart fresh` all matching the expected outcomes
 - Regression check: the same validation run reported `MISMATCHES: None` and `PASSIVE: None`, so the status layer did not interfere with existing guided-step generation or reintroduce passive phrasing
 - Remaining edge case: structural variation alone is not treated as progress anymore at the step-3 boundary, so intentionally bounded-loop exhaustion is now the deciding signal when the chain is still unresolved
 
@@ -332,8 +333,9 @@ This is the current strategic model for AI-E. It separates the already-shippable
 - Strategy rule: the escalation must shift to a higher-level recovery move rather than suggest a minor variation of the same step pattern
 - Available strategies: `Isolate to minimal reproduction`, `Switch to logging/debug instrumentation`, `Disable all but one system and rebuild`, and `Test in a clean scene or environment`
 - Selection rule: the renderer chooses among those strategies from the current stuck context, prior guided steps, and broad problem signals so scene/bootstrap-style failures bias toward clean-environment checks while mixed-system churn biases toward single-system rebuild isolation
-- UI effect: `Next focused step` is suppressed for stuck chains so the user sees the escalation strategy as the next move instead of another bounded-loop micro-step
+- UI effect: `Next focused step` is suppressed for stuck chains so the user sees the escalation strategy as the next move instead of another bounded-loop micro-step, and the escalation block is now hidden when the stuck recommendation is `Restart fresh` rather than `Escalate`
 - Targeted validation status: two known stuck chains were re-run against the live analyzer and both kept `Current status = Stuck` while the escalation output remained actionable and materially different from the prior guided steps
+- Recommendation split: true dead-end observations now align to `Stuck + Escalate`, while low-signal mixed observations align to `Stuck + Restart fresh` without leaving the status sounding optimistic
 - Regression check: the stuck validation did not change the existing loop classifier or step-generation path for non-stuck chains, and both checked escalations passed the difference check against the latest guided step
 
 #### Lightweight Session Threading For Debugging Continuation (2026-04-16)
