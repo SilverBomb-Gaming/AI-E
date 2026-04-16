@@ -18,6 +18,8 @@ type AnalysisResultProps = {
   }) => void;
 };
 
+type LoopTerminationStatus = "resolved" | "converging" | "stuck";
+
 const EVIDENCE_GAP_PATTERN =
   /absence of error messages|lack of error messages|without an error message|no obvious console errors|no error messages|not a runtime exception/i;
 const GENERIC_DIAGNOSIS_PATTERN =
@@ -450,6 +452,67 @@ function buildGuidedStepStack(nextStep: string | null, priorSteps: string[]): st
   return [nextStep, ...priorSteps].filter((step, index, values) => Boolean(step) && values.indexOf(step) === index).slice(0, MAX_GUIDED_STEPS);
 }
 
+function hasGuidedProgression(stepStack: string[]): boolean {
+  const chronologicalSteps = [...stepStack].reverse();
+  if (chronologicalSteps.length < 2) {
+    return false;
+  }
+
+  return chronologicalSteps.slice(1).every((step, index) => {
+    const priorSteps = [...chronologicalSteps.slice(0, index + 1)].reverse();
+    return isMeaningfullyProgressed({
+      priorSteps,
+      candidateStep: step,
+      candidateFocus: extractFocusPhrase(step),
+    });
+  });
+}
+
+function classifyLoopTerminationStatus(params: {
+  isRefined: boolean;
+  verificationState: FollowUpVerificationState | undefined;
+  observation: string | undefined;
+  guidedStepStack: string[];
+  nextStepGuidance: string | null;
+  reachedGuidedStepLimit: boolean;
+}): LoopTerminationStatus | null {
+  if (!params.isRefined || !params.verificationState || !params.observation?.trim()) {
+    return null;
+  }
+
+  const trimmedObservation = params.observation.trim();
+  const hasConfirmationSignal = CONFIRMATION_SIGNAL_PATTERN.test(trimmedObservation);
+  const hasPartialSignal = PARTIAL_SIGNAL_PATTERN.test(trimmedObservation);
+  const progressionAcrossChain = hasGuidedProgression(params.guidedStepStack);
+  const currentFocus = extractFocusPhrase(params.guidedStepStack[0] ?? "");
+  const nextFocus = extractFocusPhrase(params.nextStepGuidance ?? "");
+  const hasClearLever = !isWeakFocusPhrase(currentFocus) || !isWeakFocusPhrase(nextFocus);
+  const hasMeaningfulShift = progressionAcrossChain || Boolean(params.nextStepGuidance && hasClearLever);
+
+  if (params.verificationState === "confirmed" && hasConfirmationSignal) {
+    return "resolved";
+  }
+
+  if (params.reachedGuidedStepLimit && params.verificationState !== "confirmed" && !hasPartialSignal) {
+    return "stuck";
+  }
+
+  if (
+    params.verificationState === "inconclusive" &&
+    !hasPartialSignal &&
+    !hasMeaningfulShift &&
+    (!params.nextStepGuidance || !hasClearLever)
+  ) {
+    return "stuck";
+  }
+
+  if (hasPartialSignal || hasMeaningfulShift || (params.verificationState === "falsified" && hasClearLever)) {
+    return "converging";
+  }
+
+  return "stuck";
+}
+
 function classifyFollowUpResult(params: {
   originalResult: FreeAnalysisResponse;
   nextResult: FreeAnalysisResponse;
@@ -540,6 +603,45 @@ function getVerificationHint(verificationState: FollowUpVerificationState | unde
   }
 }
 
+function getLoopTerminationStatusLabel(status: LoopTerminationStatus | null): string | null {
+  switch (status) {
+    case "resolved":
+      return "Resolved";
+    case "converging":
+      return "Converging";
+    case "stuck":
+      return "Stuck";
+    default:
+      return null;
+  }
+}
+
+function getLoopTerminationStatusClassName(status: LoopTerminationStatus | null): string {
+  switch (status) {
+    case "resolved":
+      return "border-emerald-200 bg-emerald-50 text-emerald-700";
+    case "converging":
+      return "border-ocean/20 bg-ocean/10 text-ocean";
+    case "stuck":
+      return "border-coral/20 bg-coral/10 text-ember";
+    default:
+      return "border-ink/10 bg-white/70 text-ink/70";
+  }
+}
+
+function getLoopTerminationStatusHint(status: LoopTerminationStatus | null): string | null {
+  switch (status) {
+    case "resolved":
+      return "The latest step strongly indicates the issue is fixed or no longer present.";
+    case "converging":
+      return "The loop is producing clearer evidence and the next step is still narrowing the likely cause.";
+    case "stuck":
+      return "Recent checks are not shifting the signal enough to justify continuing the current loop unchanged.";
+    default:
+      return null;
+  }
+}
+
 export function AnalysisResult({
   result,
   input,
@@ -565,6 +667,14 @@ export function AnalysisResult({
     : null;
   const reachedGuidedStepLimit = isGuidedLoopActive && guidedStepStack.length >= MAX_GUIDED_STEPS;
   const canContinueGuidedLoop = !reachedGuidedStepLimit;
+  const loopTerminationStatus = classifyLoopTerminationStatus({
+    isRefined,
+    verificationState,
+    observation: lastObservation,
+    guidedStepStack,
+    nextStepGuidance,
+    reachedGuidedStepLimit,
+  });
   const showLowEvidenceCue = shouldShowLowEvidenceCue(result);
   const [observation, setObservation] = useState("");
   const [isSubmittingFollowUp, setIsSubmittingFollowUp] = useState(false);
@@ -679,6 +789,21 @@ export function AnalysisResult({
             ) : null}
             {getVerificationHint(verificationState) ? (
               <p className="text-xs leading-6 body-muted sm:text-sm">{getVerificationHint(verificationState)}</p>
+            ) : null}
+            {getLoopTerminationStatusLabel(loopTerminationStatus) ? (
+              <div className="rounded-[1rem] border border-ink/10 bg-white/40 p-3">
+                <p className="section-label">Current status</p>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <span
+                    className={`inline-flex rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] ${getLoopTerminationStatusClassName(loopTerminationStatus)}`}
+                  >
+                    {getLoopTerminationStatusLabel(loopTerminationStatus)}
+                  </span>
+                </div>
+                {getLoopTerminationStatusHint(loopTerminationStatus) ? (
+                  <p className="mt-2 text-xs leading-6 body-muted sm:text-sm">{getLoopTerminationStatusHint(loopTerminationStatus)}</p>
+                ) : null}
+              </div>
             ) : null}
           </div>
         ) : null}

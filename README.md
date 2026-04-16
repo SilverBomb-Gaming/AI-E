@@ -314,6 +314,17 @@ This is the current strategic model for AI-E. It separates the already-shippable
 - Remaining edge case: later-step focus extraction is structurally stable but can still inherit awkward wording from noisy observation text, so some step-3 phrases are less clean than the underlying lever shift even when the progression guard is doing the right thing
 - Implementation boundary: this remains a renderer-only refinement in `AnalysisResult.tsx`, deliberately capped at three total guided steps, and is meant to validate chained reasoning stability rather than introduce open-ended autonomy
 
+#### Loop Termination Classification For Guided Debugging (2026-04-16)
+
+- What changed: the renderer now derives a small `Current status` block for refined follow-ups, classifying the bounded guided-debugging chain as `Resolved`, `Converging`, or `Stuck` without changing prompts, API shape, persistence, or backend behavior
+- Status rule: `Resolved` requires a confirmed follow-up plus a strong confirmation signal that the issue is clearly fixed or gone
+- Status rule: `Converging` covers partial improvement, clearer narrowing, or a meaningful next lever before the bounded loop is exhausted
+- Status rule: `Stuck` covers repeated unresolved outcomes with no partial-improvement signal, and step-3 exhaustion now wins over structural-looking progression so an unresolved capped loop surfaces as stuck instead of optimistic
+- UI effect: refined results now show `Current status` alongside the existing refined diagnosis messaging so the user can tell whether the loop appears solved, still narrowing, or no longer moving
+- Targeted validation status: the requested live 6-case matrix passed in full against `/api/analyze` with `2 resolved`, `2 converging`, and `2 stuck` chains matching expected status labels
+- Regression check: the same validation run reported `MISMATCHES: None` and `PASSIVE: None`, so the status layer did not interfere with existing guided-step generation or reintroduce passive phrasing
+- Remaining edge case: structural variation alone is not treated as progress anymore at the step-3 boundary, so intentionally bounded-loop exhaustion is now the deciding signal when the chain is still unresolved
+
 #### Second-Step Progression And Non-Repetition Guard (2026-04-15)
 
 - What changed: the renderer now applies a small coherence guard before showing the second debugging step, rejecting candidates that reuse the same action pattern, stay on the same lever without narrowing, or overlap too heavily with the first step
