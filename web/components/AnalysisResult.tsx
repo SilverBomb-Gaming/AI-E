@@ -34,6 +34,8 @@ const ACTIONABLE_CONFIRMATION_STEP_PATTERN =
   /\b(?:disable|turn off|remove|bypass|force|toggle|clear|delay|comment out|skip|pause)\b/i;
 const WEAK_CONFIRMATION_STEP_PATTERN =
   /^(?:temporarily\s+)?(?:add a debug log|log\b|inspect\b|check\b|verify\b|look at\b)/i;
+const GENERIC_FOCUS_PATTERN =
+  /\b(?:issue|problem|symptom|behavior|weirdness|feels wrong|same slowdown|snap back|run normally|changes made|current suspected system)\b/i;
 
 const STOP_WORDS = new Set([
   "about",
@@ -159,6 +161,7 @@ function cleanFocusPhrase(text: string): string | null {
   const cleaned = trimLeadingArticle(trimTrailingPunctuation(text))
     .replace(/^(?:or\s+)?(?:disable|turn off|remove|bypass|force|clear|delay|skip|pause|comment out)\s+(?:the\s+)?/i, "")
     .replace(/^(?:most likely cause of|likely cause of|cause of|changes made to)\s+/i, "")
+    .replace(/\s+(?:lets?|makes?|removes?|fixes?|resolves?|stops?|worked|solved)\b.*$/i, "")
     .replace(/\s+/g, " ");
   if (!cleaned) {
     return null;
@@ -167,17 +170,32 @@ function cleanFocusPhrase(text: string): string | null {
   return cleaned.split(" ").slice(0, 6).join(" ");
 }
 
-function extractFocusPhrase(text: string): string | null {
-  const actionableMatch = text.match(
-    /\b(?:temporarily\s+)?(?:disable|disabling|turn off|turning off|remove|removing|bypass|bypassing|force|forcing|clear|clearing|delay|delaying|skip|skipping|pause|pausing|comment out|commenting out)(?:\s+or\s+(?:disable|turn off|remove|bypass|force|clear|delay|skip|pause|comment out))?\s+(?:the\s+)?([^.,;]+?)(?:\s+(?:once|immediately|to|and compare|lets?|makes?|causes?|restores?|returns?|fixes?|resolves?|stops?|supports?)\b|[.,;]|$)/i,
-  );
-  if (actionableMatch) {
-    return cleanFocusPhrase(actionableMatch[1]);
+function isWeakFocusPhrase(text: string | null): boolean {
+  const focus = normalizeFocusKey(text);
+  if (!focus) {
+    return true;
   }
 
-  const nounPhraseMatch = text.match(/\b(?:the|a|an)\s+([^.,;]+?)(?:\s+(?:is|are|was|were|to|before|after|during|when)\b|[.,;]|$)/i);
-  if (nounPhraseMatch) {
-    return cleanFocusPhrase(nounPhraseMatch[1]);
+  return GENERIC_FOCUS_PATTERN.test(focus) || focus.split(" ").filter((token) => token.length >= 4).length < 2;
+}
+
+function extractFocusPhrase(text: string): string | null {
+  const actionableMatch = text.match(
+    /\b(?:temporarily\s+)?(?:disable|disabling|turn off|turning off|remove|removing|bypass|bypassing|force|forcing|clear|clearing|delay|delaying|skip|skipping|pause|pausing|comment out|commenting out)(?:\s+or\s+(?:disable|turn off|remove|bypass|force|clear|delay|skip|pause|comment out))?\s+(?:the\s+)?([^.,;]+?)(?:\s+(?:once|immediately|to|and compare|lets?|makes?|causes?|restores?|returns?|removes?|fixes?|resolves?|stops?|supports?)\b|[.,;]|$)/i,
+  );
+  if (actionableMatch) {
+    const focus = cleanFocusPhrase(actionableMatch[1]);
+    if (!isWeakFocusPhrase(focus)) {
+      return focus;
+    }
+  }
+
+  const nounPhraseMatches = text.matchAll(/\b(?:the|a|an)\s+([^.,;]+?)(?:\s+(?:is|are|was|were|to|before|after|during|when|that|which)\b|[.,;]|$)/gi);
+  for (const match of nounPhraseMatches) {
+    const focus = cleanFocusPhrase(match[1]);
+    if (!isWeakFocusPhrase(focus)) {
+      return focus;
+    }
   }
 
   return null;
@@ -216,6 +234,102 @@ function buildFalsifiedDiagnosis(params: {
   return `Since ${noEffectSummary}, the issue is more likely driven by ${trimLeadingArticle(alternativeFocus)} than ${trimLeadingArticle(originalFocus)}. ${alternativeEvidence}.`;
 }
 
+type StepMethod = "disable" | "isolate" | "replace" | "force" | "inspect" | "unknown";
+
+function extractStepMethod(text: string): StepMethod {
+  if (/\b(?:isolate|narrow)\b/i.test(text)) {
+    return "isolate";
+  }
+
+  if (/\b(?:replace|swap|substitute|stub|mock)\b/i.test(text)) {
+    return "replace";
+  }
+
+  if (/\b(?:force|set)\b/i.test(text)) {
+    return "force";
+  }
+
+  if (/\b(?:inspect|check|verify|look at|log)\b/i.test(text)) {
+    return "inspect";
+  }
+
+  if (/\b(?:disable|turn off|remove|bypass|clear|delay|skip|pause|comment out)\b/i.test(text)) {
+    return "disable";
+  }
+
+  return "unknown";
+}
+
+function extractFocusTerms(text: string | null): Set<string> {
+  const focusKey = normalizeFocusKey(text);
+  if (!focusKey) {
+    return new Set();
+  }
+
+  return new Set(focusKey.split(" ").filter((token) => token.length >= 4 && !STOP_WORDS.has(token)));
+}
+
+function hasHighPhraseOverlap(left: string, right: string): boolean {
+  return calculateSimilarity(extractComparableTerms(left), extractComparableTerms(right)) >= 0.55;
+}
+
+function isNarrowerScope(baseFocus: string | null, candidateFocus: string | null): boolean {
+  const baseTerms = extractFocusTerms(baseFocus);
+  const candidateTerms = extractFocusTerms(candidateFocus);
+  if (!baseTerms.size || !candidateTerms.size || candidateTerms.size <= baseTerms.size) {
+    return false;
+  }
+
+  const sharedTerms = [...baseTerms].filter((term) => candidateTerms.has(term)).length;
+  return sharedTerms >= Math.min(2, baseTerms.size);
+}
+
+function buildActionableSecondStep(method: StepMethod, focus: string, verificationState: FollowUpVerificationState): string {
+  const trimmedFocus = trimLeadingArticle(focus);
+
+  if (method === "replace") {
+    return `Temporarily replace the ${trimmedFocus} with a known-safe default or stub, then compare the behavior immediately before and after. If the symptom changes right away, that isolates the failing path without widening the test.`;
+  }
+
+  if (method === "force") {
+    return `Temporarily force the ${trimmedFocus} to a known-safe value and compare the behavior immediately before and after. If the symptom changes right away, that isolates the branch that is actually driving the issue.`;
+  }
+
+  if (method === "isolate") {
+    return `Temporarily isolate only the ${trimmedFocus} and one related variable, then compare whether the symptom changes immediately. If nothing changes, move to the next likely system instead of broadening the test.`;
+  }
+
+  if (verificationState === "falsified") {
+    return `Temporarily disable or bypass the ${trimmedFocus} and compare the behavior immediately before and after. If the issue changes right away, that confirms the updated diagnosis.`;
+  }
+
+  return `Temporarily disable or bypass the ${trimmedFocus} once and compare the behavior immediately before and after. If the symptom changes right away, that gives you a stronger signal before widening the search.`;
+}
+
+function isMeaningfullyProgressed(params: {
+  firstStep: string;
+  candidateStep: string;
+  candidateFocus: string | null;
+}): boolean {
+  const firstFocus = extractFocusPhrase(params.firstStep);
+  const firstMethod = extractStepMethod(params.firstStep);
+  const candidateMethod = extractStepMethod(params.candidateStep);
+  const differentLever = hasDistinctAlternateLever(firstFocus, params.candidateFocus);
+  const narrowerScope = isNarrowerScope(firstFocus, params.candidateFocus);
+  const differentMethod = firstMethod !== candidateMethod && candidateMethod !== "unknown";
+  const sameSystem = !differentLever && !narrowerScope;
+
+  if (hasHighPhraseOverlap(params.firstStep, params.candidateStep)) {
+    return false;
+  }
+
+  if (sameSystem && firstMethod === candidateMethod) {
+    return false;
+  }
+
+  return differentLever || narrowerScope || differentMethod;
+}
+
 function buildSecondStepGuidance(params: {
   verificationState: FollowUpVerificationState | undefined;
   currentResult: FreeAnalysisResponse;
@@ -228,22 +342,38 @@ function buildSecondStepGuidance(params: {
   const currentFirstStep = params.currentResult.what_to_do_next[0] ?? "";
   const strengthenedCurrentStep = strengthenConfirmationStep(currentFirstStep, params.currentResult.what_happened) ?? currentFirstStep;
   const alternativeClause = params.observation.split(/\bbut\b/i)[1]?.trim() ?? params.observation.trim();
+  const diagnosisFocus = extractFocusPhrase(params.currentResult.what_happened);
+  const observationFocus = extractFocusPhrase(params.observation);
   const currentFocus =
     (extractFocusPhrase(strengthenedCurrentStep) ??
       (WEAK_CONFIRMATION_STEP_PATTERN.test(currentFirstStep) ? extractFocusPhrase(params.currentResult.what_happened) : null) ??
       extractFocusPhrase(params.currentResult.what_happened)) ??
     "current suspected system";
-  const alternateFocus = extractFocusPhrase(alternativeClause) ?? currentFocus;
+  const alternateFocus = extractFocusPhrase(alternativeClause) ?? observationFocus ?? diagnosisFocus ?? currentFocus;
+  const focusCandidates = [
+    params.verificationState === "falsified" ? alternateFocus : diagnosisFocus,
+    params.verificationState === "falsified" ? diagnosisFocus : observationFocus,
+    params.verificationState === "falsified" ? observationFocus : alternateFocus,
+    currentFocus,
+  ].filter((focus, index, values): focus is string => Boolean(focus?.trim()) && values.indexOf(focus) === index);
+  const orderedFocusCandidates = [
+    ...focusCandidates.filter((focus) => !isWeakFocusPhrase(focus)),
+    ...focusCandidates.filter((focus) => isWeakFocusPhrase(focus)),
+  ].filter((focus, index, values) => values.indexOf(focus) === index);
+  const methodCandidates: StepMethod[] =
+    params.verificationState === "falsified" ? ["disable", "isolate", "replace", "force"] : ["isolate", "replace", "force", "disable"];
 
-  if (params.verificationState === "falsified") {
-    const step = `Temporarily disable or bypass the ${trimLeadingArticle(alternateFocus)} and compare the behavior immediately before and after. If the issue changes right away, that confirms the updated diagnosis.`;
-    return step !== strengthenedCurrentStep ? step : null;
-  }
+  for (const focus of orderedFocusCandidates) {
+    for (const method of methodCandidates) {
+      const step = buildActionableSecondStep(method, focus, params.verificationState);
+      if (step === strengthenedCurrentStep) {
+        continue;
+      }
 
-  if (params.verificationState === "inconclusive") {
-    const focus = trimLeadingArticle(currentFocus);
-    const step = `Temporarily isolate only the ${focus} and one related variable, then compare whether the symptom changes immediately. If nothing changes, move to the next likely system instead of broadening the test.`;
-    return step !== strengthenedCurrentStep ? step : null;
+      if (isMeaningfullyProgressed({ firstStep: strengthenedCurrentStep, candidateStep: step, candidateFocus: focus })) {
+        return step;
+      }
+    }
   }
 
   return null;

@@ -304,6 +304,14 @@ This is the current strategic model for AI-E. It separates the already-shippable
 - Targeted validation status: two falsification probes produced relevant second steps aimed at the alternate lever (`stamina limiter`, `timeline handoff`), and two inconclusive probes produced system-focused second steps (`slope handling code`, `audio singleton implementation`) without any classification regression in the subset
 - Implementation boundary: this remains a renderer-only refinement in `AnalysisResult.tsx` and does not change prompts, API shape, persistence, or autonomous behavior
 
+#### Second-Step Progression And Non-Repetition Guard (2026-04-15)
+
+- What changed: the renderer now applies a small coherence guard before showing the second debugging step, rejecting candidates that reuse the same action pattern, stay on the same lever without narrowing, or overlap too heavily with the first step
+- Progression rule: the second step must either move to a different lever, narrow to a subcomponent within the same system, or change method (`disable -> isolate`, `disable -> replace`, `disable -> force`) instead of restating the same test in different words
+- Fallback behavior: when the first candidate fails those checks, the renderer regenerates from alternate focus sources in priority order (`diagnosis`, `observation`, then remaining local anchors) while keeping the step reversible, observable, and action-oriented
+- Targeted validation status: the 4-case live subset held classification steady (`2 falsified`, `2 inconclusive`), all second steps differed meaningfully from the displayed first step, phrase overlap stayed low, and no passive `inspect/check/log` phrasing appeared
+- Remaining edge case: if the first step itself comes back with very broad wording such as `revert the changes`, progression can still be enforced by method shift, but the first-step focus extraction is less crisp than the newer second-step focus selection
+
 #### Full 10-Case Audit After Mixed-System Refinement (2026-04-15)
 
 - Audit scope: reran the established 10-case full-loop audit against the current shipped renderer behavior after decisive-evidence interpretation, confirmation-step sharpening, falsification re-centering, and alternate-lever dominance refinements
