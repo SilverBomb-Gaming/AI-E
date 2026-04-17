@@ -330,6 +330,15 @@ function isConcreteProgressionFocus(text: string | null): text is string {
   return Boolean(text && !isMetaStepReference(text) && !isWeakFocusPhrase(text) && !isBlockedFocusPhrase(text, "general"));
 }
 
+function isDisplayableGuidedStep(step: string | null | undefined): step is string {
+  if (!step?.trim()) {
+    return false;
+  }
+
+  const focus = extractFocusPhrase(step);
+  return isConcreteProgressionFocus(focus) && extractStepMethod(step) !== "unknown";
+}
+
 function isWeakFocusPhrase(text: string | null): boolean {
   const focus = normalizeFocusKey(text);
   if (!focus) {
@@ -716,19 +725,23 @@ function getGuidedStepStack(params: {
   isRefined: boolean;
 }): string[] {
   if (params.isRefined) {
-    return params.result.what_to_do_next.filter(Boolean).slice(0, MAX_GUIDED_STEPS);
+    return params.result.what_to_do_next.filter(isDisplayableGuidedStep).slice(0, MAX_GUIDED_STEPS);
   }
 
   const firstStep = strengthenConfirmationStep(params.result.what_to_do_next[0], params.result.what_happened);
-  return firstStep ? [firstStep] : [];
+  return isDisplayableGuidedStep(firstStep) ? [firstStep] : [];
 }
 
 function buildGuidedStepStack(nextStep: string | null, priorSteps: string[]): string[] {
-  if (!nextStep) {
-    return priorSteps.slice(0, MAX_GUIDED_STEPS);
+  const sanitizedPriorSteps = priorSteps.filter(isDisplayableGuidedStep);
+
+  if (!isDisplayableGuidedStep(nextStep)) {
+    return sanitizedPriorSteps.slice(0, MAX_GUIDED_STEPS);
   }
 
-  return [nextStep, ...priorSteps].filter((step, index, values) => Boolean(step) && values.indexOf(step) === index).slice(0, MAX_GUIDED_STEPS);
+  return [nextStep, ...sanitizedPriorSteps]
+    .filter((step, index, values) => Boolean(step) && values.indexOf(step) === index)
+    .slice(0, MAX_GUIDED_STEPS);
 }
 
 function hasGuidedProgression(stepStack: string[]): boolean {
