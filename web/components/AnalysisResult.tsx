@@ -33,6 +33,21 @@ type DebuggingMode =
   | "validate-ownership-references";
 type IntentAnchor = "isolate-root-cause" | "confirm-system-boundary" | "narrow-conflicting-systems" | "verify-state-transitions";
 
+function isFreeAnalysisResponse(value: unknown): value is FreeAnalysisResponse {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const source = value as Record<string, unknown>;
+
+  return (
+    typeof source.what_happened === "string" &&
+    Array.isArray(source.what_matters) &&
+    Array.isArray(source.what_to_do_next) &&
+    typeof source.upgrade_hint === "string"
+  );
+}
+
 const EVIDENCE_GAP_PATTERN =
   /absence of error messages|lack of error messages|without an error message|no obvious console errors|no error messages|not a runtime exception/i;
 const GENERIC_DIAGNOSIS_PATTERN =
@@ -792,7 +807,7 @@ function getIntentMethodCandidates(params: {
   };
 
   const baseMethods = methodsByIntent[params.intentAnchor];
-  const verificationBiasedMethods =
+  const verificationBiasedMethods: StepMethod[] =
     params.verificationState === "falsified" && params.intentAnchor !== "verify-state-transitions"
       ? ["disable", ...baseMethods.filter((method) => method !== "disable")]
       : baseMethods;
@@ -1135,7 +1150,7 @@ function classifyLoopTerminationStatus(params: {
     return "resolved";
   }
 
-  if (params.reachedGuidedStepLimit && params.verificationState !== "confirmed" && !hasPartialSignal) {
+  if (params.reachedGuidedStepLimit && !hasPartialSignal) {
     return "stuck";
   }
 
@@ -1666,13 +1681,25 @@ export function AnalysisResult({
         } satisfies AnalysisInput),
       });
 
-      const payload = (await response.json()) as FreeAnalysisResponse | { error?: string };
+      const payload: unknown = await response.json();
       if (!response.ok) {
+        const apiErrorMessage =
+          payload &&
+          typeof payload === "object" &&
+          "error" in payload &&
+          typeof payload.error === "string" &&
+          payload.error.trim()
+            ? payload.error
+            : "We couldn't generate an analysis right now. Please try again.";
+
         setFollowUpError(
-          payload && "error" in payload
-            ? payload.error || "We couldn't generate an analysis right now. Please try again."
-            : "We couldn't generate an analysis right now. Please try again.",
+          apiErrorMessage,
         );
+        return;
+      }
+
+      if (!isFreeAnalysisResponse(payload)) {
+        setFollowUpError("We couldn't generate an analysis right now. Please try again.");
         return;
       }
 
