@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { FollowUpVerificationState, StoredActionChainState } from "./AnalysisForm";
-import { deriveAnalysisResultSignals } from "./analysisResultLogic";
+import { buildNextStepGuidance, classifyFollowUpResult, deriveAnalysisResultSignals } from "./analysisResultLogic";
 import type { FreeAnalysisResponse } from "../lib/aie/types";
 
 function makeResult(overrides: Partial<FreeAnalysisResponse> = {}): FreeAnalysisResponse {
@@ -74,6 +74,22 @@ test("maps logging-oriented diagnoses to instrument-with-logging", () => {
   assert.equal(signals.recommendedDebuggingMode, "instrument-with-logging");
 });
 
+test("prefers instrumentation over ownership when the signal is explicitly about before-or-after registration logging", () => {
+  const signals = derive({
+    problemDescription:
+      "Enemies occasionally lose aggro after scene streaming, but there is no clear console error and the current checks are too sparse to tell whether the target reference is dropped before or after registration.",
+    result: makeResult({
+      what_happened:
+        "The enemies are likely losing aggro because the target reference is being dropped somewhere around scene streaming registration.",
+      what_to_do_next: [
+        "Add logging to the enemy AI script to track the target reference before and after scene streaming, confirming whether it is being lost during the transition.",
+      ],
+    }),
+  });
+
+  assert.equal(signals.recommendedDebuggingMode, "instrument-with-logging");
+  assert.equal(signals.supervisedActionChain?.[0]?.intent, "instrumentation");
+});
 test("shows a bounded supervised chain for strong instrumentation cases", () => {
   const signals = derive({
     problemDescription: "The state transition flicker happens during the Animator handoff.",
@@ -226,6 +242,51 @@ test("holds in confirmation mode when a first strong signal still needs validati
   assert.equal(signals.supervisedActionChainStepIndicator, "Confirmation mode");
 });
 
+test("promotes a strong first confirmation to pending even when prior chain history is sparse", () => {
+  const signals = derive({
+    isRefined: true,
+    verificationState: "inconclusive",
+    lastObservation:
+      "Disabling the Animator speed sync now cleanly tracks the symptom to the same handoff, and restoring it brings the bad transition back.",
+    problemDescription:
+      "Player movement breaks after changing the Animator speed sync. The bad transition happens right when the Animator resume handoff runs, and the symptom seems tied to that handoff rather than the rest of movement.",
+    result: makeResult({
+      what_happened:
+        "The player's Animator speed sync setting is causing an improper transition during the Animator resume handoff.",
+      what_to_do_next: [
+        "Temporarily force the Animator speed sync setting to a known-safe value and compare the behavior immediately before and after.",
+      ],
+    }),
+  });
+
+  assert.equal(signals.confidenceLevel, "high");
+  assert.equal(signals.decisionCommitment, "pending");
+  assert.equal(signals.alignedSignalCount, 1);
+  assert.equal(signals.supervisedActionChain?.[0]?.intent, "confirmation");
+});
+
+test("promotes repeated confirmation phrasing to committed when the same path keeps matching", () => {
+  const signals = derive({
+    isRefined: true,
+    verificationState: "inconclusive",
+    lastObservation:
+      "The same Animator handoff still cleanly drives the symptom, and the confirm check keeps matching the expected path.",
+    problemDescription:
+      "Player movement breaks after changing the Animator speed sync. The bad transition happens right when the Animator resume handoff runs, and the symptom seems tied to that handoff rather than the rest of movement.",
+    result: makeResult({
+      what_happened:
+        "The Animator's speed sync setting is likely causing the player movement to break due to an improper handoff during the Animator transition phase.",
+      what_to_do_next: [
+        "Temporarily force the Animator speed sync setting to a known-safe value and compare the behavior immediately before and after.",
+      ],
+    }),
+  });
+
+  assert.equal(signals.confidenceLevel, "high");
+  assert.equal(signals.decisionCommitment, "committed");
+  assert.equal(signals.alignedSignalCount, 2);
+  assert.equal(signals.supervisedActionChain?.[0]?.intent, "confirmation");
+});
 test("keeps a true positive commitment once confirmation stays consistent across consecutive steps", () => {
   const signals = derive({
     isRefined: true,
@@ -256,6 +317,49 @@ test("keeps a true positive commitment once confirmation stays consistent across
   assert.equal(signals.alignedSignalCount, 2);
   assert.equal(signals.supervisedActionChain?.[0]?.intent, "confirmation");
   assert.equal(signals.supervisedActionChainStepIndicator, "Confirmation mode");
+});
+
+test("prefers canonical analyzer focus over noisy confirmation phrasing when building the next step", () => {
+  const nextStep = buildNextStepGuidance({
+    verificationState: "inconclusive",
+    observation:
+      "Disabling the Animator speed sync now cleanly tracks the symptom to the same handoff, and restoring it brings the bad transition back.",
+    priorSteps: [
+      "Temporarily disable only Animator speed sync handoff and compare the behavior immediately before and after.",
+    ],
+    currentResult: makeResult({
+      what_happened:
+        "Animator speed sync handoff is now confirmed as the cause: the same path cleanly tracks the symptom, consistently reproduces the issue, and the repeated check keeps matching the expected path.",
+      what_to_do_next: [
+        "Temporarily disable Animator speed sync handoff and compare whether the same symptom changes immediately before and after.",
+        "Restore Animator speed sync handoff immediately after that check and confirm the same symptom comes back on that same path.",
+      ],
+    }),
+  });
+
+  assert.match(nextStep ?? "", /Animator speed sync handoff/i);
+  assert.doesNotMatch(nextStep ?? "", /now cleanly tracks/i);
+});
+
+test("does not add a third exploratory step once repeated confirmation is already strong", () => {
+  const nextStep = buildNextStepGuidance({
+    verificationState: "inconclusive",
+    observation: "The same Animator handoff still cleanly drives the symptom, and the confirm check keeps matching the expected path.",
+    priorSteps: [
+      "Temporarily force the Animator speed sync handoff to a known-safe value and compare the behavior immediately before and after.",
+      "Temporarily disable only Animator speed sync handoff and compare the behavior immediately before and after.",
+    ],
+    currentResult: makeResult({
+      what_happened:
+        "Animator speed sync handoff continues to reproduce the same confirmed behavior under repeated validation. The same path cleanly tracks the symptom, consistently reproduces the issue, and the repeated check keeps matching the expected path.",
+      what_to_do_next: [
+        "Temporarily disable Animator speed sync handoff and compare whether the same symptom changes immediately before and after.",
+        "Restore Animator speed sync handoff immediately after that check and confirm the same symptom comes back on that same path.",
+      ],
+    }),
+  });
+
+  assert.equal(nextStep, null);
 });
 
 test("stays in commitment mode when confidence remains stable and high", () => {
@@ -431,6 +535,22 @@ test("maps duplicate-writer diagnoses to check-duplicate-writers", () => {
   assert.equal(signals.recommendedDebuggingMode, "check-duplicate-writers");
 });
 
+test("maps same-frame conflicting speed writes to duplicate-writer mode", () => {
+  const signals = derive({
+    problemDescription:
+      "Sprint speed flickers after I added a stamina limiter. The limiter writes run speed in Update, but the locomotion controller also writes speed later in the same frame, so movement keeps bouncing between two values.",
+    result: makeResult({
+      what_happened:
+        "The sprint speed flickers because the stamina limiter conflicts with the locomotion controller, which also modifies speed later in the same frame.",
+      what_to_do_next: [
+        "Log the values of the speed variable from both the stamina limiter and the locomotion controller to identify which is being set last during the frame.",
+      ],
+    }),
+  });
+
+  assert.equal(signals.recommendedDebuggingMode, "check-duplicate-writers");
+  assert.equal(signals.supervisedActionChain?.[0]?.intent, "duplicate-writer");
+});
 test("maps ownership and reference diagnoses to validate-ownership-references", () => {
   const signals = derive({
     problemDescription: "The button stops responding after the menu handoff.",
@@ -571,6 +691,74 @@ test("keeps a specific subsystem recommendation even when confidence is low from
   assert.equal(signals.showLowEvidenceCue, true);
   assert.equal(signals.confidenceLevel, "low");
   assert.equal(signals.recommendedDebuggingMode, "isolate-one-subsystem");
+});
+
+test("does not treat a bounded isolation prompt as a messy fresh prompt", () => {
+  const signals = derive({
+    problemDescription:
+      "After refactoring the wall-jump handoff, the player only sticks on shallow slopes right after a dash. The symptom appears immediately when that movement handoff runs, while the rest of movement feels normal.",
+    result: makeResult({
+      what_happened:
+        "The refactoring of the wall-jump handoff likely introduced a logic error that improperly handles the player's grounded state immediately after a dash, causing the player to stick to shallow slopes.",
+      what_matters: [
+        "The issue appears immediately after the wall-jump handoff runs, indicating a direct link between the refactor and the symptom.",
+        "The rest of movement feels normal, which keeps the failure bounded to the wall-jump path.",
+      ],
+      what_to_do_next: [
+        "Inspect the wall-jump handoff code to verify how the grounded state is being set or reset immediately after a dash.",
+        "Add debug logs to track the player's grounded state during the transition from dash to wall-jump.",
+        "Temporarily revert the wall-jump handoff refactor to confirm if the sticking issue resolves.",
+      ],
+    }),
+  });
+
+  assert.equal(signals.suggestedNextAction, "continue-thread");
+  assert.equal(signals.recommendedDebuggingMode, "isolate-one-subsystem");
+  assert.equal(signals.showLowEvidenceCue, false);
+});
+
+test("keeps ownership follow-ups out of low-evidence fallback when the diagnosis names a concrete handoff", () => {
+  const signals = derive({
+    problemDescription:
+      "A homing missile prefab spawns correctly, but it sometimes has no target and flies straight ahead. The launcher stores the target on one object, while the spawned projectile reads from another reference.",
+    result: makeResult({
+      what_happened:
+        "The homing missile prefab sometimes flies straight ahead because the spawned projectile reads a stale target reference from a different handoff than the launcher uses.",
+      what_matters: [
+        "The launcher stores the target on one object while the spawned projectile reads another reference.",
+      ],
+      what_to_do_next: [
+        "Inspect the missile prefab's script to verify which object it is referencing for its target upon spawn.",
+        "Check the launcher script to ensure it passes the target reference into the projectile on spawn.",
+      ],
+    }),
+  });
+
+  assert.equal(signals.showLowEvidenceCue, false);
+  assert.equal(signals.confidenceLevel, "medium");
+  assert.equal(signals.suggestedNextAction, "continue-thread");
+  assert.equal(signals.recommendedDebuggingMode, "validate-ownership-references");
+});
+
+test("classifies changed nothing follow-ups as falsified when an alternate lever clearly fixes the symptom", () => {
+  const verification = classifyFollowUpResult({
+    originalResult: makeResult({
+      what_happened: "The stamina limiter is the most likely cause of the flicker.",
+      what_to_do_next: [
+        "Temporarily disable the stamina limiter's speed assignment in Update to see if the flickering stops.",
+      ],
+    }),
+    nextResult: makeResult({
+      what_happened: "The animator speed sync is now the more likely cause.",
+      what_to_do_next: [
+        "Temporarily isolate only animator speed sync and compare whether the symptom changes immediately before and after that step.",
+      ],
+    }),
+    observation:
+      "Disabling the stamina limiter changed nothing, but disabling the animator speed sync removes the slowdown completely.",
+  });
+
+  assert.equal(verification, "falsified");
 });
 
 test("marks a formerly guided follow-up as stuck when the latest observation becomes a dead end", () => {

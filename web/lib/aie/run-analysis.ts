@@ -3,7 +3,7 @@ import type { AnalysisInput, FreeAnalysisResponse } from "@/lib/aie/types";
 const OPENAI_API_URL = "https://api.openai.com/v1/chat/completions";
 const OPENAI_MODEL = "gpt-4o-mini";
 
-function normalizeText(value: string | undefined): string {
+function normalizeText(value: string | null | undefined): string {
   return String(value ?? "")
     .replace(/\s+/g, " ")
     .trim();
@@ -22,6 +22,32 @@ type OpenAIAnalysisResponse = {
   whatMatters?: unknown;
   whatToDoNext?: unknown;
 };
+
+type CanonicalMode = "isolation" | "instrumentation" | "timing" | "duplicate-writer" | "ownership" | null;
+
+type FollowUpContext = {
+  attemptedStep: string | null;
+  observation: string | null;
+};
+
+const DUPLICATE_WRITER_SIGNAL_PATTERN =
+  /\b(?:duplicate writers?|multiple scripts writing|two scripts writing|both write|same frame|overwrit(?:e|es|ing)|bouncing between two values|written from two places|same value)\b/i;
+const OWNERSHIP_SIGNAL_PATTERN =
+  /\b(?:ownership|owner|reference handoff|spawned projectile|spawned object|reads from another reference|wrong reference|stale reference|lost reference|target reference|null target|no target)\b/i;
+const TIMING_SIGNAL_PATTERN =
+  /\b(?:initialization(?:-order)?|execution order|order of execution|awake|start\b|onenable|scene load|bootstrap|loaded before|loaded after|initial state)\b/i;
+const INSTRUMENTATION_SIGNAL_PATTERN =
+  /\b(?:no clear console error|checks are too sparse|add logging|focused logging|instrument(?:ation)?|trace\b|track whether|before or after registration|observe lifecycle timing)\b/i;
+const ISOLATION_SIGNAL_PATTERN =
+  /\b(?:appears immediately when|right after|tied to that handoff|rest of .* feels normal|same handoff|same subsystem|single subsystem|isolate only|compare the behavior immediately)\b/i;
+const MESSY_MULTI_SYSTEM_PATTERN =
+  /\b(?:touched .* and .* and .*|multiple systems?|mixed together|everything feels mixed together|not sure where to start|all at once|late-night pass|a bunch of)\b/i;
+const FOLLOW_UP_CONTEXT_PATTERN = /After trying (?:step \d+|the current step)(?: \((.*?)\))?:\s*(.+)$/i;
+const HARD_NO_CHANGE_PATTERN = /\b(?:nothing changed|changed nothing|no change|did nothing|no effect|unchanged|same issue|same behavior)\b/i;
+const PARTIAL_PROGRESS_PATTERN = /\b(?:rarer|reduced|less severe|less often|partially|improved?.*still|still appears|still happens once|still present)\b/i;
+const STRONG_CONFIRMATION_PATTERN =
+  /\b(?:cleanly tracks|tracks the symptom|brings? .* back|same .* drives the symptom|same .* keeps matching|consistently reproduces|confirms? the cause|only appears while|removes? .* completely)\b/i;
+const HARD_RESOLUTION_PATTERN = /\b(?:fix(?:es|ed) it|works? normally again|behaves? normally again|homing works normally again|gone now)\b/i;
 
 const GENERIC_SCENARIO_TOKENS = new Set([
   "unity",
@@ -218,6 +244,403 @@ function normalizeModelList(value: unknown, fallback: string[]): string[] {
   return fallback;
 }
 
+function extractFollowUpContext(problemDescription: string): FollowUpContext {
+  const match = problemDescription.match(FOLLOW_UP_CONTEXT_PATTERN);
+  if (!match) {
+    return {
+      attemptedStep: null,
+      observation: null,
+    };
+  }
+
+  return {
+    attemptedStep: normalizeText(match[1]),
+    observation: normalizeText(match[2]),
+  };
+}
+
+function trimFocusLabel(value: string | null | undefined): string | null {
+  const trimmed = normalizeText(value)
+    .replace(/^(?:this now confirms\s+|this confirms\s+)?(?:the\s+)?cause\s*:\s*/i, "")
+    .replace(/^(?:the\s+)?failing path\s*:\s*/i, "")
+    .replace(/^(?:the|a|an|same)\s+/i, "")
+    .replace(/\b(?:now|still|cleanly|consistently|immediately|directly)\b/gi, " ")
+    .replace(/\b(?:tracks?|drives?|brings?|keeps?|matching|confirm(?:s|ed)?|reproduc(?:e|es|ed))\b.*$/i, "")
+    .replace(/[.?!,;:]+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return trimmed || null;
+}
+
+function extractLeverPhrase(text: string | null | undefined): string | null {
+  const normalized = normalizeText(text);
+  if (!normalized) {
+    return null;
+  }
+
+  const patterns = [
+    /(?:but|while)\s+(?:disabling|disable|isolating|isolate|bypassing|bypass|turning off|turn off|forcing|force|restoring|restore)\s+(?:the\s+)?([^,.]+?)\s+(?:removes?|removed|fixes?|fixed|stops?|stop|makes?|make|brings?|brought|tracks?|keeps? matching)/i,
+    /(?:disabling|disable|isolating|isolate|bypassing|bypass|turning off|turn off|forcing|force|restoring|restore|passing)\s+(?:the\s+)?([^,.]+?)\s+(?:changed nothing|had no effect|fixes?|fixed|removes?|removed|stops?|stop|tracks?|brings?)/i,
+    /\b(?:same\s+)?([A-Za-z][A-Za-z0-9_-]*(?:\s+[A-Za-z][A-Za-z0-9_-]*){0,4}\s+(?:handoff|speed sync|binding|reference|transition|writer|controller|limiter|projectile))\b/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = normalized.match(pattern);
+    if (match?.[1]) {
+      return trimFocusLabel(match[1]);
+    }
+  }
+
+  return null;
+}
+
+function inferCanonicalMode(params: { input: AnalysisInput; response: FreeAnalysisResponse }): CanonicalMode {
+  const inputCombined = [
+    params.input.problemDescription,
+    params.input.errorMessage,
+    params.input.context,
+    params.input.codeSnippet,
+  ]
+    .map((value) => normalizeText(value))
+    .join(" ");
+
+  const combined = [
+    inputCombined,
+    params.response.what_happened,
+    ...params.response.what_matters,
+    ...params.response.what_to_do_next,
+  ]
+    .map((value) => normalizeText(value))
+    .join(" ");
+
+  if (
+    MESSY_MULTI_SYSTEM_PATTERN.test(params.input.problemDescription) &&
+    !DUPLICATE_WRITER_SIGNAL_PATTERN.test(combined) &&
+    !OWNERSHIP_SIGNAL_PATTERN.test(combined) &&
+    !TIMING_SIGNAL_PATTERN.test(combined)
+  ) {
+    return null;
+  }
+
+  if (DUPLICATE_WRITER_SIGNAL_PATTERN.test(inputCombined)) {
+    return "duplicate-writer";
+  }
+
+  if (INSTRUMENTATION_SIGNAL_PATTERN.test(inputCombined)) {
+    return "instrumentation";
+  }
+
+  if (OWNERSHIP_SIGNAL_PATTERN.test(inputCombined)) {
+    return "ownership";
+  }
+
+  if (TIMING_SIGNAL_PATTERN.test(inputCombined)) {
+    return "timing";
+  }
+
+  if (ISOLATION_SIGNAL_PATTERN.test(inputCombined)) {
+    return "isolation";
+  }
+
+  if (DUPLICATE_WRITER_SIGNAL_PATTERN.test(combined)) {
+    return "duplicate-writer";
+  }
+
+  if (INSTRUMENTATION_SIGNAL_PATTERN.test(combined)) {
+    return "instrumentation";
+  }
+
+  if (OWNERSHIP_SIGNAL_PATTERN.test(combined)) {
+    return "ownership";
+  }
+
+  if (TIMING_SIGNAL_PATTERN.test(combined)) {
+    return "timing";
+  }
+
+  if (ISOLATION_SIGNAL_PATTERN.test(combined)) {
+    return "isolation";
+  }
+
+  return null;
+}
+
+function inferFocusLabel(params: {
+  input: AnalysisInput;
+  response: FreeAnalysisResponse;
+  mode: CanonicalMode;
+  followUp: FollowUpContext;
+}): string {
+  const combined = [
+    params.followUp.observation,
+    params.followUp.attemptedStep,
+    params.input.problemDescription,
+    params.response.what_happened,
+    ...params.response.what_to_do_next,
+  ]
+    .map((value) => normalizeText(value))
+    .join(" ");
+  const scenarioAnchor = extractScenarioAnchors(params.input)[0] ?? null;
+  const observationLever = extractLeverPhrase(params.followUp.observation);
+
+  if (observationLever && (params.mode === "duplicate-writer" || params.mode === "ownership")) {
+    return observationLever;
+  }
+
+  if (/wall-jump handoff/i.test(combined)) {
+    return "wall-jump handoff";
+  }
+
+  if (/animator speed sync/i.test(combined)) {
+    return "Animator speed sync handoff";
+  }
+
+  switch (params.mode) {
+    case "duplicate-writer":
+      if (/speed/i.test(combined)) {
+        return "same speed value";
+      }
+      if (/state/i.test(combined)) {
+        return "same state value";
+      }
+      return "same shared value";
+    case "ownership":
+      if (/target/i.test(combined)) {
+        return "target reference handoff";
+      }
+      return "ownership/reference handoff";
+    case "timing":
+      if (/hud/i.test(combined) && /playerstats/i.test(combined)) {
+        return "HUD binding before PlayerStats initializes";
+      }
+      return "initialization boundary";
+    case "instrumentation":
+      if (/registration/i.test(combined)) {
+        return "registration handoff";
+      }
+      return scenarioAnchor ? `${scenarioAnchor} handoff` : "exact failing handoff";
+    case "isolation":
+      if (/wall-jump handoff/i.test(combined)) {
+        return "wall-jump handoff";
+      }
+      if (/animator speed sync/i.test(combined)) {
+        return "Animator speed sync handoff";
+      }
+      return scenarioAnchor ? trimFocusLabel(scenarioAnchor) ?? "same suspect subsystem" : "same suspect subsystem";
+    default:
+      return scenarioAnchor ? trimFocusLabel(scenarioAnchor) ?? "same issue path" : "same issue path";
+  }
+}
+
+function buildModeDiagnosis(params: { mode: CanonicalMode; focus: string; input: AnalysisInput }): string | null {
+  switch (params.mode) {
+    case "duplicate-writer":
+      return `This is a duplicate writer conflict: two systems are writing the same value through ${params.focus}, so the later write overwrites the earlier write and the symptom flips between two states.`;
+    case "ownership":
+      return `This is an ownership/reference handoff issue: one object stores the needed target, but ${params.focus} reads the wrong or stale target path, so the spawned behavior runs without the intended target.`;
+    case "timing":
+      return `This is an initialization-order issue: ${params.focus} is being read before the upstream state is ready, so the first frame uses stale or default data and the later lifecycle pass corrects it.`;
+    case "instrumentation":
+      return `The failure is still centered on ${params.focus}, and the next pass should instrument that exact handoff so you can see whether the signal is lost before or after the failing boundary.`;
+    case "isolation":
+      return `This is a single-subsystem isolation case: ${params.focus} is the failing path because the symptom starts when that path runs and the rest of the surrounding system stays normal.`;
+    default:
+      return null;
+  }
+}
+
+function buildContradictionDiagnosis(params: { focus: string; alternateFocus: string | null }): string {
+  const alternateFocus = params.alternateFocus ?? "the alternate path";
+  return `The previous hypothesis is contradicted. ${alternateFocus} is now the more likely cause because the earlier step did not affect the issue, while the alternate lever changes the symptom immediately.`;
+}
+
+function isRepeatedConfirmationObservation(observation: string): boolean {
+  return /\b(?:still|keeps? matching|repeated|again|continues? to reproduce|confirmed behavior)\b/i.test(
+    observation,
+  );
+}
+
+function buildConfirmationDiagnosis(params: { focus: string; observation: string; }): string {
+  if (HARD_RESOLUTION_PATTERN.test(params.observation)) {
+    return `${params.focus} is confirmed as the failing path: the latest change fixes the issue and returns the behavior to normal.`;
+  }
+
+  if (isRepeatedConfirmationObservation(params.observation)) {
+    return `${params.focus} continues to reproduce the same confirmed behavior under repeated validation. The same path cleanly tracks the symptom, consistently reproduces the issue, and the repeated check keeps matching the expected path.`;
+  }
+
+  return `${params.focus} is now confirmed as the cause: the same path cleanly tracks the symptom, consistently reproduces the issue, and the repeated check keeps matching the expected path.`;
+}
+
+function buildCanonicalMatters(params: {
+  mode: CanonicalMode;
+  focus: string;
+  followUp: FollowUpContext;
+  alternateFocus: string | null;
+}): string[] {
+  if (params.followUp.observation && HARD_NO_CHANGE_PATTERN.test(params.followUp.observation) && params.alternateFocus) {
+    return [
+      `The previous step did not affect the issue, which explicitly contradicts the earlier hypothesis.`,
+      `${params.alternateFocus} is now the stronger candidate because the symptom shifts when that path changes.`,
+      `The next pass should stay on the contradicted branch until one bounded check either cleanly reproduces or disproves it.`,
+    ];
+  }
+
+  if (params.followUp.observation && STRONG_CONFIRMATION_PATTERN.test(params.followUp.observation) && !PARTIAL_PROGRESS_PATTERN.test(params.followUp.observation)) {
+    return [
+      `The latest observation cleanly tracks the same cause instead of widening to a different system.`,
+      `That repeated confirmation is strong enough to treat ${params.focus} as the leading driver, not just a loose correlation.`,
+      `The next step should stay on the same cause one more bounded check before widening or rewriting adjacent systems.`,
+    ];
+  }
+
+  switch (params.mode) {
+    case "duplicate-writer":
+      return [
+        `Two systems are writing the same value, which is a duplicate writer conflict rather than a tuning problem.`,
+        `The symptom bounces because the later write overwrites the earlier write in the same frame or state transition.`,
+        `One bounded before/after isolation check should show which writer actually owns the failing path.`,
+      ];
+    case "ownership":
+      return [
+        `One object stores the target, but another object reads the wrong or stale target path, which points to an ownership/reference handoff issue.`,
+        `The failure only needs one broken handoff path to produce a no-target or stale-target result.`,
+        `The next pass should validate the exact handoff before changing adjacent gameplay systems.`,
+      ];
+    case "timing":
+      return [
+        `The dependent read is happening on the wrong lifecycle boundary, so the first frame is using data before initialization completes.`,
+        `This is an execution-order problem, not a broad subsystem mystery.`,
+        `A single lifecycle comparison should confirm whether the early read is the real trigger.`,
+      ];
+    case "instrumentation":
+      return [
+        `The missing signal is most likely being lost at one concrete handoff, registration point, or state transition.`,
+        `The current evidence is specific enough to instrument one path instead of broadening to generic debugging.`,
+        `Focused logging should show whether the value, event, or reference disappears before or after the failing boundary.`,
+      ];
+    case "isolation":
+      return [
+        `The symptom is tightly coupled to one bounded path instead of the whole subsystem.`,
+        `That makes a single before/after isolation check higher signal than a broad refactor.`,
+        `If the same path moves the symptom immediately, the diagnosis should stay on that path until it is disproved.`,
+      ];
+    default:
+      return [];
+  }
+}
+
+function buildCanonicalSteps(params: {
+  mode: CanonicalMode;
+  focus: string;
+  followUp: FollowUpContext;
+  alternateFocus: string | null;
+}): string[] {
+  if (params.followUp.observation && HARD_NO_CHANGE_PATTERN.test(params.followUp.observation) && params.alternateFocus) {
+    return [
+      `Temporarily isolate only ${params.alternateFocus} and compare whether the symptom changes immediately before and after that step.`,
+      `Log the before/after state on ${params.alternateFocus} so you can confirm the previous hypothesis is contradicted and this alternate path is the real driver.`,
+      `Keep the next pass on ${params.alternateFocus} until one bounded check cleanly reproduces or disproves that branch.`,
+    ];
+  }
+
+  if (params.followUp.observation && STRONG_CONFIRMATION_PATTERN.test(params.followUp.observation) && !PARTIAL_PROGRESS_PATTERN.test(params.followUp.observation)) {
+    return [
+      `Temporarily disable ${params.focus} and compare whether the same symptom changes immediately before and after.`,
+      `Restore ${params.focus} immediately after that check and confirm the same symptom comes back on that same path.`,
+      `If the same result repeats again, keep the diagnosis bounded to ${params.focus} instead of widening to unrelated systems.`,
+    ];
+  }
+
+  switch (params.mode) {
+    case "duplicate-writer":
+      return [
+        `Temporarily disable one writer at a time and compare whether the same value still changes in the same frame.`,
+        `Log the shared value where each writer sets it so you can see which system writes first and which one overwrites it.`,
+        `Keep a single owning write path for that value, then rerun the same case to confirm the duplicate writer conflict is gone.`,
+      ];
+    case "ownership":
+      return [
+        `Inspect the exact reference handoff and compare the source reference against the one the spawned object actually reads.`,
+        `Log the reference immediately when the object is spawned and again when it first uses that reference.`,
+        `Pass the same owned reference through one clear handoff path, then rerun the same case to confirm the ownership/reference issue is gone.`,
+      ];
+    case "timing":
+      return [
+        `Temporarily delay the dependent binding until after the upstream state initializes and compare the behavior before and after.`,
+        `Log Awake, OnEnable, and Start once for the involved objects so you can confirm the execution order around the failure.`,
+        `Keep the dependent read on the correct lifecycle boundary, then rerun the same load path to confirm the initialization-order issue is gone.`,
+      ];
+    case "instrumentation":
+      return [
+        `Add focused logging around ${params.focus} and compare the values or events immediately before and after the failure point.`,
+        `Log only the branch, registration point, or state transition that should prove whether the signal is lost before or after the handoff.`,
+        `Keep the logs on the same path until one branch contradicts the hypothesis, then narrow to that branch instead of widening the search.`,
+      ];
+    case "isolation":
+      return [
+        `Temporarily disable only ${params.focus} and compare the behavior immediately before and after.`,
+        `If the symptom changes, isolate the next smallest branch inside ${params.focus} instead of switching to a different system.`,
+        `Restore the path and rerun the same case to confirm the symptom still tracks ${params.focus}.`,
+      ];
+    default:
+      return [];
+  }
+}
+
+export function shapeFreeAnalysisResponse(params: {
+  input: AnalysisInput;
+  response: FreeAnalysisResponse;
+}): FreeAnalysisResponse {
+  const followUp = extractFollowUpContext(params.input.problemDescription);
+  const mode = inferCanonicalMode(params);
+  const focus = inferFocusLabel({
+    input: params.input,
+    response: params.response,
+    mode,
+    followUp,
+  });
+  const alternateFocus = extractLeverPhrase(followUp.observation?.split(/\bbut\b/i)[1]);
+  const hasHardContradiction = Boolean(
+    followUp.observation && HARD_NO_CHANGE_PATTERN.test(followUp.observation) && alternateFocus,
+  );
+  const hasStrongConfirmation = Boolean(
+    followUp.observation &&
+      STRONG_CONFIRMATION_PATTERN.test(followUp.observation) &&
+      !PARTIAL_PROGRESS_PATTERN.test(followUp.observation),
+  );
+
+  const shapedDiagnosis = hasHardContradiction
+    ? buildContradictionDiagnosis({ focus, alternateFocus })
+    : hasStrongConfirmation
+      ? buildConfirmationDiagnosis({ focus, observation: followUp.observation ?? "" })
+      : buildModeDiagnosis({ mode, focus, input: params.input }) ?? params.response.what_happened;
+
+  const canonicalMatters = buildCanonicalMatters({
+    mode,
+    focus,
+    followUp,
+    alternateFocus,
+  });
+  const canonicalSteps = buildCanonicalSteps({
+    mode,
+    focus,
+    followUp,
+    alternateFocus,
+  });
+
+  return {
+    ...params.response,
+    what_happened: trimSentence(shapedDiagnosis, 220),
+    what_matters: dedupeLines([...canonicalMatters, ...params.response.what_matters])
+      .slice(0, 5)
+      .map((entry) => trimSentence(entry, 180)),
+    what_to_do_next: dedupeLines([...canonicalSteps, ...params.response.what_to_do_next])
+      .slice(0, 5)
+      .map((entry) => trimSentence(entry, 180)),
+  };
+}
+
 function toFreeAnalysisResponse(payload: OpenAIAnalysisResponse): FreeAnalysisResponse {
   return {
     what_happened:
@@ -301,6 +724,10 @@ function buildOpenAISystemPrompt(): string {
     "- whatHappened must include a cause -> effect explanation, not just a description",
     "- whatHappened must reference at least one specific object, script, or system mentioned in the input if any are present",
     "- whatHappened must not stop at a broad category like physics, rendering, or references; it must name the specific likely failure inside that category",
+    "- When the evidence points to two systems writing the same value, use the exact phrase 'duplicate writer conflict' and explicitly say that two systems are writing the same value",
+    "- When the evidence points to one object storing a reference and another object reading a different or missing one, use the exact phrase 'ownership/reference handoff issue'",
+    "- When the evidence points to Awake/Start/OnEnable or load-order timing, use the exact phrase 'initialization-order issue' or 'execution-order issue'",
+    "- When the evidence is sparse and the next move is to inspect a signal, explicitly say to instrument or log the exact handoff, event, registration, or state transition",
     "- Avoid generic phrases like 'a GameObject', 'an object', or 'something' when concrete names are available",
     "- If scenario anchors are provided, you MUST reference at least one of them in whatHappened unless it is clearly irrelevant",
     "- whatMatters: justify why this is the most likely cause using only clues from the user's input",
@@ -318,6 +745,10 @@ function buildOpenAISystemPrompt(): string {
     "- whatToDoNext: if the primary diagnosis is structural or code-level, keep the remaining steps focused on that same cause instead of drifting into parameter tuning or unrelated fallback checks",
     "- whatToDoNext: do not suggest mass, drag, gravity, force, jumpForce, or similar tuning checks unless the input explicitly points to that parameter as evidence",
     "- whatToDoNext: every step must be specific to the issue described, not generic maintenance advice",
+    "- If a follow-up observation says a step changed nothing, say 'this did not affect the issue' and, if another lever changes the symptom, say 'this contradicts the previous hypothesis'",
+    "- If a follow-up observation cleanly tracks the same cause again, use stable confirmation language such as 'cleanly tracks the same cause', 'consistently reproduces the issue', and 'this confirms the cause'",
+    "- Do not switch between many synonyms for the same concept; prefer one stable phrasing for contradiction, confirmation, duplicate writers, ownership/reference handoff, and initialization order",
+    "- If you state certainty in prose, use only 'low confidence', 'medium confidence', or 'high confidence' wording and keep that wording aligned with the evidence strength",
     "- Avoid vague advice like 'check your code' or 'debug further'",
     "- Avoid generic advice like 'Check the Inspector', 'Look at logs', or 'Verify everything is set correctly'",
     "- Avoid filler phrases like 'there may be an issue' or 'consider investigating'",
@@ -368,6 +799,8 @@ function buildOpenAIUserPrompt(input: AnalysisInput): string {
     "- Make the first whatToDoNext item a concrete confirmation step, not a generic fix suggestion",
     "- Make the first whatToDoNext item reversible and diagnostic, so it proves the cause before asking for a lasting code change",
     "- Keep the later whatToDoNext items on the same likely cause instead of drifting into parameter tuning unless the report explicitly mentions that parameter",
+    "- Prefer these exact phrases when they fit the evidence: 'duplicate writer conflict', 'ownership/reference handoff issue', 'initialization-order issue', 'this did not affect the issue', 'this contradicts the previous hypothesis', 'cleanly tracks the same cause', 'consistently reproduces the issue', 'this confirms the cause'",
+    "- If the issue report already names one concrete handoff, path, or subsystem and the rest of the system stays normal, frame it as a bounded isolation case instead of a broad subsystem mystery",
   ].join("\n");
 }
 
@@ -470,7 +903,12 @@ async function callOpenAIAnalysis(input: AnalysisInput): Promise<FreeAnalysisRes
     );
   }
 
-  return ensureConfirmationFirstStep(toFreeAnalysisResponse(parsed));
+  return ensureConfirmationFirstStep(
+    shapeFreeAnalysisResponse({
+      input,
+      response: toFreeAnalysisResponse(parsed),
+    }),
+  );
 }
 
 function classifyIssue(input: AnalysisInput):
@@ -646,5 +1084,8 @@ export async function runAnalysis(input: AnalysisInput): Promise<FreeAnalysisRes
     hasContext: Boolean(normalizeText(input.context)),
   });
 
-  return buildFallbackAnalysis(input);
+  return shapeFreeAnalysisResponse({
+    input,
+    response: buildFallbackAnalysis(input),
+  });
 }

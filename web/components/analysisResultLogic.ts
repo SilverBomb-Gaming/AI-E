@@ -1,4 +1,4 @@
-import type {
+﻿import type {
   FollowUpVerificationState,
   StoredActionChainIntent,
   StoredActionChainState,
@@ -39,11 +39,11 @@ const EVIDENCE_GAP_PATTERN =
 const GENERIC_DIAGNOSIS_PATTERN =
   /component or object|critical object or component|missing or incorrect reference|missing reference|misconfiguration|disconnection|state management|physics settings|collision detection logic/i;
 const CONCRETE_ANCHOR_PATTERN =
-  /\b(?:Rigidbody2D|NavMeshAgent|Cinemachine|Animator|CanvasGroup|SceneManager|NullReferenceException|MissingReferenceException|Transform|Button|Slider|Image|Update|Start|Awake|FixedUpdate|MovePosition|AddForce|onClick|FadeOut)\b|[A-Za-z_]+\.[A-Za-z_]+/;
+  /\b(?:Rigidbody2D|NavMeshAgent|Cinemachine|Animator|CanvasGroup|SceneManager|NullReferenceException|MissingReferenceException|Transform|Button|Slider|Image|Update|Start|Awake|FixedUpdate|MovePosition|AddForce|onClick|FadeOut|wall-jump handoff|animator speed sync|target reference|stamina limiter|locomotion controller|scene bootstrap|loading overlay|audio singleton|pathfinding resume handoff)\b|\b[a-z][a-z0-9_-]*\s+(?:handoff|sync|reference|controller|limiter|prefab|overlay|bootstrap|singleton|binding|writer|transition)\b|[A-Za-z_]+\.[A-Za-z_]+/i;
 const CONFIRMATION_SIGNAL_PATTERN =
   /works? again|behaves? normally|returned to normal|fixed|resolved|disappear(?:ed|s)?|went away|stops? (?:happening|flickering|crashing)|regains? control|starts? working|lets? .*run normally|makes? .*disappear|removes? .*completely/i;
 const FALSIFICATION_SIGNAL_PATTERN =
-  /nothing changed|changes nothing|no change|same issue|same behavior|still broken the same|did not help|did nothing|doesn't help|no effect|unchanged|still happens exactly the same/i;
+  /nothing changed|changed nothing|changes nothing|didn't change anything|did not change anything|no change|same issue|same behavior|still broken the same|did not help|did nothing|doesn't help|no effect|unchanged|still happens exactly the same/i;
 const PARTIAL_SIGNAL_PATTERN =
   /\bbut\b|partially|reduced|less severe|less often|smaller|improved?.*\bstill\b|fixed.*\bbut\b|stops?.*\bbut\b/i;
 const STRONG_RESOLVED_SIGNAL_PATTERN =
@@ -70,6 +70,10 @@ const MESSY_MULTI_SYSTEM_INPUT_PATTERN =
   /\b(?:changed a bunch|changed a lot|touched\b|multiple systems?|various systems?|everything feels broken|not sure where to start|not sure|mixed together|all at once|one pass|a bunch of)\b/i;
 
 export const MAX_GUIDED_STEPS = 3;
+
+const STRONG_CONFIRMATION_PATTERN =
+  /\b(?:cleanly tracks|tracks the symptom|brings? .* back|same .* drives the symptom|same .* keeps matching|consistently reproduces|confirm check keeps matching|repeated validation|continues? to reproduce|only appears while)\b/i;
+
 
 const STOP_WORDS = new Set([
   "about",
@@ -109,6 +113,28 @@ export function shouldShowLowEvidenceCue(result: FreeAnalysisResponse): boolean 
   const hedgedDiagnosis = /\b(?:most likely|likely|probably)\b/i.test(result.what_happened);
 
   return hasEvidenceGapSignal || hasGenericDiagnosisSignal || (hedgedDiagnosis && !hasConcreteAnchor);
+}
+
+function hasStandaloneStrongConfirmationObservation(observation: string | undefined): boolean {
+  const trimmedObservation = observation?.trim();
+  if (
+    !trimmedObservation ||
+    PARTIAL_SIGNAL_PATTERN.test(trimmedObservation) ||
+    FALSIFICATION_SIGNAL_PATTERN.test(trimmedObservation) ||
+    /\b(?:no longer|unchanged|slipping|noisier|mixed|unclear|ambiguous|inconsistent)\b/i.test(trimmedObservation)
+  ) {
+    return false;
+  }
+
+  return STRONG_CONFIRMATION_PATTERN.test(trimmedObservation);
+}
+
+function getStandaloneConfirmationSignalCount(observation: string | undefined): number {
+  if (!hasStandaloneStrongConfirmationObservation(observation)) {
+    return 0;
+  }
+
+  return hasRepeatedConfirmationObservation(observation) ? 2 : 1;
 }
 
 function summarizeStepForPrompt(step: string | undefined): string | null {
@@ -268,8 +294,12 @@ function getFocusDomain(text: string | null): string | null {
 function cleanFocusPhrase(text: string): string | null {
   const cleaned = trimLeadingArticle(trimTrailingPunctuation(text))
     .replace(/^(?:or\s+)?(?:disable|turn off|remove|bypass|force|clear|delay|skip|pause|comment out)\s+(?:the\s+)?/i, "")
+    .replace(/^(?:same\s+)?(?:only\s+)?/i, "")
     .replace(/^(?:most likely cause of|likely cause of|cause of|changes made to)\s+/i, "")
+    .replace(/\b(?:now|still|cleanly|directly|consistently)\b/gi, " ")
     .replace(/\s+and\s+one\s+related\s+variable\b.*$/i, "")
+    .replace(/\s+(?:again|once)\b.*$/i, "")
+    .replace(/\s+(?:tracks?|drives?|keeps?|matching|reproduc(?:e|es|ed)|confirm(?:s|ed)?|continues?)\b.*$/i, "")
     .replace(/\s+(?:lets?|makes?|removes?|fixes?|resolves?|stops?|worked|solved)\b.*$/i, "")
     .replace(/\s+/g, " ");
   if (!cleaned) {
@@ -518,13 +548,31 @@ function hasBroadSystemMixSignal(text: string | undefined): boolean {
   );
 }
 
+function hasBoundedSinglePathSignal(text: string | undefined): boolean {
+  if (!text) {
+    return false;
+  }
+
+  return /\b(?:only|just)\b.*\b(?:right after|when)\b|\brest of .*\b(?:normal|fine|unchanged)\b|\bappears? immediately when\b|\btied to that handoff rather than the rest\b/i.test(
+    text,
+  );
+}
+
 export function shouldUseMessyInputFirstStep(problemDescription: string | undefined): boolean {
   if (!problemDescription) {
     return false;
   }
 
+  if (MESSY_MULTI_SYSTEM_INPUT_PATTERN.test(problemDescription)) {
+    return true;
+  }
+
+  if (hasBoundedSinglePathSignal(problemDescription)) {
+    return false;
+  }
+
   const recentChangeCandidates = extractRecentChangeCandidates(problemDescription);
-  return MESSY_MULTI_SYSTEM_INPUT_PATTERN.test(problemDescription) || hasBroadSystemMixSignal(problemDescription) || recentChangeCandidates.length >= 3;
+  return recentChangeCandidates.length >= 3;
 }
 
 export function refineFirstStepPrecision(params: {
@@ -665,6 +713,14 @@ function buildActionableSecondStep(method: StepMethod, focus: string, verificati
   }
 
   return `Temporarily disable or bypass the ${trimmedFocus} once and compare the behavior immediately before and after. If the symptom changes right away, that gives you a stronger signal before widening the search.`;
+}
+
+function hasRepeatedConfirmationObservation(text: string | undefined): boolean {
+  if (!text?.trim()) {
+    return false;
+  }
+
+  return /\b(?:same .* drives the symptom|same .* keeps matching|confirm check keeps matching|repeated validation|continues? to reproduce)\b/i.test(text);
 }
 
 function isMeaningfullyProgressed(params: {
@@ -918,6 +974,15 @@ export function buildNextStepGuidance(params: {
     return null;
   }
 
+  if (
+    params.verificationState === "inconclusive" &&
+    params.priorSteps.length >= 2 &&
+    hasRepeatedConfirmationObservation(params.observation) &&
+    /\b(?:confirmed as the cause|confirmed behavior under repeated validation)\b/i.test(params.currentResult.what_happened)
+  ) {
+    return null;
+  }
+
   const currentStep = params.priorSteps[0] ?? "";
   const analyzerSuggestedStep = strengthenConfirmationStep(params.currentResult.what_to_do_next[0], params.currentResult.what_happened) ?? params.currentResult.what_to_do_next[0] ?? "";
   const alternativeClause = params.observation.split(/\bbut\b/i)[1]?.trim() ?? params.observation.trim();
@@ -936,15 +1001,17 @@ export function buildNextStepGuidance(params: {
     currentResult: params.currentResult,
     observation: params.observation,
   });
-  const focusCandidates = [
-    params.verificationState === "falsified" ? alternateFocus : observationFocus,
-    analyzerSuggestedFocus,
-    params.verificationState === "falsified" ? diagnosisFocus : alternateFocus,
-    params.verificationState === "falsified" ? currentFocus : diagnosisFocus,
-    params.verificationState === "falsified" ? observationFocus : currentFocus,
-    currentFocus,
-  ].filter((focus, index, values): focus is string => Boolean(focus?.trim()) && values.indexOf(focus) === index);
+  const focusCandidates = (
+    params.verificationState === "falsified"
+      ? [alternateFocus, diagnosisFocus, currentFocus, observationFocus, analyzerSuggestedFocus]
+      : [analyzerSuggestedFocus, diagnosisFocus, currentFocus, observationFocus, alternateFocus]
+  ).filter((focus, index, values): focus is string => Boolean(focus?.trim()) && values.indexOf(focus) === index);
   const orderedFocusCandidates = focusCandidates.filter((focus) => isConcreteProgressionFocus(focus));
+  const preferredFocusCandidates =
+    params.verificationState !== "falsified" && analyzerSuggestedFocus && isConcreteProgressionFocus(analyzerSuggestedFocus)
+      ? [analyzerSuggestedFocus]
+      : [];
+  const fallbackFocusCandidates = orderedFocusCandidates.filter((focus) => !preferredFocusCandidates.includes(focus));
 
   if (!orderedFocusCandidates.length) {
     return null;
@@ -958,34 +1025,40 @@ export function buildNextStepGuidance(params: {
   });
   let bestCandidate: { step: string; score: number } | null = null;
 
-  for (const focus of orderedFocusCandidates) {
-    for (const method of methodCandidates) {
-      const step = buildActionableSecondStep(method, focus, params.verificationState);
-      if (params.priorSteps.includes(step)) {
-        continue;
-      }
+  for (const focusGroup of [preferredFocusCandidates, fallbackFocusCandidates]) {
+    for (const focus of focusGroup) {
+      for (const method of methodCandidates) {
+        const step = buildActionableSecondStep(method, focus, params.verificationState);
+        if (params.priorSteps.includes(step)) {
+          continue;
+        }
 
-      if (!isMeaningfullyProgressed({ priorSteps: params.priorSteps, candidateStep: step, candidateFocus: focus })) {
-        continue;
-      }
+        if (!isMeaningfullyProgressed({ priorSteps: params.priorSteps, candidateStep: step, candidateFocus: focus })) {
+          continue;
+        }
 
-      const score =
-        scoreProgressionCandidate({ priorSteps: params.priorSteps, candidateStep: step, candidateFocus: focus }) +
-        scoreIntentAlignment({
-          intentAnchor,
-          priorSteps: params.priorSteps,
-          candidateStep: step,
-          candidateFocus: focus,
-          currentFocus,
-          alternateFocus,
-        });
-      if (score < 4) {
-        continue;
-      }
+        const score =
+          scoreProgressionCandidate({ priorSteps: params.priorSteps, candidateStep: step, candidateFocus: focus }) +
+          scoreIntentAlignment({
+            intentAnchor,
+            priorSteps: params.priorSteps,
+            candidateStep: step,
+            candidateFocus: focus,
+            currentFocus,
+            alternateFocus,
+          });
+        if (score < 4) {
+          continue;
+        }
 
-      if (!bestCandidate || score > bestCandidate.score) {
-        bestCandidate = { step, score };
+        if (!bestCandidate || score > bestCandidate.score) {
+          bestCandidate = { step, score };
+        }
       }
+    }
+
+    if (bestCandidate) {
+      break;
     }
   }
 
@@ -1244,6 +1317,16 @@ export function getConfidenceLevel(params: {
     }
   }
 
+  if (
+    params.isRefined &&
+    params.loopTerminationStatus === "converging" &&
+    params.verificationState === "inconclusive" &&
+    !params.showLowEvidenceCue &&
+    hasStandaloneStrongConfirmationObservation(params.observation)
+  ) {
+    return "high";
+  }
+
   if (params.loopTerminationStatus === "converging" || params.verificationState === "falsified") {
     return "medium";
   }
@@ -1349,6 +1432,10 @@ function hasStrongCommitmentSignal(params: {
     return false;
   }
 
+  if (!params.previousActionChainState?.lastStepWatchFor) {
+    return true;
+  }
+
   return doesObservationMatchActionChainWatchFor({
     observation,
     watchFor: params.previousActionChainState?.lastStepWatchFor,
@@ -1428,6 +1515,10 @@ function getAlignedSignalCount(params: {
   const observation = params.observation?.trim();
   if (!observation) {
     return getBaselineAlignedSignalCount(params.previousActionChainState);
+  }
+
+  if (!params.previousActionChainState?.lastStepWatchFor) {
+    return getStandaloneConfirmationSignalCount(observation);
   }
 
   const matchesPreviousWatchFor = doesObservationMatchActionChainWatchFor({
@@ -1515,6 +1606,13 @@ function getDecisionCommitment(params: {
   });
 
   if (params.confidenceAlignment === "increasing") {
+    return hasValidatedEvidence ? "committed" : "pending";
+  }
+
+  if (
+    (!params.previousActionChainState || !params.previousActionChainState.previousConfidenceLevel) &&
+    hasStandaloneStrongConfirmationObservation(params.observation)
+  ) {
     return hasValidatedEvidence ? "committed" : "pending";
   }
 
@@ -1629,7 +1727,15 @@ export function getRecommendedDebuggingMode(params: {
   }
 
   if (
-    /\b(?:duplicate writers?|multiple scripts writing|two scripts writing|duplicate listeners?|multiple listeners?|duplicate handlers?|event duplication|double[- ]fir(?:e|ing)|written from two places|overwrit(?:e|es|ing)|duplicate sources?)\b/i.test(
+    /\b(?:no clear console error|checks are too sparse|before or after registration|scene streaming|focused logging|track the .* before and after|observe .* transition|serialized and restored)\b/i.test(
+      supportingText,
+    )
+  ) {
+    return "instrument-with-logging";
+  }
+
+  if (
+    /\b(?:duplicate writers?|multiple scripts writing|two scripts writing|both write|same frame|bouncing between two values|conflict(?:ing)? writes?|duplicate listeners?|multiple listeners?|duplicate handlers?|event duplication|double[- ]fir(?:e|ing)|written from two places|overwrit(?:e|es|ing)|duplicate sources?)\b/i.test(
       supportingText,
     )
   ) {
@@ -1637,7 +1743,7 @@ export function getRecommendedDebuggingMode(params: {
   }
 
   if (
-    /\b(?:stale references?|cached references?|ownership|owner|missing references?|wrong references?|null references?|lost references?|validate references?|validate ownership|handoff between systems)\b/i.test(
+    /\b(?:stale references?|cached references?|ownership|owner|missing references?|wrong references?|null references?|lost references?|target references?|validate references?|validate ownership|reference handoff|ownership handoff|handoff between systems|launcher|projectile|spawned projectile)\b/i.test(
       supportingText,
     )
   ) {
@@ -1654,7 +1760,7 @@ export function getRecommendedDebuggingMode(params: {
 
   if (
     params.suggestedEscalationStrategy === "logging" ||
-    /\b(?:debug logs?|log\b|logging|instrument(?:ation)?|trace\b|breakpoint|inspect state|track values?|watch values?|observe lifecycle timing|verify transitions?|state transitions?|event flow)\b/i.test(
+    /\b(?:debug logs?|log\b|logging|instrument(?:ation)?|trace\b|breakpoint|inspect state|track values?|watch values?|observe lifecycle timing)\b/i.test(
       supportingText,
     )
   ) {
@@ -2283,7 +2389,8 @@ export function deriveAnalysisResultSignals(params: {
     observation: lastObservation,
     problemDescription,
   });
-  const showLowEvidenceCue = shouldShowLowEvidenceCue(result);
+  const showLowEvidenceCue =
+    shouldShowLowEvidenceCue(result) && !(isRefined && hasStandaloneStrongConfirmationObservation(lastObservation));
   const confidenceLevel = getConfidenceLevel({
     verificationState,
     loopTerminationStatus,
@@ -2382,3 +2489,5 @@ export function deriveAnalysisResultSignals(params: {
     isGuidedLoopActive,
   };
 }
+
+
