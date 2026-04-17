@@ -15,6 +15,11 @@ export type DebuggingMode =
   | "reproduce-in-clean-scene"
   | "check-duplicate-writers"
   | "validate-ownership-references";
+export type SupervisedActionChainStep = {
+  label: string;
+  purpose: string;
+  watchFor: string;
+};
 type IntentAnchor = "isolate-root-cause" | "confirm-system-boundary" | "narrow-conflicting-systems" | "verify-state-transitions";
 type StepMethod = "disable" | "isolate" | "replace" | "force" | "inspect" | "unknown";
 
@@ -1363,6 +1368,237 @@ export function getRecommendedDebuggingMode(params: {
   return "isolate-one-subsystem";
 }
 
+function getEscalationStrategyFallbackLabel(strategy: EscalationStrategy | null): string {
+  switch (strategy) {
+    case "logging":
+      return "focused logging";
+    case "single-system-rebuild":
+      return "a single-system rebuild";
+    case "clean-environment":
+      return "a clean scene check";
+    case "minimal-repro":
+      return "a minimal reproduction";
+    default:
+      return "an escalation path";
+  }
+}
+
+function getActionChainFocusLabel(step: string | null): string {
+  const focus = extractFocusPhrase(step ?? "") ?? extractObservationFocus(step ?? "") ?? "suspected system";
+  return trimLeadingArticle(focus);
+}
+
+function getActionChainStepLabel(step: string | null, mode: DebuggingMode): string {
+  const method = step ? extractStepMethod(step) : "unknown";
+
+  if (method === "inspect") {
+    return mode === "instrument-with-logging" ? "Inspect the signal with logging" : "Inspect the suspect state";
+  }
+
+  if (method === "force") {
+    return "Force a known-safe state";
+  }
+
+  if (method === "replace") {
+    return "Swap in a known-safe default";
+  }
+
+  if (method === "disable" || method === "isolate") {
+    if (mode === "check-duplicate-writers") {
+      return "Disable one writer";
+    }
+
+    if (mode === "validate-ownership-references") {
+      return "Isolate the active reference path";
+    }
+
+    return "Isolate the suspected subsystem";
+  }
+
+  switch (mode) {
+    case "instrument-with-logging":
+      return "Inspect the signal with logging";
+    case "check-initialization-order":
+      return "Check lifecycle ordering";
+    case "check-duplicate-writers":
+      return "Trace the second writer";
+    case "validate-ownership-references":
+      return "Verify the active reference path";
+    case "reproduce-in-clean-scene":
+      return "Reproduce in a clean scene";
+    case "isolate-one-subsystem":
+    default:
+      return "Isolate the suspected subsystem";
+  }
+}
+
+function getActionChainStepPurpose(step: string | null, mode: DebuggingMode): string {
+  const focus = getActionChainFocusLabel(step);
+  const method = step ? extractStepMethod(step) : "unknown";
+
+  if (mode === "instrument-with-logging" || method === "inspect") {
+    return `Use ${focus} to find the exact branch, event, or value that diverges when the symptom appears.`;
+  }
+
+  if (mode === "check-initialization-order") {
+    return `Confirm whether ${focus} runs before its dependency is ready.`;
+  }
+
+  if (mode === "check-duplicate-writers") {
+    return `Test whether ${focus} is being overwritten by a second writer or listener.`;
+  }
+
+  if (mode === "validate-ownership-references") {
+    return `Confirm whether ${focus} is still the active owner or reference when the symptom appears.`;
+  }
+
+  if (method === "force" || method === "replace") {
+    return `Use ${focus} to isolate the failing path without widening the test.`;
+  }
+
+  return `Test whether ${focus} is the single subsystem actually driving the symptom.`;
+}
+
+function getActionChainStepWatchFor(step: string | null, mode: DebuggingMode): string {
+  const focus = getActionChainFocusLabel(step);
+  const method = step ? extractStepMethod(step) : "unknown";
+
+  if (mode === "instrument-with-logging" || method === "inspect") {
+    return `Watch for which branch, value, or event around ${focus} first diverges at the moment the symptom appears.`;
+  }
+
+  if (mode === "check-initialization-order") {
+    return `Watch for whether ${focus} runs too early, too late, or before the required dependency is populated.`;
+  }
+
+  if (mode === "check-duplicate-writers") {
+    return `Watch for whether the symptom stops after one writer is isolated or another write immediately restores the bad state.`;
+  }
+
+  if (mode === "validate-ownership-references") {
+    return `Watch for whether the active owner or reference around ${focus} goes stale, null, or points at the wrong object.`;
+  }
+
+  if (method === "force" || method === "replace") {
+    return `Watch for whether changing ${focus} shifts the symptom immediately instead of only producing later side effects.`;
+  }
+
+  return `Watch for whether isolating ${focus} makes the symptom disappear, weaken, or stay exactly the same.`;
+}
+
+function buildSupervisedActionChainStep(step: string | null, mode: DebuggingMode): SupervisedActionChainStep | null {
+  if (!step?.trim()) {
+    return null;
+  }
+
+  return {
+    label: getActionChainStepLabel(step, mode),
+    purpose: getActionChainStepPurpose(step, mode),
+    watchFor: getActionChainStepWatchFor(step, mode),
+  };
+}
+
+function buildModeFallbackActionChainStep(mode: DebuggingMode, currentStep: string | null): SupervisedActionChainStep | null {
+  const focus = getActionChainFocusLabel(currentStep);
+
+  switch (mode) {
+    case "instrument-with-logging":
+      return {
+        label: "Compare the logged signal",
+        purpose: `Use the logs around ${focus} to confirm the failing branch before widening the search.`,
+        watchFor: `Watch for the first value, event, or branch around ${focus} that stops matching the expected flow.`,
+      };
+    case "check-initialization-order":
+      return {
+        label: "Compare lifecycle timing",
+        purpose: `Use the timing around ${focus} to confirm whether the failure is really an order-of-execution issue.`,
+        watchFor: `Watch for the first Awake, Start, or enable-time mismatch that appears before the symptom.`,
+      };
+    case "check-duplicate-writers":
+      return {
+        label: "Confirm the overwrite path",
+        purpose: `Use the narrowed check around ${focus} to confirm whether a second writer is reapplying the bad state.`,
+        watchFor: `Watch for one writer restoring the correct value and another write immediately undoing it.`,
+      };
+    case "validate-ownership-references":
+      return {
+        label: "Confirm the live reference",
+        purpose: `Use the narrowed check around ${focus} to verify the object or owner in use at symptom time.`,
+        watchFor: `Watch for the reference around ${focus} going stale, null, or switching owners unexpectedly.`,
+      };
+    case "isolate-one-subsystem":
+      return {
+        label: "Compare the before/after result",
+        purpose: `Use the isolated check around ${focus} to confirm or reject the current subsystem boundary.`,
+        watchFor: `Watch for an immediate symptom shift after isolating ${focus}, not just unrelated side effects.`,
+      };
+    case "reproduce-in-clean-scene":
+    default:
+      return null;
+  }
+}
+
+function buildActionChainDecisionStep(params: {
+  suggestedEscalationStrategy: EscalationStrategy | null;
+}): SupervisedActionChainStep {
+  return {
+    label: "Decide continue vs escalate",
+    purpose: "Keep the chain bounded and evidence-led instead of freelancing into a longer plan.",
+    watchFor: `Stop the chain if the symptom resolves. Continue only if the latest step produced a clearer single-cause signal; otherwise switch to ${getEscalationStrategyFallbackLabel(params.suggestedEscalationStrategy)} instead of widening the loop.`,
+  };
+}
+
+export function getBoundedSupervisedActionChain(params: {
+  isRefined: boolean;
+  problemDescription: string | undefined;
+  recommendedDebuggingMode: DebuggingMode | null;
+  suggestedNextAction: SuggestedNextAction;
+  loopTerminationStatus: LoopTerminationStatus | null;
+  confidenceLevel: ConfidenceLevel;
+  showLowEvidenceCue: boolean;
+  currentGuidedStep: string | null;
+  nextStepGuidance: string | null;
+  suggestedEscalationStrategy: EscalationStrategy | null;
+}): SupervisedActionChainStep[] | null {
+  if (!params.recommendedDebuggingMode || params.recommendedDebuggingMode === "reproduce-in-clean-scene") {
+    return null;
+  }
+
+  if (params.suggestedNextAction !== "continue-thread") {
+    return null;
+  }
+
+  if (params.loopTerminationStatus === "resolved" || params.loopTerminationStatus === "stuck") {
+    return null;
+  }
+
+  if (params.showLowEvidenceCue || params.confidenceLevel === "low" || !params.currentGuidedStep) {
+    return null;
+  }
+
+  if (!params.isRefined && shouldUseMessyInputFirstStep(params.problemDescription)) {
+    return null;
+  }
+
+  const stepOne = buildSupervisedActionChainStep(params.currentGuidedStep, params.recommendedDebuggingMode);
+  const stepTwo = params.nextStepGuidance
+    ? buildSupervisedActionChainStep(params.nextStepGuidance, params.recommendedDebuggingMode)
+    : buildModeFallbackActionChainStep(params.recommendedDebuggingMode, params.currentGuidedStep);
+  const stepThree = buildActionChainDecisionStep({
+    suggestedEscalationStrategy: params.suggestedEscalationStrategy,
+  });
+
+  const chain = [stepOne, stepTwo, stepThree].filter(
+    (step): step is SupervisedActionChainStep => Boolean(step),
+  );
+
+  const dedupedChain = chain.filter((step, index, steps) => {
+    return steps.findIndex((candidate) => candidate.label === step.label && candidate.watchFor === step.watchFor) === index;
+  });
+
+  return dedupedChain.length >= 2 ? dedupedChain.slice(0, MAX_GUIDED_STEPS) : null;
+}
+
 export function deriveAnalysisResultSignals(params: {
   result: FreeAnalysisResponse;
   problemDescription?: string;
@@ -1384,6 +1620,7 @@ export function deriveAnalysisResultSignals(params: {
   confidenceLevel: ConfidenceLevel;
   suggestedNextAction: SuggestedNextAction;
   recommendedDebuggingMode: DebuggingMode | null;
+  supervisedActionChain: SupervisedActionChainStep[] | null;
   isGuidedLoopActive: boolean;
 } {
   const { result, problemDescription, isRefined = false, verificationState, lastObservation } = params;
@@ -1453,6 +1690,18 @@ export function deriveAnalysisResultSignals(params: {
     confidenceLevel,
     showLowEvidenceCue,
   });
+  const supervisedActionChain = getBoundedSupervisedActionChain({
+    isRefined,
+    problemDescription,
+    recommendedDebuggingMode,
+    suggestedNextAction,
+    loopTerminationStatus,
+    confidenceLevel,
+    showLowEvidenceCue,
+    currentGuidedStep,
+    nextStepGuidance,
+    suggestedEscalationStrategy,
+  });
 
   return {
     displayedConfirmFirstStep,
@@ -1469,6 +1718,7 @@ export function deriveAnalysisResultSignals(params: {
     confidenceLevel,
     suggestedNextAction,
     recommendedDebuggingMode,
+    supervisedActionChain,
     isGuidedLoopActive,
   };
 }

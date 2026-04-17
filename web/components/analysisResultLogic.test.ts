@@ -41,6 +41,23 @@ test("maps isolate diagnoses to isolate-one-subsystem", () => {
   assert.equal(signals.recommendedDebuggingMode, "isolate-one-subsystem");
 });
 
+test("shows a bounded supervised chain for strong isolation cases", () => {
+  const signals = derive({
+    problemDescription: "Player movement breaks after changing the Animator speed sync.",
+    result: makeResult({
+      what_happened: "The Animator speed sync override is the most likely cause of the symptom.",
+      what_to_do_next: [
+        "Temporarily disable the Animator speed sync override and compare the behavior before and after.",
+      ],
+    }),
+  });
+
+  assert.equal(signals.suggestedNextAction, "continue-thread");
+  assert.equal(signals.supervisedActionChain?.length, 3);
+  assert.equal(signals.supervisedActionChain?.[0]?.label, "Isolate the suspected subsystem");
+  assert.equal(signals.supervisedActionChain?.[2]?.label, "Decide continue vs escalate");
+});
+
 test("maps logging-oriented diagnoses to instrument-with-logging", () => {
   const signals = derive({
     problemDescription: "The state transition flicker happens during the Animator handoff.",
@@ -53,6 +70,23 @@ test("maps logging-oriented diagnoses to instrument-with-logging", () => {
   });
 
   assert.equal(signals.recommendedDebuggingMode, "instrument-with-logging");
+});
+
+test("shows a bounded supervised chain for strong instrumentation cases", () => {
+  const signals = derive({
+    problemDescription: "The state transition flicker happens during the Animator handoff.",
+    result: makeResult({
+      what_happened: "The Animator transition event flow is the most likely cause, so add focused logging around the state transition.",
+      what_to_do_next: [
+        "Add focused debug logs around the Animator transition event flow and compare the values during the handoff.",
+      ],
+    }),
+  });
+
+  assert.equal(signals.recommendedDebuggingMode, "instrument-with-logging");
+  assert.equal(signals.supervisedActionChain?.length, 3);
+  assert.equal(signals.supervisedActionChain?.[0]?.label, "Inspect the signal with logging");
+  assert.match(signals.supervisedActionChain?.[1]?.watchFor ?? "", /branch|value|event/i);
 });
 
 test("maps initialization-order diagnoses to check-initialization-order", () => {
@@ -110,6 +144,7 @@ test("suppresses recommended mode for messy fresh prompts with weak evidence", (
 
   assert.equal(signals.showLowEvidenceCue, true);
   assert.equal(signals.recommendedDebuggingMode, null);
+  assert.equal(signals.supervisedActionChain, null);
 });
 
 test("suppresses recommended mode when a refined follow-up is resolved", () => {
@@ -129,6 +164,7 @@ test("suppresses recommended mode when a refined follow-up is resolved", () => {
   assert.equal(signals.loopTerminationStatus, "resolved");
   assert.equal(signals.suggestedNextAction, "stop");
   assert.equal(signals.recommendedDebuggingMode, null);
+  assert.equal(signals.supervisedActionChain, null);
 });
 
 test("preserves clean-scene routing for stuck follow-up loops", () => {
@@ -151,6 +187,7 @@ test("preserves clean-scene routing for stuck follow-up loops", () => {
   assert.equal(signals.suggestedEscalationStrategy, "clean-environment");
   assert.equal(signals.suggestedNextAction, "escalate");
   assert.equal(signals.recommendedDebuggingMode, "reproduce-in-clean-scene");
+  assert.equal(signals.supervisedActionChain, null);
 });
 
 test("suppresses recommended mode for mixed-signal fresh prompts unless confidence reaches the clean high-signal path", () => {

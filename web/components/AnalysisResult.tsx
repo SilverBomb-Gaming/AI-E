@@ -279,6 +279,7 @@ export function AnalysisResult({
     confidenceLevel,
     suggestedNextAction,
     recommendedDebuggingMode,
+    supervisedActionChain,
     isGuidedLoopActive,
   } = deriveAnalysisResultSignals({
     result,
@@ -497,6 +498,28 @@ export function AnalysisResult({
       <section className="glass-card rounded-[1.75rem] p-6 shadow-float sm:p-7">
         <p className="section-label">What to do next</p>
         <p className="mt-3 text-sm leading-7 body-muted">Start with the first check before making broader changes.</p>
+        {supervisedActionChain ? (
+          <div className="mt-4 rounded-[1.25rem] border border-ocean/15 bg-white/55 p-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="section-label">Bounded supervised chain</p>
+              <span className="inline-flex rounded-full border border-ink/10 bg-white/80 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-ink/70">
+                User-approved only
+              </span>
+            </div>
+            <p className="mt-2 text-xs leading-6 body-muted sm:text-sm">
+              AI-E is suggesting a short evidence-gated sequence. Nothing runs automatically; approve one step at a time and stop as soon as the observation resolves or weakens the diagnosis.
+            </p>
+            <ol className="mt-4 space-y-3">
+              {supervisedActionChain.map((step, index) => (
+                <li key={`${step.label}-${index}`} className="rounded-[1rem] border border-ink/10 bg-white/70 p-3">
+                  <p className="text-sm font-semibold leading-6 text-ink/90 sm:text-base">{index + 1}. {step.label}</p>
+                  <p className="mt-1 text-sm leading-7 text-ink/90 sm:text-base">{step.purpose}</p>
+                  <p className="mt-2 text-xs leading-6 body-muted sm:text-sm">Watch for: {step.watchFor}</p>
+                </li>
+              ))}
+            </ol>
+          </div>
+        ) : null}
         {displayedConfirmFirstStep ? (
           <div className="mt-4 rounded-[1.25rem] border border-ocean/15 bg-ocean/5 p-4">
             <p className="section-label">Confirm first</p>
