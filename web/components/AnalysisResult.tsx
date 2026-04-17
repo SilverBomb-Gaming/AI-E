@@ -23,6 +23,7 @@ type AnalysisResultProps = {
 type LoopTerminationStatus = StoredLoopTerminationStatus;
 type EscalationStrategy = "minimal-repro" | "logging" | "single-system-rebuild" | "clean-environment";
 type SuggestedNextAction = "continue-thread" | "restart-fresh" | "stop" | "escalate";
+type IntentAnchor = "isolate-root-cause" | "confirm-system-boundary" | "narrow-conflicting-systems" | "verify-state-transitions";
 
 const EVIDENCE_GAP_PATTERN =
   /absence of error messages|lack of error messages|without an error message|no obvious console errors|no error messages|not a runtime exception/i;
@@ -563,6 +564,14 @@ function buildFalsifiedDiagnosis(params: {
 
 type StepMethod = "disable" | "isolate" | "replace" | "force" | "inspect" | "unknown";
 
+function hasStateTransitionSignal(text: string | null | undefined): boolean {
+  if (!text) {
+    return false;
+  }
+
+  return /\b(?:state|transition|blend|handoff|sync|update|fixedupdate|awake|start|timing|order|velocity|phase|frame|animator|timeline)\b/i.test(text);
+}
+
 function extractStepMethod(text: string): StepMethod {
   if (/\b(?:isolate|narrow)\b/i.test(text)) {
     return "isolate";
@@ -731,6 +740,145 @@ function scoreProgressionCandidate(params: {
   return score;
 }
 
+function deriveIntentAnchor(params: {
+  priorSteps: string[];
+  verificationState: FollowUpVerificationState;
+  currentResult: FreeAnalysisResponse;
+  observation: string;
+}): IntentAnchor {
+  const earliestStep = params.priorSteps[params.priorSteps.length - 1] ?? "";
+  const latestStep = params.priorSteps[0] ?? "";
+  const earliestFocus = extractFocusPhrase(earliestStep);
+  const latestFocus = extractFocusPhrase(latestStep);
+  const combinedContext = [earliestStep, latestStep, params.currentResult.what_happened, params.observation].filter(Boolean).join(" ");
+
+  if (hasStateTransitionSignal(combinedContext) && /\b(?:state machine|timeline|transition|velocity|animator|sync|handoff|blend)\b/i.test(combinedContext)) {
+    return "verify-state-transitions";
+  }
+
+  if (params.verificationState === "falsified" || hasBroadSystemMixSignal(combinedContext)) {
+    return "narrow-conflicting-systems";
+  }
+
+  if (/\b(?:conflict|overlap|between|boundary|both|twice|ownership|handoff|order)\b/i.test(combinedContext)) {
+    return "confirm-system-boundary";
+  }
+
+  if (params.priorSteps.length >= 2 && hasDistinctAlternateLever(earliestFocus, latestFocus)) {
+    return "confirm-system-boundary";
+  }
+
+  return "isolate-root-cause";
+}
+
+function getIntentMethodCandidates(params: {
+  intentAnchor: IntentAnchor;
+  verificationState: FollowUpVerificationState;
+  latestMethod: StepMethod;
+}): StepMethod[] {
+  const methodsByIntent: Record<IntentAnchor, StepMethod[]> = {
+    "isolate-root-cause": ["isolate", "replace", "force", "disable"],
+    "confirm-system-boundary": ["disable", "isolate", "force", "replace"],
+    "narrow-conflicting-systems": ["disable", "isolate", "replace", "force"],
+    "verify-state-transitions": ["force", "replace", "isolate", "disable"],
+  };
+
+  const baseMethods = methodsByIntent[params.intentAnchor];
+  const verificationBiasedMethods =
+    params.verificationState === "falsified" && params.intentAnchor !== "verify-state-transitions"
+      ? ["disable", ...baseMethods.filter((method) => method !== "disable")]
+      : baseMethods;
+
+  return [
+    ...verificationBiasedMethods.filter((method) => method !== params.latestMethod),
+    ...verificationBiasedMethods.filter((method) => method === params.latestMethod),
+  ];
+}
+
+function scoreIntentAlignment(params: {
+  intentAnchor: IntentAnchor;
+  priorSteps: string[];
+  candidateStep: string;
+  candidateFocus: string | null;
+  currentFocus: string | null;
+  alternateFocus: string | null;
+}): number {
+  const latestStep = params.priorSteps[0] ?? "";
+  const latestFocus = extractFocusPhrase(latestStep);
+  const latestMethod = extractStepMethod(latestStep);
+  const candidateMethod = extractStepMethod(params.candidateStep);
+  const latestDomain = getFocusDomain(latestFocus);
+  const currentDomain = getFocusDomain(params.currentFocus);
+  const candidateDomain = getFocusDomain(params.candidateFocus);
+  const sameLatestDomain = Boolean(latestDomain && candidateDomain && latestDomain === candidateDomain);
+  const sameCurrentDomain = Boolean(currentDomain && candidateDomain && currentDomain === candidateDomain);
+  const sharedWithLatest = countSharedTerms(extractFocusTerms(latestFocus), extractFocusTerms(params.candidateFocus));
+  let score = 0;
+
+  if (candidateMethod === latestMethod && isSameNormalizedFocus(latestFocus, params.candidateFocus)) {
+    return -6;
+  }
+
+  if (candidateMethod === latestMethod && sameLatestDomain && sharedWithLatest >= 2) {
+    score -= 4;
+  }
+
+  switch (params.intentAnchor) {
+    case "isolate-root-cause":
+      if (candidateMethod === "isolate") {
+        score += 3;
+      }
+      if (isNarrowerScope(params.currentFocus, params.candidateFocus)) {
+        score += 3;
+      }
+      if (sameCurrentDomain) {
+        score += 1;
+      }
+      break;
+    case "confirm-system-boundary":
+      if (candidateMethod === "disable" || candidateMethod === "isolate") {
+        score += 2;
+      }
+      if (hasDistinctAlternateLever(params.currentFocus, params.candidateFocus)) {
+        score += 3;
+      }
+      if (sameLatestDomain || sameCurrentDomain) {
+        score += 1;
+      }
+      break;
+    case "narrow-conflicting-systems":
+      if (candidateMethod === "disable") {
+        score += 3;
+      }
+      if (hasDistinctAlternateLever(params.currentFocus, params.candidateFocus)) {
+        score += 3;
+      }
+      if (params.alternateFocus && isSameNormalizedFocus(params.candidateFocus, params.alternateFocus)) {
+        score += 2;
+      }
+      if (!sameLatestDomain && candidateDomain) {
+        score += 1;
+      }
+      break;
+    case "verify-state-transitions":
+      if (candidateMethod === "force") {
+        score += 3;
+      }
+      if (candidateMethod === "replace") {
+        score += 2;
+      }
+      if (hasStateTransitionSignal(params.candidateFocus) || hasStateTransitionSignal(params.candidateStep)) {
+        score += 3;
+      }
+      if (sameLatestDomain || sameCurrentDomain) {
+        score += 1;
+      }
+      break;
+  }
+
+  return score;
+}
+
 function buildNextStepGuidance(params: {
   verificationState: FollowUpVerificationState | undefined;
   currentResult: FreeAnalysisResponse;
@@ -757,6 +905,12 @@ function buildNextStepGuidance(params: {
       extractFocusPhrase(params.currentResult.what_happened)) ??
     "current suspected system";
   const alternateFocus = extractObservationFocus(alternativeClause) ?? diagnosisFocus ?? currentFocus;
+  const intentAnchor = deriveIntentAnchor({
+    priorSteps: params.priorSteps,
+    verificationState: params.verificationState,
+    currentResult: params.currentResult,
+    observation: params.observation,
+  });
   const focusCandidates = [
     params.verificationState === "falsified" ? alternateFocus : observationFocus,
     analyzerSuggestedFocus,
@@ -771,10 +925,12 @@ function buildNextStepGuidance(params: {
     return null;
   }
 
-  const baseMethodCandidates: StepMethod[] =
-    params.verificationState === "falsified" ? ["disable", "isolate", "replace", "force"] : ["isolate", "replace", "force", "disable"];
   const latestMethod = extractStepMethod(currentStep);
-  const methodCandidates = [...baseMethodCandidates.filter((method) => method !== latestMethod), ...baseMethodCandidates.filter((method) => method === latestMethod)];
+  const methodCandidates = getIntentMethodCandidates({
+    intentAnchor,
+    verificationState: params.verificationState,
+    latestMethod,
+  });
   let bestCandidate: { step: string; score: number } | null = null;
 
   for (const focus of orderedFocusCandidates) {
@@ -788,7 +944,16 @@ function buildNextStepGuidance(params: {
         continue;
       }
 
-      const score = scoreProgressionCandidate({ priorSteps: params.priorSteps, candidateStep: step, candidateFocus: focus });
+      const score =
+        scoreProgressionCandidate({ priorSteps: params.priorSteps, candidateStep: step, candidateFocus: focus }) +
+        scoreIntentAlignment({
+          intentAnchor,
+          priorSteps: params.priorSteps,
+          candidateStep: step,
+          candidateFocus: focus,
+          currentFocus,
+          alternateFocus,
+        });
       if (score < 4) {
         continue;
       }

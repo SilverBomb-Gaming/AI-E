@@ -359,6 +359,16 @@ This is the current strategic model for AI-E. It separates the already-shippable
 - Boundary: this remains client-side only, keeps the existing session-storage payload, and does not add backend state, schema changes, or a new persistence layer
 - Targeted validation status: the web lint pass completed cleanly, and a focused source validation confirmed all five path checks: fresh-default routing, explicit continue routing, explicit fresh routing, conditional session load on continue only, and continuation-toggle reset by entry mode
 
+#### Lightweight Intent Anchoring For Guided Debugging Steps (2026-04-17)
+
+- What changed: the result renderer now derives a small intent anchor from the active debugging thread before choosing steps 2 and 3, then biases later guided steps to stay aligned with that direction instead of picking the next merely-valid intervention
+- Intent scope: the anchor stays renderer-only and ephemeral, with no planner, no backend changes, no schema changes, and no new stored state beyond the existing guided-step chain
+- Current intent labels: `isolate root cause`, `confirm system boundary`, `narrow conflicting systems`, and `verify state transitions`
+- Inference rule: the renderer derives the anchor from the earliest and latest guided steps plus the current diagnosis and observation, so falsified mixed-system threads bias toward conflicting-system narrowing while transition-heavy diagnoses bias toward state-transition verification
+- Bias rule: the existing progression scorer still blocks repetition, while candidate method ordering and final scoring reward steps that match the inferred intent without letting that intent bonus overpower a same-method, same-lane near-repeat
+- User-facing effect: multi-step flows now keep a more stable direction across steps 2 and 3, so the chain reads more like one line of investigation instead of hopping between unrelated but individually reasonable tests
+- Targeted validation status: the renderer change kept the existing classification and non-repetition path intact while the manual live-case review focused on whether later steps stayed in the same investigative lane rather than just remaining technically valid
+
 #### Observation Focus Sanitization For Threaded Follow-Ups (2026-04-16)
 
 - Observed issue: live threaded follow-ups could still promote raw observation fragments into malformed step targets such as outcome phrases, vague process wording, or conversational leftovers instead of concrete system anchors
