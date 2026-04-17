@@ -193,7 +193,7 @@ test("drops the chain when confidence decreases across a converging follow-up", 
   assert.equal(signals.supervisedActionChainStepIndicator, null);
 });
 
-test("enters commitment mode when confidence rises to high on a converging follow-up", () => {
+test("holds in confirmation mode when a first strong signal still needs validation", () => {
   const signals = derive({
     isRefined: true,
     verificationState: "inconclusive",
@@ -219,9 +219,42 @@ test("enters commitment mode when confidence rises to high on a converging follo
 
   assert.equal(signals.confidenceLevel, "high");
   assert.equal(signals.confidenceAlignment, "increasing");
-  assert.equal(signals.decisionCommitment, "committed");
+  assert.equal(signals.decisionCommitment, "pending");
+  assert.equal(signals.alignedSignalCount, 1);
   assert.equal(signals.supervisedActionChain?.[0]?.intent, "confirmation");
   assert.match(signals.supervisedActionChain?.[0]?.label ?? "", /confirm/i);
+  assert.equal(signals.supervisedActionChainStepIndicator, "Confirmation mode");
+});
+
+test("keeps a true positive commitment once confirmation stays consistent across consecutive steps", () => {
+  const signals = derive({
+    isRefined: true,
+    verificationState: "inconclusive",
+    lastObservation: "The same Animator handoff still cleanly drives the symptom, and the confirm check keeps matching the expected path.",
+    previousActionChainState: {
+      currentStepIndex: 0,
+      totalSteps: 2,
+      lastStepIntent: "confirmation",
+      isCommitted: false,
+      alignedSignalCount: 1,
+      lastStepVerification: "inconclusive",
+      lastStepWatchFor: "Watch for a clean confirm-or-contradict result around animator speed sync: the symptom should track this subsystem directly, not stay unchanged or move to a different cause.",
+      previousConfidenceLevel: "high",
+      confidenceHistory: ["medium", "high"],
+    },
+    problemDescription: "Player movement breaks after changing the Animator speed sync.",
+    result: makeResult({
+      what_happened: "The Animator speed sync override remains the clearly leading cause of the symptom.",
+      what_to_do_next: [
+        "Temporarily isolate only the Animator resume handoff and one related variable, then compare whether the symptom changes immediately.",
+      ],
+    }),
+  });
+
+  assert.equal(signals.confidenceLevel, "high");
+  assert.equal(signals.decisionCommitment, "committed");
+  assert.equal(signals.alignedSignalCount, 2);
+  assert.equal(signals.supervisedActionChain?.[0]?.intent, "confirmation");
   assert.equal(signals.supervisedActionChainStepIndicator, "Confirmation mode");
 });
 
@@ -283,6 +316,35 @@ test("exits commitment mode when confidence drops after a committed hypothesis",
   assert.equal(signals.confidenceLevel, "medium");
   assert.equal(signals.decisionCommitment, null);
   assert.equal(signals.supervisedActionChain, null);
+});
+
+test("avoids commitment when the evidence is noisy or ambiguous", () => {
+  const signals = derive({
+    isRefined: true,
+    verificationState: "inconclusive",
+    lastObservation: "Disabling the Animator speed sync kind of helped, but the symptom is mixed now and the same handoff is only partly involved.",
+    previousActionChainState: {
+      currentStepIndex: 1,
+      totalSteps: 3,
+      lastStepIntent: "isolation",
+      lastStepVerification: "inconclusive",
+      lastStepWatchFor: "Watch for whether changing animator resume handoff shifts the symptom immediately instead of only producing later side effects.",
+      previousConfidenceLevel: "medium",
+      confidenceHistory: ["low", "medium"],
+    },
+    problemDescription: "Player movement breaks after changing the Animator speed sync.",
+    result: makeResult({
+      what_happened: "The Animator speed sync override is now the clearly leading cause of the symptom.",
+      what_to_do_next: [
+        "Temporarily isolate only the Animator resume handoff and one related variable, then compare whether the symptom changes immediately.",
+      ],
+    }),
+  });
+
+  assert.equal(signals.confidenceLevel, "medium");
+  assert.equal(signals.decisionCommitment, null);
+  assert.equal(signals.alignedSignalCount, 0);
+  assert.equal(signals.supervisedActionChain?.[0]?.intent, "isolation");
 });
 
 test("resets commitment mode when a contradiction falsifies the current hypothesis", () => {

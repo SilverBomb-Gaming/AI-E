@@ -19,6 +19,7 @@ export type StoredActionChainState = {
   totalSteps: number;
   lastStepIntent: StoredActionChainIntent;
   isCommitted?: boolean;
+  alignedSignalCount?: number;
   lastStepVerification?: FollowUpVerificationState;
   lastStepWatchFor?: string;
   previousConfidenceLevel?: StoredConfidenceLevel;
@@ -145,6 +146,10 @@ export function normalizeStoredAnalysisState(value: unknown): StoredAnalysisStat
             totalSteps: Math.max(1, Math.min(3, Math.floor(Number((source.actionChainState as Record<string, unknown>).totalSteps)))),
             lastStepIntent: (source.actionChainState as Record<string, unknown>).lastStepIntent as StoredActionChainIntent,
             isCommitted: Boolean((source.actionChainState as Record<string, unknown>).isCommitted),
+            alignedSignalCount: Math.max(
+              0,
+              Math.min(3, Math.floor(Number((source.actionChainState as Record<string, unknown>).alignedSignalCount ?? 0))),
+            ),
             lastStepVerification:
               (source.actionChainState as Record<string, unknown>).lastStepVerification === "confirmed" ||
               (source.actionChainState as Record<string, unknown>).lastStepVerification === "falsified" ||
@@ -188,7 +193,7 @@ export function getContinuationThreadSnapshot(state: StoredAnalysisState | null 
     lastAttemptedStep: state?.lastAttemptedStep,
     lastClassification: getLoopTerminationLabel(state?.loopTerminationStatus),
     actionChainProgress: state?.actionChainState
-      ? `${state.actionChainState.isCommitted ? "Confirmation mode" : `Step ${state.actionChainState.currentStepIndex + 1} of ${state.actionChainState.totalSteps}`} (${state.actionChainState.lastStepIntent}${state.actionChainState.previousConfidenceLevel ? `, ${state.actionChainState.previousConfidenceLevel} confidence` : ""})`
+      ? `${state.actionChainState.isCommitted ? "Confirmation mode" : state.actionChainState.lastStepIntent === "confirmation" ? "Confirmation mode (pending evidence)" : `Step ${state.actionChainState.currentStepIndex + 1} of ${state.actionChainState.totalSteps}`} (${state.actionChainState.lastStepIntent}${state.actionChainState.previousConfidenceLevel ? `, ${state.actionChainState.previousConfidenceLevel} confidence` : ""})`
       : undefined,
   };
 }

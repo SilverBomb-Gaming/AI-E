@@ -185,13 +185,25 @@ function getConfidenceAlignmentClassName(confidenceAlignment: ConfidenceAlignmen
 }
 
 function getDecisionCommitmentLabel(decisionCommitment: DecisionCommitment): string | null {
-  return decisionCommitment === "committed" ? "High confidence - confirm cause" : null;
+  switch (decisionCommitment) {
+    case "committed":
+      return "High confidence - confirm cause";
+    case "pending":
+      return "Confirming evidence still needed";
+    default:
+      return null;
+  }
 }
 
 function getDecisionCommitmentClassName(decisionCommitment: DecisionCommitment): string {
-  return decisionCommitment === "committed"
-    ? "border-emerald-200/80 bg-emerald-50/80 text-emerald-700/90"
-    : "border-ink/10 bg-white/60 text-ink/65";
+  switch (decisionCommitment) {
+    case "committed":
+      return "border-emerald-200/80 bg-emerald-50/80 text-emerald-700/90";
+    case "pending":
+      return "border-amber-200/80 bg-amber-50/80 text-amber-700/90";
+    default:
+      return "border-ink/10 bg-white/60 text-ink/65";
+  }
 }
 
 function getSuggestedNextActionLabel(action: SuggestedNextAction): string {
@@ -325,6 +337,7 @@ export function AnalysisResult({
     confidenceLevel,
     confidenceAlignment,
     decisionCommitment,
+    alignedSignalCount,
     suggestedNextAction,
     recommendedDebuggingMode,
     supervisedActionChain,
@@ -457,6 +470,7 @@ export function AnalysisResult({
               totalSteps: supervisedActionChain?.length ?? 1,
               lastStepIntent: currentSupervisedActionChainStep.intent,
               isCommitted: decisionCommitment === "committed",
+              alignedSignalCount,
               lastStepVerification: verificationState,
               lastStepWatchFor: currentSupervisedActionChainStep.watchFor,
               previousConfidenceLevel: confidenceLevel,
@@ -596,6 +610,8 @@ export function AnalysisResult({
             <p className="mt-2 text-xs leading-6 body-muted sm:text-sm">
               {decisionCommitment === "committed"
                 ? "AI-E has enough evidence to stop widening the search and switch into confirmation mode. Nothing runs automatically; verify the likely cause and leave this mode immediately if the signal weakens or contradicts it."
+                : decisionCommitment === "pending"
+                  ? "AI-E sees a strong candidate cause, but the confirming evidence is not stable enough yet to treat it as locked in. Stay in confirmation mode, verify the same signal again, and drop it immediately if the evidence turns noisy or contradictory."
                 : "AI-E is suggesting a short evidence-gated sequence. Nothing runs automatically; approve one step at a time and stop as soon as the observation resolves or weakens the diagnosis."}
             </p>
             <ol className="mt-4 space-y-3">
@@ -612,7 +628,7 @@ export function AnalysisResult({
             </ol>
           </div>
         ) : null}
-        {decisionCommitment === "committed" && currentSupervisedActionChainStep ? (
+        {decisionCommitment && currentSupervisedActionChainStep ? (
           <div className="mt-4 rounded-[1.25rem] border border-emerald-200/70 bg-emerald-50/60 p-4">
             <p className="section-label">Confirm likely cause</p>
             <p className="mt-2 text-sm leading-7 text-ink/90 sm:text-base">1. {currentSupervisedActionChainStep.purpose}</p>
@@ -624,7 +640,7 @@ export function AnalysisResult({
             <p className="mt-2 text-sm leading-7 text-ink/90 sm:text-base">1. {displayedConfirmFirstStep}</p>
           </div>
         ) : null}
-        {isGuidedLoopActive && decisionCommitment !== "committed" ? (
+        {isGuidedLoopActive && !decisionCommitment ? (
           <div className="mt-4">
             <p className="section-label">Then continue</p>
             <ol className="mt-3 space-y-3 text-sm leading-7 text-ink/90 sm:text-base">
@@ -643,7 +659,7 @@ export function AnalysisResult({
             </ol>
           </div>
         ) : null}
-        {isGuidedLoopActive && decisionCommitment !== "committed" && nextStepGuidance && loopTerminationStatus !== "stuck" ? (
+        {isGuidedLoopActive && !decisionCommitment && nextStepGuidance && loopTerminationStatus !== "stuck" ? (
           <div className="mt-4 rounded-[1.25rem] border border-ink/10 bg-white/50 p-4">
             <p className="section-label">Next focused step</p>
             <p className="mt-2 text-sm leading-7 text-ink/90 sm:text-base">{displayedGuidedSteps.length + 1}. {nextStepGuidance}</p>

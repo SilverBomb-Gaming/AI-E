@@ -15,7 +15,7 @@ export type ActionChainIntent = StoredActionChainIntent;
 export type ActionChainState = StoredActionChainState;
 export type ConfidenceLevel = "high" | "medium" | "low";
 export type ConfidenceAlignment = "increasing" | "decreasing" | "unstable";
-export type DecisionCommitment = "committed" | null;
+export type DecisionCommitment = "pending" | "committed" | null;
 export type EscalationStrategy = "minimal-repro" | "logging" | "single-system-rebuild" | "clean-environment";
 export type SuggestedNextAction = "continue-thread" | "restart-fresh" | "stop" | "escalate";
 export type DebuggingMode =
@@ -1356,6 +1356,117 @@ function hasStrongCommitmentSignal(params: {
   });
 }
 
+function hasCommitmentNoise(observation: string | undefined): boolean {
+  if (!observation?.trim()) {
+    return true;
+  }
+
+  return (
+    PARTIAL_SIGNAL_PATTERN.test(observation) ||
+    /\b(?:no longer|unchanged|slipping|noisier|mixed|unclear|ambiguous|inconsistent)\b/i.test(observation)
+  );
+}
+
+function hasCommitmentContradiction(params: {
+  verificationState: FollowUpVerificationState | undefined;
+  observation: string | undefined;
+  previousActionChainState: ActionChainState | undefined;
+}): boolean {
+  if (
+    params.verificationState === "falsified" ||
+    params.previousActionChainState?.lastStepVerification === "falsified"
+  ) {
+    return true;
+  }
+
+  const observation = params.observation?.trim();
+  if (!observation) {
+    return false;
+  }
+
+  return FALSIFICATION_SIGNAL_PATTERN.test(observation);
+}
+
+function getBaselineAlignedSignalCount(previousActionChainState: ActionChainState | undefined): number {
+  if (typeof previousActionChainState?.alignedSignalCount === "number") {
+    return Math.max(0, Math.min(3, previousActionChainState.alignedSignalCount));
+  }
+
+  if (
+    previousActionChainState?.lastStepVerification === "falsified" ||
+    !previousActionChainState?.lastStepWatchFor
+  ) {
+    return 0;
+  }
+
+  if (
+    previousActionChainState?.lastStepIntent === "confirmation" ||
+    previousActionChainState?.isCommitted
+  ) {
+    return 1;
+  }
+
+  return 0;
+}
+
+function getAlignedSignalCount(params: {
+  observation: string | undefined;
+  verificationState: FollowUpVerificationState | undefined;
+  previousActionChainState: ActionChainState | undefined;
+}): number {
+  if (
+    hasCommitmentContradiction({
+      verificationState: params.verificationState,
+      observation: params.observation,
+      previousActionChainState: params.previousActionChainState,
+    }) ||
+    hasCommitmentNoise(params.observation)
+  ) {
+    return 0;
+  }
+
+  const observation = params.observation?.trim();
+  if (!observation) {
+    return getBaselineAlignedSignalCount(params.previousActionChainState);
+  }
+
+  const matchesPreviousWatchFor = doesObservationMatchActionChainWatchFor({
+    observation,
+    watchFor: params.previousActionChainState?.lastStepWatchFor,
+    intent: params.previousActionChainState?.lastStepIntent,
+  });
+
+  if (!matchesPreviousWatchFor) {
+    return 0;
+  }
+
+  return Math.min(3, getBaselineAlignedSignalCount(params.previousActionChainState) + 1);
+}
+
+function hasValidatedCommitmentEvidence(params: {
+  alignedSignalCount: number;
+  previousActionChainState: ActionChainState | undefined;
+  observation: string | undefined;
+}): boolean {
+  if (params.alignedSignalCount >= 2) {
+    return true;
+  }
+
+  const observation = params.observation?.trim();
+  if (!observation) {
+    return false;
+  }
+
+  return (
+    params.previousActionChainState?.lastStepIntent === "confirmation" &&
+    doesObservationMatchActionChainWatchFor({
+      observation,
+      watchFor: params.previousActionChainState.lastStepWatchFor,
+      intent: params.previousActionChainState.lastStepIntent,
+    })
+  );
+}
+
 function getDecisionCommitment(params: {
   isRefined: boolean;
   verificationState: FollowUpVerificationState | undefined;
@@ -1365,6 +1476,7 @@ function getDecisionCommitment(params: {
   confidenceLevel: ConfidenceLevel;
   confidenceAlignment: ConfidenceAlignment | null;
   previousActionChainState: ActionChainState | undefined;
+  observation: string | undefined;
 }): DecisionCommitment {
   if (
     !params.isRefined ||
@@ -1379,8 +1491,31 @@ function getDecisionCommitment(params: {
     return null;
   }
 
+  if (
+    hasCommitmentContradiction({
+      verificationState: params.verificationState,
+      observation: params.observation,
+      previousActionChainState: params.previousActionChainState,
+    }) ||
+    hasCommitmentNoise(params.observation)
+  ) {
+    return null;
+  }
+
+  const alignedSignalCount = getAlignedSignalCount({
+    observation: params.observation,
+    verificationState: params.verificationState,
+    previousActionChainState: params.previousActionChainState,
+  });
+
+  const hasValidatedEvidence = hasValidatedCommitmentEvidence({
+    alignedSignalCount,
+    previousActionChainState: params.previousActionChainState,
+    observation: params.observation,
+  });
+
   if (params.confidenceAlignment === "increasing") {
-    return "committed";
+    return hasValidatedEvidence ? "committed" : "pending";
   }
 
   if (
@@ -1390,7 +1525,7 @@ function getDecisionCommitment(params: {
       previousActionChainState: params.previousActionChainState,
     })
   ) {
-    return "committed";
+    return hasValidatedEvidence ? "committed" : "pending";
   }
 
   return null;
@@ -1865,6 +2000,7 @@ function getSupervisedActionChainContinuity(params: {
   stepIndicator: string | null;
   confidenceAlignment: ConfidenceAlignment | null;
   decisionCommitment: DecisionCommitment;
+  alignedSignalCount: number;
   shouldDropChain: boolean;
 } {
   if (!params.chain?.length) {
@@ -1873,6 +2009,7 @@ function getSupervisedActionChainContinuity(params: {
       stepIndicator: null,
       confidenceAlignment: null,
       decisionCommitment: null,
+      alignedSignalCount: 0,
       shouldDropChain: false,
     };
   }
@@ -1894,9 +2031,16 @@ function getSupervisedActionChainContinuity(params: {
       stepIndicator: null,
       confidenceAlignment,
       decisionCommitment: params.decisionCommitment,
+      alignedSignalCount: 0,
       shouldDropChain: true,
     };
   }
+
+  const alignedSignalCount = getAlignedSignalCount({
+    observation: params.observation,
+    verificationState: params.verificationState,
+    previousActionChainState: params.previousActionChainState,
+  });
 
   if (!params.isRefined || !params.previousActionChainState) {
     return {
@@ -1904,6 +2048,7 @@ function getSupervisedActionChainContinuity(params: {
       stepIndicator: params.decisionCommitment ? "Confirmation mode" : `Step 1 of ${params.chain.length}`,
       confidenceAlignment,
       decisionCommitment: params.decisionCommitment,
+      alignedSignalCount,
       shouldDropChain: false,
     };
   }
@@ -1914,6 +2059,7 @@ function getSupervisedActionChainContinuity(params: {
       stepIndicator: `Step 1 of ${params.chain.length}`,
       confidenceAlignment,
       decisionCommitment: null,
+      alignedSignalCount: 0,
       shouldDropChain: false,
     };
   }
@@ -1924,6 +2070,7 @@ function getSupervisedActionChainContinuity(params: {
       stepIndicator: `Step 1 of ${params.chain.length}`,
       confidenceAlignment,
       decisionCommitment: null,
+      alignedSignalCount: 0,
       shouldDropChain: false,
     };
   }
@@ -1941,6 +2088,7 @@ function getSupervisedActionChainContinuity(params: {
       stepIndicator: null,
       confidenceAlignment,
       decisionCommitment: null,
+      alignedSignalCount: 0,
       shouldDropChain: true,
     };
   }
@@ -1951,6 +2099,7 @@ function getSupervisedActionChainContinuity(params: {
       stepIndicator: null,
       confidenceAlignment,
       decisionCommitment: null,
+      alignedSignalCount: 0,
       shouldDropChain: true,
     };
   }
@@ -1961,6 +2110,7 @@ function getSupervisedActionChainContinuity(params: {
       stepIndicator: "Confirmation mode",
       confidenceAlignment,
       decisionCommitment: params.decisionCommitment,
+      alignedSignalCount,
       shouldDropChain: false,
     };
   }
@@ -1973,6 +2123,7 @@ function getSupervisedActionChainContinuity(params: {
       stepIndicator: `Step ${priorIndex + 1} of ${params.chain.length}`,
       confidenceAlignment,
       decisionCommitment: null,
+      alignedSignalCount,
       shouldDropChain: false,
     };
   }
@@ -1987,6 +2138,7 @@ function getSupervisedActionChainContinuity(params: {
     stepIndicator: `Step ${nextIndex + 1} of ${params.chain.length}`,
     confidenceAlignment,
     decisionCommitment: null,
+    alignedSignalCount,
     shouldDropChain: false,
   };
 }
@@ -2082,6 +2234,7 @@ export function deriveAnalysisResultSignals(params: {
   confidenceLevel: ConfidenceLevel;
   confidenceAlignment: ConfidenceAlignment | null;
   decisionCommitment: DecisionCommitment;
+  alignedSignalCount: number;
   suggestedNextAction: SuggestedNextAction;
   recommendedDebuggingMode: DebuggingMode | null;
   supervisedActionChain: SupervisedActionChainStep[] | null;
@@ -2162,6 +2315,7 @@ export function deriveAnalysisResultSignals(params: {
     confidenceLevel,
     confidenceAlignment,
     previousActionChainState,
+    observation: lastObservation,
   });
   const recommendedDebuggingMode = getRecommendedDebuggingMode({
     isRefined,
@@ -2218,6 +2372,7 @@ export function deriveAnalysisResultSignals(params: {
     confidenceLevel,
     confidenceAlignment: supervisedActionChainContinuity.confidenceAlignment,
     decisionCommitment: supervisedActionChainContinuity.decisionCommitment,
+    alignedSignalCount: supervisedActionChainContinuity.alignedSignalCount,
     suggestedNextAction,
     recommendedDebuggingMode,
     supervisedActionChain: alignedSupervisedActionChain,
