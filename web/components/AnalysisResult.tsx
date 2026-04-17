@@ -53,7 +53,7 @@ const GENERIC_FOCUS_PATTERN =
 const OUTCOME_FOCUS_PATTERN =
   /\b(?:moves? normally|move normally|responds?(?: normally)?|works? again|working again|behaves? normally|run normally|running normally|fixed|resolved|disappear(?:ed|s)?|went away|back to normal|better now|worse now|same behavior|no obvious change)\b/i;
 const PROCESS_FOCUS_PATTERN =
-  /\b(?:different systems one by one|one by one|before and after|first thing|next thing|next step|current step|same weird behavior|same issue|same problem|different system|suspected system)\b/i;
+  /\b(?:different systems one by one|one by one|before and after|first thing|next thing|first check|next check|second check|third check|first suggestion|next suggestion|second suggestion|third suggestion|first test|next test|second test|third test|first attempt|next attempt|second attempt|third attempt|next step(?: too)?|current step|same weird behavior|same issue|same problem|different system|suspected system)\b/i;
 const CONVERSATIONAL_FRAGMENT_PATTERN =
   /\b(?:can(?:not|'t) tell what|can(?:not|'t) tell what'?s|kind of|sort of|place and i can(?:not|'t)|what'?s wrong|i am not sure|i'm not sure)\b/i;
 const COMPONENT_LIKE_FOCUS_PATTERN =
@@ -205,6 +205,50 @@ function hasDistinctAlternateLever(originalFocus: string | null, alternativeFocu
   return originalKey !== alternativeKey && !originalKey.includes(alternativeKey) && !alternativeKey.includes(originalKey);
 }
 
+function isSameNormalizedFocus(left: string | null, right: string | null): boolean {
+  const leftKey = normalizeFocusKey(left);
+  const rightKey = normalizeFocusKey(right);
+
+  return Boolean(leftKey && rightKey && leftKey === rightKey);
+}
+
+function getFocusDomain(text: string | null): string | null {
+  if (!text) {
+    return null;
+  }
+
+  const normalized = normalizeFocusKey(text) ?? "";
+  if (!normalized) {
+    return null;
+  }
+
+  if (/\b(?:audio|music|sound|singleton)\b/.test(normalized)) {
+    return "audio";
+  }
+
+  if (/\b(?:button|click|ui|menu|overlay|canvas)\b/.test(normalized)) {
+    return "ui";
+  }
+
+  if (/\b(?:scene|transition|bootstrap|handoff|load(?:ing)?)\b/.test(normalized)) {
+    return "scene";
+  }
+
+  if (/\b(?:slope|slopes|friction|ground|landing)\b/.test(normalized)) {
+    return "surface-motion";
+  }
+
+  if (/\b(?:dash|run|speed|stamina|blend|animat(?:or|ion))\b/.test(normalized)) {
+    return "movement";
+  }
+
+  if (/\b(?:enemy|ai|pathfinding|state machine|pooling|animation events|freezing|spinning)\b/.test(normalized)) {
+    return "enemy-ai";
+  }
+
+  return null;
+}
+
 function cleanFocusPhrase(text: string): string | null {
   const cleaned = trimLeadingArticle(trimTrailingPunctuation(text))
     .replace(/^(?:or\s+)?(?:disable|turn off|remove|bypass|force|clear|delay|skip|pause|comment out)\s+(?:the\s+)?/i, "")
@@ -266,12 +310,24 @@ function isBlockedFocusPhrase(text: string | null, source: "general" | "observat
   return false;
 }
 
+function isMetaStepReference(text: string | null): boolean {
+  if (!text) {
+    return true;
+  }
+
+  return /\b(?:first|second|third|next|current|previous)\s+(?:thing|check|step|suggestion|test|attempt)\b|\b(?:step|check|suggestion|test|attempt)\s+(?:one|two|three)\b/i.test(text);
+}
+
 function getSanitizedFocusPhrase(text: string | null, source: "general" | "observation" = "general"): string | null {
-  if (!text || isWeakFocusPhrase(text) || isBlockedFocusPhrase(text, source)) {
+  if (!text || isMetaStepReference(text) || isWeakFocusPhrase(text) || isBlockedFocusPhrase(text, source)) {
     return null;
   }
 
   return text;
+}
+
+function isConcreteProgressionFocus(text: string | null): text is string {
+  return Boolean(text && !isMetaStepReference(text) && !isWeakFocusPhrase(text) && !isBlockedFocusPhrase(text, "general"));
 }
 
 function isWeakFocusPhrase(text: string | null): boolean {
@@ -335,8 +391,10 @@ function extractObservationFocus(text: string): string | null {
 function extractObservationAnchor(text: string): string | null {
   const anchorPatterns = [
     /\b(?:still happens on|still appears on|shows up on)\s+([^.,;]+?)(?:[.,;]|$)/i,
+    /\b(?:still happens|still occurs|still shows up|still breaks|still drops|still slows down|still sticks)(?:\s+(?:mostly|mainly|especially))?\s+(?:on|during|after|around)\s+([^.,;]+?)(?:[.,;]|$)/i,
     /\b(?:when|during|while|between|around)\s+([^.,;]+?)(?:[.,;]|$)/i,
     /\b(?:overlap|overlaps|overlapping)\s+([^.,;]+?)(?:[.,;]|$)/i,
+    /\b(audio duplication|music still doubles|button issue|scene transitions?|transition blend|freezing and spinning|shallow slopes(?: after a dash)?)\b/i,
   ];
 
   for (const pattern of anchorPatterns) {
@@ -517,6 +575,71 @@ function isMeaningfullyProgressed(params: {
   });
 }
 
+function scoreProgressionCandidate(params: {
+  priorSteps: string[];
+  candidateStep: string;
+  candidateFocus: string | null;
+}): number {
+  const latestStep = params.priorSteps[0] ?? "";
+  const latestFocus = extractFocusPhrase(latestStep);
+  const latestMethod = extractStepMethod(latestStep);
+  const candidateMethod = extractStepMethod(params.candidateStep);
+  const differentLever = hasDistinctAlternateLever(latestFocus, params.candidateFocus);
+  const narrowerScope = isNarrowerScope(latestFocus, params.candidateFocus);
+  const differentMethod = latestMethod !== candidateMethod && candidateMethod !== "unknown";
+  const sameFocus = isSameNormalizedFocus(latestFocus, params.candidateFocus);
+  const latestDomain = getFocusDomain(latestFocus);
+  const candidateDomain = getFocusDomain(params.candidateFocus);
+  const sameDomain = Boolean(latestDomain && candidateDomain && latestDomain === candidateDomain);
+  const latestFocusTerms = extractFocusTerms(latestFocus);
+  const candidateFocusTerms = extractFocusTerms(params.candidateFocus);
+  const sharedFocusTerms = countSharedTerms(latestFocusTerms, candidateFocusTerms);
+
+  let score = 0;
+
+  if (differentLever) {
+    score += 4;
+  }
+
+  if (narrowerScope) {
+    score += 3;
+  }
+
+  if (differentMethod) {
+    score += 2;
+  }
+
+  if (candidateMethod !== "inspect") {
+    score += 1;
+  }
+
+  if (!differentLever && sharedFocusTerms >= 2 && candidateFocusTerms.size > latestFocusTerms.size) {
+    score += 1;
+  }
+
+  if (sameFocus && differentMethod) {
+    score -= 2;
+  }
+
+  if (sameFocus && latestMethod === "inspect" && candidateMethod === "isolate") {
+    score -= 2;
+  }
+
+  if (sameDomain && candidateMethod === latestMethod && !narrowerScope) {
+    score -= 4;
+  }
+
+  if (sameDomain && !differentMethod && !narrowerScope) {
+    score -= 2;
+  }
+
+  if (!differentLever && !narrowerScope && !differentMethod) {
+    score -= 4;
+  }
+
+  return score;
+}
+
 function buildNextStepGuidance(params: {
   verificationState: FollowUpVerificationState | undefined;
   currentResult: FreeAnalysisResponse;
@@ -532,9 +655,11 @@ function buildNextStepGuidance(params: {
   }
 
   const currentStep = params.priorSteps[0] ?? "";
+  const analyzerSuggestedStep = strengthenConfirmationStep(params.currentResult.what_to_do_next[0], params.currentResult.what_happened) ?? params.currentResult.what_to_do_next[0] ?? "";
   const alternativeClause = params.observation.split(/\bbut\b/i)[1]?.trim() ?? params.observation.trim();
   const diagnosisFocus = extractFocusPhrase(params.currentResult.what_happened);
   const observationFocus = extractObservationFocus(params.observation);
+  const analyzerSuggestedFocus = extractFocusPhrase(analyzerSuggestedStep);
   const currentFocus =
     (extractFocusPhrase(currentStep) ??
       (WEAK_CONFIRMATION_STEP_PATTERN.test(currentStep) ? extractFocusPhrase(params.currentResult.what_happened) : null) ??
@@ -542,20 +667,24 @@ function buildNextStepGuidance(params: {
     "current suspected system";
   const alternateFocus = extractObservationFocus(alternativeClause) ?? diagnosisFocus ?? currentFocus;
   const focusCandidates = [
-    params.verificationState === "falsified" ? alternateFocus : diagnosisFocus,
-    params.verificationState === "falsified" ? diagnosisFocus : currentFocus,
-    params.verificationState === "falsified" ? currentFocus : alternateFocus,
-    observationFocus,
+    params.verificationState === "falsified" ? alternateFocus : observationFocus,
+    analyzerSuggestedFocus,
+    params.verificationState === "falsified" ? diagnosisFocus : alternateFocus,
+    params.verificationState === "falsified" ? currentFocus : diagnosisFocus,
+    params.verificationState === "falsified" ? observationFocus : currentFocus,
     currentFocus,
   ].filter((focus, index, values): focus is string => Boolean(focus?.trim()) && values.indexOf(focus) === index);
-  const orderedFocusCandidates = [
-    ...focusCandidates.filter((focus) => !isWeakFocusPhrase(focus)),
-    ...focusCandidates.filter((focus) => isWeakFocusPhrase(focus)),
-  ].filter((focus, index, values) => values.indexOf(focus) === index);
+  const orderedFocusCandidates = focusCandidates.filter((focus) => isConcreteProgressionFocus(focus));
+
+  if (!orderedFocusCandidates.length) {
+    return null;
+  }
+
   const baseMethodCandidates: StepMethod[] =
     params.verificationState === "falsified" ? ["disable", "isolate", "replace", "force"] : ["isolate", "replace", "force", "disable"];
   const latestMethod = extractStepMethod(currentStep);
   const methodCandidates = [...baseMethodCandidates.filter((method) => method !== latestMethod), ...baseMethodCandidates.filter((method) => method === latestMethod)];
+  let bestCandidate: { step: string; score: number } | null = null;
 
   for (const focus of orderedFocusCandidates) {
     for (const method of methodCandidates) {
@@ -564,13 +693,22 @@ function buildNextStepGuidance(params: {
         continue;
       }
 
-      if (isMeaningfullyProgressed({ priorSteps: params.priorSteps, candidateStep: step, candidateFocus: focus })) {
-        return step;
+      if (!isMeaningfullyProgressed({ priorSteps: params.priorSteps, candidateStep: step, candidateFocus: focus })) {
+        continue;
+      }
+
+      const score = scoreProgressionCandidate({ priorSteps: params.priorSteps, candidateStep: step, candidateFocus: focus });
+      if (score < 4) {
+        continue;
+      }
+
+      if (!bestCandidate || score > bestCandidate.score) {
+        bestCandidate = { step, score };
       }
     }
   }
 
-  return null;
+  return bestCandidate?.step ?? null;
 }
 
 function getGuidedStepStack(params: {

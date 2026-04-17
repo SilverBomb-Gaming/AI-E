@@ -362,8 +362,11 @@ This is the current strategic model for AI-E. It separates the already-shippable
 
 - What changed: the renderer now applies a small coherence guard before showing the second debugging step, rejecting candidates that reuse the same action pattern, stay on the same lever without narrowing, or overlap too heavily with the first step
 - Progression rule: the second step must either move to a different lever, narrow to a subcomponent within the same system, or change method (`disable -> isolate`, `disable -> replace`, `disable -> force`) instead of restating the same test in different words
+- Progression hardening: later guided steps now score candidate follow-ups instead of taking the first acceptable option, prefer concrete observation or analyzer-suggested anchors over broad fallback focus, and reject same-domain same-method churn unless the focus clearly narrows
+- Suppression rule: if the renderer cannot find a concrete next lever after those checks, it now prefers returning no extra step over surfacing a generic or meta follow-up that only rephrases the previous test
 - Fallback behavior: when the first candidate fails those checks, the renderer regenerates from alternate focus sources in priority order (`diagnosis`, `observation`, then remaining local anchors) while keeping the step reversible, observable, and action-oriented
 - Targeted validation status: the 4-case live subset held classification steady (`2 falsified`, `2 inconclusive`), all second steps differed meaningfully from the displayed first step, phrase overlap stayed low, and no passive `inspect/check/log` phrasing appeared
+- Targeted validation status: a later 4-case live progression probe for partial, messy, falsified, and stuck follow-ups showed the best improvement in cases that surfaced a concrete alternate lever (`stamina limiter`, `transition blend`, `shallow slopes`), while the remaining weak cases were narrowed to renderer-side candidate selection rather than status or workflow-control regressions
 - Remaining edge case: if the first step itself comes back with very broad wording such as `revert the changes`, progression can still be enforced by method shift, but the first-step focus extraction is less crisp than the newer second-step focus selection
 
 #### Full 10-Case Audit After Mixed-System Refinement (2026-04-15)
