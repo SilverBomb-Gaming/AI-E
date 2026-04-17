@@ -21,6 +21,7 @@ type AnalysisResultProps = {
 };
 
 type LoopTerminationStatus = StoredLoopTerminationStatus;
+type ConfidenceLevel = "high" | "medium" | "low";
 type EscalationStrategy = "minimal-repro" | "logging" | "single-system-rebuild" | "clean-environment";
 type SuggestedNextAction = "continue-thread" | "restart-fresh" | "stop" | "escalate";
 type IntentAnchor = "isolate-root-cause" | "confirm-system-boundary" | "narrow-conflicting-systems" | "verify-state-transitions";
@@ -1281,6 +1282,52 @@ function getLoopTerminationStatusHint(status: LoopTerminationStatus | null): str
   }
 }
 
+function getConfidenceLevel(params: {
+  verificationState: FollowUpVerificationState | undefined;
+  loopTerminationStatus: LoopTerminationStatus | null;
+  showLowEvidenceCue: boolean;
+}): ConfidenceLevel {
+  if (params.loopTerminationStatus === "resolved" || params.verificationState === "confirmed") {
+    return "high";
+  }
+
+  if (
+    params.loopTerminationStatus === "stuck" ||
+    params.verificationState === "inconclusive" ||
+    params.showLowEvidenceCue
+  ) {
+    return "low";
+  }
+
+  if (params.loopTerminationStatus === "converging" || params.verificationState === "falsified") {
+    return "medium";
+  }
+
+  return "medium";
+}
+
+function getConfidenceLabel(confidenceLevel: ConfidenceLevel): string {
+  switch (confidenceLevel) {
+    case "high":
+      return "Confidence: High";
+    case "medium":
+      return "Confidence: Medium";
+    case "low":
+      return "Confidence: Low";
+  }
+}
+
+function getConfidenceClassName(confidenceLevel: ConfidenceLevel): string {
+  switch (confidenceLevel) {
+    case "high":
+      return "border-emerald-200 bg-emerald-50 text-emerald-700";
+    case "medium":
+      return "border-ocean/20 bg-ocean/10 text-ocean";
+    case "low":
+      return "border-ink/10 bg-white/70 text-ink/70";
+  }
+}
+
 function getSuggestedNextAction(params: {
   loopTerminationStatus: LoopTerminationStatus | null;
   isRefined: boolean;
@@ -1440,6 +1487,11 @@ export function AnalysisResult({
     problemDescription: input?.problemDescription,
   });
   const showLowEvidenceCue = shouldShowLowEvidenceCue(result);
+  const confidenceLevel = getConfidenceLevel({
+    verificationState,
+    loopTerminationStatus,
+    showLowEvidenceCue,
+  });
   const suggestedNextAction = getSuggestedNextAction({
     loopTerminationStatus,
     isRefined,
@@ -1560,7 +1612,14 @@ export function AnalysisResult({
   return (
     <div className="grid gap-5">
       <section className="glass-card rounded-[1.75rem] p-6 shadow-float sm:p-7">
-        <p className="section-label">Diagnosis</p>
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="section-label">Diagnosis</p>
+          <span
+            className={`inline-flex rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] ${getConfidenceClassName(confidenceLevel)}`}
+          >
+            {getConfidenceLabel(confidenceLevel)}
+          </span>
+        </div>
         {isRefined ? (
           <div className="mt-2 space-y-2">
             <div className="flex flex-wrap items-center gap-2">

@@ -369,6 +369,14 @@ This is the current strategic model for AI-E. It separates the already-shippable
 - User-facing effect: multi-step flows now keep a more stable direction across steps 2 and 3, so the chain reads more like one line of investigation instead of hopping between unrelated but individually reasonable tests
 - Targeted validation status: the renderer change kept the existing classification and non-repetition path intact while the manual live-case review focused on whether later steps stayed in the same investigative lane rather than just remaining technically valid
 
+#### Lightweight Confidence Signaling For Debugging Analysis (2026-04-16)
+
+- What changed: the result renderer now derives a small `Confidence: High|Medium|Low` label from the current verification state, loop status, and existing low-evidence cue, then displays it directly in the `Diagnosis` card
+- Mapping rule: `resolved` or `confirmed` reads as `High`, `converging` or `falsified` reads as `Medium`, and low-evidence, inconclusive, or stuck states read as `Low`
+- Boundary: this is renderer-only interpretability, uses only already-derived signals, and does not change classification, step generation, API contracts, or stored state
+- User-facing effect: the diagnosis now communicates whether the current direction looks strongly supported, still narrowing, or worth double-checking before the user commits to the next step
+- Targeted validation status: the renderer logic stayed isolated to presentation, while the live-case review focused on whether the visible confidence label would make the current result easier to trust at a glance without adding UI clutter
+
 #### Observation Focus Sanitization For Threaded Follow-Ups (2026-04-16)
 
 - Observed issue: live threaded follow-ups could still promote raw observation fragments into malformed step targets such as outcome phrases, vague process wording, or conversational leftovers instead of concrete system anchors
