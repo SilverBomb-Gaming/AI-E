@@ -195,7 +195,7 @@ export function AnalysisForm({ initialMode = "fresh" }: AnalysisFormProps) {
     const submittedInput = {
       ...form,
       context: [
-        form.context.trim(),
+        (form.context ?? "").trim(),
         includeContinuationContext && continuationSnapshot ? buildContinuationContextBlock(continuationSnapshot) : "",
       ]
         .filter(Boolean)
@@ -211,12 +211,26 @@ export function AnalysisForm({ initialMode = "fresh" }: AnalysisFormProps) {
         body: JSON.stringify(submittedInput),
       });
 
-      const payload = (await response.json()) as FreeAnalysisResponse | { error?: string };
+        const payload: unknown = await response.json();
 
       if (!response.ok) {
-        setErrorMessage(payload && "error" in payload ? payload.error || "We couldn't generate an analysis right now. Please try again." : "We couldn't generate an analysis right now. Please try again.");
+          const apiErrorMessage =
+            payload &&
+            typeof payload === "object" &&
+            "error" in payload &&
+            typeof payload.error === "string" &&
+            payload.error.trim()
+              ? payload.error
+              : "We couldn't generate an analysis right now. Please try again.";
+
+          setErrorMessage(apiErrorMessage);
         return;
       }
+
+        if (!isFreeAnalysisResponse(payload)) {
+          setErrorMessage("We couldn't generate an analysis right now. Please try again.");
+          return;
+        }
 
       window.sessionStorage.setItem(
         STORAGE_KEY,
