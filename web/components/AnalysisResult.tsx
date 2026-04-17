@@ -24,6 +24,13 @@ type LoopTerminationStatus = StoredLoopTerminationStatus;
 type ConfidenceLevel = "high" | "medium" | "low";
 type EscalationStrategy = "minimal-repro" | "logging" | "single-system-rebuild" | "clean-environment";
 type SuggestedNextAction = "continue-thread" | "restart-fresh" | "stop" | "escalate";
+type DebuggingMode =
+  | "isolate-one-subsystem"
+  | "instrument-with-logging"
+  | "check-initialization-order"
+  | "reproduce-in-clean-scene"
+  | "check-duplicate-writers"
+  | "validate-ownership-references";
 type IntentAnchor = "isolate-root-cause" | "confirm-system-boundary" | "narrow-conflicting-systems" | "verify-state-transitions";
 
 const EVIDENCE_GAP_PATTERN =
@@ -1439,6 +1446,120 @@ function getEscalationStrategyGuidance(strategy: EscalationStrategy | null): str
   }
 }
 
+function getRecommendedDebuggingMode(params: {
+  diagnosis: string;
+  primaryStep: string | null;
+  nextStepGuidance: string | null;
+  loopTerminationStatus: LoopTerminationStatus | null;
+  suggestedNextAction: SuggestedNextAction;
+  suggestedEscalationStrategy: EscalationStrategy | null;
+  confidenceLevel: ConfidenceLevel;
+}): DebuggingMode | null {
+  if (params.suggestedNextAction === "stop") {
+    return null;
+  }
+
+  const supportingText = [params.diagnosis, params.primaryStep ?? "", params.nextStepGuidance ?? ""].join(" ");
+
+  if (
+    params.suggestedEscalationStrategy === "clean-environment" ||
+    params.suggestedEscalationStrategy === "minimal-repro" ||
+    /\b(?:clean scene|clean environment|isolated environment|fresh defaults|minimal repro(?:duction)?|small(?:er)? reproduction|strip the failure down|recreate the failing setup)\b/i.test(
+      supportingText,
+    ) ||
+    ((params.loopTerminationStatus === "stuck" || params.suggestedNextAction === "restart-fresh") &&
+      params.confidenceLevel === "low" &&
+      !params.primaryStep)
+  ) {
+    return "reproduce-in-clean-scene";
+  }
+
+  if (
+    /\b(?:duplicate writers?|multiple scripts writing|two scripts writing|duplicate listeners?|multiple listeners?|duplicate handlers?|event duplication|double[- ]fir(?:e|ing)|written from two places|overwrit(?:e|es|ing)|duplicate sources?)\b/i.test(
+      supportingText,
+    )
+  ) {
+    return "check-duplicate-writers";
+  }
+
+  if (
+    /\b(?:stale references?|cached references?|ownership|owner|missing references?|wrong references?|null references?|lost references?|validate references?|validate ownership|handoff between systems)\b/i.test(
+      supportingText,
+    )
+  ) {
+    return "validate-ownership-references";
+  }
+
+  if (
+    /\b(?:scene load|startup|initialization|initialize|lifecycle|order of execution|execution order|bootstrap|awake|start\(\)|start method|onenable|loaded before|loaded after|initial state)\b/i.test(
+      supportingText,
+    )
+  ) {
+    return "check-initialization-order";
+  }
+
+  if (
+    params.suggestedEscalationStrategy === "logging" ||
+    /\b(?:debug logs?|log\b|logging|instrument(?:ation)?|trace\b|breakpoint|inspect state|track values?|watch values?|observe lifecycle timing|verify transitions?|state transitions?|event flow)\b/i.test(
+      supportingText,
+    )
+  ) {
+    return "instrument-with-logging";
+  }
+
+  if (
+    params.suggestedEscalationStrategy === "single-system-rebuild" ||
+    /\b(?:disable|bypass|turn off|remove|isolate|compare before and after|compare the behavior|one system at a time|toggle|comment out|skip\b|re-enable .* one by one)\b/i.test(
+      supportingText,
+    )
+  ) {
+    return "isolate-one-subsystem";
+  }
+
+  if (params.loopTerminationStatus === "stuck") {
+    return "reproduce-in-clean-scene";
+  }
+
+  return "isolate-one-subsystem";
+}
+
+function getRecommendedDebuggingModeLabel(mode: DebuggingMode | null): string | null {
+  switch (mode) {
+    case "isolate-one-subsystem":
+      return "Isolate one subsystem";
+    case "instrument-with-logging":
+      return "Instrument with logging";
+    case "check-initialization-order":
+      return "Check initialization order";
+    case "reproduce-in-clean-scene":
+      return "Reproduce in a clean scene";
+    case "check-duplicate-writers":
+      return "Check for duplicate writers";
+    case "validate-ownership-references":
+      return "Validate ownership / references";
+    default:
+      return null;
+  }
+}
+
+function getRecommendedDebuggingModeClassName(mode: DebuggingMode | null): string {
+  switch (mode) {
+    case "instrument-with-logging":
+      return "border-ink/10 bg-white/60 text-ink/80";
+    case "check-initialization-order":
+      return "border-ocean/15 bg-ocean/10 text-ocean/80";
+    case "reproduce-in-clean-scene":
+      return "border-coral/15 bg-coral/5 text-ember/80";
+    case "check-duplicate-writers":
+      return "border-ink/10 bg-white/60 text-ink/80";
+    case "validate-ownership-references":
+      return "border-ink/10 bg-white/60 text-ink/80";
+    case "isolate-one-subsystem":
+    default:
+      return "border-ocean/15 bg-ocean/10 text-ocean/80";
+  }
+}
+
 export function AnalysisResult({
   result,
   input,
@@ -1500,6 +1621,15 @@ export function AnalysisResult({
     showLowEvidenceCue,
     hasGuidedStep: Boolean(currentGuidedStep),
     observation: lastObservation,
+  });
+  const recommendedDebuggingMode = getRecommendedDebuggingMode({
+    diagnosis: result.what_happened,
+    primaryStep: currentGuidedStep ?? displayedConfirmFirstStep ?? null,
+    nextStepGuidance,
+    loopTerminationStatus,
+    suggestedNextAction,
+    suggestedEscalationStrategy,
+    confidenceLevel,
   });
   const [observation, setObservation] = useState("");
   const [isSubmittingFollowUp, setIsSubmittingFollowUp] = useState(false);
@@ -1621,6 +1751,16 @@ export function AnalysisResult({
             {getConfidenceLabel(confidenceLevel)}
           </span>
         </div>
+        {recommendedDebuggingMode ? (
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink/50">Recommended mode</p>
+            <span
+              className={`inline-flex rounded-full border px-2.5 py-1 text-[10px] font-semibold tracking-[0.01em] ${getRecommendedDebuggingModeClassName(recommendedDebuggingMode)}`}
+            >
+              {getRecommendedDebuggingModeLabel(recommendedDebuggingMode)}
+            </span>
+          </div>
+        ) : null}
         {isRefined ? (
           <div className="mt-2 space-y-2">
             <div className="flex flex-wrap items-center gap-2">
