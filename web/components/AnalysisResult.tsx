@@ -58,6 +58,8 @@ const CONVERSATIONAL_FRAGMENT_PATTERN =
   /\b(?:can(?:not|'t) tell what|can(?:not|'t) tell what'?s|kind of|sort of|place and i can(?:not|'t)|what'?s wrong|i am not sure|i'm not sure)\b/i;
 const COMPONENT_LIKE_FOCUS_PATTERN =
   /\b(?:animator|animation|speed sync|sync|limiter|stamina|controller|state machine|pathfinding|pool|reference|target reference|overlay|bootstrap|singleton|timeline|handoff|priority|camera|recenter|rigidbody|velocity|wall-jump|jump script|audio|button|canvas|input|friction|slope|dash|ground|menu|scene|ui flow|event|transition|prefab|component|manager|handler|script|system)\b/i;
+const MESSY_MULTI_SYSTEM_INPUT_PATTERN =
+  /\b(?:changed a bunch|changed a lot|touched\b|multiple systems?|various systems?|everything feels broken|not sure where to start|not sure|mixed together|all at once|one pass|a bunch of)\b/i;
 const MAX_GUIDED_STEPS = 3;
 
 const STOP_WORDS = new Set([
@@ -446,6 +448,86 @@ function shouldRestartFreshFromObservation(observation: string | undefined): boo
   return Boolean(observation?.trim() && LOW_SIGNAL_RESET_PATTERN.test(observation));
 }
 
+function extractRecentChangeCandidates(problemDescription: string | undefined): string[] {
+  if (!problemDescription) {
+    return [];
+  }
+
+  const candidatePatterns: Array<{ label: string; pattern: RegExp }> = [
+    { label: "animation system", pattern: /\banimation\b/i },
+    { label: "slope handling", pattern: /\bslopes?\b/i },
+    { label: "dash handling", pattern: /\bdash\b/i },
+    { label: "friction settings", pattern: /\bfriction\b/i },
+    { label: "camera setup", pattern: /\bcamera\b/i },
+    { label: "ground detection", pattern: /\bground\b/i },
+    { label: "UI system", pattern: /\bui\b/i },
+    { label: "UI flow", pattern: /\bui flow\b/i },
+    { label: "audio system", pattern: /\baudio\b/i },
+    { label: "audio singleton", pattern: /\baudio singleton\b/i },
+    { label: "loading overlay", pattern: /\bloading overlay\b/i },
+    { label: "scene bootstrap", pattern: /\bscene bootstrap\b/i },
+    { label: "scene loading", pattern: /\bscene load(?:ing)?\b|\bscene swap\b/i },
+    { label: "timeline handoff", pattern: /\btimeline handoff\b/i },
+    { label: "camera recenter", pattern: /\brecenter\b/i },
+    { label: "stamina limiter", pattern: /\bstamina\b/i },
+    { label: "animator speed sync", pattern: /\banimator\b|\banimation\b/i },
+    { label: "movement script", pattern: /\bmovement script\b|\bmovement\b/i },
+    { label: "pathfinding", pattern: /\bpathfinding\b/i },
+    { label: "state machine", pattern: /\bstate machine\b/i },
+    { label: "animation events", pattern: /\banimation events\b/i },
+    { label: "pooling", pattern: /\bpooling\b|\bpool\b/i },
+    { label: "button input", pattern: /\bbutton\b|\bclick\b/i },
+  ];
+
+  return candidatePatterns
+    .map((candidate) => {
+      const match = problemDescription.match(candidate.pattern);
+      return match ? { label: candidate.label, index: match.index ?? Number.MAX_SAFE_INTEGER } : null;
+    })
+    .filter((candidate): candidate is { label: string; index: number } => Boolean(candidate))
+    .sort((left, right) => left.index - right.index)
+    .map((candidate) => candidate.label)
+    .filter((label, index, values) => values.indexOf(label) === index);
+}
+
+function shouldUseMessyInputFirstStep(problemDescription: string | undefined): boolean {
+  if (!problemDescription) {
+    return false;
+  }
+
+  const recentChangeCandidates = extractRecentChangeCandidates(problemDescription);
+  return MESSY_MULTI_SYSTEM_INPUT_PATTERN.test(problemDescription) || hasBroadSystemMixSignal(problemDescription) || recentChangeCandidates.length >= 3;
+}
+
+function refineFirstStepPrecision(params: {
+  step: string | undefined;
+  diagnosis: string;
+  problemDescription: string | undefined;
+}): string | undefined {
+  const strengthenedStep = strengthenConfirmationStep(params.step, params.diagnosis);
+  if (!strengthenedStep) {
+    return strengthenedStep;
+  }
+
+  if (!shouldUseMessyInputFirstStep(params.problemDescription)) {
+    return strengthenedStep;
+  }
+
+  const recentChangeCandidates = extractRecentChangeCandidates(params.problemDescription);
+  const primarySystem = recentChangeCandidates[0];
+  const secondarySystem = recentChangeCandidates[1];
+
+  if (primarySystem) {
+    const startingPoint = secondarySystem
+      ? `Start by isolating one recently changed system at a time, beginning with ${primarySystem} before moving to ${secondarySystem}.`
+      : `Start by isolating one recently changed system at a time, beginning with ${primarySystem}.`;
+
+    return `${startingPoint} Temporarily disable or bypass only the ${trimLeadingArticle(primarySystem)}-related change and compare the behavior before and after. If the symptom shifts, keep narrowing inside ${trimLeadingArticle(primarySystem)} before touching the other changed systems.`;
+  }
+
+  return "Start by isolating one recently changed system at a time and test it independently before combining signals. Compare one system before and after each change instead of checking multiple systems together.";
+}
+
 function strengthenConfirmationStep(step: string | undefined, diagnosis: string): string | undefined {
   if (!step) {
     return step;
@@ -723,12 +805,17 @@ function buildNextStepGuidance(params: {
 function getGuidedStepStack(params: {
   result: FreeAnalysisResponse;
   isRefined: boolean;
+  problemDescription?: string;
 }): string[] {
   if (params.isRefined) {
     return params.result.what_to_do_next.filter(isDisplayableGuidedStep).slice(0, MAX_GUIDED_STEPS);
   }
 
-  const firstStep = strengthenConfirmationStep(params.result.what_to_do_next[0], params.result.what_happened);
+  const firstStep = refineFirstStepPrecision({
+    step: params.result.what_to_do_next[0],
+    diagnosis: params.result.what_happened,
+    problemDescription: params.problemDescription,
+  });
   return isDisplayableGuidedStep(firstStep) ? [firstStep] : [];
 }
 
@@ -1149,9 +1236,17 @@ export function AnalysisResult({
   onResultChange,
 }: AnalysisResultProps) {
   const [initialConfirmFirstStep, ...initialFollowUpSteps] = result.what_to_do_next;
-  const displayedConfirmFirstStep = strengthenConfirmationStep(initialConfirmFirstStep, result.what_happened);
+  const displayedConfirmFirstStep = refineFirstStepPrecision({
+    step: initialConfirmFirstStep,
+    diagnosis: result.what_happened,
+    problemDescription: input?.problemDescription,
+  });
   const isGuidedLoopActive = isRefined && verificationState !== "confirmed";
-  const guidedStepStack = isGuidedLoopActive ? getGuidedStepStack({ result, isRefined }) : displayedConfirmFirstStep ? [displayedConfirmFirstStep] : [];
+  const guidedStepStack = isGuidedLoopActive
+    ? getGuidedStepStack({ result, isRefined, problemDescription: input?.problemDescription })
+    : displayedConfirmFirstStep
+      ? [displayedConfirmFirstStep]
+      : [];
   const displayedGuidedSteps = [...guidedStepStack].reverse();
   const currentGuidedStep = guidedStepStack[0] ?? null;
   const currentGuidedStepNumber = guidedStepStack.length;

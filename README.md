@@ -358,6 +358,16 @@ This is the current strategic model for AI-E. It separates the already-shippable
 - Targeted validation status: the same 4 live playtest cases were rerun against the local analyzer route after the patch, and all four kept concrete second-step focuses (`stamina limiter`, `timeline handoff`, `slope handling logic or friction settings`, `audio singleton`) with `MALFORMED = None`, `PASSIVE = None`, and `WORKFLOW_REGRESSION = None`
 - Remaining note: workflow suggestions still vary by case because they depend on the live analyzer wording, but the malformed focus leakage is now closed in the renderer path that feeds threaded follow-up guidance
 
+#### First-Step Precision For Messy Multi-System Inputs (2026-04-16)
+
+- What changed: the renderer now applies a lightweight first-step override for overloaded problem descriptions before showing the initial `What to do next` guidance
+- Trigger rule: this only activates when the input looks messy or multi-system, such as `changed a bunch`, `touched X, Y, Z`, `everything feels broken`, `one pass`, or other broad mixed-system phrasing
+- Selection rule: instead of preserving an arbitrary single-system guess or a broad `revert the recent changes` step, the renderer now extracts explicit recently changed systems from the problem description and starts with one named system at a time
+- UI effect: messy inputs now bias toward a narrowing step like `Start by isolating one recently changed system at a time, beginning with ...` followed by a single-system compare step, while focused inputs keep their original specific first step
+- Constraint boundary: this remains renderer-only, adds no planner, no extra state, and no backend, schema, or API changes
+- Targeted validation status: five live first-pass cases were checked against the local analyzer route, and the four messy cases all resolved to intentional first-step narrowing anchored to an explicitly mentioned system while the focused projectile-pool control stayed specific instead of being rewritten into a broad multi-system step
+- Remaining edge case: the heuristic still depends on recognizable system nouns in the original problem description, so very vague reports without named systems may still fall back to a generic isolate-one-system opening rather than a sharper named anchor
+
 #### Second-Step Progression And Non-Repetition Guard (2026-04-15)
 
 - What changed: the renderer now applies a small coherence guard before showing the second debugging step, rejecting candidates that reuse the same action pattern, stay on the same lever without narrowing, or overlap too heavily with the first step
