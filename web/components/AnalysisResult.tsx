@@ -1309,22 +1309,22 @@ function getConfidenceLevel(params: {
 function getConfidenceLabel(confidenceLevel: ConfidenceLevel): string {
   switch (confidenceLevel) {
     case "high":
-      return "Confidence: High";
+      return "High";
     case "medium":
-      return "Confidence: Medium";
+      return "Medium";
     case "low":
-      return "Confidence: Low";
+      return "Low";
   }
 }
 
 function getConfidenceClassName(confidenceLevel: ConfidenceLevel): string {
   switch (confidenceLevel) {
     case "high":
-      return "border-emerald-200 bg-emerald-50 text-emerald-700";
+      return "border-emerald-200/80 bg-emerald-50/80 text-emerald-700/90";
     case "medium":
-      return "border-ocean/20 bg-ocean/10 text-ocean";
+      return "border-ocean/15 bg-ocean/10 text-ocean/80";
     case "low":
-      return "border-ink/10 bg-white/70 text-ink/70";
+      return "border-ink/10 bg-white/60 text-ink/65";
   }
 }
 
@@ -1612,10 +1612,11 @@ export function AnalysisResult({
   return (
     <div className="grid gap-5">
       <section className="glass-card rounded-[1.75rem] p-6 shadow-float sm:p-7">
-        <div className="flex flex-wrap items-center gap-2">
-          <p className="section-label">Diagnosis</p>
+        <p className="section-label">Diagnosis</p>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink/50">Confidence</p>
           <span
-            className={`inline-flex rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] ${getConfidenceClassName(confidenceLevel)}`}
+            className={`inline-flex rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] ${getConfidenceClassName(confidenceLevel)}`}
           >
             {getConfidenceLabel(confidenceLevel)}
           </span>
