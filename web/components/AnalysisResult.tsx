@@ -11,12 +11,13 @@ import {
   classifyFollowUpResult,
   classifyLoopTerminationStatus,
   deriveAnalysisResultSignals,
-  shouldRestartFreshFromObservation,
-  shouldUseMessyInputFirstStep,
 } from "./analysisResultLogic";
 import type { ConfidenceLevel, DebuggingMode, EscalationStrategy, LoopTerminationStatus, SuggestedNextAction } from "./analysisResultLogic";
 import type { FollowUpVerificationState, StoredLoopTerminationStatus } from "@/components/AnalysisForm";
 import type { AnalysisInput, FreeAnalysisResponse } from "@/lib/aie/types";
+
+// Rendering decisions must come from analysisResultLogic.ts.
+// Keep this component presentation-focused and do not reintroduce inline decision helpers here.
 
 type AnalysisResultProps = {
   result: FreeAnalysisResponse;
@@ -126,30 +127,6 @@ function getLoopTerminationStatusHint(status: LoopTerminationStatus | null): str
   }
 }
 
-function getConfidenceLevel(params: {
-  verificationState: FollowUpVerificationState | undefined;
-  loopTerminationStatus: LoopTerminationStatus | null;
-  showLowEvidenceCue: boolean;
-}): ConfidenceLevel {
-  if (params.loopTerminationStatus === "resolved" || params.verificationState === "confirmed") {
-    return "high";
-  }
-
-  if (
-    params.loopTerminationStatus === "stuck" ||
-    params.verificationState === "inconclusive" ||
-    params.showLowEvidenceCue
-  ) {
-    return "low";
-  }
-
-  if (params.loopTerminationStatus === "converging" || params.verificationState === "falsified") {
-    return "medium";
-  }
-
-  return "medium";
-}
-
 function getConfidenceLabel(confidenceLevel: ConfidenceLevel): string {
   switch (confidenceLevel) {
     case "high":
@@ -170,48 +147,6 @@ function getConfidenceClassName(confidenceLevel: ConfidenceLevel): string {
     case "low":
       return "border-ink/10 bg-white/60 text-ink/65";
   }
-}
-
-function getSuggestedNextAction(params: {
-  loopTerminationStatus: LoopTerminationStatus | null;
-  isRefined: boolean;
-  verificationState: FollowUpVerificationState | undefined;
-  nextStepGuidance: string | null;
-  showLowEvidenceCue: boolean;
-  hasGuidedStep: boolean;
-  observation: string | undefined;
-}): SuggestedNextAction {
-  if (params.loopTerminationStatus === "resolved") {
-    return "stop";
-  }
-
-  if (params.loopTerminationStatus === "stuck") {
-    return shouldRestartFreshFromObservation(params.observation) ? "restart-fresh" : "escalate";
-  }
-
-  if (params.loopTerminationStatus === "converging") {
-    return "continue-thread";
-  }
-
-  const hasMessySignals =
-    params.showLowEvidenceCue ||
-    shouldRestartFreshFromObservation(params.observation) ||
-    (params.isRefined && params.verificationState === "inconclusive" && !params.nextStepGuidance && !params.hasGuidedStep) ||
-    (!params.isRefined && !params.hasGuidedStep);
-
-  if (hasMessySignals) {
-    return "restart-fresh";
-  }
-
-  if (!params.isRefined) {
-    return "continue-thread";
-  }
-
-  if (params.verificationState === "falsified" || params.verificationState === "inconclusive") {
-    return "continue-thread";
-  }
-
-  return "restart-fresh";
 }
 
 function getSuggestedNextActionLabel(action: SuggestedNextAction): string {
@@ -281,110 +216,6 @@ function getEscalationStrategyGuidance(strategy: EscalationStrategy | null): str
     default:
       return null;
   }
-}
-
-function shouldSuppressRecommendedDebuggingMode(params: {
-  isRefined: boolean;
-  problemDescription: string | undefined;
-  confidenceLevel: ConfidenceLevel;
-  showLowEvidenceCue: boolean;
-}): boolean {
-  if (params.isRefined || !params.problemDescription || !shouldUseMessyInputFirstStep(params.problemDescription)) {
-    return false;
-  }
-
-  return params.showLowEvidenceCue || params.confidenceLevel !== "high";
-}
-
-function getRecommendedDebuggingMode(params: {
-  isRefined: boolean;
-  problemDescription: string | undefined;
-  diagnosis: string;
-  primaryStep: string | null;
-  nextStepGuidance: string | null;
-  loopTerminationStatus: LoopTerminationStatus | null;
-  suggestedNextAction: SuggestedNextAction;
-  suggestedEscalationStrategy: EscalationStrategy | null;
-  confidenceLevel: ConfidenceLevel;
-  showLowEvidenceCue: boolean;
-}): DebuggingMode | null {
-  if (params.suggestedNextAction === "stop") {
-    return null;
-  }
-
-  const supportingText = [params.diagnosis, params.primaryStep ?? "", params.nextStepGuidance ?? ""].join(" ");
-
-  if (
-    params.suggestedEscalationStrategy === "clean-environment" ||
-    params.suggestedEscalationStrategy === "minimal-repro" ||
-    /\b(?:clean scene|clean environment|isolated environment|fresh defaults|minimal repro(?:duction)?|small(?:er)? reproduction|strip the failure down|recreate the failing setup)\b/i.test(
-      supportingText,
-    ) ||
-    ((params.loopTerminationStatus === "stuck" || params.suggestedNextAction === "restart-fresh") &&
-      params.confidenceLevel === "low" &&
-      !params.primaryStep)
-  ) {
-    return "reproduce-in-clean-scene";
-  }
-
-  if (
-    shouldSuppressRecommendedDebuggingMode({
-      isRefined: params.isRefined,
-      problemDescription: params.problemDescription,
-      confidenceLevel: params.confidenceLevel,
-      showLowEvidenceCue: params.showLowEvidenceCue,
-    })
-  ) {
-    return null;
-  }
-
-  if (
-    /\b(?:duplicate writers?|multiple scripts writing|two scripts writing|duplicate listeners?|multiple listeners?|duplicate handlers?|event duplication|double[- ]fir(?:e|ing)|written from two places|overwrit(?:e|es|ing)|duplicate sources?)\b/i.test(
-      supportingText,
-    )
-  ) {
-    return "check-duplicate-writers";
-  }
-
-  if (
-    /\b(?:stale references?|cached references?|ownership|owner|missing references?|wrong references?|null references?|lost references?|validate references?|validate ownership|handoff between systems)\b/i.test(
-      supportingText,
-    )
-  ) {
-    return "validate-ownership-references";
-  }
-
-  if (
-    /\b(?:scene load|startup|initialization|initialize|lifecycle|order of execution|execution order|bootstrap|awake|start\(\)|start method|onenable|loaded before|loaded after|initial state)\b/i.test(
-      supportingText,
-    )
-  ) {
-    return "check-initialization-order";
-  }
-
-  if (
-    params.suggestedEscalationStrategy === "logging" ||
-    /\b(?:debug logs?|log\b|logging|instrument(?:ation)?|trace\b|breakpoint|inspect state|track values?|watch values?|observe lifecycle timing|verify transitions?|state transitions?|event flow)\b/i.test(
-      supportingText,
-    )
-  ) {
-    return "instrument-with-logging";
-  }
-
-  if (
-    params.suggestedEscalationStrategy === "single-system-rebuild" ||
-    /\b(?:disable|bypass|turn off|remove|isolate|compare before and after|compare the behavior|one system at a time|toggle|comment out|skip\b|re-enable .* one by one)\b/i.test(
-      supportingText,
-    )
-  ) {
-    return "isolate-one-subsystem";
-  }
-
-  if (params.loopTerminationStatus === "stuck") {
-    return "reproduce-in-clean-scene";
-  }
-
-  return "isolate-one-subsystem";
 }
 
 function getRecommendedDebuggingModeLabel(mode: DebuggingMode | null): string | null {

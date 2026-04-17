@@ -152,3 +152,69 @@ test("preserves clean-scene routing for stuck follow-up loops", () => {
   assert.equal(signals.suggestedNextAction, "escalate");
   assert.equal(signals.recommendedDebuggingMode, "reproduce-in-clean-scene");
 });
+
+test("suppresses recommended mode for mixed-signal fresh prompts unless confidence reaches the clean high-signal path", () => {
+  const signals = derive({
+    problemDescription:
+      "I changed a bunch of systems this pass, including the camera, HUD, and Animator, and the bug feels mixed, but the dash only breaks right after the Animator speed sync change.",
+    result: makeResult({
+      what_happened: "The Animator speed sync override is the most likely cause of the dash timing break.",
+      what_matters: [
+        "The dash starts failing only after the Animator speed sync change.",
+        "The symptom is anchored to the Animator handoff rather than the HUD or camera updates.",
+      ],
+      what_to_do_next: [
+        "Temporarily disable the Animator speed sync override and compare the dash timing before and after.",
+      ],
+    }),
+  });
+
+  assert.equal(signals.showLowEvidenceCue, false);
+  assert.equal(signals.confidenceLevel, "medium");
+  assert.equal(signals.suggestedNextAction, "continue-thread");
+  assert.equal(signals.recommendedDebuggingMode, null);
+});
+
+test("keeps a specific subsystem recommendation even when confidence is low from weak evidence", () => {
+  const signals = derive({
+    problemDescription: "Player movement breaks after changing the Animator speed sync.",
+    result: makeResult({
+      what_happened: "The Animator speed sync override is the most likely cause of the symptom.",
+      what_matters: [
+        "There are no obvious console errors.",
+        "The issue still lines up with the Animator speed sync change.",
+      ],
+      what_to_do_next: [
+        "Temporarily disable the Animator speed sync override and compare the behavior before and after.",
+      ],
+    }),
+  });
+
+  assert.equal(signals.showLowEvidenceCue, true);
+  assert.equal(signals.confidenceLevel, "low");
+  assert.equal(signals.recommendedDebuggingMode, "isolate-one-subsystem");
+});
+
+test("marks a formerly guided follow-up as stuck when the latest observation becomes a dead end", () => {
+  const signals = derive({
+    isRefined: true,
+    verificationState: "inconclusive",
+    lastObservation:
+      "The first two checks reduced the issue, but after the latest step there is no obvious change and nothing clearly fixed the issue.",
+    problemDescription: "The enemy freezing issue improved after narrowing the Animator speed sync and pathfinding checks.",
+    result: makeResult({
+      what_happened: "The Animator speed sync handoff is the most likely cause of the freezing issue.",
+      what_to_do_next: [
+        "Temporarily disable the Animator speed sync override and compare the freezing before and after.",
+        "Temporarily isolate only the pathfinding resume handoff and one related variable, then compare whether the symptom changes immediately.",
+        "Temporarily force the resume state to a known-safe value and compare the behavior immediately before and after.",
+      ],
+    }),
+  });
+
+  assert.equal(signals.guidedStepStack.length, 3);
+  assert.equal(signals.loopTerminationStatus, "stuck");
+  assert.equal(signals.suggestedNextAction, "escalate");
+  assert.equal(signals.suggestedEscalationStrategy, "single-system-rebuild");
+  assert.equal(signals.recommendedDebuggingMode, "isolate-one-subsystem");
+});

@@ -1,6 +1,9 @@
 import type { FollowUpVerificationState, StoredLoopTerminationStatus } from "./AnalysisForm";
 import type { FreeAnalysisResponse } from "../lib/aie/types";
 
+// Single source of truth for AnalysisResult decision logic.
+// Keep renderer-facing behavior derivation here and do not reintroduce inline decision helpers in AnalysisResult.tsx.
+
 export type LoopTerminationStatus = StoredLoopTerminationStatus;
 export type ConfidenceLevel = "high" | "medium" | "low";
 export type EscalationStrategy = "minimal-repro" | "logging" | "single-system-rebuild" | "clean-environment";
