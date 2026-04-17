@@ -350,6 +350,15 @@ This is the current strategic model for AI-E. It separates the already-shippable
 - Targeted validation status: two sparse multi-turn scenarios were re-run against the live analyzer with threaded context, and both continuation turns retained the prior debugging frame instead of dropping back to a generic cold-start diagnosis
 - Regression check: the existing bounded follow-up loop remains renderer-driven, and the threading change only affects new analyze submissions plus client-side session payload shaping
 
+#### Session Isolation For Fresh Vs Threaded Analysis (2026-04-17)
+
+- Observed issue: a fresh visit back into the analyze form could still inherit the previous browser-session debugging thread because both result-page actions landed on the same route and the continuation toggle defaulted on once session state existed
+- What changed: the analyze page now resolves an explicit entry mode, defaults to `fresh`, and only loads the stored thread snapshot when the user intentionally enters through `mode=continue`
+- Fresh-entry rule: `Analyze another issue` now routes to `/analyze?mode=fresh`, which bypasses the stored continuation snapshot and resets the continuation toggle so a new case starts cold by default
+- Continue-entry rule: `Continue this debugging flow` now routes to `/analyze?mode=continue`, which preserves the prior diagnosis, last attempted step, and last status as an intentional client-side continuation only
+- Boundary: this remains client-side only, keeps the existing session-storage payload, and does not add backend state, schema changes, or a new persistence layer
+- Targeted validation status: the web lint pass completed cleanly, and a focused source validation confirmed all five path checks: fresh-default routing, explicit continue routing, explicit fresh routing, conditional session load on continue only, and continuation-toggle reset by entry mode
+
 #### Observation Focus Sanitization For Threaded Follow-Ups (2026-04-16)
 
 - Observed issue: live threaded follow-ups could still promote raw observation fragments into malformed step targets such as outcome phrases, vague process wording, or conversational leftovers instead of concrete system anchors

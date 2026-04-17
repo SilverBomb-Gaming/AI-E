@@ -39,7 +39,7 @@ export default function ResultPage() {
             AI-E stores the latest free analysis in your current browser session. Start from the analyze page to generate a new result.
           </p>
           <div className="mt-6 flex gap-3">
-            <Link href="/analyze" className="rounded-full bg-ink px-5 py-3 text-sm font-semibold text-white">
+            <Link href="/analyze?mode=fresh" className="rounded-full bg-ink px-5 py-3 text-sm font-semibold text-white">
               Go to analyze
             </Link>
             <Link href="/" className="rounded-full border border-ink/10 px-5 py-3 text-sm font-semibold text-ink">
@@ -59,10 +59,10 @@ export default function ResultPage() {
           <h1 className="headline mt-2 text-4xl font-semibold">A structured first pass on your Unity issue.</h1>
         </div>
         <div className="flex gap-3">
-          <Link href="/analyze" className="rounded-full bg-ink px-5 py-3 text-sm font-semibold text-white">
+          <Link href="/analyze?mode=continue" className="rounded-full bg-ink px-5 py-3 text-sm font-semibold text-white">
             Continue this debugging flow
           </Link>
-          <Link href="/analyze" className="rounded-full border border-ink/10 px-5 py-3 text-sm font-semibold text-ink">
+          <Link href="/analyze?mode=fresh" className="rounded-full border border-ink/10 px-5 py-3 text-sm font-semibold text-ink">
             Analyze another issue
           </Link>
           <Link href="/upgrade" className="rounded-full bg-coral px-5 py-3 text-sm font-semibold text-white">

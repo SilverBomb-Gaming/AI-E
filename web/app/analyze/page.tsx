@@ -2,7 +2,20 @@ import Link from "next/link";
 
 import { AnalysisForm } from "@/components/AnalysisForm";
 
-export default function AnalyzePage() {
+type AnalyzePageProps = {
+  searchParams?: {
+    mode?: string | string[];
+  };
+};
+
+function resolveEntryMode(mode: string | string[] | undefined): "fresh" | "continue" {
+  const normalizedMode = Array.isArray(mode) ? mode[0] : mode;
+  return normalizedMode === "continue" ? "continue" : "fresh";
+}
+
+export default function AnalyzePage({ searchParams }: AnalyzePageProps) {
+  const entryMode = resolveEntryMode(searchParams?.mode);
+
   return (
     <main className="page-shell mx-auto max-w-5xl px-6 py-8 lg:px-10 lg:py-12">
       <div className="mb-8 flex items-center justify-between gap-4">
@@ -13,7 +26,7 @@ export default function AnalyzePage() {
           Premium preview
         </Link>
       </div>
-      <AnalysisForm />
+      <AnalysisForm initialMode={entryMode} />
     </main>
   );
 }

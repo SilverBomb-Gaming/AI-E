@@ -7,6 +7,8 @@ import type { AnalysisInput, FreeAnalysisResponse } from "@/lib/aie/types";
 
 const STORAGE_KEY = "aie-free-analysis-result";
 
+export type AnalysisEntryMode = "fresh" | "continue";
+
 export type FollowUpVerificationState = "confirmed" | "falsified" | "inconclusive";
 export type StoredLoopTerminationStatus = "resolved" | "converging" | "stuck";
 
@@ -141,20 +143,30 @@ export function buildContinuationContextBlock(snapshot: ContinuationThreadSnapsh
   return lines.join("\n");
 }
 
-export function AnalysisForm() {
+type AnalysisFormProps = {
+  initialMode?: AnalysisEntryMode;
+};
+
+export function AnalysisForm({ initialMode = "fresh" }: AnalysisFormProps) {
   const router = useRouter();
   const [form, setForm] = useState<AnalysisInput>(initialForm);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [storedState, setStoredState] = useState<StoredAnalysisState | null>(null);
-  const [includeContinuationContext, setIncludeContinuationContext] = useState(true);
+  const [includeContinuationContext, setIncludeContinuationContext] = useState(initialMode === "continue");
 
   const descriptionLength = useMemo(() => form.problemDescription.trim().length, [form.problemDescription]);
   const continuationSnapshot = useMemo(() => getContinuationThreadSnapshot(storedState), [storedState]);
 
   useEffect(() => {
+    if (initialMode !== "continue") {
+      setStoredState(null);
+      return;
+    }
+
     const raw = window.sessionStorage.getItem(STORAGE_KEY);
     if (!raw) {
+      setStoredState(null);
       return;
     }
 
@@ -163,7 +175,11 @@ export function AnalysisForm() {
     } catch {
       setStoredState(null);
     }
-  }, []);
+  }, [initialMode]);
+
+  useEffect(() => {
+    setIncludeContinuationContext(initialMode === "continue");
+  }, [initialMode]);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -233,13 +249,13 @@ export function AnalysisForm() {
           </p>
         </div>
 
-        {continuationSnapshot ? (
+        {initialMode === "continue" && continuationSnapshot ? (
           <div className="rounded-[1.5rem] border border-ocean/15 bg-ocean/5 p-5">
             <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
               <div>
                 <p className="section-label">Session threading</p>
                 <p className="mt-2 text-sm leading-7 text-ink/90">
-                  Continue from the last debugging result by passing the previous diagnosis, most recent attempted step, and last status into this new turn.
+                  This analysis is intentionally continuing the previous debugging flow by reusing the last diagnosis, attempted step, and status from this browser session.
                 </p>
               </div>
               <label className="flex items-center gap-3 text-sm font-medium text-ink">
