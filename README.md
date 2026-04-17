@@ -323,8 +323,9 @@ This is the current strategic model for AI-E. It separates the already-shippable
 - UI effect: refined results now show `Current status` alongside the existing refined diagnosis messaging so the user can tell whether the loop appears solved, still narrowing, or no longer moving
 - Targeted validation status: the requested live 6-case matrix passed in full against `/api/analyze` with `2 resolved`, `2 converging`, and `2 stuck` chains matching expected status labels
 - Targeted validation status: a follow-up 4-case live rerun for the threaded override pass also passed in full against the local analyzer route, with `Resolved + Stop`, `Converging + Continue debugging`, `Stuck + Escalate`, and `Stuck + Restart fresh` all matching the expected outcomes
+- Targeted validation status: a natural-language robustness pass then reran 12 live wording variants against the local analyzer route without changing renderer logic, covering `4 resolved`, `3 converging`, `3 stuck dead-end`, and `2 stuck restart-fresh` observations such as `It's back to normal now`, `That fixed it`, `Movement is smoother, but not fully fixed`, `I still can't isolate the real cause`, and `Everything still feels mixed together and I don't trust the thread anymore`; all 12 matched the expected status and suggested action outputs
 - Regression check: the same validation run reported `MISMATCHES: None` and `PASSIVE: None`, so the status layer did not interfere with existing guided-step generation or reintroduce passive phrasing
-- Remaining edge case: structural variation alone is not treated as progress anymore at the step-3 boundary, so intentionally bounded-loop exhaustion is now the deciding signal when the chain is still unresolved
+- Remaining edge case: structural variation alone is not treated as progress anymore at the step-3 boundary, so intentionally bounded-loop exhaustion is now the deciding signal when the chain is still unresolved; future monitoring should focus on less explicit everyday phrasing that implies recovery or dead-end status without using direct terms like `fixed`, `stuck`, or `back to normal`
 
 #### Stuck Loop Escalation Strategies (2026-04-16)
 
