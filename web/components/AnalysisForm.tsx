@@ -11,6 +11,15 @@ export type AnalysisEntryMode = "fresh" | "continue";
 
 export type FollowUpVerificationState = "confirmed" | "falsified" | "inconclusive";
 export type StoredLoopTerminationStatus = "resolved" | "converging" | "stuck";
+export type StoredActionChainIntent = "isolation" | "instrumentation" | "timing" | "duplicate-writer" | "ownership" | "decision";
+
+export type StoredActionChainState = {
+  currentStepIndex: number;
+  totalSteps: number;
+  lastStepIntent: StoredActionChainIntent;
+  lastStepVerification?: FollowUpVerificationState;
+  lastStepWatchFor?: string;
+};
 
 export type StoredAnalysisState = {
   input?: AnalysisInput;
@@ -20,12 +29,14 @@ export type StoredAnalysisState = {
   verificationState?: FollowUpVerificationState;
   lastAttemptedStep?: string;
   loopTerminationStatus?: StoredLoopTerminationStatus;
+  actionChainState?: StoredActionChainState;
 };
 
 export type ContinuationThreadSnapshot = {
   diagnosis: string;
   lastAttemptedStep?: string;
   lastClassification?: "Resolved" | "Converging" | "Stuck";
+  actionChainProgress?: string;
 };
 
 const initialForm: AnalysisInput = {
@@ -96,6 +107,33 @@ export function normalizeStoredAnalysisState(value: unknown): StoredAnalysisStat
       source.loopTerminationStatus === "resolved" || source.loopTerminationStatus === "converging" || source.loopTerminationStatus === "stuck"
         ? (source.loopTerminationStatus as StoredLoopTerminationStatus)
         : undefined,
+    actionChainState:
+      source.actionChainState &&
+      typeof source.actionChainState === "object" &&
+      typeof (source.actionChainState as Record<string, unknown>).currentStepIndex === "number" &&
+      typeof (source.actionChainState as Record<string, unknown>).totalSteps === "number" &&
+      ((source.actionChainState as Record<string, unknown>).lastStepIntent === "isolation" ||
+        (source.actionChainState as Record<string, unknown>).lastStepIntent === "instrumentation" ||
+        (source.actionChainState as Record<string, unknown>).lastStepIntent === "timing" ||
+        (source.actionChainState as Record<string, unknown>).lastStepIntent === "duplicate-writer" ||
+        (source.actionChainState as Record<string, unknown>).lastStepIntent === "ownership" ||
+        (source.actionChainState as Record<string, unknown>).lastStepIntent === "decision")
+        ? {
+            currentStepIndex: Math.max(0, Math.min(2, Math.floor(Number((source.actionChainState as Record<string, unknown>).currentStepIndex)))),
+            totalSteps: Math.max(1, Math.min(3, Math.floor(Number((source.actionChainState as Record<string, unknown>).totalSteps)))),
+            lastStepIntent: (source.actionChainState as Record<string, unknown>).lastStepIntent as StoredActionChainIntent,
+            lastStepVerification:
+              (source.actionChainState as Record<string, unknown>).lastStepVerification === "confirmed" ||
+              (source.actionChainState as Record<string, unknown>).lastStepVerification === "falsified" ||
+              (source.actionChainState as Record<string, unknown>).lastStepVerification === "inconclusive"
+                ? ((source.actionChainState as Record<string, unknown>).lastStepVerification as FollowUpVerificationState)
+                : undefined,
+            lastStepWatchFor:
+              typeof (source.actionChainState as Record<string, unknown>).lastStepWatchFor === "string"
+                ? String((source.actionChainState as Record<string, unknown>).lastStepWatchFor).trim() || undefined
+                : undefined,
+          }
+        : undefined,
   };
 }
 
@@ -122,6 +160,9 @@ export function getContinuationThreadSnapshot(state: StoredAnalysisState | null 
     diagnosis,
     lastAttemptedStep: state?.lastAttemptedStep,
     lastClassification: getLoopTerminationLabel(state?.loopTerminationStatus),
+    actionChainProgress: state?.actionChainState
+      ? `Step ${state.actionChainState.currentStepIndex + 1} of ${state.actionChainState.totalSteps} (${state.actionChainState.lastStepIntent})`
+      : undefined,
   };
 }
 
@@ -137,6 +178,10 @@ export function buildContinuationContextBlock(snapshot: ContinuationThreadSnapsh
 
   if (snapshot.lastClassification) {
     lines.push(`- Last classification: ${snapshot.lastClassification}`);
+  }
+
+  if (snapshot.actionChainProgress) {
+    lines.push(`- Last bounded chain position: ${snapshot.actionChainProgress}`);
   }
 
   lines.push("Use this as the starting context for the new analysis instead of restarting from a fresh first pass.");
@@ -242,6 +287,7 @@ export function AnalysisForm({ initialMode = "fresh" }: AnalysisFormProps) {
           verificationState: undefined,
           lastAttemptedStep: undefined,
           loopTerminationStatus: undefined,
+          actionChainState: undefined,
         } satisfies StoredAnalysisState),
       );
       router.push("/result");
@@ -294,6 +340,11 @@ export function AnalysisForm({ initialMode = "fresh" }: AnalysisFormProps) {
               {continuationSnapshot.lastClassification ? (
                 <p>
                   <span className="font-semibold text-ink">Last classification:</span> {continuationSnapshot.lastClassification}
+                </p>
+              ) : null}
+              {continuationSnapshot.actionChainProgress ? (
+                <p>
+                  <span className="font-semibold text-ink">Last bounded chain:</span> {continuationSnapshot.actionChainProgress}
                 </p>
               ) : null}
             </div>

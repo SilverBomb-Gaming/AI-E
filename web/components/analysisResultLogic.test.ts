@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { FollowUpVerificationState } from "./AnalysisForm";
+import type { FollowUpVerificationState, StoredActionChainState } from "./AnalysisForm";
 import { deriveAnalysisResultSignals } from "./analysisResultLogic";
 import type { FreeAnalysisResponse } from "../lib/aie/types";
 
@@ -23,6 +23,7 @@ function derive(params: {
   isRefined?: boolean;
   lastObservation?: string;
   verificationState?: FollowUpVerificationState;
+  previousActionChainState?: StoredActionChainState;
 }) {
   return deriveAnalysisResultSignals(params);
 }
@@ -56,6 +57,7 @@ test("shows a bounded supervised chain for strong isolation cases", () => {
   assert.equal(signals.supervisedActionChain?.length, 3);
   assert.equal(signals.supervisedActionChain?.[0]?.label, "Isolate the suspected subsystem");
   assert.equal(signals.supervisedActionChain?.[2]?.label, "Decide continue vs escalate");
+  assert.equal(signals.supervisedActionChainStepIndicator, "Step 1 of 3");
 });
 
 test("maps logging-oriented diagnoses to instrument-with-logging", () => {
@@ -87,6 +89,69 @@ test("shows a bounded supervised chain for strong instrumentation cases", () => 
   assert.equal(signals.supervisedActionChain?.length, 3);
   assert.equal(signals.supervisedActionChain?.[0]?.label, "Inspect the signal with logging");
   assert.match(signals.supervisedActionChain?.[1]?.watchFor ?? "", /branch|value|event/i);
+});
+
+test("advances chain continuity from step 1 to step 2 when the observation matches the prior watch-for", () => {
+  const initialSignals = derive({
+    problemDescription: "Player movement breaks after changing the Animator speed sync.",
+    result: makeResult({
+      what_happened: "The Animator speed sync override is the most likely cause of the symptom.",
+      what_to_do_next: [
+        "Temporarily disable the Animator speed sync override and compare the behavior before and after.",
+      ],
+    }),
+  });
+
+  const signals = derive({
+    isRefined: true,
+    verificationState: "inconclusive",
+    lastObservation: "Disabling the Animator speed sync weakened the symptom, but it still appears during the handoff.",
+    previousActionChainState: {
+      currentStepIndex: 0,
+      totalSteps: initialSignals.supervisedActionChain?.length ?? 3,
+      lastStepIntent: initialSignals.currentSupervisedActionChainStep?.intent ?? "isolation",
+      lastStepVerification: "inconclusive",
+      lastStepWatchFor: initialSignals.currentSupervisedActionChainStep?.watchFor,
+    },
+    problemDescription: "Player movement breaks after changing the Animator speed sync.",
+    result: makeResult({
+      what_happened: "The Animator speed sync override is still the most likely cause of the symptom.",
+      what_to_do_next: [
+        "Temporarily isolate only the Animator resume handoff and one related variable, then compare whether the symptom changes immediately.",
+        "Temporarily force the resume state to a known-safe value and compare the behavior immediately before and after.",
+      ],
+    }),
+  });
+
+  assert.equal(signals.supervisedActionChain?.length, 3);
+  assert.equal(signals.supervisedActionChainActiveStepIndex, 1);
+  assert.equal(signals.supervisedActionChainStepIndicator, "Step 2 of 3");
+});
+
+test("resets chain continuity to step 1 when the previous step was falsified", () => {
+  const signals = derive({
+    isRefined: true,
+    verificationState: "falsified",
+    lastObservation: "Disabling the Animator speed sync changed nothing, but isolating the pathfinding resume handoff immediately changed the freeze.",
+    previousActionChainState: {
+      currentStepIndex: 0,
+      totalSteps: 3,
+      lastStepIntent: "isolation",
+      lastStepVerification: "falsified",
+      lastStepWatchFor: "Watch for whether isolating animator speed sync makes the symptom disappear, weaken, or stay exactly the same.",
+    },
+    problemDescription: "The enemy freezing issue changed after the pathfinding resume handoff.",
+    result: makeResult({
+      what_happened: "The pathfinding resume handoff is the more likely cause of the freezing issue.",
+      what_to_do_next: [
+        "Temporarily disable the pathfinding resume handoff and compare the freezing before and after.",
+      ],
+    }),
+  });
+
+  assert.equal(signals.supervisedActionChain?.length, 3);
+  assert.equal(signals.supervisedActionChainActiveStepIndex, 0);
+  assert.equal(signals.supervisedActionChainStepIndicator, "Step 1 of 3");
 });
 
 test("maps initialization-order diagnoses to check-initialization-order", () => {
@@ -165,6 +230,7 @@ test("suppresses recommended mode when a refined follow-up is resolved", () => {
   assert.equal(signals.suggestedNextAction, "stop");
   assert.equal(signals.recommendedDebuggingMode, null);
   assert.equal(signals.supervisedActionChain, null);
+  assert.equal(signals.supervisedActionChainStepIndicator, null);
 });
 
 test("preserves clean-scene routing for stuck follow-up loops", () => {
@@ -188,6 +254,32 @@ test("preserves clean-scene routing for stuck follow-up loops", () => {
   assert.equal(signals.suggestedNextAction, "escalate");
   assert.equal(signals.recommendedDebuggingMode, "reproduce-in-clean-scene");
   assert.equal(signals.supervisedActionChain, null);
+  assert.equal(signals.supervisedActionChainStepIndicator, null);
+});
+
+test("suppresses chain continuity when a refined follow-up becomes too messy to trust", () => {
+  const signals = derive({
+    isRefined: true,
+    verificationState: "inconclusive",
+    lastObservation: "It is still all over the place now and I cannot tell what is related to what anymore.",
+    previousActionChainState: {
+      currentStepIndex: 0,
+      totalSteps: 3,
+      lastStepIntent: "isolation",
+      lastStepVerification: "inconclusive",
+      lastStepWatchFor: "Watch for whether isolating the animator speed sync makes the symptom disappear, weaken, or stay exactly the same.",
+    },
+    problemDescription: "Player movement breaks after changing the Animator speed sync.",
+    result: makeResult({
+      what_happened: "The most likely cause is a general misconfiguration across several recent changes.",
+      what_matters: ["There are no obvious console errors and the signal is mixed again."],
+      what_to_do_next: ["Check the recent changes and see what looks wrong."],
+    }),
+  });
+
+  assert.equal(signals.suggestedNextAction, "restart-fresh");
+  assert.equal(signals.supervisedActionChain, null);
+  assert.equal(signals.supervisedActionChainStepIndicator, null);
 });
 
 test("suppresses recommended mode for mixed-signal fresh prompts unless confidence reaches the clean high-signal path", () => {

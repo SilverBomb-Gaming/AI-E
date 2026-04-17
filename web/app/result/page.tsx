@@ -77,7 +77,8 @@ export default function ResultPage() {
           isRefined={Boolean(storedState.refinedFromObservation)}
           lastObservation={storedState.lastObservation}
           verificationState={storedState.verificationState}
-          onResultChange={({ result: nextResult, observation, verificationState, attemptedStep, loopTerminationStatus }) => {
+          actionChainState={storedState.actionChainState}
+          onResultChange={({ result: nextResult, observation, verificationState, attemptedStep, loopTerminationStatus, actionChainState }) => {
             setStoredState((current) => {
               if (!current) {
                 return current;
@@ -91,6 +92,7 @@ export default function ResultPage() {
                 verificationState,
                 lastAttemptedStep: attemptedStep,
                 loopTerminationStatus: loopTerminationStatus ?? undefined,
+                actionChainState,
               } satisfies StoredAnalysisState;
 
               window.sessionStorage.setItem(resultStorageKey, JSON.stringify(nextState));

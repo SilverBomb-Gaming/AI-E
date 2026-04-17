@@ -13,7 +13,7 @@ import {
   deriveAnalysisResultSignals,
 } from "./analysisResultLogic";
 import type { ConfidenceLevel, DebuggingMode, EscalationStrategy, LoopTerminationStatus, SuggestedNextAction } from "./analysisResultLogic";
-import type { FollowUpVerificationState, StoredLoopTerminationStatus } from "@/components/AnalysisForm";
+import type { FollowUpVerificationState, StoredActionChainState, StoredLoopTerminationStatus } from "@/components/AnalysisForm";
 import type { AnalysisInput, FreeAnalysisResponse } from "@/lib/aie/types";
 
 // Rendering decisions must come from analysisResultLogic.ts.
@@ -25,12 +25,14 @@ type AnalysisResultProps = {
   isRefined?: boolean;
   lastObservation?: string;
   verificationState?: FollowUpVerificationState;
+  actionChainState?: StoredActionChainState;
   onResultChange?: (update: {
     result: FreeAnalysisResponse;
     observation: string;
     verificationState: FollowUpVerificationState;
     attemptedStep?: string;
     loopTerminationStatus: StoredLoopTerminationStatus | null;
+    actionChainState?: StoredActionChainState;
   }) => void;
 };
 
@@ -261,6 +263,7 @@ export function AnalysisResult({
   isRefined = false,
   lastObservation,
   verificationState,
+  actionChainState,
   onResultChange,
 }: AnalysisResultProps) {
   const [, ...initialFollowUpSteps] = result.what_to_do_next;
@@ -280,6 +283,9 @@ export function AnalysisResult({
     suggestedNextAction,
     recommendedDebuggingMode,
     supervisedActionChain,
+    supervisedActionChainActiveStepIndex,
+    supervisedActionChainStepIndicator,
+    currentSupervisedActionChainStep,
     isGuidedLoopActive,
   } = deriveAnalysisResultSignals({
     result,
@@ -287,6 +293,7 @@ export function AnalysisResult({
     isRefined,
     lastObservation,
     verificationState,
+    previousActionChainState: actionChainState,
   });
   const [observation, setObservation] = useState("");
   const [isSubmittingFollowUp, setIsSubmittingFollowUp] = useState(false);
@@ -399,6 +406,15 @@ export function AnalysisResult({
         verificationState,
         attemptedStep: currentGuidedStep ?? undefined,
         loopTerminationStatus: nextLoopTerminationStatus,
+        actionChainState: currentSupervisedActionChainStep
+          ? {
+              currentStepIndex: supervisedActionChainActiveStepIndex,
+              totalSteps: supervisedActionChain?.length ?? 1,
+              lastStepIntent: currentSupervisedActionChainStep.intent,
+              lastStepVerification: verificationState,
+              lastStepWatchFor: currentSupervisedActionChainStep.watchFor,
+            }
+          : undefined,
       });
       setObservation("");
     } catch {
@@ -505,13 +521,21 @@ export function AnalysisResult({
               <span className="inline-flex rounded-full border border-ink/10 bg-white/80 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-ink/70">
                 User-approved only
               </span>
+              {supervisedActionChainStepIndicator ? (
+                <span className="inline-flex rounded-full border border-ocean/15 bg-ocean/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-ocean/80">
+                  {supervisedActionChainStepIndicator}
+                </span>
+              ) : null}
             </div>
             <p className="mt-2 text-xs leading-6 body-muted sm:text-sm">
               AI-E is suggesting a short evidence-gated sequence. Nothing runs automatically; approve one step at a time and stop as soon as the observation resolves or weakens the diagnosis.
             </p>
             <ol className="mt-4 space-y-3">
               {supervisedActionChain.map((step, index) => (
-                <li key={`${step.label}-${index}`} className="rounded-[1rem] border border-ink/10 bg-white/70 p-3">
+                <li
+                  key={`${step.label}-${index}`}
+                  className={`rounded-[1rem] border p-3 ${index === supervisedActionChainActiveStepIndex ? "border-ocean/20 bg-ocean/5" : "border-ink/10 bg-white/70"}`}
+                >
                   <p className="text-sm font-semibold leading-6 text-ink/90 sm:text-base">{index + 1}. {step.label}</p>
                   <p className="mt-1 text-sm leading-7 text-ink/90 sm:text-base">{step.purpose}</p>
                   <p className="mt-2 text-xs leading-6 body-muted sm:text-sm">Watch for: {step.watchFor}</p>
