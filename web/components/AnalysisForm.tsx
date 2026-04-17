@@ -12,6 +12,7 @@ export type AnalysisEntryMode = "fresh" | "continue";
 export type FollowUpVerificationState = "confirmed" | "falsified" | "inconclusive";
 export type StoredLoopTerminationStatus = "resolved" | "converging" | "stuck";
 export type StoredActionChainIntent = "isolation" | "instrumentation" | "timing" | "duplicate-writer" | "ownership" | "decision";
+export type StoredConfidenceLevel = "high" | "medium" | "low";
 
 export type StoredActionChainState = {
   currentStepIndex: number;
@@ -19,6 +20,8 @@ export type StoredActionChainState = {
   lastStepIntent: StoredActionChainIntent;
   lastStepVerification?: FollowUpVerificationState;
   lastStepWatchFor?: string;
+  previousConfidenceLevel?: StoredConfidenceLevel;
+  confidenceHistory?: StoredConfidenceLevel[];
 };
 
 export type StoredAnalysisState = {
@@ -74,6 +77,23 @@ export function normalizeAnalysisInput(value: unknown): AnalysisInput | undefine
     errorMessage: String(source.errorMessage ?? "").trim(),
     context: String(source.context ?? "").trim(),
   };
+}
+
+function normalizeStoredConfidenceLevel(value: unknown): StoredConfidenceLevel | undefined {
+  return value === "high" || value === "medium" || value === "low" ? (value as StoredConfidenceLevel) : undefined;
+}
+
+function normalizeStoredConfidenceHistory(value: unknown): StoredConfidenceLevel[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const history = value
+    .map((item) => normalizeStoredConfidenceLevel(item))
+    .filter((item): item is StoredConfidenceLevel => Boolean(item))
+    .slice(-3);
+
+  return history.length ? history : undefined;
 }
 
 export function normalizeStoredAnalysisState(value: unknown): StoredAnalysisState | null {
@@ -132,6 +152,10 @@ export function normalizeStoredAnalysisState(value: unknown): StoredAnalysisStat
               typeof (source.actionChainState as Record<string, unknown>).lastStepWatchFor === "string"
                 ? String((source.actionChainState as Record<string, unknown>).lastStepWatchFor).trim() || undefined
                 : undefined,
+            previousConfidenceLevel: normalizeStoredConfidenceLevel(
+              (source.actionChainState as Record<string, unknown>).previousConfidenceLevel,
+            ),
+            confidenceHistory: normalizeStoredConfidenceHistory((source.actionChainState as Record<string, unknown>).confidenceHistory),
           }
         : undefined,
   };
@@ -161,7 +185,7 @@ export function getContinuationThreadSnapshot(state: StoredAnalysisState | null 
     lastAttemptedStep: state?.lastAttemptedStep,
     lastClassification: getLoopTerminationLabel(state?.loopTerminationStatus),
     actionChainProgress: state?.actionChainState
-      ? `Step ${state.actionChainState.currentStepIndex + 1} of ${state.actionChainState.totalSteps} (${state.actionChainState.lastStepIntent})`
+      ? `Step ${state.actionChainState.currentStepIndex + 1} of ${state.actionChainState.totalSteps} (${state.actionChainState.lastStepIntent}${state.actionChainState.previousConfidenceLevel ? `, ${state.actionChainState.previousConfidenceLevel} confidence` : ""})`
       : undefined,
   };
 }

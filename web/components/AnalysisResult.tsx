@@ -12,7 +12,14 @@ import {
   classifyLoopTerminationStatus,
   deriveAnalysisResultSignals,
 } from "./analysisResultLogic";
-import type { ConfidenceLevel, DebuggingMode, EscalationStrategy, LoopTerminationStatus, SuggestedNextAction } from "./analysisResultLogic";
+import type {
+  ConfidenceAlignment,
+  ConfidenceLevel,
+  DebuggingMode,
+  EscalationStrategy,
+  LoopTerminationStatus,
+  SuggestedNextAction,
+} from "./analysisResultLogic";
 import type { FollowUpVerificationState, StoredActionChainState, StoredLoopTerminationStatus } from "@/components/AnalysisForm";
 import type { AnalysisInput, FreeAnalysisResponse } from "@/lib/aie/types";
 
@@ -151,6 +158,31 @@ function getConfidenceClassName(confidenceLevel: ConfidenceLevel): string {
   }
 }
 
+function getConfidenceAlignmentLabel(confidenceAlignment: ConfidenceAlignment | null): string | null {
+  switch (confidenceAlignment) {
+    case "increasing":
+      return "Confidence rising";
+    case "decreasing":
+      return "Confidence falling";
+    case "unstable":
+      return "Confidence unstable";
+    default:
+      return null;
+  }
+}
+
+function getConfidenceAlignmentClassName(confidenceAlignment: ConfidenceAlignment | null): string {
+  switch (confidenceAlignment) {
+    case "increasing":
+      return "border-emerald-200/80 bg-emerald-50/80 text-emerald-700/90";
+    case "decreasing":
+      return "border-coral/20 bg-coral/10 text-ember";
+    case "unstable":
+    default:
+      return "border-ink/10 bg-white/60 text-ink/65";
+  }
+}
+
 function getSuggestedNextActionLabel(action: SuggestedNextAction): string {
   switch (action) {
     case "continue-thread":
@@ -280,6 +312,7 @@ export function AnalysisResult({
     suggestedEscalationStrategy,
     showLowEvidenceCue,
     confidenceLevel,
+    confidenceAlignment,
     suggestedNextAction,
     recommendedDebuggingMode,
     supervisedActionChain,
@@ -413,6 +446,12 @@ export function AnalysisResult({
               lastStepIntent: currentSupervisedActionChainStep.intent,
               lastStepVerification: verificationState,
               lastStepWatchFor: currentSupervisedActionChainStep.watchFor,
+              previousConfidenceLevel: confidenceLevel,
+              confidenceHistory: [
+                ...(actionChainState?.confidenceHistory ??
+                  (actionChainState?.previousConfidenceLevel ? [actionChainState.previousConfidenceLevel] : [])),
+                confidenceLevel,
+              ].slice(-3),
             }
           : undefined,
       });
@@ -435,6 +474,13 @@ export function AnalysisResult({
           >
             {getConfidenceLabel(confidenceLevel)}
           </span>
+          {isRefined && getConfidenceAlignmentLabel(confidenceAlignment) ? (
+            <span
+              className={`inline-flex rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] ${getConfidenceAlignmentClassName(confidenceAlignment)}`}
+            >
+              {getConfidenceAlignmentLabel(confidenceAlignment)}
+            </span>
+          ) : null}
         </div>
         {recommendedDebuggingMode ? (
           <div className="mt-2 flex flex-wrap items-center gap-2">

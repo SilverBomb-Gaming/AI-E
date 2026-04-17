@@ -1,4 +1,10 @@
-import type { FollowUpVerificationState, StoredActionChainIntent, StoredActionChainState, StoredLoopTerminationStatus } from "./AnalysisForm";
+import type {
+  FollowUpVerificationState,
+  StoredActionChainIntent,
+  StoredActionChainState,
+  StoredConfidenceLevel,
+  StoredLoopTerminationStatus,
+} from "./AnalysisForm";
 import type { FreeAnalysisResponse } from "../lib/aie/types";
 
 // Single source of truth for AnalysisResult decision logic.
@@ -8,6 +14,7 @@ export type LoopTerminationStatus = StoredLoopTerminationStatus;
 export type ActionChainIntent = StoredActionChainIntent;
 export type ActionChainState = StoredActionChainState;
 export type ConfidenceLevel = "high" | "medium" | "low";
+export type ConfidenceAlignment = "increasing" | "decreasing" | "unstable";
 export type EscalationStrategy = "minimal-repro" | "logging" | "single-system-rebuild" | "clean-environment";
 export type SuggestedNextAction = "continue-thread" | "restart-fresh" | "stop" | "escalate";
 export type DebuggingMode =
@@ -1210,11 +1217,7 @@ export function getConfidenceLevel(params: {
     return "high";
   }
 
-  if (
-    params.loopTerminationStatus === "stuck" ||
-    params.verificationState === "inconclusive" ||
-    params.showLowEvidenceCue
-  ) {
+  if (params.loopTerminationStatus === "stuck" || params.showLowEvidenceCue) {
     return "low";
   }
 
@@ -1222,7 +1225,68 @@ export function getConfidenceLevel(params: {
     return "medium";
   }
 
+  if (params.verificationState === "inconclusive") {
+    return "low";
+  }
+
   return "medium";
+}
+
+function getConfidenceLevelRank(level: ConfidenceLevel | StoredConfidenceLevel): number {
+  switch (level) {
+    case "high":
+      return 2;
+    case "medium":
+      return 1;
+    case "low":
+    default:
+      return 0;
+  }
+}
+
+function getNormalizedConfidenceHistory(previousActionChainState: ActionChainState | undefined): StoredConfidenceLevel[] {
+  const history = previousActionChainState?.confidenceHistory?.filter(
+    (level): level is StoredConfidenceLevel => level === "high" || level === "medium" || level === "low",
+  ) ?? [];
+
+  if (history.length) {
+    return history.slice(-3);
+  }
+
+  return previousActionChainState?.previousConfidenceLevel ? [previousActionChainState.previousConfidenceLevel] : [];
+}
+
+function getConfidenceAlignment(params: {
+  currentConfidenceLevel: ConfidenceLevel;
+  previousActionChainState: ActionChainState | undefined;
+  isRefined: boolean;
+}): ConfidenceAlignment | null {
+  if (!params.isRefined || !params.previousActionChainState?.previousConfidenceLevel) {
+    return null;
+  }
+
+  const sequence = [
+    ...getNormalizedConfidenceHistory(params.previousActionChainState),
+    params.currentConfidenceLevel,
+  ].slice(-3);
+
+  if (sequence.length < 2) {
+    return null;
+  }
+
+  const previousLevel = sequence[sequence.length - 2];
+  const currentRank = getConfidenceLevelRank(params.currentConfidenceLevel);
+  const previousRank = getConfidenceLevelRank(previousLevel);
+
+  if (currentRank > previousRank) {
+    return "increasing";
+  }
+
+  if (currentRank < previousRank) {
+    return "decreasing";
+  }
+
+  return "unstable";
 }
 
 export function getSuggestedNextAction(params: {
@@ -1625,18 +1689,29 @@ function getSupervisedActionChainContinuity(params: {
   loopTerminationStatus: LoopTerminationStatus | null;
   suggestedNextAction: SuggestedNextAction;
   showLowEvidenceCue: boolean;
+  confidenceLevel: ConfidenceLevel;
   previousActionChainState: ActionChainState | undefined;
   observation: string | undefined;
 }): {
   activeStepIndex: number;
   stepIndicator: string | null;
+  confidenceAlignment: ConfidenceAlignment | null;
+  shouldDropChain: boolean;
 } {
   if (!params.chain?.length) {
     return {
       activeStepIndex: 0,
       stepIndicator: null,
+      confidenceAlignment: null,
+      shouldDropChain: false,
     };
   }
+
+  const confidenceAlignment = getConfidenceAlignment({
+    currentConfidenceLevel: params.confidenceLevel,
+    previousActionChainState: params.previousActionChainState,
+    isRefined: params.isRefined,
+  });
 
   if (
     params.loopTerminationStatus === "resolved" ||
@@ -1647,6 +1722,8 @@ function getSupervisedActionChainContinuity(params: {
     return {
       activeStepIndex: 0,
       stepIndicator: null,
+      confidenceAlignment,
+      shouldDropChain: true,
     };
   }
 
@@ -1654,6 +1731,8 @@ function getSupervisedActionChainContinuity(params: {
     return {
       activeStepIndex: 0,
       stepIndicator: `Step 1 of ${params.chain.length}`,
+      confidenceAlignment,
+      shouldDropChain: false,
     };
   }
 
@@ -1661,6 +1740,8 @@ function getSupervisedActionChainContinuity(params: {
     return {
       activeStepIndex: 0,
       stepIndicator: `Step 1 of ${params.chain.length}`,
+      confidenceAlignment,
+      shouldDropChain: false,
     };
   }
 
@@ -1675,6 +1756,28 @@ function getSupervisedActionChainContinuity(params: {
     return {
       activeStepIndex: 0,
       stepIndicator: null,
+      confidenceAlignment,
+      shouldDropChain: true,
+    };
+  }
+
+  if (confidenceAlignment === "decreasing") {
+    return {
+      activeStepIndex: 0,
+      stepIndicator: null,
+      confidenceAlignment,
+      shouldDropChain: true,
+    };
+  }
+
+  const priorIndex = Math.max(0, Math.min(params.chain.length - 1, params.previousActionChainState.currentStepIndex));
+
+  if (confidenceAlignment === "unstable") {
+    return {
+      activeStepIndex: priorIndex,
+      stepIndicator: `Step ${priorIndex + 1} of ${params.chain.length}`,
+      confidenceAlignment,
+      shouldDropChain: false,
     };
   }
 
@@ -1686,6 +1789,8 @@ function getSupervisedActionChainContinuity(params: {
   return {
     activeStepIndex: nextIndex,
     stepIndicator: `Step ${nextIndex + 1} of ${params.chain.length}`,
+    confidenceAlignment,
+    shouldDropChain: false,
   };
 }
 
@@ -1765,6 +1870,7 @@ export function deriveAnalysisResultSignals(params: {
   suggestedEscalationStrategy: EscalationStrategy | null;
   showLowEvidenceCue: boolean;
   confidenceLevel: ConfidenceLevel;
+  confidenceAlignment: ConfidenceAlignment | null;
   suggestedNextAction: SuggestedNextAction;
   recommendedDebuggingMode: DebuggingMode | null;
   supervisedActionChain: SupervisedActionChainStep[] | null;
@@ -1858,10 +1964,12 @@ export function deriveAnalysisResultSignals(params: {
     loopTerminationStatus,
     suggestedNextAction,
     showLowEvidenceCue,
+    confidenceLevel,
     previousActionChainState,
     observation: lastObservation,
   });
-  const currentSupervisedActionChainStep = supervisedActionChain?.[supervisedActionChainContinuity.activeStepIndex] ?? null;
+  const alignedSupervisedActionChain = supervisedActionChainContinuity.shouldDropChain ? null : supervisedActionChain;
+  const currentSupervisedActionChainStep = alignedSupervisedActionChain?.[supervisedActionChainContinuity.activeStepIndex] ?? null;
 
   return {
     displayedConfirmFirstStep,
@@ -1876,9 +1984,10 @@ export function deriveAnalysisResultSignals(params: {
     suggestedEscalationStrategy,
     showLowEvidenceCue,
     confidenceLevel,
+    confidenceAlignment: supervisedActionChainContinuity.confidenceAlignment,
     suggestedNextAction,
     recommendedDebuggingMode,
-    supervisedActionChain,
+    supervisedActionChain: alignedSupervisedActionChain,
     supervisedActionChainActiveStepIndex: supervisedActionChainContinuity.activeStepIndex,
     supervisedActionChainStepIndicator: supervisedActionChainContinuity.stepIndicator,
     currentSupervisedActionChainStep,

@@ -112,6 +112,8 @@ test("advances chain continuity from step 1 to step 2 when the observation match
       lastStepIntent: initialSignals.currentSupervisedActionChainStep?.intent ?? "isolation",
       lastStepVerification: "inconclusive",
       lastStepWatchFor: initialSignals.currentSupervisedActionChainStep?.watchFor,
+      previousConfidenceLevel: "low",
+      confidenceHistory: ["low"],
     },
     problemDescription: "Player movement breaks after changing the Animator speed sync.",
     result: makeResult({
@@ -124,8 +126,71 @@ test("advances chain continuity from step 1 to step 2 when the observation match
   });
 
   assert.equal(signals.supervisedActionChain?.length, 3);
+  assert.equal(signals.confidenceLevel, "medium");
+  assert.equal(signals.confidenceAlignment, "increasing");
   assert.equal(signals.supervisedActionChainActiveStepIndex, 1);
   assert.equal(signals.supervisedActionChainStepIndicator, "Step 2 of 3");
+});
+
+test("holds the current chain step when confidence stays flat across a converging follow-up", () => {
+  const signals = derive({
+    isRefined: true,
+    verificationState: "inconclusive",
+    lastObservation: "Disabling the Animator speed sync still narrows the issue to the same handoff, but the symptom is only partly reduced.",
+    previousActionChainState: {
+      currentStepIndex: 0,
+      totalSteps: 3,
+      lastStepIntent: "isolation",
+      lastStepVerification: "inconclusive",
+      lastStepWatchFor: "Watch for whether isolating animator speed sync makes the symptom disappear, weaken, or stay exactly the same.",
+      previousConfidenceLevel: "medium",
+      confidenceHistory: ["low", "medium"],
+    },
+    problemDescription: "Player movement breaks after changing the Animator speed sync.",
+    result: makeResult({
+      what_happened: "The Animator speed sync override is still the most likely cause of the symptom.",
+      what_to_do_next: [
+        "Temporarily isolate only the Animator resume handoff and one related variable, then compare whether the symptom changes immediately.",
+        "Temporarily force the resume state to a known-safe value and compare the behavior immediately before and after.",
+      ],
+    }),
+  });
+
+  assert.equal(signals.confidenceLevel, "medium");
+  assert.equal(signals.confidenceAlignment, "unstable");
+  assert.equal(signals.supervisedActionChain?.length, 3);
+  assert.equal(signals.supervisedActionChainActiveStepIndex, 0);
+  assert.equal(signals.supervisedActionChainStepIndicator, "Step 1 of 3");
+});
+
+test("drops the chain when confidence decreases across a converging follow-up", () => {
+  const signals = derive({
+    isRefined: true,
+    verificationState: "inconclusive",
+    lastObservation: "The isolated handoff is still involved, but the result is much noisier now and the signal is less trustworthy than the last step.",
+    previousActionChainState: {
+      currentStepIndex: 1,
+      totalSteps: 3,
+      lastStepIntent: "isolation",
+      lastStepVerification: "inconclusive",
+      lastStepWatchFor: "Watch for whether changing animator resume handoff shifts the symptom immediately instead of only producing later side effects.",
+      previousConfidenceLevel: "high",
+      confidenceHistory: ["medium", "high"],
+    },
+    problemDescription: "Player movement breaks after changing the Animator speed sync.",
+    result: makeResult({
+      what_happened: "The Animator speed sync override is still the most likely cause of the symptom.",
+      what_to_do_next: [
+        "Temporarily isolate only the Animator resume handoff and one related variable, then compare whether the symptom changes immediately.",
+        "Temporarily force the resume state to a known-safe value and compare the behavior immediately before and after.",
+      ],
+    }),
+  });
+
+  assert.equal(signals.confidenceLevel, "medium");
+  assert.equal(signals.confidenceAlignment, "decreasing");
+  assert.equal(signals.supervisedActionChain, null);
+  assert.equal(signals.supervisedActionChainStepIndicator, null);
 });
 
 test("resets chain continuity to step 1 when the previous step was falsified", () => {
