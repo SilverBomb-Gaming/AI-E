@@ -1461,7 +1461,22 @@ function getEscalationStrategyGuidance(strategy: EscalationStrategy | null): str
   }
 }
 
+function shouldSuppressRecommendedDebuggingMode(params: {
+  isRefined: boolean;
+  problemDescription: string | undefined;
+  confidenceLevel: ConfidenceLevel;
+  showLowEvidenceCue: boolean;
+}): boolean {
+  if (params.isRefined || !params.problemDescription || !shouldUseMessyInputFirstStep(params.problemDescription)) {
+    return false;
+  }
+
+  return params.showLowEvidenceCue || params.confidenceLevel !== "high";
+}
+
 function getRecommendedDebuggingMode(params: {
+  isRefined: boolean;
+  problemDescription: string | undefined;
   diagnosis: string;
   primaryStep: string | null;
   nextStepGuidance: string | null;
@@ -1469,6 +1484,7 @@ function getRecommendedDebuggingMode(params: {
   suggestedNextAction: SuggestedNextAction;
   suggestedEscalationStrategy: EscalationStrategy | null;
   confidenceLevel: ConfidenceLevel;
+  showLowEvidenceCue: boolean;
 }): DebuggingMode | null {
   if (params.suggestedNextAction === "stop") {
     return null;
@@ -1487,6 +1503,17 @@ function getRecommendedDebuggingMode(params: {
       !params.primaryStep)
   ) {
     return "reproduce-in-clean-scene";
+  }
+
+  if (
+    shouldSuppressRecommendedDebuggingMode({
+      isRefined: params.isRefined,
+      problemDescription: params.problemDescription,
+      confidenceLevel: params.confidenceLevel,
+      showLowEvidenceCue: params.showLowEvidenceCue,
+    })
+  ) {
+    return null;
   }
 
   if (
@@ -1638,6 +1665,8 @@ export function AnalysisResult({
     observation: lastObservation,
   });
   const recommendedDebuggingMode = getRecommendedDebuggingMode({
+    isRefined,
+    problemDescription: input?.problemDescription,
     diagnosis: result.what_happened,
     primaryStep: currentGuidedStep ?? displayedConfirmFirstStep ?? null,
     nextStepGuidance,
@@ -1645,6 +1674,7 @@ export function AnalysisResult({
     suggestedNextAction,
     suggestedEscalationStrategy,
     confidenceLevel,
+    showLowEvidenceCue,
   });
   const [observation, setObservation] = useState("");
   const [isSubmittingFollowUp, setIsSubmittingFollowUp] = useState(false);
