@@ -15,6 +15,7 @@ export type ActionChainIntent = StoredActionChainIntent;
 export type ActionChainState = StoredActionChainState;
 export type ConfidenceLevel = "high" | "medium" | "low";
 export type ConfidenceAlignment = "increasing" | "decreasing" | "unstable";
+export type DecisionCommitment = "committed" | null;
 export type EscalationStrategy = "minimal-repro" | "logging" | "single-system-rebuild" | "clean-environment";
 export type SuggestedNextAction = "continue-thread" | "restart-fresh" | "stop" | "escalate";
 export type DebuggingMode =
@@ -1212,6 +1213,9 @@ export function getConfidenceLevel(params: {
   verificationState: FollowUpVerificationState | undefined;
   loopTerminationStatus: LoopTerminationStatus | null;
   showLowEvidenceCue: boolean;
+  isRefined: boolean;
+  previousActionChainState: ActionChainState | undefined;
+  observation: string | undefined;
 }): ConfidenceLevel {
   if (params.loopTerminationStatus === "resolved" || params.verificationState === "confirmed") {
     return "high";
@@ -1219,6 +1223,25 @@ export function getConfidenceLevel(params: {
 
   if (params.loopTerminationStatus === "stuck" || params.showLowEvidenceCue) {
     return "low";
+  }
+
+  if (
+    params.isRefined &&
+    params.loopTerminationStatus === "converging" &&
+    params.verificationState === "inconclusive" &&
+    !params.showLowEvidenceCue &&
+    hasStrongCommitmentSignal({
+      observation: params.observation,
+      previousActionChainState: params.previousActionChainState,
+    })
+  ) {
+    const previousConfidenceLevel =
+      getNormalizedConfidenceHistory(params.previousActionChainState).slice(-1)[0] ??
+      params.previousActionChainState?.previousConfidenceLevel;
+
+    if (previousConfidenceLevel === "medium" || previousConfidenceLevel === "high") {
+      return "high";
+    }
   }
 
   if (params.loopTerminationStatus === "converging" || params.verificationState === "falsified") {
@@ -1287,6 +1310,90 @@ function getConfidenceAlignment(params: {
   }
 
   return "unstable";
+}
+
+function hasStableHighConfidence(params: {
+  currentConfidenceLevel: ConfidenceLevel;
+  previousActionChainState: ActionChainState | undefined;
+}): boolean {
+  if (params.currentConfidenceLevel !== "high") {
+    return false;
+  }
+
+  const sequence = [
+    ...getNormalizedConfidenceHistory(params.previousActionChainState),
+    params.currentConfidenceLevel,
+  ].slice(-2);
+
+  return sequence.length === 2 && sequence.every((level) => level === "high");
+}
+
+function hasStrongCommitmentSignal(params: {
+  observation: string | undefined;
+  previousActionChainState: ActionChainState | undefined;
+}): boolean {
+  const observation = params.observation?.trim();
+  if (
+    !observation ||
+    PARTIAL_SIGNAL_PATTERN.test(observation) ||
+    FALSIFICATION_SIGNAL_PATTERN.test(observation) ||
+    /\b(?:no longer|unchanged|slipping|noisier|mixed|unclear)\b/i.test(observation)
+  ) {
+    return false;
+  }
+
+  const hasStrongTrackingSignal =
+    /\b(?:cleanly tracks|tracks the symptom|brings? .* back|same .* drives the symptom|same .* keeps matching|only appears while)\b/i.test(observation);
+
+  if (!hasStrongTrackingSignal) {
+    return false;
+  }
+
+  return doesObservationMatchActionChainWatchFor({
+    observation,
+    watchFor: params.previousActionChainState?.lastStepWatchFor,
+    intent: params.previousActionChainState?.lastStepIntent,
+  });
+}
+
+function getDecisionCommitment(params: {
+  isRefined: boolean;
+  verificationState: FollowUpVerificationState | undefined;
+  loopTerminationStatus: LoopTerminationStatus | null;
+  suggestedNextAction: SuggestedNextAction;
+  showLowEvidenceCue: boolean;
+  confidenceLevel: ConfidenceLevel;
+  confidenceAlignment: ConfidenceAlignment | null;
+  previousActionChainState: ActionChainState | undefined;
+}): DecisionCommitment {
+  if (
+    !params.isRefined ||
+    params.showLowEvidenceCue ||
+    params.suggestedNextAction !== "continue-thread" ||
+    params.loopTerminationStatus === "resolved" ||
+    params.loopTerminationStatus === "stuck" ||
+    params.verificationState === "falsified" ||
+    params.confidenceLevel !== "high" ||
+    params.confidenceAlignment === "decreasing"
+  ) {
+    return null;
+  }
+
+  if (params.confidenceAlignment === "increasing") {
+    return "committed";
+  }
+
+  if (
+    params.previousActionChainState?.isCommitted ||
+    hasStableHighConfidence({
+      currentConfidenceLevel: params.confidenceLevel,
+      previousActionChainState: params.previousActionChainState,
+    })
+  ) {
+    return "committed";
+  }
+
+  return null;
 }
 
 export function getSuggestedNextAction(params: {
@@ -1644,6 +1751,63 @@ function buildActionChainDecisionStep(params: {
   };
 }
 
+function buildCommittedConfirmationStep(params: {
+  mode: DebuggingMode;
+  currentStep: string | null;
+}): SupervisedActionChainStep {
+  const focus = getActionChainFocusLabel(params.currentStep);
+
+  switch (params.mode) {
+    case "instrument-with-logging":
+      return {
+        label: "Confirm the failing branch",
+        purpose: `Treat ${focus} as the leading cause and verify that the same branch, event, or value mismatch appears exactly when the symptom starts.`,
+        watchFor: `Watch for the same ${focus} signal to reproduce cleanly at symptom time and disappear when the suspected path is bypassed.`,
+        intent: "confirmation",
+      };
+    case "check-initialization-order":
+      return {
+        label: "Confirm the timing cause",
+        purpose: `Treat ${focus} as the leading cause and verify that the symptom only appears while ${focus} runs before its dependency is ready.`,
+        watchFor: `Watch for the same lifecycle mismatch around ${focus} to track the symptom; if the symptom survives after the order is corrected, drop this hypothesis.`,
+        intent: "confirmation",
+      };
+    case "check-duplicate-writers":
+      return {
+        label: "Confirm the overwrite cause",
+        purpose: `Treat ${focus} as the leading cause and verify that isolating the extra writer removes the bad state and restoring it brings the overwrite back.`,
+        watchFor: `Watch for the bad state to track the same ${focus} overwrite path instead of drifting to a different writer.`,
+        intent: "confirmation",
+      };
+    case "validate-ownership-references":
+      return {
+        label: "Confirm the live reference failure",
+        purpose: `Treat ${focus} as the leading cause and verify that the symptom only appears while the same owner or reference is stale, null, or wrong.`,
+        watchFor: `Watch for the symptom to track the same ${focus} ownership failure and contradict if a different object path takes over.`,
+        intent: "confirmation",
+      };
+    case "isolate-one-subsystem":
+    default:
+      return {
+        label: "Confirm the likely root cause",
+        purpose: `Treat ${focus} as the leading cause and verify that isolating it shifts the symptom immediately and restoring it brings the symptom back.`,
+        watchFor: `Watch for a clean confirm-or-contradict result around ${focus}: the symptom should track this subsystem directly, not stay unchanged or move to a different cause.`,
+        intent: "confirmation",
+      };
+  }
+}
+
+function buildCommittedDecisionStep(params: {
+  suggestedEscalationStrategy: EscalationStrategy | null;
+}): SupervisedActionChainStep {
+  return {
+    label: "Reset if contradicted",
+    purpose: "Leave confirmation mode immediately if the signal weakens, confidence falls, or a different system becomes the clearer driver.",
+    watchFor: `Watch for no change, a stronger alternate cause, or falling confidence. If that appears, drop the committed hypothesis and switch to ${getEscalationStrategyFallbackLabel(params.suggestedEscalationStrategy)} instead of forcing the conclusion.`,
+    intent: "decision",
+  };
+}
+
 function doesObservationMatchActionChainWatchFor(params: {
   observation: string | undefined;
   watchFor: string | undefined;
@@ -1677,6 +1841,8 @@ function doesObservationMatchActionChainWatchFor(params: {
         PARTIAL_SIGNAL_PATTERN.test(observation) ||
         sharedTerms >= 1
       );
+    case "confirmation":
+      return CONFIRMATION_SIGNAL_PATTERN.test(observation) || FALSIFICATION_SIGNAL_PATTERN.test(observation) || sharedTerms >= 1;
     case "decision":
     default:
       return sharedTerms >= 1;
@@ -1690,12 +1856,15 @@ function getSupervisedActionChainContinuity(params: {
   suggestedNextAction: SuggestedNextAction;
   showLowEvidenceCue: boolean;
   confidenceLevel: ConfidenceLevel;
+  decisionCommitment: DecisionCommitment;
+  verificationState: FollowUpVerificationState | undefined;
   previousActionChainState: ActionChainState | undefined;
   observation: string | undefined;
 }): {
   activeStepIndex: number;
   stepIndicator: string | null;
   confidenceAlignment: ConfidenceAlignment | null;
+  decisionCommitment: DecisionCommitment;
   shouldDropChain: boolean;
 } {
   if (!params.chain?.length) {
@@ -1703,6 +1872,7 @@ function getSupervisedActionChainContinuity(params: {
       activeStepIndex: 0,
       stepIndicator: null,
       confidenceAlignment: null,
+      decisionCommitment: null,
       shouldDropChain: false,
     };
   }
@@ -1723,6 +1893,7 @@ function getSupervisedActionChainContinuity(params: {
       activeStepIndex: 0,
       stepIndicator: null,
       confidenceAlignment,
+      decisionCommitment: params.decisionCommitment,
       shouldDropChain: true,
     };
   }
@@ -1730,8 +1901,19 @@ function getSupervisedActionChainContinuity(params: {
   if (!params.isRefined || !params.previousActionChainState) {
     return {
       activeStepIndex: 0,
+      stepIndicator: params.decisionCommitment ? "Confirmation mode" : `Step 1 of ${params.chain.length}`,
+      confidenceAlignment,
+      decisionCommitment: params.decisionCommitment,
+      shouldDropChain: false,
+    };
+  }
+
+  if (params.verificationState === "falsified") {
+    return {
+      activeStepIndex: 0,
       stepIndicator: `Step 1 of ${params.chain.length}`,
       confidenceAlignment,
+      decisionCommitment: null,
       shouldDropChain: false,
     };
   }
@@ -1741,6 +1923,7 @@ function getSupervisedActionChainContinuity(params: {
       activeStepIndex: 0,
       stepIndicator: `Step 1 of ${params.chain.length}`,
       confidenceAlignment,
+      decisionCommitment: null,
       shouldDropChain: false,
     };
   }
@@ -1757,6 +1940,7 @@ function getSupervisedActionChainContinuity(params: {
       activeStepIndex: 0,
       stepIndicator: null,
       confidenceAlignment,
+      decisionCommitment: null,
       shouldDropChain: true,
     };
   }
@@ -1766,7 +1950,18 @@ function getSupervisedActionChainContinuity(params: {
       activeStepIndex: 0,
       stepIndicator: null,
       confidenceAlignment,
+      decisionCommitment: null,
       shouldDropChain: true,
+    };
+  }
+
+  if (params.decisionCommitment) {
+    return {
+      activeStepIndex: 0,
+      stepIndicator: "Confirmation mode",
+      confidenceAlignment,
+      decisionCommitment: params.decisionCommitment,
+      shouldDropChain: false,
     };
   }
 
@@ -1777,6 +1972,7 @@ function getSupervisedActionChainContinuity(params: {
       activeStepIndex: priorIndex,
       stepIndicator: `Step ${priorIndex + 1} of ${params.chain.length}`,
       confidenceAlignment,
+      decisionCommitment: null,
       shouldDropChain: false,
     };
   }
@@ -1790,6 +1986,7 @@ function getSupervisedActionChainContinuity(params: {
     activeStepIndex: nextIndex,
     stepIndicator: `Step ${nextIndex + 1} of ${params.chain.length}`,
     confidenceAlignment,
+    decisionCommitment: null,
     shouldDropChain: false,
   };
 }
@@ -1805,6 +2002,7 @@ export function getBoundedSupervisedActionChain(params: {
   currentGuidedStep: string | null;
   nextStepGuidance: string | null;
   suggestedEscalationStrategy: EscalationStrategy | null;
+  decisionCommitment: DecisionCommitment;
 }): SupervisedActionChainStep[] | null {
   if (!params.recommendedDebuggingMode || params.recommendedDebuggingMode === "reproduce-in-clean-scene") {
     return null;
@@ -1829,6 +2027,18 @@ export function getBoundedSupervisedActionChain(params: {
 
   if (!params.isRefined && shouldUseMessyInputFirstStep(params.problemDescription)) {
     return null;
+  }
+
+  if (params.decisionCommitment) {
+    return [
+      buildCommittedConfirmationStep({
+        mode: params.recommendedDebuggingMode,
+        currentStep: params.currentGuidedStep,
+      }),
+      buildCommittedDecisionStep({
+        suggestedEscalationStrategy: params.suggestedEscalationStrategy,
+      }),
+    ];
   }
 
   const stepOne = buildSupervisedActionChainStep(params.currentGuidedStep, params.recommendedDebuggingMode);
@@ -1871,6 +2081,7 @@ export function deriveAnalysisResultSignals(params: {
   showLowEvidenceCue: boolean;
   confidenceLevel: ConfidenceLevel;
   confidenceAlignment: ConfidenceAlignment | null;
+  decisionCommitment: DecisionCommitment;
   suggestedNextAction: SuggestedNextAction;
   recommendedDebuggingMode: DebuggingMode | null;
   supervisedActionChain: SupervisedActionChainStep[] | null;
@@ -1924,6 +2135,14 @@ export function deriveAnalysisResultSignals(params: {
     verificationState,
     loopTerminationStatus,
     showLowEvidenceCue,
+    isRefined,
+    previousActionChainState,
+    observation: lastObservation,
+  });
+  const confidenceAlignment = getConfidenceAlignment({
+    currentConfidenceLevel: confidenceLevel,
+    previousActionChainState,
+    isRefined,
   });
   const suggestedNextAction = getSuggestedNextAction({
     loopTerminationStatus,
@@ -1933,6 +2152,16 @@ export function deriveAnalysisResultSignals(params: {
     showLowEvidenceCue,
     hasGuidedStep: Boolean(currentGuidedStep),
     observation: lastObservation,
+  });
+  const decisionCommitment = getDecisionCommitment({
+    isRefined,
+    verificationState,
+    loopTerminationStatus,
+    suggestedNextAction,
+    showLowEvidenceCue,
+    confidenceLevel,
+    confidenceAlignment,
+    previousActionChainState,
   });
   const recommendedDebuggingMode = getRecommendedDebuggingMode({
     isRefined,
@@ -1957,6 +2186,7 @@ export function deriveAnalysisResultSignals(params: {
     currentGuidedStep,
     nextStepGuidance,
     suggestedEscalationStrategy,
+    decisionCommitment,
   });
   const supervisedActionChainContinuity = getSupervisedActionChainContinuity({
     chain: supervisedActionChain,
@@ -1965,6 +2195,8 @@ export function deriveAnalysisResultSignals(params: {
     suggestedNextAction,
     showLowEvidenceCue,
     confidenceLevel,
+    decisionCommitment,
+    verificationState,
     previousActionChainState,
     observation: lastObservation,
   });
@@ -1985,6 +2217,7 @@ export function deriveAnalysisResultSignals(params: {
     showLowEvidenceCue,
     confidenceLevel,
     confidenceAlignment: supervisedActionChainContinuity.confidenceAlignment,
+    decisionCommitment: supervisedActionChainContinuity.decisionCommitment,
     suggestedNextAction,
     recommendedDebuggingMode,
     supervisedActionChain: alignedSupervisedActionChain,

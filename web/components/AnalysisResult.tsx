@@ -15,6 +15,7 @@ import {
 import type {
   ConfidenceAlignment,
   ConfidenceLevel,
+  DecisionCommitment,
   DebuggingMode,
   EscalationStrategy,
   LoopTerminationStatus,
@@ -183,6 +184,16 @@ function getConfidenceAlignmentClassName(confidenceAlignment: ConfidenceAlignmen
   }
 }
 
+function getDecisionCommitmentLabel(decisionCommitment: DecisionCommitment): string | null {
+  return decisionCommitment === "committed" ? "High confidence - confirm cause" : null;
+}
+
+function getDecisionCommitmentClassName(decisionCommitment: DecisionCommitment): string {
+  return decisionCommitment === "committed"
+    ? "border-emerald-200/80 bg-emerald-50/80 text-emerald-700/90"
+    : "border-ink/10 bg-white/60 text-ink/65";
+}
+
 function getSuggestedNextActionLabel(action: SuggestedNextAction): string {
   switch (action) {
     case "continue-thread":
@@ -313,6 +324,7 @@ export function AnalysisResult({
     showLowEvidenceCue,
     confidenceLevel,
     confidenceAlignment,
+    decisionCommitment,
     suggestedNextAction,
     recommendedDebuggingMode,
     supervisedActionChain,
@@ -444,6 +456,7 @@ export function AnalysisResult({
               currentStepIndex: supervisedActionChainActiveStepIndex,
               totalSteps: supervisedActionChain?.length ?? 1,
               lastStepIntent: currentSupervisedActionChainStep.intent,
+              isCommitted: decisionCommitment === "committed",
               lastStepVerification: verificationState,
               lastStepWatchFor: currentSupervisedActionChainStep.watchFor,
               previousConfidenceLevel: confidenceLevel,
@@ -479,6 +492,13 @@ export function AnalysisResult({
               className={`inline-flex rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] ${getConfidenceAlignmentClassName(confidenceAlignment)}`}
             >
               {getConfidenceAlignmentLabel(confidenceAlignment)}
+            </span>
+          ) : null}
+          {isRefined && getDecisionCommitmentLabel(decisionCommitment) ? (
+            <span
+              className={`inline-flex rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] ${getDecisionCommitmentClassName(decisionCommitment)}`}
+            >
+              {getDecisionCommitmentLabel(decisionCommitment)}
             </span>
           ) : null}
         </div>
@@ -574,7 +594,9 @@ export function AnalysisResult({
               ) : null}
             </div>
             <p className="mt-2 text-xs leading-6 body-muted sm:text-sm">
-              AI-E is suggesting a short evidence-gated sequence. Nothing runs automatically; approve one step at a time and stop as soon as the observation resolves or weakens the diagnosis.
+              {decisionCommitment === "committed"
+                ? "AI-E has enough evidence to stop widening the search and switch into confirmation mode. Nothing runs automatically; verify the likely cause and leave this mode immediately if the signal weakens or contradicts it."
+                : "AI-E is suggesting a short evidence-gated sequence. Nothing runs automatically; approve one step at a time and stop as soon as the observation resolves or weakens the diagnosis."}
             </p>
             <ol className="mt-4 space-y-3">
               {supervisedActionChain.map((step, index) => (
@@ -590,13 +612,19 @@ export function AnalysisResult({
             </ol>
           </div>
         ) : null}
-        {displayedConfirmFirstStep ? (
+        {decisionCommitment === "committed" && currentSupervisedActionChainStep ? (
+          <div className="mt-4 rounded-[1.25rem] border border-emerald-200/70 bg-emerald-50/60 p-4">
+            <p className="section-label">Confirm likely cause</p>
+            <p className="mt-2 text-sm leading-7 text-ink/90 sm:text-base">1. {currentSupervisedActionChainStep.purpose}</p>
+            <p className="mt-2 text-xs leading-6 body-muted sm:text-sm">Verify: {currentSupervisedActionChainStep.watchFor}</p>
+          </div>
+        ) : displayedConfirmFirstStep ? (
           <div className="mt-4 rounded-[1.25rem] border border-ocean/15 bg-ocean/5 p-4">
             <p className="section-label">Confirm first</p>
             <p className="mt-2 text-sm leading-7 text-ink/90 sm:text-base">1. {displayedConfirmFirstStep}</p>
           </div>
         ) : null}
-        {isGuidedLoopActive ? (
+        {isGuidedLoopActive && decisionCommitment !== "committed" ? (
           <div className="mt-4">
             <p className="section-label">Then continue</p>
             <ol className="mt-3 space-y-3 text-sm leading-7 text-ink/90 sm:text-base">
@@ -615,7 +643,7 @@ export function AnalysisResult({
             </ol>
           </div>
         ) : null}
-        {isGuidedLoopActive && nextStepGuidance && loopTerminationStatus !== "stuck" ? (
+        {isGuidedLoopActive && decisionCommitment !== "committed" && nextStepGuidance && loopTerminationStatus !== "stuck" ? (
           <div className="mt-4 rounded-[1.25rem] border border-ink/10 bg-white/50 p-4">
             <p className="section-label">Next focused step</p>
             <p className="mt-2 text-sm leading-7 text-ink/90 sm:text-base">{displayedGuidedSteps.length + 1}. {nextStepGuidance}</p>

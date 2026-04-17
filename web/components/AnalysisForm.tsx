@@ -11,13 +11,14 @@ export type AnalysisEntryMode = "fresh" | "continue";
 
 export type FollowUpVerificationState = "confirmed" | "falsified" | "inconclusive";
 export type StoredLoopTerminationStatus = "resolved" | "converging" | "stuck";
-export type StoredActionChainIntent = "isolation" | "instrumentation" | "timing" | "duplicate-writer" | "ownership" | "decision";
+export type StoredActionChainIntent = "isolation" | "instrumentation" | "timing" | "duplicate-writer" | "ownership" | "confirmation" | "decision";
 export type StoredConfidenceLevel = "high" | "medium" | "low";
 
 export type StoredActionChainState = {
   currentStepIndex: number;
   totalSteps: number;
   lastStepIntent: StoredActionChainIntent;
+  isCommitted?: boolean;
   lastStepVerification?: FollowUpVerificationState;
   lastStepWatchFor?: string;
   previousConfidenceLevel?: StoredConfidenceLevel;
@@ -137,11 +138,13 @@ export function normalizeStoredAnalysisState(value: unknown): StoredAnalysisStat
         (source.actionChainState as Record<string, unknown>).lastStepIntent === "timing" ||
         (source.actionChainState as Record<string, unknown>).lastStepIntent === "duplicate-writer" ||
         (source.actionChainState as Record<string, unknown>).lastStepIntent === "ownership" ||
+        (source.actionChainState as Record<string, unknown>).lastStepIntent === "confirmation" ||
         (source.actionChainState as Record<string, unknown>).lastStepIntent === "decision")
         ? {
             currentStepIndex: Math.max(0, Math.min(2, Math.floor(Number((source.actionChainState as Record<string, unknown>).currentStepIndex)))),
             totalSteps: Math.max(1, Math.min(3, Math.floor(Number((source.actionChainState as Record<string, unknown>).totalSteps)))),
             lastStepIntent: (source.actionChainState as Record<string, unknown>).lastStepIntent as StoredActionChainIntent,
+            isCommitted: Boolean((source.actionChainState as Record<string, unknown>).isCommitted),
             lastStepVerification:
               (source.actionChainState as Record<string, unknown>).lastStepVerification === "confirmed" ||
               (source.actionChainState as Record<string, unknown>).lastStepVerification === "falsified" ||
@@ -185,7 +188,7 @@ export function getContinuationThreadSnapshot(state: StoredAnalysisState | null 
     lastAttemptedStep: state?.lastAttemptedStep,
     lastClassification: getLoopTerminationLabel(state?.loopTerminationStatus),
     actionChainProgress: state?.actionChainState
-      ? `Step ${state.actionChainState.currentStepIndex + 1} of ${state.actionChainState.totalSteps} (${state.actionChainState.lastStepIntent}${state.actionChainState.previousConfidenceLevel ? `, ${state.actionChainState.previousConfidenceLevel} confidence` : ""})`
+      ? `${state.actionChainState.isCommitted ? "Confirmation mode" : `Step ${state.actionChainState.currentStepIndex + 1} of ${state.actionChainState.totalSteps}`} (${state.actionChainState.lastStepIntent}${state.actionChainState.previousConfidenceLevel ? `, ${state.actionChainState.previousConfidenceLevel} confidence` : ""})`
       : undefined,
   };
 }

@@ -193,6 +193,128 @@ test("drops the chain when confidence decreases across a converging follow-up", 
   assert.equal(signals.supervisedActionChainStepIndicator, null);
 });
 
+test("enters commitment mode when confidence rises to high on a converging follow-up", () => {
+  const signals = derive({
+    isRefined: true,
+    verificationState: "inconclusive",
+    lastObservation: "Disabling the Animator speed sync now cleanly tracks the symptom to the same handoff, and restoring it brings the bad transition back.",
+    previousActionChainState: {
+      currentStepIndex: 1,
+      totalSteps: 3,
+      lastStepIntent: "isolation",
+      lastStepVerification: "inconclusive",
+      lastStepWatchFor: "Watch for whether changing animator resume handoff shifts the symptom immediately instead of only producing later side effects.",
+      previousConfidenceLevel: "medium",
+      confidenceHistory: ["low", "medium"],
+    },
+    problemDescription: "Player movement breaks after changing the Animator speed sync.",
+    result: makeResult({
+      what_happened: "The Animator speed sync override is now the clearly leading cause of the symptom.",
+      what_to_do_next: [
+        "Temporarily isolate only the Animator resume handoff and one related variable, then compare whether the symptom changes immediately.",
+        "Temporarily force the resume state to a known-safe value and compare the behavior immediately before and after.",
+      ],
+    }),
+  });
+
+  assert.equal(signals.confidenceLevel, "high");
+  assert.equal(signals.confidenceAlignment, "increasing");
+  assert.equal(signals.decisionCommitment, "committed");
+  assert.equal(signals.supervisedActionChain?.[0]?.intent, "confirmation");
+  assert.match(signals.supervisedActionChain?.[0]?.label ?? "", /confirm/i);
+  assert.equal(signals.supervisedActionChainStepIndicator, "Confirmation mode");
+});
+
+test("stays in commitment mode when confidence remains stable and high", () => {
+  const signals = derive({
+    isRefined: true,
+    verificationState: "inconclusive",
+    lastObservation: "The same Animator handoff still cleanly drives the symptom, and the confirm check keeps matching the expected path.",
+    previousActionChainState: {
+      currentStepIndex: 0,
+      totalSteps: 2,
+      lastStepIntent: "confirmation",
+      isCommitted: true,
+      lastStepVerification: "inconclusive",
+      lastStepWatchFor: "Watch for a clean confirm-or-contradict result around animator speed sync: the symptom should track this subsystem directly, not stay unchanged or move to a different cause.",
+      previousConfidenceLevel: "high",
+      confidenceHistory: ["medium", "high"],
+    },
+    problemDescription: "Player movement breaks after changing the Animator speed sync.",
+    result: makeResult({
+      what_happened: "The Animator speed sync override remains the clearly leading cause of the symptom.",
+      what_to_do_next: [
+        "Temporarily isolate only the Animator resume handoff and one related variable, then compare whether the symptom changes immediately.",
+      ],
+    }),
+  });
+
+  assert.equal(signals.confidenceLevel, "high");
+  assert.equal(signals.confidenceAlignment, "unstable");
+  assert.equal(signals.decisionCommitment, "committed");
+  assert.equal(signals.supervisedActionChainActiveStepIndex, 0);
+  assert.equal(signals.supervisedActionChainStepIndicator, "Confirmation mode");
+});
+
+test("exits commitment mode when confidence drops after a committed hypothesis", () => {
+  const signals = derive({
+    isRefined: true,
+    verificationState: "inconclusive",
+    lastObservation: "The signal is noisier now, the same handoff no longer tracks the symptom cleanly, and confidence is slipping.",
+    previousActionChainState: {
+      currentStepIndex: 0,
+      totalSteps: 2,
+      lastStepIntent: "confirmation",
+      isCommitted: true,
+      lastStepVerification: "inconclusive",
+      lastStepWatchFor: "Watch for a clean confirm-or-contradict result around animator speed sync: the symptom should track this subsystem directly, not stay unchanged or move to a different cause.",
+      previousConfidenceLevel: "high",
+      confidenceHistory: ["medium", "high"],
+    },
+    problemDescription: "Player movement breaks after changing the Animator speed sync.",
+    result: makeResult({
+      what_happened: "The Animator speed sync override is still the most likely cause of the symptom.",
+      what_to_do_next: [
+        "Temporarily isolate only the Animator resume handoff and one related variable, then compare whether the symptom changes immediately.",
+      ],
+    }),
+  });
+
+  assert.equal(signals.confidenceLevel, "medium");
+  assert.equal(signals.decisionCommitment, null);
+  assert.equal(signals.supervisedActionChain, null);
+});
+
+test("resets commitment mode when a contradiction falsifies the current hypothesis", () => {
+  const signals = derive({
+    isRefined: true,
+    verificationState: "falsified",
+    lastObservation: "The confirm check changed nothing, but isolating the pathfinding resume handoff immediately changed the freeze.",
+    previousActionChainState: {
+      currentStepIndex: 0,
+      totalSteps: 2,
+      lastStepIntent: "confirmation",
+      isCommitted: true,
+      lastStepVerification: "inconclusive",
+      lastStepWatchFor: "Watch for a clean confirm-or-contradict result around animator speed sync: the symptom should track this subsystem directly, not stay unchanged or move to a different cause.",
+      previousConfidenceLevel: "high",
+      confidenceHistory: ["medium", "high"],
+    },
+    problemDescription: "The enemy freezing issue changed after the pathfinding resume handoff.",
+    result: makeResult({
+      what_happened: "The pathfinding resume handoff is the more likely cause of the freezing issue.",
+      what_to_do_next: [
+        "Temporarily disable the pathfinding resume handoff and compare the freezing before and after.",
+      ],
+    }),
+  });
+
+  assert.equal(signals.decisionCommitment, null);
+  assert.equal(signals.supervisedActionChainActiveStepIndex, 0);
+  assert.equal(signals.supervisedActionChain?.[0]?.intent, "isolation");
+  assert.equal(signals.supervisedActionChainStepIndicator, "Step 1 of 3");
+});
+
 test("resets chain continuity to step 1 when the previous step was falsified", () => {
   const signals = derive({
     isRefined: true,
