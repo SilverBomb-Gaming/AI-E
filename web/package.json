@@ -7,7 +7,10 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint . --max-warnings=0",
-    "test": "tsx --test components/analysisResultLogic.test.ts"
+    "test": "tsx --test components/analysisResultLogic.test.ts",
+    "test:trace": "tsx --test lib/aie/*.test.ts",
+    "trace:readiness": "tsx training_readiness_check.ts",
+    "trace:capture": "tsx training_dataset_capture.ts"
   },
   "dependencies": {
     "next": "14.2.24",
