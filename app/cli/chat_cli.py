@@ -56,8 +56,7 @@ class AiEChatCli:
 
     def run(self) -> int:
         self._configure_history()
-        if self._debug:
-            self._write("Debug routing enabled.")
+        self._write(f"Debug routing {'enabled' if self._debug else 'disabled'}.")
         self._write("AI-E CLI Chat initialized.")
         self._write("Type 'exit' to quit.")
         try:
