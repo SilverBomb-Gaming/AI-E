@@ -10,12 +10,17 @@ const SAFE_ERROR_MESSAGE = "We couldn't generate an analysis right now. Please t
 
 function normalizePayload(value: unknown): AnalysisInput {
   const source = (value ?? {}) as Record<string, unknown>;
+  const rawStepIndex = Number(source.stepIndex ?? 0);
+
   return {
     problemDescription: String(source.problemDescription ?? "").trim(),
     codeSnippet: String(source.codeSnippet ?? "").trim(),
     errorMessage: String(source.errorMessage ?? "").trim(),
     context: String(source.context ?? "").trim(),
     actionResult: String(source.actionResult ?? "").trim(),
+    sessionId: String(source.sessionId ?? "").trim(),
+    stepIndex: Number.isFinite(rawStepIndex) && rawStepIndex > 0 ? Math.floor(rawStepIndex) : undefined,
+    goal: String(source.goal ?? "").trim(),
   };
 }
 
@@ -33,6 +38,9 @@ function buildPayloadContext(payload: AnalysisInput | null) {
     hasErrorMessage: Boolean(payload.errorMessage),
     hasContext: Boolean(payload.context),
     hasActionResult: Boolean(payload.actionResult),
+    hasSessionId: Boolean(payload.sessionId),
+    stepIndex: payload.stepIndex ?? null,
+    hasGoal: Boolean(payload.goal),
   };
 }
 

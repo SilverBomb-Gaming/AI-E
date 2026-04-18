@@ -4,6 +4,9 @@ export type AnalysisInput = {
   errorMessage?: string;
   context?: string;
   actionResult?: string;
+  sessionId?: string;
+  stepIndex?: number;
+  goal?: string;
 };
 
 export type DryRunActionType =

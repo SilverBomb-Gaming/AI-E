@@ -6,7 +6,13 @@ import { buildAnalysisTraceRecord, listMissingAnalysisTraceFields } from "./anal
 import type { AnalysisInput, FreeAnalysisResponse } from "./types";
 
 function makeInput(problemDescription: string, overrides: Partial<AnalysisInput> = {}): AnalysisInput {
-  return { problemDescription, ...overrides };
+  return {
+    problemDescription,
+    sessionId: "test-session",
+    stepIndex: 1,
+    goal: "Confirm whether the Animator handoff is the leading cause.",
+    ...overrides,
+  };
 }
 
 function makeResult(overrides: Partial<FreeAnalysisResponse> = {}): FreeAnalysisResponse {
@@ -48,6 +54,9 @@ test("fresh traces include the full required contract", () => {
   assert.match(trace.proposedAction, /disable the Animator speed sync override/i);
   assert.match(trace.expectedOutcome, /source of the issue|target/i);
   assert.equal(trace.actionResult, null);
+  assert.equal(trace.sessionId, "test-session");
+  assert.equal(trace.stepIndex, 1);
+  assert.equal(trace.goal, "Confirm whether the Animator handoff is the leading cause.");
   assert.equal(trace.verificationState, null);
   assert.equal(trace.commitmentValidationState, null);
 });
@@ -56,6 +65,7 @@ test("pending commitment traces expose a pending validation state", () => {
   const trace = buildTrace({
     input: makeInput(
       "Player movement breaks after changing the Animator speed sync. The bad transition happens right when the Animator resume handoff runs, and the symptom seems tied to that handoff rather than the rest of movement.",
+      { stepIndex: 2 },
     ),
     isRefined: true,
     verificationState: "inconclusive",
@@ -86,7 +96,7 @@ test("pending commitment traces expose a pending validation state", () => {
 
 test("committed traces expose a validated commitment state", () => {
   const trace = buildTrace({
-    input: makeInput("Player movement breaks after changing the Animator speed sync."),
+    input: makeInput("Player movement breaks after changing the Animator speed sync.", { stepIndex: 3 }),
     isRefined: true,
     verificationState: "inconclusive",
     lastObservation:
@@ -122,6 +132,7 @@ test("follow-up traces preserve action results for falsified, confirmed, and par
   const falsified = buildTrace({
     input: makeInput("Sprint speed flickers after I added a stamina limiter.", {
       actionResult: "Disabling the stamina limiter changed nothing, but disabling the second zoom script removed jitter completely.",
+      stepIndex: 2,
     }),
     isRefined: true,
     verificationState: "falsified",
@@ -135,6 +146,7 @@ test("follow-up traces preserve action results for falsified, confirmed, and par
     input: makeInput("Player movement breaks after changing the Animator speed sync.", {
       actionResult:
         "Disabling the Animator speed sync now cleanly tracks the symptom to the same handoff, and restoring it brings the bad transition back.",
+      stepIndex: 2,
     }),
     isRefined: true,
     verificationState: "confirmed",
@@ -146,6 +158,7 @@ test("follow-up traces preserve action results for falsified, confirmed, and par
     input: makeInput("Player movement breaks after changing the Animator speed sync.", {
       actionResult:
         "Disabling the Animator speed sync reduced the jitter, but the symptom still appears during the handoff.",
+      stepIndex: 3,
     }),
     isRefined: true,
     verificationState: "inconclusive",

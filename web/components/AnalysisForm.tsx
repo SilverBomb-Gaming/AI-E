@@ -3,6 +3,11 @@
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
+import {
+  buildExecutionSessionContextBlock,
+  normalizeExecutionGoal,
+  type ExecutionSessionStep,
+} from "@/lib/aie/executionSession";
 import type { AnalysisInput, FreeAnalysisResponse } from "@/lib/aie/types";
 
 const STORAGE_KEY = "aie-free-analysis-result";
@@ -31,20 +36,26 @@ export type StoredAnalysisState = {
   result: FreeAnalysisResponse;
   refinedFromObservation?: boolean;
   lastObservation?: string;
+  previousOutcome?: string;
   verificationState?: FollowUpVerificationState;
   lastAttemptedStep?: string;
   loopTerminationStatus?: StoredLoopTerminationStatus;
   actionChainState?: StoredActionChainState;
+  sessionHistory?: ExecutionSessionStep[];
 };
 
 export type ContinuationThreadSnapshot = {
+  goal?: string;
+  currentStepIndex?: number;
   diagnosis: string;
+  previousOutcome?: string;
   lastAttemptedStep?: string;
   lastClassification?: "Resolved" | "Converging" | "Stuck";
   actionChainProgress?: string;
 };
 
 const initialForm: AnalysisInput = {
+  goal: "",
   problemDescription: "",
   codeSnippet: "",
   errorMessage: "",
@@ -75,12 +86,57 @@ export function normalizeAnalysisInput(value: unknown): AnalysisInput | undefine
   }
 
   return {
+    goal: String(source.goal ?? "").trim(),
     problemDescription,
     codeSnippet: String(source.codeSnippet ?? "").trim(),
     errorMessage: String(source.errorMessage ?? "").trim(),
     context: String(source.context ?? "").trim(),
     actionResult: String(source.actionResult ?? "").trim(),
+    sessionId: String(source.sessionId ?? "").trim(),
+    stepIndex:
+      Number.isFinite(Number(source.stepIndex)) && Number(source.stepIndex) > 0
+        ? Math.floor(Number(source.stepIndex))
+        : undefined,
   };
+}
+
+function normalizeSessionHistory(value: unknown): ExecutionSessionStep[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const steps = value
+    .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
+    .map((item) => {
+      const rawStepIndex = Number(item.stepIndex ?? 0);
+      const verificationState = item.verificationState;
+      const loopTerminationStatus = item.loopTerminationStatus;
+
+      if (
+        !Number.isFinite(rawStepIndex) ||
+        rawStepIndex <= 0 ||
+        typeof item.attemptedStep !== "string" ||
+        typeof item.actionResult !== "string" ||
+        typeof item.diagnosis !== "string" ||
+        (verificationState !== "confirmed" && verificationState !== "falsified" && verificationState !== "inconclusive") ||
+        (loopTerminationStatus !== undefined && loopTerminationStatus !== null && loopTerminationStatus !== "resolved" && loopTerminationStatus !== "converging" && loopTerminationStatus !== "stuck")
+      ) {
+        return null;
+      }
+
+      return {
+        stepIndex: Math.floor(rawStepIndex),
+        attemptedStep: String(item.attemptedStep).trim(),
+        actionResult: String(item.actionResult).trim(),
+        verificationState,
+        diagnosis: String(item.diagnosis).trim(),
+        loopTerminationStatus: loopTerminationStatus ?? null,
+      } satisfies ExecutionSessionStep;
+    })
+    .filter((item): item is ExecutionSessionStep => Boolean(item))
+    .slice(-6);
+
+  return steps.length ? steps : undefined;
 }
 
 function normalizeStoredConfidenceLevel(value: unknown): StoredConfidenceLevel | undefined {
@@ -122,6 +178,7 @@ export function normalizeStoredAnalysisState(value: unknown): StoredAnalysisStat
     result: source.result,
     refinedFromObservation: Boolean(source.refinedFromObservation),
     lastObservation: typeof source.lastObservation === "string" ? source.lastObservation.trim() || undefined : undefined,
+    previousOutcome: typeof source.previousOutcome === "string" ? source.previousOutcome.trim() || undefined : undefined,
     verificationState:
       source.verificationState === "confirmed" || source.verificationState === "falsified" || source.verificationState === "inconclusive"
         ? (source.verificationState as FollowUpVerificationState)
@@ -168,6 +225,7 @@ export function normalizeStoredAnalysisState(value: unknown): StoredAnalysisStat
             confidenceHistory: normalizeStoredConfidenceHistory((source.actionChainState as Record<string, unknown>).confidenceHistory),
           }
         : undefined,
+    sessionHistory: normalizeSessionHistory(source.sessionHistory),
   };
 }
 
@@ -191,7 +249,10 @@ export function getContinuationThreadSnapshot(state: StoredAnalysisState | null 
   }
 
   return {
+    goal: state?.input?.goal,
+    currentStepIndex: state?.input?.stepIndex,
     diagnosis,
+    previousOutcome: state?.previousOutcome,
     lastAttemptedStep: state?.lastAttemptedStep,
     lastClassification: getLoopTerminationLabel(state?.loopTerminationStatus),
     actionChainProgress: state?.actionChainState
@@ -203,8 +264,14 @@ export function getContinuationThreadSnapshot(state: StoredAnalysisState | null 
 export function buildContinuationContextBlock(snapshot: ContinuationThreadSnapshot): string {
   const lines = [
     "Continuation context from the previous AI-E debugging turn:",
+    ...(snapshot.goal ? [`- Goal: ${snapshot.goal}`] : []),
+    ...(snapshot.currentStepIndex ? [`- Current step to approve: ${snapshot.currentStepIndex}`] : []),
     `- Last diagnosis: ${snapshot.diagnosis}`,
   ];
+
+  if (snapshot.previousOutcome) {
+    lines.push(`- Previous outcome: ${snapshot.previousOutcome}`);
+  }
 
   if (snapshot.lastAttemptedStep) {
     lines.push(`- Last step attempted: ${snapshot.lastAttemptedStep}`);
@@ -260,6 +327,14 @@ export function AnalysisForm({ initialMode = "fresh" }: AnalysisFormProps) {
     setIncludeContinuationContext(initialMode === "continue");
   }, [initialMode]);
 
+  useEffect(() => {
+    if (initialMode !== "continue" || !storedState?.input?.goal) {
+      return;
+    }
+
+    setForm((current) => (current.goal ? current : { ...current, goal: storedState.input?.goal ?? "" }));
+  }, [initialMode, storedState]);
+
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setErrorMessage(null);
@@ -271,11 +346,25 @@ export function AnalysisForm({ initialMode = "fresh" }: AnalysisFormProps) {
 
     setIsSubmitting(true);
 
+    const sessionGoal = normalizeExecutionGoal(form.problemDescription, form.goal || storedState?.input?.goal);
+    const sessionId = initialMode === "continue" ? storedState?.input?.sessionId || crypto.randomUUID() : crypto.randomUUID();
+    const stepIndex = initialMode === "continue" ? Math.max(1, storedState?.input?.stepIndex ?? 1) : 1;
+    const sessionContext = buildExecutionSessionContextBlock({
+      goal: sessionGoal,
+      currentStepIndex: stepIndex,
+      previousOutcome: initialMode === "continue" ? storedState?.previousOutcome : undefined,
+      steps: initialMode === "continue" ? storedState?.sessionHistory : undefined,
+    });
+
     const submittedInput = {
       ...form,
+      goal: sessionGoal,
+      sessionId,
+      stepIndex,
       context: [
         (form.context ?? "").trim(),
         includeContinuationContext && continuationSnapshot ? buildContinuationContextBlock(continuationSnapshot) : "",
+        sessionContext,
       ]
         .filter(Boolean)
         .join("\n\n"),
@@ -318,10 +407,12 @@ export function AnalysisForm({ initialMode = "fresh" }: AnalysisFormProps) {
           result: payload,
           refinedFromObservation: false,
           lastObservation: undefined,
+          previousOutcome: initialMode === "continue" ? storedState?.previousOutcome : undefined,
           verificationState: undefined,
           lastAttemptedStep: undefined,
           loopTerminationStatus: undefined,
           actionChainState: undefined,
+          sessionHistory: initialMode === "continue" ? storedState?.sessionHistory ?? [] : [],
         } satisfies StoredAnalysisState),
       );
       router.push("/result");
@@ -384,6 +475,18 @@ export function AnalysisForm({ initialMode = "fresh" }: AnalysisFormProps) {
             </div>
           </div>
         ) : null}
+
+        <label className="grid gap-2 text-sm font-medium text-ink">
+          Goal
+          <input
+            type="text"
+            value={form.goal ?? ""}
+            onChange={(event) => setForm((current) => ({ ...current, goal: event.target.value }))}
+            placeholder="Optional: keep this session focused on one outcome."
+            className="rounded-[1.5rem] border border-ink/10 bg-white/80 px-5 py-4 text-sm text-ink outline-none transition placeholder:text-slate focus:border-coral focus:ring-2 focus:ring-coral/20"
+          />
+          <span className="text-xs body-muted">Leave blank to derive the goal from the issue description.</span>
+        </label>
 
         <label className="grid gap-2 text-sm font-medium text-ink">
           Problem description

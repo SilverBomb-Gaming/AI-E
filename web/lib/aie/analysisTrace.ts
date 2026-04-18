@@ -32,6 +32,9 @@ export type AnalysisTraceLoop = {
 
 export type AnalysisTraceRecord = {
   input: AnalysisInput;
+  sessionId: string | null;
+  stepIndex: number | null;
+  goal: string | null;
   diagnosis: string;
   actionType: DryRunActionType;
   proposedAction: string;
@@ -60,6 +63,9 @@ export type BuildAnalysisTraceRecordParams = {
 
 export const REQUIRED_TRACE_FIELDS = [
   "input",
+  "sessionId",
+  "stepIndex",
+  "goal",
   "diagnosis",
   "actionType",
   "proposedAction",
@@ -103,6 +109,9 @@ export function buildAnalysisTraceRecord(params: BuildAnalysisTraceRecordParams)
 
   return {
     input: params.input,
+    sessionId: params.input.sessionId?.trim() || null,
+    stepIndex: Number.isInteger(params.input.stepIndex) ? params.input.stepIndex ?? null : null,
+    goal: params.input.goal?.trim() || null,
     diagnosis: params.result.what_happened,
     actionType: proposal.actionType,
     proposedAction: proposal.proposedAction,
@@ -137,6 +146,9 @@ export function buildAnalysisTraceRecord(params: BuildAnalysisTraceRecordParams)
 export function listMissingAnalysisTraceFields(trace: AnalysisTraceRecord): string[] {
   const checks: Array<[string, unknown]> = [
     ["input", trace.input],
+    ["sessionId", trace.sessionId],
+    ["stepIndex", trace.stepIndex],
+    ["goal", trace.goal],
     ["diagnosis", trace.diagnosis],
     ["actionType", trace.actionType],
     ["proposedAction", trace.proposedAction],

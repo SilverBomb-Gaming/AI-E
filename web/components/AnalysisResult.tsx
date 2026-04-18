@@ -22,6 +22,7 @@ import type {
   SuggestedNextAction,
 } from "./analysisResultLogic";
 import type { FollowUpVerificationState, StoredActionChainState, StoredLoopTerminationStatus } from "@/components/AnalysisForm";
+import { buildExecutionSessionContextBlock, type ExecutionSessionStep } from "@/lib/aie/executionSession";
 import type { AnalysisInput, FreeAnalysisResponse } from "@/lib/aie/types";
 
 // Rendering decisions must come from analysisResultLogic.ts.
@@ -34,6 +35,10 @@ type AnalysisResultProps = {
   lastObservation?: string;
   verificationState?: FollowUpVerificationState;
   actionChainState?: StoredActionChainState;
+  goal?: string;
+  currentStepIndex?: number;
+  previousOutcome?: string;
+  sessionHistory?: ExecutionSessionStep[];
   onResultChange?: (update: {
     result: FreeAnalysisResponse;
     observation: string;
@@ -338,6 +343,10 @@ export function AnalysisResult({
   lastObservation,
   verificationState,
   actionChainState,
+  goal,
+  currentStepIndex,
+  previousOutcome,
+  sessionHistory,
   onResultChange,
 }: AnalysisResultProps) {
   const [, ...initialFollowUpSteps] = result.what_to_do_next;
@@ -376,6 +385,7 @@ export function AnalysisResult({
   const [isSubmittingFollowUp, setIsSubmittingFollowUp] = useState(false);
   const [followUpError, setFollowUpError] = useState<string | null>(null);
   const trimmedObservation = useMemo(() => observation.trim(), [observation]);
+  const nextStepIndex = Math.max(1, (currentStepIndex ?? input?.stepIndex ?? 1) + 1);
   const canSubmitFollowUp = Boolean(input?.problemDescription && trimmedObservation && !isSubmittingFollowUp && canContinueGuidedLoop);
 
   const handleFollowUpSubmit = async () => {
@@ -402,9 +412,22 @@ export function AnalysisResult({
             currentGuidedStepNumber || undefined,
           ),
           errorMessage: input.errorMessage ?? "",
-          context: input.context ?? "",
+          context: [
+            input.context ?? "",
+            buildExecutionSessionContextBlock({
+              goal: goal ?? input.goal,
+              currentStepIndex: nextStepIndex,
+              previousOutcome,
+              steps: sessionHistory,
+            }),
+          ]
+            .filter(Boolean)
+            .join("\n\n"),
           codeSnippet: input.codeSnippet ?? "",
           actionResult: trimmedObservation,
+          sessionId: input.sessionId ?? "",
+          stepIndex: nextStepIndex,
+          goal: goal ?? input.goal ?? "",
         } satisfies AnalysisInput),
       });
 

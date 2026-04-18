@@ -211,6 +211,12 @@ function buildSignalSummary(input: AnalysisInput): string[] {
     `Primary symptom: ${inferPrimarySymptom(input)}`,
     `User intent area: ${inferUserIntent(input)}`,
     `Likely failure surface: ${inferUnitySurface(input)}`,
+    normalizeText(input.goal)
+      ? `Session goal: ${trimSentence(input.goal ?? "", 140)}`
+      : "Session goal: no",
+    Number.isInteger(input.stepIndex)
+      ? `Session step: ${input.stepIndex}`
+      : "Session step: no",
     scenarioAnchors.length > 0
       ? `Scenario anchors: ${scenarioAnchors.join(", ")}`
       : "Scenario anchors: none extracted from the report",
@@ -782,6 +788,9 @@ function buildOpenAIUserPrompt(input: AnalysisInput): string {
     `- Code snippet: ${normalizeText(input.codeSnippet) || "None provided."}`,
     `- Context: ${normalizeText(input.context) || "None provided."}`,
     `- Action result: ${normalizeText(input.actionResult) || "None provided."}`,
+    `- Session ID: ${normalizeText(input.sessionId) || "None provided."}`,
+    `- Step index: ${Number.isInteger(input.stepIndex) ? input.stepIndex : "None provided."}`,
+    `- Goal: ${normalizeText(input.goal) || "None provided."}`,
     "",
     "Scenario framing:",
     `- Primary symptom: ${inferPrimarySymptom(input)}`,
@@ -1090,6 +1099,9 @@ export async function runAnalysis(input: AnalysisInput): Promise<FreeAnalysisRes
     hasErrorMessage: Boolean(normalizeText(input.errorMessage)),
     hasContext: Boolean(normalizeText(input.context)),
     hasActionResult: Boolean(normalizeText(input.actionResult)),
+    hasSessionId: Boolean(normalizeText(input.sessionId)),
+    stepIndex: Number.isInteger(input.stepIndex) ? input.stepIndex : null,
+    hasGoal: Boolean(normalizeText(input.goal)),
   });
 
   return shapeFreeAnalysisResponse({

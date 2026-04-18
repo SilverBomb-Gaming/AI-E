@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 
 import { AnalysisResult } from "@/components/AnalysisResult";
 import { normalizeStoredAnalysisState, resultStorageKey, type StoredAnalysisState } from "@/components/AnalysisForm";
+import { advanceExecutionSession } from "@/lib/aie/executionSession";
 import { UpgradeCard } from "@/components/UpgradeCard";
 
 export default function ResultPage() {
@@ -78,11 +79,25 @@ export default function ResultPage() {
           lastObservation={storedState.lastObservation}
           verificationState={storedState.verificationState}
           actionChainState={storedState.actionChainState}
+          goal={storedState.input?.goal}
+          currentStepIndex={storedState.input?.stepIndex}
+          previousOutcome={storedState.previousOutcome}
+          sessionHistory={storedState.sessionHistory}
           onResultChange={({ result: nextResult, observation, verificationState, attemptedStep, loopTerminationStatus, actionChainState }) => {
             setStoredState((current) => {
               if (!current) {
                 return current;
               }
+
+              const nextSession = advanceExecutionSession({
+                currentStepIndex: current.input?.stepIndex ?? 1,
+                attemptedStep,
+                actionResult: observation,
+                verificationState,
+                diagnosis: nextResult.what_happened,
+                loopTerminationStatus: loopTerminationStatus ?? null,
+                steps: current.sessionHistory,
+              });
 
               const nextState = {
                 ...current,
@@ -90,15 +105,18 @@ export default function ResultPage() {
                   ? {
                       ...current.input,
                       actionResult: observation,
+                      stepIndex: nextSession.nextStepIndex,
                     }
                   : current.input,
                 result: nextResult,
                 refinedFromObservation: true,
                 lastObservation: observation,
+                previousOutcome: nextSession.previousOutcome,
                 verificationState,
                 lastAttemptedStep: attemptedStep,
                 loopTerminationStatus: loopTerminationStatus ?? undefined,
                 actionChainState,
+                sessionHistory: nextSession.steps,
               } satisfies StoredAnalysisState;
 
               window.sessionStorage.setItem(resultStorageKey, JSON.stringify(nextState));
@@ -107,6 +125,28 @@ export default function ResultPage() {
           }}
         />
         <div className="space-y-6">
+          {storedState.input?.goal || storedState.input?.stepIndex || storedState.previousOutcome ? (
+            <div className="glass-card rounded-[1.75rem] p-6 shadow-float">
+              <p className="section-label">Execution session</p>
+              <div className="mt-3 grid gap-2 text-sm leading-7 text-ink/90">
+                {storedState.input?.goal ? (
+                  <p>
+                    <span className="font-semibold text-ink">Goal:</span> {storedState.input.goal}
+                  </p>
+                ) : null}
+                {storedState.input?.stepIndex ? (
+                  <p>
+                    <span className="font-semibold text-ink">Current step:</span> {storedState.input.stepIndex}
+                  </p>
+                ) : null}
+                {storedState.previousOutcome ? (
+                  <p>
+                    <span className="font-semibold text-ink">Previous outcome:</span> {storedState.previousOutcome}
+                  </p>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
           <div className="glass-card rounded-[1.75rem] p-6 shadow-float">
             <p className="section-label">Upgrade hint</p>
             <p className="mt-3 text-sm leading-7 text-ink/90">{storedState.result.upgrade_hint}</p>
