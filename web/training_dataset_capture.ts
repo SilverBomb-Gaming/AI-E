@@ -24,6 +24,14 @@ function getPromptVariant(rawValue: string | undefined): "seed" | "paraphrased" 
   return rawValue === "paraphrased" ? "paraphrased" : "seed";
 }
 
+function getScenarioSet(rawValue: string | undefined): "baseline" | "complex" | "game-dev" {
+  if (rawValue === "complex") {
+    return "complex";
+  }
+
+  return rawValue === "game-dev" ? "game-dev" : "baseline";
+}
+
 async function analyze(problemDescription: string) {
   const response = await fetch("http://localhost:3000/api/analyze", {
     method: "POST",
@@ -42,8 +50,9 @@ async function main() {
   const outputPath = getOutputPath(process.argv[2]);
   const repeatCount = getRepeatCount(process.argv[3]);
   const promptVariant = getPromptVariant(process.argv[4]);
+  const scenarioSet = getScenarioSet(process.argv[5]);
   const capturedAt = new Date().toISOString();
-  const traces = await captureTrainingScenarioTraces({ analyze, repeatCount, promptVariant });
+  const traces = await captureTrainingScenarioTraces({ analyze, repeatCount, promptVariant, scenarioSet });
   const lines = traces.map((trace) => JSON.stringify({ capturedAt, ...trace }));
 
   mkdirSync(dirname(outputPath), { recursive: true });
@@ -56,6 +65,7 @@ async function main() {
         traceCount: traces.length,
         repeatCount,
         promptVariant,
+        scenarioSet,
       },
       null,
       2,

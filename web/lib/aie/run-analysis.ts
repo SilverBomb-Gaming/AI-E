@@ -1,4 +1,5 @@
 import type { AnalysisInput, FreeAnalysisResponse } from "@/lib/aie/types";
+import { attachDryRunActionProposal } from "./executionBridge";
 
 const OPENAI_API_URL = "https://api.openai.com/v1/chat/completions";
 const OPENAI_MODEL = "gpt-4o-mini";
@@ -629,7 +630,7 @@ export function shapeFreeAnalysisResponse(params: {
     alternateFocus,
   });
 
-  return {
+  return attachDryRunActionProposal({
     ...params.response,
     what_happened: trimSentence(shapedDiagnosis, 220),
     what_matters: dedupeLines([...canonicalMatters, ...params.response.what_matters])
@@ -638,7 +639,7 @@ export function shapeFreeAnalysisResponse(params: {
     what_to_do_next: dedupeLines([...canonicalSteps, ...params.response.what_to_do_next])
       .slice(0, 5)
       .map((entry) => trimSentence(entry, 180)),
-  };
+  });
 }
 
 function toFreeAnalysisResponse(payload: OpenAIAnalysisResponse): FreeAnalysisResponse {
@@ -666,7 +667,7 @@ const DIRECT_FIX_STEP_PATTERN = /^(?:temporarily\s+)?(move|change|rewrite|switch
 function ensureConfirmationFirstStep(response: FreeAnalysisResponse): FreeAnalysisResponse {
   const firstStep = response.what_to_do_next[0];
   if (!firstStep || !DIRECT_FIX_STEP_PATTERN.test(firstStep)) {
-    return response;
+    return attachDryRunActionProposal(response);
   }
 
   let rewrittenStep = normalizeText(firstStep)
@@ -686,10 +687,10 @@ function ensureConfirmationFirstStep(response: FreeAnalysisResponse): FreeAnalys
 
   rewrittenStep = trimSentence(`${rewrittenStep}.`, 180);
 
-  return {
+  return attachDryRunActionProposal({
     ...response,
     what_to_do_next: [rewrittenStep, ...response.what_to_do_next.slice(1)],
-  };
+  });
 }
 
 function buildOpenAISystemPrompt(): string {

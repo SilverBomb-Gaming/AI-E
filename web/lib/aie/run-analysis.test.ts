@@ -34,6 +34,9 @@ test("shapes duplicate-writer output into stable duplicate writer language", () 
   assert.match(shaped.what_happened, /duplicate writer conflict/i);
   assert.match(shaped.what_happened, /two systems are writing the same value/i);
   assert.match(shaped.what_to_do_next[0] ?? "", /disable one writer at a time/i);
+  assert.equal(shaped.actionType, "inspection");
+  assert.match(shaped.proposedAction ?? "", /disable one writer at a time/i);
+  assert.match(shaped.expectedOutcome ?? "", /source of the issue|conflict/i);
 });
 
 test("shapes ownership output into stable ownership handoff language", () => {

@@ -312,6 +312,25 @@ function getRecommendedDebuggingModeClassName(mode: DebuggingMode | null): strin
   }
 }
 
+function getActionTypeLabel(actionType: FreeAnalysisResponse["actionType"]): string | null {
+  switch (actionType) {
+    case "inspection":
+      return "Inspection";
+    case "instrumentation":
+      return "Instrumentation";
+    case "code-change":
+      return "Code change";
+    case "tuning-pass":
+      return "Tuning pass";
+    case "design-iteration":
+      return "Design iteration";
+    case "validation-check":
+      return "Validation check";
+    default:
+      return null;
+  }
+}
+
 export function AnalysisResult({
   result,
   input,
@@ -583,6 +602,26 @@ export function AnalysisResult({
         ) : null}
         <p className="mt-3 text-sm leading-7 text-ink/90 sm:text-base">{result.what_happened}</p>
       </section>
+      {result.proposedAction && result.expectedOutcome ? (
+        <section className="glass-card rounded-[1.75rem] p-6 shadow-float sm:p-7">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="section-label">Dry-run proposal</p>
+            <span className="inline-flex rounded-full border border-ink/10 bg-white/80 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-ink/70">
+              User-approved only
+            </span>
+            {getActionTypeLabel(result.actionType) ? (
+              <span className="inline-flex rounded-full border border-ocean/15 bg-ocean/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-ocean/80">
+                {getActionTypeLabel(result.actionType)}
+              </span>
+            ) : null}
+          </div>
+          <p className="mt-3 text-sm leading-7 text-ink/90 sm:text-base">{result.proposedAction}</p>
+          <p className="mt-3 text-xs leading-6 body-muted sm:text-sm">Expected outcome: {result.expectedOutcome}</p>
+          <p className="mt-2 text-xs leading-6 body-muted sm:text-sm">
+            AI-E is only proposing a bounded next move here. Nothing executes automatically; inspect the proposal and approve any real change yourself.
+          </p>
+        </section>
+      ) : null}
       <section className="glass-card rounded-[1.75rem] p-6 shadow-float sm:p-7">
         <p className="section-label">Why this is the likely cause</p>
         <ul className="mt-4 space-y-3 text-sm leading-7 text-ink/90 sm:text-base">
