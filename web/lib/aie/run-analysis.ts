@@ -272,15 +272,62 @@ function extractFollowUpContext(input: AnalysisInput): FollowUpContext {
 
 function trimFocusLabel(value: string | null | undefined): string | null {
   const trimmed = normalizeText(value)
+    .replace(
+      /^(?:i|we)\s+(?:temporarily\s+)?(?:disabled?|disabling|disable|bypassed?|bypassing|bypass|turned off|turn off|removed?|removing|remove|forced?|forcing|force|restored?|restoring|restore|isolated?|isolating|isolate|passed?|passing)\s+(?:the\s+)?/i,
+      "",
+    )
     .replace(/^(?:this now confirms\s+|this confirms\s+)?(?:the\s+)?cause\s*:\s*/i, "")
     .replace(/^(?:the\s+)?failing path\s*:\s*/i, "")
     .replace(/^(?:the|a|an|same)\s+/i, "")
     .replace(/\b(?:now|still|cleanly|consistently|immediately|directly)\b/gi, " ")
     .replace(/\b(?:tracks?|drives?|brings?|keeps?|matching|confirm(?:s|ed)?|reproduc(?:e|es|ed))\b.*$/i, "")
+    .replace(/\b(?:in|inside|within|during|while|because|when)\b.*$/i, "")
     .replace(/[.?!,;:]+$/g, "")
     .replace(/\s+/g, " ")
     .trim();
   return trimmed || null;
+}
+
+function canonicalizeObservationFocus(params: {
+  lever: string | null;
+  mode: CanonicalMode;
+  combined: string;
+}): string | null {
+  const trimmedLever = trimFocusLabel(params.lever);
+  if (!trimmedLever) {
+    return null;
+  }
+
+  const leverTokenCount = trimmedLever.split(/\s+/).length;
+  if (/\b(?:i|we|you|they|it)\b/i.test(trimmedLever) || leverTokenCount > 6) {
+    return null;
+  }
+
+  if (params.mode === "duplicate-writer") {
+    if (/cutscene zoom/i.test(trimmedLever) || /cutscene zoom/i.test(params.combined)) {
+      return "cutscene zoom writer";
+    }
+
+    if (/combat zoom/i.test(trimmedLever) || /combat zoom/i.test(params.combined)) {
+      return "combat zoom writer";
+    }
+
+    if (!/\b(?:writer|zoom|camera|path|value|script)\b/i.test(trimmedLever)) {
+      return null;
+    }
+
+    return trimmedLever;
+  }
+
+  if (params.mode === "ownership") {
+    if (!/\b(?:owner|ownership|reference|target|handoff|path)\b/i.test(trimmedLever)) {
+      return null;
+    }
+
+    return trimmedLever;
+  }
+
+  return trimmedLever;
 }
 
 function extractLeverPhrase(text: string | null | undefined): string | null {
@@ -392,7 +439,11 @@ function inferFocusLabel(params: {
     .map((value) => normalizeText(value))
     .join(" ");
   const scenarioAnchor = extractScenarioAnchors(params.input)[0] ?? null;
-  const observationLever = extractLeverPhrase(params.followUp.observation);
+  const observationLever = canonicalizeObservationFocus({
+    lever: extractLeverPhrase(params.followUp.observation),
+    mode: params.mode,
+    combined,
+  });
 
   if (observationLever && (params.mode === "duplicate-writer" || params.mode === "ownership")) {
     return observationLever;

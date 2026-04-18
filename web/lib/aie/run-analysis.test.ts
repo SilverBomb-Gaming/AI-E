@@ -165,3 +165,23 @@ test("treats explicit actionResult input as the same follow-up observation loop"
   assert.match(shaped.what_happened, /confirmed as the cause/i);
   assert.match(shaped.what_happened, /Animator speed sync/i);
 });
+
+test("prevents approved-action observation text from leaking into duplicate-writer diagnosis", () => {
+  const shaped = shapeFreeAnalysisResponse({
+    input: makeInput(
+      "Camera motion jitters during the cutscene transition because the cutscene zoom script and another camera zoom path are both writing the same zoom value during the same state change.",
+      {
+        actionResult:
+          "I disabled the cutscene zoom writer in the combat camera coordinator, and the jitter disappeared completely. Re-enabling it brought the jitter back immediately.",
+      },
+    ),
+    response: makeResponse({
+      what_happened: "The camera zoom path is still the most likely cause.",
+    }),
+  });
+
+  assert.match(shaped.what_happened, /duplicate[- ]writer/i);
+  assert.match(shaped.what_happened, /cutscene zoom writer/i);
+  assert.doesNotMatch(shaped.what_happened, /I disabled the cutscene zoom writer/i);
+  assert.doesNotMatch(shaped.what_happened, /combat camera coordinator/i);
+});
