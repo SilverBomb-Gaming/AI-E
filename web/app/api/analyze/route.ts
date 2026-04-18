@@ -15,6 +15,7 @@ function normalizePayload(value: unknown): AnalysisInput {
     codeSnippet: String(source.codeSnippet ?? "").trim(),
     errorMessage: String(source.errorMessage ?? "").trim(),
     context: String(source.context ?? "").trim(),
+    actionResult: String(source.actionResult ?? "").trim(),
   };
 }
 
@@ -31,6 +32,7 @@ function buildPayloadContext(payload: AnalysisInput | null) {
     hasCodeSnippet: Boolean(payload.codeSnippet),
     hasErrorMessage: Boolean(payload.errorMessage),
     hasContext: Boolean(payload.context),
+    hasActionResult: Boolean(payload.actionResult),
   };
 }
 

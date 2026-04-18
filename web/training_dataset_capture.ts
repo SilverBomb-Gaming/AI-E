@@ -2,6 +2,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
 import { captureTrainingScenarioTraces } from "./lib/aie/trainingTraceScenarios";
+import type { AnalysisInput } from "./lib/aie/types";
 
 function getTimestampToken(): string {
   return new Date().toISOString().replace(/[:.]/g, "-");
@@ -32,11 +33,11 @@ function getScenarioSet(rawValue: string | undefined): "baseline" | "complex" | 
   return rawValue === "game-dev" ? "game-dev" : "baseline";
 }
 
-async function analyze(problemDescription: string) {
+async function analyze(input: AnalysisInput) {
   const response = await fetch("http://localhost:3000/api/analyze", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ problemDescription }),
+    body: JSON.stringify(input),
   });
 
   if (!response.ok) {

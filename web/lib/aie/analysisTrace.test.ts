@@ -5,8 +5,8 @@ import type { FollowUpVerificationState, StoredActionChainState } from "../../co
 import { buildAnalysisTraceRecord, listMissingAnalysisTraceFields } from "./analysisTrace";
 import type { AnalysisInput, FreeAnalysisResponse } from "./types";
 
-function makeInput(problemDescription: string): AnalysisInput {
-  return { problemDescription };
+function makeInput(problemDescription: string, overrides: Partial<AnalysisInput> = {}): AnalysisInput {
+  return { problemDescription, ...overrides };
 }
 
 function makeResult(overrides: Partial<FreeAnalysisResponse> = {}): FreeAnalysisResponse {
@@ -47,6 +47,7 @@ test("fresh traces include the full required contract", () => {
   assert.equal(trace.actionType, "inspection");
   assert.match(trace.proposedAction, /disable the Animator speed sync override/i);
   assert.match(trace.expectedOutcome, /source of the issue|target/i);
+  assert.equal(trace.actionResult, null);
   assert.equal(trace.verificationState, null);
   assert.equal(trace.commitmentValidationState, null);
 });
@@ -80,6 +81,7 @@ test("pending commitment traces expose a pending validation state", () => {
 
   assert.equal(trace.decisionCommitment, "pending");
   assert.equal(trace.commitmentValidationState, "pending");
+  assert.match(trace.actionResult ?? "", /cleanly tracks the symptom/i);
 });
 
 test("committed traces expose a validated commitment state", () => {
@@ -113,4 +115,52 @@ test("committed traces expose a validated commitment state", () => {
   assert.equal(trace.commitmentValidationState, "validated");
   assert.deepEqual(listMissingAnalysisTraceFields(trace), []);
   assert.match(trace.expectedOutcome, /confirm whether|source of the issue|target/i);
+  assert.match(trace.actionResult ?? "", /same Animator handoff/i);
+});
+
+test("follow-up traces preserve action results for falsified, confirmed, and partial updates", () => {
+  const falsified = buildTrace({
+    input: makeInput("Sprint speed flickers after I added a stamina limiter.", {
+      actionResult: "Disabling the stamina limiter changed nothing, but disabling the second zoom script removed jitter completely.",
+    }),
+    isRefined: true,
+    verificationState: "falsified",
+    lastObservation:
+      "Disabling the stamina limiter changed nothing, but disabling the second zoom script removed jitter completely.",
+    result: makeResult({
+      what_happened: "The second zoom script is the more likely cause of the jitter.",
+    }),
+  });
+  const confirmed = buildTrace({
+    input: makeInput("Player movement breaks after changing the Animator speed sync.", {
+      actionResult:
+        "Disabling the Animator speed sync now cleanly tracks the symptom to the same handoff, and restoring it brings the bad transition back.",
+    }),
+    isRefined: true,
+    verificationState: "confirmed",
+    lastObservation:
+      "Disabling the Animator speed sync now cleanly tracks the symptom to the same handoff, and restoring it brings the bad transition back.",
+    result: makeResult(),
+  });
+  const partial = buildTrace({
+    input: makeInput("Player movement breaks after changing the Animator speed sync.", {
+      actionResult:
+        "Disabling the Animator speed sync reduced the jitter, but the symptom still appears during the handoff.",
+    }),
+    isRefined: true,
+    verificationState: "inconclusive",
+    lastObservation:
+      "Disabling the Animator speed sync reduced the jitter, but the symptom still appears during the handoff.",
+    result: makeResult(),
+  });
+
+  assert.equal(falsified.verificationState, "falsified");
+  assert.equal(confirmed.verificationState, "confirmed");
+  assert.equal(partial.verificationState, "inconclusive");
+  assert.match(falsified.actionResult ?? "", /changed nothing/i);
+  assert.match(confirmed.actionResult ?? "", /cleanly tracks the symptom/i);
+  assert.match(partial.actionResult ?? "", /reduced the jitter/i);
+  assert.ok(["high", "medium", "low"].includes(falsified.confidenceLevel));
+  assert.ok(["high", "medium", "low"].includes(confirmed.confidenceLevel));
+  assert.ok(["high", "medium", "low"].includes(partial.confidenceLevel));
 });

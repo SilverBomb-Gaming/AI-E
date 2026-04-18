@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { captureTrainingScenarioTraces } from "./trainingTraceScenarios";
-import type { FreeAnalysisResponse } from "./types";
+import type { AnalysisInput, FreeAnalysisResponse } from "./types";
 
 function makeResult(problemDescription: string): FreeAnalysisResponse {
   return {
@@ -15,7 +15,7 @@ function makeResult(problemDescription: string): FreeAnalysisResponse {
 
 test("captureTrainingScenarioTraces includes the controlled seed scenarios", async () => {
   const traces = await captureTrainingScenarioTraces({
-    analyze: async (problemDescription) => makeResult(problemDescription),
+    analyze: async (input: AnalysisInput) => makeResult(input.problemDescription),
   });
 
   const scenarios = new Set(traces.map((trace) => trace.scenario));
@@ -37,7 +37,7 @@ test("captureTrainingScenarioTraces includes the controlled seed scenarios", asy
 
 test("captureTrainingScenarioTraces keeps the same coverage for paraphrased prompts", async () => {
   const traces = await captureTrainingScenarioTraces({
-    analyze: async (problemDescription) => makeResult(problemDescription),
+    analyze: async (input: AnalysisInput) => makeResult(input.problemDescription),
     promptVariant: "paraphrased",
   });
 
@@ -60,7 +60,7 @@ test("captureTrainingScenarioTraces keeps the same coverage for paraphrased prom
 
 test("captureTrainingScenarioTraces includes the complex second-tier scenarios", async () => {
   const traces = await captureTrainingScenarioTraces({
-    analyze: async (problemDescription) => makeResult(problemDescription),
+    analyze: async (input: AnalysisInput) => makeResult(input.problemDescription),
     scenarioSet: "complex",
   });
 
@@ -85,7 +85,7 @@ test("captureTrainingScenarioTraces includes the complex second-tier scenarios",
 
 test("captureTrainingScenarioTraces keeps complex coverage for paraphrased prompts", async () => {
   const traces = await captureTrainingScenarioTraces({
-    analyze: async (problemDescription) => makeResult(problemDescription),
+    analyze: async (input: AnalysisInput) => makeResult(input.problemDescription),
     promptVariant: "paraphrased",
     scenarioSet: "complex",
   });
@@ -111,7 +111,7 @@ test("captureTrainingScenarioTraces keeps complex coverage for paraphrased promp
 
 test("captureTrainingScenarioTraces includes the game-dev bridge scenarios", async () => {
   const traces = await captureTrainingScenarioTraces({
-    analyze: async (problemDescription) => makeResult(problemDescription),
+    analyze: async (input: AnalysisInput) => makeResult(input.problemDescription),
     scenarioSet: "game-dev",
   });
 
@@ -138,11 +138,12 @@ test("captureTrainingScenarioTraces includes the game-dev bridge scenarios", asy
   assert.ok(traces.every((trace) => typeof trace.sessionId === "string" && trace.sessionId.length > 0));
   assert.ok(traces.every((trace) => Number.isInteger(trace.stepIndex) && trace.stepIndex > 0));
   assert.ok(traces.every((trace) => typeof trace.goal === "string" && trace.goal.length > 0));
+  assert.ok(traces.filter((trace) => trace.stage === "follow-up" && typeof trace.actionResult === "string" && trace.actionResult.length > 0).length >= 5);
 });
 
 test("captureTrainingScenarioTraces keeps game-dev coverage for paraphrased prompts", async () => {
   const traces = await captureTrainingScenarioTraces({
-    analyze: async (problemDescription) => makeResult(problemDescription),
+    analyze: async (input: AnalysisInput) => makeResult(input.problemDescription),
     promptVariant: "paraphrased",
     scenarioSet: "game-dev",
   });
@@ -167,4 +168,5 @@ test("captureTrainingScenarioTraces keeps game-dev coverage for paraphrased prom
     "game-system-design-validation",
   ]);
   assert.equal(traces.length, 15);
+  assert.ok(traces.filter((trace) => trace.stage === "follow-up" && typeof trace.actionResult === "string" && trace.actionResult.length > 0).length >= 5);
 });

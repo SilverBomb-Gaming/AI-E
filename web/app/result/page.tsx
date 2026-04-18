@@ -86,6 +86,12 @@ export default function ResultPage() {
 
               const nextState = {
                 ...current,
+                input: current.input
+                  ? {
+                      ...current.input,
+                      actionResult: observation,
+                    }
+                  : current.input,
                 result: nextResult,
                 refinedFromObservation: true,
                 lastObservation: observation,

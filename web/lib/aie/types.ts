@@ -3,6 +3,7 @@ export type AnalysisInput = {
   codeSnippet?: string;
   errorMessage?: string;
   context?: string;
+  actionResult?: string;
 };
 
 export type DryRunActionType =

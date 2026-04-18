@@ -49,6 +49,7 @@ const initialForm: AnalysisInput = {
   codeSnippet: "",
   errorMessage: "",
   context: "",
+  actionResult: "",
 };
 
 export function isFreeAnalysisResponse(value: unknown): value is FreeAnalysisResponse {
@@ -78,6 +79,7 @@ export function normalizeAnalysisInput(value: unknown): AnalysisInput | undefine
     codeSnippet: String(source.codeSnippet ?? "").trim(),
     errorMessage: String(source.errorMessage ?? "").trim(),
     context: String(source.context ?? "").trim(),
+    actionResult: String(source.actionResult ?? "").trim(),
   };
 }
 

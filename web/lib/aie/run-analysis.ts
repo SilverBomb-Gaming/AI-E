@@ -107,7 +107,7 @@ function splitIntoClauses(value: string): string[] {
 }
 
 function inferUserIntent(input: AnalysisInput): string {
-  const combined = [input.problemDescription, input.errorMessage, input.context, input.codeSnippet]
+  const combined = [input.problemDescription, input.errorMessage, input.context, input.codeSnippet, input.actionResult]
     .map((value) => normalizeText(value))
     .join(" ")
     .toLowerCase();
@@ -156,7 +156,7 @@ function inferPrimarySymptom(input: AnalysisInput): string {
 }
 
 function extractScenarioAnchors(input: AnalysisInput): string[] {
-  const rawTexts = [input.problemDescription, input.errorMessage, input.context, input.codeSnippet]
+  const rawTexts = [input.problemDescription, input.errorMessage, input.context, input.codeSnippet, input.actionResult]
     .map((value) => String(value ?? ""));
 
   const candidates = rawTexts.flatMap((text) => {
@@ -177,7 +177,7 @@ function extractScenarioAnchors(input: AnalysisInput): string[] {
 }
 
 function inferUnitySurface(input: AnalysisInput): string {
-  const combined = [input.problemDescription, input.errorMessage, input.context, input.codeSnippet]
+  const combined = [input.problemDescription, input.errorMessage, input.context, input.codeSnippet, input.actionResult]
     .map((value) => normalizeText(value))
     .join(" ")
     .toLowerCase();
@@ -223,6 +223,9 @@ function buildSignalSummary(input: AnalysisInput): string[] {
     normalizeText(input.context)
       ? `Extra context: ${trimSentence(input.context ?? "", 140)}`
       : "Extra context: no",
+    normalizeText(input.actionResult)
+      ? `Action result: ${trimSentence(input.actionResult ?? "", 140)}`
+      : "Action result: no",
   ];
 }
 
@@ -245,12 +248,13 @@ function normalizeModelList(value: unknown, fallback: string[]): string[] {
   return fallback;
 }
 
-function extractFollowUpContext(problemDescription: string): FollowUpContext {
-  const match = problemDescription.match(FOLLOW_UP_CONTEXT_PATTERN);
+function extractFollowUpContext(input: AnalysisInput): FollowUpContext {
+  const match = input.problemDescription.match(FOLLOW_UP_CONTEXT_PATTERN);
   if (!match) {
+    const actionResult = normalizeText(input.actionResult);
     return {
       attemptedStep: null,
-      observation: null,
+      observation: actionResult || null,
     };
   }
 
@@ -593,7 +597,7 @@ export function shapeFreeAnalysisResponse(params: {
   input: AnalysisInput;
   response: FreeAnalysisResponse;
 }): FreeAnalysisResponse {
-  const followUp = extractFollowUpContext(params.input.problemDescription);
+  const followUp = extractFollowUpContext(params.input);
   const mode = inferCanonicalMode(params);
   const focus = inferFocusLabel({
     input: params.input,
@@ -777,6 +781,7 @@ function buildOpenAIUserPrompt(input: AnalysisInput): string {
     `- Error message: ${normalizeText(input.errorMessage) || "None provided."}`,
     `- Code snippet: ${normalizeText(input.codeSnippet) || "None provided."}`,
     `- Context: ${normalizeText(input.context) || "None provided."}`,
+    `- Action result: ${normalizeText(input.actionResult) || "None provided."}`,
     "",
     "Scenario framing:",
     `- Primary symptom: ${inferPrimarySymptom(input)}`,
@@ -817,6 +822,7 @@ async function callOpenAIAnalysis(input: AnalysisInput): Promise<FreeAnalysisRes
     hasCodeSnippet: Boolean(normalizeText(input.codeSnippet)),
     hasErrorMessage: Boolean(normalizeText(input.errorMessage)),
     hasContext: Boolean(normalizeText(input.context)),
+    hasActionResult: Boolean(normalizeText(input.actionResult)),
   });
 
   const response = await fetch(OPENAI_API_URL, {
@@ -920,7 +926,7 @@ function classifyIssue(input: AnalysisInput):
   | "rendering"
   | "physics"
   | "general" {
-  const combined = [input.problemDescription, input.errorMessage, input.context, input.codeSnippet]
+  const combined = [input.problemDescription, input.errorMessage, input.context, input.codeSnippet, input.actionResult]
     .map((value) => normalizeText(value))
     .join(" ")
     .toLowerCase();
@@ -1083,6 +1089,7 @@ export async function runAnalysis(input: AnalysisInput): Promise<FreeAnalysisRes
     hasCodeSnippet: Boolean(normalizeText(input.codeSnippet)),
     hasErrorMessage: Boolean(normalizeText(input.errorMessage)),
     hasContext: Boolean(normalizeText(input.context)),
+    hasActionResult: Boolean(normalizeText(input.actionResult)),
   });
 
   return shapeFreeAnalysisResponse({

@@ -1,5 +1,6 @@
 import { captureTrainingScenarioTraces } from "./lib/aie/trainingTraceScenarios";
 import { listMissingAnalysisTraceFields } from "./lib/aie/analysisTrace";
+import type { AnalysisInput } from "./lib/aie/types";
 
 function getScenarioSet(rawValue: string | undefined): "baseline" | "complex" | "game-dev" {
   if (rawValue === "complex") {
@@ -18,11 +19,11 @@ function getPromptVariant(rawValue: string | undefined): "seed" | "paraphrased" 
   return rawValue === "paraphrased" ? "paraphrased" : "seed";
 }
 
-async function analyze(problemDescription: string) {
+async function analyze(input: AnalysisInput) {
   const response = await fetch("http://localhost:3000/api/analyze", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ problemDescription }),
+    body: JSON.stringify(input),
   });
 
   if (!response.ok) {
@@ -71,6 +72,7 @@ async function main() {
           promptVariant,
           traceCount: traces.length,
           completeTraceCount: traceReports.filter((trace) => trace.missingFields.length === 0).length,
+          executionFeedbackTraceCount: traces.filter((trace) => trace.stage === "follow-up" && Boolean(trace.actionResult)).length,
         },
         missingFieldNames: [...allMissingFields],
         traces: traceReports,

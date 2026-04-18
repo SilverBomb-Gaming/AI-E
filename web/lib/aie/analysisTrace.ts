@@ -36,6 +36,7 @@ export type AnalysisTraceRecord = {
   actionType: DryRunActionType;
   proposedAction: string;
   expectedOutcome: string;
+  actionResult: string | null;
   recommendedMode: DebuggingMode | null;
   confidenceLevel: ConfidenceLevel;
   confidenceTrend: ConfidenceAlignment | null;
@@ -63,6 +64,7 @@ export const REQUIRED_TRACE_FIELDS = [
   "actionType",
   "proposedAction",
   "expectedOutcome",
+  "actionResult",
   "recommendedMode",
   "confidenceLevel",
   "confidenceTrend",
@@ -105,6 +107,7 @@ export function buildAnalysisTraceRecord(params: BuildAnalysisTraceRecordParams)
     actionType: proposal.actionType,
     proposedAction: proposal.proposedAction,
     expectedOutcome: proposal.expectedOutcome,
+    actionResult: params.input.actionResult?.trim() || params.lastObservation?.trim() || null,
     recommendedMode: signals.recommendedDebuggingMode,
     confidenceLevel: signals.confidenceLevel,
     confidenceTrend: signals.confidenceAlignment,
@@ -138,6 +141,7 @@ export function listMissingAnalysisTraceFields(trace: AnalysisTraceRecord): stri
     ["actionType", trace.actionType],
     ["proposedAction", trace.proposedAction],
     ["expectedOutcome", trace.expectedOutcome],
+    ["actionResult", trace.actionResult],
     ["recommendedMode", trace.recommendedMode],
     ["confidenceLevel", trace.confidenceLevel],
     ["confidenceTrend", trace.confidenceTrend],

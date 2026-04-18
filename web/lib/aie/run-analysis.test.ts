@@ -4,12 +4,14 @@ import test from "node:test";
 import type { AnalysisInput, FreeAnalysisResponse } from "@/lib/aie/types";
 import { shapeFreeAnalysisResponse } from "./run-analysis";
 
-function makeInput(problemDescription: string): AnalysisInput {
+function makeInput(problemDescription: string, overrides: Partial<AnalysisInput> = {}): AnalysisInput {
   return {
     problemDescription,
     errorMessage: "",
     context: "",
     codeSnippet: "",
+    actionResult: "",
+    ...overrides,
   };
 }
 
@@ -126,4 +128,19 @@ test("rewrites repeated confirmation follow-ups into stable repeated-validation 
   assert.match(shaped.what_happened, /continues to reproduce the same confirmed behavior under repeated validation/i);
   assert.match(shaped.what_happened, /Animator speed sync handoff/i);
   assert.match(shaped.what_to_do_next[0] ?? "", /Temporarily disable Animator speed sync handoff/i);
+});
+
+test("treats explicit actionResult input as the same follow-up observation loop", () => {
+  const shaped = shapeFreeAnalysisResponse({
+    input: makeInput("Player movement breaks after changing the Animator speed sync.", {
+      actionResult:
+        "Disabling the Animator speed sync now cleanly tracks the symptom to the same handoff, and restoring it brings the bad transition back.",
+    }),
+    response: makeResponse({
+      what_happened: "The Animator path is still the most likely cause.",
+    }),
+  });
+
+  assert.match(shaped.what_happened, /confirmed as the cause/i);
+  assert.match(shaped.what_happened, /Animator speed sync/i);
 });

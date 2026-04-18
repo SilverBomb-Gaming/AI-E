@@ -404,6 +404,7 @@ export function AnalysisResult({
           errorMessage: input.errorMessage ?? "",
           context: input.context ?? "",
           codeSnippet: input.codeSnippet ?? "",
+          actionResult: trimmedObservation,
         } satisfies AnalysisInput),
       });
 

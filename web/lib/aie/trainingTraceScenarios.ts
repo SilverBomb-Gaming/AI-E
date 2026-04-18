@@ -62,7 +62,7 @@ export type CapturedTrainingTrace = AnalysisTraceRecord & {
 };
 
 export type CaptureTrainingScenarioTracesParams = {
-  analyze: (problemDescription: string) => Promise<FreeAnalysisResponse>;
+  analyze: (input: AnalysisInput) => Promise<FreeAnalysisResponse>;
   repeatCount?: number;
   promptVariant?: "seed" | "paraphrased";
   scenarioSet?: TrainingScenarioSet;
@@ -494,7 +494,7 @@ export async function captureTrainingScenarioTraces(
     goal: string;
   }) {
     const input = buildInput(paramsForFresh.prompt);
-    const result = await params.analyze(input.problemDescription);
+    const result = await params.analyze(input);
     const signals = deriveAnalysisResultSignals({
       result,
       problemDescription: input.problemDescription,
@@ -538,7 +538,12 @@ export async function captureTrainingScenarioTraces(
       paramsForFollowUp.context.signals.currentGuidedStep ?? undefined,
       paramsForFollowUp.context.signals.currentGuidedStepNumber || undefined,
     );
-    const rawResult = await params.analyze(followUpPrompt);
+    const followUpInput = {
+      ...paramsForFollowUp.context.input,
+      problemDescription: followUpPrompt,
+      actionResult: paramsForFollowUp.observation,
+    } satisfies AnalysisInput;
+    const rawResult = await params.analyze(followUpInput);
     const verificationState = classifyFollowUpResult({
       originalResult: paramsForFollowUp.context.result,
       nextResult: rawResult,
@@ -560,7 +565,7 @@ export async function captureTrainingScenarioTraces(
       observation: paramsForFollowUp.observation,
       ...buildSessionMetadata(paramsForFollowUp.sessionId, paramsForFollowUp.stepIndex, paramsForFollowUp.goal),
       ...buildAnalysisTraceRecord({
-        input: paramsForFollowUp.context.input,
+        input: followUpInput,
         result,
         isRefined: true,
         lastObservation: paramsForFollowUp.observation,
@@ -847,7 +852,7 @@ export async function captureTrainingScenarioTraces(
     }
 
     const isolationInput = buildInput(promptSet.prompts.isolation);
-    const isolationResult = await params.analyze(isolationInput.problemDescription);
+    const isolationResult = await params.analyze(isolationInput);
     traces.push({
       scenario: "isolation",
       pass,
@@ -862,7 +867,7 @@ export async function captureTrainingScenarioTraces(
     });
 
     const instrumentationInput = buildInput(promptSet.prompts.instrumentation);
-    const instrumentationResult = await params.analyze(instrumentationInput.problemDescription);
+    const instrumentationResult = await params.analyze(instrumentationInput);
     traces.push({
       scenario: "instrumentation",
       pass,
@@ -877,7 +882,7 @@ export async function captureTrainingScenarioTraces(
     });
 
     const duplicateInput = buildInput(promptSet.prompts.duplicateWriter);
-    const duplicateResult = await params.analyze(duplicateInput.problemDescription);
+    const duplicateResult = await params.analyze(duplicateInput);
     const duplicateSignals = deriveAnalysisResultSignals({
       result: duplicateResult,
       problemDescription: duplicateInput.problemDescription,
@@ -897,7 +902,7 @@ export async function captureTrainingScenarioTraces(
     });
 
     const ownershipInput = buildInput(promptSet.prompts.ownership);
-    const ownershipResult = await params.analyze(ownershipInput.problemDescription);
+    const ownershipResult = await params.analyze(ownershipInput);
     traces.push({
       scenario: "ownership",
       pass,
@@ -918,7 +923,7 @@ export async function captureTrainingScenarioTraces(
     });
 
     const messyInput = buildInput(promptSet.prompts.messy);
-    const messyResult = await params.analyze(messyInput.problemDescription);
+    const messyResult = await params.analyze(messyInput);
     const messySignals = deriveAnalysisResultSignals({
       result: messyResult,
       problemDescription: messyInput.problemDescription,
@@ -943,7 +948,12 @@ export async function captureTrainingScenarioTraces(
       duplicateSignals.currentGuidedStep ?? undefined,
       duplicateSignals.currentGuidedStepNumber || undefined,
     );
-    const falsifyRawResult = await params.analyze(falsifyPrompt);
+    const falsifyRawInput = {
+      ...duplicateInput,
+      problemDescription: falsifyPrompt,
+      actionResult: promptSet.observations.falsifies,
+    } satisfies AnalysisInput;
+    const falsifyRawResult = await params.analyze(falsifyRawInput);
     const falsifyVerification = classifyFollowUpResult({
       originalResult: duplicateResult,
       nextResult: falsifyRawResult,
@@ -968,7 +978,7 @@ export async function captureTrainingScenarioTraces(
         "Resolve the sprint-speed ownership conflict without widening the scope beyond the two active writers.",
       ),
       ...buildAnalysisTraceRecord({
-        input: duplicateInput,
+        input: falsifyRawInput,
         result: falsifyResult,
         isRefined: true,
         lastObservation: promptSet.observations.falsifies,
@@ -986,7 +996,12 @@ export async function captureTrainingScenarioTraces(
       ownershipSignals.currentGuidedStep ?? undefined,
       ownershipSignals.currentGuidedStepNumber || undefined,
     );
-    const resolveRawResult = await params.analyze(resolvePrompt);
+    const resolveRawInput = {
+      ...ownershipInput,
+      problemDescription: resolvePrompt,
+      actionResult: promptSet.observations.resolves,
+    } satisfies AnalysisInput;
+    const resolveRawResult = await params.analyze(resolveRawInput);
     const resolveVerification = classifyFollowUpResult({
       originalResult: ownershipResult,
       nextResult: resolveRawResult,
@@ -1010,7 +1025,7 @@ export async function captureTrainingScenarioTraces(
         "Keep target ownership on a single reference handoff so spawned projectiles read the same source.",
       ),
       ...buildAnalysisTraceRecord({
-        input: ownershipInput,
+        input: resolveRawInput,
         result: resolveResult,
         isRefined: true,
         lastObservation: promptSet.observations.resolves,
@@ -1028,7 +1043,12 @@ export async function captureTrainingScenarioTraces(
       messySignals.currentGuidedStep ?? undefined,
       messySignals.currentGuidedStepNumber || undefined,
     );
-    const stuckRawResult = await params.analyze(stuckPrompt);
+    const stuckRawInput = {
+      ...messyInput,
+      problemDescription: stuckPrompt,
+      actionResult: promptSet.observations.stuck,
+    } satisfies AnalysisInput;
+    const stuckRawResult = await params.analyze(stuckRawInput);
     const stuckVerification = classifyFollowUpResult({
       originalResult: messyResult,
       nextResult: stuckRawResult,
@@ -1052,7 +1072,7 @@ export async function captureTrainingScenarioTraces(
         "Reduce the investigation to one recoverable subsystem before touching the rest of the mixed regression set.",
       ),
       ...buildAnalysisTraceRecord({
-        input: messyInput,
+        input: stuckRawInput,
         result: stuckResult,
         isRefined: true,
         lastObservation: promptSet.observations.stuck,
@@ -1065,7 +1085,7 @@ export async function captureTrainingScenarioTraces(
     });
 
     const animatorInput = buildInput(promptSet.prompts.animator);
-    const animatorResult = await params.analyze(animatorInput.problemDescription);
+    const animatorResult = await params.analyze(animatorInput);
     const animatorSignals = deriveAnalysisResultSignals({
       result: animatorResult,
       problemDescription: animatorInput.problemDescription,
@@ -1078,7 +1098,12 @@ export async function captureTrainingScenarioTraces(
       animatorSignals.currentGuidedStep ?? undefined,
       animatorSignals.currentGuidedStepNumber || undefined,
     );
-    const pendingRawResult = await params.analyze(pendingPrompt);
+    const pendingRawInput = {
+      ...animatorInput,
+      problemDescription: pendingPrompt,
+      actionResult: promptSet.observations.pending,
+    } satisfies AnalysisInput;
+    const pendingRawResult = await params.analyze(pendingRawInput);
     const pendingVerification = classifyFollowUpResult({
       originalResult: animatorResult,
       nextResult: pendingRawResult,
@@ -1106,7 +1131,7 @@ export async function captureTrainingScenarioTraces(
         "Confirm whether the Animator speed sync handoff is stable enough to treat as the leading cause.",
       ),
       ...buildAnalysisTraceRecord({
-        input: animatorInput,
+        input: pendingRawInput,
         result: pendingResult,
         isRefined: true,
         lastObservation: promptSet.observations.pending,
@@ -1129,7 +1154,12 @@ export async function captureTrainingScenarioTraces(
       pendingSignals.currentGuidedStep ?? undefined,
       pendingSignals.currentGuidedStepNumber || undefined,
     );
-    const committedRawResult = await params.analyze(committedPrompt);
+    const committedRawInput = {
+      ...animatorInput,
+      problemDescription: committedPrompt,
+      actionResult: promptSet.observations.committed,
+    } satisfies AnalysisInput;
+    const committedRawResult = await params.analyze(committedRawInput);
     const committedVerification = classifyFollowUpResult({
       originalResult: pendingResult,
       nextResult: committedRawResult,
@@ -1153,7 +1183,7 @@ export async function captureTrainingScenarioTraces(
         "Confirm whether the Animator speed sync handoff is stable enough to treat as the leading cause.",
       ),
       ...buildAnalysisTraceRecord({
-        input: animatorInput,
+        input: committedRawInput,
         result: committedResult,
         isRefined: true,
         lastObservation: promptSet.observations.committed,
