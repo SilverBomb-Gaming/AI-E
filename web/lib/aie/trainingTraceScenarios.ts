@@ -32,35 +32,85 @@ export type CapturedTrainingTrace = AnalysisTraceRecord & {
 export type CaptureTrainingScenarioTracesParams = {
   analyze: (problemDescription: string) => Promise<FreeAnalysisResponse>;
   repeatCount?: number;
+  promptVariant?: "seed" | "paraphrased";
 };
 
-const prompts = {
-  isolation:
-    "After refactoring the wall-jump handoff, the player only sticks on shallow slopes right after a dash. The symptom appears immediately when that movement handoff runs, while the rest of movement feels normal.",
-  instrumentation:
-    "Enemies occasionally lose aggro after scene streaming, but there is no clear console error and the current checks are too sparse to tell whether the target reference is dropped before or after registration.",
-  duplicateWriter:
-    "Sprint speed flickers after I added a stamina limiter. The limiter writes run speed in Update, but the locomotion controller also writes speed later in the same frame, so movement keeps bouncing between two values.",
-  ownership:
-    "A homing missile prefab spawns correctly, but it sometimes has no target and flies straight ahead. The launcher stores the target on one object, while the spawned projectile reads from another reference, so this may be an ownership or reference handoff issue.",
-  messy:
-    "After one late-night pass I touched dash handling, slope friction, camera recenter, loading overlay, audio singleton, and scene bootstrap. Now the player sometimes snaps back, menus lag, music doubles, and some buttons stop responding. I'm not sure where to start because everything feels mixed together.",
-  animator:
-    "Player movement breaks after changing the Animator speed sync. The bad transition happens right when the Animator resume handoff runs, and the symptom seems tied to that handoff rather than the rest of movement.",
-} as const;
+type PromptSet = {
+  prompts: {
+    isolation: string;
+    instrumentation: string;
+    duplicateWriter: string;
+    ownership: string;
+    messy: string;
+    animator: string;
+  };
+  observations: {
+    falsifies: string;
+    resolves: string;
+    stuck: string;
+    pending: string;
+    committed: string;
+  };
+};
 
-const observations = {
-  falsifies:
-    "Disabling the stamina limiter changed nothing, but disabling the animator speed sync removes the slowdown completely.",
-  resolves:
-    "Passing the target reference directly into the spawned projectile fixes it and the homing works normally again.",
-  stuck:
-    "I tried a few different systems and nothing clearly fixed the issue, no obvious change, and it still all feels mixed together.",
-  pending:
-    "Disabling the Animator speed sync now cleanly tracks the symptom to the same handoff, and restoring it brings the bad transition back.",
-  committed:
-    "The same Animator handoff still cleanly drives the symptom, and the confirm check keeps matching the expected path.",
-} as const;
+const promptSets: Record<NonNullable<CaptureTrainingScenarioTracesParams["promptVariant"]>, PromptSet> = {
+  seed: {
+    prompts: {
+      isolation:
+        "After refactoring the wall-jump handoff, the player only sticks on shallow slopes right after a dash. The symptom appears immediately when that movement handoff runs, while the rest of movement feels normal.",
+      instrumentation:
+        "Enemies occasionally lose aggro after scene streaming, but there is no clear console error and the current checks are too sparse to tell whether the target reference is dropped before or after registration.",
+      duplicateWriter:
+        "Sprint speed flickers after I added a stamina limiter. The limiter writes run speed in Update, but the locomotion controller also writes speed later in the same frame, so movement keeps bouncing between two values.",
+      ownership:
+        "A homing missile prefab spawns correctly, but it sometimes has no target and flies straight ahead. The launcher stores the target on one object, while the spawned projectile reads from another reference, so this may be an ownership or reference handoff issue.",
+      messy:
+        "After one late-night pass I touched dash handling, slope friction, camera recenter, loading overlay, audio singleton, and scene bootstrap. Now the player sometimes snaps back, menus lag, music doubles, and some buttons stop responding. I'm not sure where to start because everything feels mixed together.",
+      animator:
+        "Player movement breaks after changing the Animator speed sync. The bad transition happens right when the Animator resume handoff runs, and the symptom seems tied to that handoff rather than the rest of movement.",
+    },
+    observations: {
+      falsifies:
+        "Disabling the stamina limiter changed nothing, but disabling the animator speed sync removes the slowdown completely.",
+      resolves:
+        "Passing the target reference directly into the spawned projectile fixes it and the homing works normally again.",
+      stuck:
+        "I tried a few different systems and nothing clearly fixed the issue, no obvious change, and it still all feels mixed together.",
+      pending:
+        "Disabling the Animator speed sync now cleanly tracks the symptom to the same handoff, and restoring it brings the bad transition back.",
+      committed:
+        "The same Animator handoff still cleanly drives the symptom, and the confirm check keeps matching the expected path.",
+    },
+  },
+  paraphrased: {
+    prompts: {
+      isolation:
+        "After reworking the post-dash wall-jump handoff, the character only catches on shallow slopes right after a dash. The symptom appears immediately when that handoff runs, while the rest of movement still feels normal.",
+      instrumentation:
+        "Some enemies intermittently drop aggro after scene streaming, but there is still no clear console error. I do not have enough before-or-after registration logging to tell whether the target reference drops before registration or immediately after it.",
+      duplicateWriter:
+        "Ever since I added fatigue-based speed clamping, the run speed jitters between two values. One system clamps speed early in the frame, but another controller writes movement speed again later in the same frame, so I may have two writers fighting each other.",
+      ownership:
+        "A seeking rocket prefab spawns and launches correctly, but some shots still leave with no target and just cruise forward. The launcher stores the target on one object, while the spawned projectile reads from another reference, so this may be an ownership or reference handoff issue.",
+      messy:
+        "In one messy cleanup pass I changed movement blending, ground friction, pause-menu refresh, streaming UI, music startup, and bootstrap sequencing. Now inputs occasionally roll back, menus hitch, audio layers stack, and some UI clicks die. The failures feel scattered and I do not have a clean starting point.",
+      animator:
+        "Player movement started breaking after I changed Animator speed sync. The bad transition still appears right when the Animator resume handoff runs, and the symptom points at that handoff rather than the rest of movement.",
+    },
+    observations: {
+      falsifies:
+        "I turned off the fatigue clamp and nothing changed, but bypassing Animator speed sync removes the slowdown completely.",
+      resolves:
+        "Passing the target reference directly into the spawned projectile fixes it and the homing works normally again.",
+      stuck:
+        "I tried several different systems and nothing clearly fixed the issue, there was no obvious change, and it still all feels mixed together.",
+      pending:
+        "Turning off Animator speed sync now cleanly ties the symptom to the same handoff, and enabling it again brings the same bad transition back.",
+      committed:
+        "I repeated the same confirmation check, and the same Animator handoff still drives the symptom while the confirm result keeps matching the expected path.",
+    },
+  },
+};
 
 function buildInput(problemDescription: string): AnalysisInput {
   return { problemDescription };
@@ -121,10 +171,11 @@ export async function captureTrainingScenarioTraces(
   params: CaptureTrainingScenarioTracesParams,
 ): Promise<CapturedTrainingTrace[]> {
   const repeatCount = Math.max(1, params.repeatCount ?? 1);
+  const promptSet = promptSets[params.promptVariant ?? "seed"];
   const traces: CapturedTrainingTrace[] = [];
 
   for (let pass = 1; pass <= repeatCount; pass += 1) {
-    const isolationInput = buildInput(prompts.isolation);
+    const isolationInput = buildInput(promptSet.prompts.isolation);
     const isolationResult = await params.analyze(isolationInput.problemDescription);
     traces.push({
       scenario: "isolation",
@@ -134,7 +185,7 @@ export async function captureTrainingScenarioTraces(
       ...buildAnalysisTraceRecord({ input: isolationInput, result: isolationResult }),
     });
 
-    const instrumentationInput = buildInput(prompts.instrumentation);
+    const instrumentationInput = buildInput(promptSet.prompts.instrumentation);
     const instrumentationResult = await params.analyze(instrumentationInput.problemDescription);
     traces.push({
       scenario: "instrumentation",
@@ -144,7 +195,7 @@ export async function captureTrainingScenarioTraces(
       ...buildAnalysisTraceRecord({ input: instrumentationInput, result: instrumentationResult }),
     });
 
-    const duplicateInput = buildInput(prompts.duplicateWriter);
+    const duplicateInput = buildInput(promptSet.prompts.duplicateWriter);
     const duplicateResult = await params.analyze(duplicateInput.problemDescription);
     const duplicateSignals = deriveAnalysisResultSignals({
       result: duplicateResult,
@@ -159,7 +210,7 @@ export async function captureTrainingScenarioTraces(
       ...buildAnalysisTraceRecord({ input: duplicateInput, result: duplicateResult }),
     });
 
-    const ownershipInput = buildInput(prompts.ownership);
+    const ownershipInput = buildInput(promptSet.prompts.ownership);
     const ownershipResult = await params.analyze(ownershipInput.problemDescription);
     traces.push({
       scenario: "ownership",
@@ -175,7 +226,7 @@ export async function captureTrainingScenarioTraces(
       isRefined: false,
     });
 
-    const messyInput = buildInput(prompts.messy);
+    const messyInput = buildInput(promptSet.prompts.messy);
     const messyResult = await params.analyze(messyInput.problemDescription);
     const messySignals = deriveAnalysisResultSignals({
       result: messyResult,
@@ -192,7 +243,7 @@ export async function captureTrainingScenarioTraces(
 
     const falsifyPrompt = buildFollowUpProblemDescription(
       duplicateInput.problemDescription,
-      observations.falsifies,
+      promptSet.observations.falsifies,
       duplicateSignals.currentGuidedStep ?? undefined,
       duplicateSignals.currentGuidedStepNumber || undefined,
     );
@@ -200,12 +251,12 @@ export async function captureTrainingScenarioTraces(
     const falsifyVerification = classifyFollowUpResult({
       originalResult: duplicateResult,
       nextResult: falsifyRawResult,
-      observation: observations.falsifies,
+      observation: promptSet.observations.falsifies,
     });
     const falsifyResult = buildRefinedResult({
       originalResult: duplicateResult,
       nextResult: falsifyRawResult,
-      observation: observations.falsifies,
+      observation: promptSet.observations.falsifies,
       verificationState: falsifyVerification,
       priorSteps: duplicateSignals.guidedStepStack,
       useFalsifiedDiagnosis: true,
@@ -214,12 +265,12 @@ export async function captureTrainingScenarioTraces(
       scenario: "falsification",
       pass,
       stage: "follow-up",
-      observation: observations.falsifies,
+      observation: promptSet.observations.falsifies,
       ...buildAnalysisTraceRecord({
         input: duplicateInput,
         result: falsifyResult,
         isRefined: true,
-        lastObservation: observations.falsifies,
+        lastObservation: promptSet.observations.falsifies,
         verificationState: falsifyVerification,
         previousActionChainState: toStoredActionChainState({
           signals: duplicateSignals,
@@ -230,7 +281,7 @@ export async function captureTrainingScenarioTraces(
 
     const resolvePrompt = buildFollowUpProblemDescription(
       ownershipInput.problemDescription,
-      observations.resolves,
+      promptSet.observations.resolves,
       ownershipSignals.currentGuidedStep ?? undefined,
       ownershipSignals.currentGuidedStepNumber || undefined,
     );
@@ -238,12 +289,12 @@ export async function captureTrainingScenarioTraces(
     const resolveVerification = classifyFollowUpResult({
       originalResult: ownershipResult,
       nextResult: resolveRawResult,
-      observation: observations.resolves,
+      observation: promptSet.observations.resolves,
     });
     const resolveResult = buildRefinedResult({
       originalResult: ownershipResult,
       nextResult: resolveRawResult,
-      observation: observations.resolves,
+      observation: promptSet.observations.resolves,
       verificationState: resolveVerification,
       priorSteps: ownershipSignals.guidedStepStack,
     });
@@ -251,12 +302,12 @@ export async function captureTrainingScenarioTraces(
       scenario: "resolved",
       pass,
       stage: "follow-up",
-      observation: observations.resolves,
+      observation: promptSet.observations.resolves,
       ...buildAnalysisTraceRecord({
         input: ownershipInput,
         result: resolveResult,
         isRefined: true,
-        lastObservation: observations.resolves,
+        lastObservation: promptSet.observations.resolves,
         verificationState: resolveVerification,
         previousActionChainState: toStoredActionChainState({
           signals: ownershipSignals,
@@ -267,7 +318,7 @@ export async function captureTrainingScenarioTraces(
 
     const stuckPrompt = buildFollowUpProblemDescription(
       messyInput.problemDescription,
-      observations.stuck,
+      promptSet.observations.stuck,
       messySignals.currentGuidedStep ?? undefined,
       messySignals.currentGuidedStepNumber || undefined,
     );
@@ -275,12 +326,12 @@ export async function captureTrainingScenarioTraces(
     const stuckVerification = classifyFollowUpResult({
       originalResult: messyResult,
       nextResult: stuckRawResult,
-      observation: observations.stuck,
+      observation: promptSet.observations.stuck,
     });
     const stuckResult = buildRefinedResult({
       originalResult: messyResult,
       nextResult: stuckRawResult,
-      observation: observations.stuck,
+      observation: promptSet.observations.stuck,
       verificationState: stuckVerification,
       priorSteps: messySignals.guidedStepStack,
     });
@@ -288,12 +339,12 @@ export async function captureTrainingScenarioTraces(
       scenario: "stuck",
       pass,
       stage: "follow-up",
-      observation: observations.stuck,
+      observation: promptSet.observations.stuck,
       ...buildAnalysisTraceRecord({
         input: messyInput,
         result: stuckResult,
         isRefined: true,
-        lastObservation: observations.stuck,
+        lastObservation: promptSet.observations.stuck,
         verificationState: stuckVerification,
         previousActionChainState: toStoredActionChainState({
           signals: messySignals,
@@ -302,7 +353,7 @@ export async function captureTrainingScenarioTraces(
       }),
     });
 
-    const animatorInput = buildInput(prompts.animator);
+    const animatorInput = buildInput(promptSet.prompts.animator);
     const animatorResult = await params.analyze(animatorInput.problemDescription);
     const animatorSignals = deriveAnalysisResultSignals({
       result: animatorResult,
@@ -312,7 +363,7 @@ export async function captureTrainingScenarioTraces(
 
     const pendingPrompt = buildFollowUpProblemDescription(
       animatorInput.problemDescription,
-      observations.pending,
+      promptSet.observations.pending,
       animatorSignals.currentGuidedStep ?? undefined,
       animatorSignals.currentGuidedStepNumber || undefined,
     );
@@ -320,12 +371,12 @@ export async function captureTrainingScenarioTraces(
     const pendingVerification = classifyFollowUpResult({
       originalResult: animatorResult,
       nextResult: pendingRawResult,
-      observation: observations.pending,
+      observation: promptSet.observations.pending,
     });
     const pendingResult = buildRefinedResult({
       originalResult: animatorResult,
       nextResult: pendingRawResult,
-      observation: observations.pending,
+      observation: promptSet.observations.pending,
       verificationState: pendingVerification,
       priorSteps: animatorSignals.guidedStepStack,
     });
@@ -337,12 +388,12 @@ export async function captureTrainingScenarioTraces(
       scenario: "pending",
       pass,
       stage: "follow-up",
-      observation: observations.pending,
+      observation: promptSet.observations.pending,
       ...buildAnalysisTraceRecord({
         input: animatorInput,
         result: pendingResult,
         isRefined: true,
-        lastObservation: observations.pending,
+        lastObservation: promptSet.observations.pending,
         verificationState: pendingVerification,
         previousActionChainState: pendingPreviousState,
       }),
@@ -352,13 +403,13 @@ export async function captureTrainingScenarioTraces(
       result: pendingResult,
       problemDescription: animatorInput.problemDescription,
       isRefined: true,
-      lastObservation: observations.pending,
+      lastObservation: promptSet.observations.pending,
       verificationState: pendingVerification,
       previousActionChainState: pendingPreviousState,
     });
     const committedPrompt = buildFollowUpProblemDescription(
       animatorInput.problemDescription,
-      observations.committed,
+      promptSet.observations.committed,
       pendingSignals.currentGuidedStep ?? undefined,
       pendingSignals.currentGuidedStepNumber || undefined,
     );
@@ -366,12 +417,12 @@ export async function captureTrainingScenarioTraces(
     const committedVerification = classifyFollowUpResult({
       originalResult: pendingResult,
       nextResult: committedRawResult,
-      observation: observations.committed,
+      observation: promptSet.observations.committed,
     });
     const committedResult = buildRefinedResult({
       originalResult: pendingResult,
       nextResult: committedRawResult,
-      observation: observations.committed,
+      observation: promptSet.observations.committed,
       verificationState: committedVerification,
       priorSteps: pendingSignals.guidedStepStack,
     });
@@ -379,12 +430,12 @@ export async function captureTrainingScenarioTraces(
       scenario: "committed",
       pass,
       stage: "follow-up",
-      observation: observations.committed,
+      observation: promptSet.observations.committed,
       ...buildAnalysisTraceRecord({
         input: animatorInput,
         result: committedResult,
         isRefined: true,
-        lastObservation: observations.committed,
+        lastObservation: promptSet.observations.committed,
         verificationState: committedVerification,
         previousActionChainState: toStoredActionChainState({
           signals: pendingSignals,

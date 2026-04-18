@@ -34,3 +34,26 @@ test("captureTrainingScenarioTraces includes the controlled seed scenarios", asy
   ]);
   assert.equal(traces.length, 10);
 });
+
+test("captureTrainingScenarioTraces keeps the same coverage for paraphrased prompts", async () => {
+  const traces = await captureTrainingScenarioTraces({
+    analyze: async (problemDescription) => makeResult(problemDescription),
+    promptVariant: "paraphrased",
+  });
+
+  const scenarios = new Set(traces.map((trace) => trace.scenario));
+
+  assert.deepEqual([...scenarios].sort(), [
+    "committed",
+    "duplicate-writer",
+    "falsification",
+    "instrumentation",
+    "isolation",
+    "messy",
+    "ownership",
+    "pending",
+    "resolved",
+    "stuck",
+  ]);
+  assert.equal(traces.length, 10);
+});
