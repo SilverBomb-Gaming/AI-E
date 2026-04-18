@@ -130,6 +130,27 @@ test("rewrites repeated confirmation follow-ups into stable repeated-validation 
   assert.match(shaped.what_to_do_next[0] ?? "", /Temporarily disable Animator speed sync handoff/i);
 });
 
+test("keeps cutscene zoom duplicate-writer confirmation stable under repeated validation", () => {
+  const shaped = shapeFreeAnalysisResponse({
+    input: makeInput(
+      "Camera motion jitters during the cutscene transition because the cutscene zoom script and another camera zoom path are both writing the same zoom value during the same state change.",
+      {
+        actionResult:
+          "Disabling the cutscene zoom script consistently removes the jitter, and re-enabling it consistently brings the jitter back. This strongly suggests the cutscene zoom writer is part of the duplicate-writer conflict.",
+      },
+    ),
+    response: makeResponse({
+      what_happened: "The camera zoom path is still the most likely cause.",
+    }),
+  });
+
+  assert.match(shaped.what_happened, /duplicate[- ]writer (?:cause|conflict)/i);
+  assert.match(shaped.what_happened, /cutscene zoom (?:writer|script)/i);
+  assert.match(shaped.what_happened, /writer (?:cause|conflict)/i);
+  assert.match(shaped.what_to_do_next[0] ?? "", /disable cutscene zoom (?:writer|script)/i);
+  assert.doesNotMatch(shaped.what_to_do_next[0] ?? "", /consistently removes the jitter/i);
+});
+
 test("treats explicit actionResult input as the same follow-up observation loop", () => {
   const shaped = shapeFreeAnalysisResponse({
     input: makeInput("Player movement breaks after changing the Animator speed sync.", {

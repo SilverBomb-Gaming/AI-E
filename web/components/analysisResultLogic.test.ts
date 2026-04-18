@@ -287,6 +287,46 @@ test("promotes repeated confirmation phrasing to committed when the same path ke
   assert.equal(signals.alignedSignalCount, 2);
   assert.equal(signals.supervisedActionChain?.[0]?.intent, "confirmation");
 });
+
+test("keeps duplicate-writer repeated confirmation out of low-confidence stuck escalation", () => {
+  const signals = derive({
+    isRefined: true,
+    verificationState: "inconclusive",
+    lastObservation:
+      "Disabling the cutscene zoom script consistently removes the jitter, and re-enabling it consistently brings the jitter back. This strongly suggests the cutscene zoom writer is part of the duplicate-writer conflict.",
+    previousActionChainState: {
+      currentStepIndex: 1,
+      totalSteps: 3,
+      lastStepIntent: "duplicate-writer",
+      lastStepVerification: "inconclusive",
+      lastStepWatchFor:
+        "Watch for the bad state to track the same cutscene zoom writer overwrite path instead of drifting to a different writer.",
+      previousConfidenceLevel: "high",
+      confidenceHistory: ["medium", "high"],
+    },
+    problemDescription:
+      "Camera motion jitters during the cutscene transition because the cutscene zoom script and another camera zoom path are both writing the same zoom value during the same state change.",
+    result: makeResult({
+      what_happened:
+        "The cutscene zoom writer continues to reproduce the same confirmed behavior under repeated validation. The same overwrite path keeps matching the expected duplicate-writer conflict.",
+      what_to_do_next: [
+        "Temporarily disable cutscene zoom writer and compare whether the same jitter changes immediately before and after.",
+      ],
+    }),
+  });
+
+  assert.equal(signals.confidenceLevel, "high");
+  assert.equal(signals.loopTerminationStatus, "converging");
+  assert.equal(signals.suggestedNextAction, "continue-thread");
+  assert.equal(signals.recommendedDebuggingMode, "check-duplicate-writers");
+  assert.equal(signals.decisionCommitment, "committed");
+  assert.equal(signals.supervisedActionChainStepIndicator, "Confirmation mode");
+  assert.equal(signals.currentSupervisedActionChainStep?.intent, "confirmation");
+  assert.equal(signals.suggestedEscalationStrategy, null);
+  assert.match(signals.nextStepGuidance ?? "", /cutscene zoom/i);
+  assert.doesNotMatch(signals.nextStepGuidance ?? "", /escalat|stuck|inconclusive/i);
+});
+
 test("keeps a true positive commitment once confirmation stays consistent across consecutive steps", () => {
   const signals = derive({
     isRefined: true,

@@ -32,7 +32,7 @@ type FollowUpContext = {
 };
 
 const DUPLICATE_WRITER_SIGNAL_PATTERN =
-  /\b(?:duplicate writers?|multiple scripts writing|two scripts writing|both write|same frame|overwrit(?:e|es|ing)|bouncing between two values|written from two places|same value)\b/i;
+  /\b(?:duplicate writers?|multiple scripts writing|two scripts writing|both write|both writing|same frame|overwrit(?:e|es|ing)|bouncing between two values|written from two places|same value|same [a-z]+ value|writing the same [a-z]+ value)\b/i;
 const OWNERSHIP_SIGNAL_PATTERN =
   /\b(?:ownership|owner|reference handoff|spawned projectile|spawned object|reads from another reference|wrong reference|stale reference|lost reference|target reference|null target|no target)\b/i;
 const TIMING_SIGNAL_PATTERN =
@@ -292,7 +292,7 @@ function extractLeverPhrase(text: string | null | undefined): string | null {
   const patterns = [
     /(?:but|while)\s+(?:disabling|disable|isolating|isolate|bypassing|bypass|turning off|turn off|forcing|force|restoring|restore)\s+(?:the\s+)?([^,.]+?)\s+(?:removes?|removed|fixes?|fixed|stops?|stop|makes?|make|brings?|brought|tracks?|keeps? matching)/i,
     /(?:disabling|disable|isolating|isolate|bypassing|bypass|turning off|turn off|forcing|force|restoring|restore|passing)\s+(?:the\s+)?([^,.]+?)\s+(?:changed nothing|had no effect|fixes?|fixed|removes?|removed|stops?|stop|tracks?|brings?)/i,
-    /\b(?:same\s+)?([A-Za-z][A-Za-z0-9_-]*(?:\s+[A-Za-z][A-Za-z0-9_-]*){0,4}\s+(?:handoff|speed sync|binding|reference|transition|writer|controller|limiter|projectile))\b/i,
+    /\b(?:same\s+)?([A-Za-z][A-Za-z0-9_-]*(?:\s+[A-Za-z][A-Za-z0-9_-]*){0,4}\s+(?:handoff|speed sync|binding|reference|transition|writer|controller|limiter|projectile|script))\b/i,
   ];
 
   for (const pattern of patterns) {
@@ -406,6 +406,10 @@ function inferFocusLabel(params: {
     return "Animator speed sync handoff";
   }
 
+  if (/cutscene zoom/i.test(combined)) {
+    return params.mode === "duplicate-writer" ? "cutscene zoom writer" : "cutscene zoom path";
+  }
+
   switch (params.mode) {
     case "duplicate-writer":
       if (/speed/i.test(combined)) {
@@ -471,9 +475,17 @@ function isRepeatedConfirmationObservation(observation: string): boolean {
   );
 }
 
-function buildConfirmationDiagnosis(params: { focus: string; observation: string; }): string {
+function buildConfirmationDiagnosis(params: { focus: string; observation: string; mode: CanonicalMode }): string {
   if (HARD_RESOLUTION_PATTERN.test(params.observation)) {
     return `${params.focus} is confirmed as the failing path: the latest change fixes the issue and returns the behavior to normal.`;
+  }
+
+  if (params.mode === "duplicate-writer") {
+    if (isRepeatedConfirmationObservation(params.observation)) {
+      return `${params.focus} continues to reproduce the same confirmed duplicate-writer conflict under repeated validation. The same overwrite path keeps matching, the symptom returns on the same writer toggle, and the diagnosis should stay bounded to this writer conflict.`;
+    }
+
+    return `${params.focus} is now confirmed as the duplicate-writer cause: the same overwrite path cleanly tracks the symptom, consistently reproduces the issue, and the repeated check keeps matching the expected writer conflict.`;
   }
 
   if (isRepeatedConfirmationObservation(params.observation)) {
@@ -624,7 +636,7 @@ export function shapeFreeAnalysisResponse(params: {
   const shapedDiagnosis = hasHardContradiction
     ? buildContradictionDiagnosis({ focus, alternateFocus })
     : hasStrongConfirmation
-      ? buildConfirmationDiagnosis({ focus, observation: followUp.observation ?? "" })
+      ? buildConfirmationDiagnosis({ focus, observation: followUp.observation ?? "", mode })
       : buildModeDiagnosis({ mode, focus, input: params.input }) ?? params.response.what_happened;
 
   const canonicalMatters = buildCanonicalMatters({

@@ -16,6 +16,7 @@ export type ActionChainState = StoredActionChainState;
 export type ConfidenceLevel = "high" | "medium" | "low";
 export type ConfidenceAlignment = "increasing" | "decreasing" | "unstable";
 export type DecisionCommitment = "pending" | "committed" | null;
+export type CommitmentValidationState = "pending" | "validated" | null;
 export type EscalationStrategy = "minimal-repro" | "logging" | "single-system-rebuild" | "clean-environment";
 export type SuggestedNextAction = "continue-thread" | "restart-fresh" | "stop" | "escalate";
 export type DebuggingMode =
@@ -41,7 +42,7 @@ const GENERIC_DIAGNOSIS_PATTERN =
 const CONCRETE_ANCHOR_PATTERN =
   /\b(?:Rigidbody2D|NavMeshAgent|Cinemachine|Animator|CanvasGroup|SceneManager|NullReferenceException|MissingReferenceException|Transform|Button|Slider|Image|Update|Start|Awake|FixedUpdate|MovePosition|AddForce|onClick|FadeOut|wall-jump handoff|animator speed sync|target reference|stamina limiter|locomotion controller|scene bootstrap|loading overlay|audio singleton|pathfinding resume handoff)\b|\b[a-z][a-z0-9_-]*\s+(?:handoff|sync|reference|controller|limiter|prefab|overlay|bootstrap|singleton|binding|writer|transition)\b|[A-Za-z_]+\.[A-Za-z_]+/i;
 const CONFIRMATION_SIGNAL_PATTERN =
-  /works? again|behaves? normally|returned to normal|fixed|resolved|disappear(?:ed|s)?|went away|stops? (?:happening|flickering|crashing)|regains? control|starts? working|lets? .*run normally|makes? .*disappear|removes? .*completely/i;
+  /works? again|behaves? normally|returned to normal|fixed|resolved|disappear(?:ed|s)?|went away|stops? (?:happening|flickering|crashing)|regains? control|starts? working|lets? .*run normally|makes? .*disappear|removes? .*completely|consistently removes? .*|brings? .* back|comes? back when|re-?enabling .* brings? .* back|restor(?:e|ing) .* brings? .* back/i;
 const FALSIFICATION_SIGNAL_PATTERN =
   /nothing changed|changed nothing|changes nothing|didn't change anything|did not change anything|no change|same issue|same behavior|still broken the same|did not help|did nothing|doesn't help|no effect|unchanged|still happens exactly the same/i;
 const PARTIAL_SIGNAL_PATTERN =
@@ -73,6 +74,12 @@ export const MAX_GUIDED_STEPS = 3;
 
 const STRONG_CONFIRMATION_PATTERN =
   /\b(?:cleanly tracks|tracks the symptom|brings? .* back|same .* drives the symptom|same .* keeps matching|consistently reproduces|confirm check keeps matching|repeated validation|continues? to reproduce|only appears while)\b/i;
+
+const REPEATED_TOGGLE_CONFIRMATION_PATTERN =
+  /\b(?:consisten\w* .*removes?.*\b(?:jitter|issue|symptom|problem|flicker|slowdown|freeze|bad state)|re-?enabling .*consisten\w* brings? .* back|restor(?:e|ing) .*consisten\w* brings? .* back|brings? .* back on (?:that|the) same path|strongly suggests .*duplicate[- ]writer conflict)\b/i;
+
+const CONFIRMED_DIAGNOSIS_PATTERN =
+  /\b(?:confirmed as the cause|continues to reproduce the same confirmed behavior under repeated validation|confirmed behavior under repeated validation)\b/i;
 
 
 const STOP_WORDS = new Set([
@@ -720,7 +727,14 @@ function hasRepeatedConfirmationObservation(text: string | undefined): boolean {
     return false;
   }
 
-  return /\b(?:same .* drives the symptom|same .* keeps matching|confirm check keeps matching|repeated validation|continues? to reproduce)\b/i.test(text);
+  return /\b(?:same .* drives the symptom|same .* keeps matching|confirm check keeps matching|repeated validation|continues? to reproduce)\b/i.test(text) || REPEATED_TOGGLE_CONFIRMATION_PATTERN.test(text);
+}
+
+function hasConfirmedRepeatedEvidence(params: {
+  observation: string | undefined;
+  diagnosis: string | undefined;
+}): boolean {
+  return hasRepeatedConfirmationObservation(params.observation) && CONFIRMED_DIAGNOSIS_PATTERN.test(params.diagnosis ?? "");
 }
 
 function isMeaningfullyProgressed(params: {
@@ -1176,6 +1190,7 @@ export function classifyLoopTerminationStatus(params: {
   isRefined: boolean;
   verificationState: FollowUpVerificationState | undefined;
   observation: string | undefined;
+  currentDiagnosis: string;
   guidedStepStack: string[];
   nextStepGuidance: string | null;
   reachedGuidedStepLimit: boolean;
@@ -1193,9 +1208,16 @@ export function classifyLoopTerminationStatus(params: {
   const hasMeaningfulShift = progressionAcrossChain || Boolean(params.nextStepGuidance && hasClearLever);
   const strongResolvedOverride = !hasPartialSignal && hasStrongResolvedRecovery(trimmedObservation, params.guidedStepStack[0]);
   const strongStuckOverride = hasStrongStuckObservation(trimmedObservation);
+  const confirmedRepeatedEvidence =
+    params.verificationState !== "falsified" &&
+    hasConfirmedRepeatedEvidence({ observation: trimmedObservation, diagnosis: params.currentDiagnosis });
 
   if (strongResolvedOverride) {
     return "resolved";
+  }
+
+  if (confirmedRepeatedEvidence) {
+    return "converging";
   }
 
   if (strongStuckOverride) {
@@ -1531,7 +1553,10 @@ function getAlignedSignalCount(params: {
     return 0;
   }
 
-  return Math.min(3, getBaselineAlignedSignalCount(params.previousActionChainState) + 1);
+  return Math.max(
+    Math.min(3, getBaselineAlignedSignalCount(params.previousActionChainState) + 1),
+    getStandaloneConfirmationSignalCount(observation),
+  );
 }
 
 function hasValidatedCommitmentEvidence(params: {
@@ -2340,6 +2365,7 @@ export function deriveAnalysisResultSignals(params: {
   confidenceLevel: ConfidenceLevel;
   confidenceAlignment: ConfidenceAlignment | null;
   decisionCommitment: DecisionCommitment;
+  commitmentValidationState: CommitmentValidationState;
   alignedSignalCount: number;
   suggestedNextAction: SuggestedNextAction;
   recommendedDebuggingMode: DebuggingMode | null;
@@ -2379,6 +2405,7 @@ export function deriveAnalysisResultSignals(params: {
     isRefined,
     verificationState,
     observation: lastObservation,
+    currentDiagnosis: result.what_happened,
     guidedStepStack,
     nextStepGuidance,
     reachedGuidedStepLimit,
@@ -2424,6 +2451,7 @@ export function deriveAnalysisResultSignals(params: {
     previousActionChainState,
     observation: lastObservation,
   });
+  const commitmentValidationState = decisionCommitment === "committed" ? "validated" : decisionCommitment;
   const recommendedDebuggingMode = getRecommendedDebuggingMode({
     isRefined,
     problemDescription,
@@ -2479,6 +2507,7 @@ export function deriveAnalysisResultSignals(params: {
     confidenceLevel,
     confidenceAlignment: supervisedActionChainContinuity.confidenceAlignment,
     decisionCommitment: supervisedActionChainContinuity.decisionCommitment,
+    commitmentValidationState,
     alignedSignalCount: supervisedActionChainContinuity.alignedSignalCount,
     suggestedNextAction,
     recommendedDebuggingMode,
