@@ -11,6 +11,7 @@ import type {
 import { deriveAnalysisResultSignals } from "../../components/analysisResultLogic";
 import type { FollowUpVerificationState, StoredActionChainState } from "../../components/AnalysisForm";
 import { deriveDryRunActionProposal } from "./executionBridge";
+import { getLatestExecutionOrchestrationStep, type ExecutionOrchestrationState, type ExecutionOrchestrationStatus } from "./orchestrationSession";
 import type { AnalysisInput, DryRunActionType, FreeAnalysisResponse } from "./types";
 
 export type AnalysisTraceActionChain = {
@@ -35,9 +36,14 @@ export type AnalysisTraceRecord = {
   sessionId: string | null;
   stepIndex: number | null;
   goal: string | null;
+  orchestrationId: string | null;
+  orchestrationStepNumber: number | null;
+  orchestrationStatus: ExecutionOrchestrationStatus | null;
+  orchestrationPhase: string | null;
   diagnosis: string;
   actionType: DryRunActionType;
   proposedAction: string;
+  executedAction: string | null;
   expectedOutcome: string;
   actionResult: string | null;
   recommendedMode: DebuggingMode | null;
@@ -59,6 +65,8 @@ export type BuildAnalysisTraceRecordParams = {
   lastObservation?: string;
   verificationState?: FollowUpVerificationState;
   previousActionChainState?: StoredActionChainState;
+  executedAction?: string;
+  orchestrationState?: ExecutionOrchestrationState;
 };
 
 export const REQUIRED_TRACE_FIELDS = [
@@ -66,9 +74,14 @@ export const REQUIRED_TRACE_FIELDS = [
   "sessionId",
   "stepIndex",
   "goal",
+  "orchestrationId",
+  "orchestrationStepNumber",
+  "orchestrationStatus",
+  "orchestrationPhase",
   "diagnosis",
   "actionType",
   "proposedAction",
+  "executedAction",
   "expectedOutcome",
   "actionResult",
   "recommendedMode",
@@ -106,15 +119,21 @@ export function buildAnalysisTraceRecord(params: BuildAnalysisTraceRecordParams)
       ? "guided"
       : "none";
   const proposal = deriveDryRunActionProposal(params.result);
+  const orchestrationStep = getLatestExecutionOrchestrationStep(params.orchestrationState);
 
   return {
     input: params.input,
     sessionId: params.input.sessionId?.trim() || null,
     stepIndex: Number.isInteger(params.input.stepIndex) ? params.input.stepIndex ?? null : null,
     goal: params.input.goal?.trim() || null,
+    orchestrationId: params.orchestrationState?.orchestrationId?.trim() || null,
+    orchestrationStepNumber: orchestrationStep?.stepNumber ?? null,
+    orchestrationStatus: params.orchestrationState?.currentStatus ?? null,
+    orchestrationPhase: params.orchestrationState?.currentPhase ?? null,
     diagnosis: params.result.what_happened,
     actionType: proposal.actionType,
     proposedAction: proposal.proposedAction,
+    executedAction: params.executedAction?.trim() || orchestrationStep?.executedAction || null,
     expectedOutcome: proposal.expectedOutcome,
     actionResult: params.input.actionResult?.trim() || params.lastObservation?.trim() || null,
     recommendedMode: signals.recommendedDebuggingMode,
@@ -149,9 +168,14 @@ export function listMissingAnalysisTraceFields(trace: AnalysisTraceRecord): stri
     ["sessionId", trace.sessionId],
     ["stepIndex", trace.stepIndex],
     ["goal", trace.goal],
+    ["orchestrationId", trace.orchestrationId],
+    ["orchestrationStepNumber", trace.orchestrationStepNumber],
+    ["orchestrationStatus", trace.orchestrationStatus],
+    ["orchestrationPhase", trace.orchestrationPhase],
     ["diagnosis", trace.diagnosis],
     ["actionType", trace.actionType],
     ["proposedAction", trace.proposedAction],
+    ["executedAction", trace.executedAction],
     ["expectedOutcome", trace.expectedOutcome],
     ["actionResult", trace.actionResult],
     ["recommendedMode", trace.recommendedMode],

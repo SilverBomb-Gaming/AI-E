@@ -8,6 +8,12 @@ import {
   normalizeExecutionGoal,
   type ExecutionSessionStep,
 } from "@/lib/aie/executionSession";
+import {
+  buildExecutionOrchestrationContextBlock,
+  createExecutionOrchestrationState,
+  normalizeExecutionOrchestrationState,
+  type ExecutionOrchestrationState,
+} from "@/lib/aie/orchestrationSession";
 import type { AnalysisInput, FreeAnalysisResponse } from "@/lib/aie/types";
 
 const STORAGE_KEY = "aie-free-analysis-result";
@@ -42,6 +48,7 @@ export type StoredAnalysisState = {
   loopTerminationStatus?: StoredLoopTerminationStatus;
   actionChainState?: StoredActionChainState;
   sessionHistory?: ExecutionSessionStep[];
+  orchestrationState?: ExecutionOrchestrationState;
 };
 
 export type ContinuationThreadSnapshot = {
@@ -52,6 +59,10 @@ export type ContinuationThreadSnapshot = {
   lastAttemptedStep?: string;
   lastClassification?: "Resolved" | "Converging" | "Stuck";
   actionChainProgress?: string;
+  orchestrationId?: string;
+  orchestrationStatus?: string;
+  orchestrationPhase?: string;
+  orchestrationProgress?: string;
 };
 
 const initialForm: AnalysisInput = {
@@ -226,6 +237,7 @@ export function normalizeStoredAnalysisState(value: unknown): StoredAnalysisStat
           }
         : undefined,
     sessionHistory: normalizeSessionHistory(source.sessionHistory),
+    orchestrationState: normalizeExecutionOrchestrationState(source.orchestrationState),
   };
 }
 
@@ -258,6 +270,12 @@ export function getContinuationThreadSnapshot(state: StoredAnalysisState | null 
     actionChainProgress: state?.actionChainState
       ? `${state.actionChainState.isCommitted ? "Confirmation mode" : state.actionChainState.lastStepIntent === "confirmation" ? "Confirmation mode (pending evidence)" : `Step ${state.actionChainState.currentStepIndex + 1} of ${state.actionChainState.totalSteps}`} (${state.actionChainState.lastStepIntent}${state.actionChainState.previousConfidenceLevel ? `, ${state.actionChainState.previousConfidenceLevel} confidence` : ""})`
       : undefined,
+    orchestrationId: state?.orchestrationState?.orchestrationId,
+    orchestrationStatus: state?.orchestrationState?.currentStatus,
+    orchestrationPhase: state?.orchestrationState?.currentPhase,
+    orchestrationProgress: state?.orchestrationState
+      ? `${state.orchestrationState.currentPhase} (${state.orchestrationState.completedSteps.length} completed, ${state.orchestrationState.blockedSteps.length} blocked)`
+      : undefined,
   };
 }
 
@@ -283,6 +301,22 @@ export function buildContinuationContextBlock(snapshot: ContinuationThreadSnapsh
 
   if (snapshot.actionChainProgress) {
     lines.push(`- Last bounded chain position: ${snapshot.actionChainProgress}`);
+  }
+
+  if (snapshot.orchestrationId) {
+    lines.push(`- Orchestration ID: ${snapshot.orchestrationId}`);
+  }
+
+  if (snapshot.orchestrationStatus) {
+    lines.push(`- Orchestration status: ${snapshot.orchestrationStatus}`);
+  }
+
+  if (snapshot.orchestrationPhase) {
+    lines.push(`- Orchestration phase: ${snapshot.orchestrationPhase}`);
+  }
+
+  if (snapshot.orchestrationProgress) {
+    lines.push(`- Orchestration progress: ${snapshot.orchestrationProgress}`);
   }
 
   lines.push("Use this as the starting context for the new analysis instead of restarting from a fresh first pass.");
@@ -349,6 +383,10 @@ export function AnalysisForm({ initialMode = "fresh" }: AnalysisFormProps) {
     const sessionGoal = normalizeExecutionGoal(form.problemDescription, form.goal || storedState?.input?.goal);
     const sessionId = initialMode === "continue" ? storedState?.input?.sessionId || crypto.randomUUID() : crypto.randomUUID();
     const stepIndex = initialMode === "continue" ? Math.max(1, storedState?.input?.stepIndex ?? 1) : 1;
+    const orchestrationState =
+      initialMode === "continue" && storedState?.orchestrationState
+        ? storedState.orchestrationState
+        : createExecutionOrchestrationState({ goal: sessionGoal });
     const sessionContext = buildExecutionSessionContextBlock({
       goal: sessionGoal,
       currentStepIndex: stepIndex,
@@ -365,6 +403,7 @@ export function AnalysisForm({ initialMode = "fresh" }: AnalysisFormProps) {
         (form.context ?? "").trim(),
         includeContinuationContext && continuationSnapshot ? buildContinuationContextBlock(continuationSnapshot) : "",
         sessionContext,
+        buildExecutionOrchestrationContextBlock({ orchestration: orchestrationState }),
       ]
         .filter(Boolean)
         .join("\n\n"),
@@ -413,6 +452,7 @@ export function AnalysisForm({ initialMode = "fresh" }: AnalysisFormProps) {
           loopTerminationStatus: undefined,
           actionChainState: undefined,
           sessionHistory: initialMode === "continue" ? storedState?.sessionHistory ?? [] : [],
+          orchestrationState,
         } satisfies StoredAnalysisState),
       );
       router.push("/result");
@@ -470,6 +510,11 @@ export function AnalysisForm({ initialMode = "fresh" }: AnalysisFormProps) {
               {continuationSnapshot.actionChainProgress ? (
                 <p>
                   <span className="font-semibold text-ink">Last bounded chain:</span> {continuationSnapshot.actionChainProgress}
+                </p>
+              ) : null}
+              {continuationSnapshot.orchestrationProgress ? (
+                <p>
+                  <span className="font-semibold text-ink">Orchestration:</span> {continuationSnapshot.orchestrationProgress}
                 </p>
               ) : null}
             </div>

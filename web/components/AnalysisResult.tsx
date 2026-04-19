@@ -23,6 +23,7 @@ import type {
 } from "./analysisResultLogic";
 import type { FollowUpVerificationState, StoredActionChainState, StoredLoopTerminationStatus } from "@/components/AnalysisForm";
 import { buildExecutionSessionContextBlock, type ExecutionSessionStep } from "@/lib/aie/executionSession";
+import { buildExecutionOrchestrationContextBlock, type ExecutionOrchestrationState } from "@/lib/aie/orchestrationSession";
 import type { AnalysisInput, FreeAnalysisResponse } from "@/lib/aie/types";
 
 // Rendering decisions must come from analysisResultLogic.ts.
@@ -39,6 +40,7 @@ type AnalysisResultProps = {
   currentStepIndex?: number;
   previousOutcome?: string;
   sessionHistory?: ExecutionSessionStep[];
+  orchestrationState?: ExecutionOrchestrationState;
   onResultChange?: (update: {
     result: FreeAnalysisResponse;
     observation: string;
@@ -46,6 +48,9 @@ type AnalysisResultProps = {
     attemptedStep?: string;
     loopTerminationStatus: StoredLoopTerminationStatus | null;
     actionChainState?: StoredActionChainState;
+    confidenceLevel: ConfidenceLevel;
+    suggestedNextAction: SuggestedNextAction;
+    nextSuggestedStep?: string;
   }) => void;
 };
 
@@ -347,6 +352,7 @@ export function AnalysisResult({
   currentStepIndex,
   previousOutcome,
   sessionHistory,
+  orchestrationState,
   onResultChange,
 }: AnalysisResultProps) {
   const [, ...initialFollowUpSteps] = result.what_to_do_next;
@@ -386,7 +392,13 @@ export function AnalysisResult({
   const [followUpError, setFollowUpError] = useState<string | null>(null);
   const trimmedObservation = useMemo(() => observation.trim(), [observation]);
   const nextStepIndex = Math.max(1, (currentStepIndex ?? input?.stepIndex ?? 1) + 1);
-  const canSubmitFollowUp = Boolean(input?.problemDescription && trimmedObservation && !isSubmittingFollowUp && canContinueGuidedLoop);
+  const canSubmitFollowUp = Boolean(
+    input?.problemDescription &&
+      trimmedObservation &&
+      !isSubmittingFollowUp &&
+      canContinueGuidedLoop &&
+      (!orchestrationState || orchestrationState.currentStatus === "active"),
+  );
 
   const handleFollowUpSubmit = async () => {
     if (!input?.problemDescription || !trimmedObservation || isSubmittingFollowUp) {
@@ -420,6 +432,7 @@ export function AnalysisResult({
               previousOutcome,
               steps: sessionHistory,
             }),
+            buildExecutionOrchestrationContextBlock({ orchestration: orchestrationState }),
           ]
             .filter(Boolean)
             .join("\n\n"),
@@ -524,6 +537,9 @@ export function AnalysisResult({
               ].slice(-3),
             }
           : undefined,
+        confidenceLevel,
+        suggestedNextAction,
+        nextSuggestedStep: nextResult.what_to_do_next[0] ?? undefined,
       });
       setObservation("");
     } catch {

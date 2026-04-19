@@ -6,6 +6,11 @@ import { useEffect, useState } from "react";
 import { AnalysisResult } from "@/components/AnalysisResult";
 import { normalizeStoredAnalysisState, resultStorageKey, type StoredAnalysisState } from "@/components/AnalysisForm";
 import { advanceExecutionSession } from "@/lib/aie/executionSession";
+import {
+  advanceExecutionOrchestration,
+  createExecutionOrchestrationState,
+  deriveNextExecutionOrchestrationPhase,
+} from "@/lib/aie/orchestrationSession";
 import { UpgradeCard } from "@/components/UpgradeCard";
 
 export default function ResultPage() {
@@ -83,7 +88,8 @@ export default function ResultPage() {
           currentStepIndex={storedState.input?.stepIndex}
           previousOutcome={storedState.previousOutcome}
           sessionHistory={storedState.sessionHistory}
-          onResultChange={({ result: nextResult, observation, verificationState, attemptedStep, loopTerminationStatus, actionChainState }) => {
+          orchestrationState={storedState.orchestrationState}
+          onResultChange={({ result: nextResult, observation, verificationState, attemptedStep, loopTerminationStatus, actionChainState, confidenceLevel, suggestedNextAction, nextSuggestedStep }) => {
             setStoredState((current) => {
               if (!current) {
                 return current;
@@ -97,6 +103,28 @@ export default function ResultPage() {
                 diagnosis: nextResult.what_happened,
                 loopTerminationStatus: loopTerminationStatus ?? null,
                 steps: current.sessionHistory,
+              });
+              const currentOrchestration = current.orchestrationState ?? createExecutionOrchestrationState({ goal: current.input?.goal ?? "Resolve the current issue." });
+              const statusOverride = suggestedNextAction === "restart-fresh" && confidenceLevel === "low" ? "aborted" : undefined;
+              const nextSafeAction = suggestedNextAction === "continue-thread" ? nextSuggestedStep ?? nextResult.what_to_do_next[0] ?? "" : "";
+              const nextOrchestration = advanceExecutionOrchestration({
+                state: currentOrchestration,
+                phase: currentOrchestration.currentPhase,
+                proposedAction: current.result.proposedAction ?? current.result.what_to_do_next[0],
+                executedAction: attemptedStep ?? current.result.proposedAction ?? current.result.what_to_do_next[0],
+                actionResult: observation,
+                verificationState,
+                diagnosis: nextResult.what_happened,
+                loopTerminationStatus: loopTerminationStatus ?? null,
+                nextSafeAction,
+                statusOverride,
+                nextPhase: deriveNextExecutionOrchestrationPhase({
+                  currentPhase: currentOrchestration.currentPhase,
+                  verificationState,
+                  loopTerminationStatus: loopTerminationStatus ?? null,
+                  nextSafeAction,
+                  statusOverride,
+                }),
               });
 
               const nextState = {
@@ -117,6 +145,7 @@ export default function ResultPage() {
                 loopTerminationStatus: loopTerminationStatus ?? undefined,
                 actionChainState,
                 sessionHistory: nextSession.steps,
+                orchestrationState: nextOrchestration.state,
               } satisfies StoredAnalysisState;
 
               window.sessionStorage.setItem(resultStorageKey, JSON.stringify(nextState));
@@ -143,6 +172,19 @@ export default function ResultPage() {
                   <p>
                     <span className="font-semibold text-ink">Previous outcome:</span> {storedState.previousOutcome}
                   </p>
+                ) : null}
+                {storedState.orchestrationState ? (
+                  <>
+                    <p>
+                      <span className="font-semibold text-ink">Orchestration:</span> {storedState.orchestrationState.currentStatus}
+                    </p>
+                    <p>
+                      <span className="font-semibold text-ink">Phase:</span> {storedState.orchestrationState.currentPhase}
+                    </p>
+                    <p>
+                      <span className="font-semibold text-ink">Completed / blocked:</span> {storedState.orchestrationState.completedSteps.length} / {storedState.orchestrationState.blockedSteps.length}
+                    </p>
+                  </>
                 ) : null}
               </div>
             </div>

@@ -3,6 +3,7 @@ import test from "node:test";
 
 import type { FollowUpVerificationState, StoredActionChainState } from "../../components/AnalysisForm";
 import { buildAnalysisTraceRecord, listMissingAnalysisTraceFields } from "./analysisTrace";
+import { advanceExecutionOrchestration, createExecutionOrchestrationState } from "./orchestrationSession";
 import type { AnalysisInput, FreeAnalysisResponse } from "./types";
 
 function makeInput(problemDescription: string, overrides: Partial<AnalysisInput> = {}): AnalysisInput {
@@ -34,6 +35,8 @@ function buildTrace(params: {
   lastObservation?: string;
   verificationState?: FollowUpVerificationState;
   previousActionChainState?: StoredActionChainState;
+  executedAction?: string;
+  orchestrationState?: ReturnType<typeof createExecutionOrchestrationState>;
 }) {
   return buildAnalysisTraceRecord(params);
 }
@@ -53,12 +56,56 @@ test("fresh traces include the full required contract", () => {
   assert.equal(trace.actionType, "inspection");
   assert.match(trace.proposedAction, /disable the Animator speed sync override/i);
   assert.match(trace.expectedOutcome, /source of the issue|target/i);
+  assert.equal(trace.executedAction, null);
   assert.equal(trace.actionResult, null);
   assert.equal(trace.sessionId, "test-session");
   assert.equal(trace.stepIndex, 1);
   assert.equal(trace.goal, "Confirm whether the Animator handoff is the leading cause.");
+  assert.equal(trace.orchestrationId, null);
+  assert.equal(trace.orchestrationStatus, null);
   assert.equal(trace.verificationState, null);
   assert.equal(trace.commitmentValidationState, null);
+});
+
+test("orchestrated traces capture orchestration identifiers, step numbers, and executed actions", () => {
+  const initialOrchestration = createExecutionOrchestrationState({
+    goal: "Restore CLI startup and confirm the banner output.",
+    currentPhase: "apply-fix",
+  });
+  const orchestration = advanceExecutionOrchestration({
+    state: initialOrchestration,
+    phase: initialOrchestration.currentPhase,
+    proposedAction: "Apply the smallest import compatibility fix.",
+    executedAction: "Patch the controller startup path and rerun the CLI.",
+    actionResult: "The CLI now starts and prints the expected banner output in both modes.",
+    verificationState: "confirmed",
+    diagnosis: "The startup validation is complete.",
+    loopTerminationStatus: "resolved",
+    nextSafeAction: "",
+    nextPhase: "complete",
+  }).state;
+  const trace = buildTrace({
+    input: makeInput("CLI startup should expose the debug routing state in both normal and --debug modes.", {
+      stepIndex: 2,
+      actionResult: "The CLI now starts and prints the expected banner output in both modes.",
+    }),
+    isRefined: true,
+    verificationState: "confirmed",
+    lastObservation: "The CLI now starts and prints the expected banner output in both modes.",
+    executedAction: "Patch the controller startup path and rerun the CLI.",
+    orchestrationState: orchestration,
+    result: makeResult({
+      what_happened: "The CLI startup validation completed successfully.",
+      what_to_do_next: ["Treat the bounded orchestration as complete."],
+    }),
+  });
+
+  assert.equal(trace.orchestrationId, orchestration.orchestrationId);
+  assert.equal(trace.orchestrationStepNumber, 1);
+  assert.equal(trace.orchestrationStatus, "complete");
+  assert.equal(trace.orchestrationPhase, "complete");
+  assert.equal(trace.executedAction, "Patch the controller startup path and rerun the CLI.");
+  assert.deepEqual(listMissingAnalysisTraceFields(trace), []);
 });
 
 test("pending commitment traces expose a pending validation state", () => {
