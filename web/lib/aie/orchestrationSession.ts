@@ -200,13 +200,41 @@ function looksLikeVagueSubgoal(value: string): boolean {
   return /^(continue|keep going|keep improving|continue working|continue debugging|keep working|improve things?)$/i.test(normalizeText(value));
 }
 
+function stripSubgoalLeadIn(value: string): string {
+  return value
+    .replace(
+      /^(?:temporarily\s+)?(?:inspect|confirm|validate|run|rerun|execute|apply|keep|log|isolate|recover|patch|fix|review|choose|identify|add|stop|treat)\s+(?:the\s+)?/i,
+      "",
+    )
+    .replace(/^(?:the\s+)?planner wants(?: the executor)? to\s+/i, "")
+    .replace(/^(?:the planner selected\s+)/i, "")
+    .replace(/\b(?:and compare.*|so you can.*|until .*|before .*|after .*|that confirms?.*|whether .*)$/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizeSubgoalKey(value: string): string {
+  return normalizeText(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, " ")
+    .replace(/\b(?:confirm|validate|execute|recover|subgoal|goal|bounded|action|outcome|latest|next|approved|planner|top|level|result|active)\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .split(" ")
+    .slice(0, 6)
+    .join(" ");
+}
+
 function buildConcreteSubgoalTitle(value: string | null | undefined, fallback: string, prefix?: string): string {
-  const normalized = trimSentence(normalizeText(value), 120);
+  const normalized = trimSentence(stripSubgoalLeadIn(normalizeText(value)), 120);
   if (!normalized || looksLikeVagueSubgoal(normalized)) {
     return trimSentence(fallback, 120);
   }
 
-  const withPrefix = prefix ? `${prefix}: ${normalized}` : normalized;
+  const withPrefix =
+    prefix && !normalized.toLowerCase().startsWith(prefix.toLowerCase().split(":")[0] ?? "")
+      ? `${prefix}: ${normalized}`
+      : normalized;
   return trimSentence(withPrefix, 120);
 }
 
@@ -221,7 +249,15 @@ function appendUniqueSubgoal(
   },
 ): ExecutionSelfDirectedSubgoal[] {
   const normalizedTitle = normalizeText(params.title).toLowerCase();
-  if (!normalizedTitle || target.some((subgoal) => normalizeText(subgoal.title).toLowerCase() === normalizedTitle)) {
+  const dedupKey = normalizeSubgoalKey(`${params.title} ${params.proposedAction}`);
+  if (
+    !normalizedTitle ||
+    target.some((subgoal) => {
+      const existingTitle = normalizeText(subgoal.title).toLowerCase();
+      const existingKey = normalizeSubgoalKey(`${subgoal.title} ${subgoal.proposedAction}`);
+      return existingTitle === normalizedTitle || (dedupKey && existingKey === dedupKey);
+    })
+  ) {
     return target;
   }
 

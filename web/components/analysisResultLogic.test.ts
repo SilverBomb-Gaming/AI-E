@@ -2,7 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { FollowUpVerificationState, StoredActionChainState } from "./AnalysisForm";
-import { buildNextStepGuidance, classifyFollowUpResult, deriveAnalysisResultSignals } from "./analysisResultLogic";
+import {
+  buildFalsifiedDiagnosis,
+  buildFollowUpProblemDescription,
+  buildGuidedStepStack,
+  buildNextStepGuidance,
+  classifyFollowUpResult,
+  deriveAnalysisResultSignals,
+} from "./analysisResultLogic";
 import type { FreeAnalysisResponse } from "../lib/aie/types";
 
 function makeResult(overrides: Partial<FreeAnalysisResponse> = {}): FreeAnalysisResponse {
@@ -823,4 +830,50 @@ test("marks a formerly guided follow-up as stuck when the latest observation bec
   assert.equal(signals.suggestedNextAction, "escalate");
   assert.equal(signals.suggestedEscalationStrategy, "single-system-rebuild");
   assert.equal(signals.recommendedDebuggingMode, "isolate-one-subsystem");
+});
+
+test("builds canonical contradiction diagnosis text without stitched phrasing", () => {
+  const diagnosis = buildFalsifiedDiagnosis({
+    originalResult: makeResult({
+      what_happened: "The stamina limiter is the most likely cause of the flicker.",
+      what_to_do_next: [
+        "Temporarily disable the stamina limiter's speed assignment and compare the behavior before and after.",
+      ],
+    }),
+    nextResult: makeResult({
+      what_happened: "The animator speed sync is now the more likely cause.",
+    }),
+    observation:
+      "Disabling the stamina limiter changed nothing, but disabling the animator speed sync removes the slowdown completely.",
+  });
+
+  assert.match(diagnosis, /This contradicts the previous hypothesis\./i);
+  assert.match(diagnosis, /animator speed sync is now the more likely cause/i);
+  assert.doesNotMatch(diagnosis, /^Since\s/i);
+});
+
+test("removes near-identical guided steps from the stack", () => {
+  const stack = buildGuidedStepStack(
+    "Temporarily disable Animator speed sync handoff and compare whether the same symptom changes immediately before and after.",
+    [
+      "Temporarily disable Animator speed sync handoff once and compare the behavior immediately before and after.",
+      "Restore Animator speed sync handoff immediately after that check and confirm the same symptom comes back on that same path.",
+    ],
+  );
+
+  assert.equal(stack.filter((step) => /disable Animator speed sync handoff/i.test(step)).length, 1);
+  assert.equal(stack.length, 1);
+  assert.doesNotMatch(stack[0] ?? "", /compare whether the same symptom changes immediately before and after/i);
+});
+
+test("keeps approved-action follow-up phrasing short and readable", () => {
+  const description = buildFollowUpProblemDescription(
+    "Camera motion jitters during the cutscene transition.",
+    "Disabling the cutscene zoom writer removes the jitter, and restoring it brings the jitter back immediately.",
+    "Temporarily disable the cutscene zoom writer and compare whether the same jitter changes immediately before and after.",
+    1,
+  );
+
+  assert.match(description, /After trying step 1 \(Temporarily disable the cutscene zoom writer and compare the behavior immediately before and after\):/i);
+  assert.doesNotMatch(description, /compare whether the same jitter changes immediately before and after/i);
 });

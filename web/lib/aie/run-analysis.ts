@@ -99,6 +99,127 @@ function dedupeLines(values: string[]): string[] {
   return result;
 }
 
+const OUTPUT_STOP_WORDS = new Set([
+  "about",
+  "after",
+  "again",
+  "before",
+  "behavior",
+  "between",
+  "bounded",
+  "cause",
+  "compare",
+  "confirm",
+  "current",
+  "diagnosis",
+  "expected",
+  "immediately",
+  "issue",
+  "latest",
+  "next",
+  "path",
+  "same",
+  "should",
+  "step",
+  "symptom",
+  "that",
+  "the",
+  "then",
+  "this",
+  "validation",
+  "whether",
+]);
+
+function normalizeShapedSentence(value: string): string {
+  return normalizeText(value)
+    .replace(/\s*:\s*(?=(?:two|one|the|this|focused|same)\b)/i, ". ")
+    .replace(/\.\s*\./g, ".")
+    .replace(/\s+,/g, ",")
+    .replace(/\s+\./g, ".")
+    .replace(/compare whether (?:the same |the )?[a-z][a-z0-9\s-]{0,32} changes immediately before and after/gi, "compare the behavior immediately before and after")
+    .replace(/compare whether (?:the same |the )?(?:symptom|issue|behavior|jitter|freeze|flicker|slowdown|problem|transition) changes immediately before and after/gi, "compare the behavior immediately before and after")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function extractOutputComparableTerms(value: string): string[] {
+  return (
+    normalizeShapedSentence(value)
+      .toLowerCase()
+      .match(/[a-z0-9][a-z0-9-]+/g) ?? []
+  ).filter((token) => token.length >= 4 && !OUTPUT_STOP_WORDS.has(token));
+}
+
+function calculateOutputSimilarity(left: string, right: string): number {
+  const leftTerms = new Set(extractOutputComparableTerms(left));
+  const rightTerms = new Set(extractOutputComparableTerms(right));
+  if (!leftTerms.size || !rightTerms.size) {
+    return 0;
+  }
+
+  let shared = 0;
+  for (const term of leftTerms) {
+    if (rightTerms.has(term)) {
+      shared += 1;
+    }
+  }
+
+  return shared / new Set([...leftTerms, ...rightTerms]).size;
+}
+
+function buildShapedStepKey(value: string): string {
+  const normalized = normalizeShapedSentence(value).toLowerCase();
+  const action =
+    normalized.match(/\b(?:disable|bypass|restore|log|inspect|validate|keep|rerun|delay|isolate|force|replace|run|pass)\b/)?.[0] ??
+    "step";
+  const focus = normalized
+    .replace(/[^a-z0-9\s-]/g, " ")
+    .replace(/\b(?:disable|bypass|restore|log|inspect|validate|keep|rerun|delay|isolate|force|replace|run|pass|temporarily|behavior|before|after|immediately|same|current|next|issue|symptom|bounded|check)\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .split(" ")
+    .slice(0, 5)
+    .join(" ");
+
+  return `${action}:${focus}`;
+}
+
+function dedupeShapedEntries(values: string[], maxLength: number, kind: "step" | "note"): string[] {
+  const result: string[] = [];
+
+  for (const value of values) {
+    const normalized = normalizeShapedSentence(value);
+    if (!normalized) {
+      continue;
+    }
+
+    const alreadyPresent = result.some((existingValue) => {
+      const sameText = existingValue.toLowerCase() === normalized.toLowerCase();
+      const overlappingText =
+        existingValue.toLowerCase().includes(normalized.toLowerCase()) ||
+        normalized.toLowerCase().includes(existingValue.toLowerCase());
+
+      if (sameText || overlappingText) {
+        return true;
+      }
+
+      if (kind === "step" && buildShapedStepKey(existingValue) === buildShapedStepKey(normalized)) {
+        return true;
+      }
+
+      return kind === "step" && calculateOutputSimilarity(existingValue, normalized) >= 0.74;
+    });
+
+    if (alreadyPresent) {
+      continue;
+    }
+
+    result.push(trimSentence(normalized, maxLength));
+  }
+
+  return result;
+}
+
 function splitIntoClauses(value: string): string[] {
   return value
     .split(/[.!?\n;]+/)
@@ -501,15 +622,15 @@ function inferFocusLabel(params: {
 function buildModeDiagnosis(params: { mode: CanonicalMode; focus: string; input: AnalysisInput }): string | null {
   switch (params.mode) {
     case "duplicate-writer":
-      return `This is a duplicate writer conflict: two systems are writing the same value through ${params.focus}, so the later write overwrites the earlier write and the symptom flips between two states.`;
+      return `This is a duplicate writer conflict. Two systems are writing the same value through ${params.focus}, so the later write overwrites the earlier one and the symptom flips between states.`;
     case "ownership":
-      return `This is an ownership/reference handoff issue: one object stores the needed target, but ${params.focus} reads the wrong or stale target path, so the spawned behavior runs without the intended target.`;
+      return `This is an ownership/reference handoff issue. One object stores the needed target, but ${params.focus} reads the wrong or stale target path, so the spawned behavior runs without the intended target.`;
     case "timing":
-      return `This is an initialization-order issue: ${params.focus} is being read before the upstream state is ready, so the first frame uses stale or default data and the later lifecycle pass corrects it.`;
+      return `This is an initialization-order issue. ${params.focus} is being read before the upstream state is ready, so the first frame uses stale or default data and the later lifecycle pass corrects it.`;
     case "instrumentation":
       return `The failure is still centered on ${params.focus}, and the next pass should instrument that exact handoff so you can see whether the signal is lost before or after the failing boundary.`;
     case "isolation":
-      return `This is a single-subsystem isolation case: ${params.focus} is the failing path because the symptom starts when that path runs and the rest of the surrounding system stays normal.`;
+      return `This is a single-subsystem isolation case. ${params.focus} is the failing path because the symptom starts when that path runs and the rest of the surrounding system stays normal.`;
     default:
       return null;
   }
@@ -517,7 +638,7 @@ function buildModeDiagnosis(params: { mode: CanonicalMode; focus: string; input:
 
 function buildContradictionDiagnosis(params: { focus: string; alternateFocus: string | null }): string {
   const alternateFocus = params.alternateFocus ?? "the alternate path";
-  return `The previous hypothesis is contradicted. ${alternateFocus} is now the more likely cause because the earlier step did not affect the issue, while the alternate lever changes the symptom immediately.`;
+  return `The previous hypothesis is contradicted. ${alternateFocus} is now the more likely cause because changing ${params.focus} did not affect the issue, while the alternate lever changes the symptom immediately.`;
 }
 
 function isRepeatedConfirmationObservation(observation: string): boolean {
@@ -528,22 +649,22 @@ function isRepeatedConfirmationObservation(observation: string): boolean {
 
 function buildConfirmationDiagnosis(params: { focus: string; observation: string; mode: CanonicalMode }): string {
   if (HARD_RESOLUTION_PATTERN.test(params.observation)) {
-    return `${params.focus} is confirmed as the failing path: the latest change fixes the issue and returns the behavior to normal.`;
+    return `${params.focus} is confirmed as the failing path. The latest change fixes the issue and returns the behavior to normal.`;
   }
 
   if (params.mode === "duplicate-writer") {
     if (isRepeatedConfirmationObservation(params.observation)) {
-      return `${params.focus} continues to reproduce the same confirmed duplicate-writer conflict under repeated validation. The same overwrite path keeps matching, the symptom returns on the same writer toggle, and the diagnosis should stay bounded to this writer conflict.`;
+      return `${params.focus} remains the confirmed duplicate-writer cause. The same overwrite path still reproduces the symptom under repeated validation.`;
     }
 
-    return `${params.focus} is now confirmed as the duplicate-writer cause: the same overwrite path cleanly tracks the symptom, consistently reproduces the issue, and the repeated check keeps matching the expected writer conflict.`;
+    return `${params.focus} is confirmed as the duplicate-writer cause. The same overwrite path consistently reproduces the issue.`;
   }
 
   if (isRepeatedConfirmationObservation(params.observation)) {
-    return `${params.focus} continues to reproduce the same confirmed behavior under repeated validation. The same path cleanly tracks the symptom, consistently reproduces the issue, and the repeated check keeps matching the expected path.`;
+    return `${params.focus} remains the confirmed cause. The same path still reproduces the symptom under repeated validation.`;
   }
 
-  return `${params.focus} is now confirmed as the cause: the same path cleanly tracks the symptom, consistently reproduces the issue, and the repeated check keeps matching the expected path.`;
+  return `${params.focus} is confirmed as the cause. The same path consistently reproduces the issue.`;
 }
 
 function buildCanonicalMatters(params: {
@@ -705,13 +826,9 @@ export function shapeFreeAnalysisResponse(params: {
 
   return attachDryRunActionProposal({
     ...params.response,
-    what_happened: trimSentence(shapedDiagnosis, 220),
-    what_matters: dedupeLines([...canonicalMatters, ...params.response.what_matters])
-      .slice(0, 5)
-      .map((entry) => trimSentence(entry, 180)),
-    what_to_do_next: dedupeLines([...canonicalSteps, ...params.response.what_to_do_next])
-      .slice(0, 5)
-      .map((entry) => trimSentence(entry, 180)),
+    what_happened: trimSentence(normalizeShapedSentence(shapedDiagnosis), 220),
+    what_matters: dedupeShapedEntries([...canonicalMatters, ...params.response.what_matters], 180, "note").slice(0, 5),
+    what_to_do_next: dedupeShapedEntries([...canonicalSteps, ...params.response.what_to_do_next], 180, "step").slice(0, 5),
   });
 }
 

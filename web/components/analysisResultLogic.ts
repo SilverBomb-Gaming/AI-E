@@ -79,7 +79,7 @@ const REPEATED_TOGGLE_CONFIRMATION_PATTERN =
   /\b(?:consisten\w* .*removes?.*\b(?:jitter|issue|symptom|problem|flicker|slowdown|freeze|bad state)|re-?enabling .*consisten\w* brings? .* back|restor(?:e|ing) .*consisten\w* brings? .* back|brings? .* back on (?:that|the) same path|strongly suggests .*duplicate[- ]writer conflict)\b/i;
 
 const CONFIRMED_DIAGNOSIS_PATTERN =
-  /\b(?:confirmed as the cause|continues to reproduce the same confirmed behavior under repeated validation|confirmed behavior under repeated validation)\b/i;
+  /\b(?:confirmed as the cause|confirmed cause under repeated validation|continues to reproduce the same confirmed behavior under repeated validation|remains the confirmed cause(?: under repeated validation)?|confirmed behavior under repeated validation)\b/i;
 
 
 const STOP_WORDS = new Set([
@@ -111,6 +111,59 @@ const STOP_WORDS = new Set([
   "when",
   "with",
 ]);
+
+function normalizeGuidedStepText(text: string): string {
+  return text
+    .replace(
+      /compare whether (?:the same |the )?(?:symptom|issue|behavior|jitter|freeze|flicker|slowdown|problem|fade|transition) changes immediately before and after/gi,
+      "compare the behavior immediately before and after",
+    )
+    .replace(
+      /compare whether (?:the same |the )?[a-z][a-z0-9\s-]{0,32} changes immediately before and after/gi,
+      "compare the behavior immediately before and after",
+    )
+    .replace(/If the (?:issue|symptom) changes right away/gi, "If the behavior changes right away")
+    .replace(/If the (?:issue|symptom) changes immediately/gi, "If the behavior changes immediately")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function buildGuidedStepDedupKey(step: string): string {
+  const method = extractStepMethod(step);
+  const focus = normalizeFocusKey(extractFocusPhrase(step));
+  if (focus) {
+    return `${method}:${focus}`;
+  }
+
+  const normalized =
+    normalizeFocusKey(
+      normalizeGuidedStepText(step)
+        .toLowerCase()
+        .replace(/^temporarily\s+/i, "")
+        .replace(/[^a-z0-9\s-]/g, " "),
+    ) ?? "";
+
+  return `${method}:${normalized.split(" ").slice(0, 8).join(" ")}`;
+}
+
+function hasNearDuplicateGuidedStep(left: string, right: string): boolean {
+  const leftNormalized = normalizeGuidedStepText(trimTrailingPunctuation(left)).toLowerCase();
+  const rightNormalized = normalizeGuidedStepText(trimTrailingPunctuation(right)).toLowerCase();
+
+  if (
+    leftNormalized === rightNormalized ||
+    leftNormalized.includes(rightNormalized) ||
+    rightNormalized.includes(leftNormalized)
+  ) {
+    return true;
+  }
+
+  if (buildGuidedStepDedupKey(left) === buildGuidedStepDedupKey(right)) {
+    return true;
+  }
+
+  return false;
+}
 
 export function shouldShowLowEvidenceCue(result: FreeAnalysisResponse): boolean {
   const supportingText = [result.what_happened, ...result.what_matters].join(" ");
@@ -149,7 +202,7 @@ function summarizeStepForPrompt(step: string | undefined): string | null {
     return null;
   }
 
-  const summarized = trimTrailingPunctuation(step).split(/\s+/).slice(0, 18).join(" ");
+  const summarized = trimTrailingPunctuation(normalizeGuidedStepText(step)).split(/\s+/).slice(0, 18).join(" ");
   return summarized || null;
 }
 
@@ -617,11 +670,13 @@ function strengthenConfirmationStep(step: string | undefined, diagnosis: string)
   }
 
   if (ACTIONABLE_CONFIRMATION_STEP_PATTERN.test(step) || !WEAK_CONFIRMATION_STEP_PATTERN.test(step)) {
-    return step;
+    return normalizeGuidedStepText(step);
   }
 
-  const focus = extractFocusPhrase(step) ?? extractFocusPhrase(diagnosis) ?? "suspected system";
-  return `Temporarily disable or bypass the ${focus} once and compare the behavior before and after. If the issue changes immediately, that supports this diagnosis. If nothing changes, it points elsewhere.`;
+  const focus = trimLeadingArticle(extractFocusPhrase(step) ?? extractFocusPhrase(diagnosis) ?? "suspected system");
+  return normalizeGuidedStepText(
+    `Temporarily disable or bypass ${focus} and compare the behavior immediately before and after. If the behavior changes immediately, that supports this diagnosis. If nothing changes, it points elsewhere.`,
+  );
 }
 
 export function buildFalsifiedDiagnosis(params: {
@@ -639,9 +694,9 @@ export function buildFalsifiedDiagnosis(params: {
   const noEffectSummary = noEffectClause
     ? lowerFirstCharacter(normalizeEvidenceClause(noEffectClause)).replace(/,\s+([A-Z])/g, (_, character: string) => `, ${character.toLowerCase()}`)
     : `changing ${trimLeadingArticle(originalFocus)} had no effect`;
-  const alternativeEvidence = capitalizeSentence(normalizeEvidenceClause(alternativeClause));
+  const alternativeEvidence = lowerFirstCharacter(normalizeEvidenceClause(alternativeClause));
 
-  return `Since ${noEffectSummary}, the issue is more likely driven by ${trimLeadingArticle(alternativeFocus)} than ${trimLeadingArticle(originalFocus)}. ${alternativeEvidence}.`;
+  return `${capitalizeSentence(noEffectSummary)}. This contradicts the previous hypothesis. ${capitalizeSentence(trimLeadingArticle(alternativeFocus))} is now the more likely cause than ${trimLeadingArticle(originalFocus)} because ${alternativeEvidence}.`;
 }
 
 function hasStateTransitionSignal(text: string | null | undefined): boolean {
@@ -704,22 +759,32 @@ function buildActionableSecondStep(method: StepMethod, focus: string, verificati
   const trimmedFocus = trimLeadingArticle(focus);
 
   if (method === "replace") {
-    return `Temporarily replace the ${trimmedFocus} with a known-safe default or stub, then compare the behavior immediately before and after. If the symptom changes right away, that isolates the failing path without widening the test.`;
+    return normalizeGuidedStepText(
+      `Temporarily replace ${trimmedFocus} with a known-safe default or stub and compare the behavior immediately before and after. If the behavior changes right away, keep the investigation on that path.`,
+    );
   }
 
   if (method === "force") {
-    return `Temporarily force the ${trimmedFocus} to a known-safe value and compare the behavior immediately before and after. If the symptom changes right away, that isolates the branch that is actually driving the issue.`;
+    return normalizeGuidedStepText(
+      `Temporarily force ${trimmedFocus} to a known-safe value and compare the behavior immediately before and after. If the behavior changes right away, keep the investigation on that branch.`,
+    );
   }
 
   if (method === "isolate") {
-    return `Temporarily isolate only the ${trimmedFocus} and one related variable, then compare whether the symptom changes immediately. If nothing changes, move to the next likely system instead of broadening the test.`;
+    return normalizeGuidedStepText(
+      `Temporarily isolate ${trimmedFocus} from adjacent paths and compare the behavior immediately before and after. If nothing changes, move to the next concrete lever instead of broadening the test.`,
+    );
   }
 
   if (verificationState === "falsified") {
-    return `Temporarily disable or bypass the ${trimmedFocus} and compare the behavior immediately before and after. If the issue changes right away, that confirms the updated diagnosis.`;
+    return normalizeGuidedStepText(
+      `Temporarily disable or bypass ${trimmedFocus} and compare the behavior immediately before and after. If the behavior changes right away, that supports the updated diagnosis.`,
+    );
   }
 
-  return `Temporarily disable or bypass the ${trimmedFocus} once and compare the behavior immediately before and after. If the symptom changes right away, that gives you a stronger signal before widening the search.`;
+  return normalizeGuidedStepText(
+    `Temporarily disable or bypass ${trimmedFocus} and compare the behavior immediately before and after. If the behavior changes right away, that gives you a stronger signal before widening the search.`,
+  );
 }
 
 function hasRepeatedConfirmationObservation(text: string | undefined): boolean {
@@ -1076,7 +1141,7 @@ export function buildNextStepGuidance(params: {
     }
   }
 
-  return bestCandidate?.step ?? null;
+  return bestCandidate ? normalizeGuidedStepText(bestCandidate.step) : null;
 }
 
 export function getGuidedStepStack(params: {
@@ -1085,7 +1150,7 @@ export function getGuidedStepStack(params: {
   problemDescription?: string;
 }): string[] {
   if (params.isRefined) {
-    return params.result.what_to_do_next.filter(isDisplayableGuidedStep).slice(0, MAX_GUIDED_STEPS);
+    return buildGuidedStepStack(null, params.result.what_to_do_next);
   }
 
   const firstStep = refineFirstStepPrecision({
@@ -1093,19 +1158,43 @@ export function getGuidedStepStack(params: {
     diagnosis: params.result.what_happened,
     problemDescription: params.problemDescription,
   });
-  return isDisplayableGuidedStep(firstStep) ? [firstStep] : [];
+  return isDisplayableGuidedStep(firstStep) ? [normalizeGuidedStepText(firstStep)] : [];
 }
 
 export function buildGuidedStepStack(nextStep: string | null, priorSteps: string[]): string[] {
-  const sanitizedPriorSteps = priorSteps.filter(isDisplayableGuidedStep);
+  const sanitizedPriorSteps = priorSteps.map(normalizeGuidedStepText).filter(isDisplayableGuidedStep);
 
   if (!isDisplayableGuidedStep(nextStep)) {
-    return sanitizedPriorSteps.slice(0, MAX_GUIDED_STEPS);
+    const uniquePriorSteps: string[] = [];
+    for (const step of sanitizedPriorSteps) {
+      if (uniquePriorSteps.some((existingStep) => hasNearDuplicateGuidedStep(existingStep, step))) {
+        continue;
+      }
+
+      uniquePriorSteps.push(step);
+      if (uniquePriorSteps.length >= MAX_GUIDED_STEPS) {
+        break;
+      }
+    }
+
+    return uniquePriorSteps;
   }
 
-  return [nextStep, ...sanitizedPriorSteps]
-    .filter((step, index, values) => Boolean(step) && values.indexOf(step) === index)
-    .slice(0, MAX_GUIDED_STEPS);
+  const orderedSteps = [normalizeGuidedStepText(nextStep), ...sanitizedPriorSteps];
+  const uniqueSteps: string[] = [];
+
+  for (const step of orderedSteps) {
+    if (!step || uniqueSteps.some((existingStep) => hasNearDuplicateGuidedStep(existingStep, step))) {
+      continue;
+    }
+
+    uniqueSteps.push(step);
+    if (uniqueSteps.length >= MAX_GUIDED_STEPS) {
+      break;
+    }
+  }
+
+  return uniqueSteps;
 }
 
 function hasGuidedProgression(stepStack: string[]): boolean {

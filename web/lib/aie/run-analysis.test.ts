@@ -125,7 +125,7 @@ test("rewrites repeated confirmation follow-ups into stable repeated-validation 
     }),
   });
 
-  assert.match(shaped.what_happened, /continues to reproduce the same confirmed behavior under repeated validation/i);
+  assert.match(shaped.what_happened, /remains the confirmed cause(?: under repeated validation)?/i);
   assert.match(shaped.what_happened, /Animator speed sync handoff/i);
   assert.match(shaped.what_to_do_next[0] ?? "", /Temporarily disable Animator speed sync handoff/i);
 });
@@ -184,4 +184,35 @@ test("prevents approved-action observation text from leaking into duplicate-writ
   assert.match(shaped.what_happened, /cutscene zoom writer/i);
   assert.doesNotMatch(shaped.what_happened, /I disabled the cutscene zoom writer/i);
   assert.doesNotMatch(shaped.what_happened, /combat camera coordinator/i);
+});
+
+test("shapes initialization-order output into stable timing language", () => {
+  const shaped = shapeFreeAnalysisResponse({
+    input: makeInput(
+      "The HUD shows zero health on the first frame after scene load because the HUD binds before PlayerStats finishes initializing.",
+    ),
+    response: makeResponse(),
+  });
+
+  assert.match(shaped.what_happened, /initialization-order issue/i);
+  assert.match(shaped.what_happened, /before the upstream state is ready/i);
+  assert.match(shaped.what_to_do_next.join(" "), /Awake, OnEnable, and Start|delay the dependent binding/i);
+});
+
+test("removes overlapping repeated confirmation steps from shaped output", () => {
+  const shaped = shapeFreeAnalysisResponse({
+    input: makeInput(
+      "Player movement breaks after changing the Animator speed sync. The bad transition happens right when the Animator resume handoff runs. After trying step 1 (Temporarily disable the Animator speed sync override and compare the behavior before and after): Disabling the Animator speed sync now cleanly tracks the symptom to the same handoff, and restoring it brings the bad transition back.",
+    ),
+    response: makeResponse({
+      what_to_do_next: [
+        "Temporarily disable Animator speed sync handoff and compare whether the same symptom changes immediately before and after.",
+        "Temporarily disable Animator speed sync handoff once and compare the behavior immediately before and after.",
+        "Restore Animator speed sync handoff immediately after that check and confirm the same symptom comes back on that same path.",
+      ],
+    }),
+  });
+
+  assert.equal(shaped.what_to_do_next.filter((step) => /disable Animator speed sync handoff/i.test(step)).length, 1);
+  assert.doesNotMatch(shaped.what_to_do_next.join(" "), /compare whether the same symptom changes immediately before and after/i);
 });

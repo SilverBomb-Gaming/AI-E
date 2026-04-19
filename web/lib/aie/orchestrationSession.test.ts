@@ -366,6 +366,30 @@ test("self-direction initializes a bounded concrete subgoal queue", () => {
   assert.ok(selfDirection.subgoalQueue.length <= 2);
 });
 
+test("self-direction keeps subgoal titles concise and non-overlapping", () => {
+  const orchestration = createExecutionOrchestrationState({
+    goal: "Restore CLI startup and confirm the banner output.",
+    currentPhase: "apply-fix",
+  });
+
+  const selfDirection = initializeExecutionSelfDirection({
+    state: orchestration.selfDirectionState,
+    currentPhase: orchestration.currentPhase,
+    diagnosis: "The planner wants the executor to patch the controller startup path and rerun the CLI.",
+    proposedAction: "Patch the controller startup path and rerun the CLI.",
+    expectedOutcome: "The CLI should print the expected banner output in both modes.",
+  });
+
+  const titles = [selfDirection.currentSubgoal?.title, ...selfDirection.subgoalQueue.map((subgoal) => subgoal.title)].filter(
+    (title): title is string => Boolean(title),
+  );
+
+  assert.equal(new Set(titles.map((title) => title.toLowerCase())).size, titles.length);
+  assert.doesNotMatch(titles.join(" "), /Validate outcome: Validate/i);
+  assert.doesNotMatch(titles.join(" "), /Execute bounded action: Execute/i);
+  assert.doesNotMatch(titles.join(" "), /planner wants the executor to/i);
+});
+
 test("self-direction inserts a recovery subgoal after a recoverable failure", () => {
   const orchestration = createExecutionOrchestrationState({
     goal: "Recover CLI startup without widening the fix.",
