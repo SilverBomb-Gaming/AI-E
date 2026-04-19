@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 
 import { AnalysisResult } from "@/components/AnalysisResult";
 import { normalizeStoredAnalysisState, resultStorageKey, type StoredAnalysisState } from "@/components/AnalysisForm";
+import { hasHardBlockerSignal, isSemanticallyRedundantStep } from "@/components/analysisResultLogic";
 import { advanceExecutionSession } from "@/lib/aie/executionSession";
 import {
   advanceExecutionSelfDirection,
@@ -108,10 +109,22 @@ export default function ResultPage() {
                 steps: current.sessionHistory,
               });
               const currentOrchestration = current.orchestrationState ?? createExecutionOrchestrationState({ goal: current.input?.goal ?? "Resolve the current issue." });
-              const pauseForLowConfidence = suggestedNextAction === "restart-fresh" && confidenceLevel === "low";
-              const statusOverride = pauseForLowConfidence ? "active" : undefined;
               const nextPlannerAction = nextSuggestedStep ?? nextResult.proposedAction ?? nextResult.what_to_do_next[0] ?? "";
-              const nextSafeAction = suggestedNextAction === "continue-thread" || pauseForLowConfidence ? nextPlannerAction : "";
+              const redundantNextPlannerAction = isSemanticallyRedundantStep(nextPlannerAction, [
+                attemptedStep ?? "",
+                current.result.proposedAction ?? "",
+                current.result.what_to_do_next[0] ?? "",
+              ]);
+              const hardBlockerDetected = hasHardBlockerSignal(
+                [observation, nextResult.what_happened, nextPlannerAction, ...(nextResult.what_matters ?? [])].filter(Boolean).join(" "),
+              );
+              const canRerouteSafely =
+                verificationState === "falsified" && !hardBlockerDetected && Boolean(nextPlannerAction) && !redundantNextPlannerAction;
+              const pauseForLowConfidence =
+                !canRerouteSafely && suggestedNextAction === "restart-fresh" && confidenceLevel === "low";
+              const statusOverride = pauseForLowConfidence ? "active" : undefined;
+              const nextSafeAction =
+                suggestedNextAction === "continue-thread" || pauseForLowConfidence || canRerouteSafely ? nextPlannerAction : "";
               const executorStepNumber = Math.max(1, current.input?.stepIndex ?? 1);
               const executorUpdated = recordExecutorOutcome({
                 state: currentOrchestration,
@@ -141,15 +154,17 @@ export default function ResultPage() {
                 }),
               });
               const preliminaryPlannerDecision =
-                pauseForLowConfidence
-                  ? "continue"
-                  : nextOrchestration.state.currentStatus === "complete" || suggestedNextAction === "stop"
-                    ? "complete"
-                    : nextOrchestration.state.currentStatus === "blocked" || !nextSafeAction
-                      ? "block"
-                      : verificationState === "falsified"
-                        ? "reroute"
-                        : "continue";
+                nextOrchestration.state.currentStatus === "complete" || suggestedNextAction === "stop"
+                  ? "complete"
+                  : hardBlockerDetected
+                    ? "block"
+                    : canRerouteSafely
+                      ? "reroute"
+                      : pauseForLowConfidence
+                        ? "continue"
+                        : nextOrchestration.state.currentStatus === "blocked" || !nextSafeAction
+                          ? "block"
+                          : "continue";
               const nextSelfDirectionState = advanceExecutionSelfDirection({
                 state: nextOrchestration.state.selfDirectionState,
                 verificationState,

@@ -341,6 +341,8 @@ test("two-agent orchestration records a blocked planner decision after executor 
   assert.equal(blocked.state.currentStatus, "blocked");
   assert.equal(blocked.state.currentAgent, "planner");
   assert.equal(blocked.state.lastHandoff?.handoffTo, null);
+  assert.equal(blocked.state.plannerState.proposedAction, "");
+  assert.equal(blocked.state.executorState.pendingAction, "");
   assert.equal(blocked.state.agentHistory.at(-1)?.plannerDecision, "block");
 });
 
@@ -445,6 +447,61 @@ test("self-direction blocks when no safe next subgoal remains", () => {
   assert.equal(blocked.blockedSubgoals.length, 1);
   assert.equal(blocked.currentSubgoal, null);
   assert.match(blocked.lastBlockReason, /no safe bounded next step/i);
+});
+
+test("self-direction honors an explicit planner block even when a textual next action exists", () => {
+  const orchestration = createExecutionOrchestrationState({
+    goal: "Stop safely when a hard blocker leaves no valid path.",
+    currentPhase: "apply-fix",
+  });
+  const initialized = initializeExecutionSelfDirection({
+    state: orchestration.selfDirectionState,
+    currentPhase: orchestration.currentPhase,
+    diagnosis: "The bounded next move is to patch the import path.",
+    proposedAction: "Patch the import path.",
+    expectedOutcome: "Startup should recover.",
+  });
+
+  const blocked = advanceExecutionSelfDirection({
+    state: initialized,
+    verificationState: "falsified",
+    loopTerminationStatus: "converging",
+    plannerDecision: "block",
+    nextProposedAction: "Inspect another import path.",
+    blockReason: "The missing module has no fallback on this branch, so the planner blocked the run.",
+  });
+
+  assert.equal(blocked.selfDirectionStatus, "blocked");
+  assert.equal(blocked.currentSubgoal, null);
+  assert.match(blocked.lastBlockReason, /planner blocked the run/i);
+});
+
+test("self-direction blocks instead of rerouting into a near-duplicate recovery subgoal", () => {
+  const orchestration = createExecutionOrchestrationState({
+    goal: "Avoid looping the same bounded validation subgoal.",
+    currentPhase: "apply-fix",
+  });
+  const initialized = initializeExecutionSelfDirection({
+    state: orchestration.selfDirectionState,
+    currentPhase: orchestration.currentPhase,
+    diagnosis: "The bounded move is to rerun the validation check.",
+    proposedAction: "Rerun the bounded validation check.",
+    expectedOutcome: "The same signal should either confirm or falsify cleanly.",
+  });
+
+  const blocked = advanceExecutionSelfDirection({
+    state: initialized,
+    verificationState: "falsified",
+    loopTerminationStatus: "converging",
+    plannerDecision: "reroute",
+    nextProposedAction: "Rerun the bounded validation check.",
+    nextExpectedOutcome: "The same signal should either confirm or falsify cleanly.",
+    rerouteReason: "The reroute only repeats the same validation step.",
+  });
+
+  assert.equal(blocked.selfDirectionStatus, "blocked");
+  assert.equal(blocked.currentSubgoal, null);
+  assert.match(blocked.lastBlockReason, /reroute only produced a near-duplicate bounded subgoal|repeats the same validation step/i);
 });
 
 test("self-direction stops early when the top-level goal is already satisfied", () => {

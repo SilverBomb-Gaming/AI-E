@@ -69,6 +69,10 @@ const COMPONENT_LIKE_FOCUS_PATTERN =
   /\b(?:animator|animation|speed sync|sync|limiter|stamina|controller|state machine|pathfinding|pool|reference|target reference|overlay|bootstrap|singleton|timeline|handoff|priority|camera|recenter|rigidbody|velocity|wall-jump|jump script|audio|button|canvas|input|friction|slope|dash|ground|menu|scene|ui flow|event|transition|prefab|component|manager|handler|script|system)\b/i;
 const MESSY_MULTI_SYSTEM_INPUT_PATTERN =
   /\b(?:changed a bunch|changed a lot|touched\b|multiple systems?|various systems?|everything feels broken|not sure where to start|not sure|mixed together|all at once|one pass|a bunch of)\b/i;
+const HARD_BLOCKER_PATTERN =
+  /\b(?:missing (?:module|dependency|package|import)|module does not exist|does not exist anywhere on this branch|no equivalent module exists|no fallback|no valid fallback|without fallback|cannot proceed|can(?:not|'t) proceed|environment limitation|unsupported in this environment|unreachable target state|target state is unreachable|permission denied|requires unavailable|not available on this branch)\b/i;
+const CONTRADICTION_PATTERN =
+  /\b(?:contradict(?:s|ed|ory)|invalidat(?:e|ed|es)|no longer tracks|used to .* but now|changed nothing .* but|did(?: not|n't) change anything .* but|no change .* but|instead\b)\b/i;
 
 export const MAX_GUIDED_STEPS = 3;
 
@@ -163,6 +167,20 @@ function hasNearDuplicateGuidedStep(left: string, right: string): boolean {
   }
 
   return false;
+}
+
+export function isSemanticallyRedundantStep(candidate: string | null | undefined, priorSteps: string[]): boolean {
+  const normalizedCandidate = candidate?.trim();
+  if (!normalizedCandidate) {
+    return false;
+  }
+
+  return priorSteps.some((step) => hasNearDuplicateGuidedStep(normalizedCandidate, step));
+}
+
+export function hasHardBlockerSignal(text: string | null | undefined): boolean {
+  const normalized = String(text ?? "").replace(/\s+/g, " ").trim();
+  return Boolean(normalized) && HARD_BLOCKER_PATTERN.test(normalized);
 }
 
 export function shouldShowLowEvidenceCue(result: FreeAnalysisResponse): boolean {
@@ -1283,6 +1301,7 @@ export function classifyLoopTerminationStatus(params: {
   guidedStepStack: string[];
   nextStepGuidance: string | null;
   reachedGuidedStepLimit: boolean;
+  previousActionChainState?: ActionChainState;
 }): LoopTerminationStatus | null {
   if (!params.isRefined || !params.verificationState || !params.observation?.trim()) {
     return null;
@@ -1293,8 +1312,30 @@ export function classifyLoopTerminationStatus(params: {
   const progressionAcrossChain = hasGuidedProgression(params.guidedStepStack);
   const currentFocus = extractFocusPhrase(params.guidedStepStack[0] ?? "");
   const nextFocus = extractFocusPhrase(params.nextStepGuidance ?? "");
+  const repeatedFocus = isSameNormalizedFocus(currentFocus, nextFocus);
+  const currentDomain = getFocusDomain(currentFocus);
+  const nextDomain = getFocusDomain(nextFocus);
+  const repeatedDomain = Boolean(currentDomain && nextDomain && currentDomain === nextDomain);
+  const currentStep = params.guidedStepStack[0] ?? "";
+  const sameInterventionMethod = Boolean(
+    params.nextStepGuidance && currentStep && extractStepMethod(params.nextStepGuidance) === extractStepMethod(currentStep),
+  );
+  const sharedConcreteStepTerms =
+    params.nextStepGuidance && currentStep
+      ? countSharedTerms(extractComparableTerms(params.nextStepGuidance), extractComparableTerms(currentStep))
+      : 0;
+  const repeatedLever = Boolean(
+    (params.nextStepGuidance && currentStep && hasHighPhraseOverlap(params.nextStepGuidance, currentStep)) ||
+      (sameInterventionMethod && sharedConcreteStepTerms >= 2),
+  );
   const hasClearLever = !isWeakFocusPhrase(currentFocus) || !isWeakFocusPhrase(nextFocus);
   const hasMeaningfulShift = progressionAcrossChain || Boolean(params.nextStepGuidance && hasClearLever);
+  const redundantNextStep = isSemanticallyRedundantStep(params.nextStepGuidance, params.guidedStepStack);
+  const confidenceHistory = getNormalizedConfidenceHistory(params.previousActionChainState);
+  const confidenceHasStalled =
+    confidenceHistory.length >= 2 &&
+    getConfidenceLevelRank(confidenceHistory[confidenceHistory.length - 1]) <= getConfidenceLevelRank(confidenceHistory[confidenceHistory.length - 2]);
+  const blockerDetected = hasHardBlockerSignal([trimmedObservation, params.currentDiagnosis, params.nextStepGuidance].filter(Boolean).join(" "));
   const strongResolvedOverride = !hasPartialSignal && hasStrongResolvedRecovery(trimmedObservation, params.guidedStepStack[0]);
   const strongStuckOverride = hasStrongStuckObservation(trimmedObservation);
   const confirmedRepeatedEvidence =
@@ -1309,6 +1350,10 @@ export function classifyLoopTerminationStatus(params: {
     return "converging";
   }
 
+  if (blockerDetected) {
+    return "stuck";
+  }
+
   if (strongStuckOverride) {
     return "stuck";
   }
@@ -1321,6 +1366,28 @@ export function classifyLoopTerminationStatus(params: {
     return "stuck";
   }
 
+  if (params.reachedGuidedStepLimit && !params.nextStepGuidance) {
+    return "stuck";
+  }
+
+  if (
+    (params.verificationState === "falsified" || FALSIFICATION_SIGNAL_PATTERN.test(trimmedObservation) || CONTRADICTION_PATTERN.test(trimmedObservation)) &&
+    (!params.nextStepGuidance || redundantNextStep)
+  ) {
+    return "stuck";
+  }
+
+  if (
+    (confidenceHasStalled || DEAD_END_STUCK_SIGNAL_PATTERN.test(trimmedObservation)) &&
+    (!params.nextStepGuidance || redundantNextStep || repeatedFocus || repeatedDomain || repeatedLever)
+  ) {
+    return "stuck";
+  }
+
+  if (hasPartialSignal && (confidenceHasStalled || !params.nextStepGuidance)) {
+    return "stuck";
+  }
+
   if (
     params.verificationState === "inconclusive" &&
     !hasPartialSignal &&
@@ -1330,7 +1397,11 @@ export function classifyLoopTerminationStatus(params: {
     return "stuck";
   }
 
-  if (hasPartialSignal || hasMeaningfulShift || (params.verificationState === "falsified" && hasClearLever)) {
+  if (
+    hasPartialSignal ||
+    (hasMeaningfulShift && !redundantNextStep) ||
+    (params.verificationState === "falsified" && hasClearLever && !redundantNextStep)
+  ) {
     return "converging";
   }
 
@@ -1751,9 +1822,24 @@ export function getSuggestedNextAction(params: {
   showLowEvidenceCue: boolean;
   hasGuidedStep: boolean;
   observation: string | undefined;
+  currentDiagnosis: string;
+  guidedStepStack: string[];
 }): SuggestedNextAction {
+  const blockerDetected = hasHardBlockerSignal(
+    [params.observation, params.currentDiagnosis, params.nextStepGuidance].filter(Boolean).join(" "),
+  );
+  const redundantNextStep = isSemanticallyRedundantStep(params.nextStepGuidance, params.guidedStepStack);
+
   if (params.loopTerminationStatus === "resolved") {
     return "stop";
+  }
+
+  if (blockerDetected) {
+    return "escalate";
+  }
+
+  if (params.isRefined && params.verificationState === "falsified") {
+    return "restart-fresh";
   }
 
   if (params.loopTerminationStatus === "stuck") {
@@ -1761,13 +1847,21 @@ export function getSuggestedNextAction(params: {
   }
 
   if (params.loopTerminationStatus === "converging") {
+    if (!params.nextStepGuidance && params.isRefined) {
+      return params.showLowEvidenceCue ? "restart-fresh" : "escalate";
+    }
+
+    if (redundantNextStep && params.isRefined) {
+      return params.showLowEvidenceCue ? "restart-fresh" : "escalate";
+    }
+
     return "continue-thread";
   }
 
   const hasMessySignals =
     params.showLowEvidenceCue ||
     shouldRestartFreshFromObservation(params.observation) ||
-    (params.isRefined && params.verificationState === "inconclusive" && !params.nextStepGuidance && !params.hasGuidedStep) ||
+    (params.isRefined && params.verificationState === "inconclusive" && (!params.nextStepGuidance || redundantNextStep) && !params.hasGuidedStep) ||
     (!params.isRefined && !params.hasGuidedStep);
 
   if (hasMessySignals) {
@@ -2498,6 +2592,7 @@ export function deriveAnalysisResultSignals(params: {
     guidedStepStack,
     nextStepGuidance,
     reachedGuidedStepLimit,
+    previousActionChainState,
   });
   const suggestedEscalationStrategy = getSuggestedEscalationStrategy({
     status: loopTerminationStatus,
@@ -2528,6 +2623,8 @@ export function deriveAnalysisResultSignals(params: {
     showLowEvidenceCue,
     hasGuidedStep: Boolean(currentGuidedStep),
     observation: lastObservation,
+    currentDiagnosis: result.what_happened,
+    guidedStepStack,
   });
   const decisionCommitment = getDecisionCommitment({
     isRefined,

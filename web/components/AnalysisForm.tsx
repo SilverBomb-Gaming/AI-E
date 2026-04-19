@@ -268,6 +268,11 @@ export function getContinuationThreadSnapshot(state: StoredAnalysisState | null 
     return null;
   }
 
+  const blockedOrComplete =
+    state?.orchestrationState?.currentStatus === "blocked" ||
+    state?.orchestrationState?.currentStatus === "complete" ||
+    state?.orchestrationState?.selfDirectionState.selfDirectionStatus === "blocked";
+
   return {
     goal: state?.input?.goal,
     currentStepIndex: state?.input?.stepIndex,
@@ -291,12 +296,13 @@ export function getContinuationThreadSnapshot(state: StoredAnalysisState | null 
     selfDirectionStatus: state?.orchestrationState?.selfDirectionState.selfDirectionStatus,
     currentSubgoal: state?.orchestrationState?.selfDirectionState.currentSubgoal?.title,
     queuedSubgoals: state?.orchestrationState?.selfDirectionState.subgoalQueue.map((subgoal) => subgoal.title).join(" | ") || undefined,
-    nextBoundedAction:
-      state?.orchestrationState?.plannerState.proposedAction ||
-      state?.orchestrationState?.executorState.pendingAction ||
-      state?.result.proposedAction ||
-      state?.result.what_to_do_next[0] ||
-      state?.lastAttemptedStep,
+    nextBoundedAction: blockedOrComplete
+      ? "No further bounded action is available."
+      : state?.orchestrationState?.plannerState.proposedAction ||
+          state?.orchestrationState?.executorState.pendingAction ||
+          state?.result.proposedAction ||
+          state?.result.what_to_do_next[0] ||
+          state?.lastAttemptedStep,
   };
 }
 

@@ -523,9 +523,189 @@ test("resets commitment mode when a contradiction falsifies the current hypothes
   });
 
   assert.equal(signals.decisionCommitment, null);
+  assert.equal(signals.suggestedNextAction, "restart-fresh");
+  assert.equal(signals.supervisedActionChain, null);
   assert.equal(signals.supervisedActionChainActiveStepIndex, 0);
-  assert.equal(signals.supervisedActionChain?.[0]?.intent, "isolation");
-  assert.equal(signals.supervisedActionChainStepIndicator, "Step 1 of 3");
+  assert.equal(signals.supervisedActionChainStepIndicator, null);
+});
+
+test("terminates a stalled partial-success loop when no distinct bounded next step remains", () => {
+  const signals = derive({
+    isRefined: true,
+    verificationState: "inconclusive",
+    lastObservation:
+      "Disabling the HUD hookup reduced the empty panel issue slightly, but the same mismatch still appears and confidence is no better than the last two checks.",
+    previousActionChainState: {
+      currentStepIndex: 1,
+      totalSteps: 3,
+      lastStepIntent: "isolation",
+      lastStepVerification: "inconclusive",
+      lastStepWatchFor: "Watch for whether delaying the HUD hookup makes the empty panel disappear or keep showing on the same load path.",
+      previousConfidenceLevel: "medium",
+      confidenceHistory: ["medium", "medium"],
+    },
+    problemDescription: "The inventory HUD sometimes opens empty on slow scene loads.",
+    result: makeResult({
+      what_happened: "The HUD hookup timing is still the most likely cause of the empty first-open panel.",
+      what_to_do_next: [
+        "Temporarily delay the HUD hookup until after the data-ready callback and compare the first open before and after.",
+      ],
+    }),
+  });
+
+  assert.equal(signals.loopTerminationStatus, "stuck");
+  assert.notEqual(signals.suggestedNextAction, "continue-thread");
+});
+
+test("forces a directional change after a contradiction falsifies the current hypothesis", () => {
+  const signals = derive({
+    isRefined: true,
+    verificationState: "falsified",
+    lastObservation:
+      "Disabling the Animator speed sync changed nothing this time, but bypassing the pathfinding resume handoff removes the freeze immediately.",
+    previousActionChainState: {
+      currentStepIndex: 0,
+      totalSteps: 3,
+      lastStepIntent: "confirmation",
+      isCommitted: true,
+      lastStepVerification: "inconclusive",
+      lastStepWatchFor: "Watch for a clean confirm-or-contradict result around animator speed sync: the symptom should track this subsystem directly, not stay unchanged or move to a different cause.",
+      previousConfidenceLevel: "high",
+      confidenceHistory: ["medium", "high"],
+    },
+    problemDescription: "An enemy freeze appears during the resume handoff after scene streaming.",
+    result: makeResult({
+      what_happened: "The pathfinding resume handoff is the more likely cause of the freeze.",
+      what_to_do_next: [
+        "Temporarily disable the pathfinding resume handoff and compare the freezing before and after.",
+      ],
+    }),
+  });
+
+  assert.equal(signals.suggestedNextAction, "restart-fresh");
+  assert.equal(signals.decisionCommitment, null);
+});
+
+test("treats hard missing-dependency cases as blockers instead of forward progress", () => {
+  const signals = derive({
+    isRefined: true,
+    verificationState: "falsified",
+    lastObservation:
+      "The suggested import fix failed because the module does not exist anywhere on this branch and there is no equivalent fallback in the repo.",
+    problemDescription: "CLI startup now fails before the banner path.",
+    result: makeResult({
+      what_happened: "The startup path is blocked by a missing controller module that does not exist on this branch and has no valid fallback.",
+      what_to_do_next: ["Escalate the blocker instead of proposing another import patch."],
+    }),
+  });
+
+  assert.equal(signals.loopTerminationStatus, "stuck");
+  assert.equal(signals.suggestedNextAction, "escalate");
+});
+
+test("terminates a stalled partial-success loop when no distinct bounded next step remains", () => {
+  const signals = derive({
+    isRefined: true,
+    verificationState: "inconclusive",
+    lastObservation:
+      "Disabling the HUD hookup reduced the empty panel issue slightly, but the same mismatch still appears and confidence is no better than the last two checks.",
+    previousActionChainState: {
+      currentStepIndex: 1,
+      totalSteps: 3,
+      lastStepIntent: "isolation",
+      lastStepVerification: "inconclusive",
+      lastStepWatchFor: "Watch for whether delaying the HUD hookup makes the empty panel disappear or keep showing on the same load path.",
+      previousConfidenceLevel: "medium",
+      confidenceHistory: ["medium", "medium"],
+    },
+    problemDescription: "The inventory HUD sometimes opens empty on slow scene loads.",
+    result: makeResult({
+      what_happened: "The HUD hookup timing is still the most likely cause of the empty first-open panel.",
+      what_to_do_next: [
+        "Temporarily delay the HUD hookup until after the data-ready callback and compare the first open before and after.",
+      ],
+    }),
+  });
+
+  assert.equal(signals.loopTerminationStatus, "stuck");
+  assert.notEqual(signals.suggestedNextAction, "continue-thread");
+});
+
+test("forces a directional change after a contradiction falsifies the current hypothesis", () => {
+  const signals = derive({
+    isRefined: true,
+    verificationState: "falsified",
+    lastObservation:
+      "Disabling the Animator speed sync changed nothing this time, but bypassing the pathfinding resume handoff removes the freeze immediately.",
+    previousActionChainState: {
+      currentStepIndex: 0,
+      totalSteps: 3,
+      lastStepIntent: "confirmation",
+      isCommitted: true,
+      lastStepVerification: "inconclusive",
+      lastStepWatchFor: "Watch for a clean confirm-or-contradict result around animator speed sync: the symptom should track this subsystem directly, not stay unchanged or move to a different cause.",
+      previousConfidenceLevel: "high",
+      confidenceHistory: ["medium", "high"],
+    },
+    problemDescription: "An enemy freeze appears during the resume handoff after scene streaming.",
+    result: makeResult({
+      what_happened: "The pathfinding resume handoff is the more likely cause of the freeze.",
+      what_to_do_next: [
+        "Temporarily disable the pathfinding resume handoff and compare the freezing before and after.",
+      ],
+    }),
+  });
+
+  assert.equal(signals.suggestedNextAction, "restart-fresh");
+  assert.equal(signals.decisionCommitment, null);
+});
+
+test("treats hard missing-dependency cases as blockers instead of forward progress", () => {
+  const signals = derive({
+    isRefined: true,
+    verificationState: "falsified",
+    lastObservation:
+      "The suggested import fix failed because the module does not exist anywhere on this branch and there is no equivalent fallback in the repo.",
+    problemDescription: "CLI startup now fails before the banner path.",
+    result: makeResult({
+      what_happened: "The startup path is blocked by a missing controller module that does not exist on this branch and has no valid fallback.",
+      what_to_do_next: ["Escalate the blocker instead of proposing another import patch."],
+    }),
+  });
+
+  assert.equal(signals.loopTerminationStatus, "stuck");
+  assert.equal(signals.suggestedNextAction, "escalate");
+});
+
+test("does not continue a refined partial loop after the next guided step disappears", () => {
+  const signals = derive({
+    isRefined: true,
+    verificationState: "inconclusive",
+    lastObservation:
+      "A second bounded tweak still only weakens the same mismatch instead of resolving it, and the queue keeps suggesting another version of the same validation step.",
+    previousActionChainState: {
+      currentStepIndex: 1,
+      totalSteps: 3,
+      lastStepIntent: "ownership",
+      lastStepVerification: "inconclusive",
+      lastStepWatchFor: "Watch for whether the active owner or reference goes stale, null, or points at the wrong object.",
+      previousConfidenceLevel: "medium",
+      confidenceHistory: ["medium", "medium"],
+    },
+    problemDescription:
+      "After respawn, the stamina ring and dodge gate disagree briefly while one path restores from a replicated snapshot and the other reads a cached local reference.",
+    result: makeResult({
+      what_happened:
+        "This is an ownership/reference handoff issue. One object stores the needed target, but target reference handoff reads the wrong or stale target path, so the spawned behavior runs without the intended target.",
+      what_to_do_next: [
+        "Temporarily force needed target to a known-safe value and compare the behavior immediately before and after. If the behavior changes right away, keep the investigation on that branch.",
+      ],
+    }),
+  });
+
+  assert.equal(signals.nextStepGuidance, null);
+  assert.equal(signals.loopTerminationStatus, "stuck");
+  assert.notEqual(signals.suggestedNextAction, "continue-thread");
 });
 
 test("resets chain continuity to step 1 when the previous step was falsified", () => {
@@ -549,9 +729,10 @@ test("resets chain continuity to step 1 when the previous step was falsified", (
     }),
   });
 
-  assert.equal(signals.supervisedActionChain?.length, 3);
+  assert.equal(signals.suggestedNextAction, "restart-fresh");
+  assert.equal(signals.supervisedActionChain, null);
   assert.equal(signals.supervisedActionChainActiveStepIndex, 0);
-  assert.equal(signals.supervisedActionChainStepIndicator, "Step 1 of 3");
+  assert.equal(signals.supervisedActionChainStepIndicator, null);
 });
 
 test("maps initialization-order diagnoses to check-initialization-order", () => {

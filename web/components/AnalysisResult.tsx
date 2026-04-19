@@ -349,11 +349,11 @@ function getVisibleExecutionStatus(orchestrationState: ExecutionOrchestrationSta
   }
 
   const selfDirectionStatus = orchestrationState.selfDirectionState.selfDirectionStatus;
-  if (selfDirectionStatus === "paused") {
-    return "paused";
-  }
   if (selfDirectionStatus === "blocked" || orchestrationState.currentStatus === "blocked") {
     return "blocked";
+  }
+  if (selfDirectionStatus === "paused") {
+    return "paused";
   }
   if (selfDirectionStatus === "complete" || orchestrationState.currentStatus === "complete") {
     return "complete";
@@ -465,9 +465,13 @@ function getNextBoundedActionSummary(params: {
       return "No further bounded action is required.";
     }
     if (visibleStatus === "blocked") {
-      return orchestrationState.selfDirectionState.lastBlockReason || orchestrationState.plannerState.proposedAction || null;
+      return "No further bounded action is available.";
     }
     if (visibleStatus === "paused") {
+      if (orchestrationState.currentStatus === "blocked") {
+        return "No further bounded action is available.";
+      }
+
       return orchestrationState.plannerState.proposedAction || orchestrationState.executorState.pendingAction || params.result.proposedAction || null;
     }
 

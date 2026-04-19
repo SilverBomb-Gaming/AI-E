@@ -181,7 +181,7 @@ test("orchestrated traces capture orchestration identifiers, handoffs, and plann
   assert.equal(trace.agentRole, "planner");
   assert.equal(trace.handoffFrom, "planner");
   assert.equal(trace.handoffTo, null);
-  assert.match(trace.handoffPayloadSummary ?? "", /stop the orchestration/i);
+  assert.match(trace.handoffPayloadSummary ?? "", /bounded goal as complete|no additional bounded step/i);
   assert.equal(trace.executedAction, "Patch the controller startup path and rerun the CLI.");
   assert.equal(trace.executionNotes, "The executor confirmed the bounded fix path.");
   assert.equal(trace.validationResult, "confirmed");

@@ -442,6 +442,31 @@ function createRecoveryExecutionSelfDirectedSubgoal(params: {
   };
 }
 
+function hasDuplicateExecutionSelfDirectedSubgoal(
+  state: ExecutionSelfDirectionState,
+  candidate: Pick<ExecutionSelfDirectedSubgoal, "title" | "proposedAction">,
+): boolean {
+  const candidateKey = normalizeSubgoalKey(`${candidate.title} ${candidate.proposedAction}`);
+  const candidateActionKey = normalizeSubgoalKey(candidate.proposedAction);
+  if (!candidateKey) {
+    return false;
+  }
+
+  const existingSubgoals = [
+    ...(state.currentSubgoal ? [state.currentSubgoal] : []),
+    ...state.subgoalQueue,
+    ...state.completedSubgoals,
+    ...state.blockedSubgoals,
+    ...state.abandonedSubgoals,
+  ];
+
+  return existingSubgoals.some((subgoal) => {
+    const existingKey = normalizeSubgoalKey(`${subgoal.title} ${subgoal.proposedAction}`);
+    const existingActionKey = normalizeSubgoalKey(subgoal.proposedAction);
+    return existingKey === candidateKey || (candidateActionKey && existingActionKey === candidateActionKey);
+  });
+}
+
 export function advanceExecutionSelfDirection(params: {
   state: ExecutionSelfDirectionState;
   verificationState: ExecutionSessionVerificationState;
@@ -511,7 +536,7 @@ export function advanceExecutionSelfDirection(params: {
     } satisfies ExecutionSelfDirectionState;
   }
 
-  if ((params.plannerDecision === "block" && !nextProposedAction) || params.loopTerminationStatus === "stuck") {
+  if (params.plannerDecision === "block" || params.loopTerminationStatus === "stuck") {
     if (currentSubgoal) {
       nextState.blockedSubgoals.push({ ...currentSubgoal, status: "blocked" });
     }
@@ -538,6 +563,22 @@ export function advanceExecutionSelfDirection(params: {
       rerouteReason:
         trimSentence(normalizeText(params.rerouteReason) || "The previous subgoal failed, so the planner inserted a bounded recovery subgoal.", 180),
     });
+
+    if (hasDuplicateExecutionSelfDirectedSubgoal(nextState, recoverySubgoal)) {
+      return {
+        ...nextState,
+        currentSubgoal: null,
+        subgoalQueue: [],
+        selfDirectionStatus: "blocked",
+        lastBlockReason: trimSentence(
+          normalizeText(params.blockReason) ||
+            normalizeText(params.rerouteReason) ||
+            "The reroute only produced a near-duplicate bounded subgoal, so the self-directed run blocked instead of looping.",
+          180,
+        ),
+      } satisfies ExecutionSelfDirectionState;
+    }
+
     const boundedQueue = [recoverySubgoal, ...nextState.subgoalQueue].slice(0, nextState.maxSubgoals);
     const [currentRecoverySubgoal, ...remainingSubgoals] = boundedQueue;
 
@@ -698,17 +739,28 @@ export function recordPlannerHandoff(params: {
   handoffTo?: ExecutionOrchestrationAgentRole | null;
 }) {
   const stepNumber = Math.max(1, Math.floor(params.stepNumber ?? (getExecutionOrchestrationStepCount(params.state) + 1)));
-  const proposedAction = trimOrFallback(params.proposedAction, "Review the current bounded state and choose the next safe action.", 180);
-  const expectedOutcome = trimOrFallback(params.expectedOutcome, "The next bounded step should either narrow the issue, validate the fix, or stop the thread safely.", 180);
   const handoffTo =
     params.handoffTo !== undefined
       ? params.handoffTo
       : params.plannerDecision === "continue" || params.plannerDecision === "reroute"
         ? "executor"
         : null;
+  const shouldAdvertiseNextAction = Boolean(handoffTo);
+  const proposedAction = shouldAdvertiseNextAction
+    ? trimOrFallback(params.proposedAction, "Review the current bounded state and choose the next safe action.", 180)
+    : "";
+  const expectedOutcome = shouldAdvertiseNextAction
+    ? trimOrFallback(params.expectedOutcome, "The next bounded step should either narrow the issue, validate the fix, or stop the thread safely.", 180)
+    : "";
   const payloadSummary = trimOrFallback(
     params.handoffPayloadSummary,
-    `${proposedAction} Expected outcome: ${expectedOutcome}`,
+    shouldAdvertiseNextAction
+      ? `${proposedAction} Expected outcome: ${expectedOutcome}`
+      : params.plannerDecision === "block"
+        ? trimOrFallback(params.diagnosis, "No safe bounded next action is available.", 200)
+        : params.plannerDecision === "complete"
+          ? trimOrFallback(params.diagnosis, "The bounded goal is complete and no further action is required.", 200)
+          : trimOrFallback(params.diagnosis, "No executor handoff is required.", 200),
     200,
   );
   const nextStatus: ExecutionOrchestrationStatus =
