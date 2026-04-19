@@ -24,6 +24,18 @@ export type ExecutionSelfDirectedSubgoalDisposition = "queued" | "active" | "com
 export const PLANNER_AGENT_ID: ExecutionOrchestrationAgentId = "planner-agent";
 export const EXECUTOR_AGENT_ID: ExecutionOrchestrationAgentId = "executor-agent";
 
+function normalizeExecutionOrchestrationAgentId(value: unknown): ExecutionOrchestrationAgentId | null {
+  if (value === PLANNER_AGENT_ID) {
+    return PLANNER_AGENT_ID;
+  }
+
+  if (value === EXECUTOR_AGENT_ID) {
+    return EXECUTOR_AGENT_ID;
+  }
+
+  return null;
+}
+
 export type ExecutionSelfDirectedSubgoal = {
   subgoalId: string;
   title: string;
@@ -1178,7 +1190,7 @@ export function normalizeExecutionOrchestrationState(value: unknown): ExecutionO
     }
 
     const item = entry as Record<string, unknown>;
-    const agentId = item.agentId;
+    const agentId = normalizeExecutionOrchestrationAgentId(item.agentId);
     const agentRole = item.agentRole;
     const validationResult = item.validationResult;
     const plannerDecision = item.plannerDecision;
@@ -1190,7 +1202,7 @@ export function normalizeExecutionOrchestrationState(value: unknown): ExecutionO
     if (
       entryNumber <= 0 ||
       stepNumber <= 0 ||
-      (agentId !== PLANNER_AGENT_ID && agentId !== EXECUTOR_AGENT_ID) ||
+      !agentId ||
       (agentRole !== "planner" && agentRole !== "executor") ||
       typeof item.summary !== "string" ||
       typeof item.handoffPayloadSummary !== "string" ||
