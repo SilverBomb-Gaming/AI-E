@@ -2,6 +2,8 @@ import { captureTrainingScenarioTraces } from "./lib/aie/trainingTraceScenarios"
 import { listMissingAnalysisTraceFields } from "./lib/aie/analysisTrace";
 import type { AnalysisInput } from "./lib/aie/types";
 
+const BASE_URL = process.env.AIE_BASE_URL || "http://localhost:3000";
+
 function getScenarioSet(rawValue: string | undefined): "baseline" | "complex" | "game-dev" {
   if (rawValue === "complex") {
     return "complex";
@@ -20,7 +22,7 @@ function getPromptVariant(rawValue: string | undefined): "seed" | "paraphrased" 
 }
 
 async function analyze(input: AnalysisInput) {
-  const response = await fetch("http://localhost:3000/api/analyze", {
+  const response = await fetch(`${BASE_URL}/api/analyze`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),

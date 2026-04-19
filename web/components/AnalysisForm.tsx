@@ -88,6 +88,8 @@ const START_HERE_EXAMPLES = [
   "Animation speed desyncs from player movement",
 ] as const;
 
+const QUICK_MODE_MARKER = "[AIE_ANALYSIS_MODE:quick]";
+
 export function isFreeAnalysisResponse(value: unknown): value is FreeAnalysisResponse {
   const source = value as Record<string, unknown>;
 
@@ -387,6 +389,7 @@ type AnalysisFormProps = {
 export function AnalysisForm({ initialMode = "fresh" }: AnalysisFormProps) {
   const router = useRouter();
   const [form, setForm] = useState<AnalysisInput>(initialForm);
+  const [responseMode, setResponseMode] = useState<"full" | "quick">("full");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [storedState, setStoredState] = useState<StoredAnalysisState | null>(null);
@@ -463,6 +466,7 @@ export function AnalysisForm({ initialMode = "fresh" }: AnalysisFormProps) {
         includeContinuationContext && continuationSnapshot ? buildContinuationContextBlock(continuationSnapshot) : "",
         sessionContext,
         buildExecutionOrchestrationContextBlock({ orchestration: initialOrchestrationState }),
+        responseMode === "quick" ? QUICK_MODE_MARKER : "",
       ]
         .filter(Boolean)
         .join("\n\n"),
@@ -749,6 +753,39 @@ export function AnalysisForm({ initialMode = "fresh" }: AnalysisFormProps) {
                 className="rounded-[1.5rem] border border-ink/10 bg-white/80 px-5 py-4 text-sm text-ink outline-none transition placeholder:text-slate focus:border-coral focus:ring-2 focus:ring-coral/20"
               />
             </label>
+          </div>
+        </div>
+
+        <div className="rounded-[1.5rem] border border-ink/10 bg-white/70 p-5">
+          <p className="text-sm font-semibold text-ink">Response mode</p>
+          <p className="mt-1 text-xs body-muted">Full guided debugging keeps the normal reasoning path. Quick response uses lighter routing for a shallower first pass at lower cost.</p>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            <button
+              type="button"
+              onClick={() => setResponseMode("quick")}
+              aria-pressed={responseMode === "quick"}
+              className={`rounded-[1.25rem] border px-4 py-4 text-left transition ${
+                responseMode === "quick"
+                  ? "border-coral/40 bg-coral/10 text-ember"
+                  : "border-ink/10 bg-white/70 text-ink hover:border-coral/20"
+              }`}
+            >
+              <p className="text-sm font-semibold">Quick response (lower cost)</p>
+              <p className="mt-1 text-xs leading-6 body-muted">Uses a lighter first-pass route and shorter diagnostic depth.</p>
+            </button>
+            <button
+              type="button"
+              onClick={() => setResponseMode("full")}
+              aria-pressed={responseMode === "full"}
+              className={`rounded-[1.25rem] border px-4 py-4 text-left transition ${
+                responseMode === "full"
+                  ? "border-ocean/30 bg-ocean/8 text-ink"
+                  : "border-ink/10 bg-white/70 text-ink hover:border-ocean/20"
+              }`}
+            >
+              <p className="text-sm font-semibold">Full guided debugging</p>
+              <p className="mt-1 text-xs leading-6 body-muted">Preserves the normal high-quality reasoning path and deeper bounded debugging guidance.</p>
+            </button>
           </div>
         </div>
 
