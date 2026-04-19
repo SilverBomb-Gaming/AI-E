@@ -48,7 +48,14 @@ from .execution_models import LocalCommandExecutionRequest
 from .execution_runner import ExecutionRunnerError
 from .generated_project_models import GeneratedProjectRecord
 from .last_run_models import LastRunRecord
-from .dataset_export import DatasetExportError
+try:
+    from .dataset_export import DatasetExportError
+except ModuleNotFoundError as exc:
+    if exc.name != "app.controller.dataset_export":
+        raise
+
+    class DatasetExportError(ValueError):
+        pass
 from .node_dispatcher import NodeDispatchError
 from .node_router import NodeRoutingError
 from .file_mutator import (

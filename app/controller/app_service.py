@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from hashlib import sha256
+from importlib import import_module
 import json
 from pathlib import Path
 import secrets
@@ -61,10 +62,8 @@ from .data_policy_rules import DataPolicyRules
 from .data_policy_store import DataPolicyStore
 from .data_record_models import DataRecord
 from .data_record_store import DataRecordStore
-from .dataset_export import DatasetExportError, DatasetExporter
 from .dataset_formatter import DatasetFormatter
 from .dataset_models import DatasetMembershipRecord, DatasetRecord, RecordLabelState, normalize_dataset_split, normalize_export_format, normalize_primary_label, normalize_tag
-from .dataset_store import DatasetStore
 from .confirmation_models import ConfirmationContextSnapshot, PendingConfirmation
 from .confirmation_store import ConfirmationStore
 from .channel_models import TelegramChannelStatus, TelegramLoopStatus
@@ -100,7 +99,6 @@ from .workflow_executor import WorkflowExecutor
 from .workflow_models import WorkflowRecord
 from .workflow_store import WorkflowStore
 from .repo_inspector import RepoInspectionSnapshot, RepoInspector, RepoInspectorError
-from .startup_diagnostics import StartupDiagnosticsFormatter, StartupDiagnosticsSnapshot
 from .telegram_service import TelegramApiError, TelegramChannelService, TelegramInboundMessage, mask_telegram_token
 from .task_chain_formatter import TaskChainFormatter
 from .task_chain_models import TaskChainRecord
@@ -115,6 +113,112 @@ from ..platform.secrets import SecretStore, get_secret_store
 from ..providers import OllamaProviderAdapter, OpenAIProviderAdapter, ProviderReply, ProviderStatus, ProviderType as AdapterProviderType, mask_secret
 from ..runtime.manager import OpenClawRuntimeManager
 from ..runtime.log_sanitizer import sanitize_log_text
+
+try:
+    _dataset_export_module = import_module("app.controller.dataset_export")
+    DatasetExportError = _dataset_export_module.DatasetExportError
+    DatasetExporter = _dataset_export_module.DatasetExporter
+except ModuleNotFoundError as exc:
+    if exc.name != "app.controller.dataset_export":
+        raise
+
+    class DatasetExportError(ValueError):
+        pass
+
+    class DatasetExporter:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            pass
+
+        def export_dataset(self, *args: object, **kwargs: object) -> None:
+            raise DatasetExportError(
+                "Dataset export support is unavailable because app.controller.dataset_export is missing."
+            )
+
+try:
+    _dataset_store_module = import_module("app.controller.dataset_store")
+    DatasetStore = _dataset_store_module.DatasetStore
+except ModuleNotFoundError as exc:
+    if exc.name != "app.controller.dataset_store":
+        raise
+
+    class DatasetStore:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            self._root_path = Path(kwargs.get("root_path") if "root_path" in kwargs else (args[0] if args else ""))
+
+        def __getattr__(self, name: str) -> object:
+            raise RuntimeError(
+                f"Dataset storage support is unavailable because app.controller.dataset_store is missing (attempted: {name})."
+            )
+
+try:
+    _startup_diagnostics_module = import_module("app.controller.startup_diagnostics")
+    StartupDiagnosticsFormatter = _startup_diagnostics_module.StartupDiagnosticsFormatter
+    StartupDiagnosticsSnapshot = _startup_diagnostics_module.StartupDiagnosticsSnapshot
+except ModuleNotFoundError as exc:
+    if exc.name != "app.controller.startup_diagnostics":
+        raise
+
+    @dataclass(frozen=True)
+    class StartupDiagnosticsSnapshot:
+        health_status: str
+        security_status: str
+        readiness_status: str
+        readiness_reason_summary: str
+        blockers: tuple[str, ...]
+        repo_root: str | None
+        repo_label: str | None
+        repo_context_present: bool
+        selected_node: str
+        selected_node_summary: str
+        registered_node_count: int
+        allowed_capabilities: tuple[str, ...]
+        blocked_capabilities: tuple[str, ...]
+        generated_at_utc: str
+
+    class StartupDiagnosticsFormatter:
+        def _status_label(self, value: str) -> str:
+            normalized = value.replace("_", " ").strip()
+            return normalized.upper() if normalized else "UNKNOWN"
+
+        def _readiness_label(self, value: str) -> str:
+            return self._status_label(value)
+
+        def format_terminal(self, snapshot: StartupDiagnosticsSnapshot) -> str:
+            blocked = ", ".join(snapshot.blocked_capabilities) if snapshot.blocked_capabilities else "none"
+            allowed = ", ".join(snapshot.allowed_capabilities) if snapshot.allowed_capabilities else "none"
+            lines = [
+                "[STARTUP] AI-E controller booting",
+                f"[CHECK] Health: {self._status_label(snapshot.health_status)}",
+                f"[CHECK] Security: {self._status_label(snapshot.security_status)}",
+                f"[CHECK] Readiness: {self._readiness_label(snapshot.readiness_status)}",
+            ]
+            if snapshot.repo_root:
+                lines.append(f"[CHECK] Repo root: {snapshot.repo_root}")
+            lines.extend(
+                [
+                    f"[CHECK] Selected node: {snapshot.selected_node}",
+                    f"[CHECK] Registered nodes: {snapshot.registered_node_count}",
+                    f"[CHECK] Allowed: {allowed}",
+                    f"[CHECK] Blocked: {blocked}",
+                ]
+            )
+            lines.extend(f"[BLOCKER] {blocker}" for blocker in snapshot.blockers)
+            lines.append(
+                "[STATUS] System ready for operator-approved execution"
+                if snapshot.readiness_status == "ready"
+                else "[STATUS] Local execution remains locked"
+            )
+            return "\n".join(lines)
+
+        def format_telegram(self, snapshot: StartupDiagnosticsSnapshot) -> str:
+            lines = [
+                f"Startup readiness: {self._readiness_label(snapshot.readiness_status)}",
+                f"Health: {self._status_label(snapshot.health_status)}",
+                f"Security: {self._status_label(snapshot.security_status)}",
+            ]
+            if snapshot.blockers:
+                lines.extend(f"- {blocker}" for blocker in snapshot.blockers)
+            return "\n".join(lines)
 
 
 _OPERATOR_CONSOLE_LABEL = "Windows OpenClaw Operator Console v2.9"
@@ -799,7 +903,8 @@ class ControllerService:
         offline_status = self._provider_status_cache.get("ollama") or self._default_provider_status("ollama")
         online_status = self._provider_status_cache.get("openai") or self._default_provider_status("openai")
         selected_provider_status = online_status if self._config.selected_provider == "openai" else offline_status
-        health_report = self._latest_health_report or self._diagnostics_service.run_startup_health_check(
+        startup_health_check = getattr(self._diagnostics_service, "run_startup_health_check", self._diagnostics_service.run_health_check)
+        health_report = self._latest_health_report or startup_health_check(
             self._config,
             selected_provider_status,
             telegram_recent_success=self._telegram_recent_success(),
