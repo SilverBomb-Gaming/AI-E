@@ -691,6 +691,7 @@ export function AnalysisResult({
         isRefined: true,
         verificationState,
         observation: submittedObservation,
+        currentDiagnosis: refinedPayload.what_happened,
         guidedStepStack: nextGuidedStepStack,
         nextStepGuidance: upcomingNextStepGuidance,
         reachedGuidedStepLimit: verificationState === "confirmed" ? false : nextGuidedStepStack.length >= MAX_GUIDED_STEPS,
