@@ -7,6 +7,7 @@ import { AnalysisResult } from "@/components/AnalysisResult";
 import { normalizeStoredAnalysisState, resultStorageKey, type StoredAnalysisState } from "@/components/AnalysisForm";
 import { advanceExecutionSession } from "@/lib/aie/executionSession";
 import {
+  advanceExecutionSelfDirection,
   advanceExecutionOrchestration,
   createExecutionOrchestrationState,
   deriveNextExecutionOrchestrationPhase,
@@ -107,8 +108,10 @@ export default function ResultPage() {
                 steps: current.sessionHistory,
               });
               const currentOrchestration = current.orchestrationState ?? createExecutionOrchestrationState({ goal: current.input?.goal ?? "Resolve the current issue." });
-              const statusOverride = suggestedNextAction === "restart-fresh" && confidenceLevel === "low" ? "aborted" : undefined;
-              const nextSafeAction = suggestedNextAction === "continue-thread" ? nextSuggestedStep ?? nextResult.what_to_do_next[0] ?? "" : "";
+              const pauseForLowConfidence = suggestedNextAction === "restart-fresh" && confidenceLevel === "low";
+              const statusOverride = pauseForLowConfidence ? "active" : undefined;
+              const nextPlannerAction = nextSuggestedStep ?? nextResult.proposedAction ?? nextResult.what_to_do_next[0] ?? "";
+              const nextSafeAction = suggestedNextAction === "continue-thread" || pauseForLowConfidence ? nextPlannerAction : "";
               const executorStepNumber = Math.max(1, current.input?.stepIndex ?? 1);
               const executorUpdated = recordExecutorOutcome({
                 state: currentOrchestration,
@@ -137,9 +140,9 @@ export default function ResultPage() {
                   statusOverride,
                 }),
               });
-              const plannerDecision =
-                statusOverride === "aborted"
-                  ? "block"
+              const preliminaryPlannerDecision =
+                pauseForLowConfidence
+                  ? "continue"
                   : nextOrchestration.state.currentStatus === "complete" || suggestedNextAction === "stop"
                     ? "complete"
                     : nextOrchestration.state.currentStatus === "blocked" || !nextSafeAction
@@ -147,14 +150,48 @@ export default function ResultPage() {
                       : verificationState === "falsified"
                         ? "reroute"
                         : "continue";
+              const nextSelfDirectionState = advanceExecutionSelfDirection({
+                state: nextOrchestration.state.selfDirectionState,
+                verificationState,
+                loopTerminationStatus: loopTerminationStatus ?? null,
+                plannerDecision: preliminaryPlannerDecision,
+                nextProposedAction: nextPlannerAction,
+                nextExpectedOutcome: nextResult.expectedOutcome ?? nextResult.what_matters[0] ?? "",
+                confidenceLevel,
+                selectionReason:
+                  preliminaryPlannerDecision === "continue"
+                    ? "The latest executor result still supports continuing the bounded top-level goal, so AI-E selected the next queued subgoal."
+                    : preliminaryPlannerDecision === "reroute"
+                      ? "The latest executor result falsified the current subgoal, so AI-E inserted a bounded recovery subgoal."
+                      : preliminaryPlannerDecision === "complete"
+                        ? "The latest executor result satisfied the approved top-level goal, so AI-E stopped the self-directed run."
+                        : "The latest executor result leaves no safe next subgoal inside the bounded scope."
+                ,
+                rerouteReason: verificationState === "falsified" ? nextResult.what_happened : undefined,
+                stopReason: suggestedNextAction === "stop" ? nextResult.what_happened : undefined,
+                blockReason: preliminaryPlannerDecision === "block" ? nextResult.what_happened : undefined,
+                pauseReason: pauseForLowConfidence
+                  ? "Confidence fell too low to continue the self-directed run without widening risk, so the planner paused the queue."
+                  : undefined,
+              });
+              const orchestrationWithSelfDirection = {
+                ...nextOrchestration.state,
+                selfDirectionState: nextSelfDirectionState,
+              };
+              const plannerDecision =
+                nextSelfDirectionState.selfDirectionStatus === "complete"
+                  ? "complete"
+                  : nextSelfDirectionState.selfDirectionStatus === "blocked" || nextSelfDirectionState.selfDirectionStatus === "aborted"
+                    ? "block"
+                    : preliminaryPlannerDecision;
               const finalOrchestration = recordPlannerHandoff({
-                state: nextOrchestration.state,
+                state: orchestrationWithSelfDirection,
                 stepNumber:
                   plannerDecision === "continue" || plannerDecision === "reroute"
                     ? nextSession.nextStepIndex
                     : executorStepNumber,
                 diagnosis: nextResult.what_happened,
-                proposedAction: nextSafeAction || (nextResult.proposedAction ?? nextResult.what_to_do_next[0] ?? ""),
+                proposedAction: nextSafeAction || nextPlannerAction,
                 expectedOutcome: nextResult.expectedOutcome ?? nextResult.what_matters[0] ?? "",
                 plannerDecision,
                 handoffTo: plannerDecision === "continue" || plannerDecision === "reroute" ? "executor" : null,
@@ -218,8 +255,41 @@ export default function ResultPage() {
                       <span className="font-semibold text-ink">Current agent:</span> {storedState.orchestrationState.currentAgent}
                     </p>
                     <p>
+                      <span className="font-semibold text-ink">Self-direction:</span> {storedState.orchestrationState.selfDirectionState.selfDirectionStatus}
+                    </p>
+                    {storedState.orchestrationState.selfDirectionState.currentSubgoal ? (
+                      <p>
+                        <span className="font-semibold text-ink">Current subgoal:</span> {storedState.orchestrationState.selfDirectionState.currentSubgoal.title}
+                      </p>
+                    ) : null}
+                    {storedState.orchestrationState.selfDirectionState.subgoalQueue.length > 0 ? (
+                      <p>
+                        <span className="font-semibold text-ink">Queued subgoals:</span> {storedState.orchestrationState.selfDirectionState.subgoalQueue.map((subgoal) => subgoal.title).join(" | ")}
+                      </p>
+                    ) : null}
+                    <p>
                       <span className="font-semibold text-ink">Completed / blocked:</span> {storedState.orchestrationState.completedSteps.length} / {storedState.orchestrationState.blockedSteps.length}
                     </p>
+                    {storedState.orchestrationState.selfDirectionState.lastSelectionReason ? (
+                      <p>
+                        <span className="font-semibold text-ink">Selection reason:</span> {storedState.orchestrationState.selfDirectionState.lastSelectionReason}
+                      </p>
+                    ) : null}
+                    {storedState.orchestrationState.selfDirectionState.lastPauseReason ? (
+                      <p>
+                        <span className="font-semibold text-ink">Pause reason:</span> {storedState.orchestrationState.selfDirectionState.lastPauseReason}
+                      </p>
+                    ) : null}
+                    {storedState.orchestrationState.selfDirectionState.lastBlockReason ? (
+                      <p>
+                        <span className="font-semibold text-ink">Block reason:</span> {storedState.orchestrationState.selfDirectionState.lastBlockReason}
+                      </p>
+                    ) : null}
+                    {storedState.orchestrationState.selfDirectionState.lastStopReason ? (
+                      <p>
+                        <span className="font-semibold text-ink">Stop reason:</span> {storedState.orchestrationState.selfDirectionState.lastStopReason}
+                      </p>
+                    ) : null}
                     {storedState.orchestrationState.lastHandoff ? (
                       <p>
                         <span className="font-semibold text-ink">Last handoff:</span> {storedState.orchestrationState.lastHandoff.handoffFrom ?? "none"} -&gt; {storedState.orchestrationState.lastHandoff.handoffTo ?? "none"} ({storedState.orchestrationState.lastHandoff.payloadSummary})

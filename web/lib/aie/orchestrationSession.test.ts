@@ -2,10 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  advanceExecutionSelfDirection,
   advanceExecutionOrchestration,
   buildExecutionOrchestrationContextBlock,
   createExecutionOrchestrationState,
   deriveNextExecutionOrchestrationPhase,
+  initializeExecutionSelfDirection,
   recordExecutorOutcome,
   recordPlannerHandoff,
 } from "./orchestrationSession";
@@ -340,4 +342,150 @@ test("two-agent orchestration records a blocked planner decision after executor 
   assert.equal(blocked.state.currentAgent, "planner");
   assert.equal(blocked.state.lastHandoff?.handoffTo, null);
   assert.equal(blocked.state.agentHistory.at(-1)?.plannerDecision, "block");
+});
+
+test("self-direction initializes a bounded concrete subgoal queue", () => {
+  const orchestration = createExecutionOrchestrationState({
+    goal: "Restore CLI startup and confirm the banner output.",
+    currentPhase: "identify-blocker",
+  });
+
+  const selfDirection = initializeExecutionSelfDirection({
+    state: orchestration.selfDirectionState,
+    currentPhase: orchestration.currentPhase,
+    diagnosis: "The current blocker is a missing controller import on this branch.",
+    proposedAction: "Add the narrowest compatibility fallback around the missing import.",
+    expectedOutcome: "The CLI should reach the banner path again.",
+  });
+
+  assert.equal(selfDirection.selfDirectionStatus, "active");
+  assert.equal(selfDirection.topLevelGoal, "Restore CLI startup and confirm the banner output.");
+  assert.ok(selfDirection.currentSubgoal);
+  assert.ok(selfDirection.currentSubgoal?.title.length);
+  assert.ok(selfDirection.subgoalQueue.length >= 1);
+  assert.ok(selfDirection.subgoalQueue.length <= 2);
+});
+
+test("self-direction inserts a recovery subgoal after a recoverable failure", () => {
+  const orchestration = createExecutionOrchestrationState({
+    goal: "Recover CLI startup without widening the fix.",
+    currentPhase: "apply-fix",
+  });
+  const initialized = initializeExecutionSelfDirection({
+    state: orchestration.selfDirectionState,
+    currentPhase: orchestration.currentPhase,
+    diagnosis: "The leading bounded move is to patch the import path.",
+    proposedAction: "Patch the import path directly.",
+    expectedOutcome: "Startup should recover immediately.",
+  });
+
+  const rerouted = advanceExecutionSelfDirection({
+    state: initialized,
+    verificationState: "falsified",
+    loopTerminationStatus: "converging",
+    plannerDecision: "reroute",
+    nextProposedAction: "Inspect the controller surface and add the narrowest compatibility fallback.",
+    nextExpectedOutcome: "Startup should recover without widening the scope.",
+    rerouteReason: "The original import path never existed on this branch.",
+  });
+
+  assert.equal(rerouted.selfDirectionStatus, "active");
+  assert.equal(rerouted.abandonedSubgoals.length, 1);
+  assert.ok(rerouted.currentSubgoal);
+  assert.match(rerouted.currentSubgoal?.title ?? "", /compatibility fallback/i);
+  assert.match(rerouted.lastRerouteReason, /never existed/i);
+});
+
+test("self-direction blocks when no safe next subgoal remains", () => {
+  const orchestration = createExecutionOrchestrationState({
+    goal: "Restore CLI startup without widening the scope.",
+    currentPhase: "apply-fix",
+  });
+  const initialized = initializeExecutionSelfDirection({
+    state: orchestration.selfDirectionState,
+    currentPhase: orchestration.currentPhase,
+    diagnosis: "The bounded next move is to patch the import path.",
+    proposedAction: "Patch the import path.",
+    expectedOutcome: "Startup should recover.",
+  });
+
+  const blocked = advanceExecutionSelfDirection({
+    state: initialized,
+    verificationState: "falsified",
+    loopTerminationStatus: "stuck",
+    plannerDecision: "block",
+    blockReason: "No equivalent module exists in the repo, so no safe bounded next step remains.",
+  });
+
+  assert.equal(blocked.selfDirectionStatus, "blocked");
+  assert.equal(blocked.blockedSubgoals.length, 1);
+  assert.equal(blocked.currentSubgoal, null);
+  assert.match(blocked.lastBlockReason, /no safe bounded next step/i);
+});
+
+test("self-direction stops early when the top-level goal is already satisfied", () => {
+  const orchestration = createExecutionOrchestrationState({
+    goal: "Restore CLI startup and confirm the banner output.",
+    currentPhase: "rerun-validation",
+  });
+  const initialized = initializeExecutionSelfDirection({
+    state: orchestration.selfDirectionState,
+    currentPhase: orchestration.currentPhase,
+    diagnosis: "The only remaining move is to rerun validation.",
+    proposedAction: "Rerun the CLI in both modes.",
+    expectedOutcome: "The CLI should print the expected banner output in both modes.",
+  });
+
+  const completed = advanceExecutionSelfDirection({
+    state: initialized,
+    verificationState: "confirmed",
+    loopTerminationStatus: "resolved",
+    plannerDecision: "complete",
+    stopReason: "The executor result already satisfies the approved top-level goal.",
+  });
+
+  assert.equal(completed.selfDirectionStatus, "complete");
+  assert.equal(completed.currentSubgoal, null);
+  assert.equal(completed.subgoalQueue.length, 0);
+  assert.equal(completed.completedSubgoals.length, 1);
+  assert.match(completed.lastStopReason, /approved top-level goal/i);
+});
+
+test("paused self-direction keeps planner ownership instead of handing off execution", () => {
+  const orchestration = createExecutionOrchestrationState({
+    goal: "Pause safely when confidence drops too low.",
+    currentPhase: "decide-next-step",
+  });
+  const initialized = initializeExecutionSelfDirection({
+    state: orchestration.selfDirectionState,
+    currentPhase: orchestration.currentPhase,
+    diagnosis: "The next bounded step still needs review.",
+    proposedAction: "Rerun the bounded validation check.",
+    expectedOutcome: "Confidence should recover only if the same signal repeats.",
+  });
+  const pausedSelfDirection = advanceExecutionSelfDirection({
+    state: initialized,
+    verificationState: "inconclusive",
+    loopTerminationStatus: "converging",
+    plannerDecision: "continue",
+    nextProposedAction: "Rerun the bounded validation check.",
+    confidenceLevel: "low",
+    pauseReason: "Confidence fell too low to keep chaining the same self-directed run.",
+  });
+  const paused = recordPlannerHandoff({
+    state: {
+      ...orchestration,
+      selfDirectionState: pausedSelfDirection,
+    },
+    stepNumber: 1,
+    diagnosis: "The planner paused the self-directed queue because confidence dropped too low.",
+    proposedAction: "Rerun the bounded validation check.",
+    expectedOutcome: "Confidence should recover only if the same signal repeats.",
+    plannerDecision: "continue",
+    handoffTo: "executor",
+  });
+
+  assert.equal(paused.state.selfDirectionState.selfDirectionStatus, "paused");
+  assert.equal(paused.state.currentAgent, "planner");
+  assert.equal(paused.state.lastHandoff?.handoffTo, null);
 });

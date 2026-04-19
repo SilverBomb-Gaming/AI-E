@@ -4,6 +4,8 @@ import test from "node:test";
 import type { FollowUpVerificationState, StoredActionChainState } from "../../components/AnalysisForm";
 import { buildAnalysisTraceRecord, listMissingAnalysisTraceFields } from "./analysisTrace";
 import {
+  advanceExecutionSelfDirection,
+  initializeExecutionSelfDirection,
   advanceExecutionOrchestration,
   createExecutionOrchestrationState,
   recordExecutorOutcome,
@@ -68,6 +70,16 @@ test("fresh traces include the full required contract", () => {
   assert.equal(trace.goal, "Confirm whether the Animator handoff is the leading cause.");
   assert.equal(trace.orchestrationId, null);
   assert.equal(trace.multiAgentSessionId, null);
+  assert.equal(trace.selfDirectionId, null);
+  assert.equal(trace.topLevelGoal, null);
+  assert.equal(trace.selfDirectionStatus, null);
+  assert.equal(trace.currentSubgoal, null);
+  assert.deepEqual(trace.subgoalQueueSnapshot, []);
+  assert.equal(trace.subgoalSelectionReason, null);
+  assert.equal(trace.subgoalRerouteReason, null);
+  assert.equal(trace.selfStopReason, null);
+  assert.equal(trace.selfBlockReason, null);
+  assert.equal(trace.selfPauseReason, null);
   assert.equal(trace.orchestrationStatus, null);
   assert.equal(trace.verificationState, null);
   assert.equal(trace.validationResult, null);
@@ -80,8 +92,18 @@ test("orchestrated traces capture orchestration identifiers, handoffs, and plann
     goal: "Restore CLI startup and confirm the banner output.",
     currentPhase: "apply-fix",
   });
+  const primedOrchestration = {
+    ...initialOrchestration,
+    selfDirectionState: initializeExecutionSelfDirection({
+      state: initialOrchestration.selfDirectionState,
+      currentPhase: initialOrchestration.currentPhase,
+      diagnosis: "The planner wants the executor to patch the controller startup path and rerun the CLI.",
+      proposedAction: "Patch the controller startup path and rerun the CLI.",
+      expectedOutcome: "The CLI should print the expected banner output in both modes.",
+    }),
+  };
   const planned = recordPlannerHandoff({
-    state: initialOrchestration,
+    state: primedOrchestration,
     stepNumber: 1,
     diagnosis: "The planner wants the executor to patch the controller startup path and rerun the CLI.",
     proposedAction: "Patch the controller startup path and rerun the CLI.",
@@ -108,8 +130,18 @@ test("orchestrated traces capture orchestration identifiers, handoffs, and plann
     nextSafeAction: "",
     nextPhase: "complete",
   });
+  const completedSelfDirection = advanceExecutionSelfDirection({
+    state: advanced.state.selfDirectionState,
+    verificationState: "confirmed",
+    loopTerminationStatus: "resolved",
+    plannerDecision: "complete",
+    stopReason: "The executor result satisfied the bounded top-level goal.",
+  });
   const orchestration = recordPlannerHandoff({
-    state: advanced.state,
+    state: {
+      ...advanced.state,
+      selfDirectionState: completedSelfDirection,
+    },
     stepNumber: 1,
     diagnosis: "The planner marks the bounded goal as complete after the executor result.",
     proposedAction: "Stop the orchestration.",
@@ -135,6 +167,13 @@ test("orchestrated traces capture orchestration identifiers, handoffs, and plann
 
   assert.equal(trace.orchestrationId, orchestration.orchestrationId);
   assert.equal(trace.multiAgentSessionId, orchestration.multiAgentSessionId);
+  assert.equal(trace.selfDirectionId, orchestration.selfDirectionState.selfDirectionId);
+  assert.equal(trace.topLevelGoal, orchestration.selfDirectionState.topLevelGoal);
+  assert.equal(trace.selfDirectionStatus, "complete");
+  assert.equal(trace.currentSubgoal, null);
+  assert.deepEqual(trace.subgoalQueueSnapshot, []);
+  assert.ok((trace.subgoalSelectionReason ?? "").length > 0);
+  assert.match(trace.selfStopReason ?? "", /top-level goal|bounded goal/i);
   assert.equal(trace.orchestrationStepNumber, 1);
   assert.equal(trace.orchestrationStatus, "complete");
   assert.equal(trace.orchestrationPhase, "complete");

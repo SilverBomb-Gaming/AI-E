@@ -392,6 +392,7 @@ export function AnalysisResult({
   const [followUpError, setFollowUpError] = useState<string | null>(null);
   const trimmedObservation = useMemo(() => observation.trim(), [observation]);
   const nextStepIndex = Math.max(1, (currentStepIndex ?? input?.stepIndex ?? 1) + 1);
+  const selfDirectionState = orchestrationState?.selfDirectionState;
   const canSubmitFollowUp = Boolean(
     input?.problemDescription &&
       trimmedObservation &&
@@ -591,11 +592,29 @@ export function AnalysisResult({
             <p className="mt-2">
               Current owner: <span className="font-semibold text-ink">{orchestrationState.currentAgent}</span>
             </p>
+            <p>
+              Self-direction: <span className="font-semibold text-ink">{selfDirectionState?.selfDirectionStatus ?? "active"}</span>
+            </p>
+            {selfDirectionState?.currentSubgoal ? (
+              <p>
+                Current subgoal: <span className="font-semibold text-ink">{selfDirectionState.currentSubgoal.title}</span>
+              </p>
+            ) : null}
+            {selfDirectionState?.subgoalQueue.length ? (
+              <p>
+                Queued subgoals: <span className="font-semibold text-ink">{selfDirectionState.subgoalQueue.map((subgoal) => subgoal.title).join(" | ")}</span>
+              </p>
+            ) : null}
             {orchestrationState.lastHandoff ? (
               <p>
                 Last handoff: <span className="font-semibold text-ink">{orchestrationState.lastHandoff.handoffFrom ?? "none"} -&gt; {orchestrationState.lastHandoff.handoffTo ?? "none"}</span> ({orchestrationState.lastHandoff.payloadSummary})
               </p>
             ) : null}
+            {selfDirectionState?.lastSelectionReason ? <p>Selection reason: {selfDirectionState.lastSelectionReason}</p> : null}
+            {selfDirectionState?.lastRerouteReason ? <p>Reroute reason: {selfDirectionState.lastRerouteReason}</p> : null}
+            {selfDirectionState?.lastPauseReason ? <p>Pause reason: {selfDirectionState.lastPauseReason}</p> : null}
+            {selfDirectionState?.lastBlockReason ? <p>Block reason: {selfDirectionState.lastBlockReason}</p> : null}
+            {selfDirectionState?.lastStopReason ? <p>Stop reason: {selfDirectionState.lastStopReason}</p> : null}
           </div>
         ) : null}
         {isRefined ? (
@@ -792,7 +811,9 @@ export function AnalysisResult({
           <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-xs leading-6 body-muted">
               {canContinueGuidedLoop
-                ? "AI-E will re-run the same analysis using your latest step outcome as additional context."
+                ? !orchestrationState || selfDirectionState?.selfDirectionStatus === "active"
+                  ? "AI-E will re-run the same analysis using your latest step outcome as additional context."
+                  : `The self-directed run is ${selfDirectionState?.selfDirectionStatus}, so the planner is holding execution until the stop condition is cleared.`
                 : "This bounded guided loop stops at three steps to avoid drifting into unreviewed chained reasoning."}
             </p>
             <button

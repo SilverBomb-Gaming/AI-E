@@ -11,6 +11,7 @@ import {
 import {
   buildExecutionOrchestrationContextBlock,
   createExecutionOrchestrationState,
+  initializeExecutionSelfDirection,
   normalizeExecutionOrchestrationState,
   recordPlannerHandoff,
   type ExecutionOrchestrationState,
@@ -66,6 +67,9 @@ export type ContinuationThreadSnapshot = {
   orchestrationCurrentAgent?: string;
   orchestrationProgress?: string;
   lastHandoff?: string;
+  selfDirectionStatus?: string;
+  currentSubgoal?: string;
+  queuedSubgoals?: string;
 };
 
 const initialForm: AnalysisInput = {
@@ -278,11 +282,14 @@ export function getContinuationThreadSnapshot(state: StoredAnalysisState | null 
     orchestrationPhase: state?.orchestrationState?.currentPhase,
     orchestrationCurrentAgent: state?.orchestrationState?.currentAgent,
     orchestrationProgress: state?.orchestrationState
-      ? `${state.orchestrationState.currentPhase} (${state.orchestrationState.completedSteps.length} completed, ${state.orchestrationState.blockedSteps.length} blocked, current agent: ${state.orchestrationState.currentAgent})`
+      ? `${state.orchestrationState.currentPhase} (${state.orchestrationState.completedSteps.length} completed, ${state.orchestrationState.blockedSteps.length} blocked, current agent: ${state.orchestrationState.currentAgent}, self-direction: ${state.orchestrationState.selfDirectionState.selfDirectionStatus})`
       : undefined,
     lastHandoff: state?.orchestrationState?.lastHandoff
       ? `${state.orchestrationState.lastHandoff.handoffFrom ?? "none"} -> ${state.orchestrationState.lastHandoff.handoffTo ?? "none"}: ${state.orchestrationState.lastHandoff.payloadSummary}`
       : undefined,
+    selfDirectionStatus: state?.orchestrationState?.selfDirectionState.selfDirectionStatus,
+    currentSubgoal: state?.orchestrationState?.selfDirectionState.currentSubgoal?.title,
+    queuedSubgoals: state?.orchestrationState?.selfDirectionState.subgoalQueue.map((subgoal) => subgoal.title).join(" | ") || undefined,
   };
 }
 
@@ -332,6 +339,18 @@ export function buildContinuationContextBlock(snapshot: ContinuationThreadSnapsh
 
   if (snapshot.lastHandoff) {
     lines.push(`- Last planner/executor handoff: ${snapshot.lastHandoff}`);
+  }
+
+  if (snapshot.selfDirectionStatus) {
+    lines.push(`- Self-direction status: ${snapshot.selfDirectionStatus}`);
+  }
+
+  if (snapshot.currentSubgoal) {
+    lines.push(`- Current self-directed subgoal: ${snapshot.currentSubgoal}`);
+  }
+
+  if (snapshot.queuedSubgoals) {
+    lines.push(`- Remaining self-directed subgoals: ${snapshot.queuedSubgoals}`);
   }
 
   lines.push("Use this as the starting context for the new analysis instead of restarting from a fresh first pass.");
@@ -456,13 +475,26 @@ export function AnalysisForm({ initialMode = "fresh" }: AnalysisFormProps) {
 
       const proposedAction = payload.proposedAction ?? payload.what_to_do_next[0] ?? "";
       const expectedOutcome = payload.expectedOutcome ?? payload.what_matters[0] ?? "";
+      const primedOrchestrationState = {
+        ...initialOrchestrationState,
+        selfDirectionState: initializeExecutionSelfDirection({
+          state: initialOrchestrationState.selfDirectionState,
+          currentPhase: initialOrchestrationState.currentPhase,
+          diagnosis: payload.what_happened,
+          proposedAction,
+          expectedOutcome,
+        }),
+      };
+      const initialPlannerDecision =
+        primedOrchestrationState.selfDirectionState.selfDirectionStatus === "blocked" || !proposedAction ? "block" : "continue";
       const orchestrationState = recordPlannerHandoff({
-        state: initialOrchestrationState,
+        state: primedOrchestrationState,
         stepNumber: stepIndex,
         diagnosis: payload.what_happened,
         proposedAction,
         expectedOutcome,
-        plannerDecision: proposedAction ? "continue" : "block",
+        plannerDecision: initialPlannerDecision,
+        handoffTo: initialPlannerDecision === "continue" ? "executor" : null,
       }).state;
 
       window.sessionStorage.setItem(
@@ -541,6 +573,11 @@ export function AnalysisForm({ initialMode = "fresh" }: AnalysisFormProps) {
               {continuationSnapshot.orchestrationProgress ? (
                 <p>
                   <span className="font-semibold text-ink">Orchestration:</span> {continuationSnapshot.orchestrationProgress}
+                </p>
+              ) : null}
+              {continuationSnapshot.currentSubgoal ? (
+                <p>
+                  <span className="font-semibold text-ink">Current subgoal:</span> {continuationSnapshot.currentSubgoal}
                 </p>
               ) : null}
             </div>

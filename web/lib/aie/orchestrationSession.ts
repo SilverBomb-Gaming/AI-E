@@ -18,8 +18,39 @@ export type ExecutionOrchestrationAgentId = "planner-agent" | "executor-agent";
 export type ExecutionOrchestrationPlannerDecision = "continue" | "reroute" | "complete" | "block";
 export type ExecutionOrchestrationHandoffStatus = "pending" | "completed" | "cancelled";
 
+export type ExecutionSelfDirectionStatus = "active" | "paused" | "blocked" | "complete" | "aborted";
+export type ExecutionSelfDirectedSubgoalDisposition = "queued" | "active" | "completed" | "blocked" | "abandoned";
+
 export const PLANNER_AGENT_ID: ExecutionOrchestrationAgentId = "planner-agent";
 export const EXECUTOR_AGENT_ID: ExecutionOrchestrationAgentId = "executor-agent";
+
+export type ExecutionSelfDirectedSubgoal = {
+  subgoalId: string;
+  title: string;
+  proposedAction: string;
+  expectedOutcome: string;
+  selectionReason: string;
+  priority: number;
+  status: ExecutionSelfDirectedSubgoalDisposition;
+  requiresUserApproval: boolean;
+};
+
+export type ExecutionSelfDirectionState = {
+  selfDirectionId: string;
+  topLevelGoal: string;
+  subgoalQueue: ExecutionSelfDirectedSubgoal[];
+  currentSubgoal: ExecutionSelfDirectedSubgoal | null;
+  completedSubgoals: ExecutionSelfDirectedSubgoal[];
+  blockedSubgoals: ExecutionSelfDirectedSubgoal[];
+  abandonedSubgoals: ExecutionSelfDirectedSubgoal[];
+  selfDirectionStatus: ExecutionSelfDirectionStatus;
+  lastSelectionReason: string;
+  lastRerouteReason: string;
+  lastStopReason: string;
+  lastBlockReason: string;
+  lastPauseReason: string;
+  maxSubgoals: number;
+};
 
 export type ExecutionOrchestrationAgentHistoryEntry = {
   entryNumber: number;
@@ -79,6 +110,7 @@ export type ExecutionOrchestrationState = {
   orchestrationId: string;
   multiAgentSessionId: string;
   goal: string;
+  selfDirectionState: ExecutionSelfDirectionState;
   currentPhase: ExecutionOrchestrationPhase;
   completedSteps: ExecutionOrchestrationStep[];
   blockedSteps: ExecutionOrchestrationStep[];
@@ -115,6 +147,22 @@ export function createExecutionOrchestrationId(): string {
   return `aie-orchestration-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+export function createExecutionSelfDirectionId(): string {
+  if (globalThis.crypto?.randomUUID) {
+    return globalThis.crypto.randomUUID();
+  }
+
+  return `aie-self-direction-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function createExecutionSelfDirectedSubgoalId(): string {
+  if (globalThis.crypto?.randomUUID) {
+    return globalThis.crypto.randomUUID();
+  }
+
+  return `aie-subgoal-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 export function createExecutionMultiAgentSessionId(): string {
   if (globalThis.crypto?.randomUUID) {
     return globalThis.crypto.randomUUID();
@@ -144,6 +192,367 @@ function createExecutorState(): ExecutionOrchestrationExecutorState {
   };
 }
 
+function looksLikeHighRiskAction(value: string): boolean {
+  return /(delete|drop|destroy|reset|overwrite|rewrite|publish|deploy|push|bulk|migrate|schema|rename)/i.test(value);
+}
+
+function looksLikeVagueSubgoal(value: string): boolean {
+  return /^(continue|keep going|keep improving|continue working|continue debugging|keep working|improve things?)$/i.test(normalizeText(value));
+}
+
+function buildConcreteSubgoalTitle(value: string | null | undefined, fallback: string, prefix?: string): string {
+  const normalized = trimSentence(normalizeText(value), 120);
+  if (!normalized || looksLikeVagueSubgoal(normalized)) {
+    return trimSentence(fallback, 120);
+  }
+
+  const withPrefix = prefix ? `${prefix}: ${normalized}` : normalized;
+  return trimSentence(withPrefix, 120);
+}
+
+function appendUniqueSubgoal(
+  target: ExecutionSelfDirectedSubgoal[],
+  params: {
+    title: string;
+    proposedAction: string;
+    expectedOutcome: string;
+    selectionReason: string;
+    priority: number;
+  },
+): ExecutionSelfDirectedSubgoal[] {
+  const normalizedTitle = normalizeText(params.title).toLowerCase();
+  if (!normalizedTitle || target.some((subgoal) => normalizeText(subgoal.title).toLowerCase() === normalizedTitle)) {
+    return target;
+  }
+
+  return [
+    ...target,
+    {
+      subgoalId: createExecutionSelfDirectedSubgoalId(),
+      title: trimSentence(params.title, 120),
+      proposedAction: trimSentence(params.proposedAction, 180),
+      expectedOutcome: trimSentence(params.expectedOutcome, 180),
+      selectionReason: trimSentence(params.selectionReason, 180),
+      priority: params.priority,
+      status: "queued",
+      requiresUserApproval: looksLikeHighRiskAction(`${params.title} ${params.proposedAction}`),
+    },
+  ];
+}
+
+function deriveExecutionSelfDirectedSubgoals(params: {
+  topLevelGoal: string;
+  currentPhase?: ExecutionOrchestrationPhase;
+  diagnosis?: string;
+  proposedAction?: string;
+  expectedOutcome?: string;
+  maxSubgoals?: number;
+}): ExecutionSelfDirectedSubgoal[] {
+  const maxSubgoals = Number.isInteger(params.maxSubgoals)
+    ? Math.max(3, Math.min(5, Number(params.maxSubgoals)))
+    : 3;
+  const goal = trimSentence(params.topLevelGoal, 140);
+  const diagnosis = trimSentence(normalizeText(params.diagnosis), 180);
+  const proposedAction = trimSentence(normalizeText(params.proposedAction), 180);
+  const expectedOutcome = trimSentence(normalizeText(params.expectedOutcome), 180);
+
+  let subgoals: ExecutionSelfDirectedSubgoal[] = [];
+
+  if (params.currentPhase === "identify-blocker" || params.currentPhase === "recover" || diagnosis) {
+    subgoals = appendUniqueSubgoal(subgoals, {
+      title: buildConcreteSubgoalTitle(
+        diagnosis,
+        `Confirm the active blocker for ${goal}`,
+        params.currentPhase === "recover" ? "Recover blocker path" : "Confirm blocker",
+      ),
+      proposedAction: proposedAction || `Inspect the active blocker that prevents progress on ${goal}.`,
+      expectedOutcome: expectedOutcome || `The active blocker for ${goal} should be explicit enough to act on safely.`,
+      selectionReason: diagnosis || `The planner must keep the top-level goal concrete before taking the next bounded action.`,
+      priority: 1,
+    });
+  }
+
+  if (proposedAction) {
+    subgoals = appendUniqueSubgoal(subgoals, {
+      title: buildConcreteSubgoalTitle(proposedAction, `Execute the next bounded action for ${goal}`, "Execute bounded action"),
+      proposedAction,
+      expectedOutcome: expectedOutcome || `This bounded action should move ${goal} closer to completion without widening scope.`,
+      selectionReason: `This action is the planner-selected next move for the approved top-level goal.`,
+      priority: 2,
+    });
+  }
+
+  subgoals = appendUniqueSubgoal(subgoals, {
+    title: buildConcreteSubgoalTitle(
+      expectedOutcome ? `Validate ${expectedOutcome}` : "Validate the top-level goal against the latest bounded result.",
+      `Validate whether ${goal} is satisfied`,
+      "Validate outcome",
+    ),
+    proposedAction: expectedOutcome
+      ? `Run the bounded validation that confirms whether ${expectedOutcome}`
+      : `Run the bounded validation that confirms whether ${goal} is satisfied.`,
+    expectedOutcome: expectedOutcome || `The system should know whether ${goal} is complete, still active, or blocked.`,
+    selectionReason: `Self-direction must explicitly validate completion instead of assuming the goal is satisfied.`,
+    priority: 3,
+  });
+
+  return subgoals.slice(0, maxSubgoals).map((subgoal, index) => ({
+    ...subgoal,
+    priority: index + 1,
+  }));
+}
+
+export function summarizeExecutionSelfDirectedSubgoal(
+  subgoal: ExecutionSelfDirectedSubgoal | null | undefined,
+): string | null {
+  if (!subgoal) {
+    return null;
+  }
+
+  return trimSentence(`${subgoal.title} [${subgoal.status}]`, 140);
+}
+
+export function createExecutionSelfDirectionState(params: {
+  topLevelGoal: string;
+  selfDirectionId?: string;
+  maxSubgoals?: number;
+}): ExecutionSelfDirectionState {
+  const maxSubgoals = Number.isInteger(params.maxSubgoals)
+    ? Math.max(3, Math.min(5, Number(params.maxSubgoals)))
+    : 3;
+
+  return {
+    selfDirectionId: normalizeText(params.selfDirectionId) || createExecutionSelfDirectionId(),
+    topLevelGoal: trimSentence(params.topLevelGoal, 140),
+    subgoalQueue: [],
+    currentSubgoal: null,
+    completedSubgoals: [],
+    blockedSubgoals: [],
+    abandonedSubgoals: [],
+    selfDirectionStatus: "active",
+    lastSelectionReason: "",
+    lastRerouteReason: "",
+    lastStopReason: "",
+    lastBlockReason: "",
+    lastPauseReason: "",
+    maxSubgoals,
+  };
+}
+
+export function initializeExecutionSelfDirection(params: {
+  state: ExecutionSelfDirectionState;
+  currentPhase?: ExecutionOrchestrationPhase;
+  diagnosis?: string;
+  proposedAction?: string;
+  expectedOutcome?: string;
+}) {
+  const derivedSubgoals = deriveExecutionSelfDirectedSubgoals({
+    topLevelGoal: params.state.topLevelGoal,
+    currentPhase: params.currentPhase,
+    diagnosis: params.diagnosis,
+    proposedAction: params.proposedAction,
+    expectedOutcome: params.expectedOutcome,
+    maxSubgoals: params.state.maxSubgoals,
+  });
+  const [firstSubgoal, ...remainingSubgoals] = derivedSubgoals;
+  const currentSubgoal = firstSubgoal ? { ...firstSubgoal, status: "active" as const } : null;
+  const selectionReason = currentSubgoal?.selectionReason || "No safe bounded subgoal could be derived from the approved top-level goal.";
+
+  return {
+    ...params.state,
+    currentSubgoal,
+    subgoalQueue: remainingSubgoals,
+    selfDirectionStatus: currentSubgoal
+      ? currentSubgoal.requiresUserApproval
+        ? "paused"
+        : "active"
+      : "blocked",
+    lastSelectionReason: selectionReason,
+    lastBlockReason: currentSubgoal ? "" : selectionReason,
+    lastPauseReason: currentSubgoal?.requiresUserApproval
+      ? `The active subgoal requires explicit approval before execution: ${currentSubgoal.title}`
+      : "",
+  } satisfies ExecutionSelfDirectionState;
+}
+
+function pickNextExecutionSelfDirectedSubgoal(
+  state: ExecutionSelfDirectionState,
+): { currentSubgoal: ExecutionSelfDirectedSubgoal | null; subgoalQueue: ExecutionSelfDirectedSubgoal[] } {
+  const [nextSubgoal, ...remainingSubgoals] = state.subgoalQueue;
+  return {
+    currentSubgoal: nextSubgoal ? { ...nextSubgoal, status: "active" } : null,
+    subgoalQueue: remainingSubgoals,
+  };
+}
+
+function createRecoveryExecutionSelfDirectedSubgoal(params: {
+  state: ExecutionSelfDirectionState;
+  nextProposedAction: string;
+  nextExpectedOutcome?: string;
+  rerouteReason: string;
+}): ExecutionSelfDirectedSubgoal {
+  return {
+    subgoalId: createExecutionSelfDirectedSubgoalId(),
+    title: buildConcreteSubgoalTitle(params.nextProposedAction, `Recover the blocked path for ${params.state.topLevelGoal}`, "Recovery subgoal"),
+    proposedAction: trimSentence(params.nextProposedAction, 180),
+    expectedOutcome: trimSentence(
+      normalizeText(params.nextExpectedOutcome) || `The rerouted bounded path should restore progress on ${params.state.topLevelGoal}.`,
+      180,
+    ),
+    selectionReason: trimSentence(params.rerouteReason, 180),
+    priority: 1,
+    status: "queued",
+    requiresUserApproval: looksLikeHighRiskAction(params.nextProposedAction),
+  };
+}
+
+export function advanceExecutionSelfDirection(params: {
+  state: ExecutionSelfDirectionState;
+  verificationState: ExecutionSessionVerificationState;
+  loopTerminationStatus: ExecutionSessionLoopStatus;
+  plannerDecision: ExecutionOrchestrationPlannerDecision;
+  nextProposedAction?: string | null;
+  nextExpectedOutcome?: string | null;
+  confidenceLevel?: "high" | "medium" | "low" | null;
+  selectionReason?: string | null;
+  rerouteReason?: string | null;
+  stopReason?: string | null;
+  blockReason?: string | null;
+  pauseReason?: string | null;
+}) {
+  const nextProposedAction = normalizeText(params.nextProposedAction);
+  const nextExpectedOutcome = normalizeText(params.nextExpectedOutcome);
+  const currentSubgoal = params.state.currentSubgoal;
+  let nextState: ExecutionSelfDirectionState = {
+    ...params.state,
+    currentSubgoal: currentSubgoal ? { ...currentSubgoal } : null,
+    subgoalQueue: [...params.state.subgoalQueue],
+    completedSubgoals: [...params.state.completedSubgoals],
+    blockedSubgoals: [...params.state.blockedSubgoals],
+    abandonedSubgoals: [...params.state.abandonedSubgoals],
+    lastSelectionReason: trimSentence(normalizeText(params.selectionReason) || params.state.lastSelectionReason, 180),
+    lastRerouteReason: trimSentence(normalizeText(params.rerouteReason) || params.state.lastRerouteReason, 180),
+    lastStopReason: trimSentence(normalizeText(params.stopReason) || params.state.lastStopReason, 180),
+    lastBlockReason: trimSentence(normalizeText(params.blockReason) || params.state.lastBlockReason, 180),
+    lastPauseReason: trimSentence(normalizeText(params.pauseReason) || params.state.lastPauseReason, 180),
+  };
+
+  const totalHandledSubgoals =
+    nextState.completedSubgoals.length + nextState.blockedSubgoals.length + nextState.abandonedSubgoals.length;
+
+  if (totalHandledSubgoals >= nextState.maxSubgoals && params.plannerDecision !== "complete") {
+    return {
+      ...nextState,
+      selfDirectionStatus: "aborted",
+      currentSubgoal: null,
+      subgoalQueue: [],
+      lastStopReason: "The self-directed run reached its bounded subgoal limit and stopped automatically.",
+    } satisfies ExecutionSelfDirectionState;
+  }
+
+  if (params.confidenceLevel === "low" && params.plannerDecision !== "complete") {
+    return {
+      ...nextState,
+      selfDirectionStatus: "paused",
+      currentSubgoal: currentSubgoal ? { ...currentSubgoal, status: "active" } : null,
+      lastPauseReason:
+        trimSentence(normalizeText(params.pauseReason) || "Confidence is too low to continue the self-directed run without widening risk.", 180),
+    } satisfies ExecutionSelfDirectionState;
+  }
+
+  if (params.loopTerminationStatus === "resolved" || params.plannerDecision === "complete") {
+    if (currentSubgoal) {
+      nextState.completedSubgoals.push({ ...currentSubgoal, status: "completed" });
+    }
+
+    return {
+      ...nextState,
+      currentSubgoal: null,
+      subgoalQueue: [],
+      selfDirectionStatus: "complete",
+      lastStopReason:
+        trimSentence(normalizeText(params.stopReason) || `The top-level goal is satisfied, so the self-directed run stopped automatically.`, 180),
+    } satisfies ExecutionSelfDirectionState;
+  }
+
+  if ((params.plannerDecision === "block" && !nextProposedAction) || params.loopTerminationStatus === "stuck") {
+    if (currentSubgoal) {
+      nextState.blockedSubgoals.push({ ...currentSubgoal, status: "blocked" });
+    }
+
+    return {
+      ...nextState,
+      currentSubgoal: null,
+      subgoalQueue: [],
+      selfDirectionStatus: "blocked",
+      lastBlockReason:
+        trimSentence(normalizeText(params.blockReason) || "No safe next subgoal exists within the current bounded scope.", 180),
+    } satisfies ExecutionSelfDirectionState;
+  }
+
+  if (params.verificationState === "falsified" && nextProposedAction) {
+    if (currentSubgoal) {
+      nextState.abandonedSubgoals.push({ ...currentSubgoal, status: "abandoned" });
+    }
+
+    const recoverySubgoal = createRecoveryExecutionSelfDirectedSubgoal({
+      state: nextState,
+      nextProposedAction,
+      nextExpectedOutcome,
+      rerouteReason:
+        trimSentence(normalizeText(params.rerouteReason) || "The previous subgoal failed, so the planner inserted a bounded recovery subgoal.", 180),
+    });
+    const boundedQueue = [recoverySubgoal, ...nextState.subgoalQueue].slice(0, nextState.maxSubgoals);
+    const [currentRecoverySubgoal, ...remainingSubgoals] = boundedQueue;
+
+    return {
+      ...nextState,
+      currentSubgoal: currentRecoverySubgoal ? { ...currentRecoverySubgoal, status: "active" } : null,
+      subgoalQueue: remainingSubgoals,
+      selfDirectionStatus: currentRecoverySubgoal?.requiresUserApproval ? "paused" : "active",
+      lastSelectionReason: currentRecoverySubgoal?.selectionReason || nextState.lastSelectionReason,
+      lastRerouteReason:
+        trimSentence(normalizeText(params.rerouteReason) || "The planner inserted a bounded recovery subgoal after a failed subgoal.", 180),
+      lastPauseReason:
+        currentRecoverySubgoal?.requiresUserApproval
+          ? `The inserted recovery subgoal requires approval before execution: ${currentRecoverySubgoal.title}`
+          : "",
+    } satisfies ExecutionSelfDirectionState;
+  }
+
+  if (currentSubgoal) {
+    nextState.completedSubgoals.push({ ...currentSubgoal, status: "completed" });
+  }
+
+  const nextSelection = pickNextExecutionSelfDirectedSubgoal(nextState);
+  if (!nextSelection.currentSubgoal) {
+    return {
+      ...nextState,
+      currentSubgoal: null,
+      subgoalQueue: [],
+      selfDirectionStatus: "complete",
+      lastStopReason:
+        trimSentence(normalizeText(params.stopReason) || "All bounded self-directed subgoals are complete, so the run stopped automatically.", 180),
+    } satisfies ExecutionSelfDirectionState;
+  }
+
+  return {
+    ...nextState,
+    currentSubgoal: nextSelection.currentSubgoal,
+    subgoalQueue: nextSelection.subgoalQueue,
+    selfDirectionStatus: nextSelection.currentSubgoal.requiresUserApproval ? "paused" : "active",
+    lastSelectionReason:
+      trimSentence(
+        normalizeText(params.selectionReason) || nextSelection.currentSubgoal.selectionReason || "The planner selected the next queued bounded subgoal.",
+        180,
+      ),
+    lastPauseReason:
+      nextSelection.currentSubgoal.requiresUserApproval
+        ? `The next subgoal requires explicit approval before execution: ${nextSelection.currentSubgoal.title}`
+        : "",
+  } satisfies ExecutionSelfDirectionState;
+}
+
 function trimOrFallback(value: string | null | undefined, fallback: string, maxLength = 220): string {
   const normalized = normalizeText(value);
   return trimSentence(normalized || fallback, maxLength);
@@ -169,6 +578,7 @@ export function createExecutionOrchestrationState(params: {
   currentPhase?: ExecutionOrchestrationPhase;
   currentAgent?: ExecutionOrchestrationAgentRole;
   maxAutonomousSteps?: number;
+  selfDirectionState?: ExecutionSelfDirectionState;
 }): ExecutionOrchestrationState {
   const maxAutonomousSteps = Number.isInteger(params.maxAutonomousSteps)
     ? Math.max(3, Math.min(5, Number(params.maxAutonomousSteps)))
@@ -178,6 +588,8 @@ export function createExecutionOrchestrationState(params: {
     orchestrationId: normalizeText(params.orchestrationId) || createExecutionOrchestrationId(),
     multiAgentSessionId: normalizeText(params.multiAgentSessionId) || createExecutionMultiAgentSessionId(),
     goal: trimSentence(params.goal, 140),
+    selfDirectionState:
+      params.selfDirectionState ?? createExecutionSelfDirectionState({ topLevelGoal: trimSentence(params.goal, 140) }),
     currentPhase: params.currentPhase ?? "identify-blocker",
     completedSteps: [],
     blockedSteps: [],
@@ -233,6 +645,12 @@ export function getLatestExecutionOrchestrationAgentHistoryEntryByRole(
   return matching ?? null;
 }
 
+export function getExecutionSelfDirectionSnapshot(
+  state: ExecutionOrchestrationState | null | undefined,
+): ExecutionSelfDirectionState | null {
+  return state?.selfDirectionState ?? null;
+}
+
 export function recordPlannerHandoff(params: {
   state: ExecutionOrchestrationState;
   stepNumber?: number;
@@ -258,19 +676,22 @@ export function recordPlannerHandoff(params: {
     200,
   );
   const nextStatus: ExecutionOrchestrationStatus =
-    params.plannerDecision === "complete"
+    params.state.selfDirectionState.selfDirectionStatus === "complete" || params.plannerDecision === "complete"
       ? "complete"
-      : params.plannerDecision === "block"
+      : params.state.selfDirectionState.selfDirectionStatus === "blocked" || params.plannerDecision === "block"
         ? params.state.currentStatus === "aborted"
           ? "aborted"
           : "blocked"
         : params.state.currentStatus === "aborted"
           ? "aborted"
           : "active";
+  const requiresUserApproval = params.state.selfDirectionState.currentSubgoal?.requiresUserApproval === true;
+  const selfDirectionAllowsExecutor = params.state.selfDirectionState.selfDirectionStatus === "active" && !requiresUserApproval;
+  const derivedHandoffTo = selfDirectionAllowsExecutor ? handoffTo : null;
 
   const nextState: ExecutionOrchestrationState = {
     ...params.state,
-    currentAgent: handoffTo ?? "planner",
+    currentAgent: derivedHandoffTo ?? "planner",
     currentStatus: nextStatus,
     currentPhase:
       nextStatus === "complete"
@@ -286,7 +707,7 @@ export function recordPlannerHandoff(params: {
       agentRole: "planner",
       summary: trimSentence(params.diagnosis, 220),
       handoffFrom: params.state.lastHandoff?.handoffFrom ?? null,
-      handoffTo,
+      handoffTo: derivedHandoffTo,
       handoffPayloadSummary: payloadSummary,
       executedAction: null,
       actionResult: params.state.lastActionResult || null,
@@ -303,15 +724,15 @@ export function recordPlannerHandoff(params: {
     },
     executorState: {
       ...params.state.executorState,
-      pendingAction: handoffTo === "executor" ? proposedAction : "",
+      pendingAction: derivedHandoffTo === "executor" ? proposedAction : "",
     },
     lastHandoff: {
       stepNumber,
       handoffFrom: "planner",
-      handoffTo,
+      handoffTo: derivedHandoffTo,
       payloadSummary,
       expectedAction: proposedAction,
-      status: handoffTo ? "pending" : "completed",
+      status: derivedHandoffTo ? "pending" : "completed",
     },
   };
 
@@ -516,7 +937,38 @@ export function buildExecutionOrchestrationContextBlock(params: {
     `- Phase: ${orchestration.currentPhase}`,
     `- Current agent: ${orchestration.currentAgent}`,
     `- Max autonomous steps: ${orchestration.maxAutonomousSteps}`,
+    `- Self-direction ID: ${orchestration.selfDirectionState.selfDirectionId}`,
+    `- Self-direction status: ${orchestration.selfDirectionState.selfDirectionStatus}`,
+    `- Top-level goal: ${orchestration.selfDirectionState.topLevelGoal}`,
   ];
+
+  if (orchestration.selfDirectionState.currentSubgoal) {
+    lines.push(`- Current subgoal: ${summarizeExecutionSelfDirectedSubgoal(orchestration.selfDirectionState.currentSubgoal)}`);
+  }
+
+  if (orchestration.selfDirectionState.subgoalQueue.length > 0) {
+    lines.push(`- Queued subgoals: ${orchestration.selfDirectionState.subgoalQueue.map((subgoal) => subgoal.title).join(" | ")}`);
+  }
+
+  if (orchestration.selfDirectionState.lastSelectionReason) {
+    lines.push(`- Subgoal selection reason: ${trimSentence(orchestration.selfDirectionState.lastSelectionReason, 180)}`);
+  }
+
+  if (orchestration.selfDirectionState.lastRerouteReason) {
+    lines.push(`- Last reroute reason: ${trimSentence(orchestration.selfDirectionState.lastRerouteReason, 180)}`);
+  }
+
+  if (orchestration.selfDirectionState.lastPauseReason) {
+    lines.push(`- Last pause reason: ${trimSentence(orchestration.selfDirectionState.lastPauseReason, 180)}`);
+  }
+
+  if (orchestration.selfDirectionState.lastBlockReason) {
+    lines.push(`- Last block reason: ${trimSentence(orchestration.selfDirectionState.lastBlockReason, 180)}`);
+  }
+
+  if (orchestration.selfDirectionState.lastStopReason) {
+    lines.push(`- Last stop reason: ${trimSentence(orchestration.selfDirectionState.lastStopReason, 180)}`);
+  }
 
   if (orchestration.lastActionResult) {
     lines.push(`- Last action result: ${trimSentence(orchestration.lastActionResult, 220)}`);
@@ -572,6 +1024,7 @@ export function normalizeExecutionOrchestrationState(value: unknown): ExecutionO
   const orchestrationId = normalizeText(String(source.orchestrationId ?? ""));
   const multiAgentSessionId = normalizeText(String(source.multiAgentSessionId ?? `${orchestrationId}-multi`));
   const goal = normalizeText(String(source.goal ?? ""));
+  const selfDirectionSource = source.selfDirectionState;
   const currentPhase = source.currentPhase;
   const currentStatus = source.currentStatus;
   const currentAgent = source.currentAgent;
@@ -752,6 +1205,86 @@ export function normalizeExecutionOrchestrationState(value: unknown): ExecutionO
     };
   };
 
+  const normalizeSelfDirectedSubgoal = (entry: unknown): ExecutionSelfDirectedSubgoal | null => {
+    if (!entry || typeof entry !== "object") {
+      return null;
+    }
+
+    const item = entry as Record<string, unknown>;
+    const status = item.status;
+    const priority = Math.max(1, Math.floor(Number(item.priority ?? 0) || 0));
+
+    if (
+      typeof item.subgoalId !== "string" ||
+      typeof item.title !== "string" ||
+      typeof item.proposedAction !== "string" ||
+      typeof item.expectedOutcome !== "string" ||
+      typeof item.selectionReason !== "string" ||
+      !priority ||
+      (status !== "queued" && status !== "active" && status !== "completed" && status !== "blocked" && status !== "abandoned")
+    ) {
+      return null;
+    }
+
+    return {
+      subgoalId: normalizeText(String(item.subgoalId)),
+      title: normalizeText(String(item.title)),
+      proposedAction: normalizeText(String(item.proposedAction)),
+      expectedOutcome: normalizeText(String(item.expectedOutcome)),
+      selectionReason: normalizeText(String(item.selectionReason)),
+      priority,
+      status,
+      requiresUserApproval: Boolean(item.requiresUserApproval),
+    };
+  };
+
+  const normalizeSelfDirectionState = (entry: unknown): ExecutionSelfDirectionState => {
+    if (!entry || typeof entry !== "object") {
+      return createExecutionSelfDirectionState({ topLevelGoal: goal });
+    }
+
+    const item = entry as Record<string, unknown>;
+    const selfDirectionStatus = item.selfDirectionStatus;
+    const currentSubgoal = normalizeSelfDirectedSubgoal(item.currentSubgoal);
+    const maxSubgoals = Math.max(3, Math.min(5, Math.floor(Number(item.maxSubgoals ?? 3) || 3)));
+
+    return {
+      selfDirectionId: normalizeText(String(item.selfDirectionId ?? "")) || createExecutionSelfDirectionId(),
+      topLevelGoal: normalizeText(String(item.topLevelGoal ?? goal)) || goal,
+      subgoalQueue: Array.isArray(item.subgoalQueue)
+        ? item.subgoalQueue.map(normalizeSelfDirectedSubgoal).filter((subgoal): subgoal is ExecutionSelfDirectedSubgoal => Boolean(subgoal)).slice(0, maxSubgoals)
+        : [],
+      currentSubgoal: currentSubgoal ?? null,
+      completedSubgoals: Array.isArray(item.completedSubgoals)
+        ? item.completedSubgoals.map(normalizeSelfDirectedSubgoal).filter((subgoal): subgoal is ExecutionSelfDirectedSubgoal => Boolean(subgoal)).slice(0, maxSubgoals)
+        : [],
+      blockedSubgoals: Array.isArray(item.blockedSubgoals)
+        ? item.blockedSubgoals.map(normalizeSelfDirectedSubgoal).filter((subgoal): subgoal is ExecutionSelfDirectedSubgoal => Boolean(subgoal)).slice(0, maxSubgoals)
+        : [],
+      abandonedSubgoals: Array.isArray(item.abandonedSubgoals)
+        ? item.abandonedSubgoals.map(normalizeSelfDirectedSubgoal).filter((subgoal): subgoal is ExecutionSelfDirectedSubgoal => Boolean(subgoal)).slice(0, maxSubgoals)
+        : [],
+      selfDirectionStatus:
+        selfDirectionStatus === "active" ||
+        selfDirectionStatus === "paused" ||
+        selfDirectionStatus === "blocked" ||
+        selfDirectionStatus === "complete" ||
+        selfDirectionStatus === "aborted"
+          ? selfDirectionStatus
+          : currentSubgoal
+            ? currentSubgoal.requiresUserApproval
+              ? "paused"
+              : "active"
+            : "active",
+      lastSelectionReason: normalizeText(String(item.lastSelectionReason ?? "")),
+      lastRerouteReason: normalizeText(String(item.lastRerouteReason ?? "")),
+      lastStopReason: normalizeText(String(item.lastStopReason ?? "")),
+      lastBlockReason: normalizeText(String(item.lastBlockReason ?? "")),
+      lastPauseReason: normalizeText(String(item.lastPauseReason ?? "")),
+      maxSubgoals,
+    };
+  };
+
   const completedSteps = Array.isArray(source.completedSteps)
     ? source.completedSteps.map(normalizeStep).filter((item): item is ExecutionOrchestrationStep => Boolean(item)).slice(-maxAutonomousSteps)
     : [];
@@ -767,6 +1300,7 @@ export function normalizeExecutionOrchestrationState(value: unknown): ExecutionO
   const plannerState = normalizePlannerState(source.plannerState);
   const executorState = normalizeExecutorState(source.executorState);
   const lastHandoff = normalizeHandoff(source.lastHandoff);
+  const selfDirectionState = normalizeSelfDirectionState(selfDirectionSource);
 
   if (
     currentPhase !== "identify-blocker" &&
@@ -802,6 +1336,7 @@ export function normalizeExecutionOrchestrationState(value: unknown): ExecutionO
     orchestrationId,
     multiAgentSessionId,
     goal,
+    selfDirectionState,
     currentPhase,
     completedSteps,
     blockedSteps,

@@ -14,7 +14,9 @@ import { deriveDryRunActionProposal } from "./executionBridge";
 import {
   getLatestExecutionOrchestrationAgentHistoryEntry,
   getLatestExecutionOrchestrationAgentHistoryEntryByRole,
+  getExecutionSelfDirectionSnapshot,
   getLatestExecutionOrchestrationStep,
+  summarizeExecutionSelfDirectedSubgoal,
   type ExecutionOrchestrationAgentId,
   type ExecutionOrchestrationAgentRole,
   type ExecutionOrchestrationPlannerDecision,
@@ -47,6 +49,16 @@ export type AnalysisTraceRecord = {
   goal: string | null;
   orchestrationId: string | null;
   multiAgentSessionId: string | null;
+  selfDirectionId: string | null;
+  topLevelGoal: string | null;
+  selfDirectionStatus: string | null;
+  currentSubgoal: string | null;
+  subgoalQueueSnapshot: string[];
+  subgoalSelectionReason: string | null;
+  subgoalRerouteReason: string | null;
+  selfStopReason: string | null;
+  selfBlockReason: string | null;
+  selfPauseReason: string | null;
   orchestrationStepNumber: number | null;
   orchestrationStatus: ExecutionOrchestrationStatus | null;
   orchestrationPhase: string | null;
@@ -94,6 +106,16 @@ export const REQUIRED_TRACE_FIELDS = [
   "goal",
   "orchestrationId",
   "multiAgentSessionId",
+  "selfDirectionId",
+  "topLevelGoal",
+  "selfDirectionStatus",
+  "currentSubgoal",
+  "subgoalQueueSnapshot",
+  "subgoalSelectionReason",
+  "subgoalRerouteReason",
+  "selfStopReason",
+  "selfBlockReason",
+  "selfPauseReason",
   "orchestrationStepNumber",
   "orchestrationStatus",
   "orchestrationPhase",
@@ -150,6 +172,7 @@ export function buildAnalysisTraceRecord(params: BuildAnalysisTraceRecordParams)
   const latestAgentEntry = getLatestExecutionOrchestrationAgentHistoryEntry(params.orchestrationState);
   const latestPlannerEntry = getLatestExecutionOrchestrationAgentHistoryEntryByRole(params.orchestrationState, "planner");
   const latestExecutorEntry = getLatestExecutionOrchestrationAgentHistoryEntryByRole(params.orchestrationState, "executor");
+  const selfDirectionState = getExecutionSelfDirectionSnapshot(params.orchestrationState);
 
   return {
     input: params.input,
@@ -158,6 +181,16 @@ export function buildAnalysisTraceRecord(params: BuildAnalysisTraceRecordParams)
     goal: params.input.goal?.trim() || null,
     orchestrationId: params.orchestrationState?.orchestrationId?.trim() || null,
     multiAgentSessionId: params.orchestrationState?.multiAgentSessionId?.trim() || null,
+    selfDirectionId: selfDirectionState?.selfDirectionId ?? null,
+    topLevelGoal: selfDirectionState?.topLevelGoal ?? null,
+    selfDirectionStatus: selfDirectionState?.selfDirectionStatus ?? null,
+    currentSubgoal: summarizeExecutionSelfDirectedSubgoal(selfDirectionState?.currentSubgoal) ?? null,
+    subgoalQueueSnapshot: selfDirectionState?.subgoalQueue.map((subgoal) => subgoal.title) ?? [],
+    subgoalSelectionReason: selfDirectionState?.lastSelectionReason || null,
+    subgoalRerouteReason: selfDirectionState?.lastRerouteReason || null,
+    selfStopReason: selfDirectionState?.lastStopReason || null,
+    selfBlockReason: selfDirectionState?.lastBlockReason || null,
+    selfPauseReason: selfDirectionState?.lastPauseReason || null,
     orchestrationStepNumber: orchestrationStep?.stepNumber ?? null,
     orchestrationStatus: params.orchestrationState?.currentStatus ?? null,
     orchestrationPhase: params.orchestrationState?.currentPhase ?? null,
@@ -209,6 +242,16 @@ export function listMissingAnalysisTraceFields(trace: AnalysisTraceRecord): stri
     ["goal", trace.goal],
     ["orchestrationId", trace.orchestrationId],
     ["multiAgentSessionId", trace.multiAgentSessionId],
+    ["selfDirectionId", trace.selfDirectionId],
+    ["topLevelGoal", trace.topLevelGoal],
+    ["selfDirectionStatus", trace.selfDirectionStatus],
+    ["currentSubgoal", trace.currentSubgoal],
+    ["subgoalQueueSnapshot", trace.subgoalQueueSnapshot],
+    ["subgoalSelectionReason", trace.subgoalSelectionReason],
+    ["subgoalRerouteReason", trace.subgoalRerouteReason],
+    ["selfStopReason", trace.selfStopReason],
+    ["selfBlockReason", trace.selfBlockReason],
+    ["selfPauseReason", trace.selfPauseReason],
     ["orchestrationStepNumber", trace.orchestrationStepNumber],
     ["orchestrationStatus", trace.orchestrationStatus],
     ["orchestrationPhase", trace.orchestrationPhase],
