@@ -88,7 +88,11 @@ const START_HERE_EXAMPLES = [
   "Animation speed desyncs from player movement",
 ] as const;
 
-const QUICK_MODE_MARKER = "[AIE_ANALYSIS_MODE:quick]";
+function buildRoutingHintBlock(enabled: boolean): string {
+  return enabled
+    ? "AI-E routing hint: light\nAI-E response mode: light"
+    : "AI-E routing hint: standard\nAI-E response mode: standard";
+}
 
 export function isFreeAnalysisResponse(value: unknown): value is FreeAnalysisResponse {
   const source = value as Record<string, unknown>;
@@ -389,7 +393,7 @@ type AnalysisFormProps = {
 export function AnalysisForm({ initialMode = "fresh" }: AnalysisFormProps) {
   const router = useRouter();
   const [form, setForm] = useState<AnalysisInput>(initialForm);
-  const [responseMode, setResponseMode] = useState<"full" | "quick">("full");
+  const [lightMode, setLightMode] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [storedState, setStoredState] = useState<StoredAnalysisState | null>(null);
@@ -464,9 +468,9 @@ export function AnalysisForm({ initialMode = "fresh" }: AnalysisFormProps) {
       context: [
         (form.context ?? "").trim(),
         includeContinuationContext && continuationSnapshot ? buildContinuationContextBlock(continuationSnapshot) : "",
+        buildRoutingHintBlock(lightMode),
         sessionContext,
         buildExecutionOrchestrationContextBlock({ orchestration: initialOrchestrationState }),
-        responseMode === "quick" ? QUICK_MODE_MARKER : "",
       ]
         .filter(Boolean)
         .join("\n\n"),
@@ -545,38 +549,23 @@ export function AnalysisForm({ initialMode = "fresh" }: AnalysisFormProps) {
       router.push("/result");
     } catch {
       setErrorMessage("We couldn't generate an analysis right now. Please try again.");
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const applyExamplePrompt = (prompt: string) => {
-    setForm((current) => ({
-      ...current,
-      problemDescription: prompt,
-    }));
-    problemDescriptionRef.current?.focus();
-  };
-
-  return (
-    <form onSubmit={handleSubmit} className="glass-card rounded-[2rem] p-6 shadow-float sm:p-8">
-      <div className="grid gap-6">
         <div>
-          <p className="section-label">Free analysis</p>
-          <h2 className="headline mt-3 text-3xl font-semibold">Drop in the issue and get a structured read.</h2>
-          <p className="mt-3 text-sm leading-7 body-muted">
-            Keep it simple. Describe the problem, add the error or snippet if it helps, and AI-E will return a productized first-pass analysis.
-          </p>
+          <p className="label-text">Response mode</p>
+          <label className="mt-3 flex items-start gap-3 rounded-2xl border border-ink/10 bg-white/70 px-4 py-3 text-sm text-ink/85 shadow-soft">
+            <input
+              type="checkbox"
+              checked={lightMode}
+              onChange={(event) => setLightMode(event.target.checked)}
+              className="mt-1 h-4 w-4 rounded border-ink/30 text-ocean focus:ring-ocean"
+            />
+            <span>
+              <span className="block font-semibold text-ink">Use light mode</span>
+              <span className="mt-1 block text-xs body-muted">
+                Keeps the guided debugging loop intact but routes the request through the lighter model path for faster, cheaper first-pass analysis.
+              </span>
+            </span>
+          </label>
         </div>
-
-        {showStartHere ? (
-          <section className="rounded-[1.5rem] border border-ocean/15 bg-ocean/5 p-5">
-            <div className="grid gap-5 lg:grid-cols-[1.1fr_0.9fr]">
-              <div>
-                <p className="section-label">Start here</p>
-                <h3 className="mt-2 text-2xl font-semibold text-ink">Debug your Unity issue in one pass</h3>
-                <p className="mt-3 text-sm leading-7 text-ink/85">
-                  AI-E turns one clear issue description into a bounded debugging read: the likely diagnosis, the highest-signal facts, and the first safe step to try next.
                 </p>
                 <p className="mt-2 text-sm leading-7 text-ink/85">
                   Type one issue, not a full backlog. Include when it happens, what you expected, and what actually occurs.
@@ -753,39 +742,6 @@ export function AnalysisForm({ initialMode = "fresh" }: AnalysisFormProps) {
                 className="rounded-[1.5rem] border border-ink/10 bg-white/80 px-5 py-4 text-sm text-ink outline-none transition placeholder:text-slate focus:border-coral focus:ring-2 focus:ring-coral/20"
               />
             </label>
-          </div>
-        </div>
-
-        <div className="rounded-[1.5rem] border border-ink/10 bg-white/70 p-5">
-          <p className="text-sm font-semibold text-ink">Response mode</p>
-          <p className="mt-1 text-xs body-muted">Full guided debugging keeps the normal reasoning path. Quick response uses lighter routing for a shallower first pass at lower cost.</p>
-          <div className="mt-4 grid gap-3 sm:grid-cols-2">
-            <button
-              type="button"
-              onClick={() => setResponseMode("quick")}
-              aria-pressed={responseMode === "quick"}
-              className={`rounded-[1.25rem] border px-4 py-4 text-left transition ${
-                responseMode === "quick"
-                  ? "border-coral/40 bg-coral/10 text-ember"
-                  : "border-ink/10 bg-white/70 text-ink hover:border-coral/20"
-              }`}
-            >
-              <p className="text-sm font-semibold">Quick response (lower cost)</p>
-              <p className="mt-1 text-xs leading-6 body-muted">Uses a lighter first-pass route and shorter diagnostic depth.</p>
-            </button>
-            <button
-              type="button"
-              onClick={() => setResponseMode("full")}
-              aria-pressed={responseMode === "full"}
-              className={`rounded-[1.25rem] border px-4 py-4 text-left transition ${
-                responseMode === "full"
-                  ? "border-ocean/30 bg-ocean/8 text-ink"
-                  : "border-ink/10 bg-white/70 text-ink hover:border-ocean/20"
-              }`}
-            >
-              <p className="text-sm font-semibold">Full guided debugging</p>
-              <p className="mt-1 text-xs leading-6 body-muted">Preserves the normal high-quality reasoning path and deeper bounded debugging guidance.</p>
-            </button>
           </div>
         </div>
 

@@ -1,8 +1,6 @@
 import type { AnalysisInput, FreeAnalysisResponse } from "@/lib/aie/types";
 import { attachDryRunActionProposal } from "./executionBridge";
-import { routeModel } from "./modelRouter";
-
-const QUICK_MODE_MARKER = "[AIE_ANALYSIS_MODE:quick]";
+import { completeJson, inferRouterMode } from "./modelRouter";
 
 function normalizeText(value: string | null | undefined): string {
   return String(value ?? "")
@@ -18,14 +16,6 @@ function normalizeJsonText(value: string): string {
   return trimmed;
 }
 
-function serializePromptEnvelope(params: {
-  systemPrompt: string;
-  userPrompt: string;
-  responseShape: "analysis-json" | "text";
-}): string {
-  return JSON.stringify(params);
-}
-
 type OpenAIAnalysisResponse = {
   whatHappened?: unknown;
   whatMatters?: unknown;
@@ -38,8 +28,6 @@ type FollowUpContext = {
   attemptedStep: string | null;
   observation: string | null;
 };
-
-type RequestedAnalysisMode = "full" | "quick";
 
 const DUPLICATE_WRITER_SIGNAL_PATTERN =
   /\b(?:duplicate writers?|multiple scripts writing|two scripts writing|both write|both writing|same frame|overwrit(?:e|es|ing)|bouncing between two values|written from two places|same value|same [a-z]+ value|writing the same [a-z]+ value)\b/i;
@@ -364,10 +352,6 @@ function buildSignalSummary(input: AnalysisInput): string[] {
       ? `Action result: ${trimSentence(input.actionResult ?? "", 140)}`
       : "Action result: no",
   ];
-}
-
-function getRequestedAnalysisMode(input: AnalysisInput): RequestedAnalysisMode {
-  return normalizeText(input.context).includes(QUICK_MODE_MARKER) ? "quick" : "full";
 }
 
 function normalizeModelList(value: unknown, fallback: string[]): string[] {
@@ -1033,7 +1017,7 @@ function buildLightAnalysisUserPrompt(input: AnalysisInput): string {
     `Problem description: ${normalizeText(input.problemDescription) || "None provided."}`,
     `Error message: ${normalizeText(input.errorMessage) || "None provided."}`,
     `Code snippet: ${normalizeText(input.codeSnippet) || "None provided."}`,
-    `Context: ${normalizeText(input.context).replace(QUICK_MODE_MARKER, "").trim() || "None provided."}`,
+    `Context: ${normalizeText(input.context) || "None provided."}`,
     `Action result: ${normalizeText(input.actionResult) || "None provided."}`,
     `Goal: ${normalizeText(input.goal) || "None provided."}`,
     `Scenario anchors: ${scenarioAnchors.length > 0 ? scenarioAnchors.join(", ") : "None extracted."}`,
@@ -1045,35 +1029,43 @@ function buildLightAnalysisUserPrompt(input: AnalysisInput): string {
   ].join("\n");
 }
 
-function parseModelAnalysisContent(content: string): OpenAIAnalysisResponse {
-  try {
-    return JSON.parse(normalizeJsonText(content)) as OpenAIAnalysisResponse;
-  } catch (error) {
-    throw new Error(
-      `Model returned invalid JSON: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-}
-
 async function callRoutedAnalysis(input: AnalysisInput): Promise<FreeAnalysisResponse> {
-  const requestedMode = getRequestedAnalysisMode(input);
-  const taskType = requestedMode === "quick" ? "light_analysis" : "reasoning";
-  const promptEnvelope =
-    requestedMode === "quick"
-      ? serializePromptEnvelope({
-          systemPrompt: buildLightAnalysisSystemPrompt(),
-          userPrompt: buildLightAnalysisUserPrompt(input),
-          responseShape: "analysis-json",
-        })
-      : serializePromptEnvelope({
-          systemPrompt: buildOpenAISystemPrompt(),
-          userPrompt: buildOpenAIUserPrompt(input),
-          responseShape: "analysis-json",
-        });
+  const mode = inferRouterMode(input.context);
+  const system = mode === "light" ? buildLightAnalysisSystemPrompt() : buildOpenAISystemPrompt();
+  const user = mode === "light" ? buildLightAnalysisUserPrompt(input) : buildOpenAIUserPrompt(input);
+  const jsonSchema = {
+    name: "unity_analysis",
+    schema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["whatHappened", "whatMatters", "whatToDoNext"],
+      properties: {
+        whatHappened: {
+          type: "string",
+        },
+        whatMatters: {
+          type: "array",
+          minItems: 3,
+          maxItems: 5,
+          items: {
+            type: "string",
+          },
+        },
+        whatToDoNext: {
+          type: "array",
+          minItems: 3,
+          maxItems: 5,
+          items: {
+            type: "string",
+          },
+        },
+      },
+    },
+  };
 
   console.log("[aie/run-analysis] routing analysis", {
-    taskType,
-    requestedMode,
+    task: "reasoning",
+    mode,
     problemDescriptionLength: input.problemDescription.length,
     hasCodeSnippet: Boolean(normalizeText(input.codeSnippet)),
     hasErrorMessage: Boolean(normalizeText(input.errorMessage)),
@@ -1081,9 +1073,22 @@ async function callRoutedAnalysis(input: AnalysisInput): Promise<FreeAnalysisRes
     hasActionResult: Boolean(normalizeText(input.actionResult)),
   });
 
-  const content = await routeModel(taskType, promptEnvelope);
+  const routed = await completeJson({
+    task: "reasoning",
+    mode,
+    system,
+    user,
+    temperature: mode === "light" ? 0.15 : 0.2,
+    jsonSchema,
+  });
+  console.log("[aie/run-analysis] routed completion", {
+    provider: routed.provider,
+    model: routed.model,
+    mode: routed.mode,
+    cacheHit: routed.cacheHit,
+  });
   console.log("[run_analysis] model response received");
-  const parsed = parseModelAnalysisContent(content);
+  const parsed = JSON.parse(normalizeJsonText(routed.content)) as OpenAIAnalysisResponse;
   console.log("[run_analysis] JSON parsed successfully");
 
   return ensureConfirmationFirstStep(
@@ -1244,7 +1249,7 @@ function buildFallbackAnalysis(input: AnalysisInput): FreeAnalysisResponse {
 
 export async function runAnalysis(input: AnalysisInput): Promise<FreeAnalysisResponse> {
   console.log("[run_analysis] API key exists:", !!process.env.OPENAI_API_KEY);
-  console.log("[run_analysis] requested mode:", getRequestedAnalysisMode(input));
+  console.log("[run_analysis] requested mode:", inferRouterMode(input.context));
 
   try {
     console.log("[run_analysis] attempting routed model call");
@@ -1252,7 +1257,7 @@ export async function runAnalysis(input: AnalysisInput): Promise<FreeAnalysisRes
   } catch (error) {
     console.error("[run_analysis] routed model failed", error);
     console.error("[aie/run-analysis] routed analysis failed; falling back", {
-      requestedMode: getRequestedAnalysisMode(input),
+      requestedMode: inferRouterMode(input.context),
       error: error instanceof Error ? { message: error.message, stack: error.stack } : String(error),
     });
   }
