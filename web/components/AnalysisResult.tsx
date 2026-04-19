@@ -341,6 +341,148 @@ function getActionTypeLabel(actionType: FreeAnalysisResponse["actionType"]): str
   }
 }
 
+type VisibleExecutionStatus = "active" | "paused" | "blocked" | "complete" | "aborted";
+
+function getVisibleExecutionStatus(orchestrationState: ExecutionOrchestrationState | undefined): VisibleExecutionStatus | null {
+  if (!orchestrationState) {
+    return null;
+  }
+
+  const selfDirectionStatus = orchestrationState.selfDirectionState.selfDirectionStatus;
+  if (selfDirectionStatus === "paused") {
+    return "paused";
+  }
+  if (selfDirectionStatus === "blocked" || orchestrationState.currentStatus === "blocked") {
+    return "blocked";
+  }
+  if (selfDirectionStatus === "complete" || orchestrationState.currentStatus === "complete") {
+    return "complete";
+  }
+  if (selfDirectionStatus === "aborted" || orchestrationState.currentStatus === "aborted") {
+    return "aborted";
+  }
+
+  return "active";
+}
+
+function getVisibleExecutionStatusLabel(status: VisibleExecutionStatus | null): string | null {
+  switch (status) {
+    case "active":
+      return "Active";
+    case "paused":
+      return "Paused";
+    case "blocked":
+      return "Blocked";
+    case "complete":
+      return "Complete";
+    case "aborted":
+      return "Aborted";
+    default:
+      return null;
+  }
+}
+
+function getVisibleExecutionStatusClassName(status: VisibleExecutionStatus | null): string {
+  switch (status) {
+    case "active":
+      return "border-ocean/20 bg-ocean/10 text-ocean";
+    case "paused":
+      return "border-amber-200/80 bg-amber-50/80 text-amber-700/90";
+    case "blocked":
+      return "border-coral/20 bg-coral/10 text-ember";
+    case "complete":
+      return "border-emerald-200 bg-emerald-50 text-emerald-700";
+    case "aborted":
+      return "border-ink/10 bg-white/70 text-ink/70";
+    default:
+      return "border-ink/10 bg-white/70 text-ink/70";
+  }
+}
+
+function getVisibleExecutionStatusHint(orchestrationState: ExecutionOrchestrationState | undefined): string | null {
+  if (!orchestrationState) {
+    return null;
+  }
+
+  const status = getVisibleExecutionStatus(orchestrationState);
+  switch (status) {
+    case "paused":
+      return orchestrationState.selfDirectionState.lastPauseReason || "The planner is holding execution before the next bounded step can proceed.";
+    case "blocked":
+      return orchestrationState.selfDirectionState.lastBlockReason || "No safe bounded next step is available in the current scope.";
+    case "complete":
+      return orchestrationState.selfDirectionState.lastStopReason || "The approved goal is complete and no further bounded action is required.";
+    case "aborted":
+      return orchestrationState.selfDirectionState.lastStopReason || "The bounded run stopped before completion.";
+    case "active":
+    default:
+      return orchestrationState.currentAgent === "executor"
+        ? "The executor owns the current step and can act on the approved bounded action."
+        : "The planner owns the current step and is deciding or rerouting the next bounded move.";
+  }
+}
+
+function getCurrentOwnerLabel(orchestrationState: ExecutionOrchestrationState | undefined): string | null {
+  if (!orchestrationState) {
+    return null;
+  }
+
+  return orchestrationState.currentAgent === "executor" ? "Executor acting" : "Planner deciding";
+}
+
+function getCurrentOwnerHint(orchestrationState: ExecutionOrchestrationState | undefined): string | null {
+  if (!orchestrationState) {
+    return null;
+  }
+
+  const visibleStatus = getVisibleExecutionStatus(orchestrationState);
+  if (orchestrationState.currentAgent === "executor") {
+    return "The executor is holding the current bounded action.";
+  }
+
+  if (visibleStatus === "paused") {
+    return "The planner is holding execution until approval or a stop condition is cleared.";
+  }
+
+  if (visibleStatus === "blocked" || visibleStatus === "complete" || visibleStatus === "aborted") {
+    return "The planner owns the thread outcome and no executor step is running now.";
+  }
+
+  return "The planner owns the next handoff and chooses the next bounded move.";
+}
+
+function getNextBoundedActionSummary(params: {
+  result: FreeAnalysisResponse;
+  currentGuidedStep: string | null;
+  nextStepGuidance: string | null;
+  suggestedNextAction: SuggestedNextAction;
+  orchestrationState?: ExecutionOrchestrationState;
+}): string | null {
+  const orchestrationState = params.orchestrationState;
+  if (orchestrationState) {
+    const visibleStatus = getVisibleExecutionStatus(orchestrationState);
+    if (visibleStatus === "complete") {
+      return "No further bounded action is required.";
+    }
+    if (visibleStatus === "blocked") {
+      return orchestrationState.selfDirectionState.lastBlockReason || orchestrationState.plannerState.proposedAction || null;
+    }
+    if (visibleStatus === "paused") {
+      return orchestrationState.plannerState.proposedAction || orchestrationState.executorState.pendingAction || params.result.proposedAction || null;
+    }
+
+    return orchestrationState.currentAgent === "executor"
+      ? orchestrationState.executorState.pendingAction || orchestrationState.plannerState.proposedAction || params.result.proposedAction || params.currentGuidedStep
+      : orchestrationState.plannerState.proposedAction || params.nextStepGuidance || params.result.proposedAction || params.currentGuidedStep;
+  }
+
+  if (params.suggestedNextAction === "stop") {
+    return "No further bounded action is required.";
+  }
+
+  return params.result.proposedAction || params.currentGuidedStep || params.nextStepGuidance;
+}
+
 export function AnalysisResult({
   result,
   input,
@@ -393,6 +535,17 @@ export function AnalysisResult({
   const trimmedObservation = useMemo(() => observation.trim(), [observation]);
   const nextStepIndex = Math.max(1, (currentStepIndex ?? input?.stepIndex ?? 1) + 1);
   const selfDirectionState = orchestrationState?.selfDirectionState;
+  const visibleExecutionStatus = getVisibleExecutionStatus(orchestrationState);
+  const topLevelGoal = goal ?? input?.goal ?? orchestrationState?.goal ?? null;
+  const activeSubgoal = selfDirectionState?.currentSubgoal?.title ?? null;
+  const currentOwnerLabel = getCurrentOwnerLabel(orchestrationState);
+  const nextBoundedAction = getNextBoundedActionSummary({
+    result,
+    currentGuidedStep,
+    nextStepGuidance,
+    suggestedNextAction,
+    orchestrationState,
+  });
   const canSubmitFollowUp = Boolean(
     input?.problemDescription &&
       trimmedObservation &&
@@ -553,70 +706,78 @@ export function AnalysisResult({
   return (
     <div className="grid gap-5">
       <section className="glass-card rounded-[1.75rem] p-6 shadow-float sm:p-7">
-        <p className="section-label">Diagnosis</p>
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink/50">Confidence</p>
-          <span
-            className={`inline-flex rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] ${getConfidenceClassName(confidenceLevel)}`}
-          >
-            {getConfidenceLabel(confidenceLevel)}
+        <p className="section-label">Current AI-E state</p>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+          <div className="rounded-[1rem] border border-ink/10 bg-white/55 p-4 xl:col-span-2">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink/50">Top-level goal</p>
+            <p className="mt-2 text-sm leading-7 text-ink/90 sm:text-base">{topLevelGoal ?? "No explicit goal recorded."}</p>
+          </div>
+          <div className="rounded-[1rem] border border-ink/10 bg-white/55 p-4 xl:col-span-2">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink/50">Current subgoal</p>
+            <p className="mt-2 text-sm leading-7 text-ink/90 sm:text-base">{activeSubgoal ?? "No active subgoal right now."}</p>
+          </div>
+          <div className="rounded-[1rem] border border-ink/10 bg-white/55 p-4">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink/50">Owner</p>
+            <p className="mt-2 text-sm font-semibold leading-7 text-ink/90 sm:text-base">{currentOwnerLabel ?? "Single-agent analysis"}</p>
+            {getCurrentOwnerHint(orchestrationState) ? (
+              <p className="mt-1 text-xs leading-6 body-muted">{getCurrentOwnerHint(orchestrationState)}</p>
+            ) : null}
+          </div>
+        </div>
+        <div className="mt-3 grid gap-3 lg:grid-cols-[0.95fr_1.05fr]">
+          <div className="rounded-[1rem] border border-ink/10 bg-white/55 p-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink/50">Status</p>
+              {getVisibleExecutionStatusLabel(visibleExecutionStatus) ? (
+                <span className={`inline-flex rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] ${getVisibleExecutionStatusClassName(visibleExecutionStatus)}`}>
+                  {getVisibleExecutionStatusLabel(visibleExecutionStatus)}
+                </span>
+              ) : null}
+            </div>
+            {getVisibleExecutionStatusHint(orchestrationState) ? (
+              <p className="mt-2 text-sm leading-7 text-ink/90 sm:text-base">{getVisibleExecutionStatusHint(orchestrationState)}</p>
+            ) : isRefined && getLoopTerminationStatusHint(loopTerminationStatus) ? (
+              <p className="mt-2 text-sm leading-7 text-ink/90 sm:text-base">{getLoopTerminationStatusHint(loopTerminationStatus)}</p>
+            ) : null}
+            {orchestrationState?.lastHandoff ? (
+              <p className="mt-2 text-xs leading-6 body-muted">
+                Last handoff: <span className="font-semibold text-ink">{orchestrationState.lastHandoff.handoffFrom ?? "none"} -&gt; {orchestrationState.lastHandoff.handoffTo ?? "none"}</span>
+              </p>
+            ) : null}
+          </div>
+          <div className="rounded-[1rem] border border-ocean/15 bg-ocean/5 p-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink/50">Next bounded action</p>
+              <span className={`inline-flex rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] ${getSuggestedNextActionClassName(suggestedNextAction)}`}>
+                {getSuggestedNextActionLabel(suggestedNextAction)}
+              </span>
+            </div>
+            <p className="mt-2 text-sm leading-7 text-ink/90 sm:text-base">{nextBoundedAction ?? "No next bounded action is available."}</p>
+            {result.expectedOutcome ? (
+              <p className="mt-2 text-xs leading-6 body-muted">Expected outcome: {result.expectedOutcome}</p>
+            ) : null}
+          </div>
+        </div>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <span className={`inline-flex rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] ${getConfidenceClassName(confidenceLevel)}`}>
+            {getConfidenceLabel(confidenceLevel)} confidence
           </span>
           {isRefined && getConfidenceAlignmentLabel(confidenceAlignment) ? (
-            <span
-              className={`inline-flex rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] ${getConfidenceAlignmentClassName(confidenceAlignment)}`}
-            >
+            <span className={`inline-flex rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] ${getConfidenceAlignmentClassName(confidenceAlignment)}`}>
               {getConfidenceAlignmentLabel(confidenceAlignment)}
             </span>
           ) : null}
+          {recommendedDebuggingMode ? (
+            <span className={`inline-flex rounded-full border px-2.5 py-1 text-[10px] font-semibold tracking-[0.01em] ${getRecommendedDebuggingModeClassName(recommendedDebuggingMode)}`}>
+              {getRecommendedDebuggingModeLabel(recommendedDebuggingMode)}
+            </span>
+          ) : null}
           {isRefined && getDecisionCommitmentLabel(decisionCommitment) ? (
-            <span
-              className={`inline-flex rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] ${getDecisionCommitmentClassName(decisionCommitment)}`}
-            >
+            <span className={`inline-flex rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] ${getDecisionCommitmentClassName(decisionCommitment)}`}>
               {getDecisionCommitmentLabel(decisionCommitment)}
             </span>
           ) : null}
         </div>
-        {recommendedDebuggingMode ? (
-          <div className="mt-2 flex flex-wrap items-center gap-2">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink/50">Recommended mode</p>
-            <span
-              className={`inline-flex rounded-full border px-2.5 py-1 text-[10px] font-semibold tracking-[0.01em] ${getRecommendedDebuggingModeClassName(recommendedDebuggingMode)}`}
-            >
-              {getRecommendedDebuggingModeLabel(recommendedDebuggingMode)}
-            </span>
-          </div>
-        ) : null}
-        {orchestrationState ? (
-          <div className="mt-3 rounded-[1rem] border border-ink/10 bg-white/40 p-3 text-xs leading-6 text-ink/80">
-            <p className="section-label">Two-agent orchestration</p>
-            <p className="mt-2">
-              Current owner: <span className="font-semibold text-ink">{orchestrationState.currentAgent}</span>
-            </p>
-            <p>
-              Self-direction: <span className="font-semibold text-ink">{selfDirectionState?.selfDirectionStatus ?? "active"}</span>
-            </p>
-            {selfDirectionState?.currentSubgoal ? (
-              <p>
-                Current subgoal: <span className="font-semibold text-ink">{selfDirectionState.currentSubgoal.title}</span>
-              </p>
-            ) : null}
-            {selfDirectionState?.subgoalQueue.length ? (
-              <p>
-                Queued subgoals: <span className="font-semibold text-ink">{selfDirectionState.subgoalQueue.map((subgoal) => subgoal.title).join(" | ")}</span>
-              </p>
-            ) : null}
-            {orchestrationState.lastHandoff ? (
-              <p>
-                Last handoff: <span className="font-semibold text-ink">{orchestrationState.lastHandoff.handoffFrom ?? "none"} -&gt; {orchestrationState.lastHandoff.handoffTo ?? "none"}</span> ({orchestrationState.lastHandoff.payloadSummary})
-              </p>
-            ) : null}
-            {selfDirectionState?.lastSelectionReason ? <p>Selection reason: {selfDirectionState.lastSelectionReason}</p> : null}
-            {selfDirectionState?.lastRerouteReason ? <p>Reroute reason: {selfDirectionState.lastRerouteReason}</p> : null}
-            {selfDirectionState?.lastPauseReason ? <p>Pause reason: {selfDirectionState.lastPauseReason}</p> : null}
-            {selfDirectionState?.lastBlockReason ? <p>Block reason: {selfDirectionState.lastBlockReason}</p> : null}
-            {selfDirectionState?.lastStopReason ? <p>Stop reason: {selfDirectionState.lastStopReason}</p> : null}
-          </div>
-        ) : null}
         {isRefined ? (
           <div className="mt-2 space-y-2">
             <div className="flex flex-wrap items-center gap-2">
@@ -639,30 +800,17 @@ export function AnalysisResult({
             {getVerificationHint(verificationState) ? (
               <p className="text-xs leading-6 body-muted sm:text-sm">{getVerificationHint(verificationState)}</p>
             ) : null}
-            {getLoopTerminationStatusLabel(loopTerminationStatus) ? (
+            {getLoopTerminationStatusLabel(loopTerminationStatus) && !orchestrationState ? (
               <div className="rounded-[1rem] border border-ink/10 bg-white/40 p-3">
                 <p className="section-label">Current status</p>
                 <div className="mt-2 flex flex-wrap items-center gap-2">
-                  <span
-                    className={`inline-flex rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] ${getLoopTerminationStatusClassName(loopTerminationStatus)}`}
-                  >
+                  <span className={`inline-flex rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] ${getLoopTerminationStatusClassName(loopTerminationStatus)}`}>
                     {getLoopTerminationStatusLabel(loopTerminationStatus)}
                   </span>
                 </div>
-                {getLoopTerminationStatusHint(loopTerminationStatus) ? (
-                  <p className="mt-2 text-xs leading-6 body-muted sm:text-sm">{getLoopTerminationStatusHint(loopTerminationStatus)}</p>
-                ) : null}
-                <div className="mt-3 rounded-[1rem] border border-ink/10 bg-white/50 p-3">
-                  <p className="section-label">Suggested next action</p>
-                  <div className="mt-2 flex flex-wrap items-center gap-2">
-                    <span
-                      className={`inline-flex rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] ${getSuggestedNextActionClassName(suggestedNextAction)}`}
-                    >
-                      {getSuggestedNextActionLabel(suggestedNextAction)}
-                    </span>
-                  </div>
+                {getSuggestedNextActionHint(suggestedNextAction) ? (
                   <p className="mt-2 text-xs leading-6 body-muted sm:text-sm">{getSuggestedNextActionHint(suggestedNextAction)}</p>
-                </div>
+                ) : null}
               </div>
             ) : null}
           </div>
@@ -672,12 +820,39 @@ export function AnalysisResult({
             Given the current details, this is the most likely explanation.
           </p>
         ) : null}
-        <p className="mt-3 text-sm leading-7 text-ink/90 sm:text-base">{result.what_happened}</p>
+        <div className="mt-4 rounded-[1rem] border border-ink/10 bg-white/45 p-4">
+          <p className="section-label">Diagnosis</p>
+          <p className="mt-2 text-sm leading-7 text-ink/90 sm:text-base">{result.what_happened}</p>
+        </div>
+        {orchestrationState ? (
+          <details className="mt-4 rounded-[1rem] border border-ink/10 bg-white/40 p-4 text-xs leading-6 text-ink/80">
+            <summary className="cursor-pointer list-none text-[11px] font-semibold uppercase tracking-[0.14em] text-ink/55">
+              State details
+            </summary>
+            <div className="mt-3 space-y-1">
+              {selfDirectionState?.subgoalQueue.length ? (
+                <p>
+                  Queued subgoals: <span className="font-semibold text-ink">{selfDirectionState.subgoalQueue.map((subgoal) => subgoal.title).join(" | ")}</span>
+                </p>
+              ) : null}
+              {orchestrationState.lastHandoff ? (
+                <p>
+                  Handoff payload: <span className="font-semibold text-ink">{orchestrationState.lastHandoff.payloadSummary}</span>
+                </p>
+              ) : null}
+              {selfDirectionState?.lastSelectionReason ? <p>Selection reason: {selfDirectionState.lastSelectionReason}</p> : null}
+              {selfDirectionState?.lastRerouteReason ? <p>Reroute reason: {selfDirectionState.lastRerouteReason}</p> : null}
+              {selfDirectionState?.lastPauseReason ? <p>Pause reason: {selfDirectionState.lastPauseReason}</p> : null}
+              {selfDirectionState?.lastBlockReason ? <p>Block reason: {selfDirectionState.lastBlockReason}</p> : null}
+              {selfDirectionState?.lastStopReason ? <p>Stop reason: {selfDirectionState.lastStopReason}</p> : null}
+            </div>
+          </details>
+        ) : null}
       </section>
       {result.proposedAction && result.expectedOutcome ? (
         <section className="glass-card rounded-[1.75rem] p-6 shadow-float sm:p-7">
           <div className="flex flex-wrap items-center gap-2">
-            <p className="section-label">Dry-run proposal</p>
+            <p className="section-label">Next bounded action</p>
             <span className="inline-flex rounded-full border border-ink/10 bg-white/80 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-ink/70">
               User-approved only
             </span>
@@ -689,9 +864,7 @@ export function AnalysisResult({
           </div>
           <p className="mt-3 text-sm leading-7 text-ink/90 sm:text-base">{result.proposedAction}</p>
           <p className="mt-3 text-xs leading-6 body-muted sm:text-sm">Expected outcome: {result.expectedOutcome}</p>
-          <p className="mt-2 text-xs leading-6 body-muted sm:text-sm">
-            AI-E is only proposing a bounded next move here. Nothing executes automatically; inspect the proposal and approve any real change yourself.
-          </p>
+          <p className="mt-2 text-xs leading-6 body-muted sm:text-sm">This is the next bounded move AI-E expects to happen. Nothing executes automatically; inspect the proposal and approve any real change yourself.</p>
         </section>
       ) : null}
       <section className="glass-card rounded-[1.75rem] p-6 shadow-float sm:p-7">
@@ -703,8 +876,8 @@ export function AnalysisResult({
         </ul>
       </section>
       <section className="glass-card rounded-[1.75rem] p-6 shadow-float sm:p-7">
-        <p className="section-label">What to do next</p>
-        <p className="mt-3 text-sm leading-7 body-muted">Start with the first check before making broader changes.</p>
+        <p className="section-label">Step sequence</p>
+        <p className="mt-3 text-sm leading-7 body-muted">Start with the current bounded check, then only continue if the signal still stays clear.</p>
         {supervisedActionChain ? (
           <div className="mt-4 rounded-[1.25rem] border border-ocean/15 bg-white/55 p-4">
             <div className="flex flex-wrap items-center gap-2">

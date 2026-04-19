@@ -226,77 +226,89 @@ export default function ResultPage() {
         <div className="space-y-6">
           {storedState.input?.goal || storedState.input?.stepIndex || storedState.previousOutcome ? (
             <div className="glass-card rounded-[1.75rem] p-6 shadow-float">
-              <p className="section-label">Execution session</p>
-              <div className="mt-3 grid gap-2 text-sm leading-7 text-ink/90">
-                {storedState.input?.goal ? (
-                  <p>
-                    <span className="font-semibold text-ink">Goal:</span> {storedState.input.goal}
+              <p className="section-label">Execution snapshot</p>
+              <div className="mt-4 grid gap-3">
+                <div className="rounded-[1rem] border border-ink/10 bg-white/55 p-4">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink/50">Top-level goal</p>
+                  <p className="mt-2 text-sm leading-7 text-ink/90">{storedState.input?.goal ?? "No explicit goal recorded."}</p>
+                </div>
+                <div className="rounded-[1rem] border border-ink/10 bg-white/55 p-4">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink/50">Current subgoal</p>
+                  <p className="mt-2 text-sm leading-7 text-ink/90">{storedState.orchestrationState?.selfDirectionState.currentSubgoal?.title ?? "No active subgoal right now."}</p>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-[1rem] border border-ink/10 bg-white/55 p-4">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink/50">Owner</p>
+                    <p className="mt-2 text-sm font-semibold leading-7 text-ink/90">{storedState.orchestrationState?.currentAgent ?? "Single analysis thread"}</p>
+                    {storedState.orchestrationState?.currentPhase ? (
+                      <p className="mt-1 text-xs leading-6 body-muted">Phase: {storedState.orchestrationState.currentPhase}</p>
+                    ) : null}
+                  </div>
+                  <div className="rounded-[1rem] border border-ink/10 bg-white/55 p-4">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink/50">Status</p>
+                    <p className="mt-2 text-sm font-semibold leading-7 text-ink/90">{storedState.orchestrationState?.selfDirectionState.selfDirectionStatus ?? storedState.orchestrationState?.currentStatus ?? "Active"}</p>
+                    {storedState.input?.stepIndex ? (
+                      <p className="mt-1 text-xs leading-6 body-muted">Current step: {storedState.input.stepIndex}</p>
+                    ) : null}
+                  </div>
+                </div>
+                <div className="rounded-[1rem] border border-ocean/15 bg-ocean/5 p-4">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink/50">Next bounded action</p>
+                  <p className="mt-2 text-sm leading-7 text-ink/90">
+                    {storedState.orchestrationState?.plannerState.proposedAction ??
+                      storedState.orchestrationState?.executorState.pendingAction ??
+                      storedState.result.proposedAction ??
+                      storedState.result.what_to_do_next[0] ??
+                      "No next bounded action recorded."}
                   </p>
-                ) : null}
-                {storedState.input?.stepIndex ? (
-                  <p>
-                    <span className="font-semibold text-ink">Current step:</span> {storedState.input.stepIndex}
-                  </p>
-                ) : null}
-                {storedState.previousOutcome ? (
-                  <p>
-                    <span className="font-semibold text-ink">Previous outcome:</span> {storedState.previousOutcome}
-                  </p>
-                ) : null}
-                {storedState.orchestrationState ? (
-                  <>
-                    <p>
-                      <span className="font-semibold text-ink">Orchestration:</span> {storedState.orchestrationState.currentStatus}
-                    </p>
-                    <p>
-                      <span className="font-semibold text-ink">Phase:</span> {storedState.orchestrationState.currentPhase}
-                    </p>
-                    <p>
-                      <span className="font-semibold text-ink">Current agent:</span> {storedState.orchestrationState.currentAgent}
-                    </p>
-                    <p>
-                      <span className="font-semibold text-ink">Self-direction:</span> {storedState.orchestrationState.selfDirectionState.selfDirectionStatus}
-                    </p>
-                    {storedState.orchestrationState.selfDirectionState.currentSubgoal ? (
+                </div>
+                <details className="rounded-[1rem] border border-ink/10 bg-white/45 p-4 text-xs leading-6 body-muted">
+                  <summary className="cursor-pointer list-none text-[11px] font-semibold uppercase tracking-[0.14em] text-ink/55">Session details</summary>
+                  <div className="mt-3 grid gap-2">
+                    {storedState.previousOutcome ? (
                       <p>
-                        <span className="font-semibold text-ink">Current subgoal:</span> {storedState.orchestrationState.selfDirectionState.currentSubgoal.title}
+                        <span className="font-semibold text-ink">Previous outcome:</span> {storedState.previousOutcome}
                       </p>
                     ) : null}
-                    {storedState.orchestrationState.selfDirectionState.subgoalQueue.length > 0 ? (
-                      <p>
-                        <span className="font-semibold text-ink">Queued subgoals:</span> {storedState.orchestrationState.selfDirectionState.subgoalQueue.map((subgoal) => subgoal.title).join(" | ")}
-                      </p>
+                    {storedState.orchestrationState ? (
+                      <>
+                        <p>
+                          <span className="font-semibold text-ink">Completed / blocked:</span> {storedState.orchestrationState.completedSteps.length} / {storedState.orchestrationState.blockedSteps.length}
+                        </p>
+                        {storedState.orchestrationState.selfDirectionState.subgoalQueue.length > 0 ? (
+                          <p>
+                            <span className="font-semibold text-ink">Queued subgoals:</span> {storedState.orchestrationState.selfDirectionState.subgoalQueue.map((subgoal) => subgoal.title).join(" | ")}
+                          </p>
+                        ) : null}
+                        {storedState.orchestrationState.lastHandoff ? (
+                          <p>
+                            <span className="font-semibold text-ink">Last handoff:</span> {storedState.orchestrationState.lastHandoff.handoffFrom ?? "none"} -&gt; {storedState.orchestrationState.lastHandoff.handoffTo ?? "none"} ({storedState.orchestrationState.lastHandoff.payloadSummary})
+                          </p>
+                        ) : null}
+                        {storedState.orchestrationState.selfDirectionState.lastSelectionReason ? (
+                          <p>
+                            <span className="font-semibold text-ink">Selection reason:</span> {storedState.orchestrationState.selfDirectionState.lastSelectionReason}
+                          </p>
+                        ) : null}
+                        {storedState.orchestrationState.selfDirectionState.lastPauseReason ? (
+                          <p>
+                            <span className="font-semibold text-ink">Pause reason:</span> {storedState.orchestrationState.selfDirectionState.lastPauseReason}
+                          </p>
+                        ) : null}
+                        {storedState.orchestrationState.selfDirectionState.lastBlockReason ? (
+                          <p>
+                            <span className="font-semibold text-ink">Block reason:</span> {storedState.orchestrationState.selfDirectionState.lastBlockReason}
+                          </p>
+                        ) : null}
+                        {storedState.orchestrationState.selfDirectionState.lastStopReason ? (
+                          <p>
+                            <span className="font-semibold text-ink">Stop reason:</span> {storedState.orchestrationState.selfDirectionState.lastStopReason}
+                          </p>
+                        ) : null}
+                      </>
                     ) : null}
-                    <p>
-                      <span className="font-semibold text-ink">Completed / blocked:</span> {storedState.orchestrationState.completedSteps.length} / {storedState.orchestrationState.blockedSteps.length}
-                    </p>
-                    {storedState.orchestrationState.selfDirectionState.lastSelectionReason ? (
-                      <p>
-                        <span className="font-semibold text-ink">Selection reason:</span> {storedState.orchestrationState.selfDirectionState.lastSelectionReason}
-                      </p>
-                    ) : null}
-                    {storedState.orchestrationState.selfDirectionState.lastPauseReason ? (
-                      <p>
-                        <span className="font-semibold text-ink">Pause reason:</span> {storedState.orchestrationState.selfDirectionState.lastPauseReason}
-                      </p>
-                    ) : null}
-                    {storedState.orchestrationState.selfDirectionState.lastBlockReason ? (
-                      <p>
-                        <span className="font-semibold text-ink">Block reason:</span> {storedState.orchestrationState.selfDirectionState.lastBlockReason}
-                      </p>
-                    ) : null}
-                    {storedState.orchestrationState.selfDirectionState.lastStopReason ? (
-                      <p>
-                        <span className="font-semibold text-ink">Stop reason:</span> {storedState.orchestrationState.selfDirectionState.lastStopReason}
-                      </p>
-                    ) : null}
-                    {storedState.orchestrationState.lastHandoff ? (
-                      <p>
-                        <span className="font-semibold text-ink">Last handoff:</span> {storedState.orchestrationState.lastHandoff.handoffFrom ?? "none"} -&gt; {storedState.orchestrationState.lastHandoff.handoffTo ?? "none"} ({storedState.orchestrationState.lastHandoff.payloadSummary})
-                      </p>
-                    ) : null}
-                  </>
-                ) : null}
+                  </div>
+                </details>
               </div>
             </div>
           ) : null}

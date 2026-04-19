@@ -70,6 +70,7 @@ export type ContinuationThreadSnapshot = {
   selfDirectionStatus?: string;
   currentSubgoal?: string;
   queuedSubgoals?: string;
+  nextBoundedAction?: string;
 };
 
 const initialForm: AnalysisInput = {
@@ -290,6 +291,12 @@ export function getContinuationThreadSnapshot(state: StoredAnalysisState | null 
     selfDirectionStatus: state?.orchestrationState?.selfDirectionState.selfDirectionStatus,
     currentSubgoal: state?.orchestrationState?.selfDirectionState.currentSubgoal?.title,
     queuedSubgoals: state?.orchestrationState?.selfDirectionState.subgoalQueue.map((subgoal) => subgoal.title).join(" | ") || undefined,
+    nextBoundedAction:
+      state?.orchestrationState?.plannerState.proposedAction ||
+      state?.orchestrationState?.executorState.pendingAction ||
+      state?.result.proposedAction ||
+      state?.result.what_to_do_next[0] ||
+      state?.lastAttemptedStep,
   };
 }
 
@@ -351,6 +358,10 @@ export function buildContinuationContextBlock(snapshot: ContinuationThreadSnapsh
 
   if (snapshot.queuedSubgoals) {
     lines.push(`- Remaining self-directed subgoals: ${snapshot.queuedSubgoals}`);
+  }
+
+  if (snapshot.nextBoundedAction) {
+    lines.push(`- Next bounded action: ${snapshot.nextBoundedAction}`);
   }
 
   lines.push("Use this as the starting context for the new analysis instead of restarting from a fresh first pass.");
@@ -551,36 +562,61 @@ export function AnalysisForm({ initialMode = "fresh" }: AnalysisFormProps) {
                 Continue previous debugging flow
               </label>
             </div>
-            <div className="mt-4 grid gap-2 text-xs leading-6 body-muted sm:text-sm">
-              <p>
-                <span className="font-semibold text-ink">Last diagnosis:</span> {continuationSnapshot.diagnosis}
-              </p>
-              {continuationSnapshot.lastAttemptedStep ? (
-                <p>
-                  <span className="font-semibold text-ink">Last step attempted:</span> {continuationSnapshot.lastAttemptedStep}
-                </p>
-              ) : null}
-              {continuationSnapshot.lastClassification ? (
-                <p>
-                  <span className="font-semibold text-ink">Last classification:</span> {continuationSnapshot.lastClassification}
-                </p>
-              ) : null}
-              {continuationSnapshot.actionChainProgress ? (
-                <p>
-                  <span className="font-semibold text-ink">Last bounded chain:</span> {continuationSnapshot.actionChainProgress}
-                </p>
-              ) : null}
-              {continuationSnapshot.orchestrationProgress ? (
-                <p>
-                  <span className="font-semibold text-ink">Orchestration:</span> {continuationSnapshot.orchestrationProgress}
-                </p>
-              ) : null}
-              {continuationSnapshot.currentSubgoal ? (
-                <p>
-                  <span className="font-semibold text-ink">Current subgoal:</span> {continuationSnapshot.currentSubgoal}
-                </p>
-              ) : null}
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+              <div className="rounded-[1rem] border border-ink/10 bg-white/55 p-3 xl:col-span-2">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink/50">Active goal</p>
+                <p className="mt-2 text-sm leading-7 text-ink/90">{continuationSnapshot.goal ?? "No explicit goal recorded."}</p>
+              </div>
+              <div className="rounded-[1rem] border border-ink/10 bg-white/55 p-3 xl:col-span-2">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink/50">Current subgoal</p>
+                <p className="mt-2 text-sm leading-7 text-ink/90">{continuationSnapshot.currentSubgoal ?? "No active subgoal right now."}</p>
+              </div>
+              <div className="rounded-[1rem] border border-ink/10 bg-white/55 p-3">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink/50">Owner</p>
+                <p className="mt-2 text-sm font-semibold leading-7 text-ink/90">{continuationSnapshot.orchestrationCurrentAgent ?? "Single analysis thread"}</p>
+              </div>
             </div>
+            <div className="mt-3 grid gap-3 lg:grid-cols-[0.8fr_1.2fr]">
+              <div className="rounded-[1rem] border border-ink/10 bg-white/55 p-3">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink/50">Status</p>
+                <p className="mt-2 text-sm font-semibold leading-7 text-ink/90">{continuationSnapshot.selfDirectionStatus ?? continuationSnapshot.orchestrationStatus ?? continuationSnapshot.lastClassification ?? "Ready to continue"}</p>
+                {continuationSnapshot.orchestrationPhase ? (
+                  <p className="mt-1 text-xs leading-6 body-muted">Phase: {continuationSnapshot.orchestrationPhase}</p>
+                ) : null}
+              </div>
+              <div className="rounded-[1rem] border border-ocean/15 bg-white/55 p-3">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink/50">Next bounded action</p>
+                <p className="mt-2 text-sm leading-7 text-ink/90">{continuationSnapshot.nextBoundedAction ?? continuationSnapshot.lastAttemptedStep ?? "No next bounded action recorded."}</p>
+              </div>
+            </div>
+            <details className="mt-3 rounded-[1rem] border border-ink/10 bg-white/45 p-3 text-xs leading-6 body-muted sm:text-sm">
+              <summary className="cursor-pointer list-none text-[11px] font-semibold uppercase tracking-[0.14em] text-ink/55">Previous turn details</summary>
+              <div className="mt-3 grid gap-2">
+                <p>
+                  <span className="font-semibold text-ink">Last diagnosis:</span> {continuationSnapshot.diagnosis}
+                </p>
+                {continuationSnapshot.lastAttemptedStep ? (
+                  <p>
+                    <span className="font-semibold text-ink">Last step attempted:</span> {continuationSnapshot.lastAttemptedStep}
+                  </p>
+                ) : null}
+                {continuationSnapshot.actionChainProgress ? (
+                  <p>
+                    <span className="font-semibold text-ink">Last bounded chain:</span> {continuationSnapshot.actionChainProgress}
+                  </p>
+                ) : null}
+                {continuationSnapshot.orchestrationProgress ? (
+                  <p>
+                    <span className="font-semibold text-ink">Orchestration:</span> {continuationSnapshot.orchestrationProgress}
+                  </p>
+                ) : null}
+                {continuationSnapshot.lastHandoff ? (
+                  <p>
+                    <span className="font-semibold text-ink">Last handoff:</span> {continuationSnapshot.lastHandoff}
+                  </p>
+                ) : null}
+              </div>
+            </details>
           </div>
         ) : null}
 
