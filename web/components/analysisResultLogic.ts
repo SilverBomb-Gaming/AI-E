@@ -1120,7 +1120,8 @@ export function buildNextStepGuidance(params: {
     verificationState: params.verificationState,
     latestMethod,
   });
-  let bestCandidate: { step: string; score: number } | null = null;
+  let bestCandidateStep: string | null = null;
+  let bestCandidateScore = -Infinity;
 
   for (const focusGroup of [preferredFocusCandidates, fallbackFocusCandidates]) {
     for (const focus of focusGroup) {
@@ -1148,18 +1149,19 @@ export function buildNextStepGuidance(params: {
           continue;
         }
 
-        if (!bestCandidate || score > bestCandidate.score) {
-          bestCandidate = { step, score };
+        if (!bestCandidateStep || score > bestCandidateScore) {
+          bestCandidateStep = step;
+          bestCandidateScore = score;
         }
       }
     }
 
-    if (bestCandidate) {
+    if (bestCandidateStep) {
       break;
     }
   }
 
-  return bestCandidate ? normalizeGuidedStepText(bestCandidate.step) : null;
+  return bestCandidateStep ? normalizeGuidedStepText(bestCandidateStep) : null;
 }
 
 export function getGuidedStepStack(params: {
