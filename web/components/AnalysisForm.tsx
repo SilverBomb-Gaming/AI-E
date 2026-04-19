@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   buildExecutionSessionContextBlock,
@@ -81,6 +81,12 @@ const initialForm: AnalysisInput = {
   context: "",
   actionResult: "",
 };
+
+const START_HERE_EXAMPLES = [
+  "Camera zoom jitters when switching states",
+  "Enemy AI stops moving after respawn",
+  "Animation speed desyncs from player movement",
+] as const;
 
 export function isFreeAnalysisResponse(value: unknown): value is FreeAnalysisResponse {
   const source = value as Record<string, unknown>;
@@ -385,9 +391,11 @@ export function AnalysisForm({ initialMode = "fresh" }: AnalysisFormProps) {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [storedState, setStoredState] = useState<StoredAnalysisState | null>(null);
   const [includeContinuationContext, setIncludeContinuationContext] = useState(initialMode === "continue");
+  const problemDescriptionRef = useRef<HTMLTextAreaElement | null>(null);
 
   const descriptionLength = useMemo(() => form.problemDescription.trim().length, [form.problemDescription]);
   const continuationSnapshot = useMemo(() => getContinuationThreadSnapshot(storedState), [storedState]);
+  const showStartHere = initialMode === "fresh" && descriptionLength === 0;
 
   useEffect(() => {
     if (initialMode !== "continue") {
@@ -538,6 +546,14 @@ export function AnalysisForm({ initialMode = "fresh" }: AnalysisFormProps) {
     }
   };
 
+  const applyExamplePrompt = (prompt: string) => {
+    setForm((current) => ({
+      ...current,
+      problemDescription: prompt,
+    }));
+    problemDescriptionRef.current?.focus();
+  };
+
   return (
     <form onSubmit={handleSubmit} className="glass-card rounded-[2rem] p-6 shadow-float sm:p-8">
       <div className="grid gap-6">
@@ -548,6 +564,48 @@ export function AnalysisForm({ initialMode = "fresh" }: AnalysisFormProps) {
             Keep it simple. Describe the problem, add the error or snippet if it helps, and AI-E will return a productized first-pass analysis.
           </p>
         </div>
+
+        {showStartHere ? (
+          <section className="rounded-[1.5rem] border border-ocean/15 bg-ocean/5 p-5">
+            <div className="grid gap-5 lg:grid-cols-[1.1fr_0.9fr]">
+              <div>
+                <p className="section-label">Start here</p>
+                <h3 className="mt-2 text-2xl font-semibold text-ink">Debug your Unity issue in one pass</h3>
+                <p className="mt-3 text-sm leading-7 text-ink/85">
+                  AI-E turns one clear issue description into a bounded debugging read: the likely diagnosis, the highest-signal facts, and the first safe step to try next.
+                </p>
+                <p className="mt-2 text-sm leading-7 text-ink/85">
+                  Type one issue, not a full backlog. Include when it happens, what you expected, and what actually occurs.
+                </p>
+              </div>
+              <div className="grid gap-3 rounded-[1.25rem] border border-ink/10 bg-white/60 p-4">
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink/50">What to type</p>
+                  <p className="mt-2 text-sm leading-7 text-ink/90">A short Unity bug report with the failure, trigger, and visible result.</p>
+                </div>
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink/50">What you get back</p>
+                  <p className="mt-2 text-sm leading-7 text-ink/90">A diagnosis, the reasons it is likely, and one bounded action to try before the next follow-up.</p>
+                </div>
+              </div>
+            </div>
+            <div className="mt-5">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink/50">Try one of these examples</p>
+              <div className="mt-3 flex flex-wrap gap-3">
+                {START_HERE_EXAMPLES.map((example) => (
+                  <button
+                    key={example}
+                    type="button"
+                    onClick={() => applyExamplePrompt(example)}
+                    className="rounded-full border border-ink/10 bg-white/80 px-4 py-2 text-sm font-medium text-ink transition hover:-translate-y-0.5 hover:border-coral/30 hover:text-ember"
+                  >
+                    {example}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </section>
+        ) : null}
 
         {initialMode === "continue" && continuationSnapshot ? (
           <div className="rounded-[1.5rem] border border-ocean/15 bg-ocean/5 p-5">
@@ -641,14 +699,20 @@ export function AnalysisForm({ initialMode = "fresh" }: AnalysisFormProps) {
         <label className="grid gap-2 text-sm font-medium text-ink">
           Problem description
           <textarea
+            ref={problemDescriptionRef}
             required
             rows={6}
             value={form.problemDescription}
             onChange={(event) => setForm((current) => ({ ...current, problemDescription: event.target.value }))}
-            placeholder="Example: My Unity scene throws a NullReferenceException after loading a prefab and the player controller stops responding."
+            placeholder="Describe what’s going wrong in your Unity project..."
             className="min-h-[180px] rounded-[1.5rem] border border-ink/10 bg-white/80 px-5 py-4 text-sm text-ink outline-none transition placeholder:text-slate focus:border-coral focus:ring-2 focus:ring-coral/20"
           />
-          <span className="text-xs body-muted">Aim for one or two sentences with the failure, where it happens, and what changed.</span>
+          <span className="text-xs body-muted">Include when it happens, what you expected, and what actually occurs.</span>
+          <span className="text-xs body-muted">
+            {descriptionLength >= 120
+              ? "This has enough detail for a solid first pass."
+              : "Aim for roughly one or two sentences so AI-E can see the trigger and the visible failure."}
+          </span>
         </label>
 
         <div className="grid gap-5 lg:grid-cols-2">

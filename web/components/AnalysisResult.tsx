@@ -557,6 +557,7 @@ export function AnalysisResult({
       canContinueGuidedLoop &&
       (!orchestrationState || (orchestrationState.currentStatus === "active" && orchestrationState.currentAgent === "executor")),
   );
+  const activeStepLabel = currentGuidedStepNumber > 1 ? `Step ${currentGuidedStepNumber}` : "First step";
 
   const handleFollowUpSubmit = async () => {
     if (!input?.problemDescription || !trimmedObservation || isSubmittingFollowUp) {
@@ -710,6 +711,26 @@ export function AnalysisResult({
   return (
     <div className="grid gap-5">
       <section className="glass-card rounded-[1.75rem] p-6 shadow-float sm:p-7">
+        <div className="rounded-[1.25rem] border border-coral/20 bg-coral/5 p-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="section-label">Do this now</p>
+            <span className="inline-flex rounded-full border border-coral/20 bg-white/80 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-ember">
+              First action
+            </span>
+          </div>
+          <div className="mt-3 grid gap-3 lg:grid-cols-[0.9fr_1.1fr]">
+            <div className="rounded-[1rem] border border-ink/10 bg-white/70 p-4">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink/50">Current subgoal</p>
+              <p className="mt-2 text-sm leading-7 text-ink/90 sm:text-base">{activeSubgoal ?? "No active subgoal right now."}</p>
+            </div>
+            <div className="rounded-[1rem] border border-coral/20 bg-white/80 p-4">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink/50">Next bounded action</p>
+              <p className="mt-2 text-sm font-semibold leading-7 text-ink/95 sm:text-base">{nextBoundedAction ?? "No next bounded action is available."}</p>
+              <p className="mt-2 text-xs leading-6 body-muted">Try this step, then come back and report exactly what changed.</p>
+            </div>
+          </div>
+        </div>
+
         <p className="section-label">Current AI-E state</p>
         <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
           <div className="rounded-[1rem] border border-ink/10 bg-white/55 p-4 xl:col-span-2">
@@ -827,6 +848,14 @@ export function AnalysisResult({
         <div className="mt-4 rounded-[1rem] border border-ink/10 bg-white/45 p-4">
           <p className="section-label">Diagnosis</p>
           <p className="mt-2 text-sm leading-7 text-ink/90 sm:text-base">{result.what_happened}</p>
+        </div>
+        <div className="mt-4 rounded-[1rem] border border-ink/10 bg-white/40 p-4">
+          <p className="section-label">How to use this result</p>
+          <ol className="mt-3 space-y-2 text-sm leading-7 text-ink/90 sm:text-base">
+            <li>1. Read the diagnosis to understand the likely cause AI-E is prioritizing.</li>
+            <li>2. Try the first suggested check before changing adjacent systems.</li>
+            <li>3. Report what happened so AI-E can refine the next bounded step.</li>
+          </ol>
         </div>
         {orchestrationState ? (
           <details className="mt-4 rounded-[1rem] border border-ink/10 bg-white/40 p-4 text-xs leading-6 text-ink/80">
@@ -973,15 +1002,22 @@ export function AnalysisResult({
           </div>
         ) : null}
         <div className="mt-5 rounded-[1.25rem] border border-ink/10 bg-white/40 p-4">
-          <p className="text-sm leading-7 text-ink/90 sm:text-base">
-            After you try {currentGuidedStepNumber > 1 ? `step ${currentGuidedStepNumber}` : "the first step"}, what did you observe?
-          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="section-label">Follow-up</p>
+            <span className="inline-flex rounded-full border border-ink/10 bg-white/80 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-ink/70">
+              {activeStepLabel}
+            </span>
+          </div>
+          <label className="mt-3 grid gap-2 text-sm font-medium text-ink">
+            What happened after you tried the step?
+            <span className="text-xs body-muted">Example: Disabling the script stopped the jitter.</span>
+          </label>
           <input
             type="text"
-            aria-label="Optional follow-up observation"
+            aria-label="What happened after you tried the step?"
             value={observation}
             onChange={(event) => setObservation(event.target.value)}
-            placeholder="Optional note for your next debugging pass"
+            placeholder="e.g. Disabling the script stopped the jitter"
             disabled={!canContinueGuidedLoop}
             className="mt-3 w-full rounded-[1rem] border border-ink/10 bg-white/70 px-4 py-3 text-sm text-ink outline-none placeholder:text-slate"
           />
@@ -999,7 +1035,7 @@ export function AnalysisResult({
               disabled={!canSubmitFollowUp}
               className="rounded-full bg-ink px-5 py-3 text-sm font-semibold text-white transition hover:-translate-y-0.5 hover:bg-slate disabled:cursor-not-allowed disabled:opacity-70"
             >
-              {isSubmittingFollowUp ? "Re-running..." : "Re-run analysis with observation"}
+              {isSubmittingFollowUp ? "Re-running..." : "Submit follow-up result"}
             </button>
           </div>
           {followUpError ? <p className="mt-3 rounded-2xl bg-coral/10 px-4 py-3 text-sm text-ember">{followUpError}</p> : null}
