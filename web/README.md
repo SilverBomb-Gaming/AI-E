@@ -71,6 +71,36 @@ The analysis form exposes a `Use light mode` toggle.
 - it keeps the guided debugging loop and trace system intact
 - it allows cheaper, faster first-pass analysis without touching the stored trace schema
 
+## Execution preview
+
+AI-E now exposes a boundary-safe execution preview layer through `lib/aie/executionBridge.ts`.
+
+- reasoning still decides what to do
+- the execution bridge only normalizes and classifies the proposed action
+- no filesystem mutation, shell execution, Git action, or Unity interaction happens in this phase
+- every execution preview is approval-gated and rendered as inspectable metadata in the result UI
+
+Execution preview fields include:
+
+- description
+- type
+- scope
+- expected outcome
+- approval-required status
+
+This is intentionally preparation-only. Real execution remains out of scope until the later controlled execution phase.
+
+## Approval model
+
+The current execution bridge is preview-only.
+
+- AI-E may suggest a bounded action
+- AI-E may classify the action as safe, caution, or dangerous
+- AI-E never auto-executes the action
+- the user must approve and perform any real-world step outside the model in this phase
+
+Execution history is carried forward only through the existing context string and session storage flow. The `AnalysisInput` shape and trace schema remain unchanged.
+
 ## Readiness environments
 
 The readiness probe now reads its base URL from `BASE_URL` first, then `AIE_BASE_URL`, and falls back to `http://localhost:3000`.

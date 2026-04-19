@@ -17,6 +17,20 @@ export type DryRunActionType =
   | "design-iteration"
   | "validation-check";
 
+export type ExecutionActionType = "read" | "write" | "inspect" | "run" | "unknown";
+export type ExecutionActionScope = "safe" | "caution" | "dangerous";
+
+export type ExecutionActionPreview = {
+  id: string;
+  type: ExecutionActionType;
+  scope: ExecutionActionScope;
+  description: string;
+  expectedOutcome: string;
+  requiresApproval: true;
+  suggestedCommand?: string;
+  metadata: Record<string, unknown>;
+};
+
 export type FreeAnalysisResponse = {
   what_happened: string;
   what_matters: string[];
@@ -25,4 +39,5 @@ export type FreeAnalysisResponse = {
   actionType?: DryRunActionType;
   proposedAction?: string;
   expectedOutcome?: string;
+  execution?: ExecutionActionPreview;
 };

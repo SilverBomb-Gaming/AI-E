@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { buildExecutionAction } from "./executionBridge";
 import { advanceExecutionSession, buildExecutionSessionContextBlock, normalizeExecutionGoal } from "./executionSession";
 
 test("execution sessions support a three-step success path that converges and resolves", () => {
@@ -108,4 +109,28 @@ test("execution sessions support a three-step mixed path with partial success", 
   assert.match(sessionContext, /Goal: Tune ledge-jump forgiveness/i);
   assert.match(sessionContext, /Current step to approve: 4/i);
   assert.match(sessionContext, /Recent approved steps/i);
+  assert.match(sessionContext, /Execution history:/i);
+  assert.match(sessionContext, /step 1: attempted/i);
+});
+
+test("execution sessions keep approved execution actions alongside step history", () => {
+  const execution = buildExecutionAction({
+    proposedAction: "Add one focused timestamp log around the state handoff.",
+    actionType: "instrumentation",
+    expectedOutcome: "The log should show whether the handoff fires during the failing transition.",
+  });
+
+  const session = advanceExecutionSession({
+    currentStepIndex: 1,
+    attemptedStep: execution.description,
+    actionResult: "The log shows the handoff fires only during the failing transition.",
+    verificationState: "confirmed",
+    diagnosis: "The instrumentation confirms the handoff timing path.",
+    loopTerminationStatus: "converging",
+    action: execution,
+  });
+
+  assert.equal(session.steps[0]?.action?.approved, true);
+  assert.equal(session.steps[0]?.action?.type, "write");
+  assert.equal(session.steps[0]?.action?.scope, "caution");
 });

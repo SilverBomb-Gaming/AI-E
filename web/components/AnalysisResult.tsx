@@ -24,7 +24,7 @@ import type {
 import type { FollowUpVerificationState, StoredActionChainState, StoredLoopTerminationStatus } from "@/components/AnalysisForm";
 import { buildExecutionSessionContextBlock, type ExecutionSessionStep } from "@/lib/aie/executionSession";
 import { buildExecutionOrchestrationContextBlock, type ExecutionOrchestrationState } from "@/lib/aie/orchestrationSession";
-import type { AnalysisInput, FreeAnalysisResponse } from "@/lib/aie/types";
+import type { AnalysisInput, ExecutionActionPreview, FreeAnalysisResponse } from "@/lib/aie/types";
 
 // Rendering decisions must come from analysisResultLogic.ts.
 // Keep this component presentation-focused and do not reintroduce inline decision helpers here.
@@ -338,6 +338,36 @@ function getActionTypeLabel(actionType: FreeAnalysisResponse["actionType"]): str
       return "Validation check";
     default:
       return null;
+  }
+}
+
+function getExecutionTypeLabel(type: ExecutionActionPreview["type"] | undefined): string | null {
+  switch (type) {
+    case "read":
+      return "Read";
+    case "write":
+      return "Write";
+    case "inspect":
+      return "Inspect";
+    case "run":
+      return "Run";
+    case "unknown":
+      return "Unknown";
+    default:
+      return null;
+  }
+}
+
+function getExecutionScopeClassName(scope: ExecutionActionPreview["scope"] | undefined): string {
+  switch (scope) {
+    case "safe":
+      return "border-emerald-200 bg-emerald-50 text-emerald-700";
+    case "caution":
+      return "border-amber-200 bg-amber-50 text-amber-700";
+    case "dangerous":
+      return "border-coral/20 bg-coral/10 text-ember";
+    default:
+      return "border-ink/10 bg-white/70 text-ink/70";
   }
 }
 
@@ -882,7 +912,29 @@ export function AnalysisResult({
           </details>
         ) : null}
       </section>
-      {result.proposedAction && result.expectedOutcome ? (
+      {result.execution ? (
+        <section className="glass-card rounded-[1.75rem] p-6 shadow-float sm:p-7">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="section-label">Execution Preview</p>
+            <span className="inline-flex rounded-full border border-ink/10 bg-white/80 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-ink/70">
+              Approval required
+            </span>
+            {getExecutionTypeLabel(result.execution.type) ? (
+              <span className="inline-flex rounded-full border border-ocean/15 bg-ocean/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-ocean/80">
+                {getExecutionTypeLabel(result.execution.type)}
+              </span>
+            ) : null}
+            <span className={`inline-flex rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] ${getExecutionScopeClassName(result.execution.scope)}`}>
+              {result.execution.scope}
+            </span>
+          </div>
+          <p className="mt-3 text-sm leading-7 text-ink/90 sm:text-base">{result.execution.description}</p>
+          <p className="mt-3 text-xs leading-6 body-muted sm:text-sm">Expected outcome: {result.execution.expectedOutcome}</p>
+          <p className="mt-2 text-xs leading-6 body-muted sm:text-sm">
+            This is a boundary-safe preview only. AI-E is not executing commands, mutating files, or triggering external actions in this phase.
+          </p>
+        </section>
+      ) : result.proposedAction && result.expectedOutcome ? (
         <section className="glass-card rounded-[1.75rem] p-6 shadow-float sm:p-7">
           <div className="flex flex-wrap items-center gap-2">
             <p className="section-label">Next bounded action</p>

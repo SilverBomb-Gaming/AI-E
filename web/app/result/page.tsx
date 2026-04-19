@@ -107,6 +107,7 @@ export default function ResultPage() {
                 diagnosis: nextResult.what_happened,
                 loopTerminationStatus: loopTerminationStatus ?? null,
                 steps: current.sessionHistory,
+                action: current.result.execution,
               });
               const currentOrchestration = current.orchestrationState ?? createExecutionOrchestrationState({ goal: current.input?.goal ?? "Resolve the current issue." });
               const nextPlannerAction = nextSuggestedStep ?? nextResult.proposedAction ?? nextResult.what_to_do_next[0] ?? "";

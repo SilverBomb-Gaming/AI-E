@@ -1,5 +1,16 @@
+import type { ExecutionActionPreview } from "./types";
+
 export type ExecutionSessionVerificationState = "confirmed" | "falsified" | "inconclusive";
 export type ExecutionSessionLoopStatus = "resolved" | "converging" | "stuck" | null;
+
+export type ExecutionSessionActionRecord = {
+  id?: string;
+  description: string;
+  approved: boolean;
+  result?: string;
+  type?: ExecutionActionPreview["type"];
+  scope?: ExecutionActionPreview["scope"];
+};
 
 export type ExecutionSessionStep = {
   stepIndex: number;
@@ -8,6 +19,7 @@ export type ExecutionSessionStep = {
   verificationState: ExecutionSessionVerificationState;
   diagnosis: string;
   loopTerminationStatus: ExecutionSessionLoopStatus;
+  action?: ExecutionSessionActionRecord;
 };
 
 function normalizeText(value: string | null | undefined): string {
@@ -53,7 +65,7 @@ export function summarizeExecutionSessionStep(step: ExecutionSessionStep): strin
   const statusLabel = step.loopTerminationStatus ? ` (${step.loopTerminationStatus})` : "";
 
   return trimSentence(
-    `Step ${step.stepIndex} ${verificationLabel}${statusLabel}: ${step.attemptedStep}. Outcome: ${step.actionResult}`,
+    `Step ${step.stepIndex} ${verificationLabel}${statusLabel}: ${step.action?.description || step.attemptedStep}. Outcome: ${step.actionResult}`,
     220,
   );
 }
@@ -66,6 +78,7 @@ export function advanceExecutionSession(params: {
   diagnosis: string;
   loopTerminationStatus: ExecutionSessionLoopStatus;
   steps?: ExecutionSessionStep[];
+  action?: ExecutionActionPreview;
 }) {
   const completedStep: ExecutionSessionStep = {
     stepIndex: Math.max(1, Math.floor(params.currentStepIndex)),
@@ -74,6 +87,16 @@ export function advanceExecutionSession(params: {
     verificationState: params.verificationState,
     diagnosis: normalizeText(params.diagnosis),
     loopTerminationStatus: params.loopTerminationStatus,
+    action: params.action
+      ? {
+          id: params.action.id,
+          description: normalizeText(params.action.description) || normalizeText(params.attemptedStep),
+          approved: true,
+          result: normalizeText(params.actionResult) || undefined,
+          type: params.action.type,
+          scope: params.action.scope,
+        }
+      : undefined,
   };
 
   return {
@@ -117,6 +140,11 @@ export function buildExecutionSessionContextBlock(params: {
     lines.push("- Recent approved steps:");
     for (const step of recentSteps) {
       lines.push(`  - ${summarizeExecutionSessionStep(step)}`);
+    }
+
+    lines.push("Execution history:");
+    for (const step of recentSteps) {
+      lines.push(`* step ${step.stepIndex}: attempted ${step.action?.description || step.attemptedStep} -> result ${step.actionResult}`);
     }
   }
 

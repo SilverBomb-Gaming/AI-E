@@ -1,5 +1,5 @@
 import type { FreeAnalysisResponse } from "@/lib/aie/types";
-import { attachDryRunActionProposal } from "@/lib/aie/executionBridge";
+import { attachDryRunActionProposal, buildExecutionAction } from "@/lib/aie/executionBridge";
 
 function normalizeLine(value: unknown): string {
   return String(value ?? "")
@@ -23,7 +23,7 @@ function normalizeList(values: unknown, fallback: string[]): string[] {
 export function formatFreeAnalysis(payload: unknown): FreeAnalysisResponse {
   const source = (payload ?? {}) as Record<string, unknown>;
 
-  return attachDryRunActionProposal({
+  const withProposal = attachDryRunActionProposal({
     what_happened:
       normalizeLine(source.what_happened) ||
       "AI-E found enough signal to outline the issue, but the root cause needs a closer look.",
@@ -44,4 +44,16 @@ export function formatFreeAnalysis(payload: unknown): FreeAnalysisResponse {
     proposedAction: normalizeLine(source.proposedAction) || undefined,
     expectedOutcome: normalizeLine(source.expectedOutcome) || undefined,
   });
+
+  return {
+    ...withProposal,
+    execution: withProposal.proposedAction
+      ? buildExecutionAction({
+          proposedAction: withProposal.proposedAction,
+          actionType: withProposal.actionType,
+          expectedOutcome: withProposal.expectedOutcome,
+          context: normalizeLine(source.context) || undefined,
+        })
+      : undefined,
+  };
 }
