@@ -11,7 +11,16 @@ import type {
 import { deriveAnalysisResultSignals } from "../../components/analysisResultLogic";
 import type { FollowUpVerificationState, StoredActionChainState } from "../../components/AnalysisForm";
 import { deriveDryRunActionProposal } from "./executionBridge";
-import { getLatestExecutionOrchestrationStep, type ExecutionOrchestrationState, type ExecutionOrchestrationStatus } from "./orchestrationSession";
+import {
+  getLatestExecutionOrchestrationAgentHistoryEntry,
+  getLatestExecutionOrchestrationAgentHistoryEntryByRole,
+  getLatestExecutionOrchestrationStep,
+  type ExecutionOrchestrationAgentId,
+  type ExecutionOrchestrationAgentRole,
+  type ExecutionOrchestrationPlannerDecision,
+  type ExecutionOrchestrationState,
+  type ExecutionOrchestrationStatus,
+} from "./orchestrationSession";
 import type { AnalysisInput, DryRunActionType, FreeAnalysisResponse } from "./types";
 
 export type AnalysisTraceActionChain = {
@@ -37,21 +46,30 @@ export type AnalysisTraceRecord = {
   stepIndex: number | null;
   goal: string | null;
   orchestrationId: string | null;
+  multiAgentSessionId: string | null;
   orchestrationStepNumber: number | null;
   orchestrationStatus: ExecutionOrchestrationStatus | null;
   orchestrationPhase: string | null;
+  agentId: ExecutionOrchestrationAgentId | null;
+  agentRole: ExecutionOrchestrationAgentRole | null;
+  handoffFrom: ExecutionOrchestrationAgentRole | null;
+  handoffTo: ExecutionOrchestrationAgentRole | null;
+  handoffPayloadSummary: string | null;
   diagnosis: string;
   actionType: DryRunActionType;
   proposedAction: string;
   executedAction: string | null;
   expectedOutcome: string;
   actionResult: string | null;
+  executionNotes: string | null;
   recommendedMode: DebuggingMode | null;
   confidenceLevel: ConfidenceLevel;
   confidenceTrend: ConfidenceAlignment | null;
   decisionCommitment: DecisionCommitment;
   commitmentValidationState: CommitmentValidationState;
   verificationState: FollowUpVerificationState | null;
+  validationResult: FollowUpVerificationState | null;
+  plannerDecision: ExecutionOrchestrationPlannerDecision | null;
   actionChain: AnalysisTraceActionChain;
   loop: AnalysisTraceLoop;
   suggestedNextAction: SuggestedNextAction;
@@ -75,21 +93,30 @@ export const REQUIRED_TRACE_FIELDS = [
   "stepIndex",
   "goal",
   "orchestrationId",
+  "multiAgentSessionId",
   "orchestrationStepNumber",
   "orchestrationStatus",
   "orchestrationPhase",
+  "agentId",
+  "agentRole",
+  "handoffFrom",
+  "handoffTo",
+  "handoffPayloadSummary",
   "diagnosis",
   "actionType",
   "proposedAction",
   "executedAction",
   "expectedOutcome",
   "actionResult",
+  "executionNotes",
   "recommendedMode",
   "confidenceLevel",
   "confidenceTrend",
   "decisionCommitment",
   "commitmentValidationState",
   "verificationState",
+  "validationResult",
+  "plannerDecision",
   "actionChain.state",
   "actionChain.stepIndicator",
   "actionChain.activeStepIndex",
@@ -120,6 +147,9 @@ export function buildAnalysisTraceRecord(params: BuildAnalysisTraceRecordParams)
       : "none";
   const proposal = deriveDryRunActionProposal(params.result);
   const orchestrationStep = getLatestExecutionOrchestrationStep(params.orchestrationState);
+  const latestAgentEntry = getLatestExecutionOrchestrationAgentHistoryEntry(params.orchestrationState);
+  const latestPlannerEntry = getLatestExecutionOrchestrationAgentHistoryEntryByRole(params.orchestrationState, "planner");
+  const latestExecutorEntry = getLatestExecutionOrchestrationAgentHistoryEntryByRole(params.orchestrationState, "executor");
 
   return {
     input: params.input,
@@ -127,21 +157,30 @@ export function buildAnalysisTraceRecord(params: BuildAnalysisTraceRecordParams)
     stepIndex: Number.isInteger(params.input.stepIndex) ? params.input.stepIndex ?? null : null,
     goal: params.input.goal?.trim() || null,
     orchestrationId: params.orchestrationState?.orchestrationId?.trim() || null,
+    multiAgentSessionId: params.orchestrationState?.multiAgentSessionId?.trim() || null,
     orchestrationStepNumber: orchestrationStep?.stepNumber ?? null,
     orchestrationStatus: params.orchestrationState?.currentStatus ?? null,
     orchestrationPhase: params.orchestrationState?.currentPhase ?? null,
+    agentId: latestAgentEntry?.agentId ?? null,
+    agentRole: latestAgentEntry?.agentRole ?? null,
+    handoffFrom: params.orchestrationState?.lastHandoff?.handoffFrom ?? null,
+    handoffTo: params.orchestrationState?.lastHandoff?.handoffTo ?? null,
+    handoffPayloadSummary: params.orchestrationState?.lastHandoff?.payloadSummary ?? null,
     diagnosis: params.result.what_happened,
     actionType: proposal.actionType,
     proposedAction: proposal.proposedAction,
-    executedAction: params.executedAction?.trim() || orchestrationStep?.executedAction || null,
+    executedAction: params.executedAction?.trim() || latestExecutorEntry?.executedAction || orchestrationStep?.executedAction || null,
     expectedOutcome: proposal.expectedOutcome,
     actionResult: params.input.actionResult?.trim() || params.lastObservation?.trim() || null,
+    executionNotes: latestExecutorEntry?.executionNotes ?? (params.orchestrationState?.executorState.executionNotes || null),
     recommendedMode: signals.recommendedDebuggingMode,
     confidenceLevel: signals.confidenceLevel,
     confidenceTrend: signals.confidenceAlignment,
     decisionCommitment: signals.decisionCommitment,
     commitmentValidationState: signals.commitmentValidationState,
     verificationState: params.verificationState ?? null,
+    validationResult: latestExecutorEntry?.validationResult ?? params.verificationState ?? null,
+    plannerDecision: latestPlannerEntry?.plannerDecision ?? null,
     actionChain: {
       state: actionChainState,
       stepIndicator: signals.supervisedActionChainStepIndicator,
@@ -169,21 +208,30 @@ export function listMissingAnalysisTraceFields(trace: AnalysisTraceRecord): stri
     ["stepIndex", trace.stepIndex],
     ["goal", trace.goal],
     ["orchestrationId", trace.orchestrationId],
+    ["multiAgentSessionId", trace.multiAgentSessionId],
     ["orchestrationStepNumber", trace.orchestrationStepNumber],
     ["orchestrationStatus", trace.orchestrationStatus],
     ["orchestrationPhase", trace.orchestrationPhase],
+    ["agentId", trace.agentId],
+    ["agentRole", trace.agentRole],
+    ["handoffFrom", trace.handoffFrom],
+    ["handoffTo", trace.handoffTo],
+    ["handoffPayloadSummary", trace.handoffPayloadSummary],
     ["diagnosis", trace.diagnosis],
     ["actionType", trace.actionType],
     ["proposedAction", trace.proposedAction],
     ["executedAction", trace.executedAction],
     ["expectedOutcome", trace.expectedOutcome],
     ["actionResult", trace.actionResult],
+    ["executionNotes", trace.executionNotes],
     ["recommendedMode", trace.recommendedMode],
     ["confidenceLevel", trace.confidenceLevel],
     ["confidenceTrend", trace.confidenceTrend],
     ["decisionCommitment", trace.decisionCommitment],
     ["commitmentValidationState", trace.commitmentValidationState],
     ["verificationState", trace.verificationState],
+    ["validationResult", trace.validationResult],
+    ["plannerDecision", trace.plannerDecision],
     ["actionChain.state", trace.actionChain.state],
     ["actionChain.stepIndicator", trace.actionChain.stepIndicator],
     ["actionChain.activeStepIndex", trace.actionChain.activeStepIndex],

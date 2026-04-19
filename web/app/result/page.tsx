@@ -10,6 +10,8 @@ import {
   advanceExecutionOrchestration,
   createExecutionOrchestrationState,
   deriveNextExecutionOrchestrationPhase,
+  recordExecutorOutcome,
+  recordPlannerHandoff,
 } from "@/lib/aie/orchestrationSession";
 import { UpgradeCard } from "@/components/UpgradeCard";
 
@@ -107,9 +109,18 @@ export default function ResultPage() {
               const currentOrchestration = current.orchestrationState ?? createExecutionOrchestrationState({ goal: current.input?.goal ?? "Resolve the current issue." });
               const statusOverride = suggestedNextAction === "restart-fresh" && confidenceLevel === "low" ? "aborted" : undefined;
               const nextSafeAction = suggestedNextAction === "continue-thread" ? nextSuggestedStep ?? nextResult.what_to_do_next[0] ?? "" : "";
-              const nextOrchestration = advanceExecutionOrchestration({
+              const executorStepNumber = Math.max(1, current.input?.stepIndex ?? 1);
+              const executorUpdated = recordExecutorOutcome({
                 state: currentOrchestration,
-                phase: currentOrchestration.currentPhase,
+                stepNumber: executorStepNumber,
+                executedAction: attemptedStep ?? current.result.proposedAction ?? current.result.what_to_do_next[0],
+                actionResult: observation,
+                validationResult: verificationState,
+                executionNotes: nextResult.what_happened,
+              });
+              const nextOrchestration = advanceExecutionOrchestration({
+                state: executorUpdated.state,
+                phase: executorUpdated.state.currentPhase,
                 proposedAction: current.result.proposedAction ?? current.result.what_to_do_next[0],
                 executedAction: attemptedStep ?? current.result.proposedAction ?? current.result.what_to_do_next[0],
                 actionResult: observation,
@@ -125,6 +136,28 @@ export default function ResultPage() {
                   nextSafeAction,
                   statusOverride,
                 }),
+              });
+              const plannerDecision =
+                statusOverride === "aborted"
+                  ? "block"
+                  : nextOrchestration.state.currentStatus === "complete" || suggestedNextAction === "stop"
+                    ? "complete"
+                    : nextOrchestration.state.currentStatus === "blocked" || !nextSafeAction
+                      ? "block"
+                      : verificationState === "falsified"
+                        ? "reroute"
+                        : "continue";
+              const finalOrchestration = recordPlannerHandoff({
+                state: nextOrchestration.state,
+                stepNumber:
+                  plannerDecision === "continue" || plannerDecision === "reroute"
+                    ? nextSession.nextStepIndex
+                    : executorStepNumber,
+                diagnosis: nextResult.what_happened,
+                proposedAction: nextSafeAction || (nextResult.proposedAction ?? nextResult.what_to_do_next[0] ?? ""),
+                expectedOutcome: nextResult.expectedOutcome ?? nextResult.what_matters[0] ?? "",
+                plannerDecision,
+                handoffTo: plannerDecision === "continue" || plannerDecision === "reroute" ? "executor" : null,
               });
 
               const nextState = {
@@ -145,7 +178,7 @@ export default function ResultPage() {
                 loopTerminationStatus: loopTerminationStatus ?? undefined,
                 actionChainState,
                 sessionHistory: nextSession.steps,
-                orchestrationState: nextOrchestration.state,
+                orchestrationState: finalOrchestration.state,
               } satisfies StoredAnalysisState;
 
               window.sessionStorage.setItem(resultStorageKey, JSON.stringify(nextState));
@@ -182,8 +215,16 @@ export default function ResultPage() {
                       <span className="font-semibold text-ink">Phase:</span> {storedState.orchestrationState.currentPhase}
                     </p>
                     <p>
+                      <span className="font-semibold text-ink">Current agent:</span> {storedState.orchestrationState.currentAgent}
+                    </p>
+                    <p>
                       <span className="font-semibold text-ink">Completed / blocked:</span> {storedState.orchestrationState.completedSteps.length} / {storedState.orchestrationState.blockedSteps.length}
                     </p>
+                    {storedState.orchestrationState.lastHandoff ? (
+                      <p>
+                        <span className="font-semibold text-ink">Last handoff:</span> {storedState.orchestrationState.lastHandoff.handoffFrom ?? "none"} -&gt; {storedState.orchestrationState.lastHandoff.handoffTo ?? "none"} ({storedState.orchestrationState.lastHandoff.payloadSummary})
+                      </p>
+                    ) : null}
                   </>
                 ) : null}
               </div>

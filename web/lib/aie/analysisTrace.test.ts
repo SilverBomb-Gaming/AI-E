@@ -3,7 +3,12 @@ import test from "node:test";
 
 import type { FollowUpVerificationState, StoredActionChainState } from "../../components/AnalysisForm";
 import { buildAnalysisTraceRecord, listMissingAnalysisTraceFields } from "./analysisTrace";
-import { advanceExecutionOrchestration, createExecutionOrchestrationState } from "./orchestrationSession";
+import {
+  advanceExecutionOrchestration,
+  createExecutionOrchestrationState,
+  recordExecutorOutcome,
+  recordPlannerHandoff,
+} from "./orchestrationSession";
 import type { AnalysisInput, FreeAnalysisResponse } from "./types";
 
 function makeInput(problemDescription: string, overrides: Partial<AnalysisInput> = {}): AnalysisInput {
@@ -62,19 +67,38 @@ test("fresh traces include the full required contract", () => {
   assert.equal(trace.stepIndex, 1);
   assert.equal(trace.goal, "Confirm whether the Animator handoff is the leading cause.");
   assert.equal(trace.orchestrationId, null);
+  assert.equal(trace.multiAgentSessionId, null);
   assert.equal(trace.orchestrationStatus, null);
   assert.equal(trace.verificationState, null);
+  assert.equal(trace.validationResult, null);
+  assert.equal(trace.plannerDecision, null);
   assert.equal(trace.commitmentValidationState, null);
 });
 
-test("orchestrated traces capture orchestration identifiers, step numbers, and executed actions", () => {
+test("orchestrated traces capture orchestration identifiers, handoffs, and planner/executor state", () => {
   const initialOrchestration = createExecutionOrchestrationState({
     goal: "Restore CLI startup and confirm the banner output.",
     currentPhase: "apply-fix",
   });
-  const orchestration = advanceExecutionOrchestration({
+  const planned = recordPlannerHandoff({
     state: initialOrchestration,
-    phase: initialOrchestration.currentPhase,
+    stepNumber: 1,
+    diagnosis: "The planner wants the executor to patch the controller startup path and rerun the CLI.",
+    proposedAction: "Patch the controller startup path and rerun the CLI.",
+    expectedOutcome: "The CLI should print the expected banner output in both modes.",
+    plannerDecision: "continue",
+  });
+  const executed = recordExecutorOutcome({
+    state: planned.state,
+    stepNumber: 1,
+    executedAction: "Patch the controller startup path and rerun the CLI.",
+    actionResult: "The CLI now starts and prints the expected banner output in both modes.",
+    validationResult: "confirmed",
+    executionNotes: "The executor confirmed the bounded fix path.",
+  });
+  const advanced = advanceExecutionOrchestration({
+    state: executed.state,
+    phase: executed.state.currentPhase,
     proposedAction: "Apply the smallest import compatibility fix.",
     executedAction: "Patch the controller startup path and rerun the CLI.",
     actionResult: "The CLI now starts and prints the expected banner output in both modes.",
@@ -83,6 +107,15 @@ test("orchestrated traces capture orchestration identifiers, step numbers, and e
     loopTerminationStatus: "resolved",
     nextSafeAction: "",
     nextPhase: "complete",
+  });
+  const orchestration = recordPlannerHandoff({
+    state: advanced.state,
+    stepNumber: 1,
+    diagnosis: "The planner marks the bounded goal as complete after the executor result.",
+    proposedAction: "Stop the orchestration.",
+    expectedOutcome: "No additional bounded step is required.",
+    plannerDecision: "complete",
+    handoffTo: null,
   }).state;
   const trace = buildTrace({
     input: makeInput("CLI startup should expose the debug routing state in both normal and --debug modes.", {
@@ -101,10 +134,19 @@ test("orchestrated traces capture orchestration identifiers, step numbers, and e
   });
 
   assert.equal(trace.orchestrationId, orchestration.orchestrationId);
+  assert.equal(trace.multiAgentSessionId, orchestration.multiAgentSessionId);
   assert.equal(trace.orchestrationStepNumber, 1);
   assert.equal(trace.orchestrationStatus, "complete");
   assert.equal(trace.orchestrationPhase, "complete");
+  assert.equal(trace.agentId, "planner-agent");
+  assert.equal(trace.agentRole, "planner");
+  assert.equal(trace.handoffFrom, "planner");
+  assert.equal(trace.handoffTo, null);
+  assert.match(trace.handoffPayloadSummary ?? "", /stop the orchestration/i);
   assert.equal(trace.executedAction, "Patch the controller startup path and rerun the CLI.");
+  assert.equal(trace.executionNotes, "The executor confirmed the bounded fix path.");
+  assert.equal(trace.validationResult, "confirmed");
+  assert.equal(trace.plannerDecision, "complete");
   assert.deepEqual(listMissingAnalysisTraceFields(trace), []);
 });
 

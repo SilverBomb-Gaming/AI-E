@@ -397,7 +397,7 @@ export function AnalysisResult({
       trimmedObservation &&
       !isSubmittingFollowUp &&
       canContinueGuidedLoop &&
-      (!orchestrationState || orchestrationState.currentStatus === "active"),
+      (!orchestrationState || (orchestrationState.currentStatus === "active" && orchestrationState.currentAgent === "executor")),
   );
 
   const handleFollowUpSubmit = async () => {
@@ -583,6 +583,19 @@ export function AnalysisResult({
             >
               {getRecommendedDebuggingModeLabel(recommendedDebuggingMode)}
             </span>
+          </div>
+        ) : null}
+        {orchestrationState ? (
+          <div className="mt-3 rounded-[1rem] border border-ink/10 bg-white/40 p-3 text-xs leading-6 text-ink/80">
+            <p className="section-label">Two-agent orchestration</p>
+            <p className="mt-2">
+              Current owner: <span className="font-semibold text-ink">{orchestrationState.currentAgent}</span>
+            </p>
+            {orchestrationState.lastHandoff ? (
+              <p>
+                Last handoff: <span className="font-semibold text-ink">{orchestrationState.lastHandoff.handoffFrom ?? "none"} -&gt; {orchestrationState.lastHandoff.handoffTo ?? "none"}</span> ({orchestrationState.lastHandoff.payloadSummary})
+              </p>
+            ) : null}
           </div>
         ) : null}
         {isRefined ? (

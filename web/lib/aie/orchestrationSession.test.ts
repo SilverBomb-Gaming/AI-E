@@ -6,6 +6,8 @@ import {
   buildExecutionOrchestrationContextBlock,
   createExecutionOrchestrationState,
   deriveNextExecutionOrchestrationPhase,
+  recordExecutorOutcome,
+  recordPlannerHandoff,
 } from "./orchestrationSession";
 
 test("orchestration completes a successful bounded multi-step path", () => {
@@ -187,4 +189,155 @@ test("orchestration blocks at the configured autonomous step limit", () => {
   assert.equal(blocked.state.currentStatus, "blocked");
   assert.equal(blocked.state.blockedSteps.length, 1);
   assert.equal(blocked.state.completedSteps.length, 2);
+});
+
+test("two-agent orchestration records planner to executor to planner completion", () => {
+  const initial = createExecutionOrchestrationState({
+    goal: "Restore CLI startup with an explicit planner and executor handoff.",
+    currentPhase: "identify-blocker",
+  });
+  const planned = recordPlannerHandoff({
+    state: initial,
+    stepNumber: 1,
+    diagnosis: "The startup blocker is a missing controller import on this branch.",
+    proposedAction: "Add the narrowest compatibility fallback around the missing import.",
+    expectedOutcome: "The CLI should reach the banner path again.",
+    plannerDecision: "continue",
+  });
+  const executed = recordExecutorOutcome({
+    state: planned.state,
+    stepNumber: 1,
+    executedAction: "Add the compatibility fallback and rerun the CLI.",
+    actionResult: "The CLI starts and prints the expected banner output in both modes.",
+    validationResult: "confirmed",
+    executionNotes: "The bounded fix restored startup without widening the scope.",
+  });
+  const advanced = advanceExecutionOrchestration({
+    state: executed.state,
+    phase: executed.state.currentPhase,
+    proposedAction: "Add the narrowest compatibility fallback around the missing import.",
+    executedAction: "Add the compatibility fallback and rerun the CLI.",
+    actionResult: "The CLI starts and prints the expected banner output in both modes.",
+    verificationState: "confirmed",
+    diagnosis: "The startup validation is complete.",
+    loopTerminationStatus: "resolved",
+    nextSafeAction: "",
+    nextPhase: "complete",
+  });
+  const completed = recordPlannerHandoff({
+    state: advanced.state,
+    stepNumber: 1,
+    diagnosis: "The executor result confirms the bounded goal is complete.",
+    proposedAction: "Stop the orchestration.",
+    expectedOutcome: "No further bounded step is required.",
+    plannerDecision: "complete",
+    handoffTo: null,
+  });
+
+  assert.equal(planned.state.currentAgent, "executor");
+  assert.equal(executed.state.currentAgent, "planner");
+  assert.equal(completed.state.currentStatus, "complete");
+  assert.equal(completed.state.currentAgent, "planner");
+  assert.equal(completed.state.agentHistory.length, 3);
+  assert.equal(completed.state.agentHistory[0]?.agentRole, "planner");
+  assert.equal(completed.state.agentHistory[1]?.agentRole, "executor");
+  assert.equal(completed.state.agentHistory[2]?.plannerDecision, "complete");
+});
+
+test("two-agent orchestration lets the planner reroute after executor falsification", () => {
+  const initial = createExecutionOrchestrationState({
+    goal: "Recover from a wrong first bounded fix path.",
+    currentPhase: "apply-fix",
+  });
+  const planned = recordPlannerHandoff({
+    state: initial,
+    stepNumber: 1,
+    diagnosis: "The current import path looks like the leading blocker.",
+    proposedAction: "Patch the import path directly.",
+    expectedOutcome: "Startup should recover immediately.",
+    plannerDecision: "continue",
+  });
+  const executed = recordExecutorOutcome({
+    state: planned.state,
+    stepNumber: 1,
+    executedAction: "Patch the import path directly.",
+    actionResult: "The module does not exist on this branch, so the original fix path fails.",
+    validationResult: "falsified",
+    executionNotes: "The executor disproved the original planner path.",
+  });
+  const advanced = advanceExecutionOrchestration({
+    state: executed.state,
+    phase: executed.state.currentPhase,
+    proposedAction: "Patch the import path directly.",
+    executedAction: "Patch the import path directly.",
+    actionResult: "The module does not exist on this branch, so the original fix path fails.",
+    verificationState: "falsified",
+    diagnosis: "The planner must reroute to a compatibility fallback instead.",
+    loopTerminationStatus: "converging",
+    nextSafeAction: "Inspect the controller surface and add the narrowest fallback.",
+    nextPhase: "recover",
+  });
+  const rerouted = recordPlannerHandoff({
+    state: advanced.state,
+    stepNumber: 2,
+    diagnosis: "The executor falsified the original fix, so the bounded reroute is to add a compatibility fallback.",
+    proposedAction: "Inspect the controller surface and add the narrowest fallback.",
+    expectedOutcome: "Startup should recover without widening the scope.",
+    plannerDecision: "reroute",
+  });
+
+  assert.equal(rerouted.state.currentStatus, "active");
+  assert.equal(rerouted.state.currentAgent, "executor");
+  assert.equal(rerouted.state.lastHandoff?.handoffFrom, "planner");
+  assert.equal(rerouted.state.lastHandoff?.handoffTo, "executor");
+  assert.equal(rerouted.state.agentHistory.at(-1)?.plannerDecision, "reroute");
+});
+
+test("two-agent orchestration records a blocked planner decision after executor results", () => {
+  const initial = createExecutionOrchestrationState({
+    goal: "Stop safely when no bounded next step remains.",
+    currentPhase: "apply-fix",
+  });
+  const planned = recordPlannerHandoff({
+    state: initial,
+    stepNumber: 1,
+    diagnosis: "The next bounded move is to patch the import path.",
+    proposedAction: "Patch the import path.",
+    expectedOutcome: "Startup should recover.",
+    plannerDecision: "continue",
+  });
+  const executed = recordExecutorOutcome({
+    state: planned.state,
+    stepNumber: 1,
+    executedAction: "Patch the import path.",
+    actionResult: "No equivalent module exists in the repo, so no safe bounded follow-up remains.",
+    validationResult: "falsified",
+    executionNotes: "The executor reached a bounded dead end.",
+  });
+  const advanced = advanceExecutionOrchestration({
+    state: executed.state,
+    phase: executed.state.currentPhase,
+    proposedAction: "Patch the import path.",
+    executedAction: "Patch the import path.",
+    actionResult: "No equivalent module exists in the repo, so no safe bounded follow-up remains.",
+    verificationState: "falsified",
+    diagnosis: "No safe bounded follow-up remains.",
+    loopTerminationStatus: "stuck",
+    nextSafeAction: "",
+    nextPhase: "blocked",
+  });
+  const blocked = recordPlannerHandoff({
+    state: advanced.state,
+    stepNumber: 1,
+    diagnosis: "The executor result leaves no safe bounded next action.",
+    proposedAction: "Stop the orchestration.",
+    expectedOutcome: "Preserve bounded behavior by blocking the thread.",
+    plannerDecision: "block",
+    handoffTo: null,
+  });
+
+  assert.equal(blocked.state.currentStatus, "blocked");
+  assert.equal(blocked.state.currentAgent, "planner");
+  assert.equal(blocked.state.lastHandoff?.handoffTo, null);
+  assert.equal(blocked.state.agentHistory.at(-1)?.plannerDecision, "block");
 });

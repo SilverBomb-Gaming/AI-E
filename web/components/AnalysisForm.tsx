@@ -12,6 +12,7 @@ import {
   buildExecutionOrchestrationContextBlock,
   createExecutionOrchestrationState,
   normalizeExecutionOrchestrationState,
+  recordPlannerHandoff,
   type ExecutionOrchestrationState,
 } from "@/lib/aie/orchestrationSession";
 import type { AnalysisInput, FreeAnalysisResponse } from "@/lib/aie/types";
@@ -62,7 +63,9 @@ export type ContinuationThreadSnapshot = {
   orchestrationId?: string;
   orchestrationStatus?: string;
   orchestrationPhase?: string;
+  orchestrationCurrentAgent?: string;
   orchestrationProgress?: string;
+  lastHandoff?: string;
 };
 
 const initialForm: AnalysisInput = {
@@ -273,8 +276,12 @@ export function getContinuationThreadSnapshot(state: StoredAnalysisState | null 
     orchestrationId: state?.orchestrationState?.orchestrationId,
     orchestrationStatus: state?.orchestrationState?.currentStatus,
     orchestrationPhase: state?.orchestrationState?.currentPhase,
+    orchestrationCurrentAgent: state?.orchestrationState?.currentAgent,
     orchestrationProgress: state?.orchestrationState
-      ? `${state.orchestrationState.currentPhase} (${state.orchestrationState.completedSteps.length} completed, ${state.orchestrationState.blockedSteps.length} blocked)`
+      ? `${state.orchestrationState.currentPhase} (${state.orchestrationState.completedSteps.length} completed, ${state.orchestrationState.blockedSteps.length} blocked, current agent: ${state.orchestrationState.currentAgent})`
+      : undefined,
+    lastHandoff: state?.orchestrationState?.lastHandoff
+      ? `${state.orchestrationState.lastHandoff.handoffFrom ?? "none"} -> ${state.orchestrationState.lastHandoff.handoffTo ?? "none"}: ${state.orchestrationState.lastHandoff.payloadSummary}`
       : undefined,
   };
 }
@@ -315,8 +322,16 @@ export function buildContinuationContextBlock(snapshot: ContinuationThreadSnapsh
     lines.push(`- Orchestration phase: ${snapshot.orchestrationPhase}`);
   }
 
+  if (snapshot.orchestrationCurrentAgent) {
+    lines.push(`- Current orchestration agent: ${snapshot.orchestrationCurrentAgent}`);
+  }
+
   if (snapshot.orchestrationProgress) {
     lines.push(`- Orchestration progress: ${snapshot.orchestrationProgress}`);
+  }
+
+  if (snapshot.lastHandoff) {
+    lines.push(`- Last planner/executor handoff: ${snapshot.lastHandoff}`);
   }
 
   lines.push("Use this as the starting context for the new analysis instead of restarting from a fresh first pass.");
@@ -383,7 +398,7 @@ export function AnalysisForm({ initialMode = "fresh" }: AnalysisFormProps) {
     const sessionGoal = normalizeExecutionGoal(form.problemDescription, form.goal || storedState?.input?.goal);
     const sessionId = initialMode === "continue" ? storedState?.input?.sessionId || crypto.randomUUID() : crypto.randomUUID();
     const stepIndex = initialMode === "continue" ? Math.max(1, storedState?.input?.stepIndex ?? 1) : 1;
-    const orchestrationState =
+    const initialOrchestrationState =
       initialMode === "continue" && storedState?.orchestrationState
         ? storedState.orchestrationState
         : createExecutionOrchestrationState({ goal: sessionGoal });
@@ -403,7 +418,7 @@ export function AnalysisForm({ initialMode = "fresh" }: AnalysisFormProps) {
         (form.context ?? "").trim(),
         includeContinuationContext && continuationSnapshot ? buildContinuationContextBlock(continuationSnapshot) : "",
         sessionContext,
-        buildExecutionOrchestrationContextBlock({ orchestration: orchestrationState }),
+        buildExecutionOrchestrationContextBlock({ orchestration: initialOrchestrationState }),
       ]
         .filter(Boolean)
         .join("\n\n"),
@@ -438,6 +453,17 @@ export function AnalysisForm({ initialMode = "fresh" }: AnalysisFormProps) {
           setErrorMessage("We couldn't generate an analysis right now. Please try again.");
           return;
         }
+
+      const proposedAction = payload.proposedAction ?? payload.what_to_do_next[0] ?? "";
+      const expectedOutcome = payload.expectedOutcome ?? payload.what_matters[0] ?? "";
+      const orchestrationState = recordPlannerHandoff({
+        state: initialOrchestrationState,
+        stepNumber: stepIndex,
+        diagnosis: payload.what_happened,
+        proposedAction,
+        expectedOutcome,
+        plannerDecision: proposedAction ? "continue" : "block",
+      }).state;
 
       window.sessionStorage.setItem(
         STORAGE_KEY,
