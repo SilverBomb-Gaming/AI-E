@@ -1,4 +1,6 @@
 import { loadAutonomousSession, listAutonomousSessions } from "./lib/aie/autonomousSessionStore";
+import { createRuntimeExecutionNodeDescriptor } from "./lib/aie/executionNode";
+import { registerExecutionNode } from "./lib/aie/executionNodeRegistry";
 import { resolveRepoRoot } from "./lib/aie/repoContext";
 import { runAutonomousSession } from "./lib/aie/runAutonomousSession";
 import type { AutonomousSession } from "./lib/aie/autonomousSession";
@@ -103,6 +105,10 @@ export function formatLocalNodeSessionOutput(session: AutonomousSession, options
         goal: session.goal,
         latestAdapter: session.executionAdapterId ?? null,
         adapterContextSummary: session.adapterContextSummary ?? null,
+        executionNodeId: session.executionNodeId ?? null,
+        executionNodeMode: session.executionNodeMode ?? null,
+        nodeCapabilitySummary: session.nodeCapabilitySummary ?? null,
+        taskId: session.taskId ?? null,
         planningHintSummary: session.planningHintSummary ?? null,
         completion: session.latestCompletion ?? null,
         completedReason: session.completedReason ?? session.stateReason ?? null,
@@ -110,6 +116,10 @@ export function formatLocalNodeSessionOutput(session: AutonomousSession, options
           index: step.index,
           actionFamily: step.actionFamily ?? null,
           executionAdapterId: step.executionAdapterId ?? null,
+          executionNodeId: step.executionNodeId ?? null,
+          executionNodeMode: step.executionNodeMode ?? null,
+          nodeCapabilitySummary: step.nodeCapabilitySummary ?? null,
+          taskId: step.taskId ?? null,
           goalStatus: step.goalStatus ?? null,
           runtimeStatus: step.executionResult?.status ?? null,
         })),
@@ -124,6 +134,9 @@ export function formatLocalNodeSessionOutput(session: AutonomousSession, options
     `Goal: ${session.goal}`,
     `Status: ${session.status}`,
     `Latest adapter: ${session.executionAdapterId ?? "unknown"}`,
+    `Execution node: ${session.executionNodeId ?? "unknown"} (${session.executionNodeMode ?? "unknown"})`,
+    `Node capabilities: ${session.nodeCapabilitySummary ?? "No node capabilities recorded."}`,
+    `Latest task: ${session.taskId ?? "No task recorded."}`,
     `Completion: ${session.latestCompletion ? `${session.latestCompletion.status} (${session.latestCompletion.confidence})` : "No completion state recorded."}`,
     `Reason: ${session.completedReason ?? session.stateReason ?? "No stop reason recorded."}`,
   ];
@@ -133,6 +146,9 @@ export function formatLocalNodeSessionOutput(session: AutonomousSession, options
       "",
       ...session.steps.map((step) => [
         `Step ${step.index} | lane=${step.actionFamily ?? "unknown"} | adapter=${step.executionAdapterId ?? "unknown"} | runtime=${step.executionResult?.status ?? "unknown"}`,
+        step.executionNodeId ? `Node: ${step.executionNodeId} (${step.executionNodeMode ?? "unknown"})` : "",
+        step.nodeCapabilitySummary ? `Node capabilities: ${step.nodeCapabilitySummary}` : "",
+        step.taskId ? `Task: ${step.taskId}` : "",
         step.proposedAction ? `Action: ${step.proposedAction}` : "",
         step.planningHintSummary ? `Planning: ${step.planningHintSummary}` : "",
         step.adapterContextSummary ? `Adapter context: ${step.adapterContextSummary}` : "",
@@ -175,6 +191,11 @@ export async function runLocalNode(
   const existingSession = options.sessionId ? await loadAutonomousSession(options.sessionId) : null;
   const cwd = options.cwd ?? process.cwd();
   const repoRoot = await resolveRepoRoot(cwd);
+  registerExecutionNode(createRuntimeExecutionNodeDescriptor({
+    runtimeMode: "local",
+    cwd,
+    allowedRoots: options.allowedRoots,
+  }));
 
   return runAutonomousSession({
     goal: options.goal || existingSession?.goal || "Confirm the local execution node can complete a bounded task.",

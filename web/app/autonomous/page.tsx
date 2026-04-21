@@ -296,6 +296,9 @@ export default function AutonomousPage() {
                 <p><strong>Terminal reason:</strong> {session.completedReason || "No terminal reason recorded yet."}</p>
                 <p><strong>Completion:</strong> {session.latestCompletion ? `${session.latestCompletion.status} (${session.latestCompletion.confidence})` : "No completion state recorded yet."}</p>
                 <p><strong>Latest adapter:</strong> {session.executionAdapterId || "No adapter recorded yet."}</p>
+                <p><strong>Execution node:</strong> {session.executionNodeId ? `${session.executionNodeId} (${session.executionNodeMode || "unknown"})` : "No node recorded yet."}</p>
+                <p><strong>Node capabilities:</strong> {session.nodeCapabilitySummary || "No node capabilities recorded yet."}</p>
+                <p><strong>Latest task:</strong> {session.taskId || "No task recorded yet."}</p>
                 <p><strong>Planning hints:</strong> {session.planningHintSummary || "No planning hints recorded yet."}</p>
                 <p><strong>Adapter context:</strong> {session.adapterContextSummary || "No adapter context recorded yet."}</p>
                 {session.latestCompletion ? <p><strong>Completion reason:</strong> {session.latestCompletion.reason}</p> : null}
@@ -334,6 +337,15 @@ export default function AutonomousPage() {
                     ) : null}
                     {step.adapterContextSummary ? (
                       <p className="mt-2 text-sm text-ink/80"><strong>Adapter context:</strong> {step.adapterContextSummary}</p>
+                    ) : null}
+                    {step.executionNodeId ? (
+                      <p className="mt-2 text-sm text-ink/80"><strong>Execution node:</strong> {step.executionNodeId} ({step.executionNodeMode || "unknown"})</p>
+                    ) : null}
+                    {step.nodeCapabilitySummary ? (
+                      <p className="mt-2 text-sm text-ink/80"><strong>Node capabilities:</strong> {step.nodeCapabilitySummary}</p>
+                    ) : null}
+                    {step.taskId ? (
+                      <p className="mt-2 text-sm text-ink/80"><strong>Task ID:</strong> {step.taskId}</p>
                     ) : null}
                     <p className="mt-2 text-sm text-ink/80"><strong>Diagnosis:</strong> {step.diagnosis || "No diagnosis recorded."}</p>
                     <p className="mt-2 text-sm text-ink/80"><strong>Verification:</strong> {step.verificationState || "Unknown"}</p>

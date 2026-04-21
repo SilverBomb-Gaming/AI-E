@@ -29,6 +29,12 @@ import {
   type ExecutionAdapterContext,
 } from "./executionAdapters";
 import { buildExecutionAction } from "./executionBridge";
+import {
+  createRuntimeExecutionNodeDescriptor,
+  getExecutionNodeCapabilitiesForAction,
+  summarizeExecutionNodeCapabilities,
+} from "./executionNode";
+import { chooseExecutionNodeForAction, registerExecutionNode } from "./executionNodeRegistry";
 import { classifyExecutionFailure, type FailureClassification } from "./failureClassifier";
 import { doesExecutionOutputDirectlyAnswerGoal, evaluateGoalCompletion } from "./goalEvaluator";
 import { runAnalysis } from "./run-analysis";
@@ -36,6 +42,7 @@ import { getRetryDecision } from "./retryPolicy";
 import { getRecoveryDecision, type AutonomousRecoveryStrategy } from "./strategySwitch";
 import { detectTestFiles, findRelevantFiles, resolveRepoRoot } from "./repoContext";
 import { saveAutonomousSession } from "./autonomousSessionStore";
+import { assignTaskEnvelope, createTaskEnvelope, updateTaskEnvelopeStatus } from "./taskEnvelope";
 import type { AnalysisInput, ExecutionActionPreview, ExecutionRuntimeResult, FreeAnalysisResponse } from "./types";
 
 type RunAutonomousSessionDependencies = {
@@ -456,6 +463,33 @@ async function runSingleAutonomousStep(params: {
   };
   const selectedAdapter = action ? selectExecutionAdapter(action, executionContext) : null;
   const adapterContextSummary = selectedAdapter ? summarizeExecutionAdapterContext(selectedAdapter.id, executionContext) : undefined;
+  const registeredRuntimeNode = registerExecutionNode(
+    createRuntimeExecutionNodeDescriptor({
+      runtimeMode: executionContext.runtimeMode,
+      cwd: executionContext.cwd,
+      allowedRoots: executionContext.allowedRoots ?? executionContext.allowedDirectories,
+    }),
+  );
+  const selectedNode = action
+    ? chooseExecutionNodeForAction(action, {
+        runtimeMode: executionContext.runtimeMode,
+        preferredNodeId: registeredRuntimeNode.id,
+        cwd: executionContext.cwd,
+      }) ?? registeredRuntimeNode
+    : null;
+  const taskEnvelope = action
+    ? assignTaskEnvelope(
+        createTaskEnvelope({
+          sessionId: params.session.sessionId,
+          stepIndex: params.session.currentStepIndex,
+          action,
+          requestedCapabilities: getExecutionNodeCapabilitiesForAction(action),
+          preferredNodeId: registeredRuntimeNode.id,
+        }),
+        (selectedNode ?? registeredRuntimeNode).id,
+        "running",
+      )
+    : null;
   const actionFamily = inferActionFamily(effectiveAnalysis.proposedAction ?? action?.description ?? "");
   const targetPathSummary = summarizeExecutionTarget({ action });
   const wasReadOnly = isReadOnlyExecutionAction(action);
@@ -478,6 +512,16 @@ async function runSingleAutonomousStep(params: {
     : action && canAutonomouslyExecute
       ? await params.dependencies.executeAction(action, executionContext)
       : buildUnsupportedAutonomousExecutionResult(action);
+  const finalizedTaskEnvelope = taskEnvelope
+    ? updateTaskEnvelopeStatus(
+        taskEnvelope,
+        executionResult.status === "success"
+          ? "completed"
+          : executionResult.status === "failed"
+            ? "failed"
+            : "blocked",
+      )
+    : null;
   const targetPathAfterExecution = summarizeExecutionTarget({ action, executionResult });
   const directGoalAnswer = doesExecutionOutputDirectlyAnswerGoal({
     goal: params.session.goal,
@@ -554,6 +598,10 @@ async function runSingleAutonomousStep(params: {
     actionFamily,
     executionAdapterId: selectedAdapter?.id,
     adapterContextSummary,
+    executionNodeId: selectedNode?.id ?? registeredRuntimeNode.id,
+    executionNodeMode: selectedNode?.mode ?? registeredRuntimeNode.mode,
+    nodeCapabilitySummary: summarizeExecutionNodeCapabilities((selectedNode ?? registeredRuntimeNode).capabilities),
+    taskId: finalizedTaskEnvelope?.taskId,
     planningHintSummary: planningHints.hintSummary,
     executionResult,
     diagnosis: stopBeforeApprovalEscalation ? executionResult.output : effectiveAnalysis.what_happened,

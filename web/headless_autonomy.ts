@@ -1,4 +1,6 @@
 import { loadAutonomousSession } from "./lib/aie/autonomousSessionStore";
+import { createRuntimeExecutionNodeDescriptor } from "./lib/aie/executionNode";
+import { registerExecutionNode } from "./lib/aie/executionNodeRegistry";
 import { resolveRepoRoot } from "./lib/aie/repoContext";
 import { runAutonomousSession } from "./lib/aie/runAutonomousSession";
 import type { AutonomousSession } from "./lib/aie/autonomousSession";
@@ -101,6 +103,10 @@ export function formatHeadlessSessionSummary(session: AutonomousSession): string
       steps: session.steps.length,
       adapter: session.executionAdapterId ?? null,
       adapterContextSummary: session.adapterContextSummary ?? null,
+      executionNodeId: session.executionNodeId ?? null,
+      executionNodeMode: session.executionNodeMode ?? null,
+      nodeCapabilitySummary: session.nodeCapabilitySummary ?? null,
+      taskId: session.taskId ?? null,
       planningHintSummary: session.planningHintSummary ?? null,
       lastActionFamily: lastStep?.actionFamily ?? null,
       completionStatus: session.latestCompletion?.status ?? null,
@@ -122,6 +128,7 @@ export function formatHeadlessStepSummaries(session: AutonomousSession): string 
       `Step ${step.index}`,
       `lane=${step.actionFamily ?? "unknown"}`,
       `adapter=${step.executionAdapterId ?? "unknown"}`,
+      `node=${step.executionNodeId ?? "unknown"}`,
       `goal=${step.goalStatus ?? "unknown"}`,
       `decision=${step.nextDecision ?? "unknown"}`,
       `runtime=${step.executionResult?.status ?? "unknown"}`,
@@ -129,6 +136,8 @@ export function formatHeadlessStepSummaries(session: AutonomousSession): string 
     const detailParts = [
       step.proposedAction ? `action=${step.proposedAction}` : "",
       step.adapterContextSummary ? `adapterContext=${step.adapterContextSummary}` : "",
+      step.nodeCapabilitySummary ? `nodeCaps=${step.nodeCapabilitySummary}` : "",
+      step.taskId ? `taskId=${step.taskId}` : "",
       step.planningHintSummary ? `planning=${step.planningHintSummary}` : "",
       step.diagnosis ? `diagnosis=${step.diagnosis}` : "",
     ].filter(Boolean);
@@ -145,6 +154,10 @@ export function formatHeadlessSessionReport(session: AutonomousSession, options?
         goal: session.goal,
         adapter: session.executionAdapterId ?? null,
         adapterContextSummary: session.adapterContextSummary ?? null,
+        executionNodeId: session.executionNodeId ?? null,
+        executionNodeMode: session.executionNodeMode ?? null,
+        nodeCapabilitySummary: session.nodeCapabilitySummary ?? null,
+        taskId: session.taskId ?? null,
         planningHintSummary: session.planningHintSummary ?? null,
         completion: session.latestCompletion ?? null,
         completedReason: session.completedReason ?? session.stateReason ?? null,
@@ -152,6 +165,10 @@ export function formatHeadlessSessionReport(session: AutonomousSession, options?
           index: step.index,
           actionFamily: step.actionFamily ?? null,
           executionAdapterId: step.executionAdapterId ?? null,
+          executionNodeId: step.executionNodeId ?? null,
+          executionNodeMode: step.executionNodeMode ?? null,
+          nodeCapabilitySummary: step.nodeCapabilitySummary ?? null,
+          taskId: step.taskId ?? null,
           goalStatus: step.goalStatus ?? null,
           nextDecision: step.nextDecision ?? null,
           runtimeStatus: step.executionResult?.status ?? null,
@@ -167,6 +184,9 @@ export function formatHeadlessSessionReport(session: AutonomousSession, options?
     `Status: ${session.status}`,
     `Goal: ${session.goal}`,
     `Latest adapter: ${session.executionAdapterId ?? "unknown"}`,
+    `Execution node: ${session.executionNodeId ?? "unknown"} (${session.executionNodeMode ?? "unknown"})`,
+    `Node capabilities: ${session.nodeCapabilitySummary ?? "No node capabilities recorded."}`,
+    `Latest task: ${session.taskId ?? "No task recorded."}`,
     `Adapter context: ${session.adapterContextSummary ?? "No adapter context recorded."}`,
     `Planning hints: ${session.planningHintSummary ?? "No planning hints recorded."}`,
     `Completion: ${session.latestCompletion ? `${session.latestCompletion.status} (${session.latestCompletion.confidence})` : "No completion state recorded."}`,
@@ -187,6 +207,11 @@ export async function runHeadlessAutonomy(
   const existingSession = options.sessionId ? await loadAutonomousSession(options.sessionId) : null;
   const cwd = options.cwd ?? process.cwd();
   const repoRoot = await resolveRepoRoot(cwd);
+  registerExecutionNode(createRuntimeExecutionNodeDescriptor({
+    runtimeMode: "headless",
+    cwd,
+    allowedRoots: options.allowedRoots,
+  }));
 
   return runAutonomousSession({
     goal: options.goal || existingSession?.goal || "Confirm the bounded autonomous path reaches a healthy result.",

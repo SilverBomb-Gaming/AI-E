@@ -3,6 +3,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 
+import { listExecutionNodes, resetExecutionNodeRegistry } from "./executionNodeRegistry";
 import { runAutonomousSession } from "./runAutonomousSession";
 import type { AnalysisInput, ExecutionActionPreview, FreeAnalysisResponse } from "./types";
 
@@ -21,6 +22,7 @@ function makeSafeAction(description: string): ExecutionActionPreview {
 }
 
 test("runAutonomousSession continues bounded safe steps until the goal is complete", async () => {
+  resetExecutionNodeRegistry();
   const savedStatuses: string[] = [];
   const seenInputs: AnalysisInput[] = [];
   const responses: FreeAnalysisResponse[] = [
@@ -68,11 +70,17 @@ test("runAutonomousSession continues bounded safe steps until the goal is comple
   assert.equal(session.status, "completed");
   assert.equal(session.steps.length, 2);
   assert.equal(session.steps[0]?.executionAdapterId, "web-sandbox");
+  assert.equal(session.steps[0]?.executionNodeMode, "web");
+  assert.equal(typeof session.steps[0]?.executionNodeId, "string");
+  assert.equal(typeof session.steps[0]?.taskId, "string");
+  assert.match(session.steps[0]?.nodeCapabilitySummary ?? "", /validation-check/i);
+  assert.ok(listExecutionNodes().some((node) => node.mode === "web"));
   assert.match(session.steps[0]?.planningHintSummary ?? "", /Preferred next lane/i);
   assert.equal(seenInputs[0]?.stepIndex, 1);
   assert.equal(seenInputs[1]?.stepIndex, 2);
   assert.match(seenInputs[1]?.actionResult ?? "", /not confirmed yet/i);
   assert.ok(savedStatuses.includes("completed"));
+  resetExecutionNodeRegistry();
 });
 
 test("runAutonomousSession pauses when the analysis proposes a step outside safe auto-execution", async () => {

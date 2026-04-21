@@ -49,6 +49,26 @@ test("autonomous sessions append steps and preserve runtime output", () => {
   assert.match(buildAutonomousSessionContextBlock(updated), /Validation passed with a healthy status/i);
 });
 
+test("autonomous sessions preserve optional node and task metadata", () => {
+  const updated = appendAutonomousStep(createAutonomousSession({ goal: "Confirm the bounded validation path." }), {
+    proposedAction: "Run the bounded validation command.",
+    executionNodeId: "aie-node-local-node-test",
+    executionNodeMode: "local-node",
+    nodeCapabilitySummary: "inspection, validation-check, repo-scan",
+    taskId: "task-123",
+    executionResult: {
+      status: "success",
+      output: "Validation passed with a healthy status.",
+    },
+  });
+  const normalized = normalizeAutonomousSession(JSON.parse(JSON.stringify(updated)));
+
+  assert.equal(updated.executionNodeId, "aie-node-local-node-test");
+  assert.equal(updated.steps[0]?.taskId, "task-123");
+  assert.equal(normalized?.executionNodeMode, "local-node");
+  assert.equal(normalized?.steps[0]?.nodeCapabilitySummary, "inspection, validation-check, repo-scan");
+});
+
 test("autonomous session normalization keeps persisted sessions readable", () => {
   const session = updateAutonomousSessionStatus(
     appendAutonomousStep(createAutonomousSession({ goal: "Confirm the bounded validation path." }), {

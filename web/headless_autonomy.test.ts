@@ -4,10 +4,12 @@ import path from "node:path";
 import test from "node:test";
 
 import { formatHeadlessSessionReport, formatHeadlessSessionSummary, runHeadlessAutonomy } from "./headless_autonomy";
+import { listExecutionNodes, resetExecutionNodeRegistry } from "./lib/aie/executionNodeRegistry";
 import type { FreeAnalysisResponse } from "./lib/aie/types";
 
 test("headless_autonomy persists a bounded session and prints a matching summary", async () => {
   const sessionDirectory = path.resolve(process.cwd(), "temp-headless-session-store");
+  resetExecutionNodeRegistry();
   process.env.AIE_AUTONOMOUS_SESSION_DIR = sessionDirectory;
   await mkdir(sessionDirectory, { recursive: true });
 
@@ -51,10 +53,15 @@ test("headless_autonomy persists a bounded session and prints a matching summary
     assert.equal(summary.status, session.status);
     assert.equal(summary.completionStatus, session.latestCompletion?.status ?? null);
     assert.equal(summary.adapter, "headless-local");
+    assert.equal(summary.executionNodeMode, "headless");
+    assert.equal(typeof summary.executionNodeId, "string");
+    assert.match(String(summary.nodeCapabilitySummary ?? ""), /validation-check/i);
     assert.match(formatHeadlessSessionReport(session, { verbose: true }), /Step 1/i);
     assert.match(formatHeadlessSessionReport(session, { json: true, verbose: true }), /"sessionId"/i);
+    assert.ok(listExecutionNodes().some((node) => node.mode === "headless"));
   } finally {
     delete process.env.AIE_AUTONOMOUS_SESSION_DIR;
+    resetExecutionNodeRegistry();
     await rm(sessionDirectory, { recursive: true, force: true });
   }
 });

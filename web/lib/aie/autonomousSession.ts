@@ -2,6 +2,7 @@ import type { FailureClassification } from "./failureClassifier";
 import type { GoalCompletionStatus, GoalEvaluation } from "./goalEvaluator";
 import type { AutonomousActionFamily } from "./autonomousPlanning";
 import type { ExecutionAdapterId } from "./executionAdapters";
+import type { ExecutionNodeMode } from "./executionNode";
 import type { AutonomousRecoveryStrategy } from "./strategySwitch";
 import type { ExecutionActionPreview, ExecutionRuntimeResult } from "./types";
 
@@ -25,6 +26,10 @@ export type AutonomousStepRecord = {
   actionFamily?: AutonomousActionFamily;
   executionAdapterId?: ExecutionAdapterId;
   adapterContextSummary?: string;
+  executionNodeId?: string;
+  executionNodeMode?: ExecutionNodeMode;
+  nodeCapabilitySummary?: string;
+  taskId?: string;
   planningHintSummary?: string;
   executionResult?: ExecutionRuntimeResult;
   diagnosis?: string;
@@ -66,6 +71,10 @@ export type AutonomousSession = {
   lastDiagnosis?: string;
   executionAdapterId?: ExecutionAdapterId;
   adapterContextSummary?: string;
+  executionNodeId?: string;
+  executionNodeMode?: ExecutionNodeMode;
+  nodeCapabilitySummary?: string;
+  taskId?: string;
   planningHintSummary?: string;
   latestExecutionResult?: ExecutionRuntimeResult;
   pendingAction?: ExecutionActionPreview;
@@ -86,6 +95,10 @@ type AppendAutonomousStepParams = {
   actionFamily?: AutonomousActionFamily;
   executionAdapterId?: ExecutionAdapterId;
   adapterContextSummary?: string;
+  executionNodeId?: string;
+  executionNodeMode?: ExecutionNodeMode;
+  nodeCapabilitySummary?: string;
+  taskId?: string;
   planningHintSummary?: string;
   executionResult?: ExecutionRuntimeResult;
   diagnosis?: string;
@@ -214,6 +227,15 @@ function normalizeExecutionRuntimeResult(value: unknown): ExecutionRuntimeResult
 function normalizeExecutionAdapterId(value: unknown): ExecutionAdapterId | undefined {
   const normalized = normalizeText(typeof value === "string" ? value : "");
   if (normalized === "web-sandbox" || normalized === "repo-filesystem" || normalized === "repo-tests" || normalized === "headless-local") {
+    return normalized;
+  }
+
+  return undefined;
+}
+
+function normalizeExecutionNodeMode(value: unknown): ExecutionNodeMode | undefined {
+  const normalized = normalizeText(typeof value === "string" ? value : "");
+  if (normalized === "web" || normalized === "headless" || normalized === "local-node") {
     return normalized;
   }
 
@@ -376,6 +398,10 @@ function normalizeAutonomousStepRecord(value: unknown): AutonomousStepRecord | n
     actionFamily: normalizeActionFamily(source.actionFamily),
     executionAdapterId: normalizeExecutionAdapterId(source.executionAdapterId),
     adapterContextSummary: normalizeText(typeof source.adapterContextSummary === "string" ? source.adapterContextSummary : "") || undefined,
+    executionNodeId: normalizeText(typeof source.executionNodeId === "string" ? source.executionNodeId : "") || undefined,
+    executionNodeMode: normalizeExecutionNodeMode(source.executionNodeMode),
+    nodeCapabilitySummary: normalizeText(typeof source.nodeCapabilitySummary === "string" ? source.nodeCapabilitySummary : "") || undefined,
+    taskId: normalizeText(typeof source.taskId === "string" ? source.taskId : "") || undefined,
     planningHintSummary: normalizeText(typeof source.planningHintSummary === "string" ? source.planningHintSummary : "") || undefined,
     executionResult: normalizeExecutionRuntimeResult(source.executionResult),
     diagnosis: normalizeText(typeof source.diagnosis === "string" ? source.diagnosis : "") || undefined,
@@ -433,6 +459,10 @@ export function appendAutonomousStep(
     actionFamily: params.actionFamily,
     executionAdapterId: params.executionAdapterId,
     adapterContextSummary: normalizeText(params.adapterContextSummary) || undefined,
+    executionNodeId: normalizeText(params.executionNodeId) || undefined,
+    executionNodeMode: params.executionNodeMode,
+    nodeCapabilitySummary: normalizeText(params.nodeCapabilitySummary) || undefined,
+    taskId: normalizeText(params.taskId) || undefined,
     planningHintSummary: normalizeText(params.planningHintSummary) || undefined,
     executionResult,
     diagnosis: normalizeText(params.diagnosis) || undefined,
@@ -457,6 +487,10 @@ export function appendAutonomousStep(
     lastDiagnosis: step.diagnosis ?? session.lastDiagnosis,
     executionAdapterId: step.executionAdapterId ?? session.executionAdapterId,
     adapterContextSummary: step.adapterContextSummary ?? session.adapterContextSummary,
+    executionNodeId: step.executionNodeId ?? session.executionNodeId,
+    executionNodeMode: step.executionNodeMode ?? session.executionNodeMode,
+    nodeCapabilitySummary: step.nodeCapabilitySummary ?? session.nodeCapabilitySummary,
+    taskId: step.taskId ?? session.taskId,
     planningHintSummary: step.planningHintSummary ?? session.planningHintSummary,
     latestExecutionResult: executionResult ?? session.latestExecutionResult,
     pendingAction: session.pendingAction,
@@ -589,6 +623,10 @@ export function normalizeAutonomousSession(value: unknown): AutonomousSession | 
     lastDiagnosis: normalizeText(typeof source.lastDiagnosis === "string" ? source.lastDiagnosis : "") || undefined,
     executionAdapterId: normalizeExecutionAdapterId(source.executionAdapterId),
     adapterContextSummary: normalizeText(typeof source.adapterContextSummary === "string" ? source.adapterContextSummary : "") || undefined,
+    executionNodeId: normalizeText(typeof source.executionNodeId === "string" ? source.executionNodeId : "") || undefined,
+    executionNodeMode: normalizeExecutionNodeMode(source.executionNodeMode),
+    nodeCapabilitySummary: normalizeText(typeof source.nodeCapabilitySummary === "string" ? source.nodeCapabilitySummary : "") || undefined,
+    taskId: normalizeText(typeof source.taskId === "string" ? source.taskId : "") || undefined,
     planningHintSummary: normalizeText(typeof source.planningHintSummary === "string" ? source.planningHintSummary : "") || undefined,
     latestExecutionResult: normalizeExecutionRuntimeResult(source.latestExecutionResult),
     pendingAction: normalizeExecutionActionPreview(source.pendingAction),

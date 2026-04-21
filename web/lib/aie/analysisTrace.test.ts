@@ -44,6 +44,10 @@ function buildTrace(params: {
   previousActionChainState?: StoredActionChainState;
   executedAction?: string;
   orchestrationState?: ReturnType<typeof createExecutionOrchestrationState>;
+  executionNodeId?: string;
+  executionNodeMode?: "web" | "headless" | "local-node";
+  nodeCapabilitySummary?: string;
+  taskId?: string;
 }) {
   return buildAnalysisTraceRecord(params);
 }
@@ -96,6 +100,10 @@ test("fresh traces include the full required contract", () => {
   assert.equal(trace.autonomousPendingActionType, null);
   assert.equal(trace.executionAdapterId, null);
   assert.equal(trace.adapterContextSummary, null);
+  assert.equal(trace.executionNodeId, null);
+  assert.equal(trace.executionNodeMode, null);
+  assert.equal(trace.nodeCapabilitySummary, null);
+  assert.equal(trace.taskId, null);
   assert.equal(trace.autonomousPlanningHintSummary, null);
   assert.equal(trace.autonomousRecentActionFamily, null);
   assert.equal(trace.orchestrationId, null);
@@ -238,6 +246,10 @@ test("autonomous traces preserve optional autonomous metadata without changing t
     autonomousCompletionConfidence: "high",
     executionAdapterId: "web-sandbox",
     adapterContextSummary: "adapter=web-sandbox | mode=web",
+    executionNodeId: "aie-node-web-web",
+    executionNodeMode: "web",
+    nodeCapabilitySummary: "inspection, validation-check, file-write, test-run, repo-scan",
+    taskId: "task-autonomous-123",
     autonomousPlanningHintSummary: "Recent lane summary: validate:healthy result. Preferred next lane: validate.",
     autonomousRecentActionFamily: "validate",
   });
@@ -250,6 +262,10 @@ test("autonomous traces preserve optional autonomous metadata without changing t
   assert.equal(trace.autonomousCompletionConfidence, "high");
   assert.equal(trace.executionAdapterId, "web-sandbox");
   assert.match(trace.adapterContextSummary ?? "", /adapter=web-sandbox/i);
+  assert.equal(trace.executionNodeId, "aie-node-web-web");
+  assert.equal(trace.executionNodeMode, "web");
+  assert.match(trace.nodeCapabilitySummary ?? "", /validation-check/i);
+  assert.equal(trace.taskId, "task-autonomous-123");
   assert.match(trace.autonomousPlanningHintSummary ?? "", /Preferred next lane/i);
   assert.equal(trace.autonomousRecentActionFamily, "validate");
   assert.deepEqual(listMissingAnalysisTraceFields(trace), []);

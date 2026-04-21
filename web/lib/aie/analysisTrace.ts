@@ -28,6 +28,7 @@ import type { FailureClassification } from "./failureClassifier";
 import type { GoalCompletionStatus, GoalEvaluation } from "./goalEvaluator";
 import type { AutonomousActionFamily } from "./autonomousPlanning";
 import type { ExecutionAdapterId } from "./executionAdapters";
+import type { ExecutionNodeMode } from "./executionNode";
 import type { AutonomousRecoveryStrategy } from "./strategySwitch";
 
 export type AnalysisTraceActionChain = {
@@ -63,6 +64,10 @@ export type AnalysisTraceRecord = {
   autonomousPendingActionType: string | null;
   executionAdapterId: ExecutionAdapterId | null;
   adapterContextSummary: string | null;
+  executionNodeId: string | null;
+  executionNodeMode: ExecutionNodeMode | null;
+  nodeCapabilitySummary: string | null;
+  taskId: string | null;
   autonomousPlanningHintSummary: string | null;
   autonomousRecentActionFamily: AutonomousActionFamily | null;
   failureClass: FailureClassification["kind"] | null;
@@ -134,6 +139,10 @@ export type BuildAnalysisTraceRecordParams = {
   autonomousPendingActionType?: string;
   executionAdapterId?: ExecutionAdapterId;
   adapterContextSummary?: string;
+  executionNodeId?: string;
+  executionNodeMode?: ExecutionNodeMode;
+  nodeCapabilitySummary?: string;
+  taskId?: string;
   autonomousPlanningHintSummary?: string;
   autonomousRecentActionFamily?: AutonomousActionFamily;
   failureClassification?: FailureClassification;
@@ -258,6 +267,10 @@ export function buildAnalysisTraceRecord(params: BuildAnalysisTraceRecordParams)
     autonomousPendingActionType: params.autonomousPendingActionType?.trim() || null,
     executionAdapterId: params.executionAdapterId ?? null,
     adapterContextSummary: params.adapterContextSummary?.trim() || null,
+    executionNodeId: params.executionNodeId?.trim() || null,
+    executionNodeMode: params.executionNodeMode ?? null,
+    nodeCapabilitySummary: params.nodeCapabilitySummary?.trim() || null,
+    taskId: params.taskId?.trim() || null,
     autonomousPlanningHintSummary: params.autonomousPlanningHintSummary?.trim() || null,
     autonomousRecentActionFamily: params.autonomousRecentActionFamily ?? null,
     failureClass: params.failureClassification?.kind ?? null,
