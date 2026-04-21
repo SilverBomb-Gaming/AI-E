@@ -30,6 +30,7 @@ import type { AutonomousActionFamily } from "./autonomousPlanning";
 import type { ExecutionAdapterId } from "./executionAdapters";
 import type { ExecutionNodeMode } from "./executionNode";
 import type { AutonomousRecoveryStrategy } from "./strategySwitch";
+import type { TaskEnvelopeStatus } from "./taskEnvelope";
 
 export type AnalysisTraceActionChain = {
   state: "none" | "guided" | "confirmation";
@@ -68,6 +69,9 @@ export type AnalysisTraceRecord = {
   executionNodeMode: ExecutionNodeMode | null;
   nodeCapabilitySummary: string | null;
   taskId: string | null;
+  taskStatus: TaskEnvelopeStatus | null;
+  assignedNodeId: string | null;
+  queueStateSummary: string | null;
   autonomousPlanningHintSummary: string | null;
   autonomousRecentActionFamily: AutonomousActionFamily | null;
   failureClass: FailureClassification["kind"] | null;
@@ -143,6 +147,9 @@ export type BuildAnalysisTraceRecordParams = {
   executionNodeMode?: ExecutionNodeMode;
   nodeCapabilitySummary?: string;
   taskId?: string;
+  taskStatus?: TaskEnvelopeStatus;
+  assignedNodeId?: string;
+  queueStateSummary?: string;
   autonomousPlanningHintSummary?: string;
   autonomousRecentActionFamily?: AutonomousActionFamily;
   failureClassification?: FailureClassification;
@@ -271,6 +278,9 @@ export function buildAnalysisTraceRecord(params: BuildAnalysisTraceRecordParams)
     executionNodeMode: params.executionNodeMode ?? null,
     nodeCapabilitySummary: params.nodeCapabilitySummary?.trim() || null,
     taskId: params.taskId?.trim() || null,
+    taskStatus: params.taskStatus ?? null,
+    assignedNodeId: params.assignedNodeId?.trim() || null,
+    queueStateSummary: params.queueStateSummary?.trim() || null,
     autonomousPlanningHintSummary: params.autonomousPlanningHintSummary?.trim() || null,
     autonomousRecentActionFamily: params.autonomousRecentActionFamily ?? null,
     failureClass: params.failureClassification?.kind ?? null,

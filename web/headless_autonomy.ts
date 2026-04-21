@@ -4,6 +4,8 @@ import { registerExecutionNode } from "./lib/aie/executionNodeRegistry";
 import { resolveRepoRoot } from "./lib/aie/repoContext";
 import { runAutonomousSession } from "./lib/aie/runAutonomousSession";
 import type { AutonomousSession } from "./lib/aie/autonomousSession";
+import type { TaskEnvelope } from "./lib/aie/taskEnvelope";
+import { getTask, listTasks } from "./lib/aie/taskQueueStore";
 import type { runAnalysis } from "./lib/aie/run-analysis";
 import type { saveAutonomousSession } from "./lib/aie/autonomousSessionStore";
 import type { executeAction } from "./lib/aie/executionRuntime";
@@ -17,6 +19,8 @@ type HeadlessAutonomyOptions = {
   cwd?: string;
   verbose?: boolean;
   json?: boolean;
+  listTasks?: boolean;
+  taskId?: string;
 };
 
 type HeadlessAutonomyDependencies = {
@@ -84,6 +88,13 @@ export function parseArgs(argv: string[]): HeadlessAutonomyOptions {
       case "--json":
         options.json = true;
         break;
+      case "--listTasks":
+        options.listTasks = true;
+        break;
+      case "--taskId":
+        options.taskId = normalizeText(next) || undefined;
+        index += 1;
+        break;
       default:
         break;
     }
@@ -107,6 +118,9 @@ export function formatHeadlessSessionSummary(session: AutonomousSession): string
       executionNodeMode: session.executionNodeMode ?? null,
       nodeCapabilitySummary: session.nodeCapabilitySummary ?? null,
       taskId: session.taskId ?? null,
+      taskStatus: session.taskStatus ?? null,
+      assignedNodeId: session.assignedNodeId ?? null,
+      queueStateSummary: session.queueStateSummary ?? null,
       planningHintSummary: session.planningHintSummary ?? null,
       lastActionFamily: lastStep?.actionFamily ?? null,
       completionStatus: session.latestCompletion?.status ?? null,
@@ -129,6 +143,8 @@ export function formatHeadlessStepSummaries(session: AutonomousSession): string 
       `lane=${step.actionFamily ?? "unknown"}`,
       `adapter=${step.executionAdapterId ?? "unknown"}`,
       `node=${step.executionNodeId ?? "unknown"}`,
+      `task=${step.taskId ?? "unknown"}`,
+      `taskStatus=${step.taskStatus ?? "unknown"}`,
       `goal=${step.goalStatus ?? "unknown"}`,
       `decision=${step.nextDecision ?? "unknown"}`,
       `runtime=${step.executionResult?.status ?? "unknown"}`,
@@ -137,7 +153,8 @@ export function formatHeadlessStepSummaries(session: AutonomousSession): string 
       step.proposedAction ? `action=${step.proposedAction}` : "",
       step.adapterContextSummary ? `adapterContext=${step.adapterContextSummary}` : "",
       step.nodeCapabilitySummary ? `nodeCaps=${step.nodeCapabilitySummary}` : "",
-      step.taskId ? `taskId=${step.taskId}` : "",
+      step.assignedNodeId ? `assignedNode=${step.assignedNodeId}` : "",
+      step.queueStateSummary ? `queue=${step.queueStateSummary}` : "",
       step.planningHintSummary ? `planning=${step.planningHintSummary}` : "",
       step.diagnosis ? `diagnosis=${step.diagnosis}` : "",
     ].filter(Boolean);
@@ -158,6 +175,9 @@ export function formatHeadlessSessionReport(session: AutonomousSession, options?
         executionNodeMode: session.executionNodeMode ?? null,
         nodeCapabilitySummary: session.nodeCapabilitySummary ?? null,
         taskId: session.taskId ?? null,
+        taskStatus: session.taskStatus ?? null,
+        assignedNodeId: session.assignedNodeId ?? null,
+        queueStateSummary: session.queueStateSummary ?? null,
         planningHintSummary: session.planningHintSummary ?? null,
         completion: session.latestCompletion ?? null,
         completedReason: session.completedReason ?? session.stateReason ?? null,
@@ -169,6 +189,9 @@ export function formatHeadlessSessionReport(session: AutonomousSession, options?
           executionNodeMode: step.executionNodeMode ?? null,
           nodeCapabilitySummary: step.nodeCapabilitySummary ?? null,
           taskId: step.taskId ?? null,
+          taskStatus: step.taskStatus ?? null,
+          assignedNodeId: step.assignedNodeId ?? null,
+          queueStateSummary: step.queueStateSummary ?? null,
           goalStatus: step.goalStatus ?? null,
           nextDecision: step.nextDecision ?? null,
           runtimeStatus: step.executionResult?.status ?? null,
@@ -187,6 +210,9 @@ export function formatHeadlessSessionReport(session: AutonomousSession, options?
     `Execution node: ${session.executionNodeId ?? "unknown"} (${session.executionNodeMode ?? "unknown"})`,
     `Node capabilities: ${session.nodeCapabilitySummary ?? "No node capabilities recorded."}`,
     `Latest task: ${session.taskId ?? "No task recorded."}`,
+    `Task status: ${session.taskStatus ?? "No task status recorded."}`,
+    `Assigned node: ${session.assignedNodeId ?? "No node assignment recorded."}`,
+    `Queue summary: ${session.queueStateSummary ?? "No queue summary recorded."}`,
     `Adapter context: ${session.adapterContextSummary ?? "No adapter context recorded."}`,
     `Planning hints: ${session.planningHintSummary ?? "No planning hints recorded."}`,
     `Completion: ${session.latestCompletion ? `${session.latestCompletion.status} (${session.latestCompletion.confidence})` : "No completion state recorded."}`,
@@ -198,6 +224,39 @@ export function formatHeadlessSessionReport(session: AutonomousSession, options?
   }
 
   return lines.join("\n");
+}
+
+export function formatHeadlessTaskReport(task: TaskEnvelope, options?: { json?: boolean }): string {
+  if (options?.json) {
+    return JSON.stringify(task, null, 2);
+  }
+
+  return [
+    `Task ID: ${task.taskId}`,
+    `Session ID: ${task.sessionId}`,
+    `Step: ${task.stepIndex}`,
+    `Status: ${task.status}`,
+    `Assigned node: ${task.assignedNodeId ?? "unassigned"}`,
+    `Capabilities: ${task.requestedCapabilities.join(",") || "none"}`,
+    `Reason: ${task.statusReason ?? "No status reason recorded."}`,
+  ].join("\n");
+}
+
+export async function formatHeadlessTaskList(options?: { json?: boolean }): Promise<string> {
+  const tasks = await listTasks();
+
+  if (options?.json) {
+    return JSON.stringify({ tasks }, null, 2);
+  }
+
+  if (!tasks.length) {
+    return "No persisted autonomous tasks found.";
+  }
+
+  return tasks
+    .slice(0, 20)
+    .map((task) => `${task.taskId} | ${task.status} | ${task.assignedNodeId ?? "unassigned"} | ${task.sessionId}`)
+    .join("\n");
 }
 
 export async function runHeadlessAutonomy(
@@ -230,6 +289,23 @@ export async function runHeadlessAutonomy(
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
+
+  if (options.listTasks) {
+    process.stdout.write(`${await formatHeadlessTaskList({ json: options.json })}\n`);
+    return;
+  }
+
+  if (options.taskId) {
+    const task = await getTask(options.taskId);
+    if (!task) {
+      console.error("Autonomous task not found.");
+      process.exitCode = 1;
+      return;
+    }
+
+    process.stdout.write(`${formatHeadlessTaskReport(task, { json: options.json })}\n`);
+    return;
+  }
 
   if (!options.goal && !options.sessionId) {
     console.error("A goal or existing sessionId is required.");

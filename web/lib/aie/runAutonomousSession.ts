@@ -42,13 +42,25 @@ import { getRetryDecision } from "./retryPolicy";
 import { getRecoveryDecision, type AutonomousRecoveryStrategy } from "./strategySwitch";
 import { detectTestFiles, findRelevantFiles, resolveRepoRoot } from "./repoContext";
 import { saveAutonomousSession } from "./autonomousSessionStore";
-import { assignTaskEnvelope, createTaskEnvelope, updateTaskEnvelopeStatus } from "./taskEnvelope";
+import { assignTaskToNode, enqueueTask, updateTaskStatus } from "./taskQueueStore";
+import {
+  createTaskEnvelope,
+  markTaskAssigned,
+  markTaskBlocked,
+  markTaskCompleted,
+  markTaskFailed,
+  markTaskRunning,
+  summarizeTaskEnvelope,
+} from "./taskEnvelope";
 import type { AnalysisInput, ExecutionActionPreview, ExecutionRuntimeResult, FreeAnalysisResponse } from "./types";
 
 type RunAutonomousSessionDependencies = {
   runAnalysis: typeof runAnalysis;
   executeAction: typeof executeAction;
   saveAutonomousSession: typeof saveAutonomousSession;
+  enqueueTask: typeof enqueueTask;
+  assignTaskToNode: typeof assignTaskToNode;
+  updateTaskStatus: typeof updateTaskStatus;
 };
 
 type RunAutonomousSessionParams = {
@@ -93,6 +105,9 @@ function resolveDependencies(
     runAnalysis: dependencies?.runAnalysis ?? runAnalysis,
     executeAction: dependencies?.executeAction ?? executeAction,
     saveAutonomousSession: dependencies?.saveAutonomousSession ?? saveAutonomousSession,
+    enqueueTask: dependencies?.enqueueTask ?? enqueueTask,
+    assignTaskToNode: dependencies?.assignTaskToNode ?? assignTaskToNode,
+    updateTaskStatus: dependencies?.updateTaskStatus ?? updateTaskStatus,
   };
 }
 
@@ -477,8 +492,8 @@ async function runSingleAutonomousStep(params: {
         cwd: executionContext.cwd,
       }) ?? registeredRuntimeNode
     : null;
-  const taskEnvelope = action
-    ? assignTaskEnvelope(
+  const createdTaskEnvelope = action
+    ? await params.dependencies.enqueueTask(
         createTaskEnvelope({
           sessionId: params.session.sessionId,
           stepIndex: params.session.currentStepIndex,
@@ -486,9 +501,11 @@ async function runSingleAutonomousStep(params: {
           requestedCapabilities: getExecutionNodeCapabilitiesForAction(action),
           preferredNodeId: registeredRuntimeNode.id,
         }),
-        (selectedNode ?? registeredRuntimeNode).id,
-        "running",
       )
+    : null;
+  const assignedTaskEnvelope = createdTaskEnvelope
+    ? await params.dependencies.assignTaskToNode(createdTaskEnvelope.taskId, (selectedNode ?? registeredRuntimeNode).id)
+      ?? markTaskAssigned(createdTaskEnvelope, (selectedNode ?? registeredRuntimeNode).id)
     : null;
   const actionFamily = inferActionFamily(effectiveAnalysis.proposedAction ?? action?.description ?? "");
   const targetPathSummary = summarizeExecutionTarget({ action });
@@ -503,6 +520,15 @@ async function runSingleAutonomousStep(params: {
     session: params.session,
     nextAction: action,
   });
+  const runningTaskEnvelope = assignedTaskEnvelope && !stopBeforeApprovalEscalation && action && canAutonomouslyExecute
+    ? await params.dependencies.updateTaskStatus(assignedTaskEnvelope.taskId, "running", {
+        assignedNodeId: assignedTaskEnvelope.assignedNodeId,
+        statusReason: "Executing bounded task inside the shared runner.",
+      }) ?? markTaskRunning(assignedTaskEnvelope, {
+        assignedNodeId: assignedTaskEnvelope.assignedNodeId,
+        statusReason: "Executing bounded task inside the shared runner.",
+      })
+    : assignedTaskEnvelope;
   const executionResult = stopBeforeApprovalEscalation
     ? {
         status: "success" as const,
@@ -512,14 +538,37 @@ async function runSingleAutonomousStep(params: {
     : action && canAutonomouslyExecute
       ? await params.dependencies.executeAction(action, executionContext)
       : buildUnsupportedAutonomousExecutionResult(action);
-  const finalizedTaskEnvelope = taskEnvelope
-    ? updateTaskEnvelopeStatus(
-        taskEnvelope,
-        executionResult.status === "success"
-          ? "completed"
-          : executionResult.status === "failed"
-            ? "failed"
-            : "blocked",
+  const finalizedTaskStatus = stopBeforeApprovalEscalation
+    ? "blocked"
+    : executionResult.status === "success"
+      ? "completed"
+      : executionResult.status === "failed"
+        ? "failed"
+        : "blocked";
+  const finalizedTaskReason = stopBeforeApprovalEscalation
+    ? "The prior bounded evidence already answered the goal, so a broader follow-up task was stopped."
+    : executionResult.status === "success"
+      ? "The bounded task completed successfully."
+      : executionResult.error ?? executionResult.output ?? "The bounded task did not complete successfully.";
+  const finalizedTaskEnvelope = runningTaskEnvelope
+    ? await params.dependencies.updateTaskStatus(runningTaskEnvelope.taskId, finalizedTaskStatus, {
+        assignedNodeId: runningTaskEnvelope.assignedNodeId,
+        statusReason: finalizedTaskReason,
+      }) ?? (
+        finalizedTaskStatus === "completed"
+          ? markTaskCompleted(runningTaskEnvelope, {
+              assignedNodeId: runningTaskEnvelope.assignedNodeId,
+              statusReason: finalizedTaskReason,
+            })
+          : finalizedTaskStatus === "failed"
+            ? markTaskFailed(runningTaskEnvelope, {
+                assignedNodeId: runningTaskEnvelope.assignedNodeId,
+                statusReason: finalizedTaskReason,
+              })
+            : markTaskBlocked(runningTaskEnvelope, {
+                assignedNodeId: runningTaskEnvelope.assignedNodeId,
+                statusReason: finalizedTaskReason,
+              })
       )
     : null;
   const targetPathAfterExecution = summarizeExecutionTarget({ action, executionResult });
@@ -602,6 +651,9 @@ async function runSingleAutonomousStep(params: {
     executionNodeMode: selectedNode?.mode ?? registeredRuntimeNode.mode,
     nodeCapabilitySummary: summarizeExecutionNodeCapabilities((selectedNode ?? registeredRuntimeNode).capabilities),
     taskId: finalizedTaskEnvelope?.taskId,
+    taskStatus: finalizedTaskEnvelope?.status,
+    assignedNodeId: finalizedTaskEnvelope?.assignedNodeId,
+    queueStateSummary: finalizedTaskEnvelope ? summarizeTaskEnvelope(finalizedTaskEnvelope) : undefined,
     planningHintSummary: planningHints.hintSummary,
     executionResult,
     diagnosis: stopBeforeApprovalEscalation ? executionResult.output : effectiveAnalysis.what_happened,

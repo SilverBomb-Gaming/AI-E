@@ -299,6 +299,9 @@ export default function AutonomousPage() {
                 <p><strong>Execution node:</strong> {session.executionNodeId ? `${session.executionNodeId} (${session.executionNodeMode || "unknown"})` : "No node recorded yet."}</p>
                 <p><strong>Node capabilities:</strong> {session.nodeCapabilitySummary || "No node capabilities recorded yet."}</p>
                 <p><strong>Latest task:</strong> {session.taskId || "No task recorded yet."}</p>
+                <p><strong>Task status:</strong> {session.taskStatus || "No task status recorded yet."}</p>
+                <p><strong>Assigned node:</strong> {session.assignedNodeId || "No node assignment recorded yet."}</p>
+                <p><strong>Queue summary:</strong> {session.queueStateSummary || "No queue summary recorded yet."}</p>
                 <p><strong>Planning hints:</strong> {session.planningHintSummary || "No planning hints recorded yet."}</p>
                 <p><strong>Adapter context:</strong> {session.adapterContextSummary || "No adapter context recorded yet."}</p>
                 {session.latestCompletion ? <p><strong>Completion reason:</strong> {session.latestCompletion.reason}</p> : null}
@@ -346,6 +349,15 @@ export default function AutonomousPage() {
                     ) : null}
                     {step.taskId ? (
                       <p className="mt-2 text-sm text-ink/80"><strong>Task ID:</strong> {step.taskId}</p>
+                    ) : null}
+                    {step.taskStatus ? (
+                      <p className="mt-2 text-sm text-ink/80"><strong>Task status:</strong> {step.taskStatus}</p>
+                    ) : null}
+                    {step.assignedNodeId ? (
+                      <p className="mt-2 text-sm text-ink/80"><strong>Assigned node:</strong> {step.assignedNodeId}</p>
+                    ) : null}
+                    {step.queueStateSummary ? (
+                      <p className="mt-2 text-sm text-ink/80"><strong>Queue summary:</strong> {step.queueStateSummary}</p>
                     ) : null}
                     <p className="mt-2 text-sm text-ink/80"><strong>Diagnosis:</strong> {step.diagnosis || "No diagnosis recorded."}</p>
                     <p className="mt-2 text-sm text-ink/80"><strong>Verification:</strong> {step.verificationState || "Unknown"}</p>

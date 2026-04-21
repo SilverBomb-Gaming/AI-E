@@ -4,6 +4,7 @@ import type { AutonomousActionFamily } from "./autonomousPlanning";
 import type { ExecutionAdapterId } from "./executionAdapters";
 import type { ExecutionNodeMode } from "./executionNode";
 import type { AutonomousRecoveryStrategy } from "./strategySwitch";
+import type { TaskEnvelopeStatus } from "./taskEnvelope";
 import type { ExecutionActionPreview, ExecutionRuntimeResult } from "./types";
 
 export type AutonomousSessionStatus =
@@ -30,6 +31,9 @@ export type AutonomousStepRecord = {
   executionNodeMode?: ExecutionNodeMode;
   nodeCapabilitySummary?: string;
   taskId?: string;
+  taskStatus?: TaskEnvelopeStatus;
+  assignedNodeId?: string;
+  queueStateSummary?: string;
   planningHintSummary?: string;
   executionResult?: ExecutionRuntimeResult;
   diagnosis?: string;
@@ -75,6 +79,9 @@ export type AutonomousSession = {
   executionNodeMode?: ExecutionNodeMode;
   nodeCapabilitySummary?: string;
   taskId?: string;
+  taskStatus?: TaskEnvelopeStatus;
+  assignedNodeId?: string;
+  queueStateSummary?: string;
   planningHintSummary?: string;
   latestExecutionResult?: ExecutionRuntimeResult;
   pendingAction?: ExecutionActionPreview;
@@ -99,6 +106,9 @@ type AppendAutonomousStepParams = {
   executionNodeMode?: ExecutionNodeMode;
   nodeCapabilitySummary?: string;
   taskId?: string;
+  taskStatus?: TaskEnvelopeStatus;
+  assignedNodeId?: string;
+  queueStateSummary?: string;
   planningHintSummary?: string;
   executionResult?: ExecutionRuntimeResult;
   diagnosis?: string;
@@ -237,6 +247,21 @@ function normalizeExecutionNodeMode(value: unknown): ExecutionNodeMode | undefin
   const normalized = normalizeText(typeof value === "string" ? value : "");
   if (normalized === "web" || normalized === "headless" || normalized === "local-node") {
     return normalized;
+  }
+
+  return undefined;
+}
+
+function normalizeTaskStatus(value: unknown): TaskEnvelopeStatus | undefined {
+  if (
+    value === "pending" ||
+    value === "assigned" ||
+    value === "running" ||
+    value === "completed" ||
+    value === "failed" ||
+    value === "blocked"
+  ) {
+    return value;
   }
 
   return undefined;
@@ -402,6 +427,9 @@ function normalizeAutonomousStepRecord(value: unknown): AutonomousStepRecord | n
     executionNodeMode: normalizeExecutionNodeMode(source.executionNodeMode),
     nodeCapabilitySummary: normalizeText(typeof source.nodeCapabilitySummary === "string" ? source.nodeCapabilitySummary : "") || undefined,
     taskId: normalizeText(typeof source.taskId === "string" ? source.taskId : "") || undefined,
+    taskStatus: normalizeTaskStatus(source.taskStatus),
+    assignedNodeId: normalizeText(typeof source.assignedNodeId === "string" ? source.assignedNodeId : "") || undefined,
+    queueStateSummary: normalizeText(typeof source.queueStateSummary === "string" ? source.queueStateSummary : "") || undefined,
     planningHintSummary: normalizeText(typeof source.planningHintSummary === "string" ? source.planningHintSummary : "") || undefined,
     executionResult: normalizeExecutionRuntimeResult(source.executionResult),
     diagnosis: normalizeText(typeof source.diagnosis === "string" ? source.diagnosis : "") || undefined,
@@ -463,6 +491,9 @@ export function appendAutonomousStep(
     executionNodeMode: params.executionNodeMode,
     nodeCapabilitySummary: normalizeText(params.nodeCapabilitySummary) || undefined,
     taskId: normalizeText(params.taskId) || undefined,
+    taskStatus: params.taskStatus,
+    assignedNodeId: normalizeText(params.assignedNodeId) || undefined,
+    queueStateSummary: normalizeText(params.queueStateSummary) || undefined,
     planningHintSummary: normalizeText(params.planningHintSummary) || undefined,
     executionResult,
     diagnosis: normalizeText(params.diagnosis) || undefined,
@@ -491,6 +522,9 @@ export function appendAutonomousStep(
     executionNodeMode: step.executionNodeMode ?? session.executionNodeMode,
     nodeCapabilitySummary: step.nodeCapabilitySummary ?? session.nodeCapabilitySummary,
     taskId: step.taskId ?? session.taskId,
+    taskStatus: step.taskStatus ?? session.taskStatus,
+    assignedNodeId: step.assignedNodeId ?? session.assignedNodeId,
+    queueStateSummary: step.queueStateSummary ?? session.queueStateSummary,
     planningHintSummary: step.planningHintSummary ?? session.planningHintSummary,
     latestExecutionResult: executionResult ?? session.latestExecutionResult,
     pendingAction: session.pendingAction,
@@ -627,6 +661,9 @@ export function normalizeAutonomousSession(value: unknown): AutonomousSession | 
     executionNodeMode: normalizeExecutionNodeMode(source.executionNodeMode),
     nodeCapabilitySummary: normalizeText(typeof source.nodeCapabilitySummary === "string" ? source.nodeCapabilitySummary : "") || undefined,
     taskId: normalizeText(typeof source.taskId === "string" ? source.taskId : "") || undefined,
+    taskStatus: normalizeTaskStatus(source.taskStatus),
+    assignedNodeId: normalizeText(typeof source.assignedNodeId === "string" ? source.assignedNodeId : "") || undefined,
+    queueStateSummary: normalizeText(typeof source.queueStateSummary === "string" ? source.queueStateSummary : "") || undefined,
     planningHintSummary: normalizeText(typeof source.planningHintSummary === "string" ? source.planningHintSummary : "") || undefined,
     latestExecutionResult: normalizeExecutionRuntimeResult(source.latestExecutionResult),
     pendingAction: normalizeExecutionActionPreview(source.pendingAction),
