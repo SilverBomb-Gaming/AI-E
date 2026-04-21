@@ -9,7 +9,12 @@ import {
   summarizeExecutionNodeCapabilities,
   type ExecutionNodeDescriptor,
 } from "./executionNode";
-import { listAvailableExecutionNodes, registerExecutionNode } from "./executionNodeRegistry";
+import {
+  clearExecutionNodeActivity,
+  listAvailableExecutionNodes,
+  registerExecutionNode,
+  updateExecutionNodeActivity,
+} from "./executionNodeRegistry";
 import { createDispatchAuthToken, summarizeDispatchAuthContext } from "./dispatchAuth";
 import { createDispatchEnvelope, type DispatchProtocolVersion } from "./dispatchProtocol";
 import { createTaskDispatchRequest, summarizeDispatchPayload } from "./dispatchMessages";
@@ -223,7 +228,12 @@ function selectExecutionNodeForTask(
 ): ExecutionNodeSelection | null {
   const availableNodes = listAvailableExecutionNodes({
     requestedCapabilities: task.requestedCapabilities,
-  }).filter((node) => !context.excludedNodeIds?.has(node.id));
+    includeBusy: true,
+  }).filter(
+    (node) =>
+      !context.excludedNodeIds?.has(node.id)
+      && (!node.busy || node.activeTaskId === task.taskId),
+  );
 
   if (!availableNodes.length) {
     return null;
@@ -362,6 +372,11 @@ export async function claimNextRunnableTask(
       selectedNode.reason,
     );
     if (claimed) {
+      updateExecutionNodeActivity(selectedNode.node.id, {
+        taskId: claimed.taskId,
+        sessionId: claimed.sessionId,
+        busy: true,
+      });
       return {
         task: claimed,
         node: selectedNode.node,
@@ -402,11 +417,18 @@ export async function executeQueuedTask(
   let retryCount = Math.max(0, claimed.task.dispatchRetryCount ?? 0);
   let latestTask: TaskEnvelope = claimed.task;
   let latestSession: AutonomousSession | null = null;
+  const clearNodeActivity = async (nodeId: string, task: TaskEnvelope): Promise<void> => {
+    clearExecutionNodeActivity(nodeId, {
+      taskId: task.taskId,
+      sessionId: task.sessionId,
+    });
+  };
 
   for (let attemptIndex = 0; attemptIndex <= maxDispatchRetries; attemptIndex += 1) {
     const currentTask = await resolved.getTask(claimed.task.taskId) ?? latestTask;
 
     if (isTerminalTaskStatus(currentTask.status)) {
+      await clearNodeActivity(claimed.node.id, currentTask);
       return summarizeTerminalTask(currentTask, latestSession);
     }
 
@@ -418,6 +440,7 @@ export async function executeQueuedTask(
     });
 
     if (!selectedNode) {
+      await clearNodeActivity(claimed.node.id, currentTask);
       const rejectedTask = await resolved.updateTaskStatus(currentTask.taskId, "rejected", {
         assignedNodeId: currentTask.assignedNodeId,
         selectedNodeId: currentTask.selectedNodeId,
@@ -465,6 +488,11 @@ export async function executeQueuedTask(
     });
     const requestSummary = summarizeDispatchPayload(request.messageType, request.payload, request.protocolVersion);
     retryCount = attemptIndex + 1;
+    updateExecutionNodeActivity(selectedNode.node.id, {
+      taskId: currentTask.taskId,
+      sessionId: currentTask.sessionId,
+      busy: true,
+    });
     latestTask = await resolved.updateTaskStatus(currentTask.taskId, "awaiting-ack", {
       assignedNodeId: selectedNode.node.id,
       selectedNodeId: selectedNode.node.id,
@@ -502,10 +530,11 @@ export async function executeQueuedTask(
             executeClaimedTaskWithSharedRunner(receivedClaimed, receiveContext, resolved),
         },
       });
-      latestTask = transportResult.task ?? await resolved.getTask(currentTask.taskId) ?? latestTask;
+      latestTask = await resolved.getTask(currentTask.taskId) ?? transportResult.task ?? latestTask;
       latestSession = transportResult.session ?? latestSession;
 
       if (isTerminalTaskStatus(latestTask.status)) {
+        await clearNodeActivity(selectedNode.node.id, latestTask);
         return summarizeTerminalTask(latestTask, latestSession);
       }
 
@@ -513,8 +542,10 @@ export async function executeQueuedTask(
         const reason = transportResult.reason || latestTask.failureReason || "The controlled receiver rejected the dispatch request.";
         const retryable = shouldRetryDispatchFailure(reason, "rejected") && attemptIndex < maxDispatchRetries;
         if (retryable) {
+          await clearNodeActivity(selectedNode.node.id, currentTask);
           const persistedLatestTask = await resolved.getTask(currentTask.taskId);
           if (persistedLatestTask && isTerminalTaskStatus(persistedLatestTask.status)) {
+            await clearNodeActivity(selectedNode.node.id, persistedLatestTask);
             return summarizeTerminalTask(persistedLatestTask, latestSession);
           }
           excludedNodeIds.add(selectedNode.node.id);
@@ -542,6 +573,7 @@ export async function executeQueuedTask(
 
         const persistedLatestTask = await resolved.getTask(currentTask.taskId);
         if (persistedLatestTask && isTerminalTaskStatus(persistedLatestTask.status)) {
+          await clearNodeActivity(selectedNode.node.id, persistedLatestTask);
           return summarizeTerminalTask(persistedLatestTask, latestSession);
         }
         latestTask = await resolved.updateTaskStatus(currentTask.taskId, "rejected", {
@@ -562,6 +594,7 @@ export async function executeQueuedTask(
           dispatchTimeoutMs,
           remoteDispatchPlanned: true,
         }) ?? latestTask;
+        await clearNodeActivity(selectedNode.node.id, latestTask);
         return summarizeQueueExecution(latestTask, latestSession, "rejected");
       }
 
@@ -569,8 +602,10 @@ export async function executeQueuedTask(
         const reason = transportResult.reason || latestTask.failureReason || "The controlled dispatch transport failed.";
         const retryable = shouldRetryDispatchFailure(reason, "failed") && attemptIndex < maxDispatchRetries;
         if (retryable) {
+          await clearNodeActivity(selectedNode.node.id, currentTask);
           const persistedLatestTask = await resolved.getTask(currentTask.taskId);
           if (persistedLatestTask && isTerminalTaskStatus(persistedLatestTask.status)) {
+            await clearNodeActivity(selectedNode.node.id, persistedLatestTask);
             return summarizeTerminalTask(persistedLatestTask, latestSession);
           }
           latestTask = await resolved.updateTaskStatus(currentTask.taskId, "retrying", {
@@ -598,6 +633,7 @@ export async function executeQueuedTask(
 
         const persistedLatestTask = await resolved.getTask(currentTask.taskId);
         if (persistedLatestTask && isTerminalTaskStatus(persistedLatestTask.status)) {
+          await clearNodeActivity(selectedNode.node.id, persistedLatestTask);
           return summarizeTerminalTask(persistedLatestTask, latestSession);
         }
         latestTask = await resolved.updateTaskStatus(currentTask.taskId, "failed", {
@@ -619,17 +655,21 @@ export async function executeQueuedTask(
           dispatchTimeoutMs,
           remoteDispatchPlanned: true,
         }) ?? latestTask;
+        await clearNodeActivity(selectedNode.node.id, latestTask);
         return summarizeQueueExecution(latestTask, latestSession, "failed");
       }
 
+      await clearNodeActivity(selectedNode.node.id, latestTask);
       return summarizeQueueExecution(latestTask, latestSession, latestTask.status === "completed" ? "completed" : latestTask.status === "failed" ? "failed" : latestTask.status === "rejected" ? "rejected" : "claimed");
     } catch (error) {
       const reason = error instanceof Error ? error.message : "Controlled queued dispatch failed unexpectedly.";
       const timedOut = error instanceof DispatchTransportTimeoutError;
       const retryable = shouldRetryDispatchFailure(reason, timedOut ? "timeout" : "failed") && attemptIndex < maxDispatchRetries;
       if (retryable) {
+        await clearNodeActivity(selectedNode.node.id, currentTask);
         const persistedLatestTask = await resolved.getTask(currentTask.taskId);
         if (persistedLatestTask && isTerminalTaskStatus(persistedLatestTask.status)) {
+          await clearNodeActivity(selectedNode.node.id, persistedLatestTask);
           return summarizeTerminalTask(persistedLatestTask, latestSession);
         }
         latestTask = await resolved.updateTaskStatus(currentTask.taskId, "retrying", {
@@ -655,6 +695,7 @@ export async function executeQueuedTask(
 
       const persistedLatestTask = await resolved.getTask(currentTask.taskId);
       if (persistedLatestTask && isTerminalTaskStatus(persistedLatestTask.status)) {
+        await clearNodeActivity(selectedNode.node.id, persistedLatestTask);
         return summarizeTerminalTask(persistedLatestTask, latestSession);
       }
       latestTask = await resolved.updateTaskStatus(currentTask.taskId, "failed", {
@@ -674,10 +715,12 @@ export async function executeQueuedTask(
         dispatchTimeoutMs,
         remoteDispatchPlanned: true,
       }) ?? latestTask;
+      await clearNodeActivity(selectedNode.node.id, latestTask);
       return summarizeQueueExecution(latestTask, latestSession, "failed");
     }
   }
 
+  await clearNodeActivity(claimed.node.id, latestTask);
   return summarizeQueueExecution(latestTask, latestSession, latestTask.status === "rejected" ? "rejected" : latestTask.status === "failed" ? "failed" : latestTask.status === "completed" ? "completed" : "claimed");
 }
 
@@ -693,6 +736,11 @@ export async function executeClaimedTaskWithSharedRunner(
   await resolved.saveAutonomousSession(seededSession);
 
   try {
+    updateExecutionNodeActivity(claimed.node.id, {
+      taskId: claimed.task.taskId,
+      sessionId: claimed.task.sessionId,
+      busy: true,
+    });
     const repoRoot = await resolveRepoRoot(cwd);
     const session = await resolved.runAutonomousSession({
       goal: seededSession.goal,
@@ -780,6 +828,11 @@ export async function executeClaimedTaskWithSharedRunner(
       status: "failed",
       queueStateSummary: finalizedTask ? summarizeTaskEnvelope(finalizedTask) : undefined,
     };
+  } finally {
+    clearExecutionNodeActivity(claimed.node.id, {
+      taskId: claimed.task.taskId,
+      sessionId: claimed.task.sessionId,
+    });
   }
 }
 

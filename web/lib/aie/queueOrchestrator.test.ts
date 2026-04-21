@@ -5,7 +5,7 @@ import test from "node:test";
 
 import { createExecutionNodeDescriptor } from "./executionNode";
 import { resetExecutionNodeRegistry } from "./executionNodeRegistry";
-import { registerExecutionNode } from "./executionNodeRegistry";
+import { listAvailableExecutionNodes, registerExecutionNode } from "./executionNodeRegistry";
 import {
   claimNextRunnableTask,
   executeQueuedTask,
@@ -322,5 +322,135 @@ test("queueOrchestrator reselects another active node when the initial target be
     resetExecutionNodeRegistry();
     await rm(sessionDirectory, { recursive: true, force: true });
     await rm(taskDirectory, { recursive: true, force: true });
+  }
+});
+
+test("queueOrchestrator excludes stale nodes from future dispatch without duplicating execution", async () => {
+  const sessionDirectory = path.resolve(process.cwd(), "temp-queue-orchestrator-session-store-5");
+  const taskDirectory = path.resolve(process.cwd(), "temp-queue-orchestrator-task-store-5");
+  const registryDirectory = path.resolve(process.cwd(), "temp-queue-orchestrator-node-store-5");
+  resetExecutionNodeRegistry();
+  process.env.AIE_AUTONOMOUS_SESSION_DIR = sessionDirectory;
+  process.env.AIE_TASK_QUEUE_DIR = taskDirectory;
+  process.env.AIE_EXECUTION_NODE_REGISTRY_DIR = registryDirectory;
+  await mkdir(sessionDirectory, { recursive: true });
+  await mkdir(taskDirectory, { recursive: true });
+  await mkdir(registryDirectory, { recursive: true });
+
+  try {
+    const staleCandidate = registerExecutionNode(createExecutionNodeDescriptor({
+      id: "aie-node-headless-stale-candidate",
+      mode: "headless",
+      label: "AI-E Headless Stale Candidate",
+      capabilities: ["validation-check", "repo-scan"],
+      active: true,
+      lastHeartbeatAt: new Date().toISOString(),
+      cwd: process.cwd(),
+      allowedRoots: [process.cwd()],
+    }));
+    const healthyCandidate = registerExecutionNode(createExecutionNodeDescriptor({
+      id: "aie-node-headless-healthy-candidate",
+      mode: "headless",
+      label: "AI-E Headless Healthy Candidate",
+      capabilities: ["validation-check", "repo-scan"],
+      active: true,
+      lastHeartbeatAt: new Date().toISOString(),
+      cwd: process.cwd(),
+      allowedRoots: [process.cwd()],
+    }));
+
+    assert.deepEqual(
+      listAvailableExecutionNodes({ requestedCapabilities: ["validation-check", "repo-scan"] }).map((node) => node.id),
+      [healthyCandidate.id, staleCandidate.id],
+    );
+
+    registerExecutionNode(createExecutionNodeDescriptor({
+      ...staleCandidate,
+      active: true,
+      status: "active",
+      lastHeartbeatAt: "2026-04-20T00:00:00.000Z",
+    }));
+
+    assert.deepEqual(
+      listAvailableExecutionNodes({ requestedCapabilities: ["validation-check", "repo-scan"] }).map((node) => node.id),
+      [healthyCandidate.id],
+    );
+
+    await enqueueTask(createTaskEnvelope({
+      taskId: "task-run-stale-exclusion",
+      sessionId: "queue-session-stale-exclusion",
+      stepIndex: 1,
+      action: makeSafeAction("run-stale-exclusion"),
+      preferredNodeId: healthyCandidate.id,
+    }));
+
+    const dispatchedNodeIds: string[] = [];
+    const summary = await runSingleQueuedTask(
+      {
+        runtimeMode: "headless",
+        cwd: process.cwd(),
+        maxSteps: 1,
+        dispatchTransport: {
+          async sendDispatchRequest({ request, dependencies }) {
+            dispatchedNodeIds.push(request.targetNodeId);
+
+            const task = await dependencies.updateTaskStatus(request.taskId, "completed", {
+              assignedNodeId: request.targetNodeId,
+              selectedNodeId: request.targetNodeId,
+              selectedNodeReason: "Selected first deterministic capable node after stale-node exclusion.",
+              dispatchMessageId: request.messageId,
+              dispatchAckMessageId: `${request.messageId}-ack`,
+              dispatchResultMessageId: `${request.messageId}-result`,
+              dispatchTargetNodeId: request.targetNodeId,
+              dispatchProtocolVersion: request.protocolVersion,
+              dispatchStatusSummary: "dispatch=1 | type=result | status=completed",
+              dispatchAuthSummary: "auth=aie-node-local-default->aie-node-headless-healthy-candidate | scope=local-lab | valid=true",
+              dispatchTransportStatus: "completed",
+              dispatchLastAttemptAt: request.createdAt,
+              dispatchReceivedAt: request.createdAt,
+              dispatchCompletedAt: request.createdAt,
+              remoteDispatchPlanned: true,
+              statusReason: "Healthy node completed the queued validation after stale-node exclusion.",
+            });
+
+            return {
+              status: "delivered",
+              request,
+              rawRequest: JSON.stringify(request),
+              rawAck: "ack",
+              rawResult: "result",
+              task,
+              session: null,
+            };
+          },
+          async receiveDispatchRequest() {
+            throw new Error("Not implemented in this test transport.");
+          },
+          async sendDispatchAck() {
+            return "ack";
+          },
+          async sendDispatchResult() {
+            return "result";
+          },
+          async sendDispatchError() {
+            return "error";
+          },
+        },
+      },
+    );
+
+    assert.equal(summary.status, "completed");
+    assert.equal(summary.task?.status, "completed");
+    assert.equal(summary.selectedNodeId, healthyCandidate.id);
+    assert.deepEqual(dispatchedNodeIds, [healthyCandidate.id]);
+    assert.equal(summary.dispatchRetryCount, 1);
+  } finally {
+    delete process.env.AIE_AUTONOMOUS_SESSION_DIR;
+    delete process.env.AIE_TASK_QUEUE_DIR;
+    delete process.env.AIE_EXECUTION_NODE_REGISTRY_DIR;
+    resetExecutionNodeRegistry();
+    await rm(sessionDirectory, { recursive: true, force: true });
+    await rm(taskDirectory, { recursive: true, force: true });
+    await rm(registryDirectory, { recursive: true, force: true });
   }
 });

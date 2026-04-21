@@ -219,6 +219,29 @@ The autonomous loop now records and surfaces deeper sequencing metadata:
 
 This keeps broader bounded work inspectable without creating a second planner or a separate headless autonomy stack.
 
+## Phase 4M-A complete: persistent heartbeats and stale-node gating
+
+AI-E now persists execution node records and heartbeat-derived liveness in `lib/aie/executionNodeRegistry.ts` and `lib/aie/executionNodeStore.ts`.
+
+- node records survive process restarts through the file-backed registry store
+- dispatch eligibility still flows through the existing deterministic node-selection path
+- stale nodes are gated from new dispatches without introducing any secondary scheduler or parallel execution lane
+- explicit operator-disabled nodes stay inactive across later heartbeat updates
+- busy-node eligibility remains task-aware so the same in-flight task can continue without reopening the node to unrelated work
+- real queue-path regression coverage now verifies stale-node exclusion, deterministic healthy-node reselection, and no duplicate execution on the bounded dispatch path
+- queue transport summaries now prefer the final persisted task state over stale transport-returned task objects
+- queue execution records active task and session ownership on the node record while work is in flight
+- the node API and both CLI entrypoints now surface status, heartbeat, busy-task ownership, and eligibility summaries
+
+4M-A is complete for persistent heartbeat/liveness, stale-node dispatch gating, task-aware eligibility handling, and API/CLI node visibility improvements.
+
+Deferred to 4M-B:
+
+- resumable long-running execution and cross-node session continuation
+- lease-based distributed failover or multi-node arbitration beyond the current deterministic selector
+- fully enforced execution trust boundaries beyond the current local-lab trust metadata and validation hooks
+- any separate heartbeat daemon or secondary scheduler layer
+
 ### Phase 4L — Multi-Node Execution
 
 AI-E now supports bounded multi-node execution routing on top of the same shared runner and controlled dispatch boundary.
