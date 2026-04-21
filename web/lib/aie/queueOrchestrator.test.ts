@@ -4,6 +4,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { createExecutionNodeDescriptor } from "./executionNode";
+import { DispatchTransportTimeoutError } from "./dispatchTransport";
 import { resetExecutionNodeRegistry } from "./executionNodeRegistry";
 import { listAvailableExecutionNodes, registerExecutionNode } from "./executionNodeRegistry";
 import {
@@ -194,6 +195,8 @@ test("queueOrchestrator executes one queued task and persists completion", async
     assert.equal(summary.session?.dispatchProtocolVersion, "1");
     assert.equal(summary.selectedNodeId, summary.task?.selectedNodeId);
     assert.equal(summary.dispatchRetryCount, 1);
+    assert.equal(summary.task?.lease?.ownerNodeId, summary.selectedNodeId);
+    assert.equal(summary.task?.lease?.status, "completed");
     assert.equal(typeof summary.task?.dispatchAckMessageId, "string");
     assert.equal(typeof summary.task?.dispatchResultMessageId, "string");
     assert.match(summary.task?.dispatchAuthSummary ?? "", /scope=local-lab/i);
@@ -452,5 +455,80 @@ test("queueOrchestrator excludes stale nodes from future dispatch without duplic
     await rm(sessionDirectory, { recursive: true, force: true });
     await rm(taskDirectory, { recursive: true, force: true });
     await rm(registryDirectory, { recursive: true, force: true });
+  }
+});
+
+test("queueOrchestrator invalidates an active resumable lease and leaves deterministic recovery pending after timeout", async () => {
+  const sessionDirectory = path.resolve(process.cwd(), "temp-queue-orchestrator-session-store-6");
+  const taskDirectory = path.resolve(process.cwd(), "temp-queue-orchestrator-task-store-6");
+  resetExecutionNodeRegistry();
+  process.env.AIE_AUTONOMOUS_SESSION_DIR = sessionDirectory;
+  process.env.AIE_TASK_QUEUE_DIR = taskDirectory;
+  await mkdir(sessionDirectory, { recursive: true });
+  await mkdir(taskDirectory, { recursive: true });
+
+  try {
+    await enqueueTask({
+      ...createTaskEnvelope({
+        taskId: "task-run-timeout-recovery",
+        sessionId: "queue-session-timeout-recovery",
+        stepIndex: 1,
+        action: makeSafeAction("run-timeout-recovery"),
+      }),
+      resumability: "resumable",
+      continuationToken: "continue-timeout-recovery",
+      checkpointReference: "checkpoint://timeout-recovery",
+      lastProgressMarker: "before-dispatch",
+    });
+
+    const claimed = await claimNextRunnableTask({ runtimeMode: "web", cwd: process.cwd() });
+    assert.ok(claimed);
+
+    const summary = await executeQueuedTask(claimed, {
+      runtimeMode: "web",
+      cwd: process.cwd(),
+      maxSteps: 1,
+      maxDispatchRetries: 1,
+      dispatchTimeoutMs: 10,
+      dispatchTransport: {
+        async sendDispatchRequest() {
+          throw new DispatchTransportTimeoutError(10);
+        },
+        async receiveDispatchRequest() {
+          throw new Error("Not implemented in this test transport.");
+        },
+        async sendDispatchAck() {
+          return "ack";
+        },
+        async sendDispatchResult() {
+          return "result";
+        },
+        async sendDispatchError() {
+          return "error";
+        },
+      },
+    });
+
+    const persisted = await getTask("task-run-timeout-recovery");
+
+    assert.equal(summary.status, "retrying");
+    assert.equal(summary.task?.status, "retrying");
+    assert.equal(summary.task?.resumability, "resumable");
+    assert.equal(summary.task?.resumeAttemptCount, 1);
+    assert.equal(summary.task?.recoveryPending, true);
+    assert.equal(summary.task?.lease?.status, "superseded");
+    assert.equal(summary.task?.priorLeaseId, summary.task?.lease?.leaseId);
+    assert.equal(summary.task?.continuationToken, "continue-timeout-recovery");
+    assert.equal(persisted?.status, "retrying");
+    assert.equal(persisted?.recoveryPending, true);
+    assert.equal(persisted?.dispatchRetryCount, 1);
+    assert.equal(persisted?.lease?.status, "superseded");
+    assert.match(persisted?.statusReason ?? "", /recovery is pending/i);
+  } finally {
+    delete process.env.AIE_AUTONOMOUS_SESSION_DIR;
+    delete process.env.AIE_TASK_QUEUE_DIR;
+    resetExecutionNodeRegistry();
+    await rm(sessionDirectory, { recursive: true, force: true });
+    await rm(taskDirectory, { recursive: true, force: true });
   }
 });

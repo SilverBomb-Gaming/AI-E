@@ -219,28 +219,26 @@ The autonomous loop now records and surfaces deeper sequencing metadata:
 
 This keeps broader bounded work inspectable without creating a second planner or a separate headless autonomy stack.
 
-## Phase 4M-A complete: persistent heartbeats and stale-node gating
+## Phase 4M-B complete: execution leases and resumable task state
 
-AI-E now persists execution node records and heartbeat-derived liveness in `lib/aie/executionNodeRegistry.ts` and `lib/aie/executionNodeStore.ts`.
+AI-E now layers authoritative execution leases and persisted resumable task metadata on top of the 4M-A heartbeat/liveness foundation in `lib/aie/taskEnvelope.ts`, `lib/aie/queueOrchestrator.ts`, and the controlled dispatch boundary.
 
-- node records survive process restarts through the file-backed registry store
-- dispatch eligibility still flows through the existing deterministic node-selection path
-- stale nodes are gated from new dispatches without introducing any secondary scheduler or parallel execution lane
-- explicit operator-disabled nodes stay inactive across later heartbeat updates
-- busy-node eligibility remains task-aware so the same in-flight task can continue without reopening the node to unrelated work
-- real queue-path regression coverage now verifies stale-node exclusion, deterministic healthy-node reselection, and no duplicate execution on the bounded dispatch path
-- queue transport summaries now prefer the final persisted task state over stale transport-returned task objects
-- queue execution records active task and session ownership on the node record while work is in flight
-- the node API and both CLI entrypoints now surface status, heartbeat, busy-task ownership, and eligibility summaries
+- each running task can persist a single authoritative lease with lease id, owning node id, lease epoch, start time, last-progress time, lease status, and optional continuation/checkpoint metadata
+- task records now persist resumability classification, continuation token, checkpoint reference, resume-attempt count, last progress marker, recovery-pending state, and prior-lease linkage
+- lease creation, progress, supersession, cancellation, and completion stay inside the existing queue/lifecycle transitions instead of creating a second recovery path
+- controlled dispatch requests now carry lease ownership metadata, and the receiver rejects mismatched lease id, epoch, owner, or continuation/checkpoint state before execution starts
+- stale/offline or retry-driven recovery supersedes or invalidates the prior lease, keeps the task inside deterministic `retrying` queue state, and does not start a parallel worker
+- bounded queue execution still prefers the existing deterministic selector and no duplicate execution path is introduced
+- the autonomous task API plus both CLI entrypoints now surface lease owner, lease status, lease progress time, resumability, continuation/checkpoint presence, and recovery-pending state
 
-4M-A is complete for persistent heartbeat/liveness, stale-node dispatch gating, task-aware eligibility handling, and API/CLI node visibility improvements.
+4M-B is complete for authoritative persisted lease ownership, resumable task-state foundations, queue-mediated lease invalidation/recovery, and API/CLI observability of lease/resume state.
 
-Deferred to 4M-B:
+Deferred to the next continuation-focused slice:
 
-- resumable long-running execution and cross-node session continuation
-- lease-based distributed failover or multi-node arbitration beyond the current deterministic selector
+- true cross-node session continuation and continuation-token handoff semantics
+- final distributed handoff arbitration, multi-lease negotiation, or lease-election behavior beyond the current single-owner model
 - fully enforced execution trust boundaries beyond the current local-lab trust metadata and validation hooks
-- any separate heartbeat daemon or secondary scheduler layer
+- any separate heartbeat daemon, lease coordinator, or secondary scheduler layer
 
 ### Phase 4L — Multi-Node Execution
 

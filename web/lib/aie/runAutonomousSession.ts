@@ -44,6 +44,7 @@ import { detectTestFiles, findRelevantFiles, resolveRepoRoot } from "./repoConte
 import { saveAutonomousSession } from "./autonomousSessionStore";
 import { assignTaskToNode, enqueueTask, updateTaskStatus } from "./taskQueueStore";
 import {
+  createTaskExecutionLease,
   createTaskEnvelope,
   markTaskAssigned,
   markTaskBlocked,
@@ -530,13 +531,38 @@ async function runSingleAutonomousStep(params: {
     session: params.session,
     nextAction: action,
   });
+  const runningLease = assignedTaskEnvelope && action && canAutonomouslyExecute
+    ? assignedTaskEnvelope.lease?.status === "active"
+      ? assignedTaskEnvelope.lease
+      : createTaskExecutionLease({
+          ownerNodeId: assignedTaskEnvelope.assignedNodeId ?? (selectedNode ?? registeredRuntimeNode).id,
+          previousLease: assignedTaskEnvelope.lease,
+          continuationToken: assignedTaskEnvelope.continuationToken,
+          checkpointReference: assignedTaskEnvelope.checkpointReference,
+          progressMarker: "shared-runner-start",
+        })
+    : assignedTaskEnvelope?.lease;
   const runningTaskEnvelope = assignedTaskEnvelope && !stopBeforeApprovalEscalation && action && canAutonomouslyExecute
     ? await params.dependencies.updateTaskStatus(assignedTaskEnvelope.taskId, "running", {
         assignedNodeId: assignedTaskEnvelope.assignedNodeId,
         statusReason: "Executing bounded task inside the shared runner.",
+        priorLeaseId: assignedTaskEnvelope.lease?.leaseId ?? assignedTaskEnvelope.priorLeaseId,
+        lease: runningLease,
+        resumability: assignedTaskEnvelope.resumability,
+        continuationToken: assignedTaskEnvelope.continuationToken,
+        checkpointReference: assignedTaskEnvelope.checkpointReference,
+        lastProgressMarker: "shared-runner-start",
+        recoveryPending: false,
       }) ?? markTaskRunning(assignedTaskEnvelope, {
         assignedNodeId: assignedTaskEnvelope.assignedNodeId,
         statusReason: "Executing bounded task inside the shared runner.",
+        priorLeaseId: assignedTaskEnvelope.lease?.leaseId ?? assignedTaskEnvelope.priorLeaseId,
+        lease: runningLease,
+        resumability: assignedTaskEnvelope.resumability,
+        continuationToken: assignedTaskEnvelope.continuationToken,
+        checkpointReference: assignedTaskEnvelope.checkpointReference,
+        lastProgressMarker: "shared-runner-start",
+        recoveryPending: false,
       })
     : assignedTaskEnvelope;
   const executionResult = stopBeforeApprovalEscalation

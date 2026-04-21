@@ -1,7 +1,11 @@
 import { loadAutonomousSession, listAutonomousSessions } from "./lib/aie/autonomousSessionStore";
 import { runSingleQueuedTask, type QueueExecutionSummary } from "./lib/aie/queueOrchestrator";
 import { createRuntimeExecutionNodeDescriptor } from "./lib/aie/executionNode";
-import { registerExecutionNode } from "./lib/aie/executionNodeRegistry";
+import {
+  getExecutionNodeEligibility,
+  listExecutionNodes,
+  registerExecutionNode,
+} from "./lib/aie/executionNodeRegistry";
 import { resolveRepoRoot } from "./lib/aie/repoContext";
 import { runAutonomousSession } from "./lib/aie/runAutonomousSession";
 import type { AutonomousSession } from "./lib/aie/autonomousSession";
@@ -22,6 +26,7 @@ type LocalNodeOptions = {
   json?: boolean;
   listSessions?: boolean;
   listTasks?: boolean;
+  listNodes?: boolean;
   runNextTask?: boolean;
   runTask?: boolean;
   taskId?: string;
@@ -98,6 +103,9 @@ export function parseLocalNodeArgs(argv: string[]): LocalNodeOptions {
         break;
       case "--listTasks":
         options.listTasks = true;
+        break;
+      case "--listNodes":
+        options.listNodes = true;
         break;
       case "--runNextTask":
         options.runNextTask = true;
@@ -266,6 +274,17 @@ export function formatLocalNodeTaskOutput(task: TaskEnvelope, options?: { json?:
     `Selected node: ${task.selectedNodeId ?? task.assignedNodeId ?? "unassigned"}`,
     `Selection reason: ${task.selectedNodeReason ?? "none"}`,
     `Assigned node: ${task.assignedNodeId ?? "unassigned"}`,
+    `Resumability: ${task.resumability}`,
+    `Resume attempts: ${task.resumeAttemptCount}`,
+    `Recovery pending: ${String(task.recoveryPending)}`,
+    `Lease: ${task.lease?.leaseId ?? "none"}`,
+    `Lease owner: ${task.lease?.ownerNodeId ?? "none"}`,
+    `Lease epoch: ${typeof task.lease?.epoch === "number" ? task.lease.epoch : "none"}`,
+    `Lease status: ${task.lease?.status ?? "none"}`,
+    `Lease last progress: ${task.lease?.lastProgressAt ?? "none"}`,
+    `Progress marker: ${task.lastProgressMarker ?? "none"}`,
+    `Continuation token: ${task.continuationToken ? "present" : "none"}`,
+    `Checkpoint reference: ${task.checkpointReference ?? "none"}`,
     `Runner mode: ${task.runnerMode ?? "unknown"}`,
     `Claim token: ${task.claimToken ?? "none"}`,
     `Dispatch message: ${task.dispatchMessageId ?? "none"}`,
@@ -310,6 +329,17 @@ export function formatLocalNodeQueueRunOutput(summary: QueueExecutionSummary, op
     `Selected node: ${summary.selectedNodeId ?? summary.task?.selectedNodeId ?? summary.task?.assignedNodeId ?? "unknown"}`,
     `Selection reason: ${summary.selectedNodeReason ?? summary.task?.selectedNodeReason ?? "unknown"}`,
     `Assigned node: ${summary.nodeId ?? summary.task?.assignedNodeId ?? "unknown"}`,
+    `Resumability: ${summary.task?.resumability ?? "unknown"}`,
+    `Resume attempts: ${summary.task?.resumeAttemptCount ?? "unknown"}`,
+    `Recovery pending: ${typeof summary.task?.recoveryPending === "boolean" ? String(summary.task.recoveryPending) : "unknown"}`,
+    `Lease: ${summary.task?.lease?.leaseId ?? "unknown"}`,
+    `Lease owner: ${summary.task?.lease?.ownerNodeId ?? "unknown"}`,
+    `Lease epoch: ${typeof summary.task?.lease?.epoch === "number" ? summary.task.lease.epoch : "unknown"}`,
+    `Lease status: ${summary.task?.lease?.status ?? "unknown"}`,
+    `Lease last progress: ${summary.task?.lease?.lastProgressAt ?? "unknown"}`,
+    `Progress marker: ${summary.task?.lastProgressMarker ?? "unknown"}`,
+    `Continuation token: ${summary.task?.continuationToken ? "present" : "none"}`,
+    `Checkpoint reference: ${summary.task?.checkpointReference ?? "none"}`,
     `Runner mode: ${summary.runnerMode ?? summary.task?.runnerMode ?? "unknown"}`,
     `Claim token: ${summary.claimToken ?? summary.task?.claimToken ?? "unknown"}`,
     `Dispatch message: ${summary.dispatchMessageId ?? summary.task?.dispatchMessageId ?? "unknown"}`,
@@ -342,7 +372,31 @@ export async function formatLocalNodeTaskList(options?: { json?: boolean }): Pro
 
   return tasks
     .slice(0, 20)
-    .map((task) => `${task.taskId} | ${task.status} | ${task.selectedNodeId ?? task.assignedNodeId ?? "unassigned"} | transport=${task.dispatchTransportStatus ?? "none"} | retries=${task.dispatchRetryCount ?? 0} | failure=${task.failureReason ?? "none"} | ${task.sessionId}`)
+    .map((task) => `${task.taskId} | ${task.status} | ${task.selectedNodeId ?? task.assignedNodeId ?? "unassigned"} | lease=${task.lease?.ownerNodeId ?? "none"}:${task.lease?.status ?? "none"} | resumability=${task.resumability} | recovery=${task.recoveryPending} | transport=${task.dispatchTransportStatus ?? "none"} | retries=${task.dispatchRetryCount ?? 0} | failure=${task.failureReason ?? "none"} | ${task.sessionId}`)
+    .join("\n");
+}
+
+export function formatLocalNodeList(options?: { json?: boolean }): string {
+  const nodes = listExecutionNodes();
+
+  if (options?.json) {
+    return JSON.stringify({
+      nodes: nodes.map((node) => ({
+        ...node,
+        eligibility: getExecutionNodeEligibility(node),
+      })),
+    }, null, 2);
+  }
+
+  if (!nodes.length) {
+    return "No registered execution nodes found.";
+  }
+
+  return nodes
+    .map((node) => {
+      const eligibility = getExecutionNodeEligibility(node);
+      return `${node.id} | ${node.mode} | status=${node.status} | busy=${node.busy} | task=${node.activeTaskId ?? "none"} | heartbeat=${node.lastHeartbeatAt ?? "none"} | eligible=${eligibility.eligible} | ${eligibility.reason}`;
+    })
     .join("\n");
 }
 
@@ -398,6 +452,11 @@ async function main() {
 
   if (options.listTasks) {
     process.stdout.write(`${await formatLocalNodeTaskList({ json: options.json })}\n`);
+    return;
+  }
+
+  if (options.listNodes) {
+    process.stdout.write(`${formatLocalNodeList({ json: options.json })}\n`);
     return;
   }
 

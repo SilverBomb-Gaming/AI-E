@@ -32,6 +32,12 @@ test("dispatchMessages normalize request payloads and summarize them", () => {
     },
     requestedCapabilities: ["validation-check", "repo-scan"],
     assignedNodeId: "aie-node-local-default",
+    lease: {
+      leaseId: "aie-lease-dispatch-1",
+      ownerNodeId: "aie-node-local-default",
+      epoch: 1,
+      resumability: "restart-required",
+    },
     authToken,
     approvalState: {
       requiresApproval: true,
@@ -44,6 +50,7 @@ test("dispatchMessages normalize request payloads and summarize them", () => {
 
   assert.equal(validateDispatchPayloadShape("task-dispatch-request", request), true);
   assert.match(summarizeDispatchPayload("task-dispatch-request", request), /type=request/i);
+  assert.match(summarizeDispatchPayload("task-dispatch-request", request), /lease=aie-lease-dispatch-1/i);
   assert.equal(request.authToken.sourceNodeId, "aie-node-local-default");
   assert.equal(request.remoteDispatchPlanned, true);
 });

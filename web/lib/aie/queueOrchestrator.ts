@@ -36,8 +36,11 @@ import {
   updateTaskStatus,
 } from "./taskQueueStore";
 import {
+  createTaskExecutionLease,
+  invalidateTaskExecutionLease,
   summarizeTaskEnvelope,
   type TaskDispatchTransportStatus,
+  type TaskExecutionLease,
   type TaskEnvelope,
 } from "./taskEnvelope";
 
@@ -112,6 +115,37 @@ function createClaimToken(): string {
   return `aie-claim-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+function isLeaseRecoveryExpiryReason(reason: string | undefined): boolean {
+  const normalizedReason = normalizeText(reason).toLowerCase();
+  return normalizedReason.includes("stale")
+    || normalizedReason.includes("offline")
+    || normalizedReason.includes("inactive")
+    || normalizedReason.includes("unavailable")
+    || normalizedReason.includes("not registered");
+}
+
+function createActiveLeaseForTask(task: TaskEnvelope, nodeId: string, at: string, progressMarker: string): TaskExecutionLease {
+  return createTaskExecutionLease({
+    ownerNodeId: nodeId,
+    previousLease: task.lease,
+    at,
+    continuationToken: task.continuationToken,
+    checkpointReference: task.checkpointReference,
+    progressMarker,
+  });
+}
+
+function invalidateLeaseForRecovery(task: TaskEnvelope, reason: string | undefined, progressMarker: string, at?: string): TaskExecutionLease | undefined {
+  return invalidateTaskExecutionLease(task.lease, {
+    status: isLeaseRecoveryExpiryReason(reason) ? "expired" : "superseded",
+    at,
+    reason,
+    progressMarker,
+    continuationToken: task.continuationToken,
+    checkpointReference: task.checkpointReference,
+  });
+}
+
 function resolveDependencies(
   dependencies?: Partial<QueueOrchestratorDependencies>,
 ): QueueOrchestratorDependencies {
@@ -183,9 +217,9 @@ function normalizeDispatchDelay(value: unknown): number {
 }
 
 function normalizeDispatchTimeout(value: unknown): number {
-  const numericValue = Number(value ?? 250);
+  const numericValue = Number(value ?? 1_000);
   if (!Number.isFinite(numericValue)) {
-    return 250;
+    return 1_000;
   }
 
   return Math.max(1, Math.floor(numericValue));
@@ -210,7 +244,14 @@ function shouldRetryDispatchFailure(reason: string | undefined, status: "rejecte
     return true;
   }
 
-  if (normalizedReason.includes("busy") || normalizedReason.includes("inactive") || normalizedReason.includes("not registered") || normalizedReason.includes("unavailable")) {
+  if (
+    normalizedReason.includes("busy")
+    || normalizedReason.includes("inactive")
+    || normalizedReason.includes("stale")
+    || normalizedReason.includes("offline")
+    || normalizedReason.includes("not registered")
+    || normalizedReason.includes("unavailable")
+  ) {
     return true;
   }
 
@@ -441,6 +482,28 @@ export async function executeQueuedTask(
 
     if (!selectedNode) {
       await clearNodeActivity(claimed.node.id, currentTask);
+      if (currentTask.lease?.status === "active" || currentTask.recoveryPending) {
+        const recoveryReason = "Recovery is pending until a healthy execution node becomes available.";
+        latestTask = await resolved.updateTaskStatus(currentTask.taskId, "retrying", {
+          assignedNodeId: currentTask.assignedNodeId,
+          selectedNodeId: currentTask.selectedNodeId,
+          selectedNodeReason: currentTask.selectedNodeReason,
+          statusReason: recoveryReason,
+          failureReason: "No active non-busy capable execution node was available.",
+          recoveryPending: true,
+          priorLeaseId: currentTask.lease?.leaseId ?? currentTask.priorLeaseId,
+          lease: invalidateLeaseForRecovery(
+            currentTask,
+            "No active non-busy capable execution node was available.",
+            currentTask.lastProgressMarker ?? "recovery-pending",
+          ),
+          lastProgressMarker: currentTask.lastProgressMarker ?? "recovery-pending",
+          dispatchRetryCount: retryCount,
+          dispatchTimeoutMs,
+        }) ?? currentTask;
+        return summarizeQueueExecution(latestTask, latestSession, "retrying");
+      }
+
       const rejectedTask = await resolved.updateTaskStatus(currentTask.taskId, "rejected", {
         assignedNodeId: currentTask.assignedNodeId,
         selectedNodeId: currentTask.selectedNodeId,
@@ -453,6 +516,9 @@ export async function executeQueuedTask(
       return summarizeQueueExecution(rejectedTask ?? currentTask, latestSession, "rejected");
     }
 
+    const nextRetryCount = attemptIndex + 1;
+    const progressMarker = `dispatch-attempt-${nextRetryCount}-awaiting-ack`;
+    const activeLease = createActiveLeaseForTask(currentTask, selectedNode.node.id, new Date().toISOString(), progressMarker);
     const authToken = createDispatchAuthToken({
       sourceNodeId: runtimeNode.id,
       targetNodeId: selectedNode.node.id,
@@ -475,6 +541,14 @@ export async function executeQueuedTask(
         action: currentTask.action,
         requestedCapabilities: currentTask.requestedCapabilities,
         assignedNodeId: selectedNode.node.id,
+        lease: {
+          leaseId: activeLease.leaseId,
+          ownerNodeId: activeLease.ownerNodeId,
+          epoch: activeLease.epoch,
+          continuationToken: activeLease.continuationToken,
+          checkpointReference: activeLease.checkpointReference,
+          resumability: currentTask.resumability,
+        },
         authToken,
         approvalState: {
           requiresApproval: currentTask.action.requiresApproval,
@@ -487,7 +561,7 @@ export async function executeQueuedTask(
       }),
     });
     const requestSummary = summarizeDispatchPayload(request.messageType, request.payload, request.protocolVersion);
-    retryCount = attemptIndex + 1;
+    retryCount = nextRetryCount;
     updateExecutionNodeActivity(selectedNode.node.id, {
       taskId: currentTask.taskId,
       sessionId: currentTask.sessionId,
@@ -497,6 +571,7 @@ export async function executeQueuedTask(
       assignedNodeId: selectedNode.node.id,
       selectedNodeId: selectedNode.node.id,
       selectedNodeReason: selectedNode.reason,
+      runnerMode: selectedNode.node.mode,
       statusReason: `Dispatch attempt ${retryCount} is awaiting acknowledgment from ${selectedNode.node.id}.`,
       failureReason: undefined,
       dispatchMessageId: request.messageId,
@@ -508,6 +583,18 @@ export async function executeQueuedTask(
       dispatchRetryCount: retryCount,
       dispatchLastAttemptAt: request.createdAt,
       dispatchTimeoutMs,
+      resumability: currentTask.resumability,
+      continuationToken: currentTask.continuationToken,
+      checkpointReference: currentTask.checkpointReference,
+      resumeAttemptCount: currentTask.resumeAttemptCount,
+      lastProgressMarker: progressMarker,
+      recoveryPending: false,
+      priorLeaseId: currentTask.lease?.leaseId ?? currentTask.priorLeaseId,
+      lease: {
+        ...activeLease,
+        startedAt: request.createdAt,
+        lastProgressAt: request.createdAt,
+      },
       remoteDispatchPlanned: true,
     }) ?? currentTask;
 
@@ -553,8 +640,17 @@ export async function executeQueuedTask(
             assignedNodeId: selectedNode.node.id,
             selectedNodeId: selectedNode.node.id,
             selectedNodeReason: selectedNode.reason,
+            runnerMode: selectedNode.node.mode,
             statusReason: `Retrying after rejected dispatch attempt ${retryCount}.`,
             failureReason: reason,
+            resumability: latestTask.resumability,
+            continuationToken: latestTask.continuationToken,
+            checkpointReference: latestTask.checkpointReference,
+            resumeAttemptCount: latestTask.resumeAttemptCount + 1,
+            lastProgressMarker: `recovery-pending-attempt-${retryCount}`,
+            recoveryPending: true,
+            priorLeaseId: latestTask.lease?.leaseId ?? latestTask.priorLeaseId,
+            lease: invalidateLeaseForRecovery(latestTask, reason, `recovery-pending-attempt-${retryCount}`, request.createdAt),
             dispatchMessageId: latestTask.dispatchMessageId ?? request.messageId,
             dispatchAckMessageId: latestTask.dispatchAckMessageId,
             dispatchTargetNodeId: latestTask.dispatchTargetNodeId ?? selectedNode.node.id,
@@ -608,12 +704,22 @@ export async function executeQueuedTask(
             await clearNodeActivity(selectedNode.node.id, persistedLatestTask);
             return summarizeTerminalTask(persistedLatestTask, latestSession);
           }
+          excludedNodeIds.add(selectedNode.node.id);
           latestTask = await resolved.updateTaskStatus(currentTask.taskId, "retrying", {
             assignedNodeId: selectedNode.node.id,
             selectedNodeId: selectedNode.node.id,
             selectedNodeReason: selectedNode.reason,
+            runnerMode: selectedNode.node.mode,
             statusReason: `Retrying after failed dispatch attempt ${retryCount}.`,
             failureReason: reason,
+            resumability: latestTask.resumability,
+            continuationToken: latestTask.continuationToken,
+            checkpointReference: latestTask.checkpointReference,
+            resumeAttemptCount: latestTask.resumeAttemptCount + 1,
+            lastProgressMarker: `recovery-pending-attempt-${retryCount}`,
+            recoveryPending: true,
+            priorLeaseId: latestTask.lease?.leaseId ?? latestTask.priorLeaseId,
+            lease: invalidateLeaseForRecovery(latestTask, reason, `recovery-pending-attempt-${retryCount}`, request.createdAt),
             dispatchMessageId: latestTask.dispatchMessageId ?? request.messageId,
             dispatchAckMessageId: latestTask.dispatchAckMessageId,
             dispatchResultMessageId: latestTask.dispatchResultMessageId,
@@ -640,6 +746,7 @@ export async function executeQueuedTask(
           assignedNodeId: selectedNode.node.id,
           selectedNodeId: selectedNode.node.id,
           selectedNodeReason: selectedNode.reason,
+          runnerMode: selectedNode.node.mode,
           statusReason: reason,
           failureReason: reason,
           dispatchMessageId: latestTask.dispatchMessageId ?? request.messageId,
@@ -672,12 +779,22 @@ export async function executeQueuedTask(
           await clearNodeActivity(selectedNode.node.id, persistedLatestTask);
           return summarizeTerminalTask(persistedLatestTask, latestSession);
         }
+        excludedNodeIds.add(selectedNode.node.id);
         latestTask = await resolved.updateTaskStatus(currentTask.taskId, "retrying", {
           assignedNodeId: selectedNode.node.id,
           selectedNodeId: selectedNode.node.id,
           selectedNodeReason: selectedNode.reason,
+          runnerMode: selectedNode.node.mode,
           statusReason: `Retrying after ${timedOut ? "timeout" : "failed"} dispatch attempt ${retryCount}.`,
           failureReason: reason,
+          resumability: latestTask.resumability,
+          continuationToken: latestTask.continuationToken,
+          checkpointReference: latestTask.checkpointReference,
+          resumeAttemptCount: latestTask.resumeAttemptCount + 1,
+          lastProgressMarker: `recovery-pending-attempt-${retryCount}`,
+          recoveryPending: true,
+          priorLeaseId: latestTask.lease?.leaseId ?? latestTask.priorLeaseId,
+          lease: invalidateLeaseForRecovery(latestTask, reason, `recovery-pending-attempt-${retryCount}`, request.createdAt),
           dispatchMessageId: request.messageId,
           dispatchTargetNodeId: selectedNode.node.id,
           dispatchProtocolVersion: request.protocolVersion,
@@ -702,6 +819,7 @@ export async function executeQueuedTask(
         assignedNodeId: selectedNode.node.id,
         selectedNodeId: selectedNode.node.id,
         selectedNodeReason: selectedNode.reason,
+        runnerMode: selectedNode.node.mode,
         statusReason: reason,
         failureReason: reason,
         dispatchMessageId: request.messageId,

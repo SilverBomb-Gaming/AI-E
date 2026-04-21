@@ -1,6 +1,7 @@
 import type { DispatchEnvelope, DispatchMessageType, DispatchProtocolVersion } from "./dispatchProtocol";
 import { validateDispatchAuthTokenShape, type DispatchAuthToken } from "./dispatchAuth";
 import type { ExecutionNodeCapability } from "./executionNode";
+import type { TaskResumability } from "./taskEnvelope";
 import type { ExecutionActionPreview as ExecutionAction, ExecutionRuntimeResult } from "./types";
 
 export type TaskDispatchApprovalState = {
@@ -8,10 +9,20 @@ export type TaskDispatchApprovalState = {
   approved?: boolean;
 };
 
+export type TaskDispatchLeasePayload = {
+  leaseId: string;
+  ownerNodeId: string;
+  epoch: number;
+  continuationToken?: string;
+  checkpointReference?: string;
+  resumability?: TaskResumability;
+};
+
 export type TaskDispatchRequestPayload = {
   action: ExecutionAction;
   requestedCapabilities: ExecutionNodeCapability[];
   assignedNodeId: string;
+  lease: TaskDispatchLeasePayload;
   authToken: DispatchAuthToken;
   approvalState?: TaskDispatchApprovalState;
   executionContextSummary?: string;
@@ -89,11 +100,40 @@ function isExecutionAction(value: unknown): value is ExecutionAction {
   );
 }
 
+function isTaskResumability(value: unknown): value is TaskResumability {
+  return value === "resumable" || value === "restart-required";
+}
+
+function isTaskDispatchLeasePayload(value: unknown): value is TaskDispatchLeasePayload {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const source = value as Record<string, unknown>;
+  return Boolean(
+    normalizeText(source.leaseId)
+      && normalizeText(source.ownerNodeId)
+      && Number.isInteger(Number(source.epoch))
+      && Number(source.epoch) >= 1
+      && (!source.continuationToken || normalizeText(source.continuationToken))
+      && (!source.checkpointReference || normalizeText(source.checkpointReference))
+      && (!source.resumability || isTaskResumability(source.resumability)),
+  );
+}
+
 export function createTaskDispatchRequest(payload: TaskDispatchRequestPayload): TaskDispatchRequestPayload {
   const normalized: TaskDispatchRequestPayload = {
     action: payload.action,
     requestedCapabilities: payload.requestedCapabilities.filter(isExecutionNodeCapability),
     assignedNodeId: normalizeText(payload.assignedNodeId),
+    lease: {
+      leaseId: normalizeText(payload.lease.leaseId),
+      ownerNodeId: normalizeText(payload.lease.ownerNodeId),
+      epoch: Math.max(1, Math.floor(Number(payload.lease.epoch ?? 1))),
+      continuationToken: normalizeText(payload.lease.continuationToken) || undefined,
+      checkpointReference: normalizeText(payload.lease.checkpointReference) || undefined,
+      resumability: isTaskResumability(payload.lease.resumability) ? payload.lease.resumability : undefined,
+    },
     authToken: payload.authToken,
     approvalState: payload.approvalState
       ? {
@@ -173,6 +213,7 @@ export function validateDispatchPayloadShape(messageType: DispatchMessageType, p
           Array.isArray(source.requestedCapabilities) &&
           source.requestedCapabilities.every((item) => isExecutionNodeCapability(item)) &&
           normalizeText(source.assignedNodeId) &&
+          isTaskDispatchLeasePayload(source.lease) &&
           validateDispatchAuthTokenShape(source.authToken),
       );
     case "task-dispatch-ack":
@@ -207,8 +248,11 @@ export function summarizeDispatchPayload(
         `dispatch=${protocolVersion}`,
         "type=request",
         `node=${normalizeText(source.assignedNodeId)}`,
+        `lease=${normalizeText((source.lease as Record<string, unknown> | undefined)?.leaseId) || "unknown"}`,
+        `epoch=${normalizeText((source.lease as Record<string, unknown> | undefined)?.epoch) || "unknown"}`,
         `caps=${Array.isArray(source.requestedCapabilities) ? source.requestedCapabilities.join(",") : "none"}`,
         `approval=${source.approvalState && typeof source.approvalState === "object" ? String(Boolean((source.approvalState as Record<string, unknown>).requiresApproval)) : "unknown"}`,
+        (source.lease as Record<string, unknown> | undefined)?.resumability ? `resumability=${normalizeText((source.lease as Record<string, unknown>).resumability)}` : "",
         source.dispatchAuthSummary && typeof source.dispatchAuthSummary === "string" ? `auth=${normalizeText(source.dispatchAuthSummary)}` : "",
       ].join(" | ");
     case "task-dispatch-ack":

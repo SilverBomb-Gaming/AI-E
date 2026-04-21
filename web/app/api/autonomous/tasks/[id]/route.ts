@@ -18,6 +18,25 @@ export async function GET(
     runnable: (task.status === "pending" || task.status === "queued" || task.status === "retrying") && task.action.scope === "safe",
     selectedNodeId: task.selectedNodeId ?? task.assignedNodeId ?? null,
     retryCount: task.dispatchRetryCount ?? 0,
+    resumability: task.resumability,
+    resumeAttemptCount: task.resumeAttemptCount,
+    recoveryPending: task.recoveryPending,
+    lastProgressMarker: task.lastProgressMarker ?? null,
+    continuation: {
+      hasToken: Boolean(task.continuationToken),
+      checkpointReference: task.checkpointReference ?? null,
+    },
+    lease: task.lease
+      ? {
+          leaseId: task.lease.leaseId,
+          ownerNodeId: task.lease.ownerNodeId,
+          epoch: task.lease.epoch,
+          status: task.lease.status,
+          startedAt: task.lease.startedAt,
+          lastProgressAt: task.lease.lastProgressAt,
+          priorLeaseId: task.priorLeaseId ?? null,
+        }
+      : null,
     failureReason: task.failureReason ?? null,
     dispatch: {
       messageId: task.dispatchMessageId ?? null,

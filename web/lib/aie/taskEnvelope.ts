@@ -18,12 +18,39 @@ export type TaskEnvelopeStatus =
 
 export type TaskDispatchTransportStatus = "pending" | "accepted" | "rejected" | "delivered" | "failed" | "completed";
 
+export type TaskLeaseStatus = "active" | "superseded" | "expired" | "completed" | "cancelled";
+
+export type TaskResumability = "resumable" | "restart-required";
+
+export type TaskExecutionLease = {
+  leaseId: string;
+  ownerNodeId: string;
+  epoch: number;
+  startedAt: string;
+  lastProgressAt: string;
+  status: TaskLeaseStatus;
+  continuationToken?: string;
+  checkpointReference?: string;
+  progressMarker?: string;
+  invalidatedAt?: string;
+  invalidationReason?: string;
+  supersededByLeaseId?: string;
+};
+
 export type TaskEnvelopeTransitionMetadata = {
   assignedNodeId?: string;
   selectedNodeId?: string;
   selectedNodeReason?: string;
   statusReason?: string;
   failureReason?: string;
+  resumability?: TaskResumability;
+  continuationToken?: string;
+  checkpointReference?: string;
+  resumeAttemptCount?: number;
+  lastProgressMarker?: string;
+  recoveryPending?: boolean;
+  lease?: TaskExecutionLease | null;
+  priorLeaseId?: string;
   claimToken?: string;
   runnerMode?: ExecutionNodeMode;
   dispatchMessageId?: string;
@@ -48,6 +75,14 @@ export type TaskEnvelope = {
   stepIndex: number;
   action: ExecutionActionPreview;
   requestedCapabilities: ExecutionNodeCapability[];
+  resumability: TaskResumability;
+  continuationToken?: string;
+  checkpointReference?: string;
+  resumeAttemptCount: number;
+  lastProgressMarker?: string;
+  recoveryPending: boolean;
+  lease?: TaskExecutionLease;
+  priorLeaseId?: string;
   preferredNodeId?: string;
   assignedNodeId?: string;
   selectedNodeId?: string;
@@ -109,6 +144,73 @@ function createTaskId(): string {
   return `aie-task-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+function createLeaseId(): string {
+  if (globalThis.crypto?.randomUUID) {
+    return `aie-lease-${globalThis.crypto.randomUUID()}`;
+  }
+
+  return `aie-lease-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+export function createTaskExecutionLease(params: {
+  ownerNodeId: string;
+  previousLease?: TaskExecutionLease;
+  epoch?: number;
+  at?: string;
+  continuationToken?: string;
+  checkpointReference?: string;
+  progressMarker?: string;
+}): TaskExecutionLease {
+  const timestamp = normalizeText(params.at) || createTimestamp();
+  const epoch = Number.isInteger(Number(params.epoch))
+    ? Math.max(1, Number(params.epoch))
+    : Math.max(1, (params.previousLease?.epoch ?? 0) + 1);
+
+  return {
+    leaseId: createLeaseId(),
+    ownerNodeId: normalizeText(params.ownerNodeId),
+    epoch,
+    startedAt: timestamp,
+    lastProgressAt: timestamp,
+    status: "active",
+    continuationToken: normalizeText(params.continuationToken) || undefined,
+    checkpointReference: normalizeText(params.checkpointReference) || undefined,
+    progressMarker: normalizeText(params.progressMarker) || undefined,
+  };
+}
+
+export function invalidateTaskExecutionLease(
+  lease: TaskExecutionLease | undefined,
+  params: {
+    status?: Extract<TaskLeaseStatus, "superseded" | "expired" | "completed" | "cancelled">;
+    at?: string;
+    reason?: string;
+    supersededByLeaseId?: string;
+    progressMarker?: string;
+    continuationToken?: string;
+    checkpointReference?: string;
+  } = {},
+): TaskExecutionLease | undefined {
+  if (!lease) {
+    return undefined;
+  }
+
+  const timestamp = normalizeText(params.at) || createTimestamp();
+  const status = params.status ?? "superseded";
+
+  return {
+    ...lease,
+    status,
+    lastProgressAt: timestamp,
+    continuationToken: normalizeText(params.continuationToken) || lease.continuationToken,
+    checkpointReference: normalizeText(params.checkpointReference) || lease.checkpointReference,
+    progressMarker: normalizeText(params.progressMarker) || lease.progressMarker,
+    invalidatedAt: status === "completed" ? lease.invalidatedAt : timestamp,
+    invalidationReason: status === "completed" ? lease.invalidationReason : normalizeText(params.reason) || lease.invalidationReason,
+    supersededByLeaseId: normalizeText(params.supersededByLeaseId) || lease.supersededByLeaseId,
+  };
+}
+
 function normalizeTaskEnvelopeStatus(value: unknown): TaskEnvelopeStatus | undefined {
   if (
     value === "pending" ||
@@ -153,6 +255,61 @@ function normalizeDispatchTransportStatus(value: unknown): TaskDispatchTransport
   return undefined;
 }
 
+function normalizeLeaseStatus(value: unknown): TaskLeaseStatus | undefined {
+  if (
+    value === "active" ||
+    value === "superseded" ||
+    value === "expired" ||
+    value === "completed" ||
+    value === "cancelled"
+  ) {
+    return value;
+  }
+
+  return undefined;
+}
+
+function normalizeResumability(value: unknown): TaskResumability | undefined {
+  if (value === "resumable" || value === "restart-required") {
+    return value;
+  }
+
+  return undefined;
+}
+
+function normalizeTaskExecutionLease(value: unknown): TaskExecutionLease | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+
+  const source = value as Record<string, unknown>;
+  const leaseId = normalizeText(typeof source.leaseId === "string" ? source.leaseId : "");
+  const ownerNodeId = normalizeText(typeof source.ownerNodeId === "string" ? source.ownerNodeId : "");
+  const startedAt = normalizeText(typeof source.startedAt === "string" ? source.startedAt : "");
+  const lastProgressAt = normalizeText(typeof source.lastProgressAt === "string" ? source.lastProgressAt : "");
+  const status = normalizeLeaseStatus(source.status);
+  const epoch = Number(source.epoch ?? Number.NaN);
+
+  if (!leaseId || !ownerNodeId || !startedAt || !lastProgressAt || !status || !Number.isInteger(epoch) || epoch < 1) {
+    return undefined;
+  }
+
+  return {
+    leaseId,
+    ownerNodeId,
+    epoch,
+    startedAt,
+    lastProgressAt,
+    status,
+    continuationToken: normalizeText(typeof source.continuationToken === "string" ? source.continuationToken : "") || undefined,
+    checkpointReference: normalizeText(typeof source.checkpointReference === "string" ? source.checkpointReference : "") || undefined,
+    progressMarker: normalizeText(typeof source.progressMarker === "string" ? source.progressMarker : "") || undefined,
+    invalidatedAt: normalizeText(typeof source.invalidatedAt === "string" ? source.invalidatedAt : "") || undefined,
+    invalidationReason: normalizeText(typeof source.invalidationReason === "string" ? source.invalidationReason : "") || undefined,
+    supersededByLeaseId: normalizeText(typeof source.supersededByLeaseId === "string" ? source.supersededByLeaseId : "") || undefined,
+  };
+}
+
 function assertTaskTransitionAllowed(envelope: TaskEnvelope, nextStatus: TaskEnvelopeStatus): void {
   const allowedTransitions: Record<TaskEnvelopeStatus, TaskEnvelopeStatus[]> = {
     pending: ["queued", "assigned", "blocked", "rejected"],
@@ -190,6 +347,81 @@ function applyTaskTransition(
   const selectedNodeReason = normalizeText(metadata?.selectedNodeReason) || envelope.selectedNodeReason;
   const statusReason = normalizeText(metadata?.statusReason) || undefined;
   const failureReason = normalizeText(metadata?.failureReason) || envelope.failureReason;
+  const resumability = metadata?.resumability ?? envelope.resumability;
+  const continuationToken = normalizeText(metadata?.continuationToken) || envelope.continuationToken;
+  const checkpointReference = normalizeText(metadata?.checkpointReference) || envelope.checkpointReference;
+  const resumeAttemptCount = Number.isInteger(Number(metadata?.resumeAttemptCount))
+    ? Math.max(0, Number(metadata?.resumeAttemptCount))
+    : envelope.resumeAttemptCount;
+  const lastProgressMarker = normalizeText(metadata?.lastProgressMarker) || envelope.lastProgressMarker;
+  const recoveryPending = typeof metadata?.recoveryPending === "boolean"
+    ? metadata.recoveryPending
+    : envelope.recoveryPending;
+  const priorLeaseId = normalizeText(metadata?.priorLeaseId) || envelope.priorLeaseId;
+  const requestedLease = metadata?.lease === null
+    ? null
+    : normalizeTaskExecutionLease(metadata?.lease);
+  if (
+    requestedLease?.status === "active"
+    && envelope.lease?.status === "active"
+    && envelope.lease.leaseId !== requestedLease.leaseId
+  ) {
+    if (priorLeaseId !== envelope.lease.leaseId || requestedLease.epoch <= envelope.lease.epoch) {
+      throw new Error(`Task ${envelope.taskId} cannot create a second active lease without superseding ${envelope.lease.leaseId}.`);
+    }
+  }
+  const lease = requestedLease === null
+    ? undefined
+    : requestedLease
+      ?? (() => {
+        if (!envelope.lease) {
+          return undefined;
+        }
+
+        if (envelope.lease.status !== "active") {
+          return envelope.lease;
+        }
+
+        if (status === "completed") {
+          return invalidateTaskExecutionLease(envelope.lease, {
+            status: "completed",
+            at: timestamp,
+            progressMarker: lastProgressMarker,
+            continuationToken,
+            checkpointReference,
+          });
+        }
+
+        if (status === "failed" || status === "blocked" || status === "rejected") {
+          return invalidateTaskExecutionLease(envelope.lease, {
+            status: "cancelled",
+            at: timestamp,
+            reason: failureReason || statusReason,
+            progressMarker: lastProgressMarker,
+            continuationToken,
+            checkpointReference,
+          });
+        }
+
+        if (status === "retrying") {
+          return invalidateTaskExecutionLease(envelope.lease, {
+            status: "superseded",
+            at: timestamp,
+            reason: failureReason || statusReason,
+            progressMarker: lastProgressMarker,
+            continuationToken,
+            checkpointReference,
+          });
+        }
+
+        return {
+          ...envelope.lease,
+          lastProgressAt: timestamp,
+          continuationToken,
+          checkpointReference,
+          progressMarker: lastProgressMarker || envelope.lease.progressMarker,
+        };
+      })();
   const claimToken = normalizeText(metadata?.claimToken) || envelope.claimToken;
   const runnerMode = metadata?.runnerMode ?? envelope.runnerMode;
   const dispatchMessageId = normalizeText(metadata?.dispatchMessageId) || envelope.dispatchMessageId;
@@ -219,6 +451,14 @@ function applyTaskTransition(
 
   return {
     ...envelope,
+    resumability,
+    continuationToken: continuationToken || undefined,
+    checkpointReference: checkpointReference || undefined,
+    resumeAttemptCount,
+    lastProgressMarker: lastProgressMarker || undefined,
+    recoveryPending,
+    lease,
+    priorLeaseId: priorLeaseId || undefined,
     assignedNodeId: assignedNodeId || undefined,
     selectedNodeId: selectedNodeId || undefined,
     selectedNodeReason: selectedNodeReason || undefined,
@@ -262,6 +502,14 @@ export function createTaskEnvelope(params: CreateTaskEnvelopeParams): TaskEnvelo
     requestedCapabilities: params.requestedCapabilities?.length
       ? [...params.requestedCapabilities]
       : getExecutionNodeCapabilitiesForAction(params.action),
+    resumability: "restart-required",
+    continuationToken: undefined,
+    checkpointReference: undefined,
+    resumeAttemptCount: 0,
+    lastProgressMarker: undefined,
+    recoveryPending: false,
+    lease: undefined,
+    priorLeaseId: undefined,
     preferredNodeId: normalizeText(params.preferredNodeId) || undefined,
     assignedNodeId: undefined,
     selectedNodeId: undefined,
@@ -456,6 +704,14 @@ export function normalizeTaskEnvelope(value: unknown): TaskEnvelope | null {
     stepIndex,
     action: action as ExecutionActionPreview,
     requestedCapabilities,
+    resumability: normalizeResumability(source.resumability) ?? "restart-required",
+    continuationToken: normalizeText(typeof source.continuationToken === "string" ? source.continuationToken : "") || undefined,
+    checkpointReference: normalizeText(typeof source.checkpointReference === "string" ? source.checkpointReference : "") || undefined,
+    resumeAttemptCount: Number.isInteger(Number(source.resumeAttemptCount)) ? Math.max(0, Number(source.resumeAttemptCount)) : 0,
+    lastProgressMarker: normalizeText(typeof source.lastProgressMarker === "string" ? source.lastProgressMarker : "") || undefined,
+    recoveryPending: typeof source.recoveryPending === "boolean" ? source.recoveryPending : false,
+    lease: normalizeTaskExecutionLease(source.lease),
+    priorLeaseId: normalizeText(typeof source.priorLeaseId === "string" ? source.priorLeaseId : "") || undefined,
     preferredNodeId: normalizeText(typeof source.preferredNodeId === "string" ? source.preferredNodeId : "") || undefined,
     assignedNodeId: normalizeText(typeof source.assignedNodeId === "string" ? source.assignedNodeId : "") || undefined,
     selectedNodeId: normalizeText(typeof source.selectedNodeId === "string" ? source.selectedNodeId : "") || undefined,
@@ -495,7 +751,16 @@ export function summarizeTaskEnvelope(envelope: TaskEnvelope): string {
     `task=${envelope.taskId}`,
     `status=${envelope.status}`,
     `step=${envelope.stepIndex}`,
+    `resumability=${envelope.resumability}`,
     envelope.selectedNodeId ? `selectedNode=${envelope.selectedNodeId}` : envelope.assignedNodeId ? `node=${envelope.assignedNodeId}` : "node=unassigned",
+    envelope.lease ? `lease=${envelope.lease.leaseId}` : "lease=none",
+    envelope.lease ? `leaseStatus=${envelope.lease.status}` : "",
+    envelope.lease ? `leaseOwner=${envelope.lease.ownerNodeId}` : "",
+    envelope.lease ? `leaseEpoch=${envelope.lease.epoch}` : "",
+    envelope.lastProgressMarker ? `progress=${envelope.lastProgressMarker}` : "",
+    envelope.continuationToken ? "continuation=present" : "continuation=none",
+    envelope.checkpointReference ? `checkpoint=${envelope.checkpointReference}` : "",
+    envelope.recoveryPending ? "recovery=pending" : "",
     envelope.selectedNodeReason ? `selection=${envelope.selectedNodeReason}` : "",
     envelope.dispatchTargetNodeId ? `dispatchTarget=${envelope.dispatchTargetNodeId}` : "",
     envelope.dispatchMessageId ? `dispatch=${envelope.dispatchMessageId}` : "",

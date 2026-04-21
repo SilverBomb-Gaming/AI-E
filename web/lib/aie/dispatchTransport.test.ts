@@ -18,6 +18,7 @@ import { createTaskEnvelope } from "./taskEnvelope";
 import { enqueueTask, getTask, updateTaskDispatchMetadata, updateTaskStatus } from "./taskQueueStore";
 
 function createRequest(taskId: string, sessionId: string) {
+  const leaseId = `aie-lease-${taskId}`;
   return createDispatchEnvelope({
     messageType: "task-dispatch-request",
     sourceNodeId: "aie-node-local-default",
@@ -38,6 +39,12 @@ function createRequest(taskId: string, sessionId: string) {
       },
       requestedCapabilities: ["validation-check", "repo-scan"],
       assignedNodeId: "aie-node-headless-default",
+      lease: {
+        leaseId,
+        ownerNodeId: "aie-node-headless-default",
+        epoch: 1,
+        resumability: "restart-required",
+      },
       authToken: createDispatchAuthToken({
         sourceNodeId: "aie-node-local-default",
         targetNodeId: "aie-node-headless-default",
@@ -107,6 +114,14 @@ test("dispatchTransport runs a controlled local request ack result flow", async 
       }),
       status: "assigned",
       assignedNodeId: "aie-node-headless-default",
+      lease: {
+        leaseId: "aie-lease-task-dispatch-transport-3",
+        ownerNodeId: "aie-node-headless-default",
+        epoch: 1,
+        startedAt: "2026-04-21T03:00:00.000Z",
+        lastProgressAt: "2026-04-21T03:00:00.000Z",
+        status: "active",
+      },
     });
     const transport = createLocalControlledDispatchTransport();
     const result = await transport.sendDispatchRequest({
@@ -169,6 +184,14 @@ test("dispatchTransport reports failed delivery when the receiver execution thro
       }),
       status: "assigned",
       assignedNodeId: "aie-node-headless-default",
+      lease: {
+        leaseId: "aie-lease-task-dispatch-transport-4",
+        ownerNodeId: "aie-node-headless-default",
+        epoch: 1,
+        startedAt: "2026-04-21T03:05:00.000Z",
+        lastProgressAt: "2026-04-21T03:05:00.000Z",
+        status: "active",
+      },
     });
     const transport = createLocalControlledDispatchTransport();
     const result = await transport.sendDispatchRequest({

@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   claimTaskEnvelope,
+  createTaskExecutionLease,
   assignTaskEnvelope,
   createTaskEnvelope,
   markTaskAssigned,
@@ -41,6 +42,9 @@ test("task envelopes create serializable queued tasks", () => {
   assert.equal(envelope.sessionId, "session-123");
   assert.equal(envelope.stepIndex, 2);
   assert.equal(envelope.status, "queued");
+  assert.equal(envelope.resumability, "restart-required");
+  assert.equal(envelope.resumeAttemptCount, 0);
+  assert.equal(envelope.recoveryPending, false);
   assert.deepEqual(envelope.requestedCapabilities, ["validation-check", "repo-scan"]);
 });
 
@@ -203,6 +207,88 @@ test("task envelopes preserve dispatch metadata additively", () => {
   assert.match(summarizeTaskEnvelope(envelope), /dispatch=aie-dispatch-1/i);
   assert.match(summarizeTaskEnvelope(envelope), /ack=aie-dispatch-ack-1/i);
   assert.match(summarizeTaskEnvelope(envelope), /result=aie-dispatch-result-1/i);
+});
+
+test("task envelopes preserve additive lease and resumable metadata", () => {
+  const leaseEnvelope = updateTaskEnvelopeStatus(
+    markTaskRunning(
+      markTaskAssigned(
+        createTaskEnvelope({
+          taskId: "task-lease-1",
+          sessionId: "session-lease-1",
+          stepIndex: 1,
+          action: makeAction(),
+        }),
+        "aie-node-headless-1",
+      ),
+      {
+        resumability: "resumable",
+        continuationToken: "continue-lease-1",
+        checkpointReference: "checkpoint://lease-1",
+        resumeAttemptCount: 1,
+        lastProgressMarker: "step-1/3",
+        recoveryPending: true,
+        priorLeaseId: "aie-lease-0",
+        lease: {
+          leaseId: "aie-lease-1",
+          ownerNodeId: "aie-node-headless-1",
+          epoch: 2,
+          startedAt: "2026-04-21T01:00:00.000Z",
+          lastProgressAt: "2026-04-21T01:05:00.000Z",
+          status: "active",
+          continuationToken: "continue-lease-1",
+          checkpointReference: "checkpoint://lease-1",
+          progressMarker: "step-1/3",
+        },
+      },
+    ),
+    "executing",
+    {
+      lastProgressMarker: "step-2/3",
+    },
+  );
+
+  const normalized = normalizeTaskEnvelope(JSON.parse(JSON.stringify(leaseEnvelope)));
+
+  assert.equal(normalized?.resumability, "resumable");
+  assert.equal(normalized?.continuationToken, "continue-lease-1");
+  assert.equal(normalized?.checkpointReference, "checkpoint://lease-1");
+  assert.equal(normalized?.resumeAttemptCount, 1);
+  assert.equal(normalized?.lastProgressMarker, "step-2/3");
+  assert.equal(normalized?.recoveryPending, true);
+  assert.equal(normalized?.priorLeaseId, "aie-lease-0");
+  assert.equal(normalized?.lease?.leaseId, "aie-lease-1");
+  assert.equal(normalized?.lease?.ownerNodeId, "aie-node-headless-1");
+  assert.equal(normalized?.lease?.epoch, 2);
+  assert.equal(normalized?.lease?.status, "active");
+  assert.match(summarizeTaskEnvelope(leaseEnvelope), /lease=aie-lease-1/i);
+  assert.match(summarizeTaskEnvelope(leaseEnvelope), /resumability=resumable/i);
+  assert.match(summarizeTaskEnvelope(leaseEnvelope), /continuation=present/i);
+  assert.match(summarizeTaskEnvelope(leaseEnvelope), /recovery=pending/i);
+});
+
+test("task envelopes reject a second active lease unless the prior lease is explicitly superseded", () => {
+  const envelope = markTaskRunning(markTaskAssigned(createTaskEnvelope({
+    taskId: "task-lease-guard",
+    sessionId: "session-lease-guard",
+    stepIndex: 1,
+    action: makeAction(),
+  }), "aie-node-web-default"), {
+    lease: createTaskExecutionLease({
+      ownerNodeId: "aie-node-web-default",
+      at: "2026-04-21T02:00:00.000Z",
+      progressMarker: "initial",
+    }),
+  });
+
+  assert.throws(() => updateTaskEnvelopeStatus(envelope, "awaiting-ack", {
+    lease: createTaskExecutionLease({
+      ownerNodeId: "aie-node-headless-default",
+      previousLease: envelope.lease,
+      at: "2026-04-21T02:05:00.000Z",
+      progressMarker: "invalid-second-lease",
+    }),
+  }));
 });
 
 test("task envelopes allow retrying tasks to re-enter awaiting-ack", () => {

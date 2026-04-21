@@ -197,6 +197,7 @@ export async function handleDispatchRequest(params: HandleDispatchRequestParams)
   const nodeValidation = validateNode(request.targetNodeId, {
     requestedCapabilities: request.payload.requestedCapabilities,
     action: request.payload.action,
+    taskId: request.taskId,
   });
   if (!nodeValidation.accepted || !nodeValidation.node) {
     return rejectDispatchRequest({
@@ -213,6 +214,68 @@ export async function handleDispatchRequest(params: HandleDispatchRequestParams)
       request,
       reason: `Task ${request.taskId} was not found in the controlled queue store.`,
       authSummary,
+      dependencies: params.dependencies,
+    });
+  }
+
+  if (!existingTask.lease || existingTask.lease.status !== "active") {
+    return rejectDispatchRequest({
+      request,
+      reason: `Task ${request.taskId} does not have an active execution lease.`,
+      authSummary,
+      existingTask,
+      dependencies: params.dependencies,
+    });
+  }
+
+  if (
+    request.payload.lease.leaseId !== existingTask.lease.leaseId
+    || request.payload.lease.epoch !== existingTask.lease.epoch
+    || request.payload.lease.ownerNodeId !== existingTask.lease.ownerNodeId
+  ) {
+    return rejectDispatchRequest({
+      request,
+      reason: `Task ${request.taskId} lease ownership did not match the persisted active lease.`,
+      authSummary,
+      existingTask,
+      dependencies: params.dependencies,
+    });
+  }
+
+  if (request.payload.lease.ownerNodeId !== request.targetNodeId) {
+    return rejectDispatchRequest({
+      request,
+      reason: `Task ${request.taskId} lease owner ${request.payload.lease.ownerNodeId} does not match dispatch target ${request.targetNodeId}.`,
+      authSummary,
+      existingTask,
+      dependencies: params.dependencies,
+    });
+  }
+
+  if (
+    existingTask.continuationToken
+    && request.payload.lease.continuationToken
+    && existingTask.continuationToken !== request.payload.lease.continuationToken
+  ) {
+    return rejectDispatchRequest({
+      request,
+      reason: `Task ${request.taskId} continuation token did not match the persisted lease state.`,
+      authSummary,
+      existingTask,
+      dependencies: params.dependencies,
+    });
+  }
+
+  if (
+    existingTask.checkpointReference
+    && request.payload.lease.checkpointReference
+    && existingTask.checkpointReference !== request.payload.lease.checkpointReference
+  ) {
+    return rejectDispatchRequest({
+      request,
+      reason: `Task ${request.taskId} checkpoint reference did not match the persisted lease state.`,
+      authSummary,
+      existingTask,
       dependencies: params.dependencies,
     });
   }

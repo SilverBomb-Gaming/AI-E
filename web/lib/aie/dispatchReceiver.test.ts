@@ -18,6 +18,8 @@ function createRequest(params?: {
   targetNodeId?: string;
   requestedCapabilities?: Array<"inspection" | "validation-check" | "file-write" | "test-run" | "repo-scan">;
   authTargetNodeId?: string;
+  leaseId?: string;
+  continuationToken?: string;
 }) {
   const taskId = params?.taskId ?? "task-dispatch-receiver-1";
   const sessionId = params?.sessionId ?? "session-dispatch-receiver-1";
@@ -43,6 +45,13 @@ function createRequest(params?: {
       },
       requestedCapabilities: params?.requestedCapabilities ?? ["validation-check", "repo-scan"],
       assignedNodeId: targetNodeId,
+      lease: {
+        leaseId: params?.leaseId ?? `aie-lease-${taskId}`,
+        ownerNodeId: targetNodeId,
+        epoch: 1,
+        continuationToken: params?.continuationToken,
+        resumability: params?.continuationToken ? "resumable" : "restart-required",
+      },
       authToken: createDispatchAuthToken({
         sourceNodeId: "aie-node-local-default",
         targetNodeId: params?.authTargetNodeId ?? targetNodeId,
@@ -83,6 +92,14 @@ test("dispatchReceiver accepts a valid request and routes it into the shared sta
       }),
       status: "assigned",
       assignedNodeId: "aie-node-headless-default",
+      lease: {
+        leaseId: "aie-lease-task-dispatch-receiver-1",
+        ownerNodeId: "aie-node-headless-default",
+        epoch: 1,
+        startedAt: "2026-04-21T04:00:00.000Z",
+        lastProgressAt: "2026-04-21T04:00:00.000Z",
+        status: "active",
+      },
     });
 
     const result = await handleDispatchRequest({
@@ -145,6 +162,14 @@ test("dispatchReceiver rejects invalid auth, unknown targets, and unsupported ca
       }),
       status: "assigned",
       assignedNodeId: "aie-node-headless-default",
+      lease: {
+        leaseId: "aie-lease-task-dispatch-receiver-2",
+        ownerNodeId: "aie-node-headless-default",
+        epoch: 1,
+        startedAt: "2026-04-21T04:05:00.000Z",
+        lastProgressAt: "2026-04-21T04:05:00.000Z",
+        status: "active",
+      },
     });
     await enqueueTask({
       ...createTaskEnvelope({
@@ -155,6 +180,14 @@ test("dispatchReceiver rejects invalid auth, unknown targets, and unsupported ca
       }),
       status: "assigned",
       assignedNodeId: "aie-node-headless-default",
+      lease: {
+        leaseId: "aie-lease-task-dispatch-receiver-3",
+        ownerNodeId: "aie-node-headless-default",
+        epoch: 1,
+        startedAt: "2026-04-21T04:06:00.000Z",
+        lastProgressAt: "2026-04-21T04:06:00.000Z",
+        status: "active",
+      },
     });
     await enqueueTask({
       ...createTaskEnvelope({
@@ -165,6 +198,14 @@ test("dispatchReceiver rejects invalid auth, unknown targets, and unsupported ca
       }),
       status: "assigned",
       assignedNodeId: "aie-node-headless-default",
+      lease: {
+        leaseId: "aie-lease-task-dispatch-receiver-4",
+        ownerNodeId: "aie-node-headless-default",
+        epoch: 1,
+        startedAt: "2026-04-21T04:07:00.000Z",
+        lastProgressAt: "2026-04-21T04:07:00.000Z",
+        status: "active",
+      },
     });
 
     const badAuth = await handleDispatchRequest({
@@ -217,6 +258,76 @@ test("dispatchReceiver rejects invalid auth, unknown targets, and unsupported ca
     assert.equal(badAuth.ack.payload.accepted, false);
     assert.equal(unknownTarget.status, "rejected");
     assert.equal(unsupported.status, "rejected");
+  } finally {
+    delete process.env.AIE_AUTONOMOUS_SESSION_DIR;
+    delete process.env.AIE_TASK_QUEUE_DIR;
+    resetExecutionNodeRegistry();
+    await rm(sessionDirectory, { recursive: true, force: true });
+    await rm(taskDirectory, { recursive: true, force: true });
+  }
+});
+
+test("dispatchReceiver rejects requests whose lease does not match persisted ownership", async () => {
+  const sessionDirectory = path.resolve(process.cwd(), "temp-dispatch-receiver-session-store-3");
+  const taskDirectory = path.resolve(process.cwd(), "temp-dispatch-receiver-task-store-3");
+  resetExecutionNodeRegistry();
+  process.env.AIE_AUTONOMOUS_SESSION_DIR = sessionDirectory;
+  process.env.AIE_TASK_QUEUE_DIR = taskDirectory;
+  await mkdir(sessionDirectory, { recursive: true });
+  await mkdir(taskDirectory, { recursive: true });
+
+  try {
+    registerExecutionNode(createExecutionNodeDescriptor({
+      id: "aie-node-headless-default",
+      mode: "headless",
+      label: "AI-E Headless Test Node",
+      capabilities: ["validation-check", "repo-scan"],
+      active: true,
+      cwd: process.cwd(),
+      allowedRoots: [process.cwd()],
+    }));
+    await enqueueTask({
+      ...createTaskEnvelope({
+        taskId: "task-dispatch-receiver-5",
+        sessionId: "session-dispatch-receiver-5",
+        stepIndex: 1,
+        action: createRequest({ taskId: "task-dispatch-receiver-5", sessionId: "session-dispatch-receiver-5", continuationToken: "persisted-token" }).payload.action,
+      }),
+      status: "assigned",
+      assignedNodeId: "aie-node-headless-default",
+      resumability: "resumable",
+      continuationToken: "persisted-token",
+      lease: {
+        leaseId: "aie-lease-task-dispatch-receiver-5",
+        ownerNodeId: "aie-node-headless-default",
+        epoch: 1,
+        startedAt: "2026-04-21T04:10:00.000Z",
+        lastProgressAt: "2026-04-21T04:10:00.000Z",
+        status: "active",
+        continuationToken: "persisted-token",
+      },
+    });
+
+    const result = await handleDispatchRequest({
+      request: createRequest({
+        taskId: "task-dispatch-receiver-5",
+        sessionId: "session-dispatch-receiver-5",
+        leaseId: "aie-lease-mismatch",
+        continuationToken: "wrong-token",
+      }),
+      dependencies: {
+        getTask,
+        updateTaskStatus,
+        updateTaskDispatchMetadata,
+        executeClaimedTask: async () => {
+          throw new Error("should not execute");
+        },
+      },
+    });
+
+    assert.equal(result.status, "rejected");
+    assert.equal(result.ack.payload.accepted, false);
+    assert.match(result.reason ?? "", /lease ownership/i);
   } finally {
     delete process.env.AIE_AUTONOMOUS_SESSION_DIR;
     delete process.env.AIE_TASK_QUEUE_DIR;
