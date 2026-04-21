@@ -31,7 +31,7 @@ function makeAction(): ExecutionActionPreview {
   };
 }
 
-test("task envelopes create serializable pending tasks", () => {
+test("task envelopes create serializable queued tasks", () => {
   const envelope = createTaskEnvelope({
     sessionId: "session-123",
     stepIndex: 2,
@@ -40,24 +40,30 @@ test("task envelopes create serializable pending tasks", () => {
 
   assert.equal(envelope.sessionId, "session-123");
   assert.equal(envelope.stepIndex, 2);
-  assert.equal(envelope.status, "pending");
+  assert.equal(envelope.status, "queued");
   assert.deepEqual(envelope.requestedCapabilities, ["validation-check", "repo-scan"]);
 });
 
-test("task envelopes support assignment and status updates", () => {
+test("task envelopes support claim and status updates", () => {
   const envelope = createTaskEnvelope({
     sessionId: "session-123",
     stepIndex: 1,
     action: makeAction(),
     preferredNodeId: "aie-node-web-default",
   });
-  const assigned = assignTaskEnvelope(envelope, "aie-node-web-default");
-  const running = updateTaskEnvelopeStatus(assigned, "running");
-  const completed = updateTaskEnvelopeStatus(assigned, "completed");
+  const claimed = claimTaskEnvelope(envelope, {
+    assignedNodeId: "aie-node-web-default",
+    selectedNodeReason: "Preferred capable node matched the task.",
+    claimToken: "claim-status-1",
+    runnerMode: "web",
+  });
+  const running = updateTaskEnvelopeStatus(claimed, "executing");
+  const completed = updateTaskEnvelopeStatus(running, "completed");
 
-  assert.equal(assigned.assignedNodeId, "aie-node-web-default");
-  assert.equal(assigned.status, "assigned");
-  assert.equal(running.status, "running");
+  assert.equal(claimed.assignedNodeId, "aie-node-web-default");
+  assert.equal(claimed.selectedNodeId, "aie-node-web-default");
+  assert.equal(claimed.status, "dispatching");
+  assert.equal(running.status, "executing");
   assert.equal(completed.status, "completed");
   assert.match(summarizeTaskEnvelope(completed), /task=/i);
   assert.match(summarizeTaskEnvelope(completed), /node=aie-node-web-default/i);
@@ -78,17 +84,18 @@ test("task envelopes enforce claim and release semantics", () => {
   });
   const released = releaseTaskEnvelope(claimed, "Released back to the queue.");
 
-  assert.equal(claimed.status, "assigned");
+  assert.equal(claimed.status, "dispatching");
   assert.equal(claimed.assignedNodeId, "aie-node-local-default");
+  assert.equal(claimed.selectedNodeId, "aie-node-local-default");
   assert.equal(claimed.claimToken, "claim-1");
   assert.equal(claimed.runnerMode, "local-node");
-  assert.equal(typeof claimed.claimedAt, "string");
+  assert.equal(claimed.claimedAt, undefined);
   assert.throws(() => claimTaskEnvelope(claimed, {
     assignedNodeId: "aie-node-local-default",
     claimToken: "claim-2",
     runnerMode: "local-node",
   }));
-  assert.equal(released.status, "pending");
+  assert.equal(released.status, "queued");
   assert.equal(released.claimToken, undefined);
   assert.equal(released.runnerMode, undefined);
   assert.equal(released.assignedNodeId, undefined);
@@ -99,6 +106,7 @@ test("task lifecycle helpers persist explicit transition metadata", () => {
     sessionId: "session-123",
     stepIndex: 3,
     action: makeAction(),
+    status: "pending",
   });
 
   const assigned = markTaskAssigned(envelope, "aie-node-web-default", {
@@ -130,31 +138,37 @@ test("task lifecycle helpers persist explicit transition metadata", () => {
 });
 
 test("task envelopes normalize from serialized records", () => {
-  const envelope = assignTaskEnvelope(
-    createTaskEnvelope({
-      taskId: "task-normalize",
-      sessionId: "session-123",
-      stepIndex: 1,
-      action: makeAction(),
-    }),
-    "aie-node-web-default",
-  );
+  const envelope = claimTaskEnvelope(createTaskEnvelope({
+    taskId: "task-normalize",
+    sessionId: "session-123",
+    stepIndex: 1,
+    action: makeAction(),
+  }), {
+    assignedNodeId: "aie-node-web-default",
+    claimToken: "claim-normalize-1",
+    runnerMode: "web",
+  });
   const normalized = normalizeTaskEnvelope(JSON.parse(JSON.stringify(envelope)));
 
   assert.ok(normalized);
   assert.equal(normalized?.taskId, "task-normalize");
-  assert.equal(normalized?.status, "assigned");
+  assert.equal(normalized?.status, "dispatching");
 });
 
 test("task envelopes preserve dispatch metadata additively", () => {
   const envelope = markTaskCompleted(
     markTaskRunning(
-      markTaskAssigned(createTaskEnvelope({
+      updateTaskEnvelopeStatus(claimTaskEnvelope(createTaskEnvelope({
         taskId: "task-dispatch-1",
         sessionId: "session-dispatch-1",
         stepIndex: 1,
         action: makeAction(),
-      }), "aie-node-local-default", {
+      }), {
+        assignedNodeId: "aie-node-local-default",
+        selectedNodeReason: "Preferred local node selected.",
+        claimToken: "claim-dispatch-1",
+        runnerMode: "local-node",
+      }), "awaiting-ack", {
         dispatchMessageId: "aie-dispatch-1",
         dispatchAckMessageId: "aie-dispatch-ack-1",
         dispatchResultMessageId: "aie-dispatch-result-1",
@@ -189,4 +203,29 @@ test("task envelopes preserve dispatch metadata additively", () => {
   assert.match(summarizeTaskEnvelope(envelope), /dispatch=aie-dispatch-1/i);
   assert.match(summarizeTaskEnvelope(envelope), /ack=aie-dispatch-ack-1/i);
   assert.match(summarizeTaskEnvelope(envelope), /result=aie-dispatch-result-1/i);
+});
+
+test("task envelopes allow retrying tasks to re-enter awaiting-ack", () => {
+  const envelope = createTaskEnvelope({
+    taskId: "task-retry-awaiting-ack",
+    sessionId: "session-retry-awaiting-ack",
+    stepIndex: 1,
+    action: makeAction(),
+    status: "retrying",
+  });
+
+  const updated = updateTaskEnvelopeStatus(envelope, "awaiting-ack", {
+    assignedNodeId: "aie-node-local-default",
+    selectedNodeId: "aie-node-local-default",
+    dispatchMessageId: "aie-dispatch-retry-1",
+    dispatchTargetNodeId: "aie-node-local-default",
+    dispatchTransportStatus: "pending",
+    dispatchRetryCount: 2,
+    failureReason: undefined,
+  });
+
+  assert.equal(updated.status, "awaiting-ack");
+  assert.equal(updated.assignedNodeId, "aie-node-local-default");
+  assert.equal(updated.dispatchRetryCount, 2);
+  assert.equal(updated.dispatchTransportStatus, "pending");
 });

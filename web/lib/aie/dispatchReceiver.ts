@@ -133,9 +133,10 @@ async function rejectDispatchRequest(params: {
 
   let task = params.existingTask ?? null;
   if (task) {
-    task = await (params.dependencies.updateTaskStatus ?? updateTaskStatus)(task.taskId, "blocked", {
+    task = await (params.dependencies.updateTaskStatus ?? updateTaskStatus)(task.taskId, "rejected", {
       assignedNodeId: task.assignedNodeId ?? params.request.targetNodeId,
       statusReason: params.reason,
+      failureReason: params.reason,
       dispatchAckMessageId: ack.messageId,
       dispatchTargetNodeId: params.request.targetNodeId,
       dispatchProtocolVersion: params.request.protocolVersion,

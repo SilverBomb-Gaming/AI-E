@@ -31,6 +31,8 @@ export type AutonomousStepRecord = {
   executionNodeId?: string;
   executionNodeMode?: ExecutionNodeMode;
   nodeCapabilitySummary?: string;
+  selectedNodeId?: string;
+  selectedNodeReason?: string;
   taskId?: string;
   taskStatus?: TaskEnvelopeStatus;
   assignedNodeId?: string;
@@ -50,6 +52,7 @@ export type AutonomousStepRecord = {
   verificationState?: AutonomousStepVerificationState;
   nextDecision?: AutonomousStepDecision;
   failureClassification?: FailureClassification;
+  failureReason?: string;
   recoveryStrategy?: AutonomousRecoveryStrategy;
   retryCount?: number;
   repeatedAction?: boolean;
@@ -88,6 +91,8 @@ export type AutonomousSession = {
   executionNodeId?: string;
   executionNodeMode?: ExecutionNodeMode;
   nodeCapabilitySummary?: string;
+  selectedNodeId?: string;
+  selectedNodeReason?: string;
   taskId?: string;
   taskStatus?: TaskEnvelopeStatus;
   assignedNodeId?: string;
@@ -102,6 +107,7 @@ export type AutonomousSession = {
   dispatchTransportStatus?: "pending" | "accepted" | "rejected" | "delivered" | "failed" | "completed";
   remoteDispatchPlanned?: boolean;
   planningHintSummary?: string;
+  failureReason?: string;
   latestExecutionResult?: ExecutionRuntimeResult;
   pendingAction?: ExecutionActionPreview;
   latestRecoveryState?: AutonomousRecoveryState;
@@ -124,6 +130,8 @@ type AppendAutonomousStepParams = {
   executionNodeId?: string;
   executionNodeMode?: ExecutionNodeMode;
   nodeCapabilitySummary?: string;
+  selectedNodeId?: string;
+  selectedNodeReason?: string;
   taskId?: string;
   taskStatus?: TaskEnvelopeStatus;
   assignedNodeId?: string;
@@ -143,6 +151,7 @@ type AppendAutonomousStepParams = {
   verificationState?: AutonomousStepVerificationState;
   nextDecision?: AutonomousStepDecision;
   failureClassification?: FailureClassification;
+  failureReason?: string;
   recoveryStrategy?: AutonomousRecoveryStrategy;
   retryCount?: number;
   repeatedAction?: boolean;
@@ -285,9 +294,15 @@ function normalizeTaskStatus(value: unknown): TaskEnvelopeStatus | undefined {
     value === "pending" ||
     value === "assigned" ||
     value === "running" ||
+    value === "queued" ||
+    value === "dispatching" ||
+    value === "awaiting-ack" ||
+    value === "executing" ||
     value === "completed" ||
     value === "failed" ||
-    value === "blocked"
+    value === "blocked" ||
+    value === "retrying" ||
+    value === "rejected"
   ) {
     return value;
   }
@@ -464,6 +479,8 @@ function normalizeAutonomousStepRecord(value: unknown): AutonomousStepRecord | n
     executionNodeId: normalizeText(typeof source.executionNodeId === "string" ? source.executionNodeId : "") || undefined,
     executionNodeMode: normalizeExecutionNodeMode(source.executionNodeMode),
     nodeCapabilitySummary: normalizeText(typeof source.nodeCapabilitySummary === "string" ? source.nodeCapabilitySummary : "") || undefined,
+    selectedNodeId: normalizeText(typeof source.selectedNodeId === "string" ? source.selectedNodeId : "") || undefined,
+    selectedNodeReason: normalizeText(typeof source.selectedNodeReason === "string" ? source.selectedNodeReason : "") || undefined,
     taskId: normalizeText(typeof source.taskId === "string" ? source.taskId : "") || undefined,
     taskStatus: normalizeTaskStatus(source.taskStatus),
     assignedNodeId: normalizeText(typeof source.assignedNodeId === "string" ? source.assignedNodeId : "") || undefined,
@@ -483,6 +500,7 @@ function normalizeAutonomousStepRecord(value: unknown): AutonomousStepRecord | n
     verificationState: verificationState as AutonomousStepVerificationState | undefined,
     nextDecision: nextDecision as AutonomousStepDecision | undefined,
     failureClassification: normalizeFailureClassification(source.failureClassification),
+    failureReason: normalizeText(typeof source.failureReason === "string" ? source.failureReason : "") || undefined,
     recoveryStrategy: normalizeRecoveryStrategy(source.recoveryStrategy),
     retryCount: Number.isInteger(Number(source.retryCount)) ? Math.max(0, Number(source.retryCount)) : undefined,
     repeatedAction: typeof source.repeatedAction === "boolean" ? source.repeatedAction : undefined,
@@ -537,6 +555,8 @@ export function appendAutonomousStep(
     executionNodeId: normalizeText(params.executionNodeId) || undefined,
     executionNodeMode: params.executionNodeMode,
     nodeCapabilitySummary: normalizeText(params.nodeCapabilitySummary) || undefined,
+    selectedNodeId: normalizeText(params.selectedNodeId) || undefined,
+    selectedNodeReason: normalizeText(params.selectedNodeReason) || undefined,
     taskId: normalizeText(params.taskId) || undefined,
     taskStatus: params.taskStatus,
     assignedNodeId: normalizeText(params.assignedNodeId) || undefined,
@@ -556,6 +576,7 @@ export function appendAutonomousStep(
     verificationState: params.verificationState,
     nextDecision: params.nextDecision,
     failureClassification: params.failureClassification,
+    failureReason: normalizeText(params.failureReason) || undefined,
     recoveryStrategy: params.recoveryStrategy,
     retryCount: Number.isInteger(Number(params.retryCount)) ? Math.max(0, Number(params.retryCount)) : undefined,
     repeatedAction: typeof params.repeatedAction === "boolean" ? params.repeatedAction : undefined,
@@ -577,6 +598,8 @@ export function appendAutonomousStep(
     executionNodeId: step.executionNodeId ?? session.executionNodeId,
     executionNodeMode: step.executionNodeMode ?? session.executionNodeMode,
     nodeCapabilitySummary: step.nodeCapabilitySummary ?? session.nodeCapabilitySummary,
+    selectedNodeId: step.selectedNodeId ?? session.selectedNodeId,
+    selectedNodeReason: step.selectedNodeReason ?? session.selectedNodeReason,
     taskId: step.taskId ?? session.taskId,
     taskStatus: step.taskStatus ?? session.taskStatus,
     assignedNodeId: step.assignedNodeId ?? session.assignedNodeId,
@@ -591,6 +614,7 @@ export function appendAutonomousStep(
     dispatchTransportStatus: step.dispatchTransportStatus ?? session.dispatchTransportStatus,
     remoteDispatchPlanned: step.remoteDispatchPlanned ?? session.remoteDispatchPlanned,
     planningHintSummary: step.planningHintSummary ?? session.planningHintSummary,
+    failureReason: step.failureReason ?? session.failureReason,
     latestExecutionResult: executionResult ?? session.latestExecutionResult,
     pendingAction: session.pendingAction,
     latestRecoveryState: {
@@ -725,6 +749,8 @@ export function normalizeAutonomousSession(value: unknown): AutonomousSession | 
     executionNodeId: normalizeText(typeof source.executionNodeId === "string" ? source.executionNodeId : "") || undefined,
     executionNodeMode: normalizeExecutionNodeMode(source.executionNodeMode),
     nodeCapabilitySummary: normalizeText(typeof source.nodeCapabilitySummary === "string" ? source.nodeCapabilitySummary : "") || undefined,
+    selectedNodeId: normalizeText(typeof source.selectedNodeId === "string" ? source.selectedNodeId : "") || undefined,
+    selectedNodeReason: normalizeText(typeof source.selectedNodeReason === "string" ? source.selectedNodeReason : "") || undefined,
     taskId: normalizeText(typeof source.taskId === "string" ? source.taskId : "") || undefined,
     taskStatus: normalizeTaskStatus(source.taskStatus),
     assignedNodeId: normalizeText(typeof source.assignedNodeId === "string" ? source.assignedNodeId : "") || undefined,
@@ -739,6 +765,7 @@ export function normalizeAutonomousSession(value: unknown): AutonomousSession | 
     dispatchTransportStatus: normalizeDispatchTransportStatus(source.dispatchTransportStatus),
     remoteDispatchPlanned: typeof source.remoteDispatchPlanned === "boolean" ? source.remoteDispatchPlanned : undefined,
     planningHintSummary: normalizeText(typeof source.planningHintSummary === "string" ? source.planningHintSummary : "") || undefined,
+    failureReason: normalizeText(typeof source.failureReason === "string" ? source.failureReason : "") || undefined,
     latestExecutionResult: normalizeExecutionRuntimeResult(source.latestExecutionResult),
     pendingAction: normalizeExecutionActionPreview(source.pendingAction),
     latestRecoveryState: normalizeAutonomousRecoveryState(source.latestRecoveryState),

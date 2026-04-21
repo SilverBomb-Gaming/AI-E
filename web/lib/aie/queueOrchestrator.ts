@@ -9,13 +9,16 @@ import {
   summarizeExecutionNodeCapabilities,
   type ExecutionNodeDescriptor,
 } from "./executionNode";
-import { chooseExecutionNodeForAction, registerExecutionNode } from "./executionNodeRegistry";
+import { listAvailableExecutionNodes, registerExecutionNode } from "./executionNodeRegistry";
 import { createDispatchAuthToken, summarizeDispatchAuthContext } from "./dispatchAuth";
 import { createDispatchEnvelope, type DispatchProtocolVersion } from "./dispatchProtocol";
 import { createTaskDispatchRequest, summarizeDispatchPayload } from "./dispatchMessages";
 import {
+  DispatchTransportTimeoutError,
   createLocalControlledDispatchTransport,
+  sendDispatchRequestWithTimeout,
   type DispatchTransport,
+  waitForDispatchRetryDelay,
 } from "./dispatchTransport";
 import { resolveRepoRoot } from "./repoContext";
 import { runAutonomousSession } from "./runAutonomousSession";
@@ -50,6 +53,14 @@ type QueueExecutionContext = {
   allowedRoots?: string[];
   maxSteps?: number;
   dispatchTransport?: DispatchTransport;
+  maxDispatchRetries?: number;
+  dispatchRetryDelayMs?: number;
+  dispatchTimeoutMs?: number;
+};
+
+type ExecutionNodeSelection = {
+  node: ExecutionNodeDescriptor;
+  reason: string;
 };
 
 export type ClaimedQueuedTask = {
@@ -61,6 +72,8 @@ export type QueueExecutionSummary = {
   task: TaskEnvelope | null;
   session: AutonomousSession | null;
   nodeId?: string;
+  selectedNodeId?: string;
+  selectedNodeReason?: string;
   runnerMode?: TaskEnvelope["runnerMode"];
   claimToken?: string;
   dispatchMessageId?: string;
@@ -71,7 +84,12 @@ export type QueueExecutionSummary = {
   dispatchStatusSummary?: string;
   dispatchAuthSummary?: string;
   dispatchTransportStatus?: TaskDispatchTransportStatus;
-  status: "claimed" | "completed" | "failed" | "blocked" | "no-runnable-task";
+  dispatchRetryCount?: number;
+  dispatchLastAttemptAt?: string;
+  dispatchTimeoutMs?: number;
+  failureReason?: string;
+  retryCount?: number;
+  status: "claimed" | "completed" | "failed" | "blocked" | "rejected" | "retrying" | "no-runnable-task";
   queueStateSummary?: string;
 };
 
@@ -122,6 +140,8 @@ function buildQueuedSession(task: TaskEnvelope, node: ExecutionNodeDescriptor, m
     executionNodeId: node.id,
     executionNodeMode: node.mode,
     nodeCapabilitySummary: summarizeExecutionNodeCapabilities(node.capabilities),
+    selectedNodeId: task.selectedNodeId ?? task.assignedNodeId ?? node.id,
+    selectedNodeReason: task.selectedNodeReason,
     taskId: task.taskId,
     taskStatus: task.status,
     assignedNodeId: task.assignedNodeId,
@@ -134,8 +154,173 @@ function buildQueuedSession(task: TaskEnvelope, node: ExecutionNodeDescriptor, m
     dispatchStatusSummary: task.dispatchStatusSummary,
     dispatchAuthSummary: task.dispatchAuthSummary,
     dispatchTransportStatus: task.dispatchTransportStatus,
+    failureReason: task.failureReason,
     remoteDispatchPlanned: task.remoteDispatchPlanned,
   };
+}
+
+function normalizeDispatchRetryLimit(value: unknown): number {
+  const numericValue = Number(value ?? 2);
+  if (!Number.isFinite(numericValue)) {
+    return 2;
+  }
+
+  return Math.max(0, Math.min(3, Math.floor(numericValue)));
+}
+
+function normalizeDispatchDelay(value: unknown): number {
+  const numericValue = Number(value ?? 25);
+  if (!Number.isFinite(numericValue)) {
+    return 25;
+  }
+
+  return Math.max(0, Math.floor(numericValue));
+}
+
+function normalizeDispatchTimeout(value: unknown): number {
+  const numericValue = Number(value ?? 250);
+  if (!Number.isFinite(numericValue)) {
+    return 250;
+  }
+
+  return Math.max(1, Math.floor(numericValue));
+}
+
+function shouldRetryDispatchFailure(reason: string | undefined, status: "rejected" | "failed" | "timeout"): boolean {
+  const normalizedReason = normalizeText(reason).toLowerCase();
+
+  if (!normalizedReason) {
+    return status !== "rejected";
+  }
+
+  if (normalizedReason.includes("auth")) {
+    return false;
+  }
+
+  if (normalizedReason.includes("capab")) {
+    return false;
+  }
+
+  if (normalizedReason.includes("timeout")) {
+    return true;
+  }
+
+  if (normalizedReason.includes("busy") || normalizedReason.includes("inactive") || normalizedReason.includes("not registered") || normalizedReason.includes("unavailable")) {
+    return true;
+  }
+
+  return status === "failed" || status === "timeout";
+}
+
+function selectExecutionNodeForTask(
+  task: TaskEnvelope,
+  context: {
+    runtimeMode?: "web" | "headless" | "local";
+    cwd?: string;
+    preferredNodeId?: string;
+    excludedNodeIds?: Set<string>;
+  },
+): ExecutionNodeSelection | null {
+  const availableNodes = listAvailableExecutionNodes({
+    requestedCapabilities: task.requestedCapabilities,
+  }).filter((node) => !context.excludedNodeIds?.has(node.id));
+
+  if (!availableNodes.length) {
+    return null;
+  }
+
+  const preferredNodeId = normalizeText(context.preferredNodeId || task.preferredNodeId);
+  const preferred = preferredNodeId ? availableNodes.find((node) => node.id === preferredNodeId) : null;
+  if (preferred) {
+    return {
+      node: preferred,
+      reason: `Preferred capable node ${preferred.id} was available.`,
+    };
+  }
+
+  const normalizedCwd = normalizeText(context.cwd);
+  const localCwdMatch = normalizedCwd
+    ? availableNodes.find((node) => node.mode === "local-node" && normalizeText(node.cwd) === normalizedCwd)
+    : null;
+  if (localCwdMatch) {
+    return {
+      node: localCwdMatch,
+      reason: `Selected local node ${localCwdMatch.id} because its cwd matched the active workspace.`,
+    };
+  }
+
+  const normalizedRuntimeMode = context.runtimeMode === "local" ? "local-node" : normalizeText(context.runtimeMode);
+  const matchingMode = normalizedRuntimeMode
+    ? availableNodes.find((node) => node.mode === normalizedRuntimeMode)
+    : null;
+  if (matchingMode) {
+    return {
+      node: matchingMode,
+      reason: `Selected capable node ${matchingMode.id} because it matched runtime mode ${normalizedRuntimeMode}.`,
+    };
+  }
+
+  const localFallback = availableNodes.find((node) => node.mode === "local-node");
+  if (localFallback) {
+    return {
+      node: localFallback,
+      reason: `Fell back to capable local node ${localFallback.id}.`,
+    };
+  }
+
+  return {
+    node: availableNodes[0] as ExecutionNodeDescriptor,
+    reason: `Selected first deterministic capable node ${(availableNodes[0] as ExecutionNodeDescriptor).id}.`,
+  };
+}
+
+function summarizeQueueExecution(
+  task: TaskEnvelope | null,
+  session: AutonomousSession | null,
+  status: QueueExecutionSummary["status"],
+): QueueExecutionSummary {
+  return {
+    task,
+    session,
+    nodeId: task?.assignedNodeId,
+    selectedNodeId: task?.selectedNodeId ?? task?.assignedNodeId,
+    selectedNodeReason: task?.selectedNodeReason,
+    runnerMode: task?.runnerMode,
+    claimToken: task?.claimToken,
+    dispatchMessageId: task?.dispatchMessageId,
+    dispatchAckMessageId: task?.dispatchAckMessageId,
+    dispatchResultMessageId: task?.dispatchResultMessageId,
+    dispatchTargetNodeId: task?.dispatchTargetNodeId,
+    dispatchProtocolVersion: task?.dispatchProtocolVersion,
+    dispatchStatusSummary: task?.dispatchStatusSummary,
+    dispatchAuthSummary: task?.dispatchAuthSummary,
+    dispatchTransportStatus: task?.dispatchTransportStatus,
+    dispatchRetryCount: task?.dispatchRetryCount,
+    dispatchLastAttemptAt: task?.dispatchLastAttemptAt,
+    dispatchTimeoutMs: task?.dispatchTimeoutMs,
+    failureReason: task?.failureReason,
+    retryCount: task?.dispatchRetryCount,
+    status,
+    queueStateSummary: task ? summarizeTaskEnvelope(task) : undefined,
+  };
+}
+
+function isTerminalTaskStatus(status: TaskEnvelope["status"] | null | undefined): boolean {
+  return status === "completed" || status === "failed" || status === "blocked" || status === "rejected";
+}
+
+function summarizeTerminalTask(task: TaskEnvelope, session: AutonomousSession | null): QueueExecutionSummary {
+  return summarizeQueueExecution(
+    task,
+    session,
+    task.status === "completed"
+      ? "completed"
+      : task.status === "failed"
+        ? "failed"
+        : task.status === "rejected"
+          ? "rejected"
+          : "blocked",
+  );
 }
 
 export async function claimNextRunnableTask(
@@ -151,16 +336,20 @@ export async function claimNextRunnableTask(
   }));
 
   const candidates = context.taskId
-    ? [await resolved.getTask(context.taskId)].filter((task): task is TaskEnvelope => Boolean(task && task.status === "pending" && task.action.scope === "safe"))
+    ? [await resolved.getTask(context.taskId)].filter((task): task is TaskEnvelope => Boolean(task && (task.status === "pending" || task.status === "queued" || task.status === "retrying") && task.action.scope === "safe"))
     : await resolved.getRunnableTasks();
 
   for (const candidate of candidates) {
-    const selectedNode = chooseExecutionNodeForAction(candidate.action, {
+    const selectedNode = selectExecutionNodeForTask(candidate, {
       runtimeMode: context.runtimeMode,
       preferredNodeId: candidate.preferredNodeId || runtimeNode.id,
       cwd,
     });
     if (!selectedNode) {
+      await resolved.updateTaskStatus(candidate.taskId, "rejected", {
+        statusReason: "No active non-busy capable execution node was available.",
+        failureReason: "No active non-busy capable execution node was available.",
+      });
       continue;
     }
 
@@ -168,14 +357,14 @@ export async function claimNextRunnableTask(
     const claimed = await resolved.claimTask(
       candidate.taskId,
       claimToken,
-      selectedNode.mode,
-      selectedNode.id,
-      "Claimed for controlled queue execution through the shared runner.",
+      selectedNode.node.mode,
+      selectedNode.node.id,
+      selectedNode.reason,
     );
     if (claimed) {
       return {
         task: claimed,
-        node: selectedNode,
+        node: selectedNode.node,
       };
     }
   }
@@ -205,126 +394,291 @@ export async function executeQueuedTask(
     cwd,
     allowedRoots: context.allowedRoots,
   }));
-  const authToken = createDispatchAuthToken({
-    sourceNodeId: runtimeNode.id,
-    targetNodeId: claimed.node.id,
-    taskId: claimed.task.taskId,
-    sessionId: claimed.task.sessionId,
-  });
-  const dispatchAuthSummary = summarizeDispatchAuthContext({
-    sourceNodeId: runtimeNode.id,
-    targetNodeId: claimed.node.id,
-    valid: true,
-    expiresAt: authToken.expiresAt,
-  });
-  const request = createDispatchEnvelope({
-    messageType: "task-dispatch-request",
-    sourceNodeId: runtimeNode.id,
-    targetNodeId: claimed.node.id,
-    taskId: claimed.task.taskId,
-    sessionId: claimed.task.sessionId,
-    payload: createTaskDispatchRequest({
-      action: claimed.task.action,
-      requestedCapabilities: claimed.task.requestedCapabilities,
-      assignedNodeId: claimed.node.id,
-      authToken,
-      approvalState: {
-        requiresApproval: claimed.task.action.requiresApproval,
-        approved: true,
-      },
-      queueStateSummary: summarizeTaskEnvelope(claimed.task),
-      dispatchStatusSummary: "Dispatch requested through the controlled transport boundary.",
-      dispatchAuthSummary,
-      remoteDispatchPlanned: true,
-    }),
-  });
-  const requestSummary = summarizeDispatchPayload(request.messageType, request.payload, request.protocolVersion);
-  const pendingTask = await resolved.updateTaskDispatchMetadata(claimed.task.taskId, {
-    assignedNodeId: claimed.node.id,
-    dispatchMessageId: request.messageId,
-    dispatchTargetNodeId: claimed.node.id,
-    dispatchProtocolVersion: request.protocolVersion,
-    dispatchStatusSummary: requestSummary,
-    dispatchAuthSummary,
-    dispatchTransportStatus: "pending",
-    remoteDispatchPlanned: true,
-  });
   const transport = context.dispatchTransport ?? createLocalControlledDispatchTransport();
+  const maxDispatchRetries = normalizeDispatchRetryLimit(context.maxDispatchRetries);
+  const dispatchRetryDelayMs = normalizeDispatchDelay(context.dispatchRetryDelayMs);
+  const dispatchTimeoutMs = normalizeDispatchTimeout(context.dispatchTimeoutMs);
+  const excludedNodeIds = new Set<string>();
+  let retryCount = Math.max(0, claimed.task.dispatchRetryCount ?? 0);
+  let latestTask: TaskEnvelope = claimed.task;
+  let latestSession: AutonomousSession | null = null;
 
-  try {
-    const transportResult = await transport.sendDispatchRequest({
-      request,
-      context: {
-        runtimeMode: claimed.node.mode === "local-node" ? "local" : claimed.node.mode,
-        cwd,
-        allowedRoots: context.allowedRoots ?? claimed.node.allowedRoots,
-        maxSteps: context.maxSteps,
-      },
-      dependencies: {
-        getTask: resolved.getTask,
-        updateTaskStatus: resolved.updateTaskStatus,
-        updateTaskDispatchMetadata: resolved.updateTaskDispatchMetadata,
-        executeClaimedTask: (receivedClaimed, receiveContext) =>
-          executeClaimedTaskWithSharedRunner(receivedClaimed, receiveContext, resolved),
-      },
+  for (let attemptIndex = 0; attemptIndex <= maxDispatchRetries; attemptIndex += 1) {
+    const currentTask = await resolved.getTask(claimed.task.taskId) ?? latestTask;
+
+    if (isTerminalTaskStatus(currentTask.status)) {
+      return summarizeTerminalTask(currentTask, latestSession);
+    }
+
+    const selectedNode = selectExecutionNodeForTask(currentTask, {
+      runtimeMode: context.runtimeMode,
+      preferredNodeId: currentTask.selectedNodeId ?? currentTask.preferredNodeId ?? claimed.node.id,
+      cwd,
+      excludedNodeIds,
     });
-    const effectiveTask = transportResult.task ?? await resolved.getTask(claimed.task.taskId) ?? pendingTask ?? claimed.task;
 
-    return {
-      task: effectiveTask,
-      session: transportResult.session ?? null,
-      nodeId: claimed.node.id,
-      runnerMode: effectiveTask.runnerMode,
-      claimToken: effectiveTask.claimToken,
-      dispatchMessageId: effectiveTask.dispatchMessageId,
-      dispatchAckMessageId: effectiveTask.dispatchAckMessageId,
-      dispatchResultMessageId: effectiveTask.dispatchResultMessageId,
-      dispatchTargetNodeId: effectiveTask.dispatchTargetNodeId,
-      dispatchProtocolVersion: effectiveTask.dispatchProtocolVersion,
-      dispatchStatusSummary: effectiveTask.dispatchStatusSummary,
-      dispatchAuthSummary: effectiveTask.dispatchAuthSummary,
-      dispatchTransportStatus: effectiveTask.dispatchTransportStatus,
-      status: effectiveTask.status === "completed" || effectiveTask.status === "failed" || effectiveTask.status === "blocked"
-        ? effectiveTask.status
-        : transportResult.status === "rejected"
-          ? "blocked"
-          : transportResult.status === "failed"
-            ? "failed"
-            : "claimed",
-      queueStateSummary: summarizeTaskEnvelope(effectiveTask),
-    };
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : "Controlled queued dispatch failed unexpectedly.";
-    const failedTask = await resolved.updateTaskStatus(claimed.task.taskId, "failed", {
-      assignedNodeId: claimed.node.id,
-      statusReason: reason,
+    if (!selectedNode) {
+      const rejectedTask = await resolved.updateTaskStatus(currentTask.taskId, "rejected", {
+        assignedNodeId: currentTask.assignedNodeId,
+        selectedNodeId: currentTask.selectedNodeId,
+        selectedNodeReason: currentTask.selectedNodeReason,
+        statusReason: "No active non-busy capable execution node was available.",
+        failureReason: "No active non-busy capable execution node was available.",
+        dispatchRetryCount: retryCount,
+        dispatchTimeoutMs,
+      });
+      return summarizeQueueExecution(rejectedTask ?? currentTask, latestSession, "rejected");
+    }
+
+    const authToken = createDispatchAuthToken({
+      sourceNodeId: runtimeNode.id,
+      targetNodeId: selectedNode.node.id,
+      taskId: currentTask.taskId,
+      sessionId: currentTask.sessionId,
+    });
+    const dispatchAuthSummary = summarizeDispatchAuthContext({
+      sourceNodeId: runtimeNode.id,
+      targetNodeId: selectedNode.node.id,
+      valid: true,
+      expiresAt: authToken.expiresAt,
+    });
+    const request = createDispatchEnvelope({
+      messageType: "task-dispatch-request",
+      sourceNodeId: runtimeNode.id,
+      targetNodeId: selectedNode.node.id,
+      taskId: currentTask.taskId,
+      sessionId: currentTask.sessionId,
+      payload: createTaskDispatchRequest({
+        action: currentTask.action,
+        requestedCapabilities: currentTask.requestedCapabilities,
+        assignedNodeId: selectedNode.node.id,
+        authToken,
+        approvalState: {
+          requiresApproval: currentTask.action.requiresApproval,
+          approved: true,
+        },
+        queueStateSummary: summarizeTaskEnvelope(currentTask),
+        dispatchStatusSummary: "Dispatch requested through the controlled transport boundary.",
+        dispatchAuthSummary,
+        remoteDispatchPlanned: true,
+      }),
+    });
+    const requestSummary = summarizeDispatchPayload(request.messageType, request.payload, request.protocolVersion);
+    retryCount = attemptIndex + 1;
+    latestTask = await resolved.updateTaskStatus(currentTask.taskId, "awaiting-ack", {
+      assignedNodeId: selectedNode.node.id,
+      selectedNodeId: selectedNode.node.id,
+      selectedNodeReason: selectedNode.reason,
+      statusReason: `Dispatch attempt ${retryCount} is awaiting acknowledgment from ${selectedNode.node.id}.`,
+      failureReason: undefined,
       dispatchMessageId: request.messageId,
-      dispatchTargetNodeId: claimed.node.id,
+      dispatchTargetNodeId: selectedNode.node.id,
       dispatchProtocolVersion: request.protocolVersion,
       dispatchStatusSummary: requestSummary,
       dispatchAuthSummary,
-      dispatchTransportStatus: "failed",
+      dispatchTransportStatus: "pending",
+      dispatchRetryCount: retryCount,
+      dispatchLastAttemptAt: request.createdAt,
+      dispatchTimeoutMs,
       remoteDispatchPlanned: true,
-    });
+    }) ?? currentTask;
 
-    return {
-      task: failedTask,
-      session: null,
-      nodeId: claimed.node.id,
-      runnerMode: failedTask?.runnerMode ?? claimed.task.runnerMode,
-      claimToken: failedTask?.claimToken ?? claimed.task.claimToken,
-      dispatchMessageId: failedTask?.dispatchMessageId ?? request.messageId,
-      dispatchAckMessageId: failedTask?.dispatchAckMessageId,
-      dispatchResultMessageId: failedTask?.dispatchResultMessageId,
-      dispatchTargetNodeId: failedTask?.dispatchTargetNodeId ?? claimed.node.id,
-      dispatchProtocolVersion: failedTask?.dispatchProtocolVersion ?? request.protocolVersion,
-      dispatchStatusSummary: failedTask?.dispatchStatusSummary ?? requestSummary,
-      dispatchAuthSummary: failedTask?.dispatchAuthSummary ?? dispatchAuthSummary,
-      dispatchTransportStatus: failedTask?.dispatchTransportStatus ?? "failed",
-      status: "failed",
-      queueStateSummary: failedTask ? summarizeTaskEnvelope(failedTask) : undefined,
-    };
+    try {
+      const transportResult = await sendDispatchRequestWithTimeout({
+        transport,
+        timeoutMs: dispatchTimeoutMs,
+        request,
+        context: {
+          runtimeMode: selectedNode.node.mode === "local-node" ? "local" : selectedNode.node.mode,
+          cwd,
+          allowedRoots: context.allowedRoots ?? selectedNode.node.allowedRoots,
+          maxSteps: context.maxSteps,
+        },
+        dependencies: {
+          getTask: resolved.getTask,
+          updateTaskStatus: resolved.updateTaskStatus,
+          updateTaskDispatchMetadata: resolved.updateTaskDispatchMetadata,
+          executeClaimedTask: (receivedClaimed, receiveContext) =>
+            executeClaimedTaskWithSharedRunner(receivedClaimed, receiveContext, resolved),
+        },
+      });
+      latestTask = transportResult.task ?? await resolved.getTask(currentTask.taskId) ?? latestTask;
+      latestSession = transportResult.session ?? latestSession;
+
+      if (isTerminalTaskStatus(latestTask.status)) {
+        return summarizeTerminalTask(latestTask, latestSession);
+      }
+
+      if (transportResult.status === "rejected") {
+        const reason = transportResult.reason || latestTask.failureReason || "The controlled receiver rejected the dispatch request.";
+        const retryable = shouldRetryDispatchFailure(reason, "rejected") && attemptIndex < maxDispatchRetries;
+        if (retryable) {
+          const persistedLatestTask = await resolved.getTask(currentTask.taskId);
+          if (persistedLatestTask && isTerminalTaskStatus(persistedLatestTask.status)) {
+            return summarizeTerminalTask(persistedLatestTask, latestSession);
+          }
+          excludedNodeIds.add(selectedNode.node.id);
+          latestTask = await resolved.updateTaskStatus(currentTask.taskId, "retrying", {
+            assignedNodeId: selectedNode.node.id,
+            selectedNodeId: selectedNode.node.id,
+            selectedNodeReason: selectedNode.reason,
+            statusReason: `Retrying after rejected dispatch attempt ${retryCount}.`,
+            failureReason: reason,
+            dispatchMessageId: latestTask.dispatchMessageId ?? request.messageId,
+            dispatchAckMessageId: latestTask.dispatchAckMessageId,
+            dispatchTargetNodeId: latestTask.dispatchTargetNodeId ?? selectedNode.node.id,
+            dispatchProtocolVersion: latestTask.dispatchProtocolVersion ?? request.protocolVersion,
+            dispatchStatusSummary: latestTask.dispatchStatusSummary,
+            dispatchAuthSummary: latestTask.dispatchAuthSummary ?? dispatchAuthSummary,
+            dispatchTransportStatus: "rejected",
+            dispatchRetryCount: retryCount,
+            dispatchLastAttemptAt: latestTask.dispatchLastAttemptAt ?? request.createdAt,
+            dispatchTimeoutMs,
+            remoteDispatchPlanned: true,
+          }) ?? latestTask;
+          await waitForDispatchRetryDelay(dispatchRetryDelayMs);
+          continue;
+        }
+
+        const persistedLatestTask = await resolved.getTask(currentTask.taskId);
+        if (persistedLatestTask && isTerminalTaskStatus(persistedLatestTask.status)) {
+          return summarizeTerminalTask(persistedLatestTask, latestSession);
+        }
+        latestTask = await resolved.updateTaskStatus(currentTask.taskId, "rejected", {
+          assignedNodeId: selectedNode.node.id,
+          selectedNodeId: selectedNode.node.id,
+          selectedNodeReason: selectedNode.reason,
+          statusReason: reason,
+          failureReason: reason,
+          dispatchMessageId: latestTask.dispatchMessageId ?? request.messageId,
+          dispatchAckMessageId: latestTask.dispatchAckMessageId,
+          dispatchTargetNodeId: latestTask.dispatchTargetNodeId ?? selectedNode.node.id,
+          dispatchProtocolVersion: latestTask.dispatchProtocolVersion ?? request.protocolVersion,
+          dispatchStatusSummary: latestTask.dispatchStatusSummary,
+          dispatchAuthSummary: latestTask.dispatchAuthSummary ?? dispatchAuthSummary,
+          dispatchTransportStatus: "rejected",
+          dispatchRetryCount: retryCount,
+          dispatchLastAttemptAt: latestTask.dispatchLastAttemptAt ?? request.createdAt,
+          dispatchTimeoutMs,
+          remoteDispatchPlanned: true,
+        }) ?? latestTask;
+        return summarizeQueueExecution(latestTask, latestSession, "rejected");
+      }
+
+      if (transportResult.status === "failed") {
+        const reason = transportResult.reason || latestTask.failureReason || "The controlled dispatch transport failed.";
+        const retryable = shouldRetryDispatchFailure(reason, "failed") && attemptIndex < maxDispatchRetries;
+        if (retryable) {
+          const persistedLatestTask = await resolved.getTask(currentTask.taskId);
+          if (persistedLatestTask && isTerminalTaskStatus(persistedLatestTask.status)) {
+            return summarizeTerminalTask(persistedLatestTask, latestSession);
+          }
+          latestTask = await resolved.updateTaskStatus(currentTask.taskId, "retrying", {
+            assignedNodeId: selectedNode.node.id,
+            selectedNodeId: selectedNode.node.id,
+            selectedNodeReason: selectedNode.reason,
+            statusReason: `Retrying after failed dispatch attempt ${retryCount}.`,
+            failureReason: reason,
+            dispatchMessageId: latestTask.dispatchMessageId ?? request.messageId,
+            dispatchAckMessageId: latestTask.dispatchAckMessageId,
+            dispatchResultMessageId: latestTask.dispatchResultMessageId,
+            dispatchTargetNodeId: latestTask.dispatchTargetNodeId ?? selectedNode.node.id,
+            dispatchProtocolVersion: latestTask.dispatchProtocolVersion ?? request.protocolVersion,
+            dispatchStatusSummary: latestTask.dispatchStatusSummary,
+            dispatchAuthSummary: latestTask.dispatchAuthSummary ?? dispatchAuthSummary,
+            dispatchTransportStatus: "failed",
+            dispatchRetryCount: retryCount,
+            dispatchLastAttemptAt: latestTask.dispatchLastAttemptAt ?? request.createdAt,
+            dispatchTimeoutMs,
+            remoteDispatchPlanned: true,
+          }) ?? latestTask;
+          await waitForDispatchRetryDelay(dispatchRetryDelayMs);
+          continue;
+        }
+
+        const persistedLatestTask = await resolved.getTask(currentTask.taskId);
+        if (persistedLatestTask && isTerminalTaskStatus(persistedLatestTask.status)) {
+          return summarizeTerminalTask(persistedLatestTask, latestSession);
+        }
+        latestTask = await resolved.updateTaskStatus(currentTask.taskId, "failed", {
+          assignedNodeId: selectedNode.node.id,
+          selectedNodeId: selectedNode.node.id,
+          selectedNodeReason: selectedNode.reason,
+          statusReason: reason,
+          failureReason: reason,
+          dispatchMessageId: latestTask.dispatchMessageId ?? request.messageId,
+          dispatchAckMessageId: latestTask.dispatchAckMessageId,
+          dispatchResultMessageId: latestTask.dispatchResultMessageId,
+          dispatchTargetNodeId: latestTask.dispatchTargetNodeId ?? selectedNode.node.id,
+          dispatchProtocolVersion: latestTask.dispatchProtocolVersion ?? request.protocolVersion,
+          dispatchStatusSummary: latestTask.dispatchStatusSummary,
+          dispatchAuthSummary: latestTask.dispatchAuthSummary ?? dispatchAuthSummary,
+          dispatchTransportStatus: "failed",
+          dispatchRetryCount: retryCount,
+          dispatchLastAttemptAt: latestTask.dispatchLastAttemptAt ?? request.createdAt,
+          dispatchTimeoutMs,
+          remoteDispatchPlanned: true,
+        }) ?? latestTask;
+        return summarizeQueueExecution(latestTask, latestSession, "failed");
+      }
+
+      return summarizeQueueExecution(latestTask, latestSession, latestTask.status === "completed" ? "completed" : latestTask.status === "failed" ? "failed" : latestTask.status === "rejected" ? "rejected" : "claimed");
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : "Controlled queued dispatch failed unexpectedly.";
+      const timedOut = error instanceof DispatchTransportTimeoutError;
+      const retryable = shouldRetryDispatchFailure(reason, timedOut ? "timeout" : "failed") && attemptIndex < maxDispatchRetries;
+      if (retryable) {
+        const persistedLatestTask = await resolved.getTask(currentTask.taskId);
+        if (persistedLatestTask && isTerminalTaskStatus(persistedLatestTask.status)) {
+          return summarizeTerminalTask(persistedLatestTask, latestSession);
+        }
+        latestTask = await resolved.updateTaskStatus(currentTask.taskId, "retrying", {
+          assignedNodeId: selectedNode.node.id,
+          selectedNodeId: selectedNode.node.id,
+          selectedNodeReason: selectedNode.reason,
+          statusReason: `Retrying after ${timedOut ? "timeout" : "failed"} dispatch attempt ${retryCount}.`,
+          failureReason: reason,
+          dispatchMessageId: request.messageId,
+          dispatchTargetNodeId: selectedNode.node.id,
+          dispatchProtocolVersion: request.protocolVersion,
+          dispatchStatusSummary: requestSummary,
+          dispatchAuthSummary,
+          dispatchTransportStatus: "failed",
+          dispatchRetryCount: retryCount,
+          dispatchLastAttemptAt: request.createdAt,
+          dispatchTimeoutMs,
+          remoteDispatchPlanned: true,
+        }) ?? latestTask;
+        await waitForDispatchRetryDelay(dispatchRetryDelayMs);
+        continue;
+      }
+
+      const persistedLatestTask = await resolved.getTask(currentTask.taskId);
+      if (persistedLatestTask && isTerminalTaskStatus(persistedLatestTask.status)) {
+        return summarizeTerminalTask(persistedLatestTask, latestSession);
+      }
+      latestTask = await resolved.updateTaskStatus(currentTask.taskId, "failed", {
+        assignedNodeId: selectedNode.node.id,
+        selectedNodeId: selectedNode.node.id,
+        selectedNodeReason: selectedNode.reason,
+        statusReason: reason,
+        failureReason: reason,
+        dispatchMessageId: request.messageId,
+        dispatchTargetNodeId: selectedNode.node.id,
+        dispatchProtocolVersion: request.protocolVersion,
+        dispatchStatusSummary: requestSummary,
+        dispatchAuthSummary,
+        dispatchTransportStatus: "failed",
+        dispatchRetryCount: retryCount,
+        dispatchLastAttemptAt: request.createdAt,
+        dispatchTimeoutMs,
+        remoteDispatchPlanned: true,
+      }) ?? latestTask;
+      return summarizeQueueExecution(latestTask, latestSession, "failed");
+    }
   }
+
+  return summarizeQueueExecution(latestTask, latestSession, latestTask.status === "rejected" ? "rejected" : latestTask.status === "failed" ? "failed" : latestTask.status === "completed" ? "completed" : "claimed");
 }
 
 export async function executeClaimedTaskWithSharedRunner(

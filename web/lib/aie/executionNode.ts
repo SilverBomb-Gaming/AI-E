@@ -17,6 +17,7 @@ export type ExecutionNodeDescriptor = {
   cwd?: string;
   allowedRoots?: string[];
   active: boolean;
+  busy: boolean;
   createdAt: string;
   updatedAt: string;
 };
@@ -34,6 +35,7 @@ type CreateExecutionNodeDescriptorParams = {
   cwd?: string;
   allowedRoots?: string[];
   active?: boolean;
+  busy?: boolean;
   createdAt?: string;
   updatedAt?: string;
 };
@@ -114,7 +116,10 @@ export function supportsExecutionNodeCapabilities(
 
 export function summarizeExecutionNodePolicy(node: ExecutionNodeDescriptor): string {
   const roots = (node.allowedRoots ?? []).filter(Boolean);
-  return roots.length ? `${node.id} roots=${roots.join(",")}` : `${node.id} roots=unbounded-lab`;
+  const availability = node.active ? (node.busy ? "busy" : "active") : "inactive";
+  return roots.length
+    ? `${node.id} availability=${availability} roots=${roots.join(",")}`
+    : `${node.id} availability=${availability} roots=unbounded-lab`;
 }
 
 export function validateExecutionActionForNode(
@@ -165,6 +170,7 @@ export function createExecutionNodeDescriptor(params: CreateExecutionNodeDescrip
     cwd: normalizeText(params.cwd) || undefined,
     allowedRoots: (params.allowedRoots ?? []).map((item) => normalizeText(item)).filter(Boolean),
     active: params.active !== false,
+    busy: params.busy === true,
     createdAt: params.createdAt || timestamp,
     updatedAt: timestamp,
   };

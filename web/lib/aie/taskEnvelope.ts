@@ -2,13 +2,28 @@ import { getExecutionNodeCapabilitiesForAction, type ExecutionNodeCapability } f
 import type { ExecutionNodeMode } from "./executionNode";
 import type { ExecutionActionPreview } from "./types";
 
-export type TaskEnvelopeStatus = "pending" | "assigned" | "running" | "completed" | "failed" | "blocked";
+export type TaskEnvelopeStatus =
+  | "pending"
+  | "assigned"
+  | "running"
+  | "blocked"
+  | "queued"
+  | "dispatching"
+  | "awaiting-ack"
+  | "executing"
+  | "completed"
+  | "failed"
+  | "retrying"
+  | "rejected";
 
 export type TaskDispatchTransportStatus = "pending" | "accepted" | "rejected" | "delivered" | "failed" | "completed";
 
 export type TaskEnvelopeTransitionMetadata = {
   assignedNodeId?: string;
+  selectedNodeId?: string;
+  selectedNodeReason?: string;
   statusReason?: string;
+  failureReason?: string;
   claimToken?: string;
   runnerMode?: ExecutionNodeMode;
   dispatchMessageId?: string;
@@ -19,6 +34,9 @@ export type TaskEnvelopeTransitionMetadata = {
   dispatchStatusSummary?: string;
   dispatchAuthSummary?: string;
   dispatchTransportStatus?: TaskDispatchTransportStatus;
+  dispatchRetryCount?: number;
+  dispatchLastAttemptAt?: string;
+  dispatchTimeoutMs?: number;
   remoteDispatchPlanned?: boolean;
   dispatchReceivedAt?: string;
   dispatchCompletedAt?: string;
@@ -32,8 +50,11 @@ export type TaskEnvelope = {
   requestedCapabilities: ExecutionNodeCapability[];
   preferredNodeId?: string;
   assignedNodeId?: string;
+  selectedNodeId?: string;
+  selectedNodeReason?: string;
   status: TaskEnvelopeStatus;
   statusReason?: string;
+  failureReason?: string;
   claimToken?: string;
   runnerMode?: ExecutionNodeMode;
   dispatchMessageId?: string;
@@ -44,6 +65,9 @@ export type TaskEnvelope = {
   dispatchStatusSummary?: string;
   dispatchAuthSummary?: string;
   dispatchTransportStatus?: TaskDispatchTransportStatus;
+  dispatchRetryCount?: number;
+  dispatchLastAttemptAt?: string;
+  dispatchTimeoutMs?: number;
   remoteDispatchPlanned?: boolean;
   createdAt: string;
   claimedAt?: string;
@@ -90,9 +114,15 @@ function normalizeTaskEnvelopeStatus(value: unknown): TaskEnvelopeStatus | undef
     value === "pending" ||
     value === "assigned" ||
     value === "running" ||
+    value === "queued" ||
+    value === "dispatching" ||
+    value === "awaiting-ack" ||
+    value === "executing" ||
     value === "completed" ||
     value === "failed" ||
-    value === "blocked"
+    value === "blocked" ||
+    value === "retrying" ||
+    value === "rejected"
   ) {
     return value;
   }
@@ -125,12 +155,18 @@ function normalizeDispatchTransportStatus(value: unknown): TaskDispatchTransport
 
 function assertTaskTransitionAllowed(envelope: TaskEnvelope, nextStatus: TaskEnvelopeStatus): void {
   const allowedTransitions: Record<TaskEnvelopeStatus, TaskEnvelopeStatus[]> = {
-    pending: ["assigned", "blocked"],
-    assigned: ["pending", "running", "blocked", "failed", "completed"],
-    running: ["completed", "failed", "blocked"],
+    pending: ["queued", "assigned", "blocked", "rejected"],
+    assigned: ["pending", "dispatching", "running", "blocked", "failed", "completed", "rejected"],
+    running: ["executing", "completed", "failed", "blocked", "retrying", "rejected"],
+    queued: ["assigned", "dispatching", "blocked", "failed", "rejected"],
+    dispatching: ["awaiting-ack", "retrying", "failed", "rejected", "executing"],
+    "awaiting-ack": ["executing", "retrying", "failed", "rejected", "completed"],
+    executing: ["completed", "failed", "retrying", "rejected"],
     completed: [],
     failed: [],
     blocked: [],
+    retrying: ["dispatching", "awaiting-ack", "failed", "rejected"],
+    rejected: [],
   };
 
   if (envelope.status === nextStatus) {
@@ -149,8 +185,11 @@ function applyTaskTransition(
 ): TaskEnvelope {
   assertTaskTransitionAllowed(envelope, status);
   const timestamp = createTimestamp();
-  const assignedNodeId = normalizeText(metadata?.assignedNodeId) || envelope.assignedNodeId;
+  const selectedNodeId = normalizeText(metadata?.selectedNodeId) || normalizeText(metadata?.assignedNodeId) || envelope.selectedNodeId || envelope.assignedNodeId;
+  const assignedNodeId = selectedNodeId || envelope.assignedNodeId;
+  const selectedNodeReason = normalizeText(metadata?.selectedNodeReason) || envelope.selectedNodeReason;
   const statusReason = normalizeText(metadata?.statusReason) || undefined;
+  const failureReason = normalizeText(metadata?.failureReason) || envelope.failureReason;
   const claimToken = normalizeText(metadata?.claimToken) || envelope.claimToken;
   const runnerMode = metadata?.runnerMode ?? envelope.runnerMode;
   const dispatchMessageId = normalizeText(metadata?.dispatchMessageId) || envelope.dispatchMessageId;
@@ -161,6 +200,13 @@ function applyTaskTransition(
   const dispatchStatusSummary = normalizeText(metadata?.dispatchStatusSummary) || envelope.dispatchStatusSummary;
   const dispatchAuthSummary = normalizeText(metadata?.dispatchAuthSummary) || envelope.dispatchAuthSummary;
   const dispatchTransportStatus = metadata?.dispatchTransportStatus ?? envelope.dispatchTransportStatus;
+  const dispatchRetryCount = Number.isInteger(Number(metadata?.dispatchRetryCount))
+    ? Math.max(0, Number(metadata?.dispatchRetryCount))
+    : envelope.dispatchRetryCount;
+  const dispatchLastAttemptAt = normalizeText(metadata?.dispatchLastAttemptAt) || envelope.dispatchLastAttemptAt;
+  const dispatchTimeoutMs = Number.isFinite(Number(metadata?.dispatchTimeoutMs))
+    ? Math.max(0, Number(metadata?.dispatchTimeoutMs))
+    : envelope.dispatchTimeoutMs;
   const remoteDispatchPlanned = typeof metadata?.remoteDispatchPlanned === "boolean"
     ? metadata.remoteDispatchPlanned
     : envelope.remoteDispatchPlanned;
@@ -174,8 +220,11 @@ function applyTaskTransition(
   return {
     ...envelope,
     assignedNodeId: assignedNodeId || undefined,
+    selectedNodeId: selectedNodeId || undefined,
+    selectedNodeReason: selectedNodeReason || undefined,
     status,
     statusReason,
+    failureReason: failureReason || undefined,
     claimToken: claimToken || undefined,
     runnerMode,
     dispatchMessageId: dispatchMessageId || undefined,
@@ -186,6 +235,9 @@ function applyTaskTransition(
     dispatchStatusSummary: dispatchStatusSummary || undefined,
     dispatchAuthSummary: dispatchAuthSummary || undefined,
     dispatchTransportStatus,
+    dispatchRetryCount,
+    dispatchLastAttemptAt: dispatchLastAttemptAt || undefined,
+    dispatchTimeoutMs,
     remoteDispatchPlanned,
     claimedAt,
     assignedAt: status === "assigned" && !envelope.assignedAt ? timestamp : envelope.assignedAt,
@@ -212,8 +264,11 @@ export function createTaskEnvelope(params: CreateTaskEnvelopeParams): TaskEnvelo
       : getExecutionNodeCapabilitiesForAction(params.action),
     preferredNodeId: normalizeText(params.preferredNodeId) || undefined,
     assignedNodeId: undefined,
-    status: params.status ?? "pending",
+    selectedNodeId: undefined,
+    selectedNodeReason: undefined,
+    status: params.status ?? "queued",
     statusReason: undefined,
+    failureReason: undefined,
     claimToken: undefined,
     runnerMode: undefined,
     dispatchMessageId: undefined,
@@ -224,6 +279,9 @@ export function createTaskEnvelope(params: CreateTaskEnvelopeParams): TaskEnvelo
     dispatchStatusSummary: undefined,
     dispatchAuthSummary: undefined,
     dispatchTransportStatus: undefined,
+    dispatchRetryCount: undefined,
+    dispatchLastAttemptAt: undefined,
+    dispatchTimeoutMs: undefined,
     remoteDispatchPlanned: undefined,
     createdAt: timestamp,
     claimedAt: undefined,
@@ -242,17 +300,20 @@ export function claimTaskEnvelope(
   envelope: TaskEnvelope,
   params: {
     assignedNodeId: string;
+    selectedNodeReason?: string;
     claimToken: string;
     runnerMode: ExecutionNodeMode;
     statusReason?: string;
   },
 ): TaskEnvelope {
-  if (envelope.status !== "pending") {
+  if (envelope.status !== "pending" && envelope.status !== "queued" && envelope.status !== "retrying") {
     throw new Error(`Task ${envelope.taskId} is already ${envelope.status} and cannot be claimed again.`);
   }
 
-  return applyTaskTransition(envelope, "assigned", {
+  return applyTaskTransition(envelope, "dispatching", {
     assignedNodeId: params.assignedNodeId,
+    selectedNodeId: params.assignedNodeId,
+    selectedNodeReason: params.selectedNodeReason,
     claimToken: params.claimToken,
     runnerMode: params.runnerMode,
     statusReason: params.statusReason,
@@ -270,7 +331,7 @@ export function assignTaskEnvelope(
 }
 
 export function releaseTaskEnvelope(envelope: TaskEnvelope, statusReason?: string): TaskEnvelope {
-  if (envelope.status !== "assigned") {
+  if (envelope.status !== "assigned" && envelope.status !== "dispatching" && envelope.status !== "retrying") {
     throw new Error(`Task ${envelope.taskId} cannot be released while ${envelope.status}.`);
   }
 
@@ -278,7 +339,7 @@ export function releaseTaskEnvelope(envelope: TaskEnvelope, statusReason?: strin
   return {
     ...envelope,
     assignedNodeId: undefined,
-    status: "pending",
+    status: "queued",
     statusReason: normalizeText(statusReason) || undefined,
     claimToken: undefined,
     runnerMode: undefined,
@@ -300,15 +361,21 @@ export function markTaskAssigned(
 }
 
 export function markTaskRunning(envelope: TaskEnvelope, metadata?: TaskEnvelopeTransitionMetadata): TaskEnvelope {
-  if (envelope.status !== "assigned" && envelope.status !== "running") {
+  if (envelope.status !== "assigned" && envelope.status !== "dispatching" && envelope.status !== "awaiting-ack" && envelope.status !== "running" && envelope.status !== "executing") {
     throw new Error(`Task ${envelope.taskId} cannot start running from ${envelope.status}.`);
   }
 
-  return applyTaskTransition(envelope, "running", metadata);
+  const nextStatus = envelope.status === "assigned"
+    ? "running"
+    : envelope.status === "running"
+      ? "running"
+      : "executing";
+
+  return applyTaskTransition(envelope, nextStatus, metadata);
 }
 
 export function markTaskCompleted(envelope: TaskEnvelope, metadata?: TaskEnvelopeTransitionMetadata): TaskEnvelope {
-  if (envelope.status !== "assigned" && envelope.status !== "running" && envelope.status !== "completed") {
+  if (envelope.status !== "assigned" && envelope.status !== "dispatching" && envelope.status !== "awaiting-ack" && envelope.status !== "running" && envelope.status !== "executing" && envelope.status !== "completed") {
     throw new Error(`Task ${envelope.taskId} cannot complete from ${envelope.status}.`);
   }
 
@@ -316,7 +383,7 @@ export function markTaskCompleted(envelope: TaskEnvelope, metadata?: TaskEnvelop
 }
 
 export function markTaskFailed(envelope: TaskEnvelope, metadata?: TaskEnvelopeTransitionMetadata): TaskEnvelope {
-  if (envelope.status !== "assigned" && envelope.status !== "running" && envelope.status !== "failed") {
+  if (envelope.status !== "assigned" && envelope.status !== "dispatching" && envelope.status !== "awaiting-ack" && envelope.status !== "running" && envelope.status !== "executing" && envelope.status !== "retrying" && envelope.status !== "failed") {
     throw new Error(`Task ${envelope.taskId} cannot fail from ${envelope.status}.`);
   }
 
@@ -324,11 +391,19 @@ export function markTaskFailed(envelope: TaskEnvelope, metadata?: TaskEnvelopeTr
 }
 
 export function markTaskBlocked(envelope: TaskEnvelope, metadata?: TaskEnvelopeTransitionMetadata): TaskEnvelope {
-  if (envelope.status !== "pending" && envelope.status !== "assigned" && envelope.status !== "running" && envelope.status !== "blocked") {
+  if (envelope.status !== "pending" && envelope.status !== "queued" && envelope.status !== "assigned" && envelope.status !== "dispatching" && envelope.status !== "awaiting-ack" && envelope.status !== "running" && envelope.status !== "executing" && envelope.status !== "blocked") {
     throw new Error(`Task ${envelope.taskId} cannot be blocked from ${envelope.status}.`);
   }
 
   return applyTaskTransition(envelope, "blocked", metadata);
+}
+
+export function markTaskRejected(envelope: TaskEnvelope, metadata?: TaskEnvelopeTransitionMetadata): TaskEnvelope {
+  if (envelope.status === "completed" || envelope.status === "failed" || envelope.status === "blocked" || envelope.status === "rejected") {
+    throw new Error(`Task ${envelope.taskId} cannot be rejected from ${envelope.status}.`);
+  }
+
+  return applyTaskTransition(envelope, "rejected", metadata);
 }
 
 export function updateTaskEnvelopeStatus(
@@ -383,8 +458,11 @@ export function normalizeTaskEnvelope(value: unknown): TaskEnvelope | null {
     requestedCapabilities,
     preferredNodeId: normalizeText(typeof source.preferredNodeId === "string" ? source.preferredNodeId : "") || undefined,
     assignedNodeId: normalizeText(typeof source.assignedNodeId === "string" ? source.assignedNodeId : "") || undefined,
+    selectedNodeId: normalizeText(typeof source.selectedNodeId === "string" ? source.selectedNodeId : "") || undefined,
+    selectedNodeReason: normalizeText(typeof source.selectedNodeReason === "string" ? source.selectedNodeReason : "") || undefined,
     status,
     statusReason: normalizeText(typeof source.statusReason === "string" ? source.statusReason : "") || undefined,
+    failureReason: normalizeText(typeof source.failureReason === "string" ? source.failureReason : "") || undefined,
     claimToken: normalizeText(typeof source.claimToken === "string" ? source.claimToken : "") || undefined,
     runnerMode: normalizeExecutionNodeMode(source.runnerMode),
     dispatchMessageId: normalizeText(typeof source.dispatchMessageId === "string" ? source.dispatchMessageId : "") || undefined,
@@ -395,6 +473,9 @@ export function normalizeTaskEnvelope(value: unknown): TaskEnvelope | null {
     dispatchStatusSummary: normalizeText(typeof source.dispatchStatusSummary === "string" ? source.dispatchStatusSummary : "") || undefined,
     dispatchAuthSummary: normalizeText(typeof source.dispatchAuthSummary === "string" ? source.dispatchAuthSummary : "") || undefined,
     dispatchTransportStatus: normalizeDispatchTransportStatus(source.dispatchTransportStatus),
+    dispatchRetryCount: Number.isInteger(Number(source.dispatchRetryCount)) ? Math.max(0, Number(source.dispatchRetryCount)) : undefined,
+    dispatchLastAttemptAt: normalizeText(typeof source.dispatchLastAttemptAt === "string" ? source.dispatchLastAttemptAt : "") || undefined,
+    dispatchTimeoutMs: Number.isFinite(Number(source.dispatchTimeoutMs)) ? Math.max(0, Number(source.dispatchTimeoutMs)) : undefined,
     remoteDispatchPlanned: typeof source.remoteDispatchPlanned === "boolean" ? source.remoteDispatchPlanned : undefined,
     createdAt,
     claimedAt: normalizeText(typeof source.claimedAt === "string" ? source.claimedAt : "") || undefined,
@@ -414,13 +495,16 @@ export function summarizeTaskEnvelope(envelope: TaskEnvelope): string {
     `task=${envelope.taskId}`,
     `status=${envelope.status}`,
     `step=${envelope.stepIndex}`,
-    envelope.assignedNodeId ? `node=${envelope.assignedNodeId}` : "node=unassigned",
+    envelope.selectedNodeId ? `selectedNode=${envelope.selectedNodeId}` : envelope.assignedNodeId ? `node=${envelope.assignedNodeId}` : "node=unassigned",
+    envelope.selectedNodeReason ? `selection=${envelope.selectedNodeReason}` : "",
     envelope.dispatchTargetNodeId ? `dispatchTarget=${envelope.dispatchTargetNodeId}` : "",
     envelope.dispatchMessageId ? `dispatch=${envelope.dispatchMessageId}` : "",
     envelope.dispatchAckMessageId ? `ack=${envelope.dispatchAckMessageId}` : "",
     envelope.dispatchResultMessageId ? `result=${envelope.dispatchResultMessageId}` : "",
     envelope.requestedCapabilities.length ? `caps=${envelope.requestedCapabilities.join(",")}` : "caps=none",
     envelope.dispatchTransportStatus ? `transport=${envelope.dispatchTransportStatus}` : "",
+    typeof envelope.dispatchRetryCount === "number" ? `retries=${envelope.dispatchRetryCount}` : "",
+    envelope.failureReason ? `failure=${envelope.failureReason}` : "",
     envelope.dispatchAuthSummary ? `auth=${envelope.dispatchAuthSummary}` : "",
     envelope.dispatchStatusSummary ? `dispatchStatus=${envelope.dispatchStatusSummary}` : "",
     envelope.statusReason ? `reason=${envelope.statusReason}` : "",

@@ -79,14 +79,15 @@ test("queueOrchestrator claims the oldest runnable safe task and skips non-runna
     const fetched = claimed?.task ? await getTask(claimed.task.taskId) : null;
 
     assert.equal(claimed?.task.taskId, "task-safe-oldest");
-    assert.equal(claimed?.task.status, "assigned");
+    assert.equal(claimed?.task.status, "dispatching");
     assert.equal(claimed?.task.runnerMode, "local-node");
     assert.equal(typeof claimed?.task.claimToken, "string");
+    assert.equal(claimed?.task.selectedNodeId, claimed?.node.id);
     assert.equal(claimed?.task.remoteDispatchPlanned, undefined);
     assert.equal(claimed?.task.dispatchProtocolVersion, undefined);
     assert.equal(claimed?.task.dispatchStatusSummary, undefined);
     assert.equal(fetched?.taskId, "task-safe-oldest");
-    assert.equal(fetched?.status, "assigned");
+    assert.equal(fetched?.status, "dispatching");
     assert.equal(fetched?.dispatchProtocolVersion, undefined);
   } finally {
     delete process.env.AIE_AUTONOMOUS_SESSION_DIR;
@@ -115,27 +116,70 @@ test("queueOrchestrator executes one queued task and persists completion", async
     }));
 
     const summary = await runSingleQueuedTask(
-      { runtimeMode: "local", cwd: process.cwd(), maxSteps: 1 },
       {
-        runAutonomousSession: async (params) => runAutonomousSession({
-          ...params,
-          dependencies: {
-            runAnalysis: async () => ({
-              what_happened: "The queued validation completed successfully.",
-              what_matters: ["The queued task should finalize as completed."],
-              what_to_do_next: ["Stop."],
-              upgrade_hint: "",
-              proposedAction: "Validate the queued task.",
-              expectedOutcome: "The queued task should complete successfully.",
-              execution: makeSafeAction("run-success"),
-            }) as FreeAnalysisResponse,
-            executeAction: async () => ({
-              status: "success",
-              output: "Queued validation succeeded.",
-            }),
-            saveAutonomousSession: async () => {},
+        runtimeMode: "local",
+        cwd: process.cwd(),
+        maxSteps: 1,
+        dispatchTransport: {
+          async sendDispatchRequest({ request, dependencies }) {
+            const task = await dependencies.updateTaskStatus(request.taskId, "completed", {
+              assignedNodeId: request.targetNodeId,
+              selectedNodeId: request.targetNodeId,
+              selectedNodeReason: "Preferred capable local node selected.",
+              dispatchMessageId: request.messageId,
+              dispatchAckMessageId: `${request.messageId}-ack`,
+              dispatchResultMessageId: `${request.messageId}-result`,
+              dispatchTargetNodeId: request.targetNodeId,
+              dispatchProtocolVersion: request.protocolVersion,
+              dispatchStatusSummary: "dispatch=1 | type=result | status=completed",
+              dispatchAuthSummary: "auth=aie-node-local-default->aie-node-local-default | scope=local-lab | valid=true",
+              dispatchTransportStatus: "completed",
+              dispatchRetryCount: 1,
+              dispatchLastAttemptAt: request.createdAt,
+              dispatchReceivedAt: request.createdAt,
+              dispatchCompletedAt: request.createdAt,
+              remoteDispatchPlanned: true,
+              statusReason: "The queued validation completed successfully.",
+            });
+
+            return {
+              status: "delivered",
+              request,
+              rawRequest: JSON.stringify(request),
+              rawAck: "ack",
+              rawResult: "result",
+              task,
+              session: {
+                sessionId: `queue-task-${request.taskId}`,
+                goal: "Validate run-success.",
+                status: "completed",
+                createdAt: request.createdAt,
+                updatedAt: request.createdAt,
+                currentStepIndex: 2,
+                maxSteps: 1,
+                lastStepIndex: 1,
+                taskId: request.taskId,
+                taskStatus: "completed",
+                selectedNodeId: request.targetNodeId,
+                selectedNodeReason: "Preferred capable local node selected.",
+                dispatchProtocolVersion: request.protocolVersion,
+                steps: [],
+              },
+            };
           },
-        }),
+          async receiveDispatchRequest() {
+            throw new Error("Not implemented in this test transport.");
+          },
+          async sendDispatchAck() {
+            return "ack";
+          },
+          async sendDispatchResult() {
+            return "result";
+          },
+          async sendDispatchError() {
+            return "error";
+          },
+        },
       },
     );
 
@@ -148,13 +192,15 @@ test("queueOrchestrator executes one queued task and persists completion", async
     assert.equal(summary.session?.taskStatus, "completed");
     assert.equal(summary.task?.dispatchProtocolVersion, "1");
     assert.equal(summary.session?.dispatchProtocolVersion, "1");
+    assert.equal(summary.selectedNodeId, summary.task?.selectedNodeId);
+    assert.equal(summary.dispatchRetryCount, 1);
     assert.equal(typeof summary.task?.dispatchAckMessageId, "string");
     assert.equal(typeof summary.task?.dispatchResultMessageId, "string");
     assert.match(summary.task?.dispatchAuthSummary ?? "", /scope=local-lab/i);
     assert.equal(summary.task?.dispatchTransportStatus, "completed");
     assert.match(summary.dispatchStatusSummary ?? "", /type=result/i);
     assert.equal(typeof summary.claimToken, "string");
-    assert.match(summary.session?.sessionId ?? "", /queue-task-run-success/i);
+    assert.match(summary.session?.sessionId ?? "", /queue-task-task-run-success/i);
     assert.equal(persisted?.status, "completed");
     assert.match(persisted?.dispatchStatusSummary ?? "", /type=result/i);
     assert.equal(typeof persisted?.dispatchAckMessageId, "string");
@@ -235,7 +281,7 @@ test("queueOrchestrator finalizes failed execution and prevents duplicate claims
   }
 });
 
-test("queueOrchestrator blocks dispatch when the controlled receiver rejects the target node", async () => {
+test("queueOrchestrator reselects another active node when the initial target becomes unavailable", async () => {
   const sessionDirectory = path.resolve(process.cwd(), "temp-queue-orchestrator-session-store-4");
   const taskDirectory = path.resolve(process.cwd(), "temp-queue-orchestrator-task-store-4");
   resetExecutionNodeRegistry();
@@ -263,12 +309,13 @@ test("queueOrchestrator blocks dispatch when the controlled receiver rejects the
       : null;
     const persisted = await getTask("task-run-rejected");
 
-    assert.equal(summary?.status, "blocked");
-    assert.equal(summary?.task?.dispatchTransportStatus, "rejected");
-    assert.equal(summary?.task?.status, "blocked");
+    assert.equal(summary?.status, "completed");
+    assert.equal(summary?.task?.status, "completed");
+    assert.equal(summary?.task?.selectedNodeId, summary?.selectedNodeId);
+    assert.notEqual(summary?.task?.selectedNodeId, claimed.node.id);
     assert.equal(typeof summary?.task?.dispatchAckMessageId, "string");
-    assert.equal(persisted?.dispatchTransportStatus, "rejected");
-    assert.equal(persisted?.status, "blocked");
+    assert.equal(persisted?.dispatchTransportStatus, "completed");
+    assert.equal(persisted?.status, "completed");
   } finally {
     delete process.env.AIE_AUTONOMOUS_SESSION_DIR;
     delete process.env.AIE_TASK_QUEUE_DIR;

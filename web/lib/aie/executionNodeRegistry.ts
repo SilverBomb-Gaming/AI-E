@@ -14,6 +14,11 @@ type ExecutionNodeSelectionContext = {
   cwd?: string;
 };
 
+type ListAvailableExecutionNodesOptions = {
+  requestedCapabilities?: ExecutionNodeCapability[];
+  includeBusy?: boolean;
+};
+
 const executionNodeRegistry = new Map<string, ExecutionNodeDescriptor>();
 
 function normalizeText(value: unknown): string {
@@ -54,12 +59,69 @@ export function listExecutionNodes(): ExecutionNodeDescriptor[] {
       return left.active ? -1 : 1;
     }
 
+    if (left.busy !== right.busy) {
+      return left.busy ? 1 : -1;
+    }
+
+    if (left.mode !== right.mode) {
+      if (left.mode === "local-node") {
+        return -1;
+      }
+      if (right.mode === "local-node") {
+        return 1;
+      }
+    }
+
     return left.id.localeCompare(right.id);
+  });
+}
+
+export function listAvailableExecutionNodes(options: ListAvailableExecutionNodesOptions = {}): ExecutionNodeDescriptor[] {
+  const requestedCapabilities = options.requestedCapabilities ?? [];
+
+  return listExecutionNodes().filter((node) => {
+    if (!node.active) {
+      return false;
+    }
+
+    if (!options.includeBusy && node.busy) {
+      return false;
+    }
+
+    if (requestedCapabilities.length && !supportsCapabilities(node, requestedCapabilities)) {
+      return false;
+    }
+
+    return true;
   });
 }
 
 export function getExecutionNode(nodeId: string): ExecutionNodeDescriptor | null {
   return executionNodeRegistry.get(normalizeText(nodeId)) ?? null;
+}
+
+export function setExecutionNodeActive(nodeId: string, active: boolean): ExecutionNodeDescriptor | null {
+  const existing = getExecutionNode(nodeId);
+  if (!existing) {
+    return null;
+  }
+
+  return registerExecutionNode({
+    ...existing,
+    active,
+  });
+}
+
+export function markExecutionNodeBusy(nodeId: string, busy = true): ExecutionNodeDescriptor | null {
+  const existing = getExecutionNode(nodeId);
+  if (!existing) {
+    return null;
+  }
+
+  return registerExecutionNode({
+    ...existing,
+    busy,
+  });
 }
 
 export function validateExecutionNodeDispatch(
@@ -81,6 +143,13 @@ export function validateExecutionNodeDispatch(
     return {
       accepted: false,
       reason: `Execution node ${node.id} is inactive.`,
+    };
+  }
+
+  if (node.busy) {
+    return {
+      accepted: false,
+      reason: `Execution node ${node.id} is busy.`,
     };
   }
 
@@ -111,10 +180,9 @@ export function chooseExecutionNodeForAction(
   context: ExecutionNodeSelectionContext = {},
 ): ExecutionNodeDescriptor | null {
   const requestedCapabilities = getExecutionNodeCapabilitiesForAction(action);
-  const nodes = listExecutionNodes().filter((node) => node.active);
-  const candidates = requestedCapabilities.length
-    ? nodes.filter((node) => supportsCapabilities(node, requestedCapabilities))
-    : nodes;
+  const candidates = listAvailableExecutionNodes({
+    requestedCapabilities,
+  });
 
   if (!candidates.length) {
     return null;

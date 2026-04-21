@@ -69,6 +69,7 @@ export type AnalysisTraceRecord = {
   executionNodeId: string | null;
   executionNodeMode: ExecutionNodeMode | null;
   nodeCapabilitySummary: string | null;
+  selectedNodeId: string | null;
   taskId: string | null;
   taskStatus: TaskEnvelopeStatus | null;
   assignedNodeId: string | null;
@@ -85,6 +86,7 @@ export type AnalysisTraceRecord = {
   autonomousPlanningHintSummary: string | null;
   autonomousRecentActionFamily: AutonomousActionFamily | null;
   failureClass: FailureClassification["kind"] | null;
+  failureReason: string | null;
   recoveryStrategy: AutonomousRecoveryStrategy | null;
   retryCount: number | null;
   repeatedAction: boolean | null;
@@ -156,6 +158,7 @@ export type BuildAnalysisTraceRecordParams = {
   executionNodeId?: string;
   executionNodeMode?: ExecutionNodeMode;
   nodeCapabilitySummary?: string;
+  selectedNodeId?: string;
   taskId?: string;
   taskStatus?: TaskEnvelopeStatus;
   assignedNodeId?: string;
@@ -172,6 +175,7 @@ export type BuildAnalysisTraceRecordParams = {
   autonomousPlanningHintSummary?: string;
   autonomousRecentActionFamily?: AutonomousActionFamily;
   failureClassification?: FailureClassification;
+  failureReason?: string;
   recoveryStrategy?: AutonomousRecoveryStrategy;
   retryCount?: number;
   repeatedAction?: boolean;
@@ -296,6 +300,7 @@ export function buildAnalysisTraceRecord(params: BuildAnalysisTraceRecordParams)
     executionNodeId: params.executionNodeId?.trim() || null,
     executionNodeMode: params.executionNodeMode ?? null,
     nodeCapabilitySummary: params.nodeCapabilitySummary?.trim() || null,
+    selectedNodeId: params.selectedNodeId?.trim() || null,
     taskId: params.taskId?.trim() || null,
     taskStatus: params.taskStatus ?? null,
     assignedNodeId: params.assignedNodeId?.trim() || null,
@@ -312,6 +317,7 @@ export function buildAnalysisTraceRecord(params: BuildAnalysisTraceRecordParams)
     autonomousPlanningHintSummary: params.autonomousPlanningHintSummary?.trim() || null,
     autonomousRecentActionFamily: params.autonomousRecentActionFamily ?? null,
     failureClass: params.failureClassification?.kind ?? null,
+    failureReason: params.failureReason?.trim() || null,
     recoveryStrategy: params.recoveryStrategy ?? null,
     retryCount: Number.isInteger(Number(params.retryCount)) ? Number(params.retryCount) : null,
     repeatedAction: typeof params.repeatedAction === "boolean" ? params.repeatedAction : null,

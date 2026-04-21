@@ -55,7 +55,7 @@ test("taskQueueStore enqueues, lists, gets, assigns, and updates persisted tasks
     const fetched = await getTask(queued.taskId);
     const listed = await listTasks();
 
-    assert.equal(queued.status, "pending");
+    assert.equal(queued.status, "queued");
     assert.equal(assigned?.status, "assigned");
     assert.equal(assigned?.assignedNodeId, "aie-node-local-default");
     assert.equal(running?.status, "running");
@@ -126,12 +126,12 @@ test("taskQueueStore persists claims, runnable filtering, and explicit finalizat
     const completedTasks = await listTasksByStatus("completed");
 
     assert.deepEqual(runnable.map((task) => task.taskId), ["task-old-safe", "task-new-safe"]);
-    assert.equal(claimed?.status, "assigned");
+    assert.equal(claimed?.status, "dispatching");
     assert.equal(claimed?.claimToken, "claim-token-1");
     assert.equal(claimed?.runnerMode, "local-node");
-    assert.equal(typeof claimed?.claimedAt, "string");
+    assert.equal(claimed?.claimedAt, undefined);
     assert.equal(secondClaim, null);
-    assert.equal(running?.status, "running");
+    assert.equal(running?.status, "executing");
     assert.equal(completed?.status, "completed");
     assert.equal(typeof completed?.completedAt, "string");
     assert.deepEqual(completedTasks.map((task) => task.taskId), ["task-old-safe"]);

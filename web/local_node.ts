@@ -129,6 +129,8 @@ export function formatLocalNodeSessionOutput(session: AutonomousSession, options
         executionNodeId: session.executionNodeId ?? null,
         executionNodeMode: session.executionNodeMode ?? null,
         nodeCapabilitySummary: session.nodeCapabilitySummary ?? null,
+        selectedNodeId: session.selectedNodeId ?? null,
+        selectedNodeReason: session.selectedNodeReason ?? null,
         taskId: session.taskId ?? null,
         taskStatus: session.taskStatus ?? null,
         assignedNodeId: session.assignedNodeId ?? null,
@@ -143,6 +145,8 @@ export function formatLocalNodeSessionOutput(session: AutonomousSession, options
         dispatchTransportStatus: session.dispatchTransportStatus ?? null,
         remoteDispatchPlanned: session.remoteDispatchPlanned ?? null,
         planningHintSummary: session.planningHintSummary ?? null,
+        failureReason: session.failureReason ?? null,
+        retryCount: session.latestRecoveryState?.retryCount ?? null,
         completion: session.latestCompletion ?? null,
         completedReason: session.completedReason ?? session.stateReason ?? null,
         steps: options.verbose ? session.steps : session.steps.map((step) => ({
@@ -152,6 +156,8 @@ export function formatLocalNodeSessionOutput(session: AutonomousSession, options
           executionNodeId: step.executionNodeId ?? null,
           executionNodeMode: step.executionNodeMode ?? null,
           nodeCapabilitySummary: step.nodeCapabilitySummary ?? null,
+          selectedNodeId: step.selectedNodeId ?? null,
+          selectedNodeReason: step.selectedNodeReason ?? null,
           taskId: step.taskId ?? null,
           taskStatus: step.taskStatus ?? null,
           assignedNodeId: step.assignedNodeId ?? null,
@@ -165,6 +171,8 @@ export function formatLocalNodeSessionOutput(session: AutonomousSession, options
           dispatchAuthSummary: step.dispatchAuthSummary ?? null,
           dispatchTransportStatus: step.dispatchTransportStatus ?? null,
           remoteDispatchPlanned: step.remoteDispatchPlanned ?? null,
+          failureReason: step.failureReason ?? null,
+          retryCount: step.retryCount ?? null,
           goalStatus: step.goalStatus ?? null,
           runtimeStatus: step.executionResult?.status ?? null,
         })),
@@ -181,6 +189,8 @@ export function formatLocalNodeSessionOutput(session: AutonomousSession, options
     `Latest adapter: ${session.executionAdapterId ?? "unknown"}`,
     `Execution node: ${session.executionNodeId ?? "unknown"} (${session.executionNodeMode ?? "unknown"})`,
     `Node capabilities: ${session.nodeCapabilitySummary ?? "No node capabilities recorded."}`,
+    `Selected node: ${session.selectedNodeId ?? session.assignedNodeId ?? "No node selection recorded."}`,
+    `Selection reason: ${session.selectedNodeReason ?? "No node selection reason recorded."}`,
     `Latest task: ${session.taskId ?? "No task recorded."}`,
     `Task status: ${session.taskStatus ?? "No task status recorded."}`,
     `Assigned node: ${session.assignedNodeId ?? "No node assignment recorded."}`,
@@ -188,6 +198,8 @@ export function formatLocalNodeSessionOutput(session: AutonomousSession, options
     `Dispatch summary: ${session.dispatchStatusSummary ?? "No dispatch summary recorded."}`,
     `Dispatch transport: ${session.dispatchTransportStatus ?? "No dispatch transport status recorded."}`,
     `Dispatch auth: ${session.dispatchAuthSummary ?? "No dispatch auth summary recorded."}`,
+    `Retry count: ${typeof session.latestRecoveryState?.retryCount === "number" ? session.latestRecoveryState.retryCount : "No retry count recorded."}`,
+    `Failure reason: ${session.failureReason ?? "No failure reason recorded."}`,
     `Completion: ${session.latestCompletion ? `${session.latestCompletion.status} (${session.latestCompletion.confidence})` : "No completion state recorded."}`,
     `Reason: ${session.completedReason ?? session.stateReason ?? "No stop reason recorded."}`,
   ];
@@ -251,6 +263,8 @@ export function formatLocalNodeTaskOutput(task: TaskEnvelope, options?: { json?:
     `Session ID: ${task.sessionId}`,
     `Step: ${task.stepIndex}`,
     `Status: ${task.status}`,
+    `Selected node: ${task.selectedNodeId ?? task.assignedNodeId ?? "unassigned"}`,
+    `Selection reason: ${task.selectedNodeReason ?? "none"}`,
     `Assigned node: ${task.assignedNodeId ?? "unassigned"}`,
     `Runner mode: ${task.runnerMode ?? "unknown"}`,
     `Claim token: ${task.claimToken ?? "none"}`,
@@ -260,10 +274,14 @@ export function formatLocalNodeTaskOutput(task: TaskEnvelope, options?: { json?:
     `Dispatch target: ${task.dispatchTargetNodeId ?? "none"}`,
     `Dispatch protocol: ${task.dispatchProtocolVersion ?? "none"}`,
     `Dispatch transport: ${task.dispatchTransportStatus ?? "none"}`,
+    `Dispatch retry count: ${typeof task.dispatchRetryCount === "number" ? task.dispatchRetryCount : "none"}`,
+    `Dispatch last attempt: ${task.dispatchLastAttemptAt ?? "none"}`,
+    `Dispatch timeout: ${typeof task.dispatchTimeoutMs === "number" ? task.dispatchTimeoutMs : "none"}`,
     `Dispatch auth: ${task.dispatchAuthSummary ?? "none"}`,
     `Dispatch summary: ${task.dispatchStatusSummary ?? "No dispatch summary recorded."}`,
     `Capabilities: ${task.requestedCapabilities.join(",") || "none"}`,
     `Reason: ${task.statusReason ?? "No status reason recorded."}`,
+    `Failure reason: ${task.failureReason ?? "No failure reason recorded."}`,
     `Claimed: ${task.claimedAt ?? "not claimed"}`,
     `Dispatch received: ${task.dispatchReceivedAt ?? "not received"}`,
     `Dispatch completed: ${task.dispatchCompletedAt ?? "not completed"}`,
@@ -289,6 +307,8 @@ export function formatLocalNodeQueueRunOutput(summary: QueueExecutionSummary, op
     `Task ID: ${summary.task?.taskId ?? "unknown"}`,
     `Session ID: ${summary.session?.sessionId ?? summary.task?.sessionId ?? "unknown"}`,
     `Task status: ${summary.task?.status ?? "unknown"}`,
+    `Selected node: ${summary.selectedNodeId ?? summary.task?.selectedNodeId ?? summary.task?.assignedNodeId ?? "unknown"}`,
+    `Selection reason: ${summary.selectedNodeReason ?? summary.task?.selectedNodeReason ?? "unknown"}`,
     `Assigned node: ${summary.nodeId ?? summary.task?.assignedNodeId ?? "unknown"}`,
     `Runner mode: ${summary.runnerMode ?? summary.task?.runnerMode ?? "unknown"}`,
     `Claim token: ${summary.claimToken ?? summary.task?.claimToken ?? "unknown"}`,
@@ -298,11 +318,14 @@ export function formatLocalNodeQueueRunOutput(summary: QueueExecutionSummary, op
     `Dispatch target: ${summary.dispatchTargetNodeId ?? summary.task?.dispatchTargetNodeId ?? "unknown"}`,
     `Dispatch protocol: ${summary.dispatchProtocolVersion ?? summary.task?.dispatchProtocolVersion ?? "unknown"}`,
     `Dispatch transport: ${summary.dispatchTransportStatus ?? summary.task?.dispatchTransportStatus ?? "unknown"}`,
+    `Dispatch retry count: ${summary.dispatchRetryCount ?? summary.task?.dispatchRetryCount ?? "unknown"}`,
+    `Dispatch last attempt: ${summary.dispatchLastAttemptAt ?? summary.task?.dispatchLastAttemptAt ?? "unknown"}`,
+    `Dispatch timeout: ${summary.dispatchTimeoutMs ?? summary.task?.dispatchTimeoutMs ?? "unknown"}`,
     `Dispatch auth: ${summary.dispatchAuthSummary ?? summary.task?.dispatchAuthSummary ?? "unknown"}`,
     `Dispatch summary: ${summary.dispatchStatusSummary ?? summary.task?.dispatchStatusSummary ?? "No dispatch summary recorded."}`,
     `Queue summary: ${summary.queueStateSummary ?? "No queue summary recorded."}`,
     `Session status: ${summary.session?.status ?? "no session"}`,
-    `Reason: ${summary.task?.statusReason ?? summary.session?.completedReason ?? summary.session?.stateReason ?? "No status reason recorded."}`,
+    `Reason: ${summary.failureReason ?? summary.task?.failureReason ?? summary.task?.statusReason ?? summary.session?.completedReason ?? summary.session?.stateReason ?? "No status reason recorded."}`,
   ].join("\n");
 }
 
@@ -319,7 +342,7 @@ export async function formatLocalNodeTaskList(options?: { json?: boolean }): Pro
 
   return tasks
     .slice(0, 20)
-    .map((task) => `${task.taskId} | ${task.status} | ${task.assignedNodeId ?? "unassigned"} | ${task.sessionId}`)
+    .map((task) => `${task.taskId} | ${task.status} | ${task.selectedNodeId ?? task.assignedNodeId ?? "unassigned"} | transport=${task.dispatchTransportStatus ?? "none"} | retries=${task.dispatchRetryCount ?? 0} | failure=${task.failureReason ?? "none"} | ${task.sessionId}`)
     .join("\n");
 }
 

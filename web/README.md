@@ -219,6 +219,23 @@ The autonomous loop now records and surfaces deeper sequencing metadata:
 
 This keeps broader bounded work inspectable without creating a second planner or a separate headless autonomy stack.
 
+### Phase 4L — Multi-Node Execution
+
+AI-E now supports bounded multi-node execution routing on top of the same shared runner and controlled dispatch boundary.
+
+- task selection can target among multiple registered nodes instead of assuming a single receiver
+- routing prefers capable active non-busy nodes and keeps a deterministic local fallback when available
+- dispatch attempts carry bounded retry metadata, timeout metadata, and explicit failure reasons
+- queue lifecycle stages now distinguish queued, dispatching, awaiting-ack, executing, retrying, completed, failed, and rejected states
+- CLI and API inspection surfaces expose selected node, selection reason, retry count, last attempt, timeout, and failure reason
+
+Safety constraints remain unchanged:
+
+- no uncontrolled workers
+- no public internet transport
+- no auth bypass or capability bypass
+- no second execution stack outside the shared runner
+
 ## Approval model
 
 The execution bridge remains approval-gated and bounded.

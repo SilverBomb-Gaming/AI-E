@@ -67,6 +67,16 @@ export type DispatchTransport = {
   sendDispatchError: (envelope: DispatchEnvelope<TaskDispatchErrorPayload>) => Promise<string>;
 };
 
+export class DispatchTransportTimeoutError extends Error {
+  timeoutMs: number;
+
+  constructor(timeoutMs: number) {
+    super(`The controlled dispatch transport timed out after ${timeoutMs}ms.`);
+    this.name = "DispatchTransportTimeoutError";
+    this.timeoutMs = timeoutMs;
+  }
+}
+
 export async function sendDispatchMessage<TPayload>(envelope: DispatchEnvelope<TPayload>): Promise<string> {
   if (!validateDispatchEnvelopePayload(envelope as DispatchEnvelope)) {
     throw new Error("The dispatch message payload is invalid for the declared message type.");
@@ -156,6 +166,53 @@ export function createLocalControlledDispatchTransport(): DispatchTransport {
     sendDispatchResult,
     sendDispatchError,
   };
+}
+
+export async function sendDispatchRequestWithTimeout(params: {
+  transport: DispatchTransport;
+  timeoutMs: number;
+  request: DispatchEnvelope<TaskDispatchRequestPayload>;
+  context?: LocalControlledTransportContext;
+  dependencies: DispatchReceiverDependencies;
+}): Promise<DispatchTransportRequestResult> {
+  if (!Number.isFinite(params.timeoutMs) || params.timeoutMs <= 0) {
+    return params.transport.sendDispatchRequest({
+      request: params.request,
+      context: params.context,
+      dependencies: params.dependencies,
+    });
+  }
+
+  let timeoutHandle: NodeJS.Timeout | undefined;
+
+  try {
+    return await Promise.race([
+      params.transport.sendDispatchRequest({
+        request: params.request,
+        context: params.context,
+        dependencies: params.dependencies,
+      }),
+      new Promise<DispatchTransportRequestResult>((_, reject) => {
+        timeoutHandle = setTimeout(() => {
+          reject(new DispatchTransportTimeoutError(params.timeoutMs));
+        }, params.timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeoutHandle) {
+      clearTimeout(timeoutHandle);
+    }
+  }
+}
+
+export async function waitForDispatchRetryDelay(delayMs: number): Promise<void> {
+  if (!Number.isFinite(delayMs) || delayMs <= 0) {
+    return;
+  }
+
+  await new Promise<void>((resolve) => {
+    setTimeout(resolve, delayMs);
+  });
 }
 
 export function simulateLocalDispatchRoundTrip(params: {

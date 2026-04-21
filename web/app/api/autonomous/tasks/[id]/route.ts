@@ -15,7 +15,10 @@ export async function GET(
 
   return NextResponse.json({
     task,
-    runnable: task.status === "pending" && task.action.scope === "safe",
+    runnable: (task.status === "pending" || task.status === "queued" || task.status === "retrying") && task.action.scope === "safe",
+    selectedNodeId: task.selectedNodeId ?? task.assignedNodeId ?? null,
+    retryCount: task.dispatchRetryCount ?? 0,
+    failureReason: task.failureReason ?? null,
     dispatch: {
       messageId: task.dispatchMessageId ?? null,
       ackMessageId: task.dispatchAckMessageId ?? null,
@@ -25,6 +28,8 @@ export async function GET(
       authSummary: task.dispatchAuthSummary ?? null,
       transportStatus: task.dispatchTransportStatus ?? null,
       statusSummary: task.dispatchStatusSummary ?? null,
+      lastAttemptAt: task.dispatchLastAttemptAt ?? null,
+      timeoutMs: task.dispatchTimeoutMs ?? null,
       receivedAt: task.dispatchReceivedAt ?? null,
       completedAt: task.dispatchCompletedAt ?? null,
       planned: task.remoteDispatchPlanned ?? null,

@@ -146,6 +146,26 @@ test("dispatchReceiver rejects invalid auth, unknown targets, and unsupported ca
       status: "assigned",
       assignedNodeId: "aie-node-headless-default",
     });
+    await enqueueTask({
+      ...createTaskEnvelope({
+        taskId: "task-dispatch-receiver-3",
+        sessionId: "session-dispatch-receiver-3",
+        stepIndex: 1,
+        action: createRequest({ taskId: "task-dispatch-receiver-3", sessionId: "session-dispatch-receiver-3" }).payload.action,
+      }),
+      status: "assigned",
+      assignedNodeId: "aie-node-headless-default",
+    });
+    await enqueueTask({
+      ...createTaskEnvelope({
+        taskId: "task-dispatch-receiver-4",
+        sessionId: "session-dispatch-receiver-4",
+        stepIndex: 1,
+        action: createRequest({ taskId: "task-dispatch-receiver-4", sessionId: "session-dispatch-receiver-4" }).payload.action,
+      }),
+      status: "assigned",
+      assignedNodeId: "aie-node-headless-default",
+    });
 
     const badAuth = await handleDispatchRequest({
       request: createRequest({
@@ -164,8 +184,8 @@ test("dispatchReceiver rejects invalid auth, unknown targets, and unsupported ca
     });
     const unknownTarget = await handleDispatchRequest({
       request: createRequest({
-        taskId: "task-dispatch-receiver-2",
-        sessionId: "session-dispatch-receiver-2",
+        taskId: "task-dispatch-receiver-3",
+        sessionId: "session-dispatch-receiver-3",
         targetNodeId: "aie-node-unknown-default",
       }),
       dependencies: {
@@ -179,8 +199,8 @@ test("dispatchReceiver rejects invalid auth, unknown targets, and unsupported ca
     });
     const unsupported = await handleDispatchRequest({
       request: createRequest({
-        taskId: "task-dispatch-receiver-2",
-        sessionId: "session-dispatch-receiver-2",
+        taskId: "task-dispatch-receiver-4",
+        sessionId: "session-dispatch-receiver-4",
         requestedCapabilities: ["validation-check", "repo-scan"],
       }),
       dependencies: {

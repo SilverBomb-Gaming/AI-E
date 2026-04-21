@@ -7,6 +7,7 @@ import {
   markTaskBlocked,
   markTaskCompleted,
   markTaskFailed,
+  markTaskRejected,
   markTaskRunning,
   normalizeTaskEnvelope,
   releaseTaskEnvelope,
@@ -89,7 +90,7 @@ export async function listTasksByStatus(status: TaskEnvelopeStatus): Promise<Tas
 export async function getRunnableTasks(options?: { includeApprovalBlocked?: boolean }): Promise<TaskEnvelope[]> {
   const tasks = await listTasks();
   return tasks
-    .filter((task) => task.status === "pending")
+    .filter((task) => task.status === "pending" || task.status === "queued" || task.status === "retrying")
     .filter((task) => options?.includeApprovalBlocked === true || task.action.scope === "safe")
     .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.taskId.localeCompare(right.taskId));
 }
@@ -102,12 +103,13 @@ export async function claimTask(
   statusReason = "Claimed for controlled queue execution.",
 ): Promise<TaskEnvelope | null> {
   const existingTask = await getTask(taskId);
-  if (!existingTask || existingTask.status !== "pending") {
+  if (!existingTask || (existingTask.status !== "pending" && existingTask.status !== "queued" && existingTask.status !== "retrying")) {
     return null;
   }
 
   return writeTask(claimTaskEnvelope(existingTask, {
     assignedNodeId: nodeId,
+    selectedNodeReason: statusReason,
     claimToken,
     runnerMode,
     statusReason,
@@ -125,7 +127,7 @@ export async function releaseClaimedTask(taskId: string, statusReason?: string):
 
 export async function finalizeTask(
   taskId: string,
-  status: Extract<TaskEnvelopeStatus, "completed" | "failed" | "blocked">,
+  status: Extract<TaskEnvelopeStatus, "completed" | "failed" | "blocked" | "rejected">,
   extra?: TaskEnvelopeTransitionMetadata,
 ): Promise<TaskEnvelope | null> {
   const existingTask = await getTask(taskId);
@@ -138,6 +140,8 @@ export async function finalizeTask(
       return writeTask(markTaskCompleted(existingTask, extra));
     case "failed":
       return writeTask(markTaskFailed(existingTask, extra));
+    case "rejected":
+      return writeTask(markTaskRejected(existingTask, extra));
     case "blocked":
       return writeTask(markTaskBlocked(existingTask, extra));
   }
@@ -153,11 +157,11 @@ export async function updateTaskStatus(
     return null;
   }
 
-  if (status === "running") {
+  if (status === "running" || status === "executing") {
     return writeTask(markTaskRunning(existingTask, extra));
   }
 
-  if (status === "completed" || status === "failed" || status === "blocked") {
+  if (status === "completed" || status === "failed" || status === "blocked" || status === "rejected") {
     return finalizeTask(taskId, status, extra);
   }
 
@@ -178,11 +182,13 @@ export async function updateTaskDispatchMetadata(
 
 export async function assignTaskToNode(taskId: string, nodeId: string): Promise<TaskEnvelope | null> {
   const existingTask = await getTask(taskId);
-  if (!existingTask || existingTask.status !== "pending") {
+  if (!existingTask || (existingTask.status !== "pending" && existingTask.status !== "queued" && existingTask.status !== "retrying")) {
     return null;
   }
 
-  return writeTask(markTaskAssigned(existingTask, nodeId));
+  return writeTask(markTaskAssigned(existingTask, nodeId, {
+    selectedNodeId: nodeId,
+  }));
 }
 
 export async function removeTask(taskId: string): Promise<void> {
