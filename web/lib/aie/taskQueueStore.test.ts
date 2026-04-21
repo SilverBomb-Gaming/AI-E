@@ -1,0 +1,70 @@
+import assert from "node:assert/strict";
+import { mkdir, rm } from "node:fs/promises";
+import path from "node:path";
+import test from "node:test";
+
+import { createTaskEnvelope } from "./taskEnvelope";
+import {
+  assignTaskToNode,
+  enqueueTask,
+  getTask,
+  listTasks,
+  removeTask,
+  updateTaskStatus,
+} from "./taskQueueStore";
+import type { ExecutionActionPreview } from "./types";
+
+function makeAction(): ExecutionActionPreview {
+  return {
+    id: "queued-action",
+    type: "inspection",
+    scope: "safe",
+    description: "Inspect the bounded target.",
+    expectedOutcome: "The bounded target should be summarized.",
+    requiresApproval: true,
+    metadata: {
+      sourceActionType: "inspection",
+      targetPath: "web/lib/aie/types.ts",
+    },
+  };
+}
+
+test("taskQueueStore enqueues, lists, gets, assigns, and updates persisted tasks", async () => {
+  const taskDirectory = path.resolve(process.cwd(), "temp-task-queue-store");
+  process.env.AIE_TASK_QUEUE_DIR = taskDirectory;
+  await mkdir(taskDirectory, { recursive: true });
+
+  try {
+    const queued = await enqueueTask(createTaskEnvelope({
+      taskId: "task-queue-1",
+      sessionId: "session-queue-1",
+      stepIndex: 1,
+      action: makeAction(),
+    }));
+    const assigned = await assignTaskToNode(queued.taskId, "aie-node-local-default");
+    const running = await updateTaskStatus(queued.taskId, "running", {
+      statusReason: "Executing inside the shared runner.",
+    });
+    const completed = await updateTaskStatus(queued.taskId, "completed", {
+      statusReason: "The bounded execution completed.",
+    });
+    const fetched = await getTask(queued.taskId);
+    const listed = await listTasks();
+
+    assert.equal(queued.status, "pending");
+    assert.equal(assigned?.status, "assigned");
+    assert.equal(assigned?.assignedNodeId, "aie-node-local-default");
+    assert.equal(running?.status, "running");
+    assert.equal(completed?.status, "completed");
+    assert.equal(completed?.statusReason, "The bounded execution completed.");
+    assert.equal(fetched?.taskId, queued.taskId);
+    assert.equal(listed.length, 1);
+    assert.equal(listed[0]?.taskId, queued.taskId);
+
+    await removeTask(queued.taskId);
+    assert.equal(await getTask(queued.taskId), null);
+  } finally {
+    delete process.env.AIE_TASK_QUEUE_DIR;
+    await rm(taskDirectory, { recursive: true, force: true });
+  }
+});
