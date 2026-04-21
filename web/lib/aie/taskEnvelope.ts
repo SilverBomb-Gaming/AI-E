@@ -1,4 +1,5 @@
 import { getExecutionNodeCapabilitiesForAction, type ExecutionNodeCapability } from "./executionNode";
+import type { ExecutionNodeMode } from "./executionNode";
 import type { ExecutionActionPreview } from "./types";
 
 export type TaskEnvelopeStatus = "pending" | "assigned" | "running" | "completed" | "failed" | "blocked";
@@ -6,6 +7,8 @@ export type TaskEnvelopeStatus = "pending" | "assigned" | "running" | "completed
 export type TaskEnvelopeTransitionMetadata = {
   assignedNodeId?: string;
   statusReason?: string;
+  claimToken?: string;
+  runnerMode?: ExecutionNodeMode;
 };
 
 export type TaskEnvelope = {
@@ -18,10 +21,15 @@ export type TaskEnvelope = {
   assignedNodeId?: string;
   status: TaskEnvelopeStatus;
   statusReason?: string;
+  claimToken?: string;
+  runnerMode?: ExecutionNodeMode;
   createdAt: string;
+  claimedAt?: string;
   assignedAt?: string;
   startedAt?: string;
   completedAt?: string;
+  failedAt?: string;
+  blockedAt?: string;
   updatedAt: string;
 };
 
@@ -68,26 +76,62 @@ function normalizeTaskEnvelopeStatus(value: unknown): TaskEnvelopeStatus | undef
   return undefined;
 }
 
+function normalizeExecutionNodeMode(value: unknown): ExecutionNodeMode | undefined {
+  if (value === "web" || value === "headless" || value === "local-node") {
+    return value;
+  }
+
+  return undefined;
+}
+
+function assertTaskTransitionAllowed(envelope: TaskEnvelope, nextStatus: TaskEnvelopeStatus): void {
+  const allowedTransitions: Record<TaskEnvelopeStatus, TaskEnvelopeStatus[]> = {
+    pending: ["assigned", "blocked"],
+    assigned: ["pending", "running", "blocked", "failed", "completed"],
+    running: ["completed", "failed", "blocked"],
+    completed: [],
+    failed: [],
+    blocked: [],
+  };
+
+  if (envelope.status === nextStatus) {
+    return;
+  }
+
+  if (!allowedTransitions[envelope.status].includes(nextStatus)) {
+    throw new Error(`Task ${envelope.taskId} cannot transition from ${envelope.status} to ${nextStatus}.`);
+  }
+}
+
 function applyTaskTransition(
   envelope: TaskEnvelope,
   status: TaskEnvelopeStatus,
   metadata?: TaskEnvelopeTransitionMetadata,
 ): TaskEnvelope {
+  assertTaskTransitionAllowed(envelope, status);
   const timestamp = createTimestamp();
   const assignedNodeId = normalizeText(metadata?.assignedNodeId) || envelope.assignedNodeId;
   const statusReason = normalizeText(metadata?.statusReason) || undefined;
+  const claimToken = normalizeText(metadata?.claimToken) || envelope.claimToken;
+  const runnerMode = metadata?.runnerMode ?? envelope.runnerMode;
+  const claimedAt = status === "assigned" && !envelope.claimedAt ? timestamp : envelope.claimedAt;
+  const completedAt = status === "completed" && !envelope.completedAt ? timestamp : envelope.completedAt;
+  const failedAt = status === "failed" && !envelope.failedAt ? timestamp : envelope.failedAt;
+  const blockedAt = status === "blocked" && !envelope.blockedAt ? timestamp : envelope.blockedAt;
 
   return {
     ...envelope,
     assignedNodeId: assignedNodeId || undefined,
     status,
     statusReason,
+    claimToken: claimToken || undefined,
+    runnerMode,
+    claimedAt,
     assignedAt: status === "assigned" && !envelope.assignedAt ? timestamp : envelope.assignedAt,
     startedAt: status === "running" && !envelope.startedAt ? timestamp : envelope.startedAt,
-    completedAt:
-      (status === "completed" || status === "failed" || status === "blocked") && !envelope.completedAt
-        ? timestamp
-        : envelope.completedAt,
+    completedAt,
+    failedAt,
+    blockedAt,
     updatedAt: timestamp,
   };
 }
@@ -107,12 +151,38 @@ export function createTaskEnvelope(params: CreateTaskEnvelopeParams): TaskEnvelo
     assignedNodeId: undefined,
     status: params.status ?? "pending",
     statusReason: undefined,
+    claimToken: undefined,
+    runnerMode: undefined,
     createdAt: timestamp,
+    claimedAt: undefined,
     assignedAt: undefined,
     startedAt: undefined,
     completedAt: undefined,
+    failedAt: undefined,
+    blockedAt: undefined,
     updatedAt: timestamp,
   };
+}
+
+export function claimTaskEnvelope(
+  envelope: TaskEnvelope,
+  params: {
+    assignedNodeId: string;
+    claimToken: string;
+    runnerMode: ExecutionNodeMode;
+    statusReason?: string;
+  },
+): TaskEnvelope {
+  if (envelope.status !== "pending") {
+    throw new Error(`Task ${envelope.taskId} is already ${envelope.status} and cannot be claimed again.`);
+  }
+
+  return applyTaskTransition(envelope, "assigned", {
+    assignedNodeId: params.assignedNodeId,
+    claimToken: params.claimToken,
+    runnerMode: params.runnerMode,
+    statusReason: params.statusReason,
+  });
 }
 
 export function assignTaskEnvelope(
@@ -123,6 +193,25 @@ export function assignTaskEnvelope(
   return applyTaskTransition(envelope, status, {
     assignedNodeId,
   });
+}
+
+export function releaseTaskEnvelope(envelope: TaskEnvelope, statusReason?: string): TaskEnvelope {
+  if (envelope.status !== "assigned") {
+    throw new Error(`Task ${envelope.taskId} cannot be released while ${envelope.status}.`);
+  }
+
+  const timestamp = createTimestamp();
+  return {
+    ...envelope,
+    assignedNodeId: undefined,
+    status: "pending",
+    statusReason: normalizeText(statusReason) || undefined,
+    claimToken: undefined,
+    runnerMode: undefined,
+    claimedAt: undefined,
+    assignedAt: undefined,
+    updatedAt: timestamp,
+  };
 }
 
 export function markTaskAssigned(
@@ -137,18 +226,34 @@ export function markTaskAssigned(
 }
 
 export function markTaskRunning(envelope: TaskEnvelope, metadata?: TaskEnvelopeTransitionMetadata): TaskEnvelope {
+  if (envelope.status !== "assigned" && envelope.status !== "running") {
+    throw new Error(`Task ${envelope.taskId} cannot start running from ${envelope.status}.`);
+  }
+
   return applyTaskTransition(envelope, "running", metadata);
 }
 
 export function markTaskCompleted(envelope: TaskEnvelope, metadata?: TaskEnvelopeTransitionMetadata): TaskEnvelope {
+  if (envelope.status !== "assigned" && envelope.status !== "running" && envelope.status !== "completed") {
+    throw new Error(`Task ${envelope.taskId} cannot complete from ${envelope.status}.`);
+  }
+
   return applyTaskTransition(envelope, "completed", metadata);
 }
 
 export function markTaskFailed(envelope: TaskEnvelope, metadata?: TaskEnvelopeTransitionMetadata): TaskEnvelope {
+  if (envelope.status !== "assigned" && envelope.status !== "running" && envelope.status !== "failed") {
+    throw new Error(`Task ${envelope.taskId} cannot fail from ${envelope.status}.`);
+  }
+
   return applyTaskTransition(envelope, "failed", metadata);
 }
 
 export function markTaskBlocked(envelope: TaskEnvelope, metadata?: TaskEnvelopeTransitionMetadata): TaskEnvelope {
+  if (envelope.status !== "pending" && envelope.status !== "assigned" && envelope.status !== "running" && envelope.status !== "blocked") {
+    throw new Error(`Task ${envelope.taskId} cannot be blocked from ${envelope.status}.`);
+  }
+
   return applyTaskTransition(envelope, "blocked", metadata);
 }
 
@@ -206,10 +311,15 @@ export function normalizeTaskEnvelope(value: unknown): TaskEnvelope | null {
     assignedNodeId: normalizeText(typeof source.assignedNodeId === "string" ? source.assignedNodeId : "") || undefined,
     status,
     statusReason: normalizeText(typeof source.statusReason === "string" ? source.statusReason : "") || undefined,
+    claimToken: normalizeText(typeof source.claimToken === "string" ? source.claimToken : "") || undefined,
+    runnerMode: normalizeExecutionNodeMode(source.runnerMode),
     createdAt,
+    claimedAt: normalizeText(typeof source.claimedAt === "string" ? source.claimedAt : "") || undefined,
     assignedAt: normalizeText(typeof source.assignedAt === "string" ? source.assignedAt : "") || undefined,
     startedAt: normalizeText(typeof source.startedAt === "string" ? source.startedAt : "") || undefined,
     completedAt: normalizeText(typeof source.completedAt === "string" ? source.completedAt : "") || undefined,
+    failedAt: normalizeText(typeof source.failedAt === "string" ? source.failedAt : "") || undefined,
+    blockedAt: normalizeText(typeof source.blockedAt === "string" ? source.blockedAt : "") || undefined,
     updatedAt,
   };
 }

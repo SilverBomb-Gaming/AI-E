@@ -2,13 +2,20 @@ import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import {
+  claimTaskEnvelope,
   markTaskAssigned,
+  markTaskBlocked,
+  markTaskCompleted,
+  markTaskFailed,
+  markTaskRunning,
   normalizeTaskEnvelope,
+  releaseTaskEnvelope,
   updateTaskEnvelopeStatus,
   type TaskEnvelope,
   type TaskEnvelopeStatus,
   type TaskEnvelopeTransitionMetadata,
 } from "./taskEnvelope";
+import type { ExecutionNodeMode } from "./executionNode";
 
 function getTaskQueueStoreDirectory(): string {
   const configuredDirectory = process.env.AIE_TASK_QUEUE_DIR?.trim();
@@ -74,6 +81,68 @@ export async function listTasks(): Promise<TaskEnvelope[]> {
     .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
 }
 
+export async function listTasksByStatus(status: TaskEnvelopeStatus): Promise<TaskEnvelope[]> {
+  const tasks = await listTasks();
+  return tasks.filter((task) => task.status === status);
+}
+
+export async function getRunnableTasks(options?: { includeApprovalBlocked?: boolean }): Promise<TaskEnvelope[]> {
+  const tasks = await listTasks();
+  return tasks
+    .filter((task) => task.status === "pending")
+    .filter((task) => options?.includeApprovalBlocked === true || task.action.scope === "safe")
+    .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.taskId.localeCompare(right.taskId));
+}
+
+export async function claimTask(
+  taskId: string,
+  claimToken: string,
+  runnerMode: ExecutionNodeMode,
+  nodeId: string,
+  statusReason = "Claimed for controlled queue execution.",
+): Promise<TaskEnvelope | null> {
+  const existingTask = await getTask(taskId);
+  if (!existingTask || existingTask.status !== "pending") {
+    return null;
+  }
+
+  return writeTask(claimTaskEnvelope(existingTask, {
+    assignedNodeId: nodeId,
+    claimToken,
+    runnerMode,
+    statusReason,
+  }));
+}
+
+export async function releaseClaimedTask(taskId: string, statusReason?: string): Promise<TaskEnvelope | null> {
+  const existingTask = await getTask(taskId);
+  if (!existingTask || existingTask.status !== "assigned") {
+    return null;
+  }
+
+  return writeTask(releaseTaskEnvelope(existingTask, statusReason));
+}
+
+export async function finalizeTask(
+  taskId: string,
+  status: Extract<TaskEnvelopeStatus, "completed" | "failed" | "blocked">,
+  extra?: TaskEnvelopeTransitionMetadata,
+): Promise<TaskEnvelope | null> {
+  const existingTask = await getTask(taskId);
+  if (!existingTask) {
+    return null;
+  }
+
+  switch (status) {
+    case "completed":
+      return writeTask(markTaskCompleted(existingTask, extra));
+    case "failed":
+      return writeTask(markTaskFailed(existingTask, extra));
+    case "blocked":
+      return writeTask(markTaskBlocked(existingTask, extra));
+  }
+}
+
 export async function updateTaskStatus(
   taskId: string,
   status: TaskEnvelopeStatus,
@@ -84,12 +153,20 @@ export async function updateTaskStatus(
     return null;
   }
 
+  if (status === "running") {
+    return writeTask(markTaskRunning(existingTask, extra));
+  }
+
+  if (status === "completed" || status === "failed" || status === "blocked") {
+    return finalizeTask(taskId, status, extra);
+  }
+
   return writeTask(updateTaskEnvelopeStatus(existingTask, status, extra));
 }
 
 export async function assignTaskToNode(taskId: string, nodeId: string): Promise<TaskEnvelope | null> {
   const existingTask = await getTask(taskId);
-  if (!existingTask) {
+  if (!existingTask || existingTask.status !== "pending") {
     return null;
   }
 

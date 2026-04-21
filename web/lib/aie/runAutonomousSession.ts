@@ -51,6 +51,7 @@ import {
   markTaskFailed,
   markTaskRunning,
   summarizeTaskEnvelope,
+  type TaskEnvelope,
 } from "./taskEnvelope";
 import type { AnalysisInput, ExecutionActionPreview, ExecutionRuntimeResult, FreeAnalysisResponse } from "./types";
 
@@ -68,6 +69,7 @@ type RunAutonomousSessionParams = {
   maxSteps?: number;
   approved?: boolean;
   existingSession?: AutonomousSession;
+  queuedTask?: TaskEnvelope;
   executionContext?: Partial<ExecutionAdapterContext>;
   dependencies?: Partial<RunAutonomousSessionDependencies>;
 };
@@ -90,6 +92,7 @@ type ForcedContinuationState = {
   attemptCount: number;
   reason: string;
   mode: "retry" | "resume-approved";
+  taskEnvelope?: TaskEnvelope;
 };
 
 function normalizeText(value: string | null | undefined): string {
@@ -493,6 +496,11 @@ async function runSingleAutonomousStep(params: {
       }) ?? registeredRuntimeNode
     : null;
   const createdTaskEnvelope = action
+    ? params.continuationState?.taskEnvelope ?? null
+    : null;
+  const queuedOrClaimedTaskEnvelope = createdTaskEnvelope
+    ? createdTaskEnvelope
+    : action
     ? await params.dependencies.enqueueTask(
         createTaskEnvelope({
           sessionId: params.session.sessionId,
@@ -503,9 +511,11 @@ async function runSingleAutonomousStep(params: {
         }),
       )
     : null;
-  const assignedTaskEnvelope = createdTaskEnvelope
-    ? await params.dependencies.assignTaskToNode(createdTaskEnvelope.taskId, (selectedNode ?? registeredRuntimeNode).id)
-      ?? markTaskAssigned(createdTaskEnvelope, (selectedNode ?? registeredRuntimeNode).id)
+  const assignedTaskEnvelope = queuedOrClaimedTaskEnvelope
+    ? params.continuationState?.taskEnvelope
+      ? queuedOrClaimedTaskEnvelope
+      : await params.dependencies.assignTaskToNode(queuedOrClaimedTaskEnvelope.taskId, (selectedNode ?? registeredRuntimeNode).id)
+        ?? markTaskAssigned(queuedOrClaimedTaskEnvelope, (selectedNode ?? registeredRuntimeNode).id)
     : null;
   const actionFamily = inferActionFamily(effectiveAnalysis.proposedAction ?? action?.description ?? "");
   const targetPathSummary = summarizeExecutionTarget({ action });
@@ -725,6 +735,7 @@ export async function runAutonomousSession(params: RunAutonomousSessionParams): 
             attemptCount: session.latestRecoveryState?.retryCount ?? 0,
             reason: session.stateReason || "Manual approval was granted for the pending bounded action.",
             mode: "resume-approved",
+            taskEnvelope: params.queuedTask,
           }
         : undefined;
       session = resumeAutonomousSession(session, {
