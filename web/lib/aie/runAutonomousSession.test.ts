@@ -5,6 +5,7 @@ import test from "node:test";
 
 import { listExecutionNodes, resetExecutionNodeRegistry } from "./executionNodeRegistry";
 import { runAutonomousSession } from "./runAutonomousSession";
+import { getTask, listTasks } from "./taskQueueStore";
 import type { AnalysisInput, ExecutionActionPreview, FreeAnalysisResponse } from "./types";
 
 function makeSafeAction(description: string): ExecutionActionPreview {
@@ -81,6 +82,51 @@ test("runAutonomousSession continues bounded safe steps until the goal is comple
   assert.match(seenInputs[1]?.actionResult ?? "", /not confirmed yet/i);
   assert.ok(savedStatuses.includes("completed"));
   resetExecutionNodeRegistry();
+});
+
+test("runAutonomousSession persists assigned task state through queue completion", async () => {
+  const taskDirectory = path.resolve(process.cwd(), "temp-phase4h-task-store");
+  await rm(taskDirectory, { recursive: true, force: true });
+  await mkdir(taskDirectory, { recursive: true });
+  process.env.AIE_TASK_QUEUE_DIR = taskDirectory;
+
+  try {
+    const session = await runAutonomousSession({
+      goal: "Confirm the queued task persists assignment and completion metadata.",
+      maxSteps: 2,
+      dependencies: {
+        runAnalysis: async () => ({
+          what_happened: "The bounded validation completed and the queued task should now be marked complete.",
+          what_matters: ["The queue record should capture both node assignment and completion state."],
+          what_to_do_next: ["Stop."],
+          upgrade_hint: "",
+          proposedAction: "Run the bounded validation command.",
+          expectedOutcome: "The queued task should complete successfully.",
+          execution: makeSafeAction("Run the bounded validation command."),
+        }),
+        executeAction: async () => ({
+          status: "success",
+          output: "Healthy status confirmed, issue resolved, and expected outcome validated successfully.",
+        }),
+        saveAutonomousSession: async () => {},
+      },
+    });
+
+    const tasks = await listTasks();
+    const persistedTask = session.taskId ? await getTask(session.taskId) : null;
+
+    assert.equal(session.status, "completed");
+    assert.equal(session.taskStatus, "completed");
+    assert.equal(session.steps[0]?.taskStatus, "completed");
+    assert.equal(tasks.length, 1);
+    assert.equal(persistedTask?.taskId, session.taskId);
+    assert.equal(persistedTask?.status, "completed");
+    assert.equal(persistedTask?.assignedNodeId, session.assignedNodeId);
+    assert.match(session.queueStateSummary ?? "", /completed/i);
+  } finally {
+    delete process.env.AIE_TASK_QUEUE_DIR;
+    await rm(taskDirectory, { recursive: true, force: true });
+  }
 });
 
 test("runAutonomousSession pauses when the analysis proposes a step outside safe auto-execution", async () => {

@@ -48,6 +48,9 @@ function buildTrace(params: {
   executionNodeMode?: "web" | "headless" | "local-node";
   nodeCapabilitySummary?: string;
   taskId?: string;
+  taskStatus?: "queued" | "assigned" | "running" | "completed" | "failed" | "blocked";
+  assignedNodeId?: string;
+  queueStateSummary?: string;
 }) {
   return buildAnalysisTraceRecord(params);
 }
@@ -104,6 +107,9 @@ test("fresh traces include the full required contract", () => {
   assert.equal(trace.executionNodeMode, null);
   assert.equal(trace.nodeCapabilitySummary, null);
   assert.equal(trace.taskId, null);
+  assert.equal(trace.taskStatus, null);
+  assert.equal(trace.assignedNodeId, null);
+  assert.equal(trace.queueStateSummary, null);
   assert.equal(trace.autonomousPlanningHintSummary, null);
   assert.equal(trace.autonomousRecentActionFamily, null);
   assert.equal(trace.orchestrationId, null);
@@ -250,6 +256,9 @@ test("autonomous traces preserve optional autonomous metadata without changing t
     executionNodeMode: "web",
     nodeCapabilitySummary: "inspection, validation-check, file-write, test-run, repo-scan",
     taskId: "task-autonomous-123",
+    taskStatus: "completed",
+    assignedNodeId: "aie-node-web-web",
+    queueStateSummary: "completed | aie-node-web-web | validation-check",
     autonomousPlanningHintSummary: "Recent lane summary: validate:healthy result. Preferred next lane: validate.",
     autonomousRecentActionFamily: "validate",
   });
@@ -266,6 +275,9 @@ test("autonomous traces preserve optional autonomous metadata without changing t
   assert.equal(trace.executionNodeMode, "web");
   assert.match(trace.nodeCapabilitySummary ?? "", /validation-check/i);
   assert.equal(trace.taskId, "task-autonomous-123");
+  assert.equal(trace.taskStatus, "completed");
+  assert.equal(trace.assignedNodeId, "aie-node-web-web");
+  assert.match(trace.queueStateSummary ?? "", /completed/i);
   assert.match(trace.autonomousPlanningHintSummary ?? "", /Preferred next lane/i);
   assert.equal(trace.autonomousRecentActionFamily, "validate");
   assert.deepEqual(listMissingAnalysisTraceFields(trace), []);

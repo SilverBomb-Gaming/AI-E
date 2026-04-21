@@ -3,15 +3,25 @@ import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 
-import { formatHeadlessSessionReport, formatHeadlessSessionSummary, runHeadlessAutonomy } from "./headless_autonomy";
+import {
+  formatHeadlessSessionReport,
+  formatHeadlessSessionSummary,
+  formatHeadlessTaskList,
+  formatHeadlessTaskReport,
+  runHeadlessAutonomy,
+} from "./headless_autonomy";
 import { listExecutionNodes, resetExecutionNodeRegistry } from "./lib/aie/executionNodeRegistry";
+import { listTasks } from "./lib/aie/taskQueueStore";
 import type { FreeAnalysisResponse } from "./lib/aie/types";
 
 test("headless_autonomy persists a bounded session and prints a matching summary", async () => {
   const sessionDirectory = path.resolve(process.cwd(), "temp-headless-session-store");
+  const taskDirectory = path.resolve(process.cwd(), "temp-headless-task-store");
   resetExecutionNodeRegistry();
   process.env.AIE_AUTONOMOUS_SESSION_DIR = sessionDirectory;
+  process.env.AIE_TASK_QUEUE_DIR = taskDirectory;
   await mkdir(sessionDirectory, { recursive: true });
+  await mkdir(taskDirectory, { recursive: true });
 
   try {
     const session = await runHeadlessAutonomy(
@@ -48,6 +58,9 @@ test("headless_autonomy persists a bounded session and prints a matching summary
       },
     );
     const summary = JSON.parse(formatHeadlessSessionSummary(session)) as Record<string, unknown>;
+    const tasks = await listTasks();
+    const taskReport = tasks[0] ? formatHeadlessTaskReport(tasks[0]) : "";
+    const taskList = await formatHeadlessTaskList();
 
     assert.equal(typeof summary.sessionId, "string");
     assert.equal(summary.status, session.status);
@@ -56,12 +69,18 @@ test("headless_autonomy persists a bounded session and prints a matching summary
     assert.equal(summary.executionNodeMode, "headless");
     assert.equal(typeof summary.executionNodeId, "string");
     assert.match(String(summary.nodeCapabilitySummary ?? ""), /validation-check/i);
+    assert.equal(summary.taskStatus, "completed");
     assert.match(formatHeadlessSessionReport(session, { verbose: true }), /Step 1/i);
     assert.match(formatHeadlessSessionReport(session, { json: true, verbose: true }), /"sessionId"/i);
+    assert.equal(tasks.length, 1);
+    assert.match(taskReport, /Status: completed/i);
+    assert.match(taskList, /completed/i);
     assert.ok(listExecutionNodes().some((node) => node.mode === "headless"));
   } finally {
     delete process.env.AIE_AUTONOMOUS_SESSION_DIR;
+    delete process.env.AIE_TASK_QUEUE_DIR;
     resetExecutionNodeRegistry();
     await rm(sessionDirectory, { recursive: true, force: true });
+    await rm(taskDirectory, { recursive: true, force: true });
   }
 });
