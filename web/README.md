@@ -219,25 +219,26 @@ The autonomous loop now records and surfaces deeper sequencing metadata:
 
 This keeps broader bounded work inspectable without creating a second planner or a separate headless autonomy stack.
 
-## Phase 4M-B complete: execution leases and resumable task state
+## Phase 4M-C complete: deterministic cross-node session continuation
 
-AI-E now layers authoritative execution leases and persisted resumable task metadata on top of the 4M-A heartbeat/liveness foundation in `lib/aie/taskEnvelope.ts`, `lib/aie/queueOrchestrator.ts`, and the controlled dispatch boundary.
+AI-E now layers deterministic distributed continuation on top of the 4M-A liveness work and the 4M-B lease foundation in `lib/aie/taskEnvelope.ts`, `lib/aie/queueOrchestrator.ts`, `lib/aie/dispatchMessages.ts`, `lib/aie/dispatchReceiver.ts`, and the shared-runner path.
 
-- each running task can persist a single authoritative lease with lease id, owning node id, lease epoch, start time, last-progress time, lease status, and optional continuation/checkpoint metadata
-- task records now persist resumability classification, continuation token, checkpoint reference, resume-attempt count, last progress marker, recovery-pending state, and prior-lease linkage
-- lease creation, progress, supersession, cancellation, and completion stay inside the existing queue/lifecycle transitions instead of creating a second recovery path
-- controlled dispatch requests now carry lease ownership metadata, and the receiver rejects mismatched lease id, epoch, owner, or continuation/checkpoint state before execution starts
-- stale/offline or retry-driven recovery supersedes or invalidates the prior lease, keeps the task inside deterministic `retrying` queue state, and does not start a parallel worker
-- bounded queue execution still prefers the existing deterministic selector and no duplicate execution path is introduced
-- the autonomous task API plus both CLI entrypoints now surface lease owner, lease status, lease progress time, resumability, continuation/checkpoint presence, and recovery-pending state
+- task records now persist explicit continuation lineage, including continuation generation, source node, target node, continuation reason, resumed-from token/checkpoint references, and prior-lease linkage
+- queue-mediated recovery remains the only handoff path: stale, offline, timeout, or supersession recovery first invalidates the prior lease, persists continuation lineage, moves the task through deterministic `retrying`, and only then activates a new lease on the next selected node
+- the same logical task and session ids survive node changes, so continuation does not create a brand-new unrelated task/session identity during recovery
+- controlled dispatch requests now carry explicit continuation metadata in addition to lease ownership, and the receiver rejects mismatched continuation lineage before execution starts
+- shared-runner startup now detects continued tasks, preserves the original session id, and surfaces resumed-start context through task/session summaries instead of treating the handoff as a fresh queue session
+- the autonomous task API plus both CLI entrypoints now expose current node, prior node, prior lease id, current lease id, continuation generation, continuation reason, and resumed-from checkpoint/token state
+- bounded queue execution still keeps a single authoritative active lease and does not introduce peer-to-peer migration, duplicate execution, or a parallel scheduler path
 
-4M-B is complete for authoritative persisted lease ownership, resumable task-state foundations, queue-mediated lease invalidation/recovery, and API/CLI observability of lease/resume state.
+4M-C is complete for deterministic queue-mediated cross-node continuation, persisted lease lineage, stable task/session identity across node changes, receiver continuation validation, and API/CLI observability of resumed versus fresh execution.
 
-Deferred to the next continuation-focused slice:
+Deferred to the next trust and hardening slice:
 
-- true cross-node session continuation and continuation-token handoff semantics
-- final distributed handoff arbitration, multi-lease negotiation, or lease-election behavior beyond the current single-owner model
-- fully enforced execution trust boundaries beyond the current local-lab trust metadata and validation hooks
+- final trust-boundary enforcement beyond the current local-lab auth and validation checks
+- autonomous peer-to-peer replication or any direct node-to-node handoff channel
+- distributed handoff arbitration, multi-task lease election, or broader scheduler coordination beyond the current queue model
+- stronger continuation/checkpoint authenticity guarantees and hardened remote-state validation
 - any separate heartbeat daemon, lease coordinator, or secondary scheduler layer
 
 ### Phase 4L — Multi-Node Execution

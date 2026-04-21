@@ -539,29 +539,38 @@ async function runSingleAutonomousStep(params: {
           previousLease: assignedTaskEnvelope.lease,
           continuationToken: assignedTaskEnvelope.continuationToken,
           checkpointReference: assignedTaskEnvelope.checkpointReference,
-          progressMarker: "shared-runner-start",
+          progressMarker: assignedTaskEnvelope.continuationGeneration > 0
+            ? `shared-runner-continuation-${assignedTaskEnvelope.continuationGeneration}-start`
+            : "shared-runner-start",
         })
     : assignedTaskEnvelope?.lease;
+  const isContinuedQueuedTask = Boolean(assignedTaskEnvelope && assignedTaskEnvelope.continuationGeneration > 0);
+  const runnerStartStatusReason = isContinuedQueuedTask
+    ? `Continuing bounded task generation ${assignedTaskEnvelope?.continuationGeneration} inside the shared runner.`
+    : "Executing bounded task inside the shared runner.";
+  const runnerStartProgressMarker = isContinuedQueuedTask
+    ? `shared-runner-continuation-${assignedTaskEnvelope?.continuationGeneration}-start`
+    : "shared-runner-start";
   const runningTaskEnvelope = assignedTaskEnvelope && !stopBeforeApprovalEscalation && action && canAutonomouslyExecute
     ? await params.dependencies.updateTaskStatus(assignedTaskEnvelope.taskId, "running", {
         assignedNodeId: assignedTaskEnvelope.assignedNodeId,
-        statusReason: "Executing bounded task inside the shared runner.",
+        statusReason: runnerStartStatusReason,
         priorLeaseId: assignedTaskEnvelope.lease?.leaseId ?? assignedTaskEnvelope.priorLeaseId,
         lease: runningLease,
         resumability: assignedTaskEnvelope.resumability,
         continuationToken: assignedTaskEnvelope.continuationToken,
         checkpointReference: assignedTaskEnvelope.checkpointReference,
-        lastProgressMarker: "shared-runner-start",
+        lastProgressMarker: runnerStartProgressMarker,
         recoveryPending: false,
       }) ?? markTaskRunning(assignedTaskEnvelope, {
         assignedNodeId: assignedTaskEnvelope.assignedNodeId,
-        statusReason: "Executing bounded task inside the shared runner.",
+        statusReason: runnerStartStatusReason,
         priorLeaseId: assignedTaskEnvelope.lease?.leaseId ?? assignedTaskEnvelope.priorLeaseId,
         lease: runningLease,
         resumability: assignedTaskEnvelope.resumability,
         continuationToken: assignedTaskEnvelope.continuationToken,
         checkpointReference: assignedTaskEnvelope.checkpointReference,
-        lastProgressMarker: "shared-runner-start",
+        lastProgressMarker: runnerStartProgressMarker,
         recoveryPending: false,
       })
     : assignedTaskEnvelope;

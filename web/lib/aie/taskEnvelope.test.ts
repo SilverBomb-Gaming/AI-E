@@ -43,6 +43,7 @@ test("task envelopes create serializable queued tasks", () => {
   assert.equal(envelope.stepIndex, 2);
   assert.equal(envelope.status, "queued");
   assert.equal(envelope.resumability, "restart-required");
+  assert.equal(envelope.continuationGeneration, 0);
   assert.equal(envelope.resumeAttemptCount, 0);
   assert.equal(envelope.recoveryPending, false);
   assert.deepEqual(envelope.requestedCapabilities, ["validation-check", "repo-scan"]);
@@ -223,6 +224,12 @@ test("task envelopes preserve additive lease and resumable metadata", () => {
       ),
       {
         resumability: "resumable",
+        continuationSourceNodeId: "aie-node-headless-0",
+        continuationTargetNodeId: "aie-node-headless-1",
+        continuationGeneration: 1,
+        continuationReason: "timeout-recovery",
+        resumedFromCheckpointReference: "checkpoint://lease-0",
+        resumedFromContinuationToken: "continue-lease-0",
         continuationToken: "continue-lease-1",
         checkpointReference: "checkpoint://lease-1",
         resumeAttemptCount: 1,
@@ -251,6 +258,12 @@ test("task envelopes preserve additive lease and resumable metadata", () => {
   const normalized = normalizeTaskEnvelope(JSON.parse(JSON.stringify(leaseEnvelope)));
 
   assert.equal(normalized?.resumability, "resumable");
+  assert.equal(normalized?.continuationSourceNodeId, "aie-node-headless-0");
+  assert.equal(normalized?.continuationTargetNodeId, "aie-node-headless-1");
+  assert.equal(normalized?.continuationGeneration, 1);
+  assert.equal(normalized?.continuationReason, "timeout-recovery");
+  assert.equal(normalized?.resumedFromCheckpointReference, "checkpoint://lease-0");
+  assert.equal(normalized?.resumedFromContinuationToken, "continue-lease-0");
   assert.equal(normalized?.continuationToken, "continue-lease-1");
   assert.equal(normalized?.checkpointReference, "checkpoint://lease-1");
   assert.equal(normalized?.resumeAttemptCount, 1);
@@ -263,6 +276,12 @@ test("task envelopes preserve additive lease and resumable metadata", () => {
   assert.equal(normalized?.lease?.status, "active");
   assert.match(summarizeTaskEnvelope(leaseEnvelope), /lease=aie-lease-1/i);
   assert.match(summarizeTaskEnvelope(leaseEnvelope), /resumability=resumable/i);
+  assert.match(summarizeTaskEnvelope(leaseEnvelope), /continuationGen=1/i);
+  assert.match(summarizeTaskEnvelope(leaseEnvelope), /continuationSource=aie-node-headless-0/i);
+  assert.match(summarizeTaskEnvelope(leaseEnvelope), /continuationTarget=aie-node-headless-1/i);
+  assert.match(summarizeTaskEnvelope(leaseEnvelope), /continuationReason=timeout-recovery/i);
+  assert.match(summarizeTaskEnvelope(leaseEnvelope), /resumedCheckpoint=checkpoint:\/\/lease-0/i);
+  assert.match(summarizeTaskEnvelope(leaseEnvelope), /resumedToken=present/i);
   assert.match(summarizeTaskEnvelope(leaseEnvelope), /continuation=present/i);
   assert.match(summarizeTaskEnvelope(leaseEnvelope), /recovery=pending/i);
 });

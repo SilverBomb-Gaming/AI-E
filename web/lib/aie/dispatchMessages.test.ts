@@ -38,6 +38,16 @@ test("dispatchMessages normalize request payloads and summarize them", () => {
       epoch: 1,
       resumability: "restart-required",
     },
+    continuation: {
+      isContinuation: true,
+      priorLeaseId: "aie-lease-dispatch-0",
+      sourceNodeId: "aie-node-headless-default",
+      targetNodeId: "aie-node-local-default",
+      generation: 2,
+      reason: "timeout-recovery",
+      resumedFromCheckpointReference: "checkpoint://dispatch-0",
+      resumedFromContinuationToken: "continue-dispatch-0",
+    },
     authToken,
     approvalState: {
       requiresApproval: true,
@@ -51,8 +61,13 @@ test("dispatchMessages normalize request payloads and summarize them", () => {
   assert.equal(validateDispatchPayloadShape("task-dispatch-request", request), true);
   assert.match(summarizeDispatchPayload("task-dispatch-request", request), /type=request/i);
   assert.match(summarizeDispatchPayload("task-dispatch-request", request), /lease=aie-lease-dispatch-1/i);
+  assert.match(summarizeDispatchPayload("task-dispatch-request", request), /continuation=gen-2/i);
+  assert.match(summarizeDispatchPayload("task-dispatch-request", request), /from=aie-node-headless-default/i);
+  assert.match(summarizeDispatchPayload("task-dispatch-request", request), /to=aie-node-local-default/i);
+  assert.match(summarizeDispatchPayload("task-dispatch-request", request), /continuationReason=timeout-recovery/i);
   assert.equal(request.authToken.sourceNodeId, "aie-node-local-default");
   assert.equal(request.remoteDispatchPlanned, true);
+  assert.equal(request.continuation?.generation, 2);
 });
 
 test("dispatchMessages validate ack result and error payload families", () => {

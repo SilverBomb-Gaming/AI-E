@@ -518,6 +518,12 @@ test("queueOrchestrator invalidates an active resumable lease and leaves determi
     assert.equal(summary.task?.recoveryPending, true);
     assert.equal(summary.task?.lease?.status, "superseded");
     assert.equal(summary.task?.priorLeaseId, summary.task?.lease?.leaseId);
+    assert.equal(summary.task?.continuationGeneration, 1);
+    assert.equal(summary.task?.continuationSourceNodeId, claimed.task.selectedNodeId ?? claimed.node.id);
+    assert.equal(summary.task?.continuationTargetNodeId, undefined);
+    assert.equal(summary.task?.continuationReason, "timeout-recovery");
+    assert.equal(summary.task?.resumedFromCheckpointReference, "checkpoint://timeout-recovery");
+    assert.equal(summary.task?.resumedFromContinuationToken, "continue-timeout-recovery");
     assert.equal(summary.task?.continuationToken, "continue-timeout-recovery");
     assert.equal(persisted?.status, "retrying");
     assert.equal(persisted?.recoveryPending, true);
@@ -530,5 +536,170 @@ test("queueOrchestrator invalidates an active resumable lease and leaves determi
     resetExecutionNodeRegistry();
     await rm(sessionDirectory, { recursive: true, force: true });
     await rm(taskDirectory, { recursive: true, force: true });
+  }
+});
+
+test("queueOrchestrator performs deterministic cross-node continuation with preserved task and session identity", async () => {
+  const sessionDirectory = path.resolve(process.cwd(), "temp-queue-orchestrator-session-store-7");
+  const taskDirectory = path.resolve(process.cwd(), "temp-queue-orchestrator-task-store-7");
+  const registryDirectory = path.resolve(process.cwd(), "temp-queue-orchestrator-node-store-7");
+  resetExecutionNodeRegistry();
+  process.env.AIE_AUTONOMOUS_SESSION_DIR = sessionDirectory;
+  process.env.AIE_TASK_QUEUE_DIR = taskDirectory;
+  process.env.AIE_EXECUTION_NODE_REGISTRY_DIR = registryDirectory;
+  await mkdir(sessionDirectory, { recursive: true });
+  await mkdir(taskDirectory, { recursive: true });
+  await mkdir(registryDirectory, { recursive: true });
+
+  try {
+    const preferredNode = registerExecutionNode(createExecutionNodeDescriptor({
+      id: "aie-node-headless-continuation-source",
+      mode: "headless",
+      label: "AI-E Headless Continuation Source",
+      capabilities: ["validation-check", "repo-scan"],
+      active: true,
+      cwd: process.cwd(),
+      allowedRoots: [process.cwd()],
+    }));
+    const recoveryNode = registerExecutionNode(createExecutionNodeDescriptor({
+      id: "aie-node-headless-continuation-target",
+      mode: "headless",
+      label: "AI-E Headless Continuation Target",
+      capabilities: ["validation-check", "repo-scan"],
+      active: true,
+      cwd: process.cwd(),
+      allowedRoots: [process.cwd()],
+    }));
+
+    await enqueueTask({
+      ...createTaskEnvelope({
+        taskId: "task-run-cross-node-continuation",
+        sessionId: "queue-session-cross-node-continuation",
+        stepIndex: 1,
+        action: makeSafeAction("run-cross-node-continuation"),
+        preferredNodeId: preferredNode.id,
+      }),
+      resumability: "resumable",
+      continuationToken: "continue-cross-node-continuation",
+      checkpointReference: "checkpoint://cross-node-continuation",
+    });
+
+    const claimed = await claimNextRunnableTask({ runtimeMode: "headless", cwd: process.cwd() });
+    assert.ok(claimed);
+    assert.equal(claimed.task.sessionId, "queue-session-cross-node-continuation");
+    assert.equal(claimed.task.selectedNodeId, preferredNode.id);
+
+    const dispatchedNodeIds: string[] = [];
+    const dispatchedContinuations: Array<Record<string, unknown> | undefined> = [];
+    let attempt = 0;
+    const summary = await executeQueuedTask(claimed, {
+      runtimeMode: "headless",
+      cwd: process.cwd(),
+      maxSteps: 1,
+      maxDispatchRetries: 1,
+      dispatchTransport: {
+        async sendDispatchRequest({ request, dependencies }) {
+          attempt += 1;
+          dispatchedNodeIds.push(request.targetNodeId);
+          dispatchedContinuations.push(request.payload.continuation as Record<string, unknown> | undefined);
+
+          if (attempt === 1) {
+            throw new DispatchTransportTimeoutError(10);
+          }
+
+          const task = await dependencies.updateTaskStatus(request.taskId, "completed", {
+            assignedNodeId: request.targetNodeId,
+            selectedNodeId: request.targetNodeId,
+            selectedNodeReason: "Selected deterministic capable node for resumed continuation.",
+            dispatchMessageId: request.messageId,
+            dispatchAckMessageId: `${request.messageId}-ack`,
+            dispatchResultMessageId: `${request.messageId}-result`,
+            dispatchTargetNodeId: request.targetNodeId,
+            dispatchProtocolVersion: request.protocolVersion,
+            dispatchStatusSummary: "dispatch=1 | type=result | status=completed",
+            dispatchAuthSummary: "auth=aie-node-local-default->aie-node-headless-continuation-target | scope=local-lab | valid=true",
+            dispatchTransportStatus: "completed",
+            dispatchRetryCount: 2,
+            dispatchLastAttemptAt: request.createdAt,
+            dispatchReceivedAt: request.createdAt,
+            dispatchCompletedAt: request.createdAt,
+            remoteDispatchPlanned: true,
+            statusReason: "Resumed continuation completed on the recovery node.",
+          });
+
+          return {
+            status: "delivered",
+            request,
+            rawRequest: JSON.stringify(request),
+            rawAck: "ack",
+            rawResult: "result",
+            task,
+            session: {
+              sessionId: request.sessionId,
+              goal: "Validate run-cross-node-continuation.",
+              status: "completed",
+              createdAt: request.createdAt,
+              updatedAt: request.createdAt,
+              currentStepIndex: 2,
+              maxSteps: 1,
+              lastStepIndex: 1,
+              taskId: request.taskId,
+              taskStatus: "completed",
+              selectedNodeId: request.targetNodeId,
+              selectedNodeReason: "Selected deterministic capable node for resumed continuation.",
+              dispatchProtocolVersion: request.protocolVersion,
+              steps: [],
+            },
+          };
+        },
+        async receiveDispatchRequest() {
+          throw new Error("Not implemented in this test transport.");
+        },
+        async sendDispatchAck() {
+          return "ack";
+        },
+        async sendDispatchResult() {
+          return "result";
+        },
+        async sendDispatchError() {
+          return "error";
+        },
+      },
+    });
+
+    const persisted = await getTask("task-run-cross-node-continuation");
+
+    assert.equal(summary.status, "completed");
+    assert.equal(summary.task?.taskId, "task-run-cross-node-continuation");
+    assert.equal(summary.task?.sessionId, "queue-session-cross-node-continuation");
+    assert.equal(summary.session?.sessionId, "queue-session-cross-node-continuation");
+    assert.equal(summary.task?.continuationGeneration, 1);
+    assert.equal(summary.task?.continuationSourceNodeId, preferredNode.id);
+    assert.equal(summary.task?.continuationTargetNodeId, recoveryNode.id);
+    assert.equal(summary.task?.continuationReason, "timeout-recovery");
+    assert.equal(summary.task?.priorLeaseId, summary.task?.lease?.supersededByLeaseId ?? summary.task?.priorLeaseId);
+    assert.equal(summary.task?.resumedFromCheckpointReference, "checkpoint://cross-node-continuation");
+    assert.equal(summary.task?.resumedFromContinuationToken, "continue-cross-node-continuation");
+    assert.equal(summary.task?.lease?.ownerNodeId, recoveryNode.id);
+    assert.equal(summary.task?.lease?.status, "completed");
+    assert.deepEqual(dispatchedNodeIds, [preferredNode.id, recoveryNode.id]);
+    assert.equal(dispatchedContinuations[0], undefined);
+    assert.equal(dispatchedContinuations[1]?.generation, 1);
+    assert.equal(dispatchedContinuations[1]?.sourceNodeId, preferredNode.id);
+    assert.equal(dispatchedContinuations[1]?.targetNodeId, recoveryNode.id);
+    assert.equal(persisted?.taskId, "task-run-cross-node-continuation");
+    assert.equal(persisted?.sessionId, "queue-session-cross-node-continuation");
+    assert.equal(persisted?.continuationGeneration, 1);
+    assert.equal(persisted?.continuationSourceNodeId, preferredNode.id);
+    assert.equal(persisted?.continuationTargetNodeId, recoveryNode.id);
+    assert.equal(persisted?.resumeAttemptCount, 1);
+  } finally {
+    delete process.env.AIE_AUTONOMOUS_SESSION_DIR;
+    delete process.env.AIE_TASK_QUEUE_DIR;
+    delete process.env.AIE_EXECUTION_NODE_REGISTRY_DIR;
+    resetExecutionNodeRegistry();
+    await rm(sessionDirectory, { recursive: true, force: true });
+    await rm(taskDirectory, { recursive: true, force: true });
+    await rm(registryDirectory, { recursive: true, force: true });
   }
 });

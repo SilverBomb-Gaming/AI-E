@@ -275,6 +275,12 @@ export function formatLocalNodeTaskOutput(task: TaskEnvelope, options?: { json?:
     `Selection reason: ${task.selectedNodeReason ?? "none"}`,
     `Assigned node: ${task.assignedNodeId ?? "unassigned"}`,
     `Resumability: ${task.resumability}`,
+    `Continuation mode: ${task.continuationGeneration > 0 ? "resumed" : "fresh"}`,
+    `Continuation generation: ${task.continuationGeneration}`,
+    `Continuation source: ${task.continuationSourceNodeId ?? "none"}`,
+    `Continuation target: ${task.continuationTargetNodeId ?? "none"}`,
+    `Continuation reason: ${task.continuationReason ?? "none"}`,
+    `Prior lease: ${task.priorLeaseId ?? "none"}`,
     `Resume attempts: ${task.resumeAttemptCount}`,
     `Recovery pending: ${String(task.recoveryPending)}`,
     `Lease: ${task.lease?.leaseId ?? "none"}`,
@@ -283,6 +289,8 @@ export function formatLocalNodeTaskOutput(task: TaskEnvelope, options?: { json?:
     `Lease status: ${task.lease?.status ?? "none"}`,
     `Lease last progress: ${task.lease?.lastProgressAt ?? "none"}`,
     `Progress marker: ${task.lastProgressMarker ?? "none"}`,
+    `Resumed checkpoint: ${task.resumedFromCheckpointReference ?? "none"}`,
+    `Resumed token: ${task.resumedFromContinuationToken ? "present" : "none"}`,
     `Continuation token: ${task.continuationToken ? "present" : "none"}`,
     `Checkpoint reference: ${task.checkpointReference ?? "none"}`,
     `Runner mode: ${task.runnerMode ?? "unknown"}`,
@@ -330,6 +338,12 @@ export function formatLocalNodeQueueRunOutput(summary: QueueExecutionSummary, op
     `Selection reason: ${summary.selectedNodeReason ?? summary.task?.selectedNodeReason ?? "unknown"}`,
     `Assigned node: ${summary.nodeId ?? summary.task?.assignedNodeId ?? "unknown"}`,
     `Resumability: ${summary.task?.resumability ?? "unknown"}`,
+    `Continuation mode: ${summary.task?.continuationGeneration && summary.task.continuationGeneration > 0 ? "resumed" : "fresh"}`,
+    `Continuation generation: ${summary.task?.continuationGeneration ?? "unknown"}`,
+    `Continuation source: ${summary.task?.continuationSourceNodeId ?? "unknown"}`,
+    `Continuation target: ${summary.task?.continuationTargetNodeId ?? "unknown"}`,
+    `Continuation reason: ${summary.task?.continuationReason ?? "unknown"}`,
+    `Prior lease: ${summary.task?.priorLeaseId ?? "unknown"}`,
     `Resume attempts: ${summary.task?.resumeAttemptCount ?? "unknown"}`,
     `Recovery pending: ${typeof summary.task?.recoveryPending === "boolean" ? String(summary.task.recoveryPending) : "unknown"}`,
     `Lease: ${summary.task?.lease?.leaseId ?? "unknown"}`,
@@ -338,6 +352,8 @@ export function formatLocalNodeQueueRunOutput(summary: QueueExecutionSummary, op
     `Lease status: ${summary.task?.lease?.status ?? "unknown"}`,
     `Lease last progress: ${summary.task?.lease?.lastProgressAt ?? "unknown"}`,
     `Progress marker: ${summary.task?.lastProgressMarker ?? "unknown"}`,
+    `Resumed checkpoint: ${summary.task?.resumedFromCheckpointReference ?? "none"}`,
+    `Resumed token: ${summary.task?.resumedFromContinuationToken ? "present" : "none"}`,
     `Continuation token: ${summary.task?.continuationToken ? "present" : "none"}`,
     `Checkpoint reference: ${summary.task?.checkpointReference ?? "none"}`,
     `Runner mode: ${summary.runnerMode ?? summary.task?.runnerMode ?? "unknown"}`,
@@ -372,7 +388,7 @@ export async function formatLocalNodeTaskList(options?: { json?: boolean }): Pro
 
   return tasks
     .slice(0, 20)
-    .map((task) => `${task.taskId} | ${task.status} | ${task.selectedNodeId ?? task.assignedNodeId ?? "unassigned"} | lease=${task.lease?.ownerNodeId ?? "none"}:${task.lease?.status ?? "none"} | resumability=${task.resumability} | recovery=${task.recoveryPending} | transport=${task.dispatchTransportStatus ?? "none"} | retries=${task.dispatchRetryCount ?? 0} | failure=${task.failureReason ?? "none"} | ${task.sessionId}`)
+    .map((task) => `${task.taskId} | ${task.status} | ${task.selectedNodeId ?? task.assignedNodeId ?? "unassigned"} | lease=${task.lease?.ownerNodeId ?? "none"}:${task.lease?.status ?? "none"} | continuation=${task.continuationGeneration > 0 ? `gen-${task.continuationGeneration}:${task.continuationSourceNodeId ?? "unknown"}->${task.continuationTargetNodeId ?? "pending"}` : "fresh"} | resumability=${task.resumability} | recovery=${task.recoveryPending} | transport=${task.dispatchTransportStatus ?? "none"} | retries=${task.dispatchRetryCount ?? 0} | failure=${task.failureReason ?? "none"} | ${task.sessionId}`)
     .join("\n");
 }
 

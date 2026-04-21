@@ -252,6 +252,81 @@ export async function handleDispatchRequest(params: HandleDispatchRequestParams)
     });
   }
 
+  const persistedIsContinuation = existingTask.continuationGeneration > 0;
+  const requestIsContinuation = Boolean(request.payload.continuation?.isContinuation);
+  if (persistedIsContinuation !== requestIsContinuation) {
+    return rejectDispatchRequest({
+      request,
+      reason: `Task ${request.taskId} continuation lineage did not match the persisted task state.`,
+      authSummary,
+      existingTask,
+      dependencies: params.dependencies,
+    });
+  }
+
+  if (request.payload.continuation?.isContinuation) {
+    const continuation = request.payload.continuation;
+    if (continuation.generation !== existingTask.continuationGeneration) {
+      return rejectDispatchRequest({
+        request,
+        reason: `Task ${request.taskId} continuation generation did not match the persisted task state.`,
+        authSummary,
+        existingTask,
+        dependencies: params.dependencies,
+      });
+    }
+
+    if (existingTask.priorLeaseId && continuation.priorLeaseId && existingTask.priorLeaseId !== continuation.priorLeaseId) {
+      return rejectDispatchRequest({
+        request,
+        reason: `Task ${request.taskId} continuation prior lease did not match the persisted task state.`,
+        authSummary,
+        existingTask,
+        dependencies: params.dependencies,
+      });
+    }
+
+    if (existingTask.continuationSourceNodeId && continuation.sourceNodeId && existingTask.continuationSourceNodeId !== continuation.sourceNodeId) {
+      return rejectDispatchRequest({
+        request,
+        reason: `Task ${request.taskId} continuation source node did not match the persisted task state.`,
+        authSummary,
+        existingTask,
+        dependencies: params.dependencies,
+      });
+    }
+
+    if (existingTask.continuationTargetNodeId && continuation.targetNodeId && existingTask.continuationTargetNodeId !== continuation.targetNodeId) {
+      return rejectDispatchRequest({
+        request,
+        reason: `Task ${request.taskId} continuation target node did not match the persisted task state.`,
+        authSummary,
+        existingTask,
+        dependencies: params.dependencies,
+      });
+    }
+
+    if (existingTask.resumedFromCheckpointReference && continuation.resumedFromCheckpointReference && existingTask.resumedFromCheckpointReference !== continuation.resumedFromCheckpointReference) {
+      return rejectDispatchRequest({
+        request,
+        reason: `Task ${request.taskId} resumed checkpoint did not match the persisted continuation state.`,
+        authSummary,
+        existingTask,
+        dependencies: params.dependencies,
+      });
+    }
+
+    if (existingTask.resumedFromContinuationToken && continuation.resumedFromContinuationToken && existingTask.resumedFromContinuationToken !== continuation.resumedFromContinuationToken) {
+      return rejectDispatchRequest({
+        request,
+        reason: `Task ${request.taskId} resumed continuation token did not match the persisted continuation state.`,
+        authSummary,
+        existingTask,
+        dependencies: params.dependencies,
+      });
+    }
+  }
+
   if (
     existingTask.continuationToken
     && request.payload.lease.continuationToken

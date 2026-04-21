@@ -39,6 +39,7 @@ import {
   createTaskExecutionLease,
   invalidateTaskExecutionLease,
   summarizeTaskEnvelope,
+  type TaskContinuationReason,
   type TaskDispatchTransportStatus,
   type TaskExecutionLease,
   type TaskEnvelope,
@@ -146,6 +147,75 @@ function invalidateLeaseForRecovery(task: TaskEnvelope, reason: string | undefin
   });
 }
 
+function normalizeContinuationReason(reason: string | undefined): TaskContinuationReason | string | undefined {
+  const normalizedReason = normalizeText(reason).toLowerCase();
+  if (!normalizedReason) {
+    return undefined;
+  }
+
+  if (normalizedReason.includes("stale")) {
+    return "stale-node";
+  }
+
+  if (normalizedReason.includes("offline") || normalizedReason.includes("not registered") || normalizedReason.includes("unavailable")) {
+    return "offline-node";
+  }
+
+  if (normalizedReason.includes("timeout") || normalizedReason.includes("timed out")) {
+    return "timeout-recovery";
+  }
+
+  if (normalizedReason.includes("supersed")) {
+    return "lease-supersession";
+  }
+
+  return "receiver-recovery";
+}
+
+function createPendingContinuationMetadata(task: TaskEnvelope, sourceNodeId: string | undefined, reason: string | undefined) {
+  return {
+    continuationSourceNodeId: normalizeText(sourceNodeId) || task.continuationSourceNodeId,
+    continuationTargetNodeId: undefined,
+    continuationGeneration: Math.max(1, task.continuationGeneration + 1),
+    continuationReason: normalizeContinuationReason(reason) ?? task.continuationReason ?? "other",
+    resumedFromCheckpointReference: task.checkpointReference ?? task.resumedFromCheckpointReference,
+    resumedFromContinuationToken: task.continuationToken ?? task.resumedFromContinuationToken,
+  };
+}
+
+function createActiveContinuationMetadata(task: TaskEnvelope, targetNodeId: string) {
+  if (!task.recoveryPending && task.continuationGeneration <= 0) {
+    return undefined;
+  }
+
+  return {
+    continuationSourceNodeId: task.continuationSourceNodeId ?? task.lease?.ownerNodeId ?? task.assignedNodeId,
+    continuationTargetNodeId: targetNodeId,
+    continuationGeneration: Math.max(1, task.continuationGeneration),
+    continuationReason: task.continuationReason ?? "lease-supersession",
+    resumedFromCheckpointReference: task.resumedFromCheckpointReference ?? task.checkpointReference,
+    resumedFromContinuationToken: task.resumedFromContinuationToken ?? task.continuationToken,
+  };
+}
+
+function createDispatchContinuationPayload(task: TaskEnvelope, targetNodeId: string) {
+  const continuationMetadata = createActiveContinuationMetadata(task, targetNodeId);
+  if (!continuationMetadata) {
+    return undefined;
+  }
+
+  return {
+    isContinuation: true,
+    priorLeaseId: task.priorLeaseId ?? task.lease?.leaseId,
+    sourceNodeId: continuationMetadata.continuationSourceNodeId,
+    targetNodeId: continuationMetadata.continuationTargetNodeId,
+    generation: continuationMetadata.continuationGeneration,
+    reason: continuationMetadata.continuationReason,
+    resumedFromCheckpointReference: continuationMetadata.resumedFromCheckpointReference,
+    resumedFromContinuationToken: continuationMetadata.resumedFromContinuationToken,
+  };
+}
+
 function resolveDependencies(
   dependencies?: Partial<QueueOrchestratorDependencies>,
 ): QueueOrchestratorDependencies {
@@ -166,7 +236,7 @@ function buildQueuedSession(task: TaskEnvelope, node: ExecutionNodeDescriptor, m
   const pendingSession = createAutonomousSession({
     goal,
     maxSteps: maxSteps ?? 1,
-    sessionId: `${task.sessionId}--queue-${task.taskId}`,
+    sessionId: task.sessionId,
   });
   const awaitingApproval = markAwaitingApproval(
     pendingSession,
@@ -549,6 +619,7 @@ export async function executeQueuedTask(
           checkpointReference: activeLease.checkpointReference,
           resumability: currentTask.resumability,
         },
+        continuation: createDispatchContinuationPayload(currentTask, selectedNode.node.id),
         authToken,
         approvalState: {
           requiresApproval: currentTask.action.requiresApproval,
@@ -562,6 +633,7 @@ export async function executeQueuedTask(
     });
     const requestSummary = summarizeDispatchPayload(request.messageType, request.payload, request.protocolVersion);
     retryCount = nextRetryCount;
+    const continuationMetadata = createActiveContinuationMetadata(currentTask, selectedNode.node.id);
     updateExecutionNodeActivity(selectedNode.node.id, {
       taskId: currentTask.taskId,
       sessionId: currentTask.sessionId,
@@ -584,6 +656,12 @@ export async function executeQueuedTask(
       dispatchLastAttemptAt: request.createdAt,
       dispatchTimeoutMs,
       resumability: currentTask.resumability,
+      continuationSourceNodeId: continuationMetadata?.continuationSourceNodeId,
+      continuationTargetNodeId: continuationMetadata?.continuationTargetNodeId,
+      continuationGeneration: continuationMetadata?.continuationGeneration,
+      continuationReason: continuationMetadata?.continuationReason,
+      resumedFromCheckpointReference: continuationMetadata?.resumedFromCheckpointReference,
+      resumedFromContinuationToken: continuationMetadata?.resumedFromContinuationToken,
       continuationToken: currentTask.continuationToken,
       checkpointReference: currentTask.checkpointReference,
       resumeAttemptCount: currentTask.resumeAttemptCount,
@@ -644,6 +722,7 @@ export async function executeQueuedTask(
             statusReason: `Retrying after rejected dispatch attempt ${retryCount}.`,
             failureReason: reason,
             resumability: latestTask.resumability,
+            ...createPendingContinuationMetadata(latestTask, latestTask.lease?.ownerNodeId ?? selectedNode.node.id, reason),
             continuationToken: latestTask.continuationToken,
             checkpointReference: latestTask.checkpointReference,
             resumeAttemptCount: latestTask.resumeAttemptCount + 1,
@@ -713,6 +792,7 @@ export async function executeQueuedTask(
             statusReason: `Retrying after failed dispatch attempt ${retryCount}.`,
             failureReason: reason,
             resumability: latestTask.resumability,
+            ...createPendingContinuationMetadata(latestTask, latestTask.lease?.ownerNodeId ?? selectedNode.node.id, reason),
             continuationToken: latestTask.continuationToken,
             checkpointReference: latestTask.checkpointReference,
             resumeAttemptCount: latestTask.resumeAttemptCount + 1,
@@ -788,6 +868,7 @@ export async function executeQueuedTask(
           statusReason: `Retrying after ${timedOut ? "timeout" : "failed"} dispatch attempt ${retryCount}.`,
           failureReason: reason,
           resumability: latestTask.resumability,
+          ...createPendingContinuationMetadata(latestTask, latestTask.lease?.ownerNodeId ?? selectedNode.node.id, reason),
           continuationToken: latestTask.continuationToken,
           checkpointReference: latestTask.checkpointReference,
           resumeAttemptCount: latestTask.resumeAttemptCount + 1,

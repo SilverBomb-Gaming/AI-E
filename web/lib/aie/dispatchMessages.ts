@@ -18,11 +18,23 @@ export type TaskDispatchLeasePayload = {
   resumability?: TaskResumability;
 };
 
+export type TaskDispatchContinuationPayload = {
+  isContinuation: boolean;
+  priorLeaseId?: string;
+  sourceNodeId?: string;
+  targetNodeId?: string;
+  generation: number;
+  reason?: string;
+  resumedFromCheckpointReference?: string;
+  resumedFromContinuationToken?: string;
+};
+
 export type TaskDispatchRequestPayload = {
   action: ExecutionAction;
   requestedCapabilities: ExecutionNodeCapability[];
   assignedNodeId: string;
   lease: TaskDispatchLeasePayload;
+  continuation?: TaskDispatchContinuationPayload;
   authToken: DispatchAuthToken;
   approvalState?: TaskDispatchApprovalState;
   executionContextSummary?: string;
@@ -121,6 +133,25 @@ function isTaskDispatchLeasePayload(value: unknown): value is TaskDispatchLeaseP
   );
 }
 
+function isTaskDispatchContinuationPayload(value: unknown): value is TaskDispatchContinuationPayload {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const source = value as Record<string, unknown>;
+  return Boolean(
+    typeof source.isContinuation === "boolean"
+      && Number.isInteger(Number(source.generation))
+      && Number(source.generation) >= 1
+      && (!source.priorLeaseId || normalizeText(source.priorLeaseId))
+      && (!source.sourceNodeId || normalizeText(source.sourceNodeId))
+      && (!source.targetNodeId || normalizeText(source.targetNodeId))
+      && (!source.reason || normalizeText(source.reason))
+      && (!source.resumedFromCheckpointReference || normalizeText(source.resumedFromCheckpointReference))
+      && (!source.resumedFromContinuationToken || normalizeText(source.resumedFromContinuationToken)),
+  );
+}
+
 export function createTaskDispatchRequest(payload: TaskDispatchRequestPayload): TaskDispatchRequestPayload {
   const normalized: TaskDispatchRequestPayload = {
     action: payload.action,
@@ -134,6 +165,18 @@ export function createTaskDispatchRequest(payload: TaskDispatchRequestPayload): 
       checkpointReference: normalizeText(payload.lease.checkpointReference) || undefined,
       resumability: isTaskResumability(payload.lease.resumability) ? payload.lease.resumability : undefined,
     },
+    continuation: payload.continuation?.isContinuation
+      ? {
+          isContinuation: true,
+          priorLeaseId: normalizeText(payload.continuation.priorLeaseId) || undefined,
+          sourceNodeId: normalizeText(payload.continuation.sourceNodeId) || undefined,
+          targetNodeId: normalizeText(payload.continuation.targetNodeId) || undefined,
+          generation: Math.max(1, Math.floor(Number(payload.continuation.generation ?? 1))),
+          reason: normalizeText(payload.continuation.reason) || undefined,
+          resumedFromCheckpointReference: normalizeText(payload.continuation.resumedFromCheckpointReference) || undefined,
+          resumedFromContinuationToken: normalizeText(payload.continuation.resumedFromContinuationToken) || undefined,
+        }
+      : undefined,
     authToken: payload.authToken,
     approvalState: payload.approvalState
       ? {
@@ -214,6 +257,7 @@ export function validateDispatchPayloadShape(messageType: DispatchMessageType, p
           source.requestedCapabilities.every((item) => isExecutionNodeCapability(item)) &&
           normalizeText(source.assignedNodeId) &&
           isTaskDispatchLeasePayload(source.lease) &&
+          (!source.continuation || isTaskDispatchContinuationPayload(source.continuation)) &&
           validateDispatchAuthTokenShape(source.authToken),
       );
     case "task-dispatch-ack":
@@ -250,9 +294,21 @@ export function summarizeDispatchPayload(
         `node=${normalizeText(source.assignedNodeId)}`,
         `lease=${normalizeText((source.lease as Record<string, unknown> | undefined)?.leaseId) || "unknown"}`,
         `epoch=${normalizeText((source.lease as Record<string, unknown> | undefined)?.epoch) || "unknown"}`,
+        source.continuation && typeof source.continuation === "object"
+          ? `continuation=gen-${normalizeText((source.continuation as Record<string, unknown>).generation) || "unknown"}`
+          : "continuation=fresh",
+        source.continuation && typeof source.continuation === "object" && (source.continuation as Record<string, unknown>).sourceNodeId
+          ? `from=${normalizeText((source.continuation as Record<string, unknown>).sourceNodeId)}`
+          : "",
+        source.continuation && typeof source.continuation === "object" && (source.continuation as Record<string, unknown>).targetNodeId
+          ? `to=${normalizeText((source.continuation as Record<string, unknown>).targetNodeId)}`
+          : "",
         `caps=${Array.isArray(source.requestedCapabilities) ? source.requestedCapabilities.join(",") : "none"}`,
         `approval=${source.approvalState && typeof source.approvalState === "object" ? String(Boolean((source.approvalState as Record<string, unknown>).requiresApproval)) : "unknown"}`,
         (source.lease as Record<string, unknown> | undefined)?.resumability ? `resumability=${normalizeText((source.lease as Record<string, unknown>).resumability)}` : "",
+        source.continuation && typeof source.continuation === "object" && (source.continuation as Record<string, unknown>).reason
+          ? `continuationReason=${normalizeText((source.continuation as Record<string, unknown>).reason)}`
+          : "",
         source.dispatchAuthSummary && typeof source.dispatchAuthSummary === "string" ? `auth=${normalizeText(source.dispatchAuthSummary)}` : "",
       ].join(" | ");
     case "task-dispatch-ack":

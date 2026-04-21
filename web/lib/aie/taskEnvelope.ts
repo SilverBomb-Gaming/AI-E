@@ -22,6 +22,15 @@ export type TaskLeaseStatus = "active" | "superseded" | "expired" | "completed" 
 
 export type TaskResumability = "resumable" | "restart-required";
 
+export type TaskContinuationReason =
+  | "stale-node"
+  | "offline-node"
+  | "timeout-recovery"
+  | "lease-supersession"
+  | "manual-retry"
+  | "receiver-recovery"
+  | "other";
+
 export type TaskExecutionLease = {
   leaseId: string;
   ownerNodeId: string;
@@ -44,6 +53,12 @@ export type TaskEnvelopeTransitionMetadata = {
   statusReason?: string;
   failureReason?: string;
   resumability?: TaskResumability;
+  continuationSourceNodeId?: string;
+  continuationTargetNodeId?: string;
+  continuationGeneration?: number;
+  continuationReason?: TaskContinuationReason | string;
+  resumedFromCheckpointReference?: string;
+  resumedFromContinuationToken?: string;
   continuationToken?: string;
   checkpointReference?: string;
   resumeAttemptCount?: number;
@@ -76,6 +91,12 @@ export type TaskEnvelope = {
   action: ExecutionActionPreview;
   requestedCapabilities: ExecutionNodeCapability[];
   resumability: TaskResumability;
+  continuationSourceNodeId?: string;
+  continuationTargetNodeId?: string;
+  continuationGeneration: number;
+  continuationReason?: TaskContinuationReason | string;
+  resumedFromCheckpointReference?: string;
+  resumedFromContinuationToken?: string;
   continuationToken?: string;
   checkpointReference?: string;
   resumeAttemptCount: number;
@@ -277,6 +298,27 @@ function normalizeResumability(value: unknown): TaskResumability | undefined {
   return undefined;
 }
 
+function normalizeContinuationReason(value: unknown): TaskContinuationReason | string | undefined {
+  const normalized = normalizeText(value);
+  if (!normalized) {
+    return undefined;
+  }
+
+  if (
+    normalized === "stale-node"
+    || normalized === "offline-node"
+    || normalized === "timeout-recovery"
+    || normalized === "lease-supersession"
+    || normalized === "manual-retry"
+    || normalized === "receiver-recovery"
+    || normalized === "other"
+  ) {
+    return normalized;
+  }
+
+  return normalized;
+}
+
 function normalizeTaskExecutionLease(value: unknown): TaskExecutionLease | undefined {
   if (!value || typeof value !== "object") {
     return undefined;
@@ -348,6 +390,14 @@ function applyTaskTransition(
   const statusReason = normalizeText(metadata?.statusReason) || undefined;
   const failureReason = normalizeText(metadata?.failureReason) || envelope.failureReason;
   const resumability = metadata?.resumability ?? envelope.resumability;
+  const continuationSourceNodeId = normalizeText(metadata?.continuationSourceNodeId) || envelope.continuationSourceNodeId;
+  const continuationTargetNodeId = normalizeText(metadata?.continuationTargetNodeId) || envelope.continuationTargetNodeId;
+  const continuationGeneration = Number.isInteger(Number(metadata?.continuationGeneration))
+    ? Math.max(0, Number(metadata?.continuationGeneration))
+    : envelope.continuationGeneration;
+  const continuationReason = normalizeContinuationReason(metadata?.continuationReason) ?? envelope.continuationReason;
+  const resumedFromCheckpointReference = normalizeText(metadata?.resumedFromCheckpointReference) || envelope.resumedFromCheckpointReference;
+  const resumedFromContinuationToken = normalizeText(metadata?.resumedFromContinuationToken) || envelope.resumedFromContinuationToken;
   const continuationToken = normalizeText(metadata?.continuationToken) || envelope.continuationToken;
   const checkpointReference = normalizeText(metadata?.checkpointReference) || envelope.checkpointReference;
   const resumeAttemptCount = Number.isInteger(Number(metadata?.resumeAttemptCount))
@@ -452,6 +502,12 @@ function applyTaskTransition(
   return {
     ...envelope,
     resumability,
+    continuationSourceNodeId: continuationSourceNodeId || undefined,
+    continuationTargetNodeId: continuationTargetNodeId || undefined,
+    continuationGeneration,
+    continuationReason: continuationReason || undefined,
+    resumedFromCheckpointReference: resumedFromCheckpointReference || undefined,
+    resumedFromContinuationToken: resumedFromContinuationToken || undefined,
     continuationToken: continuationToken || undefined,
     checkpointReference: checkpointReference || undefined,
     resumeAttemptCount,
@@ -503,6 +559,12 @@ export function createTaskEnvelope(params: CreateTaskEnvelopeParams): TaskEnvelo
       ? [...params.requestedCapabilities]
       : getExecutionNodeCapabilitiesForAction(params.action),
     resumability: "restart-required",
+    continuationSourceNodeId: undefined,
+    continuationTargetNodeId: undefined,
+    continuationGeneration: 0,
+    continuationReason: undefined,
+    resumedFromCheckpointReference: undefined,
+    resumedFromContinuationToken: undefined,
     continuationToken: undefined,
     checkpointReference: undefined,
     resumeAttemptCount: 0,
@@ -705,6 +767,12 @@ export function normalizeTaskEnvelope(value: unknown): TaskEnvelope | null {
     action: action as ExecutionActionPreview,
     requestedCapabilities,
     resumability: normalizeResumability(source.resumability) ?? "restart-required",
+    continuationSourceNodeId: normalizeText(typeof source.continuationSourceNodeId === "string" ? source.continuationSourceNodeId : "") || undefined,
+    continuationTargetNodeId: normalizeText(typeof source.continuationTargetNodeId === "string" ? source.continuationTargetNodeId : "") || undefined,
+    continuationGeneration: Number.isInteger(Number(source.continuationGeneration)) ? Math.max(0, Number(source.continuationGeneration)) : 0,
+    continuationReason: normalizeContinuationReason(source.continuationReason),
+    resumedFromCheckpointReference: normalizeText(typeof source.resumedFromCheckpointReference === "string" ? source.resumedFromCheckpointReference : "") || undefined,
+    resumedFromContinuationToken: normalizeText(typeof source.resumedFromContinuationToken === "string" ? source.resumedFromContinuationToken : "") || undefined,
     continuationToken: normalizeText(typeof source.continuationToken === "string" ? source.continuationToken : "") || undefined,
     checkpointReference: normalizeText(typeof source.checkpointReference === "string" ? source.checkpointReference : "") || undefined,
     resumeAttemptCount: Number.isInteger(Number(source.resumeAttemptCount)) ? Math.max(0, Number(source.resumeAttemptCount)) : 0,
@@ -752,6 +820,12 @@ export function summarizeTaskEnvelope(envelope: TaskEnvelope): string {
     `status=${envelope.status}`,
     `step=${envelope.stepIndex}`,
     `resumability=${envelope.resumability}`,
+    envelope.continuationGeneration > 0 ? `continuationGen=${envelope.continuationGeneration}` : "continuationGen=0",
+    envelope.continuationSourceNodeId ? `continuationSource=${envelope.continuationSourceNodeId}` : "",
+    envelope.continuationTargetNodeId ? `continuationTarget=${envelope.continuationTargetNodeId}` : "",
+    envelope.continuationReason ? `continuationReason=${envelope.continuationReason}` : "",
+    envelope.resumedFromCheckpointReference ? `resumedCheckpoint=${envelope.resumedFromCheckpointReference}` : "",
+    envelope.resumedFromContinuationToken ? "resumedToken=present" : "",
     envelope.selectedNodeId ? `selectedNode=${envelope.selectedNodeId}` : envelope.assignedNodeId ? `node=${envelope.assignedNodeId}` : "node=unassigned",
     envelope.lease ? `lease=${envelope.lease.leaseId}` : "lease=none",
     envelope.lease ? `leaseStatus=${envelope.lease.status}` : "",
