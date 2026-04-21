@@ -4,14 +4,18 @@ import path from "node:path";
 import test from "node:test";
 
 import {
+  formatHeadlessQueueRunReport,
   formatHeadlessSessionReport,
   formatHeadlessSessionSummary,
   formatHeadlessTaskList,
   formatHeadlessTaskReport,
+  parseArgs,
   runHeadlessAutonomy,
+  runHeadlessQueuedTask,
 } from "./headless_autonomy";
+import { createTaskEnvelope } from "./lib/aie/taskEnvelope";
 import { listExecutionNodes, resetExecutionNodeRegistry } from "./lib/aie/executionNodeRegistry";
-import { listTasks } from "./lib/aie/taskQueueStore";
+import { enqueueTask, listTasks } from "./lib/aie/taskQueueStore";
 import type { FreeAnalysisResponse } from "./lib/aie/types";
 
 test("headless_autonomy persists a bounded session and prints a matching summary", async () => {
@@ -76,6 +80,80 @@ test("headless_autonomy persists a bounded session and prints a matching summary
     assert.match(taskReport, /Status: completed/i);
     assert.match(taskList, /completed/i);
     assert.ok(listExecutionNodes().some((node) => node.mode === "headless"));
+  } finally {
+    delete process.env.AIE_AUTONOMOUS_SESSION_DIR;
+    delete process.env.AIE_TASK_QUEUE_DIR;
+    resetExecutionNodeRegistry();
+    await rm(sessionDirectory, { recursive: true, force: true });
+    await rm(taskDirectory, { recursive: true, force: true });
+  }
+});
+
+test("headless_autonomy queue entrypoints run one queued task and print a queue summary", async () => {
+  const sessionDirectory = path.resolve(process.cwd(), "temp-headless-queue-session-store");
+  const taskDirectory = path.resolve(process.cwd(), "temp-headless-queue-task-store");
+  resetExecutionNodeRegistry();
+  process.env.AIE_AUTONOMOUS_SESSION_DIR = sessionDirectory;
+  process.env.AIE_TASK_QUEUE_DIR = taskDirectory;
+  await mkdir(sessionDirectory, { recursive: true });
+  await mkdir(taskDirectory, { recursive: true });
+
+  try {
+    const parsed = parseArgs(["--taskId", "task-headless-queue-1", "--runTask", "--json"]);
+    await enqueueTask(createTaskEnvelope({
+      taskId: "task-headless-queue-1",
+      sessionId: "session-headless-queue-1",
+      stepIndex: 1,
+      action: {
+        id: "headless-queued-action",
+        type: "validation-check",
+        scope: "safe",
+        description: "Validate the headless queued output.",
+        expectedOutcome: "The headless queued output should be confirmed.",
+        requiresApproval: true,
+        metadata: {
+          sourceActionType: "validation-check",
+        },
+      },
+    }));
+
+    const summary = await runHeadlessQueuedTask(
+      {
+        goal: "",
+        taskId: "task-headless-queue-1",
+        runTask: true,
+        cwd: process.cwd(),
+      },
+      {
+        runSingleQueuedTask: async () => ({
+          status: "completed",
+          nodeId: "aie-node-headless-default",
+          runnerMode: "headless",
+          claimToken: "claim-headless-1",
+          queueStateSummary: "task=task-headless-queue-1 status=completed node=aie-node-headless-default",
+          task: (await listTasks())[0] ?? null,
+          session: {
+            sessionId: "session-headless-queue-1--queue-task-headless-queue-1",
+            goal: "Queued headless validation.",
+            status: "completed",
+            createdAt: "2026-04-21T00:00:00.000Z",
+            updatedAt: "2026-04-21T00:00:01.000Z",
+            currentStepIndex: 1,
+            maxSteps: 1,
+            steps: [],
+          },
+        }),
+      },
+    );
+    const output = formatHeadlessQueueRunReport(summary);
+
+    assert.equal(parsed.runTask, true);
+    assert.equal(parsed.taskId, "task-headless-queue-1");
+    assert.equal(parsed.json, true);
+    assert.equal(summary.status, "completed");
+    assert.match(output, /Queue run: completed/i);
+    assert.match(output, /Task ID: task-headless-queue-1/i);
+    assert.match(output, /Claim token: claim-headless-1/i);
   } finally {
     delete process.env.AIE_AUTONOMOUS_SESSION_DIR;
     delete process.env.AIE_TASK_QUEUE_DIR;

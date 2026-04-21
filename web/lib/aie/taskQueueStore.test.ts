@@ -6,9 +6,13 @@ import test from "node:test";
 import { createTaskEnvelope } from "./taskEnvelope";
 import {
   assignTaskToNode,
+  claimTask,
   enqueueTask,
+  finalizeTask,
   getTask,
+  getRunnableTasks,
   listTasks,
+  listTasksByStatus,
   removeTask,
   updateTaskStatus,
 } from "./taskQueueStore";
@@ -63,6 +67,74 @@ test("taskQueueStore enqueues, lists, gets, assigns, and updates persisted tasks
 
     await removeTask(queued.taskId);
     assert.equal(await getTask(queued.taskId), null);
+  } finally {
+    delete process.env.AIE_TASK_QUEUE_DIR;
+    await rm(taskDirectory, { recursive: true, force: true });
+  }
+});
+
+test("taskQueueStore persists claims, runnable filtering, and explicit finalization", async () => {
+  const taskDirectory = path.resolve(process.cwd(), "temp-task-queue-claim-store");
+  process.env.AIE_TASK_QUEUE_DIR = taskDirectory;
+  await mkdir(taskDirectory, { recursive: true });
+
+  try {
+    await enqueueTask({
+      ...createTaskEnvelope({
+        taskId: "task-old-safe",
+        sessionId: "session-queue-2",
+        stepIndex: 1,
+        action: makeAction(),
+      }),
+      createdAt: "2026-04-21T00:00:00.000Z",
+      updatedAt: "2026-04-21T00:00:00.000Z",
+    });
+    await enqueueTask({
+      ...createTaskEnvelope({
+        taskId: "task-dangerous",
+        sessionId: "session-queue-3",
+        stepIndex: 1,
+        action: {
+          ...makeAction(),
+          id: "dangerous-action",
+          scope: "dangerous",
+        },
+      }),
+      createdAt: "2026-04-21T00:00:01.000Z",
+      updatedAt: "2026-04-21T00:00:01.000Z",
+    });
+    await enqueueTask({
+      ...createTaskEnvelope({
+        taskId: "task-new-safe",
+        sessionId: "session-queue-4",
+        stepIndex: 1,
+        action: makeAction(),
+      }),
+      createdAt: "2026-04-21T00:00:02.000Z",
+      updatedAt: "2026-04-21T00:00:02.000Z",
+    });
+
+    const runnable = await getRunnableTasks();
+    const claimed = await claimTask("task-old-safe", "claim-token-1", "local-node", "aie-node-local-default");
+    const secondClaim = await claimTask("task-old-safe", "claim-token-2", "local-node", "aie-node-local-default");
+    const running = claimed
+      ? await updateTaskStatus(claimed.taskId, "running", { statusReason: "Running inside local queue orchestration." })
+      : null;
+    const completed = claimed
+      ? await finalizeTask(claimed.taskId, "completed", { statusReason: "Completed through explicit finalizeTask." })
+      : null;
+    const completedTasks = await listTasksByStatus("completed");
+
+    assert.deepEqual(runnable.map((task) => task.taskId), ["task-old-safe", "task-new-safe"]);
+    assert.equal(claimed?.status, "assigned");
+    assert.equal(claimed?.claimToken, "claim-token-1");
+    assert.equal(claimed?.runnerMode, "local-node");
+    assert.equal(typeof claimed?.claimedAt, "string");
+    assert.equal(secondClaim, null);
+    assert.equal(running?.status, "running");
+    assert.equal(completed?.status, "completed");
+    assert.equal(typeof completed?.completedAt, "string");
+    assert.deepEqual(completedTasks.map((task) => task.taskId), ["task-old-safe"]);
   } finally {
     delete process.env.AIE_TASK_QUEUE_DIR;
     await rm(taskDirectory, { recursive: true, force: true });
