@@ -2,6 +2,7 @@ import type { FailureClassification } from "./failureClassifier";
 import type { GoalCompletionStatus, GoalEvaluation } from "./goalEvaluator";
 import type { AutonomousActionFamily } from "./autonomousPlanning";
 import type { ExecutionAdapterId } from "./executionAdapters";
+import type { DispatchProtocolVersion } from "./dispatchProtocol";
 import type { ExecutionNodeMode } from "./executionNode";
 import type { AutonomousRecoveryStrategy } from "./strategySwitch";
 import type { TaskEnvelopeStatus } from "./taskEnvelope";
@@ -34,6 +35,11 @@ export type AutonomousStepRecord = {
   taskStatus?: TaskEnvelopeStatus;
   assignedNodeId?: string;
   queueStateSummary?: string;
+  dispatchMessageId?: string;
+  dispatchTargetNodeId?: string;
+  dispatchProtocolVersion?: DispatchProtocolVersion;
+  dispatchStatusSummary?: string;
+  remoteDispatchPlanned?: boolean;
   planningHintSummary?: string;
   executionResult?: ExecutionRuntimeResult;
   diagnosis?: string;
@@ -82,6 +88,11 @@ export type AutonomousSession = {
   taskStatus?: TaskEnvelopeStatus;
   assignedNodeId?: string;
   queueStateSummary?: string;
+  dispatchMessageId?: string;
+  dispatchTargetNodeId?: string;
+  dispatchProtocolVersion?: DispatchProtocolVersion;
+  dispatchStatusSummary?: string;
+  remoteDispatchPlanned?: boolean;
   planningHintSummary?: string;
   latestExecutionResult?: ExecutionRuntimeResult;
   pendingAction?: ExecutionActionPreview;
@@ -109,6 +120,11 @@ type AppendAutonomousStepParams = {
   taskStatus?: TaskEnvelopeStatus;
   assignedNodeId?: string;
   queueStateSummary?: string;
+  dispatchMessageId?: string;
+  dispatchTargetNodeId?: string;
+  dispatchProtocolVersion?: DispatchProtocolVersion;
+  dispatchStatusSummary?: string;
+  remoteDispatchPlanned?: boolean;
   planningHintSummary?: string;
   executionResult?: ExecutionRuntimeResult;
   diagnosis?: string;
@@ -265,6 +281,10 @@ function normalizeTaskStatus(value: unknown): TaskEnvelopeStatus | undefined {
   }
 
   return undefined;
+}
+
+function normalizeDispatchProtocolVersion(value: unknown): DispatchProtocolVersion | undefined {
+  return value === "1" ? "1" : undefined;
 }
 
 function normalizeActionFamily(value: unknown): AutonomousActionFamily | undefined {
@@ -430,6 +450,11 @@ function normalizeAutonomousStepRecord(value: unknown): AutonomousStepRecord | n
     taskStatus: normalizeTaskStatus(source.taskStatus),
     assignedNodeId: normalizeText(typeof source.assignedNodeId === "string" ? source.assignedNodeId : "") || undefined,
     queueStateSummary: normalizeText(typeof source.queueStateSummary === "string" ? source.queueStateSummary : "") || undefined,
+    dispatchMessageId: normalizeText(typeof source.dispatchMessageId === "string" ? source.dispatchMessageId : "") || undefined,
+    dispatchTargetNodeId: normalizeText(typeof source.dispatchTargetNodeId === "string" ? source.dispatchTargetNodeId : "") || undefined,
+    dispatchProtocolVersion: normalizeDispatchProtocolVersion(source.dispatchProtocolVersion),
+    dispatchStatusSummary: normalizeText(typeof source.dispatchStatusSummary === "string" ? source.dispatchStatusSummary : "") || undefined,
+    remoteDispatchPlanned: typeof source.remoteDispatchPlanned === "boolean" ? source.remoteDispatchPlanned : undefined,
     planningHintSummary: normalizeText(typeof source.planningHintSummary === "string" ? source.planningHintSummary : "") || undefined,
     executionResult: normalizeExecutionRuntimeResult(source.executionResult),
     diagnosis: normalizeText(typeof source.diagnosis === "string" ? source.diagnosis : "") || undefined,
@@ -494,6 +519,11 @@ export function appendAutonomousStep(
     taskStatus: params.taskStatus,
     assignedNodeId: normalizeText(params.assignedNodeId) || undefined,
     queueStateSummary: normalizeText(params.queueStateSummary) || undefined,
+    dispatchMessageId: normalizeText(params.dispatchMessageId) || undefined,
+    dispatchTargetNodeId: normalizeText(params.dispatchTargetNodeId) || undefined,
+    dispatchProtocolVersion: params.dispatchProtocolVersion,
+    dispatchStatusSummary: normalizeText(params.dispatchStatusSummary) || undefined,
+    remoteDispatchPlanned: typeof params.remoteDispatchPlanned === "boolean" ? params.remoteDispatchPlanned : undefined,
     planningHintSummary: normalizeText(params.planningHintSummary) || undefined,
     executionResult,
     diagnosis: normalizeText(params.diagnosis) || undefined,
@@ -525,6 +555,11 @@ export function appendAutonomousStep(
     taskStatus: step.taskStatus ?? session.taskStatus,
     assignedNodeId: step.assignedNodeId ?? session.assignedNodeId,
     queueStateSummary: step.queueStateSummary ?? session.queueStateSummary,
+    dispatchMessageId: step.dispatchMessageId ?? session.dispatchMessageId,
+    dispatchTargetNodeId: step.dispatchTargetNodeId ?? session.dispatchTargetNodeId,
+    dispatchProtocolVersion: step.dispatchProtocolVersion ?? session.dispatchProtocolVersion,
+    dispatchStatusSummary: step.dispatchStatusSummary ?? session.dispatchStatusSummary,
+    remoteDispatchPlanned: step.remoteDispatchPlanned ?? session.remoteDispatchPlanned,
     planningHintSummary: step.planningHintSummary ?? session.planningHintSummary,
     latestExecutionResult: executionResult ?? session.latestExecutionResult,
     pendingAction: session.pendingAction,
@@ -664,6 +699,11 @@ export function normalizeAutonomousSession(value: unknown): AutonomousSession | 
     taskStatus: normalizeTaskStatus(source.taskStatus),
     assignedNodeId: normalizeText(typeof source.assignedNodeId === "string" ? source.assignedNodeId : "") || undefined,
     queueStateSummary: normalizeText(typeof source.queueStateSummary === "string" ? source.queueStateSummary : "") || undefined,
+    dispatchMessageId: normalizeText(typeof source.dispatchMessageId === "string" ? source.dispatchMessageId : "") || undefined,
+    dispatchTargetNodeId: normalizeText(typeof source.dispatchTargetNodeId === "string" ? source.dispatchTargetNodeId : "") || undefined,
+    dispatchProtocolVersion: normalizeDispatchProtocolVersion(source.dispatchProtocolVersion),
+    dispatchStatusSummary: normalizeText(typeof source.dispatchStatusSummary === "string" ? source.dispatchStatusSummary : "") || undefined,
+    remoteDispatchPlanned: typeof source.remoteDispatchPlanned === "boolean" ? source.remoteDispatchPlanned : undefined,
     planningHintSummary: normalizeText(typeof source.planningHintSummary === "string" ? source.planningHintSummary : "") || undefined,
     latestExecutionResult: normalizeExecutionRuntimeResult(source.latestExecutionResult),
     pendingAction: normalizeExecutionActionPreview(source.pendingAction),

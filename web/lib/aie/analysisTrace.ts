@@ -27,6 +27,7 @@ import type { AnalysisInput, DryRunActionType, ExecutionRuntimeResult, FreeAnaly
 import type { FailureClassification } from "./failureClassifier";
 import type { GoalCompletionStatus, GoalEvaluation } from "./goalEvaluator";
 import type { AutonomousActionFamily } from "./autonomousPlanning";
+import type { DispatchProtocolVersion } from "./dispatchProtocol";
 import type { ExecutionAdapterId } from "./executionAdapters";
 import type { ExecutionNodeMode } from "./executionNode";
 import type { AutonomousRecoveryStrategy } from "./strategySwitch";
@@ -72,6 +73,11 @@ export type AnalysisTraceRecord = {
   taskStatus: TaskEnvelopeStatus | null;
   assignedNodeId: string | null;
   queueStateSummary: string | null;
+  dispatchMessageId: string | null;
+  dispatchTargetNodeId: string | null;
+  dispatchProtocolVersion: DispatchProtocolVersion | null;
+  dispatchStatusSummary: string | null;
+  remoteDispatchPlanned: boolean | null;
   autonomousPlanningHintSummary: string | null;
   autonomousRecentActionFamily: AutonomousActionFamily | null;
   failureClass: FailureClassification["kind"] | null;
@@ -150,6 +156,11 @@ export type BuildAnalysisTraceRecordParams = {
   taskStatus?: TaskEnvelopeStatus;
   assignedNodeId?: string;
   queueStateSummary?: string;
+  dispatchMessageId?: string;
+  dispatchTargetNodeId?: string;
+  dispatchProtocolVersion?: DispatchProtocolVersion;
+  dispatchStatusSummary?: string;
+  remoteDispatchPlanned?: boolean;
   autonomousPlanningHintSummary?: string;
   autonomousRecentActionFamily?: AutonomousActionFamily;
   failureClassification?: FailureClassification;
@@ -281,6 +292,11 @@ export function buildAnalysisTraceRecord(params: BuildAnalysisTraceRecordParams)
     taskStatus: params.taskStatus ?? null,
     assignedNodeId: params.assignedNodeId?.trim() || null,
     queueStateSummary: params.queueStateSummary?.trim() || null,
+    dispatchMessageId: params.dispatchMessageId?.trim() || null,
+    dispatchTargetNodeId: params.dispatchTargetNodeId?.trim() || null,
+    dispatchProtocolVersion: params.dispatchProtocolVersion ?? null,
+    dispatchStatusSummary: params.dispatchStatusSummary?.trim() || null,
+    remoteDispatchPlanned: typeof params.remoteDispatchPlanned === "boolean" ? params.remoteDispatchPlanned : null,
     autonomousPlanningHintSummary: params.autonomousPlanningHintSummary?.trim() || null,
     autonomousRecentActionFamily: params.autonomousRecentActionFamily ?? null,
     failureClass: params.failureClassification?.kind ?? null,

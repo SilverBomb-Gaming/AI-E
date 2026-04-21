@@ -80,8 +80,12 @@ test("queueOrchestrator claims the oldest runnable safe task and skips non-runna
     assert.equal(claimed?.task.status, "assigned");
     assert.equal(claimed?.task.runnerMode, "local-node");
     assert.equal(typeof claimed?.task.claimToken, "string");
+    assert.equal(claimed?.task.remoteDispatchPlanned, true);
+    assert.equal(claimed?.task.dispatchProtocolVersion, "1");
+    assert.match(claimed?.task.dispatchStatusSummary ?? "", /type=request/i);
     assert.equal(fetched?.taskId, "task-safe-oldest");
     assert.equal(fetched?.status, "assigned");
+    assert.equal(fetched?.dispatchProtocolVersion, "1");
   } finally {
     delete process.env.AIE_AUTONOMOUS_SESSION_DIR;
     delete process.env.AIE_TASK_QUEUE_DIR;
@@ -140,9 +144,13 @@ test("queueOrchestrator executes one queued task and persists completion", async
     assert.equal(summary.task?.status, "completed");
     assert.equal(summary.session?.taskId, "task-run-success");
     assert.equal(summary.session?.taskStatus, "completed");
+    assert.equal(summary.task?.dispatchProtocolVersion, "1");
+    assert.equal(summary.session?.dispatchProtocolVersion, "1");
+    assert.match(summary.dispatchStatusSummary ?? "", /type=result/i);
     assert.equal(typeof summary.claimToken, "string");
     assert.match(summary.session?.sessionId ?? "", /queue-task-run-success/i);
     assert.equal(persisted?.status, "completed");
+    assert.match(persisted?.dispatchStatusSummary ?? "", /type=result/i);
   } finally {
     delete process.env.AIE_AUTONOMOUS_SESSION_DIR;
     delete process.env.AIE_TASK_QUEUE_DIR;

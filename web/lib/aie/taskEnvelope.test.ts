@@ -145,3 +145,33 @@ test("task envelopes normalize from serialized records", () => {
   assert.equal(normalized?.taskId, "task-normalize");
   assert.equal(normalized?.status, "assigned");
 });
+
+test("task envelopes preserve dispatch metadata additively", () => {
+  const envelope = markTaskCompleted(
+    markTaskRunning(
+      markTaskAssigned(createTaskEnvelope({
+        taskId: "task-dispatch-1",
+        sessionId: "session-dispatch-1",
+        stepIndex: 1,
+        action: makeAction(),
+      }), "aie-node-local-default", {
+        dispatchMessageId: "aie-dispatch-1",
+        dispatchTargetNodeId: "aie-node-local-default",
+        dispatchProtocolVersion: "1",
+        dispatchStatusSummary: "dispatch=1 | type=request | node=aie-node-local-default",
+        remoteDispatchPlanned: true,
+      }),
+    ),
+    {
+      dispatchStatusSummary: "dispatch=1 | type=result | status=completed",
+    },
+  );
+
+  const normalized = normalizeTaskEnvelope(JSON.parse(JSON.stringify(envelope)));
+
+  assert.equal(normalized?.dispatchMessageId, "aie-dispatch-1");
+  assert.equal(normalized?.dispatchTargetNodeId, "aie-node-local-default");
+  assert.equal(normalized?.dispatchProtocolVersion, "1");
+  assert.equal(normalized?.remoteDispatchPlanned, true);
+  assert.match(summarizeTaskEnvelope(envelope), /dispatch=aie-dispatch-1/i);
+});

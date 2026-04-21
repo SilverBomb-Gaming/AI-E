@@ -10,6 +10,9 @@ import {
   type ExecutionNodeDescriptor,
 } from "./executionNode";
 import { chooseExecutionNodeForAction, registerExecutionNode } from "./executionNodeRegistry";
+import { createDispatchEnvelope, type DispatchProtocolVersion } from "./dispatchProtocol";
+import { createTaskDispatchRequest, summarizeDispatchPayload } from "./dispatchMessages";
+import { simulateLocalDispatchRoundTrip } from "./dispatchTransport";
 import { resolveRepoRoot } from "./repoContext";
 import { runAutonomousSession } from "./runAutonomousSession";
 import {
@@ -17,6 +20,7 @@ import {
   finalizeTask,
   getRunnableTasks,
   getTask,
+  updateTaskStatus,
 } from "./taskQueueStore";
 import { summarizeTaskEnvelope, type TaskEnvelope } from "./taskEnvelope";
 
@@ -25,6 +29,7 @@ type QueueOrchestratorDependencies = {
   getTask: typeof getTask;
   claimTask: typeof claimTask;
   finalizeTask: typeof finalizeTask;
+  updateTaskStatus: typeof updateTaskStatus;
   saveAutonomousSession: typeof saveAutonomousSession;
   runAutonomousSession: typeof runAutonomousSession;
 };
@@ -47,6 +52,10 @@ export type QueueExecutionSummary = {
   nodeId?: string;
   runnerMode?: TaskEnvelope["runnerMode"];
   claimToken?: string;
+  dispatchMessageId?: string;
+  dispatchTargetNodeId?: string;
+  dispatchProtocolVersion?: DispatchProtocolVersion;
+  dispatchStatusSummary?: string;
   status: "claimed" | "completed" | "failed" | "blocked" | "no-runnable-task";
   queueStateSummary?: string;
 };
@@ -73,6 +82,7 @@ function resolveDependencies(
     getTask: dependencies?.getTask ?? getTask,
     claimTask: dependencies?.claimTask ?? claimTask,
     finalizeTask: dependencies?.finalizeTask ?? finalizeTask,
+    updateTaskStatus: dependencies?.updateTaskStatus ?? updateTaskStatus,
     saveAutonomousSession: dependencies?.saveAutonomousSession ?? saveAutonomousSession,
     runAutonomousSession: dependencies?.runAutonomousSession ?? runAutonomousSession,
   };
@@ -100,6 +110,11 @@ function buildQueuedSession(task: TaskEnvelope, node: ExecutionNodeDescriptor, m
     taskStatus: task.status,
     assignedNodeId: task.assignedNodeId,
     queueStateSummary: summarizeTaskEnvelope(task),
+    dispatchMessageId: task.dispatchMessageId,
+    dispatchTargetNodeId: task.dispatchTargetNodeId,
+    dispatchProtocolVersion: task.dispatchProtocolVersion,
+    dispatchStatusSummary: task.dispatchStatusSummary,
+    remoteDispatchPlanned: task.remoteDispatchPlanned,
   };
 }
 
@@ -138,8 +153,54 @@ export async function claimNextRunnableTask(
       "Claimed for controlled queue execution through the shared runner.",
     );
     if (claimed) {
+      const request = createDispatchEnvelope({
+        messageType: "task-dispatch-request",
+        sourceNodeId: runtimeNode.id,
+        targetNodeId: selectedNode.id,
+        taskId: claimed.taskId,
+        sessionId: claimed.sessionId,
+        payload: createTaskDispatchRequest({
+          action: claimed.action,
+          requestedCapabilities: claimed.requestedCapabilities,
+          assignedNodeId: selectedNode.id,
+          approvalState: {
+            requiresApproval: claimed.action.requiresApproval,
+            approved: true,
+          },
+          queueStateSummary: summarizeTaskEnvelope(claimed),
+          dispatchStatusSummary: "Dispatch requested for local simulated handoff.",
+          remoteDispatchPlanned: true,
+        }),
+      });
+      const roundTrip = simulateLocalDispatchRoundTrip({
+        request,
+        accepted: true,
+        ackReason: "Local dispatch handshake accepted through the simulated transport boundary.",
+      });
+      const dispatchStatusSummary = [
+        summarizeDispatchPayload(roundTrip.request.messageType, roundTrip.request.payload, roundTrip.request.protocolVersion),
+        summarizeDispatchPayload(roundTrip.ack.messageType, roundTrip.ack.payload, roundTrip.ack.protocolVersion),
+      ].join(" || ");
+      const claimedWithDispatch = await resolved.updateTaskStatus(claimed.taskId, "assigned", {
+        assignedNodeId: selectedNode.id,
+        claimToken: claimed.claimToken,
+        runnerMode: claimed.runnerMode,
+        dispatchMessageId: request.messageId,
+        dispatchTargetNodeId: selectedNode.id,
+        dispatchProtocolVersion: request.protocolVersion,
+        dispatchStatusSummary,
+        remoteDispatchPlanned: true,
+      });
+
       return {
-        task: claimed,
+        task: claimedWithDispatch ?? {
+          ...claimed,
+          dispatchMessageId: request.messageId,
+          dispatchTargetNodeId: selectedNode.id,
+          dispatchProtocolVersion: request.protocolVersion,
+          dispatchStatusSummary,
+          remoteDispatchPlanned: true,
+        },
         node: selectedNode,
       };
     }
@@ -198,15 +259,75 @@ export async function executeQueuedTask(
             : session.status === "completed"
               ? "completed"
               : "claimed";
+    const request = claimed.task.dispatchMessageId
+      ? createDispatchEnvelope({
+          protocolVersion: claimed.task.dispatchProtocolVersion ?? "1",
+          messageType: "task-dispatch-request",
+          messageId: claimed.task.dispatchMessageId,
+          sourceNodeId: claimed.task.assignedNodeId ?? claimed.node.id,
+          targetNodeId: claimed.task.dispatchTargetNodeId ?? claimed.node.id,
+          taskId: claimed.task.taskId,
+          sessionId: claimed.task.sessionId,
+          payload: createTaskDispatchRequest({
+            action: claimed.task.action,
+            requestedCapabilities: claimed.task.requestedCapabilities,
+            assignedNodeId: claimed.task.dispatchTargetNodeId ?? claimed.node.id,
+            approvalState: {
+              requiresApproval: claimed.task.action.requiresApproval,
+              approved: true,
+            },
+            queueStateSummary: summarizeTaskEnvelope(claimed.task),
+            dispatchStatusSummary: claimed.task.dispatchStatusSummary,
+            remoteDispatchPlanned: claimed.task.remoteDispatchPlanned,
+          }),
+        })
+      : undefined;
+    const roundTrip = request
+      ? simulateLocalDispatchRoundTrip({
+          request,
+          accepted: true,
+          resultPayload: {
+            status: effectiveStatus === "claimed" ? "blocked" : effectiveStatus,
+            executionResult: session.latestExecutionResult,
+            linkedSessionId: session.sessionId,
+            linkedTaskId: effectiveTask.taskId,
+            summary: `Local simulated dispatch returned ${effectiveStatus} through the shared runner.`,
+          },
+        })
+      : undefined;
+    const dispatchStatusSummary = roundTrip
+      ? [
+          summarizeDispatchPayload(roundTrip.request.messageType, roundTrip.request.payload, roundTrip.request.protocolVersion),
+          summarizeDispatchPayload(roundTrip.ack.messageType, roundTrip.ack.payload, roundTrip.ack.protocolVersion),
+          roundTrip.result
+            ? summarizeDispatchPayload(roundTrip.result.messageType, roundTrip.result.payload, roundTrip.result.protocolVersion)
+            : "",
+        ].filter(Boolean).join(" || ")
+      : effectiveTask.dispatchStatusSummary;
+    const persistedTask = effectiveStatus === "claimed"
+      ? finalizedTask
+      : await resolved.updateTaskStatus(effectiveTask.taskId, effectiveStatus, {
+          assignedNodeId: effectiveTask.assignedNodeId,
+          dispatchMessageId: request?.messageId ?? effectiveTask.dispatchMessageId,
+          dispatchTargetNodeId: claimed.task.dispatchTargetNodeId ?? effectiveTask.dispatchTargetNodeId,
+          dispatchProtocolVersion: request?.protocolVersion ?? effectiveTask.dispatchProtocolVersion,
+          dispatchStatusSummary,
+          remoteDispatchPlanned: claimed.task.remoteDispatchPlanned ?? effectiveTask.remoteDispatchPlanned,
+        });
+    const summarizedTask = persistedTask ?? effectiveTask;
 
     return {
-      task: finalizedTask,
+      task: persistedTask ?? finalizedTask,
       session,
       nodeId: claimed.node.id,
-      runnerMode: effectiveTask.runnerMode,
-      claimToken: effectiveTask.claimToken,
+      runnerMode: summarizedTask.runnerMode,
+      claimToken: summarizedTask.claimToken,
+      dispatchMessageId: summarizedTask.dispatchMessageId,
+      dispatchTargetNodeId: summarizedTask.dispatchTargetNodeId,
+      dispatchProtocolVersion: summarizedTask.dispatchProtocolVersion,
+      dispatchStatusSummary: summarizedTask.dispatchStatusSummary,
       status: effectiveStatus,
-      queueStateSummary: finalizedTask ? summarizeTaskEnvelope(finalizedTask) : summarizeTaskEnvelope(effectiveTask),
+      queueStateSummary: summarizeTaskEnvelope(summarizedTask),
     };
   } catch (error) {
     const reason = error instanceof Error ? error.message : "Queued task execution failed unexpectedly.";
@@ -221,6 +342,10 @@ export async function executeQueuedTask(
       nodeId: claimed.node.id,
       runnerMode: finalizedTask?.runnerMode ?? claimed.task.runnerMode,
       claimToken: finalizedTask?.claimToken ?? claimed.task.claimToken,
+      dispatchMessageId: finalizedTask?.dispatchMessageId ?? claimed.task.dispatchMessageId,
+      dispatchTargetNodeId: finalizedTask?.dispatchTargetNodeId ?? claimed.task.dispatchTargetNodeId,
+      dispatchProtocolVersion: finalizedTask?.dispatchProtocolVersion ?? claimed.task.dispatchProtocolVersion,
+      dispatchStatusSummary: finalizedTask?.dispatchStatusSummary ?? claimed.task.dispatchStatusSummary,
       status: "failed",
       queueStateSummary: finalizedTask ? summarizeTaskEnvelope(finalizedTask) : undefined,
     };

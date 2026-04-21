@@ -16,5 +16,12 @@ export async function GET(
   return NextResponse.json({
     task,
     runnable: task.status === "pending" && task.action.scope === "safe",
+    dispatch: {
+      messageId: task.dispatchMessageId ?? null,
+      targetNodeId: task.dispatchTargetNodeId ?? null,
+      protocolVersion: task.dispatchProtocolVersion ?? null,
+      statusSummary: task.dispatchStatusSummary ?? null,
+      planned: task.remoteDispatchPlanned ?? null,
+    },
   });
 }

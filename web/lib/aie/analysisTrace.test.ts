@@ -51,6 +51,11 @@ function buildTrace(params: {
   taskStatus?: "queued" | "assigned" | "running" | "completed" | "failed" | "blocked";
   assignedNodeId?: string;
   queueStateSummary?: string;
+  dispatchMessageId?: string;
+  dispatchTargetNodeId?: string;
+  dispatchProtocolVersion?: "1";
+  dispatchStatusSummary?: string;
+  remoteDispatchPlanned?: boolean;
 }) {
   return buildAnalysisTraceRecord(params);
 }
@@ -259,6 +264,11 @@ test("autonomous traces preserve optional autonomous metadata without changing t
     taskStatus: "completed",
     assignedNodeId: "aie-node-web-web",
     queueStateSummary: "completed | aie-node-web-web | validation-check",
+    dispatchMessageId: "aie-dispatch-123",
+    dispatchTargetNodeId: "aie-node-web-web",
+    dispatchProtocolVersion: "1",
+    dispatchStatusSummary: "dispatch=1 | type=result | status=completed",
+    remoteDispatchPlanned: true,
     autonomousPlanningHintSummary: "Recent lane summary: validate:healthy result. Preferred next lane: validate.",
     autonomousRecentActionFamily: "validate",
   });
@@ -278,6 +288,11 @@ test("autonomous traces preserve optional autonomous metadata without changing t
   assert.equal(trace.taskStatus, "completed");
   assert.equal(trace.assignedNodeId, "aie-node-web-web");
   assert.match(trace.queueStateSummary ?? "", /completed/i);
+  assert.equal(trace.dispatchMessageId, "aie-dispatch-123");
+  assert.equal(trace.dispatchTargetNodeId, "aie-node-web-web");
+  assert.equal(trace.dispatchProtocolVersion, "1");
+  assert.match(trace.dispatchStatusSummary ?? "", /type=result/i);
+  assert.equal(trace.remoteDispatchPlanned, true);
   assert.match(trace.autonomousPlanningHintSummary ?? "", /Preferred next lane/i);
   assert.equal(trace.autonomousRecentActionFamily, "validate");
   assert.deepEqual(listMissingAnalysisTraceFields(trace), []);

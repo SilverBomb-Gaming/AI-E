@@ -132,6 +132,10 @@ test("local_node queue entrypoints run one queued task and print a queue summary
           nodeId: "aie-node-local-default",
           runnerMode: "local-node",
           claimToken: "claim-local-1",
+          dispatchMessageId: "aie-dispatch-local-1",
+          dispatchTargetNodeId: "aie-node-local-default",
+          dispatchProtocolVersion: "1",
+          dispatchStatusSummary: "dispatch=1 | type=result | status=completed",
           queueStateSummary: "task=task-local-queue-1 status=completed node=aie-node-local-default",
           task: (await listTasks())[0] ?? null,
           session: {
@@ -142,6 +146,10 @@ test("local_node queue entrypoints run one queued task and print a queue summary
             updatedAt: "2026-04-21T00:00:01.000Z",
             currentStepIndex: 1,
             maxSteps: 1,
+            dispatchMessageId: "aie-dispatch-local-1",
+            dispatchTargetNodeId: "aie-node-local-default",
+            dispatchProtocolVersion: "1",
+            dispatchStatusSummary: "dispatch=1 | type=result | status=completed",
             steps: [],
           },
         }),
@@ -155,6 +163,8 @@ test("local_node queue entrypoints run one queued task and print a queue summary
     assert.match(output, /Queue run: completed/i);
     assert.match(output, /Task ID: task-local-queue-1/i);
     assert.match(output, /Claim token: claim-local-1/i);
+    assert.match(output, /Dispatch message: aie-dispatch-local-1/i);
+    assert.match(output, /Dispatch summary: dispatch=1 \| type=result \| status=completed/i);
   } finally {
     delete process.env.AIE_AUTONOMOUS_SESSION_DIR;
     delete process.env.AIE_TASK_QUEUE_DIR;

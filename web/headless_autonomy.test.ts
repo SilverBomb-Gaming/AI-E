@@ -130,6 +130,10 @@ test("headless_autonomy queue entrypoints run one queued task and print a queue 
           nodeId: "aie-node-headless-default",
           runnerMode: "headless",
           claimToken: "claim-headless-1",
+          dispatchMessageId: "aie-dispatch-headless-1",
+          dispatchTargetNodeId: "aie-node-headless-default",
+          dispatchProtocolVersion: "1",
+          dispatchStatusSummary: "dispatch=1 | type=result | status=completed",
           queueStateSummary: "task=task-headless-queue-1 status=completed node=aie-node-headless-default",
           task: (await listTasks())[0] ?? null,
           session: {
@@ -140,6 +144,10 @@ test("headless_autonomy queue entrypoints run one queued task and print a queue 
             updatedAt: "2026-04-21T00:00:01.000Z",
             currentStepIndex: 1,
             maxSteps: 1,
+            dispatchMessageId: "aie-dispatch-headless-1",
+            dispatchTargetNodeId: "aie-node-headless-default",
+            dispatchProtocolVersion: "1",
+            dispatchStatusSummary: "dispatch=1 | type=result | status=completed",
             steps: [],
           },
         }),
@@ -154,6 +162,8 @@ test("headless_autonomy queue entrypoints run one queued task and print a queue 
     assert.match(output, /Queue run: completed/i);
     assert.match(output, /Task ID: task-headless-queue-1/i);
     assert.match(output, /Claim token: claim-headless-1/i);
+    assert.match(output, /Dispatch message: aie-dispatch-headless-1/i);
+    assert.match(output, /Dispatch summary: dispatch=1 \| type=result \| status=completed/i);
   } finally {
     delete process.env.AIE_AUTONOMOUS_SESSION_DIR;
     delete process.env.AIE_TASK_QUEUE_DIR;

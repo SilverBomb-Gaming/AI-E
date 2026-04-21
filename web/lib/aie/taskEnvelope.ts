@@ -9,6 +9,11 @@ export type TaskEnvelopeTransitionMetadata = {
   statusReason?: string;
   claimToken?: string;
   runnerMode?: ExecutionNodeMode;
+  dispatchMessageId?: string;
+  dispatchTargetNodeId?: string;
+  dispatchProtocolVersion?: "1";
+  dispatchStatusSummary?: string;
+  remoteDispatchPlanned?: boolean;
 };
 
 export type TaskEnvelope = {
@@ -23,6 +28,11 @@ export type TaskEnvelope = {
   statusReason?: string;
   claimToken?: string;
   runnerMode?: ExecutionNodeMode;
+  dispatchMessageId?: string;
+  dispatchTargetNodeId?: string;
+  dispatchProtocolVersion?: "1";
+  dispatchStatusSummary?: string;
+  remoteDispatchPlanned?: boolean;
   createdAt: string;
   claimedAt?: string;
   assignedAt?: string;
@@ -114,6 +124,13 @@ function applyTaskTransition(
   const statusReason = normalizeText(metadata?.statusReason) || undefined;
   const claimToken = normalizeText(metadata?.claimToken) || envelope.claimToken;
   const runnerMode = metadata?.runnerMode ?? envelope.runnerMode;
+  const dispatchMessageId = normalizeText(metadata?.dispatchMessageId) || envelope.dispatchMessageId;
+  const dispatchTargetNodeId = normalizeText(metadata?.dispatchTargetNodeId) || envelope.dispatchTargetNodeId;
+  const dispatchProtocolVersion = metadata?.dispatchProtocolVersion ?? envelope.dispatchProtocolVersion;
+  const dispatchStatusSummary = normalizeText(metadata?.dispatchStatusSummary) || envelope.dispatchStatusSummary;
+  const remoteDispatchPlanned = typeof metadata?.remoteDispatchPlanned === "boolean"
+    ? metadata.remoteDispatchPlanned
+    : envelope.remoteDispatchPlanned;
   const claimedAt = status === "assigned" && !envelope.claimedAt ? timestamp : envelope.claimedAt;
   const completedAt = status === "completed" && !envelope.completedAt ? timestamp : envelope.completedAt;
   const failedAt = status === "failed" && !envelope.failedAt ? timestamp : envelope.failedAt;
@@ -126,6 +143,11 @@ function applyTaskTransition(
     statusReason,
     claimToken: claimToken || undefined,
     runnerMode,
+    dispatchMessageId: dispatchMessageId || undefined,
+    dispatchTargetNodeId: dispatchTargetNodeId || undefined,
+    dispatchProtocolVersion,
+    dispatchStatusSummary: dispatchStatusSummary || undefined,
+    remoteDispatchPlanned,
     claimedAt,
     assignedAt: status === "assigned" && !envelope.assignedAt ? timestamp : envelope.assignedAt,
     startedAt: status === "running" && !envelope.startedAt ? timestamp : envelope.startedAt,
@@ -153,6 +175,11 @@ export function createTaskEnvelope(params: CreateTaskEnvelopeParams): TaskEnvelo
     statusReason: undefined,
     claimToken: undefined,
     runnerMode: undefined,
+    dispatchMessageId: undefined,
+    dispatchTargetNodeId: undefined,
+    dispatchProtocolVersion: undefined,
+    dispatchStatusSummary: undefined,
+    remoteDispatchPlanned: undefined,
     createdAt: timestamp,
     claimedAt: undefined,
     assignedAt: undefined,
@@ -313,6 +340,11 @@ export function normalizeTaskEnvelope(value: unknown): TaskEnvelope | null {
     statusReason: normalizeText(typeof source.statusReason === "string" ? source.statusReason : "") || undefined,
     claimToken: normalizeText(typeof source.claimToken === "string" ? source.claimToken : "") || undefined,
     runnerMode: normalizeExecutionNodeMode(source.runnerMode),
+    dispatchMessageId: normalizeText(typeof source.dispatchMessageId === "string" ? source.dispatchMessageId : "") || undefined,
+    dispatchTargetNodeId: normalizeText(typeof source.dispatchTargetNodeId === "string" ? source.dispatchTargetNodeId : "") || undefined,
+    dispatchProtocolVersion: source.dispatchProtocolVersion === "1" ? "1" : undefined,
+    dispatchStatusSummary: normalizeText(typeof source.dispatchStatusSummary === "string" ? source.dispatchStatusSummary : "") || undefined,
+    remoteDispatchPlanned: typeof source.remoteDispatchPlanned === "boolean" ? source.remoteDispatchPlanned : undefined,
     createdAt,
     claimedAt: normalizeText(typeof source.claimedAt === "string" ? source.claimedAt : "") || undefined,
     assignedAt: normalizeText(typeof source.assignedAt === "string" ? source.assignedAt : "") || undefined,
@@ -330,7 +362,10 @@ export function summarizeTaskEnvelope(envelope: TaskEnvelope): string {
     `status=${envelope.status}`,
     `step=${envelope.stepIndex}`,
     envelope.assignedNodeId ? `node=${envelope.assignedNodeId}` : "node=unassigned",
+    envelope.dispatchTargetNodeId ? `dispatchTarget=${envelope.dispatchTargetNodeId}` : "",
+    envelope.dispatchMessageId ? `dispatch=${envelope.dispatchMessageId}` : "",
     envelope.requestedCapabilities.length ? `caps=${envelope.requestedCapabilities.join(",")}` : "caps=none",
+    envelope.dispatchStatusSummary ? `dispatchStatus=${envelope.dispatchStatusSummary}` : "",
     envelope.statusReason ? `reason=${envelope.statusReason}` : "",
-  ].join(" | ");
+  ].filter(Boolean).join(" | ");
 }

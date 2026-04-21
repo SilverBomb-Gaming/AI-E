@@ -16,6 +16,8 @@ export async function GET() {
       failed: tasks.filter((task) => task.status === "failed").length,
       blocked: tasks.filter((task) => task.status === "blocked").length,
       runnableSafe: tasks.filter((task) => task.status === "pending" && task.action.scope === "safe").length,
+      dispatchPlanned: tasks.filter((task) => task.remoteDispatchPlanned).length,
+      withDispatchMetadata: tasks.filter((task) => task.dispatchMessageId || task.dispatchStatusSummary).length,
     };
     return NextResponse.json({ tasks, summary });
   } catch (error) {
