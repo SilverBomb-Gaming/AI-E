@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import {
   MAX_GUIDED_STEPS,
@@ -24,7 +24,7 @@ import type {
 import type { FollowUpVerificationState, StoredActionChainState, StoredLoopTerminationStatus } from "@/components/AnalysisForm";
 import { buildExecutionSessionContextBlock, type ExecutionSessionStep } from "@/lib/aie/executionSession";
 import { buildExecutionOrchestrationContextBlock, type ExecutionOrchestrationState } from "@/lib/aie/orchestrationSession";
-import type { AnalysisInput, ExecutionActionPreview, FreeAnalysisResponse } from "@/lib/aie/types";
+import type { AnalysisInput, ExecutionActionPreview, ExecutionRuntimeResult, FreeAnalysisResponse } from "@/lib/aie/types";
 
 // Rendering decisions must come from analysisResultLogic.ts.
 // Keep this component presentation-focused and do not reintroduce inline decision helpers here.
@@ -40,6 +40,7 @@ type AnalysisResultProps = {
   currentStepIndex?: number;
   previousOutcome?: string;
   sessionHistory?: ExecutionSessionStep[];
+  executionResult?: ExecutionRuntimeResult;
   orchestrationState?: ExecutionOrchestrationState;
   onResultChange?: (update: {
     result: FreeAnalysisResponse;
@@ -52,6 +53,7 @@ type AnalysisResultProps = {
     suggestedNextAction: SuggestedNextAction;
     nextSuggestedStep?: string;
   }) => void;
+  onExecutionResultChange?: (executionResult: ExecutionRuntimeResult) => void;
 };
 
 function isFreeAnalysisResponse(value: unknown): value is FreeAnalysisResponse {
@@ -351,6 +353,14 @@ function getExecutionTypeLabel(type: ExecutionActionPreview["type"] | undefined)
       return "Inspect";
     case "run":
       return "Run";
+    case "inspection":
+      return "Inspection";
+    case "validation-check":
+      return "Validation check";
+    case "file-write":
+      return "File write";
+    case "test-run":
+      return "Test run";
     case "unknown":
       return "Unknown";
     default:
@@ -369,6 +379,60 @@ function getExecutionScopeClassName(scope: ExecutionActionPreview["scope"] | und
     default:
       return "border-ink/10 bg-white/70 text-ink/70";
   }
+}
+
+function isExecutionRuntimeResult(value: unknown): value is ExecutionRuntimeResult {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const source = value as Record<string, unknown>;
+  return source.status === "success" || source.status === "failed" || source.status === "blocked";
+}
+
+function getExecutablePreviewActionType(action: ExecutionActionPreview | undefined): "inspection" | "validation-check" | "file-write" | "test-run" | null {
+  if (action?.type === "inspection" || action?.type === "validation-check" || action?.type === "file-write" || action?.type === "test-run") {
+    return action.type;
+  }
+
+  const sourceActionType = String(action?.metadata?.sourceActionType ?? "").trim();
+  if (sourceActionType === "inspection" || sourceActionType === "validation-check" || sourceActionType === "file-write" || sourceActionType === "test-run") {
+    return sourceActionType;
+  }
+
+  return null;
+}
+
+function isSupportedExecutionPreview(action: ExecutionActionPreview | undefined): boolean {
+  if (!action || action.requiresApproval !== true) {
+    return false;
+  }
+
+  const executableActionType = getExecutablePreviewActionType(action);
+  if (!executableActionType) {
+    return false;
+  }
+
+  if (executableActionType === "file-write") {
+    return action.scope === "safe" || action.scope === "caution";
+  }
+
+  return action.scope === "safe";
+}
+
+function getExecutionPreviewHelpText(action: ExecutionActionPreview): string {
+  const executableActionType = getExecutablePreviewActionType(action);
+  if (executableActionType === "file-write") {
+    return action.scope === "safe"
+      ? "AI-E can apply this bounded sandbox file write after approval. Broader file edits still pause autonomous execution."
+      : "This bounded file write can be run manually after approval, but autonomous execution still pauses outside the safe sandbox scope.";
+  }
+
+  if (executableActionType === "test-run") {
+    return "AI-E only runs mapped test or build targets from the bounded whitelist. Freeform shell commands remain blocked.";
+  }
+
+  return "AI-E only runs explicit safe inspection and validation actions from this control. Arbitrary shell commands and unrestricted writes remain blocked.";
 }
 
 type VisibleExecutionStatus = "active" | "paused" | "blocked" | "complete" | "aborted";
@@ -528,8 +592,10 @@ export function AnalysisResult({
   currentStepIndex,
   previousOutcome,
   sessionHistory,
+  executionResult,
   orchestrationState,
   onResultChange,
+  onExecutionResultChange,
 }: AnalysisResultProps) {
   const [, ...initialFollowUpSteps] = result.what_to_do_next;
   const {
@@ -566,6 +632,8 @@ export function AnalysisResult({
   const [observation, setObservation] = useState("");
   const [isSubmittingFollowUp, setIsSubmittingFollowUp] = useState(false);
   const [followUpError, setFollowUpError] = useState<string | null>(null);
+  const [isExecuting, setIsExecuting] = useState(false);
+  const [executionError, setExecutionError] = useState<string | null>(null);
   const trimmedObservation = useMemo(() => observation.trim(), [observation]);
   const nextStepIndex = Math.max(1, (currentStepIndex ?? input?.stepIndex ?? 1) + 1);
   const selfDirectionState = orchestrationState?.selfDirectionState;
@@ -580,6 +648,7 @@ export function AnalysisResult({
     suggestedNextAction,
     orchestrationState,
   });
+  const canRunExecution = isSupportedExecutionPreview(result.execution);
   const canSubmitFollowUp = Boolean(
     input?.problemDescription &&
       trimmedObservation &&
@@ -588,6 +657,66 @@ export function AnalysisResult({
       (!orchestrationState || (orchestrationState.currentStatus === "active" && orchestrationState.currentAgent === "executor")),
   );
   const activeStepLabel = currentGuidedStepNumber > 1 ? `Step ${currentGuidedStepNumber}` : "First step";
+
+  useEffect(() => {
+    const executionOutput = executionResult?.output?.trim();
+    if (!executionOutput || observation.trim()) {
+      return;
+    }
+
+    setObservation(executionOutput);
+  }, [executionResult?.output, observation]);
+
+  const handleRunStep = async () => {
+    if (!result.execution || !canRunExecution || isExecuting) {
+      return;
+    }
+
+    setExecutionError(null);
+    setIsExecuting(true);
+
+    try {
+      const response = await fetch("/api/execute", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          action: result.execution,
+          approved: true,
+        }),
+      });
+
+      const payload: unknown = await response.json();
+      if (!response.ok) {
+        const apiErrorMessage =
+          payload &&
+          typeof payload === "object" &&
+          "error" in payload &&
+          typeof payload.error === "string" &&
+          payload.error.trim()
+            ? payload.error
+            : "AI-E couldn't execute this bounded step right now.";
+
+        setExecutionError(apiErrorMessage);
+        return;
+      }
+
+      if (!isExecutionRuntimeResult(payload)) {
+        setExecutionError("AI-E couldn't execute this bounded step right now.");
+        return;
+      }
+
+      onExecutionResultChange?.(payload);
+      if (payload.output?.trim()) {
+        setObservation(payload.output.trim());
+      }
+    } catch {
+      setExecutionError("AI-E couldn't execute this bounded step right now.");
+    } finally {
+      setIsExecuting(false);
+    }
+  };
 
   const handleFollowUpSubmit = async () => {
     if (!input?.problemDescription || !trimmedObservation || isSubmittingFollowUp) {
@@ -931,9 +1060,70 @@ export function AnalysisResult({
           </div>
           <p className="mt-3 text-sm leading-7 text-ink/90 sm:text-base">{result.execution.description}</p>
           <p className="mt-3 text-xs leading-6 body-muted sm:text-sm">Expected outcome: {result.execution.expectedOutcome}</p>
-          <p className="mt-2 text-xs leading-6 body-muted sm:text-sm">
-            This is a boundary-safe preview only. AI-E is not executing commands, mutating files, or triggering external actions in this phase.
-          </p>
+          <p className="mt-2 text-xs leading-6 body-muted sm:text-sm">{getExecutionPreviewHelpText(result.execution)}</p>
+          {result.execution.metadata.targetPath ? (
+            <p className="mt-2 text-xs leading-6 body-muted sm:text-sm">Target path: {result.execution.metadata.targetPath}</p>
+          ) : null}
+          {result.execution.metadata.allowedRoot ? (
+            <p className="mt-1 text-xs leading-6 body-muted sm:text-sm">Allowed root: {result.execution.metadata.allowedRoot}</p>
+          ) : null}
+          {result.execution.metadata.testTarget ? (
+            <p className="mt-1 text-xs leading-6 body-muted sm:text-sm">Test target: {result.execution.metadata.testTarget}</p>
+          ) : null}
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={handleRunStep}
+              disabled={!canRunExecution || isExecuting}
+              className="rounded-full bg-ink px-5 py-3 text-sm font-semibold text-white transition hover:-translate-y-0.5 hover:bg-slate disabled:cursor-not-allowed disabled:opacity-70"
+            >
+              {isExecuting ? "Running..." : "Run this step"}
+            </button>
+            {!canRunExecution ? (
+              <p className="text-xs leading-6 body-muted sm:text-sm">This preview is outside the current bounded runtime policy and cannot be executed from this control.</p>
+            ) : null}
+          </div>
+          {executionError ? (
+            <p className="mt-3 rounded-2xl bg-coral/10 px-4 py-3 text-sm text-ember">{executionError}</p>
+          ) : null}
+          {executionResult ? (
+            <div className="mt-4 rounded-[1rem] border border-ink/10 bg-white/60 p-4">
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="section-label">Execution result</p>
+                <span className={`inline-flex rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] ${executionResult.status === "success" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : executionResult.status === "failed" ? "border-coral/20 bg-coral/10 text-ember" : "border-amber-200 bg-amber-50 text-amber-700"}`}>
+                  {executionResult.status}
+                </span>
+              </div>
+              {executionResult.output ? (
+                <pre className="mt-3 whitespace-pre-wrap break-words text-xs leading-6 text-ink/85 sm:text-sm">{executionResult.output}</pre>
+              ) : null}
+              {executionResult.error ? (
+                <p className="mt-3 text-xs leading-6 text-ember sm:text-sm">{executionResult.error}</p>
+              ) : null}
+              {executionResult.changedPaths?.length ? (
+                <div className="mt-3 text-xs leading-6 text-ink/80 sm:text-sm">
+                  <p className="font-semibold text-ink">Changed paths</p>
+                  <ul className="mt-1 space-y-1">
+                    {executionResult.changedPaths.map((path) => (
+                      <li key={path}>{path}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+              {executionResult.diffSummary ? (
+                <p className="mt-3 text-xs leading-6 text-ink/80 sm:text-sm"><strong>Diff summary:</strong> {executionResult.diffSummary}</p>
+              ) : null}
+              {executionResult.commandLabel ? (
+                <p className="mt-2 text-xs leading-6 text-ink/80 sm:text-sm"><strong>Command:</strong> {executionResult.commandLabel}</p>
+              ) : null}
+              {typeof executionResult.exitCode === "number" ? (
+                <p className="mt-2 text-xs leading-6 text-ink/80 sm:text-sm"><strong>Exit code:</strong> {executionResult.exitCode}</p>
+              ) : null}
+              {executionResult.rollback ? (
+                <p className="mt-2 text-xs leading-6 text-ink/80 sm:text-sm"><strong>Rollback:</strong> restore {executionResult.rollback.targetPath} from snapshot {executionResult.rollback.snapshotId}</p>
+              ) : null}
+            </div>
+          ) : null}
         </section>
       ) : result.proposedAction && result.expectedOutcome ? (
         <section className="glass-card rounded-[1.75rem] p-6 shadow-float sm:p-7">
@@ -1078,7 +1268,9 @@ export function AnalysisResult({
             <p className="text-xs leading-6 body-muted">
               {canContinueGuidedLoop
                 ? !orchestrationState || selfDirectionState?.selfDirectionStatus === "active"
-                  ? "AI-E will re-run the same analysis using your latest step outcome as additional context."
+                  ? executionResult?.output
+                    ? "AI-E prefilled this field from the latest bounded execution result. Edit it if you need to add context before re-running the analysis."
+                    : "AI-E will re-run the same analysis using your latest step outcome as additional context."
                   : `The self-directed run is ${selfDirectionState?.selfDirectionStatus}, so the planner is holding execution until the stop condition is cleared.`
                 : "This bounded guided loop stops at three steps to avoid drifting into unreviewed chained reasoning."}
             </p>

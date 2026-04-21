@@ -128,9 +128,15 @@ test("execution sessions keep approved execution actions alongside step history"
     diagnosis: "The instrumentation confirms the handoff timing path.",
     loopTerminationStatus: "converging",
     action: execution,
+    executionResult: {
+      status: "success",
+      output: "Inspection completed in read-only mode.",
+    },
   });
 
   assert.equal(session.steps[0]?.action?.approved, true);
   assert.equal(session.steps[0]?.action?.type, "write");
   assert.equal(session.steps[0]?.action?.scope, "caution");
+  assert.equal(session.steps[0]?.executionResult?.status, "success");
+  assert.match(session.steps[0]?.action?.result ?? "", /Inspection completed in read-only mode/i);
 });

@@ -16,7 +16,7 @@ import {
   recordPlannerHandoff,
   type ExecutionOrchestrationState,
 } from "@/lib/aie/orchestrationSession";
-import type { AnalysisInput, FreeAnalysisResponse } from "@/lib/aie/types";
+import type { AnalysisInput, ExecutionRuntimeResult, FreeAnalysisResponse } from "@/lib/aie/types";
 
 const STORAGE_KEY = "aie-free-analysis-result";
 
@@ -42,6 +42,7 @@ export type StoredActionChainState = {
 export type StoredAnalysisState = {
   input?: AnalysisInput;
   result: FreeAnalysisResponse;
+  executionResult?: ExecutionRuntimeResult;
   refinedFromObservation?: boolean;
   lastObservation?: string;
   previousOutcome?: string;
@@ -155,16 +156,52 @@ function normalizeSessionHistory(value: unknown): ExecutionSessionStep[] | undef
         return null;
       }
 
-      return {
+      const rawAction = item.action;
+      const action: ExecutionSessionStep["action"] =
+        rawAction && typeof rawAction === "object" && typeof (rawAction as Record<string, unknown>).description === "string"
+          ? {
+              id:
+                typeof (rawAction as Record<string, unknown>).id === "string"
+                  ? String((rawAction as Record<string, unknown>).id).trim() || undefined
+                  : undefined,
+              description: String((rawAction as Record<string, unknown>).description).trim(),
+              approved: Boolean((rawAction as Record<string, unknown>).approved),
+              result:
+                typeof (rawAction as Record<string, unknown>).result === "string"
+                  ? String((rawAction as Record<string, unknown>).result).trim() || undefined
+                  : undefined,
+              type:
+                (rawAction as Record<string, unknown>).type === "read" ||
+                (rawAction as Record<string, unknown>).type === "write" ||
+                (rawAction as Record<string, unknown>).type === "inspect" ||
+                (rawAction as Record<string, unknown>).type === "run" ||
+                (rawAction as Record<string, unknown>).type === "unknown"
+                  ? ((rawAction as Record<string, unknown>).type as "read" | "write" | "inspect" | "run" | "unknown")
+                  : undefined,
+              scope:
+                (rawAction as Record<string, unknown>).scope === "safe" ||
+                (rawAction as Record<string, unknown>).scope === "caution" ||
+                (rawAction as Record<string, unknown>).scope === "dangerous"
+                  ? ((rawAction as Record<string, unknown>).scope as "safe" | "caution" | "dangerous")
+                  : undefined,
+              executionResult: normalizeExecutionRuntimeResult((rawAction as Record<string, unknown>).executionResult),
+            }
+          : undefined;
+
+      const normalizedStep: ExecutionSessionStep = {
         stepIndex: Math.floor(rawStepIndex),
         attemptedStep: String(item.attemptedStep).trim(),
         actionResult: String(item.actionResult).trim(),
         verificationState,
         diagnosis: String(item.diagnosis).trim(),
         loopTerminationStatus: loopTerminationStatus ?? null,
-      } satisfies ExecutionSessionStep;
+        action,
+        executionResult: normalizeExecutionRuntimeResult(item.executionResult),
+      };
+
+      return normalizedStep;
     })
-    .filter((item): item is ExecutionSessionStep => Boolean(item))
+    .filter((item): item is ExecutionSessionStep => item !== null)
     .slice(-6);
 
   return steps.length ? steps : undefined;
@@ -187,6 +224,52 @@ function normalizeStoredConfidenceHistory(value: unknown): StoredConfidenceLevel
   return history.length ? history : undefined;
 }
 
+function normalizeExecutionRuntimeResult(value: unknown): ExecutionRuntimeResult | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+
+  const source = value as Record<string, unknown>;
+  if (source.status !== "success" && source.status !== "failed" && source.status !== "blocked") {
+    return undefined;
+  }
+
+  const output = typeof source.output === "string" ? source.output.trim() : "";
+  const error = typeof source.error === "string" ? source.error.trim() : "";
+  const changedPaths = Array.isArray(source.changedPaths)
+    ? source.changedPaths.map((item) => String(item ?? "").trim()).filter(Boolean)
+    : undefined;
+  const diffSummary = typeof source.diffSummary === "string" ? source.diffSummary.trim() : "";
+  const commandLabel = typeof source.commandLabel === "string" ? source.commandLabel.trim() : "";
+  const rollback =
+    source.rollback &&
+    typeof source.rollback === "object" &&
+    (source.rollback as Record<string, unknown>).type === "restore-file" &&
+    typeof (source.rollback as Record<string, unknown>).targetPath === "string" &&
+    typeof (source.rollback as Record<string, unknown>).previousContent === "string" &&
+    typeof (source.rollback as Record<string, unknown>).snapshotId === "string" &&
+    typeof (source.rollback as Record<string, unknown>).createdAt === "string"
+      ? {
+          type: "restore-file" as const,
+          targetPath: String((source.rollback as Record<string, unknown>).targetPath).trim(),
+          previousContent: String((source.rollback as Record<string, unknown>).previousContent),
+          snapshotId: String((source.rollback as Record<string, unknown>).snapshotId).trim(),
+          createdAt: String((source.rollback as Record<string, unknown>).createdAt).trim(),
+        }
+      : undefined;
+
+  return {
+    status: source.status,
+    output: output || undefined,
+    error: error || undefined,
+    changedPaths: changedPaths?.length ? changedPaths : undefined,
+    diffSummary: diffSummary || undefined,
+    exitCode: Number.isInteger(Number(source.exitCode)) ? Number(source.exitCode) : undefined,
+    commandLabel: commandLabel || undefined,
+    rollback,
+  };
+}
+
 export function normalizeStoredAnalysisState(value: unknown): StoredAnalysisState | null {
   if (isFreeAnalysisResponse(value)) {
     return {
@@ -207,6 +290,7 @@ export function normalizeStoredAnalysisState(value: unknown): StoredAnalysisStat
   return {
     input: normalizeAnalysisInput(source.input),
     result: source.result,
+    executionResult: normalizeExecutionRuntimeResult(source.executionResult),
     refinedFromObservation: Boolean(source.refinedFromObservation),
     lastObservation: typeof source.lastObservation === "string" ? source.lastObservation.trim() || undefined : undefined,
     previousOutcome: typeof source.previousOutcome === "string" ? source.previousOutcome.trim() || undefined : undefined,
@@ -485,26 +569,26 @@ export function AnalysisForm({ initialMode = "fresh" }: AnalysisFormProps) {
         body: JSON.stringify(submittedInput),
       });
 
-        const payload: unknown = await response.json();
+      const payload: unknown = await response.json();
 
       if (!response.ok) {
-          const apiErrorMessage =
-            payload &&
-            typeof payload === "object" &&
-            "error" in payload &&
-            typeof payload.error === "string" &&
-            payload.error.trim()
-              ? payload.error
-              : "We couldn't generate an analysis right now. Please try again.";
+        const apiErrorMessage =
+          payload &&
+          typeof payload === "object" &&
+          "error" in payload &&
+          typeof payload.error === "string" &&
+          payload.error.trim()
+            ? payload.error
+            : "We couldn't generate an analysis right now. Please try again.";
 
-          setErrorMessage(apiErrorMessage);
+        setErrorMessage(apiErrorMessage);
         return;
       }
 
-        if (!isFreeAnalysisResponse(payload)) {
-          setErrorMessage("We couldn't generate an analysis right now. Please try again.");
-          return;
-        }
+      if (!isFreeAnalysisResponse(payload)) {
+        setErrorMessage("We couldn't generate an analysis right now. Please try again.");
+        return;
+      }
 
       const proposedAction = payload.proposedAction ?? payload.what_to_do_next[0] ?? "";
       const expectedOutcome = payload.expectedOutcome ?? payload.what_matters[0] ?? "";
@@ -549,6 +633,19 @@ export function AnalysisForm({ initialMode = "fresh" }: AnalysisFormProps) {
       router.push("/result");
     } catch {
       setErrorMessage("We couldn't generate an analysis right now. Please try again.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const applyExamplePrompt = (example: string) => {
+    setForm((current) => ({ ...current, problemDescription: example }));
+    problemDescriptionRef.current?.focus();
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="grid gap-6">
+      <div className="grid gap-6 rounded-[1.75rem] border border-ink/10 bg-white/55 p-6 shadow-float sm:p-7">
         <div>
           <p className="label-text">Response mode</p>
           <label className="mt-3 flex items-start gap-3 rounded-2xl border border-ink/10 bg-white/70 px-4 py-3 text-sm text-ink/85 shadow-soft">
@@ -566,7 +663,12 @@ export function AnalysisForm({ initialMode = "fresh" }: AnalysisFormProps) {
             </span>
           </label>
         </div>
-                </p>
+
+        {showStartHere ? (
+          <section className="rounded-[1.5rem] border border-ink/10 bg-white/45 p-5">
+            <div className="grid gap-4 lg:grid-cols-[1.05fr_0.95fr]">
+              <div>
+                <p className="section-label">Start here</p>
                 <p className="mt-2 text-sm leading-7 text-ink/85">
                   Type one issue, not a full backlog. Include when it happens, what you expected, and what actually occurs.
                 </p>
@@ -696,7 +798,10 @@ export function AnalysisForm({ initialMode = "fresh" }: AnalysisFormProps) {
             required
             rows={6}
             value={form.problemDescription}
-            onChange={(event) => setForm((current) => ({ ...current, problemDescription: event.target.value }))}
+            onChange={(event) => {
+              const nextProblemDescription = event.target.value;
+              setForm((current) => ({ ...current, problemDescription: nextProblemDescription }));
+            }}
             placeholder="Describe what’s going wrong in your Unity project..."
             className="min-h-[180px] rounded-[1.5rem] border border-ink/10 bg-white/80 px-5 py-4 text-sm text-ink outline-none transition placeholder:text-slate focus:border-coral focus:ring-2 focus:ring-coral/20"
           />

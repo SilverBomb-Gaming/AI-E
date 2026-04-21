@@ -1,0 +1,221 @@
+import { loadAutonomousSession } from "./lib/aie/autonomousSessionStore";
+import { resolveRepoRoot } from "./lib/aie/repoContext";
+import { runAutonomousSession } from "./lib/aie/runAutonomousSession";
+import type { AutonomousSession } from "./lib/aie/autonomousSession";
+import type { runAnalysis } from "./lib/aie/run-analysis";
+import type { saveAutonomousSession } from "./lib/aie/autonomousSessionStore";
+import type { executeAction } from "./lib/aie/executionRuntime";
+
+type HeadlessAutonomyOptions = {
+  goal: string;
+  maxSteps?: number;
+  sessionId?: string;
+  approved?: boolean;
+  allowedRoots?: string[];
+  cwd?: string;
+  verbose?: boolean;
+  json?: boolean;
+};
+
+type HeadlessAutonomyDependencies = {
+  runAnalysis: typeof runAnalysis;
+  executeAction: typeof executeAction;
+  saveAutonomousSession: typeof saveAutonomousSession;
+};
+
+function normalizeText(value: unknown): string {
+  return String(value ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function clampMaxSteps(value: unknown): number | undefined {
+  const normalized = normalizeText(value);
+  if (!normalized) {
+    return undefined;
+  }
+
+  const numericValue = Number(normalized);
+  if (!Number.isFinite(numericValue)) {
+    return undefined;
+  }
+
+  return Math.max(1, Math.min(5, Math.floor(numericValue)));
+}
+
+export function parseArgs(argv: string[]): HeadlessAutonomyOptions {
+  const options: HeadlessAutonomyOptions = {
+    goal: "",
+  };
+
+  for (let index = 0; index < argv.length; index += 1) {
+    const current = argv[index];
+    const next = argv[index + 1];
+
+    switch (current) {
+      case "--goal":
+        options.goal = normalizeText(next);
+        index += 1;
+        break;
+      case "--maxSteps":
+        options.maxSteps = clampMaxSteps(next);
+        index += 1;
+        break;
+      case "--sessionId":
+        options.sessionId = normalizeText(next) || undefined;
+        index += 1;
+        break;
+      case "--approved":
+        options.approved = true;
+        break;
+      case "--allowedRoot":
+        options.allowedRoots = [...(options.allowedRoots ?? []), normalizeText(next)].filter(Boolean);
+        index += 1;
+        break;
+      case "--cwd":
+        options.cwd = normalizeText(next) || undefined;
+        index += 1;
+        break;
+      case "--verbose":
+        options.verbose = true;
+        break;
+      case "--json":
+        options.json = true;
+        break;
+      default:
+        break;
+    }
+  }
+
+  return options;
+}
+
+export function formatHeadlessSessionSummary(session: AutonomousSession): string {
+  const lastStep = session.steps.at(-1);
+
+  return JSON.stringify(
+    {
+      ok: session.status !== "failed" && session.status !== "blocked",
+      sessionId: session.sessionId,
+      status: session.status,
+      steps: session.steps.length,
+      adapter: session.executionAdapterId ?? null,
+      adapterContextSummary: session.adapterContextSummary ?? null,
+      planningHintSummary: session.planningHintSummary ?? null,
+      lastActionFamily: lastStep?.actionFamily ?? null,
+      completionStatus: session.latestCompletion?.status ?? null,
+      completedReason: session.completedReason ?? session.stateReason ?? null,
+      pendingAction: session.pendingAction?.description ?? null,
+    },
+    null,
+    2,
+  );
+}
+
+export function formatHeadlessStepSummaries(session: AutonomousSession): string {
+  if (!session.steps.length) {
+    return "No autonomous steps were recorded.";
+  }
+
+  return session.steps.map((step) => {
+    const summaryParts = [
+      `Step ${step.index}`,
+      `lane=${step.actionFamily ?? "unknown"}`,
+      `adapter=${step.executionAdapterId ?? "unknown"}`,
+      `goal=${step.goalStatus ?? "unknown"}`,
+      `decision=${step.nextDecision ?? "unknown"}`,
+      `runtime=${step.executionResult?.status ?? "unknown"}`,
+    ];
+    const detailParts = [
+      step.proposedAction ? `action=${step.proposedAction}` : "",
+      step.adapterContextSummary ? `adapterContext=${step.adapterContextSummary}` : "",
+      step.planningHintSummary ? `planning=${step.planningHintSummary}` : "",
+      step.diagnosis ? `diagnosis=${step.diagnosis}` : "",
+    ].filter(Boolean);
+    return [summaryParts.join(" | "), detailParts.join(" | ")].filter(Boolean).join("\n");
+  }).join("\n\n");
+}
+
+export function formatHeadlessSessionReport(session: AutonomousSession, options?: { json?: boolean; verbose?: boolean }): string {
+  if (options?.json) {
+    return JSON.stringify(
+      {
+        sessionId: session.sessionId,
+        status: session.status,
+        goal: session.goal,
+        adapter: session.executionAdapterId ?? null,
+        adapterContextSummary: session.adapterContextSummary ?? null,
+        planningHintSummary: session.planningHintSummary ?? null,
+        completion: session.latestCompletion ?? null,
+        completedReason: session.completedReason ?? session.stateReason ?? null,
+        steps: options.verbose ? session.steps : session.steps.map((step) => ({
+          index: step.index,
+          actionFamily: step.actionFamily ?? null,
+          executionAdapterId: step.executionAdapterId ?? null,
+          goalStatus: step.goalStatus ?? null,
+          nextDecision: step.nextDecision ?? null,
+          runtimeStatus: step.executionResult?.status ?? null,
+        })),
+      },
+      null,
+      2,
+    );
+  }
+
+  const lines = [
+    `Session ID: ${session.sessionId}`,
+    `Status: ${session.status}`,
+    `Goal: ${session.goal}`,
+    `Latest adapter: ${session.executionAdapterId ?? "unknown"}`,
+    `Adapter context: ${session.adapterContextSummary ?? "No adapter context recorded."}`,
+    `Planning hints: ${session.planningHintSummary ?? "No planning hints recorded."}`,
+    `Completion: ${session.latestCompletion ? `${session.latestCompletion.status} (${session.latestCompletion.confidence})` : "No completion state recorded."}`,
+    `Reason: ${session.completedReason ?? session.stateReason ?? "No stop reason recorded."}`,
+  ];
+
+  if (options?.verbose) {
+    lines.push("", "Step summary:", formatHeadlessStepSummaries(session));
+  }
+
+  return lines.join("\n");
+}
+
+export async function runHeadlessAutonomy(
+  options: HeadlessAutonomyOptions,
+  dependencies?: Partial<HeadlessAutonomyDependencies>,
+): Promise<AutonomousSession> {
+  const existingSession = options.sessionId ? await loadAutonomousSession(options.sessionId) : null;
+  const cwd = options.cwd ?? process.cwd();
+  const repoRoot = await resolveRepoRoot(cwd);
+
+  return runAutonomousSession({
+    goal: options.goal || existingSession?.goal || "Confirm the bounded autonomous path reaches a healthy result.",
+    maxSteps: options.maxSteps,
+    approved: options.approved,
+    existingSession: existingSession ?? undefined,
+    executionContext: {
+      cwd,
+      repoRoot,
+      allowedRoots: options.allowedRoots,
+      runtimeMode: "headless",
+    },
+    dependencies,
+  });
+}
+
+async function main() {
+  const options = parseArgs(process.argv.slice(2));
+
+  if (!options.goal && !options.sessionId) {
+    console.error("A goal or existing sessionId is required.");
+    process.exitCode = 1;
+    return;
+  }
+
+  const session = await runHeadlessAutonomy(options);
+  process.stdout.write(`${formatHeadlessSessionReport(session, { json: options.json, verbose: options.verbose })}\n`);
+}
+
+if (process.argv[1]?.endsWith("headless_autonomy.ts")) {
+  void main();
+}

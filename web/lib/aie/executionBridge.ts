@@ -1,4 +1,4 @@
-import type { DryRunActionType, ExecutionActionPreview, ExecutionActionScope, ExecutionActionType, FreeAnalysisResponse } from "./types";
+import type { DryRunActionType, ExecutionActionMetadata, ExecutionActionPreview, ExecutionActionScope, ExecutionActionType, FreeAnalysisResponse } from "./types";
 
 export type DryRunActionProposal = {
   actionType: DryRunActionType;
@@ -11,6 +11,7 @@ type BuildExecutionActionParams = {
   actionType?: DryRunActionType;
   expectedOutcome?: string;
   context?: string;
+  metadata?: Partial<ExecutionActionMetadata>;
 };
 
 function normalizeLine(value: unknown): string {
@@ -43,6 +44,34 @@ function buildFallbackStep(response: FreeAnalysisResponse): string {
 
 function inferActionType(response: FreeAnalysisResponse): DryRunActionType {
   const combined = `${buildFallbackStep(response)} ${normalizeLine(response.what_happened)}`.toLowerCase();
+
+  if (/(?:\b(?:npm|jest|vitest|pytest|build)\b|\btest:trace\b|\brun build\b|\brun tests?\b|\bexecute tests?\b)/.test(combined)) {
+    return "test-run";
+  }
+
+  if (/(?:\b(?:check|confirm|validate|verify)\b.*\b(?:exists?|presence|available|accessible)\b|\b(?:exists?|presence|available|accessible)\b.*\b(?:check|confirm|validate|verify)\b)/.test(combined)) {
+    return "validation-check";
+  }
+
+  if (/(?:\b(?:confirm|validate|verify|check)\b.*\b(?:contains?|includes?|contract|signature|marker)\b|\b(?:contains?|includes?|contract|signature|marker)\b.*\b(?:confirm|validate|verify|check)\b)/.test(combined)) {
+    return "validation-check";
+  }
+
+  if (/(?:\b(?:confirm|validate|verify)\b.*\b(?:before continuing|read-only|successful(?:ly)?|passed)\b|\b(?:before continuing|read-only)\b.*\b(?:confirm|validate|verify)\b)/.test(combined)) {
+    return "validation-check";
+  }
+
+  if (/(?:\b(?:inspect|review|read|summarize|examine)\b.*\b(?:file|path|reference|module|shape|contents?)\b|\b(?:file|path|reference|module|shape|contents?)\b.*\b(?:inspect|review|read|summarize|examine)\b)/.test(combined)) {
+    return "inspection";
+  }
+
+  if (/(?:\b(?:summarize|summarise)\b.*\b(?:shape|contents?|module|file)\b|\b(?:shape|contents?|module|file)\b.*\b(?:summarize|summarise)\b)/.test(combined)) {
+    return "inspection";
+  }
+
+  if (/(?:\b(?:write|rewrite|create|update|replace|save)\b.*\b(?:file|readme|doc|docs|markdown|component|module|test)\b|\b[a-z0-9_./\\-]+\.(?:ts|tsx|js|jsx|json|md|txt|css)\b)/.test(combined)) {
+    return "file-write";
+  }
 
   if (/\b(?:log|logging|instrument|timestamp|trace|breakpoint|debug output)\b/.test(combined)) {
     return "instrumentation";
@@ -109,13 +138,17 @@ function buildExpectedOutcome(actionType: DryRunActionType, focus: string): stri
 function classifyExecutionType(actionType: DryRunActionType | undefined): ExecutionActionType {
   switch (actionType) {
     case "inspection":
-      return "inspect";
+      return "inspection";
+    case "validation-check":
+      return "validation-check";
+    case "file-write":
+      return "file-write";
+    case "test-run":
+      return "test-run";
     case "instrumentation":
       return "write";
     case "code-change":
       return "write";
-    case "validation-check":
-      return "run";
     default:
       return "unknown";
   }
@@ -125,7 +158,10 @@ function classifyExecutionScope(actionType: DryRunActionType | undefined): Execu
   switch (actionType) {
     case "inspection":
     case "validation-check":
+    case "test-run":
       return "safe";
+    case "file-write":
+      return "caution";
     case "instrumentation":
       return "caution";
     case "code-change":
@@ -140,11 +176,101 @@ function buildSuggestedCommand(actionType: DryRunActionType | undefined, propose
     return sentenceCase(`Run this bounded validation exactly as written: ${trimSentence(proposedAction)}`);
   }
 
+  if (actionType === "test-run") {
+    return sentenceCase(`Run only the mapped bounded test target for: ${trimSentence(proposedAction)}`);
+  }
+
+  if (actionType === "file-write") {
+    return sentenceCase(`Review the bounded file write before execution: ${trimSentence(proposedAction)}`);
+  }
+
   if (actionType === "inspection") {
     return sentenceCase(`Inspect only: ${trimSentence(proposedAction)}`);
   }
 
   return undefined;
+}
+
+function extractTargetPath(params: { proposedAction: string; context?: string; metadata?: Partial<ExecutionActionMetadata> }): string | undefined {
+  const explicitTargetPath = normalizeLine(params.metadata?.targetPath);
+  if (explicitTargetPath) {
+    return explicitTargetPath;
+  }
+
+  const combined = [params.proposedAction, params.context]
+    .map((value) => normalizeLine(value))
+    .filter(Boolean)
+    .join(" ");
+  const match = combined.match(/(?:^|\s)(web\/[a-z0-9_./-]+|sandbox\/[a-z0-9_./-]+|app\/[a-z0-9_./-]+|components\/[a-z0-9_./-]+|lib\/[a-z0-9_./-]+|docs\/[a-z0-9_./-]+|tests\/[a-z0-9_./-]+|[a-z0-9_./-]+\.(?:ts|tsx|js|jsx|json|md|txt|css))(?:\s|$)/i);
+  return match?.[1]?.trim();
+}
+
+function classifyAllowedRoot(targetPath: string | undefined): string | undefined {
+  const normalizedTargetPath = normalizeLine(targetPath).replace(/\\/g, "/");
+  if (!normalizedTargetPath) {
+    return undefined;
+  }
+
+  if (normalizedTargetPath.startsWith("web/sandbox/") || normalizedTargetPath === "web/sandbox") {
+    return "web/sandbox";
+  }
+
+  const rootMatch = normalizedTargetPath.match(/^(web\/(?:app|components|lib|tests|docs)|app|components|lib|tests|docs)(?:\/|$)/i);
+  return rootMatch?.[1];
+}
+
+function isSpecificTestFileTarget(value: string): boolean {
+  return /(?:^|\/).+\.(?:test|spec)\.[cm]?[jt]sx?$/i.test(normalizeLine(value).replace(/\\/g, "/"));
+}
+
+function inferTestTarget(params: { proposedAction: string; expectedOutcome: string; metadata?: Partial<ExecutionActionMetadata> }): string | undefined {
+  const explicitTarget = normalizeLine(params.metadata?.testTarget);
+  const normalizedExplicitTarget = explicitTarget.toLowerCase();
+  if (normalizedExplicitTarget === "core" || normalizedExplicitTarget === "trace" || normalizedExplicitTarget === "build") {
+    return normalizedExplicitTarget;
+  }
+
+  if (isSpecificTestFileTarget(explicitTarget)) {
+    return explicitTarget.replace(/\\/g, "/");
+  }
+
+  const combined = `${normalizeLine(params.proposedAction)} ${normalizeLine(params.expectedOutcome)}`.toLowerCase();
+  if (/\btest:trace\b|\btrace tests?\b/.test(combined)) {
+    return "trace";
+  }
+  if (/\bbuild\b|\bnext build\b/.test(combined)) {
+    return "build";
+  }
+  if (/\bnpm test\b|\brun tests?\b|\bcore tests?\b/.test(combined)) {
+    return "core";
+  }
+
+  return undefined;
+}
+
+function buildExecutionMetadata(params: BuildExecutionActionParams, description: string, expectedOutcome: string): ExecutionActionMetadata {
+  const targetPath = extractTargetPath({
+    proposedAction: description,
+    context: params.context,
+    metadata: params.metadata,
+  });
+  const allowedRoot = normalizeLine(params.metadata?.allowedRoot) || classifyAllowedRoot(targetPath);
+  const testTarget = inferTestTarget({
+    proposedAction: description,
+    expectedOutcome,
+    metadata: params.metadata,
+  });
+
+  return {
+    sourceActionType: params.actionType ?? "unknown",
+    context: normalizeLine(params.context) || undefined,
+    targetPath,
+    allowedRoot,
+    patch: normalizeLine(params.metadata?.patch) || undefined,
+    content: typeof params.metadata?.content === "string" ? params.metadata.content : undefined,
+    command: normalizeLine(params.metadata?.command) || undefined,
+    testTarget,
+  };
 }
 
 export function buildExecutionAction(params: BuildExecutionActionParams): ExecutionActionPreview {
@@ -153,20 +279,21 @@ export function buildExecutionAction(params: BuildExecutionActionParams): Execut
     trimSentence(normalizeLine(params.expectedOutcome)) ||
       "The next bounded check should narrow the likely cause without widening the execution scope.",
   );
-  const normalizedContext = normalizeLine(params.context);
+  const metadata = buildExecutionMetadata(params, description, expectedOutcome);
+  const scope =
+    params.actionType === "file-write" && metadata.allowedRoot === "web/sandbox"
+      ? "safe"
+      : classifyExecutionScope(params.actionType);
 
   return {
     id: createExecutionActionId(),
     type: classifyExecutionType(params.actionType),
-    scope: classifyExecutionScope(params.actionType),
+    scope,
     description,
     expectedOutcome,
     requiresApproval: true,
     suggestedCommand: buildSuggestedCommand(params.actionType, description),
-    metadata: {
-      sourceActionType: params.actionType ?? "unknown",
-      context: normalizedContext || undefined,
-    },
+    metadata,
   };
 }
 

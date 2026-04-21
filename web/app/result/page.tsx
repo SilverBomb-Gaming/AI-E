@@ -92,7 +92,29 @@ export default function ResultPage() {
           currentStepIndex={storedState.input?.stepIndex}
           previousOutcome={storedState.previousOutcome}
           sessionHistory={storedState.sessionHistory}
+          executionResult={storedState.executionResult}
           orchestrationState={storedState.orchestrationState}
+          onExecutionResultChange={(executionResult) => {
+            setStoredState((current) => {
+              if (!current) {
+                return current;
+              }
+
+              const nextState = {
+                ...current,
+                input: current.input
+                  ? {
+                      ...current.input,
+                      actionResult: executionResult.output?.trim() || current.input.actionResult,
+                    }
+                  : current.input,
+                executionResult,
+              } satisfies StoredAnalysisState;
+
+              window.sessionStorage.setItem(resultStorageKey, JSON.stringify(nextState));
+              return nextState;
+            });
+          }}
           onResultChange={({ result: nextResult, observation, verificationState, attemptedStep, loopTerminationStatus, actionChainState, confidenceLevel, suggestedNextAction, nextSuggestedStep }) => {
             setStoredState((current) => {
               if (!current) {
@@ -108,6 +130,7 @@ export default function ResultPage() {
                 loopTerminationStatus: loopTerminationStatus ?? null,
                 steps: current.sessionHistory,
                 action: current.result.execution,
+                executionResult: current.executionResult,
               });
               const currentOrchestration = current.orchestrationState ?? createExecutionOrchestrationState({ goal: current.input?.goal ?? "Resolve the current issue." });
               const nextPlannerAction = nextSuggestedStep ?? nextResult.proposedAction ?? nextResult.what_to_do_next[0] ?? "";
@@ -223,6 +246,7 @@ export default function ResultPage() {
                     }
                   : current.input,
                 result: nextResult,
+                executionResult: undefined,
                 refinedFromObservation: true,
                 lastObservation: observation,
                 previousOutcome: nextSession.previousOutcome,

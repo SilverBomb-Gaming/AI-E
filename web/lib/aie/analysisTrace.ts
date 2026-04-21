@@ -23,7 +23,12 @@ import {
   type ExecutionOrchestrationState,
   type ExecutionOrchestrationStatus,
 } from "./orchestrationSession";
-import type { AnalysisInput, DryRunActionType, FreeAnalysisResponse } from "./types";
+import type { AnalysisInput, DryRunActionType, ExecutionRuntimeResult, FreeAnalysisResponse } from "./types";
+import type { FailureClassification } from "./failureClassifier";
+import type { GoalCompletionStatus, GoalEvaluation } from "./goalEvaluator";
+import type { AutonomousActionFamily } from "./autonomousPlanning";
+import type { ExecutionAdapterId } from "./executionAdapters";
+import type { AutonomousRecoveryStrategy } from "./strategySwitch";
 
 export type AnalysisTraceActionChain = {
   state: "none" | "guided" | "confirmation";
@@ -47,6 +52,25 @@ export type AnalysisTraceRecord = {
   sessionId: string | null;
   stepIndex: number | null;
   goal: string | null;
+  autonomousSessionId: string | null;
+  autonomousStepIndex: number | null;
+  autonomousStatus: string | null;
+  autonomousCompletedReason: string | null;
+  autonomousGoalStatus: GoalCompletionStatus | null;
+  autonomousCompletionConfidence: GoalEvaluation["confidence"] | null;
+  autonomousPauseReason: string | null;
+  autonomousAwaitingApproval: boolean | null;
+  autonomousPendingActionType: string | null;
+  executionAdapterId: ExecutionAdapterId | null;
+  adapterContextSummary: string | null;
+  autonomousPlanningHintSummary: string | null;
+  autonomousRecentActionFamily: AutonomousActionFamily | null;
+  failureClass: FailureClassification["kind"] | null;
+  recoveryStrategy: AutonomousRecoveryStrategy | null;
+  retryCount: number | null;
+  repeatedAction: boolean | null;
+  repeatedOutput: boolean | null;
+  autonomousStopReason: string | null;
   orchestrationId: string | null;
   multiAgentSessionId: string | null;
   selfDirectionId: string | null;
@@ -74,6 +98,7 @@ export type AnalysisTraceRecord = {
   expectedOutcome: string;
   actionResult: string | null;
   executionNotes: string | null;
+  executionResult?: ExecutionRuntimeResult;
   recommendedMode: DebuggingMode | null;
   confidenceLevel: ConfidenceLevel;
   confidenceTrend: ConfidenceAlignment | null;
@@ -96,8 +121,51 @@ export type BuildAnalysisTraceRecordParams = {
   verificationState?: FollowUpVerificationState;
   previousActionChainState?: StoredActionChainState;
   executedAction?: string;
+  executionResult?: ExecutionRuntimeResult;
   orchestrationState?: ExecutionOrchestrationState;
+  autonomousSessionId?: string;
+  autonomousStepIndex?: number;
+  autonomousStatus?: string;
+  autonomousCompletedReason?: string;
+  autonomousGoalStatus?: GoalCompletionStatus;
+  autonomousCompletionConfidence?: GoalEvaluation["confidence"];
+  autonomousPauseReason?: string;
+  autonomousAwaitingApproval?: boolean;
+  autonomousPendingActionType?: string;
+  executionAdapterId?: ExecutionAdapterId;
+  adapterContextSummary?: string;
+  autonomousPlanningHintSummary?: string;
+  autonomousRecentActionFamily?: AutonomousActionFamily;
+  failureClassification?: FailureClassification;
+  recoveryStrategy?: AutonomousRecoveryStrategy;
+  retryCount?: number;
+  repeatedAction?: boolean;
+  repeatedOutput?: boolean;
+  autonomousStopReason?: string;
 };
+
+function normalizeExecutionRuntimeResult(result: ExecutionRuntimeResult | undefined): ExecutionRuntimeResult | undefined {
+  if (!result) {
+    return undefined;
+  }
+
+  const output = result.output?.trim();
+  const error = result.error?.trim();
+  const diffSummary = result.diffSummary?.trim();
+  const commandLabel = result.commandLabel?.trim();
+  const changedPaths = result.changedPaths?.map((item) => item.trim()).filter(Boolean);
+
+  return {
+    status: result.status,
+    output: output || undefined,
+    error: error || undefined,
+    changedPaths: changedPaths?.length ? changedPaths : undefined,
+    diffSummary: diffSummary || undefined,
+    exitCode: Number.isInteger(result.exitCode) ? result.exitCode : undefined,
+    commandLabel: commandLabel || undefined,
+    rollback: result.rollback,
+  };
+}
 
 export const REQUIRED_TRACE_FIELDS = [
   "input",
@@ -179,6 +247,25 @@ export function buildAnalysisTraceRecord(params: BuildAnalysisTraceRecordParams)
     sessionId: params.input.sessionId?.trim() || null,
     stepIndex: Number.isInteger(params.input.stepIndex) ? params.input.stepIndex ?? null : null,
     goal: params.input.goal?.trim() || null,
+    autonomousSessionId: params.autonomousSessionId?.trim() || null,
+    autonomousStepIndex: Number.isInteger(params.autonomousStepIndex) ? params.autonomousStepIndex ?? null : null,
+    autonomousStatus: params.autonomousStatus?.trim() || null,
+    autonomousCompletedReason: params.autonomousCompletedReason?.trim() || null,
+    autonomousGoalStatus: params.autonomousGoalStatus ?? null,
+    autonomousCompletionConfidence: params.autonomousCompletionConfidence ?? null,
+    autonomousPauseReason: params.autonomousPauseReason?.trim() || null,
+    autonomousAwaitingApproval: typeof params.autonomousAwaitingApproval === "boolean" ? params.autonomousAwaitingApproval : null,
+    autonomousPendingActionType: params.autonomousPendingActionType?.trim() || null,
+    executionAdapterId: params.executionAdapterId ?? null,
+    adapterContextSummary: params.adapterContextSummary?.trim() || null,
+    autonomousPlanningHintSummary: params.autonomousPlanningHintSummary?.trim() || null,
+    autonomousRecentActionFamily: params.autonomousRecentActionFamily ?? null,
+    failureClass: params.failureClassification?.kind ?? null,
+    recoveryStrategy: params.recoveryStrategy ?? null,
+    retryCount: Number.isInteger(Number(params.retryCount)) ? Number(params.retryCount) : null,
+    repeatedAction: typeof params.repeatedAction === "boolean" ? params.repeatedAction : null,
+    repeatedOutput: typeof params.repeatedOutput === "boolean" ? params.repeatedOutput : null,
+    autonomousStopReason: params.autonomousStopReason?.trim() || null,
     orchestrationId: params.orchestrationState?.orchestrationId?.trim() || null,
     multiAgentSessionId: params.orchestrationState?.multiAgentSessionId?.trim() || null,
     selfDirectionId: selfDirectionState?.selfDirectionId ?? null,
@@ -206,6 +293,7 @@ export function buildAnalysisTraceRecord(params: BuildAnalysisTraceRecordParams)
     expectedOutcome: proposal.expectedOutcome,
     actionResult: params.input.actionResult?.trim() || params.lastObservation?.trim() || null,
     executionNotes: latestExecutorEntry?.executionNotes ?? (params.orchestrationState?.executorState.executionNotes || null),
+    executionResult: normalizeExecutionRuntimeResult(params.executionResult),
     recommendedMode: signals.recommendedDebuggingMode,
     confidenceLevel: signals.confidenceLevel,
     confidenceTrend: signals.confidenceAlignment,

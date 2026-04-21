@@ -15,10 +15,53 @@ export type DryRunActionType =
   | "code-change"
   | "tuning-pass"
   | "design-iteration"
-  | "validation-check";
+  | "validation-check"
+  | "file-write"
+  | "test-run";
 
-export type ExecutionActionType = "read" | "write" | "inspect" | "run" | "unknown";
+export type ExecutableDryRunActionType = Extract<DryRunActionType, "inspection" | "validation-check" | "file-write" | "test-run">;
+
+export type ExecutionActionType =
+  | "read"
+  | "write"
+  | "inspect"
+  | "run"
+  | "inspection"
+  | "validation-check"
+  | "file-write"
+  | "test-run"
+  | "unknown";
 export type ExecutionActionScope = "safe" | "caution" | "dangerous";
+
+export type ExecutionRollback = {
+  type: "restore-file";
+  targetPath: string;
+  previousContent: string;
+  snapshotId: string;
+  createdAt: string;
+};
+
+export type ExecutionActionMetadata = {
+  sourceActionType?: DryRunActionType | "unknown";
+  context?: string;
+  targetPath?: string;
+  allowedRoot?: string;
+  patch?: string;
+  content?: string;
+  command?: string;
+  testTarget?: string;
+};
+
+export type ExecutionRuntimeResult = {
+  status: "success" | "failed" | "blocked";
+  output?: string;
+  error?: string;
+  changedPaths?: string[];
+  diffSummary?: string;
+  exitCode?: number;
+  commandLabel?: string;
+  rollback?: ExecutionRollback;
+};
 
 export type ExecutionActionPreview = {
   id: string;
@@ -28,7 +71,7 @@ export type ExecutionActionPreview = {
   expectedOutcome: string;
   requiresApproval: true;
   suggestedCommand?: string;
-  metadata: Record<string, unknown>;
+  metadata: ExecutionActionMetadata;
 };
 
 export type FreeAnalysisResponse = {

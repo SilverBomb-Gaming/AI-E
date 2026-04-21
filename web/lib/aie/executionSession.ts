@@ -1,4 +1,4 @@
-import type { ExecutionActionPreview } from "./types";
+import type { ExecutionActionPreview, ExecutionRuntimeResult } from "./types";
 
 export type ExecutionSessionVerificationState = "confirmed" | "falsified" | "inconclusive";
 export type ExecutionSessionLoopStatus = "resolved" | "converging" | "stuck" | null;
@@ -10,6 +10,7 @@ export type ExecutionSessionActionRecord = {
   result?: string;
   type?: ExecutionActionPreview["type"];
   scope?: ExecutionActionPreview["scope"];
+  executionResult?: ExecutionRuntimeResult;
 };
 
 export type ExecutionSessionStep = {
@@ -20,7 +21,23 @@ export type ExecutionSessionStep = {
   diagnosis: string;
   loopTerminationStatus: ExecutionSessionLoopStatus;
   action?: ExecutionSessionActionRecord;
+  executionResult?: ExecutionRuntimeResult;
 };
+
+function normalizeExecutionRuntimeResult(result: ExecutionRuntimeResult | undefined): ExecutionRuntimeResult | undefined {
+  if (!result) {
+    return undefined;
+  }
+
+  const output = normalizeText(result.output);
+  const error = normalizeText(result.error);
+
+  return {
+    status: result.status,
+    output: output || undefined,
+    error: error || undefined,
+  };
+}
 
 function normalizeText(value: string | null | undefined): string {
   return String(value ?? "")
@@ -63,9 +80,10 @@ export function summarizeExecutionSessionStep(step: ExecutionSessionStep): strin
         ? "falsified"
         : "remained inconclusive";
   const statusLabel = step.loopTerminationStatus ? ` (${step.loopTerminationStatus})` : "";
+  const executionLabel = step.executionResult ? ` Execution ${step.executionResult.status}.` : "";
 
   return trimSentence(
-    `Step ${step.stepIndex} ${verificationLabel}${statusLabel}: ${step.action?.description || step.attemptedStep}. Outcome: ${step.actionResult}`,
+    `Step ${step.stepIndex} ${verificationLabel}${statusLabel}: ${step.action?.description || step.attemptedStep}. Outcome: ${step.actionResult}.${executionLabel}`,
     220,
   );
 }
@@ -79,7 +97,9 @@ export function advanceExecutionSession(params: {
   loopTerminationStatus: ExecutionSessionLoopStatus;
   steps?: ExecutionSessionStep[];
   action?: ExecutionActionPreview;
+  executionResult?: ExecutionRuntimeResult;
 }) {
+  const normalizedExecutionResult = normalizeExecutionRuntimeResult(params.executionResult);
   const completedStep: ExecutionSessionStep = {
     stepIndex: Math.max(1, Math.floor(params.currentStepIndex)),
     attemptedStep: normalizeText(params.attemptedStep) || "Follow the current proposed action and compare the outcome.",
@@ -87,14 +107,16 @@ export function advanceExecutionSession(params: {
     verificationState: params.verificationState,
     diagnosis: normalizeText(params.diagnosis),
     loopTerminationStatus: params.loopTerminationStatus,
+    executionResult: normalizedExecutionResult,
     action: params.action
       ? {
           id: params.action.id,
           description: normalizeText(params.action.description) || normalizeText(params.attemptedStep),
           approved: true,
-          result: normalizeText(params.actionResult) || undefined,
+          result: normalizedExecutionResult?.output || normalizeText(params.actionResult) || undefined,
           type: params.action.type,
           scope: params.action.scope,
+          executionResult: normalizedExecutionResult,
         }
       : undefined,
   };

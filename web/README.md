@@ -88,16 +88,147 @@ Execution preview fields include:
 - expected outcome
 - approval-required status
 
-This is intentionally preparation-only. Real execution remains out of scope until the later controlled execution phase.
+This bridge now supports a narrow controlled execution phase for approved actions:
+
+- safe inspections remain read-only
+- safe validation checks still use bounded read-only evidence
+- sandbox-scoped file writes may apply whole-file content inside approved roots such as `web/sandbox`
+- test execution is limited to a fixed whitelist: `npm test`, `npm run test:trace`, and `npm run build`
+
+Execution results can now surface additive metadata such as:
+
+- changed paths
+- diff summary
+- command label and exit code
+- rollback snapshot metadata for overwrite-style file writes
+
+## Recovery intelligence
+
+AI-E now adds bounded recovery logic on top of the same autonomous loop and execution bridge.
+
+- failures are classified as `environment`, `logic`, `constraint`, `transient`, or `unknown`
+- same-action retries are limited to a small bounded per-action budget
+- blocked safety and path-policy failures are never retried
+- logic-style failures prefer rerouting or validation before another write
+- duplicate action and duplicate output detection stop useless loop churn
+
+Current bounded recovery strategies:
+
+- `retry-same-action`
+- `reroute-analysis`
+- `narrow-scope`
+- `validate-before-write`
+- `stop`
+
+Autonomous sessions and traces can now preserve additive recovery metadata such as:
+
+- failure class
+- recovery strategy
+- retry count
+- repeated-action and repeated-output flags
+- explicit autonomous stop reasons
+
+## Deeper autonomous continuation
+
+AI-E now distinguishes bounded progress from true goal completion and can continue a stored autonomous session across multiple rounds.
+
+Goal status meanings:
+
+- `incomplete`: not enough bounded evidence yet
+- `progressing`: a step made progress, but the top-level outcome is still unconfirmed
+- `needs-verification`: the latest result looks promising, but AI-E keeps a conservative verification step before claiming completion unless the safe bounded evidence already answers a small read-only goal strongly enough to stop
+- `complete`: the expected bounded outcome is directly confirmed, including short safe read-only checks whose output already answers the goal
+- `blocked`: the loop is paused at a bounded wall such as approval or a hard safety boundary
+
+Completion confidence remains additive and conservative:
+
+- `low`: indirect or ambiguous evidence only
+- `medium`: useful progress or partial alignment, but not enough to close the goal
+- `high`: direct alignment between the expected outcome and the latest bounded evidence
+
+Phase 4E.1 small-goal closure rules:
+
+- short read-only goals such as file existence checks, bounded summaries, and bounded test confirmations can close without forcing a broader follow-up when the latest safe output already answers the goal
+- adapter-aware closure scoring stays additive and uses the same runner metadata instead of a separate headless-only heuristic
+- ambiguous read-only output stays open and conservative
+- AI-E suppresses approval drift when a broader next step is outside the original bounded goal and prior safe evidence already satisfied that goal
+
+Autonomous session continuity now includes:
+
+- persisted session states: `active`, `paused`, `awaiting-approval`, `blocked`, `completed`, `failed`, `max-step-limit`
+- stored pending action metadata when a caution-scoped next step needs explicit approval
+- resumable continuation through `POST /api/autonomous/resume/[id]`
+- recent-session inspection through `GET /api/autonomous/sessions`
+
+Approval flow:
+
+- AI-E does not mark approval-gated next steps as a generic failure
+- the session moves to `awaiting-approval`
+- the pending action is visible in the autonomous UI and persisted in session storage
+- when approval is granted, AI-E resumes from stored state and executes the pending bounded action before planning the next step
+
+Long-horizon planning depth stays integrated into the current runner:
+
+- recent diagnoses, action families, recoveries, changed paths, and validation outcomes are folded back into the next bounded reasoning step
+- AI-E prefers validating recent writes before broadening again
+- AI-E avoids repeating just-failed action families unless the evidence materially changed
+
+## Phase 4E execution adapters
+
+AI-E now routes bounded execution through adapter selection instead of a single hard-coded runtime switch.
+
+Current adapters:
+
+- `web-sandbox`: browser-driven inspection and validation steps
+- `repo-filesystem`: bounded repo-local file writes under the existing path policy
+- `repo-tests`: whitelisted repo-local test and build commands
+- `headless-local`: headless inspection and validation runs that still use the same runner/session contracts
+
+Adapter behavior remains bounded:
+
+- no arbitrary shell strings from model output
+- file writes stay policy-bound and approval-aware
+- test execution stays on the whitelist
+- adapter identity is stored in autonomous session metadata and rendered in the autonomous UI
+
+## Phase 4E headless mode
+
+AI-E can now run the same bounded autonomous session loop without the browser UI.
+
+Example:
+
+- `npx tsx headless_autonomy.ts --goal "Confirm the safe validation path can reach a healthy bounded result." --maxSteps 4`
+
+Headless mode uses:
+
+- the same autonomous session store
+- the same `runAutonomousSession(...)` runner
+- the same adapter-backed execution runtime
+- the same approval and safety boundaries
+
+This means the same small safe-goal closure behavior applies in both headless and browser/API flows.
+
+## Phase 4E sequencing depth
+
+The autonomous loop now records and surfaces deeper sequencing metadata:
+
+- action family lane per step (`write`, `test`, `validate`, `inspect`)
+- selected execution adapter per step
+- adapter context summary
+- recent planning hint summary derived from prior steps
+
+This keeps broader bounded work inspectable without creating a second planner or a separate headless autonomy stack.
 
 ## Approval model
 
-The current execution bridge is preview-only.
+The execution bridge remains approval-gated and bounded.
 
 - AI-E may suggest a bounded action
 - AI-E may classify the action as safe, caution, or dangerous
-- AI-E never auto-executes the action
-- the user must approve and perform any real-world step outside the model in this phase
+- AI-E only auto-executes safe bounded actions inside the existing autonomous loop
+- manual execution still requires explicit approval from the result surface
+- broader file writes outside safe sandbox roots still pause autonomous execution
+- arbitrary shell commands, Git operations, unrestricted filesystem writes, and repo-wide edits remain blocked
 
 Execution history is carried forward only through the existing context string and session storage flow. The `AnalysisInput` shape and trace schema remain unchanged.
 

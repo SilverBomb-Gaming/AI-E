@@ -11,7 +11,7 @@ import {
   recordExecutorOutcome,
   recordPlannerHandoff,
 } from "./orchestrationSession";
-import type { AnalysisInput, FreeAnalysisResponse } from "./types";
+import type { AnalysisInput, ExecutionRuntimeResult, FreeAnalysisResponse } from "./types";
 
 function makeInput(problemDescription: string, overrides: Partial<AnalysisInput> = {}): AnalysisInput {
   return {
@@ -48,6 +48,23 @@ function buildTrace(params: {
   return buildAnalysisTraceRecord(params);
 }
 
+function makeExecutionResult(overrides: Partial<ExecutionRuntimeResult> = {}): ExecutionRuntimeResult {
+  return {
+    status: "success",
+    output: "Sandbox file write completed.",
+    changedPaths: ["web/sandbox/trace-note.txt"],
+    diffSummary: "Created new file with 1 lines.",
+    rollback: {
+      type: "restore-file",
+      targetPath: "web/sandbox/trace-note.txt",
+      previousContent: "before",
+      snapshotId: "rollback-123",
+      createdAt: new Date().toISOString(),
+    },
+    ...overrides,
+  };
+}
+
 test("fresh traces include the full required contract", () => {
   const trace = buildTrace({
     input: makeInput("Player movement breaks after changing the Animator speed sync."),
@@ -68,6 +85,19 @@ test("fresh traces include the full required contract", () => {
   assert.equal(trace.sessionId, "test-session");
   assert.equal(trace.stepIndex, 1);
   assert.equal(trace.goal, "Confirm whether the Animator handoff is the leading cause.");
+  assert.equal(trace.autonomousSessionId, null);
+  assert.equal(trace.autonomousStepIndex, null);
+  assert.equal(trace.autonomousStatus, null);
+  assert.equal(trace.autonomousCompletedReason, null);
+  assert.equal(trace.autonomousGoalStatus, null);
+  assert.equal(trace.autonomousCompletionConfidence, null);
+  assert.equal(trace.autonomousPauseReason, null);
+  assert.equal(trace.autonomousAwaitingApproval, null);
+  assert.equal(trace.autonomousPendingActionType, null);
+  assert.equal(trace.executionAdapterId, null);
+  assert.equal(trace.adapterContextSummary, null);
+  assert.equal(trace.autonomousPlanningHintSummary, null);
+  assert.equal(trace.autonomousRecentActionFamily, null);
   assert.equal(trace.orchestrationId, null);
   assert.equal(trace.multiAgentSessionId, null);
   assert.equal(trace.selfDirectionId, null);
@@ -189,6 +219,98 @@ test("orchestrated traces capture orchestration identifiers, handoffs, and plann
   assert.deepEqual(listMissingAnalysisTraceFields(trace), []);
 });
 
+test("autonomous traces preserve optional autonomous metadata without changing the required contract", () => {
+  const trace = buildTrace({
+    input: makeInput("Confirm the safe bounded validation output for the autonomous loop.", {
+      sessionId: "autonomous-session-input",
+      stepIndex: 2,
+      actionResult: "Validation now passes and the status banner is healthy.",
+    }),
+    result: makeResult({
+      what_happened: "The autonomous step matched the expected validation output and satisfied the bounded goal.",
+      what_to_do_next: ["Treat the bounded autonomous session as complete."],
+    }),
+    autonomousSessionId: "autonomous-session-123",
+    autonomousStepIndex: 2,
+    autonomousStatus: "completed",
+    autonomousCompletedReason: "The latest bounded validation satisfied the autonomous goal.",
+    autonomousGoalStatus: "complete",
+    autonomousCompletionConfidence: "high",
+    executionAdapterId: "web-sandbox",
+    adapterContextSummary: "adapter=web-sandbox | mode=web",
+    autonomousPlanningHintSummary: "Recent lane summary: validate:healthy result. Preferred next lane: validate.",
+    autonomousRecentActionFamily: "validate",
+  });
+
+  assert.equal(trace.autonomousSessionId, "autonomous-session-123");
+  assert.equal(trace.autonomousStepIndex, 2);
+  assert.equal(trace.autonomousStatus, "completed");
+  assert.match(trace.autonomousCompletedReason ?? "", /satisfied the autonomous goal/i);
+  assert.equal(trace.autonomousGoalStatus, "complete");
+  assert.equal(trace.autonomousCompletionConfidence, "high");
+  assert.equal(trace.executionAdapterId, "web-sandbox");
+  assert.match(trace.adapterContextSummary ?? "", /adapter=web-sandbox/i);
+  assert.match(trace.autonomousPlanningHintSummary ?? "", /Preferred next lane/i);
+  assert.equal(trace.autonomousRecentActionFamily, "validate");
+  assert.deepEqual(listMissingAnalysisTraceFields(trace), []);
+});
+
+test("autonomous traces preserve pause and pending-approval metadata additively", () => {
+  const trace = buildTrace({
+    input: makeInput("Pause the bounded autonomous session until approval is granted."),
+    result: makeResult({
+      what_happened: "The autonomous session paused awaiting approval for the pending caution write.",
+    }),
+    autonomousSessionId: "autonomous-session-awaiting-approval",
+    autonomousStepIndex: 1,
+    autonomousStatus: "awaiting-approval",
+    autonomousPauseReason: "Explicit approval is required for the pending caution write.",
+    autonomousAwaitingApproval: true,
+    autonomousPendingActionType: "file-write",
+    autonomousGoalStatus: "blocked",
+    autonomousCompletionConfidence: "low",
+  });
+
+  assert.equal(trace.autonomousStatus, "awaiting-approval");
+  assert.equal(trace.autonomousPauseReason, "Explicit approval is required for the pending caution write.");
+  assert.equal(trace.autonomousAwaitingApproval, true);
+  assert.equal(trace.autonomousPendingActionType, "file-write");
+  assert.equal(trace.autonomousGoalStatus, "blocked");
+});
+
+test("trace records preserve bounded execution result metadata additively", () => {
+  const trace = buildTrace({
+    input: makeInput("Confirm the sandbox write metadata reaches the trace.", {
+      actionResult: "Sandbox file write completed.",
+    }),
+    result: makeResult({
+      what_happened: "The sandbox write completed successfully.",
+      what_to_do_next: ["Run the bounded trace validation next."],
+    }),
+    executionResult: makeExecutionResult(),
+    failureClassification: {
+      kind: "logic",
+      retryable: false,
+      severity: "medium",
+      reason: "The bounded validation still failed.",
+    },
+    recoveryStrategy: "reroute-analysis",
+    retryCount: 1,
+    repeatedAction: false,
+    repeatedOutput: true,
+    autonomousStopReason: "The loop repeated the same output and stopped.",
+  });
+
+  assert.deepEqual(trace.executionResult?.changedPaths, ["web/sandbox/trace-note.txt"]);
+  assert.match(trace.executionResult?.diffSummary ?? "", /Created new file/i);
+  assert.equal(trace.executionResult?.rollback?.snapshotId, "rollback-123");
+  assert.equal(trace.failureClass, "logic");
+  assert.equal(trace.recoveryStrategy, "reroute-analysis");
+  assert.equal(trace.retryCount, 1);
+  assert.equal(trace.repeatedOutput, true);
+  assert.match(trace.autonomousStopReason ?? "", /same output/i);
+});
+
 test("pending commitment traces expose a pending validation state", () => {
   const trace = buildTrace({
     input: makeInput(
@@ -304,4 +426,27 @@ test("follow-up traces preserve action results for falsified, confirmed, and par
   assert.ok(["high", "medium", "low"].includes(falsified.confidenceLevel));
   assert.ok(["high", "medium", "low"].includes(confirmed.confidenceLevel));
   assert.ok(["high", "medium", "low"].includes(partial.confidenceLevel));
+});
+
+test("traces retain optional execution results without changing the required contract", () => {
+  const trace = buildTrace({
+    input: makeInput("Validate whether the previewed safe inspection can populate the next follow-up loop.", {
+      actionResult: "Inspection completed in read-only mode. Filesystem findings: web/components/AnalysisResult.tsx (file)",
+      stepIndex: 2,
+    }),
+    isRefined: true,
+    verificationState: "confirmed",
+    lastObservation: "Inspection completed in read-only mode. Filesystem findings: web/components/AnalysisResult.tsx (file)",
+    executionResult: {
+      status: "success",
+      output: "Inspection completed in read-only mode. Filesystem findings: web/components/AnalysisResult.tsx (file)",
+    },
+    result: makeResult({
+      what_happened: "The bounded inspection found the target file and returned a safe execution result.",
+    }),
+  });
+
+  assert.deepEqual(listMissingAnalysisTraceFields(trace), []);
+  assert.equal(trace.executionResult?.status, "success");
+  assert.match(trace.executionResult?.output ?? "", /AnalysisResult\.tsx/i);
 });
