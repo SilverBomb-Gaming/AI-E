@@ -4,16 +4,24 @@ import type { ExecutionActionPreview } from "./types";
 
 export type TaskEnvelopeStatus = "pending" | "assigned" | "running" | "completed" | "failed" | "blocked";
 
+export type TaskDispatchTransportStatus = "pending" | "accepted" | "rejected" | "delivered" | "failed" | "completed";
+
 export type TaskEnvelopeTransitionMetadata = {
   assignedNodeId?: string;
   statusReason?: string;
   claimToken?: string;
   runnerMode?: ExecutionNodeMode;
   dispatchMessageId?: string;
+  dispatchAckMessageId?: string;
+  dispatchResultMessageId?: string;
   dispatchTargetNodeId?: string;
   dispatchProtocolVersion?: "1";
   dispatchStatusSummary?: string;
+  dispatchAuthSummary?: string;
+  dispatchTransportStatus?: TaskDispatchTransportStatus;
   remoteDispatchPlanned?: boolean;
+  dispatchReceivedAt?: string;
+  dispatchCompletedAt?: string;
 };
 
 export type TaskEnvelope = {
@@ -29,14 +37,20 @@ export type TaskEnvelope = {
   claimToken?: string;
   runnerMode?: ExecutionNodeMode;
   dispatchMessageId?: string;
+  dispatchAckMessageId?: string;
+  dispatchResultMessageId?: string;
   dispatchTargetNodeId?: string;
   dispatchProtocolVersion?: "1";
   dispatchStatusSummary?: string;
+  dispatchAuthSummary?: string;
+  dispatchTransportStatus?: TaskDispatchTransportStatus;
   remoteDispatchPlanned?: boolean;
   createdAt: string;
   claimedAt?: string;
   assignedAt?: string;
   startedAt?: string;
+  dispatchReceivedAt?: string;
+  dispatchCompletedAt?: string;
   completedAt?: string;
   failedAt?: string;
   blockedAt?: string;
@@ -94,6 +108,21 @@ function normalizeExecutionNodeMode(value: unknown): ExecutionNodeMode | undefin
   return undefined;
 }
 
+function normalizeDispatchTransportStatus(value: unknown): TaskDispatchTransportStatus | undefined {
+  if (
+    value === "pending" ||
+    value === "accepted" ||
+    value === "rejected" ||
+    value === "delivered" ||
+    value === "failed" ||
+    value === "completed"
+  ) {
+    return value;
+  }
+
+  return undefined;
+}
+
 function assertTaskTransitionAllowed(envelope: TaskEnvelope, nextStatus: TaskEnvelopeStatus): void {
   const allowedTransitions: Record<TaskEnvelopeStatus, TaskEnvelopeStatus[]> = {
     pending: ["assigned", "blocked"],
@@ -125,12 +154,18 @@ function applyTaskTransition(
   const claimToken = normalizeText(metadata?.claimToken) || envelope.claimToken;
   const runnerMode = metadata?.runnerMode ?? envelope.runnerMode;
   const dispatchMessageId = normalizeText(metadata?.dispatchMessageId) || envelope.dispatchMessageId;
+  const dispatchAckMessageId = normalizeText(metadata?.dispatchAckMessageId) || envelope.dispatchAckMessageId;
+  const dispatchResultMessageId = normalizeText(metadata?.dispatchResultMessageId) || envelope.dispatchResultMessageId;
   const dispatchTargetNodeId = normalizeText(metadata?.dispatchTargetNodeId) || envelope.dispatchTargetNodeId;
   const dispatchProtocolVersion = metadata?.dispatchProtocolVersion ?? envelope.dispatchProtocolVersion;
   const dispatchStatusSummary = normalizeText(metadata?.dispatchStatusSummary) || envelope.dispatchStatusSummary;
+  const dispatchAuthSummary = normalizeText(metadata?.dispatchAuthSummary) || envelope.dispatchAuthSummary;
+  const dispatchTransportStatus = metadata?.dispatchTransportStatus ?? envelope.dispatchTransportStatus;
   const remoteDispatchPlanned = typeof metadata?.remoteDispatchPlanned === "boolean"
     ? metadata.remoteDispatchPlanned
     : envelope.remoteDispatchPlanned;
+  const dispatchReceivedAt = normalizeText(metadata?.dispatchReceivedAt) || envelope.dispatchReceivedAt;
+  const dispatchCompletedAt = normalizeText(metadata?.dispatchCompletedAt) || envelope.dispatchCompletedAt;
   const claimedAt = status === "assigned" && !envelope.claimedAt ? timestamp : envelope.claimedAt;
   const completedAt = status === "completed" && !envelope.completedAt ? timestamp : envelope.completedAt;
   const failedAt = status === "failed" && !envelope.failedAt ? timestamp : envelope.failedAt;
@@ -144,13 +179,19 @@ function applyTaskTransition(
     claimToken: claimToken || undefined,
     runnerMode,
     dispatchMessageId: dispatchMessageId || undefined,
+    dispatchAckMessageId: dispatchAckMessageId || undefined,
+    dispatchResultMessageId: dispatchResultMessageId || undefined,
     dispatchTargetNodeId: dispatchTargetNodeId || undefined,
     dispatchProtocolVersion,
     dispatchStatusSummary: dispatchStatusSummary || undefined,
+    dispatchAuthSummary: dispatchAuthSummary || undefined,
+    dispatchTransportStatus,
     remoteDispatchPlanned,
     claimedAt,
     assignedAt: status === "assigned" && !envelope.assignedAt ? timestamp : envelope.assignedAt,
     startedAt: status === "running" && !envelope.startedAt ? timestamp : envelope.startedAt,
+    dispatchReceivedAt: dispatchReceivedAt || undefined,
+    dispatchCompletedAt: dispatchCompletedAt || undefined,
     completedAt,
     failedAt,
     blockedAt,
@@ -176,14 +217,20 @@ export function createTaskEnvelope(params: CreateTaskEnvelopeParams): TaskEnvelo
     claimToken: undefined,
     runnerMode: undefined,
     dispatchMessageId: undefined,
+    dispatchAckMessageId: undefined,
+    dispatchResultMessageId: undefined,
     dispatchTargetNodeId: undefined,
     dispatchProtocolVersion: undefined,
     dispatchStatusSummary: undefined,
+    dispatchAuthSummary: undefined,
+    dispatchTransportStatus: undefined,
     remoteDispatchPlanned: undefined,
     createdAt: timestamp,
     claimedAt: undefined,
     assignedAt: undefined,
     startedAt: undefined,
+    dispatchReceivedAt: undefined,
+    dispatchCompletedAt: undefined,
     completedAt: undefined,
     failedAt: undefined,
     blockedAt: undefined,
@@ -341,14 +388,20 @@ export function normalizeTaskEnvelope(value: unknown): TaskEnvelope | null {
     claimToken: normalizeText(typeof source.claimToken === "string" ? source.claimToken : "") || undefined,
     runnerMode: normalizeExecutionNodeMode(source.runnerMode),
     dispatchMessageId: normalizeText(typeof source.dispatchMessageId === "string" ? source.dispatchMessageId : "") || undefined,
+    dispatchAckMessageId: normalizeText(typeof source.dispatchAckMessageId === "string" ? source.dispatchAckMessageId : "") || undefined,
+    dispatchResultMessageId: normalizeText(typeof source.dispatchResultMessageId === "string" ? source.dispatchResultMessageId : "") || undefined,
     dispatchTargetNodeId: normalizeText(typeof source.dispatchTargetNodeId === "string" ? source.dispatchTargetNodeId : "") || undefined,
     dispatchProtocolVersion: source.dispatchProtocolVersion === "1" ? "1" : undefined,
     dispatchStatusSummary: normalizeText(typeof source.dispatchStatusSummary === "string" ? source.dispatchStatusSummary : "") || undefined,
+    dispatchAuthSummary: normalizeText(typeof source.dispatchAuthSummary === "string" ? source.dispatchAuthSummary : "") || undefined,
+    dispatchTransportStatus: normalizeDispatchTransportStatus(source.dispatchTransportStatus),
     remoteDispatchPlanned: typeof source.remoteDispatchPlanned === "boolean" ? source.remoteDispatchPlanned : undefined,
     createdAt,
     claimedAt: normalizeText(typeof source.claimedAt === "string" ? source.claimedAt : "") || undefined,
     assignedAt: normalizeText(typeof source.assignedAt === "string" ? source.assignedAt : "") || undefined,
     startedAt: normalizeText(typeof source.startedAt === "string" ? source.startedAt : "") || undefined,
+    dispatchReceivedAt: normalizeText(typeof source.dispatchReceivedAt === "string" ? source.dispatchReceivedAt : "") || undefined,
+    dispatchCompletedAt: normalizeText(typeof source.dispatchCompletedAt === "string" ? source.dispatchCompletedAt : "") || undefined,
     completedAt: normalizeText(typeof source.completedAt === "string" ? source.completedAt : "") || undefined,
     failedAt: normalizeText(typeof source.failedAt === "string" ? source.failedAt : "") || undefined,
     blockedAt: normalizeText(typeof source.blockedAt === "string" ? source.blockedAt : "") || undefined,
@@ -364,7 +417,11 @@ export function summarizeTaskEnvelope(envelope: TaskEnvelope): string {
     envelope.assignedNodeId ? `node=${envelope.assignedNodeId}` : "node=unassigned",
     envelope.dispatchTargetNodeId ? `dispatchTarget=${envelope.dispatchTargetNodeId}` : "",
     envelope.dispatchMessageId ? `dispatch=${envelope.dispatchMessageId}` : "",
+    envelope.dispatchAckMessageId ? `ack=${envelope.dispatchAckMessageId}` : "",
+    envelope.dispatchResultMessageId ? `result=${envelope.dispatchResultMessageId}` : "",
     envelope.requestedCapabilities.length ? `caps=${envelope.requestedCapabilities.join(",")}` : "caps=none",
+    envelope.dispatchTransportStatus ? `transport=${envelope.dispatchTransportStatus}` : "",
+    envelope.dispatchAuthSummary ? `auth=${envelope.dispatchAuthSummary}` : "",
     envelope.dispatchStatusSummary ? `dispatchStatus=${envelope.dispatchStatusSummary}` : "",
     envelope.statusReason ? `reason=${envelope.statusReason}` : "",
   ].filter(Boolean).join(" | ");

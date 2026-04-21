@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { createDispatchAuthToken } from "./dispatchAuth";
 import {
   createTaskDispatchAck,
   createTaskDispatchError,
@@ -11,6 +12,12 @@ import {
 } from "./dispatchMessages";
 
 test("dispatchMessages normalize request payloads and summarize them", () => {
+  const authToken = createDispatchAuthToken({
+    sourceNodeId: "aie-node-local-default",
+    targetNodeId: "aie-node-local-default",
+    taskId: "dispatch-action-1",
+    sessionId: "session-dispatch-action-1",
+  });
   const request = createTaskDispatchRequest({
     action: {
       id: "dispatch-action-1",
@@ -25,16 +32,19 @@ test("dispatchMessages normalize request payloads and summarize them", () => {
     },
     requestedCapabilities: ["validation-check", "repo-scan"],
     assignedNodeId: "aie-node-local-default",
+    authToken,
     approvalState: {
       requiresApproval: true,
       approved: true,
     },
     queueStateSummary: "task=dispatch-action-1 status=assigned",
+    dispatchAuthSummary: "auth=aie-node-local-default->aie-node-local-default | scope=local-lab | valid=true",
     remoteDispatchPlanned: true,
   });
 
   assert.equal(validateDispatchPayloadShape("task-dispatch-request", request), true);
   assert.match(summarizeDispatchPayload("task-dispatch-request", request), /type=request/i);
+  assert.equal(request.authToken.sourceNodeId, "aie-node-local-default");
   assert.equal(request.remoteDispatchPlanned, true);
 });
 

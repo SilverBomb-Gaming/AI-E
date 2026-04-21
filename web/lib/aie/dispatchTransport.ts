@@ -14,12 +14,57 @@ import {
   type TaskDispatchRequestPayload,
   type TaskDispatchResultPayload,
 } from "./dispatchMessages";
+import type { AutonomousSession } from "./autonomousSession";
+import { handleDispatchRequest, type DispatchReceiverDependencies, type DispatchReceiverResult } from "./dispatchReceiver";
+import type { TaskEnvelope } from "./taskEnvelope";
 
 export type SimulatedDispatchRoundTrip = {
   request: DispatchEnvelope<TaskDispatchRequestPayload>;
   ack: DispatchEnvelope<TaskDispatchAckPayload>;
   result?: DispatchEnvelope<TaskDispatchResultPayload>;
   error?: DispatchEnvelope<TaskDispatchErrorPayload>;
+};
+
+export type DispatchTransportStatus = "accepted" | "rejected" | "delivered" | "failed";
+
+export type DispatchTransportRequestResult = {
+  status: DispatchTransportStatus;
+  request: DispatchEnvelope<TaskDispatchRequestPayload>;
+  ack?: DispatchEnvelope<TaskDispatchAckPayload>;
+  result?: DispatchEnvelope<TaskDispatchResultPayload>;
+  error?: DispatchEnvelope<TaskDispatchErrorPayload>;
+  rawRequest: string;
+  rawAck?: string;
+  rawResult?: string;
+  rawError?: string;
+  task?: TaskEnvelope | null;
+  session?: AutonomousSession | null;
+  authSummary?: string;
+  reason?: string;
+};
+
+export type LocalControlledTransportContext = {
+  runtimeMode?: "web" | "headless" | "local";
+  cwd?: string;
+  allowedRoots?: string[];
+  maxSteps?: number;
+};
+
+export type DispatchTransport = {
+  sendDispatchRequest: (params: {
+    request: DispatchEnvelope<TaskDispatchRequestPayload>;
+    context?: LocalControlledTransportContext;
+    dependencies: DispatchReceiverDependencies;
+  }) => Promise<DispatchTransportRequestResult>;
+  receiveDispatchRequest: (params: {
+    request?: DispatchEnvelope<TaskDispatchRequestPayload>;
+    rawRequest?: string;
+    context?: LocalControlledTransportContext;
+    dependencies: DispatchReceiverDependencies;
+  }) => Promise<DispatchReceiverResult>;
+  sendDispatchAck: (envelope: DispatchEnvelope<TaskDispatchAckPayload>) => Promise<string>;
+  sendDispatchResult: (envelope: DispatchEnvelope<TaskDispatchResultPayload>) => Promise<string>;
+  sendDispatchError: (envelope: DispatchEnvelope<TaskDispatchErrorPayload>) => Promise<string>;
 };
 
 export async function sendDispatchMessage<TPayload>(envelope: DispatchEnvelope<TPayload>): Promise<string> {
@@ -37,6 +82,80 @@ export async function receiveDispatchMessage(raw: string): Promise<DispatchEnvel
   }
 
   return envelope;
+}
+
+export async function sendDispatchAck(envelope: DispatchEnvelope<TaskDispatchAckPayload>): Promise<string> {
+  if (envelope.messageType !== "task-dispatch-ack") {
+    throw new Error("Only acknowledgment envelopes can be sent through sendDispatchAck.");
+  }
+
+  return sendDispatchMessage(envelope);
+}
+
+export async function sendDispatchResult(envelope: DispatchEnvelope<TaskDispatchResultPayload>): Promise<string> {
+  if (envelope.messageType !== "task-dispatch-result") {
+    throw new Error("Only result envelopes can be sent through sendDispatchResult.");
+  }
+
+  return sendDispatchMessage(envelope);
+}
+
+export async function sendDispatchError(envelope: DispatchEnvelope<TaskDispatchErrorPayload>): Promise<string> {
+  if (envelope.messageType !== "task-dispatch-error") {
+    throw new Error("Only error envelopes can be sent through sendDispatchError.");
+  }
+
+  return sendDispatchMessage(envelope);
+}
+
+export function createLocalControlledDispatchTransport(): DispatchTransport {
+  return {
+    async sendDispatchRequest(params) {
+      const rawRequest = await sendDispatchMessage(params.request);
+      const received = await handleDispatchRequest({
+        request: params.request,
+        rawRequest,
+        executionContext: params.context,
+        dependencies: params.dependencies,
+      });
+      const rawAck = received.ack ? await sendDispatchAck(received.ack as DispatchEnvelope<TaskDispatchAckPayload>) : undefined;
+      const rawResult = received.result
+        ? await sendDispatchResult(received.result as DispatchEnvelope<TaskDispatchResultPayload>)
+        : undefined;
+      const rawError = received.error
+        ? await sendDispatchError(received.error as DispatchEnvelope<TaskDispatchErrorPayload>)
+        : undefined;
+
+      return {
+        status: received.status === "accepted"
+          ? (received.result ? "delivered" : "accepted")
+          : received.status,
+        request: received.request,
+        ack: received.ack as DispatchEnvelope<TaskDispatchAckPayload>,
+        result: received.result as DispatchEnvelope<TaskDispatchResultPayload> | undefined,
+        error: received.error as DispatchEnvelope<TaskDispatchErrorPayload> | undefined,
+        rawRequest,
+        rawAck,
+        rawResult,
+        rawError,
+        task: received.task,
+        session: received.session,
+        authSummary: received.authSummary,
+        reason: received.reason,
+      };
+    },
+    async receiveDispatchRequest(params) {
+      return handleDispatchRequest({
+        request: params.request,
+        rawRequest: params.rawRequest,
+        executionContext: params.context,
+        dependencies: params.dependencies,
+      });
+    },
+    sendDispatchAck,
+    sendDispatchResult,
+    sendDispatchError,
+  };
 }
 
 export function simulateLocalDispatchRoundTrip(params: {

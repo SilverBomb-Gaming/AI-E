@@ -164,6 +164,18 @@ export async function updateTaskStatus(
   return writeTask(updateTaskEnvelopeStatus(existingTask, status, extra));
 }
 
+export async function updateTaskDispatchMetadata(
+  taskId: string,
+  metadata: TaskEnvelopeTransitionMetadata,
+): Promise<TaskEnvelope | null> {
+  const existingTask = await getTask(taskId);
+  if (!existingTask) {
+    return null;
+  }
+
+  return writeTask(updateTaskEnvelopeStatus(existingTask, existingTask.status, metadata));
+}
+
 export async function assignTaskToNode(taskId: string, nodeId: string): Promise<TaskEnvelope | null> {
   const existingTask = await getTask(taskId);
   if (!existingTask || existingTask.status !== "pending") {

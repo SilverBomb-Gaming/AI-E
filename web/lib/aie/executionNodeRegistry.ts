@@ -2,6 +2,8 @@ import type { ExecutionActionPreview } from "./types";
 import {
   createExecutionNodeDescriptor,
   getExecutionNodeCapabilitiesForAction,
+  supportsExecutionNodeCapabilities,
+  validateExecutionActionForNode,
   type ExecutionNodeCapability,
   type ExecutionNodeDescriptor,
 } from "./executionNode";
@@ -21,8 +23,14 @@ function normalizeText(value: unknown): string {
 }
 
 function supportsCapabilities(node: ExecutionNodeDescriptor, capabilities: ExecutionNodeCapability[]): boolean {
-  return capabilities.every((capability) => node.capabilities.includes(capability));
+  return supportsExecutionNodeCapabilities(node, capabilities);
 }
+
+export type ExecutionNodeDispatchValidation = {
+  accepted: boolean;
+  reason?: string;
+  node?: ExecutionNodeDescriptor;
+};
 
 export function registerExecutionNode(node: ExecutionNodeDescriptor): ExecutionNodeDescriptor {
   const existing = executionNodeRegistry.get(node.id);
@@ -52,6 +60,50 @@ export function listExecutionNodes(): ExecutionNodeDescriptor[] {
 
 export function getExecutionNode(nodeId: string): ExecutionNodeDescriptor | null {
   return executionNodeRegistry.get(normalizeText(nodeId)) ?? null;
+}
+
+export function validateExecutionNodeDispatch(
+  nodeId: string,
+  params: {
+    requestedCapabilities: ExecutionNodeCapability[];
+    action?: ExecutionActionPreview;
+  },
+): ExecutionNodeDispatchValidation {
+  const node = getExecutionNode(nodeId);
+  if (!node) {
+    return {
+      accepted: false,
+      reason: `Execution node ${normalizeText(nodeId) || "unknown"} is not registered.`,
+    };
+  }
+
+  if (!node.active) {
+    return {
+      accepted: false,
+      reason: `Execution node ${node.id} is inactive.`,
+    };
+  }
+
+  if (!supportsCapabilities(node, params.requestedCapabilities)) {
+    return {
+      accepted: false,
+      reason: `Execution node ${node.id} does not support ${params.requestedCapabilities.join(",") || "the requested capabilities"}.`,
+    };
+  }
+
+  const actionCheck = validateExecutionActionForNode(node, params.action);
+  if (!actionCheck.allowed) {
+    return {
+      accepted: false,
+      reason: actionCheck.reason,
+      node,
+    };
+  }
+
+  return {
+    accepted: true,
+    node,
+  };
 }
 
 export function chooseExecutionNodeForAction(

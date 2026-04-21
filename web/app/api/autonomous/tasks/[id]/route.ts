@@ -18,9 +18,15 @@ export async function GET(
     runnable: task.status === "pending" && task.action.scope === "safe",
     dispatch: {
       messageId: task.dispatchMessageId ?? null,
+      ackMessageId: task.dispatchAckMessageId ?? null,
+      resultMessageId: task.dispatchResultMessageId ?? null,
       targetNodeId: task.dispatchTargetNodeId ?? null,
       protocolVersion: task.dispatchProtocolVersion ?? null,
+      authSummary: task.dispatchAuthSummary ?? null,
+      transportStatus: task.dispatchTransportStatus ?? null,
       statusSummary: task.dispatchStatusSummary ?? null,
+      receivedAt: task.dispatchReceivedAt ?? null,
+      completedAt: task.dispatchCompletedAt ?? null,
       planned: task.remoteDispatchPlanned ?? null,
     },
   });

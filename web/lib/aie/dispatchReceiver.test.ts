@@ -6,22 +6,27 @@ import test from "node:test";
 import { createDispatchAuthToken } from "./dispatchAuth";
 import { createTaskDispatchRequest } from "./dispatchMessages";
 import { createDispatchEnvelope } from "./dispatchProtocol";
-import {
-  createLocalControlledDispatchTransport,
-  receiveDispatchMessage,
-  sendDispatchMessage,
-  simulateLocalDispatchRoundTrip,
-} from "./dispatchTransport";
+import { handleDispatchRequest } from "./dispatchReceiver";
 import { createExecutionNodeDescriptor } from "./executionNode";
 import { registerExecutionNode, resetExecutionNodeRegistry } from "./executionNodeRegistry";
 import { createTaskEnvelope } from "./taskEnvelope";
 import { enqueueTask, getTask, updateTaskDispatchMetadata, updateTaskStatus } from "./taskQueueStore";
 
-function createRequest(taskId: string, sessionId: string) {
+function createRequest(params?: {
+  taskId?: string;
+  sessionId?: string;
+  targetNodeId?: string;
+  requestedCapabilities?: Array<"inspection" | "validation-check" | "file-write" | "test-run" | "repo-scan">;
+  authTargetNodeId?: string;
+}) {
+  const taskId = params?.taskId ?? "task-dispatch-receiver-1";
+  const sessionId = params?.sessionId ?? "session-dispatch-receiver-1";
+  const targetNodeId = params?.targetNodeId ?? "aie-node-headless-default";
+
   return createDispatchEnvelope({
     messageType: "task-dispatch-request",
     sourceNodeId: "aie-node-local-default",
-    targetNodeId: "aie-node-headless-default",
+    targetNodeId,
     taskId,
     sessionId,
     payload: createTaskDispatchRequest({
@@ -29,18 +34,18 @@ function createRequest(taskId: string, sessionId: string) {
         id: `${taskId}-action`,
         type: "validation-check",
         scope: "safe",
-        description: "Validate the transport payload.",
-        expectedOutcome: "The transport payload should remain valid.",
+        description: "Validate the bounded receive path.",
+        expectedOutcome: "The request should be validated at the receive boundary.",
         requiresApproval: true,
         metadata: {
           sourceActionType: "validation-check",
         },
       },
-      requestedCapabilities: ["validation-check", "repo-scan"],
-      assignedNodeId: "aie-node-headless-default",
+      requestedCapabilities: params?.requestedCapabilities ?? ["validation-check", "repo-scan"],
+      assignedNodeId: targetNodeId,
       authToken: createDispatchAuthToken({
         sourceNodeId: "aie-node-local-default",
-        targetNodeId: "aie-node-headless-default",
+        targetNodeId: params?.authTargetNodeId ?? targetNodeId,
         taskId,
         sessionId,
       }),
@@ -50,38 +55,9 @@ function createRequest(taskId: string, sessionId: string) {
   });
 }
 
-test("dispatchTransport serializes and rehydrates validated messages", async () => {
-  const envelope = createRequest("task-dispatch-transport-1", "session-dispatch-transport-1");
-
-  const serialized = await sendDispatchMessage(envelope);
-  const received = await receiveDispatchMessage(serialized);
-
-  assert.equal(received?.messageId, envelope.messageId);
-  assert.equal(received?.messageType, "task-dispatch-request");
-});
-
-test("dispatchTransport simulates local ack and result messages without executing remotely", () => {
-  const request = createRequest("task-dispatch-transport-2", "session-dispatch-transport-2");
-
-  const roundTrip = simulateLocalDispatchRoundTrip({
-    request,
-    accepted: true,
-    resultPayload: {
-      status: "completed",
-      linkedTaskId: request.taskId,
-      linkedSessionId: request.sessionId,
-      summary: "Completed through the shared local runner.",
-    },
-  });
-
-  assert.equal(roundTrip.ack.payload.accepted, true);
-  assert.equal(roundTrip.result?.payload.status, "completed");
-  assert.equal(roundTrip.error, undefined);
-});
-
-test("dispatchTransport runs a controlled local request ack result flow", async () => {
-  const sessionDirectory = path.resolve(process.cwd(), "temp-dispatch-transport-session-store");
-  const taskDirectory = path.resolve(process.cwd(), "temp-dispatch-transport-task-store");
+test("dispatchReceiver accepts a valid request and routes it into the shared stack", async () => {
+  const sessionDirectory = path.resolve(process.cwd(), "temp-dispatch-receiver-session-store-1");
+  const taskDirectory = path.resolve(process.cwd(), "temp-dispatch-receiver-task-store-1");
   resetExecutionNodeRegistry();
   process.env.AIE_AUTONOMOUS_SESSION_DIR = sessionDirectory;
   process.env.AIE_TASK_QUEUE_DIR = taskDirectory;
@@ -100,17 +76,17 @@ test("dispatchTransport runs a controlled local request ack result flow", async 
     }));
     await enqueueTask({
       ...createTaskEnvelope({
-        taskId: "task-dispatch-transport-3",
-        sessionId: "session-dispatch-transport-3",
+        taskId: "task-dispatch-receiver-1",
+        sessionId: "session-dispatch-receiver-1",
         stepIndex: 1,
-        action: createRequest("task-dispatch-transport-3", "session-dispatch-transport-3").payload.action,
+        action: createRequest().payload.action,
       }),
       status: "assigned",
       assignedNodeId: "aie-node-headless-default",
     });
-    const transport = createLocalControlledDispatchTransport();
-    const result = await transport.sendDispatchRequest({
-      request: createRequest("task-dispatch-transport-3", "session-dispatch-transport-3"),
+
+    const result = await handleDispatchRequest({
+      request: createRequest(),
       dependencies: {
         getTask,
         updateTaskStatus,
@@ -128,10 +104,10 @@ test("dispatchTransport runs a controlled local request ack result flow", async 
       },
     });
 
-    assert.equal(result.status, "delivered");
-    assert.equal(result.ack?.payload.accepted, true);
+    assert.equal(result.status, "accepted");
+    assert.equal(result.ack.payload.accepted, true);
     assert.equal(result.result?.payload.status, "completed");
-    assert.match(result.authSummary ?? "", /scope=local-lab/i);
+    assert.match(result.authSummary, /scope=local-lab/i);
   } finally {
     delete process.env.AIE_AUTONOMOUS_SESSION_DIR;
     delete process.env.AIE_TASK_QUEUE_DIR;
@@ -141,9 +117,9 @@ test("dispatchTransport runs a controlled local request ack result flow", async 
   }
 });
 
-test("dispatchTransport reports failed delivery when the receiver execution throws", async () => {
-  const sessionDirectory = path.resolve(process.cwd(), "temp-dispatch-transport-session-store-failed");
-  const taskDirectory = path.resolve(process.cwd(), "temp-dispatch-transport-task-store-failed");
+test("dispatchReceiver rejects invalid auth, unknown targets, and unsupported capabilities", async () => {
+  const sessionDirectory = path.resolve(process.cwd(), "temp-dispatch-receiver-session-store-2");
+  const taskDirectory = path.resolve(process.cwd(), "temp-dispatch-receiver-task-store-2");
   resetExecutionNodeRegistry();
   process.env.AIE_AUTONOMOUS_SESSION_DIR = sessionDirectory;
   process.env.AIE_TASK_QUEUE_DIR = taskDirectory;
@@ -155,41 +131,72 @@ test("dispatchTransport reports failed delivery when the receiver execution thro
       id: "aie-node-headless-default",
       mode: "headless",
       label: "AI-E Headless Test Node",
-      capabilities: ["validation-check", "repo-scan"],
+      capabilities: ["validation-check"],
       active: true,
       cwd: process.cwd(),
       allowedRoots: [process.cwd()],
     }));
     await enqueueTask({
       ...createTaskEnvelope({
-        taskId: "task-dispatch-transport-4",
-        sessionId: "session-dispatch-transport-4",
+        taskId: "task-dispatch-receiver-2",
+        sessionId: "session-dispatch-receiver-2",
         stepIndex: 1,
-        action: createRequest("task-dispatch-transport-4", "session-dispatch-transport-4").payload.action,
+        action: createRequest({ taskId: "task-dispatch-receiver-2", sessionId: "session-dispatch-receiver-2" }).payload.action,
       }),
       status: "assigned",
       assignedNodeId: "aie-node-headless-default",
     });
-    const transport = createLocalControlledDispatchTransport();
-    const result = await transport.sendDispatchRequest({
-      request: createRequest("task-dispatch-transport-4", "session-dispatch-transport-4"),
-      context: {
-        runtimeMode: "headless",
-        cwd: process.cwd(),
-      },
+
+    const badAuth = await handleDispatchRequest({
+      request: createRequest({
+        taskId: "task-dispatch-receiver-2",
+        sessionId: "session-dispatch-receiver-2",
+        authTargetNodeId: "aie-node-other-default",
+      }),
       dependencies: {
         getTask,
         updateTaskStatus,
         updateTaskDispatchMetadata,
         executeClaimedTask: async () => {
-          throw new Error("Receiver execution failed.");
+          throw new Error("should not execute");
+        },
+      },
+    });
+    const unknownTarget = await handleDispatchRequest({
+      request: createRequest({
+        taskId: "task-dispatch-receiver-2",
+        sessionId: "session-dispatch-receiver-2",
+        targetNodeId: "aie-node-unknown-default",
+      }),
+      dependencies: {
+        getTask,
+        updateTaskStatus,
+        updateTaskDispatchMetadata,
+        executeClaimedTask: async () => {
+          throw new Error("should not execute");
+        },
+      },
+    });
+    const unsupported = await handleDispatchRequest({
+      request: createRequest({
+        taskId: "task-dispatch-receiver-2",
+        sessionId: "session-dispatch-receiver-2",
+        requestedCapabilities: ["validation-check", "repo-scan"],
+      }),
+      dependencies: {
+        getTask,
+        updateTaskStatus,
+        updateTaskDispatchMetadata,
+        executeClaimedTask: async () => {
+          throw new Error("should not execute");
         },
       },
     });
 
-    assert.equal(result.status, "failed");
-    assert.equal(result.error?.messageType, "task-dispatch-error");
-    assert.match(result.reason ?? "", /failed/i);
+    assert.equal(badAuth.status, "rejected");
+    assert.equal(badAuth.ack.payload.accepted, false);
+    assert.equal(unknownTarget.status, "rejected");
+    assert.equal(unsupported.status, "rejected");
   } finally {
     delete process.env.AIE_AUTONOMOUS_SESSION_DIR;
     delete process.env.AIE_TASK_QUEUE_DIR;

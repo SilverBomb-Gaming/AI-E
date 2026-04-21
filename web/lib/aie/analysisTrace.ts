@@ -74,9 +74,13 @@ export type AnalysisTraceRecord = {
   assignedNodeId: string | null;
   queueStateSummary: string | null;
   dispatchMessageId: string | null;
+  dispatchAckMessageId: string | null;
+  dispatchResultMessageId: string | null;
   dispatchTargetNodeId: string | null;
   dispatchProtocolVersion: DispatchProtocolVersion | null;
   dispatchStatusSummary: string | null;
+  dispatchAuthSummary: string | null;
+  dispatchTransportStatus: string | null;
   remoteDispatchPlanned: boolean | null;
   autonomousPlanningHintSummary: string | null;
   autonomousRecentActionFamily: AutonomousActionFamily | null;
@@ -157,9 +161,13 @@ export type BuildAnalysisTraceRecordParams = {
   assignedNodeId?: string;
   queueStateSummary?: string;
   dispatchMessageId?: string;
+  dispatchAckMessageId?: string;
+  dispatchResultMessageId?: string;
   dispatchTargetNodeId?: string;
   dispatchProtocolVersion?: DispatchProtocolVersion;
   dispatchStatusSummary?: string;
+  dispatchAuthSummary?: string;
+  dispatchTransportStatus?: string;
   remoteDispatchPlanned?: boolean;
   autonomousPlanningHintSummary?: string;
   autonomousRecentActionFamily?: AutonomousActionFamily;
@@ -293,9 +301,13 @@ export function buildAnalysisTraceRecord(params: BuildAnalysisTraceRecordParams)
     assignedNodeId: params.assignedNodeId?.trim() || null,
     queueStateSummary: params.queueStateSummary?.trim() || null,
     dispatchMessageId: params.dispatchMessageId?.trim() || null,
+    dispatchAckMessageId: params.dispatchAckMessageId?.trim() || null,
+    dispatchResultMessageId: params.dispatchResultMessageId?.trim() || null,
     dispatchTargetNodeId: params.dispatchTargetNodeId?.trim() || null,
     dispatchProtocolVersion: params.dispatchProtocolVersion ?? null,
     dispatchStatusSummary: params.dispatchStatusSummary?.trim() || null,
+    dispatchAuthSummary: params.dispatchAuthSummary?.trim() || null,
+    dispatchTransportStatus: params.dispatchTransportStatus?.trim() || null,
     remoteDispatchPlanned: typeof params.remoteDispatchPlanned === "boolean" ? params.remoteDispatchPlanned : null,
     autonomousPlanningHintSummary: params.autonomousPlanningHintSummary?.trim() || null,
     autonomousRecentActionFamily: params.autonomousRecentActionFamily ?? null,

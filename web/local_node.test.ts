@@ -133,8 +133,12 @@ test("local_node queue entrypoints run one queued task and print a queue summary
           runnerMode: "local-node",
           claimToken: "claim-local-1",
           dispatchMessageId: "aie-dispatch-local-1",
+          dispatchAckMessageId: "aie-dispatch-local-ack-1",
+          dispatchResultMessageId: "aie-dispatch-local-result-1",
           dispatchTargetNodeId: "aie-node-local-default",
           dispatchProtocolVersion: "1",
+          dispatchAuthSummary: "auth=aie-node-local-default->aie-node-local-default | scope=local-lab | valid=true",
+          dispatchTransportStatus: "completed",
           dispatchStatusSummary: "dispatch=1 | type=result | status=completed",
           queueStateSummary: "task=task-local-queue-1 status=completed node=aie-node-local-default",
           task: (await listTasks())[0] ?? null,
@@ -147,8 +151,12 @@ test("local_node queue entrypoints run one queued task and print a queue summary
             currentStepIndex: 1,
             maxSteps: 1,
             dispatchMessageId: "aie-dispatch-local-1",
+            dispatchAckMessageId: "aie-dispatch-local-ack-1",
+            dispatchResultMessageId: "aie-dispatch-local-result-1",
             dispatchTargetNodeId: "aie-node-local-default",
             dispatchProtocolVersion: "1",
+            dispatchAuthSummary: "auth=aie-node-local-default->aie-node-local-default | scope=local-lab | valid=true",
+            dispatchTransportStatus: "completed",
             dispatchStatusSummary: "dispatch=1 | type=result | status=completed",
             steps: [],
           },
@@ -164,6 +172,8 @@ test("local_node queue entrypoints run one queued task and print a queue summary
     assert.match(output, /Task ID: task-local-queue-1/i);
     assert.match(output, /Claim token: claim-local-1/i);
     assert.match(output, /Dispatch message: aie-dispatch-local-1/i);
+    assert.match(output, /Dispatch ack: aie-dispatch-local-ack-1/i);
+    assert.match(output, /Dispatch transport: completed/i);
     assert.match(output, /Dispatch summary: dispatch=1 \| type=result \| status=completed/i);
   } finally {
     delete process.env.AIE_AUTONOMOUS_SESSION_DIR;

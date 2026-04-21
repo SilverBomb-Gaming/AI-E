@@ -156,22 +156,37 @@ test("task envelopes preserve dispatch metadata additively", () => {
         action: makeAction(),
       }), "aie-node-local-default", {
         dispatchMessageId: "aie-dispatch-1",
+        dispatchAckMessageId: "aie-dispatch-ack-1",
+        dispatchResultMessageId: "aie-dispatch-result-1",
         dispatchTargetNodeId: "aie-node-local-default",
         dispatchProtocolVersion: "1",
         dispatchStatusSummary: "dispatch=1 | type=request | node=aie-node-local-default",
+        dispatchAuthSummary: "auth=aie-node-local-default->aie-node-local-default | scope=local-lab | valid=true",
+        dispatchTransportStatus: "accepted",
+        dispatchReceivedAt: "2026-04-21T00:00:01.000Z",
         remoteDispatchPlanned: true,
       }),
     ),
     {
       dispatchStatusSummary: "dispatch=1 | type=result | status=completed",
+      dispatchTransportStatus: "completed",
+      dispatchCompletedAt: "2026-04-21T00:00:02.000Z",
     },
   );
 
   const normalized = normalizeTaskEnvelope(JSON.parse(JSON.stringify(envelope)));
 
   assert.equal(normalized?.dispatchMessageId, "aie-dispatch-1");
+  assert.equal(normalized?.dispatchAckMessageId, "aie-dispatch-ack-1");
+  assert.equal(normalized?.dispatchResultMessageId, "aie-dispatch-result-1");
   assert.equal(normalized?.dispatchTargetNodeId, "aie-node-local-default");
   assert.equal(normalized?.dispatchProtocolVersion, "1");
+  assert.equal(normalized?.dispatchTransportStatus, "completed");
+  assert.match(normalized?.dispatchAuthSummary ?? "", /scope=local-lab/i);
   assert.equal(normalized?.remoteDispatchPlanned, true);
+  assert.equal(normalized?.dispatchReceivedAt, "2026-04-21T00:00:01.000Z");
+  assert.equal(normalized?.dispatchCompletedAt, "2026-04-21T00:00:02.000Z");
   assert.match(summarizeTaskEnvelope(envelope), /dispatch=aie-dispatch-1/i);
+  assert.match(summarizeTaskEnvelope(envelope), /ack=aie-dispatch-ack-1/i);
+  assert.match(summarizeTaskEnvelope(envelope), /result=aie-dispatch-result-1/i);
 });

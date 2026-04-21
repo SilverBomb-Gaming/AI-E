@@ -1,4 +1,5 @@
 import type { DispatchEnvelope, DispatchMessageType, DispatchProtocolVersion } from "./dispatchProtocol";
+import { validateDispatchAuthTokenShape, type DispatchAuthToken } from "./dispatchAuth";
 import type { ExecutionNodeCapability } from "./executionNode";
 import type { ExecutionActionPreview as ExecutionAction, ExecutionRuntimeResult } from "./types";
 
@@ -11,6 +12,7 @@ export type TaskDispatchRequestPayload = {
   action: ExecutionAction;
   requestedCapabilities: ExecutionNodeCapability[];
   assignedNodeId: string;
+  authToken: DispatchAuthToken;
   approvalState?: TaskDispatchApprovalState;
   executionContextSummary?: string;
   policySummary?: string;
@@ -18,6 +20,7 @@ export type TaskDispatchRequestPayload = {
   queueStateSummary?: string;
   planningHintSummary?: string;
   dispatchStatusSummary?: string;
+  dispatchAuthSummary?: string;
   remoteDispatchPlanned?: boolean;
 };
 
@@ -91,6 +94,7 @@ export function createTaskDispatchRequest(payload: TaskDispatchRequestPayload): 
     action: payload.action,
     requestedCapabilities: payload.requestedCapabilities.filter(isExecutionNodeCapability),
     assignedNodeId: normalizeText(payload.assignedNodeId),
+    authToken: payload.authToken,
     approvalState: payload.approvalState
       ? {
           requiresApproval: Boolean(payload.approvalState.requiresApproval),
@@ -103,6 +107,7 @@ export function createTaskDispatchRequest(payload: TaskDispatchRequestPayload): 
     queueStateSummary: normalizeText(payload.queueStateSummary) || undefined,
     planningHintSummary: normalizeText(payload.planningHintSummary) || undefined,
     dispatchStatusSummary: normalizeText(payload.dispatchStatusSummary) || undefined,
+    dispatchAuthSummary: normalizeText(payload.dispatchAuthSummary) || undefined,
     remoteDispatchPlanned: typeof payload.remoteDispatchPlanned === "boolean" ? payload.remoteDispatchPlanned : undefined,
   };
 
@@ -167,7 +172,8 @@ export function validateDispatchPayloadShape(messageType: DispatchMessageType, p
         isExecutionAction(source.action) &&
           Array.isArray(source.requestedCapabilities) &&
           source.requestedCapabilities.every((item) => isExecutionNodeCapability(item)) &&
-          normalizeText(source.assignedNodeId),
+          normalizeText(source.assignedNodeId) &&
+          validateDispatchAuthTokenShape(source.authToken),
       );
     case "task-dispatch-ack":
       return typeof source.accepted === "boolean" && (!source.reason || Boolean(normalizeText(source.reason)));
@@ -203,6 +209,7 @@ export function summarizeDispatchPayload(
         `node=${normalizeText(source.assignedNodeId)}`,
         `caps=${Array.isArray(source.requestedCapabilities) ? source.requestedCapabilities.join(",") : "none"}`,
         `approval=${source.approvalState && typeof source.approvalState === "object" ? String(Boolean((source.approvalState as Record<string, unknown>).requiresApproval)) : "unknown"}`,
+        source.dispatchAuthSummary && typeof source.dispatchAuthSummary === "string" ? `auth=${normalizeText(source.dispatchAuthSummary)}` : "",
       ].join(" | ");
     case "task-dispatch-ack":
       return [

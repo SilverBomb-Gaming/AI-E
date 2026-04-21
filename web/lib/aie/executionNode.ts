@@ -21,6 +21,11 @@ export type ExecutionNodeDescriptor = {
   updatedAt: string;
 };
 
+export type ExecutionNodeActionPolicyCheck = {
+  allowed: boolean;
+  reason?: string;
+};
+
 type CreateExecutionNodeDescriptorParams = {
   id?: string;
   label?: string;
@@ -73,6 +78,22 @@ function normalizeCapabilities(capabilities: ExecutionNodeCapability[]): Executi
   return CAPABILITY_ORDER.filter((capability) => seen.has(capability));
 }
 
+function normalizePathForMatch(value: unknown): string {
+  return normalizeText(value)
+    .replace(/\\+/g, "/")
+    .replace(/\/+/g, "/")
+    .replace(/\/$/, "")
+    .toLowerCase();
+}
+
+function isPathWithinAllowedRoots(targetPath: string, allowedRoots: string[]): boolean {
+  const normalizedTargetPath = normalizePathForMatch(targetPath);
+  return allowedRoots
+    .map((root) => normalizePathForMatch(root))
+    .filter(Boolean)
+    .some((root) => normalizedTargetPath === root || normalizedTargetPath.startsWith(`${root}/`));
+}
+
 function buildExecutionNodeId(params: { mode: ExecutionNodeMode; cwd?: string; label?: string }): string {
   const seed = slugify(params.cwd || params.label || params.mode) || params.mode;
   return `aie-node-${params.mode}-${seed}`;
@@ -81,6 +102,55 @@ function buildExecutionNodeId(params: { mode: ExecutionNodeMode; cwd?: string; l
 export function summarizeExecutionNodeCapabilities(capabilities: ExecutionNodeCapability[]): string {
   const normalized = normalizeCapabilities(capabilities);
   return normalized.length ? normalized.join(", ") : "no capabilities";
+}
+
+export function supportsExecutionNodeCapabilities(
+  node: ExecutionNodeDescriptor,
+  requestedCapabilities: ExecutionNodeCapability[],
+): boolean {
+  const normalizedRequestedCapabilities = normalizeCapabilities(requestedCapabilities);
+  return normalizedRequestedCapabilities.every((capability) => node.capabilities.includes(capability));
+}
+
+export function summarizeExecutionNodePolicy(node: ExecutionNodeDescriptor): string {
+  const roots = (node.allowedRoots ?? []).filter(Boolean);
+  return roots.length ? `${node.id} roots=${roots.join(",")}` : `${node.id} roots=unbounded-lab`;
+}
+
+export function validateExecutionActionForNode(
+  node: ExecutionNodeDescriptor,
+  action: ExecutionActionPreview | undefined,
+): ExecutionNodeActionPolicyCheck {
+  if (!action) {
+    return {
+      allowed: false,
+      reason: `Execution node ${node.id} rejected a missing action payload.`,
+    };
+  }
+
+  const targetPath = normalizeText(action.metadata?.targetPath);
+  const requestedAllowedRoot = normalizeText(action.metadata?.allowedRoot);
+  const allowedRoots = (node.allowedRoots ?? []).filter(Boolean);
+
+  if (!allowedRoots.length) {
+    return { allowed: true };
+  }
+
+  if (requestedAllowedRoot && !isPathWithinAllowedRoots(requestedAllowedRoot, allowedRoots)) {
+    return {
+      allowed: false,
+      reason: `Execution node ${node.id} rejected allowed root ${requestedAllowedRoot} outside ${allowedRoots.join(", ")}.`,
+    };
+  }
+
+  if (targetPath && !isPathWithinAllowedRoots(targetPath, allowedRoots)) {
+    return {
+      allowed: false,
+      reason: `Execution node ${node.id} rejected target path ${targetPath} outside ${allowedRoots.join(", ")}.`,
+    };
+  }
+
+  return { allowed: true };
 }
 
 export function createExecutionNodeDescriptor(params: CreateExecutionNodeDescriptorParams): ExecutionNodeDescriptor {

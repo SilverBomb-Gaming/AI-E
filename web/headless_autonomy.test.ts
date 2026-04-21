@@ -131,8 +131,12 @@ test("headless_autonomy queue entrypoints run one queued task and print a queue 
           runnerMode: "headless",
           claimToken: "claim-headless-1",
           dispatchMessageId: "aie-dispatch-headless-1",
+          dispatchAckMessageId: "aie-dispatch-headless-ack-1",
+          dispatchResultMessageId: "aie-dispatch-headless-result-1",
           dispatchTargetNodeId: "aie-node-headless-default",
           dispatchProtocolVersion: "1",
+          dispatchAuthSummary: "auth=aie-node-local-default->aie-node-headless-default | scope=local-lab | valid=true",
+          dispatchTransportStatus: "completed",
           dispatchStatusSummary: "dispatch=1 | type=result | status=completed",
           queueStateSummary: "task=task-headless-queue-1 status=completed node=aie-node-headless-default",
           task: (await listTasks())[0] ?? null,
@@ -145,8 +149,12 @@ test("headless_autonomy queue entrypoints run one queued task and print a queue 
             currentStepIndex: 1,
             maxSteps: 1,
             dispatchMessageId: "aie-dispatch-headless-1",
+            dispatchAckMessageId: "aie-dispatch-headless-ack-1",
+            dispatchResultMessageId: "aie-dispatch-headless-result-1",
             dispatchTargetNodeId: "aie-node-headless-default",
             dispatchProtocolVersion: "1",
+            dispatchAuthSummary: "auth=aie-node-local-default->aie-node-headless-default | scope=local-lab | valid=true",
+            dispatchTransportStatus: "completed",
             dispatchStatusSummary: "dispatch=1 | type=result | status=completed",
             steps: [],
           },
@@ -163,6 +171,8 @@ test("headless_autonomy queue entrypoints run one queued task and print a queue 
     assert.match(output, /Task ID: task-headless-queue-1/i);
     assert.match(output, /Claim token: claim-headless-1/i);
     assert.match(output, /Dispatch message: aie-dispatch-headless-1/i);
+    assert.match(output, /Dispatch ack: aie-dispatch-headless-ack-1/i);
+    assert.match(output, /Dispatch transport: completed/i);
     assert.match(output, /Dispatch summary: dispatch=1 \| type=result \| status=completed/i);
   } finally {
     delete process.env.AIE_AUTONOMOUS_SESSION_DIR;

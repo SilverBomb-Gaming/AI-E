@@ -36,9 +36,13 @@ export type AutonomousStepRecord = {
   assignedNodeId?: string;
   queueStateSummary?: string;
   dispatchMessageId?: string;
+  dispatchAckMessageId?: string;
+  dispatchResultMessageId?: string;
   dispatchTargetNodeId?: string;
   dispatchProtocolVersion?: DispatchProtocolVersion;
   dispatchStatusSummary?: string;
+  dispatchAuthSummary?: string;
+  dispatchTransportStatus?: "pending" | "accepted" | "rejected" | "delivered" | "failed" | "completed";
   remoteDispatchPlanned?: boolean;
   planningHintSummary?: string;
   executionResult?: ExecutionRuntimeResult;
@@ -89,9 +93,13 @@ export type AutonomousSession = {
   assignedNodeId?: string;
   queueStateSummary?: string;
   dispatchMessageId?: string;
+  dispatchAckMessageId?: string;
+  dispatchResultMessageId?: string;
   dispatchTargetNodeId?: string;
   dispatchProtocolVersion?: DispatchProtocolVersion;
   dispatchStatusSummary?: string;
+  dispatchAuthSummary?: string;
+  dispatchTransportStatus?: "pending" | "accepted" | "rejected" | "delivered" | "failed" | "completed";
   remoteDispatchPlanned?: boolean;
   planningHintSummary?: string;
   latestExecutionResult?: ExecutionRuntimeResult;
@@ -121,9 +129,13 @@ type AppendAutonomousStepParams = {
   assignedNodeId?: string;
   queueStateSummary?: string;
   dispatchMessageId?: string;
+  dispatchAckMessageId?: string;
+  dispatchResultMessageId?: string;
   dispatchTargetNodeId?: string;
   dispatchProtocolVersion?: DispatchProtocolVersion;
   dispatchStatusSummary?: string;
+  dispatchAuthSummary?: string;
+  dispatchTransportStatus?: "pending" | "accepted" | "rejected" | "delivered" | "failed" | "completed";
   remoteDispatchPlanned?: boolean;
   planningHintSummary?: string;
   executionResult?: ExecutionRuntimeResult;
@@ -285,6 +297,12 @@ function normalizeTaskStatus(value: unknown): TaskEnvelopeStatus | undefined {
 
 function normalizeDispatchProtocolVersion(value: unknown): DispatchProtocolVersion | undefined {
   return value === "1" ? "1" : undefined;
+}
+
+function normalizeDispatchTransportStatus(value: unknown): AutonomousStepRecord["dispatchTransportStatus"] {
+  return value === "pending" || value === "accepted" || value === "rejected" || value === "delivered" || value === "failed" || value === "completed"
+    ? value
+    : undefined;
 }
 
 function normalizeActionFamily(value: unknown): AutonomousActionFamily | undefined {
@@ -451,9 +469,13 @@ function normalizeAutonomousStepRecord(value: unknown): AutonomousStepRecord | n
     assignedNodeId: normalizeText(typeof source.assignedNodeId === "string" ? source.assignedNodeId : "") || undefined,
     queueStateSummary: normalizeText(typeof source.queueStateSummary === "string" ? source.queueStateSummary : "") || undefined,
     dispatchMessageId: normalizeText(typeof source.dispatchMessageId === "string" ? source.dispatchMessageId : "") || undefined,
+    dispatchAckMessageId: normalizeText(typeof source.dispatchAckMessageId === "string" ? source.dispatchAckMessageId : "") || undefined,
+    dispatchResultMessageId: normalizeText(typeof source.dispatchResultMessageId === "string" ? source.dispatchResultMessageId : "") || undefined,
     dispatchTargetNodeId: normalizeText(typeof source.dispatchTargetNodeId === "string" ? source.dispatchTargetNodeId : "") || undefined,
     dispatchProtocolVersion: normalizeDispatchProtocolVersion(source.dispatchProtocolVersion),
     dispatchStatusSummary: normalizeText(typeof source.dispatchStatusSummary === "string" ? source.dispatchStatusSummary : "") || undefined,
+    dispatchAuthSummary: normalizeText(typeof source.dispatchAuthSummary === "string" ? source.dispatchAuthSummary : "") || undefined,
+    dispatchTransportStatus: normalizeDispatchTransportStatus(source.dispatchTransportStatus),
     remoteDispatchPlanned: typeof source.remoteDispatchPlanned === "boolean" ? source.remoteDispatchPlanned : undefined,
     planningHintSummary: normalizeText(typeof source.planningHintSummary === "string" ? source.planningHintSummary : "") || undefined,
     executionResult: normalizeExecutionRuntimeResult(source.executionResult),
@@ -520,9 +542,13 @@ export function appendAutonomousStep(
     assignedNodeId: normalizeText(params.assignedNodeId) || undefined,
     queueStateSummary: normalizeText(params.queueStateSummary) || undefined,
     dispatchMessageId: normalizeText(params.dispatchMessageId) || undefined,
+    dispatchAckMessageId: normalizeText(params.dispatchAckMessageId) || undefined,
+    dispatchResultMessageId: normalizeText(params.dispatchResultMessageId) || undefined,
     dispatchTargetNodeId: normalizeText(params.dispatchTargetNodeId) || undefined,
     dispatchProtocolVersion: params.dispatchProtocolVersion,
     dispatchStatusSummary: normalizeText(params.dispatchStatusSummary) || undefined,
+    dispatchAuthSummary: normalizeText(params.dispatchAuthSummary) || undefined,
+    dispatchTransportStatus: params.dispatchTransportStatus,
     remoteDispatchPlanned: typeof params.remoteDispatchPlanned === "boolean" ? params.remoteDispatchPlanned : undefined,
     planningHintSummary: normalizeText(params.planningHintSummary) || undefined,
     executionResult,
@@ -556,9 +582,13 @@ export function appendAutonomousStep(
     assignedNodeId: step.assignedNodeId ?? session.assignedNodeId,
     queueStateSummary: step.queueStateSummary ?? session.queueStateSummary,
     dispatchMessageId: step.dispatchMessageId ?? session.dispatchMessageId,
+    dispatchAckMessageId: step.dispatchAckMessageId ?? session.dispatchAckMessageId,
+    dispatchResultMessageId: step.dispatchResultMessageId ?? session.dispatchResultMessageId,
     dispatchTargetNodeId: step.dispatchTargetNodeId ?? session.dispatchTargetNodeId,
     dispatchProtocolVersion: step.dispatchProtocolVersion ?? session.dispatchProtocolVersion,
     dispatchStatusSummary: step.dispatchStatusSummary ?? session.dispatchStatusSummary,
+    dispatchAuthSummary: step.dispatchAuthSummary ?? session.dispatchAuthSummary,
+    dispatchTransportStatus: step.dispatchTransportStatus ?? session.dispatchTransportStatus,
     remoteDispatchPlanned: step.remoteDispatchPlanned ?? session.remoteDispatchPlanned,
     planningHintSummary: step.planningHintSummary ?? session.planningHintSummary,
     latestExecutionResult: executionResult ?? session.latestExecutionResult,
@@ -700,9 +730,13 @@ export function normalizeAutonomousSession(value: unknown): AutonomousSession | 
     assignedNodeId: normalizeText(typeof source.assignedNodeId === "string" ? source.assignedNodeId : "") || undefined,
     queueStateSummary: normalizeText(typeof source.queueStateSummary === "string" ? source.queueStateSummary : "") || undefined,
     dispatchMessageId: normalizeText(typeof source.dispatchMessageId === "string" ? source.dispatchMessageId : "") || undefined,
+    dispatchAckMessageId: normalizeText(typeof source.dispatchAckMessageId === "string" ? source.dispatchAckMessageId : "") || undefined,
+    dispatchResultMessageId: normalizeText(typeof source.dispatchResultMessageId === "string" ? source.dispatchResultMessageId : "") || undefined,
     dispatchTargetNodeId: normalizeText(typeof source.dispatchTargetNodeId === "string" ? source.dispatchTargetNodeId : "") || undefined,
     dispatchProtocolVersion: normalizeDispatchProtocolVersion(source.dispatchProtocolVersion),
     dispatchStatusSummary: normalizeText(typeof source.dispatchStatusSummary === "string" ? source.dispatchStatusSummary : "") || undefined,
+    dispatchAuthSummary: normalizeText(typeof source.dispatchAuthSummary === "string" ? source.dispatchAuthSummary : "") || undefined,
+    dispatchTransportStatus: normalizeDispatchTransportStatus(source.dispatchTransportStatus),
     remoteDispatchPlanned: typeof source.remoteDispatchPlanned === "boolean" ? source.remoteDispatchPlanned : undefined,
     planningHintSummary: normalizeText(typeof source.planningHintSummary === "string" ? source.planningHintSummary : "") || undefined,
     latestExecutionResult: normalizeExecutionRuntimeResult(source.latestExecutionResult),

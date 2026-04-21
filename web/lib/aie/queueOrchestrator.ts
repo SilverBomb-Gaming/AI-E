@@ -10,9 +10,13 @@ import {
   type ExecutionNodeDescriptor,
 } from "./executionNode";
 import { chooseExecutionNodeForAction, registerExecutionNode } from "./executionNodeRegistry";
+import { createDispatchAuthToken, summarizeDispatchAuthContext } from "./dispatchAuth";
 import { createDispatchEnvelope, type DispatchProtocolVersion } from "./dispatchProtocol";
 import { createTaskDispatchRequest, summarizeDispatchPayload } from "./dispatchMessages";
-import { simulateLocalDispatchRoundTrip } from "./dispatchTransport";
+import {
+  createLocalControlledDispatchTransport,
+  type DispatchTransport,
+} from "./dispatchTransport";
 import { resolveRepoRoot } from "./repoContext";
 import { runAutonomousSession } from "./runAutonomousSession";
 import {
@@ -20,9 +24,14 @@ import {
   finalizeTask,
   getRunnableTasks,
   getTask,
+  updateTaskDispatchMetadata,
   updateTaskStatus,
 } from "./taskQueueStore";
-import { summarizeTaskEnvelope, type TaskEnvelope } from "./taskEnvelope";
+import {
+  summarizeTaskEnvelope,
+  type TaskDispatchTransportStatus,
+  type TaskEnvelope,
+} from "./taskEnvelope";
 
 type QueueOrchestratorDependencies = {
   getRunnableTasks: typeof getRunnableTasks;
@@ -30,6 +39,7 @@ type QueueOrchestratorDependencies = {
   claimTask: typeof claimTask;
   finalizeTask: typeof finalizeTask;
   updateTaskStatus: typeof updateTaskStatus;
+  updateTaskDispatchMetadata: typeof updateTaskDispatchMetadata;
   saveAutonomousSession: typeof saveAutonomousSession;
   runAutonomousSession: typeof runAutonomousSession;
 };
@@ -39,6 +49,7 @@ type QueueExecutionContext = {
   cwd?: string;
   allowedRoots?: string[];
   maxSteps?: number;
+  dispatchTransport?: DispatchTransport;
 };
 
 export type ClaimedQueuedTask = {
@@ -53,9 +64,13 @@ export type QueueExecutionSummary = {
   runnerMode?: TaskEnvelope["runnerMode"];
   claimToken?: string;
   dispatchMessageId?: string;
+  dispatchAckMessageId?: string;
+  dispatchResultMessageId?: string;
   dispatchTargetNodeId?: string;
   dispatchProtocolVersion?: DispatchProtocolVersion;
   dispatchStatusSummary?: string;
+  dispatchAuthSummary?: string;
+  dispatchTransportStatus?: TaskDispatchTransportStatus;
   status: "claimed" | "completed" | "failed" | "blocked" | "no-runnable-task";
   queueStateSummary?: string;
 };
@@ -83,6 +98,7 @@ function resolveDependencies(
     claimTask: dependencies?.claimTask ?? claimTask,
     finalizeTask: dependencies?.finalizeTask ?? finalizeTask,
     updateTaskStatus: dependencies?.updateTaskStatus ?? updateTaskStatus,
+    updateTaskDispatchMetadata: dependencies?.updateTaskDispatchMetadata ?? updateTaskDispatchMetadata,
     saveAutonomousSession: dependencies?.saveAutonomousSession ?? saveAutonomousSession,
     runAutonomousSession: dependencies?.runAutonomousSession ?? runAutonomousSession,
   };
@@ -111,9 +127,13 @@ function buildQueuedSession(task: TaskEnvelope, node: ExecutionNodeDescriptor, m
     assignedNodeId: task.assignedNodeId,
     queueStateSummary: summarizeTaskEnvelope(task),
     dispatchMessageId: task.dispatchMessageId,
+    dispatchAckMessageId: task.dispatchAckMessageId,
+    dispatchResultMessageId: task.dispatchResultMessageId,
     dispatchTargetNodeId: task.dispatchTargetNodeId,
     dispatchProtocolVersion: task.dispatchProtocolVersion,
     dispatchStatusSummary: task.dispatchStatusSummary,
+    dispatchAuthSummary: task.dispatchAuthSummary,
+    dispatchTransportStatus: task.dispatchTransportStatus,
     remoteDispatchPlanned: task.remoteDispatchPlanned,
   };
 }
@@ -153,54 +173,8 @@ export async function claimNextRunnableTask(
       "Claimed for controlled queue execution through the shared runner.",
     );
     if (claimed) {
-      const request = createDispatchEnvelope({
-        messageType: "task-dispatch-request",
-        sourceNodeId: runtimeNode.id,
-        targetNodeId: selectedNode.id,
-        taskId: claimed.taskId,
-        sessionId: claimed.sessionId,
-        payload: createTaskDispatchRequest({
-          action: claimed.action,
-          requestedCapabilities: claimed.requestedCapabilities,
-          assignedNodeId: selectedNode.id,
-          approvalState: {
-            requiresApproval: claimed.action.requiresApproval,
-            approved: true,
-          },
-          queueStateSummary: summarizeTaskEnvelope(claimed),
-          dispatchStatusSummary: "Dispatch requested for local simulated handoff.",
-          remoteDispatchPlanned: true,
-        }),
-      });
-      const roundTrip = simulateLocalDispatchRoundTrip({
-        request,
-        accepted: true,
-        ackReason: "Local dispatch handshake accepted through the simulated transport boundary.",
-      });
-      const dispatchStatusSummary = [
-        summarizeDispatchPayload(roundTrip.request.messageType, roundTrip.request.payload, roundTrip.request.protocolVersion),
-        summarizeDispatchPayload(roundTrip.ack.messageType, roundTrip.ack.payload, roundTrip.ack.protocolVersion),
-      ].join(" || ");
-      const claimedWithDispatch = await resolved.updateTaskStatus(claimed.taskId, "assigned", {
-        assignedNodeId: selectedNode.id,
-        claimToken: claimed.claimToken,
-        runnerMode: claimed.runnerMode,
-        dispatchMessageId: request.messageId,
-        dispatchTargetNodeId: selectedNode.id,
-        dispatchProtocolVersion: request.protocolVersion,
-        dispatchStatusSummary,
-        remoteDispatchPlanned: true,
-      });
-
       return {
-        task: claimedWithDispatch ?? {
-          ...claimed,
-          dispatchMessageId: request.messageId,
-          dispatchTargetNodeId: selectedNode.id,
-          dispatchProtocolVersion: request.protocolVersion,
-          dispatchStatusSummary,
-          remoteDispatchPlanned: true,
-        },
+        task: claimed,
         node: selectedNode,
       };
     }
@@ -220,6 +194,140 @@ export async function finalizeQueuedTask(
 }
 
 export async function executeQueuedTask(
+  claimed: ClaimedQueuedTask,
+  context: QueueExecutionContext,
+  dependencies?: Partial<QueueOrchestratorDependencies>,
+): Promise<QueueExecutionSummary> {
+  const resolved = resolveDependencies(dependencies);
+  const cwd = context.cwd ?? claimed.node.cwd ?? process.cwd();
+  const runtimeNode = registerExecutionNode(createRuntimeExecutionNodeDescriptor({
+    runtimeMode: context.runtimeMode,
+    cwd,
+    allowedRoots: context.allowedRoots,
+  }));
+  const authToken = createDispatchAuthToken({
+    sourceNodeId: runtimeNode.id,
+    targetNodeId: claimed.node.id,
+    taskId: claimed.task.taskId,
+    sessionId: claimed.task.sessionId,
+  });
+  const dispatchAuthSummary = summarizeDispatchAuthContext({
+    sourceNodeId: runtimeNode.id,
+    targetNodeId: claimed.node.id,
+    valid: true,
+    expiresAt: authToken.expiresAt,
+  });
+  const request = createDispatchEnvelope({
+    messageType: "task-dispatch-request",
+    sourceNodeId: runtimeNode.id,
+    targetNodeId: claimed.node.id,
+    taskId: claimed.task.taskId,
+    sessionId: claimed.task.sessionId,
+    payload: createTaskDispatchRequest({
+      action: claimed.task.action,
+      requestedCapabilities: claimed.task.requestedCapabilities,
+      assignedNodeId: claimed.node.id,
+      authToken,
+      approvalState: {
+        requiresApproval: claimed.task.action.requiresApproval,
+        approved: true,
+      },
+      queueStateSummary: summarizeTaskEnvelope(claimed.task),
+      dispatchStatusSummary: "Dispatch requested through the controlled transport boundary.",
+      dispatchAuthSummary,
+      remoteDispatchPlanned: true,
+    }),
+  });
+  const requestSummary = summarizeDispatchPayload(request.messageType, request.payload, request.protocolVersion);
+  const pendingTask = await resolved.updateTaskDispatchMetadata(claimed.task.taskId, {
+    assignedNodeId: claimed.node.id,
+    dispatchMessageId: request.messageId,
+    dispatchTargetNodeId: claimed.node.id,
+    dispatchProtocolVersion: request.protocolVersion,
+    dispatchStatusSummary: requestSummary,
+    dispatchAuthSummary,
+    dispatchTransportStatus: "pending",
+    remoteDispatchPlanned: true,
+  });
+  const transport = context.dispatchTransport ?? createLocalControlledDispatchTransport();
+
+  try {
+    const transportResult = await transport.sendDispatchRequest({
+      request,
+      context: {
+        runtimeMode: claimed.node.mode === "local-node" ? "local" : claimed.node.mode,
+        cwd,
+        allowedRoots: context.allowedRoots ?? claimed.node.allowedRoots,
+        maxSteps: context.maxSteps,
+      },
+      dependencies: {
+        getTask: resolved.getTask,
+        updateTaskStatus: resolved.updateTaskStatus,
+        updateTaskDispatchMetadata: resolved.updateTaskDispatchMetadata,
+        executeClaimedTask: (receivedClaimed, receiveContext) =>
+          executeClaimedTaskWithSharedRunner(receivedClaimed, receiveContext, resolved),
+      },
+    });
+    const effectiveTask = transportResult.task ?? await resolved.getTask(claimed.task.taskId) ?? pendingTask ?? claimed.task;
+
+    return {
+      task: effectiveTask,
+      session: transportResult.session ?? null,
+      nodeId: claimed.node.id,
+      runnerMode: effectiveTask.runnerMode,
+      claimToken: effectiveTask.claimToken,
+      dispatchMessageId: effectiveTask.dispatchMessageId,
+      dispatchAckMessageId: effectiveTask.dispatchAckMessageId,
+      dispatchResultMessageId: effectiveTask.dispatchResultMessageId,
+      dispatchTargetNodeId: effectiveTask.dispatchTargetNodeId,
+      dispatchProtocolVersion: effectiveTask.dispatchProtocolVersion,
+      dispatchStatusSummary: effectiveTask.dispatchStatusSummary,
+      dispatchAuthSummary: effectiveTask.dispatchAuthSummary,
+      dispatchTransportStatus: effectiveTask.dispatchTransportStatus,
+      status: effectiveTask.status === "completed" || effectiveTask.status === "failed" || effectiveTask.status === "blocked"
+        ? effectiveTask.status
+        : transportResult.status === "rejected"
+          ? "blocked"
+          : transportResult.status === "failed"
+            ? "failed"
+            : "claimed",
+      queueStateSummary: summarizeTaskEnvelope(effectiveTask),
+    };
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : "Controlled queued dispatch failed unexpectedly.";
+    const failedTask = await resolved.updateTaskStatus(claimed.task.taskId, "failed", {
+      assignedNodeId: claimed.node.id,
+      statusReason: reason,
+      dispatchMessageId: request.messageId,
+      dispatchTargetNodeId: claimed.node.id,
+      dispatchProtocolVersion: request.protocolVersion,
+      dispatchStatusSummary: requestSummary,
+      dispatchAuthSummary,
+      dispatchTransportStatus: "failed",
+      remoteDispatchPlanned: true,
+    });
+
+    return {
+      task: failedTask,
+      session: null,
+      nodeId: claimed.node.id,
+      runnerMode: failedTask?.runnerMode ?? claimed.task.runnerMode,
+      claimToken: failedTask?.claimToken ?? claimed.task.claimToken,
+      dispatchMessageId: failedTask?.dispatchMessageId ?? request.messageId,
+      dispatchAckMessageId: failedTask?.dispatchAckMessageId,
+      dispatchResultMessageId: failedTask?.dispatchResultMessageId,
+      dispatchTargetNodeId: failedTask?.dispatchTargetNodeId ?? claimed.node.id,
+      dispatchProtocolVersion: failedTask?.dispatchProtocolVersion ?? request.protocolVersion,
+      dispatchStatusSummary: failedTask?.dispatchStatusSummary ?? requestSummary,
+      dispatchAuthSummary: failedTask?.dispatchAuthSummary ?? dispatchAuthSummary,
+      dispatchTransportStatus: failedTask?.dispatchTransportStatus ?? "failed",
+      status: "failed",
+      queueStateSummary: failedTask ? summarizeTaskEnvelope(failedTask) : undefined,
+    };
+  }
+}
+
+export async function executeClaimedTaskWithSharedRunner(
   claimed: ClaimedQueuedTask,
   context: QueueExecutionContext,
   dependencies?: Partial<QueueOrchestratorDependencies>,
@@ -259,60 +367,21 @@ export async function executeQueuedTask(
             : session.status === "completed"
               ? "completed"
               : "claimed";
-    const request = claimed.task.dispatchMessageId
-      ? createDispatchEnvelope({
-          protocolVersion: claimed.task.dispatchProtocolVersion ?? "1",
-          messageType: "task-dispatch-request",
-          messageId: claimed.task.dispatchMessageId,
-          sourceNodeId: claimed.task.assignedNodeId ?? claimed.node.id,
-          targetNodeId: claimed.task.dispatchTargetNodeId ?? claimed.node.id,
-          taskId: claimed.task.taskId,
-          sessionId: claimed.task.sessionId,
-          payload: createTaskDispatchRequest({
-            action: claimed.task.action,
-            requestedCapabilities: claimed.task.requestedCapabilities,
-            assignedNodeId: claimed.task.dispatchTargetNodeId ?? claimed.node.id,
-            approvalState: {
-              requiresApproval: claimed.task.action.requiresApproval,
-              approved: true,
-            },
-            queueStateSummary: summarizeTaskEnvelope(claimed.task),
-            dispatchStatusSummary: claimed.task.dispatchStatusSummary,
-            remoteDispatchPlanned: claimed.task.remoteDispatchPlanned,
-          }),
-        })
-      : undefined;
-    const roundTrip = request
-      ? simulateLocalDispatchRoundTrip({
-          request,
-          accepted: true,
-          resultPayload: {
-            status: effectiveStatus === "claimed" ? "blocked" : effectiveStatus,
-            executionResult: session.latestExecutionResult,
-            linkedSessionId: session.sessionId,
-            linkedTaskId: effectiveTask.taskId,
-            summary: `Local simulated dispatch returned ${effectiveStatus} through the shared runner.`,
-          },
-        })
-      : undefined;
-    const dispatchStatusSummary = roundTrip
-      ? [
-          summarizeDispatchPayload(roundTrip.request.messageType, roundTrip.request.payload, roundTrip.request.protocolVersion),
-          summarizeDispatchPayload(roundTrip.ack.messageType, roundTrip.ack.payload, roundTrip.ack.protocolVersion),
-          roundTrip.result
-            ? summarizeDispatchPayload(roundTrip.result.messageType, roundTrip.result.payload, roundTrip.result.protocolVersion)
-            : "",
-        ].filter(Boolean).join(" || ")
-      : effectiveTask.dispatchStatusSummary;
     const persistedTask = effectiveStatus === "claimed"
       ? finalizedTask
       : await resolved.updateTaskStatus(effectiveTask.taskId, effectiveStatus, {
           assignedNodeId: effectiveTask.assignedNodeId,
-          dispatchMessageId: request?.messageId ?? effectiveTask.dispatchMessageId,
-          dispatchTargetNodeId: claimed.task.dispatchTargetNodeId ?? effectiveTask.dispatchTargetNodeId,
-          dispatchProtocolVersion: request?.protocolVersion ?? effectiveTask.dispatchProtocolVersion,
-          dispatchStatusSummary,
+          dispatchMessageId: effectiveTask.dispatchMessageId,
+          dispatchAckMessageId: effectiveTask.dispatchAckMessageId,
+          dispatchResultMessageId: effectiveTask.dispatchResultMessageId,
+          dispatchTargetNodeId: effectiveTask.dispatchTargetNodeId,
+          dispatchProtocolVersion: effectiveTask.dispatchProtocolVersion,
+          dispatchStatusSummary: effectiveTask.dispatchStatusSummary,
+          dispatchAuthSummary: effectiveTask.dispatchAuthSummary,
+          dispatchTransportStatus: effectiveTask.dispatchTransportStatus,
           remoteDispatchPlanned: claimed.task.remoteDispatchPlanned ?? effectiveTask.remoteDispatchPlanned,
+          dispatchReceivedAt: effectiveTask.dispatchReceivedAt,
+          dispatchCompletedAt: effectiveTask.dispatchCompletedAt,
         });
     const summarizedTask = persistedTask ?? effectiveTask;
 
@@ -323,9 +392,13 @@ export async function executeQueuedTask(
       runnerMode: summarizedTask.runnerMode,
       claimToken: summarizedTask.claimToken,
       dispatchMessageId: summarizedTask.dispatchMessageId,
+      dispatchAckMessageId: summarizedTask.dispatchAckMessageId,
+      dispatchResultMessageId: summarizedTask.dispatchResultMessageId,
       dispatchTargetNodeId: summarizedTask.dispatchTargetNodeId,
       dispatchProtocolVersion: summarizedTask.dispatchProtocolVersion,
       dispatchStatusSummary: summarizedTask.dispatchStatusSummary,
+      dispatchAuthSummary: summarizedTask.dispatchAuthSummary,
+      dispatchTransportStatus: summarizedTask.dispatchTransportStatus,
       status: effectiveStatus,
       queueStateSummary: summarizeTaskEnvelope(summarizedTask),
     };
@@ -343,9 +416,13 @@ export async function executeQueuedTask(
       runnerMode: finalizedTask?.runnerMode ?? claimed.task.runnerMode,
       claimToken: finalizedTask?.claimToken ?? claimed.task.claimToken,
       dispatchMessageId: finalizedTask?.dispatchMessageId ?? claimed.task.dispatchMessageId,
+      dispatchAckMessageId: finalizedTask?.dispatchAckMessageId ?? claimed.task.dispatchAckMessageId,
+      dispatchResultMessageId: finalizedTask?.dispatchResultMessageId ?? claimed.task.dispatchResultMessageId,
       dispatchTargetNodeId: finalizedTask?.dispatchTargetNodeId ?? claimed.task.dispatchTargetNodeId,
       dispatchProtocolVersion: finalizedTask?.dispatchProtocolVersion ?? claimed.task.dispatchProtocolVersion,
       dispatchStatusSummary: finalizedTask?.dispatchStatusSummary ?? claimed.task.dispatchStatusSummary,
+      dispatchAuthSummary: finalizedTask?.dispatchAuthSummary ?? claimed.task.dispatchAuthSummary,
+      dispatchTransportStatus: finalizedTask?.dispatchTransportStatus ?? claimed.task.dispatchTransportStatus,
       status: "failed",
       queueStateSummary: finalizedTask ? summarizeTaskEnvelope(finalizedTask) : undefined,
     };

@@ -18,6 +18,10 @@ export async function GET() {
       runnableSafe: tasks.filter((task) => task.status === "pending" && task.action.scope === "safe").length,
       dispatchPlanned: tasks.filter((task) => task.remoteDispatchPlanned).length,
       withDispatchMetadata: tasks.filter((task) => task.dispatchMessageId || task.dispatchStatusSummary).length,
+      acceptedDispatches: tasks.filter((task) => task.dispatchTransportStatus === "accepted").length,
+      deliveredDispatches: tasks.filter((task) => task.dispatchTransportStatus === "delivered" || task.dispatchTransportStatus === "completed").length,
+      rejectedDispatches: tasks.filter((task) => task.dispatchTransportStatus === "rejected").length,
+      failedDispatches: tasks.filter((task) => task.dispatchTransportStatus === "failed").length,
     };
     return NextResponse.json({ tasks, summary });
   } catch (error) {
