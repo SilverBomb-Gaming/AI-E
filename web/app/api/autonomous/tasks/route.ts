@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { deriveTaskDispatchHardeningState } from "@/lib/aie/taskEnvelope";
 import { listTasks } from "@/lib/aie/taskQueueStore";
 
 export const runtime = "nodejs";
@@ -40,6 +41,7 @@ export async function GET() {
           }
         : null,
       failureReason: task.failureReason ?? null,
+      hardening: deriveTaskDispatchHardeningState(task),
       dispatch: {
         messageId: task.dispatchMessageId ?? null,
         ackMessageId: task.dispatchAckMessageId ?? null,
@@ -73,6 +75,9 @@ export async function GET() {
       deliveredDispatches: tasks.filter((task) => task.dispatchTransportStatus === "delivered" || task.dispatchTransportStatus === "completed").length,
       rejectedDispatches: tasks.filter((task) => task.dispatchTransportStatus === "rejected").length,
       failedDispatches: tasks.filter((task) => task.dispatchTransportStatus === "failed").length,
+      hardeningPassed: tasks.filter((task) => deriveTaskDispatchHardeningState(task).state === "passed").length,
+      hardeningRetryableRejections: tasks.filter((task) => deriveTaskDispatchHardeningState(task).state === "retryable-rejection").length,
+      hardeningTerminalRejections: tasks.filter((task) => deriveTaskDispatchHardeningState(task).state === "terminal-rejection").length,
     };
     return NextResponse.json({ tasks: taskSummaries, summary });
   } catch (error) {

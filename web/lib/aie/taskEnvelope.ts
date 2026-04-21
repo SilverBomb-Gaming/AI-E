@@ -137,6 +137,20 @@ export type TaskEnvelope = {
   updatedAt: string;
 };
 
+export type TaskDispatchHardeningState = {
+  state: "unverified" | "passed" | "retryable-rejection" | "terminal-rejection";
+  category:
+    | "none"
+    | "trust-boundary"
+    | "dispatch-protocol"
+    | "authentication"
+    | "lease"
+    | "continuation"
+    | "checkpoint"
+    | "other";
+  reason?: string;
+};
+
 type CreateTaskEnvelopeParams = {
   taskId?: string;
   sessionId: string;
@@ -815,6 +829,7 @@ export function normalizeTaskEnvelope(value: unknown): TaskEnvelope | null {
 }
 
 export function summarizeTaskEnvelope(envelope: TaskEnvelope): string {
+  const hardening = deriveTaskDispatchHardeningState(envelope);
   return [
     `task=${envelope.taskId}`,
     `status=${envelope.status}`,
@@ -842,10 +857,61 @@ export function summarizeTaskEnvelope(envelope: TaskEnvelope): string {
     envelope.dispatchResultMessageId ? `result=${envelope.dispatchResultMessageId}` : "",
     envelope.requestedCapabilities.length ? `caps=${envelope.requestedCapabilities.join(",")}` : "caps=none",
     envelope.dispatchTransportStatus ? `transport=${envelope.dispatchTransportStatus}` : "",
+    hardening.category !== "none" ? `hardening=${hardening.state}:${hardening.category}` : "",
     typeof envelope.dispatchRetryCount === "number" ? `retries=${envelope.dispatchRetryCount}` : "",
     envelope.failureReason ? `failure=${envelope.failureReason}` : "",
     envelope.dispatchAuthSummary ? `auth=${envelope.dispatchAuthSummary}` : "",
     envelope.dispatchStatusSummary ? `dispatchStatus=${envelope.dispatchStatusSummary}` : "",
     envelope.statusReason ? `reason=${envelope.statusReason}` : "",
   ].filter(Boolean).join(" | ");
+}
+
+export function deriveTaskDispatchHardeningState(envelope: TaskEnvelope): TaskDispatchHardeningState {
+  const reason = normalizeText(envelope.failureReason || envelope.statusReason || envelope.dispatchStatusSummary);
+  const normalizedReason = reason.toLowerCase();
+  const category: TaskDispatchHardeningState["category"] = normalizedReason.includes("trust boundary")
+    ? "trust-boundary"
+    : normalizedReason.includes("dispatch protocol")
+      ? "dispatch-protocol"
+      : normalizedReason.includes("auth")
+        ? "authentication"
+        : normalizedReason.includes("checkpoint")
+          ? "checkpoint"
+          : normalizedReason.includes("continuation")
+            ? "continuation"
+            : normalizedReason.includes("lease")
+              ? "lease"
+              : reason
+                ? "other"
+                : "none";
+
+  if (envelope.dispatchTransportStatus === "accepted" || envelope.dispatchTransportStatus === "delivered" || envelope.dispatchTransportStatus === "completed") {
+    return {
+      state: "passed",
+      category: category === "none" ? "none" : category,
+      reason: reason || undefined,
+    };
+  }
+
+  if (envelope.dispatchTransportStatus === "rejected") {
+    return {
+      state: envelope.status === "retrying" || envelope.recoveryPending ? "retryable-rejection" : "terminal-rejection",
+      category,
+      reason: reason || undefined,
+    };
+  }
+
+  if (envelope.status === "rejected" || envelope.status === "failed" || envelope.status === "blocked") {
+    return {
+      state: "terminal-rejection",
+      category,
+      reason: reason || undefined,
+    };
+  }
+
+  return {
+    state: "unverified",
+    category,
+    reason: reason || undefined,
+  };
 }

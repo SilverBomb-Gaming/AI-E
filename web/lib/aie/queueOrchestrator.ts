@@ -17,7 +17,7 @@ import {
 } from "./executionNodeRegistry";
 import { createDispatchAuthToken, summarizeDispatchAuthContext } from "./dispatchAuth";
 import { createDispatchEnvelope, type DispatchProtocolVersion } from "./dispatchProtocol";
-import { createTaskDispatchRequest, summarizeDispatchPayload } from "./dispatchMessages";
+import { createDispatchAuthenticityBinding, createTaskDispatchRequest, summarizeDispatchPayload } from "./dispatchMessages";
 import {
   DispatchTransportTimeoutError,
   createLocalControlledDispatchTransport,
@@ -204,6 +204,10 @@ function createDispatchContinuationPayload(task: TaskEnvelope, targetNodeId: str
     return undefined;
   }
 
+  const leaseId = task.lease?.leaseId ?? task.priorLeaseId ?? "unknown-lease";
+  const leaseEpoch = task.lease?.epoch ?? 1;
+  const continuationGeneration = continuationMetadata.continuationGeneration;
+
   return {
     isContinuation: true,
     priorLeaseId: task.priorLeaseId ?? task.lease?.leaseId,
@@ -212,7 +216,23 @@ function createDispatchContinuationPayload(task: TaskEnvelope, targetNodeId: str
     generation: continuationMetadata.continuationGeneration,
     reason: continuationMetadata.continuationReason,
     resumedFromCheckpointReference: continuationMetadata.resumedFromCheckpointReference,
+    resumedFromCheckpointBinding: createDispatchAuthenticityBinding({
+      kind: "continuation-resume-checkpoint",
+      taskId: task.taskId,
+      leaseId,
+      leaseEpoch,
+      continuationGeneration,
+      value: continuationMetadata.resumedFromCheckpointReference,
+    }),
     resumedFromContinuationToken: continuationMetadata.resumedFromContinuationToken,
+    resumedFromContinuationBinding: createDispatchAuthenticityBinding({
+      kind: "continuation-resume-token",
+      taskId: task.taskId,
+      leaseId,
+      leaseEpoch,
+      continuationGeneration,
+      value: continuationMetadata.resumedFromContinuationToken,
+    }),
   };
 }
 
@@ -321,6 +341,8 @@ function shouldRetryDispatchFailure(reason: string | undefined, status: "rejecte
     || normalizedReason.includes("offline")
     || normalizedReason.includes("not registered")
     || normalizedReason.includes("unavailable")
+    || normalizedReason.includes("trust boundary")
+    || normalizedReason.includes("dispatch protocol")
   ) {
     return true;
   }
@@ -340,6 +362,8 @@ function selectExecutionNodeForTask(
   const availableNodes = listAvailableExecutionNodes({
     requestedCapabilities: task.requestedCapabilities,
     includeBusy: true,
+    minimumTrustState: "trusted",
+    requiredProtocolVersion: "1",
   }).filter(
     (node) =>
       !context.excludedNodeIds?.has(node.id)
@@ -616,7 +640,23 @@ export async function executeQueuedTask(
           ownerNodeId: activeLease.ownerNodeId,
           epoch: activeLease.epoch,
           continuationToken: activeLease.continuationToken,
+          continuationTokenBinding: createDispatchAuthenticityBinding({
+            kind: "lease-continuation",
+            taskId: currentTask.taskId,
+            leaseId: activeLease.leaseId,
+            leaseEpoch: activeLease.epoch,
+            continuationGeneration: currentTask.continuationGeneration,
+            value: activeLease.continuationToken,
+          }),
           checkpointReference: activeLease.checkpointReference,
+          checkpointReferenceBinding: createDispatchAuthenticityBinding({
+            kind: "lease-checkpoint",
+            taskId: currentTask.taskId,
+            leaseId: activeLease.leaseId,
+            leaseEpoch: activeLease.epoch,
+            continuationGeneration: currentTask.continuationGeneration,
+            value: activeLease.checkpointReference,
+          }),
           resumability: currentTask.resumability,
         },
         continuation: createDispatchContinuationPayload(currentTask, selectedNode.node.id),
@@ -698,18 +738,13 @@ export async function executeQueuedTask(
       latestTask = await resolved.getTask(currentTask.taskId) ?? transportResult.task ?? latestTask;
       latestSession = transportResult.session ?? latestSession;
 
-      if (isTerminalTaskStatus(latestTask.status)) {
-        await clearNodeActivity(selectedNode.node.id, latestTask);
-        return summarizeTerminalTask(latestTask, latestSession);
-      }
-
       if (transportResult.status === "rejected") {
         const reason = transportResult.reason || latestTask.failureReason || "The controlled receiver rejected the dispatch request.";
         const retryable = shouldRetryDispatchFailure(reason, "rejected") && attemptIndex < maxDispatchRetries;
         if (retryable) {
           await clearNodeActivity(selectedNode.node.id, currentTask);
           const persistedLatestTask = await resolved.getTask(currentTask.taskId);
-          if (persistedLatestTask && isTerminalTaskStatus(persistedLatestTask.status)) {
+          if (persistedLatestTask && isTerminalTaskStatus(persistedLatestTask.status) && persistedLatestTask.status !== "rejected") {
             await clearNodeActivity(selectedNode.node.id, persistedLatestTask);
             return summarizeTerminalTask(persistedLatestTask, latestSession);
           }
@@ -779,7 +814,7 @@ export async function executeQueuedTask(
         if (retryable) {
           await clearNodeActivity(selectedNode.node.id, currentTask);
           const persistedLatestTask = await resolved.getTask(currentTask.taskId);
-          if (persistedLatestTask && isTerminalTaskStatus(persistedLatestTask.status)) {
+          if (persistedLatestTask && isTerminalTaskStatus(persistedLatestTask.status) && persistedLatestTask.status !== "failed") {
             await clearNodeActivity(selectedNode.node.id, persistedLatestTask);
             return summarizeTerminalTask(persistedLatestTask, latestSession);
           }
@@ -844,6 +879,11 @@ export async function executeQueuedTask(
         }) ?? latestTask;
         await clearNodeActivity(selectedNode.node.id, latestTask);
         return summarizeQueueExecution(latestTask, latestSession, "failed");
+      }
+
+      if (isTerminalTaskStatus(latestTask.status)) {
+        await clearNodeActivity(selectedNode.node.id, latestTask);
+        return summarizeTerminalTask(latestTask, latestSession);
       }
 
       await clearNodeActivity(selectedNode.node.id, latestTask);

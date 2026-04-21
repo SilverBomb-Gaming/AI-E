@@ -102,6 +102,7 @@ test("dispatchTransport runs a controlled local request ack result flow", async 
       label: "AI-E Headless Test Node",
       capabilities: ["validation-check", "repo-scan"],
       active: true,
+      trustState: "trusted",
       cwd: process.cwd(),
       allowedRoots: [process.cwd()],
     }));
@@ -172,6 +173,7 @@ test("dispatchTransport reports failed delivery when the receiver execution thro
       label: "AI-E Headless Test Node",
       capabilities: ["validation-check", "repo-scan"],
       active: true,
+      trustState: "trusted",
       cwd: process.cwd(),
       allowedRoots: [process.cwd()],
     }));

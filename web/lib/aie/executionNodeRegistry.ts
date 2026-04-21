@@ -1,3 +1,4 @@
+import type { DispatchProtocolVersion } from "./dispatchProtocol";
 import type { ExecutionActionPreview } from "./types";
 import {
   createExecutionNodeDescriptor,
@@ -27,6 +28,8 @@ type ListAvailableExecutionNodesOptions = {
   includeBusy?: boolean;
   taskId?: string;
   heartbeatStaleAfterMs?: number;
+  minimumTrustState?: ExecutionNodeDescriptor["trustState"];
+  requiredProtocolVersion?: DispatchProtocolVersion;
 };
 
 export type ExecutionNodeEligibility = {
@@ -139,6 +142,12 @@ export type ExecutionNodeDispatchValidation = {
   node?: ExecutionNodeDescriptor;
 };
 
+function normalizeMinimumTrustState(value: unknown): ExecutionNodeDescriptor["trustState"] | undefined {
+  return value === "trusted" || value === "restricted" || value === "blocked" || value === "unknown"
+    ? value
+    : undefined;
+}
+
 export function registerExecutionNode(node: ExecutionNodeDescriptor): ExecutionNodeDescriptor {
   const existing = getExecutionNode(node.id);
   const status = node.active === false && node.status === "active"
@@ -155,6 +164,7 @@ export function registerExecutionNode(node: ExecutionNodeDescriptor): ExecutionN
     heartbeatMissCount: node.heartbeatMissCount ?? existing?.heartbeatMissCount ?? 0,
     lastHeartbeatAt: node.lastHeartbeatAt ?? existing?.lastHeartbeatAt,
     trustState: node.trustState ?? existing?.trustState ?? "unknown",
+    protocolVersions: node.protocolVersions ?? existing?.protocolVersions ?? ["1"],
     leaseEpoch: node.leaseEpoch ?? existing?.leaseEpoch ?? 0,
     activeTaskId: node.activeTaskId ?? existing?.activeTaskId,
     activeSessionIds: node.activeSessionIds ?? existing?.activeSessionIds ?? [],
@@ -180,6 +190,34 @@ export function getExecutionNodeEligibility(
     return {
       eligible: false,
       reason: `Execution node ${node.id} is blocked by trust state.`,
+      heartbeatAgeMs,
+      stale: false,
+    };
+  }
+
+  const minimumTrustState = normalizeMinimumTrustState(options.minimumTrustState);
+  if (minimumTrustState === "trusted" && node.trustState !== "trusted") {
+    return {
+      eligible: false,
+      reason: `Execution node ${node.id} is outside the allowed trust boundary (${node.trustState}).`,
+      heartbeatAgeMs,
+      stale: false,
+    };
+  }
+
+  if (minimumTrustState === "restricted" && node.trustState === "unknown") {
+    return {
+      eligible: false,
+      reason: `Execution node ${node.id} does not meet the minimum trust boundary (${minimumTrustState}).`,
+      heartbeatAgeMs,
+      stale: false,
+    };
+  }
+
+  if (options.requiredProtocolVersion && !node.protocolVersions.includes(options.requiredProtocolVersion)) {
+    return {
+      eligible: false,
+      reason: `Execution node ${node.id} does not support dispatch protocol ${options.requiredProtocolVersion}.`,
       heartbeatAgeMs,
       stale: false,
     };
@@ -269,6 +307,7 @@ export function updateExecutionNodeHeartbeat(
     lastHeartbeatAt: heartbeatAt,
     heartbeatMissCount: 0,
     trustState: update.trustState ?? existing.trustState,
+    protocolVersions: existing.protocolVersions,
     leaseEpoch: (existing.leaseEpoch ?? 0) + 1,
   }));
 }
@@ -376,6 +415,8 @@ export function validateExecutionNodeDispatch(
     requestedCapabilities: ExecutionNodeCapability[];
     action?: ExecutionActionPreview;
     taskId?: string;
+    minimumTrustState?: ExecutionNodeDescriptor["trustState"];
+    requiredProtocolVersion?: DispatchProtocolVersion;
   },
 ): ExecutionNodeDispatchValidation {
   const node = getExecutionNode(nodeId);
@@ -389,6 +430,8 @@ export function validateExecutionNodeDispatch(
   const eligibility = getExecutionNodeEligibility(node, {
     requestedCapabilities: params.requestedCapabilities,
     taskId: params.taskId,
+    minimumTrustState: params.minimumTrustState,
+    requiredProtocolVersion: params.requiredProtocolVersion,
   });
   if (!eligibility.eligible) {
     return {

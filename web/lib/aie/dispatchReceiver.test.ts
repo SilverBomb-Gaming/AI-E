@@ -4,7 +4,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { createDispatchAuthToken } from "./dispatchAuth";
-import { createTaskDispatchRequest } from "./dispatchMessages";
+import { createDispatchAuthenticityBinding, createTaskDispatchRequest } from "./dispatchMessages";
 import { createDispatchEnvelope } from "./dispatchProtocol";
 import { handleDispatchRequest } from "./dispatchReceiver";
 import { createExecutionNodeDescriptor } from "./executionNode";
@@ -33,6 +33,8 @@ function createRequest(params?: {
   const taskId = params?.taskId ?? "task-dispatch-receiver-1";
   const sessionId = params?.sessionId ?? "session-dispatch-receiver-1";
   const targetNodeId = params?.targetNodeId ?? "aie-node-headless-default";
+  const leaseId = params?.leaseId ?? `aie-lease-${taskId}`;
+  const continuationGeneration = params?.continuation?.generation ?? 0;
 
   return createDispatchEnvelope({
     messageType: "task-dispatch-request",
@@ -55,10 +57,18 @@ function createRequest(params?: {
       requestedCapabilities: params?.requestedCapabilities ?? ["validation-check", "repo-scan"],
       assignedNodeId: targetNodeId,
       lease: {
-        leaseId: params?.leaseId ?? `aie-lease-${taskId}`,
+        leaseId,
         ownerNodeId: targetNodeId,
         epoch: 1,
         continuationToken: params?.continuationToken,
+        continuationTokenBinding: createDispatchAuthenticityBinding({
+          kind: "lease-continuation",
+          taskId,
+          leaseId,
+          leaseEpoch: 1,
+          continuationGeneration,
+          value: params?.continuationToken,
+        }),
         resumability: params?.continuationToken ? "resumable" : "restart-required",
       },
       continuation: params?.continuation
@@ -70,7 +80,23 @@ function createRequest(params?: {
             generation: params.continuation.generation,
             reason: params.continuation.reason,
             resumedFromCheckpointReference: params.continuation.resumedFromCheckpointReference,
+            resumedFromCheckpointBinding: createDispatchAuthenticityBinding({
+              kind: "continuation-resume-checkpoint",
+              taskId,
+              leaseId,
+              leaseEpoch: 1,
+              continuationGeneration,
+              value: params.continuation.resumedFromCheckpointReference,
+            }),
             resumedFromContinuationToken: params.continuation.resumedFromContinuationToken,
+            resumedFromContinuationBinding: createDispatchAuthenticityBinding({
+              kind: "continuation-resume-token",
+              taskId,
+              leaseId,
+              leaseEpoch: 1,
+              continuationGeneration,
+              value: params.continuation.resumedFromContinuationToken,
+            }),
           }
         : undefined,
       authToken: createDispatchAuthToken({
@@ -101,6 +127,7 @@ test("dispatchReceiver accepts a valid request and routes it into the shared sta
       label: "AI-E Headless Test Node",
       capabilities: ["validation-check", "repo-scan"],
       active: true,
+      trustState: "trusted",
       cwd: process.cwd(),
       allowedRoots: [process.cwd()],
     }));
@@ -171,6 +198,7 @@ test("dispatchReceiver rejects invalid auth, unknown targets, and unsupported ca
       label: "AI-E Headless Test Node",
       capabilities: ["validation-check"],
       active: true,
+      trustState: "trusted",
       cwd: process.cwd(),
       allowedRoots: [process.cwd()],
     }));
@@ -304,6 +332,7 @@ test("dispatchReceiver rejects requests whose lease does not match persisted own
       label: "AI-E Headless Test Node",
       capabilities: ["validation-check", "repo-scan"],
       active: true,
+      trustState: "trusted",
       cwd: process.cwd(),
       allowedRoots: [process.cwd()],
     }));
@@ -389,6 +418,7 @@ test("dispatchReceiver rejects requests whose continuation lineage does not matc
       label: "AI-E Headless Test Node",
       capabilities: ["validation-check", "repo-scan"],
       active: true,
+      trustState: "trusted",
       cwd: process.cwd(),
       allowedRoots: [process.cwd()],
     }));
@@ -462,6 +492,176 @@ test("dispatchReceiver rejects requests whose continuation lineage does not matc
     assert.equal(result.status, "rejected");
     assert.equal(result.ack.payload.accepted, false);
     assert.match(result.reason ?? "", /continuation source node/i);
+  } finally {
+    delete process.env.AIE_AUTONOMOUS_SESSION_DIR;
+    delete process.env.AIE_TASK_QUEUE_DIR;
+    resetExecutionNodeRegistry();
+    await rm(sessionDirectory, { recursive: true, force: true });
+    await rm(taskDirectory, { recursive: true, force: true });
+  }
+});
+
+test("dispatchReceiver rejects requests outside the trusted target boundary", async () => {
+  const sessionDirectory = path.resolve(process.cwd(), "temp-dispatch-receiver-session-store-5");
+  const taskDirectory = path.resolve(process.cwd(), "temp-dispatch-receiver-task-store-5");
+  resetExecutionNodeRegistry();
+  process.env.AIE_AUTONOMOUS_SESSION_DIR = sessionDirectory;
+  process.env.AIE_TASK_QUEUE_DIR = taskDirectory;
+  await mkdir(sessionDirectory, { recursive: true });
+  await mkdir(taskDirectory, { recursive: true });
+
+  try {
+    registerExecutionNode(createExecutionNodeDescriptor({
+      id: "aie-node-headless-default",
+      mode: "headless",
+      label: "AI-E Restricted Test Node",
+      capabilities: ["validation-check", "repo-scan"],
+      active: true,
+      trustState: "restricted",
+      cwd: process.cwd(),
+      allowedRoots: [process.cwd()],
+    }));
+    await enqueueTask({
+      ...createTaskEnvelope({
+        taskId: "task-dispatch-receiver-7",
+        sessionId: "session-dispatch-receiver-7",
+        stepIndex: 1,
+        action: createRequest({ taskId: "task-dispatch-receiver-7", sessionId: "session-dispatch-receiver-7" }).payload.action,
+      }),
+      status: "assigned",
+      assignedNodeId: "aie-node-headless-default",
+      lease: {
+        leaseId: "aie-lease-task-dispatch-receiver-7",
+        ownerNodeId: "aie-node-headless-default",
+        epoch: 1,
+        startedAt: "2026-04-21T04:13:00.000Z",
+        lastProgressAt: "2026-04-21T04:13:00.000Z",
+        status: "active",
+      },
+    });
+
+    const result = await handleDispatchRequest({
+      request: createRequest({
+        taskId: "task-dispatch-receiver-7",
+        sessionId: "session-dispatch-receiver-7",
+        leaseId: "aie-lease-task-dispatch-receiver-7",
+      }),
+      dependencies: {
+        getTask,
+        updateTaskStatus,
+        updateTaskDispatchMetadata,
+        executeClaimedTask: async () => {
+          throw new Error("should not execute");
+        },
+      },
+    });
+
+    assert.equal(result.status, "rejected");
+    assert.match(result.reason ?? "", /trust boundary/i);
+  } finally {
+    delete process.env.AIE_AUTONOMOUS_SESSION_DIR;
+    delete process.env.AIE_TASK_QUEUE_DIR;
+    resetExecutionNodeRegistry();
+    await rm(sessionDirectory, { recursive: true, force: true });
+    await rm(taskDirectory, { recursive: true, force: true });
+  }
+});
+
+test("dispatchReceiver rejects forged continuation authenticity bindings", async () => {
+  const sessionDirectory = path.resolve(process.cwd(), "temp-dispatch-receiver-session-store-6");
+  const taskDirectory = path.resolve(process.cwd(), "temp-dispatch-receiver-task-store-6");
+  resetExecutionNodeRegistry();
+  process.env.AIE_AUTONOMOUS_SESSION_DIR = sessionDirectory;
+  process.env.AIE_TASK_QUEUE_DIR = taskDirectory;
+  await mkdir(sessionDirectory, { recursive: true });
+  await mkdir(taskDirectory, { recursive: true });
+
+  try {
+    registerExecutionNode(createExecutionNodeDescriptor({
+      id: "aie-node-headless-default",
+      mode: "headless",
+      label: "AI-E Headless Test Node",
+      capabilities: ["validation-check", "repo-scan"],
+      active: true,
+      trustState: "trusted",
+      cwd: process.cwd(),
+      allowedRoots: [process.cwd()],
+    }));
+    await enqueueTask({
+      ...createTaskEnvelope({
+        taskId: "task-dispatch-receiver-8",
+        sessionId: "session-dispatch-receiver-8",
+        stepIndex: 1,
+        action: createRequest({
+          taskId: "task-dispatch-receiver-8",
+          sessionId: "session-dispatch-receiver-8",
+          continuationToken: "persisted-token-8",
+          continuation: {
+            priorLeaseId: "aie-lease-task-dispatch-receiver-7",
+            sourceNodeId: "aie-node-web-default",
+            targetNodeId: "aie-node-headless-default",
+            generation: 1,
+            reason: "timeout-recovery",
+            resumedFromCheckpointReference: "checkpoint://persisted-token-8",
+            resumedFromContinuationToken: "persisted-token-8",
+          },
+        }).payload.action,
+      }),
+      status: "assigned",
+      assignedNodeId: "aie-node-headless-default",
+      resumability: "resumable",
+      continuationSourceNodeId: "aie-node-web-default",
+      continuationTargetNodeId: "aie-node-headless-default",
+      continuationGeneration: 1,
+      continuationReason: "timeout-recovery",
+      resumedFromCheckpointReference: "checkpoint://persisted-token-8",
+      resumedFromContinuationToken: "persisted-token-8",
+      continuationToken: "persisted-token-8",
+      priorLeaseId: "aie-lease-task-dispatch-receiver-7",
+      lease: {
+        leaseId: "aie-lease-task-dispatch-receiver-8",
+        ownerNodeId: "aie-node-headless-default",
+        epoch: 1,
+        startedAt: "2026-04-21T04:14:00.000Z",
+        lastProgressAt: "2026-04-21T04:14:00.000Z",
+        status: "active",
+        continuationToken: "persisted-token-8",
+      },
+    });
+
+    const forgedRequest = createRequest({
+      taskId: "task-dispatch-receiver-8",
+      sessionId: "session-dispatch-receiver-8",
+      leaseId: "aie-lease-task-dispatch-receiver-8",
+      continuationToken: "persisted-token-8",
+      continuation: {
+        priorLeaseId: "aie-lease-task-dispatch-receiver-7",
+        sourceNodeId: "aie-node-web-default",
+        targetNodeId: "aie-node-headless-default",
+        generation: 1,
+        reason: "timeout-recovery",
+        resumedFromCheckpointReference: "checkpoint://persisted-token-8",
+        resumedFromContinuationToken: "persisted-token-8",
+      },
+    });
+    if (forgedRequest.payload.continuation) {
+      forgedRequest.payload.continuation.resumedFromContinuationBinding = "forged-binding";
+    }
+
+    const result = await handleDispatchRequest({
+      request: forgedRequest,
+      dependencies: {
+        getTask,
+        updateTaskStatus,
+        updateTaskDispatchMetadata,
+        executeClaimedTask: async () => {
+          throw new Error("should not execute");
+        },
+      },
+    });
+
+    assert.equal(result.status, "rejected");
+    assert.match(result.reason ?? "", /authenticity binding/i);
   } finally {
     delete process.env.AIE_AUTONOMOUS_SESSION_DIR;
     delete process.env.AIE_TASK_QUEUE_DIR;

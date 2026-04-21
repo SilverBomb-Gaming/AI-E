@@ -1,5 +1,6 @@
 import { validateDispatchAuthToken } from "./dispatchAuth";
 import {
+  createDispatchAuthenticityBinding,
   createTaskDispatchAck,
   createTaskDispatchError,
   createTaskDispatchResult,
@@ -116,6 +117,39 @@ function createErrorEnvelope(
   });
 }
 
+function isRetryableDispatchRejection(reason: string): boolean {
+  const normalizedReason = normalizeText(reason).toLowerCase();
+  return normalizedReason.includes("busy")
+    || normalizedReason.includes("inactive")
+    || normalizedReason.includes("stale")
+    || normalizedReason.includes("offline")
+    || normalizedReason.includes("not registered")
+    || normalizedReason.includes("unavailable")
+    || normalizedReason.includes("trust boundary")
+    || normalizedReason.includes("dispatch protocol");
+}
+
+function matchesAuthenticityBinding(params: {
+  kind: Parameters<typeof createDispatchAuthenticityBinding>[0]["kind"];
+  taskId: string;
+  leaseId: string;
+  leaseEpoch: number;
+  continuationGeneration: number;
+  value?: string;
+  binding?: string;
+}): boolean {
+  const expectedBinding = createDispatchAuthenticityBinding({
+    kind: params.kind,
+    taskId: params.taskId,
+    leaseId: params.leaseId,
+    leaseEpoch: params.leaseEpoch,
+    continuationGeneration: params.continuationGeneration,
+    value: params.value,
+  });
+
+  return !expectedBinding || expectedBinding === normalizeText(params.binding);
+}
+
 async function rejectDispatchRequest(params: {
   request: DispatchEnvelope<TaskDispatchRequestPayload>;
   reason: string;
@@ -123,8 +157,9 @@ async function rejectDispatchRequest(params: {
   existingTask?: TaskEnvelope | null;
   dependencies: DispatchReceiverDependencies;
 }): Promise<DispatchReceiverResult> {
+  const retryable = isRetryableDispatchRejection(params.reason);
   const ack = createAckEnvelope(params.request, false, params.reason);
-  const error = createErrorEnvelope(params.request, params.reason);
+  const error = createErrorEnvelope(params.request, params.reason, retryable);
   const dispatchStatusSummary = [
     summarizeDispatchPayload(params.request.messageType, params.request.payload, params.request.protocolVersion),
     summarizeDispatchPayload(ack.messageType, ack.payload, ack.protocolVersion),
@@ -133,7 +168,7 @@ async function rejectDispatchRequest(params: {
 
   let task = params.existingTask ?? null;
   if (task) {
-    task = await (params.dependencies.updateTaskStatus ?? updateTaskStatus)(task.taskId, "rejected", {
+    const rejectionMetadata = {
       assignedNodeId: task.assignedNodeId ?? params.request.targetNodeId,
       statusReason: params.reason,
       failureReason: params.reason,
@@ -142,11 +177,14 @@ async function rejectDispatchRequest(params: {
       dispatchProtocolVersion: params.request.protocolVersion,
       dispatchStatusSummary,
       dispatchAuthSummary: params.authSummary,
-      dispatchTransportStatus: "rejected",
+      dispatchTransportStatus: "rejected" as const,
       dispatchReceivedAt: ack.createdAt,
       dispatchCompletedAt: error.createdAt,
       remoteDispatchPlanned: true,
-    });
+    };
+    task = retryable
+      ? await (params.dependencies.updateTaskDispatchMetadata ?? updateTaskDispatchMetadata)(task.taskId, rejectionMetadata)
+      : await (params.dependencies.updateTaskStatus ?? updateTaskStatus)(task.taskId, "rejected", rejectionMetadata);
   }
 
   return {
@@ -198,6 +236,8 @@ export async function handleDispatchRequest(params: HandleDispatchRequestParams)
     requestedCapabilities: request.payload.requestedCapabilities,
     action: request.payload.action,
     taskId: request.taskId,
+    minimumTrustState: "trusted",
+    requiredProtocolVersion: request.protocolVersion,
   });
   if (!nodeValidation.accepted || !nodeValidation.node) {
     return rejectDispatchRequest({
@@ -316,10 +356,54 @@ export async function handleDispatchRequest(params: HandleDispatchRequestParams)
       });
     }
 
+    if (
+      existingTask.resumedFromCheckpointReference
+      && continuation.resumedFromCheckpointReference
+      && !matchesAuthenticityBinding({
+        kind: "continuation-resume-checkpoint",
+        taskId: request.taskId,
+        leaseId: request.payload.lease.leaseId,
+        leaseEpoch: request.payload.lease.epoch,
+        continuationGeneration: continuation.generation,
+        value: continuation.resumedFromCheckpointReference,
+        binding: continuation.resumedFromCheckpointBinding,
+      })
+    ) {
+      return rejectDispatchRequest({
+        request,
+        reason: `Task ${request.taskId} resumed checkpoint authenticity binding did not match the persisted continuation lineage.`,
+        authSummary,
+        existingTask,
+        dependencies: params.dependencies,
+      });
+    }
+
     if (existingTask.resumedFromContinuationToken && continuation.resumedFromContinuationToken && existingTask.resumedFromContinuationToken !== continuation.resumedFromContinuationToken) {
       return rejectDispatchRequest({
         request,
         reason: `Task ${request.taskId} resumed continuation token did not match the persisted continuation state.`,
+        authSummary,
+        existingTask,
+        dependencies: params.dependencies,
+      });
+    }
+
+    if (
+      existingTask.resumedFromContinuationToken
+      && continuation.resumedFromContinuationToken
+      && !matchesAuthenticityBinding({
+        kind: "continuation-resume-token",
+        taskId: request.taskId,
+        leaseId: request.payload.lease.leaseId,
+        leaseEpoch: request.payload.lease.epoch,
+        continuationGeneration: continuation.generation,
+        value: continuation.resumedFromContinuationToken,
+        binding: continuation.resumedFromContinuationBinding,
+      })
+    ) {
+      return rejectDispatchRequest({
+        request,
+        reason: `Task ${request.taskId} resumed continuation token authenticity binding did not match the persisted continuation lineage.`,
         authSummary,
         existingTask,
         dependencies: params.dependencies,
@@ -342,6 +426,28 @@ export async function handleDispatchRequest(params: HandleDispatchRequestParams)
   }
 
   if (
+    existingTask.continuationToken
+    && request.payload.lease.continuationToken
+    && !matchesAuthenticityBinding({
+      kind: "lease-continuation",
+      taskId: request.taskId,
+      leaseId: request.payload.lease.leaseId,
+      leaseEpoch: request.payload.lease.epoch,
+      continuationGeneration: existingTask.continuationGeneration,
+      value: request.payload.lease.continuationToken,
+      binding: request.payload.lease.continuationTokenBinding,
+    })
+  ) {
+    return rejectDispatchRequest({
+      request,
+      reason: `Task ${request.taskId} continuation token authenticity binding did not match the persisted lease lineage.`,
+      authSummary,
+      existingTask,
+      dependencies: params.dependencies,
+    });
+  }
+
+  if (
     existingTask.checkpointReference
     && request.payload.lease.checkpointReference
     && existingTask.checkpointReference !== request.payload.lease.checkpointReference
@@ -349,6 +455,28 @@ export async function handleDispatchRequest(params: HandleDispatchRequestParams)
     return rejectDispatchRequest({
       request,
       reason: `Task ${request.taskId} checkpoint reference did not match the persisted lease state.`,
+      authSummary,
+      existingTask,
+      dependencies: params.dependencies,
+    });
+  }
+
+  if (
+    existingTask.checkpointReference
+    && request.payload.lease.checkpointReference
+    && !matchesAuthenticityBinding({
+      kind: "lease-checkpoint",
+      taskId: request.taskId,
+      leaseId: request.payload.lease.leaseId,
+      leaseEpoch: request.payload.lease.epoch,
+      continuationGeneration: existingTask.continuationGeneration,
+      value: request.payload.lease.checkpointReference,
+      binding: request.payload.lease.checkpointReferenceBinding,
+    })
+  ) {
+    return rejectDispatchRequest({
+      request,
+      reason: `Task ${request.taskId} checkpoint authenticity binding did not match the persisted lease lineage.`,
       authSummary,
       existingTask,
       dependencies: params.dependencies,

@@ -9,7 +9,7 @@ import {
 import { resolveRepoRoot } from "./lib/aie/repoContext";
 import { runAutonomousSession } from "./lib/aie/runAutonomousSession";
 import type { AutonomousSession } from "./lib/aie/autonomousSession";
-import type { TaskEnvelope } from "./lib/aie/taskEnvelope";
+import { deriveTaskDispatchHardeningState, type TaskEnvelope } from "./lib/aie/taskEnvelope";
 import { getTask, listTasks } from "./lib/aie/taskQueueStore";
 import type { runAnalysis } from "./lib/aie/run-analysis";
 import type { saveAutonomousSession } from "./lib/aie/autonomousSessionStore";
@@ -302,6 +302,8 @@ export function formatHeadlessTaskReport(task: TaskEnvelope, options?: { json?: 
     return JSON.stringify(task, null, 2);
   }
 
+  const hardening = deriveTaskDispatchHardeningState(task);
+
   return [
     `Task ID: ${task.taskId}`,
     `Session ID: ${task.sessionId}`,
@@ -340,6 +342,8 @@ export function formatHeadlessTaskReport(task: TaskEnvelope, options?: { json?: 
     `Dispatch retry count: ${typeof task.dispatchRetryCount === "number" ? task.dispatchRetryCount : "none"}`,
     `Dispatch last attempt: ${task.dispatchLastAttemptAt ?? "none"}`,
     `Dispatch timeout: ${typeof task.dispatchTimeoutMs === "number" ? task.dispatchTimeoutMs : "none"}`,
+    `Dispatch hardening: ${hardening.state}/${hardening.category}`,
+    `Dispatch hardening reason: ${hardening.reason ?? "none"}`,
     `Dispatch auth: ${task.dispatchAuthSummary ?? "none"}`,
     `Dispatch summary: ${task.dispatchStatusSummary ?? "No dispatch summary recorded."}`,
     `Capabilities: ${task.requestedCapabilities.join(",") || "none"}`,
@@ -423,7 +427,7 @@ export async function formatHeadlessTaskList(options?: { json?: boolean }): Prom
 
   return tasks
     .slice(0, 20)
-    .map((task) => `${task.taskId} | ${task.status} | ${task.selectedNodeId ?? task.assignedNodeId ?? "unassigned"} | lease=${task.lease?.ownerNodeId ?? "none"}:${task.lease?.status ?? "none"} | continuation=${task.continuationGeneration > 0 ? `gen-${task.continuationGeneration}:${task.continuationSourceNodeId ?? "unknown"}->${task.continuationTargetNodeId ?? "pending"}` : "fresh"} | resumability=${task.resumability} | recovery=${task.recoveryPending} | transport=${task.dispatchTransportStatus ?? "none"} | retries=${task.dispatchRetryCount ?? 0} | failure=${task.failureReason ?? "none"} | ${task.sessionId}`)
+    .map((task) => `${task.taskId} | ${task.status} | ${task.selectedNodeId ?? task.assignedNodeId ?? "unassigned"} | lease=${task.lease?.ownerNodeId ?? "none"}:${task.lease?.status ?? "none"} | continuation=${task.continuationGeneration > 0 ? `gen-${task.continuationGeneration}:${task.continuationSourceNodeId ?? "unknown"}->${task.continuationTargetNodeId ?? "pending"}` : "fresh"} | resumability=${task.resumability} | recovery=${task.recoveryPending} | transport=${task.dispatchTransportStatus ?? "none"} | hardening=${deriveTaskDispatchHardeningState(task).state}:${deriveTaskDispatchHardeningState(task).category} | retries=${task.dispatchRetryCount ?? 0} | failure=${task.failureReason ?? "none"} | ${task.sessionId}`)
     .join("\n");
 }
 

@@ -1,6 +1,11 @@
+import type { DispatchProtocolVersion } from "./dispatchProtocol";
 import type { ExecutionActionPreview } from "./types";
 
 export type ExecutionNodeMode = "web" | "headless" | "local-node";
+
+export type ExecutionNodeStatus = "active" | "inactive" | "stale" | "draining";
+
+export type ExecutionNodeTrustState = "unknown" | "trusted" | "restricted" | "blocked";
 
 export type ExecutionNodeCapability =
   | "inspection"
@@ -18,6 +23,14 @@ export type ExecutionNodeDescriptor = {
   allowedRoots?: string[];
   active: boolean;
   busy: boolean;
+  status: ExecutionNodeStatus;
+  lastHeartbeatAt?: string;
+  heartbeatMissCount: number;
+  trustState: ExecutionNodeTrustState;
+  protocolVersions: DispatchProtocolVersion[];
+  leaseEpoch: number;
+  activeTaskId?: string;
+  activeSessionIds: string[];
   createdAt: string;
   updatedAt: string;
 };
@@ -36,6 +49,14 @@ type CreateExecutionNodeDescriptorParams = {
   allowedRoots?: string[];
   active?: boolean;
   busy?: boolean;
+  status?: ExecutionNodeStatus;
+  lastHeartbeatAt?: string;
+  heartbeatMissCount?: number;
+  trustState?: ExecutionNodeTrustState;
+  protocolVersions?: DispatchProtocolVersion[];
+  leaseEpoch?: number;
+  activeTaskId?: string;
+  activeSessionIds?: string[];
   createdAt?: string;
   updatedAt?: string;
 };
@@ -48,6 +69,8 @@ const CAPABILITY_ORDER: ExecutionNodeCapability[] = [
   "repo-scan",
 ];
 
+const PROTOCOL_VERSION_ORDER: DispatchProtocolVersion[] = ["1"];
+
 export const DEFAULT_RUNTIME_EXECUTION_NODE_CAPABILITIES: ExecutionNodeCapability[] = [...CAPABILITY_ORDER];
 
 function normalizeText(value: unknown): string {
@@ -58,6 +81,15 @@ function normalizeText(value: unknown): string {
 
 function createTimestamp(): string {
   return new Date().toISOString();
+}
+
+function normalizeCount(value: unknown): number {
+  const numericValue = Number(value ?? 0);
+  if (!Number.isFinite(numericValue)) {
+    return 0;
+  }
+
+  return Math.max(0, Math.floor(numericValue));
 }
 
 function slugify(value: string): string {
@@ -78,6 +110,18 @@ function normalizeCapabilities(capabilities: ExecutionNodeCapability[]): Executi
   }
 
   return CAPABILITY_ORDER.filter((capability) => seen.has(capability));
+}
+
+function normalizeProtocolVersions(protocolVersions: DispatchProtocolVersion[] | undefined): DispatchProtocolVersion[] {
+  const seen = new Set<DispatchProtocolVersion>();
+
+  for (const protocolVersion of protocolVersions ?? []) {
+    if (PROTOCOL_VERSION_ORDER.includes(protocolVersion)) {
+      seen.add(protocolVersion);
+    }
+  }
+
+  return PROTOCOL_VERSION_ORDER.filter((protocolVersion) => seen.has(protocolVersion));
 }
 
 function normalizePathForMatch(value: unknown): string {
@@ -116,10 +160,15 @@ export function supportsExecutionNodeCapabilities(
 
 export function summarizeExecutionNodePolicy(node: ExecutionNodeDescriptor): string {
   const roots = (node.allowedRoots ?? []).filter(Boolean);
-  const availability = node.active ? (node.busy ? "busy" : "active") : "inactive";
+  const availability = `${node.status}${node.busy ? "/busy" : ""}`;
+  const protocols = node.protocolVersions.length ? node.protocolVersions.join(",") : "none";
   return roots.length
-    ? `${node.id} availability=${availability} roots=${roots.join(",")}`
-    : `${node.id} availability=${availability} roots=unbounded-lab`;
+    ? `${node.id} availability=${availability} trust=${node.trustState} protocol=${protocols} roots=${roots.join(",")}`
+    : `${node.id} availability=${availability} trust=${node.trustState} protocol=${protocols} roots=unbounded-lab`;
+}
+
+export function normalizeExecutionNodeDescriptor(node: ExecutionNodeDescriptor): ExecutionNodeDescriptor {
+  return createExecutionNodeDescriptor(node);
 }
 
 export function validateExecutionActionForNode(
@@ -161,6 +210,11 @@ export function validateExecutionActionForNode(
 export function createExecutionNodeDescriptor(params: CreateExecutionNodeDescriptorParams): ExecutionNodeDescriptor {
   const timestamp = params.updatedAt || createTimestamp();
   const normalizedCapabilities = normalizeCapabilities(params.capabilities);
+  const normalizedProtocolVersions = normalizeProtocolVersions(params.protocolVersions);
+  const status = params.status ?? (params.active === false ? "inactive" : "active");
+  const normalizedActive = params.active ?? status === "active";
+  const lastHeartbeatAt = normalizeText(params.lastHeartbeatAt) || (status === "active" ? timestamp : undefined);
+  const activeSessionIds = [...new Set((params.activeSessionIds ?? []).map((item) => normalizeText(item)).filter(Boolean))];
 
   return {
     id: normalizeText(params.id) || buildExecutionNodeId(params),
@@ -169,8 +223,16 @@ export function createExecutionNodeDescriptor(params: CreateExecutionNodeDescrip
     capabilities: normalizedCapabilities,
     cwd: normalizeText(params.cwd) || undefined,
     allowedRoots: (params.allowedRoots ?? []).map((item) => normalizeText(item)).filter(Boolean),
-    active: params.active !== false,
+    active: normalizedActive,
     busy: params.busy === true,
+    status,
+    lastHeartbeatAt,
+    heartbeatMissCount: normalizeCount(params.heartbeatMissCount),
+    trustState: params.trustState === "trusted" || params.trustState === "restricted" || params.trustState === "blocked" ? params.trustState : "unknown",
+    protocolVersions: normalizedProtocolVersions.length ? normalizedProtocolVersions : ["1"],
+    leaseEpoch: normalizeCount(params.leaseEpoch),
+    activeTaskId: normalizeText(params.activeTaskId) || undefined,
+    activeSessionIds,
     createdAt: params.createdAt || timestamp,
     updatedAt: timestamp,
   };
@@ -221,5 +283,7 @@ export function createRuntimeExecutionNodeDescriptor(params: {
     allowedRoots: params.allowedRoots,
     label: params.label || defaultLabel,
     capabilities: params.capabilities ?? DEFAULT_RUNTIME_EXECUTION_NODE_CAPABILITIES,
+    trustState: "trusted",
+    protocolVersions: ["1"],
   });
 }

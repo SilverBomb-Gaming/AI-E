@@ -14,7 +14,9 @@ export type TaskDispatchLeasePayload = {
   ownerNodeId: string;
   epoch: number;
   continuationToken?: string;
+  continuationTokenBinding?: string;
   checkpointReference?: string;
+  checkpointReferenceBinding?: string;
   resumability?: TaskResumability;
 };
 
@@ -26,7 +28,9 @@ export type TaskDispatchContinuationPayload = {
   generation: number;
   reason?: string;
   resumedFromCheckpointReference?: string;
+  resumedFromCheckpointBinding?: string;
   resumedFromContinuationToken?: string;
+  resumedFromContinuationBinding?: string;
 };
 
 export type TaskDispatchRequestPayload = {
@@ -75,6 +79,30 @@ function normalizeText(value: unknown): string {
   return String(value ?? "")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+export function createDispatchAuthenticityBinding(params: {
+  kind: "lease-continuation" | "lease-checkpoint" | "continuation-resume-checkpoint" | "continuation-resume-token";
+  taskId: string;
+  leaseId: string;
+  leaseEpoch: number;
+  continuationGeneration?: number;
+  value?: string;
+}): string | undefined {
+  const normalizedValue = normalizeText(params.value);
+  if (!normalizedValue) {
+    return undefined;
+  }
+
+  return [
+    "aie-bind-v1",
+    normalizeText(params.kind),
+    normalizeText(params.taskId),
+    normalizeText(params.leaseId),
+    Math.max(1, Math.floor(Number(params.leaseEpoch ?? 1))).toString(),
+    Math.max(0, Math.floor(Number(params.continuationGeneration ?? 0))).toString(),
+    normalizedValue,
+  ].join(":");
 }
 
 function isExecutionNodeCapability(value: unknown): value is ExecutionNodeCapability {
@@ -128,7 +156,9 @@ function isTaskDispatchLeasePayload(value: unknown): value is TaskDispatchLeaseP
       && Number.isInteger(Number(source.epoch))
       && Number(source.epoch) >= 1
       && (!source.continuationToken || normalizeText(source.continuationToken))
+      && (!source.continuationTokenBinding || normalizeText(source.continuationTokenBinding))
       && (!source.checkpointReference || normalizeText(source.checkpointReference))
+      && (!source.checkpointReferenceBinding || normalizeText(source.checkpointReferenceBinding))
       && (!source.resumability || isTaskResumability(source.resumability)),
   );
 }
@@ -148,7 +178,9 @@ function isTaskDispatchContinuationPayload(value: unknown): value is TaskDispatc
       && (!source.targetNodeId || normalizeText(source.targetNodeId))
       && (!source.reason || normalizeText(source.reason))
       && (!source.resumedFromCheckpointReference || normalizeText(source.resumedFromCheckpointReference))
-      && (!source.resumedFromContinuationToken || normalizeText(source.resumedFromContinuationToken)),
+      && (!source.resumedFromCheckpointBinding || normalizeText(source.resumedFromCheckpointBinding))
+      && (!source.resumedFromContinuationToken || normalizeText(source.resumedFromContinuationToken))
+      && (!source.resumedFromContinuationBinding || normalizeText(source.resumedFromContinuationBinding))
   );
 }
 
@@ -162,7 +194,9 @@ export function createTaskDispatchRequest(payload: TaskDispatchRequestPayload): 
       ownerNodeId: normalizeText(payload.lease.ownerNodeId),
       epoch: Math.max(1, Math.floor(Number(payload.lease.epoch ?? 1))),
       continuationToken: normalizeText(payload.lease.continuationToken) || undefined,
+      continuationTokenBinding: normalizeText(payload.lease.continuationTokenBinding) || undefined,
       checkpointReference: normalizeText(payload.lease.checkpointReference) || undefined,
+      checkpointReferenceBinding: normalizeText(payload.lease.checkpointReferenceBinding) || undefined,
       resumability: isTaskResumability(payload.lease.resumability) ? payload.lease.resumability : undefined,
     },
     continuation: payload.continuation?.isContinuation
@@ -174,7 +208,9 @@ export function createTaskDispatchRequest(payload: TaskDispatchRequestPayload): 
           generation: Math.max(1, Math.floor(Number(payload.continuation.generation ?? 1))),
           reason: normalizeText(payload.continuation.reason) || undefined,
           resumedFromCheckpointReference: normalizeText(payload.continuation.resumedFromCheckpointReference) || undefined,
+          resumedFromCheckpointBinding: normalizeText(payload.continuation.resumedFromCheckpointBinding) || undefined,
           resumedFromContinuationToken: normalizeText(payload.continuation.resumedFromContinuationToken) || undefined,
+          resumedFromContinuationBinding: normalizeText(payload.continuation.resumedFromContinuationBinding) || undefined,
         }
       : undefined,
     authToken: payload.authToken,

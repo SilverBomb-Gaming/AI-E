@@ -15,6 +15,7 @@ import {
   resetExecutionNodeRegistry,
   updateExecutionNodeHeartbeat,
   unregisterExecutionNode,
+  validateExecutionNodeDispatch,
 } from "./executionNodeRegistry";
 import type { ExecutionActionPreview } from "./types";
 
@@ -187,4 +188,24 @@ test("execution node registry only treats busy state as reusable for the same ta
     resetExecutionNodeRegistry();
     await rm(registryDirectory, { recursive: true, force: true });
   }
+});
+
+test("execution node registry refuses restricted trust dispatches at a trusted boundary", () => {
+  resetExecutionNodeRegistry();
+
+  const restrictedNode = registerExecutionNode(createExecutionNodeDescriptor({
+    mode: "headless",
+    label: "AI-E Restricted Node",
+    capabilities: ["inspection", "validation-check", "repo-scan"],
+    trustState: "restricted",
+  }));
+
+  const validation = validateExecutionNodeDispatch(restrictedNode.id, {
+    requestedCapabilities: ["validation-check"],
+    minimumTrustState: "trusted",
+    requiredProtocolVersion: "1",
+  });
+
+  assert.equal(validation.accepted, false);
+  assert.match(validation.reason ?? "", /trust boundary/i);
 });

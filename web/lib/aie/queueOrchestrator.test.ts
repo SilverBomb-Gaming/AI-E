@@ -14,7 +14,7 @@ import {
 } from "./queueOrchestrator";
 import { runAutonomousSession } from "./runAutonomousSession";
 import { createTaskEnvelope } from "./taskEnvelope";
-import { enqueueTask, getTask, updateTaskStatus } from "./taskQueueStore";
+import { enqueueTask, getTask, updateTaskDispatchMetadata, updateTaskStatus } from "./taskQueueStore";
 import type { FreeAnalysisResponse } from "./types";
 
 function makeSafeAction(id: string) {
@@ -305,6 +305,7 @@ test("queueOrchestrator reselects another active node when the initial target be
     registerExecutionNode(createExecutionNodeDescriptor({
       ...claimed.node,
       active: false,
+      trustState: "trusted",
     }));
 
     const summary = claimed
@@ -347,6 +348,7 @@ test("queueOrchestrator excludes stale nodes from future dispatch without duplic
       label: "AI-E Headless Stale Candidate",
       capabilities: ["validation-check", "repo-scan"],
       active: true,
+      trustState: "trusted",
       lastHeartbeatAt: new Date().toISOString(),
       cwd: process.cwd(),
       allowedRoots: [process.cwd()],
@@ -357,6 +359,7 @@ test("queueOrchestrator excludes stale nodes from future dispatch without duplic
       label: "AI-E Headless Healthy Candidate",
       capabilities: ["validation-check", "repo-scan"],
       active: true,
+      trustState: "trusted",
       lastHeartbeatAt: new Date().toISOString(),
       cwd: process.cwd(),
       allowedRoots: [process.cwd()],
@@ -371,6 +374,7 @@ test("queueOrchestrator excludes stale nodes from future dispatch without duplic
       ...staleCandidate,
       active: true,
       status: "active",
+      trustState: "trusted",
       lastHeartbeatAt: "2026-04-20T00:00:00.000Z",
     }));
 
@@ -539,6 +543,170 @@ test("queueOrchestrator invalidates an active resumable lease and leaves determi
   }
 });
 
+test("queueOrchestrator retries deterministically after a trusted-boundary dispatch rejection without duplicate execution", async () => {
+  const sessionDirectory = path.resolve(process.cwd(), "temp-queue-orchestrator-session-store-6b");
+  const taskDirectory = path.resolve(process.cwd(), "temp-queue-orchestrator-task-store-6b");
+  const registryDirectory = path.resolve(process.cwd(), "temp-queue-orchestrator-node-store-6b");
+  resetExecutionNodeRegistry();
+  process.env.AIE_AUTONOMOUS_SESSION_DIR = sessionDirectory;
+  process.env.AIE_TASK_QUEUE_DIR = taskDirectory;
+  process.env.AIE_EXECUTION_NODE_REGISTRY_DIR = registryDirectory;
+  await mkdir(sessionDirectory, { recursive: true });
+  await mkdir(taskDirectory, { recursive: true });
+  await mkdir(registryDirectory, { recursive: true });
+
+  try {
+    const firstNode = registerExecutionNode(createExecutionNodeDescriptor({
+      id: "aie-node-headless-trust-retry-1-manual",
+      mode: "headless",
+      label: "AI-E Headless Trust Retry 1",
+      capabilities: ["validation-check", "repo-scan"],
+      active: true,
+      trustState: "trusted",
+      cwd: process.cwd(),
+      allowedRoots: [process.cwd()],
+    }));
+    const secondNode = registerExecutionNode(createExecutionNodeDescriptor({
+      id: "aie-node-headless-trust-retry-2-manual",
+      mode: "headless",
+      label: "AI-E Headless Trust Retry 2",
+      capabilities: ["validation-check", "repo-scan"],
+      active: true,
+      trustState: "trusted",
+      cwd: process.cwd(),
+      allowedRoots: [process.cwd()],
+    }));
+
+    await enqueueTask({
+      ...createTaskEnvelope({
+        taskId: "task-run-trust-retry",
+        sessionId: "queue-session-trust-retry",
+        stepIndex: 1,
+        action: makeSafeAction("run-trust-retry"),
+        
+      }),
+      resumability: "resumable",
+      continuationToken: "continue-trust-retry",
+      checkpointReference: "checkpoint://trust-retry",
+    });
+
+    const claimed = await claimNextRunnableTask({ runtimeMode: "headless", cwd: process.cwd() });
+    assert.ok(claimed);
+
+    const dispatchedNodeIds: string[] = [];
+    let completionCount = 0;
+    const summary = await executeQueuedTask(claimed, {
+      runtimeMode: "headless",
+      cwd: process.cwd(),
+      maxSteps: 1,
+      maxDispatchRetries: 1,
+      dispatchTransport: {
+        async sendDispatchRequest({ request, dependencies }) {
+          dispatchedNodeIds.push(request.targetNodeId);
+
+          if (dispatchedNodeIds.length === 1) {
+            const task = await dependencies.updateTaskDispatchMetadata(request.taskId, {
+              assignedNodeId: request.targetNodeId,
+              selectedNodeId: request.targetNodeId,
+              selectedNodeReason: "Any trusted node selected first.",
+              dispatchMessageId: request.messageId,
+              dispatchAckMessageId: `${request.messageId}-ack`,
+              dispatchTargetNodeId: request.targetNodeId,
+              dispatchProtocolVersion: request.protocolVersion,
+              dispatchStatusSummary: "dispatch=1 | type=error | status=rejected | reason=trust-boundary",
+              dispatchAuthSummary: `auth=aie-node-local-default->${request.targetNodeId} | scope=local-lab | valid=true`,
+              dispatchTransportStatus: "rejected",
+              dispatchRetryCount: 1,
+              dispatchLastAttemptAt: request.createdAt,
+              dispatchReceivedAt: request.createdAt,
+              dispatchCompletedAt: request.createdAt,
+              remoteDispatchPlanned: true,
+              statusReason: "Execution node moved outside the allowed trust boundary.",
+              failureReason: "Execution node moved outside the allowed trust boundary.",
+            });
+
+            return {
+              status: "rejected",
+              request,
+              rawRequest: JSON.stringify(request),
+              rawAck: "ack",
+              rawError: "error",
+              reason: "Execution node moved outside the allowed trust boundary.",
+              task,
+              session: null,
+            };
+          }
+
+          completionCount += 1;
+          const task = await dependencies.updateTaskStatus(request.taskId, "completed", {
+            assignedNodeId: request.targetNodeId,
+            selectedNodeId: request.targetNodeId,
+            selectedNodeReason: "Selected deterministic fallback node after trust rejection.",
+            dispatchMessageId: request.messageId,
+            dispatchAckMessageId: `${request.messageId}-ack`,
+            dispatchResultMessageId: `${request.messageId}-result`,
+            dispatchTargetNodeId: request.targetNodeId,
+            dispatchProtocolVersion: request.protocolVersion,
+            dispatchStatusSummary: "dispatch=1 | type=result | status=completed",
+            dispatchAuthSummary: `auth=aie-node-local-default->${request.targetNodeId} | scope=local-lab | valid=true`,
+            dispatchTransportStatus: "completed",
+            dispatchRetryCount: 2,
+            dispatchLastAttemptAt: request.createdAt,
+            dispatchReceivedAt: request.createdAt,
+            dispatchCompletedAt: request.createdAt,
+            remoteDispatchPlanned: true,
+            statusReason: "Trusted fallback node completed the queued validation.",
+          });
+
+          return {
+            status: "delivered",
+            request,
+            rawRequest: JSON.stringify(request),
+            rawAck: "ack",
+            rawResult: "result",
+            task,
+            session: null,
+          };
+        },
+        async receiveDispatchRequest() {
+          throw new Error("Not implemented in this test transport.");
+        },
+        async sendDispatchAck() {
+          return "ack";
+        },
+        async sendDispatchResult() {
+          return "result";
+        },
+        async sendDispatchError() {
+          return "error";
+        },
+      },
+    });
+
+    const persisted = await getTask("task-run-trust-retry");
+
+    assert.equal(summary.status, "completed");
+    assert.equal(summary.task?.status, "completed");
+    assert.equal(dispatchedNodeIds.length, 2);
+    assert.notEqual(dispatchedNodeIds[0], dispatchedNodeIds[1]);
+    assert.equal(summary.task?.selectedNodeId, dispatchedNodeIds[1]);
+    assert.equal(summary.task?.resumeAttemptCount, 1);
+    assert.equal(summary.task?.continuationGeneration, 1);
+    assert.equal(completionCount, 1);
+    assert.equal(persisted?.status, "completed");
+    assert.equal(persisted?.selectedNodeId, dispatchedNodeIds[1]);
+    assert.equal(persisted?.dispatchRetryCount, 2);
+  } finally {
+    delete process.env.AIE_AUTONOMOUS_SESSION_DIR;
+    delete process.env.AIE_TASK_QUEUE_DIR;
+    delete process.env.AIE_EXECUTION_NODE_REGISTRY_DIR;
+    resetExecutionNodeRegistry();
+    await rm(sessionDirectory, { recursive: true, force: true });
+    await rm(taskDirectory, { recursive: true, force: true });
+    await rm(registryDirectory, { recursive: true, force: true });
+  }
+});
+
 test("queueOrchestrator performs deterministic cross-node continuation with preserved task and session identity", async () => {
   const sessionDirectory = path.resolve(process.cwd(), "temp-queue-orchestrator-session-store-7");
   const taskDirectory = path.resolve(process.cwd(), "temp-queue-orchestrator-task-store-7");
@@ -558,6 +726,7 @@ test("queueOrchestrator performs deterministic cross-node continuation with pres
       label: "AI-E Headless Continuation Source",
       capabilities: ["validation-check", "repo-scan"],
       active: true,
+      trustState: "trusted",
       cwd: process.cwd(),
       allowedRoots: [process.cwd()],
     }));
@@ -567,6 +736,7 @@ test("queueOrchestrator performs deterministic cross-node continuation with pres
       label: "AI-E Headless Continuation Target",
       capabilities: ["validation-check", "repo-scan"],
       active: true,
+      trustState: "trusted",
       cwd: process.cwd(),
       allowedRoots: [process.cwd()],
     }));
@@ -687,6 +857,8 @@ test("queueOrchestrator performs deterministic cross-node continuation with pres
     assert.equal(dispatchedContinuations[1]?.generation, 1);
     assert.equal(dispatchedContinuations[1]?.sourceNodeId, preferredNode.id);
     assert.equal(dispatchedContinuations[1]?.targetNodeId, recoveryNode.id);
+    assert.match(String(dispatchedContinuations[1]?.resumedFromCheckpointBinding ?? ""), /^aie-bind-v1:/);
+    assert.match(String(dispatchedContinuations[1]?.resumedFromContinuationBinding ?? ""), /^aie-bind-v1:/);
     assert.equal(persisted?.taskId, "task-run-cross-node-continuation");
     assert.equal(persisted?.sessionId, "queue-session-cross-node-continuation");
     assert.equal(persisted?.continuationGeneration, 1);
