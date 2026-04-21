@@ -13,5 +13,8 @@ export async function GET(
     return NextResponse.json({ error: "Autonomous task not found." }, { status: 404 });
   }
 
-  return NextResponse.json({ task });
+  return NextResponse.json({
+    task,
+    runnable: task.status === "pending" && task.action.scope === "safe",
+  });
 }

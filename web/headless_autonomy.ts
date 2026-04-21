@@ -1,4 +1,5 @@
 import { loadAutonomousSession } from "./lib/aie/autonomousSessionStore";
+import { runSingleQueuedTask, type QueueExecutionSummary } from "./lib/aie/queueOrchestrator";
 import { createRuntimeExecutionNodeDescriptor } from "./lib/aie/executionNode";
 import { registerExecutionNode } from "./lib/aie/executionNodeRegistry";
 import { resolveRepoRoot } from "./lib/aie/repoContext";
@@ -20,6 +21,8 @@ type HeadlessAutonomyOptions = {
   verbose?: boolean;
   json?: boolean;
   listTasks?: boolean;
+  runNextTask?: boolean;
+  runTask?: boolean;
   taskId?: string;
 };
 
@@ -27,6 +30,7 @@ type HeadlessAutonomyDependencies = {
   runAnalysis: typeof runAnalysis;
   executeAction: typeof executeAction;
   saveAutonomousSession: typeof saveAutonomousSession;
+  runSingleQueuedTask: typeof runSingleQueuedTask;
 };
 
 function normalizeText(value: unknown): string {
@@ -90,6 +94,12 @@ export function parseArgs(argv: string[]): HeadlessAutonomyOptions {
         break;
       case "--listTasks":
         options.listTasks = true;
+        break;
+      case "--runNextTask":
+        options.runNextTask = true;
+        break;
+      case "--runTask":
+        options.runTask = true;
         break;
       case "--taskId":
         options.taskId = normalizeText(next) || undefined;
@@ -237,8 +247,38 @@ export function formatHeadlessTaskReport(task: TaskEnvelope, options?: { json?: 
     `Step: ${task.stepIndex}`,
     `Status: ${task.status}`,
     `Assigned node: ${task.assignedNodeId ?? "unassigned"}`,
+    `Runner mode: ${task.runnerMode ?? "unknown"}`,
+    `Claim token: ${task.claimToken ?? "none"}`,
     `Capabilities: ${task.requestedCapabilities.join(",") || "none"}`,
     `Reason: ${task.statusReason ?? "No status reason recorded."}`,
+    `Claimed: ${task.claimedAt ?? "not claimed"}`,
+    `Started: ${task.startedAt ?? "not started"}`,
+    `Completed: ${task.completedAt ?? "not completed"}`,
+    `Failed: ${task.failedAt ?? "not failed"}`,
+    `Blocked: ${task.blockedAt ?? "not blocked"}`,
+  ].join("\n");
+}
+
+export function formatHeadlessQueueRunReport(summary: QueueExecutionSummary, options?: { json?: boolean }): string {
+  if (options?.json) {
+    return JSON.stringify(summary, null, 2);
+  }
+
+  if (summary.status === "no-runnable-task") {
+    return "No runnable safe queued task was available for controlled execution.";
+  }
+
+  return [
+    `Queue run: ${summary.status}`,
+    `Task ID: ${summary.task?.taskId ?? "unknown"}`,
+    `Session ID: ${summary.session?.sessionId ?? summary.task?.sessionId ?? "unknown"}`,
+    `Task status: ${summary.task?.status ?? "unknown"}`,
+    `Assigned node: ${summary.nodeId ?? summary.task?.assignedNodeId ?? "unknown"}`,
+    `Runner mode: ${summary.runnerMode ?? summary.task?.runnerMode ?? "unknown"}`,
+    `Claim token: ${summary.claimToken ?? summary.task?.claimToken ?? "unknown"}`,
+    `Queue summary: ${summary.queueStateSummary ?? "No queue summary recorded."}`,
+    `Session status: ${summary.session?.status ?? "no session"}`,
+    `Reason: ${summary.task?.statusReason ?? summary.session?.completedReason ?? summary.session?.stateReason ?? "No status reason recorded."}`,
   ].join("\n");
 }
 
@@ -287,6 +327,19 @@ export async function runHeadlessAutonomy(
   });
 }
 
+export async function runHeadlessQueuedTask(
+  options: HeadlessAutonomyOptions,
+  dependencies?: Partial<HeadlessAutonomyDependencies>,
+): Promise<QueueExecutionSummary> {
+  return (dependencies?.runSingleQueuedTask ?? runSingleQueuedTask)({
+    taskId: options.runTask ? options.taskId : undefined,
+    runtimeMode: "headless",
+    cwd: options.cwd ?? process.cwd(),
+    allowedRoots: options.allowedRoots,
+    maxSteps: options.maxSteps ?? 1,
+  });
+}
+
 async function main() {
   const options = parseArgs(process.argv.slice(2));
 
@@ -296,6 +349,12 @@ async function main() {
   }
 
   if (options.taskId) {
+    if (options.runTask) {
+      const summary = await runHeadlessQueuedTask(options);
+      process.stdout.write(`${formatHeadlessQueueRunReport(summary, { json: options.json })}\n`);
+      return;
+    }
+
     const task = await getTask(options.taskId);
     if (!task) {
       console.error("Autonomous task not found.");
@@ -304,6 +363,12 @@ async function main() {
     }
 
     process.stdout.write(`${formatHeadlessTaskReport(task, { json: options.json })}\n`);
+    return;
+  }
+
+  if (options.runNextTask) {
+    const summary = await runHeadlessQueuedTask(options);
+    process.stdout.write(`${formatHeadlessQueueRunReport(summary, { json: options.json })}\n`);
     return;
   }
 

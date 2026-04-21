@@ -4,8 +4,33 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import type { AutonomousSession } from "@/lib/aie/autonomousSession";
+import type { TaskEnvelope } from "@/lib/aie/taskEnvelope";
 
 type RunState = "idle" | "running" | "failed";
+
+type TaskListResponse = {
+  error?: string;
+  tasks?: TaskEnvelope[];
+  summary?: {
+    total: number;
+    pending: number;
+    assigned: number;
+    running: number;
+    completed: number;
+    failed: number;
+    blocked: number;
+    runnableSafe: number;
+  };
+};
+
+type QueueRunPayload = {
+  error?: string;
+  summary?: {
+    status: string;
+    task?: TaskEnvelope | null;
+    session?: AutonomousSession | null;
+  };
+};
 
 function getStatusClassName(status: AutonomousSession["status"]): string {
   switch (status) {
@@ -31,11 +56,14 @@ export default function AutonomousPage() {
   const [sessionId, setSessionId] = useState("");
   const [session, setSession] = useState<AutonomousSession | null>(null);
   const [sessions, setSessions] = useState<AutonomousSession[]>([]);
+  const [tasks, setTasks] = useState<TaskEnvelope[]>([]);
+  const [taskSummary, setTaskSummary] = useState<TaskListResponse["summary"] | null>(null);
   const [runState, setRunState] = useState<RunState>("idle");
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     void refreshRecentSessions();
+    void refreshTasks();
   }, []);
 
   async function refreshRecentSessions() {
@@ -49,6 +77,21 @@ export default function AutonomousPage() {
       setSessions(payload.sessions);
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "The autonomous sessions could not be loaded.");
+    }
+  }
+
+  async function refreshTasks() {
+    try {
+      const response = await fetch("/api/autonomous/tasks", { cache: "no-store" });
+      const payload = (await response.json()) as TaskListResponse;
+      if (!response.ok || !Array.isArray(payload.tasks)) {
+        throw new Error(payload.error || "The autonomous tasks could not be loaded.");
+      }
+
+      setTasks(payload.tasks);
+      setTaskSummary(payload.summary ?? null);
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "The autonomous tasks could not be loaded.");
     }
   }
 
@@ -77,6 +120,7 @@ export default function AutonomousPage() {
       setSession(payload.session);
       setSessionId(payload.session.sessionId);
       await refreshRecentSessions();
+      await refreshTasks();
       setRunState("idle");
     } catch (nextError) {
       setRunState("failed");
@@ -101,6 +145,7 @@ export default function AutonomousPage() {
 
       setSession(payload.session);
       await refreshRecentSessions();
+      await refreshTasks();
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "The autonomous session could not be loaded.");
     }
@@ -131,10 +176,42 @@ export default function AutonomousPage() {
       setSession(payload.session);
       setSessionId(payload.session.sessionId);
       await refreshRecentSessions();
+      await refreshTasks();
       setRunState("idle");
     } catch (nextError) {
       setRunState("failed");
       setError(nextError instanceof Error ? nextError.message : "The autonomous session could not be resumed.");
+    }
+  }
+
+  async function runNextQueuedTask() {
+    setRunState("running");
+    setError(null);
+
+    try {
+      const response = await fetch("/api/autonomous/tasks/run", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ maxSteps: 1 }),
+      });
+      const payload = (await response.json()) as QueueRunPayload;
+      if (!response.ok || !payload.summary) {
+        throw new Error(payload.error || "The queued task could not be executed.");
+      }
+
+      if (payload.summary.session) {
+        setSession(payload.summary.session);
+        setSessionId(payload.summary.session.sessionId);
+      }
+
+      await refreshRecentSessions();
+      await refreshTasks();
+      setRunState("idle");
+    } catch (nextError) {
+      setRunState("failed");
+      setError(nextError instanceof Error ? nextError.message : "The queued task could not be executed.");
     }
   }
 
@@ -192,6 +269,14 @@ export default function AutonomousPage() {
               className="rounded-full bg-ink px-5 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
             >
               {runState === "running" ? "Running bounded loop..." : "Run autonomous session"}
+            </button>
+            <button
+              type="button"
+              onClick={runNextQueuedTask}
+              disabled={runState === "running"}
+              className="rounded-full border border-ocean/20 bg-ocean/10 px-5 py-3 text-sm font-semibold text-ocean disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {runState === "running" ? "Executing queued task..." : "Run next queued task"}
             </button>
             <button
               type="button"
@@ -263,6 +348,67 @@ export default function AutonomousPage() {
                 </button>
               ))}
               {!sessions.length ? <p className="text-sm text-ink/60">No persisted autonomous sessions yet.</p> : null}
+            </div>
+          </div>
+
+          <div className="mt-8 rounded-[1.3rem] border border-ink/10 bg-white/70 p-4">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.22em] text-ink/45">Queue state</p>
+                <p className="mt-1 text-sm text-ink/65">Inspect claimed, running, and finalized task envelopes without leaving this page.</p>
+              </div>
+              <button
+                type="button"
+                onClick={refreshTasks}
+                className="rounded-full border border-ink/10 px-3 py-2 text-xs font-semibold text-ink"
+              >
+                Refresh tasks
+              </button>
+            </div>
+
+            {taskSummary ? (
+              <div className="mt-4 flex flex-wrap gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-ink/55">
+                <span className="rounded-full border border-ink/10 bg-white px-3 py-1">total {taskSummary.total}</span>
+                <span className="rounded-full border border-ink/10 bg-white px-3 py-1">pending {taskSummary.pending}</span>
+                <span className="rounded-full border border-ink/10 bg-white px-3 py-1">assigned {taskSummary.assigned}</span>
+                <span className="rounded-full border border-ink/10 bg-white px-3 py-1">running {taskSummary.running}</span>
+                <span className="rounded-full border border-ink/10 bg-white px-3 py-1">completed {taskSummary.completed}</span>
+                <span className="rounded-full border border-ink/10 bg-white px-3 py-1">failed {taskSummary.failed}</span>
+                <span className="rounded-full border border-ink/10 bg-white px-3 py-1">blocked {taskSummary.blocked}</span>
+                <span className="rounded-full border border-ocean/20 bg-ocean/10 px-3 py-1 text-ocean">runnable safe {taskSummary.runnableSafe}</span>
+              </div>
+            ) : null}
+
+            <div className="mt-4 space-y-3">
+              {tasks.slice(0, 6).map((task) => (
+                <article key={task.taskId} className="rounded-[1rem] border border-ink/10 bg-white/80 px-4 py-3 text-sm text-ink/80">
+                  <div className="flex items-center justify-between gap-4">
+                    <div>
+                      <p className="font-semibold text-ink">{task.action.description}</p>
+                      <p className="mt-1 text-xs text-ink/55">{task.taskId} · session {task.sessionId}</p>
+                    </div>
+                    <span className={`rounded-full border px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] ${task.status === "completed"
+                      ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                      : task.status === "failed" || task.status === "blocked"
+                        ? "border-coral/20 bg-coral/10 text-ember"
+                        : task.status === "running"
+                          ? "border-ocean/20 bg-ocean/10 text-ocean"
+                          : task.status === "assigned"
+                            ? "border-gold/30 bg-gold/10 text-gold-700"
+                            : "border-ink/10 bg-white text-ink/65"
+                    }`}>
+                      {task.status}
+                    </span>
+                  </div>
+                  <p className="mt-2 text-sm text-ink/75">Assigned node: {task.assignedNodeId || "unassigned"} · runner: {task.runnerMode || "unknown"}</p>
+                  <p className="mt-2 text-sm text-ink/75">Claim token: {task.claimToken || "none"}</p>
+                  <p className="mt-2 text-sm text-ink/75">Timeline: claimed {task.claimedAt || "-"} · started {task.startedAt || "-"} · completed {task.completedAt || "-"}</p>
+                  {task.failedAt ? <p className="mt-2 text-sm text-ink/75">Failed at: {task.failedAt}</p> : null}
+                  {task.blockedAt ? <p className="mt-2 text-sm text-ink/75">Blocked at: {task.blockedAt}</p> : null}
+                  <p className="mt-2 text-sm text-ink/75">Reason: {task.statusReason || "No status reason recorded yet."}</p>
+                </article>
+              ))}
+              {!tasks.length ? <p className="text-sm text-ink/60">No persisted autonomous tasks yet.</p> : null}
             </div>
           </div>
         </section>
