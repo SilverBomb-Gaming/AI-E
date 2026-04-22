@@ -525,10 +525,16 @@ export default function AutonomousPage() {
                 <p><strong>Coding target scope:</strong> {session.workflowContinuity.coding.targetScope || "No coding scope recorded yet."}</p>
                 <p><strong>Current coding objective:</strong> {session.workflowContinuity.coding.currentCodingObjective || "No coding objective recorded yet."}</p>
                 <p><strong>Validation target:</strong> {session.workflowContinuity.coding.validationTarget || "No validation target recorded yet."}</p>
+                <p><strong>Current validation target:</strong> {session.workflowContinuity.coding.currentValidationTarget || "No current validation target recorded yet."}</p>
                 <p><strong>Last code change summary:</strong> {session.workflowContinuity.coding.lastCodeChangeSummary || "No code change summary recorded yet."}</p>
+                <p><strong>Last implementation summary:</strong> {session.workflowContinuity.coding.lastImplementationSummary || "No implementation summary recorded yet."}</p>
+                <p><strong>Last validation summary:</strong> {session.workflowContinuity.coding.lastValidationSummary || "No validation summary recorded yet."}</p>
                 <p><strong>Last validation result summary:</strong> {session.workflowContinuity.coding.lastValidationResultSummary || "No validation result summary recorded yet."}</p>
                 <p><strong>Current correction target:</strong> {session.workflowContinuity.coding.currentCorrectionTarget || "No correction target recorded yet."}</p>
+                <p><strong>Last correction summary:</strong> {session.workflowContinuity.coding.lastCorrectionSummary || "No correction summary recorded yet."}</p>
                 <p><strong>Repeated validation outcome:</strong> {session.workflowContinuity.coding.repeatedValidationOutcome || "No repeated validation outcome recorded yet."}</p>
+                <p><strong>Validation-first coding behavior:</strong> {session.workflowContinuity.coding.validationFirstActive ? "Active" : "Inactive"}</p>
+                <p><strong>Repeated validation failure driving escalation:</strong> {session.workflowContinuity.coding.repeatedValidationFailureDrivingEscalation ? "Yes" : "No"}</p>
                 <p><strong>Next intended coding action:</strong> {session.workflowContinuity.coding.nextIntendedCodingAction || "No coding action recorded yet."}</p>
                 <p><strong>Coding escalation active:</strong> {session.workflowContinuity.coding.escalationActive ? "Yes" : "No"}</p>
                 <p><strong>Coding supervised recovery active:</strong> {session.workflowContinuity.coding.supervisedRecoveryActive ? "Yes" : "No"}</p>

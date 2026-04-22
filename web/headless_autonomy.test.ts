@@ -78,7 +78,13 @@ test("headless_autonomy persists a bounded session and prints a matching summary
     assert.match(formatHeadlessSessionReport(session), /Session mode:/i);
     assert.match(formatHeadlessSessionReport(session), /Coding loop phase:/i);
     assert.match(formatHeadlessSessionReport(session), /Current coding objective:/i);
+    assert.match(formatHeadlessSessionReport(session), /Current validation target:/i);
+    assert.match(formatHeadlessSessionReport(session), /Last implementation summary:/i);
+    assert.match(formatHeadlessSessionReport(session), /Last validation summary:/i);
     assert.match(formatHeadlessSessionReport(session), /Last validation result summary:/i);
+    assert.match(formatHeadlessSessionReport(session), /Last correction summary:/i);
+    assert.match(formatHeadlessSessionReport(session), /Validation-first coding behavior:/i);
+    assert.match(formatHeadlessSessionReport(session), /Repeated validation failure driving escalation:/i);
     assert.match(formatHeadlessSessionReport(session), /Recommendation confidence:/i);
     assert.match(formatHeadlessSessionReport(session), /Recommendation rationale:/i);
     assert.match(formatHeadlessSessionReport(session), /Recommendation review summary:/i);
@@ -191,6 +197,12 @@ test("headless_autonomy queue entrypoints run one queued task and print a queue 
     assert.match(output, /Session mode:/i);
     assert.match(output, /Coding loop phase:/i);
     assert.match(output, /Current coding objective:/i);
+    assert.match(output, /Current validation target:/i);
+    assert.match(output, /Last implementation summary:/i);
+    assert.match(output, /Last validation summary:/i);
+    assert.match(output, /Last correction summary:/i);
+    assert.match(output, /Validation-first coding behavior:/i);
+    assert.match(output, /Repeated validation failure driving escalation:/i);
     assert.match(output, /Recommendation confidence:/i);
     assert.match(output, /Recommendation review summary:/i);
     assert.match(output, /Last recommendation review outcome:/i);

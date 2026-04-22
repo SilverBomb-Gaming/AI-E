@@ -207,6 +207,11 @@ test("repo coding sessions derive explicit coding loop context from implementati
     },
     nextDecision: "continue",
   });
+
+  assert.equal(implemented.workflowContinuity.coding.codingLoopPhase, "validation-pending");
+  assert.equal(implemented.workflowContinuity.coding.validationFirstActive, true);
+  assert.match(implemented.workflowContinuity.coding.currentValidationTarget ?? "", /ready for validation/i);
+
   const validated = appendAutonomousStep(implemented, {
     proposedAction: "Run the bounded autonomous session validation target.",
     expectedOutcome: "The bounded coding loop validation should pass.",
@@ -220,15 +225,65 @@ test("repo coding sessions derive explicit coding loop context from implementati
 
   assert.equal(validated.sessionMode, "repo-coding");
   assert.equal(validated.workflowContinuity.coding.sessionMode, "repo-coding");
-  assert.equal(validated.workflowContinuity.coding.codingLoopPhase, "validation");
+  assert.equal(validated.workflowContinuity.coding.codingLoopPhase, "validation-failed");
   assert.equal(validated.workflowContinuity.coding.targetScope, "web/lib/aie/autonomousSession.ts");
   assert.match(validated.workflowContinuity.coding.currentCodingObjective ?? "", /stabilize web\/lib\/aie\/autonomoussession\.ts/i);
   assert.match(validated.workflowContinuity.coding.lastCodeChangeSummary ?? "", /changed=web\/lib\/aie\/autonomousSession\.ts/i);
+  assert.match(validated.workflowContinuity.coding.lastImplementationSummary ?? "", /runtime=success/i);
+  assert.match(validated.workflowContinuity.coding.lastValidationSummary ?? "", /runtime=failed/i);
   assert.match(validated.workflowContinuity.coding.lastValidationResultSummary ?? "", /runtime=failed/i);
   assert.equal(validated.workflowContinuity.coding.lastValidationPassed, false);
+  assert.equal(validated.workflowContinuity.coding.validationFirstActive, true);
   assert.match(validated.workflowContinuity.coding.currentCorrectionTarget ?? "", /summary mismatch/i);
   assert.match(validated.workflowContinuity.coding.nextIntendedCodingAction ?? "", /run the bounded autonomous session validation target/i);
-  assert.match(buildAutonomousSessionContextBlock(validated), /Coding loop phase: validation/i);
+  assert.match(buildAutonomousSessionContextBlock(validated), /Coding loop phase: validation-failed/i);
+  assert.match(buildAutonomousSessionContextBlock(validated), /Validation-first coding behavior active: true/i);
+});
+
+test("repo coding sessions mark correction pending and validation recovered after a successful bounded fix", () => {
+  const created = createAutonomousSession({
+    goal: "Correct a repo coding loop regression and revalidate the bounded fix.",
+    sessionMode: "repo-coding",
+  });
+  const failedValidation = appendAutonomousStep(created, {
+    proposedAction: "Run the bounded validation target.",
+    executionResult: {
+      status: "failed",
+      error: "Validation still reports the same bounded regression.",
+      commandLabel: "npm test",
+    },
+    failureReason: "Validation still reports the same bounded regression.",
+  });
+  const corrected = appendAutonomousStep(failedValidation, {
+    proposedAction: "Apply the bounded correction patch to web/lib/aie/autonomousSession.ts.",
+    expectedOutcome: "The bounded correction should be ready for validation.",
+    executionResult: {
+      status: "success",
+      output: "Correction patch applied cleanly.",
+      changedPaths: ["web/lib/aie/autonomousSession.ts"],
+      diffSummary: "Adjusted the validation-first coding state derivation.",
+    },
+    nextDecision: "continue",
+  });
+  const recovered = appendAutonomousStep(corrected, {
+    proposedAction: "Run the bounded validation target again.",
+    expectedOutcome: "The bounded correction should now validate cleanly.",
+    executionResult: {
+      status: "success",
+      output: "Validation passed after the bounded correction.",
+      commandLabel: "npm test",
+    },
+    nextDecision: "continue",
+  });
+
+  assert.equal(corrected.workflowContinuity.coding.codingLoopPhase, "validation-pending");
+  assert.match(corrected.workflowContinuity.coding.lastCorrectionSummary ?? "", /adjusted the validation-first coding state derivation/i);
+  assert.match(corrected.workflowContinuity.coding.currentCorrectionTarget ?? "", /bounded regression/i);
+  assert.equal(recovered.workflowContinuity.coding.codingLoopPhase, "validation-recovered");
+  assert.equal(recovered.workflowContinuity.coding.lastValidationPassed, true);
+  assert.equal(recovered.workflowContinuity.coding.validationFirstActive, true);
+  assert.equal(recovered.workflowContinuity.coding.currentCorrectionTarget, undefined);
+  assert.match(recovered.workflowContinuity.coding.codingSummary ?? "", /last-validation=passed/i);
 });
 
 test("repo coding sessions surface escalation and supervised recovery as coding loop phases", () => {
@@ -269,12 +324,23 @@ test("repo coding sessions surface escalation and supervised recovery as coding 
     action: "prefer-validation-next",
     overrideReason: "Select the supervised validation-first recovery path.",
   });
+  const recovered = appendAutonomousStep(selectedRecovery, {
+    proposedAction: "Run the supervised validation-first recovery step.",
+    executionResult: {
+      status: "success",
+      output: "The supervised validation-first recovery step restored the bounded validation path.",
+      commandLabel: "npm test",
+    },
+    nextDecision: "continue",
+  });
 
-  assert.equal(escalated.workflowContinuity.coding.codingLoopPhase, 'supervised-recovery');
-  assert.equal(escalated.workflowContinuity.coding.supervisedRecoveryActive, true);
-  assert.equal(selectedRecovery.workflowContinuity.coding.codingLoopPhase, "supervised-recovery");
-  assert.equal(selectedRecovery.workflowContinuity.coding.supervisedRecoveryActive, true);
-  assert.match(selectedRecovery.workflowContinuity.coding.codingSummary ?? "", /phase=supervised-recovery/i);
+  assert.equal(escalated.workflowContinuity.coding.codingLoopPhase, "escalation");
+  assert.equal(escalated.workflowContinuity.coding.validationFirstActive, true);
+  assert.equal(escalated.workflowContinuity.coding.repeatedValidationFailureDrivingEscalation, true);
+  assert.equal(recovered.workflowContinuity.coding.codingLoopPhase, "supervised-recovery");
+  assert.equal(recovered.workflowContinuity.coding.supervisedRecoveryActive, true);
+  assert.equal(recovered.workflowContinuity.coding.repeatedValidationFailureDrivingEscalation, false);
+  assert.match(recovered.workflowContinuity.coding.codingSummary ?? "", /phase=supervised-recovery/i);
 });
 
 test("autonomous sessions mark repeated ineffective validation loops as stalled", () => {

@@ -352,6 +352,17 @@ AI-E now treats repo coding work as an explicit bounded loop mode built on the c
 
 Phase 5A is complete when these coding-loop fields continue to validate under focused owner tests and the broader regression gate. Later production-capability slices can build on this by tightening repo-task intake, linking concrete edits more directly to validation targets, and expanding operator review around real coding deliverables.
 
+## Phase 5B: validation-first repo coding loop behavior
+
+AI-E now makes the repo-coding loop more practically useful by treating validation-first behavior as an explicit bounded coding mode on top of the Phase 5A continuity layer rather than as an implicit side effect of generic loop state.
+
+- `workflowContinuity.coding` now distinguishes validation-first coding states such as `validation-pending`, `validation-failed`, `correction-pending`, `validation-recovered`, `escalation`, and `supervised-recovery`, so implementation, validation, correction, and bounded recovery stay visible in repo-work terms
+- validation-oriented repo summaries now persist in the same session-local continuity block instead of a second memory system: current validation target, last implementation summary, last validation summary, last correction summary, validation-first-active state, and repeated-validation-failure escalation state all remain deterministic and inspectable across the loop
+- the existing escalation and supervised recovery handoff spine now drives repo-coding visibility more clearly: repeated validation failure can surface as an explicit coding escalation, while selected and executing supervised recovery paths surface separately from ordinary validation failure
+- the autonomous page, session context block, headless CLI, local-node CLI, and queue-run reports now expose validation-first coding fields directly so operators can see whether the loop is waiting to validate, failed validation, is correcting toward a target, recovered after validation, or is escalating because repeated validation failure is still driving the loop
+
+Phase 5B is complete when these validation-first coding states continue to validate under focused owner tests, the widened regression slice, and the broader web test gate. Later production-capability slices can build on this by tightening repo-task intake, connecting validation targets more directly to concrete deliverables, and surfacing stronger operator review around code-change acceptance.
+
 Still deferred beyond 4M-D:
 
 - autonomous peer-to-peer replication or any direct node-to-node handoff channel

@@ -78,7 +78,13 @@ test("local_node runs a bounded goal, creates a session, and prints a structured
     assert.match(textOutput, /Session mode:/i);
     assert.match(textOutput, /Coding loop phase:/i);
     assert.match(textOutput, /Current coding objective:/i);
+    assert.match(textOutput, /Current validation target:/i);
+    assert.match(textOutput, /Last implementation summary:/i);
+    assert.match(textOutput, /Last validation summary:/i);
     assert.match(textOutput, /Last validation result summary:/i);
+    assert.match(textOutput, /Last correction summary:/i);
+    assert.match(textOutput, /Validation-first coding behavior:/i);
+    assert.match(textOutput, /Repeated validation failure driving escalation:/i);
     assert.match(textOutput, /Recommendation confidence:/i);
     assert.match(textOutput, /Recommendation rationale:/i);
     assert.match(textOutput, /Recommendation review summary:/i);
@@ -192,6 +198,12 @@ test("local_node queue entrypoints run one queued task and print a queue summary
     assert.match(output, /Session mode:/i);
     assert.match(output, /Coding loop phase:/i);
     assert.match(output, /Current coding objective:/i);
+    assert.match(output, /Current validation target:/i);
+    assert.match(output, /Last implementation summary:/i);
+    assert.match(output, /Last validation summary:/i);
+    assert.match(output, /Last correction summary:/i);
+    assert.match(output, /Validation-first coding behavior:/i);
+    assert.match(output, /Repeated validation failure driving escalation:/i);
     assert.match(output, /Recommended next phase:/i);
     assert.match(output, /Recommendation review summary:/i);
     assert.match(output, /Last recommendation review outcome:/i);
