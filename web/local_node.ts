@@ -227,6 +227,13 @@ export function formatLocalNodeSessionOutput(session: AutonomousSession, options
     `Last fix attempt: ${session.workflowContinuity.memory.lastFixAttemptSummary ?? "No fix attempt recorded."}`,
     `Pending next action: ${session.workflowContinuity.memory.pendingNextActionSummary ?? "No pending next action recorded."}`,
     `Operator blockers: ${session.workflowContinuity.memory.operatorBlockers ?? "No operator blockers recorded."}`,
+    `Current phase repeat count: ${session.workflowContinuity.loopHealth.currentPhaseRepeatCount}`,
+    `Stalled loop: ${String(session.workflowContinuity.loopHealth.stalledLoop)}`,
+    `Operator intervention preferred: ${String(session.workflowContinuity.loopHealth.operatorInterventionPreferred)}`,
+    `Recommended next phase: ${session.workflowContinuity.loopHealth.recommendedNextPhase}`,
+    `Recommended next action: ${session.workflowContinuity.loopHealth.recommendedNextActionSummary ?? "No recommended next action recorded."}`,
+    `Loop health reason: ${session.workflowContinuity.loopHealth.loopHealthReason ?? "No loop health reason recorded."}`,
+    `Recent phase outcomes: ${session.workflowContinuity.loopHealth.recentPhaseOutcomes.join(" | ") || "No recent phase outcomes recorded."}`,
     `Pending context: ${session.workflowContinuity.memory.pendingOperatorContext ?? "No pending operator context recorded."}`,
     `Recent decisions: ${session.workflowContinuity.memory.recentDecisions.join(" | ") || "No recent decisions recorded."}`,
     `Recovery outcomes: ${session.workflowContinuity.memory.priorRecoveryOutcomes.join(" | ") || "No recovery outcomes recorded."}`,
@@ -394,6 +401,10 @@ export function formatLocalNodeQueueRunOutput(summary: QueueExecutionSummary, op
     `Last validation outcome: ${summary.session?.workflowContinuity.memory.lastValidationOutcome ?? "unknown"}`,
     `Last fix attempt: ${summary.session?.workflowContinuity.memory.lastFixAttemptSummary ?? "unknown"}`,
     `Operator blockers: ${summary.session?.workflowContinuity.memory.operatorBlockers ?? "unknown"}`,
+    `Phase repeat count: ${summary.session?.workflowContinuity.loopHealth.currentPhaseRepeatCount ?? "unknown"}`,
+    `Stalled loop: ${typeof summary.session?.workflowContinuity.loopHealth.stalledLoop === "boolean" ? String(summary.session.workflowContinuity.loopHealth.stalledLoop) : "unknown"}`,
+    `Recommended next phase: ${summary.session?.workflowContinuity.loopHealth.recommendedNextPhase ?? "unknown"}`,
+    `Loop health reason: ${summary.session?.workflowContinuity.loopHealth.loopHealthReason ?? "unknown"}`,
     `Lease: ${summary.task?.lease?.leaseId ?? "unknown"}`,
     `Lease owner: ${summary.task?.lease?.ownerNodeId ?? "unknown"}`,
     `Lease epoch: ${typeof summary.task?.lease?.epoch === "number" ? summary.task.lease.epoch : "unknown"}`,
@@ -437,7 +448,7 @@ export async function formatLocalNodeTaskList(options?: { json?: boolean }): Pro
   const taskLines = await Promise.all(
     tasks.slice(0, 20).map(async (task) => {
       const session = await loadAutonomousSession(task.sessionId);
-      return `${task.taskId} | ${task.status} | ${task.selectedNodeId ?? task.assignedNodeId ?? "unassigned"} | lease=${task.lease?.ownerNodeId ?? "none"}:${task.lease?.status ?? "none"} | continuation=${task.continuationGeneration > 0 ? `gen-${task.continuationGeneration}:${task.continuationSourceNodeId ?? "unknown"}->${task.continuationTargetNodeId ?? "pending"}` : "fresh"} | chain=${deriveTaskContinuationChainState(task).state}:${deriveTaskContinuationChainState(task).depth} | phase=${session?.workflowContinuity.progress.chainPhase ?? "unknown"} | safeStep=${typeof session?.workflowContinuity.progress.lastCompletedSafeStep === "number" ? session.workflowContinuity.progress.lastCompletedSafeStep : "none"} | next=${session?.workflowContinuity.progress.nextIntendedStep ?? "none"} | plan=${deriveTaskRecoveryPlanningState(task).strategy}:${deriveTaskRecoveryPlanningState(task).reasonCategory} | safeStop=${deriveTaskRecoveryPlanningState(task).safeStopPoint ?? "none"} | resumability=${task.resumability} | recovery=${task.recoveryPending} | transport=${task.dispatchTransportStatus ?? "none"} | hardening=${deriveTaskDispatchHardeningState(task).state}:${deriveTaskDispatchHardeningState(task).category} | retries=${task.dispatchRetryCount ?? 0} | failure=${task.failureReason ?? "none"} | ${task.sessionId}`;
+      return `${task.taskId} | ${task.status} | ${task.selectedNodeId ?? task.assignedNodeId ?? "unassigned"} | lease=${task.lease?.ownerNodeId ?? "none"}:${task.lease?.status ?? "none"} | continuation=${task.continuationGeneration > 0 ? `gen-${task.continuationGeneration}:${task.continuationSourceNodeId ?? "unknown"}->${task.continuationTargetNodeId ?? "pending"}` : "fresh"} | chain=${deriveTaskContinuationChainState(task).state}:${deriveTaskContinuationChainState(task).depth} | phase=${session?.workflowContinuity.progress.chainPhase ?? "unknown"} | repeat=${session?.workflowContinuity.loopHealth.currentPhaseRepeatCount ?? "unknown"} | stalled=${typeof session?.workflowContinuity.loopHealth.stalledLoop === "boolean" ? String(session.workflowContinuity.loopHealth.stalledLoop) : "unknown"} | recommended=${session?.workflowContinuity.loopHealth.recommendedNextPhase ?? "unknown"} | safeStep=${typeof session?.workflowContinuity.progress.lastCompletedSafeStep === "number" ? session.workflowContinuity.progress.lastCompletedSafeStep : "none"} | next=${session?.workflowContinuity.loopHealth.recommendedNextActionSummary ?? session?.workflowContinuity.progress.nextIntendedStep ?? "none"} | plan=${deriveTaskRecoveryPlanningState(task).strategy}:${deriveTaskRecoveryPlanningState(task).reasonCategory} | safeStop=${deriveTaskRecoveryPlanningState(task).safeStopPoint ?? "none"} | resumability=${task.resumability} | recovery=${task.recoveryPending} | transport=${task.dispatchTransportStatus ?? "none"} | hardening=${deriveTaskDispatchHardeningState(task).state}:${deriveTaskDispatchHardeningState(task).category} | retries=${task.dispatchRetryCount ?? 0} | failure=${task.failureReason ?? "none"} | ${task.sessionId}`;
     }),
   );
 

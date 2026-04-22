@@ -106,9 +106,31 @@ export type AutonomousWorkflowMemoryState = {
   pendingOperatorContext?: string;
 };
 
+export type AutonomousWorkflowRecommendedNextPhase =
+  | "planning"
+  | "implementation"
+  | "validation"
+  | "fix"
+  | "retry"
+  | "waiting-on-operator"
+  | "restart-from-last-safe-boundary"
+  | "completed-safe-boundary"
+  | "stop";
+
+export type AutonomousWorkflowLoopHealthState = {
+  currentPhaseRepeatCount: number;
+  recentPhaseOutcomes: string[];
+  stalledLoop: boolean;
+  operatorInterventionPreferred: boolean;
+  recommendedNextPhase: AutonomousWorkflowRecommendedNextPhase;
+  recommendedNextActionSummary?: string;
+  loopHealthReason?: string;
+};
+
 export type AutonomousWorkflowContinuityState = {
   progress: AutonomousWorkflowProgressState;
   memory: AutonomousWorkflowMemoryState;
+  loopHealth: AutonomousWorkflowLoopHealthState;
 };
 
 export type AutonomousCompletionState = Pick<GoalEvaluation, "status" | "isComplete" | "reason" | "confidence">;
@@ -548,6 +570,210 @@ function summarizeFixAttempt(step: AutonomousStepRecord): string | undefined {
   ].filter(Boolean).join(" | ")) || undefined;
 }
 
+function deriveWorkflowPhaseForStep(step: AutonomousStepRecord): "planning" | "implementation" | "validation" | "fix" | "retry" {
+  if (step.recoveryStrategy === "retry-same-action" || step.recoveryStrategy === "narrow-scope") {
+    return "retry";
+  }
+
+  if (step.executionResult?.status === "failed" && summarizeFixAttempt(step)) {
+    return "fix";
+  }
+
+  if (summarizeValidationOutcome(step)) {
+    return "validation";
+  }
+
+  if (summarizeFixAttempt(step)) {
+    return "implementation";
+  }
+
+  return "planning";
+}
+
+function summarizePhaseOutcome(step: AutonomousStepRecord): string {
+  const phase = deriveWorkflowPhaseForStep(step);
+  const runtimeStatus = step.executionResult?.status ?? "unknown";
+  return `${phase}:${runtimeStatus}${step.goalStatus ? `:${step.goalStatus}` : ""}`;
+}
+
+function derivePhaseRepeatCount(session: AutonomousSession, latestPhase: AutonomousWorkflowChainPhase): number {
+  if (
+    latestPhase === "waiting-on-operator"
+    || latestPhase === "blocked"
+    || latestPhase === "completed-safe-boundary"
+    || latestPhase === "failed"
+  ) {
+    return 1;
+  }
+
+  let count = 0;
+  for (let index = session.steps.length - 1; index >= 0; index -= 1) {
+    if (deriveWorkflowPhaseForStep(session.steps[index] as AutonomousStepRecord) !== latestPhase) {
+      break;
+    }
+    count += 1;
+  }
+
+  return Math.max(1, count);
+}
+
+function deriveStalledLoop(session: AutonomousSession, latestPhase: AutonomousWorkflowChainPhase, repeatCount: number): boolean {
+  if (
+    repeatCount < 3
+    || latestPhase === "waiting-on-operator"
+    || latestPhase === "blocked"
+    || latestPhase === "completed-safe-boundary"
+    || latestPhase === "failed"
+  ) {
+    return false;
+  }
+
+  const recentLoop = session.steps.slice(-repeatCount);
+  const actions = new Set(recentLoop.map((step) => normalizeText(step.proposedAction) || "no-action"));
+  const outcomes = new Set(recentLoop.map((step) => summarizeExecutionOutcome(step) || summarizeFailure(step) || "no-outcome"));
+  const hasNewInformation = recentLoop.some((step) => {
+    const changedPaths = Array.isArray(step.executionResult?.changedPaths) && step.executionResult.changedPaths.length > 0;
+    return changedPaths || Boolean(normalizeText(step.executionResult?.diffSummary));
+  });
+
+  return actions.size === 1 && outcomes.size <= 1 && !hasNewInformation;
+}
+
+function deriveLoopHealth(
+  session: AutonomousSession,
+  chainPhase: AutonomousWorkflowChainPhase,
+  nextIntendedStep: string | undefined,
+  currentRecoveryTarget: string | undefined,
+  lastCompletedSafeStep: number | undefined,
+  operatorBlockers: string | undefined,
+): AutonomousWorkflowLoopHealthState {
+  const currentPhaseRepeatCount = derivePhaseRepeatCount(session, chainPhase);
+  const recentPhaseOutcomes = clampWorkflowMemoryItems(session.steps.slice(-4).map((step) => summarizePhaseOutcome(step)));
+  const stalledLoop = deriveStalledLoop(session, chainPhase, currentPhaseRepeatCount);
+  const latestStep = session.steps.at(-1);
+  const actionableFailure = normalizeText(session.latestRecoveryState?.failureClassification?.reason)
+    || normalizeText(latestStep?.failureReason)
+    || normalizeText(latestStep?.executionResult?.error)
+    || undefined;
+  const implementationJustChangedWork = Boolean(
+    latestStep
+    && summarizeFixAttempt(latestStep)
+    && latestStep.executionResult?.status === "success"
+    && (
+      (Array.isArray(latestStep.executionResult.changedPaths) && latestStep.executionResult.changedPaths.length > 0)
+      || Boolean(normalizeText(latestStep.executionResult.diffSummary))
+    ),
+  );
+  const failedValidation = Boolean(latestStep && summarizeValidationOutcome(latestStep) && latestStep.executionResult?.status === "failed");
+
+  if (operatorBlockers) {
+    return {
+      currentPhaseRepeatCount,
+      recentPhaseOutcomes,
+      stalledLoop,
+      operatorInterventionPreferred: true,
+      recommendedNextPhase: "waiting-on-operator",
+      recommendedNextActionSummary: nextIntendedStep || "Wait for operator input before continuing.",
+      loopHealthReason: operatorBlockers,
+    };
+  }
+
+  if (stalledLoop) {
+    return {
+      currentPhaseRepeatCount,
+      recentPhaseOutcomes,
+      stalledLoop: true,
+      operatorInterventionPreferred: true,
+      recommendedNextPhase: lastCompletedSafeStep ? "restart-from-last-safe-boundary" : "waiting-on-operator",
+      recommendedNextActionSummary: lastCompletedSafeStep
+        ? `Restart from last safe boundary at step ${lastCompletedSafeStep}.`
+        : "Wait for operator input because the loop is repeating without new information.",
+      loopHealthReason: "The current bounded loop repeated the same ineffective phase without new information.",
+    };
+  }
+
+  if (implementationJustChangedWork) {
+    return {
+      currentPhaseRepeatCount,
+      recentPhaseOutcomes,
+      stalledLoop: false,
+      operatorInterventionPreferred: false,
+      recommendedNextPhase: "validation",
+      recommendedNextActionSummary: nextIntendedStep || "Validate next to confirm the recent bounded change.",
+      loopHealthReason: "A bounded implementation step changed the work surface, so validation is preferred next.",
+    };
+  }
+
+  if (failedValidation && actionableFailure) {
+    return {
+      currentPhaseRepeatCount,
+      recentPhaseOutcomes,
+      stalledLoop: false,
+      operatorInterventionPreferred: false,
+      recommendedNextPhase: "fix",
+      recommendedNextActionSummary: nextIntendedStep || `Apply the next bounded fix for: ${actionableFailure}`,
+      loopHealthReason: `A failed validation exposed an actionable failure: ${actionableFailure}`,
+    };
+  }
+
+  if (chainPhase === "retry") {
+    return {
+      currentPhaseRepeatCount,
+      recentPhaseOutcomes,
+      stalledLoop: false,
+      operatorInterventionPreferred: false,
+      recommendedNextPhase: lastCompletedSafeStep ? "restart-from-last-safe-boundary" : "retry",
+      recommendedNextActionSummary: lastCompletedSafeStep
+        ? `Restart from last safe boundary at step ${lastCompletedSafeStep}.`
+        : (nextIntendedStep || currentRecoveryTarget || "Retry with the current bounded recovery strategy."),
+      loopHealthReason: currentRecoveryTarget || "The bounded loop is in recovery mode.",
+    };
+  }
+
+  if (chainPhase === "completed-safe-boundary") {
+    return {
+      currentPhaseRepeatCount,
+      recentPhaseOutcomes,
+      stalledLoop: false,
+      operatorInterventionPreferred: false,
+      recommendedNextPhase: "stop",
+      recommendedNextActionSummary: "Stop because the bounded goal is complete at a safe boundary.",
+      loopHealthReason: "The bounded goal is complete at the current safe boundary.",
+    };
+  }
+
+  return {
+    currentPhaseRepeatCount,
+    recentPhaseOutcomes,
+    stalledLoop: false,
+    operatorInterventionPreferred: false,
+    recommendedNextPhase: chainPhase === "waiting-on-operator" || chainPhase === "blocked" || chainPhase === "failed"
+      ? "waiting-on-operator"
+      : chainPhase,
+    recommendedNextActionSummary: nextIntendedStep || "Continue the current bounded production loop.",
+    loopHealthReason: "The bounded loop is still making useful progress.",
+  };
+}
+
+function normalizeAutonomousWorkflowRecommendedNextPhase(value: unknown): AutonomousWorkflowRecommendedNextPhase | undefined {
+  const normalized = normalizeText(typeof value === "string" ? value : "");
+  if (
+    normalized === "planning"
+    || normalized === "implementation"
+    || normalized === "validation"
+    || normalized === "fix"
+    || normalized === "retry"
+    || normalized === "waiting-on-operator"
+    || normalized === "restart-from-last-safe-boundary"
+    || normalized === "completed-safe-boundary"
+    || normalized === "stop"
+  ) {
+    return normalized as AutonomousWorkflowRecommendedNextPhase;
+  }
+
+  return undefined;
+}
+
 function deriveProductionLoopFocus(session: AutonomousSession): "planning" | "implementation" | "validation" | undefined {
   const latestStep = session.steps.at(-1);
   const candidateTexts = [
@@ -682,6 +908,14 @@ export function deriveAutonomousWorkflowContinuity(session: AutonomousSession): 
         || normalizeText(session.planningHintSummary)
         || undefined,
     },
+    loopHealth: deriveLoopHealth(
+      session,
+      chainPhase,
+      nextIntendedStep,
+      currentRecoveryTarget,
+      lastCompletedSafeStep,
+      operatorBlockers,
+    ),
   };
 }
 
@@ -693,6 +927,7 @@ function normalizeAutonomousWorkflowContinuityState(value: unknown): AutonomousW
   const source = value as Record<string, unknown>;
   const progressSource = source.progress && typeof source.progress === "object" ? (source.progress as Record<string, unknown>) : undefined;
   const memorySource = source.memory && typeof source.memory === "object" ? (source.memory as Record<string, unknown>) : undefined;
+  const loopHealthSource = source.loopHealth && typeof source.loopHealth === "object" ? (source.loopHealth as Record<string, unknown>) : undefined;
   const chainPhase = normalizeText(typeof progressSource?.chainPhase === "string" ? progressSource.chainPhase : "");
 
   if (
@@ -736,6 +971,17 @@ function normalizeAutonomousWorkflowContinuityState(value: unknown): AutonomousW
       restartReason: normalizeText(typeof memorySource?.restartReason === "string" ? memorySource.restartReason : "") || undefined,
       priorRecoveryOutcomes: clampWorkflowMemoryItems(Array.isArray(memorySource?.priorRecoveryOutcomes) ? memorySource?.priorRecoveryOutcomes as string[] : []),
       pendingOperatorContext: normalizeText(typeof memorySource?.pendingOperatorContext === "string" ? memorySource.pendingOperatorContext : "") || undefined,
+    },
+    loopHealth: {
+      currentPhaseRepeatCount: Number.isInteger(Number(loopHealthSource?.currentPhaseRepeatCount)) ? Math.max(1, Number(loopHealthSource?.currentPhaseRepeatCount)) : 1,
+      recentPhaseOutcomes: clampWorkflowMemoryItems(Array.isArray(loopHealthSource?.recentPhaseOutcomes) ? loopHealthSource?.recentPhaseOutcomes as string[] : []),
+      stalledLoop: typeof loopHealthSource?.stalledLoop === "boolean" ? loopHealthSource.stalledLoop : false,
+      operatorInterventionPreferred:
+        typeof loopHealthSource?.operatorInterventionPreferred === "boolean" ? loopHealthSource.operatorInterventionPreferred : false,
+      recommendedNextPhase: normalizeAutonomousWorkflowRecommendedNextPhase(loopHealthSource?.recommendedNextPhase) ?? "planning",
+      recommendedNextActionSummary:
+        normalizeText(typeof loopHealthSource?.recommendedNextActionSummary === "string" ? loopHealthSource.recommendedNextActionSummary : "") || undefined,
+      loopHealthReason: normalizeText(typeof loopHealthSource?.loopHealthReason === "string" ? loopHealthSource.loopHealthReason : "") || undefined,
     },
   };
 }
@@ -885,6 +1131,13 @@ export function createAutonomousSession(params: CreateAutonomousSessionParams): 
       memory: {
         recentDecisions: [],
         priorRecoveryOutcomes: [],
+      },
+      loopHealth: {
+        currentPhaseRepeatCount: 1,
+        recentPhaseOutcomes: [],
+        stalledLoop: false,
+        operatorInterventionPreferred: false,
+        recommendedNextPhase: "planning",
       },
     },
     steps: [],
@@ -1169,6 +1422,13 @@ export function normalizeAutonomousSession(value: unknown): AutonomousSession | 
         recentDecisions: [],
         priorRecoveryOutcomes: [],
       },
+      loopHealth: {
+        currentPhaseRepeatCount: 1,
+        recentPhaseOutcomes: [],
+        stalledLoop: false,
+        operatorInterventionPreferred: false,
+        recommendedNextPhase: "planning",
+      },
     },
     steps,
   };
@@ -1248,6 +1508,23 @@ export function buildAutonomousSessionContextBlock(session: AutonomousSession, l
 
   if (session.workflowContinuity.memory.operatorBlockers) {
     lines.push(`- Operator blockers: ${session.workflowContinuity.memory.operatorBlockers}`);
+  }
+
+  lines.push(`- Current phase repeat count: ${session.workflowContinuity.loopHealth.currentPhaseRepeatCount}`);
+  lines.push(`- Stalled loop: ${String(session.workflowContinuity.loopHealth.stalledLoop)}`);
+  lines.push(`- Operator intervention preferred: ${String(session.workflowContinuity.loopHealth.operatorInterventionPreferred)}`);
+  lines.push(`- Recommended next phase: ${session.workflowContinuity.loopHealth.recommendedNextPhase}`);
+
+  if (session.workflowContinuity.loopHealth.recommendedNextActionSummary) {
+    lines.push(`- Recommended next action: ${session.workflowContinuity.loopHealth.recommendedNextActionSummary}`);
+  }
+
+  if (session.workflowContinuity.loopHealth.loopHealthReason) {
+    lines.push(`- Loop health reason: ${session.workflowContinuity.loopHealth.loopHealthReason}`);
+  }
+
+  if (session.workflowContinuity.loopHealth.recentPhaseOutcomes.length > 0) {
+    lines.push(`- Recent phase outcomes: ${session.workflowContinuity.loopHealth.recentPhaseOutcomes.join(" | ")}`);
   }
 
   if (session.workflowContinuity.memory.pendingOperatorContext) {

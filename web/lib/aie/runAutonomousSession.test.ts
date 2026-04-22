@@ -245,6 +245,7 @@ test("runAutonomousSession resumes an awaiting-approval session from stored pend
   assert.equal(resumed.workflowContinuity.progress.lastCompletedSafeStep, 3);
   assert.match(resumed.workflowContinuity.memory.chainSummary ?? "", /goal status: complete/i);
   assert.match(resumed.workflowContinuity.memory.lastValidationOutcome ?? "", /healthy result confirmed/i);
+  assert.equal(resumed.workflowContinuity.loopHealth.recommendedNextPhase, "stop");
   assert.equal(analysisCalls, 1);
 });
 

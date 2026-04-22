@@ -185,6 +185,45 @@ test("autonomous sessions derive implementation and fix loop memory from changed
   assert.match(implemented.workflowContinuity.memory.lastFixAttemptSummary ?? "", /changed=web\/lib\/aie\/autonomousSession.ts/i);
   assert.equal(failedFix.workflowContinuity.progress.chainPhase, "fix");
   assert.match(failedFix.workflowContinuity.memory.lastFailureSummary ?? "", /patch conflicted/i);
+  assert.equal(implemented.workflowContinuity.loopHealth.recommendedNextPhase, "validation");
+  assert.match(implemented.workflowContinuity.loopHealth.loopHealthReason ?? "", /validation is preferred next/i);
+});
+
+test("autonomous sessions mark repeated ineffective validation loops as stalled", () => {
+  const first = appendAutonomousStep(createAutonomousSession({ goal: "Confirm the validation loop stops when it stalls." }), {
+    proposedAction: "Run the bounded validation command.",
+    expectedOutcome: "The validation output should report a healthy result.",
+    executionResult: {
+      status: "failed",
+      error: "Validation still reports the same unresolved failure.",
+    },
+    failureReason: "Validation still reports the same unresolved failure.",
+  });
+  const second = appendAutonomousStep(first, {
+    proposedAction: "Run the bounded validation command.",
+    expectedOutcome: "The validation output should report a healthy result.",
+    executionResult: {
+      status: "failed",
+      error: "Validation still reports the same unresolved failure.",
+    },
+    failureReason: "Validation still reports the same unresolved failure.",
+  });
+  const third = appendAutonomousStep(second, {
+    proposedAction: "Run the bounded validation command.",
+    expectedOutcome: "The validation output should report a healthy result.",
+    executionResult: {
+      status: "failed",
+      error: "Validation still reports the same unresolved failure.",
+    },
+    failureReason: "Validation still reports the same unresolved failure.",
+  });
+
+  assert.equal(third.workflowContinuity.loopHealth.currentPhaseRepeatCount, 3);
+  assert.equal(third.workflowContinuity.loopHealth.stalledLoop, true);
+  assert.equal(third.workflowContinuity.loopHealth.operatorInterventionPreferred, true);
+  assert.equal(third.workflowContinuity.loopHealth.recommendedNextPhase, "waiting-on-operator");
+  assert.match(third.workflowContinuity.loopHealth.loopHealthReason ?? "", /same ineffective phase/i);
+  assert.match(buildAutonomousSessionContextBlock(third), /Recommended next phase: waiting-on-operator/i);
 });
 
 test("autonomous sessions can pause and resume without losing state reason", () => {
