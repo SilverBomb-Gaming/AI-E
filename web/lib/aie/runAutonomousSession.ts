@@ -295,6 +295,20 @@ function buildRepoCodingAcceptanceGoalEvaluation(session: AutonomousSession): Re
   };
 }
 
+function buildRepoActionApprovalGoalEvaluation(session: AutonomousSession): ReturnType<typeof evaluateGoalCompletion> {
+  return {
+    status: "needs-verification",
+    isComplete: false,
+    reason:
+      session.workflowContinuity.coding.repoActionSummary
+      || "The accepted repo output now requires explicit approval for the bounded repo action before final completion.",
+    confidence: "medium",
+    safeEvidenceSufficient: true,
+    followUpUnnecessary: false,
+    outputDirectlyAnswersGoal: false,
+  };
+}
+
 function buildSyntheticContinuationAnalysis(state: ForcedContinuationState): FreeAnalysisResponse {
   return {
     what_happened:
@@ -709,6 +723,7 @@ async function runSingleAutonomousStep(params: {
   let nextSession = appendAutonomousStep(params.session, {
     proposedAction,
     expectedOutcome: effectiveAnalysis.expectedOutcome ?? action?.expectedOutcome,
+    executedActionPreview: action,
     actionFamily,
     executionAdapterId: selectedAdapter?.id,
     adapterContextSummary,
@@ -753,10 +768,29 @@ async function runSingleAutonomousStep(params: {
     };
   }
 
-  const effectiveGoalEvaluation = nextSession.workflowContinuity.coding.deliverableAccepted
+  let effectiveGoalEvaluation = nextSession.workflowContinuity.coding.deliverableAccepted
     && nextSession.workflowContinuity.coding.shouldTerminateLoop
     ? buildRepoCodingAcceptanceGoalEvaluation(nextSession)
     : goalEvaluation;
+  let effectivePendingApprovalAction = pendingApprovalAction;
+
+  if (
+    nextSession.workflowContinuity.coding.deliverableAccepted
+    && !nextSession.workflowContinuity.coding.shouldTerminateLoop
+    && !nextSession.pendingAction
+  ) {
+    const pendingRepoAction = nextSession.workflowContinuity.coding.pendingRepoActions.find((repoAction) => repoAction.executionPreview);
+    if (pendingRepoAction?.executionPreview) {
+      nextSession = markAwaitingApproval(
+        nextSession,
+        pendingRepoAction.executionPreview,
+        pendingRepoAction.changeSummary
+          || `Approve the bounded repo action for ${pendingRepoAction.artifactFilePaths.join(", ")} before final completion.`,
+      );
+      effectivePendingApprovalAction = pendingRepoAction.executionPreview;
+      effectiveGoalEvaluation = buildRepoActionApprovalGoalEvaluation(nextSession);
+    }
+  }
 
   return {
     nextSession,
@@ -768,7 +802,7 @@ async function runSingleAutonomousStep(params: {
     recoveryStrategy,
     retryAction: recoveryDecision?.strategy === "retry-same-action" ? action : undefined,
     retryCount,
-    pendingApprovalAction,
+    pendingApprovalAction: effectivePendingApprovalAction,
   };
 }
 
@@ -845,6 +879,11 @@ export async function runAutonomousSession(params: RunAutonomousSessionParams): 
     });
 
     session = stepResult.nextSession;
+    if (stepResult.pendingApprovalAction && session.status === "awaiting-approval") {
+      await dependencies.saveAutonomousSession(session);
+      return session;
+    }
+
     const stopDecision = shouldStopAutonomousSession({
       session,
       latestExecutionResult: stepResult.executionResult,

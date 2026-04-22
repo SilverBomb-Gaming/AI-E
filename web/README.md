@@ -396,6 +396,17 @@ AI-E now extends the same repo-coding owner seam from loop-state tracking into b
 
 Phase 5E is complete when output artifacts are explicitly tracked in repo-coding continuity, tied to deliverables, referenced by validation and acceptance summaries, exposed through operator surfaces, and kept green under the focused autonomy tests, widened regression slice, and broader web test gate. The final layer can now build on this tracked-output contract to introduce tighter supervised repo-action handoff without skipping the current approval and bounded-execution boundary.
 
+## Phase 5F: supervised repo-action execution handoff
+
+AI-E now turns accepted bounded repo outputs into explicit supervised repo actions without introducing a second executor or bypassing the existing approval boundary. The same repo-coding owner seam derives pending, approved, and executed repo actions from accepted output artifacts when the originating coding step preserved a materialized bounded write preview, and the shared runner now pauses for approval before applying that repo action and allowing final closure.
+
+- `workflowContinuity.coding` now derives `pendingRepoActions`, `approvedRepoActions`, `executedRepoActions`, and `repoActionSummary` so accepted repo outputs can be represented as explicit bounded actions linked back to artifact step, target files, and approval/execution status
+- accepted outputs only generate executable repo actions when the originating bounded coding step already carries a structured materialized write preview, which keeps Phase 5F inside the current controlled file-write boundary instead of inventing raw patch execution or hidden repo mutation paths
+- `runAutonomousSession` now converts accepted repo outputs into an approval-gated `pendingAction` through the existing resume-after-approval seam, executes the approved repo action through the same bounded runtime, and delays final completion until those executable repo actions are recorded as executed
+- repo-action execution steps are excluded from fresh output-artifact derivation, so applying an approved repo action does not recursively create a second approval loop, and operator/report surfaces now expose repo-action summary plus pending, approved, and executed actions directly
+
+Phase 5F is complete when accepted materialized repo outputs are handed off into explicit approval-gated repo actions, those actions execute through the existing bounded runtime before final closure, operator/report surfaces expose repo-action state directly, and the focused autonomy tests, widened regression slice, and broader web test gate remain green.
+
 Still deferred beyond 4M-D:
 
 - autonomous peer-to-peer replication or any direct node-to-node handoff channel

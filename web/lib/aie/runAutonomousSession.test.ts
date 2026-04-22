@@ -3,6 +3,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 
+import { appendAutonomousStep, createAutonomousSession } from "./autonomousSession";
 import { listExecutionNodes, resetExecutionNodeRegistry } from "./executionNodeRegistry";
 import { runAutonomousSession } from "./runAutonomousSession";
 import { getTask, listTasks } from "./taskQueueStore";
@@ -359,6 +360,101 @@ test("runAutonomousSession closes a repo-coding loop after deterministic deliver
   assert.equal(session.workflowContinuity.coding.shouldTerminateLoop, true);
   assert.equal(session.latestCompletion?.status, "complete");
   resetExecutionNodeRegistry();
+});
+
+test("runAutonomousSession converts accepted materialized output into an approval-gated repo action before final completion", async () => {
+  const seeded = appendAutonomousStep(createAutonomousSession({
+    goal: "Deliver a bounded repo coding fix and hand it off as a supervised repo action.",
+    sessionMode: "repo-coding",
+  }), {
+    proposedAction: "Prepare the bounded implementation output for web/sandbox/repo-action.txt.",
+    expectedOutcome: "The bounded repo coding fix should be ready for validation.",
+    executedActionPreview: {
+      id: "seeded-materialized-output",
+      type: "file-write",
+      scope: "caution",
+      description: "Prepare the bounded implementation output for web/sandbox/repo-action.txt.",
+      expectedOutcome: "The bounded repo coding fix should be ready for validation.",
+      requiresApproval: true,
+      metadata: {
+        sourceActionType: "file-write",
+        targetPath: "web/sandbox/repo-action.txt",
+        allowedRoot: "web/sandbox",
+        content: "phase-5f supervised repo action",
+      },
+    },
+    executionResult: {
+      status: "success",
+      output: "Implementation output materialized for later supervised application.",
+      changedPaths: ["web/sandbox/repo-action.txt"],
+      diffSummary: "Created new file with 1 lines.",
+    },
+    nextDecision: "continue",
+  });
+  const firstSuccess = appendAutonomousStep(seeded, {
+    proposedAction: "Run the bounded validation target.",
+    expectedOutcome: "The bounded repo coding fix should validate cleanly.",
+    executionResult: {
+      status: "success",
+      output: "Validation passed for the bounded repo coding fix.",
+      commandLabel: "npm test",
+    },
+    nextDecision: "continue",
+  });
+
+  const approvalPass = await runAutonomousSession({
+    goal: firstSuccess.goal,
+    maxSteps: 5,
+    existingSession: firstSuccess,
+    dependencies: {
+      runAnalysis: async () => ({
+        what_happened: "The bounded validation passed again without regression, so the accepted output should now hand off to a supervised repo action.",
+        what_matters: ["The accepted output is ready for approval-gated repo action execution."],
+        what_to_do_next: ["Approve the derived repo action before closing the loop."],
+        upgrade_hint: "",
+        proposedAction: "Run the bounded validation target again.",
+        expectedOutcome: "The bounded repo coding fix should still validate cleanly without regression.",
+        execution: makeSafeAction("Run the bounded validation target again."),
+      }),
+      executeAction: async () => ({
+        status: "success",
+        output: "Validation passed again without regression.",
+        commandLabel: "npm test",
+      }),
+      saveAutonomousSession: async () => {},
+    },
+  });
+
+  assert.equal(approvalPass.status, "awaiting-approval");
+  assert.equal(approvalPass.workflowContinuity.coding.pendingRepoActions.length, 1);
+  assert.equal(approvalPass.workflowContinuity.coding.shouldTerminateLoop, false);
+  assert.match(approvalPass.pendingAction?.id ?? "", /repo-action-step-1/i);
+
+  const resumed = await runAutonomousSession({
+    goal: approvalPass.goal,
+    maxSteps: 5,
+    approved: true,
+    existingSession: approvalPass,
+    dependencies: {
+      runAnalysis: async () => {
+        throw new Error("Approved repo action execution should use the stored continuation action.");
+      },
+      executeAction: async (action) => ({
+        status: "success",
+        output: `Applied supervised repo action: ${action.description}`,
+        changedPaths: ["web/sandbox/repo-action.txt"],
+        diffSummary: "Created new file with 1 lines.",
+      }),
+      saveAutonomousSession: async () => {},
+    },
+  });
+
+  assert.equal(resumed.status, "completed");
+  assert.equal(resumed.workflowContinuity.coding.pendingRepoActions.length, 0);
+  assert.equal(resumed.workflowContinuity.coding.executedRepoActions.length, 1);
+  assert.equal(resumed.workflowContinuity.coding.shouldTerminateLoop, true);
+  assert.match(resumed.workflowContinuity.coding.repoActionSummary ?? "", /executed=1/i);
+  assert.match(resumed.steps.at(-1)?.executedActionPreview?.id ?? "", /repo-action-step-1/i);
 });
 
 test("runAutonomousSession auto-executes safe sandbox file writes and preserves changed-path metadata", async () => {

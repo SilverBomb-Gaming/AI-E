@@ -413,6 +413,67 @@ test("repo coding sessions accept a deliverable after repeated successful valida
   assert.match(buildAutonomousSessionContextBlock(accepted), /Completion state: accepted/i);
 });
 
+test("repo coding sessions derive supervised repo actions from accepted materialized outputs", () => {
+  const created = createAutonomousSession({
+    goal: "Deliver a bounded repo coding fix and hand off a supervised repo action.",
+    sessionMode: "repo-coding",
+  });
+  const implemented = appendAutonomousStep(created, {
+    proposedAction: "Prepare the bounded implementation output for web/sandbox/repo-action.txt.",
+    expectedOutcome: "The bounded repo coding fix should be ready for validation.",
+    executedActionPreview: {
+      id: "simulated-materialized-output",
+      type: "file-write",
+      scope: "caution",
+      description: "Prepare the bounded implementation output for web/sandbox/repo-action.txt.",
+      expectedOutcome: "The bounded repo coding fix should be ready for validation.",
+      requiresApproval: true,
+      metadata: {
+        sourceActionType: "file-write",
+        targetPath: "web/sandbox/repo-action.txt",
+        allowedRoot: "web/sandbox",
+        content: "phase-5f materialized output",
+      },
+    },
+    executionResult: {
+      status: "success",
+      output: "Implementation output materialized for later supervised application.",
+      changedPaths: ["web/sandbox/repo-action.txt"],
+      diffSummary: "Created new file with 1 lines.",
+    },
+    nextDecision: "continue",
+  });
+  const firstSuccess = appendAutonomousStep(implemented, {
+    proposedAction: "Run the bounded validation target.",
+    expectedOutcome: "The bounded repo coding fix should validate cleanly.",
+    executionResult: {
+      status: "success",
+      output: "Validation passed for the bounded repo coding fix.",
+      commandLabel: "npm test",
+    },
+    nextDecision: "continue",
+  });
+  const accepted = appendAutonomousStep(firstSuccess, {
+    proposedAction: "Run the bounded validation target again.",
+    expectedOutcome: "The bounded repo coding fix should still validate cleanly without regression.",
+    executionResult: {
+      status: "success",
+      output: "Validation passed again without regression.",
+      commandLabel: "npm test",
+    },
+    nextDecision: "continue",
+  });
+
+  assert.equal(accepted.workflowContinuity.coding.deliverableAccepted, true);
+  assert.equal(accepted.workflowContinuity.coding.pendingRepoActions.length, 1);
+  assert.equal(accepted.workflowContinuity.coding.executedRepoActions.length, 0);
+  assert.equal(accepted.workflowContinuity.coding.shouldTerminateLoop, false);
+  assert.equal(accepted.workflowContinuity.coding.pendingRepoActions[0]?.artifactFilePaths[0], "web/sandbox/repo-action.txt");
+  assert.equal(accepted.workflowContinuity.coding.pendingRepoActions[0]?.executionPreview?.type, "file-write");
+  assert.match(accepted.workflowContinuity.coding.repoActionSummary ?? "", /pending=1/i);
+  assert.match(buildAutonomousSessionContextBlock(accepted), /Pending repo actions:/i);
+});
+
 test("repo coding sessions allow bounded operator confirmation and rejection for deliverable closure", () => {
   const failedValidation = appendAutonomousStep(createAutonomousSession({
     goal: "Close a bounded repo deliverable with explicit operator confirmation.",

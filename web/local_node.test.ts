@@ -99,6 +99,9 @@ test("local_node runs a bounded goal, creates a session, and prints a structured
     assert.match(textOutput, /Files affected:/i);
     assert.match(textOutput, /Last output summary:/i);
     assert.match(textOutput, /Output artifacts:/i);
+    assert.match(textOutput, /Repo action summary:/i);
+    assert.match(textOutput, /Pending repo actions:/i);
+    assert.match(textOutput, /Executed repo actions:/i);
     assert.match(textOutput, /Current validation target:/i);
     assert.match(textOutput, /Last implementation summary:/i);
     assert.match(textOutput, /Last validation summary:/i);
@@ -240,6 +243,9 @@ test("local_node queue entrypoints run one queued task and print a queue summary
     assert.match(output, /Files affected:/i);
     assert.match(output, /Last output summary:/i);
     assert.match(output, /Output artifacts:/i);
+    assert.match(output, /Repo action summary:/i);
+    assert.match(output, /Pending repo actions:/i);
+    assert.match(output, /Executed repo actions:/i);
     assert.match(output, /Current validation target:/i);
     assert.match(output, /Last implementation summary:/i);
     assert.match(output, /Last validation summary:/i);

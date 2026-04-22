@@ -25,6 +25,7 @@ export type AutonomousStepRecord = {
   goal: string;
   proposedAction?: string;
   expectedOutcome?: string;
+  executedActionPreview?: ExecutionActionPreview;
   actionFamily?: AutonomousActionFamily;
   executionAdapterId?: ExecutionAdapterId;
   adapterContextSummary?: string;
@@ -321,6 +322,23 @@ export type AutonomousWorkflowCodingOutputArtifact = {
   linkedToDeliverable: boolean;
 };
 
+export type AutonomousWorkflowRepoActionApprovalStatus = "pending" | "approved" | "executed";
+
+export type AutonomousWorkflowRepoActionExecutionStatus = "awaiting-approval" | "approved-awaiting-execution" | "executed" | "failed";
+
+export type AutonomousWorkflowRepoAction = {
+  actionId: string;
+  artifactStepIndex: number;
+  artifactFilePaths: string[];
+  changeSummary?: string;
+  artifactReference: string;
+  approvalStatus: AutonomousWorkflowRepoActionApprovalStatus;
+  executionStatus: AutonomousWorkflowRepoActionExecutionStatus;
+  executed: boolean;
+  failureReason?: string;
+  executionPreview?: ExecutionActionPreview;
+};
+
 export type AutonomousWorkflowCodingState = {
   sessionMode: AutonomousSessionMode;
   codingLoopPhase: AutonomousWorkflowCodingLoopPhase;
@@ -345,6 +363,10 @@ export type AutonomousWorkflowCodingState = {
   outputArtifacts: AutonomousWorkflowCodingOutputArtifact[];
   lastOutputSummary?: string;
   outputLinkedToDeliverable: boolean;
+  pendingRepoActions: AutonomousWorkflowRepoAction[];
+  approvedRepoActions: AutonomousWorkflowRepoAction[];
+  executedRepoActions: AutonomousWorkflowRepoAction[];
+  repoActionSummary?: string;
   acceptanceSummary?: string;
   currentValidationTarget?: string;
   validationTarget?: string;
@@ -464,6 +486,7 @@ type CreateAutonomousSessionParams = {
 type AppendAutonomousStepParams = {
   proposedAction?: string;
   expectedOutcome?: string;
+  executedActionPreview?: ExecutionActionPreview;
   actionFamily?: AutonomousActionFamily;
   executionAdapterId?: ExecutionAdapterId;
   adapterContextSummary?: string;
@@ -599,6 +622,9 @@ function createDefaultAutonomousWorkflowCodingState(): AutonomousWorkflowCodingS
     shouldTerminateLoop: false,
     outputArtifacts: [],
     outputLinkedToDeliverable: false,
+    pendingRepoActions: [],
+    approvedRepoActions: [],
+    executedRepoActions: [],
     lastValidationPassed: false,
     validationFirstActive: false,
     repeatedValidationFailureDrivingEscalation: false,
@@ -824,6 +850,62 @@ function clampCodingOutputArtifacts(
   artifacts: AutonomousWorkflowCodingOutputArtifact[],
 ): AutonomousWorkflowCodingOutputArtifact[] {
   return artifacts.slice(-8);
+}
+
+function normalizeAutonomousWorkflowRepoActionApprovalStatus(
+  value: unknown,
+): AutonomousWorkflowRepoActionApprovalStatus | undefined {
+  return value === "pending" || value === "approved" || value === "executed" ? value : undefined;
+}
+
+function normalizeAutonomousWorkflowRepoActionExecutionStatus(
+  value: unknown,
+): AutonomousWorkflowRepoActionExecutionStatus | undefined {
+  return value === "awaiting-approval"
+    || value === "approved-awaiting-execution"
+    || value === "executed"
+    || value === "failed"
+    ? value
+    : undefined;
+}
+
+function normalizeAutonomousWorkflowRepoAction(value: unknown): AutonomousWorkflowRepoAction | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const source = value as Record<string, unknown>;
+  const actionId = normalizeText(typeof source.actionId === "string" ? source.actionId : "");
+  const artifactStepIndex = Number(source.artifactStepIndex ?? 0);
+  const artifactFilePaths = Array.isArray(source.artifactFilePaths)
+    ? source.artifactFilePaths
+        .map((item) => normalizeText(typeof item === "string" ? item : String(item ?? "")))
+        .filter(Boolean)
+    : [];
+  const artifactReference = normalizeText(typeof source.artifactReference === "string" ? source.artifactReference : "");
+  const approvalStatus = normalizeAutonomousWorkflowRepoActionApprovalStatus(source.approvalStatus);
+  const executionStatus = normalizeAutonomousWorkflowRepoActionExecutionStatus(source.executionStatus);
+
+  if (!actionId || !Number.isInteger(artifactStepIndex) || artifactStepIndex <= 0 || artifactFilePaths.length === 0 || !artifactReference || !approvalStatus || !executionStatus) {
+    return null;
+  }
+
+  return {
+    actionId,
+    artifactStepIndex,
+    artifactFilePaths,
+    changeSummary: normalizeText(typeof source.changeSummary === "string" ? source.changeSummary : "") || undefined,
+    artifactReference,
+    approvalStatus,
+    executionStatus,
+    executed: typeof source.executed === "boolean" ? source.executed : executionStatus === "executed",
+    failureReason: normalizeText(typeof source.failureReason === "string" ? source.failureReason : "") || undefined,
+    executionPreview: normalizeExecutionActionPreview(source.executionPreview),
+  };
+}
+
+function clampAutonomousWorkflowRepoActions(actions: AutonomousWorkflowRepoAction[]): AutonomousWorkflowRepoAction[] {
+  return actions.slice(-8);
 }
 
 function hasSteeringBeenApplied(session: AutonomousSession, requestedForStepIndex: number | undefined): boolean {
@@ -1360,12 +1442,16 @@ function summarizeOutputIterationDelta(step: AutonomousStepRecord, previousStep:
   return "Repeated output iteration without a new diff summary.";
 }
 
+function isRepoActionExecutionStep(step: AutonomousStepRecord | undefined): boolean {
+  return Boolean(normalizeText(step?.executedActionPreview?.metadata?.context).includes("repo-action="));
+}
+
 function deriveCodingOutputArtifacts(params: {
   session: AutonomousSession;
   targetScope?: string;
   currentDeliverableTarget?: string;
 }): AutonomousWorkflowCodingOutputArtifact[] {
-  const outputSteps = params.session.steps.filter((step) => Boolean(summarizeFixAttempt(step)));
+  const outputSteps = params.session.steps.filter((step) => Boolean(summarizeFixAttempt(step)) && !isRepoActionExecutionStep(step));
   return clampCodingOutputArtifacts(outputSteps.flatMap((step, index) => {
     const changedPaths = Array.isArray(step.executionResult?.changedPaths)
       ? clampWorkflowMemoryItems(step.executionResult.changedPaths)
@@ -1411,6 +1497,124 @@ function summarizeLatestCodingOutput(params: {
     artifactsForStep[0]?.changeSummary ? `change=${artifactsForStep[0].changeSummary}` : "",
     normalizeText(lastOutputStep.executionResult?.diffSummary) ? `diff=${normalizeText(lastOutputStep.executionResult?.diffSummary)}` : "",
   ].filter(Boolean).join(" | ")) || undefined;
+}
+
+function sanitizeRepoActionToken(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48) || "artifact";
+}
+
+function buildRepoActionId(stepIndex: number, artifactFilePaths: string[]): string {
+  return `repo-action-step-${stepIndex}-${sanitizeRepoActionToken(artifactFilePaths.join("-"))}`;
+}
+
+function buildRepoActionExecutionPreview(params: {
+  actionId: string;
+  sourceStep: AutonomousStepRecord | undefined;
+  artifactFilePaths: string[];
+  changeSummary?: string;
+}): ExecutionActionPreview | undefined {
+  const sourceAction = params.sourceStep?.executedActionPreview;
+  const sourceActionType = sourceAction?.type ?? sourceAction?.metadata?.sourceActionType;
+  const targetPath = normalizeText(sourceAction?.metadata?.targetPath);
+  const allowedRoot = normalizeText(sourceAction?.metadata?.allowedRoot);
+
+  if ((sourceActionType !== "file-write" && sourceActionType !== "write") || !targetPath || !allowedRoot || typeof sourceAction?.metadata?.content !== "string") {
+    return undefined;
+  }
+
+  return {
+    id: params.actionId,
+    type: "file-write",
+    scope: "caution",
+    description: `Apply the approved repo action for ${params.artifactFilePaths.join(", ")}.`,
+    expectedOutcome: params.changeSummary || `The accepted repo output should be applied to ${params.artifactFilePaths.join(", ")}.`,
+    requiresApproval: true,
+    suggestedCommand: sourceAction?.suggestedCommand,
+    metadata: {
+      ...sourceAction.metadata,
+      sourceActionType: "file-write",
+      context: normalizeText([
+        sourceAction.metadata.context,
+        `repo-action=${params.actionId}`,
+        params.sourceStep ? `artifact-step=${params.sourceStep.index}` : "",
+      ].filter(Boolean).join(" | ")) || undefined,
+      targetPath,
+      allowedRoot,
+      content: sourceAction.metadata.content,
+    },
+  };
+}
+
+function summarizeRepoActionState(actions: AutonomousWorkflowRepoAction[]): string | undefined {
+  if (actions.length === 0) {
+    return undefined;
+  }
+
+  const pendingCount = actions.filter((action) => action.approvalStatus === "pending").length;
+  const approvedCount = actions.filter((action) => action.approvalStatus === "approved").length;
+  const executedCount = actions.filter((action) => action.approvalStatus === "executed").length;
+  const failedCount = actions.filter((action) => action.executionStatus === "failed").length;
+  return `pending=${pendingCount} | approved=${approvedCount} | executed=${executedCount}${failedCount > 0 ? ` | failed=${failedCount}` : ""}`;
+}
+
+function deriveAutonomousWorkflowRepoActions(params: {
+  session: AutonomousSession;
+  outputArtifacts: AutonomousWorkflowCodingOutputArtifact[];
+  deliverableAccepted: boolean;
+}): AutonomousWorkflowRepoAction[] {
+  if (!params.deliverableAccepted) {
+    return [];
+  }
+
+  const linkedArtifacts = params.outputArtifacts.filter((artifact) => artifact.linkedToDeliverable);
+  const actionMap = new Map<number, AutonomousWorkflowCodingOutputArtifact[]>();
+  for (const artifact of linkedArtifacts) {
+    const existing = actionMap.get(artifact.stepIndex) ?? [];
+    existing.push(artifact);
+    actionMap.set(artifact.stepIndex, existing);
+  }
+
+  return clampAutonomousWorkflowRepoActions(Array.from(actionMap.entries()).map(([stepIndex, artifacts]) => {
+    const sourceStep = params.session.steps.find((step) => step.index === stepIndex);
+    const artifactFilePaths = Array.from(new Set(artifacts.map((artifact) => artifact.filePath).filter(Boolean)));
+    const actionId = buildRepoActionId(stepIndex, artifactFilePaths);
+    const latestAttempt = [...params.session.steps].reverse().find((step) => step.executedActionPreview?.id === actionId);
+    const executionPreview = buildRepoActionExecutionPreview({
+      actionId,
+      sourceStep,
+      artifactFilePaths,
+      changeSummary: artifacts[0]?.changeSummary,
+    });
+    const pendingApproval = params.session.pendingAction?.id === actionId;
+    const executed = latestAttempt?.executionResult?.status === "success";
+    const attempted = Boolean(latestAttempt);
+    const failed = latestAttempt?.executionResult?.status === "failed" || latestAttempt?.executionResult?.status === "blocked";
+
+    return executionPreview ? {
+      actionId,
+      artifactStepIndex: stepIndex,
+      artifactFilePaths,
+      changeSummary: artifacts[0]?.changeSummary,
+      artifactReference: artifacts.map((artifact) => `${artifact.stepIndex}:${artifact.filePath}`).join(", "),
+      approvalStatus: executed ? "executed" : attempted ? "approved" : "pending",
+      executionStatus: pendingApproval
+        ? "awaiting-approval"
+        : executed
+          ? "executed"
+          : failed
+            ? "failed"
+            : attempted
+              ? "approved-awaiting-execution"
+              : "awaiting-approval",
+      executed,
+      failureReason: normalizeText(
+        latestAttempt?.failureReason
+          || latestAttempt?.executionResult?.error
+          || latestAttempt?.executionResult?.output,
+      ) || undefined,
+      executionPreview,
+    } : null;
+  }).filter((action): action is AutonomousWorkflowRepoAction => Boolean(action)));
 }
 
 function summarizeCodingScope(paths: string[] | undefined, fallbackTargetPath?: string, fallbackAllowedRoot?: string): string | undefined {
@@ -1796,7 +2000,17 @@ function deriveAutonomousWorkflowCodingState(params: {
           : acceptanceSignalsConflict
             ? "Conflicting deliverable or validation signals require operator confirmation before closure."
             : undefined);
-  const shouldTerminateLoop = deliverableAccepted;
+  const repoActions = deriveAutonomousWorkflowRepoActions({
+    session: params.session,
+    outputArtifacts,
+    deliverableAccepted,
+  });
+  const pendingRepoActions = repoActions.filter((action) => action.approvalStatus === "pending");
+  const approvedRepoActions = repoActions.filter((action) => action.approvalStatus === "approved");
+  const executedRepoActions = repoActions.filter((action) => action.approvalStatus === "executed");
+  const repoActionSummary = summarizeRepoActionState(repoActions);
+  const repoActionsSatisfied = repoActions.length === 0 || executedRepoActions.length >= repoActions.length;
+  const shouldTerminateLoop = deliverableAccepted && repoActionsSatisfied;
   const acceptanceSummary = currentDeliverableTarget
     ? normalizeText([
         `deliverable=${currentDeliverableTarget}`,
@@ -1806,6 +2020,7 @@ function deriveAutonomousWorkflowCodingState(params: {
         deliverableAccepted ? "accepted=true" : "accepted=false",
         validationTargetMatchesDeliverable ? "validation-aligned=true" : "validation-aligned=false",
         outputLinkedToDeliverable ? "output-linked=true" : "output-linked=false",
+        repoActionSummary ? `repo-actions=${repoActionSummary}` : "",
         lastOutputSummary ? `output=${lastOutputSummary}` : "",
       ].filter(Boolean).join(" | ")) || undefined
     : undefined;
@@ -1823,6 +2038,7 @@ function deriveAutonomousWorkflowCodingState(params: {
         validationTargetMatchesDeliverable ? "validation-aligned=true" : "validation-aligned=false",
         outputArtifacts.length > 0 ? `outputs=${outputArtifacts.length}` : "",
         outputLinkedToDeliverable ? "output-linked=true" : "",
+        repoActionSummary ? `repo-actions=${repoActionSummary}` : "",
         currentCorrectionTarget ? `correction=${currentCorrectionTarget}` : "",
         deliverableChangedDuringCorrectionOrEscalation ? "deliverable-retargeted=true" : "",
         operatorConfirmationRequired ? "operator-confirmation-required=true" : "",
@@ -1856,6 +2072,10 @@ function deriveAutonomousWorkflowCodingState(params: {
     outputArtifacts,
     lastOutputSummary,
     outputLinkedToDeliverable,
+    pendingRepoActions,
+    approvedRepoActions,
+    executedRepoActions,
+    repoActionSummary,
     acceptanceSummary,
     currentValidationTarget: validationTarget,
     validationTarget,
@@ -2867,6 +3087,29 @@ function normalizeAutonomousWorkflowContinuityState(value: unknown): AutonomousW
         normalizeText(typeof codingSource?.lastOutputSummary === "string" ? codingSource.lastOutputSummary : "") || undefined,
       outputLinkedToDeliverable:
         typeof codingSource?.outputLinkedToDeliverable === "boolean" ? codingSource.outputLinkedToDeliverable : false,
+      pendingRepoActions: Array.isArray(codingSource?.pendingRepoActions)
+        ? clampAutonomousWorkflowRepoActions(
+            codingSource.pendingRepoActions
+              .map((action) => normalizeAutonomousWorkflowRepoAction(action))
+              .filter((action): action is AutonomousWorkflowRepoAction => Boolean(action)),
+          )
+        : [],
+      approvedRepoActions: Array.isArray(codingSource?.approvedRepoActions)
+        ? clampAutonomousWorkflowRepoActions(
+            codingSource.approvedRepoActions
+              .map((action) => normalizeAutonomousWorkflowRepoAction(action))
+              .filter((action): action is AutonomousWorkflowRepoAction => Boolean(action)),
+          )
+        : [],
+      executedRepoActions: Array.isArray(codingSource?.executedRepoActions)
+        ? clampAutonomousWorkflowRepoActions(
+            codingSource.executedRepoActions
+              .map((action) => normalizeAutonomousWorkflowRepoAction(action))
+              .filter((action): action is AutonomousWorkflowRepoAction => Boolean(action)),
+          )
+        : [],
+      repoActionSummary:
+        normalizeText(typeof codingSource?.repoActionSummary === "string" ? codingSource.repoActionSummary : "") || undefined,
       acceptanceSummary:
         normalizeText(typeof codingSource?.acceptanceSummary === "string" ? codingSource.acceptanceSummary : "") || undefined,
       currentValidationTarget:
@@ -3005,6 +3248,7 @@ function normalizeAutonomousStepRecord(value: unknown): AutonomousStepRecord | n
     goal,
     proposedAction: normalizeText(typeof source.proposedAction === "string" ? source.proposedAction : "") || undefined,
     expectedOutcome: normalizeText(typeof source.expectedOutcome === "string" ? source.expectedOutcome : "") || undefined,
+    executedActionPreview: normalizeExecutionActionPreview(source.executedActionPreview),
     actionFamily: normalizeActionFamily(source.actionFamily),
     executionAdapterId: normalizeExecutionAdapterId(source.executionAdapterId),
     adapterContextSummary: normalizeText(typeof source.adapterContextSummary === "string" ? source.adapterContextSummary : "") || undefined,
@@ -3769,6 +4013,7 @@ export function appendAutonomousStep(
     goal: session.goal,
     proposedAction: normalizeText(params.proposedAction) || undefined,
     expectedOutcome: normalizeText(params.expectedOutcome) || undefined,
+    executedActionPreview: normalizeExecutionActionPreview(params.executedActionPreview),
     actionFamily: params.actionFamily,
     executionAdapterId: params.executionAdapterId,
     adapterContextSummary: normalizeText(params.adapterContextSummary) || undefined,
@@ -4301,6 +4546,34 @@ export function buildAutonomousSessionContextBlock(session: AutonomousSession, l
           artifact.diffLikeSummary ? `diff=${artifact.diffLikeSummary}` : "",
           artifact.linkedToDeliverable ? "linked=true" : "linked=false",
         ].filter(Boolean).join(" | ")))
+        .join(" ; ")}`,
+    );
+  }
+
+  if (session.workflowContinuity.coding.repoActionSummary) {
+    lines.push(`- Repo action summary: ${session.workflowContinuity.coding.repoActionSummary}`);
+  }
+
+  if (session.workflowContinuity.coding.pendingRepoActions.length > 0) {
+    lines.push(
+      `- Pending repo actions: ${session.workflowContinuity.coding.pendingRepoActions
+        .map((action) => `${action.actionId} -> ${action.artifactFilePaths.join(", ")} -> ${action.executionStatus}`)
+        .join(" ; ")}`,
+    );
+  }
+
+  if (session.workflowContinuity.coding.approvedRepoActions.length > 0) {
+    lines.push(
+      `- Approved repo actions: ${session.workflowContinuity.coding.approvedRepoActions
+        .map((action) => `${action.actionId} -> ${action.artifactFilePaths.join(", ")} -> ${action.executionStatus}`)
+        .join(" ; ")}`,
+    );
+  }
+
+  if (session.workflowContinuity.coding.executedRepoActions.length > 0) {
+    lines.push(
+      `- Executed repo actions: ${session.workflowContinuity.coding.executedRepoActions
+        .map((action) => `${action.actionId} -> ${action.artifactFilePaths.join(", ")} -> ${action.executionStatus}`)
         .join(" ; ")}`,
     );
   }
