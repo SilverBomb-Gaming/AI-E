@@ -228,6 +228,16 @@ test("repo coding sessions derive explicit coding loop context from implementati
   assert.equal(validated.workflowContinuity.coding.codingLoopPhase, "validation-failed");
   assert.equal(validated.workflowContinuity.coding.targetScope, "web/lib/aie/autonomousSession.ts");
   assert.match(validated.workflowContinuity.coding.currentCodingObjective ?? "", /stabilize web\/lib\/aie\/autonomoussession\.ts/i);
+  assert.match(validated.workflowContinuity.coding.currentDeliverableTarget ?? "", /ready for validation/i);
+  assert.match(validated.workflowContinuity.coding.expectedOutputForm ?? "", /repo code change in web\/lib\/aie\/autonomousSession\.ts/i);
+  assert.match(validated.workflowContinuity.coding.validationSuccessTarget ?? "", /bounded coding loop validation should pass/i);
+  assert.match(validated.workflowContinuity.coding.currentAcceptanceTarget ?? "", /bounded coding loop validation should pass/i);
+  assert.equal(validated.workflowContinuity.coding.currentTargetStatus, "validation-failed");
+  assert.match(validated.workflowContinuity.coding.validationProves ?? "", /ready for validation/i);
+  assert.equal(validated.workflowContinuity.coding.validationTargetMatchesDeliverable, true);
+  assert.match(validated.workflowContinuity.coding.validationFailureImpact ?? "", /blocks acceptance/i);
+  assert.equal(validated.workflowContinuity.coding.deliverableChangedDuringCorrectionOrEscalation, false);
+  assert.match(validated.workflowContinuity.coding.acceptanceSummary ?? "", /status=validation-failed/i);
   assert.match(validated.workflowContinuity.coding.lastCodeChangeSummary ?? "", /changed=web\/lib\/aie\/autonomousSession\.ts/i);
   assert.match(validated.workflowContinuity.coding.lastImplementationSummary ?? "", /runtime=success/i);
   assert.match(validated.workflowContinuity.coding.lastValidationSummary ?? "", /runtime=failed/i);
@@ -279,10 +289,13 @@ test("repo coding sessions mark correction pending and validation recovered afte
   assert.equal(corrected.workflowContinuity.coding.codingLoopPhase, "validation-pending");
   assert.match(corrected.workflowContinuity.coding.lastCorrectionSummary ?? "", /adjusted the validation-first coding state derivation/i);
   assert.match(corrected.workflowContinuity.coding.currentCorrectionTarget ?? "", /bounded regression/i);
+  assert.equal(corrected.workflowContinuity.coding.currentTargetStatus, "awaiting-validation");
   assert.equal(recovered.workflowContinuity.coding.codingLoopPhase, "validation-recovered");
   assert.equal(recovered.workflowContinuity.coding.lastValidationPassed, true);
   assert.equal(recovered.workflowContinuity.coding.validationFirstActive, true);
   assert.equal(recovered.workflowContinuity.coding.currentCorrectionTarget, undefined);
+  assert.equal(recovered.workflowContinuity.coding.currentTargetStatus, "accepted");
+  assert.equal(recovered.workflowContinuity.coding.correctionMaintainsDeliverable, true);
   assert.match(recovered.workflowContinuity.coding.codingSummary ?? "", /last-validation=passed/i);
 });
 

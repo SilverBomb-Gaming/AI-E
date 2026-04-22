@@ -363,6 +363,17 @@ AI-E now makes the repo-coding loop more practically useful by treating validati
 
 Phase 5B is complete when these validation-first coding states continue to validate under focused owner tests, the widened regression slice, and the broader web test gate. Later production-capability slices can build on this by tightening repo-task intake, connecting validation targets more directly to concrete deliverables, and surfacing stronger operator review around code-change acceptance.
 
+## Phase 5C: deliverable-linked repo coding loop targets
+
+AI-E now carries repo-coding work in clearer deliverable terms on top of the Phase 5B validation-first loop, so the supervised coding session can state not just what phase it is in but what concrete output it is trying to produce, what validation is supposed to prove, and whether the loop is still working toward the same bounded target.
+
+- `workflowContinuity.coding` now derives deliverable-linked target fields such as current deliverable target, expected output form, validation success target, current acceptance target, current target status, validation proof summary, validation-failure impact, correction-maintains-deliverable state, and whether correction or escalation changed the active deliverable target
+- this slice builds directly on Phase 5B rather than replacing it: the same implementation, validation, correction, escalation, and supervised-recovery signals now feed a more concrete repo-work target model instead of introducing another planner, memory system, or orchestration layer
+- validation linkage is now more explicit inside repo-coding continuity: AI-E can show whether the current validation target still matches the active deliverable, what success is expected to prove for that deliverable, and whether a correction path is still working toward the same bounded acceptance goal
+- the autonomous page, session context block, headless CLI, local-node CLI, and queue-run reports now expose deliverable-linked coding target state directly so operators can inspect the current deliverable, expected validation outcome, acceptance target, target status, deliverable alignment, and retargeting risk across browser and non-browser workflows
+
+Phase 5C is complete when these deliverable-linked coding targets continue to validate under focused owner tests, the widened regression slice, and the broader web test gate. Later production-capability slices can build on this by tightening repo-task intake further, linking deliverable targets to more concrete approval and acceptance checkpoints, and expanding operator review around code-change acceptance decisions.
+
 Still deferred beyond 4M-D:
 
 - autonomous peer-to-peer replication or any direct node-to-node handoff channel

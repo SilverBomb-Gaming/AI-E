@@ -524,6 +524,17 @@ export default function AutonomousPage() {
                 <p><strong>Coding loop phase:</strong> {session.workflowContinuity.coding.codingLoopPhase}</p>
                 <p><strong>Coding target scope:</strong> {session.workflowContinuity.coding.targetScope || "No coding scope recorded yet."}</p>
                 <p><strong>Current coding objective:</strong> {session.workflowContinuity.coding.currentCodingObjective || "No coding objective recorded yet."}</p>
+                <p><strong>Current deliverable target:</strong> {session.workflowContinuity.coding.currentDeliverableTarget || "No deliverable target recorded yet."}</p>
+                <p><strong>Expected output form:</strong> {session.workflowContinuity.coding.expectedOutputForm || "No expected output form recorded yet."}</p>
+                <p><strong>Validation success target:</strong> {session.workflowContinuity.coding.validationSuccessTarget || "No validation success target recorded yet."}</p>
+                <p><strong>Current acceptance target:</strong> {session.workflowContinuity.coding.currentAcceptanceTarget || "No acceptance target recorded yet."}</p>
+                <p><strong>Current target status:</strong> {session.workflowContinuity.coding.currentTargetStatus}</p>
+                <p><strong>Validation proves:</strong> {session.workflowContinuity.coding.validationProves || "No validation proof target recorded yet."}</p>
+                <p><strong>Validation target matches deliverable:</strong> {session.workflowContinuity.coding.validationTargetMatchesDeliverable ? "Yes" : "No"}</p>
+                <p><strong>Validation failure impact:</strong> {session.workflowContinuity.coding.validationFailureImpact || "No deliverable impact recorded yet."}</p>
+                <p><strong>Correction maintains deliverable:</strong> {session.workflowContinuity.coding.correctionMaintainsDeliverable ? "Yes" : "No"}</p>
+                <p><strong>Deliverable changed during correction or escalation:</strong> {session.workflowContinuity.coding.deliverableChangedDuringCorrectionOrEscalation ? "Yes" : "No"}</p>
+                <p><strong>Acceptance summary:</strong> {session.workflowContinuity.coding.acceptanceSummary || "No acceptance summary recorded yet."}</p>
                 <p><strong>Validation target:</strong> {session.workflowContinuity.coding.validationTarget || "No validation target recorded yet."}</p>
                 <p><strong>Current validation target:</strong> {session.workflowContinuity.coding.currentValidationTarget || "No current validation target recorded yet."}</p>
                 <p><strong>Last code change summary:</strong> {session.workflowContinuity.coding.lastCodeChangeSummary || "No code change summary recorded yet."}</p>

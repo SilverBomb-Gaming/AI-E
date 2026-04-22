@@ -294,11 +294,33 @@ export type AutonomousWorkflowCodingLoopPhase =
   | "escalation"
   | "supervised-recovery";
 
+export type AutonomousWorkflowCodingTargetStatus =
+  | "none"
+  | "implementation-in-progress"
+  | "awaiting-validation"
+  | "validation-failed"
+  | "under-correction"
+  | "accepted"
+  | "under-review"
+  | "escalated"
+  | "supervised-recovery";
+
 export type AutonomousWorkflowCodingState = {
   sessionMode: AutonomousSessionMode;
   codingLoopPhase: AutonomousWorkflowCodingLoopPhase;
   targetScope?: string;
   currentCodingObjective?: string;
+  currentDeliverableTarget?: string;
+  expectedOutputForm?: string;
+  validationSuccessTarget?: string;
+  currentAcceptanceTarget?: string;
+  currentTargetStatus: AutonomousWorkflowCodingTargetStatus;
+  validationProves?: string;
+  validationTargetMatchesDeliverable: boolean;
+  validationFailureImpact?: string;
+  correctionMaintainsDeliverable: boolean;
+  deliverableChangedDuringCorrectionOrEscalation: boolean;
+  acceptanceSummary?: string;
   currentValidationTarget?: string;
   validationTarget?: string;
   lastCodeChangeSummary?: string;
@@ -541,6 +563,10 @@ function createDefaultAutonomousWorkflowCodingState(): AutonomousWorkflowCodingS
   return {
     sessionMode: "general",
     codingLoopPhase: "none",
+    currentTargetStatus: "none",
+    validationTargetMatchesDeliverable: false,
+    correctionMaintainsDeliverable: false,
+    deliverableChangedDuringCorrectionOrEscalation: false,
     lastValidationPassed: false,
     validationFirstActive: false,
     repeatedValidationFailureDrivingEscalation: false,
@@ -697,6 +723,22 @@ function deriveRequestedNextPhaseOverride(
   }
 
   return undefined;
+}
+
+function normalizeAutonomousWorkflowCodingTargetStatus(
+  value: unknown,
+): AutonomousWorkflowCodingTargetStatus | undefined {
+  return value === "none"
+    || value === "implementation-in-progress"
+    || value === "awaiting-validation"
+    || value === "validation-failed"
+    || value === "under-correction"
+    || value === "accepted"
+    || value === "under-review"
+    || value === "escalated"
+    || value === "supervised-recovery"
+    ? value
+    : undefined;
 }
 
 function hasSteeringBeenApplied(session: AutonomousSession, requestedForStepIndex: number | undefined): boolean {
@@ -1175,6 +1217,29 @@ function summarizeCodingScope(paths: string[] | undefined, fallbackTargetPath?: 
   return normalizeText(fallbackTargetPath) || normalizeText(fallbackAllowedRoot) || undefined;
 }
 
+function deriveRepoCodingTargetStatus(codingLoopPhase: AutonomousWorkflowCodingLoopPhase): AutonomousWorkflowCodingTargetStatus {
+  switch (codingLoopPhase) {
+    case "implementation":
+      return "implementation-in-progress";
+    case "validation-pending":
+      return "awaiting-validation";
+    case "validation-failed":
+      return "validation-failed";
+    case "correction-pending":
+      return "under-correction";
+    case "validation-recovered":
+      return "accepted";
+    case "review":
+      return "under-review";
+    case "escalation":
+      return "escalated";
+    case "supervised-recovery":
+      return "supervised-recovery";
+    default:
+      return "none";
+  }
+}
+
 function deriveWorkflowPhaseForStep(step: AutonomousStepRecord): "planning" | "implementation" | "validation" | "fix" | "retry" {
   if (step.recoveryStrategy === "retry-same-action" || step.recoveryStrategy === "narrow-scope") {
     return "retry";
@@ -1324,6 +1389,7 @@ function deriveAutonomousWorkflowCodingState(params: {
     pendingTargetPath,
     pendingAllowedRoot,
   );
+  const correctionScope = summarizeCodingScope(lastCorrectionStep?.executionResult?.changedPaths);
   const lastImplementationSummary = lastImplementationStep ? summarizeFixAttempt(lastImplementationStep) : undefined;
   const lastValidationSummary = lastValidationStep ? summarizeValidationOutcome(lastValidationStep) : undefined;
   const lastCorrectionSummary = lastCorrectionStep
@@ -1343,6 +1409,27 @@ function deriveAutonomousWorkflowCodingState(params: {
     || normalizeText(lastValidationStep?.proposedAction)
     || normalizeText(lastValidationStep?.expectedOutcome)
     || undefined;
+  const currentDeliverableTarget = normalizeText(lastImplementationStep?.expectedOutcome)
+    || normalizeText(params.session.pendingAction?.expectedOutcome)
+    || normalizeText(params.session.pendingAction?.description)
+    || normalizeText(params.currentObjectiveSummary)
+    || normalizeText(params.session.goal)
+    || undefined;
+  const deliverableChangedDuringCorrectionOrEscalation = Boolean(
+    params.handoff.selectedRecoveryMode === "restart-from-last-safe-boundary"
+    || params.handoff.selectedRecoveryMode === "stop-loop"
+    || (Boolean(targetScope) && Boolean(correctionScope) && correctionScope !== targetScope)
+  );
+  const expectedOutputForm = sessionMode === "repo-coding"
+    ? targetScope
+      ? `repo code change in ${targetScope}`
+      : currentDeliverableTarget
+        ? "repo code change"
+        : undefined
+    : undefined;
+  const validationSuccessTarget = normalizeText(lastValidationStep?.expectedOutcome)
+    || (currentDeliverableTarget ? `Validation should confirm ${currentDeliverableTarget}` : undefined);
+  const currentAcceptanceTarget = validationSuccessTarget || currentDeliverableTarget;
   const recoverySelectionActive = params.handoff.handoffStatus === "recovery-selected"
     || params.handoff.waitingOnOperatorDecision
     || params.handoff.handoffStatus === "second-escalation-needed";
@@ -1365,6 +1452,7 @@ function deriveAutonomousWorkflowCodingState(params: {
   const nextIntendedCodingAction = normalizeText(params.nextIntendedStep)
     || normalizeText(params.session.workflowContinuity?.loopHealth?.recommendedNextActionSummary)
     || undefined;
+  const currentTargetStatus = deriveRepoCodingTargetStatus(codingLoopPhase);
   const escalationActive = params.escalation.escalationStatus !== "none" || recoverySelectionActive;
   const supervisedRecoveryActive = codingLoopPhase === "supervised-recovery";
   const validationFirstActive = sessionMode === "repo-coding" && (
@@ -1382,15 +1470,43 @@ function deriveAutonomousWorkflowCodingState(params: {
       || normalizeText(lastValidationStep?.failureReason || lastValidationStep?.executionResult?.error)
       || undefined
     : undefined;
+  const validationTargetMatchesDeliverable = Boolean(validationTarget) && Boolean(currentDeliverableTarget) && (
+    !deliverableChangedDuringCorrectionOrEscalation
+    || (Boolean(targetScope) && normalizeText(currentDeliverableTarget).toLowerCase().includes(String(targetScope).toLowerCase()))
+  );
+  const validationProves = currentDeliverableTarget
+    ? `Validation should prove ${currentDeliverableTarget}`
+    : currentAcceptanceTarget;
+  const validationFailureImpact = currentCorrectionTarget && currentDeliverableTarget
+    ? `Validation failure blocks acceptance of ${currentDeliverableTarget}`
+    : undefined;
+  const correctionMaintainsDeliverable = (codingLoopPhase === "correction-pending"
+    || codingLoopPhase === "validation-recovered"
+    || codingLoopPhase === "escalation"
+    || codingLoopPhase === "supervised-recovery")
+    ? !deliverableChangedDuringCorrectionOrEscalation
+    : false;
+  const acceptanceSummary = currentDeliverableTarget
+    ? normalizeText([
+        `deliverable=${currentDeliverableTarget}`,
+        currentAcceptanceTarget ? `acceptance=${currentAcceptanceTarget}` : "",
+        `status=${currentTargetStatus}`,
+        validationTargetMatchesDeliverable ? "validation-aligned=true" : "validation-aligned=false",
+      ].filter(Boolean).join(" | ")) || undefined
+    : undefined;
   const codingSummary = sessionMode === "repo-coding"
     ? normalizeText([
         `phase=${codingLoopPhase}`,
         targetScope ? `scope=${targetScope}` : "",
+        currentDeliverableTarget ? `deliverable=${currentDeliverableTarget}` : "",
+        currentTargetStatus !== "none" ? `target-status=${currentTargetStatus}` : "",
         currentCodingObjective ? `objective=${currentCodingObjective}` : "",
         validationFirstActive ? "validation-first=active" : "",
         lastValidationStep?.executionResult?.status === "success" ? "last-validation=passed" : "",
         lastValidationStep?.executionResult?.status === "failed" ? "last-validation=failed" : "",
+        validationTargetMatchesDeliverable ? "validation-aligned=true" : "validation-aligned=false",
         currentCorrectionTarget ? `correction=${currentCorrectionTarget}` : "",
+        deliverableChangedDuringCorrectionOrEscalation ? "deliverable-retargeted=true" : "",
         repeatedValidationFailureDrivingEscalation ? "escalation-driver=repeated-validation-failure" : "",
         nextIntendedCodingAction ? `next=${nextIntendedCodingAction}` : "",
       ].filter(Boolean).join(" | ")) || undefined
@@ -1401,6 +1517,17 @@ function deriveAutonomousWorkflowCodingState(params: {
     codingLoopPhase,
     targetScope,
     currentCodingObjective,
+    currentDeliverableTarget,
+    expectedOutputForm,
+    validationSuccessTarget,
+    currentAcceptanceTarget,
+    currentTargetStatus,
+    validationProves,
+    validationTargetMatchesDeliverable,
+    validationFailureImpact,
+    correctionMaintainsDeliverable,
+    deliverableChangedDuringCorrectionOrEscalation,
+    acceptanceSummary,
     currentValidationTarget: validationTarget,
     validationTarget,
     lastCodeChangeSummary: lastImplementationSummary,
@@ -2364,6 +2491,29 @@ function normalizeAutonomousWorkflowContinuityState(value: unknown): AutonomousW
       targetScope: normalizeText(typeof codingSource?.targetScope === "string" ? codingSource.targetScope : "") || undefined,
       currentCodingObjective:
         normalizeText(typeof codingSource?.currentCodingObjective === "string" ? codingSource.currentCodingObjective : "") || undefined,
+      currentDeliverableTarget:
+        normalizeText(typeof codingSource?.currentDeliverableTarget === "string" ? codingSource.currentDeliverableTarget : "") || undefined,
+      expectedOutputForm:
+        normalizeText(typeof codingSource?.expectedOutputForm === "string" ? codingSource.expectedOutputForm : "") || undefined,
+      validationSuccessTarget:
+        normalizeText(typeof codingSource?.validationSuccessTarget === "string" ? codingSource.validationSuccessTarget : "") || undefined,
+      currentAcceptanceTarget:
+        normalizeText(typeof codingSource?.currentAcceptanceTarget === "string" ? codingSource.currentAcceptanceTarget : "") || undefined,
+      currentTargetStatus: normalizeAutonomousWorkflowCodingTargetStatus(codingSource?.currentTargetStatus) ?? "none",
+      validationProves:
+        normalizeText(typeof codingSource?.validationProves === "string" ? codingSource.validationProves : "") || undefined,
+      validationTargetMatchesDeliverable:
+        typeof codingSource?.validationTargetMatchesDeliverable === "boolean" ? codingSource.validationTargetMatchesDeliverable : false,
+      validationFailureImpact:
+        normalizeText(typeof codingSource?.validationFailureImpact === "string" ? codingSource.validationFailureImpact : "") || undefined,
+      correctionMaintainsDeliverable:
+        typeof codingSource?.correctionMaintainsDeliverable === "boolean" ? codingSource.correctionMaintainsDeliverable : false,
+      deliverableChangedDuringCorrectionOrEscalation:
+        typeof codingSource?.deliverableChangedDuringCorrectionOrEscalation === "boolean"
+          ? codingSource.deliverableChangedDuringCorrectionOrEscalation
+          : false,
+      acceptanceSummary:
+        normalizeText(typeof codingSource?.acceptanceSummary === "string" ? codingSource.acceptanceSummary : "") || undefined,
       currentValidationTarget:
         normalizeText(typeof codingSource?.currentValidationTarget === "string" ? codingSource.currentValidationTarget : "") || undefined,
       validationTarget: normalizeText(typeof codingSource?.validationTarget === "string" ? codingSource.validationTarget : "") || undefined,
@@ -3707,6 +3857,41 @@ export function buildAutonomousSessionContextBlock(session: AutonomousSession, l
 
   if (session.workflowContinuity.coding.currentCodingObjective) {
     lines.push(`- Current coding objective: ${session.workflowContinuity.coding.currentCodingObjective}`);
+  }
+
+  if (session.workflowContinuity.coding.currentDeliverableTarget) {
+    lines.push(`- Current deliverable target: ${session.workflowContinuity.coding.currentDeliverableTarget}`);
+  }
+
+  if (session.workflowContinuity.coding.expectedOutputForm) {
+    lines.push(`- Expected output form: ${session.workflowContinuity.coding.expectedOutputForm}`);
+  }
+
+  lines.push(`- Current target status: ${session.workflowContinuity.coding.currentTargetStatus}`);
+
+  if (session.workflowContinuity.coding.validationSuccessTarget) {
+    lines.push(`- Validation success target: ${session.workflowContinuity.coding.validationSuccessTarget}`);
+  }
+
+  if (session.workflowContinuity.coding.currentAcceptanceTarget) {
+    lines.push(`- Current acceptance target: ${session.workflowContinuity.coding.currentAcceptanceTarget}`);
+  }
+
+  if (session.workflowContinuity.coding.validationProves) {
+    lines.push(`- Validation proves: ${session.workflowContinuity.coding.validationProves}`);
+  }
+
+  lines.push(`- Validation target matches deliverable: ${String(session.workflowContinuity.coding.validationTargetMatchesDeliverable)}`);
+
+  if (session.workflowContinuity.coding.validationFailureImpact) {
+    lines.push(`- Validation failure impact: ${session.workflowContinuity.coding.validationFailureImpact}`);
+  }
+
+  lines.push(`- Correction maintains deliverable: ${String(session.workflowContinuity.coding.correctionMaintainsDeliverable)}`);
+  lines.push(`- Deliverable changed during correction or escalation: ${String(session.workflowContinuity.coding.deliverableChangedDuringCorrectionOrEscalation)}`);
+
+  if (session.workflowContinuity.coding.acceptanceSummary) {
+    lines.push(`- Acceptance summary: ${session.workflowContinuity.coding.acceptanceSummary}`);
   }
 
   if (session.workflowContinuity.coding.validationTarget) {
