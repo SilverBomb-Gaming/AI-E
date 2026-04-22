@@ -191,6 +191,92 @@ test("autonomous sessions derive implementation and fix loop memory from changed
   assert.match(implemented.workflowContinuity.loopHealth.loopHealthReason ?? "", /validation/i);
 });
 
+test("repo coding sessions derive explicit coding loop context from implementation and validation steps", () => {
+  const created = createAutonomousSession({
+    goal: "Stabilize web/lib/aie/autonomousSession.ts and validate the bounded coding loop.",
+    sessionMode: "repo-coding",
+  });
+  const implemented = appendAutonomousStep(created, {
+    proposedAction: "Apply the bounded implementation patch to web/lib/aie/autonomousSession.ts.",
+    expectedOutcome: "The bounded implementation change should be ready for validation.",
+    executionResult: {
+      status: "success",
+      output: "Implementation patch applied cleanly.",
+      changedPaths: ["web/lib/aie/autonomousSession.ts"],
+      diffSummary: "Added bounded repo coding loop continuity.",
+    },
+    nextDecision: "continue",
+  });
+  const validated = appendAutonomousStep(implemented, {
+    proposedAction: "Run the bounded autonomous session validation target.",
+    expectedOutcome: "The bounded coding loop validation should pass.",
+    executionResult: {
+      status: "failed",
+      error: "Validation still reports the repo coding loop summary mismatch.",
+      commandLabel: "npx tsx --test lib/aie/autonomousSession.test.ts",
+    },
+    failureReason: "Validation still reports the repo coding loop summary mismatch.",
+  });
+
+  assert.equal(validated.sessionMode, "repo-coding");
+  assert.equal(validated.workflowContinuity.coding.sessionMode, "repo-coding");
+  assert.equal(validated.workflowContinuity.coding.codingLoopPhase, "validation");
+  assert.equal(validated.workflowContinuity.coding.targetScope, "web/lib/aie/autonomousSession.ts");
+  assert.match(validated.workflowContinuity.coding.currentCodingObjective ?? "", /stabilize web\/lib\/aie\/autonomoussession\.ts/i);
+  assert.match(validated.workflowContinuity.coding.lastCodeChangeSummary ?? "", /changed=web\/lib\/aie\/autonomousSession\.ts/i);
+  assert.match(validated.workflowContinuity.coding.lastValidationResultSummary ?? "", /runtime=failed/i);
+  assert.equal(validated.workflowContinuity.coding.lastValidationPassed, false);
+  assert.match(validated.workflowContinuity.coding.currentCorrectionTarget ?? "", /summary mismatch/i);
+  assert.match(validated.workflowContinuity.coding.nextIntendedCodingAction ?? "", /run the bounded autonomous session validation target/i);
+  assert.match(buildAutonomousSessionContextBlock(validated), /Coding loop phase: validation/i);
+});
+
+test("repo coding sessions surface escalation and supervised recovery as coding loop phases", () => {
+  const failedValidation = appendAutonomousStep(createAutonomousSession({
+    goal: "Keep a repo coding loop bounded when validation keeps failing.",
+    sessionMode: "repo-coding",
+  }), {
+    proposedAction: "Run the bounded validation target.",
+    executionResult: {
+      status: "failed",
+      error: "Validation still reports the same unresolved repo failure.",
+      commandLabel: "npm test",
+    },
+    failureReason: "Validation still reports the same unresolved repo failure.",
+  });
+  const reviewedOne = updateAutonomousSessionSteering(failedValidation, {
+    action: "accept-current-recommendation",
+    operatorNote: "Accept the current bounded recommendation once.",
+  });
+  const secondFailure = appendAutonomousStep(reviewedOne, {
+    proposedAction: "Run the bounded validation target again.",
+    executionResult: {
+      status: "failed",
+      error: "Validation still reports the same unresolved repo failure.",
+      commandLabel: "npm test",
+    },
+    failureReason: "Validation still reports the same unresolved repo failure.",
+  });
+  const acceptedTwo = updateAutonomousSessionSteering(secondFailure, {
+    action: "accept-current-recommendation",
+    operatorNote: "Accept the current bounded recommendation a second time.",
+  });
+  const escalated = updateAutonomousSessionSteering(acceptedTwo, {
+    action: "prefer-validation-next",
+    overrideReason: "The accepted recommendation still needs correction, so escalate to a supervised recovery choice.",
+  });
+  const selectedRecovery = updateAutonomousSessionSteering(escalated, {
+    action: "prefer-validation-next",
+    overrideReason: "Select the supervised validation-first recovery path.",
+  });
+
+  assert.equal(escalated.workflowContinuity.coding.codingLoopPhase, 'supervised-recovery');
+  assert.equal(escalated.workflowContinuity.coding.supervisedRecoveryActive, true);
+  assert.equal(selectedRecovery.workflowContinuity.coding.codingLoopPhase, "supervised-recovery");
+  assert.equal(selectedRecovery.workflowContinuity.coding.supervisedRecoveryActive, true);
+  assert.match(selectedRecovery.workflowContinuity.coding.codingSummary ?? "", /phase=supervised-recovery/i);
+});
+
 test("autonomous sessions mark repeated ineffective validation loops as stalled", () => {
   const first = appendAutonomousStep(createAutonomousSession({ goal: "Confirm the validation loop stops when it stalls." }), {
     proposedAction: "Run the bounded validation command.",
@@ -784,3 +870,4 @@ test("autonomous sessions persist awaiting-approval pending actions", () => {
   assert.equal(normalized?.pendingAction?.scope, "caution");
   assert.match(normalized?.stateReason ?? "", /approval/i);
 });
+

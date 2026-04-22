@@ -75,6 +75,10 @@ test("local_node runs a bounded goal, creates a session, and prints a structured
     assert.equal(session.taskStatus, "completed");
     assert.match(textOutput, /Session ID:/i);
     assert.match(textOutput, /Step 1/i);
+    assert.match(textOutput, /Session mode:/i);
+    assert.match(textOutput, /Coding loop phase:/i);
+    assert.match(textOutput, /Current coding objective:/i);
+    assert.match(textOutput, /Last validation result summary:/i);
     assert.match(textOutput, /Recommendation confidence:/i);
     assert.match(textOutput, /Recommendation rationale:/i);
     assert.match(textOutput, /Recommendation review summary:/i);
@@ -185,6 +189,9 @@ test("local_node queue entrypoints run one queued task and print a queue summary
     assert.match(output, /Dispatch ack: aie-dispatch-local-ack-1/i);
     assert.match(output, /Dispatch transport: completed/i);
     assert.match(output, /Dispatch summary: dispatch=1 \| type=result \| status=completed/i);
+    assert.match(output, /Session mode:/i);
+    assert.match(output, /Coding loop phase:/i);
+    assert.match(output, /Current coding objective:/i);
     assert.match(output, /Recommended next phase:/i);
     assert.match(output, /Recommendation review summary:/i);
     assert.match(output, /Last recommendation review outcome:/i);

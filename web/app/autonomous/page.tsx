@@ -520,6 +520,19 @@ export default function AutonomousPage() {
                 <p><strong>Queue summary:</strong> {session.queueStateSummary || "No queue summary recorded yet."}</p>
                 <p><strong>Planning hints:</strong> {session.planningHintSummary || "No planning hints recorded yet."}</p>
                 <p><strong>Adapter context:</strong> {session.adapterContextSummary || "No adapter context recorded yet."}</p>
+                <p><strong>Session mode:</strong> {session.sessionMode}</p>
+                <p><strong>Coding loop phase:</strong> {session.workflowContinuity.coding.codingLoopPhase}</p>
+                <p><strong>Coding target scope:</strong> {session.workflowContinuity.coding.targetScope || "No coding scope recorded yet."}</p>
+                <p><strong>Current coding objective:</strong> {session.workflowContinuity.coding.currentCodingObjective || "No coding objective recorded yet."}</p>
+                <p><strong>Validation target:</strong> {session.workflowContinuity.coding.validationTarget || "No validation target recorded yet."}</p>
+                <p><strong>Last code change summary:</strong> {session.workflowContinuity.coding.lastCodeChangeSummary || "No code change summary recorded yet."}</p>
+                <p><strong>Last validation result summary:</strong> {session.workflowContinuity.coding.lastValidationResultSummary || "No validation result summary recorded yet."}</p>
+                <p><strong>Current correction target:</strong> {session.workflowContinuity.coding.currentCorrectionTarget || "No correction target recorded yet."}</p>
+                <p><strong>Repeated validation outcome:</strong> {session.workflowContinuity.coding.repeatedValidationOutcome || "No repeated validation outcome recorded yet."}</p>
+                <p><strong>Next intended coding action:</strong> {session.workflowContinuity.coding.nextIntendedCodingAction || "No coding action recorded yet."}</p>
+                <p><strong>Coding escalation active:</strong> {session.workflowContinuity.coding.escalationActive ? "Yes" : "No"}</p>
+                <p><strong>Coding supervised recovery active:</strong> {session.workflowContinuity.coding.supervisedRecoveryActive ? "Yes" : "No"}</p>
+                <p><strong>Coding loop summary:</strong> {session.workflowContinuity.coding.codingSummary || "No coding loop summary recorded yet."}</p>
                 <p><strong>System recommended next phase:</strong> {session.workflowContinuity.loopHealth.systemRecommendedNextPhase || "No system recommendation recorded yet."}</p>
                 <p><strong>Recommended next phase:</strong> {session.workflowContinuity.loopHealth.recommendedNextPhase}</p>
                 <p><strong>Recommendation confidence:</strong> {session.workflowContinuity.loopHealth.recommendationConfidence}</p>
@@ -587,6 +600,7 @@ export default function AutonomousPage() {
                   <p><strong>Current rationale:</strong> {session.workflowContinuity.loopHealth.recommendationRationaleSummary || "No recommendation rationale recorded yet."}</p>
                   <p><strong>Current top signals:</strong> {session.workflowContinuity.loopHealth.topContributingSignals.length ? session.workflowContinuity.loopHealth.topContributingSignals.join(", ") : "No recommendation signals recorded yet."}</p>
                   <p><strong>Current follow-through:</strong> {session.workflowContinuity.review.lastFollowThroughSummary || "No follow-through summary recorded yet."}</p>
+                  <p><strong>Current coding loop:</strong> {session.workflowContinuity.coding.codingSummary || "No coding loop summary recorded yet."}</p>
                   <p><strong>Current escalation:</strong> {session.workflowContinuity.escalation.escalationSummary || "No escalation summary recorded yet."}</p>
                   <p><strong>Current recovery guidance:</strong> {session.workflowContinuity.escalation.recoverySummary || "No recovery guidance recorded yet."}</p>
                   <p><strong>Current handoff:</strong> {session.workflowContinuity.handoff.handoffSummary || "No handoff summary recorded yet."}</p>

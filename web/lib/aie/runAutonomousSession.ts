@@ -772,6 +772,7 @@ export async function runAutonomousSession(params: RunAutonomousSessionParams): 
     : createAutonomousSession({
         goal: params.goal,
         maxSteps: params.maxSteps,
+        sessionMode: "repo-coding",
       });
 
   if (params.clearSteering) {

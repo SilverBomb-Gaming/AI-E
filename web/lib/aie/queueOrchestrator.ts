@@ -281,6 +281,7 @@ function buildQueuedSession(task: TaskEnvelope, node: ExecutionNodeDescriptor, m
     goal,
     maxSteps: maxSteps ?? 1,
     sessionId: task.sessionId,
+    sessionMode: "repo-coding",
   });
   const awaitingApproval = markAwaitingApproval(
     pendingSession,

@@ -341,6 +341,17 @@ AI-E now turns escalation into an explicit bounded handoff state, so operators c
 
 This slice still does not add hidden adaptation, cross-session learning, alternate orchestration, multi-agent recovery logic, or any bypass around the existing queue, lease, approval, and trusted dispatch boundaries. Operator handoff and supervised recovery execution remain session-local, deterministic, and inspectable.
 
+## Phase 5A: bounded repo coding loop continuity
+
+AI-E now treats repo coding work as an explicit bounded loop mode built on the completed autonomy spine, so the same supervised session can carry implementation, validation, correction, review, escalation, and supervised recovery through a real repo workflow without adding another coordinator or planner.
+
+- `AutonomousSession` now supports explicit `repo-coding` mode, and `workflowContinuity.coding` derives repo-work state from the existing bounded steps, validation outcomes, correction signals, escalation state, and supervised recovery state already carried by the session spine
+- repo-oriented coding context now persists in-session rather than in a second memory system: target scope, current coding objective, validation target, last code-change summary, last validation result summary, current correction target, repeated validation outcome, and next intended coding action remain deterministic and inspectable across the loop
+- the shared runner and queued-task session builder now create repo-coding sessions for real repo execution, which means Phase 5A builds directly on the existing queue, lease, trust, approval, continuity, escalation, and recovery controls instead of bypassing them
+- the autonomous page, session context block, headless CLI, local-node CLI, and task list views now expose coding-loop mode and repo-work summaries so operators can see what the supervised coding loop is doing in repo terms
+
+Phase 5A is complete when these coding-loop fields continue to validate under focused owner tests and the broader regression gate. Later production-capability slices can build on this by tightening repo-task intake, linking concrete edits more directly to validation targets, and expanding operator review around real coding deliverables.
+
 Still deferred beyond 4M-D:
 
 - autonomous peer-to-peer replication or any direct node-to-node handoff channel

@@ -162,6 +162,7 @@ export function formatHeadlessSessionSummary(session: AutonomousSession): string
     {
       ok: session.status !== "failed" && session.status !== "blocked",
       sessionId: session.sessionId,
+      sessionMode: session.sessionMode,
       status: session.status,
       steps: session.steps.length,
       adapter: session.executionAdapterId ?? null,
@@ -323,6 +324,19 @@ export function formatHeadlessSessionReport(session: AutonomousSession, options?
     `Adapter context: ${session.adapterContextSummary ?? "No adapter context recorded."}`,
     `Planning hints: ${session.planningHintSummary ?? "No planning hints recorded."}`,
     `Production-loop phase: ${session.workflowContinuity.progress.chainPhase}`,
+    `Session mode: ${session.sessionMode}`,
+    `Coding loop phase: ${session.workflowContinuity.coding.codingLoopPhase}`,
+    `Coding target scope: ${session.workflowContinuity.coding.targetScope ?? "No coding scope recorded."}`,
+    `Current coding objective: ${session.workflowContinuity.coding.currentCodingObjective ?? "No coding objective recorded."}`,
+    `Validation target: ${session.workflowContinuity.coding.validationTarget ?? "No validation target recorded."}`,
+    `Last code change summary: ${session.workflowContinuity.coding.lastCodeChangeSummary ?? "No code change summary recorded."}`,
+    `Last validation result summary: ${session.workflowContinuity.coding.lastValidationResultSummary ?? "No validation result summary recorded."}`,
+    `Current correction target: ${session.workflowContinuity.coding.currentCorrectionTarget ?? "No correction target recorded."}`,
+    `Repeated validation outcome: ${session.workflowContinuity.coding.repeatedValidationOutcome ?? "No repeated validation outcome recorded."}`,
+    `Next intended coding action: ${session.workflowContinuity.coding.nextIntendedCodingAction ?? "No coding action recorded."}`,
+    `Coding escalation active: ${String(session.workflowContinuity.coding.escalationActive)}`,
+    `Coding supervised recovery active: ${String(session.workflowContinuity.coding.supervisedRecoveryActive)}`,
+    `Coding loop summary: ${session.workflowContinuity.coding.codingSummary ?? "No coding loop summary recorded."}`,
     `Current chain step: ${session.workflowContinuity.progress.currentChainStep}`,
     `Total known steps: ${session.workflowContinuity.progress.totalKnownSteps}`,
     `Last safe step: ${typeof session.workflowContinuity.progress.lastCompletedSafeStep === "number" ? session.workflowContinuity.progress.lastCompletedSafeStep : "No safe step recorded."}`,
@@ -513,11 +527,17 @@ export function formatHeadlessQueueRunReport(summary: QueueExecutionSummary, opt
     `Chain state: ${chain?.state ?? "unknown"}`,
     `Chain depth: ${chain?.depth ?? "unknown"}`,
     `Production-loop phase: ${summary.session?.workflowContinuity?.progress.chainPhase ?? "unknown"}`,
+    `Session mode: ${summary.session?.sessionMode ?? "unknown"}`,
+    `Coding loop phase: ${summary.session?.workflowContinuity?.coding?.codingLoopPhase ?? "unknown"}`,
+    `Coding target scope: ${summary.session?.workflowContinuity?.coding?.targetScope ?? "unknown"}`,
+    `Current coding objective: ${summary.session?.workflowContinuity?.coding?.currentCodingObjective ?? "unknown"}`,
     `Last safe step: ${typeof summary.session?.workflowContinuity?.progress.lastCompletedSafeStep === "number" ? summary.session.workflowContinuity.progress.lastCompletedSafeStep : "unknown"}`,
     `Next intended step: ${summary.session?.workflowContinuity?.progress.nextIntendedStep ?? "unknown"}`,
     `Chain summary: ${summary.session?.workflowContinuity?.memory.chainSummary ?? "unknown"}`,
     `Last validation outcome: ${summary.session?.workflowContinuity?.memory.lastValidationOutcome ?? "unknown"}`,
+    `Last validation result summary: ${summary.session?.workflowContinuity?.coding?.lastValidationResultSummary ?? "unknown"}`,
     `Last fix attempt: ${summary.session?.workflowContinuity?.memory.lastFixAttemptSummary ?? "unknown"}`,
+    `Current correction target: ${summary.session?.workflowContinuity?.coding?.currentCorrectionTarget ?? "unknown"}`,
     `Operator blockers: ${summary.session?.workflowContinuity?.memory.operatorBlockers ?? "unknown"}`,
     `Phase repeat count: ${summary.session?.workflowContinuity?.loopHealth.currentPhaseRepeatCount ?? "unknown"}`,
     `Stalled loop: ${typeof summary.session?.workflowContinuity?.loopHealth.stalledLoop === "boolean" ? String(summary.session.workflowContinuity.loopHealth.stalledLoop) : "unknown"}`,
@@ -606,7 +626,7 @@ export async function formatHeadlessTaskList(options?: { json?: boolean }): Prom
   const taskLines = await Promise.all(
     tasks.slice(0, 20).map(async (task) => {
       const session = await loadAutonomousSession(task.sessionId);
-      return `${task.taskId} | ${task.status} | ${task.selectedNodeId ?? task.assignedNodeId ?? "unassigned"} | lease=${task.lease?.ownerNodeId ?? "none"}:${task.lease?.status ?? "none"} | continuation=${task.continuationGeneration > 0 ? `gen-${task.continuationGeneration}:${task.continuationSourceNodeId ?? "unknown"}->${task.continuationTargetNodeId ?? "pending"}` : "fresh"} | chain=${deriveTaskContinuationChainState(task).state}:${deriveTaskContinuationChainState(task).depth} | phase=${session?.workflowContinuity.progress.chainPhase ?? "unknown"} | repeat=${session?.workflowContinuity.loopHealth.currentPhaseRepeatCount ?? "unknown"} | stalled=${typeof session?.workflowContinuity.loopHealth.stalledLoop === "boolean" ? String(session.workflowContinuity.loopHealth.stalledLoop) : "unknown"} | recommended=${session?.workflowContinuity.loopHealth.recommendedNextPhase ?? "unknown"} | safeStep=${typeof session?.workflowContinuity.progress.lastCompletedSafeStep === "number" ? session.workflowContinuity.progress.lastCompletedSafeStep : "none"} | next=${session?.workflowContinuity.loopHealth.recommendedNextActionSummary ?? session?.workflowContinuity.progress.nextIntendedStep ?? "none"} | plan=${deriveTaskRecoveryPlanningState(task).strategy}:${deriveTaskRecoveryPlanningState(task).reasonCategory} | safeStop=${deriveTaskRecoveryPlanningState(task).safeStopPoint ?? "none"} | resumability=${task.resumability} | recovery=${task.recoveryPending} | transport=${task.dispatchTransportStatus ?? "none"} | hardening=${deriveTaskDispatchHardeningState(task).state}:${deriveTaskDispatchHardeningState(task).category} | retries=${task.dispatchRetryCount ?? 0} | failure=${task.failureReason ?? "none"} | ${task.sessionId}`;
+      return `${task.taskId} | ${task.status} | ${task.selectedNodeId ?? task.assignedNodeId ?? "unassigned"} | lease=${task.lease?.ownerNodeId ?? "none"}:${task.lease?.status ?? "none"} | continuation=${task.continuationGeneration > 0 ? `gen-${task.continuationGeneration}:${task.continuationSourceNodeId ?? "unknown"}->${task.continuationTargetNodeId ?? "pending"}` : "fresh"} | mode=${session?.sessionMode ?? "unknown"} | chain=${deriveTaskContinuationChainState(task).state}:${deriveTaskContinuationChainState(task).depth} | phase=${session?.workflowContinuity.progress.chainPhase ?? "unknown"} | coding=${session?.workflowContinuity.coding.codingLoopPhase ?? "unknown"} | scope=${session?.workflowContinuity.coding.targetScope ?? "none"} | repeat=${session?.workflowContinuity.loopHealth.currentPhaseRepeatCount ?? "unknown"} | stalled=${typeof session?.workflowContinuity.loopHealth.stalledLoop === "boolean" ? String(session.workflowContinuity.loopHealth.stalledLoop) : "unknown"} | recommended=${session?.workflowContinuity.loopHealth.recommendedNextPhase ?? "unknown"} | safeStep=${typeof session?.workflowContinuity.progress.lastCompletedSafeStep === "number" ? session.workflowContinuity.progress.lastCompletedSafeStep : "none"} | next=${session?.workflowContinuity.coding.nextIntendedCodingAction ?? session?.workflowContinuity.loopHealth.recommendedNextActionSummary ?? session?.workflowContinuity.progress.nextIntendedStep ?? "none"} | plan=${deriveTaskRecoveryPlanningState(task).strategy}:${deriveTaskRecoveryPlanningState(task).reasonCategory} | safeStop=${deriveTaskRecoveryPlanningState(task).safeStopPoint ?? "none"} | resumability=${task.resumability} | recovery=${task.recoveryPending} | transport=${task.dispatchTransportStatus ?? "none"} | hardening=${deriveTaskDispatchHardeningState(task).state}:${deriveTaskDispatchHardeningState(task).category} | retries=${task.dispatchRetryCount ?? 0} | failure=${task.failureReason ?? "none"} | ${task.sessionId}`;
     }),
   );
 
