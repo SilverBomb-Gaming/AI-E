@@ -366,7 +366,9 @@ export type AutonomousWorkflowCodingState = {
   pendingRepoActions: AutonomousWorkflowRepoAction[];
   approvedRepoActions: AutonomousWorkflowRepoAction[];
   executedRepoActions: AutonomousWorkflowRepoAction[];
+  approvalStateSummary?: string;
   repoActionSummary?: string;
+  integritySummary?: string;
   acceptanceSummary?: string;
   currentValidationTarget?: string;
   validationTarget?: string;
@@ -625,6 +627,8 @@ function createDefaultAutonomousWorkflowCodingState(): AutonomousWorkflowCodingS
     pendingRepoActions: [],
     approvedRepoActions: [],
     executedRepoActions: [],
+    approvalStateSummary: undefined,
+    integritySummary: undefined,
     lastValidationPassed: false,
     validationFirstActive: false,
     repeatedValidationFailureDrivingEscalation: false,
@@ -1557,6 +1561,85 @@ function summarizeRepoActionState(actions: AutonomousWorkflowRepoAction[]): stri
   return `pending=${pendingCount} | approved=${approvedCount} | executed=${executedCount}${failedCount > 0 ? ` | failed=${failedCount}` : ""}`;
 }
 
+function summarizeRepoApprovalState(params: {
+  session: AutonomousSession;
+  pendingRepoActions: AutonomousWorkflowRepoAction[];
+  approvedRepoActions: AutonomousWorkflowRepoAction[];
+  executedRepoActions: AutonomousWorkflowRepoAction[];
+}): string | undefined {
+  const pendingApprovalAction = params.session.pendingAction;
+  if (params.session.status === "awaiting-approval" && pendingApprovalAction) {
+    return `awaiting-explicit-approval${pendingApprovalAction.id ? ` | action=${pendingApprovalAction.id}` : ""}`;
+  }
+
+  if (params.pendingRepoActions.length > 0) {
+    return `approval-required | pending=${params.pendingRepoActions.length}`;
+  }
+
+  const failedApprovedActions = params.approvedRepoActions.filter((action) => action.executionStatus === "failed");
+  if (failedApprovedActions.length > 0) {
+    return `approved-execution-failed | failed=${failedApprovedActions.length}`;
+  }
+
+  if (params.approvedRepoActions.length > 0) {
+    return `approved-awaiting-execution | approved=${params.approvedRepoActions.length}`;
+  }
+
+  if (params.executedRepoActions.length > 0) {
+    return `repo-actions-executed | executed=${params.executedRepoActions.length}`;
+  }
+
+  return undefined;
+}
+
+function deriveCodingStateIntegrityIssues(params: {
+  session: AutonomousSession;
+  outputArtifacts: AutonomousWorkflowCodingOutputArtifact[];
+  repoActions: AutonomousWorkflowRepoAction[];
+  pendingRepoActions: AutonomousWorkflowRepoAction[];
+  approvedRepoActions: AutonomousWorkflowRepoAction[];
+  deliverableAccepted: boolean;
+  completionState: AutonomousWorkflowCodingCompletionState;
+  shouldTerminateLoop: boolean;
+}): string[] {
+  const issues: string[] = [];
+
+  if (params.session.status === "awaiting-approval" && !params.session.pendingAction) {
+    issues.push("The session is awaiting approval without a stored pending action.");
+  }
+
+  if (
+    params.session.status === "awaiting-approval"
+    && params.session.pendingAction
+    && params.session.pendingAction.requiresApproval !== true
+  ) {
+    issues.push("The session is awaiting approval for an action that is not explicitly approval-gated.");
+  }
+
+  const pendingActionId = normalizeText(params.session.pendingAction?.id);
+  const pendingActionContext = normalizeText(params.session.pendingAction?.metadata?.context);
+  const pendingActionLooksLikeRepoAction = Boolean(
+    pendingActionId && pendingActionId.startsWith("repo-action-step-"),
+  ) || pendingActionContext.includes("repo-action=");
+  if (
+    pendingActionLooksLikeRepoAction
+    && pendingActionId
+    && !params.repoActions.some((action) => action.actionId === pendingActionId)
+  ) {
+    issues.push("The stored approval gate no longer matches any derived repo action.");
+  }
+
+  if (params.completionState === "accepted" && !params.deliverableAccepted) {
+    issues.push("Accepted completion state requires a validated deliverable.");
+  }
+
+  if (params.shouldTerminateLoop && (params.pendingRepoActions.length > 0 || params.approvedRepoActions.length > 0)) {
+    issues.push("Loop closure is blocked until every derived repo action is fully executed.");
+  }
+
+  return issues;
+}
+
 function deriveAutonomousWorkflowRepoActions(params: {
   session: AutonomousSession;
   outputArtifacts: AutonomousWorkflowCodingOutputArtifact[];
@@ -2008,19 +2091,53 @@ function deriveAutonomousWorkflowCodingState(params: {
   const pendingRepoActions = repoActions.filter((action) => action.approvalStatus === "pending");
   const approvedRepoActions = repoActions.filter((action) => action.approvalStatus === "approved");
   const executedRepoActions = repoActions.filter((action) => action.approvalStatus === "executed");
+  const approvalStateSummary = summarizeRepoApprovalState({
+    session: params.session,
+    pendingRepoActions,
+    approvedRepoActions,
+    executedRepoActions,
+  });
   const repoActionSummary = summarizeRepoActionState(repoActions);
   const repoActionsSatisfied = repoActions.length === 0 || executedRepoActions.length >= repoActions.length;
-  const shouldTerminateLoop = deliverableAccepted && repoActionsSatisfied;
+  let effectiveDeliverableAccepted = deliverableAccepted;
+  let effectiveAcceptanceReason = acceptanceReason;
+  let effectiveAcceptanceConfidence = acceptanceConfidence;
+  let effectiveCompletionState = completionState;
+  let effectiveOperatorConfirmationRequired = operatorConfirmationRequired;
+  let effectiveShouldTerminateLoop = deliverableAccepted && repoActionsSatisfied;
+  const integrityIssues = deriveCodingStateIntegrityIssues({
+    session: params.session,
+    outputArtifacts,
+    repoActions,
+    pendingRepoActions,
+    approvedRepoActions,
+    deliverableAccepted,
+    completionState,
+    shouldTerminateLoop: effectiveShouldTerminateLoop,
+  });
+  const integritySummary = integrityIssues.length > 0 ? integrityIssues.join(" | ") : undefined;
+  if (integritySummary) {
+    effectiveDeliverableAccepted = false;
+    effectiveAcceptanceReason = normalizeText([effectiveAcceptanceReason, integritySummary].filter(Boolean).join(" ")) || integritySummary;
+    effectiveAcceptanceConfidence = "low";
+    effectiveOperatorConfirmationRequired = true;
+    effectiveShouldTerminateLoop = false;
+    if (effectiveCompletionState === "accepted") {
+      effectiveCompletionState = "in-progress";
+    }
+  }
   const acceptanceSummary = currentDeliverableTarget
     ? normalizeText([
         `deliverable=${currentDeliverableTarget}`,
         currentAcceptanceTarget ? `acceptance=${currentAcceptanceTarget}` : "",
         `status=${currentTargetStatus}`,
-        `completion=${completionState}`,
-        deliverableAccepted ? "accepted=true" : "accepted=false",
+        `completion=${effectiveCompletionState}`,
+        effectiveDeliverableAccepted ? "accepted=true" : "accepted=false",
         validationTargetMatchesDeliverable ? "validation-aligned=true" : "validation-aligned=false",
         outputLinkedToDeliverable ? "output-linked=true" : "output-linked=false",
+        approvalStateSummary ? `approval=${approvalStateSummary}` : "",
         repoActionSummary ? `repo-actions=${repoActionSummary}` : "",
+        integritySummary ? `integrity=${integritySummary}` : "",
         lastOutputSummary ? `output=${lastOutputSummary}` : "",
       ].filter(Boolean).join(" | ")) || undefined
     : undefined;
@@ -2030,7 +2147,7 @@ function deriveAutonomousWorkflowCodingState(params: {
         targetScope ? `scope=${targetScope}` : "",
         currentDeliverableTarget ? `deliverable=${currentDeliverableTarget}` : "",
         currentTargetStatus !== "none" ? `target-status=${currentTargetStatus}` : "",
-        `completion=${completionState}`,
+        `completion=${effectiveCompletionState}`,
         currentCodingObjective ? `objective=${currentCodingObjective}` : "",
         validationFirstActive ? "validation-first=active" : "",
         lastValidationStep?.executionResult?.status === "success" ? "last-validation=passed" : "",
@@ -2038,11 +2155,13 @@ function deriveAutonomousWorkflowCodingState(params: {
         validationTargetMatchesDeliverable ? "validation-aligned=true" : "validation-aligned=false",
         outputArtifacts.length > 0 ? `outputs=${outputArtifacts.length}` : "",
         outputLinkedToDeliverable ? "output-linked=true" : "",
+        approvalStateSummary ? `approval=${approvalStateSummary}` : "",
         repoActionSummary ? `repo-actions=${repoActionSummary}` : "",
+        integritySummary ? `integrity=${integritySummary}` : "",
         currentCorrectionTarget ? `correction=${currentCorrectionTarget}` : "",
         deliverableChangedDuringCorrectionOrEscalation ? "deliverable-retargeted=true" : "",
-        operatorConfirmationRequired ? "operator-confirmation-required=true" : "",
-        shouldTerminateLoop ? "terminate=true" : "",
+        effectiveOperatorConfirmationRequired ? "operator-confirmation-required=true" : "",
+        effectiveShouldTerminateLoop ? "terminate=true" : "",
         repeatedValidationFailureDrivingEscalation ? "escalation-driver=repeated-validation-failure" : "",
         nextIntendedCodingAction ? `next=${nextIntendedCodingAction}` : "",
       ].filter(Boolean).join(" | ")) || undefined
@@ -2063,19 +2182,21 @@ function deriveAutonomousWorkflowCodingState(params: {
     validationFailureImpact,
     correctionMaintainsDeliverable,
     deliverableChangedDuringCorrectionOrEscalation,
-    deliverableAccepted,
-    acceptanceReason,
-    acceptanceConfidence,
-    completionState,
-    operatorConfirmationRequired,
-    shouldTerminateLoop,
+    deliverableAccepted: effectiveDeliverableAccepted,
+    acceptanceReason: effectiveAcceptanceReason,
+    acceptanceConfidence: effectiveAcceptanceConfidence,
+    completionState: effectiveCompletionState,
+    operatorConfirmationRequired: effectiveOperatorConfirmationRequired,
+    shouldTerminateLoop: effectiveShouldTerminateLoop,
     outputArtifacts,
     lastOutputSummary,
     outputLinkedToDeliverable,
     pendingRepoActions,
     approvedRepoActions,
     executedRepoActions,
+    approvalStateSummary,
     repoActionSummary,
+    integritySummary,
     acceptanceSummary,
     currentValidationTarget: validationTarget,
     validationTarget,
@@ -3108,8 +3229,12 @@ function normalizeAutonomousWorkflowContinuityState(value: unknown): AutonomousW
               .filter((action): action is AutonomousWorkflowRepoAction => Boolean(action)),
           )
         : [],
+      approvalStateSummary:
+        normalizeText(typeof codingSource?.approvalStateSummary === "string" ? codingSource.approvalStateSummary : "") || undefined,
       repoActionSummary:
         normalizeText(typeof codingSource?.repoActionSummary === "string" ? codingSource.repoActionSummary : "") || undefined,
+      integritySummary:
+        normalizeText(typeof codingSource?.integritySummary === "string" ? codingSource.integritySummary : "") || undefined,
       acceptanceSummary:
         normalizeText(typeof codingSource?.acceptanceSummary === "string" ? codingSource.acceptanceSummary : "") || undefined,
       currentValidationTarget:
@@ -4552,6 +4677,14 @@ export function buildAutonomousSessionContextBlock(session: AutonomousSession, l
 
   if (session.workflowContinuity.coding.repoActionSummary) {
     lines.push(`- Repo action summary: ${session.workflowContinuity.coding.repoActionSummary}`);
+  }
+
+  if (session.workflowContinuity.coding.approvalStateSummary) {
+    lines.push(`- Approval state: ${session.workflowContinuity.coding.approvalStateSummary}`);
+  }
+
+  if (session.workflowContinuity.coding.integritySummary) {
+    lines.push(`- Readiness guardrails: ${session.workflowContinuity.coding.integritySummary}`);
   }
 
   if (session.workflowContinuity.coding.pendingRepoActions.length > 0) {

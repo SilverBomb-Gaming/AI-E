@@ -407,6 +407,17 @@ AI-E now turns accepted bounded repo outputs into explicit supervised repo actio
 
 Phase 5F is complete when accepted materialized repo outputs are handed off into explicit approval-gated repo actions, those actions execute through the existing bounded runtime before final closure, operator/report surfaces expose repo-action state directly, and the focused autonomy tests, widened regression slice, and broader web test gate remain green.
 
+## Phase 6A: readiness and deployment pass
+
+AI-E is now hardened for repeated real-task operation without changing the core autonomy contract. The readiness pass keeps the existing bounded orchestration, continuity, and execution seams intact while tightening fail-closed behavior around approval state, repo-action continuity, and operator visibility.
+
+- repo-action approval remains mandatory for every caution-scoped repo mutation, and stored approval resumes stay bounded: rejection leaves the pending action untouched, approval resumes only the stored action, and final completion still waits for every derived repo action to reach executed state
+- coding continuity now surfaces explicit approval and readiness summaries so operators can see the current coding phase, deliverable state, approval state, completion state, and any active guardrails blocking unsafe closure
+- inconsistent approval states fail closed instead of silently closing the loop; orphaned approval waits and mismatched repo-action continuity now stay inspectable through the owner-seam summaries rather than being treated as healthy completion
+- deployable completion means the bounded deliverable has been validated, any approval-gated repo actions derived from accepted materialized outputs have been executed through the existing runtime, and the session reports a clean completion state without active readiness guardrails
+
+Basic usage expectations stay unchanged: run the bounded session, inspect the coding and approval summaries, approve only the explicit pending repo action when the materialized preview is acceptable, and treat completion as valid only when the session status, completion state, and repo-action state all agree.
+
 Still deferred beyond 4M-D:
 
 - autonomous peer-to-peer replication or any direct node-to-node handoff channel

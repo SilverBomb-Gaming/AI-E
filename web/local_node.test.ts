@@ -99,7 +99,9 @@ test("local_node runs a bounded goal, creates a session, and prints a structured
     assert.match(textOutput, /Files affected:/i);
     assert.match(textOutput, /Last output summary:/i);
     assert.match(textOutput, /Output artifacts:/i);
+    assert.match(textOutput, /Approval state:/i);
     assert.match(textOutput, /Repo action summary:/i);
+    assert.match(textOutput, /Readiness guardrails:/i);
     assert.match(textOutput, /Pending repo actions:/i);
     assert.match(textOutput, /Executed repo actions:/i);
     assert.match(textOutput, /Current validation target:/i);

@@ -3,7 +3,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 
-import { appendAutonomousStep, createAutonomousSession } from "./autonomousSession";
+import { appendAutonomousStep, createAutonomousSession, markAwaitingApproval } from "./autonomousSession";
 import { listExecutionNodes, resetExecutionNodeRegistry } from "./executionNodeRegistry";
 import { runAutonomousSession } from "./runAutonomousSession";
 import { getTask, listTasks } from "./taskQueueStore";
@@ -455,6 +455,57 @@ test("runAutonomousSession converts accepted materialized output into an approva
   assert.equal(resumed.workflowContinuity.coding.shouldTerminateLoop, true);
   assert.match(resumed.workflowContinuity.coding.repoActionSummary ?? "", /executed=1/i);
   assert.match(resumed.steps.at(-1)?.executedActionPreview?.id ?? "", /repo-action-step-1/i);
+});
+
+test("runAutonomousSession does not execute a stored approval-gated action after rejection", async () => {
+  let executed = false;
+  const awaiting = markAwaitingApproval(
+    createAutonomousSession({
+      goal: "Keep approval rejection from executing the stored repo action.",
+      sessionMode: "repo-coding",
+    }),
+    {
+      id: "repo-action-step-rejected",
+      type: "file-write",
+      scope: "caution",
+      description: "Apply the rejected repo action.",
+      expectedOutcome: "The rejected repo action should never execute.",
+      requiresApproval: true,
+      metadata: {
+        sourceActionType: "file-write",
+        targetPath: "web/sandbox/rejected-repo-action.txt",
+        allowedRoot: "web/sandbox",
+        content: "rejected",
+        context: "repo-action=repo-action-step-rejected",
+      },
+    },
+    "Explicit approval is required before the repo action can execute.",
+  );
+
+  const result = await runAutonomousSession({
+    goal: awaiting.goal,
+    maxSteps: 3,
+    existingSession: awaiting,
+    approved: false,
+    dependencies: {
+      runAnalysis: async () => {
+        throw new Error("Rejected approval should not re-enter analysis.");
+      },
+      executeAction: async () => {
+        executed = true;
+        return {
+          status: "success",
+          output: "This action should not run after rejection.",
+        };
+      },
+      saveAutonomousSession: async () => {},
+    },
+  });
+
+  assert.equal(result.status, "awaiting-approval");
+  assert.equal(result.pendingAction?.id, "repo-action-step-rejected");
+  assert.equal(result.stateReason, awaiting.stateReason);
+  assert.equal(executed, false);
 });
 
 test("runAutonomousSession auto-executes safe sandbox file writes and preserves changed-path metadata", async () => {

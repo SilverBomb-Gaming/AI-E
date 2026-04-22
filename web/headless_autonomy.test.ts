@@ -99,7 +99,9 @@ test("headless_autonomy persists a bounded session and prints a matching summary
     assert.match(formatHeadlessSessionReport(session), /Files affected:/i);
     assert.match(formatHeadlessSessionReport(session), /Last output summary:/i);
     assert.match(formatHeadlessSessionReport(session), /Output artifacts:/i);
+    assert.match(formatHeadlessSessionReport(session), /Approval state:/i);
     assert.match(formatHeadlessSessionReport(session), /Repo action summary:/i);
+    assert.match(formatHeadlessSessionReport(session), /Readiness guardrails:/i);
     assert.match(formatHeadlessSessionReport(session), /Pending repo actions:/i);
     assert.match(formatHeadlessSessionReport(session), /Executed repo actions:/i);
     assert.match(formatHeadlessSessionReport(session), /Current validation target:/i);

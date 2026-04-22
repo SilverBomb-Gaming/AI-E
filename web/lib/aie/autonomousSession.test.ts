@@ -474,6 +474,50 @@ test("repo coding sessions derive supervised repo actions from accepted material
   assert.match(buildAutonomousSessionContextBlock(accepted), /Pending repo actions:/i);
 });
 
+test("repo coding sessions do not derive supervised repo actions from incomplete output artifacts", () => {
+  const created = createAutonomousSession({
+    goal: "Deliver a bounded repo coding fix without allowing an unsafe closeout.",
+    sessionMode: "repo-coding",
+  });
+  const implemented = appendAutonomousStep(created, {
+    proposedAction: "Prepare the bounded implementation output for web/sandbox/incomplete-repo-action.txt.",
+    expectedOutcome: "The bounded repo coding fix should be ready for validation.",
+    executionResult: {
+      status: "success",
+      output: "Implementation output changed the repo file, but no materialized preview was preserved.",
+      changedPaths: ["web/sandbox/incomplete-repo-action.txt"],
+      diffSummary: "Created new file with 1 lines.",
+    },
+    nextDecision: "continue",
+  });
+  const firstSuccess = appendAutonomousStep(implemented, {
+    proposedAction: "Run the bounded validation target.",
+    expectedOutcome: "The bounded repo coding fix should validate cleanly.",
+    executionResult: {
+      status: "success",
+      output: "Validation passed for the bounded repo coding fix.",
+      commandLabel: "npm test",
+    },
+    nextDecision: "continue",
+  });
+  const accepted = appendAutonomousStep(firstSuccess, {
+    proposedAction: "Run the bounded validation target again.",
+    expectedOutcome: "The bounded repo coding fix should still validate cleanly without regression.",
+    executionResult: {
+      status: "success",
+      output: "Validation passed again without regression.",
+      commandLabel: "npm test",
+    },
+    nextDecision: "continue",
+  });
+
+  assert.equal(accepted.workflowContinuity.coding.deliverableAccepted, true);
+  assert.equal(accepted.workflowContinuity.coding.operatorConfirmationRequired, false);
+  assert.equal(accepted.workflowContinuity.coding.shouldTerminateLoop, true);
+  assert.equal(accepted.workflowContinuity.coding.pendingRepoActions.length, 0);
+  assert.equal(accepted.workflowContinuity.coding.repoActionSummary, undefined);
+});
+
 test("repo coding sessions allow bounded operator confirmation and rejection for deliverable closure", () => {
   const failedValidation = appendAutonomousStep(createAutonomousSession({
     goal: "Close a bounded repo deliverable with explicit operator confirmation.",
@@ -1178,5 +1222,51 @@ test("autonomous sessions persist awaiting-approval pending actions", () => {
   assert.equal(normalized?.pendingAction?.type, "file-write");
   assert.equal(normalized?.pendingAction?.scope, "caution");
   assert.match(normalized?.stateReason ?? "", /approval/i);
+});
+
+test("autonomous sessions reject invalid approval resumes without mutating pending approval state", () => {
+  const awaiting = markAwaitingApproval(
+    createAutonomousSession({ goal: "Confirm invalid approval resumes stay bounded." }),
+    {
+      id: "pending-invalid-resume",
+      type: "file-write",
+      scope: "caution",
+      description: "Apply a caution-scoped sandbox write.",
+      expectedOutcome: "The sandbox output should become healthy.",
+      requiresApproval: true,
+      metadata: {
+        sourceActionType: "file-write",
+        targetPath: "web/sandbox/pending-invalid.txt",
+        allowedRoot: "web/sandbox",
+        content: "pending-invalid",
+      },
+    },
+    "Explicit approval is required for the pending caution write.",
+  );
+
+  const resumedWithoutApproval = resumeAutonomousSession(awaiting, {
+    approved: false,
+    reason: "This should not resume the bounded approval gate.",
+  });
+
+  assert.equal(resumedWithoutApproval, awaiting);
+  assert.equal(resumedWithoutApproval.status, "awaiting-approval");
+  assert.equal(resumedWithoutApproval.pendingAction?.id, "pending-invalid-resume");
+  assert.match(resumedWithoutApproval.stateReason ?? "", /approval/i);
+});
+
+test("normalized sessions surface readiness guardrails for orphaned approval states", () => {
+  const normalized = normalizeAutonomousSession({
+    ...createAutonomousSession({ goal: "Keep orphaned approval states visible." }),
+    sessionMode: "repo-coding",
+    status: "awaiting-approval",
+    workflowContinuity: undefined,
+    pendingAction: undefined,
+    stateReason: "Waiting for approval without a pending action.",
+  });
+
+  assert.match(normalized?.workflowContinuity.coding.integritySummary ?? "", /without a stored pending action/i);
+  assert.equal(normalized?.workflowContinuity.coding.operatorConfirmationRequired, true);
+  assert.match(buildAutonomousSessionContextBlock(normalized as NonNullable<typeof normalized>), /Readiness guardrails:/i);
 });
 
