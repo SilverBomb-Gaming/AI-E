@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 
-import { deriveTaskDispatchHardeningState } from "@/lib/aie/taskEnvelope";
+import {
+  deriveTaskContinuationChainState,
+  deriveTaskDispatchHardeningState,
+  deriveTaskRecoveryPlanningState,
+} from "@/lib/aie/taskEnvelope";
 import { listTasks } from "@/lib/aie/taskQueueStore";
 
 export const runtime = "nodejs";
@@ -40,6 +44,8 @@ export async function GET() {
             priorLeaseId: task.priorLeaseId ?? null,
           }
         : null,
+          recovery: deriveTaskRecoveryPlanningState(task),
+          chain: deriveTaskContinuationChainState(task),
       failureReason: task.failureReason ?? null,
       hardening: deriveTaskDispatchHardeningState(task),
       dispatch: {

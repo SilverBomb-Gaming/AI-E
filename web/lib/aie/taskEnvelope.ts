@@ -151,6 +151,34 @@ export type TaskDispatchHardeningState = {
   reason?: string;
 };
 
+export type TaskRecoveryStrategy = "none" | "resume-continuation" | "restart-safe-boundary" | "fail-non-retryable";
+
+export type TaskRecoveryPlanningState = {
+  strategy: TaskRecoveryStrategy;
+  reasonCategory:
+    | "none"
+    | "timeout"
+    | "stale-node"
+    | "offline-node"
+    | "trust-boundary"
+    | "dispatch-protocol"
+    | "authentication"
+    | "checkpoint"
+    | "continuation"
+    | "lease"
+    | "other";
+  safeStopPoint?: string;
+  reason?: string;
+};
+
+export type TaskContinuationChainState = {
+  state: "fresh" | "continuing" | "restart-pending" | "safe-stop" | "terminal";
+  depth: number;
+  active: boolean;
+  safeStopPoint?: string;
+  latestReason?: string;
+};
+
 type CreateTaskEnvelopeParams = {
   taskId?: string;
   sessionId: string;
@@ -333,6 +361,59 @@ function normalizeContinuationReason(value: unknown): TaskContinuationReason | s
   return normalized;
 }
 
+function hasExplicitMetadataValue(metadata: TaskEnvelopeTransitionMetadata | undefined, key: keyof TaskEnvelopeTransitionMetadata): boolean {
+  return Boolean(metadata && Object.prototype.hasOwnProperty.call(metadata, key));
+}
+
+function categorizeRecoveryReason(reason: string | undefined): TaskRecoveryPlanningState["reasonCategory"] {
+  const normalizedReason = normalizeText(reason).toLowerCase();
+  if (!normalizedReason) {
+    return "none";
+  }
+
+  if (normalizedReason.includes("timeout") || normalizedReason.includes("timed out")) {
+    return "timeout";
+  }
+
+  if (normalizedReason.includes("stale")) {
+    return "stale-node";
+  }
+
+  if (
+    normalizedReason.includes("offline")
+    || normalizedReason.includes("unavailable")
+    || normalizedReason.includes("not registered")
+  ) {
+    return "offline-node";
+  }
+
+  if (normalizedReason.includes("trust boundary")) {
+    return "trust-boundary";
+  }
+
+  if (normalizedReason.includes("dispatch protocol")) {
+    return "dispatch-protocol";
+  }
+
+  if (normalizedReason.includes("auth")) {
+    return "authentication";
+  }
+
+  if (normalizedReason.includes("checkpoint")) {
+    return "checkpoint";
+  }
+
+  if (normalizedReason.includes("continuation")) {
+    return "continuation";
+  }
+
+  if (normalizedReason.includes("lease")) {
+    return "lease";
+  }
+
+  return "other";
+}
+
 function normalizeTaskExecutionLease(value: unknown): TaskExecutionLease | undefined {
   if (!value || typeof value !== "object") {
     return undefined;
@@ -404,16 +485,28 @@ function applyTaskTransition(
   const statusReason = normalizeText(metadata?.statusReason) || undefined;
   const failureReason = normalizeText(metadata?.failureReason) || envelope.failureReason;
   const resumability = metadata?.resumability ?? envelope.resumability;
-  const continuationSourceNodeId = normalizeText(metadata?.continuationSourceNodeId) || envelope.continuationSourceNodeId;
-  const continuationTargetNodeId = normalizeText(metadata?.continuationTargetNodeId) || envelope.continuationTargetNodeId;
+  const continuationSourceNodeId = hasExplicitMetadataValue(metadata, "continuationSourceNodeId")
+    ? normalizeText(metadata?.continuationSourceNodeId) || undefined
+    : envelope.continuationSourceNodeId;
+  const continuationTargetNodeId = hasExplicitMetadataValue(metadata, "continuationTargetNodeId")
+    ? normalizeText(metadata?.continuationTargetNodeId) || undefined
+    : envelope.continuationTargetNodeId;
   const continuationGeneration = Number.isInteger(Number(metadata?.continuationGeneration))
     ? Math.max(0, Number(metadata?.continuationGeneration))
     : envelope.continuationGeneration;
   const continuationReason = normalizeContinuationReason(metadata?.continuationReason) ?? envelope.continuationReason;
-  const resumedFromCheckpointReference = normalizeText(metadata?.resumedFromCheckpointReference) || envelope.resumedFromCheckpointReference;
-  const resumedFromContinuationToken = normalizeText(metadata?.resumedFromContinuationToken) || envelope.resumedFromContinuationToken;
-  const continuationToken = normalizeText(metadata?.continuationToken) || envelope.continuationToken;
-  const checkpointReference = normalizeText(metadata?.checkpointReference) || envelope.checkpointReference;
+  const resumedFromCheckpointReference = hasExplicitMetadataValue(metadata, "resumedFromCheckpointReference")
+    ? normalizeText(metadata?.resumedFromCheckpointReference) || undefined
+    : envelope.resumedFromCheckpointReference;
+  const resumedFromContinuationToken = hasExplicitMetadataValue(metadata, "resumedFromContinuationToken")
+    ? normalizeText(metadata?.resumedFromContinuationToken) || undefined
+    : envelope.resumedFromContinuationToken;
+  const continuationToken = hasExplicitMetadataValue(metadata, "continuationToken")
+    ? normalizeText(metadata?.continuationToken) || undefined
+    : envelope.continuationToken;
+  const checkpointReference = hasExplicitMetadataValue(metadata, "checkpointReference")
+    ? normalizeText(metadata?.checkpointReference) || undefined
+    : envelope.checkpointReference;
   const resumeAttemptCount = Number.isInteger(Number(metadata?.resumeAttemptCount))
     ? Math.max(0, Number(metadata?.resumeAttemptCount))
     : envelope.resumeAttemptCount;
@@ -830,6 +923,8 @@ export function normalizeTaskEnvelope(value: unknown): TaskEnvelope | null {
 
 export function summarizeTaskEnvelope(envelope: TaskEnvelope): string {
   const hardening = deriveTaskDispatchHardeningState(envelope);
+  const recoveryPlanning = deriveTaskRecoveryPlanningState(envelope);
+  const continuationChain = deriveTaskContinuationChainState(envelope);
   return [
     `task=${envelope.taskId}`,
     `status=${envelope.status}`,
@@ -850,6 +945,11 @@ export function summarizeTaskEnvelope(envelope: TaskEnvelope): string {
     envelope.continuationToken ? "continuation=present" : "continuation=none",
     envelope.checkpointReference ? `checkpoint=${envelope.checkpointReference}` : "",
     envelope.recoveryPending ? "recovery=pending" : "",
+    recoveryPlanning.strategy !== "none" ? `recoveryPlan=${recoveryPlanning.strategy}` : "",
+    recoveryPlanning.reasonCategory !== "none" ? `recoveryReason=${recoveryPlanning.reasonCategory}` : "",
+    recoveryPlanning.safeStopPoint ? `safeStop=${recoveryPlanning.safeStopPoint}` : "",
+    `chain=${continuationChain.state}`,
+    `chainDepth=${continuationChain.depth}`,
     envelope.selectedNodeReason ? `selection=${envelope.selectedNodeReason}` : "",
     envelope.dispatchTargetNodeId ? `dispatchTarget=${envelope.dispatchTargetNodeId}` : "",
     envelope.dispatchMessageId ? `dispatch=${envelope.dispatchMessageId}` : "",
@@ -914,4 +1014,106 @@ export function deriveTaskDispatchHardeningState(envelope: TaskEnvelope): TaskDi
     category,
     reason: reason || undefined,
   };
+}
+
+export function deriveTaskRecoveryPlanningState(envelope: TaskEnvelope): TaskRecoveryPlanningState {
+  const reason = normalizeText(envelope.failureReason || envelope.statusReason || envelope.continuationReason);
+  const reasonCategory = categorizeRecoveryReason(reason);
+  const safeStopPoint = normalizeText(envelope.lastProgressMarker)
+    || (Number.isInteger(Number(envelope.stepIndex)) ? `step-${envelope.stepIndex}` : "")
+    || undefined;
+
+  if (envelope.status === "failed" || envelope.status === "rejected" || envelope.status === "blocked") {
+    return {
+      strategy: "fail-non-retryable",
+      reasonCategory,
+      safeStopPoint,
+      reason: reason || undefined,
+    };
+  }
+
+  if (!envelope.recoveryPending && envelope.status !== "retrying") {
+    return {
+      strategy: "none",
+      reasonCategory,
+      safeStopPoint,
+      reason: reason || undefined,
+    };
+  }
+
+  if (
+    envelope.resumability === "resumable"
+    && Boolean(normalizeText(envelope.continuationToken) || normalizeText(envelope.checkpointReference) || envelope.continuationGeneration > 0)
+  ) {
+    return {
+      strategy: "resume-continuation",
+      reasonCategory,
+      safeStopPoint,
+      reason: reason || undefined,
+    };
+  }
+
+  if (envelope.recoveryPending || envelope.status === "retrying") {
+    return {
+      strategy: "restart-safe-boundary",
+      reasonCategory,
+      safeStopPoint,
+      reason: reason || undefined,
+    };
+  }
+
+  return {
+    strategy: "none",
+    reasonCategory,
+    safeStopPoint,
+    reason: reason || undefined,
+  };
+}
+
+export function deriveTaskContinuationChainState(envelope: TaskEnvelope): TaskContinuationChainState {
+  const recoveryPlanning = deriveTaskRecoveryPlanningState(envelope);
+  const safeStopPoint = recoveryPlanning.safeStopPoint;
+  const latestReason = recoveryPlanning.reason;
+
+  if (isTerminalTaskStatus(envelope.status)) {
+    return {
+      state: "terminal",
+      depth: Math.max(0, envelope.continuationGeneration),
+      active: false,
+      safeStopPoint,
+      latestReason,
+    };
+  }
+
+  if (recoveryPlanning.strategy === "restart-safe-boundary") {
+    return {
+      state: "restart-pending",
+      depth: Math.max(0, envelope.continuationGeneration),
+      active: envelope.status === "retrying" || envelope.status === "dispatching" || envelope.status === "awaiting-ack" || envelope.status === "executing" || envelope.status === "running",
+      safeStopPoint,
+      latestReason,
+    };
+  }
+
+  if (envelope.continuationGeneration > 0) {
+    return {
+      state: envelope.recoveryPending ? "safe-stop" : "continuing",
+      depth: Math.max(0, envelope.continuationGeneration),
+      active: envelope.status !== "queued" && envelope.status !== "pending",
+      safeStopPoint,
+      latestReason,
+    };
+  }
+
+  return {
+    state: envelope.recoveryPending ? "safe-stop" : "fresh",
+    depth: 0,
+    active: envelope.status !== "queued" && envelope.status !== "pending",
+    safeStopPoint,
+    latestReason,
+  };
+}
+
+function isTerminalTaskStatus(status: TaskEnvelopeStatus): boolean {
+  return status === "completed" || status === "failed" || status === "blocked" || status === "rejected";
 }

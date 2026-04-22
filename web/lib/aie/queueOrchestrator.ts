@@ -37,6 +37,7 @@ import {
 } from "./taskQueueStore";
 import {
   createTaskExecutionLease,
+  deriveTaskRecoveryPlanningState,
   invalidateTaskExecutionLease,
   summarizeTaskEnvelope,
   type TaskContinuationReason,
@@ -173,6 +174,27 @@ function normalizeContinuationReason(reason: string | undefined): TaskContinuati
 }
 
 function createPendingContinuationMetadata(task: TaskEnvelope, sourceNodeId: string | undefined, reason: string | undefined) {
+  const recoveryPlanning = deriveTaskRecoveryPlanningState({
+    ...task,
+    failureReason: normalizeText(reason) || task.failureReason,
+    statusReason: normalizeText(reason) || task.statusReason,
+    recoveryPending: true,
+    status: "retrying",
+  });
+
+  if (recoveryPlanning.strategy === "restart-safe-boundary") {
+    return {
+      continuationSourceNodeId: undefined,
+      continuationTargetNodeId: undefined,
+      continuationGeneration: 0,
+      continuationReason: normalizeContinuationReason(reason) ?? task.continuationReason ?? "other",
+      resumedFromCheckpointReference: undefined,
+      resumedFromContinuationToken: undefined,
+      continuationToken: undefined,
+      checkpointReference: undefined,
+    };
+  }
+
   return {
     continuationSourceNodeId: normalizeText(sourceNodeId) || task.continuationSourceNodeId,
     continuationTargetNodeId: undefined,
@@ -180,11 +202,13 @@ function createPendingContinuationMetadata(task: TaskEnvelope, sourceNodeId: str
     continuationReason: normalizeContinuationReason(reason) ?? task.continuationReason ?? "other",
     resumedFromCheckpointReference: task.checkpointReference ?? task.resumedFromCheckpointReference,
     resumedFromContinuationToken: task.continuationToken ?? task.resumedFromContinuationToken,
+    continuationToken: task.continuationToken,
+    checkpointReference: task.checkpointReference,
   };
 }
 
 function createActiveContinuationMetadata(task: TaskEnvelope, targetNodeId: string) {
-  if (!task.recoveryPending && task.continuationGeneration <= 0) {
+  if (task.continuationGeneration <= 0) {
     return undefined;
   }
 
@@ -666,6 +690,12 @@ export async function executeQueuedTask(
           approved: true,
         },
         queueStateSummary: summarizeTaskEnvelope(currentTask),
+        planningHintSummary: (() => {
+          const recoveryPlanning = deriveTaskRecoveryPlanningState(currentTask);
+          return recoveryPlanning.strategy === "none"
+            ? undefined
+            : `Recovery plan: ${recoveryPlanning.strategy} | reason=${recoveryPlanning.reasonCategory} | safe-stop=${recoveryPlanning.safeStopPoint ?? "step-" + currentTask.stepIndex}`;
+        })(),
         dispatchStatusSummary: "Dispatch requested through the controlled transport boundary.",
         dispatchAuthSummary,
         remoteDispatchPlanned: true,
@@ -749,6 +779,10 @@ export async function executeQueuedTask(
             return summarizeTerminalTask(persistedLatestTask, latestSession);
           }
           excludedNodeIds.add(selectedNode.node.id);
+          const pendingContinuation = createPendingContinuationMetadata(latestTask, latestTask.lease?.ownerNodeId ?? selectedNode.node.id, reason);
+          const recoveryProgressMarker = pendingContinuation.continuationGeneration === 0
+            ? currentTask.lastProgressMarker ?? latestTask.lastProgressMarker ?? `recovery-pending-attempt-${retryCount}`
+            : `recovery-pending-attempt-${retryCount}`;
           latestTask = await resolved.updateTaskStatus(currentTask.taskId, "retrying", {
             assignedNodeId: selectedNode.node.id,
             selectedNodeId: selectedNode.node.id,
@@ -757,14 +791,14 @@ export async function executeQueuedTask(
             statusReason: `Retrying after rejected dispatch attempt ${retryCount}.`,
             failureReason: reason,
             resumability: latestTask.resumability,
-            ...createPendingContinuationMetadata(latestTask, latestTask.lease?.ownerNodeId ?? selectedNode.node.id, reason),
-            continuationToken: latestTask.continuationToken,
-            checkpointReference: latestTask.checkpointReference,
+            ...pendingContinuation,
+            continuationToken: pendingContinuation.continuationToken,
+            checkpointReference: pendingContinuation.checkpointReference,
             resumeAttemptCount: latestTask.resumeAttemptCount + 1,
-            lastProgressMarker: `recovery-pending-attempt-${retryCount}`,
+            lastProgressMarker: recoveryProgressMarker,
             recoveryPending: true,
             priorLeaseId: latestTask.lease?.leaseId ?? latestTask.priorLeaseId,
-            lease: invalidateLeaseForRecovery(latestTask, reason, `recovery-pending-attempt-${retryCount}`, request.createdAt),
+            lease: invalidateLeaseForRecovery(latestTask, reason, recoveryProgressMarker, request.createdAt),
             dispatchMessageId: latestTask.dispatchMessageId ?? request.messageId,
             dispatchAckMessageId: latestTask.dispatchAckMessageId,
             dispatchTargetNodeId: latestTask.dispatchTargetNodeId ?? selectedNode.node.id,
@@ -819,6 +853,10 @@ export async function executeQueuedTask(
             return summarizeTerminalTask(persistedLatestTask, latestSession);
           }
           excludedNodeIds.add(selectedNode.node.id);
+          const pendingContinuation = createPendingContinuationMetadata(latestTask, latestTask.lease?.ownerNodeId ?? selectedNode.node.id, reason);
+          const recoveryProgressMarker = pendingContinuation.continuationGeneration === 0
+            ? currentTask.lastProgressMarker ?? latestTask.lastProgressMarker ?? `recovery-pending-attempt-${retryCount}`
+            : `recovery-pending-attempt-${retryCount}`;
           latestTask = await resolved.updateTaskStatus(currentTask.taskId, "retrying", {
             assignedNodeId: selectedNode.node.id,
             selectedNodeId: selectedNode.node.id,
@@ -827,14 +865,14 @@ export async function executeQueuedTask(
             statusReason: `Retrying after failed dispatch attempt ${retryCount}.`,
             failureReason: reason,
             resumability: latestTask.resumability,
-            ...createPendingContinuationMetadata(latestTask, latestTask.lease?.ownerNodeId ?? selectedNode.node.id, reason),
-            continuationToken: latestTask.continuationToken,
-            checkpointReference: latestTask.checkpointReference,
+            ...pendingContinuation,
+            continuationToken: pendingContinuation.continuationToken,
+            checkpointReference: pendingContinuation.checkpointReference,
             resumeAttemptCount: latestTask.resumeAttemptCount + 1,
-            lastProgressMarker: `recovery-pending-attempt-${retryCount}`,
+            lastProgressMarker: recoveryProgressMarker,
             recoveryPending: true,
             priorLeaseId: latestTask.lease?.leaseId ?? latestTask.priorLeaseId,
-            lease: invalidateLeaseForRecovery(latestTask, reason, `recovery-pending-attempt-${retryCount}`, request.createdAt),
+            lease: invalidateLeaseForRecovery(latestTask, reason, recoveryProgressMarker, request.createdAt),
             dispatchMessageId: latestTask.dispatchMessageId ?? request.messageId,
             dispatchAckMessageId: latestTask.dispatchAckMessageId,
             dispatchResultMessageId: latestTask.dispatchResultMessageId,
@@ -900,6 +938,10 @@ export async function executeQueuedTask(
           return summarizeTerminalTask(persistedLatestTask, latestSession);
         }
         excludedNodeIds.add(selectedNode.node.id);
+        const pendingContinuation = createPendingContinuationMetadata(latestTask, latestTask.lease?.ownerNodeId ?? selectedNode.node.id, reason);
+        const recoveryProgressMarker = pendingContinuation.continuationGeneration === 0
+          ? currentTask.lastProgressMarker ?? latestTask.lastProgressMarker ?? `recovery-pending-attempt-${retryCount}`
+          : `recovery-pending-attempt-${retryCount}`;
         latestTask = await resolved.updateTaskStatus(currentTask.taskId, "retrying", {
           assignedNodeId: selectedNode.node.id,
           selectedNodeId: selectedNode.node.id,
@@ -908,14 +950,14 @@ export async function executeQueuedTask(
           statusReason: `Retrying after ${timedOut ? "timeout" : "failed"} dispatch attempt ${retryCount}.`,
           failureReason: reason,
           resumability: latestTask.resumability,
-          ...createPendingContinuationMetadata(latestTask, latestTask.lease?.ownerNodeId ?? selectedNode.node.id, reason),
-          continuationToken: latestTask.continuationToken,
-          checkpointReference: latestTask.checkpointReference,
+          ...pendingContinuation,
+          continuationToken: pendingContinuation.continuationToken,
+          checkpointReference: pendingContinuation.checkpointReference,
           resumeAttemptCount: latestTask.resumeAttemptCount + 1,
-          lastProgressMarker: `recovery-pending-attempt-${retryCount}`,
+          lastProgressMarker: recoveryProgressMarker,
           recoveryPending: true,
           priorLeaseId: latestTask.lease?.leaseId ?? latestTask.priorLeaseId,
-          lease: invalidateLeaseForRecovery(latestTask, reason, `recovery-pending-attempt-${retryCount}`, request.createdAt),
+          lease: invalidateLeaseForRecovery(latestTask, reason, recoveryProgressMarker, request.createdAt),
           dispatchMessageId: request.messageId,
           dispatchTargetNodeId: selectedNode.node.id,
           dispatchProtocolVersion: request.protocolVersion,

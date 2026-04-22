@@ -9,7 +9,12 @@ import {
 import { resolveRepoRoot } from "./lib/aie/repoContext";
 import { runAutonomousSession } from "./lib/aie/runAutonomousSession";
 import type { AutonomousSession } from "./lib/aie/autonomousSession";
-import { deriveTaskDispatchHardeningState, type TaskEnvelope } from "./lib/aie/taskEnvelope";
+import {
+  deriveTaskContinuationChainState,
+  deriveTaskDispatchHardeningState,
+  deriveTaskRecoveryPlanningState,
+  type TaskEnvelope,
+} from "./lib/aie/taskEnvelope";
 import { getTask, listTasks } from "./lib/aie/taskQueueStore";
 import type { runAnalysis } from "./lib/aie/run-analysis";
 import type { saveAutonomousSession } from "./lib/aie/autonomousSessionStore";
@@ -267,6 +272,8 @@ export function formatLocalNodeTaskOutput(task: TaskEnvelope, options?: { json?:
   }
 
   const hardening = deriveTaskDispatchHardeningState(task);
+  const recovery = deriveTaskRecoveryPlanningState(task);
+  const chain = deriveTaskContinuationChainState(task);
 
   return [
     `Task ID: ${task.taskId}`,
@@ -285,6 +292,11 @@ export function formatLocalNodeTaskOutput(task: TaskEnvelope, options?: { json?:
     `Prior lease: ${task.priorLeaseId ?? "none"}`,
     `Resume attempts: ${task.resumeAttemptCount}`,
     `Recovery pending: ${String(task.recoveryPending)}`,
+    `Recovery plan: ${recovery.strategy}`,
+    `Recovery reason: ${recovery.reasonCategory}`,
+    `Safe-stop point: ${recovery.safeStopPoint ?? "none"}`,
+    `Chain state: ${chain.state}`,
+    `Chain depth: ${chain.depth}`,
     `Lease: ${task.lease?.leaseId ?? "none"}`,
     `Lease owner: ${task.lease?.ownerNodeId ?? "none"}`,
     `Lease epoch: ${typeof task.lease?.epoch === "number" ? task.lease.epoch : "none"}`,
@@ -333,6 +345,9 @@ export function formatLocalNodeQueueRunOutput(summary: QueueExecutionSummary, op
     return "No runnable safe queued task was available for controlled execution.";
   }
 
+  const recovery = summary.task ? deriveTaskRecoveryPlanningState(summary.task) : null;
+  const chain = summary.task ? deriveTaskContinuationChainState(summary.task) : null;
+
   return [
     `Queue run: ${summary.status}`,
     `Task ID: ${summary.task?.taskId ?? "unknown"}`,
@@ -350,6 +365,11 @@ export function formatLocalNodeQueueRunOutput(summary: QueueExecutionSummary, op
     `Prior lease: ${summary.task?.priorLeaseId ?? "unknown"}`,
     `Resume attempts: ${summary.task?.resumeAttemptCount ?? "unknown"}`,
     `Recovery pending: ${typeof summary.task?.recoveryPending === "boolean" ? String(summary.task.recoveryPending) : "unknown"}`,
+    `Recovery plan: ${recovery?.strategy ?? "unknown"}`,
+    `Recovery reason: ${recovery?.reasonCategory ?? "unknown"}`,
+    `Safe-stop point: ${recovery?.safeStopPoint ?? "unknown"}`,
+    `Chain state: ${chain?.state ?? "unknown"}`,
+    `Chain depth: ${chain?.depth ?? "unknown"}`,
     `Lease: ${summary.task?.lease?.leaseId ?? "unknown"}`,
     `Lease owner: ${summary.task?.lease?.ownerNodeId ?? "unknown"}`,
     `Lease epoch: ${typeof summary.task?.lease?.epoch === "number" ? summary.task.lease.epoch : "unknown"}`,
@@ -392,7 +412,7 @@ export async function formatLocalNodeTaskList(options?: { json?: boolean }): Pro
 
   return tasks
     .slice(0, 20)
-    .map((task) => `${task.taskId} | ${task.status} | ${task.selectedNodeId ?? task.assignedNodeId ?? "unassigned"} | lease=${task.lease?.ownerNodeId ?? "none"}:${task.lease?.status ?? "none"} | continuation=${task.continuationGeneration > 0 ? `gen-${task.continuationGeneration}:${task.continuationSourceNodeId ?? "unknown"}->${task.continuationTargetNodeId ?? "pending"}` : "fresh"} | resumability=${task.resumability} | recovery=${task.recoveryPending} | transport=${task.dispatchTransportStatus ?? "none"} | hardening=${deriveTaskDispatchHardeningState(task).state}:${deriveTaskDispatchHardeningState(task).category} | retries=${task.dispatchRetryCount ?? 0} | failure=${task.failureReason ?? "none"} | ${task.sessionId}`)
+    .map((task) => `${task.taskId} | ${task.status} | ${task.selectedNodeId ?? task.assignedNodeId ?? "unassigned"} | lease=${task.lease?.ownerNodeId ?? "none"}:${task.lease?.status ?? "none"} | continuation=${task.continuationGeneration > 0 ? `gen-${task.continuationGeneration}:${task.continuationSourceNodeId ?? "unknown"}->${task.continuationTargetNodeId ?? "pending"}` : "fresh"} | chain=${deriveTaskContinuationChainState(task).state}:${deriveTaskContinuationChainState(task).depth} | plan=${deriveTaskRecoveryPlanningState(task).strategy}:${deriveTaskRecoveryPlanningState(task).reasonCategory} | safeStop=${deriveTaskRecoveryPlanningState(task).safeStopPoint ?? "none"} | resumability=${task.resumability} | recovery=${task.recoveryPending} | transport=${task.dispatchTransportStatus ?? "none"} | hardening=${deriveTaskDispatchHardeningState(task).state}:${deriveTaskDispatchHardeningState(task).category} | retries=${task.dispatchRetryCount ?? 0} | failure=${task.failureReason ?? "none"} | ${task.sessionId}`)
     .join("\n");
 }
 

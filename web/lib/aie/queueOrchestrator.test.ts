@@ -707,6 +707,85 @@ test("queueOrchestrator retries deterministically after a trusted-boundary dispa
   }
 });
 
+test("queueOrchestrator restarts from a safe boundary for restart-required timeout recovery", async () => {
+  const sessionDirectory = path.resolve(process.cwd(), "temp-queue-orchestrator-session-store-6c");
+  const taskDirectory = path.resolve(process.cwd(), "temp-queue-orchestrator-task-store-6c");
+  resetExecutionNodeRegistry();
+  process.env.AIE_AUTONOMOUS_SESSION_DIR = sessionDirectory;
+  process.env.AIE_TASK_QUEUE_DIR = taskDirectory;
+  await mkdir(sessionDirectory, { recursive: true });
+  await mkdir(taskDirectory, { recursive: true });
+
+  try {
+    await enqueueTask({
+      ...createTaskEnvelope({
+        taskId: "task-run-restart-boundary",
+        sessionId: "queue-session-restart-boundary",
+        stepIndex: 2,
+        action: makeSafeAction("run-restart-boundary"),
+      }),
+      resumability: "restart-required",
+      continuationToken: "continue-restart-boundary",
+      checkpointReference: "checkpoint://restart-boundary",
+      lastProgressMarker: "step-2/safe-stop",
+    });
+
+    const claimed = await claimNextRunnableTask({ runtimeMode: "web", cwd: process.cwd() });
+    assert.ok(claimed);
+
+    const summary = await executeQueuedTask(claimed, {
+      runtimeMode: "web",
+      cwd: process.cwd(),
+      maxSteps: 1,
+      maxDispatchRetries: 1,
+      dispatchTimeoutMs: 10,
+      dispatchTransport: {
+        async sendDispatchRequest() {
+          throw new DispatchTransportTimeoutError(10);
+        },
+        async receiveDispatchRequest() {
+          throw new Error("Not implemented in this test transport.");
+        },
+        async sendDispatchAck() {
+          return "ack";
+        },
+        async sendDispatchResult() {
+          return "result";
+        },
+        async sendDispatchError() {
+          return "error";
+        },
+      },
+    });
+
+    const persisted = await getTask("task-run-restart-boundary");
+
+    assert.equal(summary.status, "retrying");
+    assert.equal(summary.task?.status, "retrying");
+    assert.equal(summary.task?.resumability, "restart-required");
+    assert.equal(summary.task?.resumeAttemptCount, 1);
+    assert.equal(summary.task?.recoveryPending, true);
+    assert.equal(summary.task?.continuationGeneration, 0);
+    assert.equal(summary.task?.continuationSourceNodeId, undefined);
+    assert.equal(summary.task?.continuationTargetNodeId, undefined);
+    assert.equal(summary.task?.resumedFromCheckpointReference, undefined);
+    assert.equal(summary.task?.resumedFromContinuationToken, undefined);
+    assert.equal(summary.task?.continuationToken, undefined);
+    assert.equal(summary.task?.checkpointReference, undefined);
+    assert.equal(summary.task?.lastProgressMarker, "step-2/safe-stop");
+    assert.equal(persisted?.continuationGeneration, 0);
+    assert.equal(persisted?.continuationToken, undefined);
+    assert.equal(persisted?.checkpointReference, undefined);
+    assert.match(persisted?.statusReason ?? "", /recovery is pending/i);
+  } finally {
+    delete process.env.AIE_AUTONOMOUS_SESSION_DIR;
+    delete process.env.AIE_TASK_QUEUE_DIR;
+    resetExecutionNodeRegistry();
+    await rm(sessionDirectory, { recursive: true, force: true });
+    await rm(taskDirectory, { recursive: true, force: true });
+  }
+});
+
 test("queueOrchestrator performs deterministic cross-node continuation with preserved task and session identity", async () => {
   const sessionDirectory = path.resolve(process.cwd(), "temp-queue-orchestrator-session-store-7");
   const taskDirectory = path.resolve(process.cwd(), "temp-queue-orchestrator-task-store-7");

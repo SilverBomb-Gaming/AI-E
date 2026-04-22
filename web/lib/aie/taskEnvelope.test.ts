@@ -6,6 +6,8 @@ import {
   createTaskExecutionLease,
   assignTaskEnvelope,
   createTaskEnvelope,
+  deriveTaskContinuationChainState,
+  deriveTaskRecoveryPlanningState,
   markTaskAssigned,
   markTaskBlocked,
   markTaskCompleted,
@@ -333,4 +335,59 @@ test("task envelopes allow retrying tasks to re-enter awaiting-ack", () => {
   assert.equal(updated.assignedNodeId, "aie-node-local-default");
   assert.equal(updated.dispatchRetryCount, 2);
   assert.equal(updated.dispatchTransportStatus, "pending");
+});
+
+test("task envelopes derive restart-safe-boundary planning for non-resumable recovery", () => {
+  const envelope = updateTaskEnvelopeStatus(createTaskEnvelope({
+    taskId: "task-recovery-plan-1",
+    sessionId: "session-recovery-plan-1",
+    stepIndex: 3,
+    action: makeAction(),
+    status: "retrying",
+  }), "retrying", {
+    statusReason: "Retrying after timeout while preserving the last safe stop point.",
+    failureReason: "Dispatch timed out before the bounded validation completed.",
+    lastProgressMarker: "step-3/safe-stop",
+    recoveryPending: true,
+  });
+
+  const recoveryPlanning = deriveTaskRecoveryPlanningState(envelope);
+  const continuationChain = deriveTaskContinuationChainState(envelope);
+
+  assert.equal(recoveryPlanning.strategy, "restart-safe-boundary");
+  assert.equal(recoveryPlanning.reasonCategory, "timeout");
+  assert.equal(recoveryPlanning.safeStopPoint, "step-3/safe-stop");
+  assert.equal(continuationChain.state, "restart-pending");
+  assert.equal(continuationChain.depth, 0);
+  assert.equal(continuationChain.safeStopPoint, "step-3/safe-stop");
+  assert.match(summarizeTaskEnvelope(envelope), /recoveryPlan=restart-safe-boundary/i);
+  assert.match(summarizeTaskEnvelope(envelope), /chain=restart-pending/i);
+});
+
+test("task envelopes derive continuation-resume planning for resumable recovery", () => {
+  const envelope = updateTaskEnvelopeStatus(createTaskEnvelope({
+    taskId: "task-recovery-plan-2",
+    sessionId: "session-recovery-plan-2",
+    stepIndex: 2,
+    action: makeAction(),
+    status: "retrying",
+  }), "retrying", {
+    resumability: "resumable",
+    continuationGeneration: 1,
+    continuationReason: "timeout-recovery",
+    continuationToken: "continue-recovery-plan-2",
+    checkpointReference: "checkpoint://recovery-plan-2",
+    resumedFromContinuationToken: "continue-recovery-plan-1",
+    resumedFromCheckpointReference: "checkpoint://recovery-plan-1",
+    lastProgressMarker: "step-2/checkpoint",
+    recoveryPending: true,
+  });
+
+  const recoveryPlanning = deriveTaskRecoveryPlanningState(envelope);
+  const continuationChain = deriveTaskContinuationChainState(envelope);
+
+  assert.equal(recoveryPlanning.strategy, "resume-continuation");
+  assert.equal(recoveryPlanning.reasonCategory, "timeout");
+  assert.equal(continuationChain.state, "safe-stop");
+  assert.equal(continuationChain.depth, 1);
 });

@@ -235,6 +235,19 @@ AI-E now layers deterministic distributed continuation on top of the 4M-A livene
 
 4M-D is complete for trusted dispatch-target enforcement, protocol compatibility checks, continuation/checkpoint authenticity binding, deterministic retry after retryable boundary rejection, and API/CLI observability of dispatch hardening state.
 
+## Post-4M bounded autonomy layering: recovery-aware continuation chains
+
+AI-E now adds a bounded recovery-planning layer on top of the hardened 4M coordination spine instead of introducing a second orchestration model.
+
+- queued tasks now derive an explicit supervised recovery plan: `resume-continuation`, `restart-safe-boundary`, or `fail-non-retryable`
+- retryable `restart-required` work now clears continuation lineage and restarts from the last persisted safe-stop boundary instead of masquerading as a continuation resume
+- retryable `resumable` work keeps deterministic continuation lineage, resumed-from token/checkpoint references, and continuation generation for the next dispatch attempt
+- task summaries now derive bounded continuation-chain state such as `fresh`, `safe-stop`, `restart-pending`, and `terminal`, along with chain depth
+- autonomous task API responses and both CLI entrypoints now expose recovery plan, recovery reason, safe-stop point, chain state, and chain depth alongside the existing dispatch hardening metadata
+- dispatch planning hints now include the derived recovery plan so longer-running supervised sessions surface clearer resume-vs-restart context without bypassing queue, lease, or trust controls
+
+This slice keeps the same single authoritative queue/lease/receiver path. It does not add peer-to-peer migration, a secondary scheduler, or unsupervised multi-step execution.
+
 Still deferred beyond 4M-D:
 
 - autonomous peer-to-peer replication or any direct node-to-node handoff channel

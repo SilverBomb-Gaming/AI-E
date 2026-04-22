@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 
-import { deriveTaskDispatchHardeningState } from "@/lib/aie/taskEnvelope";
+import {
+  deriveTaskContinuationChainState,
+  deriveTaskDispatchHardeningState,
+  deriveTaskRecoveryPlanningState,
+} from "@/lib/aie/taskEnvelope";
 import { getTask } from "@/lib/aie/taskQueueStore";
 
 export const runtime = "nodejs";
@@ -14,7 +18,6 @@ export async function GET(
     return NextResponse.json({ error: "Autonomous task not found." }, { status: 404 });
   }
 
-  hardening: deriveTaskDispatchHardeningState(task),
   return NextResponse.json({
     task,
     runnable: (task.status === "pending" || task.status === "queued" || task.status === "retrying") && task.action.scope === "safe",
@@ -47,6 +50,9 @@ export async function GET(
           priorLeaseId: task.priorLeaseId ?? null,
         }
       : null,
+        recovery: deriveTaskRecoveryPlanningState(task),
+        chain: deriveTaskContinuationChainState(task),
+        hardening: deriveTaskDispatchHardeningState(task),
     failureReason: task.failureReason ?? null,
     dispatch: {
       messageId: task.dispatchMessageId ?? null,
