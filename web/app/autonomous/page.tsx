@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
-import type { AutonomousSession } from "@/lib/aie/autonomousSession";
+import type { AutonomousOperatorSteeringAction, AutonomousSession } from "@/lib/aie/autonomousSession";
 import type { TaskEnvelope } from "@/lib/aie/taskEnvelope";
 
 type RunState = "idle" | "running" | "failed";
@@ -30,6 +30,14 @@ type QueueRunPayload = {
     task?: TaskEnvelope | null;
     session?: AutonomousSession | null;
   };
+};
+
+type SteeringPayload = {
+  action?: AutonomousOperatorSteeringAction;
+  operatorNote?: string;
+  stopReason?: string;
+  restartReason?: string;
+  clear?: boolean;
 };
 
 function getStatusClassName(status: AutonomousSession["status"]): string {
@@ -60,6 +68,9 @@ export default function AutonomousPage() {
   const [taskSummary, setTaskSummary] = useState<TaskListResponse["summary"] | null>(null);
   const [runState, setRunState] = useState<RunState>("idle");
   const [error, setError] = useState<string | null>(null);
+  const [steeringAction, setSteeringAction] = useState<AutonomousOperatorSteeringAction | "">("");
+  const [operatorNote, setOperatorNote] = useState("");
+  const [overrideReason, setOverrideReason] = useState("");
 
   useEffect(() => {
     void refreshRecentSessions();
@@ -151,7 +162,23 @@ export default function AutonomousPage() {
     }
   }
 
-  async function resumeSession(approved: boolean) {
+  function buildSteeringPayload(): SteeringPayload | undefined {
+    const trimmedNote = operatorNote.trim();
+    const trimmedReason = overrideReason.trim();
+
+    if (!steeringAction && !trimmedNote) {
+      return undefined;
+    }
+
+    return {
+      action: steeringAction || undefined,
+      operatorNote: trimmedNote || undefined,
+      stopReason: steeringAction === "stop-loop" ? trimmedReason || undefined : undefined,
+      restartReason: steeringAction === "restart-from-last-safe-boundary" ? trimmedReason || undefined : undefined,
+    };
+  }
+
+  async function resumeSession(approved: boolean, steering?: SteeringPayload, clearSteering = false) {
     if (!sessionId.trim()) {
       return;
     }
@@ -165,7 +192,7 @@ export default function AutonomousPage() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ approved }),
+        body: JSON.stringify({ approved, steering, clearSteering }),
       });
       const payload = (await response.json()) as { error?: string; session?: AutonomousSession };
 
@@ -175,12 +202,53 @@ export default function AutonomousPage() {
 
       setSession(payload.session);
       setSessionId(payload.session.sessionId);
+      setSteeringAction("");
+      setOperatorNote("");
+      setOverrideReason("");
       await refreshRecentSessions();
       await refreshTasks();
       setRunState("idle");
     } catch (nextError) {
       setRunState("failed");
       setError(nextError instanceof Error ? nextError.message : "The autonomous session could not be resumed.");
+    }
+  }
+
+  async function applySteering(clear = false) {
+    if (!sessionId.trim()) {
+      return;
+    }
+
+    setRunState("running");
+    setError(null);
+
+    try {
+      const response = await fetch(`/api/autonomous/steer/${encodeURIComponent(sessionId.trim())}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(clear ? { clear: true } : buildSteeringPayload()),
+      });
+      const payload = (await response.json()) as { error?: string; session?: AutonomousSession };
+
+      if (!response.ok || !payload.session) {
+        throw new Error(payload.error || "The autonomous steering request could not be stored.");
+      }
+
+      setSession(payload.session);
+      setSessionId(payload.session.sessionId);
+      if (clear) {
+        setSteeringAction("");
+        setOperatorNote("");
+        setOverrideReason("");
+      }
+      await refreshRecentSessions();
+      await refreshTasks();
+      setRunState("idle");
+    } catch (nextError) {
+      setRunState("failed");
+      setError(nextError instanceof Error ? nextError.message : "The autonomous steering request could not be stored.");
     }
   }
 
@@ -450,9 +518,84 @@ export default function AutonomousPage() {
                 <p><strong>Queue summary:</strong> {session.queueStateSummary || "No queue summary recorded yet."}</p>
                 <p><strong>Planning hints:</strong> {session.planningHintSummary || "No planning hints recorded yet."}</p>
                 <p><strong>Adapter context:</strong> {session.adapterContextSummary || "No adapter context recorded yet."}</p>
+                <p><strong>System recommended next phase:</strong> {session.workflowContinuity.loopHealth.systemRecommendedNextPhase || "No system recommendation recorded yet."}</p>
+                <p><strong>Recommended next phase:</strong> {session.workflowContinuity.loopHealth.recommendedNextPhase}</p>
+                <p><strong>Operator override status:</strong> {session.workflowContinuity.steering.status}</p>
+                <p><strong>Operator override:</strong> {session.workflowContinuity.steering.requestedAction || "No operator override recorded yet."}</p>
+                <p><strong>Operator note:</strong> {session.workflowContinuity.steering.operatorNote || "No operator note recorded yet."}</p>
+                <p><strong>Override blocked reason:</strong> {session.workflowContinuity.steering.blockedReason || "No override block recorded yet."}</p>
                 {session.latestCompletion ? <p><strong>Completion reason:</strong> {session.latestCompletion.reason}</p> : null}
                 {session.pendingAction ? <p><strong>Pending action:</strong> {session.pendingAction.description}</p> : null}
                 {session.pendingAction ? <p><strong>Pending action type:</strong> {session.pendingAction.type} ({session.pendingAction.scope})</p> : null}
+              </div>
+
+              <div className="rounded-[1.2rem] border border-ink/10 bg-white/70 p-4 text-sm leading-7 text-ink/80">
+                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-ink/45">Supervised loop steering</p>
+                <label className="mt-3 block text-sm font-semibold text-ink">
+                  Requested override
+                  <select
+                    value={steeringAction}
+                    onChange={(event) => setSteeringAction(event.target.value as AutonomousOperatorSteeringAction | "")}
+                    className="mt-2 w-full rounded-[1rem] border border-ink/10 bg-white/80 px-4 py-3 text-sm text-ink outline-none transition focus:border-ocean/40"
+                  >
+                    <option value="">No override</option>
+                    <option value="prefer-validation-next">Prefer validation next</option>
+                    <option value="prefer-fix-next">Prefer fix next</option>
+                    <option value="restart-from-last-safe-boundary">Restart from last safe boundary</option>
+                    <option value="pause-and-wait">Pause and wait for operator input</option>
+                    <option value="stop-loop">Stop loop because it is no longer useful</option>
+                  </select>
+                </label>
+                <label className="mt-4 block text-sm font-semibold text-ink">
+                  Operator note for next loop step
+                  <textarea
+                    value={operatorNote}
+                    onChange={(event) => setOperatorNote(event.target.value)}
+                    rows={3}
+                    className="mt-2 w-full rounded-[1rem] border border-ink/10 bg-white/80 px-4 py-3 text-sm text-ink outline-none transition focus:border-ocean/40"
+                    placeholder="Record what the next bounded step should pay attention to."
+                  />
+                </label>
+                <label className="mt-4 block text-sm font-semibold text-ink">
+                  Stop or restart reason
+                  <input
+                    value={overrideReason}
+                    onChange={(event) => setOverrideReason(event.target.value)}
+                    className="mt-2 w-full rounded-[1rem] border border-ink/10 bg-white/80 px-4 py-3 text-sm text-ink outline-none transition focus:border-ocean/40"
+                    placeholder="Explain why the loop should stop or restart from a safe boundary."
+                  />
+                </label>
+                <div className="mt-5 flex flex-wrap gap-3">
+                  <button
+                    type="button"
+                    onClick={() => applySteering(false)}
+                    disabled={!sessionId.trim() || runState === "running" || (!steeringAction && !operatorNote.trim())}
+                    className="rounded-full border border-ocean/20 bg-ocean/10 px-5 py-3 text-sm font-semibold text-ocean disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    Apply steering only
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => resumeSession(session?.status === "awaiting-approval", buildSteeringPayload())}
+                    disabled={
+                      !canResume
+                      || runState === "running"
+                      || steeringAction === "pause-and-wait"
+                      || steeringAction === "stop-loop"
+                    }
+                    className="rounded-full border border-gold/30 px-5 py-3 text-sm font-semibold text-ink disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    Apply steering and resume
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => applySteering(true)}
+                    disabled={!sessionId.trim() || runState === "running"}
+                    className="rounded-full border border-ink/10 px-5 py-3 text-sm font-semibold text-ink disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    Clear override
+                  </button>
+                </div>
               </div>
 
               {session.pendingAction ? (

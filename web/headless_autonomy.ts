@@ -8,7 +8,7 @@ import {
 } from "./lib/aie/executionNodeRegistry";
 import { resolveRepoRoot } from "./lib/aie/repoContext";
 import { runAutonomousSession } from "./lib/aie/runAutonomousSession";
-import type { AutonomousSession } from "./lib/aie/autonomousSession";
+import type { AutonomousOperatorSteeringAction, AutonomousSession } from "./lib/aie/autonomousSession";
 import {
   deriveTaskContinuationChainState,
   deriveTaskDispatchHardeningState,
@@ -25,6 +25,11 @@ type HeadlessAutonomyOptions = {
   maxSteps?: number;
   sessionId?: string;
   approved?: boolean;
+  steeringAction?: AutonomousOperatorSteeringAction;
+  operatorNote?: string;
+  stopReason?: string;
+  restartReason?: string;
+  clearSteering?: boolean;
   allowedRoots?: string[];
   cwd?: string;
   verbose?: boolean;
@@ -87,6 +92,25 @@ export function parseArgs(argv: string[]): HeadlessAutonomyOptions {
         break;
       case "--approved":
         options.approved = true;
+        break;
+      case "--steering":
+        options.steeringAction = normalizeText(next) as AutonomousOperatorSteeringAction;
+        index += 1;
+        break;
+      case "--operatorNote":
+        options.operatorNote = normalizeText(next) || undefined;
+        index += 1;
+        break;
+      case "--stopReason":
+        options.stopReason = normalizeText(next) || undefined;
+        index += 1;
+        break;
+      case "--restartReason":
+        options.restartReason = normalizeText(next) || undefined;
+        index += 1;
+        break;
+      case "--clearSteering":
+        options.clearSteering = true;
         break;
       case "--allowedRoot":
         options.allowedRoots = [...(options.allowedRoots ?? []), normalizeText(next)].filter(Boolean);
@@ -309,9 +333,15 @@ export function formatHeadlessSessionReport(session: AutonomousSession, options?
     `Current phase repeat count: ${session.workflowContinuity.loopHealth.currentPhaseRepeatCount}`,
     `Stalled loop: ${String(session.workflowContinuity.loopHealth.stalledLoop)}`,
     `Operator intervention preferred: ${String(session.workflowContinuity.loopHealth.operatorInterventionPreferred)}`,
+    `Operator override status: ${session.workflowContinuity.steering.status}`,
+    `Operator override request: ${session.workflowContinuity.steering.requestedAction ?? "none"}`,
+    `Operator override blocked reason: ${session.workflowContinuity.steering.blockedReason ?? "No override block recorded."}`,
+    `Operator note: ${session.workflowContinuity.steering.operatorNote ?? "No operator note recorded."}`,
+    `System recommended next phase: ${session.workflowContinuity.loopHealth.systemRecommendedNextPhase ?? "No system recommendation recorded."}`,
     `Recommended next phase: ${session.workflowContinuity.loopHealth.recommendedNextPhase}`,
     `Recommended next action: ${session.workflowContinuity.loopHealth.recommendedNextActionSummary ?? "No recommended next action recorded."}`,
     `Loop health reason: ${session.workflowContinuity.loopHealth.loopHealthReason ?? "No loop health reason recorded."}`,
+    `System loop health reason: ${session.workflowContinuity.loopHealth.systemLoopHealthReason ?? "No system loop health reason recorded."}`,
     `Recent phase outcomes: ${session.workflowContinuity.loopHealth.recentPhaseOutcomes.join(" | ") || "No recent phase outcomes recorded."}`,
     `Pending context: ${session.workflowContinuity.memory.pendingOperatorContext ?? "No pending operator context recorded."}`,
     `Recent decisions: ${session.workflowContinuity.memory.recentDecisions.join(" | ") || "No recent decisions recorded."}`,
@@ -430,17 +460,22 @@ export function formatHeadlessQueueRunReport(summary: QueueExecutionSummary, opt
     `Safe-stop point: ${recovery?.safeStopPoint ?? "unknown"}`,
     `Chain state: ${chain?.state ?? "unknown"}`,
     `Chain depth: ${chain?.depth ?? "unknown"}`,
-    `Production-loop phase: ${summary.session?.workflowContinuity.progress.chainPhase ?? "unknown"}`,
-    `Last safe step: ${typeof summary.session?.workflowContinuity.progress.lastCompletedSafeStep === "number" ? summary.session.workflowContinuity.progress.lastCompletedSafeStep : "unknown"}`,
-    `Next intended step: ${summary.session?.workflowContinuity.progress.nextIntendedStep ?? "unknown"}`,
-    `Chain summary: ${summary.session?.workflowContinuity.memory.chainSummary ?? "unknown"}`,
-    `Last validation outcome: ${summary.session?.workflowContinuity.memory.lastValidationOutcome ?? "unknown"}`,
-    `Last fix attempt: ${summary.session?.workflowContinuity.memory.lastFixAttemptSummary ?? "unknown"}`,
-    `Operator blockers: ${summary.session?.workflowContinuity.memory.operatorBlockers ?? "unknown"}`,
-    `Phase repeat count: ${summary.session?.workflowContinuity.loopHealth.currentPhaseRepeatCount ?? "unknown"}`,
-    `Stalled loop: ${typeof summary.session?.workflowContinuity.loopHealth.stalledLoop === "boolean" ? String(summary.session.workflowContinuity.loopHealth.stalledLoop) : "unknown"}`,
-    `Recommended next phase: ${summary.session?.workflowContinuity.loopHealth.recommendedNextPhase ?? "unknown"}`,
-    `Loop health reason: ${summary.session?.workflowContinuity.loopHealth.loopHealthReason ?? "unknown"}`,
+    `Production-loop phase: ${summary.session?.workflowContinuity?.progress.chainPhase ?? "unknown"}`,
+    `Last safe step: ${typeof summary.session?.workflowContinuity?.progress.lastCompletedSafeStep === "number" ? summary.session.workflowContinuity.progress.lastCompletedSafeStep : "unknown"}`,
+    `Next intended step: ${summary.session?.workflowContinuity?.progress.nextIntendedStep ?? "unknown"}`,
+    `Chain summary: ${summary.session?.workflowContinuity?.memory.chainSummary ?? "unknown"}`,
+    `Last validation outcome: ${summary.session?.workflowContinuity?.memory.lastValidationOutcome ?? "unknown"}`,
+    `Last fix attempt: ${summary.session?.workflowContinuity?.memory.lastFixAttemptSummary ?? "unknown"}`,
+    `Operator blockers: ${summary.session?.workflowContinuity?.memory.operatorBlockers ?? "unknown"}`,
+    `Phase repeat count: ${summary.session?.workflowContinuity?.loopHealth.currentPhaseRepeatCount ?? "unknown"}`,
+    `Stalled loop: ${typeof summary.session?.workflowContinuity?.loopHealth.stalledLoop === "boolean" ? String(summary.session.workflowContinuity.loopHealth.stalledLoop) : "unknown"}`,
+    `Operator override status: ${summary.session?.workflowContinuity?.steering?.status ?? "unknown"}`,
+    `Operator override request: ${summary.session?.workflowContinuity?.steering?.requestedAction ?? "unknown"}`,
+    `Operator note: ${summary.session?.workflowContinuity?.steering?.operatorNote ?? "unknown"}`,
+    `System recommended next phase: ${summary.session?.workflowContinuity?.loopHealth.systemRecommendedNextPhase ?? "unknown"}`,
+    `Recommended next phase: ${summary.session?.workflowContinuity?.loopHealth.recommendedNextPhase ?? "unknown"}`,
+    `Loop health reason: ${summary.session?.workflowContinuity?.loopHealth.loopHealthReason ?? "unknown"}`,
+    `System loop health reason: ${summary.session?.workflowContinuity?.loopHealth.systemLoopHealthReason ?? "unknown"}`,
     `Lease: ${summary.task?.lease?.leaseId ?? "unknown"}`,
     `Lease owner: ${summary.task?.lease?.ownerNodeId ?? "unknown"}`,
     `Lease epoch: ${typeof summary.task?.lease?.epoch === "number" ? summary.task.lease.epoch : "unknown"}`,
@@ -532,6 +567,15 @@ export async function runHeadlessAutonomy(
     goal: options.goal || existingSession?.goal || "Confirm the bounded autonomous path reaches a healthy result.",
     maxSteps: options.maxSteps,
     approved: options.approved,
+    steering: options.steeringAction || options.operatorNote || options.stopReason || options.restartReason
+      ? {
+          action: options.steeringAction,
+          operatorNote: options.operatorNote,
+          stopReason: options.stopReason,
+          restartReason: options.restartReason,
+        }
+      : undefined,
+    clearSteering: options.clearSteering,
     existingSession: existingSession ?? undefined,
     executionContext: {
       cwd,

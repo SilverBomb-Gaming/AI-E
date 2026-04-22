@@ -265,6 +265,18 @@ What remains for later autonomy layers:
 
 This slice is intentionally derived from `TaskEnvelope` and `AutonomousSession` rather than replacing them. Queue truth, lease ownership, and trusted dispatch remain authoritative; workflow continuity is a persisted planning and observability layer on top of that spine.
 
+## Post-4M bounded autonomy layering: supervised loop steering handoff
+
+AI-E now lets operators steer repeated supervised production loops with explicit bounded next-step overrides, while keeping the existing queue, lease, trust, and continuity guarantees intact.
+
+- the persisted `workflowContinuity` block now carries an operator steering state with the requested next-phase override, stop or restart rationale, operator note for the next loop step, and whether the override is pending, applied, or blocked
+- loop-health derivation now preserves both the system recommendation and the effective recommended next phase, so operators can see when a manual override changed the next-step guidance and when the system recommendation still wins
+- bounded steering rules only apply when they do not bypass approval, trust, or safe-boundary requirements, and blocked overrides now explain why they could not be honored
+- the existing resume surface now accepts bounded steering payloads, a dedicated steering API can persist pause, stop, restart, validation, or fix preferences without launching a new run, and the operator page exposes those controls directly
+- both CLI entrypoints now surface the operator override state, blocked reason, operator note, and system-vs-effective next-phase recommendation so the loop remains inspectable outside the web UI too
+
+This slice still does not add a second workflow engine, parallel autonomous execution, or any way around the existing `TaskEnvelope` lease and dispatch path. Steering is a bounded operator influence layer on top of the same persisted session spine.
+
 Still deferred beyond 4M-D:
 
 - autonomous peer-to-peer replication or any direct node-to-node handoff channel

@@ -183,3 +183,21 @@ test("local_node queue entrypoints run one queued task and print a queue summary
     await rm(taskDirectory, { recursive: true, force: true });
   }
 });
+
+test("local_node parses bounded steering flags", () => {
+  const parsed = parseLocalNodeArgs([
+    "--sessionId",
+    "session-steer-1",
+    "--steering",
+    "prefer-fix-next",
+    "--operatorNote",
+    "Fix the current regression before validating again.",
+    "--stopReason",
+    "The loop is no longer useful.",
+  ]);
+
+  assert.equal(parsed.sessionId, "session-steer-1");
+  assert.equal(parsed.steeringAction, "prefer-fix-next");
+  assert.equal(parsed.operatorNote, "Fix the current regression before validating again.");
+  assert.equal(parsed.stopReason, "The loop is no longer useful.");
+});

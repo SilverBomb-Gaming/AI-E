@@ -182,3 +182,21 @@ test("headless_autonomy queue entrypoints run one queued task and print a queue 
     await rm(taskDirectory, { recursive: true, force: true });
   }
 });
+
+test("headless_autonomy parses bounded steering flags", () => {
+  const parsed = parseArgs([
+    "--sessionId",
+    "session-steer-1",
+    "--steering",
+    "prefer-validation-next",
+    "--operatorNote",
+    "Validate before the next fix.",
+    "--restartReason",
+    "Return to the last safe checkpoint.",
+  ]);
+
+  assert.equal(parsed.sessionId, "session-steer-1");
+  assert.equal(parsed.steeringAction, "prefer-validation-next");
+  assert.equal(parsed.operatorNote, "Validate before the next fix.");
+  assert.equal(parsed.restartReason, "Return to the last safe checkpoint.");
+});

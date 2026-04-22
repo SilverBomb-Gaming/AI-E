@@ -5,12 +5,14 @@ import {
   appendAutonomousStep,
   buildAutonomousSessionContextBlock,
   canResumeAutonomousSession,
+  clearAutonomousSessionSteering,
   countPriorAttemptsForAction,
   createAutonomousSession,
   markAwaitingApproval,
   normalizeAutonomousSession,
   pauseAutonomousSession,
   resumeAutonomousSession,
+  updateAutonomousSessionSteering,
   updateAutonomousSessionStatus,
 } from "./autonomousSession";
 
@@ -224,6 +226,59 @@ test("autonomous sessions mark repeated ineffective validation loops as stalled"
   assert.equal(third.workflowContinuity.loopHealth.recommendedNextPhase, "waiting-on-operator");
   assert.match(third.workflowContinuity.loopHealth.loopHealthReason ?? "", /same ineffective phase/i);
   assert.match(buildAutonomousSessionContextBlock(third), /Recommended next phase: waiting-on-operator/i);
+});
+
+test("autonomous sessions persist and apply supervised steering overrides", () => {
+  const implemented = appendAutonomousStep(createAutonomousSession({ goal: "Steer the bounded loop toward validation." }), {
+    proposedAction: "Apply the bounded fix patch.",
+    executionResult: {
+      status: "success",
+      output: "Patch applied cleanly.",
+      changedPaths: ["web/lib/aie/autonomousSession.ts"],
+      diffSummary: "Updated workflow continuity derivation.",
+    },
+    nextDecision: "continue",
+  });
+  const steered = updateAutonomousSessionSteering(implemented, {
+    action: "prefer-validation-next",
+    operatorNote: "Validate before another fix loop.",
+  });
+  const resumed = resumeAutonomousSession(pauseAutonomousSession(steered, "Waiting for operator review."), {
+    reason: "Operator review finished.",
+  });
+
+  assert.equal(steered.workflowContinuity.steering.requestedAction, "prefer-validation-next");
+  assert.equal(steered.workflowContinuity.steering.requestedNextPhaseOverride, "validation");
+  assert.equal(steered.workflowContinuity.steering.status, "pending");
+  assert.equal(steered.workflowContinuity.loopHealth.systemRecommendedNextPhase, "validation");
+  assert.equal(steered.workflowContinuity.loopHealth.recommendedNextPhase, "validation");
+  assert.match(steered.workflowContinuity.loopHealth.loopHealthReason ?? "", /operator requested validation/i);
+  assert.match(buildAutonomousSessionContextBlock(steered), /Operator override request: prefer-validation-next/i);
+  assert.equal(resumed.workflowContinuity.steering.status, "pending");
+});
+
+test("autonomous sessions block impossible restart overrides and preserve why", () => {
+  const blocked = updateAutonomousSessionSteering(createAutonomousSession({ goal: "Try a restart without a safe step." }), {
+    action: "restart-from-last-safe-boundary",
+    restartReason: "The loop should restart from the last verified checkpoint.",
+  });
+
+  assert.equal(blocked.workflowContinuity.steering.status, "blocked");
+  assert.match(blocked.workflowContinuity.steering.blockedReason ?? "", /no last safe boundary/i);
+  assert.equal(blocked.workflowContinuity.loopHealth.recommendedNextPhase, "planning");
+});
+
+test("autonomous sessions can clear a supervised steering override", () => {
+  const steered = updateAutonomousSessionSteering(createAutonomousSession({ goal: "Clear an operator override." }), {
+    action: "stop-loop",
+    stopReason: "The loop no longer adds useful evidence.",
+  });
+  const cleared = clearAutonomousSessionSteering(steered);
+
+  assert.equal(steered.workflowContinuity.steering.status, "applied");
+  assert.equal(steered.workflowContinuity.loopHealth.recommendedNextPhase, "stop");
+  assert.equal(cleared.workflowContinuity.steering.status, "none");
+  assert.equal(cleared.workflowContinuity.steering.requestedAction, undefined);
 });
 
 test("autonomous sessions can pause and resume without losing state reason", () => {

@@ -2,15 +2,18 @@ import {
   appendAutonomousStep,
   buildAutonomousSessionContextBlock,
   canResumeAutonomousSession,
+  clearAutonomousSessionSteering,
   countPriorAttemptsForAction,
   createAutonomousSession,
   markAwaitingApproval,
   resumeAutonomousSession,
+  updateAutonomousSessionSteering,
   updateAutonomousSessionStatus,
   type AutonomousSession,
   type AutonomousStepDecision,
   type AutonomousStepRecord,
   type AutonomousStepVerificationState,
+  type UpdateAutonomousSessionSteeringParams,
 } from "./autonomousSession";
 import {
   buildRepoAwareAutonomousPlanningContext,
@@ -69,6 +72,8 @@ type RunAutonomousSessionParams = {
   goal: string;
   maxSteps?: number;
   approved?: boolean;
+  steering?: UpdateAutonomousSessionSteeringParams;
+  clearSteering?: boolean;
   existingSession?: AutonomousSession;
   queuedTask?: TaskEnvelope;
   executionContext?: Partial<ExecutionAdapterContext>;
@@ -768,6 +773,13 @@ export async function runAutonomousSession(params: RunAutonomousSessionParams): 
         goal: params.goal,
         maxSteps: params.maxSteps,
       });
+
+  if (params.clearSteering) {
+    session = clearAutonomousSessionSteering(session);
+  } else if (params.steering) {
+    session = updateAutonomousSessionSteering(session, params.steering);
+  }
+
   let pendingContinuationState: ForcedContinuationState | undefined;
 
   if (params.existingSession) {
