@@ -541,6 +541,15 @@ export default function AutonomousPage() {
                 <p><strong>Returned to same recommendation again:</strong> {session.workflowContinuity.review.returnedToSameRecommendationAgain ? "Yes" : "No"}</p>
                 <p><strong>Repeated review without progress:</strong> {session.workflowContinuity.review.repeatedReviewWithoutProgress ? "Yes" : "No"}</p>
                 <p><strong>Recommendation frequently overridden:</strong> {session.workflowContinuity.review.frequentlyOverridden ? "Yes" : "No"}</p>
+                <p><strong>Recommendation escalation status:</strong> {session.workflowContinuity.escalation.escalationStatus}</p>
+                <p><strong>Recommendation recovery guidance:</strong> {session.workflowContinuity.escalation.recoveryRecommendation}</p>
+                <p><strong>Likely needs operator intervention now:</strong> {session.workflowContinuity.escalation.likelyNeedsOperatorInterventionNow ? "Yes" : "No"}</p>
+                <p><strong>Repeated ineffective review cycles:</strong> {session.workflowContinuity.escalation.repeatedIneffectiveReviewCycles ? "Yes" : "No"}</p>
+                <p><strong>Accepted recommendations repeatedly requiring correction:</strong> {session.workflowContinuity.escalation.acceptedRecommendationsRepeatedlyRequiringCorrection ? "Yes" : "No"}</p>
+                <p><strong>Redirected recommendations outperforming system:</strong> {session.workflowContinuity.escalation.redirectedRecommendationsOutperformSystem ? "Yes" : "No"}</p>
+                <p><strong>Returned to same ineffective recommendation state:</strong> {session.workflowContinuity.escalation.returnedToSameIneffectiveState ? "Yes" : "No"}</p>
+                <p><strong>Recommendation escalation summary:</strong> {session.workflowContinuity.escalation.escalationSummary || "No escalation summary recorded yet."}</p>
+                <p><strong>Recommendation recovery summary:</strong> {session.workflowContinuity.escalation.recoverySummary || "No recovery summary recorded yet."}</p>
                 <p><strong>Operator override status:</strong> {session.workflowContinuity.steering.status}</p>
                 <p><strong>Operator override:</strong> {session.workflowContinuity.steering.requestedAction || "No operator override recorded yet."}</p>
                 <p><strong>Operator override reason:</strong> {session.workflowContinuity.steering.overrideReason || "No override reason recorded yet."}</p>
@@ -567,6 +576,8 @@ export default function AutonomousPage() {
                   <p><strong>Current rationale:</strong> {session.workflowContinuity.loopHealth.recommendationRationaleSummary || "No recommendation rationale recorded yet."}</p>
                   <p><strong>Current top signals:</strong> {session.workflowContinuity.loopHealth.topContributingSignals.length ? session.workflowContinuity.loopHealth.topContributingSignals.join(", ") : "No recommendation signals recorded yet."}</p>
                   <p><strong>Current follow-through:</strong> {session.workflowContinuity.review.lastFollowThroughSummary || "No follow-through summary recorded yet."}</p>
+                  <p><strong>Current escalation:</strong> {session.workflowContinuity.escalation.escalationSummary || "No escalation summary recorded yet."}</p>
+                  <p><strong>Current recovery guidance:</strong> {session.workflowContinuity.escalation.recoverySummary || "No recovery guidance recorded yet."}</p>
                 </div>
                 <label className="mt-3 block text-sm font-semibold text-ink">
                   Review response

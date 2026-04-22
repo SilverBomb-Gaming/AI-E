@@ -321,6 +321,16 @@ AI-E now tracks what happened after a reviewed recommendation was accepted, redi
 
 This slice still does not add hidden adaptation, cross-session learning, alternate orchestration, or any bypass around the existing queue, lease, approval, and trusted dispatch controls. Recommendation follow-through remains a bounded observability layer on top of the same `AutonomousSession` continuity spine.
 
+## Post-4M bounded autonomy layering: bounded escalation and recommendation recovery handoff
+
+AI-E now turns poor recommendation follow-through into explicit bounded escalation and recovery guidance, so the supervised loop can react deterministically when reviewed recommendations keep failing, require correction, or return to the same ineffective state.
+
+- `workflowContinuity.escalation` now derives bounded escalation fields including escalation status, recovery recommendation, likely-needs-operator-intervention state, repeated ineffective review-cycle detection, repeated accepted-recommendation correction detection, redirected-recommendation outperformance detection, and same-ineffective-state return detection
+- this escalation layer builds directly on the prior recommendation follow-through history instead of creating a second planner: AI-E evaluates recent reviewed outcomes and converts them into bounded recovery guidance such as operator intervention, safe-boundary restart, alternate validation-first or fix-first guidance, or stopping the current loop
+- the autonomous page, session context block, headless CLI, and local-node CLI now surface escalation summaries and recovery summaries alongside the existing review and follow-through state so operators can see when the supervised loop is no longer progressing well
+
+This slice still does not add hidden adaptive learning, alternate orchestration, multi-agent behavior, or any bypass around the existing queue, lease, approval, and trusted dispatch boundaries. Escalation and recommendation recovery remain session-local, deterministic, and inspectable.
+
 Still deferred beyond 4M-D:
 
 - autonomous peer-to-peer replication or any direct node-to-node handoff channel

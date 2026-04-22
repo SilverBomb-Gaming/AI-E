@@ -440,6 +440,137 @@ test("autonomous sessions mark repeated reviewed recommendations with no useful 
   assert.equal(repeatedFailure.workflowContinuity.review.repeatedReviewWithoutProgress, false);
 });
 
+test("autonomous sessions recommend alternate recovery paths when redirected recommendations outperform the system repeatedly", () => {
+  const implemented = appendAutonomousStep(createAutonomousSession({ goal: "Prefer a repeated alternate fix-first path when redirects help." }), {
+    proposedAction: "Apply the first bounded implementation change.",
+    executionResult: {
+      status: "success",
+      output: "Implementation completed and is ready for validation.",
+    },
+    nextDecision: "continue",
+  });
+  const redirectOne = updateAutonomousSessionSteering(implemented, {
+    action: "prefer-fix-next",
+    overrideReason: "A bounded fix-first path is safer than validating too early.",
+  });
+  const fixOne = appendAutonomousStep(redirectOne, {
+    proposedAction: "Apply the first bounded follow-up fix.",
+    executionResult: {
+      status: "success",
+      output: "The first follow-up fix improved the bounded state.",
+    },
+    nextDecision: "continue",
+  });
+  const cleared = clearAutonomousSessionSteering(fixOne);
+  const implementedAgain = appendAutonomousStep(cleared, {
+    proposedAction: "Apply the second bounded implementation change.",
+    executionResult: {
+      status: "success",
+      output: "Another implementation change is ready for review.",
+    },
+    nextDecision: "continue",
+  });
+  const redirectTwo = updateAutonomousSessionSteering(implementedAgain, {
+    action: "prefer-fix-next",
+    overrideReason: "The recent redirected fix-first path outperformed the default recommendation.",
+  });
+  const fixTwo = appendAutonomousStep(redirectTwo, {
+    proposedAction: "Apply the second bounded follow-up fix.",
+    executionResult: {
+      status: "success",
+      output: "The second follow-up fix improved the bounded state again.",
+    },
+    nextDecision: "continue",
+  });
+
+  assert.equal(fixTwo.workflowContinuity.escalation.escalationStatus, "alternate-path-recommended");
+  assert.equal(fixTwo.workflowContinuity.escalation.recoveryRecommendation, "fix-first");
+  assert.equal(fixTwo.workflowContinuity.escalation.redirectedRecommendationsOutperformSystem, true);
+  assert.match(fixTwo.workflowContinuity.escalation.recoverySummary ?? "", /fix-first/i);
+});
+
+test("autonomous sessions escalate to operator intervention when accepted recommendations repeatedly require correction", () => {
+  const failedValidation = appendAutonomousStep(createAutonomousSession({ goal: "Escalate when accepted recommendations keep needing correction." }), {
+    proposedAction: "Run the bounded validation command.",
+    executionResult: {
+      status: "failed",
+      error: "Validation still reports the same unresolved failure.",
+    },
+    failureReason: "Validation still reports the same unresolved failure.",
+  });
+  const acceptedOne = updateAutonomousSessionSteering(failedValidation, {
+    action: "accept-current-recommendation",
+    operatorNote: "Accept the current recommendation before redirecting if needed.",
+  });
+  const correctedOne = updateAutonomousSessionSteering(acceptedOne, {
+    action: "prefer-validation-next",
+    overrideReason: "The accepted recommendation still needs correction.",
+  });
+  const repeatedFailure = appendAutonomousStep(correctedOne, {
+    proposedAction: "Run the bounded validation command again.",
+    executionResult: {
+      status: "failed",
+      error: "Validation still reports the same unresolved failure.",
+    },
+    failureReason: "Validation still reports the same unresolved failure.",
+  });
+  const acceptedTwo = updateAutonomousSessionSteering(repeatedFailure, {
+    action: "accept-current-recommendation",
+    operatorNote: "Accept the latest recommendation again for one more bounded attempt.",
+  });
+  const correctedTwo = updateAutonomousSessionSteering(acceptedTwo, {
+    action: "prefer-validation-next",
+    overrideReason: "The accepted recommendation needed correction again.",
+  });
+
+  assert.equal(correctedTwo.workflowContinuity.escalation.escalationStatus, "operator-intervention-recommended");
+  assert.equal(correctedTwo.workflowContinuity.escalation.recoveryRecommendation, "operator-intervention");
+  assert.equal(correctedTwo.workflowContinuity.escalation.acceptedRecommendationsRepeatedlyRequiringCorrection, true);
+  assert.equal(correctedTwo.workflowContinuity.escalation.likelyNeedsOperatorInterventionNow, true);
+  assert.match(correctedTwo.workflowContinuity.escalation.escalationSummary ?? "", /requiring correction/i);
+});
+
+test("autonomous sessions recommend stopping loops after repeated ineffective reviewed follow-through cycles", () => {
+  const firstFailure = appendAutonomousStep(createAutonomousSession({ goal: "Stop when repeated review cycles do not improve progress." }), {
+    proposedAction: "Run the bounded validation command.",
+    executionResult: {
+      status: "failed",
+      error: "Validation still reports the same unresolved failure.",
+    },
+    failureReason: "Validation still reports the same unresolved failure.",
+  });
+  const reviewedOne = updateAutonomousSessionSteering(firstFailure, {
+    action: "accept-current-recommendation",
+    operatorNote: "Accept the current recommendation for another bounded validation attempt.",
+  });
+  const secondFailure = appendAutonomousStep(reviewedOne, {
+    proposedAction: "Run the bounded validation command again.",
+    executionResult: {
+      status: "failed",
+      error: "Validation still reports the same unresolved failure.",
+    },
+    failureReason: "Validation still reports the same unresolved failure.",
+  });
+  const reviewedTwo = updateAutonomousSessionSteering(secondFailure, {
+    action: "accept-current-recommendation",
+    operatorNote: "Accept the current recommendation for one final bounded validation attempt.",
+  });
+  const thirdFailure = appendAutonomousStep(reviewedTwo, {
+    proposedAction: "Run the bounded validation command a third time.",
+    executionResult: {
+      status: "failed",
+      error: "Validation still reports the same unresolved failure.",
+    },
+    failureReason: "Validation still reports the same unresolved failure.",
+  });
+
+  assert.equal(thirdFailure.workflowContinuity.escalation.escalationStatus, "stop-recommended");
+  assert.equal(thirdFailure.workflowContinuity.escalation.recoveryRecommendation, "stop-loop");
+  assert.equal(thirdFailure.workflowContinuity.escalation.repeatedIneffectiveReviewCycles, true);
+  assert.equal(thirdFailure.workflowContinuity.escalation.likelyNeedsOperatorInterventionNow, true);
+  assert.match(thirdFailure.workflowContinuity.escalation.recoverySummary ?? "", /stopping the current loop/i);
+});
+
 test("autonomous sessions record blocked refinement attempts for later inspection", () => {
   const blocked = updateAutonomousSessionSteering(createAutonomousSession({ goal: "Record a blocked restart refinement." }), {
     action: "restart-from-last-safe-boundary",

@@ -80,6 +80,8 @@ test("headless_autonomy persists a bounded session and prints a matching summary
     assert.match(formatHeadlessSessionReport(session), /Recommendation review summary:/i);
     assert.match(formatHeadlessSessionReport(session), /Last recommendation follow-through status:/i);
     assert.match(formatHeadlessSessionReport(session), /Follow-through helped:/i);
+    assert.match(formatHeadlessSessionReport(session), /Recommendation escalation status:/i);
+    assert.match(formatHeadlessSessionReport(session), /Recommendation recovery guidance:/i);
     assert.match(formatHeadlessSessionReport(session), /Recommendation frequently overridden:/i);
     assert.match(formatHeadlessSessionReport(session, { json: true, verbose: true }), /"sessionId"/i);
     assert.equal(tasks.length, 1);
@@ -185,6 +187,8 @@ test("headless_autonomy queue entrypoints run one queued task and print a queue 
     assert.match(output, /Last recommendation review outcome:/i);
     assert.match(output, /Last recommendation follow-through status:/i);
     assert.match(output, /Repeated review without progress:/i);
+    assert.match(output, /Recommendation escalation status:/i);
+    assert.match(output, /Recommendation recovery guidance:/i);
   } finally {
     delete process.env.AIE_AUTONOMOUS_SESSION_DIR;
     delete process.env.AIE_TASK_QUEUE_DIR;
