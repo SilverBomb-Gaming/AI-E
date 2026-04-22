@@ -118,6 +118,7 @@ export type AutonomousWorkflowRecommendedNextPhase =
   | "stop";
 
 export type AutonomousOperatorSteeringAction =
+  | "accept-current-recommendation"
   | "prefer-validation-next"
   | "prefer-fix-next"
   | "restart-from-last-safe-boundary"
@@ -164,6 +165,39 @@ export type AutonomousWorkflowRefinementState = {
   refinementSummary?: string;
 };
 
+export type AutonomousWorkflowRecommendationReviewOutcome =
+  | "pending"
+  | "helped-progress"
+  | "needed-correction"
+  | "no-clear-improvement"
+  | "still-blocked";
+
+export type AutonomousWorkflowRecommendationReviewHistoryEntry = {
+  reviewedAtStepIndex: number;
+  systemRecommendedNextPhase?: AutonomousWorkflowRecommendedNextPhase;
+  recommendedNextPhase: AutonomousWorkflowRecommendedNextPhase;
+  recommendationConfidence: AutonomousWorkflowRecommendationConfidence;
+  likelyNeedsOperatorInput: boolean;
+  topContributingSignals: AutonomousWorkflowRecommendationSignal[];
+  recommendationRationaleSummary?: string;
+  operatorResponse?: AutonomousOperatorSteeringAction;
+  requestedNextPhaseOverride?: AutonomousWorkflowRecommendedNextPhase;
+  operatorNote?: string;
+  overrideReason?: string;
+};
+
+export type AutonomousWorkflowRecommendationReviewState = {
+  history: AutonomousWorkflowRecommendationReviewHistoryEntry[];
+  lastReviewedRecommendation?: AutonomousWorkflowRecommendedNextPhase;
+  lastSystemRecommendation?: AutonomousWorkflowRecommendedNextPhase;
+  lastOperatorResponse?: AutonomousOperatorSteeringAction;
+  lastRecommendationOutcome?: AutonomousWorkflowRecommendationReviewOutcome;
+  lastReviewImprovedProgress: boolean;
+  lastRecommendationNeededCorrection: boolean;
+  frequentlyOverridden: boolean;
+  reviewSummary?: string;
+};
+
 export type AutonomousWorkflowRecommendationConfidence = "low" | "medium" | "high";
 
 export type AutonomousWorkflowRecommendationSignal =
@@ -202,6 +236,7 @@ export type AutonomousWorkflowContinuityState = {
   memory: AutonomousWorkflowMemoryState;
   steering: AutonomousWorkflowSteeringState;
   refinement: AutonomousWorkflowRefinementState;
+  review: AutonomousWorkflowRecommendationReviewState;
   loopHealth: AutonomousWorkflowLoopHealthState;
 };
 
@@ -341,10 +376,20 @@ function createDefaultAutonomousWorkflowRefinementState(): AutonomousWorkflowRef
   };
 }
 
+function createDefaultAutonomousWorkflowRecommendationReviewState(): AutonomousWorkflowRecommendationReviewState {
+  return {
+    history: [],
+    lastReviewImprovedProgress: false,
+    lastRecommendationNeededCorrection: false,
+    frequentlyOverridden: false,
+  };
+}
+
 function normalizeAutonomousOperatorSteeringAction(value: unknown): AutonomousOperatorSteeringAction | undefined {
   const normalized = normalizeText(typeof value === "string" ? value : "");
   if (
-    normalized === "prefer-validation-next"
+    normalized === "accept-current-recommendation"
+    || normalized === "prefer-validation-next"
     || normalized === "prefer-fix-next"
     || normalized === "restart-from-last-safe-boundary"
     || normalized === "pause-and-wait"
@@ -368,6 +413,10 @@ function normalizeAutonomousOperatorSteeringStatus(value: unknown): AutonomousOp
 function deriveRequestedNextPhaseOverride(
   action: AutonomousOperatorSteeringAction | undefined,
 ): AutonomousWorkflowRecommendedNextPhase | undefined {
+  if (action === "accept-current-recommendation") {
+    return undefined;
+  }
+
   if (action === "prefer-validation-next") {
     return "validation";
   }
@@ -406,6 +455,12 @@ function clampRefinementHistoryEntries(
   return entries.slice(-6);
 }
 
+function clampRecommendationReviewHistoryEntries(
+  entries: AutonomousWorkflowRecommendationReviewHistoryEntry[],
+): AutonomousWorkflowRecommendationReviewHistoryEntry[] {
+  return entries.slice(-6);
+}
+
 function normalizeAutonomousWorkflowRefinementHistoryEntry(value: unknown): AutonomousWorkflowRefinementHistoryEntry | null {
   if (!value || typeof value !== "object") {
     return null;
@@ -431,6 +486,39 @@ function normalizeAutonomousWorkflowRefinementHistoryEntry(value: unknown): Auto
     operatorNote: normalizeText(typeof source.operatorNote === "string" ? source.operatorNote : "") || undefined,
     requestedStopReason: normalizeText(typeof source.requestedStopReason === "string" ? source.requestedStopReason : "") || undefined,
     requestedRestartReason: normalizeText(typeof source.requestedRestartReason === "string" ? source.requestedRestartReason : "") || undefined,
+  };
+}
+
+function normalizeAutonomousWorkflowRecommendationReviewHistoryEntry(value: unknown): AutonomousWorkflowRecommendationReviewHistoryEntry | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const source = value as Record<string, unknown>;
+  const reviewedAtStepIndex = Number(source.reviewedAtStepIndex ?? 0);
+  const recommendedNextPhase = normalizeAutonomousWorkflowRecommendedNextPhase(source.recommendedNextPhase);
+  if (!Number.isInteger(reviewedAtStepIndex) || reviewedAtStepIndex <= 0 || !recommendedNextPhase) {
+    return null;
+  }
+
+  return {
+    reviewedAtStepIndex,
+    systemRecommendedNextPhase: normalizeAutonomousWorkflowRecommendedNextPhase(source.systemRecommendedNextPhase),
+    recommendedNextPhase,
+    recommendationConfidence:
+      source.recommendationConfidence === "low" || source.recommendationConfidence === "medium" || source.recommendationConfidence === "high"
+        ? source.recommendationConfidence as AutonomousWorkflowRecommendationConfidence
+        : "medium",
+    likelyNeedsOperatorInput: typeof source.likelyNeedsOperatorInput === "boolean" ? source.likelyNeedsOperatorInput : false,
+    topContributingSignals: clampWorkflowMemoryItems(
+      Array.isArray(source.topContributingSignals) ? source.topContributingSignals as string[] : [],
+    ) as AutonomousWorkflowRecommendationSignal[],
+    recommendationRationaleSummary:
+      normalizeText(typeof source.recommendationRationaleSummary === "string" ? source.recommendationRationaleSummary : "") || undefined,
+    operatorResponse: normalizeAutonomousOperatorSteeringAction(source.operatorResponse),
+    requestedNextPhaseOverride: normalizeAutonomousWorkflowRecommendedNextPhase(source.requestedNextPhaseOverride),
+    operatorNote: normalizeText(typeof source.operatorNote === "string" ? source.operatorNote : "") || undefined,
+    overrideReason: normalizeText(typeof source.overrideReason === "string" ? source.overrideReason : "") || undefined,
   };
 }
 
@@ -1187,7 +1275,7 @@ function deriveOperatorSteeringState(params: {
     };
   }
 
-  const isImmediateOverride = requestedAction === "pause-and-wait" || requestedAction === "stop-loop";
+  const isImmediateOverride = requestedAction === "accept-current-recommendation" || requestedAction === "pause-and-wait" || requestedAction === "stop-loop";
   const status = isImmediateOverride
     ? "applied"
     : hasSteeringBeenApplied(params.session, requestedForStepIndex)
@@ -1229,6 +1317,19 @@ function applyOperatorSteeringToLoopHealth(params: {
       ...loopHealth,
       recommendedNextActionSummary: operatorNote,
       loopHealthReason: `Operator note recorded for the next bounded step: ${operatorNote}`,
+    };
+  }
+
+  if (requestedAction === "accept-current-recommendation") {
+    return {
+      ...loopHealth,
+      recommendedNextActionSummary:
+        operatorNote
+        || loopHealth.recommendedNextActionSummary
+        || `Continue with the current bounded ${loopHealth.recommendedNextPhase} recommendation.`,
+      loopHealthReason: operatorNote
+        ? `Operator confirmed the current recommendation: ${operatorNote}`
+        : `Operator confirmed the current bounded ${loopHealth.recommendedNextPhase} recommendation.`,
     };
   }
 
@@ -1495,6 +1596,9 @@ export function deriveAutonomousWorkflowContinuity(session: AutonomousSession): 
       lastCompletedSafeStep,
       actionableFailure,
     }),
+    review: deriveRecommendationReviewState({
+      session,
+    }),
   };
 }
 
@@ -1508,6 +1612,7 @@ function normalizeAutonomousWorkflowContinuityState(value: unknown): AutonomousW
   const memorySource = source.memory && typeof source.memory === "object" ? (source.memory as Record<string, unknown>) : undefined;
   const steeringSource = source.steering && typeof source.steering === "object" ? (source.steering as Record<string, unknown>) : undefined;
   const refinementSource = source.refinement && typeof source.refinement === "object" ? (source.refinement as Record<string, unknown>) : undefined;
+  const reviewSource = source.review && typeof source.review === "object" ? (source.review as Record<string, unknown>) : undefined;
   const loopHealthSource = source.loopHealth && typeof source.loopHealth === "object" ? (source.loopHealth as Record<string, unknown>) : undefined;
   const chainPhase = normalizeText(typeof progressSource?.chainPhase === "string" ? progressSource.chainPhase : "");
 
@@ -1593,6 +1698,31 @@ function normalizeAutonomousWorkflowContinuityState(value: unknown): AutonomousW
         normalizeAutonomousWorkflowRecommendedNextPhase(refinementSource?.influencedRecommendedNextPhase) ?? undefined,
       influenceReason: normalizeText(typeof refinementSource?.influenceReason === "string" ? refinementSource.influenceReason : "") || undefined,
       refinementSummary: normalizeText(typeof refinementSource?.refinementSummary === "string" ? refinementSource.refinementSummary : "") || undefined,
+    },
+    review: {
+      history: clampRecommendationReviewHistoryEntries(
+        Array.isArray(reviewSource?.history)
+          ? (reviewSource?.history as unknown[])
+              .map((entry) => normalizeAutonomousWorkflowRecommendationReviewHistoryEntry(entry))
+              .filter((entry): entry is AutonomousWorkflowRecommendationReviewHistoryEntry => entry !== null)
+          : [],
+      ),
+      lastReviewedRecommendation: normalizeAutonomousWorkflowRecommendedNextPhase(reviewSource?.lastReviewedRecommendation) ?? undefined,
+      lastSystemRecommendation: normalizeAutonomousWorkflowRecommendedNextPhase(reviewSource?.lastSystemRecommendation) ?? undefined,
+      lastOperatorResponse: normalizeAutonomousOperatorSteeringAction(reviewSource?.lastOperatorResponse),
+      lastRecommendationOutcome:
+        reviewSource?.lastRecommendationOutcome === "pending"
+        || reviewSource?.lastRecommendationOutcome === "helped-progress"
+        || reviewSource?.lastRecommendationOutcome === "needed-correction"
+        || reviewSource?.lastRecommendationOutcome === "no-clear-improvement"
+        || reviewSource?.lastRecommendationOutcome === "still-blocked"
+          ? reviewSource.lastRecommendationOutcome as AutonomousWorkflowRecommendationReviewOutcome
+          : undefined,
+      lastReviewImprovedProgress: typeof reviewSource?.lastReviewImprovedProgress === "boolean" ? reviewSource.lastReviewImprovedProgress : false,
+      lastRecommendationNeededCorrection:
+        typeof reviewSource?.lastRecommendationNeededCorrection === "boolean" ? reviewSource.lastRecommendationNeededCorrection : false,
+      frequentlyOverridden: typeof reviewSource?.frequentlyOverridden === "boolean" ? reviewSource.frequentlyOverridden : false,
+      reviewSummary: normalizeText(typeof reviewSource?.reviewSummary === "string" ? reviewSource.reviewSummary : "") || undefined,
     },
     loopHealth: {
       currentPhaseRepeatCount: Number.isInteger(Number(loopHealthSource?.currentPhaseRepeatCount)) ? Math.max(1, Number(loopHealthSource?.currentPhaseRepeatCount)) : 1,
@@ -1799,6 +1929,57 @@ function deriveRefinementOutcome(params: {
   };
 }
 
+function deriveRecommendationReviewOutcome(params: {
+  session: AutonomousSession;
+  entry: AutonomousWorkflowRecommendationReviewHistoryEntry;
+}): { outcome: AutonomousWorkflowRecommendationReviewOutcome; summary: string } {
+  const followUpSteps = params.session.steps.filter((step) => step.index >= params.entry.reviewedAtStepIndex);
+
+  if (followUpSteps.length === 0) {
+    return {
+      outcome: "pending",
+      summary: "This recommendation review is waiting for the next bounded step.",
+    };
+  }
+
+  const successfulFollowUp = followUpSteps.find((step) => {
+    return step.executionResult?.status === "success"
+      || step.goalStatus === "progressing"
+      || step.goalStatus === "complete"
+      || step.nextDecision === "continue";
+  });
+
+  if (successfulFollowUp) {
+    const recommendationNeededCorrection = Boolean(
+      params.entry.operatorResponse
+      && params.entry.operatorResponse !== "accept-current-recommendation",
+    );
+
+    return {
+      outcome: recommendationNeededCorrection ? "needed-correction" : "helped-progress",
+      summary: recommendationNeededCorrection
+        ? `A reviewed alternate recommendation improved progress at step ${successfulFollowUp.index}.`
+        : `The reviewed recommendation helped progress at step ${successfulFollowUp.index}.`,
+    };
+  }
+
+  if (
+    params.session.status === "blocked"
+    || params.session.status === "paused"
+    || params.session.status === "awaiting-approval"
+  ) {
+    return {
+      outcome: "still-blocked",
+      summary: params.session.stateReason || "The loop is still waiting at a bounded operator-side blocker.",
+    };
+  }
+
+  return {
+    outcome: "no-clear-improvement",
+    summary: "The reviewed recommendation does not show clear bounded improvement yet.",
+  };
+}
+
 function summarizeRefinementHistoryPreference(
   entries: Array<AutonomousWorkflowRefinementHistoryEntry & { outcome: AutonomousWorkflowRefinementOutcome }>,
 ): AutonomousWorkflowRecommendedNextPhase | undefined {
@@ -1870,6 +2051,40 @@ function deriveOperatorRefinementState(params: {
       params.steering.status === "none" ? successfulInfluence?.requestedNextPhaseOverride : undefined,
     influenceReason,
     refinementSummary,
+  };
+}
+
+function deriveRecommendationReviewState(params: {
+  session: AutonomousSession;
+}): AutonomousWorkflowRecommendationReviewState {
+  const priorReview = params.session.workflowContinuity?.review ?? createDefaultAutonomousWorkflowRecommendationReviewState();
+  const history = clampRecommendationReviewHistoryEntries(priorReview.history ?? []);
+  const lastHistoryEntry = history.at(-1);
+
+  if (!lastHistoryEntry) {
+    return createDefaultAutonomousWorkflowRecommendationReviewState();
+  }
+
+  const evaluation = deriveRecommendationReviewOutcome({
+    session: params.session,
+    entry: lastHistoryEntry,
+  });
+  const recentOverrides = history.slice(-4).filter((entry) => {
+    return Boolean(entry.operatorResponse) && entry.operatorResponse !== "accept-current-recommendation";
+  }).length;
+  const lastRecommendationNeededCorrection = evaluation.outcome === "needed-correction";
+  const lastReviewImprovedProgress = evaluation.outcome === "helped-progress" || evaluation.outcome === "needed-correction";
+
+  return {
+    history,
+    lastReviewedRecommendation: lastHistoryEntry.recommendedNextPhase,
+    lastSystemRecommendation: lastHistoryEntry.systemRecommendedNextPhase,
+    lastOperatorResponse: lastHistoryEntry.operatorResponse,
+    lastRecommendationOutcome: evaluation.outcome,
+    lastReviewImprovedProgress,
+    lastRecommendationNeededCorrection,
+    frequentlyOverridden: recentOverrides >= 2,
+    reviewSummary: `Last review: ${lastHistoryEntry.recommendedNextPhase} -> ${lastHistoryEntry.operatorResponse ?? "operator-note"} (${evaluation.summary})`,
   };
 }
 
@@ -1947,6 +2162,7 @@ export function createAutonomousSession(params: CreateAutonomousSessionParams): 
       },
       steering: createDefaultAutonomousWorkflowSteeringState(),
       refinement: createDefaultAutonomousWorkflowRefinementState(),
+      review: createDefaultAutonomousWorkflowRecommendationReviewState(),
       loopHealth: {
         currentPhaseRepeatCount: 1,
         recentPhaseOutcomes: [],
@@ -2242,6 +2458,7 @@ export function normalizeAutonomousSession(value: unknown): AutonomousSession | 
       },
       steering: createDefaultAutonomousWorkflowSteeringState(),
       refinement: createDefaultAutonomousWorkflowRefinementState(),
+      review: createDefaultAutonomousWorkflowRecommendationReviewState(),
       loopHealth: {
         currentPhaseRepeatCount: 1,
         recentPhaseOutcomes: [],
@@ -2350,6 +2567,24 @@ export function buildAutonomousSessionContextBlock(session: AutonomousSession, l
   if (session.workflowContinuity.steering.blockedReason) {
     lines.push(`- Operator override blocked reason: ${session.workflowContinuity.steering.blockedReason}`);
   }
+
+  if (session.workflowContinuity.review.reviewSummary) {
+    lines.push(`- Recommendation review summary: ${session.workflowContinuity.review.reviewSummary}`);
+  }
+
+  if (session.workflowContinuity.review.lastReviewedRecommendation) {
+    lines.push(`- Last reviewed recommendation: ${session.workflowContinuity.review.lastReviewedRecommendation}`);
+  }
+
+  if (session.workflowContinuity.review.lastOperatorResponse) {
+    lines.push(`- Last operator review response: ${session.workflowContinuity.review.lastOperatorResponse}`);
+  }
+
+  if (session.workflowContinuity.review.lastRecommendationOutcome) {
+    lines.push(`- Last recommendation review outcome: ${session.workflowContinuity.review.lastRecommendationOutcome}`);
+  }
+
+  lines.push(`- Recommendation frequently overridden: ${String(session.workflowContinuity.review.frequentlyOverridden)}`);
 
   if (session.workflowContinuity.loopHealth.systemRecommendedNextPhase) {
     lines.push(`- System recommended next phase: ${session.workflowContinuity.loopHealth.systemRecommendedNextPhase}`);
@@ -2485,6 +2720,7 @@ export function updateAutonomousSessionSteering(
   const overrideReason = normalizeText(params.overrideReason) || undefined;
   const systemRecommendedNextPhase = session.workflowContinuity.loopHealth.systemRecommendedNextPhase
     ?? session.workflowContinuity.loopHealth.recommendedNextPhase;
+  const requestedNextPhaseOverride = deriveRequestedNextPhaseOverride(requestedAction);
   const nextSession: AutonomousSession = {
     ...session,
     updatedAt: createTimestamp(),
@@ -2492,7 +2728,7 @@ export function updateAutonomousSessionSteering(
       ...session.workflowContinuity,
       steering: {
         requestedAction,
-        requestedNextPhaseOverride: deriveRequestedNextPhaseOverride(requestedAction),
+        requestedNextPhaseOverride,
         overrideReason,
         requestedStopReason: normalizeText(params.stopReason) || undefined,
         requestedRestartReason: normalizeText(params.restartReason) || undefined,
@@ -2507,12 +2743,31 @@ export function updateAutonomousSessionSteering(
           {
             requestedAtStepIndex: session.currentStepIndex,
             requestedAction,
-            requestedNextPhaseOverride: deriveRequestedNextPhaseOverride(requestedAction),
+            requestedNextPhaseOverride,
             systemRecommendedNextPhase,
             overrideReason,
             operatorNote,
             requestedStopReason: normalizeText(params.stopReason) || undefined,
             requestedRestartReason: normalizeText(params.restartReason) || undefined,
+          },
+        ]),
+      },
+      review: {
+        ...session.workflowContinuity.review,
+        history: clampRecommendationReviewHistoryEntries([
+          ...(session.workflowContinuity.review.history ?? []),
+          {
+            reviewedAtStepIndex: session.currentStepIndex,
+            systemRecommendedNextPhase,
+            recommendedNextPhase: session.workflowContinuity.loopHealth.recommendedNextPhase,
+            recommendationConfidence: session.workflowContinuity.loopHealth.recommendationConfidence,
+            likelyNeedsOperatorInput: session.workflowContinuity.loopHealth.likelyNeedsOperatorInput,
+            topContributingSignals: session.workflowContinuity.loopHealth.topContributingSignals,
+            recommendationRationaleSummary: session.workflowContinuity.loopHealth.recommendationRationaleSummary,
+            operatorResponse: requestedAction,
+            requestedNextPhaseOverride,
+            operatorNote,
+            overrideReason,
           },
         ]),
       },

@@ -263,6 +263,39 @@ test("autonomous sessions persist and apply supervised steering overrides", () =
   assert.equal(resumed.workflowContinuity.steering.status, "pending");
 });
 
+test("autonomous sessions record accepted recommendation reviews and bounded follow-up progress", () => {
+  const implemented = appendAutonomousStep(createAutonomousSession({ goal: "Review and confirm the current recommendation." }), {
+    proposedAction: "Apply the bounded change set.",
+    executionResult: {
+      status: "success",
+      output: "Implementation finished cleanly and is ready for validation.",
+    },
+    nextDecision: "continue",
+  });
+  const reviewed = updateAutonomousSessionSteering(implemented, {
+    action: "accept-current-recommendation",
+    operatorNote: "The current validation recommendation is appropriate.",
+  });
+  const progressed = appendAutonomousStep(reviewed, {
+    proposedAction: "Run the bounded validation command.",
+    executionResult: {
+      status: "success",
+      output: "Validation confirmed the bounded implementation change.",
+    },
+    nextDecision: "continue",
+  });
+
+  assert.equal(reviewed.workflowContinuity.steering.status, "applied");
+  assert.equal(reviewed.workflowContinuity.review.history.length, 1);
+  assert.equal(reviewed.workflowContinuity.review.history[0]?.operatorResponse, "accept-current-recommendation");
+  assert.equal(progressed.workflowContinuity.review.lastOperatorResponse, "accept-current-recommendation");
+  assert.equal(progressed.workflowContinuity.review.lastRecommendationOutcome, "helped-progress");
+  assert.equal(progressed.workflowContinuity.review.lastReviewImprovedProgress, true);
+  assert.equal(progressed.workflowContinuity.review.lastRecommendationNeededCorrection, false);
+  assert.match(buildAutonomousSessionContextBlock(progressed), /Last operator review response: accept-current-recommendation/i);
+  assert.match(buildAutonomousSessionContextBlock(progressed), /Last recommendation review outcome: helped-progress/i);
+});
+
 test("autonomous sessions block impossible restart overrides and preserve why", () => {
   const blocked = updateAutonomousSessionSteering(createAutonomousSession({ goal: "Try a restart without a safe step." }), {
     action: "restart-from-last-safe-boundary",
@@ -333,6 +366,40 @@ test("autonomous sessions carry bounded refinement history and mark progress fro
   assert.equal(repeatedFailure.workflowContinuity.loopHealth.recommendedNextPhase, "validation");
   assert.match(repeatedFailure.workflowContinuity.loopHealth.loopHealthReason ?? "", /premature until the validation path is rechecked/i);
   assert.match(buildAutonomousSessionContextBlock(repeatedFailure), /Recommendation influenced by recent guidance: true/i);
+});
+
+test("autonomous sessions track repeated recommendation redirects and mark when correction was needed", () => {
+  const implemented = appendAutonomousStep(createAutonomousSession({ goal: "Redirect repeated recommendations when needed." }), {
+    proposedAction: "Apply the first bounded change set.",
+    executionResult: {
+      status: "success",
+      output: "Implementation finished and is ready for validation.",
+    },
+    nextDecision: "continue",
+  });
+  const firstRedirect = updateAutonomousSessionSteering(implemented, {
+    action: "prefer-fix-next",
+    overrideReason: "Another bounded fix is safer than validating too early.",
+  });
+  const corrected = appendAutonomousStep(firstRedirect, {
+    proposedAction: "Apply the follow-up bounded fix.",
+    executionResult: {
+      status: "success",
+      output: "The follow-up fix removed the remaining issue.",
+    },
+    nextDecision: "continue",
+  });
+  const secondRedirect = updateAutonomousSessionSteering(corrected, {
+    action: "prefer-fix-next",
+    overrideReason: "One more bounded fix is still safer than a validation hop.",
+  });
+
+  assert.equal(corrected.workflowContinuity.review.lastRecommendationOutcome, "needed-correction");
+  assert.equal(corrected.workflowContinuity.review.lastReviewImprovedProgress, true);
+  assert.equal(corrected.workflowContinuity.review.lastRecommendationNeededCorrection, true);
+  assert.equal(secondRedirect.workflowContinuity.review.frequentlyOverridden, true);
+  assert.match(secondRedirect.workflowContinuity.review.reviewSummary ?? "", /prefer-fix-next/i);
+  assert.match(buildAutonomousSessionContextBlock(secondRedirect), /Recommendation frequently overridden: true/i);
 });
 
 test("autonomous sessions record blocked refinement attempts for later inspection", () => {

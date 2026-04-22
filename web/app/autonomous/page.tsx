@@ -526,6 +526,13 @@ export default function AutonomousPage() {
                 <p><strong>Likely needs operator input:</strong> {session.workflowContinuity.loopHealth.likelyNeedsOperatorInput ? "Yes" : "No"}</p>
                 <p><strong>Recommendation rationale:</strong> {session.workflowContinuity.loopHealth.recommendationRationaleSummary || "No recommendation rationale recorded yet."}</p>
                 <p><strong>Top recommendation signals:</strong> {session.workflowContinuity.loopHealth.topContributingSignals.length ? session.workflowContinuity.loopHealth.topContributingSignals.join(", ") : "No recommendation signals recorded yet."}</p>
+                <p><strong>Recommendation review summary:</strong> {session.workflowContinuity.review.reviewSummary || "No recommendation review recorded yet."}</p>
+                <p><strong>Last reviewed recommendation:</strong> {session.workflowContinuity.review.lastReviewedRecommendation || "No reviewed recommendation recorded yet."}</p>
+                <p><strong>Last operator review response:</strong> {session.workflowContinuity.review.lastOperatorResponse || "No operator review response recorded yet."}</p>
+                <p><strong>Last recommendation review outcome:</strong> {session.workflowContinuity.review.lastRecommendationOutcome || "No recommendation review outcome recorded yet."}</p>
+                <p><strong>Last review improved progress:</strong> {session.workflowContinuity.review.lastReviewImprovedProgress ? "Yes" : "No"}</p>
+                <p><strong>Last review needed correction:</strong> {session.workflowContinuity.review.lastRecommendationNeededCorrection ? "Yes" : "No"}</p>
+                <p><strong>Recommendation frequently overridden:</strong> {session.workflowContinuity.review.frequentlyOverridden ? "Yes" : "No"}</p>
                 <p><strong>Operator override status:</strong> {session.workflowContinuity.steering.status}</p>
                 <p><strong>Operator override:</strong> {session.workflowContinuity.steering.requestedAction || "No operator override recorded yet."}</p>
                 <p><strong>Operator override reason:</strong> {session.workflowContinuity.steering.overrideReason || "No override reason recorded yet."}</p>
@@ -544,15 +551,23 @@ export default function AutonomousPage() {
               </div>
 
               <div className="rounded-[1.2rem] border border-ink/10 bg-white/70 p-4 text-sm leading-7 text-ink/80">
-                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-ink/45">Supervised loop steering</p>
+                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-ink/45">Operator-assisted recommendation review</p>
+                <div className="mt-3 rounded-[1rem] border border-ocean/10 bg-ocean/5 p-4">
+                  <p><strong>Current system recommendation:</strong> {session.workflowContinuity.loopHealth.systemRecommendedNextPhase || "No system recommendation recorded yet."}</p>
+                  <p><strong>Current recommended next phase:</strong> {session.workflowContinuity.loopHealth.recommendedNextPhase}</p>
+                  <p><strong>Current recommendation confidence:</strong> {session.workflowContinuity.loopHealth.recommendationConfidence}</p>
+                  <p><strong>Current rationale:</strong> {session.workflowContinuity.loopHealth.recommendationRationaleSummary || "No recommendation rationale recorded yet."}</p>
+                  <p><strong>Current top signals:</strong> {session.workflowContinuity.loopHealth.topContributingSignals.length ? session.workflowContinuity.loopHealth.topContributingSignals.join(", ") : "No recommendation signals recorded yet."}</p>
+                </div>
                 <label className="mt-3 block text-sm font-semibold text-ink">
-                  Requested override
+                  Review response
                   <select
                     value={steeringAction}
                     onChange={(event) => setSteeringAction(event.target.value as AutonomousOperatorSteeringAction | "")}
                     className="mt-2 w-full rounded-[1rem] border border-ink/10 bg-white/80 px-4 py-3 text-sm text-ink outline-none transition focus:border-ocean/40"
                   >
                     <option value="">No override</option>
+                    <option value="accept-current-recommendation">Accept current recommendation</option>
                     <option value="prefer-validation-next">Prefer validation next</option>
                     <option value="prefer-fix-next">Prefer fix next</option>
                     <option value="restart-from-last-safe-boundary">Restart from last safe boundary</option>
@@ -586,7 +601,7 @@ export default function AutonomousPage() {
                     disabled={!sessionId.trim() || runState === "running" || (!steeringAction && !operatorNote.trim())}
                     className="rounded-full border border-ocean/20 bg-ocean/10 px-5 py-3 text-sm font-semibold text-ocean disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    Apply steering only
+                    Save review only
                   </button>
                   <button
                     type="button"
@@ -599,7 +614,7 @@ export default function AutonomousPage() {
                     }
                     className="rounded-full border border-gold/30 px-5 py-3 text-sm font-semibold text-ink disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    Apply steering and resume
+                    Save review and resume
                   </button>
                   <button
                     type="button"

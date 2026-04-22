@@ -77,6 +77,8 @@ test("local_node runs a bounded goal, creates a session, and prints a structured
     assert.match(textOutput, /Step 1/i);
     assert.match(textOutput, /Recommendation confidence:/i);
     assert.match(textOutput, /Recommendation rationale:/i);
+    assert.match(textOutput, /Recommendation review summary:/i);
+    assert.match(textOutput, /Recommendation frequently overridden:/i);
     assert.match(jsonOutput, /"sessionId"/i);
     assert.equal(typeof jsonSummary.executionNodeId, "string");
     assert.match(String(jsonSummary.nodeCapabilitySummary ?? ""), /validation-check/i);
@@ -178,6 +180,8 @@ test("local_node queue entrypoints run one queued task and print a queue summary
     assert.match(output, /Dispatch transport: completed/i);
     assert.match(output, /Dispatch summary: dispatch=1 \| type=result \| status=completed/i);
     assert.match(output, /Recommended next phase:/i);
+    assert.match(output, /Recommendation review summary:/i);
+    assert.match(output, /Last recommendation review outcome:/i);
   } finally {
     delete process.env.AIE_AUTONOMOUS_SESSION_DIR;
     delete process.env.AIE_TASK_QUEUE_DIR;
@@ -192,7 +196,7 @@ test("local_node parses bounded steering flags", () => {
     "--sessionId",
     "session-steer-1",
     "--steering",
-    "prefer-fix-next",
+    "accept-current-recommendation",
     "--operatorNote",
     "Fix the current regression before validating again.",
     "--overrideReason",
@@ -202,7 +206,7 @@ test("local_node parses bounded steering flags", () => {
   ]);
 
   assert.equal(parsed.sessionId, "session-steer-1");
-  assert.equal(parsed.steeringAction, "prefer-fix-next");
+  assert.equal(parsed.steeringAction, "accept-current-recommendation");
   assert.equal(parsed.operatorNote, "Fix the current regression before validating again.");
   assert.equal(parsed.overrideReason, "The repeated validation loop is not producing a new signal.");
   assert.equal(parsed.stopReason, "The loop is no longer useful.");

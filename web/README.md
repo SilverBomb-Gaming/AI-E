@@ -300,6 +300,17 @@ AI-E now improves bounded next-step recommendations across repeated supervised l
 
 This slice still does not introduce a second planner, hidden learning state, cross-session adaptation, or any bypass around the existing `TaskEnvelope`, lease, approval, and trusted dispatch boundaries. Recommendation improvement remains session-local, deterministic, and inspectable.
 
+## Post-4M bounded autonomy layering: bounded operator-assisted recommendation review handoff
+
+AI-E now makes bounded next-step recommendations easier for operators to review, confirm, or redirect without adding a second planner or weakening the existing queue, lease, approval, trust, or continuity guarantees.
+
+- `workflowContinuity` now persists bounded recommendation-review history alongside steering and refinement state, including the recommendation that was shown, the operator response, the visible rationale snapshot, and whether later bounded progress showed that the recommendation helped or needed correction
+- operator review stays explicit rather than hidden inside steering metadata: the current session now exposes review summary, last reviewed recommendation, last operator response, last review outcome, whether the review improved progress, whether correction was needed, and whether recent recommendations are being frequently overridden
+- the existing steering path now supports an explicit `accept-current-recommendation` action so operators can confirm the current bounded recommendation directly instead of only redirecting it
+- the autonomous page, headless CLI, local-node CLI, and session context block now surface the same review-oriented fields, making recommendation confirmation or redirection inspectable across browser and non-browser workflows
+
+This slice still does not add hidden adaptation, cross-session operator learning, a secondary orchestration path, or any bypass around the existing `TaskEnvelope` and `AutonomousSession` spine. Recommendation review remains session-local, deterministic, and inspectable.
+
 Still deferred beyond 4M-D:
 
 - autonomous peer-to-peer replication or any direct node-to-node handoff channel

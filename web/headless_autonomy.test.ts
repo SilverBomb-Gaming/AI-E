@@ -77,6 +77,8 @@ test("headless_autonomy persists a bounded session and prints a matching summary
     assert.match(formatHeadlessSessionReport(session, { verbose: true }), /Step 1/i);
     assert.match(formatHeadlessSessionReport(session), /Recommendation confidence:/i);
     assert.match(formatHeadlessSessionReport(session), /Recommendation rationale:/i);
+    assert.match(formatHeadlessSessionReport(session), /Recommendation review summary:/i);
+    assert.match(formatHeadlessSessionReport(session), /Recommendation frequently overridden:/i);
     assert.match(formatHeadlessSessionReport(session, { json: true, verbose: true }), /"sessionId"/i);
     assert.equal(tasks.length, 1);
     assert.match(taskReport, /Status: completed/i);
@@ -177,6 +179,8 @@ test("headless_autonomy queue entrypoints run one queued task and print a queue 
     assert.match(output, /Dispatch transport: completed/i);
     assert.match(output, /Dispatch summary: dispatch=1 \| type=result \| status=completed/i);
     assert.match(output, /Recommendation confidence:/i);
+    assert.match(output, /Recommendation review summary:/i);
+    assert.match(output, /Last recommendation review outcome:/i);
   } finally {
     delete process.env.AIE_AUTONOMOUS_SESSION_DIR;
     delete process.env.AIE_TASK_QUEUE_DIR;
@@ -191,7 +195,7 @@ test("headless_autonomy parses bounded steering flags", () => {
     "--sessionId",
     "session-steer-1",
     "--steering",
-    "prefer-validation-next",
+    "accept-current-recommendation",
     "--operatorNote",
     "Validate before the next fix.",
     "--overrideReason",
@@ -201,7 +205,7 @@ test("headless_autonomy parses bounded steering flags", () => {
   ]);
 
   assert.equal(parsed.sessionId, "session-steer-1");
-  assert.equal(parsed.steeringAction, "prefer-validation-next");
+  assert.equal(parsed.steeringAction, "accept-current-recommendation");
   assert.equal(parsed.operatorNote, "Validate before the next fix.");
   assert.equal(parsed.overrideReason, "The prior fix recommendation is premature.");
   assert.equal(parsed.restartReason, "Return to the last safe checkpoint.");
