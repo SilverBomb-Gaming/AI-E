@@ -550,6 +550,17 @@ export default function AutonomousPage() {
                 <p><strong>Returned to same ineffective recommendation state:</strong> {session.workflowContinuity.escalation.returnedToSameIneffectiveState ? "Yes" : "No"}</p>
                 <p><strong>Recommendation escalation summary:</strong> {session.workflowContinuity.escalation.escalationSummary || "No escalation summary recorded yet."}</p>
                 <p><strong>Recommendation recovery summary:</strong> {session.workflowContinuity.escalation.recoverySummary || "No recovery summary recorded yet."}</p>
+                <p><strong>Recommendation handoff status:</strong> {session.workflowContinuity.handoff.handoffStatus}</p>
+                <p><strong>Waiting on operator recovery decision:</strong> {session.workflowContinuity.handoff.waitingOnOperatorDecision ? "Yes" : "No"}</p>
+                <p><strong>Recovery execution in progress:</strong> {session.workflowContinuity.handoff.recoveryExecutionInProgress ? "Yes" : "No"}</p>
+                <p><strong>Recovery execution completed:</strong> {session.workflowContinuity.handoff.recoveryExecutionCompleted ? "Yes" : "No"}</p>
+                <p><strong>Recovery improved progress:</strong> {session.workflowContinuity.handoff.recoveryImprovedProgress ? "Yes" : "No"}</p>
+                <p><strong>Second escalation needed:</strong> {session.workflowContinuity.handoff.secondEscalationNeeded ? "Yes" : "No"}</p>
+                <p><strong>Selected recovery action:</strong> {session.workflowContinuity.handoff.selectedRecoveryAction || "No recovery action selected yet."}</p>
+                <p><strong>Selected recovery mode:</strong> {session.workflowContinuity.handoff.selectedRecoveryMode || "No recovery mode selected yet."}</p>
+                <p><strong>Selected recovery reason:</strong> {session.workflowContinuity.handoff.selectedRecoveryReason || "No recovery reason recorded yet."}</p>
+                <p><strong>Recommendation handoff summary:</strong> {session.workflowContinuity.handoff.handoffSummary || "No handoff summary recorded yet."}</p>
+                <p><strong>Recovery execution summary:</strong> {session.workflowContinuity.handoff.recoveryExecutionSummary || "No recovery execution summary recorded yet."}</p>
                 <p><strong>Operator override status:</strong> {session.workflowContinuity.steering.status}</p>
                 <p><strong>Operator override:</strong> {session.workflowContinuity.steering.requestedAction || "No operator override recorded yet."}</p>
                 <p><strong>Operator override reason:</strong> {session.workflowContinuity.steering.overrideReason || "No override reason recorded yet."}</p>
@@ -578,6 +589,8 @@ export default function AutonomousPage() {
                   <p><strong>Current follow-through:</strong> {session.workflowContinuity.review.lastFollowThroughSummary || "No follow-through summary recorded yet."}</p>
                   <p><strong>Current escalation:</strong> {session.workflowContinuity.escalation.escalationSummary || "No escalation summary recorded yet."}</p>
                   <p><strong>Current recovery guidance:</strong> {session.workflowContinuity.escalation.recoverySummary || "No recovery guidance recorded yet."}</p>
+                  <p><strong>Current handoff:</strong> {session.workflowContinuity.handoff.handoffSummary || "No handoff summary recorded yet."}</p>
+                  <p><strong>Current recovery execution:</strong> {session.workflowContinuity.handoff.recoveryExecutionSummary || "No recovery execution summary recorded yet."}</p>
                 </div>
                 <label className="mt-3 block text-sm font-semibold text-ink">
                   Review response

@@ -331,6 +331,16 @@ AI-E now turns poor recommendation follow-through into explicit bounded escalati
 
 This slice still does not add hidden adaptive learning, alternate orchestration, multi-agent behavior, or any bypass around the existing queue, lease, approval, and trusted dispatch boundaries. Escalation and recommendation recovery remain session-local, deterministic, and inspectable.
 
+## Post-4M bounded autonomy layering: bounded operator handoff and supervised recovery execution handoff
+
+AI-E now turns escalation into an explicit bounded handoff state, so operators can see when the loop is waiting on a recovery choice, which supervised recovery path was selected, and whether that recovery execution improved progress or triggered another escalation.
+
+- `workflowContinuity.handoff` now persists bounded operator-handoff history alongside the existing escalation state, including the selected recovery action, the derived recovery mode, the operator rationale, whether the system is still waiting on a decision, whether supervised recovery execution is in progress or completed, and whether another escalation became necessary
+- the existing steering update path records supervised recovery choices only when escalation is already active, keeping operator-vs-system distinction explicit and preserving the same bounded continuity spine rather than introducing a second planner or hidden controller
+- the session context block, autonomous page, headless CLI, and local-node CLI now surface handoff and recovery-execution summaries alongside escalation guidance so operators can move from "this loop is stuck" to "this is the supervised recovery path currently being executed"
+
+This slice still does not add hidden adaptation, cross-session learning, alternate orchestration, multi-agent recovery logic, or any bypass around the existing queue, lease, approval, and trusted dispatch boundaries. Operator handoff and supervised recovery execution remain session-local, deterministic, and inspectable.
+
 Still deferred beyond 4M-D:
 
 - autonomous peer-to-peer replication or any direct node-to-node handoff channel

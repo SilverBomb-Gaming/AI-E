@@ -82,6 +82,8 @@ test("local_node runs a bounded goal, creates a session, and prints a structured
     assert.match(textOutput, /Follow-through helped:/i);
     assert.match(textOutput, /Recommendation escalation status:/i);
     assert.match(textOutput, /Recommendation recovery guidance:/i);
+    assert.match(textOutput, /Recommendation handoff status:/i);
+    assert.match(textOutput, /Recovery execution summary:/i);
     assert.match(textOutput, /Recommendation frequently overridden:/i);
     assert.match(jsonOutput, /"sessionId"/i);
     assert.equal(typeof jsonSummary.executionNodeId, "string");
@@ -190,6 +192,8 @@ test("local_node queue entrypoints run one queued task and print a queue summary
     assert.match(output, /Repeated review without progress:/i);
     assert.match(output, /Recommendation escalation status:/i);
     assert.match(output, /Recommendation recovery guidance:/i);
+    assert.match(output, /Recommendation handoff status:/i);
+    assert.match(output, /Recovery execution summary:/i);
   } finally {
     delete process.env.AIE_AUTONOMOUS_SESSION_DIR;
     delete process.env.AIE_TASK_QUEUE_DIR;

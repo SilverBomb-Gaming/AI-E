@@ -196,6 +196,19 @@ export type AutonomousWorkflowRecommendationRecoveryRecommendation =
   | "fix-first"
   | "stop-loop";
 
+export type AutonomousWorkflowRecommendationHandoffStatus =
+  | "none"
+  | "waiting-on-operator-decision"
+  | "escalation-acknowledged"
+  | "recovery-selected"
+  | "recovery-executing"
+  | "recovery-completed"
+  | "second-escalation-needed";
+
+export type AutonomousWorkflowRecommendationHandoffRecoveryMode =
+  | AutonomousWorkflowRecommendationRecoveryRecommendation
+  | "current-recommendation";
+
 export type AutonomousWorkflowRecommendationReviewHistoryEntry = {
   reviewedAtStepIndex: number;
   systemRecommendedNextPhase?: AutonomousWorkflowRecommendedNextPhase;
@@ -242,6 +255,32 @@ export type AutonomousWorkflowRecommendationEscalationState = {
   recoverySummary?: string;
 };
 
+export type AutonomousWorkflowRecommendationHandoffHistoryEntry = {
+  initiatedAtStepIndex: number;
+  escalationStatus: AutonomousWorkflowRecommendationEscalationStatus;
+  recoveryRecommendation: AutonomousWorkflowRecommendationRecoveryRecommendation;
+  operatorAcknowledged: boolean;
+  selectedRecoveryAction?: AutonomousOperatorSteeringAction;
+  selectedRecoveryMode?: AutonomousWorkflowRecommendationHandoffRecoveryMode;
+  operatorNote?: string;
+  overrideReason?: string;
+};
+
+export type AutonomousWorkflowRecommendationHandoffState = {
+  history: AutonomousWorkflowRecommendationHandoffHistoryEntry[];
+  handoffStatus: AutonomousWorkflowRecommendationHandoffStatus;
+  selectedRecoveryAction?: AutonomousOperatorSteeringAction;
+  selectedRecoveryMode?: AutonomousWorkflowRecommendationHandoffRecoveryMode;
+  selectedRecoveryReason?: string;
+  waitingOnOperatorDecision: boolean;
+  recoveryExecutionInProgress: boolean;
+  recoveryExecutionCompleted: boolean;
+  recoveryImprovedProgress: boolean;
+  secondEscalationNeeded: boolean;
+  handoffSummary?: string;
+  recoveryExecutionSummary?: string;
+};
+
 export type AutonomousWorkflowRecommendationConfidence = "low" | "medium" | "high";
 
 export type AutonomousWorkflowRecommendationSignal =
@@ -282,6 +321,7 @@ export type AutonomousWorkflowContinuityState = {
   refinement: AutonomousWorkflowRefinementState;
   review: AutonomousWorkflowRecommendationReviewState;
   escalation: AutonomousWorkflowRecommendationEscalationState;
+  handoff: AutonomousWorkflowRecommendationHandoffState;
   loopHealth: AutonomousWorkflowLoopHealthState;
 };
 
@@ -446,6 +486,18 @@ function createDefaultAutonomousWorkflowRecommendationEscalationState(): Autonom
   };
 }
 
+function createDefaultAutonomousWorkflowRecommendationHandoffState(): AutonomousWorkflowRecommendationHandoffState {
+  return {
+    history: [],
+    handoffStatus: "none",
+    waitingOnOperatorDecision: false,
+    recoveryExecutionInProgress: false,
+    recoveryExecutionCompleted: false,
+    recoveryImprovedProgress: false,
+    secondEscalationNeeded: false,
+  };
+}
+
 function normalizeAutonomousOperatorSteeringAction(value: unknown): AutonomousOperatorSteeringAction | undefined {
   const normalized = normalizeText(typeof value === "string" ? value : "");
   if (
@@ -510,6 +562,34 @@ function normalizeAutonomousWorkflowRecommendationRecoveryRecommendation(
     : undefined;
 }
 
+function normalizeAutonomousWorkflowRecommendationHandoffStatus(
+  value: unknown,
+): AutonomousWorkflowRecommendationHandoffStatus | undefined {
+  return value === "none"
+    || value === "waiting-on-operator-decision"
+    || value === "escalation-acknowledged"
+    || value === "recovery-selected"
+    || value === "recovery-executing"
+    || value === "recovery-completed"
+    || value === "second-escalation-needed"
+    ? value
+    : undefined;
+}
+
+function normalizeAutonomousWorkflowRecommendationHandoffRecoveryMode(
+  value: unknown,
+): AutonomousWorkflowRecommendationHandoffRecoveryMode | undefined {
+  return value === "none"
+    || value === "operator-intervention"
+    || value === "restart-from-last-safe-boundary"
+    || value === "validation-first"
+    || value === "fix-first"
+    || value === "stop-loop"
+    || value === "current-recommendation"
+    ? value as AutonomousWorkflowRecommendationHandoffRecoveryMode
+    : undefined;
+}
+
 function deriveRequestedNextPhaseOverride(
   action: AutonomousOperatorSteeringAction | undefined,
 ): AutonomousWorkflowRecommendedNextPhase | undefined {
@@ -558,6 +638,12 @@ function clampRefinementHistoryEntries(
 function clampRecommendationReviewHistoryEntries(
   entries: AutonomousWorkflowRecommendationReviewHistoryEntry[],
 ): AutonomousWorkflowRecommendationReviewHistoryEntry[] {
+  return entries.slice(-6);
+}
+
+function clampRecommendationHandoffHistoryEntries(
+  entries: AutonomousWorkflowRecommendationHandoffHistoryEntry[],
+): AutonomousWorkflowRecommendationHandoffHistoryEntry[] {
   return entries.slice(-6);
 }
 
@@ -620,6 +706,62 @@ function normalizeAutonomousWorkflowRecommendationReviewHistoryEntry(value: unkn
     operatorNote: normalizeText(typeof source.operatorNote === "string" ? source.operatorNote : "") || undefined,
     overrideReason: normalizeText(typeof source.overrideReason === "string" ? source.overrideReason : "") || undefined,
   };
+}
+
+function normalizeAutonomousWorkflowRecommendationHandoffHistoryEntry(value: unknown): AutonomousWorkflowRecommendationHandoffHistoryEntry | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const source = value as Record<string, unknown>;
+  const initiatedAtStepIndex = Number(source.initiatedAtStepIndex ?? 0);
+  const escalationStatus = normalizeAutonomousWorkflowRecommendationEscalationStatus(source.escalationStatus);
+  const recoveryRecommendation = normalizeAutonomousWorkflowRecommendationRecoveryRecommendation(source.recoveryRecommendation);
+  if (!Number.isInteger(initiatedAtStepIndex) || initiatedAtStepIndex <= 0 || !escalationStatus || !recoveryRecommendation) {
+    return null;
+  }
+
+  return {
+    initiatedAtStepIndex,
+    escalationStatus,
+    recoveryRecommendation,
+    operatorAcknowledged: typeof source.operatorAcknowledged === "boolean" ? source.operatorAcknowledged : false,
+    selectedRecoveryAction: normalizeAutonomousOperatorSteeringAction(source.selectedRecoveryAction),
+    selectedRecoveryMode: normalizeAutonomousWorkflowRecommendationHandoffRecoveryMode(source.selectedRecoveryMode),
+    operatorNote: normalizeText(typeof source.operatorNote === "string" ? source.operatorNote : "") || undefined,
+    overrideReason: normalizeText(typeof source.overrideReason === "string" ? source.overrideReason : "") || undefined,
+  };
+}
+
+function deriveRecommendationHandoffRecoveryMode(
+  action: AutonomousOperatorSteeringAction | undefined,
+  recoveryRecommendation: AutonomousWorkflowRecommendationRecoveryRecommendation,
+): AutonomousWorkflowRecommendationHandoffRecoveryMode | undefined {
+  if (action === "accept-current-recommendation") {
+    return "current-recommendation";
+  }
+
+  if (action === "prefer-validation-next") {
+    return "validation-first";
+  }
+
+  if (action === "prefer-fix-next") {
+    return "fix-first";
+  }
+
+  if (action === "restart-from-last-safe-boundary") {
+    return "restart-from-last-safe-boundary";
+  }
+
+  if (action === "pause-and-wait") {
+    return "operator-intervention";
+  }
+
+  if (action === "stop-loop") {
+    return "stop-loop";
+  }
+
+  return recoveryRecommendation !== "none" ? recoveryRecommendation : undefined;
 }
 
 function normalizeFailureClassification(value: unknown): FailureClassification | undefined {
@@ -1706,6 +1848,14 @@ export function deriveAutonomousWorkflowContinuity(session: AutonomousSession): 
       currentLoopHealth: loopHealth,
       lastCompletedSafeStep,
     }),
+    handoff: deriveRecommendationHandoffState({
+      session,
+      currentEscalation: deriveRecommendationEscalationState({
+        session,
+        currentLoopHealth: loopHealth,
+        lastCompletedSafeStep,
+      }),
+    }),
   };
 }
 
@@ -1721,6 +1871,7 @@ function normalizeAutonomousWorkflowContinuityState(value: unknown): AutonomousW
   const refinementSource = source.refinement && typeof source.refinement === "object" ? (source.refinement as Record<string, unknown>) : undefined;
   const reviewSource = source.review && typeof source.review === "object" ? (source.review as Record<string, unknown>) : undefined;
   const escalationSource = source.escalation && typeof source.escalation === "object" ? (source.escalation as Record<string, unknown>) : undefined;
+  const handoffSource = source.handoff && typeof source.handoff === "object" ? (source.handoff as Record<string, unknown>) : undefined;
   const loopHealthSource = source.loopHealth && typeof source.loopHealth === "object" ? (source.loopHealth as Record<string, unknown>) : undefined;
   const chainPhase = normalizeText(typeof progressSource?.chainPhase === "string" ? progressSource.chainPhase : "");
 
@@ -1867,6 +2018,27 @@ function normalizeAutonomousWorkflowContinuityState(value: unknown): AutonomousW
         typeof escalationSource?.returnedToSameIneffectiveState === "boolean" ? escalationSource.returnedToSameIneffectiveState : false,
       escalationSummary: normalizeText(typeof escalationSource?.escalationSummary === "string" ? escalationSource.escalationSummary : "") || undefined,
       recoverySummary: normalizeText(typeof escalationSource?.recoverySummary === "string" ? escalationSource.recoverySummary : "") || undefined,
+    },
+    handoff: {
+      history: clampRecommendationHandoffHistoryEntries(
+        Array.isArray(handoffSource?.history)
+          ? (handoffSource?.history as unknown[])
+              .map((entry) => normalizeAutonomousWorkflowRecommendationHandoffHistoryEntry(entry))
+              .filter((entry): entry is AutonomousWorkflowRecommendationHandoffHistoryEntry => entry !== null)
+          : [],
+      ),
+      handoffStatus: normalizeAutonomousWorkflowRecommendationHandoffStatus(handoffSource?.handoffStatus) ?? "none",
+      selectedRecoveryAction: normalizeAutonomousOperatorSteeringAction(handoffSource?.selectedRecoveryAction),
+      selectedRecoveryMode: normalizeAutonomousWorkflowRecommendationHandoffRecoveryMode(handoffSource?.selectedRecoveryMode),
+      selectedRecoveryReason: normalizeText(typeof handoffSource?.selectedRecoveryReason === "string" ? handoffSource.selectedRecoveryReason : "") || undefined,
+      waitingOnOperatorDecision: typeof handoffSource?.waitingOnOperatorDecision === "boolean" ? handoffSource.waitingOnOperatorDecision : false,
+      recoveryExecutionInProgress: typeof handoffSource?.recoveryExecutionInProgress === "boolean" ? handoffSource.recoveryExecutionInProgress : false,
+      recoveryExecutionCompleted: typeof handoffSource?.recoveryExecutionCompleted === "boolean" ? handoffSource.recoveryExecutionCompleted : false,
+      recoveryImprovedProgress: typeof handoffSource?.recoveryImprovedProgress === "boolean" ? handoffSource.recoveryImprovedProgress : false,
+      secondEscalationNeeded: typeof handoffSource?.secondEscalationNeeded === "boolean" ? handoffSource.secondEscalationNeeded : false,
+      handoffSummary: normalizeText(typeof handoffSource?.handoffSummary === "string" ? handoffSource.handoffSummary : "") || undefined,
+      recoveryExecutionSummary:
+        normalizeText(typeof handoffSource?.recoveryExecutionSummary === "string" ? handoffSource.recoveryExecutionSummary : "") || undefined,
     },
     loopHealth: {
       currentPhaseRepeatCount: Number.isInteger(Number(loopHealthSource?.currentPhaseRepeatCount)) ? Math.max(1, Number(loopHealthSource?.currentPhaseRepeatCount)) : 1,
@@ -2528,6 +2700,106 @@ function deriveRecommendationEscalationState(params: {
   };
 }
 
+function deriveRecommendationHandoffState(params: {
+  session: AutonomousSession;
+  currentEscalation: AutonomousWorkflowRecommendationEscalationState;
+}): AutonomousWorkflowRecommendationHandoffState {
+  const priorHandoff = params.session.workflowContinuity?.handoff ?? createDefaultAutonomousWorkflowRecommendationHandoffState();
+  const history = clampRecommendationHandoffHistoryEntries(priorHandoff.history ?? []);
+  const lastHistoryEntry = history.at(-1);
+
+  if (!lastHistoryEntry) {
+    if (params.currentEscalation.escalationStatus !== "none") {
+      return {
+        ...createDefaultAutonomousWorkflowRecommendationHandoffState(),
+        handoffStatus: "waiting-on-operator-decision",
+        waitingOnOperatorDecision: true,
+        handoffSummary: params.currentEscalation.escalationSummary || "An escalated supervised recovery decision is waiting on the operator.",
+        recoveryExecutionSummary: params.currentEscalation.recoverySummary,
+      };
+    }
+
+    return createDefaultAutonomousWorkflowRecommendationHandoffState();
+  }
+
+  const followUpSteps = params.session.steps.filter((step) => step.index >= lastHistoryEntry.initiatedAtStepIndex);
+  const successfulFollowUp = followUpSteps.find((step) => {
+    return step.executionResult?.status === "success"
+      || step.goalStatus === "progressing"
+      || step.goalStatus === "complete"
+      || step.nextDecision === "continue";
+  });
+  const selectedRecoveryAction = lastHistoryEntry.selectedRecoveryAction;
+  const selectedRecoveryMode = lastHistoryEntry.selectedRecoveryMode;
+  const selectedRecoveryReason = lastHistoryEntry.overrideReason || lastHistoryEntry.operatorNote || params.currentEscalation.recoverySummary;
+  const newEscalationRaised = params.currentEscalation.escalationStatus !== "none"
+    && lastHistoryEntry.initiatedAtStepIndex < params.session.currentStepIndex
+    && (
+      lastHistoryEntry.escalationStatus !== params.currentEscalation.escalationStatus
+      || lastHistoryEntry.recoveryRecommendation !== params.currentEscalation.recoveryRecommendation
+    );
+  const waitingOnOperatorDecision = params.currentEscalation.escalationStatus !== "none"
+    && (newEscalationRaised || (!selectedRecoveryAction && !selectedRecoveryMode));
+  const escalationAcknowledged = lastHistoryEntry.operatorAcknowledged && !selectedRecoveryAction && !selectedRecoveryMode;
+  const recoveryExecutionCompleted = Boolean(successfulFollowUp)
+    || (selectedRecoveryMode === "stop-loop" && params.session.status !== "active")
+    || (selectedRecoveryMode === "operator-intervention" && params.session.status === "paused");
+  const recoveryImprovedProgress = Boolean(successfulFollowUp);
+  const secondEscalationNeeded = (newEscalationRaised && followUpSteps.length > 0 && !successfulFollowUp)
+    || (followUpSteps.length > 0
+    && !recoveryExecutionCompleted
+    && params.currentEscalation.escalationStatus !== "none"
+    && params.currentEscalation.likelyNeedsOperatorInterventionNow
+    && !newEscalationRaised);
+  const recoveryExecutionInProgress = followUpSteps.length > 0 && !recoveryExecutionCompleted && !secondEscalationNeeded;
+
+  let handoffStatus: AutonomousWorkflowRecommendationHandoffStatus = "none";
+  if (waitingOnOperatorDecision) {
+    handoffStatus = "waiting-on-operator-decision";
+  } else if (secondEscalationNeeded) {
+    handoffStatus = "second-escalation-needed";
+  } else if (recoveryExecutionCompleted) {
+    handoffStatus = "recovery-completed";
+  } else if (recoveryExecutionInProgress) {
+    handoffStatus = "recovery-executing";
+  } else if (selectedRecoveryAction || selectedRecoveryMode) {
+    handoffStatus = "recovery-selected";
+  } else if (escalationAcknowledged) {
+    handoffStatus = "escalation-acknowledged";
+  }
+
+  return {
+    history,
+    handoffStatus,
+    selectedRecoveryAction,
+    selectedRecoveryMode,
+    selectedRecoveryReason,
+    waitingOnOperatorDecision,
+    recoveryExecutionInProgress,
+    recoveryExecutionCompleted,
+    recoveryImprovedProgress,
+    secondEscalationNeeded,
+    handoffSummary: waitingOnOperatorDecision
+      ? params.currentEscalation.escalationSummary
+        ? `Waiting on an operator recovery decision: ${params.currentEscalation.escalationSummary}`
+        : "Waiting on an operator recovery decision."
+      : escalationAcknowledged
+        ? "The operator acknowledged the escalation and is preparing a supervised recovery path."
+        : selectedRecoveryAction || selectedRecoveryMode
+          ? `Selected supervised recovery path: ${selectedRecoveryMode ?? selectedRecoveryAction}.`
+          : undefined,
+    recoveryExecutionSummary: recoveryExecutionCompleted
+      ? successfulFollowUp
+        ? `The supervised recovery path improved progress at step ${successfulFollowUp.index}.`
+        : `The supervised recovery path completed with ${selectedRecoveryMode ?? selectedRecoveryAction}.`
+      : secondEscalationNeeded
+        ? "The supervised recovery path did not improve progress and triggered another escalation."
+        : recoveryExecutionInProgress
+          ? `The supervised recovery path is in progress via ${selectedRecoveryMode ?? selectedRecoveryAction}.`
+          : params.currentEscalation.recoverySummary,
+  };
+}
+
 function applyOperatorRefinementToLoopHealth(params: {
   systemLoopHealth: AutonomousWorkflowLoopHealthState;
   steering: AutonomousWorkflowSteeringState;
@@ -2604,6 +2876,7 @@ export function createAutonomousSession(params: CreateAutonomousSessionParams): 
       refinement: createDefaultAutonomousWorkflowRefinementState(),
       review: createDefaultAutonomousWorkflowRecommendationReviewState(),
       escalation: createDefaultAutonomousWorkflowRecommendationEscalationState(),
+      handoff: createDefaultAutonomousWorkflowRecommendationHandoffState(),
       loopHealth: {
         currentPhaseRepeatCount: 1,
         recentPhaseOutcomes: [],
@@ -2901,6 +3174,7 @@ export function normalizeAutonomousSession(value: unknown): AutonomousSession | 
       refinement: createDefaultAutonomousWorkflowRefinementState(),
       review: createDefaultAutonomousWorkflowRecommendationReviewState(),
       escalation: createDefaultAutonomousWorkflowRecommendationEscalationState(),
+      handoff: createDefaultAutonomousWorkflowRecommendationHandoffState(),
       loopHealth: {
         currentPhaseRepeatCount: 1,
         recentPhaseOutcomes: [],
@@ -3065,6 +3339,33 @@ export function buildAutonomousSessionContextBlock(session: AutonomousSession, l
     lines.push(`- Recommendation recovery summary: ${session.workflowContinuity.escalation.recoverySummary}`);
   }
 
+  lines.push(`- Recommendation handoff status: ${session.workflowContinuity.handoff.handoffStatus}`);
+  lines.push(`- Waiting on operator recovery decision: ${String(session.workflowContinuity.handoff.waitingOnOperatorDecision)}`);
+  lines.push(`- Recovery execution in progress: ${String(session.workflowContinuity.handoff.recoveryExecutionInProgress)}`);
+  lines.push(`- Recovery execution completed: ${String(session.workflowContinuity.handoff.recoveryExecutionCompleted)}`);
+  lines.push(`- Recovery improved progress: ${String(session.workflowContinuity.handoff.recoveryImprovedProgress)}`);
+  lines.push(`- Second escalation needed: ${String(session.workflowContinuity.handoff.secondEscalationNeeded)}`);
+
+  if (session.workflowContinuity.handoff.selectedRecoveryAction) {
+    lines.push(`- Selected recovery action: ${session.workflowContinuity.handoff.selectedRecoveryAction}`);
+  }
+
+  if (session.workflowContinuity.handoff.selectedRecoveryMode) {
+    lines.push(`- Selected recovery mode: ${session.workflowContinuity.handoff.selectedRecoveryMode}`);
+  }
+
+  if (session.workflowContinuity.handoff.selectedRecoveryReason) {
+    lines.push(`- Selected recovery reason: ${session.workflowContinuity.handoff.selectedRecoveryReason}`);
+  }
+
+  if (session.workflowContinuity.handoff.handoffSummary) {
+    lines.push(`- Recommendation handoff summary: ${session.workflowContinuity.handoff.handoffSummary}`);
+  }
+
+  if (session.workflowContinuity.handoff.recoveryExecutionSummary) {
+    lines.push(`- Recovery execution summary: ${session.workflowContinuity.handoff.recoveryExecutionSummary}`);
+  }
+
   if (session.workflowContinuity.loopHealth.systemRecommendedNextPhase) {
     lines.push(`- System recommended next phase: ${session.workflowContinuity.loopHealth.systemRecommendedNextPhase}`);
   }
@@ -3200,6 +3501,12 @@ export function updateAutonomousSessionSteering(
   const systemRecommendedNextPhase = session.workflowContinuity.loopHealth.systemRecommendedNextPhase
     ?? session.workflowContinuity.loopHealth.recommendedNextPhase;
   const requestedNextPhaseOverride = deriveRequestedNextPhaseOverride(requestedAction);
+  const shouldRecordHandoff = session.workflowContinuity.escalation.escalationStatus !== "none"
+    && Boolean(requestedAction || operatorNote || overrideReason);
+  const selectedRecoveryMode = deriveRecommendationHandoffRecoveryMode(
+    requestedAction,
+    session.workflowContinuity.escalation.recoveryRecommendation,
+  );
   const nextSession: AutonomousSession = {
     ...session,
     updatedAt: createTimestamp(),
@@ -3249,6 +3556,24 @@ export function updateAutonomousSessionSteering(
             overrideReason,
           },
         ]),
+      },
+      handoff: {
+        ...session.workflowContinuity.handoff,
+        history: shouldRecordHandoff
+          ? clampRecommendationHandoffHistoryEntries([
+              ...(session.workflowContinuity.handoff.history ?? []),
+              {
+                initiatedAtStepIndex: session.currentStepIndex,
+                escalationStatus: session.workflowContinuity.escalation.escalationStatus,
+                recoveryRecommendation: session.workflowContinuity.escalation.recoveryRecommendation,
+                operatorAcknowledged: true,
+                selectedRecoveryAction: requestedAction,
+                selectedRecoveryMode,
+                operatorNote,
+                overrideReason,
+              },
+            ])
+          : session.workflowContinuity.handoff.history,
       },
     },
   };

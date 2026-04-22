@@ -571,6 +571,166 @@ test("autonomous sessions recommend stopping loops after repeated ineffective re
   assert.match(thirdFailure.workflowContinuity.escalation.recoverySummary ?? "", /stopping the current loop/i);
 });
 
+test("autonomous sessions open an explicit handoff when escalation is waiting on an operator recovery choice", () => {
+  const failedValidation = appendAutonomousStep(createAutonomousSession({ goal: "Wait for a supervised recovery decision after escalation." }), {
+    proposedAction: "Run the bounded validation command.",
+    executionResult: {
+      status: "failed",
+      error: "Validation still reports the same unresolved failure.",
+    },
+    failureReason: "Validation still reports the same unresolved failure.",
+  });
+  const reviewedOne = updateAutonomousSessionSteering(failedValidation, {
+    action: "accept-current-recommendation",
+    operatorNote: "Accept the current recommendation for another bounded validation attempt.",
+  });
+  const secondFailure = appendAutonomousStep(reviewedOne, {
+    proposedAction: "Run the bounded validation command again.",
+    executionResult: {
+      status: "failed",
+      error: "Validation still reports the same unresolved failure.",
+    },
+    failureReason: "Validation still reports the same unresolved failure.",
+  });
+  const reviewedTwo = updateAutonomousSessionSteering(secondFailure, {
+    action: "accept-current-recommendation",
+    operatorNote: "Accept the current recommendation for one final bounded validation attempt.",
+  });
+  const thirdFailure = appendAutonomousStep(reviewedTwo, {
+    proposedAction: "Run the bounded validation command a third time.",
+    executionResult: {
+      status: "failed",
+      error: "Validation still reports the same unresolved failure.",
+    },
+    failureReason: "Validation still reports the same unresolved failure.",
+  });
+
+  assert.equal(thirdFailure.workflowContinuity.escalation.escalationStatus, "stop-recommended");
+  assert.equal(thirdFailure.workflowContinuity.handoff.handoffStatus, "waiting-on-operator-decision");
+  assert.equal(thirdFailure.workflowContinuity.handoff.waitingOnOperatorDecision, true);
+  assert.equal(thirdFailure.workflowContinuity.handoff.secondEscalationNeeded, true);
+  assert.match(thirdFailure.workflowContinuity.handoff.handoffSummary ?? "", /waiting/i);
+});
+
+test("autonomous sessions track supervised recovery execution after the operator selects a bounded recovery path", () => {
+  const implemented = appendAutonomousStep(createAutonomousSession({ goal: "Execute a supervised recovery path after escalation." }), {
+    proposedAction: "Apply the first bounded implementation change.",
+    executionResult: {
+      status: "success",
+      output: "Implementation completed and is ready for validation.",
+    },
+    nextDecision: "continue",
+  });
+  const redirectOne = updateAutonomousSessionSteering(implemented, {
+    action: "prefer-fix-next",
+    overrideReason: "A bounded fix-first path is safer than validating too early.",
+  });
+  const fixOne = appendAutonomousStep(redirectOne, {
+    proposedAction: "Apply the first bounded follow-up fix.",
+    executionResult: {
+      status: "success",
+      output: "The first follow-up fix improved the bounded state.",
+    },
+    nextDecision: "continue",
+  });
+  const cleared = clearAutonomousSessionSteering(fixOne);
+  const implementedAgain = appendAutonomousStep(cleared, {
+    proposedAction: "Apply the second bounded implementation change.",
+    executionResult: {
+      status: "success",
+      output: "Another implementation change is ready for review.",
+    },
+    nextDecision: "continue",
+  });
+  const redirectTwo = updateAutonomousSessionSteering(implementedAgain, {
+    action: "prefer-fix-next",
+    overrideReason: "The recent redirected fix-first path outperformed the default recommendation.",
+  });
+  const fixTwo = appendAutonomousStep(redirectTwo, {
+    proposedAction: "Apply the second bounded follow-up fix.",
+    executionResult: {
+      status: "success",
+      output: "The second follow-up fix improved the bounded state again.",
+    },
+    nextDecision: "continue",
+  });
+  const selectedRecovery = updateAutonomousSessionSteering(fixTwo, {
+    action: "prefer-fix-next",
+    overrideReason: "Use the supervised fix-first recovery path now that the alternate path escalation is active.",
+  });
+  const recovered = appendAutonomousStep(selectedRecovery, {
+    proposedAction: "Apply the supervised fix-first recovery step.",
+    executionResult: {
+      status: "success",
+      output: "The supervised fix-first recovery path improved progress.",
+    },
+    nextDecision: "continue",
+  });
+
+  assert.equal(selectedRecovery.workflowContinuity.handoff.history.length >= 1, true);
+  assert.equal(recovered.workflowContinuity.handoff.handoffStatus, "recovery-completed");
+  assert.equal(recovered.workflowContinuity.handoff.selectedRecoveryAction, "prefer-fix-next");
+  assert.equal(recovered.workflowContinuity.handoff.selectedRecoveryMode, "fix-first");
+  assert.equal(recovered.workflowContinuity.handoff.recoveryExecutionCompleted, true);
+  assert.equal(recovered.workflowContinuity.handoff.recoveryImprovedProgress, true);
+  assert.match(recovered.workflowContinuity.handoff.recoveryExecutionSummary ?? "", /improved progress/i);
+});
+
+test("autonomous sessions mark a second escalation when a selected supervised recovery path still does not improve progress", () => {
+  const failedValidation = appendAutonomousStep(createAutonomousSession({ goal: "Require a second escalation after an ineffective supervised recovery path." }), {
+    proposedAction: "Run the bounded validation command.",
+    executionResult: {
+      status: "failed",
+      error: "Validation still reports the same unresolved failure.",
+    },
+    failureReason: "Validation still reports the same unresolved failure.",
+  });
+  const acceptedOne = updateAutonomousSessionSteering(failedValidation, {
+    action: "accept-current-recommendation",
+    operatorNote: "Accept the current recommendation before redirecting if needed.",
+  });
+  const correctedOne = updateAutonomousSessionSteering(acceptedOne, {
+    action: "prefer-validation-next",
+    overrideReason: "The accepted recommendation still needs correction.",
+  });
+  const repeatedFailure = appendAutonomousStep(correctedOne, {
+    proposedAction: "Run the bounded validation command again.",
+    executionResult: {
+      status: "failed",
+      error: "Validation still reports the same unresolved failure.",
+    },
+    failureReason: "Validation still reports the same unresolved failure.",
+  });
+  const acceptedTwo = updateAutonomousSessionSteering(repeatedFailure, {
+    action: "accept-current-recommendation",
+    operatorNote: "Accept the latest recommendation again for one more bounded attempt.",
+  });
+  const correctedTwo = updateAutonomousSessionSteering(acceptedTwo, {
+    action: "prefer-validation-next",
+    overrideReason: "The accepted recommendation needed correction again.",
+  });
+  const selectedRecovery = updateAutonomousSessionSteering(correctedTwo, {
+    action: "prefer-validation-next",
+    overrideReason: "Select the supervised validation-first recovery path for this escalation.",
+  });
+  const failedRecovery = appendAutonomousStep(selectedRecovery, {
+    proposedAction: "Run the supervised validation-first recovery step.",
+    executionResult: {
+      status: "failed",
+      error: "The supervised recovery path still did not improve progress.",
+    },
+    failureReason: "The supervised recovery path still did not improve progress.",
+  });
+
+  assert.equal(failedRecovery.workflowContinuity.escalation.escalationStatus, "stop-recommended");
+  assert.equal(failedRecovery.workflowContinuity.handoff.handoffStatus, "waiting-on-operator-decision");
+  assert.equal(failedRecovery.workflowContinuity.handoff.secondEscalationNeeded, true);
+  assert.equal(failedRecovery.workflowContinuity.handoff.waitingOnOperatorDecision, true);
+  assert.equal(failedRecovery.workflowContinuity.handoff.selectedRecoveryAction, "prefer-validation-next");
+  assert.equal(failedRecovery.workflowContinuity.handoff.selectedRecoveryMode, "validation-first");
+  assert.match(failedRecovery.workflowContinuity.handoff.recoveryExecutionSummary ?? "", /triggered another escalation/i);
+});
+
 test("autonomous sessions record blocked refinement attempts for later inspection", () => {
   const blocked = updateAutonomousSessionSteering(createAutonomousSession({ goal: "Record a blocked restart refinement." }), {
     action: "restart-from-last-safe-boundary",
