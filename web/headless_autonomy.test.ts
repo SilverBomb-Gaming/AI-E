@@ -95,6 +95,10 @@ test("headless_autonomy persists a bounded session and prints a matching summary
     assert.match(formatHeadlessSessionReport(session), /Loop should terminate:/i);
     assert.match(formatHeadlessSessionReport(session), /Acceptance reason:/i);
     assert.match(formatHeadlessSessionReport(session), /Acceptance summary:/i);
+    assert.match(formatHeadlessSessionReport(session), /Output linked to deliverable:/i);
+    assert.match(formatHeadlessSessionReport(session), /Files affected:/i);
+    assert.match(formatHeadlessSessionReport(session), /Last output summary:/i);
+    assert.match(formatHeadlessSessionReport(session), /Output artifacts:/i);
     assert.match(formatHeadlessSessionReport(session), /Current validation target:/i);
     assert.match(formatHeadlessSessionReport(session), /Last implementation summary:/i);
     assert.match(formatHeadlessSessionReport(session), /Last validation summary:/i);
@@ -231,6 +235,10 @@ test("headless_autonomy queue entrypoints run one queued task and print a queue 
     assert.match(output, /Loop should terminate:/i);
     assert.match(output, /Acceptance reason:/i);
     assert.match(output, /Acceptance summary:/i);
+    assert.match(output, /Output linked to deliverable:/i);
+    assert.match(output, /Files affected:/i);
+    assert.match(output, /Last output summary:/i);
+    assert.match(output, /Output artifacts:/i);
     assert.match(output, /Current validation target:/i);
     assert.match(output, /Last implementation summary:/i);
     assert.match(output, /Last validation summary:/i);

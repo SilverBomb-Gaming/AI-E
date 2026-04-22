@@ -303,6 +303,68 @@ test("repo coding sessions mark correction pending and validation recovered afte
   assert.match(recovered.workflowContinuity.coding.codingSummary ?? "", /last-validation=passed/i);
 });
 
+test("repo coding sessions track bounded output artifacts across implementation and correction iterations", () => {
+  const created = createAutonomousSession({
+    goal: "Produce a bounded repo output, correct it, and revalidate it.",
+    sessionMode: "repo-coding",
+  });
+  const implemented = appendAutonomousStep(created, {
+    proposedAction: "Apply the bounded implementation patch to web/lib/aie/autonomousSession.ts.",
+    expectedOutcome: "The bounded repo output should be ready for validation.",
+    executionResult: {
+      status: "success",
+      output: "Implementation patch applied cleanly.",
+      changedPaths: ["web/lib/aie/autonomousSession.ts"],
+      diffSummary: "Added bounded repo output artifact tracking.",
+    },
+    nextDecision: "continue",
+  });
+  const failedValidation = appendAutonomousStep(implemented, {
+    proposedAction: "Run the bounded validation target.",
+    expectedOutcome: "The bounded repo output should validate cleanly.",
+    executionResult: {
+      status: "failed",
+      error: "Validation still reports that the output summary is incomplete.",
+      commandLabel: "npx tsx --test lib/aie/autonomousSession.test.ts",
+    },
+    failureReason: "Validation still reports that the output summary is incomplete.",
+  });
+  const corrected = appendAutonomousStep(failedValidation, {
+    proposedAction: "Apply the bounded correction patch to web/lib/aie/autonomousSession.ts.",
+    expectedOutcome: "The bounded corrected output should be ready for validation.",
+    executionResult: {
+      status: "success",
+      output: "Correction patch applied cleanly.",
+      changedPaths: ["web/lib/aie/autonomousSession.ts"],
+      diffSummary: "Updated output summaries to include iteration deltas.",
+    },
+    nextDecision: "continue",
+  });
+  const recovered = appendAutonomousStep(corrected, {
+    proposedAction: "Run the bounded validation target again.",
+    expectedOutcome: "The bounded corrected output should now validate cleanly.",
+    executionResult: {
+      status: "success",
+      output: "Validation passed for the corrected output.",
+      commandLabel: "npx tsx --test lib/aie/autonomousSession.test.ts",
+    },
+    nextDecision: "continue",
+  });
+
+  assert.equal(corrected.workflowContinuity.coding.outputArtifacts.length, 2);
+  assert.equal(corrected.workflowContinuity.coding.outputArtifacts[0]?.filePath, "web/lib/aie/autonomousSession.ts");
+  assert.match(corrected.workflowContinuity.coding.outputArtifacts[0]?.changeSummary ?? "", /first recorded output iteration/i);
+  assert.match(corrected.workflowContinuity.coding.outputArtifacts[1]?.changeSummary ?? "", /changed from prior output iteration/i);
+  assert.equal(corrected.workflowContinuity.coding.outputArtifacts[1]?.linkedToDeliverable, true);
+  assert.equal(corrected.workflowContinuity.coding.outputLinkedToDeliverable, true);
+  assert.match(corrected.workflowContinuity.coding.lastOutputSummary ?? "", /updated output summaries to include iteration deltas/i);
+  assert.match(recovered.workflowContinuity.coding.validationProves ?? "", /produced output/i);
+  assert.match(recovered.workflowContinuity.coding.currentAcceptanceTarget ?? "", /accept the produced output/i);
+  assert.match(recovered.workflowContinuity.coding.acceptanceSummary ?? "", /output-linked=true/i);
+  assert.match(buildAutonomousSessionContextBlock(recovered), /Output linked to deliverable: true/i);
+  assert.match(buildAutonomousSessionContextBlock(recovered), /Output artifacts:/i);
+});
+
 test("repo coding sessions accept a deliverable after repeated successful validation without regression", () => {
   const created = createAutonomousSession({
     goal: "Deliver a bounded repo coding fix and close it cleanly.",

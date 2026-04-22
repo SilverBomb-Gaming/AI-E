@@ -313,6 +313,14 @@ export type AutonomousWorkflowCodingCompletionState =
   | "accepted"
   | "rejected";
 
+export type AutonomousWorkflowCodingOutputArtifact = {
+  stepIndex: number;
+  filePath: string;
+  changeSummary?: string;
+  diffLikeSummary?: string;
+  linkedToDeliverable: boolean;
+};
+
 export type AutonomousWorkflowCodingState = {
   sessionMode: AutonomousSessionMode;
   codingLoopPhase: AutonomousWorkflowCodingLoopPhase;
@@ -334,6 +342,9 @@ export type AutonomousWorkflowCodingState = {
   completionState: AutonomousWorkflowCodingCompletionState;
   operatorConfirmationRequired: boolean;
   shouldTerminateLoop: boolean;
+  outputArtifacts: AutonomousWorkflowCodingOutputArtifact[];
+  lastOutputSummary?: string;
+  outputLinkedToDeliverable: boolean;
   acceptanceSummary?: string;
   currentValidationTarget?: string;
   validationTarget?: string;
@@ -586,6 +597,8 @@ function createDefaultAutonomousWorkflowCodingState(): AutonomousWorkflowCodingS
     completionState: "in-progress",
     operatorConfirmationRequired: false,
     shouldTerminateLoop: false,
+    outputArtifacts: [],
+    outputLinkedToDeliverable: false,
     lastValidationPassed: false,
     validationFirstActive: false,
     repeatedValidationFailureDrivingEscalation: false,
@@ -779,6 +792,38 @@ function normalizeAutonomousWorkflowCodingCompletionState(
     || value === "rejected"
     ? value
     : undefined;
+}
+
+function normalizeAutonomousWorkflowCodingOutputArtifact(
+  value: unknown,
+): AutonomousWorkflowCodingOutputArtifact | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const source = value as Record<string, unknown>;
+  const stepIndex = Number(source.stepIndex ?? 0);
+  const filePath = normalizeText(typeof source.filePath === "string" ? source.filePath : "");
+  if (!Number.isInteger(stepIndex) || stepIndex <= 0 || !filePath) {
+    return null;
+  }
+
+  return {
+    stepIndex,
+    filePath,
+    changeSummary:
+      normalizeText(typeof source.changeSummary === "string" ? source.changeSummary : "") || undefined,
+    diffLikeSummary:
+      normalizeText(typeof source.diffLikeSummary === "string" ? source.diffLikeSummary : "") || undefined,
+    linkedToDeliverable:
+      typeof source.linkedToDeliverable === "boolean" ? source.linkedToDeliverable : false,
+  };
+}
+
+function clampCodingOutputArtifacts(
+  artifacts: AutonomousWorkflowCodingOutputArtifact[],
+): AutonomousWorkflowCodingOutputArtifact[] {
+  return artifacts.slice(-8);
 }
 
 function hasSteeringBeenApplied(session: AutonomousSession, requestedForStepIndex: number | undefined): boolean {
@@ -1264,6 +1309,110 @@ function summarizeFixAttempt(step: AutonomousStepRecord): string | undefined {
   ].filter(Boolean).join(" | ")) || undefined;
 }
 
+function doesOutputArtifactLinkToDeliverable(params: {
+  filePath: string;
+  targetScope?: string;
+  currentDeliverableTarget?: string;
+}): boolean {
+  const normalizedPath = normalizeText(params.filePath).replace(/\\/g, "/").toLowerCase();
+  if (!normalizedPath) {
+    return false;
+  }
+
+  const scopeTokens = normalizeText(params.targetScope)
+    .split(",")
+    .map((token) => normalizeText(token).replace(/\\/g, "/").toLowerCase())
+    .filter(Boolean);
+  if (scopeTokens.some((token) => token === normalizedPath || normalizedPath.includes(token) || token.includes(normalizedPath))) {
+    return true;
+  }
+
+  const deliverable = normalizeText(params.currentDeliverableTarget).replace(/\\/g, "/").toLowerCase();
+  return Boolean(deliverable) && (deliverable.includes(normalizedPath) || normalizedPath.includes(deliverable));
+}
+
+function summarizeOutputIterationDelta(step: AutonomousStepRecord, previousStep: AutonomousStepRecord | undefined): string | undefined {
+  if (!previousStep) {
+    return "First recorded output iteration.";
+  }
+
+  const currentPaths = Array.isArray(step.executionResult?.changedPaths)
+    ? clampWorkflowMemoryItems(step.executionResult.changedPaths)
+    : [];
+  const previousPaths = Array.isArray(previousStep.executionResult?.changedPaths)
+    ? clampWorkflowMemoryItems(previousStep.executionResult.changedPaths)
+    : [];
+  const currentDiff = normalizeText(step.executionResult?.diffSummary);
+  const previousDiff = normalizeText(previousStep.executionResult?.diffSummary);
+
+  if (currentDiff && previousDiff && currentDiff !== previousDiff) {
+    return `Changed from prior output iteration: ${currentDiff}`;
+  }
+
+  if (currentPaths.join(", ") !== previousPaths.join(", ") && currentPaths.length > 0) {
+    return `Affected files changed from prior iteration: ${currentPaths.join(", ")}`;
+  }
+
+  if (currentDiff) {
+    return `Repeated output iteration with updated summary: ${currentDiff}`;
+  }
+
+  return "Repeated output iteration without a new diff summary.";
+}
+
+function deriveCodingOutputArtifacts(params: {
+  session: AutonomousSession;
+  targetScope?: string;
+  currentDeliverableTarget?: string;
+}): AutonomousWorkflowCodingOutputArtifact[] {
+  const outputSteps = params.session.steps.filter((step) => Boolean(summarizeFixAttempt(step)));
+  return clampCodingOutputArtifacts(outputSteps.flatMap((step, index) => {
+    const changedPaths = Array.isArray(step.executionResult?.changedPaths)
+      ? clampWorkflowMemoryItems(step.executionResult.changedPaths)
+      : [];
+    const scopedFallback = summarizeCodingScope(changedPaths, undefined, undefined);
+    const filePaths = changedPaths.length > 0 ? changedPaths : (scopedFallback ? [scopedFallback] : []);
+    if (!filePaths.length) {
+      return [];
+    }
+
+    const iterationDelta = summarizeOutputIterationDelta(step, outputSteps[index - 1]);
+    return filePaths.map((filePath) => ({
+      stepIndex: step.index,
+      filePath,
+      changeSummary:
+        normalizeText([
+          normalizeText(step.proposedAction),
+          iterationDelta,
+        ].filter(Boolean).join(" | ")) || undefined,
+      diffLikeSummary: normalizeText(step.executionResult?.diffSummary) || undefined,
+      linkedToDeliverable: doesOutputArtifactLinkToDeliverable({
+        filePath,
+        targetScope: params.targetScope,
+        currentDeliverableTarget: params.currentDeliverableTarget,
+      }),
+    }));
+  }));
+}
+
+function summarizeLatestCodingOutput(params: {
+  session: AutonomousSession;
+  outputArtifacts: AutonomousWorkflowCodingOutputArtifact[];
+}): string | undefined {
+  const lastOutputStep = [...params.session.steps].reverse().find((step) => Boolean(summarizeFixAttempt(step)));
+  if (!lastOutputStep) {
+    return undefined;
+  }
+
+  const artifactsForStep = params.outputArtifacts.filter((artifact) => artifact.stepIndex === lastOutputStep.index);
+  return normalizeText([
+    `step ${lastOutputStep.index}`,
+    artifactsForStep.length > 0 ? `files=${artifactsForStep.map((artifact) => artifact.filePath).join(", ")}` : "",
+    artifactsForStep[0]?.changeSummary ? `change=${artifactsForStep[0].changeSummary}` : "",
+    normalizeText(lastOutputStep.executionResult?.diffSummary) ? `diff=${normalizeText(lastOutputStep.executionResult?.diffSummary)}` : "",
+  ].filter(Boolean).join(" | ")) || undefined;
+}
+
 function summarizeCodingScope(paths: string[] | undefined, fallbackTargetPath?: string, fallbackAllowedRoot?: string): string | undefined {
   const normalizedPaths = Array.isArray(paths) ? clampWorkflowMemoryItems(paths) : [];
   if (normalizedPaths.length > 0) {
@@ -1499,6 +1648,16 @@ function deriveAutonomousWorkflowCodingState(params: {
     || normalizeText(params.currentObjectiveSummary)
     || normalizeText(params.session.goal)
     || undefined;
+  const outputArtifacts = deriveCodingOutputArtifacts({
+    session: params.session,
+    targetScope,
+    currentDeliverableTarget,
+  });
+  const lastOutputSummary = summarizeLatestCodingOutput({
+    session: params.session,
+    outputArtifacts,
+  });
+  const outputLinkedToDeliverable = outputArtifacts.some((artifact) => artifact.linkedToDeliverable);
   const deliverableChangedDuringCorrectionOrEscalation = Boolean(
     params.handoff.selectedRecoveryMode === "restart-from-last-safe-boundary"
     || params.handoff.selectedRecoveryMode === "stop-loop"
@@ -1512,8 +1671,14 @@ function deriveAutonomousWorkflowCodingState(params: {
         : undefined
     : undefined;
   const validationSuccessTarget = normalizeText(lastValidationStep?.expectedOutcome)
-    || (currentDeliverableTarget ? `Validation should confirm ${currentDeliverableTarget}` : undefined);
-  const currentAcceptanceTarget = validationSuccessTarget || currentDeliverableTarget;
+    || (currentDeliverableTarget && lastOutputSummary
+      ? `Validation should confirm the produced output ${lastOutputSummary} satisfies ${currentDeliverableTarget}`
+      : currentDeliverableTarget
+        ? `Validation should confirm ${currentDeliverableTarget}`
+        : undefined);
+  const currentAcceptanceTarget = lastValidationStep?.executionResult?.status === "success" && lastOutputSummary
+    ? `Accept the produced output ${lastOutputSummary}`
+    : validationSuccessTarget || currentDeliverableTarget;
   const recoverySelectionActive = params.handoff.handoffStatus === "recovery-selected"
     || params.handoff.waitingOnOperatorDecision
     || params.handoff.handoffStatus === "second-escalation-needed";
@@ -1559,10 +1724,14 @@ function deriveAutonomousWorkflowCodingState(params: {
     || (Boolean(targetScope) && normalizeText(currentDeliverableTarget).toLowerCase().includes(String(targetScope).toLowerCase()))
   );
   const validationProves = currentDeliverableTarget
-    ? `Validation should prove ${currentDeliverableTarget}`
+    ? lastOutputSummary
+      ? `Validation should prove the produced output ${lastOutputSummary} satisfies ${currentDeliverableTarget}`
+      : `Validation should prove ${currentDeliverableTarget}`
     : currentAcceptanceTarget;
   const validationFailureImpact = currentCorrectionTarget && currentDeliverableTarget
-    ? `Validation failure blocks acceptance of ${currentDeliverableTarget}`
+    ? lastOutputSummary
+      ? `Validation failure blocks acceptance of ${currentDeliverableTarget} until the produced output ${lastOutputSummary} is corrected.`
+      : `Validation failure blocks acceptance of ${currentDeliverableTarget}`
     : undefined;
   const correctionMaintainsDeliverable = (codingLoopPhase === "correction-pending"
     || codingLoopPhase === "validation-recovered"
@@ -1610,12 +1779,20 @@ function deriveAutonomousWorkflowCodingState(params: {
   const acceptanceReason = operatorAcceptanceDecision.reason
     || (deliverableAccepted
       ? repeatedValidationSuccessWithoutRegression
-        ? "Repeated successful validation without regression accepted the deliverable."
-        : "Operator confirmed the deliverable acceptance after bounded validation."
+        ? lastOutputSummary
+          ? `Repeated successful validation without regression accepted the produced output ${lastOutputSummary}.`
+          : "Repeated successful validation without regression accepted the deliverable."
+        : lastOutputSummary
+          ? `Operator confirmed deliverable acceptance for the produced output ${lastOutputSummary}.`
+          : "Operator confirmed the deliverable acceptance after bounded validation."
       : operatorAcceptanceDecision.rejected
-        ? "Operator rejected the current deliverable and returned it to the correction loop."
+        ? lastOutputSummary
+          ? `Operator rejected the produced output ${lastOutputSummary} and returned it to the correction loop.`
+          : "Operator rejected the current deliverable and returned it to the correction loop."
         : completionState === "ready-for-acceptance"
-          ? "Successful validation after bounded correction made the deliverable ready for acceptance."
+          ? lastOutputSummary
+            ? `Successful validation after bounded correction made the produced output ${lastOutputSummary} ready for acceptance.`
+            : "Successful validation after bounded correction made the deliverable ready for acceptance."
           : acceptanceSignalsConflict
             ? "Conflicting deliverable or validation signals require operator confirmation before closure."
             : undefined);
@@ -1628,6 +1805,8 @@ function deriveAutonomousWorkflowCodingState(params: {
         `completion=${completionState}`,
         deliverableAccepted ? "accepted=true" : "accepted=false",
         validationTargetMatchesDeliverable ? "validation-aligned=true" : "validation-aligned=false",
+        outputLinkedToDeliverable ? "output-linked=true" : "output-linked=false",
+        lastOutputSummary ? `output=${lastOutputSummary}` : "",
       ].filter(Boolean).join(" | ")) || undefined
     : undefined;
   const codingSummary = sessionMode === "repo-coding"
@@ -1642,6 +1821,8 @@ function deriveAutonomousWorkflowCodingState(params: {
         lastValidationStep?.executionResult?.status === "success" ? "last-validation=passed" : "",
         lastValidationStep?.executionResult?.status === "failed" ? "last-validation=failed" : "",
         validationTargetMatchesDeliverable ? "validation-aligned=true" : "validation-aligned=false",
+        outputArtifacts.length > 0 ? `outputs=${outputArtifacts.length}` : "",
+        outputLinkedToDeliverable ? "output-linked=true" : "",
         currentCorrectionTarget ? `correction=${currentCorrectionTarget}` : "",
         deliverableChangedDuringCorrectionOrEscalation ? "deliverable-retargeted=true" : "",
         operatorConfirmationRequired ? "operator-confirmation-required=true" : "",
@@ -1672,6 +1853,9 @@ function deriveAutonomousWorkflowCodingState(params: {
     completionState,
     operatorConfirmationRequired,
     shouldTerminateLoop,
+    outputArtifacts,
+    lastOutputSummary,
+    outputLinkedToDeliverable,
     acceptanceSummary,
     currentValidationTarget: validationTarget,
     validationTarget,
@@ -2672,6 +2856,17 @@ function normalizeAutonomousWorkflowContinuityState(value: unknown): AutonomousW
         typeof codingSource?.operatorConfirmationRequired === "boolean" ? codingSource.operatorConfirmationRequired : false,
       shouldTerminateLoop:
         typeof codingSource?.shouldTerminateLoop === "boolean" ? codingSource.shouldTerminateLoop : false,
+      outputArtifacts: Array.isArray(codingSource?.outputArtifacts)
+        ? clampCodingOutputArtifacts(
+            codingSource.outputArtifacts
+              .map((artifact) => normalizeAutonomousWorkflowCodingOutputArtifact(artifact))
+              .filter((artifact): artifact is AutonomousWorkflowCodingOutputArtifact => Boolean(artifact)),
+          )
+        : [],
+      lastOutputSummary:
+        normalizeText(typeof codingSource?.lastOutputSummary === "string" ? codingSource.lastOutputSummary : "") || undefined,
+      outputLinkedToDeliverable:
+        typeof codingSource?.outputLinkedToDeliverable === "boolean" ? codingSource.outputLinkedToDeliverable : false,
       acceptanceSummary:
         normalizeText(typeof codingSource?.acceptanceSummary === "string" ? codingSource.acceptanceSummary : "") || undefined,
       currentValidationTarget:
@@ -4089,6 +4284,25 @@ export function buildAutonomousSessionContextBlock(session: AutonomousSession, l
 
   if (session.workflowContinuity.coding.acceptanceSummary) {
     lines.push(`- Acceptance summary: ${session.workflowContinuity.coding.acceptanceSummary}`);
+  }
+
+  lines.push(`- Output linked to deliverable: ${String(session.workflowContinuity.coding.outputLinkedToDeliverable)}`);
+
+  if (session.workflowContinuity.coding.lastOutputSummary) {
+    lines.push(`- Last output summary: ${session.workflowContinuity.coding.lastOutputSummary}`);
+  }
+
+  if (session.workflowContinuity.coding.outputArtifacts.length > 0) {
+    lines.push(
+      `- Output artifacts: ${session.workflowContinuity.coding.outputArtifacts
+        .map((artifact) => normalizeText([
+          `step ${artifact.stepIndex}`,
+          artifact.filePath,
+          artifact.diffLikeSummary ? `diff=${artifact.diffLikeSummary}` : "",
+          artifact.linkedToDeliverable ? "linked=true" : "linked=false",
+        ].filter(Boolean).join(" | ")))
+        .join(" ; ")}`,
+    );
   }
 
   if (session.workflowContinuity.coding.validationTarget) {

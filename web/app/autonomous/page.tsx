@@ -541,6 +541,10 @@ export default function AutonomousPage() {
                 <p><strong>Loop should terminate:</strong> {session.workflowContinuity.coding.shouldTerminateLoop ? "Yes" : "No"}</p>
                 <p><strong>Acceptance reason:</strong> {session.workflowContinuity.coding.acceptanceReason || "No acceptance reason recorded yet."}</p>
                 <p><strong>Acceptance summary:</strong> {session.workflowContinuity.coding.acceptanceSummary || "No acceptance summary recorded yet."}</p>
+                <p><strong>Output linked to deliverable:</strong> {session.workflowContinuity.coding.outputLinkedToDeliverable ? "Yes" : "No"}</p>
+                <p><strong>Files affected:</strong> {session.workflowContinuity.coding.outputArtifacts.length > 0 ? [...new Set(session.workflowContinuity.coding.outputArtifacts.map((artifact) => artifact.filePath))].join(", ") : "No output artifacts recorded yet."}</p>
+                <p><strong>Last output summary:</strong> {session.workflowContinuity.coding.lastOutputSummary || "No output summary recorded yet."}</p>
+                <p><strong>Output artifacts:</strong> {session.workflowContinuity.coding.outputArtifacts.length > 0 ? session.workflowContinuity.coding.outputArtifacts.map((artifact) => `step ${artifact.stepIndex}: ${artifact.filePath}${artifact.diffLikeSummary ? ` | diff=${artifact.diffLikeSummary}` : ""}${artifact.changeSummary ? ` | change=${artifact.changeSummary}` : ""}${artifact.linkedToDeliverable ? " | linked=true" : " | linked=false"}`).join(" ; ") : "No output artifacts recorded yet."}</p>
                 <p><strong>Validation target:</strong> {session.workflowContinuity.coding.validationTarget || "No validation target recorded yet."}</p>
                 <p><strong>Current validation target:</strong> {session.workflowContinuity.coding.currentValidationTarget || "No current validation target recorded yet."}</p>
                 <p><strong>Last code change summary:</strong> {session.workflowContinuity.coding.lastCodeChangeSummary || "No code change summary recorded yet."}</p>

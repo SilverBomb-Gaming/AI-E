@@ -385,6 +385,17 @@ AI-E now closes bounded repo-coding loops with explicit acceptance state instead
 
 Phase 5D is complete when these acceptance and completion-closure signals continue to validate under focused owner tests, the widened regression slice, and the broader web test gate. Later production-capability slices can build on this by tightening how repo-task intake sets acceptance criteria up front and by feeding stronger deliverable contracts into higher-level operator review.
 
+## Phase 5E: bounded repo output artifact tracking
+
+AI-E now extends the same repo-coding owner seam from loop-state tracking into bounded real-output tracking without mutating repo files directly or bypassing approval. The system still does not perform raw Git automation or uncontrolled code generation, but it now records the concrete repo outputs a bounded coding loop claims to have produced and ties those outputs back to deliverable, validation, and acceptance state.
+
+- `workflowContinuity.coding` now carries bounded `outputArtifacts`, `lastOutputSummary`, and `outputLinkedToDeliverable` state so repo-coding continuity can preserve touched file paths, change summaries, diff-like output descriptions, and whether the produced outputs still align with the active deliverable target
+- output artifacts are derived from the same bounded execution results that already carry `changedPaths` and `diffSummary`, so correction and implementation cycles now update tracked outputs explicitly instead of only leaving abstract loop memory behind
+- validation and acceptance summaries now reference the latest produced outputs when that evidence exists, which means repo-coding loops can state what output validation is proving, what output is currently up for acceptance, and what output a correction is trying to repair
+- the autonomous page, headless CLI, local-node CLI, and queue-run reports now expose output linkage, affected files, latest output summary, and per-iteration output artifact summaries directly so operators can inspect what changed between iterations before accepting a deliverable
+
+Phase 5E is complete when output artifacts are explicitly tracked in repo-coding continuity, tied to deliverables, referenced by validation and acceptance summaries, exposed through operator surfaces, and kept green under the focused autonomy tests, widened regression slice, and broader web test gate. The final layer can now build on this tracked-output contract to introduce tighter supervised repo-action handoff without skipping the current approval and bounded-execution boundary.
+
 Still deferred beyond 4M-D:
 
 - autonomous peer-to-peer replication or any direct node-to-node handoff channel
