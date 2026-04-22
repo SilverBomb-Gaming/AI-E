@@ -88,6 +88,12 @@ test("headless_autonomy persists a bounded session and prints a matching summary
     assert.match(formatHeadlessSessionReport(session), /Validation failure impact:/i);
     assert.match(formatHeadlessSessionReport(session), /Correction maintains deliverable:/i);
     assert.match(formatHeadlessSessionReport(session), /Deliverable changed during correction or escalation:/i);
+    assert.match(formatHeadlessSessionReport(session), /Deliverable accepted:/i);
+    assert.match(formatHeadlessSessionReport(session), /Acceptance confidence:/i);
+    assert.match(formatHeadlessSessionReport(session), /Completion state:/i);
+    assert.match(formatHeadlessSessionReport(session), /Operator confirmation required:/i);
+    assert.match(formatHeadlessSessionReport(session), /Loop should terminate:/i);
+    assert.match(formatHeadlessSessionReport(session), /Acceptance reason:/i);
     assert.match(formatHeadlessSessionReport(session), /Acceptance summary:/i);
     assert.match(formatHeadlessSessionReport(session), /Current validation target:/i);
     assert.match(formatHeadlessSessionReport(session), /Last implementation summary:/i);
@@ -218,6 +224,12 @@ test("headless_autonomy queue entrypoints run one queued task and print a queue 
     assert.match(output, /Validation failure impact:/i);
     assert.match(output, /Correction maintains deliverable:/i);
     assert.match(output, /Deliverable changed during correction or escalation:/i);
+    assert.match(output, /Deliverable accepted:/i);
+    assert.match(output, /Acceptance confidence:/i);
+    assert.match(output, /Completion state:/i);
+    assert.match(output, /Operator confirmation required:/i);
+    assert.match(output, /Loop should terminate:/i);
+    assert.match(output, /Acceptance reason:/i);
     assert.match(output, /Acceptance summary:/i);
     assert.match(output, /Current validation target:/i);
     assert.match(output, /Last implementation summary:/i);

@@ -534,6 +534,12 @@ export default function AutonomousPage() {
                 <p><strong>Validation failure impact:</strong> {session.workflowContinuity.coding.validationFailureImpact || "No deliverable impact recorded yet."}</p>
                 <p><strong>Correction maintains deliverable:</strong> {session.workflowContinuity.coding.correctionMaintainsDeliverable ? "Yes" : "No"}</p>
                 <p><strong>Deliverable changed during correction or escalation:</strong> {session.workflowContinuity.coding.deliverableChangedDuringCorrectionOrEscalation ? "Yes" : "No"}</p>
+                <p><strong>Deliverable accepted:</strong> {session.workflowContinuity.coding.deliverableAccepted ? "Yes" : "No"}</p>
+                <p><strong>Acceptance confidence:</strong> {session.workflowContinuity.coding.acceptanceConfidence}</p>
+                <p><strong>Completion state:</strong> {session.workflowContinuity.coding.completionState}</p>
+                <p><strong>Operator confirmation required:</strong> {session.workflowContinuity.coding.operatorConfirmationRequired ? "Yes" : "No"}</p>
+                <p><strong>Loop should terminate:</strong> {session.workflowContinuity.coding.shouldTerminateLoop ? "Yes" : "No"}</p>
+                <p><strong>Acceptance reason:</strong> {session.workflowContinuity.coding.acceptanceReason || "No acceptance reason recorded yet."}</p>
                 <p><strong>Acceptance summary:</strong> {session.workflowContinuity.coding.acceptanceSummary || "No acceptance summary recorded yet."}</p>
                 <p><strong>Validation target:</strong> {session.workflowContinuity.coding.validationTarget || "No validation target recorded yet."}</p>
                 <p><strong>Current validation target:</strong> {session.workflowContinuity.coding.currentValidationTarget || "No current validation target recorded yet."}</p>

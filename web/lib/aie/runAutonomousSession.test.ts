@@ -292,6 +292,75 @@ test("runAutonomousSession keeps a successful validation in needs-verification b
   assert.equal(session.steps[1]?.goalStatus, "complete");
 });
 
+test("runAutonomousSession closes a repo-coding loop after deterministic deliverable acceptance", async () => {
+  resetExecutionNodeRegistry();
+  const responses: FreeAnalysisResponse[] = [
+    {
+      what_happened: "The bounded implementation is ready for validation.",
+      what_matters: ["The repo deliverable now needs bounded validation."],
+      what_to_do_next: ["Run validation."],
+      upgrade_hint: "",
+      proposedAction: "Apply the bounded implementation patch to web/lib/aie/autonomousSession.ts.",
+      expectedOutcome: "The bounded deliverable should be ready for validation.",
+      execution: makeSafeAction("Apply the bounded implementation patch to web/lib/aie/autonomousSession.ts."),
+    },
+    {
+      what_happened: "The bounded validation passed once.",
+      what_matters: ["The deliverable looks healthy but still needs closure evidence."],
+      what_to_do_next: ["Run the bounded validation again."],
+      upgrade_hint: "",
+      proposedAction: "Run the bounded validation target.",
+      expectedOutcome: "The bounded deliverable should now validate cleanly.",
+      execution: makeSafeAction("Run the bounded validation target."),
+    },
+    {
+      what_happened: "The bounded validation passed again without regression.",
+      what_matters: ["The deliverable can now close."],
+      what_to_do_next: ["Stop."],
+      upgrade_hint: "",
+      proposedAction: "Run the bounded validation target again.",
+      expectedOutcome: "The bounded deliverable should still validate cleanly without regression.",
+      execution: makeSafeAction("Run the bounded validation target again."),
+    },
+  ];
+
+  const session = await runAutonomousSession({
+    goal: "Deliver a bounded repo coding fix and close it cleanly.",
+    maxSteps: 4,
+    dependencies: {
+      runAnalysis: async () => responses.shift() as FreeAnalysisResponse,
+      executeAction: async (action) => {
+        if (/apply the bounded implementation patch/i.test(action.description)) {
+          return {
+            status: "success",
+            output: "Implementation patch applied cleanly.",
+            changedPaths: ["web/lib/aie/autonomousSession.ts"],
+            diffSummary: "Updated deliverable acceptance closure derivation.",
+          };
+        }
+
+        return /again/i.test(action.description)
+          ? {
+              status: "success",
+              output: "Validation passed again without regression.",
+            }
+          : {
+              status: "success",
+              output: "Validation passed for the bounded deliverable.",
+            };
+      },
+      saveAutonomousSession: async () => {},
+    },
+  });
+
+  assert.equal(session.status, "completed");
+  assert.equal(session.workflowContinuity.coding.deliverableAccepted, true);
+  assert.equal(session.workflowContinuity.coding.completionState, "accepted");
+  assert.equal(session.workflowContinuity.coding.shouldTerminateLoop, true);
+  assert.equal(session.latestCompletion?.status, "complete");
+  resetExecutionNodeRegistry();
+});
+
 test("runAutonomousSession auto-executes safe sandbox file writes and preserves changed-path metadata", async () => {
   const executedActions: string[] = [];
 

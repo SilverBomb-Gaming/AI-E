@@ -374,6 +374,17 @@ AI-E now carries repo-coding work in clearer deliverable terms on top of the Pha
 
 Phase 5C is complete when these deliverable-linked coding targets continue to validate under focused owner tests, the widened regression slice, and the broader web test gate. Later production-capability slices can build on this by tightening repo-task intake further, linking deliverable targets to more concrete approval and acceptance checkpoints, and expanding operator review around code-change acceptance decisions.
 
+## Phase 5D: output acceptance and completion closure
+
+AI-E now closes bounded repo-coding loops with explicit acceptance state instead of leaving successful validation and final closure implicit. The same owner seam continues to derive the coding loop, but it now distinguishes work that is still in progress from work that is ready for acceptance, explicitly accepted, explicitly rejected, or waiting for an operator to confirm closure.
+
+- `workflowContinuity.coding` now derives completion-oriented fields such as deliverable accepted, acceptance reason, acceptance confidence, completion state, operator confirmation required, and loop termination readiness from the existing implementation, validation, correction, escalation, and steering history
+- successful validation after a bounded correction now surfaces as `ready-for-acceptance`, repeated successful validation without regression can deterministically move the deliverable to `accepted`, and conflicting deliverable signals continue to require explicit operator confirmation before closure instead of creating a second planner or hidden acceptance path
+- operator steering now supports explicit bounded acceptance confirmation and rejection through the existing steering/review spine, so an operator can close an accepted deliverable or send it back into correction without bypassing the existing trust and approval controls
+- the autonomous page, session context block, headless CLI, local-node CLI, and queue-run reports now expose acceptance and completion-closure fields directly so operators can inspect whether a deliverable is accepted, why closure is or is not allowed yet, and whether the loop should terminate cleanly
+
+Phase 5D is complete when these acceptance and completion-closure signals continue to validate under focused owner tests, the widened regression slice, and the broader web test gate. Later production-capability slices can build on this by tightening how repo-task intake sets acceptance criteria up front and by feeding stronger deliverable contracts into higher-level operator review.
+
 Still deferred beyond 4M-D:
 
 - autonomous peer-to-peer replication or any direct node-to-node handoff channel

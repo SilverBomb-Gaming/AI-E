@@ -119,6 +119,8 @@ export type AutonomousWorkflowRecommendedNextPhase =
 
 export type AutonomousOperatorSteeringAction =
   | "accept-current-recommendation"
+  | "confirm-deliverable-acceptance"
+  | "reject-deliverable-acceptance"
   | "prefer-validation-next"
   | "prefer-fix-next"
   | "restart-from-last-safe-boundary"
@@ -305,6 +307,12 @@ export type AutonomousWorkflowCodingTargetStatus =
   | "escalated"
   | "supervised-recovery";
 
+export type AutonomousWorkflowCodingCompletionState =
+  | "in-progress"
+  | "ready-for-acceptance"
+  | "accepted"
+  | "rejected";
+
 export type AutonomousWorkflowCodingState = {
   sessionMode: AutonomousSessionMode;
   codingLoopPhase: AutonomousWorkflowCodingLoopPhase;
@@ -320,6 +328,12 @@ export type AutonomousWorkflowCodingState = {
   validationFailureImpact?: string;
   correctionMaintainsDeliverable: boolean;
   deliverableChangedDuringCorrectionOrEscalation: boolean;
+  deliverableAccepted: boolean;
+  acceptanceReason?: string;
+  acceptanceConfidence: AutonomousWorkflowRecommendationConfidence;
+  completionState: AutonomousWorkflowCodingCompletionState;
+  operatorConfirmationRequired: boolean;
+  shouldTerminateLoop: boolean;
   acceptanceSummary?: string;
   currentValidationTarget?: string;
   validationTarget?: string;
@@ -567,6 +581,11 @@ function createDefaultAutonomousWorkflowCodingState(): AutonomousWorkflowCodingS
     validationTargetMatchesDeliverable: false,
     correctionMaintainsDeliverable: false,
     deliverableChangedDuringCorrectionOrEscalation: false,
+    deliverableAccepted: false,
+    acceptanceConfidence: "low",
+    completionState: "in-progress",
+    operatorConfirmationRequired: false,
+    shouldTerminateLoop: false,
     lastValidationPassed: false,
     validationFirstActive: false,
     repeatedValidationFailureDrivingEscalation: false,
@@ -583,6 +602,8 @@ function normalizeAutonomousOperatorSteeringAction(value: unknown): AutonomousOp
   const normalized = normalizeText(typeof value === "string" ? value : "");
   if (
     normalized === "accept-current-recommendation"
+    || normalized === "confirm-deliverable-acceptance"
+    || normalized === "reject-deliverable-acceptance"
     || normalized === "prefer-validation-next"
     || normalized === "prefer-fix-next"
     || normalized === "restart-from-last-safe-boundary"
@@ -702,6 +723,14 @@ function deriveRequestedNextPhaseOverride(
     return undefined;
   }
 
+  if (action === "confirm-deliverable-acceptance") {
+    return "stop";
+  }
+
+  if (action === "reject-deliverable-acceptance") {
+    return "fix";
+  }
+
   if (action === "prefer-validation-next") {
     return "validation";
   }
@@ -737,6 +766,17 @@ function normalizeAutonomousWorkflowCodingTargetStatus(
     || value === "under-review"
     || value === "escalated"
     || value === "supervised-recovery"
+    ? value
+    : undefined;
+}
+
+function normalizeAutonomousWorkflowCodingCompletionState(
+  value: unknown,
+): AutonomousWorkflowCodingCompletionState | undefined {
+  return value === "in-progress"
+    || value === "ready-for-acceptance"
+    || value === "accepted"
+    || value === "rejected"
     ? value
     : undefined;
 }
@@ -860,6 +900,14 @@ function deriveRecommendationHandoffRecoveryMode(
 ): AutonomousWorkflowRecommendationHandoffRecoveryMode | undefined {
   if (action === "accept-current-recommendation") {
     return "current-recommendation";
+  }
+
+  if (action === "confirm-deliverable-acceptance") {
+    return "current-recommendation";
+  }
+
+  if (action === "reject-deliverable-acceptance") {
+    return "fix-first";
   }
 
   if (action === "prefer-validation-next") {
@@ -1187,6 +1235,14 @@ function summarizeValidationOutcome(step: AutonomousStepRecord): string | undefi
   ].filter(Boolean).join(" | ")) || undefined;
 }
 
+function isExplicitValidationStep(step: AutonomousStepRecord): boolean {
+  if (!summarizeValidationOutcome(step)) {
+    return false;
+  }
+
+  return !Boolean(summarizeFixAttempt(step));
+}
+
 function summarizeFixAttempt(step: AutonomousStepRecord): string | undefined {
   const changedPaths = Array.isArray(step.executionResult?.changedPaths)
     ? clampWorkflowMemoryItems(step.executionResult.changedPaths)
@@ -1266,6 +1322,35 @@ function summarizePhaseOutcome(step: AutonomousStepRecord): string {
   return `${phase}:${runtimeStatus}${step.goalStatus ? `:${step.goalStatus}` : ""}`;
 }
 
+function summarizeRecentOperatorAcceptanceDecision(params: {
+  review: AutonomousWorkflowRecommendationReviewState;
+  steeringAction: AutonomousOperatorSteeringAction | undefined;
+  operatorNote?: string;
+  overrideReason?: string;
+}): {
+  confirmed: boolean;
+  rejected: boolean;
+  reason?: string;
+} {
+  const latestReview = [...params.review.history].reverse().find((entry) => {
+    return entry.operatorResponse === "confirm-deliverable-acceptance"
+      || entry.operatorResponse === "reject-deliverable-acceptance";
+  });
+  const latestAction = params.steeringAction ?? latestReview?.operatorResponse;
+  const reason = normalizeText(
+    params.operatorNote
+      || params.overrideReason
+      || latestReview?.operatorNote
+      || latestReview?.overrideReason,
+  ) || undefined;
+
+  return {
+    confirmed: latestAction === "confirm-deliverable-acceptance",
+    rejected: latestAction === "reject-deliverable-acceptance",
+    reason,
+  };
+}
+
 function deriveRepoCodingLoopPhase(params: {
   session: AutonomousSession;
   chainPhase: AutonomousWorkflowChainPhase;
@@ -1282,7 +1367,6 @@ function deriveRepoCodingLoopPhase(params: {
   if (params.session.sessionMode !== "repo-coding") {
     return "none";
   }
-
   const latestCompletedStep = params.session.lastStepIndex ?? params.session.steps.at(-1)?.index ?? 0;
   const latestReview = params.review.history.at(-1);
   const supervisedRecoveryActive = (
@@ -1367,9 +1451,9 @@ function deriveAutonomousWorkflowCodingState(params: {
   const pendingAllowedRoot = normalizeText(params.session.pendingAction?.metadata?.allowedRoot);
   const pendingTestTarget = normalizeText(params.session.pendingAction?.metadata?.testTarget);
   const lastImplementationStep = [...params.session.steps].reverse().find((step) => Boolean(summarizeFixAttempt(step)));
-  const lastValidationStep = [...params.session.steps].reverse().find((step) => Boolean(summarizeValidationOutcome(step)));
+  const lastValidationStep = [...params.session.steps].reverse().find((step) => isExplicitValidationStep(step));
   const mostRecentFailedValidationStep = [...params.session.steps].reverse().find(
-    (step) => Boolean(summarizeValidationOutcome(step)) && step.executionResult?.status === "failed",
+    (step) => isExplicitValidationStep(step) && step.executionResult?.status === "failed",
   );
   const lastCorrectionStep = [...params.session.steps].reverse().find((step) => {
     if (!summarizeFixAttempt(step)) {
@@ -1383,7 +1467,7 @@ function deriveAutonomousWorkflowCodingState(params: {
     const phase = deriveWorkflowPhaseForStep(step);
     return phase === "fix" || phase === "retry";
   });
-  const recentValidationSteps = [...params.session.steps].reverse().filter((step) => Boolean(summarizeValidationOutcome(step))).slice(0, 2);
+  const recentValidationSteps = [...params.session.steps].reverse().filter((step) => isExplicitValidationStep(step)).slice(0, 2);
   const targetScope = summarizeCodingScope(
     lastImplementationStep?.executionResult?.changedPaths,
     pendingTargetPath,
@@ -1486,11 +1570,63 @@ function deriveAutonomousWorkflowCodingState(params: {
     || codingLoopPhase === "supervised-recovery")
     ? !deliverableChangedDuringCorrectionOrEscalation
     : false;
+  const repeatedValidationSuccessWithoutRegression = recentValidationSteps.length >= 2
+    && recentValidationSteps[0]?.executionResult?.status === "success"
+    && recentValidationSteps[1]?.executionResult?.status === "success";
+  const stableCorrectionValidation = Boolean(lastValidationStep)
+    && lastValidationStep?.executionResult?.status === "success"
+    && Boolean(lastCorrectionStep)
+    && (lastCorrectionStep?.index ?? 0) < (lastValidationStep?.index ?? 0);
+  const acceptanceSignalsConflict = Boolean(
+    deliverableChangedDuringCorrectionOrEscalation
+    || (Boolean(validationTarget) && !validationTargetMatchesDeliverable)
+    || (lastValidationStep?.executionResult?.status === "success" && escalationActive)
+  );
+  const operatorAcceptanceDecision = summarizeRecentOperatorAcceptanceDecision({
+    review: params.review,
+    steeringAction: params.session.workflowContinuity.steering.requestedAction,
+    operatorNote: params.session.workflowContinuity.steering.operatorNote,
+    overrideReason: params.session.workflowContinuity.steering.overrideReason,
+  });
+  const deliverableAccepted = Boolean(
+    lastValidationStep?.executionResult?.status === "success"
+    && !acceptanceSignalsConflict
+    && !operatorAcceptanceDecision.rejected
+    && (operatorAcceptanceDecision.confirmed || repeatedValidationSuccessWithoutRegression)
+  );
+  const completionState: AutonomousWorkflowCodingCompletionState = operatorAcceptanceDecision.rejected
+    ? "rejected"
+    : deliverableAccepted
+      ? "accepted"
+      : lastValidationStep?.executionResult?.status === "success" && stableCorrectionValidation
+        ? "ready-for-acceptance"
+        : "in-progress";
+  const operatorConfirmationRequired = completionState === "ready-for-acceptance" || acceptanceSignalsConflict;
+  const acceptanceConfidence: AutonomousWorkflowRecommendationConfidence = operatorAcceptanceDecision.confirmed || deliverableAccepted
+    ? "high"
+    : completionState === "ready-for-acceptance"
+      ? "medium"
+      : "low";
+  const acceptanceReason = operatorAcceptanceDecision.reason
+    || (deliverableAccepted
+      ? repeatedValidationSuccessWithoutRegression
+        ? "Repeated successful validation without regression accepted the deliverable."
+        : "Operator confirmed the deliverable acceptance after bounded validation."
+      : operatorAcceptanceDecision.rejected
+        ? "Operator rejected the current deliverable and returned it to the correction loop."
+        : completionState === "ready-for-acceptance"
+          ? "Successful validation after bounded correction made the deliverable ready for acceptance."
+          : acceptanceSignalsConflict
+            ? "Conflicting deliverable or validation signals require operator confirmation before closure."
+            : undefined);
+  const shouldTerminateLoop = deliverableAccepted;
   const acceptanceSummary = currentDeliverableTarget
     ? normalizeText([
         `deliverable=${currentDeliverableTarget}`,
         currentAcceptanceTarget ? `acceptance=${currentAcceptanceTarget}` : "",
         `status=${currentTargetStatus}`,
+        `completion=${completionState}`,
+        deliverableAccepted ? "accepted=true" : "accepted=false",
         validationTargetMatchesDeliverable ? "validation-aligned=true" : "validation-aligned=false",
       ].filter(Boolean).join(" | ")) || undefined
     : undefined;
@@ -1500,6 +1636,7 @@ function deriveAutonomousWorkflowCodingState(params: {
         targetScope ? `scope=${targetScope}` : "",
         currentDeliverableTarget ? `deliverable=${currentDeliverableTarget}` : "",
         currentTargetStatus !== "none" ? `target-status=${currentTargetStatus}` : "",
+        `completion=${completionState}`,
         currentCodingObjective ? `objective=${currentCodingObjective}` : "",
         validationFirstActive ? "validation-first=active" : "",
         lastValidationStep?.executionResult?.status === "success" ? "last-validation=passed" : "",
@@ -1507,6 +1644,8 @@ function deriveAutonomousWorkflowCodingState(params: {
         validationTargetMatchesDeliverable ? "validation-aligned=true" : "validation-aligned=false",
         currentCorrectionTarget ? `correction=${currentCorrectionTarget}` : "",
         deliverableChangedDuringCorrectionOrEscalation ? "deliverable-retargeted=true" : "",
+        operatorConfirmationRequired ? "operator-confirmation-required=true" : "",
+        shouldTerminateLoop ? "terminate=true" : "",
         repeatedValidationFailureDrivingEscalation ? "escalation-driver=repeated-validation-failure" : "",
         nextIntendedCodingAction ? `next=${nextIntendedCodingAction}` : "",
       ].filter(Boolean).join(" | ")) || undefined
@@ -1527,6 +1666,12 @@ function deriveAutonomousWorkflowCodingState(params: {
     validationFailureImpact,
     correctionMaintainsDeliverable,
     deliverableChangedDuringCorrectionOrEscalation,
+    deliverableAccepted,
+    acceptanceReason,
+    acceptanceConfidence,
+    completionState,
+    operatorConfirmationRequired,
+    shouldTerminateLoop,
     acceptanceSummary,
     currentValidationTarget: validationTarget,
     validationTarget,
@@ -2512,6 +2657,21 @@ function normalizeAutonomousWorkflowContinuityState(value: unknown): AutonomousW
         typeof codingSource?.deliverableChangedDuringCorrectionOrEscalation === "boolean"
           ? codingSource.deliverableChangedDuringCorrectionOrEscalation
           : false,
+      deliverableAccepted: typeof codingSource?.deliverableAccepted === "boolean" ? codingSource.deliverableAccepted : false,
+      acceptanceReason:
+        normalizeText(typeof codingSource?.acceptanceReason === "string" ? codingSource.acceptanceReason : "") || undefined,
+      acceptanceConfidence:
+        codingSource?.acceptanceConfidence === "low"
+        || codingSource?.acceptanceConfidence === "medium"
+        || codingSource?.acceptanceConfidence === "high"
+          ? codingSource.acceptanceConfidence as AutonomousWorkflowRecommendationConfidence
+          : "low",
+      completionState:
+        normalizeAutonomousWorkflowCodingCompletionState(codingSource?.completionState) ?? "in-progress",
+      operatorConfirmationRequired:
+        typeof codingSource?.operatorConfirmationRequired === "boolean" ? codingSource.operatorConfirmationRequired : false,
+      shouldTerminateLoop:
+        typeof codingSource?.shouldTerminateLoop === "boolean" ? codingSource.shouldTerminateLoop : false,
       acceptanceSummary:
         normalizeText(typeof codingSource?.acceptanceSummary === "string" ? codingSource.acceptanceSummary : "") || undefined,
       currentValidationTarget:
@@ -3502,10 +3662,38 @@ export function appendAutonomousStep(
     steps: [...session.steps, step],
   };
 
-  return {
+  let derivedSession: AutonomousSession = {
     ...nextSession,
     workflowContinuity: deriveAutonomousWorkflowContinuity(nextSession),
   };
+
+  if (
+    derivedSession.sessionMode === "repo-coding"
+    && derivedSession.workflowContinuity.coding.deliverableAccepted
+    && derivedSession.workflowContinuity.coding.shouldTerminateLoop
+    && derivedSession.latestCompletion?.status !== "complete"
+  ) {
+    derivedSession = {
+      ...derivedSession,
+      latestCompletion: {
+        status: "complete",
+        isComplete: true,
+        reason:
+          derivedSession.workflowContinuity.coding.acceptanceReason
+          || derivedSession.workflowContinuity.coding.acceptanceSummary
+          || derivedSession.latestCompletion?.reason
+          || "The repo deliverable satisfied its bounded acceptance criteria.",
+        confidence: derivedSession.workflowContinuity.coding.acceptanceConfidence,
+      },
+    };
+
+    derivedSession = {
+      ...derivedSession,
+      workflowContinuity: deriveAutonomousWorkflowContinuity(derivedSession),
+    };
+  }
+
+  return derivedSession;
 }
 
 export function updateAutonomousSessionStatus(
@@ -3889,6 +4077,15 @@ export function buildAutonomousSessionContextBlock(session: AutonomousSession, l
 
   lines.push(`- Correction maintains deliverable: ${String(session.workflowContinuity.coding.correctionMaintainsDeliverable)}`);
   lines.push(`- Deliverable changed during correction or escalation: ${String(session.workflowContinuity.coding.deliverableChangedDuringCorrectionOrEscalation)}`);
+  lines.push(`- Deliverable accepted: ${String(session.workflowContinuity.coding.deliverableAccepted)}`);
+  lines.push(`- Acceptance confidence: ${session.workflowContinuity.coding.acceptanceConfidence}`);
+  lines.push(`- Completion state: ${session.workflowContinuity.coding.completionState}`);
+  lines.push(`- Operator confirmation required: ${String(session.workflowContinuity.coding.operatorConfirmationRequired)}`);
+  lines.push(`- Loop should terminate: ${String(session.workflowContinuity.coding.shouldTerminateLoop)}`);
+
+  if (session.workflowContinuity.coding.acceptanceReason) {
+    lines.push(`- Acceptance reason: ${session.workflowContinuity.coding.acceptanceReason}`);
+  }
 
   if (session.workflowContinuity.coding.acceptanceSummary) {
     lines.push(`- Acceptance summary: ${session.workflowContinuity.coding.acceptanceSummary}`);
@@ -4107,7 +4304,7 @@ export function updateAutonomousSessionSteering(
     requestedAction,
     session.workflowContinuity.escalation.recoveryRecommendation,
   );
-  const nextSession: AutonomousSession = {
+  let nextSession: AutonomousSession = {
     ...session,
     updatedAt: createTimestamp(),
     workflowContinuity: {
@@ -4177,6 +4374,32 @@ export function updateAutonomousSessionSteering(
       },
     },
   };
+
+  if (
+    requestedAction === "confirm-deliverable-acceptance"
+    && (
+      session.workflowContinuity.coding.completionState === "ready-for-acceptance"
+      || session.workflowContinuity.coding.completionState === "accepted"
+    )
+  ) {
+    const completionReason = operatorNote
+      || overrideReason
+      || session.workflowContinuity.coding.acceptanceReason
+      || session.workflowContinuity.coding.acceptanceSummary
+      || "Operator confirmed the bounded deliverable acceptance.";
+    nextSession = {
+      ...nextSession,
+      status: "completed",
+      completedReason: completionReason,
+      stateReason: completionReason,
+      latestCompletion: {
+        status: "complete",
+        isComplete: true,
+        reason: completionReason,
+        confidence: "high",
+      },
+    };
+  }
 
   return {
     ...nextSession,

@@ -280,6 +280,21 @@ function buildStoredCompletionGoalEvaluation(session: AutonomousSession): Return
   };
 }
 
+function buildRepoCodingAcceptanceGoalEvaluation(session: AutonomousSession): ReturnType<typeof evaluateGoalCompletion> {
+  return {
+    status: "complete",
+    isComplete: true,
+    reason:
+      session.workflowContinuity.coding.acceptanceReason
+      || session.workflowContinuity.coding.acceptanceSummary
+      || "The repo deliverable satisfied its bounded acceptance criteria.",
+    confidence: session.workflowContinuity.coding.acceptanceConfidence === "high" ? "high" : "medium",
+    safeEvidenceSufficient: true,
+    followUpUnnecessary: true,
+    outputDirectlyAnswersGoal: true,
+  };
+}
+
 function buildSyntheticContinuationAnalysis(state: ForcedContinuationState): FreeAnalysisResponse {
   return {
     what_happened:
@@ -738,12 +753,17 @@ async function runSingleAutonomousStep(params: {
     };
   }
 
+  const effectiveGoalEvaluation = nextSession.workflowContinuity.coding.deliverableAccepted
+    && nextSession.workflowContinuity.coding.shouldTerminateLoop
+    ? buildRepoCodingAcceptanceGoalEvaluation(nextSession)
+    : goalEvaluation;
+
   return {
     nextSession,
     analysis,
     executionResult,
     step: nextSession.steps.at(-1) as AutonomousStepRecord,
-    goalEvaluation,
+    goalEvaluation: effectiveGoalEvaluation,
     failureClassification,
     recoveryStrategy,
     retryAction: recoveryDecision?.strategy === "retry-same-action" ? action : undefined,

@@ -294,9 +294,116 @@ test("repo coding sessions mark correction pending and validation recovered afte
   assert.equal(recovered.workflowContinuity.coding.lastValidationPassed, true);
   assert.equal(recovered.workflowContinuity.coding.validationFirstActive, true);
   assert.equal(recovered.workflowContinuity.coding.currentCorrectionTarget, undefined);
+  assert.equal(recovered.workflowContinuity.coding.deliverableAccepted, false);
+  assert.equal(recovered.workflowContinuity.coding.completionState, "ready-for-acceptance");
+  assert.equal(recovered.workflowContinuity.coding.operatorConfirmationRequired, true);
+  assert.equal(recovered.workflowContinuity.coding.shouldTerminateLoop, false);
   assert.equal(recovered.workflowContinuity.coding.currentTargetStatus, "accepted");
   assert.equal(recovered.workflowContinuity.coding.correctionMaintainsDeliverable, true);
   assert.match(recovered.workflowContinuity.coding.codingSummary ?? "", /last-validation=passed/i);
+});
+
+test("repo coding sessions accept a deliverable after repeated successful validation without regression", () => {
+  const created = createAutonomousSession({
+    goal: "Deliver a bounded repo coding fix and close it cleanly.",
+    sessionMode: "repo-coding",
+  });
+  const implemented = appendAutonomousStep(created, {
+    proposedAction: "Apply the bounded implementation patch to web/lib/aie/autonomousSession.ts.",
+    expectedOutcome: "The bounded repo coding fix should be ready for validation.",
+    executionResult: {
+      status: "success",
+      output: "Implementation patch applied cleanly.",
+      changedPaths: ["web/lib/aie/autonomousSession.ts"],
+      diffSummary: "Updated completion closure derivation.",
+    },
+    nextDecision: "continue",
+  });
+  const firstSuccess = appendAutonomousStep(implemented, {
+    proposedAction: "Run the bounded validation target.",
+    expectedOutcome: "The bounded repo coding fix should validate cleanly.",
+    executionResult: {
+      status: "success",
+      output: "Validation passed for the bounded repo coding fix.",
+      commandLabel: "npm test",
+    },
+    nextDecision: "continue",
+  });
+  const accepted = appendAutonomousStep(firstSuccess, {
+    proposedAction: "Run the bounded validation target again.",
+    expectedOutcome: "The bounded repo coding fix should still validate cleanly without regression.",
+    executionResult: {
+      status: "success",
+      output: "Validation passed again without regression.",
+      commandLabel: "npm test",
+    },
+    nextDecision: "continue",
+  });
+
+  assert.equal(firstSuccess.workflowContinuity.coding.completionState, "in-progress");
+  assert.equal(accepted.workflowContinuity.coding.deliverableAccepted, true);
+  assert.equal(accepted.workflowContinuity.coding.completionState, "accepted");
+  assert.equal(accepted.workflowContinuity.coding.acceptanceConfidence, "high");
+  assert.equal(accepted.workflowContinuity.coding.operatorConfirmationRequired, false);
+  assert.equal(accepted.workflowContinuity.coding.shouldTerminateLoop, true);
+  assert.match(accepted.workflowContinuity.coding.acceptanceReason ?? "", /repeated successful validation/i);
+  assert.equal(accepted.latestCompletion?.status, "complete");
+  assert.match(buildAutonomousSessionContextBlock(accepted), /Completion state: accepted/i);
+});
+
+test("repo coding sessions allow bounded operator confirmation and rejection for deliverable closure", () => {
+  const failedValidation = appendAutonomousStep(createAutonomousSession({
+    goal: "Close a bounded repo deliverable with explicit operator confirmation.",
+    sessionMode: "repo-coding",
+  }), {
+    proposedAction: "Run the bounded validation target.",
+    executionResult: {
+      status: "failed",
+      error: "Validation still reports the bounded deliverable regression.",
+      commandLabel: "npm test",
+    },
+    failureReason: "Validation still reports the bounded deliverable regression.",
+  });
+  const corrected = appendAutonomousStep(failedValidation, {
+    proposedAction: "Apply the bounded correction patch to web/lib/aie/autonomousSession.ts.",
+    expectedOutcome: "The bounded deliverable should be ready for validation.",
+    executionResult: {
+      status: "success",
+      output: "Correction patch applied cleanly.",
+      changedPaths: ["web/lib/aie/autonomousSession.ts"],
+      diffSummary: "Prepared deliverable closure state.",
+    },
+    nextDecision: "continue",
+  });
+  const ready = appendAutonomousStep(corrected, {
+    proposedAction: "Run the bounded validation target.",
+    expectedOutcome: "The bounded deliverable should now validate cleanly.",
+    executionResult: {
+      status: "success",
+      output: "Validation passed for the bounded deliverable.",
+      commandLabel: "npm test",
+    },
+    nextDecision: "continue",
+  });
+  const rejected = updateAutonomousSessionSteering(ready, {
+    action: "reject-deliverable-acceptance",
+    operatorNote: "The deliverable still needs one more bounded correction before closure.",
+  });
+  const confirmed = updateAutonomousSessionSteering(ready, {
+    action: "confirm-deliverable-acceptance",
+    operatorNote: "The deliverable is accepted and can close.",
+  });
+
+  assert.equal(ready.workflowContinuity.coding.completionState, "ready-for-acceptance");
+  assert.equal(rejected.workflowContinuity.coding.completionState, "rejected");
+  assert.equal(rejected.workflowContinuity.coding.deliverableAccepted, false);
+  assert.match(rejected.workflowContinuity.coding.acceptanceReason ?? "", /needs one more bounded correction/i);
+  assert.equal(confirmed.workflowContinuity.coding.completionState, "accepted");
+  assert.equal(confirmed.workflowContinuity.coding.deliverableAccepted, true);
+  assert.equal(confirmed.workflowContinuity.coding.shouldTerminateLoop, true);
+  assert.equal(confirmed.status, "completed");
+  assert.equal(confirmed.latestCompletion?.status, "complete");
+  assert.match(confirmed.completedReason ?? "", /deliverable is accepted and can close/i);
 });
 
 test("repo coding sessions surface escalation and supervised recovery as coding loop phases", () => {

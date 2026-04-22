@@ -88,6 +88,12 @@ test("local_node runs a bounded goal, creates a session, and prints a structured
     assert.match(textOutput, /Validation failure impact:/i);
     assert.match(textOutput, /Correction maintains deliverable:/i);
     assert.match(textOutput, /Deliverable changed during correction or escalation:/i);
+    assert.match(textOutput, /Deliverable accepted:/i);
+    assert.match(textOutput, /Acceptance confidence:/i);
+    assert.match(textOutput, /Completion state:/i);
+    assert.match(textOutput, /Operator confirmation required:/i);
+    assert.match(textOutput, /Loop should terminate:/i);
+    assert.match(textOutput, /Acceptance reason:/i);
     assert.match(textOutput, /Acceptance summary:/i);
     assert.match(textOutput, /Current validation target:/i);
     assert.match(textOutput, /Last implementation summary:/i);
@@ -219,6 +225,12 @@ test("local_node queue entrypoints run one queued task and print a queue summary
     assert.match(output, /Validation failure impact:/i);
     assert.match(output, /Correction maintains deliverable:/i);
     assert.match(output, /Deliverable changed during correction or escalation:/i);
+    assert.match(output, /Deliverable accepted:/i);
+    assert.match(output, /Acceptance confidence:/i);
+    assert.match(output, /Completion state:/i);
+    assert.match(output, /Operator confirmation required:/i);
+    assert.match(output, /Loop should terminate:/i);
+    assert.match(output, /Acceptance reason:/i);
     assert.match(output, /Acceptance summary:/i);
     assert.match(output, /Current validation target:/i);
     assert.match(output, /Last implementation summary:/i);
