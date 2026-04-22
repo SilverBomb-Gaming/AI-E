@@ -27,6 +27,7 @@ export async function POST(
       ? {
           action: typeof steeringBody.action === "string" ? steeringBody.action as AutonomousOperatorSteeringAction : undefined,
           operatorNote: typeof steeringBody.operatorNote === "string" ? steeringBody.operatorNote : undefined,
+          overrideReason: typeof steeringBody.overrideReason === "string" ? steeringBody.overrideReason : undefined,
           stopReason: typeof steeringBody.stopReason === "string" ? steeringBody.stopReason : undefined,
           restartReason: typeof steeringBody.restartReason === "string" ? steeringBody.restartReason : undefined,
         }

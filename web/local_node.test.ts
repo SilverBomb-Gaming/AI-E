@@ -192,6 +192,8 @@ test("local_node parses bounded steering flags", () => {
     "prefer-fix-next",
     "--operatorNote",
     "Fix the current regression before validating again.",
+    "--overrideReason",
+    "The repeated validation loop is not producing a new signal.",
     "--stopReason",
     "The loop is no longer useful.",
   ]);
@@ -199,5 +201,6 @@ test("local_node parses bounded steering flags", () => {
   assert.equal(parsed.sessionId, "session-steer-1");
   assert.equal(parsed.steeringAction, "prefer-fix-next");
   assert.equal(parsed.operatorNote, "Fix the current regression before validating again.");
+  assert.equal(parsed.overrideReason, "The repeated validation loop is not producing a new signal.");
   assert.equal(parsed.stopReason, "The loop is no longer useful.");
 });

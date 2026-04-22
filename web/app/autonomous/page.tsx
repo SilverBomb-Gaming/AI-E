@@ -35,6 +35,7 @@ type QueueRunPayload = {
 type SteeringPayload = {
   action?: AutonomousOperatorSteeringAction;
   operatorNote?: string;
+  overrideReason?: string;
   stopReason?: string;
   restartReason?: string;
   clear?: boolean;
@@ -173,6 +174,7 @@ export default function AutonomousPage() {
     return {
       action: steeringAction || undefined,
       operatorNote: trimmedNote || undefined,
+      overrideReason: trimmedReason || undefined,
       stopReason: steeringAction === "stop-loop" ? trimmedReason || undefined : undefined,
       restartReason: steeringAction === "restart-from-last-safe-boundary" ? trimmedReason || undefined : undefined,
     };
@@ -522,8 +524,16 @@ export default function AutonomousPage() {
                 <p><strong>Recommended next phase:</strong> {session.workflowContinuity.loopHealth.recommendedNextPhase}</p>
                 <p><strong>Operator override status:</strong> {session.workflowContinuity.steering.status}</p>
                 <p><strong>Operator override:</strong> {session.workflowContinuity.steering.requestedAction || "No operator override recorded yet."}</p>
+                <p><strong>Operator override reason:</strong> {session.workflowContinuity.steering.overrideReason || "No override reason recorded yet."}</p>
                 <p><strong>Operator note:</strong> {session.workflowContinuity.steering.operatorNote || "No operator note recorded yet."}</p>
                 <p><strong>Override blocked reason:</strong> {session.workflowContinuity.steering.blockedReason || "No override block recorded yet."}</p>
+                <p><strong>Last refinement note:</strong> {session.workflowContinuity.refinement.lastOperatorRefinementNote || "No refinement note recorded yet."}</p>
+                <p><strong>Last override reason:</strong> {session.workflowContinuity.refinement.lastOverrideReason || "No override reason recorded yet."}</p>
+                <p><strong>Recent overrides improved progress:</strong> {session.workflowContinuity.refinement.recentOverridesImprovedProgress ? "Yes" : "No"}</p>
+                <p><strong>Similar future preference:</strong> {session.workflowContinuity.refinement.similarFuturePreference || "No preference recorded yet."}</p>
+                <p><strong>Recommendation influenced by prior guidance:</strong> {session.workflowContinuity.refinement.recommendationInfluencedByRecentGuidance ? "Yes" : "No"}</p>
+                <p><strong>Refinement influence reason:</strong> {session.workflowContinuity.refinement.influenceReason || "No refinement influence recorded yet."}</p>
+                <p><strong>Refinement summary:</strong> {session.workflowContinuity.refinement.refinementSummary || "No refinement summary recorded yet."}</p>
                 {session.latestCompletion ? <p><strong>Completion reason:</strong> {session.latestCompletion.reason}</p> : null}
                 {session.pendingAction ? <p><strong>Pending action:</strong> {session.pendingAction.description}</p> : null}
                 {session.pendingAction ? <p><strong>Pending action type:</strong> {session.pendingAction.type} ({session.pendingAction.scope})</p> : null}
@@ -557,12 +567,12 @@ export default function AutonomousPage() {
                   />
                 </label>
                 <label className="mt-4 block text-sm font-semibold text-ink">
-                  Stop or restart reason
+                  Override reason
                   <input
                     value={overrideReason}
                     onChange={(event) => setOverrideReason(event.target.value)}
                     className="mt-2 w-full rounded-[1rem] border border-ink/10 bg-white/80 px-4 py-3 text-sm text-ink outline-none transition focus:border-ocean/40"
-                    placeholder="Explain why the loop should stop or restart from a safe boundary."
+                    placeholder="Explain why you are overriding the current recommendation or asking for a stop or restart."
                   />
                 </label>
                 <div className="mt-5 flex flex-wrap gap-3">

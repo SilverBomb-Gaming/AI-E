@@ -27,6 +27,7 @@ type HeadlessAutonomyOptions = {
   approved?: boolean;
   steeringAction?: AutonomousOperatorSteeringAction;
   operatorNote?: string;
+  overrideReason?: string;
   stopReason?: string;
   restartReason?: string;
   clearSteering?: boolean;
@@ -99,6 +100,10 @@ export function parseArgs(argv: string[]): HeadlessAutonomyOptions {
         break;
       case "--operatorNote":
         options.operatorNote = normalizeText(next) || undefined;
+        index += 1;
+        break;
+      case "--overrideReason":
+        options.overrideReason = normalizeText(next) || undefined;
         index += 1;
         break;
       case "--stopReason":
@@ -335,8 +340,16 @@ export function formatHeadlessSessionReport(session: AutonomousSession, options?
     `Operator intervention preferred: ${String(session.workflowContinuity.loopHealth.operatorInterventionPreferred)}`,
     `Operator override status: ${session.workflowContinuity.steering.status}`,
     `Operator override request: ${session.workflowContinuity.steering.requestedAction ?? "none"}`,
+    `Operator override reason: ${session.workflowContinuity.steering.overrideReason ?? "No override reason recorded."}`,
     `Operator override blocked reason: ${session.workflowContinuity.steering.blockedReason ?? "No override block recorded."}`,
     `Operator note: ${session.workflowContinuity.steering.operatorNote ?? "No operator note recorded."}`,
+    `Last operator refinement note: ${session.workflowContinuity.refinement.lastOperatorRefinementNote ?? "No refinement note recorded."}`,
+    `Last override reason: ${session.workflowContinuity.refinement.lastOverrideReason ?? "No override reason recorded."}`,
+    `Recent overrides improved progress: ${String(session.workflowContinuity.refinement.recentOverridesImprovedProgress)}`,
+    `Similar future preference: ${session.workflowContinuity.refinement.similarFuturePreference ?? "No preference recorded."}`,
+    `Recommendation influenced by recent guidance: ${String(session.workflowContinuity.refinement.recommendationInfluencedByRecentGuidance)}`,
+    `Refinement influence reason: ${session.workflowContinuity.refinement.influenceReason ?? "No refinement influence reason recorded."}`,
+    `Refinement summary: ${session.workflowContinuity.refinement.refinementSummary ?? "No refinement summary recorded."}`,
     `System recommended next phase: ${session.workflowContinuity.loopHealth.systemRecommendedNextPhase ?? "No system recommendation recorded."}`,
     `Recommended next phase: ${session.workflowContinuity.loopHealth.recommendedNextPhase}`,
     `Recommended next action: ${session.workflowContinuity.loopHealth.recommendedNextActionSummary ?? "No recommended next action recorded."}`,
@@ -471,7 +484,12 @@ export function formatHeadlessQueueRunReport(summary: QueueExecutionSummary, opt
     `Stalled loop: ${typeof summary.session?.workflowContinuity?.loopHealth.stalledLoop === "boolean" ? String(summary.session.workflowContinuity.loopHealth.stalledLoop) : "unknown"}`,
     `Operator override status: ${summary.session?.workflowContinuity?.steering?.status ?? "unknown"}`,
     `Operator override request: ${summary.session?.workflowContinuity?.steering?.requestedAction ?? "unknown"}`,
+    `Operator override reason: ${summary.session?.workflowContinuity?.steering?.overrideReason ?? "unknown"}`,
     `Operator note: ${summary.session?.workflowContinuity?.steering?.operatorNote ?? "unknown"}`,
+    `Last operator refinement note: ${summary.session?.workflowContinuity?.refinement?.lastOperatorRefinementNote ?? "unknown"}`,
+    `Recent overrides improved progress: ${typeof summary.session?.workflowContinuity?.refinement?.recentOverridesImprovedProgress === "boolean" ? String(summary.session.workflowContinuity.refinement.recentOverridesImprovedProgress) : "unknown"}`,
+    `Recommendation influenced by recent guidance: ${typeof summary.session?.workflowContinuity?.refinement?.recommendationInfluencedByRecentGuidance === "boolean" ? String(summary.session.workflowContinuity.refinement.recommendationInfluencedByRecentGuidance) : "unknown"}`,
+    `Refinement summary: ${summary.session?.workflowContinuity?.refinement?.refinementSummary ?? "unknown"}`,
     `System recommended next phase: ${summary.session?.workflowContinuity?.loopHealth.systemRecommendedNextPhase ?? "unknown"}`,
     `Recommended next phase: ${summary.session?.workflowContinuity?.loopHealth.recommendedNextPhase ?? "unknown"}`,
     `Loop health reason: ${summary.session?.workflowContinuity?.loopHealth.loopHealthReason ?? "unknown"}`,
@@ -571,6 +589,7 @@ export async function runHeadlessAutonomy(
       ? {
           action: options.steeringAction,
           operatorNote: options.operatorNote,
+          overrideReason: options.overrideReason,
           stopReason: options.stopReason,
           restartReason: options.restartReason,
         }

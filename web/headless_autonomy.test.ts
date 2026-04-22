@@ -191,6 +191,8 @@ test("headless_autonomy parses bounded steering flags", () => {
     "prefer-validation-next",
     "--operatorNote",
     "Validate before the next fix.",
+    "--overrideReason",
+    "The prior fix recommendation is premature.",
     "--restartReason",
     "Return to the last safe checkpoint.",
   ]);
@@ -198,5 +200,6 @@ test("headless_autonomy parses bounded steering flags", () => {
   assert.equal(parsed.sessionId, "session-steer-1");
   assert.equal(parsed.steeringAction, "prefer-validation-next");
   assert.equal(parsed.operatorNote, "Validate before the next fix.");
+  assert.equal(parsed.overrideReason, "The prior fix recommendation is premature.");
   assert.equal(parsed.restartReason, "Return to the last safe checkpoint.");
 });

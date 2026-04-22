@@ -24,10 +24,11 @@ export async function POST(
     const clearSteering = body.clear === true;
     const action = typeof body.action === "string" ? body.action as AutonomousOperatorSteeringAction : undefined;
     const operatorNote = typeof body.operatorNote === "string" ? body.operatorNote : undefined;
+    const overrideReason = typeof body.overrideReason === "string" ? body.overrideReason : undefined;
     const stopReason = typeof body.stopReason === "string" ? body.stopReason : undefined;
     const restartReason = typeof body.restartReason === "string" ? body.restartReason : undefined;
 
-    if (!clearSteering && !action && !operatorNote && !stopReason && !restartReason) {
+    if (!clearSteering && !action && !operatorNote && !overrideReason && !stopReason && !restartReason) {
       return NextResponse.json({ error: "A bounded steering request is required." }, { status: 400 });
     }
 
@@ -36,6 +37,7 @@ export async function POST(
       : updateAutonomousSessionSteering(session, {
           action,
           operatorNote,
+          overrideReason,
           stopReason,
           restartReason,
         });

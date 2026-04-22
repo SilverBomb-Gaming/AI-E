@@ -129,6 +129,7 @@ export type AutonomousOperatorSteeringStatus = "none" | "pending" | "applied" | 
 export type AutonomousWorkflowSteeringState = {
   requestedAction?: AutonomousOperatorSteeringAction;
   requestedNextPhaseOverride?: AutonomousWorkflowRecommendedNextPhase;
+  overrideReason?: string;
   requestedStopReason?: string;
   requestedRestartReason?: string;
   operatorNote?: string;
@@ -136,6 +137,31 @@ export type AutonomousWorkflowSteeringState = {
   status: AutonomousOperatorSteeringStatus;
   blockedReason?: string;
   effectiveNextPhase?: AutonomousWorkflowRecommendedNextPhase;
+};
+
+export type AutonomousWorkflowRefinementOutcome = "pending" | "helped-progress" | "no-clear-improvement" | "still-blocked" | "blocked";
+
+export type AutonomousWorkflowRefinementHistoryEntry = {
+  requestedAtStepIndex: number;
+  requestedAction?: AutonomousOperatorSteeringAction;
+  requestedNextPhaseOverride?: AutonomousWorkflowRecommendedNextPhase;
+  systemRecommendedNextPhase?: AutonomousWorkflowRecommendedNextPhase;
+  overrideReason?: string;
+  operatorNote?: string;
+  requestedStopReason?: string;
+  requestedRestartReason?: string;
+};
+
+export type AutonomousWorkflowRefinementState = {
+  history: AutonomousWorkflowRefinementHistoryEntry[];
+  lastOperatorRefinementNote?: string;
+  lastOverrideReason?: string;
+  recentOverridesImprovedProgress: boolean;
+  similarFuturePreference?: AutonomousWorkflowRecommendedNextPhase;
+  recommendationInfluencedByRecentGuidance: boolean;
+  influencedRecommendedNextPhase?: AutonomousWorkflowRecommendedNextPhase;
+  influenceReason?: string;
+  refinementSummary?: string;
 };
 
 export type AutonomousWorkflowLoopHealthState = {
@@ -155,6 +181,7 @@ export type AutonomousWorkflowContinuityState = {
   progress: AutonomousWorkflowProgressState;
   memory: AutonomousWorkflowMemoryState;
   steering: AutonomousWorkflowSteeringState;
+  refinement: AutonomousWorkflowRefinementState;
   loopHealth: AutonomousWorkflowLoopHealthState;
 };
 
@@ -252,6 +279,7 @@ type AppendAutonomousStepParams = {
 export type UpdateAutonomousSessionSteeringParams = {
   action?: AutonomousOperatorSteeringAction;
   operatorNote?: string;
+  overrideReason?: string;
   stopReason?: string;
   restartReason?: string;
 };
@@ -282,6 +310,14 @@ function createTimestamp(date = new Date()): string {
 function createDefaultAutonomousWorkflowSteeringState(): AutonomousWorkflowSteeringState {
   return {
     status: "none",
+  };
+}
+
+function createDefaultAutonomousWorkflowRefinementState(): AutonomousWorkflowRefinementState {
+  return {
+    history: [],
+    recentOverridesImprovedProgress: false,
+    recommendationInfluencedByRecentGuidance: false,
   };
 }
 
@@ -342,6 +378,40 @@ function hasSteeringBeenApplied(session: AutonomousSession, requestedForStepInde
 
   const latestCompletedStep = session.lastStepIndex ?? session.steps.at(-1)?.index ?? 0;
   return latestCompletedStep >= requestedForStepIndex;
+}
+
+function clampRefinementHistoryEntries(
+  entries: AutonomousWorkflowRefinementHistoryEntry[],
+): AutonomousWorkflowRefinementHistoryEntry[] {
+  return entries.slice(-6);
+}
+
+function normalizeAutonomousWorkflowRefinementHistoryEntry(value: unknown): AutonomousWorkflowRefinementHistoryEntry | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const source = value as Record<string, unknown>;
+  const requestedAtStepIndex = Number(source.requestedAtStepIndex ?? 0);
+  if (!Number.isInteger(requestedAtStepIndex) || requestedAtStepIndex <= 0) {
+    return null;
+  }
+
+  const requestedAction = normalizeAutonomousOperatorSteeringAction(source.requestedAction);
+  const requestedNextPhaseOverride =
+    normalizeAutonomousWorkflowRecommendedNextPhase(source.requestedNextPhaseOverride)
+    ?? deriveRequestedNextPhaseOverride(requestedAction);
+
+  return {
+    requestedAtStepIndex,
+    requestedAction,
+    requestedNextPhaseOverride,
+    systemRecommendedNextPhase: normalizeAutonomousWorkflowRecommendedNextPhase(source.systemRecommendedNextPhase),
+    overrideReason: normalizeText(typeof source.overrideReason === "string" ? source.overrideReason : "") || undefined,
+    operatorNote: normalizeText(typeof source.operatorNote === "string" ? source.operatorNote : "") || undefined,
+    requestedStopReason: normalizeText(typeof source.requestedStopReason === "string" ? source.requestedStopReason : "") || undefined,
+    requestedRestartReason: normalizeText(typeof source.requestedRestartReason === "string" ? source.requestedRestartReason : "") || undefined,
+  };
 }
 
 function normalizeFailureClassification(value: unknown): FailureClassification | undefined {
@@ -864,6 +934,7 @@ function deriveOperatorSteeringState(params: {
   const requestedNextPhaseOverride =
     normalizeAutonomousWorkflowRecommendedNextPhase(requested.requestedNextPhaseOverride)
     ?? deriveRequestedNextPhaseOverride(requestedAction);
+  const overrideReason = normalizeText(requested.overrideReason) || undefined;
   const operatorNote = normalizeText(requested.operatorNote) || undefined;
   const requestedStopReason = normalizeText(requested.requestedStopReason) || undefined;
   const requestedRestartReason = normalizeText(requested.requestedRestartReason) || undefined;
@@ -892,6 +963,7 @@ function deriveOperatorSteeringState(params: {
     return {
       requestedAction,
       requestedNextPhaseOverride,
+      overrideReason,
       requestedStopReason,
       requestedRestartReason,
       operatorNote,
@@ -912,6 +984,7 @@ function deriveOperatorSteeringState(params: {
   return {
     requestedAction,
     requestedNextPhaseOverride,
+    overrideReason,
     requestedStopReason,
     requestedRestartReason,
     operatorNote,
@@ -922,16 +995,13 @@ function deriveOperatorSteeringState(params: {
 }
 
 function applyOperatorSteeringToLoopHealth(params: {
-  systemLoopHealth: AutonomousWorkflowLoopHealthState;
+  loopHealth: AutonomousWorkflowLoopHealthState;
   steering: AutonomousWorkflowSteeringState;
   lastCompletedSafeStep: number | undefined;
   actionableFailure: string | undefined;
 }): AutonomousWorkflowLoopHealthState {
   const loopHealth: AutonomousWorkflowLoopHealthState = {
-    ...params.systemLoopHealth,
-    systemRecommendedNextPhase: params.systemLoopHealth.recommendedNextPhase,
-    systemRecommendedNextActionSummary: params.systemLoopHealth.recommendedNextActionSummary,
-    systemLoopHealthReason: params.systemLoopHealth.loopHealthReason,
+    ...params.loopHealth,
   };
 
   if (params.steering.status === "blocked" || params.steering.status === "none") {
@@ -1161,6 +1231,16 @@ export function deriveAutonomousWorkflowContinuity(session: AutonomousSession): 
     actionableFailure,
     operatorBlockers,
   });
+  const refinement = deriveOperatorRefinementState({
+    session,
+    systemLoopHealth,
+    steering,
+  });
+  const refinementAwareLoopHealth = applyOperatorRefinementToLoopHealth({
+    systemLoopHealth,
+    steering,
+    refinement,
+  });
 
   return {
     progress: {
@@ -1195,8 +1275,9 @@ export function deriveAutonomousWorkflowContinuity(session: AutonomousSession): 
         || undefined,
     },
     steering,
+    refinement,
     loopHealth: applyOperatorSteeringToLoopHealth({
-      systemLoopHealth,
+      loopHealth: refinementAwareLoopHealth,
       steering,
       lastCompletedSafeStep,
       actionableFailure,
@@ -1213,6 +1294,7 @@ function normalizeAutonomousWorkflowContinuityState(value: unknown): AutonomousW
   const progressSource = source.progress && typeof source.progress === "object" ? (source.progress as Record<string, unknown>) : undefined;
   const memorySource = source.memory && typeof source.memory === "object" ? (source.memory as Record<string, unknown>) : undefined;
   const steeringSource = source.steering && typeof source.steering === "object" ? (source.steering as Record<string, unknown>) : undefined;
+  const refinementSource = source.refinement && typeof source.refinement === "object" ? (source.refinement as Record<string, unknown>) : undefined;
   const loopHealthSource = source.loopHealth && typeof source.loopHealth === "object" ? (source.loopHealth as Record<string, unknown>) : undefined;
   const chainPhase = normalizeText(typeof progressSource?.chainPhase === "string" ? progressSource.chainPhase : "");
 
@@ -1263,6 +1345,7 @@ function normalizeAutonomousWorkflowContinuityState(value: unknown): AutonomousW
       requestedNextPhaseOverride:
         normalizeAutonomousWorkflowRecommendedNextPhase(steeringSource?.requestedNextPhaseOverride)
         ?? deriveRequestedNextPhaseOverride(normalizeAutonomousOperatorSteeringAction(steeringSource?.requestedAction)),
+      overrideReason: normalizeText(typeof steeringSource?.overrideReason === "string" ? steeringSource.overrideReason : "") || undefined,
       requestedStopReason: normalizeText(typeof steeringSource?.requestedStopReason === "string" ? steeringSource.requestedStopReason : "") || undefined,
       requestedRestartReason:
         normalizeText(typeof steeringSource?.requestedRestartReason === "string" ? steeringSource.requestedRestartReason : "") || undefined,
@@ -1272,6 +1355,31 @@ function normalizeAutonomousWorkflowContinuityState(value: unknown): AutonomousW
       status: normalizeAutonomousOperatorSteeringStatus(steeringSource?.status) ?? "none",
       blockedReason: normalizeText(typeof steeringSource?.blockedReason === "string" ? steeringSource.blockedReason : "") || undefined,
       effectiveNextPhase: normalizeAutonomousWorkflowRecommendedNextPhase(steeringSource?.effectiveNextPhase),
+    },
+    refinement: {
+      history: clampRefinementHistoryEntries(
+        Array.isArray(refinementSource?.history)
+          ? (refinementSource?.history as unknown[])
+              .map((entry) => normalizeAutonomousWorkflowRefinementHistoryEntry(entry))
+              .filter((entry): entry is AutonomousWorkflowRefinementHistoryEntry => entry !== null)
+          : [],
+      ),
+      lastOperatorRefinementNote:
+        normalizeText(typeof refinementSource?.lastOperatorRefinementNote === "string" ? refinementSource.lastOperatorRefinementNote : "") || undefined,
+      lastOverrideReason:
+        normalizeText(typeof refinementSource?.lastOverrideReason === "string" ? refinementSource.lastOverrideReason : "") || undefined,
+      recentOverridesImprovedProgress:
+        typeof refinementSource?.recentOverridesImprovedProgress === "boolean" ? refinementSource.recentOverridesImprovedProgress : false,
+      similarFuturePreference:
+        normalizeAutonomousWorkflowRecommendedNextPhase(refinementSource?.similarFuturePreference) ?? undefined,
+      recommendationInfluencedByRecentGuidance:
+        typeof refinementSource?.recommendationInfluencedByRecentGuidance === "boolean"
+          ? refinementSource.recommendationInfluencedByRecentGuidance
+          : false,
+      influencedRecommendedNextPhase:
+        normalizeAutonomousWorkflowRecommendedNextPhase(refinementSource?.influencedRecommendedNextPhase) ?? undefined,
+      influenceReason: normalizeText(typeof refinementSource?.influenceReason === "string" ? refinementSource.influenceReason : "") || undefined,
+      refinementSummary: normalizeText(typeof refinementSource?.refinementSummary === "string" ? refinementSource.refinementSummary : "") || undefined,
     },
     loopHealth: {
       currentPhaseRepeatCount: Number.isInteger(Number(loopHealthSource?.currentPhaseRepeatCount)) ? Math.max(1, Number(loopHealthSource?.currentPhaseRepeatCount)) : 1,
@@ -1408,6 +1516,172 @@ function normalizeAutonomousStepRecord(value: unknown): AutonomousStepRecord | n
   };
 }
 
+function deriveRefinementOutcome(params: {
+  session: AutonomousSession;
+  entry: AutonomousWorkflowRefinementHistoryEntry;
+  steering: AutonomousWorkflowSteeringState;
+}): { outcome: AutonomousWorkflowRefinementOutcome; summary?: string } {
+  const followUpSteps = params.session.steps.filter((step) => step.index >= params.entry.requestedAtStepIndex);
+  if (
+    params.steering.requestedForStepIndex === params.entry.requestedAtStepIndex
+    && params.steering.status === "blocked"
+  ) {
+    return {
+      outcome: "blocked",
+      summary: params.steering.blockedReason || "The requested bounded override could not be applied.",
+    };
+  }
+
+  if (followUpSteps.length === 0) {
+    return {
+      outcome: "pending",
+      summary: "Waiting for the next bounded step to evaluate the operator guidance.",
+    };
+  }
+
+  const successfulFollowUp = followUpSteps.find((step) => {
+    if (step.goalStatus === "progressing" || step.goalStatus === "complete") {
+      return true;
+    }
+
+    if (step.executionResult?.status === "success") {
+      return true;
+    }
+
+    return false;
+  });
+
+  if (successfulFollowUp) {
+    return {
+      outcome: "helped-progress",
+      summary: `Operator guidance improved progress at step ${successfulFollowUp.index}.`,
+    };
+  }
+
+  if (
+    params.session.status === "blocked"
+    || params.session.status === "paused"
+    || params.session.status === "awaiting-approval"
+  ) {
+    return {
+      outcome: "still-blocked",
+      summary: params.session.stateReason || "The loop is still waiting on an operator-side blocker.",
+    };
+  }
+
+  return {
+    outcome: "no-clear-improvement",
+    summary: "The recent override did not produce clear bounded progress yet.",
+  };
+}
+
+function summarizeRefinementHistoryPreference(
+  entries: Array<AutonomousWorkflowRefinementHistoryEntry & { outcome: AutonomousWorkflowRefinementOutcome }>,
+): AutonomousWorkflowRecommendedNextPhase | undefined {
+  const counts = new Map<AutonomousWorkflowRecommendedNextPhase, number>();
+  for (const entry of entries) {
+    if (entry.outcome !== "helped-progress" || !entry.requestedNextPhaseOverride) {
+      continue;
+    }
+
+    counts.set(entry.requestedNextPhaseOverride, (counts.get(entry.requestedNextPhaseOverride) ?? 0) + 1);
+  }
+
+  return [...counts.entries()].sort((left, right) => right[1] - left[1])[0]?.[0];
+}
+
+function deriveOperatorRefinementState(params: {
+  session: AutonomousSession;
+  systemLoopHealth: AutonomousWorkflowLoopHealthState;
+  steering: AutonomousWorkflowSteeringState;
+}): AutonomousWorkflowRefinementState {
+  const priorRefinement = params.session.workflowContinuity?.refinement ?? createDefaultAutonomousWorkflowRefinementState();
+  const history = clampRefinementHistoryEntries(priorRefinement.history ?? []);
+
+  if (history.length === 0) {
+    return createDefaultAutonomousWorkflowRefinementState();
+  }
+
+  const evaluatedHistory = history.map((entry) => {
+    const evaluation = deriveRefinementOutcome({
+      session: params.session,
+      entry,
+      steering: params.steering,
+    });
+
+    return {
+      ...entry,
+      outcome: evaluation.outcome,
+      evaluationSummary: evaluation.summary,
+    };
+  });
+  const successfulInfluence = [...evaluatedHistory].reverse().find((entry) => {
+    return entry.outcome === "helped-progress"
+      && Boolean(entry.requestedNextPhaseOverride)
+      && Boolean(entry.systemRecommendedNextPhase)
+      && entry.systemRecommendedNextPhase === params.systemLoopHealth.recommendedNextPhase
+      && entry.requestedNextPhaseOverride !== params.systemLoopHealth.recommendedNextPhase;
+  });
+  const similarFuturePreference = summarizeRefinementHistoryPreference(evaluatedHistory);
+  const lastHistoryEntry = evaluatedHistory.at(-1);
+  const influenceReason = successfulInfluence
+    ? successfulInfluence.overrideReason
+      || successfulInfluence.operatorNote
+      || `A prior operator override improved progress by preferring ${successfulInfluence.requestedNextPhaseOverride}.`
+    : undefined;
+  const refinementSummary = lastHistoryEntry
+    ? `Last refinement: ${lastHistoryEntry.requestedAction ?? "operator-note"} -> ${lastHistoryEntry.outcome}${lastHistoryEntry.evaluationSummary ? ` (${lastHistoryEntry.evaluationSummary})` : ""}`
+    : undefined;
+
+  return {
+    history,
+    lastOperatorRefinementNote: lastHistoryEntry?.operatorNote,
+    lastOverrideReason: lastHistoryEntry?.overrideReason,
+    recentOverridesImprovedProgress: evaluatedHistory.slice(-3).some((entry) => entry.outcome === "helped-progress"),
+    similarFuturePreference,
+    recommendationInfluencedByRecentGuidance:
+      params.steering.status === "none"
+      && Boolean(successfulInfluence?.requestedNextPhaseOverride),
+    influencedRecommendedNextPhase:
+      params.steering.status === "none" ? successfulInfluence?.requestedNextPhaseOverride : undefined,
+    influenceReason,
+    refinementSummary,
+  };
+}
+
+function applyOperatorRefinementToLoopHealth(params: {
+  systemLoopHealth: AutonomousWorkflowLoopHealthState;
+  steering: AutonomousWorkflowSteeringState;
+  refinement: AutonomousWorkflowRefinementState;
+}): AutonomousWorkflowLoopHealthState {
+  const loopHealth: AutonomousWorkflowLoopHealthState = {
+    ...params.systemLoopHealth,
+    systemRecommendedNextPhase: params.systemLoopHealth.recommendedNextPhase,
+    systemRecommendedNextActionSummary: params.systemLoopHealth.recommendedNextActionSummary,
+    systemLoopHealthReason: params.systemLoopHealth.loopHealthReason,
+  };
+
+  if (
+    params.steering.status !== "none"
+    || !params.refinement.recommendationInfluencedByRecentGuidance
+    || !params.refinement.influencedRecommendedNextPhase
+  ) {
+    return loopHealth;
+  }
+
+  return {
+    ...loopHealth,
+    operatorInterventionPreferred: true,
+    recommendedNextPhase: params.refinement.influencedRecommendedNextPhase,
+    recommendedNextActionSummary:
+      params.refinement.lastOperatorRefinementNote
+      || `Recent operator guidance suggests preferring ${params.refinement.influencedRecommendedNextPhase} in this bounded loop.`,
+    loopHealthReason:
+      params.refinement.influenceReason
+      || `Recent operator-guided loop refinement suggests preferring ${params.refinement.influencedRecommendedNextPhase}.`,
+  };
+}
+
 export function createAutonomousSessionId(): string {
   if (globalThis.crypto?.randomUUID) {
     return globalThis.crypto.randomUUID();
@@ -1440,6 +1714,7 @@ export function createAutonomousSession(params: CreateAutonomousSessionParams): 
         priorRecoveryOutcomes: [],
       },
       steering: createDefaultAutonomousWorkflowSteeringState(),
+      refinement: createDefaultAutonomousWorkflowRefinementState(),
       loopHealth: {
         currentPhaseRepeatCount: 1,
         recentPhaseOutcomes: [],
@@ -1731,6 +2006,7 @@ export function normalizeAutonomousSession(value: unknown): AutonomousSession | 
         priorRecoveryOutcomes: [],
       },
       steering: createDefaultAutonomousWorkflowSteeringState(),
+      refinement: createDefaultAutonomousWorkflowRefinementState(),
       loopHealth: {
         currentPhaseRepeatCount: 1,
         recentPhaseOutcomes: [],
@@ -1825,6 +2101,10 @@ export function buildAutonomousSessionContextBlock(session: AutonomousSession, l
 
   lines.push(`- Operator override status: ${session.workflowContinuity.steering.status}`);
 
+  if (session.workflowContinuity.steering.overrideReason) {
+    lines.push(`- Operator override reason: ${session.workflowContinuity.steering.overrideReason}`);
+  }
+
   if (session.workflowContinuity.steering.operatorNote) {
     lines.push(`- Operator note for next step: ${session.workflowContinuity.steering.operatorNote}`);
   }
@@ -1852,6 +2132,32 @@ export function buildAutonomousSessionContextBlock(session: AutonomousSession, l
 
   if (session.workflowContinuity.loopHealth.systemLoopHealthReason) {
     lines.push(`- System loop health reason: ${session.workflowContinuity.loopHealth.systemLoopHealthReason}`);
+  }
+
+  if (session.workflowContinuity.refinement.lastOperatorRefinementNote) {
+    lines.push(`- Last operator refinement note: ${session.workflowContinuity.refinement.lastOperatorRefinementNote}`);
+  }
+
+  if (session.workflowContinuity.refinement.lastOverrideReason) {
+    lines.push(`- Last override reason: ${session.workflowContinuity.refinement.lastOverrideReason}`);
+  }
+
+  lines.push(`- Recent overrides improved progress: ${String(session.workflowContinuity.refinement.recentOverridesImprovedProgress)}`);
+
+  if (session.workflowContinuity.refinement.similarFuturePreference) {
+    lines.push(`- Similar future preference: ${session.workflowContinuity.refinement.similarFuturePreference}`);
+  }
+
+  lines.push(
+    `- Recommendation influenced by recent guidance: ${String(session.workflowContinuity.refinement.recommendationInfluencedByRecentGuidance)}`,
+  );
+
+  if (session.workflowContinuity.refinement.influenceReason) {
+    lines.push(`- Refinement influence reason: ${session.workflowContinuity.refinement.influenceReason}`);
+  }
+
+  if (session.workflowContinuity.refinement.refinementSummary) {
+    lines.push(`- Refinement summary: ${session.workflowContinuity.refinement.refinementSummary}`);
   }
 
   if (session.workflowContinuity.loopHealth.recentPhaseOutcomes.length > 0) {
@@ -1928,6 +2234,9 @@ export function updateAutonomousSessionSteering(
 ): AutonomousSession {
   const requestedAction = params.action;
   const operatorNote = normalizeText(params.operatorNote) || undefined;
+  const overrideReason = normalizeText(params.overrideReason) || undefined;
+  const systemRecommendedNextPhase = session.workflowContinuity.loopHealth.systemRecommendedNextPhase
+    ?? session.workflowContinuity.loopHealth.recommendedNextPhase;
   const nextSession: AutonomousSession = {
     ...session,
     updatedAt: createTimestamp(),
@@ -1936,11 +2245,28 @@ export function updateAutonomousSessionSteering(
       steering: {
         requestedAction,
         requestedNextPhaseOverride: deriveRequestedNextPhaseOverride(requestedAction),
+        overrideReason,
         requestedStopReason: normalizeText(params.stopReason) || undefined,
         requestedRestartReason: normalizeText(params.restartReason) || undefined,
         operatorNote,
         requestedForStepIndex: session.currentStepIndex,
         status: requestedAction || operatorNote ? "pending" : "none",
+      },
+      refinement: {
+        ...session.workflowContinuity.refinement,
+        history: clampRefinementHistoryEntries([
+          ...(session.workflowContinuity.refinement.history ?? []),
+          {
+            requestedAtStepIndex: session.currentStepIndex,
+            requestedAction,
+            requestedNextPhaseOverride: deriveRequestedNextPhaseOverride(requestedAction),
+            systemRecommendedNextPhase,
+            overrideReason,
+            operatorNote,
+            requestedStopReason: normalizeText(params.stopReason) || undefined,
+            requestedRestartReason: normalizeText(params.restartReason) || undefined,
+          },
+        ]),
       },
     },
   };

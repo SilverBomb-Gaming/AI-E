@@ -281,6 +281,66 @@ test("autonomous sessions can clear a supervised steering override", () => {
   assert.equal(cleared.workflowContinuity.steering.requestedAction, undefined);
 });
 
+test("autonomous sessions carry bounded refinement history and mark progress from prior operator guidance", () => {
+  const failedValidation = appendAutonomousStep(createAutonomousSession({ goal: "Refine repeated validation loops." }), {
+    proposedAction: "Run the bounded validation command.",
+    expectedOutcome: "The validation output should report a healthy result.",
+    executionResult: {
+      status: "failed",
+      error: "Validation still reports the same unresolved failure.",
+    },
+    failureReason: "Validation still reports the same unresolved failure.",
+  });
+  const steered = updateAutonomousSessionSteering(failedValidation, {
+    action: "prefer-validation-next",
+    overrideReason: "A fix would be premature until the validation path is rechecked.",
+    operatorNote: "Run validation one more time before switching to a fix.",
+  });
+  const successfulValidation = appendAutonomousStep(steered, {
+    proposedAction: "Run the bounded validation command.",
+    expectedOutcome: "The validation output should report a healthy result.",
+    executionResult: {
+      status: "success",
+      output: "Validation produced new signal and narrowed the problem safely.",
+    },
+    nextDecision: "continue",
+  });
+  const cleared = clearAutonomousSessionSteering(successfulValidation);
+  const repeatedFailure = appendAutonomousStep(cleared, {
+    proposedAction: "Run the bounded validation command.",
+    expectedOutcome: "The validation output should report a healthy result.",
+    executionResult: {
+      status: "failed",
+      error: "Validation still reports the same unresolved failure.",
+    },
+    failureReason: "Validation still reports the same unresolved failure.",
+  });
+
+  assert.equal(successfulValidation.workflowContinuity.refinement.history.length, 1);
+  assert.equal(successfulValidation.workflowContinuity.refinement.lastOverrideReason, "A fix would be premature until the validation path is rechecked.");
+  assert.equal(successfulValidation.workflowContinuity.refinement.recentOverridesImprovedProgress, true);
+  assert.equal(repeatedFailure.workflowContinuity.loopHealth.systemRecommendedNextPhase, "fix");
+  assert.equal(repeatedFailure.workflowContinuity.refinement.recommendationInfluencedByRecentGuidance, true);
+  assert.equal(repeatedFailure.workflowContinuity.refinement.influencedRecommendedNextPhase, "validation");
+  assert.equal(repeatedFailure.workflowContinuity.loopHealth.recommendedNextPhase, "validation");
+  assert.match(repeatedFailure.workflowContinuity.loopHealth.loopHealthReason ?? "", /premature until the validation path is rechecked/i);
+  assert.match(buildAutonomousSessionContextBlock(repeatedFailure), /Recommendation influenced by recent guidance: true/i);
+});
+
+test("autonomous sessions record blocked refinement attempts for later inspection", () => {
+  const blocked = updateAutonomousSessionSteering(createAutonomousSession({ goal: "Record a blocked restart refinement." }), {
+    action: "restart-from-last-safe-boundary",
+    overrideReason: "The loop should return to the last safe checkpoint before trying again.",
+    restartReason: "No useful progress is happening from the current point.",
+  });
+
+  assert.equal(blocked.workflowContinuity.steering.overrideReason, "The loop should return to the last safe checkpoint before trying again.");
+  assert.equal(blocked.workflowContinuity.refinement.history.length, 1);
+  assert.equal(blocked.workflowContinuity.refinement.lastOverrideReason, "The loop should return to the last safe checkpoint before trying again.");
+  assert.equal(blocked.workflowContinuity.refinement.recentOverridesImprovedProgress, false);
+  assert.match(blocked.workflowContinuity.refinement.refinementSummary ?? "", /blocked/i);
+});
+
 test("autonomous sessions can pause and resume without losing state reason", () => {
   const created = createAutonomousSession({ goal: "Confirm the bounded validation path." });
   const paused = pauseAutonomousSession(created, "Waiting for the next bounded continuation window.");

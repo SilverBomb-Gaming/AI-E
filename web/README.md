@@ -277,6 +277,17 @@ AI-E now lets operators steer repeated supervised production loops with explicit
 
 This slice still does not add a second workflow engine, parallel autonomous execution, or any way around the existing `TaskEnvelope` lease and dispatch path. Steering is a bounded operator influence layer on top of the same persisted session spine.
 
+## Post-4M bounded autonomy layering: operator-guided loop refinement handoff
+
+AI-E now carries forward bounded operator guidance across repeated supervised loops, so recent overrides can refine later next-step recommendations without hiding the underlying system recommendation or weakening queue, lease, trust, or continuity guarantees.
+
+- `workflowContinuity` now persists bounded refinement history for recent operator overrides, including the requested preference, the system recommendation at the time, the operator note, the override rationale, and whether later bounded steps showed useful progress
+- the loop recommendation layer now derives a refinement influence signal from recent in-session operator history, so later repeated loops can prefer the same operator-guided phase in similar bounded cases while still exposing the unchanged system recommendation separately
+- steering transparency remains explicit: the current session now shows the system recommendation, current override, override rationale, blocked or applied status, whether recent overrides improved progress, whether the current recommendation was influenced by prior guidance, and a bounded refinement summary
+- session APIs inherit the richer continuity block automatically, while the autonomous page and both CLI entrypoints now surface refinement note, progress-improvement signal, similar-future preference, recommendation influence, and refinement summary alongside the existing steering and loop-health state
+
+This slice still does not add unconstrained adaptive planning, hidden operator-learning behavior, multi-agent orchestration, or any bypass around the existing `TaskEnvelope` and trusted dispatch path. Refinement remains session-local, deterministic, and inspectable.
+
 Still deferred beyond 4M-D:
 
 - autonomous peer-to-peer replication or any direct node-to-node handoff channel
