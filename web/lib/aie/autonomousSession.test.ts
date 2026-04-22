@@ -46,9 +46,10 @@ test("autonomous sessions append steps and preserve runtime output", () => {
   assert.equal(updated.steps.length, 1);
   assert.equal(updated.currentStepIndex, 2);
   assert.equal(updated.latestExecutionResult?.status, "success");
-  assert.equal(updated.workflowContinuity.progress.chainPhase, "continuing");
+  assert.equal(updated.workflowContinuity.progress.chainPhase, "validation");
   assert.equal(updated.workflowContinuity.progress.lastCompletedSafeStep, 1);
   assert.equal(updated.workflowContinuity.memory.recentDecisions[0], "step 1: Run the bounded validation command. -> continue");
+  assert.match(updated.workflowContinuity.memory.lastValidationOutcome ?? "", /runtime=success/i);
   assert.match(buildAutonomousSessionContextBlock(updated), /Validation passed with a healthy status/i);
 });
 
@@ -115,8 +116,9 @@ test("autonomous sessions preserve recovery metadata and action attempt counts",
 
   assert.equal(normalized?.steps[0]?.failureClassification?.kind, "transient");
   assert.equal(normalized?.steps[0]?.recoveryStrategy, "retry-same-action");
-  assert.equal(normalized?.workflowContinuity.progress.chainPhase, "restarting");
+  assert.equal(normalized?.workflowContinuity.progress.chainPhase, "retry");
   assert.match(normalized?.workflowContinuity.memory.restartReason ?? "", /Timed out once/i);
+  assert.match(normalized?.workflowContinuity.memory.lastFailureSummary ?? "", /Timed out once/i);
   assert.equal(countPriorAttemptsForAction(session, "Run validation."), 1);
   assert.match(buildAutonomousSessionContextBlock(session), /retry-same-action/i);
 });
@@ -150,10 +152,39 @@ test("autonomous sessions persist workflow continuity across awaiting approval s
 
   const normalized = normalizeAutonomousSession(JSON.parse(JSON.stringify(awaiting)));
 
-  assert.equal(normalized?.workflowContinuity.progress.chainPhase, "waiting");
+  assert.equal(normalized?.workflowContinuity.progress.chainPhase, "waiting-on-operator");
   assert.equal(normalized?.workflowContinuity.progress.lastCompletedSafeStep, 1);
   assert.equal(normalized?.workflowContinuity.progress.nextIntendedStep, "Apply the bounded fix.");
+  assert.match(normalized?.workflowContinuity.memory.operatorBlockers ?? "", /approval required/i);
   assert.match(normalized?.workflowContinuity.memory.pendingOperatorContext ?? "", /approval is required/i);
+});
+
+test("autonomous sessions derive implementation and fix loop memory from changed paths", () => {
+  const implemented = appendAutonomousStep(createAutonomousSession({ goal: "Stabilize the bounded production loop." }), {
+    proposedAction: "Apply the bounded fix patch.",
+    executionResult: {
+      status: "success",
+      output: "Patch applied cleanly.",
+      changedPaths: ["web/lib/aie/autonomousSession.ts"],
+      diffSummary: "Updated workflow continuity derivation.",
+    },
+    nextDecision: "continue",
+  });
+  const failedFix = appendAutonomousStep(implemented, {
+    proposedAction: "Apply a second bounded fix patch.",
+    executionResult: {
+      status: "failed",
+      error: "Patch conflicted with the current file state.",
+      changedPaths: ["web/lib/aie/autonomousSession.ts"],
+      diffSummary: "Attempted to update the same continuity block.",
+    },
+    failureReason: "Patch conflicted with the current file state.",
+  });
+
+  assert.equal(implemented.workflowContinuity.progress.chainPhase, "implementation");
+  assert.match(implemented.workflowContinuity.memory.lastFixAttemptSummary ?? "", /changed=web\/lib\/aie\/autonomousSession.ts/i);
+  assert.equal(failedFix.workflowContinuity.progress.chainPhase, "fix");
+  assert.match(failedFix.workflowContinuity.memory.lastFailureSummary ?? "", /patch conflicted/i);
 });
 
 test("autonomous sessions can pause and resume without losing state reason", () => {

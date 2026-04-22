@@ -73,11 +73,14 @@ export type AutonomousRecoveryState = {
 };
 
 export type AutonomousWorkflowChainPhase =
-  | "continuing"
-  | "restarting"
-  | "waiting"
+  | "planning"
+  | "implementation"
+  | "validation"
+  | "fix"
+  | "retry"
+  | "waiting-on-operator"
   | "blocked"
-  | "completed"
+  | "completed-safe-boundary"
   | "failed";
 
 export type AutonomousWorkflowProgressState = {
@@ -91,6 +94,12 @@ export type AutonomousWorkflowProgressState = {
 
 export type AutonomousWorkflowMemoryState = {
   chainSummary?: string;
+  currentObjectiveSummary?: string;
+  lastValidationOutcome?: string;
+  lastFailureSummary?: string;
+  lastFixAttemptSummary?: string;
+  pendingNextActionSummary?: string;
+  operatorBlockers?: string;
   recentDecisions: string[];
   restartReason?: string;
   priorRecoveryOutcomes: string[];
@@ -457,9 +466,116 @@ function summarizeWorkflowRecoveryOutcome(step: AutonomousStepRecord): string | 
   return `step ${step.index}: ${recovery || "recovery-recorded"}${failure ? ` -> ${failure}` : ""}`;
 }
 
+function summarizeExecutionOutcome(step: AutonomousStepRecord): string | undefined {
+  const output = normalizeText(step.executionResult?.output);
+  const error = normalizeText(step.executionResult?.error);
+  const changedPaths = Array.isArray(step.executionResult?.changedPaths)
+    ? clampWorkflowMemoryItems(step.executionResult.changedPaths)
+    : [];
+  const diffSummary = normalizeText(step.executionResult?.diffSummary);
+
+  return normalizeText([
+    step.executionResult?.status ? `runtime=${step.executionResult.status}` : "",
+    output ? `output=${output}` : "",
+    error ? `error=${error}` : "",
+    changedPaths.length > 0 ? `changed=${changedPaths.join(", ")}` : "",
+    diffSummary ? `diff=${diffSummary}` : "",
+  ].filter(Boolean).join(" | ")) || undefined;
+}
+
+function isValidationLikeText(value: string | undefined): boolean {
+  const normalized = normalizeText(value).toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+
+  return /(validate|validation|verify|verification|test|smoke|check|confirm|build|lint|prove)/i.test(normalized);
+}
+
+function isImplementationLikeText(value: string | undefined): boolean {
+  const normalized = normalizeText(value).toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+
+  return /(implement|implementation|apply|edit|patch|change|update|create|modify|write|refactor)/i.test(normalized);
+}
+
+function summarizeFailure(step: AutonomousStepRecord): string | undefined {
+  const failureReason = step.failureClassification
+    ? `${step.failureClassification.kind}:${step.failureClassification.reason}`
+    : normalizeText(step.failureReason);
+  const outcome = summarizeExecutionOutcome(step);
+
+  return normalizeText([
+    `step ${step.index}`,
+    failureReason ? `failure=${failureReason}` : "",
+    step.recoveryStrategy ? `recovery=${step.recoveryStrategy}` : "",
+    outcome,
+  ].filter(Boolean).join(" | ")) || undefined;
+}
+
+function summarizeValidationOutcome(step: AutonomousStepRecord): string | undefined {
+  if (!isValidationLikeText(step.proposedAction) && !isValidationLikeText(step.expectedOutcome)) {
+    return undefined;
+  }
+
+  return normalizeText([
+    `step ${step.index}`,
+    summarizeExecutionOutcome(step),
+    step.goalStatus ? `goal=${step.goalStatus}` : "",
+  ].filter(Boolean).join(" | ")) || undefined;
+}
+
+function summarizeFixAttempt(step: AutonomousStepRecord): string | undefined {
+  const changedPaths = Array.isArray(step.executionResult?.changedPaths)
+    ? clampWorkflowMemoryItems(step.executionResult.changedPaths)
+    : [];
+  const hasImplementationSignal = isImplementationLikeText(step.proposedAction)
+    || changedPaths.length > 0
+    || Boolean(normalizeText(step.executionResult?.diffSummary));
+
+  if (!hasImplementationSignal) {
+    return undefined;
+  }
+
+  return normalizeText([
+    `step ${step.index}`,
+    step.proposedAction ? `action=${step.proposedAction}` : "",
+    step.executionResult?.status ? `runtime=${step.executionResult.status}` : "",
+    changedPaths.length > 0 ? `changed=${changedPaths.join(", ")}` : "",
+    normalizeText(step.executionResult?.diffSummary) ? `diff=${normalizeText(step.executionResult?.diffSummary)}` : "",
+  ].filter(Boolean).join(" | ")) || undefined;
+}
+
+function deriveProductionLoopFocus(session: AutonomousSession): "planning" | "implementation" | "validation" | undefined {
+  const latestStep = session.steps.at(-1);
+  const candidateTexts = [
+    session.pendingAction?.description,
+    session.pendingAction?.expectedOutcome,
+    session.planningHintSummary,
+    latestStep?.proposedAction,
+    latestStep?.expectedOutcome,
+  ];
+
+  if (candidateTexts.some((value) => isValidationLikeText(value))) {
+    return "validation";
+  }
+
+  if (
+    candidateTexts.some((value) => isImplementationLikeText(value))
+    || Array.isArray(latestStep?.executionResult?.changedPaths)
+    || Boolean(normalizeText(latestStep?.executionResult?.diffSummary))
+  ) {
+    return "implementation";
+  }
+
+  return session.steps.length === 0 ? "planning" : undefined;
+}
+
 function deriveAutonomousWorkflowChainPhase(session: AutonomousSession): AutonomousWorkflowChainPhase {
   if (session.status === "completed") {
-    return "completed";
+    return "completed-safe-boundary";
   }
 
   if (session.status === "failed" || session.status === "max-step-limit") {
@@ -471,7 +587,7 @@ function deriveAutonomousWorkflowChainPhase(session: AutonomousSession): Autonom
   }
 
   if (session.status === "paused" || session.status === "awaiting-approval") {
-    return "waiting";
+    return "waiting-on-operator";
   }
 
   if (
@@ -479,14 +595,33 @@ function deriveAutonomousWorkflowChainPhase(session: AutonomousSession): Autonom
     session.latestRecoveryState?.recoveryStrategy === "retry-same-action" ||
     session.latestRecoveryState?.recoveryStrategy === "narrow-scope"
   ) {
-    return "restarting";
+    return "retry";
   }
 
-  return "continuing";
+  const latestStep = session.steps.at(-1);
+  const focus = deriveProductionLoopFocus(session);
+
+  if (latestStep?.executionResult?.status === "failed" && focus === "implementation") {
+    return "fix";
+  }
+
+  if (focus === "validation") {
+    return "validation";
+  }
+
+  if (focus === "implementation") {
+    return "implementation";
+  }
+
+  return "planning";
 }
 
 export function deriveAutonomousWorkflowContinuity(session: AutonomousSession): AutonomousWorkflowContinuityState {
   const recentSteps = session.steps.slice(-4);
+  const latestStep = session.steps.at(-1);
+  const lastValidationStep = [...session.steps].reverse().find((step) => summarizeValidationOutcome(step));
+  const lastFixStep = [...session.steps].reverse().find((step) => summarizeFixAttempt(step));
+  const lastFailureStep = [...session.steps].reverse().find((step) => summarizeFailure(step));
   const lastCompletedSafeStep = [...session.steps]
     .reverse()
     .find((step) => step.executionResult?.status === "success" || step.goalStatus === "complete")?.index;
@@ -496,16 +631,24 @@ export function deriveAutonomousWorkflowContinuity(session: AutonomousSession): 
     || undefined;
   const nextIntendedStep = normalizeText(session.pendingAction?.description)
     || normalizeText(session.planningHintSummary)
-    || normalizeText(session.steps.at(-1)?.proposedAction)
+    || normalizeText(latestStep?.proposedAction)
     || undefined;
   const chainPhase = deriveAutonomousWorkflowChainPhase(session);
   const totalKnownSteps = session.steps.length + (session.pendingAction ? 1 : 0);
-  const latestStep = session.steps.at(-1);
   const summarySource = [
     `${session.goal}`,
     latestStep?.diagnosis ? `Latest diagnosis: ${latestStep.diagnosis}` : "",
     session.latestCompletion ? `Goal status: ${session.latestCompletion.status}` : "",
   ].filter(Boolean).join(" | ");
+  const currentObjectiveSummary = normalizeText([
+    session.goal,
+    nextIntendedStep ? `Next bounded action: ${nextIntendedStep}` : "",
+  ].filter(Boolean).join(" | ")) || undefined;
+  const operatorBlockers = normalizeText([
+    session.status === "awaiting-approval" ? "Approval required before the next bounded step." : "",
+    session.status === "blocked" ? (session.stateReason || "The session is blocked at the current bounded boundary.") : "",
+    session.pendingAction?.requiresApproval ? `Pending approval: ${session.pendingAction.description}` : "",
+  ].filter(Boolean).join(" | ")) || undefined;
 
   return {
     progress: {
@@ -518,9 +661,15 @@ export function deriveAutonomousWorkflowContinuity(session: AutonomousSession): 
     },
     memory: {
       chainSummary: normalizeText(summarySource) || undefined,
+      currentObjectiveSummary,
+      lastValidationOutcome: lastValidationStep ? summarizeValidationOutcome(lastValidationStep) : undefined,
+      lastFailureSummary: lastFailureStep ? summarizeFailure(lastFailureStep) : undefined,
+      lastFixAttemptSummary: lastFixStep ? summarizeFixAttempt(lastFixStep) : undefined,
+      pendingNextActionSummary: nextIntendedStep,
+      operatorBlockers,
       recentDecisions: clampWorkflowMemoryItems(recentSteps.map((step) => summarizeWorkflowDecision(step))),
       restartReason:
-        chainPhase === "restarting"
+        chainPhase === "retry"
           ? normalizeText(session.latestRecoveryState?.failureClassification?.reason)
             || normalizeText(session.stateReason)
             || normalizeText(session.failureReason)
@@ -547,11 +696,14 @@ function normalizeAutonomousWorkflowContinuityState(value: unknown): AutonomousW
   const chainPhase = normalizeText(typeof progressSource?.chainPhase === "string" ? progressSource.chainPhase : "");
 
   if (
-    chainPhase !== "continuing" &&
-    chainPhase !== "restarting" &&
-    chainPhase !== "waiting" &&
+    chainPhase !== "planning" &&
+    chainPhase !== "implementation" &&
+    chainPhase !== "validation" &&
+    chainPhase !== "fix" &&
+    chainPhase !== "retry" &&
+    chainPhase !== "waiting-on-operator" &&
     chainPhase !== "blocked" &&
-    chainPhase !== "completed" &&
+    chainPhase !== "completed-safe-boundary" &&
     chainPhase !== "failed"
   ) {
     return undefined;
@@ -568,6 +720,18 @@ function normalizeAutonomousWorkflowContinuityState(value: unknown): AutonomousW
     },
     memory: {
       chainSummary: normalizeText(typeof memorySource?.chainSummary === "string" ? memorySource.chainSummary : "") || undefined,
+      currentObjectiveSummary:
+        normalizeText(typeof memorySource?.currentObjectiveSummary === "string" ? memorySource.currentObjectiveSummary : "") || undefined,
+      lastValidationOutcome:
+        normalizeText(typeof memorySource?.lastValidationOutcome === "string" ? memorySource.lastValidationOutcome : "") || undefined,
+      lastFailureSummary:
+        normalizeText(typeof memorySource?.lastFailureSummary === "string" ? memorySource.lastFailureSummary : "") || undefined,
+      lastFixAttemptSummary:
+        normalizeText(typeof memorySource?.lastFixAttemptSummary === "string" ? memorySource.lastFixAttemptSummary : "") || undefined,
+      pendingNextActionSummary:
+        normalizeText(typeof memorySource?.pendingNextActionSummary === "string" ? memorySource.pendingNextActionSummary : "") || undefined,
+      operatorBlockers:
+        normalizeText(typeof memorySource?.operatorBlockers === "string" ? memorySource.operatorBlockers : "") || undefined,
       recentDecisions: clampWorkflowMemoryItems(Array.isArray(memorySource?.recentDecisions) ? memorySource?.recentDecisions as string[] : []),
       restartReason: normalizeText(typeof memorySource?.restartReason === "string" ? memorySource.restartReason : "") || undefined,
       priorRecoveryOutcomes: clampWorkflowMemoryItems(Array.isArray(memorySource?.priorRecoveryOutcomes) ? memorySource?.priorRecoveryOutcomes as string[] : []),
@@ -714,7 +878,7 @@ export function createAutonomousSession(params: CreateAutonomousSessionParams): 
     lastStepIndex: 0,
     workflowContinuity: {
       progress: {
-        chainPhase: "continuing",
+        chainPhase: "planning",
         currentChainStep: 1,
         totalKnownSteps: 0,
       },
@@ -997,7 +1161,7 @@ export function normalizeAutonomousSession(value: unknown): AutonomousSession | 
     latestCompletion: normalizeAutonomousCompletionState(source.latestCompletion),
     workflowContinuity: {
       progress: {
-        chainPhase: "continuing",
+        chainPhase: "planning",
         currentChainStep: 1,
         totalKnownSteps: 0,
       },
@@ -1060,6 +1224,30 @@ export function buildAutonomousSessionContextBlock(session: AutonomousSession, l
 
   if (session.workflowContinuity.memory.chainSummary) {
     lines.push(`- Chain summary: ${session.workflowContinuity.memory.chainSummary}`);
+  }
+
+  if (session.workflowContinuity.memory.currentObjectiveSummary) {
+    lines.push(`- Current objective summary: ${session.workflowContinuity.memory.currentObjectiveSummary}`);
+  }
+
+  if (session.workflowContinuity.memory.lastValidationOutcome) {
+    lines.push(`- Last validation outcome: ${session.workflowContinuity.memory.lastValidationOutcome}`);
+  }
+
+  if (session.workflowContinuity.memory.lastFailureSummary) {
+    lines.push(`- Last failure summary: ${session.workflowContinuity.memory.lastFailureSummary}`);
+  }
+
+  if (session.workflowContinuity.memory.lastFixAttemptSummary) {
+    lines.push(`- Last fix attempt: ${session.workflowContinuity.memory.lastFixAttemptSummary}`);
+  }
+
+  if (session.workflowContinuity.memory.pendingNextActionSummary) {
+    lines.push(`- Pending next action: ${session.workflowContinuity.memory.pendingNextActionSummary}`);
+  }
+
+  if (session.workflowContinuity.memory.operatorBlockers) {
+    lines.push(`- Operator blockers: ${session.workflowContinuity.memory.operatorBlockers}`);
   }
 
   if (session.workflowContinuity.memory.pendingOperatorContext) {

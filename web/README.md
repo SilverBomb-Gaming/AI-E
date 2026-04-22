@@ -248,15 +248,20 @@ AI-E now adds a bounded recovery-planning layer on top of the hardened 4M coordi
 
 This slice keeps the same single authoritative queue/lease/receiver path. It does not add peer-to-peer migration, a secondary scheduler, or unsupervised multi-step execution.
 
-## Post-4M bounded autonomy layering: production-workflow continuity handoff
+## Post-4M bounded autonomy layering: supervised production-loop continuity handoff
 
-AI-E now translates the recovery-aware continuation spine into bounded workflow continuity that survives longer coding and operator loops without weakening queue, lease, or trust guarantees.
+AI-E now translates the bounded workflow continuity layer into explicit supervised production loops that carry useful implementation, validation, fix, retry, and approval context across longer bounded work chains without weakening queue, lease, or trust guarantees.
 
-- autonomous sessions now persist a `workflowContinuity` block with chain phase, current chain step, total known steps, last completed safe step, current recovery target, and next intended bounded step
-- the same session layer now keeps lightweight bounded chain memory such as chain summary, recent decisions, restart reason, prior recovery outcomes, and pending operator context
-- session lifecycle transitions recompute that continuity block during append, pause, approval wait, resume, completion, and normalization so resumed chains do not lose operator-facing context
-- shared analysis context now injects workflow continuity lines back into the runner, which gives later bounded steps restart-aware and approval-aware continuity without creating a second orchestrator
-- task inspection APIs now attach the owning session workflow continuity block, and both CLI entrypoints surface chain phase, safe-step, next-step, and chain-summary details during session and queued-task reporting
+- autonomous sessions still persist a single `workflowContinuity` block, but its phase now maps to production-loop states such as `planning`, `implementation`, `validation`, `fix`, `retry`, `waiting-on-operator`, and `completed-safe-boundary`
+- the same session layer now keeps richer bounded loop memory such as current objective summary, last validation outcome, last failure summary, last fix attempt summary, pending next action summary, operator blockers, chain summary, recent decisions, restart reason, prior recovery outcomes, and pending operator context
+- session lifecycle transitions recompute that continuity block during append, pause, approval wait, resume, completion, and normalization so resumed validation or fix loops do not lose what failed, what changed, or what should happen next
+- shared analysis context now injects those production-loop continuity lines back into the runner, which gives later bounded steps validation-aware and fix-aware continuity without creating a second orchestrator
+- task inspection APIs inherit the richer session continuity block, session APIs expose it through the persisted session object, and both CLI entrypoints now surface production-loop phase, validation/fix summaries, next action, and operator blockers during session and queued-task reporting
+
+What remains for later autonomy layers:
+
+- broader supervised loop optimization such as smarter multi-loop prioritization and richer bounded planning heuristics
+- any multi-agent workflow orchestration, peer scheduling, or unbounded autonomous coding behavior
 
 This slice is intentionally derived from `TaskEnvelope` and `AutonomousSession` rather than replacing them. Queue truth, lease ownership, and trusted dispatch remain authoritative; workflow continuity is a persisted planning and observability layer on top of that spine.
 
