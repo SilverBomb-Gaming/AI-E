@@ -290,8 +290,12 @@ test("autonomous sessions record accepted recommendation reviews and bounded fol
   assert.equal(reviewed.workflowContinuity.review.history[0]?.operatorResponse, "accept-current-recommendation");
   assert.equal(progressed.workflowContinuity.review.lastOperatorResponse, "accept-current-recommendation");
   assert.equal(progressed.workflowContinuity.review.lastRecommendationOutcome, "helped-progress");
+  assert.equal(progressed.workflowContinuity.review.lastFollowThroughStatus, "accepted-and-succeeded");
+  assert.equal(progressed.workflowContinuity.review.lastAcceptedRecommendationOutcome, "accepted-and-succeeded");
   assert.equal(progressed.workflowContinuity.review.lastReviewImprovedProgress, true);
   assert.equal(progressed.workflowContinuity.review.lastRecommendationNeededCorrection, false);
+  assert.equal(progressed.workflowContinuity.review.followThroughLedUsefulProgress, true);
+  assert.equal(progressed.workflowContinuity.review.followThroughRequiredCorrection, false);
   assert.match(buildAutonomousSessionContextBlock(progressed), /Last operator review response: accept-current-recommendation/i);
   assert.match(buildAutonomousSessionContextBlock(progressed), /Last recommendation review outcome: helped-progress/i);
 });
@@ -395,11 +399,45 @@ test("autonomous sessions track repeated recommendation redirects and mark when 
   });
 
   assert.equal(corrected.workflowContinuity.review.lastRecommendationOutcome, "needed-correction");
+  assert.equal(corrected.workflowContinuity.review.lastFollowThroughStatus, "redirected-and-improved-progress");
+  assert.equal(corrected.workflowContinuity.review.lastRedirectedRecommendationOutcome, "redirected-and-improved-progress");
   assert.equal(corrected.workflowContinuity.review.lastReviewImprovedProgress, true);
   assert.equal(corrected.workflowContinuity.review.lastRecommendationNeededCorrection, true);
+  assert.equal(corrected.workflowContinuity.review.followThroughLedUsefulProgress, true);
+  assert.equal(corrected.workflowContinuity.review.followThroughRequiredCorrection, true);
   assert.equal(secondRedirect.workflowContinuity.review.frequentlyOverridden, true);
   assert.match(secondRedirect.workflowContinuity.review.reviewSummary ?? "", /prefer-fix-next/i);
   assert.match(buildAutonomousSessionContextBlock(secondRedirect), /Recommendation frequently overridden: true/i);
+});
+
+test("autonomous sessions mark repeated reviewed recommendations with no useful follow-through progress", () => {
+  const failedValidation = appendAutonomousStep(createAutonomousSession({ goal: "Track repeated recommendation follow-through without progress." }), {
+    proposedAction: "Run the bounded validation command.",
+    executionResult: {
+      status: "failed",
+      error: "Validation still reports the same unresolved failure.",
+    },
+    failureReason: "Validation still reports the same unresolved failure.",
+  });
+  const accepted = updateAutonomousSessionSteering(failedValidation, {
+    action: "accept-current-recommendation",
+    operatorNote: "Accept the current fix recommendation and follow it through.",
+  });
+  const repeatedFailure = appendAutonomousStep(accepted, {
+    proposedAction: "Run the bounded validation command again.",
+    executionResult: {
+      status: "failed",
+      error: "Validation still reports the same unresolved failure.",
+    },
+    failureReason: "Validation still reports the same unresolved failure.",
+  });
+
+  assert.equal(repeatedFailure.workflowContinuity.review.lastRecommendationOutcome, "no-clear-improvement");
+  assert.equal(repeatedFailure.workflowContinuity.review.lastFollowThroughStatus, "repeated-review-no-progress");
+  assert.equal(repeatedFailure.workflowContinuity.review.lastAcceptedRecommendationOutcome, "repeated-review-no-progress");
+  assert.equal(repeatedFailure.workflowContinuity.review.followThroughLedUsefulProgress, false);
+  assert.equal(repeatedFailure.workflowContinuity.review.returnedToSameRecommendationAgain, true);
+  assert.equal(repeatedFailure.workflowContinuity.review.repeatedReviewWithoutProgress, false);
 });
 
 test("autonomous sessions record blocked refinement attempts for later inspection", () => {

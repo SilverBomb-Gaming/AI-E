@@ -530,8 +530,16 @@ export default function AutonomousPage() {
                 <p><strong>Last reviewed recommendation:</strong> {session.workflowContinuity.review.lastReviewedRecommendation || "No reviewed recommendation recorded yet."}</p>
                 <p><strong>Last operator review response:</strong> {session.workflowContinuity.review.lastOperatorResponse || "No operator review response recorded yet."}</p>
                 <p><strong>Last recommendation review outcome:</strong> {session.workflowContinuity.review.lastRecommendationOutcome || "No recommendation review outcome recorded yet."}</p>
+                <p><strong>Last recommendation follow-through status:</strong> {session.workflowContinuity.review.lastFollowThroughStatus || "No follow-through status recorded yet."}</p>
+                <p><strong>Last recommendation follow-through summary:</strong> {session.workflowContinuity.review.lastFollowThroughSummary || "No follow-through summary recorded yet."}</p>
+                <p><strong>Last accepted recommendation outcome:</strong> {session.workflowContinuity.review.lastAcceptedRecommendationOutcome || "No accepted recommendation outcome recorded yet."}</p>
+                <p><strong>Last redirected recommendation outcome:</strong> {session.workflowContinuity.review.lastRedirectedRecommendationOutcome || "No redirected recommendation outcome recorded yet."}</p>
                 <p><strong>Last review improved progress:</strong> {session.workflowContinuity.review.lastReviewImprovedProgress ? "Yes" : "No"}</p>
                 <p><strong>Last review needed correction:</strong> {session.workflowContinuity.review.lastRecommendationNeededCorrection ? "Yes" : "No"}</p>
+                <p><strong>Follow-through helped:</strong> {session.workflowContinuity.review.followThroughLedUsefulProgress ? "Yes" : "No"}</p>
+                <p><strong>Follow-through required correction:</strong> {session.workflowContinuity.review.followThroughRequiredCorrection ? "Yes" : "No"}</p>
+                <p><strong>Returned to same recommendation again:</strong> {session.workflowContinuity.review.returnedToSameRecommendationAgain ? "Yes" : "No"}</p>
+                <p><strong>Repeated review without progress:</strong> {session.workflowContinuity.review.repeatedReviewWithoutProgress ? "Yes" : "No"}</p>
                 <p><strong>Recommendation frequently overridden:</strong> {session.workflowContinuity.review.frequentlyOverridden ? "Yes" : "No"}</p>
                 <p><strong>Operator override status:</strong> {session.workflowContinuity.steering.status}</p>
                 <p><strong>Operator override:</strong> {session.workflowContinuity.steering.requestedAction || "No operator override recorded yet."}</p>
@@ -558,6 +566,7 @@ export default function AutonomousPage() {
                   <p><strong>Current recommendation confidence:</strong> {session.workflowContinuity.loopHealth.recommendationConfidence}</p>
                   <p><strong>Current rationale:</strong> {session.workflowContinuity.loopHealth.recommendationRationaleSummary || "No recommendation rationale recorded yet."}</p>
                   <p><strong>Current top signals:</strong> {session.workflowContinuity.loopHealth.topContributingSignals.length ? session.workflowContinuity.loopHealth.topContributingSignals.join(", ") : "No recommendation signals recorded yet."}</p>
+                  <p><strong>Current follow-through:</strong> {session.workflowContinuity.review.lastFollowThroughSummary || "No follow-through summary recorded yet."}</p>
                 </div>
                 <label className="mt-3 block text-sm font-semibold text-ink">
                   Review response

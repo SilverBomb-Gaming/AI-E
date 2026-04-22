@@ -172,6 +172,14 @@ export type AutonomousWorkflowRecommendationReviewOutcome =
   | "no-clear-improvement"
   | "still-blocked";
 
+export type AutonomousWorkflowRecommendationFollowThroughStatus =
+  | "pending"
+  | "accepted-and-succeeded"
+  | "accepted-needed-correction"
+  | "redirected-and-improved-progress"
+  | "repeated-review-no-progress"
+  | "still-blocked";
+
 export type AutonomousWorkflowRecommendationReviewHistoryEntry = {
   reviewedAtStepIndex: number;
   systemRecommendedNextPhase?: AutonomousWorkflowRecommendedNextPhase;
@@ -192,8 +200,16 @@ export type AutonomousWorkflowRecommendationReviewState = {
   lastSystemRecommendation?: AutonomousWorkflowRecommendedNextPhase;
   lastOperatorResponse?: AutonomousOperatorSteeringAction;
   lastRecommendationOutcome?: AutonomousWorkflowRecommendationReviewOutcome;
+  lastFollowThroughStatus?: AutonomousWorkflowRecommendationFollowThroughStatus;
+  lastFollowThroughSummary?: string;
+  lastAcceptedRecommendationOutcome?: AutonomousWorkflowRecommendationFollowThroughStatus;
+  lastRedirectedRecommendationOutcome?: AutonomousWorkflowRecommendationFollowThroughStatus;
   lastReviewImprovedProgress: boolean;
   lastRecommendationNeededCorrection: boolean;
+  followThroughLedUsefulProgress: boolean;
+  followThroughRequiredCorrection: boolean;
+  returnedToSameRecommendationAgain: boolean;
+  repeatedReviewWithoutProgress: boolean;
   frequentlyOverridden: boolean;
   reviewSummary?: string;
 };
@@ -381,6 +397,10 @@ function createDefaultAutonomousWorkflowRecommendationReviewState(): AutonomousW
     history: [],
     lastReviewImprovedProgress: false,
     lastRecommendationNeededCorrection: false,
+    followThroughLedUsefulProgress: false,
+    followThroughRequiredCorrection: false,
+    returnedToSameRecommendationAgain: false,
+    repeatedReviewWithoutProgress: false,
     frequentlyOverridden: false,
   };
 }
@@ -408,6 +428,19 @@ function normalizeAutonomousOperatorSteeringStatus(value: unknown): AutonomousOp
   }
 
   return undefined;
+}
+
+function normalizeAutonomousWorkflowRecommendationFollowThroughStatus(
+  value: unknown,
+): AutonomousWorkflowRecommendationFollowThroughStatus | undefined {
+  return value === "pending"
+    || value === "accepted-and-succeeded"
+    || value === "accepted-needed-correction"
+    || value === "redirected-and-improved-progress"
+    || value === "repeated-review-no-progress"
+    || value === "still-blocked"
+    ? value
+    : undefined;
 }
 
 function deriveRequestedNextPhaseOverride(
@@ -1555,6 +1588,12 @@ export function deriveAutonomousWorkflowContinuity(session: AutonomousSession): 
     steering,
     refinement,
   });
+  const loopHealth = applyOperatorSteeringToLoopHealth({
+    loopHealth: refinementAwareLoopHealth,
+    steering,
+    lastCompletedSafeStep,
+    actionableFailure,
+  });
 
   return {
     progress: {
@@ -1590,14 +1629,10 @@ export function deriveAutonomousWorkflowContinuity(session: AutonomousSession): 
     },
     steering,
     refinement,
-    loopHealth: applyOperatorSteeringToLoopHealth({
-      loopHealth: refinementAwareLoopHealth,
-      steering,
-      lastCompletedSafeStep,
-      actionableFailure,
-    }),
+    loopHealth,
     review: deriveRecommendationReviewState({
       session,
+      currentLoopHealth: loopHealth,
     }),
   };
 }
@@ -1718,9 +1753,24 @@ function normalizeAutonomousWorkflowContinuityState(value: unknown): AutonomousW
         || reviewSource?.lastRecommendationOutcome === "still-blocked"
           ? reviewSource.lastRecommendationOutcome as AutonomousWorkflowRecommendationReviewOutcome
           : undefined,
+      lastFollowThroughStatus: normalizeAutonomousWorkflowRecommendationFollowThroughStatus(reviewSource?.lastFollowThroughStatus),
+      lastFollowThroughSummary:
+        normalizeText(typeof reviewSource?.lastFollowThroughSummary === "string" ? reviewSource.lastFollowThroughSummary : "") || undefined,
+      lastAcceptedRecommendationOutcome:
+        normalizeAutonomousWorkflowRecommendationFollowThroughStatus(reviewSource?.lastAcceptedRecommendationOutcome),
+      lastRedirectedRecommendationOutcome:
+        normalizeAutonomousWorkflowRecommendationFollowThroughStatus(reviewSource?.lastRedirectedRecommendationOutcome),
       lastReviewImprovedProgress: typeof reviewSource?.lastReviewImprovedProgress === "boolean" ? reviewSource.lastReviewImprovedProgress : false,
       lastRecommendationNeededCorrection:
         typeof reviewSource?.lastRecommendationNeededCorrection === "boolean" ? reviewSource.lastRecommendationNeededCorrection : false,
+      followThroughLedUsefulProgress:
+        typeof reviewSource?.followThroughLedUsefulProgress === "boolean" ? reviewSource.followThroughLedUsefulProgress : false,
+      followThroughRequiredCorrection:
+        typeof reviewSource?.followThroughRequiredCorrection === "boolean" ? reviewSource.followThroughRequiredCorrection : false,
+      returnedToSameRecommendationAgain:
+        typeof reviewSource?.returnedToSameRecommendationAgain === "boolean" ? reviewSource.returnedToSameRecommendationAgain : false,
+      repeatedReviewWithoutProgress:
+        typeof reviewSource?.repeatedReviewWithoutProgress === "boolean" ? reviewSource.repeatedReviewWithoutProgress : false,
       frequentlyOverridden: typeof reviewSource?.frequentlyOverridden === "boolean" ? reviewSource.frequentlyOverridden : false,
       reviewSummary: normalizeText(typeof reviewSource?.reviewSummary === "string" ? reviewSource.reviewSummary : "") || undefined,
     },
@@ -1980,6 +2030,94 @@ function deriveRecommendationReviewOutcome(params: {
   };
 }
 
+function deriveRecommendationFollowThroughStatus(params: {
+  entry: AutonomousWorkflowRecommendationReviewHistoryEntry;
+  outcome: AutonomousWorkflowRecommendationReviewOutcome;
+  outcomeSummary: string;
+  nextHistoryEntry?: AutonomousWorkflowRecommendationReviewHistoryEntry;
+  currentLoopHealth: AutonomousWorkflowLoopHealthState;
+  currentStepIndex: number;
+  repeatedReviewWithoutProgress: boolean;
+}): {
+  status: AutonomousWorkflowRecommendationFollowThroughStatus;
+  summary: string;
+  ledUsefulProgress: boolean;
+  requiredCorrection: boolean;
+  returnedToSameRecommendationAgain: boolean;
+} {
+  const acceptedRecommendation = params.entry.operatorResponse === "accept-current-recommendation";
+  const redirectedRecommendation = Boolean(
+    params.entry.operatorResponse && params.entry.operatorResponse !== "accept-current-recommendation",
+  );
+  const returnedToSameRecommendationAgain =
+    params.currentStepIndex > params.entry.reviewedAtStepIndex
+    && params.currentLoopHealth.recommendedNextPhase === params.entry.recommendedNextPhase;
+  const laterCorrectionApplied = acceptedRecommendation && Boolean(
+    params.nextHistoryEntry?.operatorResponse
+    && params.nextHistoryEntry.operatorResponse !== "accept-current-recommendation",
+  );
+
+  if (laterCorrectionApplied) {
+    return {
+      status: "accepted-needed-correction",
+      summary: `The accepted ${params.entry.recommendedNextPhase} recommendation later needed correction.`,
+      ledUsefulProgress: params.outcome === "helped-progress",
+      requiredCorrection: true,
+      returnedToSameRecommendationAgain,
+    };
+  }
+
+  if (acceptedRecommendation && params.outcome === "helped-progress") {
+    return {
+      status: "accepted-and-succeeded",
+      summary: `The accepted ${params.entry.recommendedNextPhase} recommendation produced useful bounded progress.`,
+      ledUsefulProgress: true,
+      requiredCorrection: false,
+      returnedToSameRecommendationAgain,
+    };
+  }
+
+  if (redirectedRecommendation && (params.outcome === "needed-correction" || params.outcome === "helped-progress")) {
+    return {
+      status: "redirected-and-improved-progress",
+      summary: `The redirected recommendation improved bounded progress after operator review.`,
+      ledUsefulProgress: true,
+      requiredCorrection: true,
+      returnedToSameRecommendationAgain,
+    };
+  }
+
+  if (params.outcome === "still-blocked") {
+    return {
+      status: "still-blocked",
+      summary: params.outcomeSummary,
+      ledUsefulProgress: false,
+      requiredCorrection: redirectedRecommendation,
+      returnedToSameRecommendationAgain,
+    };
+  }
+
+  if (params.outcome === "pending") {
+    return {
+      status: "pending",
+      summary: params.outcomeSummary,
+      ledUsefulProgress: false,
+      requiredCorrection: false,
+      returnedToSameRecommendationAgain,
+    };
+  }
+
+  return {
+    status: "repeated-review-no-progress",
+    summary: params.repeatedReviewWithoutProgress || returnedToSameRecommendationAgain
+      ? `The loop returned to the same ${params.entry.recommendedNextPhase} recommendation without useful progress yet.`
+      : params.outcomeSummary,
+    ledUsefulProgress: false,
+    requiredCorrection: redirectedRecommendation,
+    returnedToSameRecommendationAgain,
+  };
+}
+
 function summarizeRefinementHistoryPreference(
   entries: Array<AutonomousWorkflowRefinementHistoryEntry & { outcome: AutonomousWorkflowRefinementOutcome }>,
 ): AutonomousWorkflowRecommendedNextPhase | undefined {
@@ -2056,35 +2194,98 @@ function deriveOperatorRefinementState(params: {
 
 function deriveRecommendationReviewState(params: {
   session: AutonomousSession;
+  currentLoopHealth: AutonomousWorkflowLoopHealthState;
 }): AutonomousWorkflowRecommendationReviewState {
   const priorReview = params.session.workflowContinuity?.review ?? createDefaultAutonomousWorkflowRecommendationReviewState();
   const history = clampRecommendationReviewHistoryEntries(priorReview.history ?? []);
-  const lastHistoryEntry = history.at(-1);
 
+  if (history.length === 0) {
+    return createDefaultAutonomousWorkflowRecommendationReviewState();
+  }
+
+  const evaluatedHistory = history.map((entry, index) => {
+    const evaluation = deriveRecommendationReviewOutcome({
+      session: params.session,
+      entry,
+    });
+
+    return {
+      ...entry,
+      outcome: evaluation.outcome,
+      evaluationSummary: evaluation.summary,
+      nextHistoryEntry: history[index + 1],
+    };
+  });
+  const lastHistoryEntry = evaluatedHistory.at(-1);
   if (!lastHistoryEntry) {
     return createDefaultAutonomousWorkflowRecommendationReviewState();
   }
 
-  const evaluation = deriveRecommendationReviewOutcome({
-    session: params.session,
+  const repeatedReviewWithoutProgress = evaluatedHistory.slice(-2).length >= 2
+    && evaluatedHistory.slice(-2).every((entry) => {
+      return entry.outcome === "no-clear-improvement" || entry.outcome === "still-blocked";
+    });
+  const followThrough = deriveRecommendationFollowThroughStatus({
     entry: lastHistoryEntry,
+    outcome: lastHistoryEntry.outcome,
+    outcomeSummary: lastHistoryEntry.evaluationSummary,
+    nextHistoryEntry: lastHistoryEntry.nextHistoryEntry,
+    currentLoopHealth: params.currentLoopHealth,
+    currentStepIndex: params.session.currentStepIndex,
+    repeatedReviewWithoutProgress,
   });
   const recentOverrides = history.slice(-4).filter((entry) => {
     return Boolean(entry.operatorResponse) && entry.operatorResponse !== "accept-current-recommendation";
   }).length;
-  const lastRecommendationNeededCorrection = evaluation.outcome === "needed-correction";
-  const lastReviewImprovedProgress = evaluation.outcome === "helped-progress" || evaluation.outcome === "needed-correction";
+  const lastAcceptedRecommendationOutcome = [...evaluatedHistory].reverse().find((entry) => {
+    return entry.operatorResponse === "accept-current-recommendation";
+  });
+  const lastRedirectedRecommendationOutcome = [...evaluatedHistory].reverse().find((entry) => {
+    return Boolean(entry.operatorResponse) && entry.operatorResponse !== "accept-current-recommendation";
+  });
+  const acceptedFollowThrough = lastAcceptedRecommendationOutcome
+    ? deriveRecommendationFollowThroughStatus({
+        entry: lastAcceptedRecommendationOutcome,
+        outcome: lastAcceptedRecommendationOutcome.outcome,
+        outcomeSummary: lastAcceptedRecommendationOutcome.evaluationSummary,
+        nextHistoryEntry: lastAcceptedRecommendationOutcome.nextHistoryEntry,
+        currentLoopHealth: params.currentLoopHealth,
+        currentStepIndex: params.session.currentStepIndex,
+        repeatedReviewWithoutProgress: false,
+      }).status
+    : undefined;
+  const redirectedFollowThrough = lastRedirectedRecommendationOutcome
+    ? deriveRecommendationFollowThroughStatus({
+        entry: lastRedirectedRecommendationOutcome,
+        outcome: lastRedirectedRecommendationOutcome.outcome,
+        outcomeSummary: lastRedirectedRecommendationOutcome.evaluationSummary,
+        nextHistoryEntry: lastRedirectedRecommendationOutcome.nextHistoryEntry,
+        currentLoopHealth: params.currentLoopHealth,
+        currentStepIndex: params.session.currentStepIndex,
+        repeatedReviewWithoutProgress: false,
+      }).status
+    : undefined;
+  const lastRecommendationNeededCorrection = lastHistoryEntry.outcome === "needed-correction";
+  const lastReviewImprovedProgress = lastHistoryEntry.outcome === "helped-progress" || lastHistoryEntry.outcome === "needed-correction";
 
   return {
     history,
     lastReviewedRecommendation: lastHistoryEntry.recommendedNextPhase,
     lastSystemRecommendation: lastHistoryEntry.systemRecommendedNextPhase,
     lastOperatorResponse: lastHistoryEntry.operatorResponse,
-    lastRecommendationOutcome: evaluation.outcome,
+    lastRecommendationOutcome: lastHistoryEntry.outcome,
+    lastFollowThroughStatus: followThrough.status,
+    lastFollowThroughSummary: followThrough.summary,
+    lastAcceptedRecommendationOutcome: acceptedFollowThrough,
+    lastRedirectedRecommendationOutcome: redirectedFollowThrough,
     lastReviewImprovedProgress,
     lastRecommendationNeededCorrection,
+    followThroughLedUsefulProgress: followThrough.ledUsefulProgress,
+    followThroughRequiredCorrection: followThrough.requiredCorrection,
+    returnedToSameRecommendationAgain: followThrough.returnedToSameRecommendationAgain,
+    repeatedReviewWithoutProgress,
     frequentlyOverridden: recentOverrides >= 2,
-    reviewSummary: `Last review: ${lastHistoryEntry.recommendedNextPhase} -> ${lastHistoryEntry.operatorResponse ?? "operator-note"} (${evaluation.summary})`,
+    reviewSummary: `Last review: ${lastHistoryEntry.recommendedNextPhase} -> ${lastHistoryEntry.operatorResponse ?? "operator-note"} (${followThrough.summary})`,
   };
 }
 
@@ -2583,6 +2784,27 @@ export function buildAutonomousSessionContextBlock(session: AutonomousSession, l
   if (session.workflowContinuity.review.lastRecommendationOutcome) {
     lines.push(`- Last recommendation review outcome: ${session.workflowContinuity.review.lastRecommendationOutcome}`);
   }
+
+  if (session.workflowContinuity.review.lastFollowThroughStatus) {
+    lines.push(`- Last recommendation follow-through status: ${session.workflowContinuity.review.lastFollowThroughStatus}`);
+  }
+
+  if (session.workflowContinuity.review.lastFollowThroughSummary) {
+    lines.push(`- Last recommendation follow-through summary: ${session.workflowContinuity.review.lastFollowThroughSummary}`);
+  }
+
+  if (session.workflowContinuity.review.lastAcceptedRecommendationOutcome) {
+    lines.push(`- Last accepted recommendation outcome: ${session.workflowContinuity.review.lastAcceptedRecommendationOutcome}`);
+  }
+
+  if (session.workflowContinuity.review.lastRedirectedRecommendationOutcome) {
+    lines.push(`- Last redirected recommendation outcome: ${session.workflowContinuity.review.lastRedirectedRecommendationOutcome}`);
+  }
+
+  lines.push(`- Recommendation follow-through helped: ${String(session.workflowContinuity.review.followThroughLedUsefulProgress)}`);
+  lines.push(`- Recommendation follow-through required correction: ${String(session.workflowContinuity.review.followThroughRequiredCorrection)}`);
+  lines.push(`- Recommendation returned to the same phase: ${String(session.workflowContinuity.review.returnedToSameRecommendationAgain)}`);
+  lines.push(`- Recommendation review repeating without progress: ${String(session.workflowContinuity.review.repeatedReviewWithoutProgress)}`);
 
   lines.push(`- Recommendation frequently overridden: ${String(session.workflowContinuity.review.frequentlyOverridden)}`);
 

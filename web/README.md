@@ -311,6 +311,16 @@ AI-E now makes bounded next-step recommendations easier for operators to review,
 
 This slice still does not add hidden adaptation, cross-session operator learning, a secondary orchestration path, or any bypass around the existing `TaskEnvelope` and `AutonomousSession` spine. Recommendation review remains session-local, deterministic, and inspectable.
 
+## Post-4M bounded autonomy layering: bounded recommendation follow-through handoff
+
+AI-E now tracks what happened after a reviewed recommendation was accepted, redirected, or corrected, so the current supervised loop can show not just the recommendation and review response but the bounded follow-through that came after it.
+
+- `workflowContinuity.review` now derives bounded follow-through fields including last follow-through status and summary, last accepted recommendation outcome, last redirected recommendation outcome, whether the follow-through helped, whether it required correction, whether the loop returned to the same recommendation again, and whether review cycles are repeating without useful progress
+- this follow-through layer builds directly on the prior recommendation-review history instead of creating a second planner: AI-E evaluates later bounded steps against the reviewed recommendation and keeps the result session-local, deterministic, and inspectable
+- the autonomous page, session context block, headless CLI, and local-node CLI now surface follow-through state alongside recommendation review state so operators can see whether an accepted recommendation succeeded cleanly, needed later correction, or kept cycling without progress
+
+This slice still does not add hidden adaptation, cross-session learning, alternate orchestration, or any bypass around the existing queue, lease, approval, and trusted dispatch controls. Recommendation follow-through remains a bounded observability layer on top of the same `AutonomousSession` continuity spine.
+
 Still deferred beyond 4M-D:
 
 - autonomous peer-to-peer replication or any direct node-to-node handoff channel
