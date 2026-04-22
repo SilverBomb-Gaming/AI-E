@@ -288,6 +288,18 @@ AI-E now carries forward bounded operator guidance across repeated supervised lo
 
 This slice still does not add unconstrained adaptive planning, hidden operator-learning behavior, multi-agent orchestration, or any bypass around the existing `TaskEnvelope` and trusted dispatch path. Refinement remains session-local, deterministic, and inspectable.
 
+## Post-4M bounded autonomy layering: bounded recommendation improvement handoff
+
+AI-E now improves bounded next-step recommendations across repeated supervised loops by combining recent loop outcomes with recent operator-guided refinement signals, while still making the underlying rationale explicit and preserving system-vs-operator distinction.
+
+- `workflowContinuity.loopHealth` now carries additive recommendation rationale fields including top contributing signals, rationale summary, confidence, and whether the current state likely needs operator input
+- the deterministic recommendation layer now weights repeated validation failures, recent implementation changes, blocker persistence, stalled-loop evidence, safe restart value, and helpful prior operator overrides instead of exposing only a single opaque next-phase recommendation
+- hard bounded cases remain explicit rather than hidden in scoring noise: active blockers still recommend waiting on operator input, stalled loops recommend restart-or-wait with low confidence, and completed safe boundaries recommend stopping cleanly
+- operator-guided refinement now augments the visible recommendation rationale instead of silently replacing it, so the session can show both the unchanged system recommendation and the final influenced recommendation with a concrete refinement reason
+- session context blocks, the autonomous page, and both CLI entrypoints now expose recommendation confidence, rationale summary, top contributing signals, and likely-needs-operator status alongside the prior steering and refinement fields
+
+This slice still does not introduce a second planner, hidden learning state, cross-session adaptation, or any bypass around the existing `TaskEnvelope`, lease, approval, and trusted dispatch boundaries. Recommendation improvement remains session-local, deterministic, and inspectable.
+
 Still deferred beyond 4M-D:
 
 - autonomous peer-to-peer replication or any direct node-to-node handoff channel

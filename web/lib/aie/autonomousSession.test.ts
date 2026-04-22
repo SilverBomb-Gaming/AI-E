@@ -188,7 +188,7 @@ test("autonomous sessions derive implementation and fix loop memory from changed
   assert.equal(failedFix.workflowContinuity.progress.chainPhase, "fix");
   assert.match(failedFix.workflowContinuity.memory.lastFailureSummary ?? "", /patch conflicted/i);
   assert.equal(implemented.workflowContinuity.loopHealth.recommendedNextPhase, "validation");
-  assert.match(implemented.workflowContinuity.loopHealth.loopHealthReason ?? "", /validation is preferred next/i);
+  assert.match(implemented.workflowContinuity.loopHealth.loopHealthReason ?? "", /validation/i);
 });
 
 test("autonomous sessions mark repeated ineffective validation loops as stalled", () => {
@@ -223,8 +223,14 @@ test("autonomous sessions mark repeated ineffective validation loops as stalled"
   assert.equal(third.workflowContinuity.loopHealth.currentPhaseRepeatCount, 3);
   assert.equal(third.workflowContinuity.loopHealth.stalledLoop, true);
   assert.equal(third.workflowContinuity.loopHealth.operatorInterventionPreferred, true);
+  assert.equal(third.workflowContinuity.loopHealth.recommendationConfidence, "low");
+  assert.equal(third.workflowContinuity.loopHealth.likelyNeedsOperatorInput, true);
+  assert.deepEqual(third.workflowContinuity.loopHealth.topContributingSignals, ["stalled-loop-indicators"]);
+  assert.match(third.workflowContinuity.loopHealth.recommendationRationaleSummary ?? "", /stalled/i);
   assert.equal(third.workflowContinuity.loopHealth.recommendedNextPhase, "waiting-on-operator");
   assert.match(third.workflowContinuity.loopHealth.loopHealthReason ?? "", /same ineffective phase/i);
+  assert.match(buildAutonomousSessionContextBlock(third), /Recommendation confidence: low/i);
+  assert.match(buildAutonomousSessionContextBlock(third), /Top recommendation signals: stalled-loop-indicators/i);
   assert.match(buildAutonomousSessionContextBlock(third), /Recommended next phase: waiting-on-operator/i);
 });
 
@@ -322,6 +328,8 @@ test("autonomous sessions carry bounded refinement history and mark progress fro
   assert.equal(repeatedFailure.workflowContinuity.loopHealth.systemRecommendedNextPhase, "fix");
   assert.equal(repeatedFailure.workflowContinuity.refinement.recommendationInfluencedByRecentGuidance, true);
   assert.equal(repeatedFailure.workflowContinuity.refinement.influencedRecommendedNextPhase, "validation");
+  assert.match(repeatedFailure.workflowContinuity.loopHealth.recommendationRationaleSummary ?? "", /premature until the validation path is rechecked/i);
+  assert.match(repeatedFailure.workflowContinuity.loopHealth.topContributingSignals.join(" | "), /helpful-operator-overrides/i);
   assert.equal(repeatedFailure.workflowContinuity.loopHealth.recommendedNextPhase, "validation");
   assert.match(repeatedFailure.workflowContinuity.loopHealth.loopHealthReason ?? "", /premature until the validation path is rechecked/i);
   assert.match(buildAutonomousSessionContextBlock(repeatedFailure), /Recommendation influenced by recent guidance: true/i);

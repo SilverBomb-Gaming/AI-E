@@ -522,6 +522,10 @@ export default function AutonomousPage() {
                 <p><strong>Adapter context:</strong> {session.adapterContextSummary || "No adapter context recorded yet."}</p>
                 <p><strong>System recommended next phase:</strong> {session.workflowContinuity.loopHealth.systemRecommendedNextPhase || "No system recommendation recorded yet."}</p>
                 <p><strong>Recommended next phase:</strong> {session.workflowContinuity.loopHealth.recommendedNextPhase}</p>
+                <p><strong>Recommendation confidence:</strong> {session.workflowContinuity.loopHealth.recommendationConfidence}</p>
+                <p><strong>Likely needs operator input:</strong> {session.workflowContinuity.loopHealth.likelyNeedsOperatorInput ? "Yes" : "No"}</p>
+                <p><strong>Recommendation rationale:</strong> {session.workflowContinuity.loopHealth.recommendationRationaleSummary || "No recommendation rationale recorded yet."}</p>
+                <p><strong>Top recommendation signals:</strong> {session.workflowContinuity.loopHealth.topContributingSignals.length ? session.workflowContinuity.loopHealth.topContributingSignals.join(", ") : "No recommendation signals recorded yet."}</p>
                 <p><strong>Operator override status:</strong> {session.workflowContinuity.steering.status}</p>
                 <p><strong>Operator override:</strong> {session.workflowContinuity.steering.requestedAction || "No operator override recorded yet."}</p>
                 <p><strong>Operator override reason:</strong> {session.workflowContinuity.steering.overrideReason || "No override reason recorded yet."}</p>

@@ -164,11 +164,31 @@ export type AutonomousWorkflowRefinementState = {
   refinementSummary?: string;
 };
 
+export type AutonomousWorkflowRecommendationConfidence = "low" | "medium" | "high";
+
+export type AutonomousWorkflowRecommendationSignal =
+  | "recent-failed-validations"
+  | "repeated-fix-attempts"
+  | "helpful-operator-overrides"
+  | "stalled-loop-indicators"
+  | "blocker-present"
+  | "blocker-persistence"
+  | "safe-boundary-restart-value"
+  | "fresh-implementation-change"
+  | "actionable-validation-failure"
+  | "retry-recovery-active"
+  | "completed-safe-boundary"
+  | "current-loop-progress";
+
 export type AutonomousWorkflowLoopHealthState = {
   currentPhaseRepeatCount: number;
   recentPhaseOutcomes: string[];
   stalledLoop: boolean;
   operatorInterventionPreferred: boolean;
+  topContributingSignals: AutonomousWorkflowRecommendationSignal[];
+  recommendationRationaleSummary?: string;
+  recommendationConfidence: AutonomousWorkflowRecommendationConfidence;
+  likelyNeedsOperatorInput: boolean;
   systemRecommendedNextPhase?: AutonomousWorkflowRecommendedNextPhase;
   systemRecommendedNextActionSummary?: string;
   systemLoopHealthReason?: string;
@@ -806,6 +826,123 @@ function deriveStalledLoop(session: AutonomousSession, latestPhase: AutonomousWo
   return actions.size === 1 && outcomes.size <= 1 && !hasNewInformation;
 }
 
+function countRecentPhaseFailures(session: AutonomousSession, phase: AutonomousWorkflowChainPhase): number {
+  let count = 0;
+  for (let index = session.steps.length - 1; index >= 0; index -= 1) {
+    const step = session.steps[index] as AutonomousStepRecord;
+    if (deriveWorkflowPhaseForStep(step) !== phase) {
+      break;
+    }
+
+    if (step.executionResult?.status !== "failed") {
+      break;
+    }
+
+    count += 1;
+  }
+
+  return count;
+}
+
+function chooseRecommendedPhaseFromScores(
+  scores: Record<AutonomousWorkflowRecommendedNextPhase, number>,
+): AutonomousWorkflowRecommendedNextPhase {
+  const priorityOrder: AutonomousWorkflowRecommendedNextPhase[] = [
+    "stop",
+    "validation",
+    "fix",
+    "restart-from-last-safe-boundary",
+    "waiting-on-operator",
+    "retry",
+    "implementation",
+    "planning",
+    "completed-safe-boundary",
+  ];
+  let bestPhase: AutonomousWorkflowRecommendedNextPhase = "planning";
+  let bestScore = Number.NEGATIVE_INFINITY;
+
+  for (const phase of priorityOrder) {
+    const score = scores[phase] ?? 0;
+    if (score > bestScore) {
+      bestPhase = phase;
+      bestScore = score;
+    }
+  }
+
+  return bestPhase;
+}
+
+function summarizeRecommendationRationale(
+  phase: AutonomousWorkflowRecommendedNextPhase,
+  signals: AutonomousWorkflowRecommendationSignal[],
+): string {
+  if (signals.includes("blocker-present")) {
+    return "A current bounded blocker is still present, so operator input remains the safest next step.";
+  }
+
+  if (signals.includes("stalled-loop-indicators") && signals.includes("safe-boundary-restart-value")) {
+    return "The recent loop appears stalled and a safe restart point exists, so restarting from the last safe boundary is favored.";
+  }
+
+  if (signals.includes("fresh-implementation-change")) {
+    return "A fresh bounded implementation change exists, so validation is favored before another fix attempt.";
+  }
+
+  if (signals.includes("actionable-validation-failure")) {
+    return "Recent validation failures exposed a concrete issue, so a bounded fix is favored next.";
+  }
+
+  if (signals.includes("helpful-operator-overrides")) {
+    return `Recent helpful operator guidance improved similar loops, so ${phase} is favored again in this bounded case.`;
+  }
+
+  if (signals.includes("retry-recovery-active")) {
+    return "The bounded loop is still in an active recovery cycle, so the recommendation stays aligned with recovery.";
+  }
+
+  if (signals.includes("completed-safe-boundary")) {
+    return "The goal is already complete at a safe boundary, so no broader follow-up is recommended.";
+  }
+
+  return "The bounded loop is still making useful progress with the current recommendation.";
+}
+
+function summarizeRecommendedNextAction(
+  phase: AutonomousWorkflowRecommendedNextPhase,
+  nextIntendedStep: string | undefined,
+  currentRecoveryTarget: string | undefined,
+  lastCompletedSafeStep: number | undefined,
+  actionableFailure: string | undefined,
+): string {
+  if (phase === "validation") {
+    return nextIntendedStep || "Validate next to confirm the latest bounded change or signal.";
+  }
+
+  if (phase === "fix") {
+    return nextIntendedStep || (actionableFailure ? `Apply the next bounded fix for: ${actionableFailure}` : "Apply the next bounded fix.");
+  }
+
+  if (phase === "restart-from-last-safe-boundary") {
+    return typeof lastCompletedSafeStep === "number"
+      ? `Restart from last safe boundary at step ${lastCompletedSafeStep}.`
+      : "Restart from the last safe boundary.";
+  }
+
+  if (phase === "waiting-on-operator") {
+    return nextIntendedStep || "Wait for operator input before continuing.";
+  }
+
+  if (phase === "retry") {
+    return nextIntendedStep || currentRecoveryTarget || "Retry with the current bounded recovery strategy.";
+  }
+
+  if (phase === "stop") {
+    return "Stop because the bounded goal is complete at a safe boundary.";
+  }
+
+  return nextIntendedStep || "Continue the current bounded production loop.";
+}
+
 function deriveSystemLoopHealth(
   session: AutonomousSession,
   chainPhase: AutonomousWorkflowChainPhase,
@@ -818,6 +955,8 @@ function deriveSystemLoopHealth(
   const recentPhaseOutcomes = clampWorkflowMemoryItems(session.steps.slice(-4).map((step) => summarizePhaseOutcome(step)));
   const stalledLoop = deriveStalledLoop(session, chainPhase, currentPhaseRepeatCount);
   const latestStep = session.steps.at(-1);
+  const recentFailedValidationCount = countRecentPhaseFailures(session, "validation");
+  const recentFailedFixCount = countRecentPhaseFailures(session, "fix");
   const actionableFailure = normalizeText(session.latestRecoveryState?.failureClassification?.reason)
     || normalizeText(latestStep?.failureReason)
     || normalizeText(latestStep?.executionResult?.error)
@@ -839,6 +978,10 @@ function deriveSystemLoopHealth(
       recentPhaseOutcomes,
       stalledLoop,
       operatorInterventionPreferred: true,
+      topContributingSignals: chainPhase === "waiting-on-operator" ? ["blocker-present", "blocker-persistence"] : ["blocker-present"],
+      recommendationRationaleSummary: "A current bounded blocker is still present, so operator input remains the safest next step.",
+      recommendationConfidence: "low",
+      likelyNeedsOperatorInput: true,
       recommendedNextPhase: "waiting-on-operator",
       recommendedNextActionSummary: nextIntendedStep || "Wait for operator input before continuing.",
       loopHealthReason: operatorBlockers,
@@ -851,49 +994,19 @@ function deriveSystemLoopHealth(
       recentPhaseOutcomes,
       stalledLoop: true,
       operatorInterventionPreferred: true,
-      recommendedNextPhase: lastCompletedSafeStep ? "restart-from-last-safe-boundary" : "waiting-on-operator",
-      recommendedNextActionSummary: lastCompletedSafeStep
+      topContributingSignals: typeof lastCompletedSafeStep === "number"
+        ? ["stalled-loop-indicators", "safe-boundary-restart-value"]
+        : ["stalled-loop-indicators"],
+      recommendationRationaleSummary: typeof lastCompletedSafeStep === "number"
+        ? "The recent loop appears stalled and a safe restart point exists, so restarting from the last safe boundary is favored."
+        : "The recent loop appears stalled without a safe restart point, so operator input is favored before continuing.",
+      recommendationConfidence: "low",
+      likelyNeedsOperatorInput: typeof lastCompletedSafeStep !== "number",
+      recommendedNextPhase: typeof lastCompletedSafeStep === "number" ? "restart-from-last-safe-boundary" : "waiting-on-operator",
+      recommendedNextActionSummary: typeof lastCompletedSafeStep === "number"
         ? `Restart from last safe boundary at step ${lastCompletedSafeStep}.`
         : "Wait for operator input because the loop is repeating without new information.",
       loopHealthReason: "The current bounded loop repeated the same ineffective phase without new information.",
-    };
-  }
-
-  if (implementationJustChangedWork) {
-    return {
-      currentPhaseRepeatCount,
-      recentPhaseOutcomes,
-      stalledLoop: false,
-      operatorInterventionPreferred: false,
-      recommendedNextPhase: "validation",
-      recommendedNextActionSummary: nextIntendedStep || "Validate next to confirm the recent bounded change.",
-      loopHealthReason: "A bounded implementation step changed the work surface, so validation is preferred next.",
-    };
-  }
-
-  if (failedValidation && actionableFailure) {
-    return {
-      currentPhaseRepeatCount,
-      recentPhaseOutcomes,
-      stalledLoop: false,
-      operatorInterventionPreferred: false,
-      recommendedNextPhase: "fix",
-      recommendedNextActionSummary: nextIntendedStep || `Apply the next bounded fix for: ${actionableFailure}`,
-      loopHealthReason: `A failed validation exposed an actionable failure: ${actionableFailure}`,
-    };
-  }
-
-  if (chainPhase === "retry") {
-    return {
-      currentPhaseRepeatCount,
-      recentPhaseOutcomes,
-      stalledLoop: false,
-      operatorInterventionPreferred: false,
-      recommendedNextPhase: lastCompletedSafeStep ? "restart-from-last-safe-boundary" : "retry",
-      recommendedNextActionSummary: lastCompletedSafeStep
-        ? `Restart from last safe boundary at step ${lastCompletedSafeStep}.`
-        : (nextIntendedStep || currentRecoveryTarget || "Retry with the current bounded recovery strategy."),
-      loopHealthReason: currentRecoveryTarget || "The bounded loop is in recovery mode.",
     };
   }
 
@@ -903,22 +1016,122 @@ function deriveSystemLoopHealth(
       recentPhaseOutcomes,
       stalledLoop: false,
       operatorInterventionPreferred: false,
+      topContributingSignals: ["completed-safe-boundary"],
+      recommendationRationaleSummary: "The goal is already complete at a safe boundary, so no broader follow-up is recommended.",
+      recommendationConfidence: "high",
+      likelyNeedsOperatorInput: false,
       recommendedNextPhase: "stop",
       recommendedNextActionSummary: "Stop because the bounded goal is complete at a safe boundary.",
       loopHealthReason: "The bounded goal is complete at the current safe boundary.",
     };
   }
+  const scores: Record<AutonomousWorkflowRecommendedNextPhase, number> = {
+    planning: 0,
+    implementation: 0,
+    validation: 0,
+    fix: 0,
+    retry: 0,
+    "waiting-on-operator": 0,
+    "restart-from-last-safe-boundary": 0,
+    "completed-safe-boundary": 0,
+    stop: 0,
+  };
+  const contributingSignals: AutonomousWorkflowRecommendationSignal[] = [];
+  let likelyNeedsOperatorInput = false;
+
+  if (operatorBlockers) {
+    contributingSignals.push("blocker-present");
+    scores["waiting-on-operator"] += 6;
+    likelyNeedsOperatorInput = true;
+    if (chainPhase === "waiting-on-operator") {
+      contributingSignals.push("blocker-persistence");
+      scores["waiting-on-operator"] += 2;
+    }
+  }
+
+  if (stalledLoop) {
+    contributingSignals.push("stalled-loop-indicators");
+    if (typeof lastCompletedSafeStep === "number") {
+      contributingSignals.push("safe-boundary-restart-value");
+      scores["restart-from-last-safe-boundary"] += 7;
+    } else {
+      scores["waiting-on-operator"] += 7;
+      likelyNeedsOperatorInput = true;
+    }
+  }
+
+  if (implementationJustChangedWork) {
+    contributingSignals.push("fresh-implementation-change");
+    scores.validation += 5;
+  }
+
+  if (failedValidation && actionableFailure) {
+    contributingSignals.push("actionable-validation-failure");
+    scores.fix += 4;
+  }
+
+  if (recentFailedValidationCount >= 2) {
+    contributingSignals.push("recent-failed-validations");
+    scores.fix += actionableFailure ? 2 : 1;
+    if (typeof lastCompletedSafeStep === "number") {
+      scores["restart-from-last-safe-boundary"] += 1;
+    }
+  }
+
+  if (recentFailedFixCount >= 2) {
+    contributingSignals.push("repeated-fix-attempts");
+    if (typeof lastCompletedSafeStep === "number") {
+      scores["restart-from-last-safe-boundary"] += 2;
+    } else {
+      scores["waiting-on-operator"] += 1;
+    }
+  }
+
+  if (chainPhase === "retry") {
+    contributingSignals.push("retry-recovery-active");
+    scores.retry += 3;
+    if (currentPhaseRepeatCount >= 2 && typeof lastCompletedSafeStep === "number") {
+      contributingSignals.push("safe-boundary-restart-value");
+      scores["restart-from-last-safe-boundary"] += 2;
+    }
+  }
+
+  if (chainPhase === "completed-safe-boundary") {
+    contributingSignals.push("completed-safe-boundary");
+    scores.stop += 8;
+  }
+
+  if (contributingSignals.length === 0) {
+    contributingSignals.push("current-loop-progress");
+    scores[chainPhase === "waiting-on-operator" || chainPhase === "blocked" || chainPhase === "failed" ? "waiting-on-operator" : chainPhase] += 1;
+  }
+
+  const recommendedNextPhase = chooseRecommendedPhaseFromScores(scores);
+  const recommendationRationaleSummary = summarizeRecommendationRationale(recommendedNextPhase, contributingSignals);
+  const recommendationConfidence: AutonomousWorkflowRecommendationConfidence = operatorBlockers || stalledLoop
+    ? "low"
+    : contributingSignals.includes("fresh-implementation-change") || contributingSignals.includes("actionable-validation-failure")
+      ? "high"
+      : "medium";
 
   return {
     currentPhaseRepeatCount,
     recentPhaseOutcomes,
-    stalledLoop: false,
-    operatorInterventionPreferred: false,
-    recommendedNextPhase: chainPhase === "waiting-on-operator" || chainPhase === "blocked" || chainPhase === "failed"
-      ? "waiting-on-operator"
-      : chainPhase,
-    recommendedNextActionSummary: nextIntendedStep || "Continue the current bounded production loop.",
-    loopHealthReason: "The bounded loop is still making useful progress.",
+    stalledLoop,
+    operatorInterventionPreferred: likelyNeedsOperatorInput || recommendedNextPhase === "waiting-on-operator" || recommendedNextPhase === "restart-from-last-safe-boundary",
+    topContributingSignals: contributingSignals.slice(0, 4),
+    recommendationRationaleSummary,
+    recommendationConfidence,
+    likelyNeedsOperatorInput,
+    recommendedNextPhase,
+    recommendedNextActionSummary: summarizeRecommendedNextAction(
+      recommendedNextPhase,
+      nextIntendedStep,
+      currentRecoveryTarget,
+      lastCompletedSafeStep,
+      actionableFailure,
+    ),
+    loopHealthReason: operatorBlockers || recommendationRationaleSummary,
   };
 }
 
@@ -1387,6 +1600,17 @@ function normalizeAutonomousWorkflowContinuityState(value: unknown): AutonomousW
       stalledLoop: typeof loopHealthSource?.stalledLoop === "boolean" ? loopHealthSource.stalledLoop : false,
       operatorInterventionPreferred:
         typeof loopHealthSource?.operatorInterventionPreferred === "boolean" ? loopHealthSource.operatorInterventionPreferred : false,
+      topContributingSignals: clampWorkflowMemoryItems(
+        Array.isArray(loopHealthSource?.topContributingSignals) ? loopHealthSource?.topContributingSignals as string[] : [],
+      ) as AutonomousWorkflowRecommendationSignal[],
+      recommendationRationaleSummary:
+        normalizeText(typeof loopHealthSource?.recommendationRationaleSummary === "string" ? loopHealthSource.recommendationRationaleSummary : "") || undefined,
+      recommendationConfidence:
+        loopHealthSource?.recommendationConfidence === "low" || loopHealthSource?.recommendationConfidence === "medium" || loopHealthSource?.recommendationConfidence === "high"
+          ? loopHealthSource.recommendationConfidence as AutonomousWorkflowRecommendationConfidence
+          : "medium",
+      likelyNeedsOperatorInput:
+        typeof loopHealthSource?.likelyNeedsOperatorInput === "boolean" ? loopHealthSource.likelyNeedsOperatorInput : false,
       systemRecommendedNextPhase:
         normalizeAutonomousWorkflowRecommendedNextPhase(loopHealthSource?.systemRecommendedNextPhase) ?? undefined,
       systemRecommendedNextActionSummary:
@@ -1672,6 +1896,14 @@ function applyOperatorRefinementToLoopHealth(params: {
   return {
     ...loopHealth,
     operatorInterventionPreferred: true,
+    topContributingSignals: clampWorkflowMemoryItems([
+      ...loopHealth.topContributingSignals,
+      "helpful-operator-overrides",
+    ]) as AutonomousWorkflowRecommendationSignal[],
+    recommendationRationaleSummary:
+      params.refinement.influenceReason
+      || `Recent operator-guided refinement suggests preferring ${params.refinement.influencedRecommendedNextPhase}.`,
+    recommendationConfidence: loopHealth.recommendationConfidence === "low" ? "medium" : loopHealth.recommendationConfidence,
     recommendedNextPhase: params.refinement.influencedRecommendedNextPhase,
     recommendedNextActionSummary:
       params.refinement.lastOperatorRefinementNote
@@ -1720,6 +1952,9 @@ export function createAutonomousSession(params: CreateAutonomousSessionParams): 
         recentPhaseOutcomes: [],
         stalledLoop: false,
         operatorInterventionPreferred: false,
+        topContributingSignals: [],
+        recommendationConfidence: "medium",
+        likelyNeedsOperatorInput: false,
         recommendedNextPhase: "planning",
       },
     },
@@ -2012,6 +2247,9 @@ export function normalizeAutonomousSession(value: unknown): AutonomousSession | 
         recentPhaseOutcomes: [],
         stalledLoop: false,
         operatorInterventionPreferred: false,
+        topContributingSignals: [],
+        recommendationConfidence: "medium",
+        likelyNeedsOperatorInput: false,
         recommendedNextPhase: "planning",
       },
     },
@@ -2120,7 +2358,17 @@ export function buildAutonomousSessionContextBlock(session: AutonomousSession, l
   lines.push(`- Current phase repeat count: ${session.workflowContinuity.loopHealth.currentPhaseRepeatCount}`);
   lines.push(`- Stalled loop: ${String(session.workflowContinuity.loopHealth.stalledLoop)}`);
   lines.push(`- Operator intervention preferred: ${String(session.workflowContinuity.loopHealth.operatorInterventionPreferred)}`);
+  lines.push(`- Recommendation confidence: ${session.workflowContinuity.loopHealth.recommendationConfidence}`);
+  lines.push(`- Likely needs operator input: ${String(session.workflowContinuity.loopHealth.likelyNeedsOperatorInput)}`);
   lines.push(`- Recommended next phase: ${session.workflowContinuity.loopHealth.recommendedNextPhase}`);
+
+  if (session.workflowContinuity.loopHealth.recommendationRationaleSummary) {
+    lines.push(`- Recommendation rationale: ${session.workflowContinuity.loopHealth.recommendationRationaleSummary}`);
+  }
+
+  if (session.workflowContinuity.loopHealth.topContributingSignals.length) {
+    lines.push(`- Top recommendation signals: ${session.workflowContinuity.loopHealth.topContributingSignals.join(", ")}`);
+  }
 
   if (session.workflowContinuity.loopHealth.recommendedNextActionSummary) {
     lines.push(`- Recommended next action: ${session.workflowContinuity.loopHealth.recommendedNextActionSummary}`);
