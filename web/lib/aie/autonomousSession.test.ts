@@ -46,6 +46,9 @@ test("autonomous sessions append steps and preserve runtime output", () => {
   assert.equal(updated.steps.length, 1);
   assert.equal(updated.currentStepIndex, 2);
   assert.equal(updated.latestExecutionResult?.status, "success");
+  assert.equal(updated.workflowContinuity.progress.chainPhase, "continuing");
+  assert.equal(updated.workflowContinuity.progress.lastCompletedSafeStep, 1);
+  assert.equal(updated.workflowContinuity.memory.recentDecisions[0], "step 1: Run the bounded validation command. -> continue");
   assert.match(buildAutonomousSessionContextBlock(updated), /Validation passed with a healthy status/i);
 });
 
@@ -112,8 +115,45 @@ test("autonomous sessions preserve recovery metadata and action attempt counts",
 
   assert.equal(normalized?.steps[0]?.failureClassification?.kind, "transient");
   assert.equal(normalized?.steps[0]?.recoveryStrategy, "retry-same-action");
+  assert.equal(normalized?.workflowContinuity.progress.chainPhase, "restarting");
+  assert.match(normalized?.workflowContinuity.memory.restartReason ?? "", /Timed out once/i);
   assert.equal(countPriorAttemptsForAction(session, "Run validation."), 1);
   assert.match(buildAutonomousSessionContextBlock(session), /retry-same-action/i);
+});
+
+test("autonomous sessions persist workflow continuity across awaiting approval state", () => {
+  const awaiting = markAwaitingApproval(
+    appendAutonomousStep(createAutonomousSession({ goal: "Confirm the bounded validation path." }), {
+      proposedAction: "Inspect the bounded validation path.",
+      nextDecision: "continue",
+      executionResult: {
+        status: "success",
+        output: "Inspection completed without widening scope.",
+      },
+    }),
+    {
+      id: "pending-caution-write",
+      type: "file-write",
+      scope: "caution",
+      description: "Apply the bounded fix.",
+      expectedOutcome: "The bounded validation should become healthy.",
+      requiresApproval: true,
+      metadata: {
+        sourceActionType: "file-write",
+        targetPath: "web/sandbox/pending.txt",
+        allowedRoot: "web/sandbox",
+        content: "pending",
+      },
+    },
+    "Approval is required before the bounded fix step.",
+  );
+
+  const normalized = normalizeAutonomousSession(JSON.parse(JSON.stringify(awaiting)));
+
+  assert.equal(normalized?.workflowContinuity.progress.chainPhase, "waiting");
+  assert.equal(normalized?.workflowContinuity.progress.lastCompletedSafeStep, 1);
+  assert.equal(normalized?.workflowContinuity.progress.nextIntendedStep, "Apply the bounded fix.");
+  assert.match(normalized?.workflowContinuity.memory.pendingOperatorContext ?? "", /approval is required/i);
 });
 
 test("autonomous sessions can pause and resume without losing state reason", () => {

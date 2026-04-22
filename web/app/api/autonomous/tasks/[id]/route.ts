@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { loadAutonomousSession } from "@/lib/aie/autonomousSessionStore";
 import {
   deriveTaskContinuationChainState,
   deriveTaskDispatchHardeningState,
@@ -17,6 +18,8 @@ export async function GET(
   if (!task) {
     return NextResponse.json({ error: "Autonomous task not found." }, { status: 404 });
   }
+
+  const session = await loadAutonomousSession(task.sessionId);
 
   return NextResponse.json({
     task,
@@ -54,6 +57,7 @@ export async function GET(
         chain: deriveTaskContinuationChainState(task),
         hardening: deriveTaskDispatchHardeningState(task),
     failureReason: task.failureReason ?? null,
+    workflowContinuity: session?.workflowContinuity ?? null,
     dispatch: {
       messageId: task.dispatchMessageId ?? null,
       ackMessageId: task.dispatchAckMessageId ?? null,

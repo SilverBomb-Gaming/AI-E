@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { loadAutonomousSession } from "@/lib/aie/autonomousSessionStore";
 import {
   deriveTaskContinuationChainState,
   deriveTaskDispatchHardeningState,
@@ -12,7 +13,10 @@ export const runtime = "nodejs";
 export async function GET() {
   try {
     const tasks = await listTasks();
-    const taskSummaries = tasks.map((task) => ({
+    const taskSummaries = await Promise.all(tasks.map(async (task) => {
+      const session = await loadAutonomousSession(task.sessionId);
+
+      return {
       taskId: task.taskId,
       status: task.status,
       selectedNodeId: task.selectedNodeId ?? task.assignedNodeId ?? null,
@@ -48,6 +52,7 @@ export async function GET() {
           chain: deriveTaskContinuationChainState(task),
       failureReason: task.failureReason ?? null,
       hardening: deriveTaskDispatchHardeningState(task),
+      workflowContinuity: session?.workflowContinuity ?? null,
       dispatch: {
         messageId: task.dispatchMessageId ?? null,
         ackMessageId: task.dispatchAckMessageId ?? null,
@@ -60,7 +65,7 @@ export async function GET() {
         lastAttemptAt: task.dispatchLastAttemptAt ?? null,
         timeoutMs: task.dispatchTimeoutMs ?? null,
       },
-    }));
+    }; }));
     const summary = {
       total: tasks.length,
       pending: tasks.filter((task) => task.status === "pending" || task.status === "queued").length,

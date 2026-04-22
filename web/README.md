@@ -248,6 +248,18 @@ AI-E now adds a bounded recovery-planning layer on top of the hardened 4M coordi
 
 This slice keeps the same single authoritative queue/lease/receiver path. It does not add peer-to-peer migration, a secondary scheduler, or unsupervised multi-step execution.
 
+## Post-4M bounded autonomy layering: production-workflow continuity handoff
+
+AI-E now translates the recovery-aware continuation spine into bounded workflow continuity that survives longer coding and operator loops without weakening queue, lease, or trust guarantees.
+
+- autonomous sessions now persist a `workflowContinuity` block with chain phase, current chain step, total known steps, last completed safe step, current recovery target, and next intended bounded step
+- the same session layer now keeps lightweight bounded chain memory such as chain summary, recent decisions, restart reason, prior recovery outcomes, and pending operator context
+- session lifecycle transitions recompute that continuity block during append, pause, approval wait, resume, completion, and normalization so resumed chains do not lose operator-facing context
+- shared analysis context now injects workflow continuity lines back into the runner, which gives later bounded steps restart-aware and approval-aware continuity without creating a second orchestrator
+- task inspection APIs now attach the owning session workflow continuity block, and both CLI entrypoints surface chain phase, safe-step, next-step, and chain-summary details during session and queued-task reporting
+
+This slice is intentionally derived from `TaskEnvelope` and `AutonomousSession` rather than replacing them. Queue truth, lease ownership, and trusted dispatch remain authoritative; workflow continuity is a persisted planning and observability layer on top of that spine.
+
 Still deferred beyond 4M-D:
 
 - autonomous peer-to-peer replication or any direct node-to-node handoff channel

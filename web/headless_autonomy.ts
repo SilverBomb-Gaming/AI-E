@@ -233,6 +233,7 @@ export function formatHeadlessSessionReport(session: AutonomousSession, options?
         dispatchTransportStatus: session.dispatchTransportStatus ?? null,
         remoteDispatchPlanned: session.remoteDispatchPlanned ?? null,
         planningHintSummary: session.planningHintSummary ?? null,
+        workflowContinuity: session.workflowContinuity,
         failureReason: session.failureReason ?? null,
         retryCount: session.latestRecoveryState?.retryCount ?? null,
         completion: session.latestCompletion ?? null,
@@ -291,6 +292,16 @@ export function formatHeadlessSessionReport(session: AutonomousSession, options?
     `Failure reason: ${session.failureReason ?? "No failure reason recorded."}`,
     `Adapter context: ${session.adapterContextSummary ?? "No adapter context recorded."}`,
     `Planning hints: ${session.planningHintSummary ?? "No planning hints recorded."}`,
+    `Chain phase: ${session.workflowContinuity.progress.chainPhase}`,
+    `Current chain step: ${session.workflowContinuity.progress.currentChainStep}`,
+    `Total known steps: ${session.workflowContinuity.progress.totalKnownSteps}`,
+    `Last safe step: ${typeof session.workflowContinuity.progress.lastCompletedSafeStep === "number" ? session.workflowContinuity.progress.lastCompletedSafeStep : "No safe step recorded."}`,
+    `Recovery target: ${session.workflowContinuity.progress.currentRecoveryTarget ?? "No recovery target recorded."}`,
+    `Next intended step: ${session.workflowContinuity.progress.nextIntendedStep ?? "No next step recorded."}`,
+    `Chain summary: ${session.workflowContinuity.memory.chainSummary ?? "No chain summary recorded."}`,
+    `Pending context: ${session.workflowContinuity.memory.pendingOperatorContext ?? "No pending operator context recorded."}`,
+    `Recent decisions: ${session.workflowContinuity.memory.recentDecisions.join(" | ") || "No recent decisions recorded."}`,
+    `Recovery outcomes: ${session.workflowContinuity.memory.priorRecoveryOutcomes.join(" | ") || "No recovery outcomes recorded."}`,
     `Completion: ${session.latestCompletion ? `${session.latestCompletion.status} (${session.latestCompletion.confidence})` : "No completion state recorded."}`,
     `Reason: ${session.completedReason ?? session.stateReason ?? "No stop reason recorded."}`,
   ];
@@ -405,6 +416,10 @@ export function formatHeadlessQueueRunReport(summary: QueueExecutionSummary, opt
     `Safe-stop point: ${recovery?.safeStopPoint ?? "unknown"}`,
     `Chain state: ${chain?.state ?? "unknown"}`,
     `Chain depth: ${chain?.depth ?? "unknown"}`,
+    `Chain phase: ${summary.session?.workflowContinuity.progress.chainPhase ?? "unknown"}`,
+    `Last safe step: ${typeof summary.session?.workflowContinuity.progress.lastCompletedSafeStep === "number" ? summary.session.workflowContinuity.progress.lastCompletedSafeStep : "unknown"}`,
+    `Next intended step: ${summary.session?.workflowContinuity.progress.nextIntendedStep ?? "unknown"}`,
+    `Chain summary: ${summary.session?.workflowContinuity.memory.chainSummary ?? "unknown"}`,
     `Lease: ${summary.task?.lease?.leaseId ?? "unknown"}`,
     `Lease owner: ${summary.task?.lease?.ownerNodeId ?? "unknown"}`,
     `Lease epoch: ${typeof summary.task?.lease?.epoch === "number" ? summary.task.lease.epoch : "unknown"}`,
@@ -445,10 +460,14 @@ export async function formatHeadlessTaskList(options?: { json?: boolean }): Prom
     return "No persisted autonomous tasks found.";
   }
 
-  return tasks
-    .slice(0, 20)
-    .map((task) => `${task.taskId} | ${task.status} | ${task.selectedNodeId ?? task.assignedNodeId ?? "unassigned"} | lease=${task.lease?.ownerNodeId ?? "none"}:${task.lease?.status ?? "none"} | continuation=${task.continuationGeneration > 0 ? `gen-${task.continuationGeneration}:${task.continuationSourceNodeId ?? "unknown"}->${task.continuationTargetNodeId ?? "pending"}` : "fresh"} | chain=${deriveTaskContinuationChainState(task).state}:${deriveTaskContinuationChainState(task).depth} | plan=${deriveTaskRecoveryPlanningState(task).strategy}:${deriveTaskRecoveryPlanningState(task).reasonCategory} | safeStop=${deriveTaskRecoveryPlanningState(task).safeStopPoint ?? "none"} | resumability=${task.resumability} | recovery=${task.recoveryPending} | transport=${task.dispatchTransportStatus ?? "none"} | hardening=${deriveTaskDispatchHardeningState(task).state}:${deriveTaskDispatchHardeningState(task).category} | retries=${task.dispatchRetryCount ?? 0} | failure=${task.failureReason ?? "none"} | ${task.sessionId}`)
-    .join("\n");
+  const taskLines = await Promise.all(
+    tasks.slice(0, 20).map(async (task) => {
+      const session = await loadAutonomousSession(task.sessionId);
+      return `${task.taskId} | ${task.status} | ${task.selectedNodeId ?? task.assignedNodeId ?? "unassigned"} | lease=${task.lease?.ownerNodeId ?? "none"}:${task.lease?.status ?? "none"} | continuation=${task.continuationGeneration > 0 ? `gen-${task.continuationGeneration}:${task.continuationSourceNodeId ?? "unknown"}->${task.continuationTargetNodeId ?? "pending"}` : "fresh"} | chain=${deriveTaskContinuationChainState(task).state}:${deriveTaskContinuationChainState(task).depth} | phase=${session?.workflowContinuity.progress.chainPhase ?? "unknown"} | safeStep=${typeof session?.workflowContinuity.progress.lastCompletedSafeStep === "number" ? session.workflowContinuity.progress.lastCompletedSafeStep : "none"} | next=${session?.workflowContinuity.progress.nextIntendedStep ?? "none"} | plan=${deriveTaskRecoveryPlanningState(task).strategy}:${deriveTaskRecoveryPlanningState(task).reasonCategory} | safeStop=${deriveTaskRecoveryPlanningState(task).safeStopPoint ?? "none"} | resumability=${task.resumability} | recovery=${task.recoveryPending} | transport=${task.dispatchTransportStatus ?? "none"} | hardening=${deriveTaskDispatchHardeningState(task).state}:${deriveTaskDispatchHardeningState(task).category} | retries=${task.dispatchRetryCount ?? 0} | failure=${task.failureReason ?? "none"} | ${task.sessionId}`;
+    }),
+  );
+
+  return taskLines.join("\n");
 }
 
 export function formatHeadlessNodeList(options?: { json?: boolean }): string {

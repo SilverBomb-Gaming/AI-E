@@ -241,6 +241,9 @@ test("runAutonomousSession resumes an awaiting-approval session from stored pend
   assert.equal(resumed.status, "completed");
   assert.equal(resumed.steps.length, 3);
   assert.equal(resumed.steps[1]?.executionResult?.changedPaths?.[0], "web/sandbox/approved.txt");
+  assert.equal(resumed.workflowContinuity.progress.chainPhase, "completed");
+  assert.equal(resumed.workflowContinuity.progress.lastCompletedSafeStep, 3);
+  assert.match(resumed.workflowContinuity.memory.chainSummary ?? "", /goal status: complete/i);
   assert.equal(analysisCalls, 1);
 });
 

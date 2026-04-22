@@ -72,6 +72,36 @@ export type AutonomousRecoveryState = {
   stallReason?: string;
 };
 
+export type AutonomousWorkflowChainPhase =
+  | "continuing"
+  | "restarting"
+  | "waiting"
+  | "blocked"
+  | "completed"
+  | "failed";
+
+export type AutonomousWorkflowProgressState = {
+  chainPhase: AutonomousWorkflowChainPhase;
+  currentChainStep: number;
+  totalKnownSteps: number;
+  lastCompletedSafeStep?: number;
+  currentRecoveryTarget?: string;
+  nextIntendedStep?: string;
+};
+
+export type AutonomousWorkflowMemoryState = {
+  chainSummary?: string;
+  recentDecisions: string[];
+  restartReason?: string;
+  priorRecoveryOutcomes: string[];
+  pendingOperatorContext?: string;
+};
+
+export type AutonomousWorkflowContinuityState = {
+  progress: AutonomousWorkflowProgressState;
+  memory: AutonomousWorkflowMemoryState;
+};
+
 export type AutonomousCompletionState = Pick<GoalEvaluation, "status" | "isComplete" | "reason" | "confidence">;
 
 export type AutonomousSession = {
@@ -112,6 +142,7 @@ export type AutonomousSession = {
   pendingAction?: ExecutionActionPreview;
   latestRecoveryState?: AutonomousRecoveryState;
   latestCompletion?: AutonomousCompletionState;
+  workflowContinuity: AutonomousWorkflowContinuityState;
   steps: AutonomousStepRecord[];
 };
 
@@ -397,6 +428,154 @@ function normalizeAutonomousRecoveryState(value: unknown): AutonomousRecoverySta
   };
 }
 
+function clampWorkflowMemoryItems(values: Array<string | undefined>, limit = 4): string[] {
+  return values.map((value) => normalizeText(value)).filter(Boolean).slice(-Math.max(1, limit));
+}
+
+function summarizeWorkflowDecision(step: AutonomousStepRecord): string | undefined {
+  const action = normalizeText(step.proposedAction);
+  const decision = normalizeText(step.nextDecision);
+  const goalState = normalizeText(step.goalStatus);
+
+  if (!action && !decision && !goalState) {
+    return undefined;
+  }
+
+  return `step ${step.index}: ${action || "no-action"}${decision ? ` -> ${decision}` : ""}${goalState ? ` (${goalState})` : ""}`;
+}
+
+function summarizeWorkflowRecoveryOutcome(step: AutonomousStepRecord): string | undefined {
+  if (!step.recoveryStrategy && !step.failureClassification) {
+    return undefined;
+  }
+
+  const recovery = normalizeText(step.recoveryStrategy);
+  const failure = step.failureClassification
+    ? `${step.failureClassification.kind}:${step.failureClassification.reason}`
+    : normalizeText(step.failureReason);
+
+  return `step ${step.index}: ${recovery || "recovery-recorded"}${failure ? ` -> ${failure}` : ""}`;
+}
+
+function deriveAutonomousWorkflowChainPhase(session: AutonomousSession): AutonomousWorkflowChainPhase {
+  if (session.status === "completed") {
+    return "completed";
+  }
+
+  if (session.status === "failed" || session.status === "max-step-limit") {
+    return "failed";
+  }
+
+  if (session.status === "blocked") {
+    return "blocked";
+  }
+
+  if (session.status === "paused" || session.status === "awaiting-approval") {
+    return "waiting";
+  }
+
+  if (
+    session.taskStatus === "retrying" ||
+    session.latestRecoveryState?.recoveryStrategy === "retry-same-action" ||
+    session.latestRecoveryState?.recoveryStrategy === "narrow-scope"
+  ) {
+    return "restarting";
+  }
+
+  return "continuing";
+}
+
+export function deriveAutonomousWorkflowContinuity(session: AutonomousSession): AutonomousWorkflowContinuityState {
+  const recentSteps = session.steps.slice(-4);
+  const lastCompletedSafeStep = [...session.steps]
+    .reverse()
+    .find((step) => step.executionResult?.status === "success" || step.goalStatus === "complete")?.index;
+  const currentRecoveryTarget = normalizeText(session.pendingAction?.description)
+    || normalizeText(session.latestRecoveryState?.failureClassification?.reason)
+    || normalizeText(session.failureReason)
+    || undefined;
+  const nextIntendedStep = normalizeText(session.pendingAction?.description)
+    || normalizeText(session.planningHintSummary)
+    || normalizeText(session.steps.at(-1)?.proposedAction)
+    || undefined;
+  const chainPhase = deriveAutonomousWorkflowChainPhase(session);
+  const totalKnownSteps = session.steps.length + (session.pendingAction ? 1 : 0);
+  const latestStep = session.steps.at(-1);
+  const summarySource = [
+    `${session.goal}`,
+    latestStep?.diagnosis ? `Latest diagnosis: ${latestStep.diagnosis}` : "",
+    session.latestCompletion ? `Goal status: ${session.latestCompletion.status}` : "",
+  ].filter(Boolean).join(" | ");
+
+  return {
+    progress: {
+      chainPhase,
+      currentChainStep: Math.max(1, session.currentStepIndex),
+      totalKnownSteps: Math.max(session.steps.length, totalKnownSteps),
+      lastCompletedSafeStep,
+      currentRecoveryTarget,
+      nextIntendedStep,
+    },
+    memory: {
+      chainSummary: normalizeText(summarySource) || undefined,
+      recentDecisions: clampWorkflowMemoryItems(recentSteps.map((step) => summarizeWorkflowDecision(step))),
+      restartReason:
+        chainPhase === "restarting"
+          ? normalizeText(session.latestRecoveryState?.failureClassification?.reason)
+            || normalizeText(session.stateReason)
+            || normalizeText(session.failureReason)
+            || undefined
+          : undefined,
+      priorRecoveryOutcomes: clampWorkflowMemoryItems(session.steps.map((step) => summarizeWorkflowRecoveryOutcome(step))),
+      pendingOperatorContext:
+        normalizeText(session.stateReason)
+        || normalizeText(session.pendingAction?.expectedOutcome)
+        || normalizeText(session.planningHintSummary)
+        || undefined,
+    },
+  };
+}
+
+function normalizeAutonomousWorkflowContinuityState(value: unknown): AutonomousWorkflowContinuityState | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+
+  const source = value as Record<string, unknown>;
+  const progressSource = source.progress && typeof source.progress === "object" ? (source.progress as Record<string, unknown>) : undefined;
+  const memorySource = source.memory && typeof source.memory === "object" ? (source.memory as Record<string, unknown>) : undefined;
+  const chainPhase = normalizeText(typeof progressSource?.chainPhase === "string" ? progressSource.chainPhase : "");
+
+  if (
+    chainPhase !== "continuing" &&
+    chainPhase !== "restarting" &&
+    chainPhase !== "waiting" &&
+    chainPhase !== "blocked" &&
+    chainPhase !== "completed" &&
+    chainPhase !== "failed"
+  ) {
+    return undefined;
+  }
+
+  return {
+    progress: {
+      chainPhase: chainPhase as AutonomousWorkflowChainPhase,
+      currentChainStep: Number.isInteger(Number(progressSource?.currentChainStep)) ? Math.max(1, Number(progressSource?.currentChainStep)) : 1,
+      totalKnownSteps: Number.isInteger(Number(progressSource?.totalKnownSteps)) ? Math.max(0, Number(progressSource?.totalKnownSteps)) : 0,
+      lastCompletedSafeStep: Number.isInteger(Number(progressSource?.lastCompletedSafeStep)) ? Math.max(0, Number(progressSource?.lastCompletedSafeStep)) : undefined,
+      currentRecoveryTarget: normalizeText(typeof progressSource?.currentRecoveryTarget === "string" ? progressSource.currentRecoveryTarget : "") || undefined,
+      nextIntendedStep: normalizeText(typeof progressSource?.nextIntendedStep === "string" ? progressSource.nextIntendedStep : "") || undefined,
+    },
+    memory: {
+      chainSummary: normalizeText(typeof memorySource?.chainSummary === "string" ? memorySource.chainSummary : "") || undefined,
+      recentDecisions: clampWorkflowMemoryItems(Array.isArray(memorySource?.recentDecisions) ? memorySource?.recentDecisions as string[] : []),
+      restartReason: normalizeText(typeof memorySource?.restartReason === "string" ? memorySource.restartReason : "") || undefined,
+      priorRecoveryOutcomes: clampWorkflowMemoryItems(Array.isArray(memorySource?.priorRecoveryOutcomes) ? memorySource?.priorRecoveryOutcomes as string[] : []),
+      pendingOperatorContext: normalizeText(typeof memorySource?.pendingOperatorContext === "string" ? memorySource.pendingOperatorContext : "") || undefined,
+    },
+  };
+}
+
 function normalizeAutonomousCompletionState(value: unknown): AutonomousCompletionState | undefined {
   if (!value || typeof value !== "object") {
     return undefined;
@@ -524,7 +703,7 @@ export function createAutonomousSession(params: CreateAutonomousSessionParams): 
   const goal = normalizeText(params.goal);
   const timestamp = createTimestamp();
 
-  return {
+  const session: AutonomousSession = {
     sessionId: normalizeText(params.sessionId) || createAutonomousSessionId(),
     goal: goal || "Resolve the current bounded autonomous debugging goal.",
     status: "active",
@@ -533,7 +712,23 @@ export function createAutonomousSession(params: CreateAutonomousSessionParams): 
     currentStepIndex: 1,
     maxSteps: clampAutonomousMaxSteps(params.maxSteps),
     lastStepIndex: 0,
+    workflowContinuity: {
+      progress: {
+        chainPhase: "continuing",
+        currentChainStep: 1,
+        totalKnownSteps: 0,
+      },
+      memory: {
+        recentDecisions: [],
+        priorRecoveryOutcomes: [],
+      },
+    },
     steps: [],
+  };
+
+  return {
+    ...session,
+    workflowContinuity: deriveAutonomousWorkflowContinuity(session),
   };
 }
 
@@ -587,7 +782,7 @@ export function appendAutonomousStep(
     timestamp,
   };
 
-  return {
+  const nextSession: AutonomousSession = {
     ...session,
     updatedAt: timestamp,
     currentStepIndex: nextIndex + 1,
@@ -633,7 +828,13 @@ export function appendAutonomousStep(
           confidence: step.completionConfidence ?? session.latestCompletion?.confidence ?? "low",
         }
       : session.latestCompletion,
+    workflowContinuity: session.workflowContinuity,
     steps: [...session.steps, step],
+  };
+
+  return {
+    ...nextSession,
+    workflowContinuity: deriveAutonomousWorkflowContinuity(nextSession),
   };
 }
 
@@ -643,12 +844,18 @@ export function updateAutonomousSessionStatus(
   completedReason?: string,
 ): AutonomousSession {
   const nextReason = normalizeText(completedReason) || undefined;
-  return {
+  const nextSession: AutonomousSession = {
     ...session,
     status,
     updatedAt: createTimestamp(),
     completedReason: nextReason ?? session.completedReason,
     stateReason: nextReason ?? session.stateReason,
+    workflowContinuity: session.workflowContinuity,
+  };
+
+  return {
+    ...nextSession,
+    workflowContinuity: deriveAutonomousWorkflowContinuity(nextSession),
   };
 }
 
@@ -657,10 +864,16 @@ export function pauseAutonomousSession(
   reason: string,
   pendingAction?: ExecutionActionPreview,
 ): AutonomousSession {
-  return {
+  const nextSession: AutonomousSession = {
     ...updateAutonomousSessionStatus(session, "paused", reason),
     pendingAction: pendingAction ?? session.pendingAction,
     stateReason: normalizeText(reason) || session.stateReason,
+    workflowContinuity: session.workflowContinuity,
+  };
+
+  return {
+    ...nextSession,
+    workflowContinuity: deriveAutonomousWorkflowContinuity(nextSession),
   };
 }
 
@@ -669,10 +882,16 @@ export function markAwaitingApproval(
   pendingAction: ExecutionActionPreview,
   reason: string,
 ): AutonomousSession {
-  return {
+  const nextSession: AutonomousSession = {
     ...updateAutonomousSessionStatus(session, "awaiting-approval", reason),
     pendingAction,
     stateReason: normalizeText(reason) || session.stateReason,
+    workflowContinuity: session.workflowContinuity,
+  };
+
+  return {
+    ...nextSession,
+    workflowContinuity: deriveAutonomousWorkflowContinuity(nextSession),
   };
 }
 
@@ -696,10 +915,16 @@ export function resumeAutonomousSession(
     return session;
   }
 
-  return {
+  const nextSession: AutonomousSession = {
     ...updateAutonomousSessionStatus(session, "active", normalizeText(options?.reason) || session.stateReason),
     stateReason: normalizeText(options?.reason) || session.stateReason,
     pendingAction: session.status === "awaiting-approval" && options?.approved ? session.pendingAction : undefined,
+    workflowContinuity: session.workflowContinuity,
+  };
+
+  return {
+    ...nextSession,
+    workflowContinuity: deriveAutonomousWorkflowContinuity(nextSession),
   };
 }
 
@@ -732,7 +957,7 @@ export function normalizeAutonomousSession(value: unknown): AutonomousSession | 
     return null;
   }
 
-  return {
+  const normalized: AutonomousSession = {
     sessionId: normalizeText(source.sessionId),
     goal: normalizeText(source.goal),
     status,
@@ -770,7 +995,23 @@ export function normalizeAutonomousSession(value: unknown): AutonomousSession | 
     pendingAction: normalizeExecutionActionPreview(source.pendingAction),
     latestRecoveryState: normalizeAutonomousRecoveryState(source.latestRecoveryState),
     latestCompletion: normalizeAutonomousCompletionState(source.latestCompletion),
+    workflowContinuity: {
+      progress: {
+        chainPhase: "continuing",
+        currentChainStep: 1,
+        totalKnownSteps: 0,
+      },
+      memory: {
+        recentDecisions: [],
+        priorRecoveryOutcomes: [],
+      },
+    },
     steps,
+  };
+
+  return {
+    ...normalized,
+    workflowContinuity: normalizeAutonomousWorkflowContinuityState(source.workflowContinuity) ?? deriveAutonomousWorkflowContinuity(normalized),
   };
 }
 
@@ -799,6 +1040,42 @@ export function buildAutonomousSessionContextBlock(session: AutonomousSession, l
 
   if (session.pendingAction) {
     lines.push(`- Pending action awaiting continuation: ${session.pendingAction.description}`);
+  }
+
+  lines.push(
+    `- Workflow continuity: phase=${session.workflowContinuity.progress.chainPhase}, current=${session.workflowContinuity.progress.currentChainStep}, total=${session.workflowContinuity.progress.totalKnownSteps}`,
+  );
+
+  if (typeof session.workflowContinuity.progress.lastCompletedSafeStep === "number") {
+    lines.push(`- Last completed safe step: ${session.workflowContinuity.progress.lastCompletedSafeStep}`);
+  }
+
+  if (session.workflowContinuity.progress.currentRecoveryTarget) {
+    lines.push(`- Current recovery target: ${session.workflowContinuity.progress.currentRecoveryTarget}`);
+  }
+
+  if (session.workflowContinuity.progress.nextIntendedStep) {
+    lines.push(`- Next intended bounded step: ${session.workflowContinuity.progress.nextIntendedStep}`);
+  }
+
+  if (session.workflowContinuity.memory.chainSummary) {
+    lines.push(`- Chain summary: ${session.workflowContinuity.memory.chainSummary}`);
+  }
+
+  if (session.workflowContinuity.memory.pendingOperatorContext) {
+    lines.push(`- Pending operator context: ${session.workflowContinuity.memory.pendingOperatorContext}`);
+  }
+
+  if (session.workflowContinuity.memory.recentDecisions.length > 0) {
+    lines.push(`- Recent decisions: ${session.workflowContinuity.memory.recentDecisions.join(" | ")}`);
+  }
+
+  if (session.workflowContinuity.memory.restartReason) {
+    lines.push(`- Restart reason: ${session.workflowContinuity.memory.restartReason}`);
+  }
+
+  if (session.workflowContinuity.memory.priorRecoveryOutcomes.length > 0) {
+    lines.push(`- Prior recovery outcomes: ${session.workflowContinuity.memory.priorRecoveryOutcomes.join(" | ")}`);
   }
 
   if (recentSteps.length > 0) {
