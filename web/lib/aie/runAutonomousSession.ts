@@ -566,8 +566,7 @@ function deriveFeatureDependencyGraph(params: {
         + feature.totalTaskCount
         + (feature.blockedByFeatures.length === 0 ? 1 : 0)
         + (feature.unlockScore * 2)
-        + feature.criticalPathWeight
-        + Math.max(0, feature.highestTaskPriority);
+        + feature.criticalPathWeight;
     feature.dependencyStatusSummary = feature.blockedByFeatures.length > 0
       ? `Blocked by feature dependencies: ${feature.blockedByFeatures.join(", ")}.`
       : feature.dependsOnFeatureIds.length > 0
@@ -638,11 +637,9 @@ function choosePreferredFeatureId(params: {
     : undefined;
   const lastCompletedFeatureId = lastCompletedTask ? deriveTaskFeatureMetadata(lastCompletedTask, params.session).featureId : undefined;
   if (lastCompletedFeatureId) {
-    const newlyUnlockedFeature = [...readyFeatures]
-      .filter((feature) => feature.dependsOnFeatureIds.includes(lastCompletedFeatureId))
-      .sort((left, right) => right.highestTaskPriority - left.highestTaskPriority
-        || left.firstQueuedIndex - right.firstQueuedIndex
-        || left.featureId.localeCompare(right.featureId))[0];
+    const newlyUnlockedFeature = sortFeatureGraphForPlanning(
+      readyFeatures.filter((feature) => feature.dependsOnFeatureIds.includes(lastCompletedFeatureId)),
+    )[0];
     if (newlyUnlockedFeature) {
       return newlyUnlockedFeature.featureId;
     }

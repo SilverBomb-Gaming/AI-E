@@ -1708,7 +1708,7 @@ test("runAutonomousSession prefers the deeper critical path when ready features 
     const seedSession = createAutonomousSession({
       goal: "Prefer the longer critical path over a shorter high-priority branch.",
       sessionId: "phase7d-feature-planning-session",
-      maxSteps: 6,
+      maxSteps: 7,
       sessionMode: "repo-coding",
     });
     await enqueueTask(createTaskEnvelope({
@@ -1773,7 +1773,7 @@ test("runAutonomousSession prefers the deeper critical path when ready features 
 
     const session = await runAutonomousSession({
       goal: seedSession.goal,
-      maxSteps: 6,
+      maxSteps: 7,
       existingSession: seedSession,
       dependencies: {
         runAnalysis: async () => ({
