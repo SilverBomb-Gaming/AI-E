@@ -7,6 +7,45 @@ import { runAutonomousSession } from "@/lib/aie/runAutonomousSession";
 
 export const runtime = "nodejs";
 
+function clampMaxTasksPerSession(value: unknown): number | undefined {
+  if (value === undefined || value === null || String(value).trim() === "") {
+    return undefined;
+  }
+
+  const numericValue = Number(value ?? 0);
+  if (!Number.isFinite(numericValue)) {
+    return undefined;
+  }
+
+  return Math.max(1, Math.min(10, Math.floor(numericValue)));
+}
+
+function clampMaxFailuresPerSession(value: unknown): number | undefined {
+  if (value === undefined || value === null || String(value).trim() === "") {
+    return undefined;
+  }
+
+  const numericValue = Number(value ?? 0);
+  if (!Number.isFinite(numericValue)) {
+    return undefined;
+  }
+
+  return Math.max(1, Math.min(3, Math.floor(numericValue)));
+}
+
+function clampMaxRuntimeMs(value: unknown): number | undefined {
+  if (value === undefined || value === null || String(value).trim() === "") {
+    return undefined;
+  }
+
+  const numericValue = Number(value ?? 0);
+  if (!Number.isFinite(numericValue) || numericValue <= 0) {
+    return undefined;
+  }
+
+  return Math.max(1_000, Math.min(8 * 60 * 60 * 1_000, Math.floor(numericValue)));
+}
+
 export async function POST(
   request: Request,
   { params }: { params: { id: string } },
@@ -19,6 +58,9 @@ export async function POST(
 
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
     const approved = body.approved === true;
+    const maxTasksPerSession = clampMaxTasksPerSession(body.maxTasksPerSession);
+    const maxFailuresPerSession = clampMaxFailuresPerSession(body.maxFailuresPerSession);
+    const maxRuntimeMs = clampMaxRuntimeMs(body.maxRuntimeMs);
     const steeringBody = body.steering && typeof body.steering === "object"
       ? body.steering as Record<string, unknown>
       : undefined;
@@ -41,6 +83,9 @@ export async function POST(
     const nextSession = await runAutonomousSession({
       goal: nextSessionInput.goal,
       maxSteps: nextSessionInput.maxSteps,
+      maxTasksPerSession,
+      maxFailuresPerSession,
+      maxRuntimeMs,
       approved,
       existingSession: nextSessionInput,
       executionContext: {

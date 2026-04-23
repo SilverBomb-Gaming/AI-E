@@ -126,8 +126,10 @@ export type AutonomousOperatorSteeringAction =
   | "prefer-validation-next"
   | "prefer-fix-next"
   | "restart-from-last-safe-boundary"
+  | "skip-current-task"
   | "pause-and-wait"
-  | "stop-loop";
+  | "stop-loop"
+  | "force-stop";
 
 export type AutonomousOperatorSteeringStatus = "none" | "pending" | "applied" | "blocked";
 
@@ -448,6 +450,36 @@ export type AutonomousWorkflowTaskChainState = {
   chainStatus: AutonomousWorkflowTaskChainStatus;
 };
 
+export type AutonomousSessionPauseReason =
+  | "approval-required"
+  | "critical-task-failure"
+  | "dependency-missing"
+  | "all-tasks-blocked"
+  | "all-tasks-complete"
+  | "max-tasks-reached"
+  | "max-failures-reached"
+  | "max-runtime-reached"
+  | "operator-paused"
+  | "operator-stopped"
+  | "session-limit-reached";
+
+export type AutonomousSessionLoopState = {
+  sessionStartedAt: string;
+  lastUpdatedAt: string;
+  maxTasksPerSession: number;
+  maxFailuresPerSession: number;
+  maxRuntimeMs?: number;
+  completedTaskIds: string[];
+  skippedTaskIds: string[];
+  blockedTaskIds: string[];
+  failureCount: number;
+  currentActiveTaskId?: string;
+  lastCompletedTaskId?: string;
+  nextRecommendedTaskId?: string;
+  pauseReason?: AutonomousSessionPauseReason;
+  pauseSummary?: string;
+};
+
 export type AutonomousWorkflowContinuityState = {
   progress: AutonomousWorkflowProgressState;
   memory: AutonomousWorkflowMemoryState;
@@ -472,6 +504,7 @@ export type AutonomousSession = {
   updatedAt: string;
   currentStepIndex: number;
   maxSteps: number;
+  sessionLoop: AutonomousSessionLoopState;
   lastStepIndex?: number;
   completedReason?: string;
   stateReason?: string;
@@ -509,6 +542,9 @@ export type AutonomousSession = {
 type CreateAutonomousSessionParams = {
   goal: string;
   maxSteps?: number;
+  maxTasksPerSession?: number;
+  maxFailuresPerSession?: number;
+  maxRuntimeMs?: number;
   sessionId?: string;
   sessionMode?: AutonomousSessionMode;
 };
@@ -580,6 +616,45 @@ function clampAutonomousMaxSteps(value: unknown): number {
   }
 
   return Math.max(1, Math.min(5, Math.floor(numericValue)));
+}
+
+function clampAutonomousMaxTasksPerSession(value: unknown): number {
+  if (value === undefined || value === null || String(value).trim() === "") {
+    return 5;
+  }
+
+  const numericValue = Number(value ?? 0);
+  if (!Number.isFinite(numericValue)) {
+    return 5;
+  }
+
+  return Math.max(1, Math.min(10, Math.floor(numericValue)));
+}
+
+function clampAutonomousMaxFailuresPerSession(value: unknown): number {
+  if (value === undefined || value === null || String(value).trim() === "") {
+    return 2;
+  }
+
+  const numericValue = Number(value ?? 0);
+  if (!Number.isFinite(numericValue)) {
+    return 2;
+  }
+
+  return Math.max(1, Math.min(3, Math.floor(numericValue)));
+}
+
+function clampAutonomousMaxRuntimeMs(value: unknown): number | undefined {
+  if (value === undefined || value === null || String(value).trim() === "") {
+    return undefined;
+  }
+
+  const numericValue = Number(value ?? 0);
+  if (!Number.isFinite(numericValue) || numericValue <= 0) {
+    return undefined;
+  }
+
+  return Math.max(1_000, Math.min(8 * 60 * 60 * 1_000, Math.floor(numericValue)));
 }
 
 function createTimestamp(date = new Date()): string {
@@ -677,6 +752,33 @@ function createDefaultAutonomousWorkflowTaskChainState(): AutonomousWorkflowTask
   };
 }
 
+function createDefaultAutonomousSessionLoopState(params?: {
+  sessionStartedAt?: string;
+  lastUpdatedAt?: string;
+  maxTasksPerSession?: unknown;
+  maxFailuresPerSession?: unknown;
+  maxRuntimeMs?: unknown;
+}): AutonomousSessionLoopState {
+  const timestamp = normalizeText(params?.sessionStartedAt) || createTimestamp();
+
+  return {
+    sessionStartedAt: timestamp,
+    lastUpdatedAt: normalizeText(params?.lastUpdatedAt) || timestamp,
+    maxTasksPerSession: clampAutonomousMaxTasksPerSession(params?.maxTasksPerSession),
+    maxFailuresPerSession: clampAutonomousMaxFailuresPerSession(params?.maxFailuresPerSession),
+    maxRuntimeMs: clampAutonomousMaxRuntimeMs(params?.maxRuntimeMs),
+    completedTaskIds: [],
+    skippedTaskIds: [],
+    blockedTaskIds: [],
+    failureCount: 0,
+    currentActiveTaskId: undefined,
+    lastCompletedTaskId: undefined,
+    nextRecommendedTaskId: undefined,
+    pauseReason: undefined,
+    pauseSummary: undefined,
+  };
+}
+
 function normalizeUniqueTaskIdList(value: unknown): string[] {
   if (!Array.isArray(value)) {
     return [];
@@ -707,6 +809,51 @@ function normalizeAutonomousWorkflowTaskChainStatus(value: unknown): AutonomousW
     || value === "completed"
     ? value
     : undefined;
+}
+
+function normalizeAutonomousSessionPauseReason(value: unknown): AutonomousSessionPauseReason | undefined {
+  return value === "approval-required"
+    || value === "critical-task-failure"
+    || value === "dependency-missing"
+    || value === "all-tasks-blocked"
+    || value === "all-tasks-complete"
+    || value === "max-tasks-reached"
+    || value === "max-failures-reached"
+    || value === "max-runtime-reached"
+    || value === "operator-paused"
+    || value === "operator-stopped"
+    || value === "session-limit-reached"
+    ? value
+    : undefined;
+}
+
+function normalizeAutonomousSessionLoopState(value: unknown): AutonomousSessionLoopState | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+
+  const source = value as Record<string, unknown>;
+  const sessionStartedAt = normalizeText(typeof source.sessionStartedAt === "string" ? source.sessionStartedAt : "");
+  if (!sessionStartedAt) {
+    return undefined;
+  }
+
+  return {
+    sessionStartedAt,
+    lastUpdatedAt: normalizeText(typeof source.lastUpdatedAt === "string" ? source.lastUpdatedAt : "") || sessionStartedAt,
+    maxTasksPerSession: clampAutonomousMaxTasksPerSession(source.maxTasksPerSession),
+    maxFailuresPerSession: clampAutonomousMaxFailuresPerSession(source.maxFailuresPerSession),
+    maxRuntimeMs: clampAutonomousMaxRuntimeMs(source.maxRuntimeMs),
+    completedTaskIds: normalizeUniqueTaskIdList(source.completedTaskIds),
+    skippedTaskIds: normalizeUniqueTaskIdList(source.skippedTaskIds),
+    blockedTaskIds: normalizeUniqueTaskIdList(source.blockedTaskIds),
+    failureCount: Number.isInteger(Number(source.failureCount)) ? Math.max(0, Math.floor(Number(source.failureCount))) : 0,
+    currentActiveTaskId: normalizeText(typeof source.currentActiveTaskId === "string" ? source.currentActiveTaskId : "") || undefined,
+    lastCompletedTaskId: normalizeText(typeof source.lastCompletedTaskId === "string" ? source.lastCompletedTaskId : "") || undefined,
+    nextRecommendedTaskId: normalizeText(typeof source.nextRecommendedTaskId === "string" ? source.nextRecommendedTaskId : "") || undefined,
+    pauseReason: normalizeAutonomousSessionPauseReason(source.pauseReason),
+    pauseSummary: normalizeText(typeof source.pauseSummary === "string" ? source.pauseSummary : "") || undefined,
+  };
 }
 
 function normalizeAutonomousGeneratedTaskQueueEntry(value: unknown): AutonomousGeneratedTaskQueueEntry | null {
@@ -804,8 +951,10 @@ function normalizeAutonomousOperatorSteeringAction(value: unknown): AutonomousOp
     || normalized === "prefer-validation-next"
     || normalized === "prefer-fix-next"
     || normalized === "restart-from-last-safe-boundary"
+    || normalized === "skip-current-task"
     || normalized === "pause-and-wait"
     || normalized === "stop-loop"
+    || normalized === "force-stop"
   ) {
     return normalized as AutonomousOperatorSteeringAction;
   }
@@ -940,11 +1089,15 @@ function deriveRequestedNextPhaseOverride(
     return "restart-from-last-safe-boundary";
   }
 
+  if (action === "skip-current-task") {
+    return undefined;
+  }
+
   if (action === "pause-and-wait") {
     return "waiting-on-operator";
   }
 
-  if (action === "stop-loop") {
+  if (action === "stop-loop" || action === "force-stop") {
     return "stop";
   }
 
@@ -1211,7 +1364,7 @@ function deriveRecommendationHandoffRecoveryMode(
     return "operator-intervention";
   }
 
-  if (action === "stop-loop") {
+  if (action === "stop-loop" || action === "force-stop") {
     return "stop-loop";
   }
 
@@ -2786,7 +2939,11 @@ function deriveOperatorSteeringState(params: {
     };
   }
 
-  const isImmediateOverride = requestedAction === "accept-current-recommendation" || requestedAction === "pause-and-wait" || requestedAction === "stop-loop";
+  const isImmediateOverride = requestedAction === "accept-current-recommendation"
+    || requestedAction === "skip-current-task"
+    || requestedAction === "pause-and-wait"
+    || requestedAction === "stop-loop"
+    || requestedAction === "force-stop";
   const status = isImmediateOverride
     ? "applied"
     : hasSteeringBeenApplied(params.session, requestedForStepIndex)
@@ -2887,6 +3044,17 @@ function applyOperatorSteeringToLoopHealth(params: {
     };
   }
 
+  if (requestedAction === "skip-current-task") {
+    return {
+      ...loopHealth,
+      operatorInterventionPreferred: true,
+      recommendedNextActionSummary: operatorNote || "Skip the current task and advance to the next runnable bounded task.",
+      loopHealthReason: operatorNote
+        ? `Operator requested skipping the current task: ${operatorNote}`
+        : "Operator requested skipping the current task before the next bounded step.",
+    };
+  }
+
   if (requestedAction === "pause-and-wait") {
     return {
       ...loopHealth,
@@ -2899,7 +3067,7 @@ function applyOperatorSteeringToLoopHealth(params: {
     };
   }
 
-  if (requestedAction === "stop-loop") {
+  if (requestedAction === "stop-loop" || requestedAction === "force-stop") {
     return {
       ...loopHealth,
       operatorInterventionPreferred: true,
@@ -2909,8 +3077,8 @@ function applyOperatorSteeringToLoopHealth(params: {
       loopHealthReason:
         params.steering.requestedStopReason
         || (operatorNote
-          ? `Operator requested that the bounded loop stop: ${operatorNote}`
-          : "Operator requested that the bounded loop stop."),
+          ? `Operator requested that the bounded loop stop immediately: ${operatorNote}`
+          : "Operator requested that the bounded loop stop immediately."),
     };
   }
 
@@ -4271,6 +4439,13 @@ export function createAutonomousSession(params: CreateAutonomousSessionParams): 
     updatedAt: timestamp,
     currentStepIndex: 1,
     maxSteps: clampAutonomousMaxSteps(params.maxSteps),
+    sessionLoop: createDefaultAutonomousSessionLoopState({
+      sessionStartedAt: timestamp,
+      lastUpdatedAt: timestamp,
+      maxTasksPerSession: params.maxTasksPerSession,
+      maxFailuresPerSession: params.maxFailuresPerSession,
+      maxRuntimeMs: params.maxRuntimeMs,
+    }),
     lastStepIndex: 0,
     workflowContinuity: {
       progress: {
@@ -4602,6 +4777,10 @@ export function normalizeAutonomousSession(value: unknown): AutonomousSession | 
     pendingAction: normalizeExecutionActionPreview(source.pendingAction),
     latestRecoveryState: normalizeAutonomousRecoveryState(source.latestRecoveryState),
     latestCompletion: normalizeAutonomousCompletionState(source.latestCompletion),
+    sessionLoop: createDefaultAutonomousSessionLoopState({
+      sessionStartedAt: normalizeText(typeof source.createdAt === "string" ? source.createdAt : "") || createTimestamp(),
+      lastUpdatedAt: normalizeText(typeof source.updatedAt === "string" ? source.updatedAt : "") || undefined,
+    }),
     workflowContinuity: {
       progress: {
         chainPhase: "planning",
@@ -4634,6 +4813,7 @@ export function normalizeAutonomousSession(value: unknown): AutonomousSession | 
 
   return {
     ...normalized,
+    sessionLoop: normalizeAutonomousSessionLoopState(source.sessionLoop) ?? normalized.sessionLoop,
     workflowContinuity: normalizeAutonomousWorkflowContinuityState(source.workflowContinuity) ?? deriveAutonomousWorkflowContinuity(normalized),
   };
 }
@@ -4646,7 +4826,32 @@ export function buildAutonomousSessionContextBlock(session: AutonomousSession, l
     `- Session mode: ${session.sessionMode}`,
     `- Session status: ${session.status}`,
     `- Current autonomous step: ${session.currentStepIndex}`,
+    `- Session loop limits: tasks=${session.sessionLoop.maxTasksPerSession}, failures=${session.sessionLoop.maxFailuresPerSession}${typeof session.sessionLoop.maxRuntimeMs === "number" ? `, runtimeMs=${session.sessionLoop.maxRuntimeMs}` : ""}`,
   ];
+
+  lines.push(
+    `- Session loop progress: completed=${session.sessionLoop.completedTaskIds.length}, skipped=${session.sessionLoop.skippedTaskIds.length}, blocked=${session.sessionLoop.blockedTaskIds.length}, failures=${session.sessionLoop.failureCount}`,
+  );
+
+  if (session.sessionLoop.currentActiveTaskId) {
+    lines.push(`- Active session task: ${session.sessionLoop.currentActiveTaskId}`);
+  }
+
+  if (session.sessionLoop.lastCompletedTaskId) {
+    lines.push(`- Last completed session task: ${session.sessionLoop.lastCompletedTaskId}`);
+  }
+
+  if (session.sessionLoop.nextRecommendedTaskId) {
+    lines.push(`- Next recommended session task: ${session.sessionLoop.nextRecommendedTaskId}`);
+  }
+
+  if (session.sessionLoop.pauseReason) {
+    lines.push(`- Session pause reason: ${session.sessionLoop.pauseReason}`);
+  }
+
+  if (session.sessionLoop.pauseSummary) {
+    lines.push(`- Session pause summary: ${session.sessionLoop.pauseSummary}`);
+  }
 
   if (session.completedReason) {
     lines.push(`- Latest session reason: ${session.completedReason}`);

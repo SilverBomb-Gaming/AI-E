@@ -76,6 +76,9 @@ test("headless_autonomy persists a bounded session and prints a matching summary
     assert.equal(summary.taskStatus, "completed");
     assert.match(formatHeadlessSessionReport(session, { verbose: true }), /Step 1/i);
     assert.match(formatHeadlessSessionReport(session), /Session mode:/i);
+    assert.match(formatHeadlessSessionReport(session), /Session loop limits:/i);
+    assert.match(formatHeadlessSessionReport(session), /Session loop progress:/i);
+    assert.match(formatHeadlessSessionReport(session), /Session pause reason:/i);
     assert.match(formatHeadlessSessionReport(session), /Coding loop phase:/i);
     assert.match(formatHeadlessSessionReport(session), /Current coding objective:/i);
     assert.match(formatHeadlessSessionReport(session), /Current deliverable target:/i);
@@ -221,6 +224,9 @@ test("headless_autonomy queue entrypoints run one queued task and print a queue 
     assert.match(output, /Dispatch transport: completed/i);
     assert.match(output, /Dispatch summary: dispatch=1 \| type=result \| status=completed/i);
     assert.match(output, /Session mode:/i);
+    assert.match(output, /Session loop limits:/i);
+    assert.match(output, /Session loop progress:/i);
+    assert.match(output, /Session pause reason:/i);
     assert.match(output, /Coding loop phase:/i);
     assert.match(output, /Current coding objective:/i);
     assert.match(output, /Current deliverable target:/i);
@@ -273,6 +279,12 @@ test("headless_autonomy queue entrypoints run one queued task and print a queue 
 
 test("headless_autonomy parses bounded steering flags", () => {
   const parsed = parseArgs([
+    "--maxTasksPerSession",
+    "4",
+    "--maxFailuresPerSession",
+    "2",
+    "--maxRuntimeMs",
+    "90000",
     "--sessionId",
     "session-steer-1",
     "--steering",
@@ -285,6 +297,9 @@ test("headless_autonomy parses bounded steering flags", () => {
     "Return to the last safe checkpoint.",
   ]);
 
+  assert.equal(parsed.maxTasksPerSession, 4);
+  assert.equal(parsed.maxFailuresPerSession, 2);
+  assert.equal(parsed.maxRuntimeMs, 90000);
   assert.equal(parsed.sessionId, "session-steer-1");
   assert.equal(parsed.steeringAction, "accept-current-recommendation");
   assert.equal(parsed.operatorNote, "Validate before the next fix.");

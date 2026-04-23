@@ -24,11 +24,53 @@ function clampMaxSteps(value: unknown): number {
   return Math.max(1, Math.min(5, Math.floor(numericValue)));
 }
 
+function clampMaxTasksPerSession(value: unknown): number | undefined {
+  if (value === undefined || value === null || String(value).trim() === "") {
+    return undefined;
+  }
+
+  const numericValue = Number(value ?? 0);
+  if (!Number.isFinite(numericValue)) {
+    return undefined;
+  }
+
+  return Math.max(1, Math.min(10, Math.floor(numericValue)));
+}
+
+function clampMaxFailuresPerSession(value: unknown): number | undefined {
+  if (value === undefined || value === null || String(value).trim() === "") {
+    return undefined;
+  }
+
+  const numericValue = Number(value ?? 0);
+  if (!Number.isFinite(numericValue)) {
+    return undefined;
+  }
+
+  return Math.max(1, Math.min(3, Math.floor(numericValue)));
+}
+
+function clampMaxRuntimeMs(value: unknown): number | undefined {
+  if (value === undefined || value === null || String(value).trim() === "") {
+    return undefined;
+  }
+
+  const numericValue = Number(value ?? 0);
+  if (!Number.isFinite(numericValue) || numericValue <= 0) {
+    return undefined;
+  }
+
+  return Math.max(1_000, Math.min(8 * 60 * 60 * 1_000, Math.floor(numericValue)));
+}
+
 export async function POST(request: Request) {
   try {
     const body = (await request.json()) as Record<string, unknown>;
     const goal = normalizeGoal(body.goal);
     const maxSteps = clampMaxSteps(body.maxSteps);
+    const maxTasksPerSession = clampMaxTasksPerSession(body.maxTasksPerSession);
+    const maxFailuresPerSession = clampMaxFailuresPerSession(body.maxFailuresPerSession);
+    const maxRuntimeMs = clampMaxRuntimeMs(body.maxRuntimeMs);
     const existingSessionId = normalizeGoal(body.sessionId);
     const approved = body.approved === true;
 
@@ -44,6 +86,9 @@ export async function POST(request: Request) {
     const session = await runAutonomousSession({
       goal,
       maxSteps,
+      maxTasksPerSession,
+      maxFailuresPerSession,
+      maxRuntimeMs,
       approved,
       existingSession: existingSession ?? undefined,
       executionContext: {

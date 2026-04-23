@@ -173,6 +173,36 @@ Long-horizon planning depth stays integrated into the current runner:
 - AI-E prefers validating recent writes before broadening again
 - AI-E avoids repeating just-failed action families unless the evidence materially changed
 
+## Operator-light autonomous session loop
+
+AI-E now supports a longer bounded session loop on top of the same persisted session runner instead of introducing a second scheduler.
+
+Session loop behavior:
+
+- the persisted session now carries explicit session-level limits for `maxTasksPerSession`, `maxFailuresPerSession`, and optional `maxRuntimeMs`
+- generated queued tasks continue in dependency and priority order through the existing queue selection path
+- session continuity now records loop-level progress such as completed, skipped, blocked, and failed task counts, current active task, last completed task, next recommended task, and the last pause reason
+- the browser UI, `headless_autonomy.ts`, and `local_node.ts` all expose the same loop state so the run remains inspectable across surfaces
+
+AI-E pauses the session when:
+
+- a bounded next step requires explicit approval
+- the operator pauses or force-stops the session
+- the session reaches its configured task, failure, or runtime limit
+- no queued task is runnable because the remaining work is blocked, failed, rejected, or waiting on missing dependencies
+
+AI-E resumes the session by loading the persisted state and re-entering the same runner:
+
+- approval resumes execute the stored pending action first
+- paused sessions with a runnable queued task continue directly into that task without recomputing a new plan first
+- operators can skip the current queued task, pause the session, or force-stop the session through the existing steering channel
+
+This keeps the system safe, bounded, and inspectable:
+
+- approval gates are unchanged for caution-scoped repo actions
+- autonomous continuation still uses the persisted queue, lease, and trust boundaries already in place
+- the loop records why it paused and what it recommends next before asking the operator to intervene
+
 ## Phase 4E execution adapters
 
 AI-E now routes bounded execution through adapter selection instead of a single hard-coded runtime switch.

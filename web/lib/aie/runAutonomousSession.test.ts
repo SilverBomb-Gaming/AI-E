@@ -3,7 +3,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 
-import { appendAutonomousStep, createAutonomousSession, markAwaitingApproval } from "./autonomousSession";
+import { appendAutonomousStep, createAutonomousSession, markAwaitingApproval, updateAutonomousSessionSteering } from "./autonomousSession";
 import { listExecutionNodes, resetExecutionNodeRegistry } from "./executionNodeRegistry";
 import { runAutonomousSession } from "./runAutonomousSession";
 import { createTaskEnvelope } from "./taskEnvelope";
@@ -1461,6 +1461,168 @@ test("runAutonomousSession does not advance to the next generated queued task af
     assert.notEqual(session.status, "completed");
     assert.equal(session.workflowContinuity.taskChain.completedTaskIds.length, 0);
     assert.equal(secondTask?.status, "queued");
+  } finally {
+    delete process.env.AIE_TASK_QUEUE_DIR;
+    await rm(taskDirectory, { recursive: true, force: true });
+  }
+});
+
+test("runAutonomousSession pauses at the bounded task limit and resumes into the next queued task", async () => {
+  const taskDirectory = path.resolve(process.cwd(), "temp-phase7c-session-limit-store");
+  await rm(taskDirectory, { recursive: true, force: true });
+  await mkdir(taskDirectory, { recursive: true });
+  process.env.AIE_TASK_QUEUE_DIR = taskDirectory;
+
+  try {
+    const seedSession = createAutonomousSession({
+      goal: "Pause after one completed queued task and resume later.",
+      sessionId: "phase7c-session-limit-session",
+      maxSteps: 4,
+      maxTasksPerSession: 1,
+      sessionMode: "repo-coding",
+    });
+    const firstTask = await enqueueTask(createTaskEnvelope({
+      taskId: "phase7c-limit-task-1",
+      sessionId: seedSession.sessionId,
+      stepIndex: 1,
+      priority: 10,
+      action: makeSafeAction("Execute queued task 1."),
+    }));
+    await enqueueTask(createTaskEnvelope({
+      taskId: "phase7c-limit-task-2",
+      sessionId: seedSession.sessionId,
+      stepIndex: 2,
+      priority: 5,
+      dependsOnTaskIds: [firstTask.taskId],
+      action: makeSafeAction("Execute queued task 2."),
+    }));
+
+    let analysisCalls = 0;
+    const dependencies = {
+      runAnalysis: async () => {
+        analysisCalls += 1;
+        return {
+          what_happened: "Unexpected analysis call.",
+          what_matters: ["The queued session should resume directly into the next runnable task."],
+          what_to_do_next: ["Stop."],
+          upgrade_hint: "",
+          proposedAction: "Stop.",
+          expectedOutcome: "Stop.",
+          execution: makeSafeAction("Unexpected analysis path."),
+        };
+      },
+      executeAction: async (action: ExecutionActionPreview) => ({
+        status: "success" as const,
+        output: `${action.description} completed successfully.`,
+      }),
+      saveAutonomousSession: async () => {},
+    };
+
+    const firstPass = await runAutonomousSession({
+      goal: seedSession.goal,
+      maxSteps: 4,
+      maxTasksPerSession: 1,
+      existingSession: seedSession,
+      queuedTask: firstTask,
+      dependencies,
+    });
+
+    assert.equal(firstPass.status, "paused");
+    assert.equal(firstPass.sessionLoop.pauseReason, "max-tasks-reached");
+    assert.deepEqual(firstPass.sessionLoop.completedTaskIds, ["phase7c-limit-task-1"]);
+    assert.equal(firstPass.sessionLoop.nextRecommendedTaskId, "phase7c-limit-task-2");
+    assert.equal(firstPass.steps.length, 1);
+
+    const resumed = await runAutonomousSession({
+      goal: firstPass.goal,
+      maxSteps: 4,
+      maxTasksPerSession: 2,
+      existingSession: firstPass,
+      dependencies,
+    });
+
+    assert.equal(analysisCalls, 0);
+    assert.equal(resumed.status, "completed");
+    assert.equal(resumed.steps.length, 2);
+    assert.deepEqual(resumed.steps.map((step) => step.taskId), ["phase7c-limit-task-1", "phase7c-limit-task-2"]);
+    assert.deepEqual(resumed.sessionLoop.completedTaskIds, ["phase7c-limit-task-1", "phase7c-limit-task-2"]);
+  } finally {
+    delete process.env.AIE_TASK_QUEUE_DIR;
+    await rm(taskDirectory, { recursive: true, force: true });
+  }
+});
+
+test("runAutonomousSession can skip the current queued task and continue to the next runnable task", async () => {
+  const taskDirectory = path.resolve(process.cwd(), "temp-phase7c-skip-task-store");
+  await rm(taskDirectory, { recursive: true, force: true });
+  await mkdir(taskDirectory, { recursive: true });
+  process.env.AIE_TASK_QUEUE_DIR = taskDirectory;
+
+  try {
+    const baseSession = createAutonomousSession({
+      goal: "Skip the current queued task and keep the bounded session moving.",
+      sessionId: "phase7c-skip-task-session",
+      maxSteps: 4,
+      sessionMode: "repo-coding",
+    });
+    const firstTask = await enqueueTask(createTaskEnvelope({
+      taskId: "phase7c-skip-task-1",
+      sessionId: baseSession.sessionId,
+      stepIndex: 1,
+      priority: 10,
+      action: makeSafeAction("Execute queued task that should be skipped."),
+    }));
+    await enqueueTask(createTaskEnvelope({
+      taskId: "phase7c-skip-task-2",
+      sessionId: baseSession.sessionId,
+      stepIndex: 2,
+      priority: 5,
+      action: makeSafeAction("Execute queued task after skip."),
+    }));
+    const steeredSession = updateAutonomousSessionSteering({
+      ...baseSession,
+      taskId: firstTask.taskId,
+      taskStatus: firstTask.status,
+    }, {
+      action: "skip-current-task",
+      operatorNote: "Skip the first queued task.",
+    });
+
+    let analysisCalls = 0;
+    const session = await runAutonomousSession({
+      goal: steeredSession.goal,
+      maxSteps: 4,
+      existingSession: steeredSession,
+      queuedTask: firstTask,
+      dependencies: {
+        runAnalysis: async () => {
+          analysisCalls += 1;
+          return {
+            what_happened: "Unexpected analysis call.",
+            what_matters: ["Skipping the current queued task should continue directly into the next runnable task."],
+            what_to_do_next: ["Stop."],
+            upgrade_hint: "",
+            proposedAction: "Stop.",
+            expectedOutcome: "Stop.",
+            execution: makeSafeAction("Unexpected analysis path."),
+          };
+        },
+        executeAction: async (action: ExecutionActionPreview) => ({
+          status: "success",
+          output: `${action.description} completed successfully after the skipped task.`,
+        }),
+        saveAutonomousSession: async () => {},
+      },
+    });
+
+    const skippedTask = await getTask("phase7c-skip-task-1");
+
+    assert.equal(analysisCalls, 0);
+    assert.equal(session.status, "completed");
+    assert.deepEqual(session.workflowContinuity.taskChain.skippedTaskIds, ["phase7c-skip-task-1"]);
+    assert.deepEqual(session.sessionLoop.skippedTaskIds, ["phase7c-skip-task-1"]);
+    assert.deepEqual(session.steps.map((step) => step.taskId), ["phase7c-skip-task-2"]);
+    assert.equal(skippedTask?.status, "rejected");
   } finally {
     delete process.env.AIE_TASK_QUEUE_DIR;
     await rm(taskDirectory, { recursive: true, force: true });

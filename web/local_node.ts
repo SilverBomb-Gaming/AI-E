@@ -23,6 +23,9 @@ import type { executeAction } from "./lib/aie/executionRuntime";
 type LocalNodeOptions = {
   goal: string;
   maxSteps?: number;
+  maxTasksPerSession?: number;
+  maxFailuresPerSession?: number;
+  maxRuntimeMs?: number;
   sessionId?: string;
   approved?: boolean;
   steeringAction?: AutonomousOperatorSteeringAction;
@@ -70,6 +73,48 @@ function clampMaxSteps(value: unknown): number | undefined {
   return Math.max(1, Math.min(5, Math.floor(numericValue)));
 }
 
+function clampMaxTasksPerSession(value: unknown): number | undefined {
+  const normalized = normalizeText(value);
+  if (!normalized) {
+    return undefined;
+  }
+
+  const numericValue = Number(normalized);
+  if (!Number.isFinite(numericValue)) {
+    return undefined;
+  }
+
+  return Math.max(1, Math.min(10, Math.floor(numericValue)));
+}
+
+function clampMaxFailuresPerSession(value: unknown): number | undefined {
+  const normalized = normalizeText(value);
+  if (!normalized) {
+    return undefined;
+  }
+
+  const numericValue = Number(normalized);
+  if (!Number.isFinite(numericValue)) {
+    return undefined;
+  }
+
+  return Math.max(1, Math.min(3, Math.floor(numericValue)));
+}
+
+function clampMaxRuntimeMs(value: unknown): number | undefined {
+  const normalized = normalizeText(value);
+  if (!normalized) {
+    return undefined;
+  }
+
+  const numericValue = Number(normalized);
+  if (!Number.isFinite(numericValue) || numericValue <= 0) {
+    return undefined;
+  }
+
+  return Math.max(1_000, Math.min(8 * 60 * 60 * 1_000, Math.floor(numericValue)));
+}
+
 export function parseLocalNodeArgs(argv: string[]): LocalNodeOptions {
   const options: LocalNodeOptions = {
     goal: "",
@@ -86,6 +131,18 @@ export function parseLocalNodeArgs(argv: string[]): LocalNodeOptions {
         break;
       case "--maxSteps":
         options.maxSteps = clampMaxSteps(next);
+        index += 1;
+        break;
+      case "--maxTasksPerSession":
+        options.maxTasksPerSession = clampMaxTasksPerSession(next);
+        index += 1;
+        break;
+      case "--maxFailuresPerSession":
+        options.maxFailuresPerSession = clampMaxFailuresPerSession(next);
+        index += 1;
+        break;
+      case "--maxRuntimeMs":
+        options.maxRuntimeMs = clampMaxRuntimeMs(next);
         index += 1;
         break;
       case "--sessionId":
@@ -178,6 +235,7 @@ export function formatLocalNodeSessionOutput(session: AutonomousSession, options
         taskStatus: session.taskStatus ?? null,
         assignedNodeId: session.assignedNodeId ?? null,
         queueStateSummary: session.queueStateSummary ?? null,
+        sessionLoop: session.sessionLoop,
         dispatchMessageId: session.dispatchMessageId ?? null,
         dispatchAckMessageId: session.dispatchAckMessageId ?? null,
         dispatchResultMessageId: session.dispatchResultMessageId ?? null,
@@ -244,6 +302,13 @@ export function formatLocalNodeSessionOutput(session: AutonomousSession, options
     `Dispatch auth: ${session.dispatchAuthSummary ?? "No dispatch auth summary recorded."}`,
     `Retry count: ${typeof session.latestRecoveryState?.retryCount === "number" ? session.latestRecoveryState.retryCount : "No retry count recorded."}`,
     `Failure reason: ${session.failureReason ?? "No failure reason recorded."}`,
+    `Session loop limits: tasks=${session.sessionLoop.maxTasksPerSession}, failures=${session.sessionLoop.maxFailuresPerSession}${typeof session.sessionLoop.maxRuntimeMs === "number" ? `, runtimeMs=${session.sessionLoop.maxRuntimeMs}` : ""}`,
+    `Session loop progress: completed=${session.sessionLoop.completedTaskIds.length}, skipped=${session.sessionLoop.skippedTaskIds.length}, blocked=${session.sessionLoop.blockedTaskIds.length}, failures=${session.sessionLoop.failureCount}`,
+    `Session active task: ${session.sessionLoop.currentActiveTaskId ?? "No active task recorded."}`,
+    `Last completed task: ${session.sessionLoop.lastCompletedTaskId ?? "No completed task recorded."}`,
+    `Next recommended task: ${session.sessionLoop.nextRecommendedTaskId ?? "No recommended task recorded."}`,
+    `Session pause reason: ${session.sessionLoop.pauseReason ?? "No pause reason recorded."}`,
+    `Session pause summary: ${session.sessionLoop.pauseSummary ?? "No pause summary recorded."}`,
     `Production-loop phase: ${session.workflowContinuity.progress.chainPhase}`,
     `Session mode: ${session.sessionMode}`,
     `Coding loop phase: ${session.workflowContinuity.coding.codingLoopPhase}`,
@@ -523,6 +588,10 @@ export function formatLocalNodeQueueRunOutput(summary: QueueExecutionSummary, op
     `Safe-stop point: ${recovery?.safeStopPoint ?? "unknown"}`,
     `Chain state: ${chain?.state ?? "unknown"}`,
     `Chain depth: ${chain?.depth ?? "unknown"}`,
+    `Session loop limits: tasks=${summary.session?.sessionLoop?.maxTasksPerSession ?? "unknown"}, failures=${summary.session?.sessionLoop?.maxFailuresPerSession ?? "unknown"}${typeof summary.session?.sessionLoop?.maxRuntimeMs === "number" ? `, runtimeMs=${summary.session.sessionLoop.maxRuntimeMs}` : ""}`,
+    `Session loop progress: completed=${summary.session?.sessionLoop?.completedTaskIds?.length ?? "unknown"}, skipped=${summary.session?.sessionLoop?.skippedTaskIds?.length ?? "unknown"}, blocked=${summary.session?.sessionLoop?.blockedTaskIds?.length ?? "unknown"}, failures=${summary.session?.sessionLoop?.failureCount ?? "unknown"}`,
+    `Session pause reason: ${summary.session?.sessionLoop?.pauseReason ?? "unknown"}`,
+    `Session pause summary: ${summary.session?.sessionLoop?.pauseSummary ?? "unknown"}`,
     `Production-loop phase: ${summary.session?.workflowContinuity?.progress.chainPhase ?? "unknown"}`,
     `Session mode: ${summary.session?.sessionMode ?? "unknown"}`,
     `Coding loop phase: ${summary.session?.workflowContinuity?.coding?.codingLoopPhase ?? "unknown"}`,
@@ -699,6 +768,9 @@ export async function runLocalNode(
   return runAutonomousSession({
     goal: options.goal || existingSession?.goal || "Confirm the local execution node can complete a bounded task.",
     maxSteps: options.maxSteps,
+    maxTasksPerSession: options.maxTasksPerSession,
+    maxFailuresPerSession: options.maxFailuresPerSession,
+    maxRuntimeMs: options.maxRuntimeMs,
     approved: options.approved,
     steering: options.steeringAction || options.operatorNote || options.stopReason || options.restartReason
       ? {

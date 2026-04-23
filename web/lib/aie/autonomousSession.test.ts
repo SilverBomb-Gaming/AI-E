@@ -28,6 +28,47 @@ test("autonomous sessions clamp max steps and start active", () => {
   assert.equal(session.steps.length, 0);
 });
 
+test("autonomous sessions persist bounded session loop limits and surface them in context", () => {
+  const session = createAutonomousSession({
+    goal: "Run multiple bounded queued tasks without exceeding session limits.",
+    maxTasksPerSession: 99,
+    maxFailuresPerSession: 0,
+    maxRuntimeMs: 9 * 60 * 60 * 1_000,
+  });
+
+  assert.equal(session.sessionLoop.maxTasksPerSession, 10);
+  assert.equal(session.sessionLoop.maxFailuresPerSession, 1);
+  assert.equal(session.sessionLoop.maxRuntimeMs, 8 * 60 * 60 * 1_000);
+  assert.match(buildAutonomousSessionContextBlock(session), /Session loop limits: tasks=10, failures=1, runtimeMs=28800000/i);
+  assert.match(buildAutonomousSessionContextBlock(session), /Session loop progress: completed=0, skipped=0, blocked=0, failures=0/i);
+});
+
+test("autonomous sessions preserve explicit skip and force-stop steering actions", () => {
+  const ready = appendAutonomousStep(createAutonomousSession({ goal: "Use explicit operator-light queue controls." }), {
+    proposedAction: "Run the bounded queued task.",
+    executionResult: {
+      status: "success",
+      output: "The queued task is ready for the next operator decision.",
+    },
+    nextDecision: "continue",
+  });
+  const skipped = updateAutonomousSessionSteering(ready, {
+    action: "skip-current-task",
+    operatorNote: "Skip the current queued task and move on.",
+  });
+  const stopped = updateAutonomousSessionSteering(ready, {
+    action: "force-stop",
+    operatorNote: "Stop the autonomous session immediately.",
+  });
+
+  assert.equal(skipped.workflowContinuity.steering.requestedAction, "skip-current-task");
+  assert.match(skipped.workflowContinuity.loopHealth.loopHealthReason ?? "", /skip/i);
+  assert.equal(stopped.workflowContinuity.steering.requestedAction, "force-stop");
+  assert.equal(stopped.workflowContinuity.steering.requestedNextPhaseOverride, "stop");
+  assert.equal(stopped.workflowContinuity.loopHealth.recommendedNextPhase, "stop");
+  assert.match(stopped.workflowContinuity.loopHealth.loopHealthReason ?? "", /stop immediately/i);
+});
+
 test("autonomous sessions append steps and preserve runtime output", () => {
   const created = createAutonomousSession({
     goal: "Confirm the bounded validation path.",

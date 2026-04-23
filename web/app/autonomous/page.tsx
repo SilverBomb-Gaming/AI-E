@@ -62,6 +62,9 @@ function getStatusClassName(status: AutonomousSession["status"]): string {
 export default function AutonomousPage() {
   const [goal, setGoal] = useState("Confirm whether the safe validation path can reach a healthy bounded result.");
   const [maxSteps, setMaxSteps] = useState(4);
+  const [maxTasksPerSession, setMaxTasksPerSession] = useState(5);
+  const [maxFailuresPerSession, setMaxFailuresPerSession] = useState(2);
+  const [maxRuntimeMinutes, setMaxRuntimeMinutes] = useState(30);
   const [sessionId, setSessionId] = useState("");
   const [session, setSession] = useState<AutonomousSession | null>(null);
   const [sessions, setSessions] = useState<AutonomousSession[]>([]);
@@ -120,6 +123,9 @@ export default function AutonomousPage() {
         body: JSON.stringify({
           goal,
           maxSteps,
+          maxTasksPerSession,
+          maxFailuresPerSession,
+          maxRuntimeMs: Math.max(1, maxRuntimeMinutes) * 60 * 1000,
           sessionId: sessionId.trim() || undefined,
         }),
       });
@@ -175,9 +181,19 @@ export default function AutonomousPage() {
       action: steeringAction || undefined,
       operatorNote: trimmedNote || undefined,
       overrideReason: trimmedReason || undefined,
-      stopReason: steeringAction === "stop-loop" ? trimmedReason || undefined : undefined,
+      stopReason: steeringAction === "stop-loop" || steeringAction === "force-stop" ? trimmedReason || undefined : undefined,
       restartReason: steeringAction === "restart-from-last-safe-boundary" ? trimmedReason || undefined : undefined,
     };
+  }
+
+  async function triggerImmediateSteering(action: AutonomousOperatorSteeringAction) {
+    await resumeSession(false, {
+      action,
+      operatorNote: operatorNote.trim() || undefined,
+      overrideReason: overrideReason.trim() || undefined,
+      stopReason: action === "stop-loop" || action === "force-stop" ? overrideReason.trim() || operatorNote.trim() || undefined : undefined,
+      restartReason: action === "restart-from-last-safe-boundary" ? overrideReason.trim() || undefined : undefined,
+    });
   }
 
   async function resumeSession(approved: boolean, steering?: SteeringPayload, clearSteering = false) {
@@ -194,7 +210,14 @@ export default function AutonomousPage() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ approved, steering, clearSteering }),
+        body: JSON.stringify({
+          approved,
+          steering,
+          clearSteering,
+          maxTasksPerSession,
+          maxFailuresPerSession,
+          maxRuntimeMs: Math.max(1, maxRuntimeMinutes) * 60 * 1000,
+        }),
       });
       const payload = (await response.json()) as { error?: string; session?: AutonomousSession };
 
@@ -331,6 +354,42 @@ export default function AutonomousPage() {
             </label>
           </div>
 
+          <div className="mt-4 grid gap-4 sm:grid-cols-3">
+            <label className="text-sm font-semibold text-ink">
+              Max tasks per session
+              <input
+                value={maxTasksPerSession}
+                onChange={(event) => setMaxTasksPerSession(Number(event.target.value) || 1)}
+                min={1}
+                max={10}
+                type="number"
+                className="mt-2 w-full rounded-[1rem] border border-ink/10 bg-white/80 px-4 py-3 text-sm text-ink outline-none transition focus:border-ocean/40"
+              />
+            </label>
+            <label className="text-sm font-semibold text-ink">
+              Max failures per session
+              <input
+                value={maxFailuresPerSession}
+                onChange={(event) => setMaxFailuresPerSession(Number(event.target.value) || 1)}
+                min={1}
+                max={3}
+                type="number"
+                className="mt-2 w-full rounded-[1rem] border border-ink/10 bg-white/80 px-4 py-3 text-sm text-ink outline-none transition focus:border-ocean/40"
+              />
+            </label>
+            <label className="text-sm font-semibold text-ink">
+              Max runtime minutes
+              <input
+                value={maxRuntimeMinutes}
+                onChange={(event) => setMaxRuntimeMinutes(Number(event.target.value) || 1)}
+                min={1}
+                max={480}
+                type="number"
+                className="mt-2 w-full rounded-[1rem] border border-ink/10 bg-white/80 px-4 py-3 text-sm text-ink outline-none transition focus:border-ocean/40"
+              />
+            </label>
+          </div>
+
           <div className="mt-6 flex flex-wrap gap-3">
             <button
               type="button"
@@ -404,6 +463,9 @@ export default function AutonomousPage() {
                     setSession(item);
                     setGoal(item.goal);
                     setMaxSteps(item.maxSteps);
+                    setMaxTasksPerSession(item.sessionLoop.maxTasksPerSession);
+                    setMaxFailuresPerSession(item.sessionLoop.maxFailuresPerSession);
+                    setMaxRuntimeMinutes(Math.max(1, Math.floor((item.sessionLoop.maxRuntimeMs ?? 30 * 60 * 1000) / (60 * 1000))));
                   }}
                   className="w-full rounded-[1rem] border border-ink/10 bg-white/80 px-4 py-3 text-left transition hover:border-ocean/30"
                 >
@@ -507,6 +569,17 @@ export default function AutonomousPage() {
                 <p><strong>Goal:</strong> {session.goal}</p>
                 <p><strong>Next step index:</strong> {session.currentStepIndex}</p>
                 <p><strong>Max steps:</strong> {session.maxSteps}</p>
+                <p><strong>Max tasks per session:</strong> {session.sessionLoop.maxTasksPerSession}</p>
+                <p><strong>Max failures per session:</strong> {session.sessionLoop.maxFailuresPerSession}</p>
+                <p><strong>Max runtime:</strong> {typeof session.sessionLoop.maxRuntimeMs === "number" ? `${Math.floor(session.sessionLoop.maxRuntimeMs / 60000)} minutes` : "No runtime limit recorded yet."}</p>
+                <p><strong>Session started:</strong> {session.sessionLoop.sessionStartedAt}</p>
+                <p><strong>Session loop updated:</strong> {session.sessionLoop.lastUpdatedAt}</p>
+                <p><strong>Session loop progress:</strong> completed {session.sessionLoop.completedTaskIds.length} · skipped {session.sessionLoop.skippedTaskIds.length} · blocked {session.sessionLoop.blockedTaskIds.length} · failures {session.sessionLoop.failureCount}</p>
+                <p><strong>Active session task:</strong> {session.sessionLoop.currentActiveTaskId || "No active task recorded yet."}</p>
+                <p><strong>Last completed session task:</strong> {session.sessionLoop.lastCompletedTaskId || "No completed task recorded yet."}</p>
+                <p><strong>Next recommended session task:</strong> {session.sessionLoop.nextRecommendedTaskId || "No recommended task recorded yet."}</p>
+                <p><strong>Session pause reason:</strong> {session.sessionLoop.pauseReason || "No pause reason recorded yet."}</p>
+                <p><strong>Session pause summary:</strong> {session.sessionLoop.pauseSummary || "No pause summary recorded yet."}</p>
                 <p><strong>Last step index:</strong> {session.lastStepIndex ?? 0}</p>
                 <p><strong>State reason:</strong> {session.stateReason || session.completedReason || "No state reason recorded yet."}</p>
                 <p><strong>Terminal reason:</strong> {session.completedReason || "No terminal reason recorded yet."}</p>
@@ -651,8 +724,10 @@ export default function AutonomousPage() {
                     <option value="prefer-validation-next">Prefer validation next</option>
                     <option value="prefer-fix-next">Prefer fix next</option>
                     <option value="restart-from-last-safe-boundary">Restart from last safe boundary</option>
+                    <option value="skip-current-task">Skip current task</option>
                     <option value="pause-and-wait">Pause and wait for operator input</option>
                     <option value="stop-loop">Stop loop because it is no longer useful</option>
+                    <option value="force-stop">Force stop immediately</option>
                   </select>
                 </label>
                 <label className="mt-4 block text-sm font-semibold text-ink">
@@ -691,6 +766,7 @@ export default function AutonomousPage() {
                       || runState === "running"
                       || steeringAction === "pause-and-wait"
                       || steeringAction === "stop-loop"
+                      || steeringAction === "force-stop"
                     }
                     className="rounded-full border border-gold/30 px-5 py-3 text-sm font-semibold text-ink disabled:cursor-not-allowed disabled:opacity-60"
                   >
@@ -703,6 +779,30 @@ export default function AutonomousPage() {
                     className="rounded-full border border-ink/10 px-5 py-3 text-sm font-semibold text-ink disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     Clear override
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => triggerImmediateSteering("pause-and-wait")}
+                    disabled={!sessionId.trim() || runState === "running"}
+                    className="rounded-full border border-gold/30 bg-gold/10 px-5 py-3 text-sm font-semibold text-ink disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    Pause session
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => triggerImmediateSteering("skip-current-task")}
+                    disabled={!sessionId.trim() || runState === "running"}
+                    className="rounded-full border border-ocean/20 bg-ocean/10 px-5 py-3 text-sm font-semibold text-ocean disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    Skip current task
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => triggerImmediateSteering("force-stop")}
+                    disabled={!sessionId.trim() || runState === "running"}
+                    className="rounded-full border border-coral/20 bg-coral/10 px-5 py-3 text-sm font-semibold text-ember disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    Force stop
                   </button>
                 </div>
               </div>
