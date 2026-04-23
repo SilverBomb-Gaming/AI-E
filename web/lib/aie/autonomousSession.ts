@@ -134,6 +134,61 @@ export type AutonomousOperatorSteeringAction =
   | "stop-loop"
   | "force-stop";
 
+export type AutonomousSessionTelemetryFinalState = "completed" | "paused" | "blocked" | "failed";
+
+export type AutonomousSessionOperatorInteractionType =
+  | "steering-action"
+  | "resume-session"
+  | "approval-requested"
+  | "approval-approved"
+  | "approval-rejected";
+
+export type AutonomousSessionOperatorInteractionRecord = {
+  interactionType: AutonomousSessionOperatorInteractionType;
+  action?: AutonomousOperatorSteeringAction | "resume-session";
+  recordedAt: string;
+  taskId?: string;
+  featureId?: string;
+  featureTitle?: string;
+  reason?: string;
+  operatorNote?: string;
+};
+
+export type AutonomousSessionFrictionSignalKind =
+  | "repeated-task-failures"
+  | "frequent-skips"
+  | "repeated-overrides"
+  | "high-approval-rejection-rate"
+  | "session-stopped-early";
+
+export type AutonomousSessionFrictionSignal = {
+  kind: AutonomousSessionFrictionSignalKind;
+  severity: "low" | "medium" | "high";
+  count: number;
+  summary: string;
+};
+
+export type AutonomousSessionTelemetry = {
+  sessionId: string;
+  sessionStartTime: string;
+  sessionEndTime: string;
+  totalTasksExecuted: number;
+  featuresCompleted: number;
+  featuresBlocked: number;
+  featuresFailed: number;
+  approvalsRequested: number;
+  approvalsApproved: number;
+  approvalsRejected: number;
+  pauseReasons: string[];
+  finalSessionState?: AutonomousSessionTelemetryFinalState;
+  operatorInteractions: AutonomousSessionOperatorInteractionRecord[];
+  frictionSignals: AutonomousSessionFrictionSignal[];
+  operatorInterventionSummary: string;
+  frictionSummary: string[];
+  systemConfidenceSignals: string[];
+  whatSlowedThisSessionDown: string[];
+};
+
 export type AutonomousOperatorSteeringStatus = "none" | "pending" | "applied" | "blocked";
 
 export type AutonomousWorkflowSteeringState = {
@@ -571,6 +626,7 @@ export type AutonomousSession = {
   latestRecoveryState?: AutonomousRecoveryState;
   latestCompletion?: AutonomousCompletionState;
   workflowContinuity: AutonomousWorkflowContinuityState;
+  sessionTelemetry: AutonomousSessionTelemetry;
   oversight: AutonomousSessionOversight;
   steps: AutonomousStepRecord[];
 };
@@ -643,10 +699,16 @@ export type AutonomousSessionSummaryArtifact = {
   keyFilesOrAssetsChanged: string[];
   validationSummary: string;
   safeToResume: boolean;
+  operatorInterventionCount: number;
+  operatorInterventionSummary: string;
+  frictionSummary: string[];
+  systemConfidenceSignals: string[];
+  whatSlowedThisSessionDown: string[];
 };
 
 export type AutonomousSessionOversight = {
   summary: AutonomousSessionSummaryArtifact;
+  sessionTelemetry: AutonomousSessionTelemetry;
   operatorAttention: AutonomousOperatorAttentionItem[];
   controls: AutonomousOperatorControlGuide[];
   taskReviews: AutonomousTaskReviewRecord[];
@@ -725,6 +787,264 @@ type AppendAutonomousStepParams = {
 
 function uniqueStrings(values: Array<string | undefined | null>): string[] {
   return [...new Set(values.map((value) => normalizeText(value)).filter(Boolean))];
+}
+
+function createDefaultAutonomousSessionTelemetry(sessionId: string, timestamp: string): AutonomousSessionTelemetry {
+  return {
+    sessionId,
+    sessionStartTime: timestamp,
+    sessionEndTime: timestamp,
+    totalTasksExecuted: 0,
+    featuresCompleted: 0,
+    featuresBlocked: 0,
+    featuresFailed: 0,
+    approvalsRequested: 0,
+    approvalsApproved: 0,
+    approvalsRejected: 0,
+    pauseReasons: [],
+    finalSessionState: undefined,
+    operatorInteractions: [],
+    frictionSignals: [],
+    operatorInterventionSummary: "No manual operator interventions recorded.",
+    frictionSummary: [],
+    systemConfidenceSignals: [],
+    whatSlowedThisSessionDown: [],
+  };
+}
+
+function normalizeAutonomousSessionOperatorInteractionRecord(value: unknown): AutonomousSessionOperatorInteractionRecord | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const source = value as Record<string, unknown>;
+  const interactionType = source.interactionType;
+  if (
+    interactionType !== "steering-action"
+    && interactionType !== "resume-session"
+    && interactionType !== "approval-requested"
+    && interactionType !== "approval-approved"
+    && interactionType !== "approval-rejected"
+  ) {
+    return null;
+  }
+
+  const recordedAt = normalizeText(typeof source.recordedAt === "string" ? source.recordedAt : "");
+  if (!recordedAt) {
+    return null;
+  }
+
+  const actionValue = normalizeText(typeof source.action === "string" ? source.action : "");
+  const action = actionValue === "resume-session"
+    ? actionValue
+    : normalizeAutonomousOperatorSteeringAction(actionValue);
+
+  return {
+    interactionType,
+    action,
+    recordedAt,
+    taskId: normalizeText(typeof source.taskId === "string" ? source.taskId : "") || undefined,
+    featureId: normalizeText(typeof source.featureId === "string" ? source.featureId : "") || undefined,
+    featureTitle: normalizeText(typeof source.featureTitle === "string" ? source.featureTitle : "") || undefined,
+    reason: normalizeText(typeof source.reason === "string" ? source.reason : "") || undefined,
+    operatorNote: normalizeText(typeof source.operatorNote === "string" ? source.operatorNote : "") || undefined,
+  };
+}
+
+function normalizeAutonomousSessionTelemetry(value: unknown, sessionId: string, timestamp: string): AutonomousSessionTelemetry {
+  if (!value || typeof value !== "object") {
+    return createDefaultAutonomousSessionTelemetry(sessionId, timestamp);
+  }
+
+  const source = value as Record<string, unknown>;
+  return {
+    ...createDefaultAutonomousSessionTelemetry(sessionId, timestamp),
+    sessionId,
+    sessionStartTime: normalizeText(typeof source.sessionStartTime === "string" ? source.sessionStartTime : "") || timestamp,
+    sessionEndTime: normalizeText(typeof source.sessionEndTime === "string" ? source.sessionEndTime : "") || timestamp,
+    pauseReasons: Array.isArray(source.pauseReasons)
+      ? uniqueStrings(source.pauseReasons.map((entry) => (typeof entry === "string" ? entry : undefined)))
+      : [],
+    operatorInteractions: Array.isArray(source.operatorInteractions)
+      ? source.operatorInteractions
+        .map((entry) => normalizeAutonomousSessionOperatorInteractionRecord(entry))
+        .filter((entry): entry is AutonomousSessionOperatorInteractionRecord => entry !== null)
+      : [],
+  };
+}
+
+function mapAutonomousSessionStatusToTelemetryFinalState(status: AutonomousSessionStatus): AutonomousSessionTelemetryFinalState | undefined {
+  switch (status) {
+    case "completed":
+      return "completed";
+    case "paused":
+    case "awaiting-approval":
+    case "max-step-limit":
+      return "paused";
+    case "blocked":
+      return "blocked";
+    case "failed":
+      return "failed";
+    default:
+      return undefined;
+  }
+}
+
+function recordAutonomousSessionInteraction(
+  session: AutonomousSession,
+  interaction: Omit<AutonomousSessionOperatorInteractionRecord, "recordedAt"> & { recordedAt?: string },
+): AutonomousSession {
+  const sessionTelemetry = session.sessionTelemetry ?? createDefaultAutonomousSessionTelemetry(session.sessionId, session.createdAt);
+
+  return {
+    ...session,
+    sessionTelemetry: {
+      ...sessionTelemetry,
+      operatorInteractions: [
+        ...sessionTelemetry.operatorInteractions,
+        {
+          ...interaction,
+          recordedAt: normalizeText(interaction.recordedAt) || createTimestamp(),
+        },
+      ],
+    },
+  };
+}
+
+function recordAutonomousSessionPauseReason(
+  session: AutonomousSession,
+  pauseReason: AutonomousSessionPauseReason | undefined,
+): AutonomousSession {
+  if (!pauseReason) {
+    return session;
+  }
+
+  const sessionTelemetry = session.sessionTelemetry ?? createDefaultAutonomousSessionTelemetry(session.sessionId, session.createdAt);
+  return {
+    ...session,
+    sessionTelemetry: {
+      ...sessionTelemetry,
+      pauseReasons: uniqueStrings([...sessionTelemetry.pauseReasons, pauseReason]),
+    },
+  };
+}
+
+function deriveAutonomousSessionTelemetry(
+  session: AutonomousSession,
+  taskReviews: AutonomousTaskReviewRecord[],
+  featureBundles: AutonomousFeatureBundleSummary[],
+): AutonomousSessionTelemetry {
+  const previous = session.sessionTelemetry ?? createDefaultAutonomousSessionTelemetry(session.sessionId, session.createdAt);
+  const executedTaskIds = uniqueStrings([
+    ...taskReviews.map((review) => review.taskId.startsWith("step-") ? undefined : review.taskId),
+    session.sessionLoop.currentActiveTaskId,
+  ]);
+  const completedFeatureIds = featureBundles
+    .filter((bundle) => bundle.featureStatus === "completed")
+    .map((bundle) => bundle.featureId);
+  const blockedFeatureIds = featureBundles
+    .filter((bundle) => bundle.featureStatus === "blocked")
+    .map((bundle) => bundle.featureId);
+  const failedFeatureIds = featureBundles
+    .filter((bundle) => bundle.relatedTasks.some((taskId) => taskReviews.some((review) => review.taskId === taskId && review.status === "failed")))
+    .map((bundle) => bundle.featureId);
+  const approvalsRequested = previous.operatorInteractions.filter((entry) => entry.interactionType === "approval-requested").length;
+  const approvalsApproved = previous.operatorInteractions.filter((entry) => entry.interactionType === "approval-approved").length;
+  const approvalsRejected = previous.operatorInteractions.filter((entry) => entry.interactionType === "approval-rejected").length;
+  const skipCount = previous.operatorInteractions.filter((entry) => entry.action === "skip-current-task").length;
+  const manualPauseCount = previous.operatorInteractions.filter((entry) => entry.action === "pause-and-wait").length;
+  const forceStopCount = previous.operatorInteractions.filter((entry) => entry.action === "force-stop" || entry.action === "stop-loop").length;
+  const resumeCount = previous.operatorInteractions.filter((entry) => entry.interactionType === "resume-session").length;
+  const overrideCount = previous.operatorInteractions.filter((entry) => entry.interactionType === "steering-action").length;
+  const failedTaskCount = taskReviews.filter((review) => review.status === "failed").length;
+  const frictionSignals: AutonomousSessionFrictionSignal[] = [];
+
+  if (failedTaskCount >= 2) {
+    frictionSignals.push({
+      kind: "repeated-task-failures",
+      severity: failedTaskCount >= 3 ? "high" : "medium",
+      count: failedTaskCount,
+      summary: `${failedTaskCount} task failures required repeated recovery inside this session.`,
+    });
+  }
+
+  if (skipCount >= 2) {
+    frictionSignals.push({
+      kind: "frequent-skips",
+      severity: "medium",
+      count: skipCount,
+      summary: `${skipCount} operator skips changed the planned task flow.`,
+    });
+  }
+
+  if (overrideCount >= 3) {
+    frictionSignals.push({
+      kind: "repeated-overrides",
+      severity: overrideCount >= 4 ? "high" : "medium",
+      count: overrideCount,
+      summary: `${overrideCount} steering overrides were needed to keep the session moving.`,
+    });
+  }
+
+  if (approvalsRequested > 0 && approvalsRejected * 2 >= approvalsRequested) {
+    frictionSignals.push({
+      kind: "high-approval-rejection-rate",
+      severity: approvalsRejected >= 2 ? "high" : "medium",
+      count: approvalsRejected,
+      summary: `${approvalsRejected} of ${approvalsRequested} approval decisions were rejected by the operator.`,
+    });
+  }
+
+  const stoppedEarly = !session.latestCompletion?.isComplete
+    && session.steps.length < session.maxSteps
+    && session.status !== "active"
+    && session.status !== "completed";
+  if (stoppedEarly) {
+    frictionSignals.push({
+      kind: "session-stopped-early",
+      severity: session.status === "failed" ? "high" : "medium",
+      count: 1,
+      summary: `The session stopped early in state ${session.status}.`,
+    });
+  }
+
+  const operatorInterventionSummary = previous.operatorInteractions.filter((entry) => entry.interactionType !== "approval-requested").length > 0
+    ? `Operator interventions: pause=${manualPauseCount}, resume=${resumeCount}, skip=${skipCount}, force-stop=${forceStopCount}, approvals approved=${approvalsApproved}, approvals rejected=${approvalsRejected}.`
+    : "No manual operator interventions recorded.";
+
+  return {
+    ...previous,
+    sessionId: session.sessionId,
+    sessionStartTime: session.sessionLoop.sessionStartedAt,
+    sessionEndTime: session.updatedAt,
+    totalTasksExecuted: executedTaskIds.length,
+    featuresCompleted: completedFeatureIds.length,
+    featuresBlocked: blockedFeatureIds.length,
+    featuresFailed: uniqueStrings(failedFeatureIds).length,
+    approvalsRequested,
+    approvalsApproved,
+    approvalsRejected,
+    pauseReasons: uniqueStrings([...previous.pauseReasons, session.sessionLoop.pauseReason]),
+    finalSessionState: mapAutonomousSessionStatusToTelemetryFinalState(session.status),
+    operatorInteractions: previous.operatorInteractions,
+    frictionSignals,
+    operatorInterventionSummary,
+    frictionSummary: frictionSignals.map((signal) => signal.summary),
+    systemConfidenceSignals: uniqueStrings([
+      session.latestCompletion?.confidence ? `Goal completion confidence: ${session.latestCompletion.confidence}.` : undefined,
+      `Recommendation confidence: ${session.workflowContinuity.loopHealth.recommendationConfidence}.`,
+      session.workflowContinuity.loopHealth.likelyNeedsOperatorInput ? "Loop health indicates the session likely needs operator input." : undefined,
+      session.workflowContinuity.loopHealth.stalledLoop ? "Loop health indicates the session is stalled." : undefined,
+      `Safe to resume: ${String(canResumeAutonomousSession(session, false))}.`,
+    ]),
+    whatSlowedThisSessionDown: uniqueStrings([
+      failedTaskCount > 0 ? `${failedTaskCount} task failure${failedTaskCount === 1 ? "" : "s"} triggered recovery work.` : undefined,
+      approvalsRequested > approvalsApproved ? "Approval waits slowed autonomous continuation." : undefined,
+      blockedFeatureIds.length > 0 ? `${blockedFeatureIds.length} feature bundle${blockedFeatureIds.length === 1 ? " remained" : "s remained"} blocked.` : undefined,
+      skipCount > 0 ? `${skipCount} operator skip${skipCount === 1 ? " changed" : "s changed"} the task order.` : undefined,
+      stoppedEarly ? `The session stopped early while state=${session.status}.` : undefined,
+    ]),
+  };
 }
 
 function summarizeTaskReviewTitle(step: AutonomousStepRecord, taskId: string): string {
@@ -1449,9 +1769,13 @@ function deriveAutonomousOperatorControls(session: AutonomousSession): Autonomou
   ];
 }
 
-function deriveAutonomousSessionOversight(session: AutonomousSession): AutonomousSessionOversight {
+function deriveAutonomousSessionOversight(
+  session: AutonomousSession,
+  sessionTelemetry?: AutonomousSessionTelemetry,
+): AutonomousSessionOversight {
   const taskReviews = deriveAutonomousTaskReviewRecords(session);
   const featureBundles = deriveAutonomousFeatureBundles(session);
+  const telemetry = sessionTelemetry ?? deriveAutonomousSessionTelemetry(session, taskReviews, featureBundles);
   const changedPaths = uniqueStrings([
     ...session.workflowContinuity.coding.outputArtifacts.map((artifact) => artifact.filePath),
     ...session.workflowContinuity.coding.pendingRepoActions.flatMap((action) => action.artifactFilePaths),
@@ -1524,7 +1848,13 @@ function deriveAutonomousSessionOversight(session: AutonomousSession): Autonomou
         || session.latestCompletion?.reason
         || "No validation summary is currently recorded.",
       safeToResume: canResumeAutonomousSession(session, false),
+      operatorInterventionCount: telemetry.operatorInteractions.filter((entry) => entry.interactionType !== "approval-requested").length,
+      operatorInterventionSummary: telemetry.operatorInterventionSummary,
+      frictionSummary: telemetry.frictionSummary,
+      systemConfidenceSignals: telemetry.systemConfidenceSignals,
+      whatSlowedThisSessionDown: telemetry.whatSlowedThisSessionDown,
     },
+    sessionTelemetry: telemetry,
     operatorAttention: attention,
     controls: deriveAutonomousOperatorControls(session),
     taskReviews,
@@ -1551,12 +1881,21 @@ function refreshAutonomousSessionDerivedState(session: AutonomousSession): Auton
   const withContinuity: AutonomousSession = {
     ...session,
     workflowContinuity: deriveAutonomousWorkflowContinuity(session),
+    sessionTelemetry: session.sessionTelemetry ?? createDefaultAutonomousSessionTelemetry(session.sessionId, session.createdAt),
     oversight: session.oversight,
   };
 
-  return {
+  const taskReviews = deriveAutonomousTaskReviewRecords(withContinuity);
+  const featureBundles = deriveAutonomousFeatureBundles(withContinuity);
+  const telemetry = deriveAutonomousSessionTelemetry(withContinuity, taskReviews, featureBundles);
+  const withTelemetry: AutonomousSession = {
     ...withContinuity,
-    oversight: deriveAutonomousSessionOversight(withContinuity),
+    sessionTelemetry: telemetry,
+  };
+
+  return {
+    ...withTelemetry,
+    oversight: deriveAutonomousSessionOversight(withTelemetry, telemetry),
   };
 }
 
@@ -5466,9 +5805,11 @@ export function createAutonomousSessionId(): string {
 export function createAutonomousSession(params: CreateAutonomousSessionParams): AutonomousSession {
   const goal = normalizeText(params.goal);
   const timestamp = createTimestamp();
+  const sessionId = normalizeText(params.sessionId) || createAutonomousSessionId();
+  const sessionTelemetry = createDefaultAutonomousSessionTelemetry(sessionId, timestamp);
 
   const session: AutonomousSession = {
-    sessionId: normalizeText(params.sessionId) || createAutonomousSessionId(),
+    sessionId,
     goal: goal || "Resolve the current bounded autonomous debugging goal.",
     sessionMode: normalizeAutonomousSessionMode(params.sessionMode) ?? "general",
     status: "active",
@@ -5512,6 +5853,7 @@ export function createAutonomousSession(params: CreateAutonomousSessionParams): 
         recommendedNextPhase: "planning",
       },
     },
+    sessionTelemetry,
     oversight: {
       summary: {
         sessionId: "",
@@ -5533,7 +5875,13 @@ export function createAutonomousSession(params: CreateAutonomousSessionParams): 
         keyFilesOrAssetsChanged: [],
         validationSummary: "No validation summary is currently recorded.",
         safeToResume: false,
+        operatorInterventionCount: 0,
+        operatorInterventionSummary: "No manual operator interventions recorded.",
+        frictionSummary: [],
+        systemConfidenceSignals: [],
+        whatSlowedThisSessionDown: [],
       },
+      sessionTelemetry,
       operatorAttention: [],
       controls: [],
       taskReviews: [],
@@ -5714,7 +6062,7 @@ export function pauseAutonomousSession(
     workflowContinuity: session.workflowContinuity,
   };
 
-  return refreshAutonomousSessionDerivedState(nextSession);
+  return refreshAutonomousSessionDerivedState(recordAutonomousSessionPauseReason(nextSession, "operator-paused"));
 }
 
 export function markAwaitingApproval(
@@ -5722,14 +6070,21 @@ export function markAwaitingApproval(
   pendingAction: ExecutionActionPreview,
   reason: string,
 ): AutonomousSession {
+  const sessionWithInteraction = recordAutonomousSessionInteraction(session, {
+    interactionType: "approval-requested",
+    taskId: normalizeText(session.taskId) || undefined,
+    featureId: normalizeText(session.workflowContinuity.taskChain.currentFeatureId) || normalizeText(session.steps.at(-1)?.featureId) || undefined,
+    featureTitle: normalizeText(session.oversight.currentFeatureTitle) || normalizeText(session.steps.at(-1)?.featureTitle) || undefined,
+    reason: normalizeText(reason) || undefined,
+  });
   const nextSession: AutonomousSession = {
-    ...updateAutonomousSessionStatus(session, "awaiting-approval", reason),
+    ...updateAutonomousSessionStatus(sessionWithInteraction, "awaiting-approval", reason),
     pendingAction,
-    stateReason: normalizeText(reason) || session.stateReason,
-    workflowContinuity: session.workflowContinuity,
+    stateReason: normalizeText(reason) || sessionWithInteraction.stateReason,
+    workflowContinuity: sessionWithInteraction.workflowContinuity,
   };
 
-  return refreshAutonomousSessionDerivedState(nextSession);
+  return refreshAutonomousSessionDerivedState(recordAutonomousSessionPauseReason(nextSession, "approval-required"));
 }
 
 export function canResumeAutonomousSession(session: AutonomousSession, approved = false): boolean {
@@ -5752,11 +6107,19 @@ export function resumeAutonomousSession(
     return session;
   }
 
+  const resumedSession = recordAutonomousSessionInteraction(session, {
+    interactionType: session.status === "awaiting-approval" && options?.approved ? "approval-approved" : "resume-session",
+    action: "resume-session",
+    taskId: normalizeText(session.taskId) || undefined,
+    featureId: normalizeText(session.workflowContinuity.taskChain.currentFeatureId) || normalizeText(session.steps.at(-1)?.featureId) || undefined,
+    featureTitle: normalizeText(session.oversight.currentFeatureTitle) || normalizeText(session.steps.at(-1)?.featureTitle) || undefined,
+    reason: normalizeText(options?.reason) || session.stateReason,
+  });
   const nextSession: AutonomousSession = {
-    ...updateAutonomousSessionStatus(session, "active", normalizeText(options?.reason) || session.stateReason),
-    stateReason: normalizeText(options?.reason) || session.stateReason,
+    ...updateAutonomousSessionStatus(resumedSession, "active", normalizeText(options?.reason) || resumedSession.stateReason),
+    stateReason: normalizeText(options?.reason) || resumedSession.stateReason,
     pendingAction: session.status === "awaiting-approval" && options?.approved ? session.pendingAction : undefined,
-    workflowContinuity: session.workflowContinuity,
+    workflowContinuity: resumedSession.workflowContinuity,
   };
 
   return refreshAutonomousSessionDerivedState(nextSession);
@@ -5862,6 +6225,11 @@ export function normalizeAutonomousSession(value: unknown): AutonomousSession | 
         recommendedNextPhase: "planning",
       },
     },
+    sessionTelemetry: normalizeAutonomousSessionTelemetry(
+      source.sessionTelemetry,
+      normalizeText(source.sessionId),
+      normalizeText(typeof source.createdAt === "string" ? source.createdAt : "") || createTimestamp(),
+    ),
     oversight: {
       summary: {
         sessionId: normalizeText(source.sessionId),
@@ -5883,7 +6251,17 @@ export function normalizeAutonomousSession(value: unknown): AutonomousSession | 
         keyFilesOrAssetsChanged: [],
         validationSummary: "No validation summary is currently recorded.",
         safeToResume: false,
+        operatorInterventionCount: 0,
+        operatorInterventionSummary: "No manual operator interventions recorded.",
+        frictionSummary: [],
+        systemConfidenceSignals: [],
+        whatSlowedThisSessionDown: [],
       },
+      sessionTelemetry: normalizeAutonomousSessionTelemetry(
+        source.sessionTelemetry,
+        normalizeText(source.sessionId),
+        normalizeText(typeof source.createdAt === "string" ? source.createdAt : "") || createTimestamp(),
+      ),
       operatorAttention: [],
       controls: [],
       taskReviews: [],
@@ -6392,6 +6770,22 @@ export function buildAutonomousSessionContextBlock(session: AutonomousSession, l
     lines.push(`- Pending operator context: ${session.workflowContinuity.memory.pendingOperatorContext}`);
   }
 
+  if (session.oversight.summary.operatorInterventionSummary) {
+    lines.push(`- Operator intervention summary: ${session.oversight.summary.operatorInterventionSummary}`);
+  }
+
+  if (session.oversight.summary.frictionSummary.length > 0) {
+    lines.push(`- Friction summary: ${session.oversight.summary.frictionSummary.join(" | ")}`);
+  }
+
+  if (session.oversight.summary.systemConfidenceSignals.length > 0) {
+    lines.push(`- System confidence signals: ${session.oversight.summary.systemConfidenceSignals.join(" | ")}`);
+  }
+
+  if (session.oversight.summary.whatSlowedThisSessionDown.length > 0) {
+    lines.push(`- What slowed this session down: ${session.oversight.summary.whatSlowedThisSessionDown.join(" | ")}`);
+  }
+
   if (session.workflowContinuity.memory.recentDecisions.length > 0) {
     lines.push(`- Recent decisions: ${session.workflowContinuity.memory.recentDecisions.join(" | ")}`);
   }
@@ -6468,11 +6862,27 @@ export function updateAutonomousSessionSteering(
     requestedAction,
     session.workflowContinuity.escalation.recoveryRecommendation,
   );
+  const interactionType = requestedAction === "confirm-deliverable-acceptance"
+    ? "approval-approved"
+    : requestedAction === "reject-deliverable-acceptance"
+      ? "approval-rejected"
+      : "steering-action";
+  const sessionWithInteraction = requestedAction || operatorNote || overrideReason
+    ? recordAutonomousSessionInteraction(session, {
+      interactionType,
+      action: requestedAction,
+      taskId: normalizeText(session.taskId) || undefined,
+      featureId: normalizeText(session.workflowContinuity.taskChain.currentFeatureId) || normalizeText(session.steps.at(-1)?.featureId) || undefined,
+      featureTitle: normalizeText(session.oversight.currentFeatureTitle) || normalizeText(session.steps.at(-1)?.featureTitle) || undefined,
+      reason: overrideReason,
+      operatorNote,
+    })
+    : session;
   let nextSession: AutonomousSession = {
-    ...session,
+    ...sessionWithInteraction,
     updatedAt: createTimestamp(),
     workflowContinuity: {
-      ...session.workflowContinuity,
+      ...sessionWithInteraction.workflowContinuity,
       steering: {
         requestedAction,
         requestedNextPhaseOverride,
@@ -6480,15 +6890,15 @@ export function updateAutonomousSessionSteering(
         requestedStopReason: normalizeText(params.stopReason) || undefined,
         requestedRestartReason: normalizeText(params.restartReason) || undefined,
         operatorNote,
-        requestedForStepIndex: session.currentStepIndex,
+        requestedForStepIndex: sessionWithInteraction.currentStepIndex,
         status: requestedAction || operatorNote ? "pending" : "none",
       },
       refinement: {
-        ...session.workflowContinuity.refinement,
+        ...sessionWithInteraction.workflowContinuity.refinement,
         history: clampRefinementHistoryEntries([
-          ...(session.workflowContinuity.refinement.history ?? []),
+          ...(sessionWithInteraction.workflowContinuity.refinement.history ?? []),
           {
-            requestedAtStepIndex: session.currentStepIndex,
+            requestedAtStepIndex: sessionWithInteraction.currentStepIndex,
             requestedAction,
             requestedNextPhaseOverride,
             systemRecommendedNextPhase,
@@ -6500,17 +6910,17 @@ export function updateAutonomousSessionSteering(
         ]),
       },
       review: {
-        ...session.workflowContinuity.review,
+        ...sessionWithInteraction.workflowContinuity.review,
         history: clampRecommendationReviewHistoryEntries([
-          ...(session.workflowContinuity.review.history ?? []),
+          ...(sessionWithInteraction.workflowContinuity.review.history ?? []),
           {
-            reviewedAtStepIndex: session.currentStepIndex,
+            reviewedAtStepIndex: sessionWithInteraction.currentStepIndex,
             systemRecommendedNextPhase,
-            recommendedNextPhase: session.workflowContinuity.loopHealth.recommendedNextPhase,
-            recommendationConfidence: session.workflowContinuity.loopHealth.recommendationConfidence,
-            likelyNeedsOperatorInput: session.workflowContinuity.loopHealth.likelyNeedsOperatorInput,
-            topContributingSignals: session.workflowContinuity.loopHealth.topContributingSignals,
-            recommendationRationaleSummary: session.workflowContinuity.loopHealth.recommendationRationaleSummary,
+            recommendedNextPhase: sessionWithInteraction.workflowContinuity.loopHealth.recommendedNextPhase,
+            recommendationConfidence: sessionWithInteraction.workflowContinuity.loopHealth.recommendationConfidence,
+            likelyNeedsOperatorInput: sessionWithInteraction.workflowContinuity.loopHealth.likelyNeedsOperatorInput,
+            topContributingSignals: sessionWithInteraction.workflowContinuity.loopHealth.topContributingSignals,
+            recommendationRationaleSummary: sessionWithInteraction.workflowContinuity.loopHealth.recommendationRationaleSummary,
             operatorResponse: requestedAction,
             requestedNextPhaseOverride,
             operatorNote,
@@ -6519,14 +6929,14 @@ export function updateAutonomousSessionSteering(
         ]),
       },
       handoff: {
-        ...session.workflowContinuity.handoff,
+        ...sessionWithInteraction.workflowContinuity.handoff,
         history: shouldRecordHandoff
           ? clampRecommendationHandoffHistoryEntries([
-              ...(session.workflowContinuity.handoff.history ?? []),
+              ...(sessionWithInteraction.workflowContinuity.handoff.history ?? []),
               {
-                initiatedAtStepIndex: session.currentStepIndex,
-                escalationStatus: session.workflowContinuity.escalation.escalationStatus,
-                recoveryRecommendation: session.workflowContinuity.escalation.recoveryRecommendation,
+                initiatedAtStepIndex: sessionWithInteraction.currentStepIndex,
+                escalationStatus: sessionWithInteraction.workflowContinuity.escalation.escalationStatus,
+                recoveryRecommendation: sessionWithInteraction.workflowContinuity.escalation.recoveryRecommendation,
                 operatorAcknowledged: true,
                 selectedRecoveryAction: requestedAction,
                 selectedRecoveryMode,
@@ -6538,6 +6948,12 @@ export function updateAutonomousSessionSteering(
       },
     },
   };
+
+  if (requestedAction === "pause-and-wait") {
+    nextSession = recordAutonomousSessionPauseReason(nextSession, "operator-paused");
+  } else if (requestedAction === "force-stop" || requestedAction === "stop-loop") {
+    nextSession = recordAutonomousSessionPauseReason(nextSession, "operator-stopped");
+  }
 
   let derivedSession = refreshAutonomousSessionDerivedState(nextSession);
 

@@ -148,8 +148,17 @@ function applySessionLoopState(
   session: AutonomousSession,
   sessionLoop: AutonomousSessionLoopState,
 ): AutonomousSession {
+  const priorPauseReasons = session.sessionTelemetry?.pauseReasons ?? [];
+  const pauseReasons = sessionLoop.pauseReason
+    ? [...new Set([...priorPauseReasons, sessionLoop.pauseReason])]
+    : priorPauseReasons;
+
   return {
     ...session,
+    sessionTelemetry: {
+      ...session.sessionTelemetry,
+      pauseReasons,
+    },
     sessionLoop,
   };
 }

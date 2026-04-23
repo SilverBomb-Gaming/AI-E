@@ -69,6 +69,75 @@ test("autonomous sessions preserve explicit skip and force-stop steering actions
   assert.match(stopped.workflowContinuity.loopHealth.loopHealthReason ?? "", /stop immediately/i);
 });
 
+test("autonomous sessions record telemetry for operator interactions and friction", () => {
+  let session = appendAutonomousStep(createAutonomousSession({
+    goal: "Capture telemetry from a bounded autonomous session.",
+    sessionMode: "repo-coding",
+  }), {
+    proposedAction: "Run the first bounded task.",
+    taskId: "task-a",
+    featureId: "feature-a",
+    featureTitle: "Feature A",
+    taskStatus: "completed",
+    executionResult: {
+      status: "success",
+      output: "The first bounded task completed successfully.",
+    },
+    nextDecision: "continue",
+  });
+  session = appendAutonomousStep(session, {
+    proposedAction: "Run the second bounded task.",
+    taskId: "task-b",
+    featureId: "feature-b",
+    featureTitle: "Feature B",
+    taskStatus: "completed",
+    executionResult: {
+      status: "success",
+      output: "The second bounded task completed successfully.",
+    },
+    nextDecision: "continue",
+  });
+  session = updateAutonomousSessionSteering(session, {
+    action: "skip-current-task",
+    operatorNote: "Skip the current task once.",
+  });
+  session = updateAutonomousSessionSteering(session, {
+    action: "skip-current-task",
+    operatorNote: "Skip the current task twice.",
+  });
+  session = pauseAutonomousSession(session, "Pause for bounded operator review.");
+  session = resumeAutonomousSession(session, { reason: "Resume after bounded review." });
+  session = markAwaitingApproval(session, {
+    id: "telemetry-approval-1",
+    type: "file-write",
+    scope: "caution",
+    description: "Apply the bounded telemetry approval write.",
+    expectedOutcome: "The bounded telemetry output should be ready for review.",
+    requiresApproval: true,
+    metadata: {
+      sourceActionType: "file-write",
+      targetPath: "web/sandbox/telemetry-approval.txt",
+      allowedRoot: "web/sandbox",
+      content: "telemetry approval output",
+    },
+  }, "Approval is required before the bounded write can proceed.");
+  session = updateAutonomousSessionSteering(session, {
+    action: "reject-deliverable-acceptance",
+    operatorNote: "Reject the bounded deliverable for another pass.",
+  });
+
+  assert.equal(session.sessionTelemetry.totalTasksExecuted, 2);
+  assert.equal(session.sessionTelemetry.approvalsRequested, 1);
+  assert.equal(session.sessionTelemetry.approvalsRejected, 1);
+  assert.deepEqual(session.sessionTelemetry.pauseReasons, ["operator-paused", "approval-required"]);
+  assert.equal(session.sessionTelemetry.operatorInteractions.filter((entry) => entry.action === "skip-current-task").length, 2);
+  assert.match(session.oversight.summary.operatorInterventionSummary, /skip=2/i);
+  assert.ok(session.oversight.summary.frictionSummary.some((entry) => /operator skips changed the planned task flow/i.test(entry)));
+  assert.ok(session.oversight.summary.frictionSummary.some((entry) => /approval decisions were rejected/i.test(entry)));
+  assert.ok(session.oversight.summary.whatSlowedThisSessionDown.some((entry) => /Approval waits slowed autonomous continuation/i.test(entry)));
+  assert.match(buildAutonomousSessionContextBlock(session), /Operator intervention summary:/i);
+});
+
 test("autonomous sessions append steps and preserve runtime output", () => {
   const created = createAutonomousSession({
     goal: "Confirm the bounded validation path.",
@@ -118,6 +187,7 @@ test("autonomous sessions preserve optional node and task metadata", () => {
   assert.equal(normalized?.executionNodeMode, "local-node");
   assert.equal(normalized?.steps[0]?.featureTitle, "Validation Flow");
   assert.equal(normalized?.steps[0]?.nodeCapabilitySummary, "inspection, validation-check, repo-scan");
+  assert.equal(normalized?.sessionTelemetry.totalTasksExecuted, 1);
 });
 
 test("autonomous session normalization keeps persisted sessions readable", () => {

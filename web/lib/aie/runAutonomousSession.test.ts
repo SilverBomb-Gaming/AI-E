@@ -240,9 +240,13 @@ test("runAutonomousSession resumes an awaiting-approval session from stored pend
   });
 
   assert.equal(firstPass.status, "awaiting-approval");
+  assert.equal(firstPass.sessionTelemetry.approvalsRequested, 1);
+  assert.ok(firstPass.sessionTelemetry.pauseReasons.includes("approval-required"));
   assert.equal(resumed.status, "completed");
   assert.equal(resumed.steps.length, 3);
   assert.equal(resumed.steps[1]?.executionResult?.changedPaths?.[0], "web/sandbox/approved.txt");
+  assert.equal(resumed.sessionTelemetry.approvalsApproved, 1);
+  assert.equal(resumed.sessionTelemetry.finalSessionState, "completed");
   assert.equal(resumed.workflowContinuity.progress.chainPhase, "completed-safe-boundary");
   assert.equal(resumed.workflowContinuity.progress.lastCompletedSafeStep, 3);
   assert.match(resumed.workflowContinuity.memory.chainSummary ?? "", /goal status: complete/i);
