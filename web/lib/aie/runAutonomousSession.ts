@@ -13,6 +13,7 @@ import {
   type AutonomousSessionLoopState,
   type AutonomousSessionPauseReason,
   type AutonomousStepDecision,
+  type AutonomousFeatureBundleSummary,
   type AutonomousStepRecord,
   type AutonomousStepVerificationState,
   type AutonomousWorkflowTaskChainState,
@@ -327,35 +328,195 @@ function deriveTaskFeatureMetadata(task: TaskEnvelope, session: AutonomousSessio
   };
 }
 
+type DerivedFeatureDependencyGraphEntry = AutonomousFeatureBundleSummary & {
+  hasRunnableTask: boolean;
+  highestTaskPriority: number;
+  firstQueuedIndex: number;
+};
+
+function mergeUniqueFeatureIds(...lists: Array<string[] | undefined>): string[] {
+  return [...new Set(lists.flatMap((list) => list ?? []).map((value) => normalizeText(value)).filter(Boolean))];
+}
+
+function deriveFeatureDependencyGraph(params: {
+  session: AutonomousSession;
+  queuedTasks: TaskEnvelope[];
+  runnableTasks: TaskEnvelope[];
+  currentTaskId?: string;
+  nextRecommendedTaskId?: string;
+}): DerivedFeatureDependencyGraphEntry[] {
+  const orderedTasks = [...params.queuedTasks].sort(sortTaskChainBacklog);
+  const taskFeatureMetadata = new Map(orderedTasks.map((task) => [task.taskId, deriveTaskFeatureMetadata(task, params.session)]));
+  const previousFeatureGraph = new Map(
+    (params.session.workflowContinuity.taskChain.featureGraph ?? []).map((entry) => [entry.featureId, entry]),
+  );
+  const runnableTaskIds = new Set(params.runnableTasks.map((task) => task.taskId));
+  const featureMap = new Map<string, DerivedFeatureDependencyGraphEntry>();
+
+  const getOrCreateFeature = (featureId: string, featureTitle: string, featureDescription: string | undefined, taskId: string, index: number) => {
+    const existing = featureMap.get(featureId);
+    if (existing) {
+      return existing;
+    }
+
+    const previous = previousFeatureGraph.get(featureId);
+    const created: DerivedFeatureDependencyGraphEntry = {
+      featureId,
+      featureTitle,
+      featureDescription: featureDescription || previous?.featureDescription,
+      relatedTasks: previous?.relatedTasks ? [...previous.relatedTasks] : [],
+      dependsOnFeatureIds: previous?.dependsOnFeatureIds ? [...previous.dependsOnFeatureIds] : [],
+      blockedByFeatures: [],
+      unlocksFeatures: [],
+      dependencyStatusSummary: previous?.dependencyStatusSummary,
+      featureStatus: previous?.featureStatus ?? "planned",
+      completedTaskCount: 0,
+      totalTaskCount: 0,
+      blockedTaskIds: [],
+      currentTaskId: params.currentTaskId === taskId ? taskId : undefined,
+      nextRecommendedTaskId: params.nextRecommendedTaskId === taskId ? taskId : undefined,
+      hasRunnableTask: false,
+      highestTaskPriority: Number.NEGATIVE_INFINITY,
+      firstQueuedIndex: index,
+    };
+    featureMap.set(featureId, created);
+    return created;
+  };
+
+  for (const [index, task] of orderedTasks.entries()) {
+    const featureMetadata = taskFeatureMetadata.get(task.taskId);
+    if (!featureMetadata) {
+      continue;
+    }
+
+    const feature = getOrCreateFeature(
+      featureMetadata.featureId,
+      featureMetadata.featureTitle,
+      featureMetadata.featureDescription,
+      task.taskId,
+      index,
+    );
+    feature.relatedTasks = mergeUniqueFeatureIds(feature.relatedTasks, [task.taskId]);
+    feature.dependsOnFeatureIds = mergeUniqueFeatureIds(feature.dependsOnFeatureIds, task.dependsOnFeatureIds);
+    feature.totalTaskCount += 1;
+    feature.highestTaskPriority = Math.max(feature.highestTaskPriority, task.priority);
+    if (!feature.featureDescription) {
+      feature.featureDescription = featureMetadata.featureDescription;
+    }
+    if (task.status === "completed") {
+      feature.completedTaskCount += 1;
+    }
+    if (task.status === "blocked" || task.status === "failed" || task.status === "rejected") {
+      feature.blockedTaskIds = mergeUniqueFeatureIds(feature.blockedTaskIds, [task.taskId]);
+    }
+    if (params.currentTaskId === task.taskId) {
+      feature.currentTaskId = task.taskId;
+    }
+    if (params.nextRecommendedTaskId === task.taskId) {
+      feature.nextRecommendedTaskId = task.taskId;
+    }
+    if (runnableTaskIds.has(task.taskId)) {
+      feature.hasRunnableTask = true;
+    }
+
+    for (const dependencyTaskId of task.dependsOnTaskIds) {
+      const dependencyFeatureId = taskFeatureMetadata.get(dependencyTaskId)?.featureId;
+      if (dependencyFeatureId && dependencyFeatureId !== feature.featureId) {
+        feature.dependsOnFeatureIds = mergeUniqueFeatureIds(feature.dependsOnFeatureIds, [dependencyFeatureId]);
+      }
+    }
+  }
+
+  const featureEntries = [...featureMap.values()];
+  const completedFeatureIds = new Set(
+    featureEntries
+      .filter((feature) => feature.totalTaskCount > 0 && feature.completedTaskCount >= feature.totalTaskCount)
+      .map((feature) => feature.featureId),
+  );
+  const unlockMap = new Map<string, string[]>();
+
+  for (const feature of featureEntries) {
+    feature.dependsOnFeatureIds = mergeUniqueFeatureIds(feature.dependsOnFeatureIds.filter((dependencyId) => dependencyId !== feature.featureId));
+    for (const dependencyId of feature.dependsOnFeatureIds) {
+      unlockMap.set(dependencyId, mergeUniqueFeatureIds(unlockMap.get(dependencyId), [feature.featureId]));
+    }
+  }
+
+  for (const feature of featureEntries) {
+    feature.blockedByFeatures = feature.dependsOnFeatureIds.filter((dependencyId) => !completedFeatureIds.has(dependencyId));
+    feature.unlocksFeatures = unlockMap.get(feature.featureId) ?? [];
+    feature.dependencyStatusSummary = feature.blockedByFeatures.length > 0
+      ? `Blocked by feature dependencies: ${feature.blockedByFeatures.join(", ")}.`
+      : feature.dependsOnFeatureIds.length > 0
+        ? `Ready: dependencies satisfied (${feature.dependsOnFeatureIds.join(", ")}).`
+        : "Ready: no feature dependencies.";
+
+    const isCompleted = feature.totalTaskCount > 0 && feature.completedTaskCount >= feature.totalTaskCount;
+    feature.featureStatus = isCompleted
+      ? "completed"
+      : feature.blockedByFeatures.length > 0 || feature.blockedTaskIds.length > 0
+        ? "blocked"
+        : feature.currentTaskId || feature.nextRecommendedTaskId || feature.completedTaskCount > 0
+          ? "in-progress"
+          : "planned";
+  }
+
+  return featureEntries.sort((left, right) => left.firstQueuedIndex - right.firstQueuedIndex || left.featureId.localeCompare(right.featureId));
+}
+
 function choosePreferredFeatureId(params: {
   session: AutonomousSession;
   queuedTasks: TaskEnvelope[];
   runnableTasks: TaskEnvelope[];
+  currentTaskId?: string;
 }): string | undefined {
-  const runnableTaskIds = new Set(params.runnableTasks.map((task) => task.taskId));
+  const featureGraph = deriveFeatureDependencyGraph({
+    session: params.session,
+    queuedTasks: params.queuedTasks,
+    runnableTasks: params.runnableTasks,
+    currentTaskId: params.currentTaskId,
+    nextRecommendedTaskId: params.session.workflowContinuity.taskChain.nextRecommendedTaskId,
+  });
+  const readyFeatures = featureGraph.filter(
+    (feature) => feature.hasRunnableTask && feature.blockedByFeatures.length === 0 && feature.featureStatus !== "completed",
+  );
   const currentFeatureId = normalizeText(params.session.workflowContinuity.taskChain.currentFeatureId);
   if (currentFeatureId) {
-    const currentFeatureRunnable = params.runnableTasks.some((task) => deriveTaskFeatureMetadata(task, params.session).featureId === currentFeatureId);
-    if (currentFeatureRunnable) {
+    const currentFeature = readyFeatures.find((feature) => feature.featureId === currentFeatureId);
+    if (currentFeature?.hasRunnableTask && currentFeature.blockedByFeatures.length === 0) {
       return currentFeatureId;
+    }
+  }
+
+  const lastCompletedTaskId = getLastCompletedTaskId(params.queuedTasks, params.session.sessionLoop.lastCompletedTaskId);
+  const lastCompletedTask = lastCompletedTaskId
+    ? params.queuedTasks.find((task) => task.taskId === lastCompletedTaskId)
+    : undefined;
+  const lastCompletedFeatureId = lastCompletedTask ? deriveTaskFeatureMetadata(lastCompletedTask, params.session).featureId : undefined;
+  if (lastCompletedFeatureId) {
+    const newlyUnlockedFeature = [...readyFeatures]
+      .filter((feature) => feature.dependsOnFeatureIds.includes(lastCompletedFeatureId))
+      .sort((left, right) => right.highestTaskPriority - left.highestTaskPriority
+        || left.firstQueuedIndex - right.firstQueuedIndex
+        || left.featureId.localeCompare(right.featureId))[0];
+    if (newlyUnlockedFeature) {
+      return newlyUnlockedFeature.featureId;
     }
   }
 
   const nextRecommendedFeatureId = normalizeText(params.session.workflowContinuity.taskChain.nextRecommendedFeatureId);
   if (nextRecommendedFeatureId) {
-    const recommendedFeatureRunnable = params.runnableTasks.some((task) => deriveTaskFeatureMetadata(task, params.session).featureId === nextRecommendedFeatureId);
-    if (recommendedFeatureRunnable) {
+    const recommendedFeature = readyFeatures.find((feature) => feature.featureId === nextRecommendedFeatureId);
+    if (recommendedFeature?.hasRunnableTask && recommendedFeature.blockedByFeatures.length === 0) {
       return nextRecommendedFeatureId;
     }
   }
 
-  for (const task of params.queuedTasks) {
-    if (runnableTaskIds.has(task.taskId)) {
-      return deriveTaskFeatureMetadata(task, params.session).featureId;
-    }
-  }
-
-  return undefined;
+  return readyFeatures
+    .sort((left, right) => right.unlocksFeatures.length - left.unlocksFeatures.length
+      || right.highestTaskPriority - left.highestTaskPriority
+      || left.firstQueuedIndex - right.firstQueuedIndex
+      || left.featureId.localeCompare(right.featureId))[0]?.featureId;
 }
 
 function chooseNextRecommendedTaskId(params: {
@@ -365,10 +526,22 @@ function chooseNextRecommendedTaskId(params: {
   currentTaskId?: string;
 }): string | undefined {
   const skippedTaskIds = new Set(params.session.workflowContinuity.taskChain.skippedTaskIds);
-  const preferredFeatureId = choosePreferredFeatureId(params);
   const orderedRunnableTasks = [...params.runnableTasks]
     .sort(sortTaskChainBacklog)
     .filter((task) => task.taskId !== params.currentTaskId && !skippedTaskIds.has(task.taskId));
+  const featureGraph = deriveFeatureDependencyGraph({
+    session: params.session,
+    queuedTasks: params.queuedTasks,
+    runnableTasks: params.runnableTasks,
+    currentTaskId: params.currentTaskId,
+    nextRecommendedTaskId: params.session.workflowContinuity.taskChain.nextRecommendedTaskId,
+  });
+  const readyFeatureIds = new Set(
+    featureGraph
+      .filter((feature) => feature.hasRunnableTask && feature.blockedByFeatures.length === 0 && feature.featureStatus !== "completed")
+      .map((feature) => feature.featureId),
+  );
+  const preferredFeatureId = choosePreferredFeatureId(params);
 
   if (preferredFeatureId) {
     const preferredTask = orderedRunnableTasks.find((task) => deriveTaskFeatureMetadata(task, params.session).featureId === preferredFeatureId);
@@ -377,7 +550,7 @@ function chooseNextRecommendedTaskId(params: {
     }
   }
 
-  return orderedRunnableTasks[0]?.taskId;
+  return orderedRunnableTasks.find((task) => readyFeatureIds.has(deriveTaskFeatureMetadata(task, params.session).featureId))?.taskId;
 }
 
 function buildTaskChainSnapshot(params: {
@@ -408,6 +581,14 @@ function buildTaskChainSnapshot(params: {
       currentTaskId,
     })
     || undefined;
+  const featureGraph = deriveFeatureDependencyGraph({
+    session: params.session,
+    queuedTasks: orderedTasks,
+    runnableTasks: params.runnableTasks,
+    currentTaskId,
+    nextRecommendedTaskId,
+  });
+  const featureGraphById = new Map(featureGraph.map((feature) => [feature.featureId, feature]));
   const currentFeatureId = currentTaskId ? taskFeatureMetadata.get(currentTaskId)?.featureId : undefined;
   const nextRecommendedFeatureId = nextRecommendedTaskId ? taskFeatureMetadata.get(nextRecommendedTaskId)?.featureId : undefined;
   const chainStatus = params.chainStatus
@@ -430,10 +611,27 @@ function buildTaskChainSnapshot(params: {
       taskId: task.taskId,
       priority: task.priority,
       dependsOnTaskIds: [...task.dependsOnTaskIds],
+      dependsOnFeatureIds: featureGraphById.get(taskFeatureMetadata.get(task.taskId)?.featureId ?? "")?.dependsOnFeatureIds ?? [...task.dependsOnFeatureIds],
       featureId: taskFeatureMetadata.get(task.taskId)?.featureId,
       featureTitle: taskFeatureMetadata.get(task.taskId)?.featureTitle,
       featureDescription: taskFeatureMetadata.get(task.taskId)?.featureDescription,
       status: skippedTaskIds.includes(task.taskId) ? "skipped" : task.status,
+    })),
+    featureGraph: featureGraph.map((feature) => ({
+      featureId: feature.featureId,
+      featureTitle: feature.featureTitle,
+      featureDescription: feature.featureDescription,
+      relatedTasks: [...feature.relatedTasks],
+      dependsOnFeatureIds: [...feature.dependsOnFeatureIds],
+      blockedByFeatures: [...feature.blockedByFeatures],
+      unlocksFeatures: [...feature.unlocksFeatures],
+      dependencyStatusSummary: feature.dependencyStatusSummary,
+      featureStatus: feature.featureStatus,
+      completedTaskCount: feature.completedTaskCount,
+      totalTaskCount: feature.totalTaskCount,
+      blockedTaskIds: [...feature.blockedTaskIds],
+      currentTaskId: feature.currentTaskId,
+      nextRecommendedTaskId: feature.nextRecommendedTaskId,
     })),
     currentTaskId,
     currentFeatureId,
@@ -530,9 +728,7 @@ async function selectNextQueuedTask(
     currentTaskId: session.taskId,
   });
 
-  return runnableTasks.find((task) => task.taskId === nextTaskId && !skippedTaskIds.has(task.taskId))
-    ?? runnableTasks.find((task) => task.taskId !== session.taskId && !skippedTaskIds.has(task.taskId))
-    ?? null;
+  return runnableTasks.find((task) => task.taskId === nextTaskId && !skippedTaskIds.has(task.taskId)) ?? null;
 }
 
 async function classifySessionQueueState(
@@ -563,8 +759,21 @@ async function classifySessionQueueState(
     || task.status === "failed"
     || task.status === "rejected",
   );
+  const featureGraph = deriveFeatureDependencyGraph({
+    session,
+    queuedTasks: remainingTasks,
+    runnableTasks,
+    currentTaskId: session.taskId,
+    nextRecommendedTaskId: session.workflowContinuity.taskChain.nextRecommendedTaskId,
+  });
+  const readyFeatureIds = new Set(
+    featureGraph
+      .filter((feature) => feature.blockedByFeatures.length === 0 && feature.featureStatus !== "completed")
+      .map((feature) => feature.featureId),
+  );
+  const dependencyValidRunnableTasks = runnableTasks.filter((task) => readyFeatureIds.has(deriveTaskFeatureMetadata(task, session).featureId));
 
-  if (runnableTasks.length > 0) {
+  if (dependencyValidRunnableTasks.length > 0) {
     return {
       reason: "session-limit-reached",
       summary: "The autonomous session paused even though runnable work remains.",
@@ -589,7 +798,10 @@ async function classifySessionQueueState(
   }
 
   const completedTaskIds = new Set(remainingTasks.filter((task) => task.status === "completed").map((task) => task.taskId));
-  const dependencyMissing = pendingLikeTasks.some((task) => task.dependsOnTaskIds.some((dependencyId) => !completedTaskIds.has(dependencyId)));
+  const dependencyMissing = pendingLikeTasks.some((task) =>
+    task.dependsOnTaskIds.some((dependencyId) => !completedTaskIds.has(dependencyId))
+    || !readyFeatureIds.has(deriveTaskFeatureMetadata(task, session).featureId),
+  ) || (runnableTasks.length > 0 && dependencyValidRunnableTasks.length === 0);
   if (dependencyMissing) {
     return {
       reason: "dependency-missing",

@@ -442,6 +442,7 @@ export type AutonomousGeneratedTaskQueueEntry = {
   taskId: string;
   priority: number;
   dependsOnTaskIds: string[];
+  dependsOnFeatureIds: string[];
   featureId?: string;
   featureTitle?: string;
   featureDescription?: string;
@@ -453,6 +454,10 @@ export type AutonomousFeatureBundleSummary = {
   featureTitle: string;
   featureDescription?: string;
   relatedTasks: string[];
+  dependsOnFeatureIds: string[];
+  blockedByFeatures: string[];
+  unlocksFeatures: string[];
+  dependencyStatusSummary?: string;
   featureStatus: AutonomousFeatureBundleStatus;
   completedTaskCount: number;
   totalTaskCount: number;
@@ -463,6 +468,7 @@ export type AutonomousFeatureBundleSummary = {
 
 export type AutonomousWorkflowTaskChainState = {
   generatedTaskQueue: AutonomousGeneratedTaskQueueEntry[];
+  featureGraph: AutonomousFeatureBundleSummary[];
   currentTaskId?: string;
   currentFeatureId?: string;
   completedTaskIds: string[];
@@ -621,6 +627,7 @@ export type AutonomousSessionSummaryArtifact = {
   currentFeatureId?: string;
   currentFeatureTitle?: string;
   currentFeatureProgress?: string;
+  readyFeatures: number;
   completedFeatures: number;
   blockedFeatures: number;
   keyFilesOrAssetsChanged: string[];
@@ -637,6 +644,8 @@ export type AutonomousSessionOversight = {
   currentFeatureId?: string;
   currentFeatureTitle?: string;
   featureBundles: AutonomousFeatureBundleSummary[];
+  readyFeatureIds: string[];
+  featureDependencyGraph: string[];
   recentCompletedTaskIds: string[];
   blockedTaskIds: string[];
   completedFeatureIds: string[];
@@ -768,6 +777,25 @@ function deriveAutonomousFeatureBundles(session: AutonomousSession): AutonomousF
   const nextRecommendedTaskId = normalizeText(session.workflowContinuity.taskChain.nextRecommendedTaskId) || undefined;
   const groups = new Map<string, AutonomousFeatureBundleSummary>();
 
+  for (const feature of session.workflowContinuity.taskChain.featureGraph) {
+    groups.set(feature.featureId, {
+      featureId: feature.featureId,
+      featureTitle: feature.featureTitle,
+      featureDescription: feature.featureDescription,
+      relatedTasks: [...feature.relatedTasks],
+      dependsOnFeatureIds: [...feature.dependsOnFeatureIds],
+      blockedByFeatures: [...feature.blockedByFeatures],
+      unlocksFeatures: [...feature.unlocksFeatures],
+      dependencyStatusSummary: feature.dependencyStatusSummary,
+      featureStatus: feature.featureStatus,
+      completedTaskCount: feature.completedTaskCount,
+      totalTaskCount: feature.totalTaskCount,
+      blockedTaskIds: [...feature.blockedTaskIds],
+      currentTaskId: feature.currentTaskId,
+      nextRecommendedTaskId: feature.nextRecommendedTaskId,
+    });
+  }
+
   for (const entry of queue) {
     const featureId = normalizeText(entry.featureId) || `task-${entry.taskId}`;
     const featureTitle = normalizeText(entry.featureTitle) || `Task ${entry.taskId}`;
@@ -778,6 +806,10 @@ function deriveAutonomousFeatureBundles(session: AutonomousSession): AutonomousF
         featureTitle,
         featureDescription: normalizeText(entry.featureDescription) || undefined,
         relatedTasks: [entry.taskId],
+        dependsOnFeatureIds: [...entry.dependsOnFeatureIds],
+        blockedByFeatures: [],
+        unlocksFeatures: [],
+        dependencyStatusSummary: undefined,
         featureStatus: "planned",
         completedTaskCount: entry.status === "completed" || entry.status === "skipped" ? 1 : 0,
         totalTaskCount: 1,
@@ -793,6 +825,7 @@ function deriveAutonomousFeatureBundles(session: AutonomousSession): AutonomousF
 
     existing.relatedTasks.push(entry.taskId);
     existing.totalTaskCount += 1;
+    existing.dependsOnFeatureIds = uniqueStrings([...existing.dependsOnFeatureIds, ...entry.dependsOnFeatureIds]);
     if (!existing.featureDescription) {
       existing.featureDescription = normalizeText(entry.featureDescription) || undefined;
     }
@@ -828,6 +861,10 @@ function deriveAutonomousFeatureBundles(session: AutonomousSession): AutonomousF
         featureTitle,
         featureDescription: normalizeText(step.featureDescription) || undefined,
         relatedTasks: [taskId],
+        dependsOnFeatureIds: [],
+        blockedByFeatures: [],
+        unlocksFeatures: [],
+        dependencyStatusSummary: undefined,
         featureStatus: "planned",
         completedTaskCount: stepCountsAsCompleted ? 1 : 0,
         totalTaskCount: 1,
@@ -861,26 +898,52 @@ function deriveAutonomousFeatureBundles(session: AutonomousSession): AutonomousF
     }
   }
 
-  return [...groups.values()]
+  const bundles = [...groups.values()];
+  const completedFeatureIds = new Set(
+    bundles
+      .filter((bundle) => bundle.totalTaskCount > 0 && bundle.completedTaskCount >= bundle.totalTaskCount)
+      .map((bundle) => bundle.featureId),
+  );
+  const unlockMap = new Map<string, string[]>();
+
+  for (const bundle of bundles) {
+    bundle.dependsOnFeatureIds = uniqueStrings(bundle.dependsOnFeatureIds.filter((featureId) => featureId !== bundle.featureId));
+    for (const dependencyId of bundle.dependsOnFeatureIds) {
+      unlockMap.set(dependencyId, uniqueStrings([...(unlockMap.get(dependencyId) ?? []), bundle.featureId]));
+    }
+  }
+
+  return bundles
     .map((bundle) => {
       const hasBlockedTasks = bundle.blockedTaskIds.length > 0;
       const isCurrent = Boolean(bundle.currentTaskId);
       const hasNextRecommendation = Boolean(bundle.nextRecommendedTaskId);
       const isCompleted = bundle.totalTaskCount > 0 && bundle.completedTaskCount >= bundle.totalTaskCount;
+      const blockedByFeatures = bundle.dependsOnFeatureIds.filter((featureId) => !completedFeatureIds.has(featureId));
+      const unlocksFeatures = unlockMap.get(bundle.featureId) ?? [];
       const awaitingApprovalOnCurrentFeature = session.status === "awaiting-approval"
         && normalizeText(session.pendingAction?.id)
         && normalizeText(session.oversight.currentFeatureId) !== bundle.featureId
         ? false
         : session.status === "awaiting-approval"
           && bundle.featureId === (normalizeText(session.workflowContinuity.taskChain.currentFeatureId) || normalizeText(session.steps.at(-1)?.featureId));
+      const dependencyStatusSummary = blockedByFeatures.length > 0
+        ? `Blocked by feature dependencies: ${blockedByFeatures.join(", ")}.`
+        : bundle.dependsOnFeatureIds.length > 0
+          ? `Ready: dependencies satisfied (${bundle.dependsOnFeatureIds.join(", ")}).`
+          : "Ready: no feature dependencies.";
 
       return {
         ...bundle,
         relatedTasks: [...bundle.relatedTasks],
+        dependsOnFeatureIds: [...bundle.dependsOnFeatureIds],
+        blockedByFeatures,
+        unlocksFeatures: [...unlocksFeatures],
+        dependencyStatusSummary,
         blockedTaskIds: [...bundle.blockedTaskIds],
         featureStatus: isCompleted
           ? "completed"
-          : (hasBlockedTasks && !isCurrent && !hasNextRecommendation) || awaitingApprovalOnCurrentFeature
+          : blockedByFeatures.length > 0 || (hasBlockedTasks && !isCurrent && !hasNextRecommendation) || awaitingApprovalOnCurrentFeature
             ? "blocked"
             : isCurrent || hasNextRecommendation || bundle.completedTaskCount > 0
               ? "in-progress"
@@ -1100,12 +1163,18 @@ function deriveAutonomousSessionOversight(session: AutonomousSession): Autonomou
     || undefined;
   const currentFeature = featureBundles.find((bundle) => bundle.featureId === currentFeatureId)
     ?? featureBundles.find((bundle) => bundle.currentTaskId === currentTaskId);
+  const readyFeatureIds = featureBundles
+    .filter((bundle) => bundle.featureStatus !== "completed" && bundle.blockedByFeatures.length === 0)
+    .map((bundle) => bundle.featureId);
   const completedFeatureIds = featureBundles
     .filter((bundle) => bundle.featureStatus === "completed")
     .map((bundle) => bundle.featureId);
   const blockedFeatureIds = featureBundles
     .filter((bundle) => bundle.featureStatus === "blocked")
     .map((bundle) => bundle.featureId);
+  const featureDependencyGraph = featureBundles
+    .filter((bundle) => bundle.dependsOnFeatureIds.length > 0)
+    .map((bundle) => `${bundle.featureId} <- ${bundle.dependsOnFeatureIds.join(", ")}`);
 
   return {
     summary: {
@@ -1130,6 +1199,7 @@ function deriveAutonomousSessionOversight(session: AutonomousSession): Autonomou
       currentFeatureId: currentFeature?.featureId,
       currentFeatureTitle: currentFeature?.featureTitle,
       currentFeatureProgress: currentFeature ? buildAutonomousFeatureProgressLabel(currentFeature) : undefined,
+      readyFeatures: readyFeatureIds.length,
       completedFeatures: completedFeatureIds.length,
       blockedFeatures: blockedFeatureIds.length,
       keyFilesOrAssetsChanged: changedPaths,
@@ -1147,6 +1217,8 @@ function deriveAutonomousSessionOversight(session: AutonomousSession): Autonomou
     currentFeatureId: currentFeature?.featureId,
     currentFeatureTitle: currentFeature?.featureTitle,
     featureBundles,
+    readyFeatureIds,
+    featureDependencyGraph,
     recentCompletedTaskIds: session.sessionLoop.completedTaskIds.slice(-5).reverse(),
     blockedTaskIds: uniqueStrings([...session.sessionLoop.blockedTaskIds, ...session.workflowContinuity.taskChain.blockedTaskIds]),
     completedFeatureIds,
@@ -1320,6 +1392,7 @@ function createDefaultAutonomousWorkflowCodingState(): AutonomousWorkflowCodingS
 function createDefaultAutonomousWorkflowTaskChainState(): AutonomousWorkflowTaskChainState {
   return {
     generatedTaskQueue: [],
+    featureGraph: [],
     currentTaskId: undefined,
     currentFeatureId: undefined,
     completedTaskIds: [],
@@ -1469,10 +1542,47 @@ function normalizeAutonomousGeneratedTaskQueueEntry(value: unknown): AutonomousG
     taskId,
     priority: Number.isFinite(Number(source.priority)) ? Math.max(0, Math.floor(Number(source.priority))) : 0,
     dependsOnTaskIds: normalizeUniqueTaskIdList(source.dependsOnTaskIds),
+    dependsOnFeatureIds: normalizeUniqueTaskIdList(source.dependsOnFeatureIds),
     featureId: normalizeText(typeof source.featureId === "string" ? source.featureId : "") || undefined,
     featureTitle: normalizeText(typeof source.featureTitle === "string" ? source.featureTitle : "") || undefined,
     featureDescription: normalizeText(typeof source.featureDescription === "string" ? source.featureDescription : "") || undefined,
     status,
+  };
+}
+
+function normalizeAutonomousFeatureBundleStatus(value: unknown): AutonomousFeatureBundleStatus | undefined {
+  return value === "planned" || value === "in-progress" || value === "completed" || value === "blocked"
+    ? value
+    : undefined;
+}
+
+function normalizeAutonomousFeatureBundleSummary(value: unknown): AutonomousFeatureBundleSummary | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const source = value as Record<string, unknown>;
+  const featureId = normalizeText(typeof source.featureId === "string" ? source.featureId : "");
+  const featureTitle = normalizeText(typeof source.featureTitle === "string" ? source.featureTitle : "");
+  if (!featureId || !featureTitle) {
+    return null;
+  }
+
+  return {
+    featureId,
+    featureTitle,
+    featureDescription: normalizeText(typeof source.featureDescription === "string" ? source.featureDescription : "") || undefined,
+    relatedTasks: normalizeUniqueTaskIdList(source.relatedTasks),
+    dependsOnFeatureIds: normalizeUniqueTaskIdList(source.dependsOnFeatureIds),
+    blockedByFeatures: normalizeUniqueTaskIdList(source.blockedByFeatures),
+    unlocksFeatures: normalizeUniqueTaskIdList(source.unlocksFeatures),
+    dependencyStatusSummary: normalizeText(typeof source.dependencyStatusSummary === "string" ? source.dependencyStatusSummary : "") || undefined,
+    featureStatus: normalizeAutonomousFeatureBundleStatus(source.featureStatus) ?? "planned",
+    completedTaskCount: Number.isFinite(Number(source.completedTaskCount)) ? Math.max(0, Math.floor(Number(source.completedTaskCount))) : 0,
+    totalTaskCount: Number.isFinite(Number(source.totalTaskCount)) ? Math.max(0, Math.floor(Number(source.totalTaskCount))) : 0,
+    blockedTaskIds: normalizeUniqueTaskIdList(source.blockedTaskIds),
+    currentTaskId: normalizeText(typeof source.currentTaskId === "string" ? source.currentTaskId : "") || undefined,
+    nextRecommendedTaskId: normalizeText(typeof source.nextRecommendedTaskId === "string" ? source.nextRecommendedTaskId : "") || undefined,
   };
 }
 
@@ -1483,6 +1593,7 @@ function deriveAutonomousWorkflowTaskChainState(session: AutonomousSession): Aut
     : undefined;
   const nextRecommendedTaskId = normalizeText(previous.nextRecommendedTaskId) || undefined;
   const generatedTaskQueue = Array.isArray(previous.generatedTaskQueue) ? previous.generatedTaskQueue : [];
+  const featureGraph = Array.isArray(previous.featureGraph) ? previous.featureGraph : [];
   const completedTaskIds = normalizeUniqueTaskIdList(previous.completedTaskIds);
   const blockedTaskIds = normalizeUniqueTaskIdList(previous.blockedTaskIds);
   const skippedTaskIds = normalizeUniqueTaskIdList(previous.skippedTaskIds);
@@ -1515,6 +1626,7 @@ function deriveAutonomousWorkflowTaskChainState(session: AutonomousSession): Aut
 
   return {
     generatedTaskQueue,
+    featureGraph,
     currentTaskId,
     currentFeatureId,
     completedTaskIds,
@@ -4196,6 +4308,11 @@ function normalizeAutonomousWorkflowContinuityState(value: unknown): AutonomousW
             .map((entry) => normalizeAutonomousGeneratedTaskQueueEntry(entry))
             .filter((entry): entry is AutonomousGeneratedTaskQueueEntry => entry !== null)
         : [],
+      featureGraph: Array.isArray(taskChainSource?.featureGraph)
+        ? taskChainSource.featureGraph
+            .map((entry) => normalizeAutonomousFeatureBundleSummary(entry))
+            .filter((entry): entry is AutonomousFeatureBundleSummary => entry !== null)
+        : [],
       currentTaskId: normalizeText(typeof taskChainSource?.currentTaskId === "string" ? taskChainSource.currentTaskId : "") || undefined,
       currentFeatureId: normalizeText(typeof taskChainSource?.currentFeatureId === "string" ? taskChainSource.currentFeatureId : "") || undefined,
       completedTaskIds: normalizeUniqueTaskIdList(taskChainSource?.completedTaskIds),
@@ -5499,7 +5616,17 @@ export function buildAutonomousSessionContextBlock(session: AutonomousSession, l
   }
 
   if (session.oversight.summary.completedFeatures > 0 || session.oversight.summary.blockedFeatures > 0) {
-    lines.push(`- Feature bundle totals: completed=${session.oversight.summary.completedFeatures}, blocked=${session.oversight.summary.blockedFeatures}`);
+    lines.push(
+      `- Feature bundle totals: ready=${session.oversight.summary.readyFeatures}, completed=${session.oversight.summary.completedFeatures}, blocked=${session.oversight.summary.blockedFeatures}`,
+    );
+  }
+
+  if (session.oversight.readyFeatureIds.length > 0) {
+    lines.push(`- Ready feature bundles: ${session.oversight.readyFeatureIds.join(", ")}`);
+  }
+
+  if (session.oversight.featureDependencyGraph.length > 0) {
+    lines.push(`- Feature dependency graph: ${session.oversight.featureDependencyGraph.slice(0, 5).join(" | ")}`);
   }
 
   if (session.sessionLoop.pauseReason) {

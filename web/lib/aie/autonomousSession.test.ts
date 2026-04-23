@@ -264,6 +264,82 @@ test("autonomous sessions derive operator oversight summaries, attention, and ta
   assert.deepEqual(awaiting.oversight.featureBundles.map((bundle) => bundle.featureId), ["feature-oversight"]);
 });
 
+test("autonomous sessions expose blocked and ready features from the persisted dependency graph", () => {
+  const session = createAutonomousSession({ goal: "Respect feature dependencies before switching work." });
+  const normalized = normalizeAutonomousSession({
+    ...session,
+    workflowContinuity: {
+      ...session.workflowContinuity,
+      taskChain: {
+        ...session.workflowContinuity.taskChain,
+        generatedTaskQueue: [
+          {
+            taskId: "task-feature-a",
+            priority: 2,
+            dependsOnTaskIds: [],
+            dependsOnFeatureIds: [],
+            featureId: "feature-a",
+            featureTitle: "Feature A",
+            featureDescription: "Core system feature.",
+            status: "queued",
+          },
+          {
+            taskId: "task-feature-b",
+            priority: 10,
+            dependsOnTaskIds: [],
+            dependsOnFeatureIds: ["feature-a"],
+            featureId: "feature-b",
+            featureTitle: "Feature B",
+            featureDescription: "Depends on Feature A.",
+            status: "queued",
+          },
+        ],
+        featureGraph: [
+          {
+            featureId: "feature-a",
+            featureTitle: "Feature A",
+            featureDescription: "Core system feature.",
+            relatedTasks: ["task-feature-a"],
+            dependsOnFeatureIds: [],
+            blockedByFeatures: [],
+            unlocksFeatures: ["feature-b"],
+            dependencyStatusSummary: "Ready: no feature dependencies.",
+            featureStatus: "planned",
+            completedTaskCount: 0,
+            totalTaskCount: 1,
+            blockedTaskIds: [],
+          },
+          {
+            featureId: "feature-b",
+            featureTitle: "Feature B",
+            featureDescription: "Depends on Feature A.",
+            relatedTasks: ["task-feature-b"],
+            dependsOnFeatureIds: ["feature-a"],
+            blockedByFeatures: ["feature-a"],
+            unlocksFeatures: [],
+            dependencyStatusSummary: "Blocked by feature dependencies: feature-a.",
+            featureStatus: "blocked",
+            completedTaskCount: 0,
+            totalTaskCount: 1,
+            blockedTaskIds: [],
+          },
+        ],
+        nextRecommendedTaskId: "task-feature-a",
+        nextRecommendedFeatureId: "feature-a",
+        chainStatus: "selecting-next-task",
+      },
+    },
+  });
+
+  assert.ok(normalized);
+  assert.deepEqual(normalized?.workflowContinuity.taskChain.featureGraph[1]?.dependsOnFeatureIds, ["feature-a"]);
+  assert.deepEqual(normalized?.oversight.readyFeatureIds, ["feature-a"]);
+  assert.deepEqual(normalized?.oversight.blockedFeatureIds, ["feature-b"]);
+  assert.match(normalized?.oversight.featureBundles.find((bundle) => bundle.featureId === "feature-b")?.dependencyStatusSummary ?? "", /feature-a/i);
+  assert.ok(normalized?.oversight.featureDependencyGraph.includes("feature-b <- feature-a"));
+  assert.match(buildAutonomousSessionContextBlock(normalized ?? session), /Ready feature bundles: feature-a/i);
+});
+
 test("autonomous sessions derive implementation and fix loop memory from changed paths", () => {
   const implemented = appendAutonomousStep(createAutonomousSession({ goal: "Stabilize the bounded production loop." }), {
     proposedAction: "Apply the bounded fix patch.",

@@ -94,6 +94,7 @@ export type TaskEnvelope = {
   featureId?: string;
   featureTitle?: string;
   featureDescription?: string;
+  dependsOnFeatureIds: string[];
   action: ExecutionActionPreview;
   requestedCapabilities: ExecutionNodeCapability[];
   resumability: TaskResumability;
@@ -195,6 +196,7 @@ type CreateTaskEnvelopeParams = {
   featureId?: string;
   featureTitle?: string;
   featureDescription?: string;
+  dependsOnFeatureIds?: string[];
   action: ExecutionActionPreview;
   requestedCapabilities?: ExecutionNodeCapability[];
   preferredNodeId?: string;
@@ -707,6 +709,7 @@ export function createTaskEnvelope(params: CreateTaskEnvelopeParams): TaskEnvelo
     featureId: normalizeText(params.featureId) || undefined,
     featureTitle: normalizeText(params.featureTitle) || undefined,
     featureDescription: normalizeText(params.featureDescription) || undefined,
+    dependsOnFeatureIds: normalizeTaskDependencyIds(params.dependsOnFeatureIds),
     action: params.action,
     requestedCapabilities: params.requestedCapabilities?.length
       ? [...params.requestedCapabilities]
@@ -923,6 +926,7 @@ export function normalizeTaskEnvelope(value: unknown): TaskEnvelope | null {
     featureId: normalizeText(typeof source.featureId === "string" ? source.featureId : "") || undefined,
     featureTitle: normalizeText(typeof source.featureTitle === "string" ? source.featureTitle : "") || undefined,
     featureDescription: normalizeText(typeof source.featureDescription === "string" ? source.featureDescription : "") || undefined,
+    dependsOnFeatureIds: normalizeTaskDependencyIds(source.dependsOnFeatureIds),
     action: action as ExecutionActionPreview,
     requestedCapabilities,
     resumability: normalizeResumability(source.resumability) ?? "restart-required",
@@ -984,6 +988,7 @@ export function summarizeTaskEnvelope(envelope: TaskEnvelope): string {
     `generated=${String(envelope.generatedTask)}`,
     `priority=${envelope.priority}`,
     envelope.dependsOnTaskIds.length ? `dependsOn=${envelope.dependsOnTaskIds.join(",")}` : "dependsOn=none",
+    envelope.dependsOnFeatureIds.length ? `featureDependsOn=${envelope.dependsOnFeatureIds.join(",")}` : "featureDependsOn=none",
     `resumability=${envelope.resumability}`,
     envelope.continuationGeneration > 0 ? `continuationGen=${envelope.continuationGeneration}` : "continuationGen=0",
     envelope.continuationSourceNodeId ? `continuationSource=${envelope.continuationSourceNodeId}` : "",
