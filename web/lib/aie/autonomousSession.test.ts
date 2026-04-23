@@ -103,6 +103,8 @@ test("autonomous sessions preserve optional node and task metadata", () => {
     executionNodeMode: "local-node",
     nodeCapabilitySummary: "inspection, validation-check, repo-scan",
     taskId: "task-123",
+    featureId: "feature-validation",
+    featureTitle: "Validation Flow",
     executionResult: {
       status: "success",
       output: "Validation passed with a healthy status.",
@@ -112,7 +114,9 @@ test("autonomous sessions preserve optional node and task metadata", () => {
 
   assert.equal(updated.executionNodeId, "aie-node-local-node-test");
   assert.equal(updated.steps[0]?.taskId, "task-123");
+  assert.equal(updated.steps[0]?.featureId, "feature-validation");
   assert.equal(normalized?.executionNodeMode, "local-node");
+  assert.equal(normalized?.steps[0]?.featureTitle, "Validation Flow");
   assert.equal(normalized?.steps[0]?.nodeCapabilitySummary, "inspection, validation-check, repo-scan");
 });
 
@@ -205,6 +209,8 @@ test("autonomous sessions persist workflow continuity across awaiting approval s
 test("autonomous sessions derive operator oversight summaries, attention, and task reviews", () => {
   const inspected = appendAutonomousStep(createAutonomousSession({ goal: "Productize operator-facing oversight for the bounded session." }), {
     taskId: "task-inspect",
+    featureId: "feature-oversight",
+    featureTitle: "Operator Oversight",
     proposedAction: "Inspect the autonomous operator surface.",
     planningHintSummary: "Review the highest-signal session state first.",
     executionResult: {
@@ -217,6 +223,8 @@ test("autonomous sessions derive operator oversight summaries, attention, and ta
   });
   const failedValidation = appendAutonomousStep(inspected, {
     taskId: "task-validate",
+    featureId: "feature-oversight",
+    featureTitle: "Operator Oversight",
     proposedAction: "Run the bounded validation check.",
     executionResult: {
       status: "failed",
@@ -249,6 +257,11 @@ test("autonomous sessions derive operator oversight summaries, attention, and ta
   assert.ok(awaiting.oversight.controls.some((control) => control.action === "resume-session" && !control.available));
   assert.ok(awaiting.oversight.taskReviews.some((review) => review.taskId === "task-inspect" && /Inspect the autonomous operator surface/i.test(review.title)));
   assert.ok(awaiting.oversight.taskReviews.some((review) => review.taskId === "task-validate"));
+  assert.equal(awaiting.oversight.currentFeatureId, "feature-oversight");
+  assert.equal(awaiting.oversight.currentFeatureTitle, "Operator Oversight");
+  assert.equal(awaiting.oversight.summary.blockedFeatures, 1);
+  assert.match(awaiting.oversight.summary.currentFeatureProgress ?? "", /0\/2 tasks completed/i);
+  assert.deepEqual(awaiting.oversight.featureBundles.map((bundle) => bundle.featureId), ["feature-oversight"]);
 });
 
 test("autonomous sessions derive implementation and fix loop memory from changed paths", () => {

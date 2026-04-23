@@ -36,6 +36,9 @@ export type AutonomousStepRecord = {
   selectedNodeId?: string;
   selectedNodeReason?: string;
   taskId?: string;
+  featureId?: string;
+  featureTitle?: string;
+  featureDescription?: string;
   taskStatus?: TaskEnvelopeStatus;
   assignedNodeId?: string;
   queueStateSummary?: string;
@@ -433,20 +436,40 @@ export type AutonomousWorkflowTaskChainStatus =
   | "blocked"
   | "completed";
 
+export type AutonomousFeatureBundleStatus = "planned" | "in-progress" | "completed" | "blocked";
+
 export type AutonomousGeneratedTaskQueueEntry = {
   taskId: string;
   priority: number;
   dependsOnTaskIds: string[];
+  featureId?: string;
+  featureTitle?: string;
+  featureDescription?: string;
   status: TaskEnvelopeStatus | "skipped";
+};
+
+export type AutonomousFeatureBundleSummary = {
+  featureId: string;
+  featureTitle: string;
+  featureDescription?: string;
+  relatedTasks: string[];
+  featureStatus: AutonomousFeatureBundleStatus;
+  completedTaskCount: number;
+  totalTaskCount: number;
+  blockedTaskIds: string[];
+  currentTaskId?: string;
+  nextRecommendedTaskId?: string;
 };
 
 export type AutonomousWorkflowTaskChainState = {
   generatedTaskQueue: AutonomousGeneratedTaskQueueEntry[];
   currentTaskId?: string;
+  currentFeatureId?: string;
   completedTaskIds: string[];
   blockedTaskIds: string[];
   skippedTaskIds: string[];
   nextRecommendedTaskId?: string;
+  nextRecommendedFeatureId?: string;
   chainStatus: AutonomousWorkflowTaskChainStatus;
 };
 
@@ -595,6 +618,11 @@ export type AutonomousSessionSummaryArtifact = {
   approvalsExecuted: number;
   currentPauseReason: string;
   recommendedNextStep: string;
+  currentFeatureId?: string;
+  currentFeatureTitle?: string;
+  currentFeatureProgress?: string;
+  completedFeatures: number;
+  blockedFeatures: number;
   keyFilesOrAssetsChanged: string[];
   validationSummary: string;
   safeToResume: boolean;
@@ -606,8 +634,13 @@ export type AutonomousSessionOversight = {
   controls: AutonomousOperatorControlGuide[];
   taskReviews: AutonomousTaskReviewRecord[];
   currentTaskId?: string;
+  currentFeatureId?: string;
+  currentFeatureTitle?: string;
+  featureBundles: AutonomousFeatureBundleSummary[];
   recentCompletedTaskIds: string[];
   blockedTaskIds: string[];
+  completedFeatureIds: string[];
+  blockedFeatureIds: string[];
   pendingApprovalActionIds: string[];
 };
 
@@ -634,6 +667,9 @@ type AppendAutonomousStepParams = {
   selectedNodeId?: string;
   selectedNodeReason?: string;
   taskId?: string;
+  featureId?: string;
+  featureTitle?: string;
+  featureDescription?: string;
   taskStatus?: TaskEnvelopeStatus;
   assignedNodeId?: string;
   queueStateSummary?: string;
@@ -720,6 +756,138 @@ function summarizeTaskReviewTransition(status: AutonomousTaskReviewStatus, taskS
   }
 
   return reason || "This task has not produced a terminal result yet.";
+}
+
+function buildAutonomousFeatureProgressLabel(bundle: AutonomousFeatureBundleSummary): string {
+  return `${bundle.completedTaskCount}/${bundle.totalTaskCount} tasks completed`;
+}
+
+function deriveAutonomousFeatureBundles(session: AutonomousSession): AutonomousFeatureBundleSummary[] {
+  const queue = session.workflowContinuity.taskChain.generatedTaskQueue;
+  const currentTaskId = normalizeText(session.workflowContinuity.taskChain.currentTaskId) || undefined;
+  const nextRecommendedTaskId = normalizeText(session.workflowContinuity.taskChain.nextRecommendedTaskId) || undefined;
+  const groups = new Map<string, AutonomousFeatureBundleSummary>();
+
+  for (const entry of queue) {
+    const featureId = normalizeText(entry.featureId) || `task-${entry.taskId}`;
+    const featureTitle = normalizeText(entry.featureTitle) || `Task ${entry.taskId}`;
+    const existing = groups.get(featureId);
+    if (!existing) {
+      groups.set(featureId, {
+        featureId,
+        featureTitle,
+        featureDescription: normalizeText(entry.featureDescription) || undefined,
+        relatedTasks: [entry.taskId],
+        featureStatus: "planned",
+        completedTaskCount: entry.status === "completed" || entry.status === "skipped" ? 1 : 0,
+        totalTaskCount: 1,
+        blockedTaskIds:
+          entry.status === "blocked" || entry.status === "failed" || entry.status === "rejected"
+            ? [entry.taskId]
+            : [],
+        currentTaskId: currentTaskId === entry.taskId ? entry.taskId : undefined,
+        nextRecommendedTaskId: nextRecommendedTaskId === entry.taskId ? entry.taskId : undefined,
+      });
+      continue;
+    }
+
+    existing.relatedTasks.push(entry.taskId);
+    existing.totalTaskCount += 1;
+    if (!existing.featureDescription) {
+      existing.featureDescription = normalizeText(entry.featureDescription) || undefined;
+    }
+    if (entry.status === "completed" || entry.status === "skipped") {
+      existing.completedTaskCount += 1;
+    }
+    if (entry.status === "blocked" || entry.status === "failed" || entry.status === "rejected") {
+      existing.blockedTaskIds.push(entry.taskId);
+    }
+    if (currentTaskId === entry.taskId) {
+      existing.currentTaskId = entry.taskId;
+    }
+    if (nextRecommendedTaskId === entry.taskId) {
+      existing.nextRecommendedTaskId = entry.taskId;
+    }
+  }
+
+  for (const step of session.steps) {
+    const taskId = normalizeText(step.taskId) || `step-${step.index}`;
+    const featureId = normalizeText(step.featureId);
+    const featureTitle = normalizeText(step.featureTitle);
+    if (!featureId || !featureTitle) {
+      continue;
+    }
+
+    const existing = groups.get(featureId);
+    const stepCountsAsCompleted = step.taskStatus === "completed";
+    const stepCountsAsBlocked = step.executionResult?.status === "failed" || step.nextDecision === "stop";
+
+    if (!existing) {
+      groups.set(featureId, {
+        featureId,
+        featureTitle,
+        featureDescription: normalizeText(step.featureDescription) || undefined,
+        relatedTasks: [taskId],
+        featureStatus: "planned",
+        completedTaskCount: stepCountsAsCompleted ? 1 : 0,
+        totalTaskCount: 1,
+        blockedTaskIds: stepCountsAsBlocked ? [taskId] : [],
+        currentTaskId: currentTaskId === taskId ? taskId : undefined,
+        nextRecommendedTaskId: nextRecommendedTaskId === taskId ? taskId : undefined,
+      });
+      continue;
+    }
+
+    const taskAlreadyTracked = existing.relatedTasks.includes(taskId);
+
+    if (!taskAlreadyTracked) {
+      existing.relatedTasks.push(taskId);
+      existing.totalTaskCount += 1;
+    }
+    if (!existing.featureDescription) {
+      existing.featureDescription = normalizeText(step.featureDescription) || undefined;
+    }
+    if (stepCountsAsCompleted && !taskAlreadyTracked) {
+      existing.completedTaskCount += 1;
+    }
+    if (stepCountsAsBlocked && !existing.blockedTaskIds.includes(taskId)) {
+      existing.blockedTaskIds.push(taskId);
+    }
+    if (currentTaskId === taskId) {
+      existing.currentTaskId = taskId;
+    }
+    if (nextRecommendedTaskId === taskId) {
+      existing.nextRecommendedTaskId = taskId;
+    }
+  }
+
+  return [...groups.values()]
+    .map((bundle) => {
+      const hasBlockedTasks = bundle.blockedTaskIds.length > 0;
+      const isCurrent = Boolean(bundle.currentTaskId);
+      const hasNextRecommendation = Boolean(bundle.nextRecommendedTaskId);
+      const isCompleted = bundle.totalTaskCount > 0 && bundle.completedTaskCount >= bundle.totalTaskCount;
+      const awaitingApprovalOnCurrentFeature = session.status === "awaiting-approval"
+        && normalizeText(session.pendingAction?.id)
+        && normalizeText(session.oversight.currentFeatureId) !== bundle.featureId
+        ? false
+        : session.status === "awaiting-approval"
+          && bundle.featureId === (normalizeText(session.workflowContinuity.taskChain.currentFeatureId) || normalizeText(session.steps.at(-1)?.featureId));
+
+      return {
+        ...bundle,
+        relatedTasks: [...bundle.relatedTasks],
+        blockedTaskIds: [...bundle.blockedTaskIds],
+        featureStatus: isCompleted
+          ? "completed"
+          : (hasBlockedTasks && !isCurrent && !hasNextRecommendation) || awaitingApprovalOnCurrentFeature
+            ? "blocked"
+            : isCurrent || hasNextRecommendation || bundle.completedTaskCount > 0
+              ? "in-progress"
+              : "planned",
+      };
+    })
+    .sort((left, right) => left.featureTitle.localeCompare(right.featureTitle) || left.featureId.localeCompare(right.featureId));
 }
 
 function deriveAutonomousTaskReviewRecords(session: AutonomousSession): AutonomousTaskReviewRecord[] {
@@ -913,6 +1081,7 @@ function deriveAutonomousOperatorControls(session: AutonomousSession): Autonomou
 
 function deriveAutonomousSessionOversight(session: AutonomousSession): AutonomousSessionOversight {
   const taskReviews = deriveAutonomousTaskReviewRecords(session);
+  const featureBundles = deriveAutonomousFeatureBundles(session);
   const changedPaths = uniqueStrings([
     ...session.workflowContinuity.coding.outputArtifacts.map((artifact) => artifact.filePath),
     ...session.workflowContinuity.coding.pendingRepoActions.flatMap((action) => action.artifactFilePaths),
@@ -926,6 +1095,17 @@ function deriveAutonomousSessionOversight(session: AutonomousSession): Autonomou
   ]);
   const attention = deriveAutonomousOperatorAttention(session, taskReviews);
   const currentTaskId = normalizeText(session.sessionLoop.currentActiveTaskId || session.workflowContinuity.taskChain.currentTaskId) || undefined;
+  const currentFeatureId = normalizeText(session.workflowContinuity.taskChain.currentFeatureId)
+    || normalizeText(session.steps.at(-1)?.featureId)
+    || undefined;
+  const currentFeature = featureBundles.find((bundle) => bundle.featureId === currentFeatureId)
+    ?? featureBundles.find((bundle) => bundle.currentTaskId === currentTaskId);
+  const completedFeatureIds = featureBundles
+    .filter((bundle) => bundle.featureStatus === "completed")
+    .map((bundle) => bundle.featureId);
+  const blockedFeatureIds = featureBundles
+    .filter((bundle) => bundle.featureStatus === "blocked")
+    .map((bundle) => bundle.featureId);
 
   return {
     summary: {
@@ -947,6 +1127,11 @@ function deriveAutonomousSessionOversight(session: AutonomousSession): Autonomou
         || session.workflowContinuity.progress.nextIntendedStep
         || session.sessionLoop.nextRecommendedTaskId
         || "No recommended next step is currently recorded.",
+      currentFeatureId: currentFeature?.featureId,
+      currentFeatureTitle: currentFeature?.featureTitle,
+      currentFeatureProgress: currentFeature ? buildAutonomousFeatureProgressLabel(currentFeature) : undefined,
+      completedFeatures: completedFeatureIds.length,
+      blockedFeatures: blockedFeatureIds.length,
       keyFilesOrAssetsChanged: changedPaths,
       validationSummary:
         session.workflowContinuity.coding.lastValidationResultSummary
@@ -959,8 +1144,13 @@ function deriveAutonomousSessionOversight(session: AutonomousSession): Autonomou
     controls: deriveAutonomousOperatorControls(session),
     taskReviews,
     currentTaskId,
+    currentFeatureId: currentFeature?.featureId,
+    currentFeatureTitle: currentFeature?.featureTitle,
+    featureBundles,
     recentCompletedTaskIds: session.sessionLoop.completedTaskIds.slice(-5).reverse(),
     blockedTaskIds: uniqueStrings([...session.sessionLoop.blockedTaskIds, ...session.workflowContinuity.taskChain.blockedTaskIds]),
+    completedFeatureIds,
+    blockedFeatureIds,
     pendingApprovalActionIds: session.workflowContinuity.coding.pendingRepoActions.map((action) => action.actionId),
   };
 }
@@ -1131,10 +1321,12 @@ function createDefaultAutonomousWorkflowTaskChainState(): AutonomousWorkflowTask
   return {
     generatedTaskQueue: [],
     currentTaskId: undefined,
+    currentFeatureId: undefined,
     completedTaskIds: [],
     blockedTaskIds: [],
     skippedTaskIds: [],
     nextRecommendedTaskId: undefined,
+    nextRecommendedFeatureId: undefined,
     chainStatus: "idle",
   };
 }
@@ -1277,6 +1469,9 @@ function normalizeAutonomousGeneratedTaskQueueEntry(value: unknown): AutonomousG
     taskId,
     priority: Number.isFinite(Number(source.priority)) ? Math.max(0, Math.floor(Number(source.priority))) : 0,
     dependsOnTaskIds: normalizeUniqueTaskIdList(source.dependsOnTaskIds),
+    featureId: normalizeText(typeof source.featureId === "string" ? source.featureId : "") || undefined,
+    featureTitle: normalizeText(typeof source.featureTitle === "string" ? source.featureTitle : "") || undefined,
+    featureDescription: normalizeText(typeof source.featureDescription === "string" ? source.featureDescription : "") || undefined,
     status,
   };
 }
@@ -1291,6 +1486,8 @@ function deriveAutonomousWorkflowTaskChainState(session: AutonomousSession): Aut
   const completedTaskIds = normalizeUniqueTaskIdList(previous.completedTaskIds);
   const blockedTaskIds = normalizeUniqueTaskIdList(previous.blockedTaskIds);
   const skippedTaskIds = normalizeUniqueTaskIdList(previous.skippedTaskIds);
+  const currentFeatureId = generatedTaskQueue.find((entry) => entry.taskId === currentTaskId)?.featureId
+    ?? (normalizeText(previous.currentFeatureId) || undefined);
   const chainStatus = session.status === "awaiting-approval"
     ? "awaiting-approval"
     : session.status === "blocked" || session.status === "failed"
@@ -1313,14 +1510,18 @@ function deriveAutonomousWorkflowTaskChainState(session: AutonomousSession): Aut
               && generatedTaskQueue.every((entry) => completedTaskIds.includes(entry.taskId) || blockedTaskIds.includes(entry.taskId) || skippedTaskIds.includes(entry.taskId))
               ? "completed"
               : "idle";
+  const nextRecommendedFeatureId = generatedTaskQueue.find((entry) => entry.taskId === nextRecommendedTaskId)?.featureId
+    ?? (normalizeText(previous.nextRecommendedFeatureId) || undefined);
 
   return {
     generatedTaskQueue,
     currentTaskId,
+    currentFeatureId,
     completedTaskIds,
     blockedTaskIds,
     skippedTaskIds,
     nextRecommendedTaskId,
+      nextRecommendedFeatureId,
     chainStatus,
   };
 }
@@ -3996,11 +4197,14 @@ function normalizeAutonomousWorkflowContinuityState(value: unknown): AutonomousW
             .filter((entry): entry is AutonomousGeneratedTaskQueueEntry => entry !== null)
         : [],
       currentTaskId: normalizeText(typeof taskChainSource?.currentTaskId === "string" ? taskChainSource.currentTaskId : "") || undefined,
+      currentFeatureId: normalizeText(typeof taskChainSource?.currentFeatureId === "string" ? taskChainSource.currentFeatureId : "") || undefined,
       completedTaskIds: normalizeUniqueTaskIdList(taskChainSource?.completedTaskIds),
       blockedTaskIds: normalizeUniqueTaskIdList(taskChainSource?.blockedTaskIds),
       skippedTaskIds: normalizeUniqueTaskIdList(taskChainSource?.skippedTaskIds),
       nextRecommendedTaskId:
         normalizeText(typeof taskChainSource?.nextRecommendedTaskId === "string" ? taskChainSource.nextRecommendedTaskId : "") || undefined,
+      nextRecommendedFeatureId:
+        normalizeText(typeof taskChainSource?.nextRecommendedFeatureId === "string" ? taskChainSource.nextRecommendedFeatureId : "") || undefined,
       chainStatus: normalizeAutonomousWorkflowTaskChainStatus(taskChainSource?.chainStatus) ?? "idle",
     },
     loopHealth: {
@@ -4120,6 +4324,9 @@ function normalizeAutonomousStepRecord(value: unknown): AutonomousStepRecord | n
     selectedNodeId: normalizeText(typeof source.selectedNodeId === "string" ? source.selectedNodeId : "") || undefined,
     selectedNodeReason: normalizeText(typeof source.selectedNodeReason === "string" ? source.selectedNodeReason : "") || undefined,
     taskId: normalizeText(typeof source.taskId === "string" ? source.taskId : "") || undefined,
+    featureId: normalizeText(typeof source.featureId === "string" ? source.featureId : "") || undefined,
+    featureTitle: normalizeText(typeof source.featureTitle === "string" ? source.featureTitle : "") || undefined,
+    featureDescription: normalizeText(typeof source.featureDescription === "string" ? source.featureDescription : "") || undefined,
     taskStatus: normalizeTaskStatus(source.taskStatus),
     assignedNodeId: normalizeText(typeof source.assignedNodeId === "string" ? source.assignedNodeId : "") || undefined,
     queueStateSummary: normalizeText(typeof source.queueStateSummary === "string" ? source.queueStateSummary : "") || undefined,
@@ -4875,6 +5082,11 @@ export function createAutonomousSession(params: CreateAutonomousSessionParams): 
         approvalsExecuted: 0,
         currentPauseReason: "No pause reason is currently recorded.",
         recommendedNextStep: "No recommended next step is currently recorded.",
+        currentFeatureId: undefined,
+        currentFeatureTitle: undefined,
+        currentFeatureProgress: undefined,
+        completedFeatures: 0,
+        blockedFeatures: 0,
         keyFilesOrAssetsChanged: [],
         validationSummary: "No validation summary is currently recorded.",
         safeToResume: false,
@@ -4882,8 +5094,13 @@ export function createAutonomousSession(params: CreateAutonomousSessionParams): 
       operatorAttention: [],
       controls: [],
       taskReviews: [],
+      currentFeatureId: undefined,
+      currentFeatureTitle: undefined,
+      featureBundles: [],
       recentCompletedTaskIds: [],
       blockedTaskIds: [],
+      completedFeatureIds: [],
+      blockedFeatureIds: [],
       pendingApprovalActionIds: [],
     },
     steps: [],
@@ -4914,6 +5131,9 @@ export function appendAutonomousStep(
     selectedNodeId: normalizeText(params.selectedNodeId) || undefined,
     selectedNodeReason: normalizeText(params.selectedNodeReason) || undefined,
     taskId: normalizeText(params.taskId) || undefined,
+    featureId: normalizeText(params.featureId) || undefined,
+    featureTitle: normalizeText(params.featureTitle) || undefined,
+    featureDescription: normalizeText(params.featureDescription) || undefined,
     taskStatus: params.taskStatus,
     assignedNodeId: normalizeText(params.assignedNodeId) || undefined,
     queueStateSummary: normalizeText(params.queueStateSummary) || undefined,
@@ -5212,6 +5432,11 @@ export function normalizeAutonomousSession(value: unknown): AutonomousSession | 
         approvalsExecuted: 0,
         currentPauseReason: "No pause reason is currently recorded.",
         recommendedNextStep: "No recommended next step is currently recorded.",
+        currentFeatureId: undefined,
+        currentFeatureTitle: undefined,
+        currentFeatureProgress: undefined,
+        completedFeatures: 0,
+        blockedFeatures: 0,
         keyFilesOrAssetsChanged: [],
         validationSummary: "No validation summary is currently recorded.",
         safeToResume: false,
@@ -5219,8 +5444,13 @@ export function normalizeAutonomousSession(value: unknown): AutonomousSession | 
       operatorAttention: [],
       controls: [],
       taskReviews: [],
+      currentFeatureId: undefined,
+      currentFeatureTitle: undefined,
+      featureBundles: [],
       recentCompletedTaskIds: [],
       blockedTaskIds: [],
+      completedFeatureIds: [],
+      blockedFeatureIds: [],
       pendingApprovalActionIds: [],
     },
     steps,
@@ -5258,6 +5488,18 @@ export function buildAutonomousSessionContextBlock(session: AutonomousSession, l
 
   if (session.sessionLoop.nextRecommendedTaskId) {
     lines.push(`- Next recommended session task: ${session.sessionLoop.nextRecommendedTaskId}`);
+  }
+
+  if (session.workflowContinuity.taskChain.currentFeatureId) {
+    lines.push(`- Current feature bundle: ${session.workflowContinuity.taskChain.currentFeatureId}`);
+  }
+
+  if (session.oversight.summary.currentFeatureProgress) {
+    lines.push(`- Current feature progress: ${session.oversight.summary.currentFeatureProgress}`);
+  }
+
+  if (session.oversight.summary.completedFeatures > 0 || session.oversight.summary.blockedFeatures > 0) {
+    lines.push(`- Feature bundle totals: completed=${session.oversight.summary.completedFeatures}, blocked=${session.oversight.summary.blockedFeatures}`);
   }
 
   if (session.sessionLoop.pauseReason) {

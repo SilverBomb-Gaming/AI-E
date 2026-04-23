@@ -40,6 +40,9 @@ test("task envelopes create serializable queued tasks", () => {
     stepIndex: 2,
     priority: 7,
     dependsOnTaskIds: ["task-alpha", "task-alpha", "task-beta"],
+    featureId: "feature-oversight",
+    featureTitle: "Operator Oversight",
+    featureDescription: "Related bounded tasks for the operator oversight feature.",
     action: makeAction(),
   });
 
@@ -49,6 +52,9 @@ test("task envelopes create serializable queued tasks", () => {
   assert.equal(envelope.generatedTask, true);
   assert.equal(envelope.priority, 7);
   assert.deepEqual(envelope.dependsOnTaskIds, ["task-alpha", "task-beta"]);
+  assert.equal(envelope.featureId, "feature-oversight");
+  assert.equal(envelope.featureTitle, "Operator Oversight");
+  assert.match(envelope.featureDescription ?? "", /operator oversight/i);
   assert.equal(envelope.resumability, "restart-required");
   assert.equal(envelope.continuationGeneration, 0);
   assert.equal(envelope.resumeAttemptCount, 0);

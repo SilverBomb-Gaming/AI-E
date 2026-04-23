@@ -1552,6 +1552,79 @@ test("runAutonomousSession pauses at the bounded task limit and resumes into the
   }
 });
 
+test("runAutonomousSession continues within the current feature bundle before switching bundles", async () => {
+  const taskDirectory = path.resolve(process.cwd(), "temp-phase7d-feature-bundle-store");
+  await rm(taskDirectory, { recursive: true, force: true });
+  await mkdir(taskDirectory, { recursive: true });
+  process.env.AIE_TASK_QUEUE_DIR = taskDirectory;
+
+  try {
+    const seedSession = createAutonomousSession({
+      goal: "Finish the active feature bundle before switching to unrelated queued work.",
+      sessionId: "phase7d-feature-bundle-session",
+      maxSteps: 4,
+      sessionMode: "repo-coding",
+    });
+    const firstTask = await enqueueTask(createTaskEnvelope({
+      taskId: "phase7d-feature-a-1",
+      sessionId: seedSession.sessionId,
+      stepIndex: 1,
+      priority: 5,
+      featureId: "feature-a",
+      featureTitle: "Feature A",
+      action: makeSafeAction("Execute feature A task 1."),
+    }));
+    await enqueueTask(createTaskEnvelope({
+      taskId: "phase7d-feature-a-2",
+      sessionId: seedSession.sessionId,
+      stepIndex: 2,
+      priority: 1,
+      dependsOnTaskIds: [firstTask.taskId],
+      featureId: "feature-a",
+      featureTitle: "Feature A",
+      action: makeSafeAction("Execute feature A task 2."),
+    }));
+    await enqueueTask(createTaskEnvelope({
+      taskId: "phase7d-feature-b-1",
+      sessionId: seedSession.sessionId,
+      stepIndex: 3,
+      priority: 10,
+      featureId: "feature-b",
+      featureTitle: "Feature B",
+      action: makeSafeAction("Execute feature B task 1."),
+    }));
+
+    const session = await runAutonomousSession({
+      goal: seedSession.goal,
+      maxSteps: 4,
+      existingSession: seedSession,
+      queuedTask: firstTask,
+      dependencies: {
+        runAnalysis: async () => ({
+          what_happened: "Unexpected analysis call.",
+          what_matters: ["The queued-task chain should continue from the current feature bundle."],
+          what_to_do_next: ["Stop."],
+          upgrade_hint: "",
+          proposedAction: "Stop.",
+          expectedOutcome: "Stop.",
+          execution: makeSafeAction("Unexpected analysis path."),
+        }),
+        executeAction: async (action) => ({
+          status: "success",
+          output: `${action.description} completed successfully.`,
+        }),
+        saveAutonomousSession: async () => {},
+      },
+    });
+
+    assert.deepEqual(session.steps.map((step) => step.taskId), ["phase7d-feature-a-1", "phase7d-feature-a-2", "phase7d-feature-b-1"]);
+    assert.equal(session.oversight.summary.completedFeatures, 2);
+  } finally {
+    delete process.env.AIE_TASK_QUEUE_DIR;
+    await rm(taskDirectory, { recursive: true, force: true });
+  }
+});
+
 test("runAutonomousSession can skip the current queued task and continue to the next runnable task", async () => {
   const taskDirectory = path.resolve(process.cwd(), "temp-phase7c-skip-task-store");
   await rm(taskDirectory, { recursive: true, force: true });

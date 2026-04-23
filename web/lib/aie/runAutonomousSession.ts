@@ -271,6 +271,115 @@ function sortTaskChainBacklog(left: TaskEnvelope, right: TaskEnvelope): number {
     || left.taskId.localeCompare(right.taskId);
 }
 
+function slugifyFeatureValue(value: string): string {
+  const normalized = normalizeText(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+  return normalized || "session-feature";
+}
+
+function deriveTaskFeatureMetadata(task: TaskEnvelope, session: AutonomousSession): {
+  featureId: string;
+  featureTitle: string;
+  featureDescription?: string;
+} {
+  const explicitFeatureId = normalizeText(task.featureId);
+  const explicitFeatureTitle = normalizeText(task.featureTitle);
+  const explicitFeatureDescription = normalizeText(task.featureDescription);
+  if (explicitFeatureId && explicitFeatureTitle) {
+    return {
+      featureId: explicitFeatureId,
+      featureTitle: explicitFeatureTitle,
+      featureDescription: explicitFeatureDescription || undefined,
+    };
+  }
+
+  const targetPath = normalizeText(task.action.metadata?.targetPath);
+  const testTarget = normalizeText(task.action.metadata?.testTarget);
+  const currentFeatureId = normalizeText(session.workflowContinuity.taskChain.currentFeatureId);
+  const currentFeatureTitle = normalizeText(
+    session.workflowContinuity.taskChain.generatedTaskQueue.find((entry) => entry.featureId === currentFeatureId)?.featureTitle,
+  );
+
+  if (currentFeatureId && currentFeatureTitle && !targetPath && !testTarget) {
+    return {
+      featureId: currentFeatureId,
+      featureTitle: currentFeatureTitle,
+      featureDescription: explicitFeatureDescription || undefined,
+    };
+  }
+
+  const featureAnchor = targetPath || testTarget || session.goal;
+  const featureId = explicitFeatureId || `feature-${slugifyFeatureValue(featureAnchor)}`;
+  const featureTitle = explicitFeatureTitle
+    || (targetPath || testTarget
+      ? `Feature work for ${targetPath || testTarget}`
+      : session.goal.length > 96
+        ? `${session.goal.slice(0, 93)}...`
+        : session.goal);
+
+  return {
+    featureId,
+    featureTitle,
+    featureDescription: explicitFeatureDescription || `Feature bundle aligned to ${targetPath || testTarget || session.goal}.`,
+  };
+}
+
+function choosePreferredFeatureId(params: {
+  session: AutonomousSession;
+  queuedTasks: TaskEnvelope[];
+  runnableTasks: TaskEnvelope[];
+}): string | undefined {
+  const runnableTaskIds = new Set(params.runnableTasks.map((task) => task.taskId));
+  const currentFeatureId = normalizeText(params.session.workflowContinuity.taskChain.currentFeatureId);
+  if (currentFeatureId) {
+    const currentFeatureRunnable = params.runnableTasks.some((task) => deriveTaskFeatureMetadata(task, params.session).featureId === currentFeatureId);
+    if (currentFeatureRunnable) {
+      return currentFeatureId;
+    }
+  }
+
+  const nextRecommendedFeatureId = normalizeText(params.session.workflowContinuity.taskChain.nextRecommendedFeatureId);
+  if (nextRecommendedFeatureId) {
+    const recommendedFeatureRunnable = params.runnableTasks.some((task) => deriveTaskFeatureMetadata(task, params.session).featureId === nextRecommendedFeatureId);
+    if (recommendedFeatureRunnable) {
+      return nextRecommendedFeatureId;
+    }
+  }
+
+  for (const task of params.queuedTasks) {
+    if (runnableTaskIds.has(task.taskId)) {
+      return deriveTaskFeatureMetadata(task, params.session).featureId;
+    }
+  }
+
+  return undefined;
+}
+
+function chooseNextRecommendedTaskId(params: {
+  session: AutonomousSession;
+  queuedTasks: TaskEnvelope[];
+  runnableTasks: TaskEnvelope[];
+  currentTaskId?: string;
+}): string | undefined {
+  const skippedTaskIds = new Set(params.session.workflowContinuity.taskChain.skippedTaskIds);
+  const preferredFeatureId = choosePreferredFeatureId(params);
+  const orderedRunnableTasks = [...params.runnableTasks]
+    .sort(sortTaskChainBacklog)
+    .filter((task) => task.taskId !== params.currentTaskId && !skippedTaskIds.has(task.taskId));
+
+  if (preferredFeatureId) {
+    const preferredTask = orderedRunnableTasks.find((task) => deriveTaskFeatureMetadata(task, params.session).featureId === preferredFeatureId);
+    if (preferredTask) {
+      return preferredTask.taskId;
+    }
+  }
+
+  return orderedRunnableTasks[0]?.taskId;
+}
+
 function buildTaskChainSnapshot(params: {
   session: AutonomousSession;
   queuedTasks: TaskEnvelope[];
@@ -281,6 +390,7 @@ function buildTaskChainSnapshot(params: {
   skippedTaskIds?: string[];
 }): AutonomousWorkflowTaskChainState {
   const orderedTasks = [...params.queuedTasks].sort(sortTaskChainBacklog);
+  const taskFeatureMetadata = new Map(orderedTasks.map((task) => [task.taskId, deriveTaskFeatureMetadata(task, params.session)]));
   const previous = params.session.workflowContinuity.taskChain;
   const skippedTaskIds = mergeUniqueTaskIds(previous.skippedTaskIds, params.skippedTaskIds);
   const completedTaskIds = orderedTasks
@@ -290,7 +400,16 @@ function buildTaskChainSnapshot(params: {
     .filter((task) => task.status === "blocked" || task.status === "failed" || task.status === "rejected")
     .map((task) => task.taskId);
   const currentTaskId = normalizeText(params.currentTaskId) || undefined;
-  const nextRecommendedTaskId = normalizeText(params.nextRecommendedTaskId) || undefined;
+  const nextRecommendedTaskId = normalizeText(params.nextRecommendedTaskId)
+    || chooseNextRecommendedTaskId({
+      session: params.session,
+      queuedTasks: orderedTasks,
+      runnableTasks: params.runnableTasks,
+      currentTaskId,
+    })
+    || undefined;
+  const currentFeatureId = currentTaskId ? taskFeatureMetadata.get(currentTaskId)?.featureId : undefined;
+  const nextRecommendedFeatureId = nextRecommendedTaskId ? taskFeatureMetadata.get(nextRecommendedTaskId)?.featureId : undefined;
   const chainStatus = params.chainStatus
     ?? (params.session.status === "awaiting-approval"
       ? "awaiting-approval"
@@ -311,13 +430,18 @@ function buildTaskChainSnapshot(params: {
       taskId: task.taskId,
       priority: task.priority,
       dependsOnTaskIds: [...task.dependsOnTaskIds],
+      featureId: taskFeatureMetadata.get(task.taskId)?.featureId,
+      featureTitle: taskFeatureMetadata.get(task.taskId)?.featureTitle,
+      featureDescription: taskFeatureMetadata.get(task.taskId)?.featureDescription,
       status: skippedTaskIds.includes(task.taskId) ? "skipped" : task.status,
     })),
     currentTaskId,
+    currentFeatureId,
     completedTaskIds,
     blockedTaskIds,
     skippedTaskIds,
     nextRecommendedTaskId,
+    nextRecommendedFeatureId,
     chainStatus,
   };
 }
@@ -347,7 +471,13 @@ async function syncTaskChainState(
     .filter((task) => task.sessionId === session.sessionId)
     .sort(sortTaskChainBacklog);
 
-  const nextRecommendedTaskId = overrides?.nextRecommendedTaskId ?? runnableTasks[0]?.taskId;
+  const nextRecommendedTaskId = overrides?.nextRecommendedTaskId
+    ?? chooseNextRecommendedTaskId({
+      session,
+      queuedTasks: allTasks,
+      runnableTasks,
+      currentTaskId: overrides?.currentTaskId,
+    });
   const nextSession = applyTaskChainState(
     session,
     buildTaskChainSnapshot({
@@ -387,11 +517,22 @@ async function selectNextQueuedTask(
   dependencies: RunAutonomousSessionDependencies,
 ): Promise<TaskEnvelope | null> {
   const skippedTaskIds = new Set(session.workflowContinuity.taskChain.skippedTaskIds);
+  const queuedTasks = (await dependencies.listTasks())
+    .filter((task) => task.sessionId === session.sessionId)
+    .sort(sortTaskChainBacklog);
   const runnableTasks = (await dependencies.getRunnableTasks())
     .filter((task) => task.sessionId === session.sessionId)
     .sort(sortTaskChainBacklog);
+  const nextTaskId = chooseNextRecommendedTaskId({
+    session,
+    queuedTasks,
+    runnableTasks,
+    currentTaskId: session.taskId,
+  });
 
-  return runnableTasks.find((task) => task.taskId !== session.taskId && !skippedTaskIds.has(task.taskId)) ?? null;
+  return runnableTasks.find((task) => task.taskId === nextTaskId && !skippedTaskIds.has(task.taskId))
+    ?? runnableTasks.find((task) => task.taskId !== session.taskId && !skippedTaskIds.has(task.taskId))
+    ?? null;
 }
 
 async function classifySessionQueueState(
@@ -874,6 +1015,17 @@ async function runSingleAutonomousStep(params: {
         cwd: executionContext.cwd,
       }) ?? registeredRuntimeNode
     : null;
+  const featureMetadata = action
+    ? deriveTaskFeatureMetadata(
+        params.continuationState?.taskEnvelope
+          ?? createTaskEnvelope({
+            sessionId: params.session.sessionId,
+            stepIndex: params.session.currentStepIndex,
+            action,
+          }),
+        params.session,
+      )
+    : undefined;
   const createdTaskEnvelope = action
     ? params.continuationState?.taskEnvelope ?? null
     : null;
@@ -884,6 +1036,9 @@ async function runSingleAutonomousStep(params: {
         createTaskEnvelope({
           sessionId: params.session.sessionId,
           stepIndex: params.session.currentStepIndex,
+          featureId: featureMetadata?.featureId,
+          featureTitle: featureMetadata?.featureTitle,
+          featureDescription: featureMetadata?.featureDescription,
           action,
           requestedCapabilities: getExecutionNodeCapabilitiesForAction(action),
           preferredNodeId: registeredRuntimeNode.id,
@@ -1086,6 +1241,9 @@ async function runSingleAutonomousStep(params: {
     selectedNodeId: finalizedTaskEnvelope?.selectedNodeId ?? finalizedTaskEnvelope?.assignedNodeId ?? selectedNode?.id ?? registeredRuntimeNode.id,
     selectedNodeReason: finalizedTaskEnvelope?.selectedNodeReason,
     taskId: finalizedTaskEnvelope?.taskId,
+    featureId: finalizedTaskEnvelope?.featureId,
+    featureTitle: finalizedTaskEnvelope?.featureTitle,
+    featureDescription: finalizedTaskEnvelope?.featureDescription,
     taskStatus: finalizedTaskEnvelope?.status,
     assignedNodeId: finalizedTaskEnvelope?.assignedNodeId,
     queueStateSummary: finalizedTaskEnvelope ? summarizeTaskEnvelope(finalizedTaskEnvelope) : undefined,

@@ -91,6 +91,9 @@ export type TaskEnvelope = {
   generatedTask: boolean;
   priority: number;
   dependsOnTaskIds: string[];
+  featureId?: string;
+  featureTitle?: string;
+  featureDescription?: string;
   action: ExecutionActionPreview;
   requestedCapabilities: ExecutionNodeCapability[];
   resumability: TaskResumability;
@@ -189,6 +192,9 @@ type CreateTaskEnvelopeParams = {
   generatedTask?: boolean;
   priority?: number;
   dependsOnTaskIds?: string[];
+  featureId?: string;
+  featureTitle?: string;
+  featureDescription?: string;
   action: ExecutionActionPreview;
   requestedCapabilities?: ExecutionNodeCapability[];
   preferredNodeId?: string;
@@ -698,6 +704,9 @@ export function createTaskEnvelope(params: CreateTaskEnvelopeParams): TaskEnvelo
     generatedTask: params.generatedTask !== false,
     priority: normalizeTaskPriority(params.priority),
     dependsOnTaskIds: normalizeTaskDependencyIds(params.dependsOnTaskIds),
+    featureId: normalizeText(params.featureId) || undefined,
+    featureTitle: normalizeText(params.featureTitle) || undefined,
+    featureDescription: normalizeText(params.featureDescription) || undefined,
     action: params.action,
     requestedCapabilities: params.requestedCapabilities?.length
       ? [...params.requestedCapabilities]
@@ -911,6 +920,9 @@ export function normalizeTaskEnvelope(value: unknown): TaskEnvelope | null {
     generatedTask: typeof source.generatedTask === "boolean" ? source.generatedTask : true,
     priority: normalizeTaskPriority(source.priority),
     dependsOnTaskIds: normalizeTaskDependencyIds(source.dependsOnTaskIds),
+    featureId: normalizeText(typeof source.featureId === "string" ? source.featureId : "") || undefined,
+    featureTitle: normalizeText(typeof source.featureTitle === "string" ? source.featureTitle : "") || undefined,
+    featureDescription: normalizeText(typeof source.featureDescription === "string" ? source.featureDescription : "") || undefined,
     action: action as ExecutionActionPreview,
     requestedCapabilities,
     resumability: normalizeResumability(source.resumability) ?? "restart-required",
