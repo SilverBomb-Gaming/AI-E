@@ -2,6 +2,31 @@
 
 Controlled execution surface for supported projects. AI-E turns a bounded request into a real, reviewable result with guardrails, live status, proof summaries, and saved history.
 
+## Autonomous Session Loop
+
+The web surface now includes a bounded autonomous session loop for safe multi-step runs. This keeps the existing AnalysisInput contract intact, reuses the same dry-run action proposal and bounded execution bridge, and only auto-executes safe supported actions.
+
+Operator workflow reference:
+
+- `docs/AI_E_OPERATOR_PLAYBOOK.md` defines the repeatable human workflow for starting sessions, letting AI-E run, interpreting oversight output, approving repo actions, and intervening correctly.
+
+What the bounded autonomous loop does:
+
+- accepts one top-level goal and turns it into a persisted autonomous session
+- runs `analyze -> choose bounded action -> execute -> observe -> decide next step` until a stop condition fires
+- persists session state under `runner_artifacts/autonomous_sessions` so runs can be inspected or resumed by session id
+- carries the latest execution output back into the next analysis call through the existing supported fields: `goal`, `sessionId`, `stepIndex`, `context`, and `actionResult`
+- adds optional autonomous metadata to trace records without changing the required trace contract
+
+Boundaries and stop conditions:
+
+- only safe bounded execution actions continue automatically today; risky or destructive steps pause and require manual approval
+- the loop is capped to a hard max of 5 steps per run
+- the loop stops on goal completion, blocked execution, repeated failures, repeated identical actions or outputs, or missing actionable next steps
+- arbitrary shell execution remains out of scope for this loop
+
+The intended operating model is: define a bounded goal, start a session, watch the session summary and operator-attention output, approve gated repo actions when appropriate, and intervene only when the system gives you a concrete reason to do so.
+
 ## Constraint Router
 
 Build the system that uses everything else, safely.
