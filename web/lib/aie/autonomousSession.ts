@@ -168,6 +168,11 @@ export type AutonomousSessionFrictionSignal = {
   summary: string;
 };
 
+export type AutonomousSessionPauseReasonCount = {
+  reason: AutonomousSessionPauseReason;
+  count: number;
+};
+
 export type AutonomousSessionTelemetry = {
   sessionId: string;
   sessionStartTime: string;
@@ -180,6 +185,7 @@ export type AutonomousSessionTelemetry = {
   approvalsApproved: number;
   approvalsRejected: number;
   pauseReasons: string[];
+  pauseReasonCounts: AutonomousSessionPauseReasonCount[];
   finalSessionState?: AutonomousSessionTelemetryFinalState;
   operatorInteractions: AutonomousSessionOperatorInteractionRecord[];
   frictionSignals: AutonomousSessionFrictionSignal[];
@@ -493,6 +499,17 @@ export type AutonomousWorkflowTaskChainStatus =
 
 export type AutonomousFeatureBundleStatus = "planned" | "in-progress" | "completed" | "blocked";
 
+export type AutonomousFeatureTelemetryRiskLevel = "unobserved" | "low-friction" | "operator-attention" | "high-risk";
+
+export type AutonomousSessionProductInsights = {
+  mostCommonInterventionTypes: string[];
+  recurringPauseReasons: string[];
+  failureProneFeatures: string[];
+  approvalRejectionPatterns: string[];
+  reliableFeatures: string[];
+  summaryLines: string[];
+};
+
 export type AutonomousGeneratedTaskQueueEntry = {
   taskId: string;
   priority: number;
@@ -518,6 +535,16 @@ export type AutonomousFeatureBundleSummary = {
   downstreamFeatureCount: number;
   dependencyDepth: number;
   criticalPathWeight: number;
+  telemetryPlanningAdjustment: number;
+  featureInterventionRate: number;
+  featureApprovalFriction: number;
+  featureFailureRate: number;
+  featureSessionSlowdownScore: number;
+  featureResumeCount: number;
+  featurePauseFrequency: number;
+  featureOperatorOverrideFrequency: number;
+  telemetryRiskLevel: AutonomousFeatureTelemetryRiskLevel;
+  telemetryPlanningSummary?: string;
   recommendedPlanningReason?: string;
   featureStatus: AutonomousFeatureBundleStatus;
   completedTaskCount: number;
@@ -704,11 +731,17 @@ export type AutonomousSessionSummaryArtifact = {
   frictionSummary: string[];
   systemConfidenceSignals: string[];
   whatSlowedThisSessionDown: string[];
+  mostInterventionHeavyFeatures: string[];
+  currentPathTelemetrySummary: string;
+  nextRecommendedFeatureTelemetrySummary: string;
+  approvalPatternSummary: string;
+  productInsights: string[];
 };
 
 export type AutonomousSessionOversight = {
   summary: AutonomousSessionSummaryArtifact;
   sessionTelemetry: AutonomousSessionTelemetry;
+  productInsights: AutonomousSessionProductInsights;
   operatorAttention: AutonomousOperatorAttentionItem[];
   controls: AutonomousOperatorControlGuide[];
   taskReviews: AutonomousTaskReviewRecord[];
@@ -789,6 +822,26 @@ function uniqueStrings(values: Array<string | undefined | null>): string[] {
   return [...new Set(values.map((value) => normalizeText(value)).filter(Boolean))];
 }
 
+function roundTelemetryRate(value: number): number {
+  return Number.isFinite(value) ? Math.round(value * 100) / 100 : 0;
+}
+
+function incrementPauseReasonCounts(
+  counts: AutonomousSessionPauseReasonCount[],
+  pauseReason: AutonomousSessionPauseReason | undefined,
+): AutonomousSessionPauseReasonCount[] {
+  if (!pauseReason) {
+    return counts;
+  }
+
+  const existing = counts.find((entry) => entry.reason === pauseReason);
+  if (!existing) {
+    return [...counts, { reason: pauseReason, count: 1 }];
+  }
+
+  return counts.map((entry) => entry.reason === pauseReason ? { ...entry, count: entry.count + 1 } : entry);
+}
+
 function createDefaultAutonomousSessionTelemetry(sessionId: string, timestamp: string): AutonomousSessionTelemetry {
   return {
     sessionId,
@@ -802,6 +855,7 @@ function createDefaultAutonomousSessionTelemetry(sessionId: string, timestamp: s
     approvalsApproved: 0,
     approvalsRejected: 0,
     pauseReasons: [],
+    pauseReasonCounts: [],
     finalSessionState: undefined,
     operatorInteractions: [],
     frictionSignals: [],
@@ -851,6 +905,30 @@ function normalizeAutonomousSessionOperatorInteractionRecord(value: unknown): Au
   };
 }
 
+function normalizeAutonomousSessionPauseReasonCounts(value: unknown): AutonomousSessionPauseReasonCount[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const counts = new Map<AutonomousSessionPauseReason, number>();
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object") {
+      continue;
+    }
+
+    const source = entry as Record<string, unknown>;
+    const reason = normalizeAutonomousSessionPauseReason(source.reason);
+    const count = Number(source.count ?? 0);
+    if (!reason || !Number.isFinite(count) || count <= 0) {
+      continue;
+    }
+
+    counts.set(reason, (counts.get(reason) ?? 0) + Math.floor(count));
+  }
+
+  return [...counts.entries()].map(([reason, count]) => ({ reason, count }));
+}
+
 function normalizeAutonomousSessionTelemetry(value: unknown, sessionId: string, timestamp: string): AutonomousSessionTelemetry {
   if (!value || typeof value !== "object") {
     return createDefaultAutonomousSessionTelemetry(sessionId, timestamp);
@@ -865,6 +943,7 @@ function normalizeAutonomousSessionTelemetry(value: unknown, sessionId: string, 
     pauseReasons: Array.isArray(source.pauseReasons)
       ? uniqueStrings(source.pauseReasons.map((entry) => (typeof entry === "string" ? entry : undefined)))
       : [],
+    pauseReasonCounts: normalizeAutonomousSessionPauseReasonCounts(source.pauseReasonCounts),
     operatorInteractions: Array.isArray(source.operatorInteractions)
       ? source.operatorInteractions
         .map((entry) => normalizeAutonomousSessionOperatorInteractionRecord(entry))
@@ -925,6 +1004,7 @@ function recordAutonomousSessionPauseReason(
     sessionTelemetry: {
       ...sessionTelemetry,
       pauseReasons: uniqueStrings([...sessionTelemetry.pauseReasons, pauseReason]),
+      pauseReasonCounts: incrementPauseReasonCounts(sessionTelemetry.pauseReasonCounts, pauseReason),
     },
   };
 }
@@ -1025,6 +1105,7 @@ function deriveAutonomousSessionTelemetry(
     approvalsApproved,
     approvalsRejected,
     pauseReasons: uniqueStrings([...previous.pauseReasons, session.sessionLoop.pauseReason]),
+    pauseReasonCounts: previous.pauseReasonCounts,
     finalSessionState: mapAutonomousSessionStatusToTelemetryFinalState(session.status),
     operatorInteractions: previous.operatorInteractions,
     frictionSignals,
@@ -1106,7 +1187,11 @@ function buildAutonomousFeatureProgressLabel(bundle: AutonomousFeatureBundleSumm
   return `${bundle.completedTaskCount}/${bundle.totalTaskCount} tasks completed`;
 }
 
-function deriveFeaturePlanningMetadata(bundles: AutonomousFeatureBundleSummary[]): AutonomousFeatureBundleSummary[] {
+function deriveFeaturePlanningMetadata(
+  session: AutonomousSession,
+  taskReviews: AutonomousTaskReviewRecord[],
+  bundles: AutonomousFeatureBundleSummary[],
+): AutonomousFeatureBundleSummary[] {
   const bundleById = new Map(bundles.map((bundle) => [bundle.featureId, bundle]));
   const completedFeatureIds = new Set(
     bundles
@@ -1261,12 +1346,56 @@ function deriveFeaturePlanningMetadata(bundles: AutonomousFeatureBundleSummary[]
 
   return bundlesWithDependencies.map((bundle) => {
     const blockedByFeatures = bundle.blockedByFeatures;
+    const bundleInteractions = session.sessionTelemetry.operatorInteractions.filter((entry) => entry.featureId === bundle.featureId);
+    const approvalRequestedCount = bundleInteractions.filter((entry) => entry.interactionType === "approval-requested").length;
+    const approvalRejectedCount = bundleInteractions.filter((entry) => entry.interactionType === "approval-rejected").length;
+    const resumeCount = bundleInteractions.filter((entry) => entry.interactionType === "resume-session").length;
+    const pauseCount = bundleInteractions.filter((entry) => entry.action === "pause-and-wait").length;
+    const overrideCount = bundleInteractions.filter((entry) =>
+      entry.interactionType === "steering-action"
+      && entry.action !== "accept-current-recommendation"
+      && entry.action !== "confirm-deliverable-acceptance").length;
+    const failedTaskCount = bundle.relatedTasks.filter((taskId) =>
+      taskReviews.some((review) => review.taskId === taskId && review.status === "failed")).length;
+    const taskCount = Math.max(bundle.totalTaskCount, bundle.relatedTasks.length, 1);
+    const featureInterventionRate = roundTelemetryRate(bundleInteractions.filter((entry) => entry.interactionType !== "approval-requested").length / taskCount);
+    const featureApprovalFriction = approvalRequestedCount > 0
+      ? roundTelemetryRate(approvalRejectedCount / approvalRequestedCount)
+      : 0;
+    const featureFailureRate = roundTelemetryRate(failedTaskCount / taskCount);
+    const featurePauseFrequency = roundTelemetryRate(pauseCount / taskCount);
+    const featureOperatorOverrideFrequency = roundTelemetryRate(overrideCount / taskCount);
+    const featureSessionSlowdownScore = (failedTaskCount * 3)
+      + (approvalRequestedCount * 2)
+      + (approvalRejectedCount * 3)
+      + pauseCount
+      + resumeCount
+      + overrideCount;
     const remainingUnlocks = bundle.unlocksFeatures.filter((featureId) => !completedFeatureIds.has(featureId));
     const blockedUnlockCount = remainingUnlocks.filter((featureId) => (blockedByMap.get(featureId) ?? []).includes(bundle.featureId)).length;
     const downstreamFeatureCount = getHydratedDownstreamFeatureIds(bundle.featureId).length;
     const dependencyDepth = getDependencyDepth(bundle.featureId);
     const criticalPathWeight = dependencyDepth + getHydratedLongestUnlockPath(bundle.featureId) + (blockedUnlockCount > 0 ? 1 : 0);
     const unlockScore = (blockedUnlockCount * 3) + (remainingUnlocks.length * 2) + downstreamFeatureCount;
+    const telemetryRiskLevel: AutonomousFeatureTelemetryRiskLevel = bundleInteractions.length === 0
+      && failedTaskCount === 0
+      && bundle.completedTaskCount === 0
+      ? "unobserved"
+      : featureFailureRate >= 0.5 || featureApprovalFriction >= 0.5 || featureSessionSlowdownScore >= 4
+        ? "high-risk"
+        : featureInterventionRate === 0
+          && featurePauseFrequency === 0
+          && featureFailureRate === 0
+          && bundle.completedTaskCount > 0
+          ? "low-friction"
+          : "operator-attention";
+    const telemetryPlanningAdjustment = telemetryRiskLevel === "low-friction"
+      ? 1
+      : telemetryRiskLevel === "high-risk"
+        ? -2
+        : telemetryRiskLevel === "operator-attention"
+          ? -1
+          : 0;
     const planningScore = bundle.featureStatus === "completed"
       ? 0
       : (bundle.currentTaskId ? 6 : 0)
@@ -1275,7 +1404,8 @@ function deriveFeaturePlanningMetadata(bundles: AutonomousFeatureBundleSummary[]
         + bundle.totalTaskCount
         + (blockedByFeatures.length === 0 ? 1 : 0)
         + (unlockScore * 2)
-        + criticalPathWeight;
+        + criticalPathWeight
+        + telemetryPlanningAdjustment;
     const planningReasons: string[] = [];
     if (blockedUnlockCount > 0) {
       planningReasons.push(`unlocks ${blockedUnlockCount} currently blocked feature${blockedUnlockCount === 1 ? "" : "s"}`);
@@ -1294,6 +1424,16 @@ function deriveFeaturePlanningMetadata(bundles: AutonomousFeatureBundleSummary[]
     if (bundle.totalTaskCount > 0) {
       planningReasons.push(`${bundle.completedTaskCount}/${bundle.totalTaskCount} tasks completed`);
     }
+    const telemetryPlanningSummary = telemetryRiskLevel === "low-friction"
+      ? "observed low-friction progress with no recorded interventions or failures"
+      : telemetryRiskLevel === "high-risk"
+        ? `showed friction in-session (slowdown score ${featureSessionSlowdownScore}, failure rate ${Math.round(featureFailureRate * 100)}%)`
+        : telemetryRiskLevel === "operator-attention"
+          ? `needed operator attention (${Math.round(featureInterventionRate * 100)}% intervention rate)`
+          : undefined;
+    if (telemetryPlanningSummary) {
+      planningReasons.push(telemetryPlanningSummary);
+    }
 
     return {
       ...bundle,
@@ -1303,6 +1443,16 @@ function deriveFeaturePlanningMetadata(bundles: AutonomousFeatureBundleSummary[]
       downstreamFeatureCount,
       dependencyDepth,
       criticalPathWeight,
+      telemetryPlanningAdjustment,
+      featureInterventionRate,
+      featureApprovalFriction,
+      featureFailureRate,
+      featureSessionSlowdownScore,
+      featureResumeCount: resumeCount,
+      featurePauseFrequency,
+      featureOperatorOverrideFrequency,
+      telemetryRiskLevel,
+      telemetryPlanningSummary,
       recommendedPlanningReason: planningReasons.length > 0
         ? `Prioritize ${bundle.featureId} because it ${planningReasons.join(", ")}.`
         : `Prioritize ${bundle.featureId} because it is ready and preserves project momentum.`,
@@ -1324,6 +1474,7 @@ function sortFeatureBundlesForPlanning(
     }
 
     return right.planningScore - left.planningScore
+      || right.telemetryPlanningAdjustment - left.telemetryPlanningAdjustment
       || right.unlockScore - left.unlockScore
       || right.criticalPathWeight - left.criticalPathWeight
       || right.downstreamFeatureCount - left.downstreamFeatureCount
@@ -1344,6 +1495,8 @@ function deriveRecommendedFeatureSequence(session: AutonomousSession, bundles: A
 
   for (let index = 0; index < horizon; index += 1) {
     const simulatedBundles = deriveFeaturePlanningMetadata(
+      session,
+      deriveAutonomousTaskReviewRecords(session),
       bundles.map((bundle) =>
         simulatedCompletion.has(bundle.featureId)
           ? {
@@ -1352,7 +1505,7 @@ function deriveRecommendedFeatureSequence(session: AutonomousSession, bundles: A
               completedTaskCount: Math.max(bundle.completedTaskCount, bundle.totalTaskCount),
               blockedByFeatures: [],
             }
-          : bundle),
+              : bundle),
     );
     const readyBundles = simulatedBundles.filter((bundle) =>
       !simulatedCompletion.has(bundle.featureId)
@@ -1399,6 +1552,16 @@ function deriveAutonomousFeatureBundles(session: AutonomousSession): AutonomousF
       downstreamFeatureCount: feature.downstreamFeatureCount,
       dependencyDepth: feature.dependencyDepth,
       criticalPathWeight: feature.criticalPathWeight,
+      telemetryPlanningAdjustment: feature.telemetryPlanningAdjustment,
+      featureInterventionRate: feature.featureInterventionRate,
+      featureApprovalFriction: feature.featureApprovalFriction,
+      featureFailureRate: feature.featureFailureRate,
+      featureSessionSlowdownScore: feature.featureSessionSlowdownScore,
+      featureResumeCount: feature.featureResumeCount,
+      featurePauseFrequency: feature.featurePauseFrequency,
+      featureOperatorOverrideFrequency: feature.featureOperatorOverrideFrequency,
+      telemetryRiskLevel: feature.telemetryRiskLevel,
+      telemetryPlanningSummary: feature.telemetryPlanningSummary,
       recommendedPlanningReason: feature.recommendedPlanningReason,
       featureStatus: feature.featureStatus,
       completedTaskCount: feature.completedTaskCount,
@@ -1428,6 +1591,16 @@ function deriveAutonomousFeatureBundles(session: AutonomousSession): AutonomousF
         downstreamFeatureCount: 0,
         dependencyDepth: 0,
         criticalPathWeight: 0,
+        telemetryPlanningAdjustment: 0,
+        featureInterventionRate: 0,
+        featureApprovalFriction: 0,
+        featureFailureRate: 0,
+        featureSessionSlowdownScore: 0,
+        featureResumeCount: 0,
+        featurePauseFrequency: 0,
+        featureOperatorOverrideFrequency: 0,
+        telemetryRiskLevel: "unobserved",
+        telemetryPlanningSummary: undefined,
         recommendedPlanningReason: undefined,
         featureStatus: "planned",
         completedTaskCount: entry.status === "completed" || entry.status === "skipped" ? 1 : 0,
@@ -1489,6 +1662,16 @@ function deriveAutonomousFeatureBundles(session: AutonomousSession): AutonomousF
         downstreamFeatureCount: 0,
         dependencyDepth: 0,
         criticalPathWeight: 0,
+        telemetryPlanningAdjustment: 0,
+        featureInterventionRate: 0,
+        featureApprovalFriction: 0,
+        featureFailureRate: 0,
+        featureSessionSlowdownScore: 0,
+        featureResumeCount: 0,
+        featurePauseFrequency: 0,
+        featureOperatorOverrideFrequency: 0,
+        telemetryRiskLevel: "unobserved",
+        telemetryPlanningSummary: undefined,
         recommendedPlanningReason: undefined,
         featureStatus: "planned",
         completedTaskCount: stepCountsAsCompleted ? 1 : 0,
@@ -1539,6 +1722,8 @@ function deriveAutonomousFeatureBundles(session: AutonomousSession): AutonomousF
   }
 
   return deriveFeaturePlanningMetadata(
+    session,
+    deriveAutonomousTaskReviewRecords(session),
     bundles
       .map((bundle) => {
       const hasBlockedTasks = bundle.blockedTaskIds.length > 0;
@@ -1809,6 +1994,12 @@ function deriveAutonomousSessionOversight(
   const recommendedFeatureSequence = deriveRecommendedFeatureSequence(session, featureBundles);
   const topRecommendedFeature = featureBundles.find((bundle) => bundle.featureId === recommendedFeatureSequence[0]);
   const nextLikelyFeatureIds = recommendedFeatureSequence.slice(1);
+  const productInsights = deriveAutonomousSessionProductInsights(telemetry, featureBundles);
+  const mostInterventionHeavyFeatures = featureBundles
+    .filter((bundle) => bundle.featureInterventionRate > 0 || bundle.featureSessionSlowdownScore > 0)
+    .sort((left, right) => right.featureInterventionRate - left.featureInterventionRate || right.featureSessionSlowdownScore - left.featureSessionSlowdownScore)
+    .slice(0, 3)
+    .map((bundle) => bundle.featureId);
 
   return {
     summary: {
@@ -1853,8 +2044,18 @@ function deriveAutonomousSessionOversight(
       frictionSummary: telemetry.frictionSummary,
       systemConfidenceSignals: telemetry.systemConfidenceSignals,
       whatSlowedThisSessionDown: telemetry.whatSlowedThisSessionDown,
+      mostInterventionHeavyFeatures,
+      currentPathTelemetrySummary: currentFeature
+        ? formatFeatureTelemetrySummary(currentFeature)
+        : "No active feature path telemetry is available yet.",
+      nextRecommendedFeatureTelemetrySummary: topRecommendedFeature
+        ? formatFeatureTelemetrySummary(topRecommendedFeature)
+        : "No recommended feature telemetry is available yet.",
+      approvalPatternSummary: productInsights.approvalRejectionPatterns[0] ?? "No approval rejection pattern has been observed yet.",
+      productInsights: productInsights.summaryLines,
     },
     sessionTelemetry: telemetry,
+    productInsights,
     operatorAttention: attention,
     controls: deriveAutonomousOperatorControls(session),
     taskReviews,
@@ -2241,6 +2442,28 @@ function normalizeAutonomousFeatureBundleSummary(value: unknown): AutonomousFeat
     downstreamFeatureCount: Number.isFinite(Number(source.downstreamFeatureCount)) ? Math.max(0, Math.floor(Number(source.downstreamFeatureCount))) : 0,
     dependencyDepth: Number.isFinite(Number(source.dependencyDepth)) ? Math.max(0, Math.floor(Number(source.dependencyDepth))) : 0,
     criticalPathWeight: Number.isFinite(Number(source.criticalPathWeight)) ? Math.max(0, Math.floor(Number(source.criticalPathWeight))) : 0,
+    telemetryPlanningAdjustment: Number.isFinite(Number(source.telemetryPlanningAdjustment))
+      ? Number(source.telemetryPlanningAdjustment)
+      : 0,
+    featureInterventionRate: Number.isFinite(Number(source.featureInterventionRate)) ? Number(source.featureInterventionRate) : 0,
+    featureApprovalFriction: Number.isFinite(Number(source.featureApprovalFriction)) ? Number(source.featureApprovalFriction) : 0,
+    featureFailureRate: Number.isFinite(Number(source.featureFailureRate)) ? Number(source.featureFailureRate) : 0,
+    featureSessionSlowdownScore: Number.isFinite(Number(source.featureSessionSlowdownScore))
+      ? Number(source.featureSessionSlowdownScore)
+      : 0,
+    featureResumeCount: Number.isFinite(Number(source.featureResumeCount)) ? Math.max(0, Math.floor(Number(source.featureResumeCount))) : 0,
+    featurePauseFrequency: Number.isFinite(Number(source.featurePauseFrequency)) ? Number(source.featurePauseFrequency) : 0,
+    featureOperatorOverrideFrequency: Number.isFinite(Number(source.featureOperatorOverrideFrequency))
+      ? Number(source.featureOperatorOverrideFrequency)
+      : 0,
+    telemetryRiskLevel:
+      source.telemetryRiskLevel === "low-friction"
+      || source.telemetryRiskLevel === "operator-attention"
+      || source.telemetryRiskLevel === "high-risk"
+      || source.telemetryRiskLevel === "unobserved"
+        ? source.telemetryRiskLevel as AutonomousFeatureTelemetryRiskLevel
+        : "unobserved",
+    telemetryPlanningSummary: normalizeText(typeof source.telemetryPlanningSummary === "string" ? source.telemetryPlanningSummary : "") || undefined,
     recommendedPlanningReason: normalizeText(typeof source.recommendedPlanningReason === "string" ? source.recommendedPlanningReason : "") || undefined,
     featureStatus: normalizeAutonomousFeatureBundleStatus(source.featureStatus) ?? "planned",
     completedTaskCount: Number.isFinite(Number(source.completedTaskCount)) ? Math.max(0, Math.floor(Number(source.completedTaskCount))) : 0,
@@ -2248,6 +2471,85 @@ function normalizeAutonomousFeatureBundleSummary(value: unknown): AutonomousFeat
     blockedTaskIds: normalizeUniqueTaskIdList(source.blockedTaskIds),
     currentTaskId: normalizeText(typeof source.currentTaskId === "string" ? source.currentTaskId : "") || undefined,
     nextRecommendedTaskId: normalizeText(typeof source.nextRecommendedTaskId === "string" ? source.nextRecommendedTaskId : "") || undefined,
+  };
+}
+
+function formatFeatureTelemetrySummary(bundle: AutonomousFeatureBundleSummary): string {
+  switch (bundle.telemetryRiskLevel) {
+    case "low-friction":
+      return `${bundle.featureId} is an observed low-friction path in this session.`;
+    case "operator-attention":
+      return `${bundle.featureId} is moving, but recent interventions suggest operator attention may be needed.`;
+    case "high-risk":
+      return `${bundle.featureId} is showing high-friction signals in this session and should be planned with caution.`;
+    default:
+      return `${bundle.featureId} has no meaningful telemetry yet, so planning stays on structural signals.`;
+  }
+}
+
+function deriveAutonomousSessionProductInsights(
+  telemetry: AutonomousSessionTelemetry,
+  featureBundles: AutonomousFeatureBundleSummary[],
+): AutonomousSessionProductInsights {
+  const interventionCounts = new Map<string, number>();
+  for (const interaction of telemetry.operatorInteractions) {
+    const key = interaction.action ?? interaction.interactionType;
+    interventionCounts.set(key, (interventionCounts.get(key) ?? 0) + 1);
+  }
+
+  const mostCommonInterventionTypes = [...interventionCounts.entries()]
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+    .slice(0, 3)
+    .map(([kind, count]) => `${kind} (${count})`);
+  const recurringPauseReasons = [...telemetry.pauseReasonCounts]
+    .sort((left, right) => right.count - left.count || left.reason.localeCompare(right.reason))
+    .slice(0, 3)
+    .map((entry) => `${entry.reason} (${entry.count})`);
+  const failureProneFeatures = featureBundles
+    .filter((bundle) => bundle.featureFailureRate > 0 || bundle.telemetryRiskLevel === "high-risk")
+    .sort((left, right) => right.featureFailureRate - left.featureFailureRate || right.featureSessionSlowdownScore - left.featureSessionSlowdownScore)
+    .slice(0, 3)
+    .map((bundle) => `${bundle.featureId} (${Math.round(bundle.featureFailureRate * 100)}% failure rate)`);
+  const approvalRejectionPatterns = uniqueStrings([
+    telemetry.approvalsRejected > 0
+      ? `${telemetry.approvalsRejected} approval rejection${telemetry.approvalsRejected === 1 ? "" : "s"} clustered around approval-gated work.`
+      : undefined,
+    telemetry.operatorInteractions.some((entry) => entry.action === "reject-deliverable-acceptance")
+      ? "Deliverable-acceptance rejections appeared in this session."
+      : undefined,
+    telemetry.operatorInteractions.some((entry) => entry.action === "confirm-deliverable-acceptance")
+      && telemetry.approvalsRejected === 0
+      ? "Approval-gated work was accepted without rejection once surfaced to the operator."
+      : undefined,
+  ]);
+  const reliableFeatures = featureBundles
+    .filter((bundle) => bundle.telemetryRiskLevel === "low-friction" || (bundle.featureFailureRate === 0 && bundle.featureInterventionRate === 0 && bundle.featureStatus === "completed"))
+    .sort((left, right) => right.completedTaskCount - left.completedTaskCount || left.featureId.localeCompare(right.featureId))
+    .slice(0, 3)
+    .map((bundle) => bundle.featureId);
+  const summaryLines = uniqueStrings([
+    mostCommonInterventionTypes.length > 0
+      ? `Most common interventions: ${mostCommonInterventionTypes.join(", ")}.`
+      : undefined,
+    recurringPauseReasons.length > 0
+      ? `Recurring pause reasons: ${recurringPauseReasons.join(", ")}.`
+      : undefined,
+    failureProneFeatures.length > 0
+      ? `Highest-friction features: ${failureProneFeatures.join(", ")}.`
+      : undefined,
+    approvalRejectionPatterns[0],
+    reliableFeatures.length > 0
+      ? `Most reliable features so far: ${reliableFeatures.join(", ")}.`
+      : undefined,
+  ]);
+
+  return {
+    mostCommonInterventionTypes,
+    recurringPauseReasons,
+    failureProneFeatures,
+    approvalRejectionPatterns,
+    reliableFeatures,
+    summaryLines,
   };
 }
 
@@ -5880,8 +6182,21 @@ export function createAutonomousSession(params: CreateAutonomousSessionParams): 
         frictionSummary: [],
         systemConfidenceSignals: [],
         whatSlowedThisSessionDown: [],
+        mostInterventionHeavyFeatures: [],
+        currentPathTelemetrySummary: "No active feature path telemetry is available yet.",
+        nextRecommendedFeatureTelemetrySummary: "No recommended feature telemetry is available yet.",
+        approvalPatternSummary: "No approval rejection pattern has been observed yet.",
+        productInsights: [],
       },
       sessionTelemetry,
+      productInsights: {
+        mostCommonInterventionTypes: [],
+        recurringPauseReasons: [],
+        failureProneFeatures: [],
+        approvalRejectionPatterns: [],
+        reliableFeatures: [],
+        summaryLines: [],
+      },
       operatorAttention: [],
       controls: [],
       taskReviews: [],
@@ -6256,12 +6571,25 @@ export function normalizeAutonomousSession(value: unknown): AutonomousSession | 
         frictionSummary: [],
         systemConfidenceSignals: [],
         whatSlowedThisSessionDown: [],
+        mostInterventionHeavyFeatures: [],
+        currentPathTelemetrySummary: "No active feature path telemetry is available yet.",
+        nextRecommendedFeatureTelemetrySummary: "No recommended feature telemetry is available yet.",
+        approvalPatternSummary: "No approval rejection pattern has been observed yet.",
+        productInsights: [],
       },
       sessionTelemetry: normalizeAutonomousSessionTelemetry(
         source.sessionTelemetry,
         normalizeText(source.sessionId),
         normalizeText(typeof source.createdAt === "string" ? source.createdAt : "") || createTimestamp(),
       ),
+      productInsights: {
+        mostCommonInterventionTypes: [],
+        recurringPauseReasons: [],
+        failureProneFeatures: [],
+        approvalRejectionPatterns: [],
+        reliableFeatures: [],
+        summaryLines: [],
+      },
       operatorAttention: [],
       controls: [],
       taskReviews: [],
@@ -6784,6 +7112,26 @@ export function buildAutonomousSessionContextBlock(session: AutonomousSession, l
 
   if (session.oversight.summary.whatSlowedThisSessionDown.length > 0) {
     lines.push(`- What slowed this session down: ${session.oversight.summary.whatSlowedThisSessionDown.join(" | ")}`);
+  }
+
+  if (session.oversight.summary.mostInterventionHeavyFeatures.length > 0) {
+    lines.push(`- Highest-intervention features: ${session.oversight.summary.mostInterventionHeavyFeatures.join(" | ")}`);
+  }
+
+  if (session.oversight.summary.currentPathTelemetrySummary) {
+    lines.push(`- Current path telemetry: ${session.oversight.summary.currentPathTelemetrySummary}`);
+  }
+
+  if (session.oversight.summary.nextRecommendedFeatureTelemetrySummary) {
+    lines.push(`- Next recommended feature telemetry: ${session.oversight.summary.nextRecommendedFeatureTelemetrySummary}`);
+  }
+
+  if (session.oversight.summary.approvalPatternSummary) {
+    lines.push(`- Approval pattern summary: ${session.oversight.summary.approvalPatternSummary}`);
+  }
+
+  if (session.oversight.summary.productInsights.length > 0) {
+    lines.push(`- Product insights: ${session.oversight.summary.productInsights.join(" | ")}`);
   }
 
   if (session.workflowContinuity.memory.recentDecisions.length > 0) {

@@ -130,12 +130,198 @@ test("autonomous sessions record telemetry for operator interactions and frictio
   assert.equal(session.sessionTelemetry.approvalsRequested, 1);
   assert.equal(session.sessionTelemetry.approvalsRejected, 1);
   assert.deepEqual(session.sessionTelemetry.pauseReasons, ["operator-paused", "approval-required"]);
+  assert.deepEqual(session.sessionTelemetry.pauseReasonCounts, [
+    { reason: "operator-paused", count: 1 },
+    { reason: "approval-required", count: 1 },
+  ]);
   assert.equal(session.sessionTelemetry.operatorInteractions.filter((entry) => entry.action === "skip-current-task").length, 2);
   assert.match(session.oversight.summary.operatorInterventionSummary, /skip=2/i);
   assert.ok(session.oversight.summary.frictionSummary.some((entry) => /operator skips changed the planned task flow/i.test(entry)));
   assert.ok(session.oversight.summary.frictionSummary.some((entry) => /approval decisions were rejected/i.test(entry)));
   assert.ok(session.oversight.summary.whatSlowedThisSessionDown.some((entry) => /Approval waits slowed autonomous continuation/i.test(entry)));
   assert.match(buildAutonomousSessionContextBlock(session), /Operator intervention summary:/i);
+});
+
+test("autonomous sessions derive telemetry-informed planning guidance and product insights", () => {
+  const base = createAutonomousSession({
+    goal: "Use observed friction to improve bounded planning guidance.",
+    sessionMode: "repo-coding",
+  });
+  const normalized = normalizeAutonomousSession({
+    ...base,
+    status: "paused",
+    updatedAt: "2026-04-06T12:00:00.000Z",
+    stateReason: "Awaiting operator input after approval friction.",
+    steps: [
+      {
+        index: 1,
+        startedAt: "2026-04-06T11:45:00.000Z",
+        completedAt: "2026-04-06T11:47:00.000Z",
+        proposedAction: "Attempt Feature A.",
+        taskId: "task-feature-a",
+        featureId: "feature-a",
+        featureTitle: "Feature A",
+        featureDescription: "Observed friction-heavy work.",
+        executionResult: {
+          status: "failed",
+          error: "Feature A required another intervention-heavy pass.",
+        },
+        failureReason: "Feature A required another intervention-heavy pass.",
+        nextDecision: "pause",
+      },
+    ],
+    sessionLoop: {
+      ...base.sessionLoop,
+      sessionStartedAt: "2026-04-06T11:40:00.000Z",
+      lastUpdatedAt: "2026-04-06T12:00:00.000Z",
+      completedTaskIds: ["task-feature-b-1"],
+      blockedTaskIds: ["task-feature-a"],
+      failureCount: 1,
+      pauseReason: "approval-required",
+      pauseSummary: "Waiting for operator review after repeated friction on Feature A.",
+    },
+    workflowContinuity: {
+      ...base.workflowContinuity,
+      taskChain: {
+        ...base.workflowContinuity.taskChain,
+        generatedTaskQueue: [
+          {
+            taskId: "task-feature-a",
+            priority: 6,
+            dependsOnTaskIds: [],
+            dependsOnFeatureIds: [],
+            featureId: "feature-a",
+            featureTitle: "Feature A",
+            featureDescription: "Observed friction-heavy work.",
+            status: "blocked",
+          },
+          {
+            taskId: "task-feature-b-1",
+            priority: 5,
+            dependsOnTaskIds: [],
+            dependsOnFeatureIds: [],
+            featureId: "feature-b",
+            featureTitle: "Feature B",
+            featureDescription: "Observed smooth implementation work.",
+            status: "completed",
+          },
+          {
+            taskId: "task-feature-b-2",
+            priority: 5,
+            dependsOnTaskIds: [],
+            dependsOnFeatureIds: [],
+            featureId: "feature-b",
+            featureTitle: "Feature B",
+            featureDescription: "Observed smooth implementation work.",
+            status: "queued",
+          },
+          {
+            taskId: "task-feature-c",
+            priority: 4,
+            dependsOnTaskIds: [],
+            dependsOnFeatureIds: ["feature-a"],
+            featureId: "feature-c",
+            featureTitle: "Feature C",
+            featureDescription: "Depends on Feature A.",
+            status: "queued",
+          },
+          {
+            taskId: "task-feature-d",
+            priority: 4,
+            dependsOnTaskIds: [],
+            dependsOnFeatureIds: ["feature-b"],
+            featureId: "feature-d",
+            featureTitle: "Feature D",
+            featureDescription: "Depends on Feature B.",
+            status: "queued",
+          },
+        ],
+        featureGraph: [],
+        currentTaskId: undefined,
+        currentFeatureId: undefined,
+        completedTaskIds: ["task-feature-b-1"],
+        blockedTaskIds: ["task-feature-a"],
+        skippedTaskIds: [],
+        nextRecommendedTaskId: undefined,
+        nextRecommendedFeatureId: undefined,
+        chainStatus: "selecting-next-task",
+      },
+    },
+    sessionTelemetry: {
+      ...base.sessionTelemetry,
+      sessionId: base.sessionId,
+      sessionStartTime: "2026-04-06T11:40:00.000Z",
+      sessionEndTime: "2026-04-06T12:00:00.000Z",
+      pauseReasons: ["approval-required", "operator-paused"],
+      pauseReasonCounts: [
+        { reason: "approval-required", count: 2 },
+        { reason: "operator-paused", count: 1 },
+      ],
+      operatorInteractions: [
+        {
+          interactionType: "approval-requested",
+          recordedAt: "2026-04-06T11:48:00.000Z",
+          taskId: "task-feature-a",
+          featureId: "feature-a",
+          featureTitle: "Feature A",
+        },
+        {
+          interactionType: "approval-rejected",
+          action: "reject-deliverable-acceptance",
+          recordedAt: "2026-04-06T11:49:00.000Z",
+          taskId: "task-feature-a",
+          featureId: "feature-a",
+          featureTitle: "Feature A",
+          operatorNote: "Needs another pass.",
+        },
+        {
+          interactionType: "steering-action",
+          action: "skip-current-task",
+          recordedAt: "2026-04-06T11:50:00.000Z",
+          taskId: "task-feature-a",
+          featureId: "feature-a",
+          featureTitle: "Feature A",
+        },
+        {
+          interactionType: "steering-action",
+          action: "pause-and-wait",
+          recordedAt: "2026-04-06T11:51:00.000Z",
+          taskId: "task-feature-a",
+          featureId: "feature-a",
+          featureTitle: "Feature A",
+        },
+        {
+          interactionType: "resume-session",
+          action: "resume-session",
+          recordedAt: "2026-04-06T11:55:00.000Z",
+          taskId: "task-feature-a",
+          featureId: "feature-a",
+          featureTitle: "Feature A",
+        },
+      ],
+      frictionSignals: [],
+      operatorInterventionSummary: "",
+      frictionSummary: [],
+      systemConfidenceSignals: [],
+      whatSlowedThisSessionDown: [],
+    },
+  });
+
+  const featureA = normalized?.oversight.featureBundles.find((bundle) => bundle.featureId === "feature-a");
+  const featureB = normalized?.oversight.featureBundles.find((bundle) => bundle.featureId === "feature-b");
+
+  assert.ok(normalized);
+  assert.equal(normalized?.oversight.topRecommendedFeatureId, "feature-b");
+  assert.equal(featureA?.telemetryRiskLevel, "high-risk");
+  assert.equal(featureB?.telemetryRiskLevel, "low-friction");
+  assert.match(featureA?.recommendedPlanningReason ?? "", /showed friction in-session/i);
+  assert.match(featureB?.recommendedPlanningReason ?? "", /observed low-friction progress/i);
+  assert.deepEqual(normalized?.oversight.summary.mostInterventionHeavyFeatures, ["feature-a"]);
+  assert.match(normalized?.oversight.summary.currentPathTelemetrySummary ?? "", /feature-a is showing high-friction signals/i);
+  assert.match(normalized?.oversight.summary.nextRecommendedFeatureTelemetrySummary ?? "", /feature-b is an observed low-friction path/i);
+  assert.ok(normalized?.oversight.productInsights.recurringPauseReasons.includes("approval-required (2)"));
+  assert.ok(normalized?.oversight.productInsights.approvalRejectionPatterns.some((entry) => /approval rejection/i.test(entry)));
+  assert.match(buildAutonomousSessionContextBlock(normalized ?? base), /Product insights:/i);
 });
 
 test("autonomous sessions append steps and preserve runtime output", () => {
@@ -474,6 +660,8 @@ test("autonomous sessions expose planning recommendations and near-term feature 
   assert.equal(normalized?.oversight.summary.topRecommendedFeatureId, "feature-a");
   assert.deepEqual(normalized?.oversight.summary.nextLikelyFeatureIds, ["feature-b", "feature-d"]);
   assert.match(normalized?.oversight.topRecommendedPlanningReason ?? "", /unlocks|critical path/i);
+  assert.equal(normalized?.oversight.featureBundles.find((bundle) => bundle.featureId === "feature-a")?.telemetryRiskLevel, "unobserved");
+  assert.match(normalized?.oversight.summary.nextRecommendedFeatureTelemetrySummary ?? "", /no meaningful telemetry yet/i);
   assert.ok(
     (normalized?.oversight.featureBundles.find((bundle) => bundle.featureId === "feature-a")?.planningScore ?? 0)
       > (normalized?.oversight.featureBundles.find((bundle) => bundle.featureId === "feature-c")?.planningScore ?? 0),

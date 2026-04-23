@@ -149,15 +149,30 @@ function applySessionLoopState(
   sessionLoop: AutonomousSessionLoopState,
 ): AutonomousSession {
   const priorPauseReasons = session.sessionTelemetry?.pauseReasons ?? [];
+  const priorPauseReasonCounts = session.sessionTelemetry?.pauseReasonCounts ?? [];
   const pauseReasons = sessionLoop.pauseReason
     ? [...new Set([...priorPauseReasons, sessionLoop.pauseReason])]
     : priorPauseReasons;
+  const pauseReasonCounts = sessionLoop.pauseReason && sessionLoop.pauseReason !== session.sessionLoop.pauseReason
+    ? (() => {
+        const existing = priorPauseReasonCounts.find((entry) => entry.reason === sessionLoop.pauseReason);
+        if (!existing) {
+          return [...priorPauseReasonCounts, { reason: sessionLoop.pauseReason, count: 1 }];
+        }
+
+        return priorPauseReasonCounts.map((entry) =>
+          entry.reason === sessionLoop.pauseReason
+            ? { ...entry, count: entry.count + 1 }
+            : entry);
+      })()
+    : priorPauseReasonCounts;
 
   return {
     ...session,
     sessionTelemetry: {
       ...session.sessionTelemetry,
       pauseReasons,
+      pauseReasonCounts,
     },
     sessionLoop,
   };
