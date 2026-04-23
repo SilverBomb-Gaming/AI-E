@@ -13,6 +13,7 @@ import {
   type AutonomousStepDecision,
   type AutonomousStepRecord,
   type AutonomousStepVerificationState,
+  type AutonomousWorkflowTaskChainState,
   type UpdateAutonomousSessionSteeringParams,
 } from "./autonomousSession";
 import {
@@ -45,7 +46,7 @@ import { getRetryDecision } from "./retryPolicy";
 import { getRecoveryDecision, type AutonomousRecoveryStrategy } from "./strategySwitch";
 import { detectTestFiles, findRelevantFiles, resolveRepoRoot } from "./repoContext";
 import { saveAutonomousSession } from "./autonomousSessionStore";
-import { assignTaskToNode, enqueueTask, updateTaskStatus } from "./taskQueueStore";
+import { assignTaskToNode, enqueueTask, getRunnableTasks, listTasks, updateTaskStatus } from "./taskQueueStore";
 import {
   createTaskExecutionLease,
   createTaskEnvelope,
@@ -65,6 +66,8 @@ type RunAutonomousSessionDependencies = {
   saveAutonomousSession: typeof saveAutonomousSession;
   enqueueTask: typeof enqueueTask;
   assignTaskToNode: typeof assignTaskToNode;
+  listTasks: typeof listTasks;
+  getRunnableTasks: typeof getRunnableTasks;
   updateTaskStatus: typeof updateTaskStatus;
 };
 
@@ -97,7 +100,7 @@ type ForcedContinuationState = {
   action: ExecutionActionPreview;
   attemptCount: number;
   reason: string;
-  mode: "retry" | "resume-approved";
+  mode: "retry" | "resume-approved" | "chain-next-task";
   taskEnvelope?: TaskEnvelope;
 };
 
@@ -116,8 +119,120 @@ function resolveDependencies(
     saveAutonomousSession: dependencies?.saveAutonomousSession ?? saveAutonomousSession,
     enqueueTask: dependencies?.enqueueTask ?? enqueueTask,
     assignTaskToNode: dependencies?.assignTaskToNode ?? assignTaskToNode,
+    listTasks: dependencies?.listTasks ?? listTasks,
+    getRunnableTasks: dependencies?.getRunnableTasks ?? getRunnableTasks,
     updateTaskStatus: dependencies?.updateTaskStatus ?? updateTaskStatus,
   };
+}
+
+function applyTaskChainState(
+  session: AutonomousSession,
+  taskChain: AutonomousWorkflowTaskChainState,
+): AutonomousSession {
+  return {
+    ...session,
+    workflowContinuity: {
+      ...session.workflowContinuity,
+      taskChain,
+    },
+  };
+}
+
+function sortTaskChainBacklog(left: TaskEnvelope, right: TaskEnvelope): number {
+  return right.priority - left.priority
+    || left.createdAt.localeCompare(right.createdAt)
+    || left.taskId.localeCompare(right.taskId);
+}
+
+function buildTaskChainSnapshot(params: {
+  session: AutonomousSession;
+  queuedTasks: TaskEnvelope[];
+  runnableTasks: TaskEnvelope[];
+  currentTaskId?: string;
+  nextRecommendedTaskId?: string;
+  chainStatus?: AutonomousWorkflowTaskChainState["chainStatus"];
+}): AutonomousWorkflowTaskChainState {
+  const orderedTasks = [...params.queuedTasks].sort(sortTaskChainBacklog);
+  const previous = params.session.workflowContinuity.taskChain;
+  const skippedTaskIds = [...new Set(previous.skippedTaskIds)];
+  const completedTaskIds = orderedTasks
+    .filter((task) => task.status === "completed")
+    .map((task) => task.taskId);
+  const blockedTaskIds = orderedTasks
+    .filter((task) => task.status === "blocked" || task.status === "failed" || task.status === "rejected")
+    .map((task) => task.taskId);
+  const currentTaskId = normalizeText(params.currentTaskId) || undefined;
+  const nextRecommendedTaskId = normalizeText(params.nextRecommendedTaskId) || undefined;
+  const chainStatus = params.chainStatus
+    ?? (params.session.status === "awaiting-approval"
+      ? "awaiting-approval"
+      : params.session.status === "blocked" || params.session.status === "failed"
+        ? "blocked"
+        : currentTaskId && params.session.taskStatus === "completed"
+          ? "validating-task"
+          : currentTaskId
+            ? "executing-task"
+            : nextRecommendedTaskId
+              ? "selecting-next-task"
+              : orderedTasks.length > 0 && orderedTasks.every((task) => completedTaskIds.includes(task.taskId) || blockedTaskIds.includes(task.taskId) || skippedTaskIds.includes(task.taskId))
+                ? "completed"
+                : "idle");
+
+  return {
+    generatedTaskQueue: orderedTasks.map((task) => ({
+      taskId: task.taskId,
+      priority: task.priority,
+      dependsOnTaskIds: [...task.dependsOnTaskIds],
+      status: skippedTaskIds.includes(task.taskId) ? "skipped" : task.status,
+    })),
+    currentTaskId,
+    completedTaskIds,
+    blockedTaskIds,
+    skippedTaskIds,
+    nextRecommendedTaskId,
+    chainStatus,
+  };
+}
+
+async function syncTaskChainState(
+  session: AutonomousSession,
+  dependencies: RunAutonomousSessionDependencies,
+  overrides?: {
+    currentTaskId?: string;
+    nextRecommendedTaskId?: string;
+    chainStatus?: AutonomousWorkflowTaskChainState["chainStatus"];
+  },
+): Promise<AutonomousSession> {
+  const allTasks = (await dependencies.listTasks())
+    .filter((task) => task.sessionId === session.sessionId)
+    .sort(sortTaskChainBacklog);
+  const runnableTasks = (await dependencies.getRunnableTasks())
+    .filter((task) => task.sessionId === session.sessionId)
+    .sort(sortTaskChainBacklog);
+
+  return applyTaskChainState(
+    session,
+    buildTaskChainSnapshot({
+      session,
+      queuedTasks: allTasks,
+      runnableTasks,
+      currentTaskId: overrides?.currentTaskId,
+      nextRecommendedTaskId: overrides?.nextRecommendedTaskId ?? runnableTasks[0]?.taskId,
+      chainStatus: overrides?.chainStatus,
+    }),
+  );
+}
+
+async function selectNextQueuedTask(
+  session: AutonomousSession,
+  dependencies: RunAutonomousSessionDependencies,
+): Promise<TaskEnvelope | null> {
+  const skippedTaskIds = new Set(session.workflowContinuity.taskChain.skippedTaskIds);
+  const runnableTasks = (await dependencies.getRunnableTasks())
+    .filter((task) => task.sessionId === session.sessionId)
+    .sort(sortTaskChainBacklog);
+
+  return runnableTasks.find((task) => task.taskId !== session.taskId && !skippedTaskIds.has(task.taskId)) ?? null;
 }
 
 function buildAutonomousAnalysisInput(session: AutonomousSession, planningContext: string): AnalysisInput {
@@ -548,7 +663,14 @@ async function runSingleAutonomousStep(params: {
     : null;
   const assignedTaskEnvelope = queuedOrClaimedTaskEnvelope
     ? params.continuationState?.taskEnvelope
-      ? queuedOrClaimedTaskEnvelope
+      ? (
+          queuedOrClaimedTaskEnvelope.status === "pending"
+          || queuedOrClaimedTaskEnvelope.status === "queued"
+          || queuedOrClaimedTaskEnvelope.status === "retrying"
+            ? await params.dependencies.assignTaskToNode(queuedOrClaimedTaskEnvelope.taskId, (selectedNode ?? registeredRuntimeNode).id)
+              ?? markTaskAssigned(queuedOrClaimedTaskEnvelope, (selectedNode ?? registeredRuntimeNode).id)
+            : queuedOrClaimedTaskEnvelope
+        )
       : await params.dependencies.assignTaskToNode(queuedOrClaimedTaskEnvelope.taskId, (selectedNode ?? registeredRuntimeNode).id)
         ?? markTaskAssigned(queuedOrClaimedTaskEnvelope, (selectedNode ?? registeredRuntimeNode).id)
     : null;
@@ -694,6 +816,8 @@ async function runSingleAutonomousStep(params: {
     : undefined;
   const recoveryDecision = executionResult.status === "success"
     ? undefined
+    : params.continuationState?.mode === "chain-next-task"
+      ? { strategy: "stop" as const, reason: executionResult.error ?? executionResult.output ?? "The generated queued task failed." }
     : stallDetection.shouldStallStop
       ? { strategy: "stop" as const, reason: stallDetection.reason }
       : retryDecision?.shouldRetry
@@ -867,10 +991,25 @@ export async function runAutonomousSession(params: RunAutonomousSessionParams): 
     return session;
   }
 
+  if (!pendingContinuationState && params.queuedTask) {
+    pendingContinuationState = {
+      action: params.queuedTask.action,
+      attemptCount: 0,
+      reason: `Executing queued generated task ${params.queuedTask.taskId} inside the bounded runner.`,
+      mode: "chain-next-task",
+      taskEnvelope: params.queuedTask,
+    };
+  }
+
   session = updateAutonomousSessionStatus(session, "active");
+  session = await syncTaskChainState(session, dependencies, {
+    currentTaskId: pendingContinuationState?.taskEnvelope?.taskId ?? session.taskId,
+    chainStatus: pendingContinuationState?.taskEnvelope?.taskId ? "selecting-next-task" : undefined,
+  });
   await dependencies.saveAutonomousSession(session);
 
   while (session.steps.length < session.maxSteps) {
+    const executedChainedTask = pendingContinuationState?.mode === "chain-next-task";
     const stepResult = await runSingleAutonomousStep({
       session,
       dependencies,
@@ -878,8 +1017,56 @@ export async function runAutonomousSession(params: RunAutonomousSessionParams): 
       continuationState: pendingContinuationState,
     });
 
-    session = stepResult.nextSession;
+    session = await syncTaskChainState(stepResult.nextSession, dependencies, {
+      currentTaskId: stepResult.nextSession.taskStatus === "completed" ? undefined : stepResult.nextSession.taskId,
+      chainStatus: stepResult.nextSession.taskStatus === "completed" ? "validating-task" : undefined,
+    });
     if (stepResult.pendingApprovalAction && session.status === "awaiting-approval") {
+      session = await syncTaskChainState(session, dependencies, {
+        currentTaskId: session.taskId,
+        chainStatus: "awaiting-approval",
+      });
+      await dependencies.saveAutonomousSession(session);
+      return session;
+    }
+
+    if (executedChainedTask && session.taskStatus === "completed") {
+      const nextQueuedTask = await selectNextQueuedTask(session, dependencies);
+      if (nextQueuedTask && session.steps.length < session.maxSteps) {
+        pendingContinuationState = {
+          action: nextQueuedTask.action,
+          attemptCount: 0,
+          reason: `Continue into the next generated task ${nextQueuedTask.taskId} after the prior task completed successfully.`,
+          mode: "chain-next-task",
+          taskEnvelope: nextQueuedTask,
+        };
+        session = {
+          ...session,
+          status: "active",
+          completedReason: undefined,
+          stateReason: `Continuing into generated task ${nextQueuedTask.taskId}.`,
+          latestCompletion: undefined,
+          pendingAction: undefined,
+          taskId: nextQueuedTask.taskId,
+          taskStatus: nextQueuedTask.status,
+          assignedNodeId: nextQueuedTask.assignedNodeId,
+          queueStateSummary: summarizeTaskEnvelope(nextQueuedTask),
+        };
+        session = await syncTaskChainState(session, dependencies, {
+          currentTaskId: nextQueuedTask.taskId,
+          nextRecommendedTaskId: undefined,
+          chainStatus: "selecting-next-task",
+        });
+        await dependencies.saveAutonomousSession(session);
+        continue;
+      }
+
+      session = updateAutonomousSessionStatus(session, "completed", "Completed the generated queued task chain.");
+      session = await syncTaskChainState(session, dependencies, {
+        currentTaskId: undefined,
+        nextRecommendedTaskId: undefined,
+        chainStatus: "completed",
+      });
       await dependencies.saveAutonomousSession(session);
       return session;
     }
@@ -895,9 +1082,43 @@ export async function runAutonomousSession(params: RunAutonomousSessionParams): 
     session = stopDecision.status === "awaiting-approval" && stepResult.pendingApprovalAction
       ? markAwaitingApproval(session, stepResult.pendingApprovalAction, stopDecision.reason)
       : updateAutonomousSessionStatus(session, stopDecision.status, stopDecision.reason);
+    session = await syncTaskChainState(session, dependencies);
     await dependencies.saveAutonomousSession(session);
 
     if (stopDecision.shouldStop) {
+      const nextQueuedTask = stopDecision.status === "completed" && session.taskStatus === "completed"
+        ? await selectNextQueuedTask(session, dependencies)
+        : null;
+
+      if (nextQueuedTask && session.steps.length < session.maxSteps) {
+        pendingContinuationState = {
+          action: nextQueuedTask.action,
+          attemptCount: 0,
+          reason: `Continue into the next generated task ${nextQueuedTask.taskId} after the prior task completed and validated successfully.`,
+          mode: "chain-next-task",
+          taskEnvelope: nextQueuedTask,
+        };
+        session = {
+          ...session,
+          status: "active",
+          completedReason: undefined,
+          stateReason: `Continuing into generated task ${nextQueuedTask.taskId}.`,
+          latestCompletion: undefined,
+          pendingAction: undefined,
+          taskId: nextQueuedTask.taskId,
+          taskStatus: nextQueuedTask.status,
+          assignedNodeId: nextQueuedTask.assignedNodeId,
+          queueStateSummary: summarizeTaskEnvelope(nextQueuedTask),
+        };
+        session = await syncTaskChainState(session, dependencies, {
+          currentTaskId: nextQueuedTask.taskId,
+          nextRecommendedTaskId: undefined,
+          chainStatus: "selecting-next-task",
+        });
+        await dependencies.saveAutonomousSession(session);
+        continue;
+      }
+
       return session;
     }
 

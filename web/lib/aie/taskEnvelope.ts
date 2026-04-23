@@ -88,6 +88,9 @@ export type TaskEnvelope = {
   taskId: string;
   sessionId: string;
   stepIndex: number;
+  generatedTask: boolean;
+  priority: number;
+  dependsOnTaskIds: string[];
   action: ExecutionActionPreview;
   requestedCapabilities: ExecutionNodeCapability[];
   resumability: TaskResumability;
@@ -183,6 +186,9 @@ type CreateTaskEnvelopeParams = {
   taskId?: string;
   sessionId: string;
   stepIndex: number;
+  generatedTask?: boolean;
+  priority?: number;
+  dependsOnTaskIds?: string[];
   action: ExecutionActionPreview;
   requestedCapabilities?: ExecutionNodeCapability[];
   preferredNodeId?: string;
@@ -213,6 +219,34 @@ function createLeaseId(): string {
   }
 
   return `aie-lease-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function normalizeTaskPriority(value: unknown): number {
+  if (!Number.isFinite(Number(value))) {
+    return 0;
+  }
+
+  return Math.max(0, Math.floor(Number(value)));
+}
+
+function normalizeTaskDependencyIds(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+  for (const item of value) {
+    const taskId = normalizeText(item);
+    if (!taskId || seen.has(taskId)) {
+      continue;
+    }
+
+    seen.add(taskId);
+    normalized.push(taskId);
+  }
+
+  return normalized;
 }
 
 export function createTaskExecutionLease(params: {
@@ -661,6 +695,9 @@ export function createTaskEnvelope(params: CreateTaskEnvelopeParams): TaskEnvelo
     taskId: normalizeText(params.taskId) || createTaskId(),
     sessionId: normalizeText(params.sessionId),
     stepIndex: Math.max(1, Math.floor(params.stepIndex)),
+    generatedTask: params.generatedTask !== false,
+    priority: normalizeTaskPriority(params.priority),
+    dependsOnTaskIds: normalizeTaskDependencyIds(params.dependsOnTaskIds),
     action: params.action,
     requestedCapabilities: params.requestedCapabilities?.length
       ? [...params.requestedCapabilities]
@@ -871,6 +908,9 @@ export function normalizeTaskEnvelope(value: unknown): TaskEnvelope | null {
     taskId,
     sessionId,
     stepIndex,
+    generatedTask: typeof source.generatedTask === "boolean" ? source.generatedTask : true,
+    priority: normalizeTaskPriority(source.priority),
+    dependsOnTaskIds: normalizeTaskDependencyIds(source.dependsOnTaskIds),
     action: action as ExecutionActionPreview,
     requestedCapabilities,
     resumability: normalizeResumability(source.resumability) ?? "restart-required",
@@ -929,6 +969,9 @@ export function summarizeTaskEnvelope(envelope: TaskEnvelope): string {
     `task=${envelope.taskId}`,
     `status=${envelope.status}`,
     `step=${envelope.stepIndex}`,
+    `generated=${String(envelope.generatedTask)}`,
+    `priority=${envelope.priority}`,
+    envelope.dependsOnTaskIds.length ? `dependsOn=${envelope.dependsOnTaskIds.join(",")}` : "dependsOn=none",
     `resumability=${envelope.resumability}`,
     envelope.continuationGeneration > 0 ? `continuationGen=${envelope.continuationGeneration}` : "continuationGen=0",
     envelope.continuationSourceNodeId ? `continuationSource=${envelope.continuationSourceNodeId}` : "",

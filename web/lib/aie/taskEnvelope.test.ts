@@ -38,12 +38,17 @@ test("task envelopes create serializable queued tasks", () => {
   const envelope = createTaskEnvelope({
     sessionId: "session-123",
     stepIndex: 2,
+    priority: 7,
+    dependsOnTaskIds: ["task-alpha", "task-alpha", "task-beta"],
     action: makeAction(),
   });
 
   assert.equal(envelope.sessionId, "session-123");
   assert.equal(envelope.stepIndex, 2);
   assert.equal(envelope.status, "queued");
+  assert.equal(envelope.generatedTask, true);
+  assert.equal(envelope.priority, 7);
+  assert.deepEqual(envelope.dependsOnTaskIds, ["task-alpha", "task-beta"]);
   assert.equal(envelope.resumability, "restart-required");
   assert.equal(envelope.continuationGeneration, 0);
   assert.equal(envelope.resumeAttemptCount, 0);
@@ -74,6 +79,7 @@ test("task envelopes support claim and status updates", () => {
   assert.equal(completed.status, "completed");
   assert.match(summarizeTaskEnvelope(completed), /task=/i);
   assert.match(summarizeTaskEnvelope(completed), /node=aie-node-web-default/i);
+  assert.match(summarizeTaskEnvelope(completed), /priority=0/i);
 });
 
 test("task envelopes enforce claim and release semantics", () => {

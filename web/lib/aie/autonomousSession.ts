@@ -422,6 +422,32 @@ export type AutonomousWorkflowLoopHealthState = {
   loopHealthReason?: string;
 };
 
+export type AutonomousWorkflowTaskChainStatus =
+  | "idle"
+  | "selecting-next-task"
+  | "executing-task"
+  | "validating-task"
+  | "awaiting-approval"
+  | "blocked"
+  | "completed";
+
+export type AutonomousGeneratedTaskQueueEntry = {
+  taskId: string;
+  priority: number;
+  dependsOnTaskIds: string[];
+  status: TaskEnvelopeStatus | "skipped";
+};
+
+export type AutonomousWorkflowTaskChainState = {
+  generatedTaskQueue: AutonomousGeneratedTaskQueueEntry[];
+  currentTaskId?: string;
+  completedTaskIds: string[];
+  blockedTaskIds: string[];
+  skippedTaskIds: string[];
+  nextRecommendedTaskId?: string;
+  chainStatus: AutonomousWorkflowTaskChainStatus;
+};
+
 export type AutonomousWorkflowContinuityState = {
   progress: AutonomousWorkflowProgressState;
   memory: AutonomousWorkflowMemoryState;
@@ -431,6 +457,7 @@ export type AutonomousWorkflowContinuityState = {
   escalation: AutonomousWorkflowRecommendationEscalationState;
   handoff: AutonomousWorkflowRecommendationHandoffState;
   coding: AutonomousWorkflowCodingState;
+  taskChain: AutonomousWorkflowTaskChainState;
   loopHealth: AutonomousWorkflowLoopHealthState;
 };
 
@@ -635,6 +662,132 @@ function createDefaultAutonomousWorkflowCodingState(): AutonomousWorkflowCodingS
     repeatedValidationFailureDrivingEscalation: false,
     escalationActive: false,
     supervisedRecoveryActive: false,
+  };
+}
+
+function createDefaultAutonomousWorkflowTaskChainState(): AutonomousWorkflowTaskChainState {
+  return {
+    generatedTaskQueue: [],
+    currentTaskId: undefined,
+    completedTaskIds: [],
+    blockedTaskIds: [],
+    skippedTaskIds: [],
+    nextRecommendedTaskId: undefined,
+    chainStatus: "idle",
+  };
+}
+
+function normalizeUniqueTaskIdList(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+  for (const item of value) {
+    const taskId = normalizeText(typeof item === "string" ? item : "");
+    if (!taskId || seen.has(taskId)) {
+      continue;
+    }
+
+    seen.add(taskId);
+    normalized.push(taskId);
+  }
+
+  return normalized;
+}
+
+function normalizeAutonomousWorkflowTaskChainStatus(value: unknown): AutonomousWorkflowTaskChainStatus | undefined {
+  return value === "idle"
+    || value === "selecting-next-task"
+    || value === "executing-task"
+    || value === "validating-task"
+    || value === "awaiting-approval"
+    || value === "blocked"
+    || value === "completed"
+    ? value
+    : undefined;
+}
+
+function normalizeAutonomousGeneratedTaskQueueEntry(value: unknown): AutonomousGeneratedTaskQueueEntry | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const source = value as Record<string, unknown>;
+  const taskId = normalizeText(typeof source.taskId === "string" ? source.taskId : "");
+  const status = source.status;
+  if (!taskId) {
+    return null;
+  }
+
+  if (
+    status !== "pending"
+    && status !== "assigned"
+    && status !== "running"
+    && status !== "blocked"
+    && status !== "queued"
+    && status !== "dispatching"
+    && status !== "awaiting-ack"
+    && status !== "executing"
+    && status !== "completed"
+    && status !== "failed"
+    && status !== "retrying"
+    && status !== "rejected"
+    && status !== "skipped"
+  ) {
+    return null;
+  }
+
+  return {
+    taskId,
+    priority: Number.isFinite(Number(source.priority)) ? Math.max(0, Math.floor(Number(source.priority))) : 0,
+    dependsOnTaskIds: normalizeUniqueTaskIdList(source.dependsOnTaskIds),
+    status,
+  };
+}
+
+function deriveAutonomousWorkflowTaskChainState(session: AutonomousSession): AutonomousWorkflowTaskChainState {
+  const previous = session.workflowContinuity?.taskChain ?? createDefaultAutonomousWorkflowTaskChainState();
+  const currentTaskId = session.status === "active" || session.status === "awaiting-approval"
+    ? normalizeText(session.taskId) || previous.currentTaskId
+    : undefined;
+  const nextRecommendedTaskId = normalizeText(previous.nextRecommendedTaskId) || undefined;
+  const generatedTaskQueue = Array.isArray(previous.generatedTaskQueue) ? previous.generatedTaskQueue : [];
+  const completedTaskIds = normalizeUniqueTaskIdList(previous.completedTaskIds);
+  const blockedTaskIds = normalizeUniqueTaskIdList(previous.blockedTaskIds);
+  const skippedTaskIds = normalizeUniqueTaskIdList(previous.skippedTaskIds);
+  const chainStatus = session.status === "awaiting-approval"
+    ? "awaiting-approval"
+    : session.status === "blocked" || session.status === "failed"
+      ? "blocked"
+      : currentTaskId && (
+        session.taskStatus === "assigned"
+        || session.taskStatus === "running"
+        || session.taskStatus === "dispatching"
+        || session.taskStatus === "awaiting-ack"
+        || session.taskStatus === "executing"
+        || session.taskStatus === "queued"
+        || session.taskStatus === "retrying"
+      )
+        ? "executing-task"
+        : currentTaskId && session.taskStatus === "completed"
+          ? "validating-task"
+          : nextRecommendedTaskId
+            ? "selecting-next-task"
+            : generatedTaskQueue.length > 0
+              && generatedTaskQueue.every((entry) => completedTaskIds.includes(entry.taskId) || blockedTaskIds.includes(entry.taskId) || skippedTaskIds.includes(entry.taskId))
+              ? "completed"
+              : "idle";
+
+  return {
+    generatedTaskQueue,
+    currentTaskId,
+    completedTaskIds,
+    blockedTaskIds,
+    skippedTaskIds,
+    nextRecommendedTaskId,
+    chainStatus,
   };
 }
 
@@ -2942,6 +3095,7 @@ export function deriveAutonomousWorkflowContinuity(session: AutonomousSession): 
     escalation,
     handoff,
   });
+  const taskChain = deriveAutonomousWorkflowTaskChainState(session);
 
   return {
     progress: {
@@ -2981,6 +3135,7 @@ export function deriveAutonomousWorkflowContinuity(session: AutonomousSession): 
     escalation,
     handoff,
     coding,
+    taskChain,
     loopHealth,
   };
 }
@@ -2999,6 +3154,7 @@ function normalizeAutonomousWorkflowContinuityState(value: unknown): AutonomousW
   const escalationSource = source.escalation && typeof source.escalation === "object" ? (source.escalation as Record<string, unknown>) : undefined;
   const handoffSource = source.handoff && typeof source.handoff === "object" ? (source.handoff as Record<string, unknown>) : undefined;
   const codingSource = source.coding && typeof source.coding === "object" ? (source.coding as Record<string, unknown>) : undefined;
+  const taskChainSource = source.taskChain && typeof source.taskChain === "object" ? (source.taskChain as Record<string, unknown>) : undefined;
   const loopHealthSource = source.loopHealth && typeof source.loopHealth === "object" ? (source.loopHealth as Record<string, unknown>) : undefined;
   const chainPhase = normalizeText(typeof progressSource?.chainPhase === "string" ? progressSource.chainPhase : "");
 
@@ -3277,6 +3433,20 @@ function normalizeAutonomousWorkflowContinuityState(value: unknown): AutonomousW
       escalationActive: typeof codingSource?.escalationActive === "boolean" ? codingSource.escalationActive : false,
       supervisedRecoveryActive: typeof codingSource?.supervisedRecoveryActive === "boolean" ? codingSource.supervisedRecoveryActive : false,
       codingSummary: normalizeText(typeof codingSource?.codingSummary === "string" ? codingSource.codingSummary : "") || undefined,
+    },
+    taskChain: {
+      generatedTaskQueue: Array.isArray(taskChainSource?.generatedTaskQueue)
+        ? taskChainSource.generatedTaskQueue
+            .map((entry) => normalizeAutonomousGeneratedTaskQueueEntry(entry))
+            .filter((entry): entry is AutonomousGeneratedTaskQueueEntry => entry !== null)
+        : [],
+      currentTaskId: normalizeText(typeof taskChainSource?.currentTaskId === "string" ? taskChainSource.currentTaskId : "") || undefined,
+      completedTaskIds: normalizeUniqueTaskIdList(taskChainSource?.completedTaskIds),
+      blockedTaskIds: normalizeUniqueTaskIdList(taskChainSource?.blockedTaskIds),
+      skippedTaskIds: normalizeUniqueTaskIdList(taskChainSource?.skippedTaskIds),
+      nextRecommendedTaskId:
+        normalizeText(typeof taskChainSource?.nextRecommendedTaskId === "string" ? taskChainSource.nextRecommendedTaskId : "") || undefined,
+      chainStatus: normalizeAutonomousWorkflowTaskChainStatus(taskChainSource?.chainStatus) ?? "idle",
     },
     loopHealth: {
       currentPhaseRepeatCount: Number.isInteger(Number(loopHealthSource?.currentPhaseRepeatCount)) ? Math.max(1, Number(loopHealthSource?.currentPhaseRepeatCount)) : 1,
@@ -4118,6 +4288,7 @@ export function createAutonomousSession(params: CreateAutonomousSessionParams): 
       escalation: createDefaultAutonomousWorkflowRecommendationEscalationState(),
       handoff: createDefaultAutonomousWorkflowRecommendationHandoffState(),
       coding: createDefaultAutonomousWorkflowCodingState(),
+      taskChain: createDefaultAutonomousWorkflowTaskChainState(),
       loopHealth: {
         currentPhaseRepeatCount: 1,
         recentPhaseOutcomes: [],
@@ -4615,6 +4786,40 @@ export function buildAutonomousSessionContextBlock(session: AutonomousSession, l
   lines.push(`- Coding loop phase: ${session.workflowContinuity.coding.codingLoopPhase}`);
   lines.push(`- Coding escalation active: ${String(session.workflowContinuity.coding.escalationActive)}`);
   lines.push(`- Coding supervised recovery active: ${String(session.workflowContinuity.coding.supervisedRecoveryActive)}`);
+  lines.push(`- Task chain status: ${session.workflowContinuity.taskChain.chainStatus}`);
+
+  if (session.workflowContinuity.taskChain.currentTaskId) {
+    lines.push(`- Current chained task: ${session.workflowContinuity.taskChain.currentTaskId}`);
+  }
+
+  if (session.workflowContinuity.taskChain.nextRecommendedTaskId) {
+    lines.push(`- Next recommended chained task: ${session.workflowContinuity.taskChain.nextRecommendedTaskId}`);
+  }
+
+  if (session.workflowContinuity.taskChain.generatedTaskQueue.length > 0) {
+    lines.push(
+      `- Generated task queue: ${session.workflowContinuity.taskChain.generatedTaskQueue
+        .map((task) => normalizeText([
+          task.taskId,
+          `status=${task.status}`,
+          `priority=${task.priority}`,
+          task.dependsOnTaskIds.length ? `dependsOn=${task.dependsOnTaskIds.join(",")}` : "dependsOn=none",
+        ].join(" | ")))
+        .join(" ; ")}`,
+    );
+  }
+
+  if (session.workflowContinuity.taskChain.completedTaskIds.length > 0) {
+    lines.push(`- Completed chained tasks: ${session.workflowContinuity.taskChain.completedTaskIds.join(", ")}`);
+  }
+
+  if (session.workflowContinuity.taskChain.blockedTaskIds.length > 0) {
+    lines.push(`- Blocked chained tasks: ${session.workflowContinuity.taskChain.blockedTaskIds.join(", ")}`);
+  }
+
+  if (session.workflowContinuity.taskChain.skippedTaskIds.length > 0) {
+    lines.push(`- Skipped chained tasks: ${session.workflowContinuity.taskChain.skippedTaskIds.join(", ")}`);
+  }
 
   if (session.workflowContinuity.coding.targetScope) {
     lines.push(`- Coding target scope: ${session.workflowContinuity.coding.targetScope}`);

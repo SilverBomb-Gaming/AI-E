@@ -89,10 +89,21 @@ export async function listTasksByStatus(status: TaskEnvelopeStatus): Promise<Tas
 
 export async function getRunnableTasks(options?: { includeApprovalBlocked?: boolean }): Promise<TaskEnvelope[]> {
   const tasks = await listTasks();
+  const completedTaskIds = new Set(
+    tasks
+      .filter((task) => task.status === "completed")
+      .map((task) => task.taskId),
+  );
+
   return tasks
     .filter((task) => task.status === "pending" || task.status === "queued" || task.status === "retrying")
     .filter((task) => options?.includeApprovalBlocked === true || task.action.scope === "safe")
-    .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.taskId.localeCompare(right.taskId));
+    .filter((task) => task.dependsOnTaskIds.every((dependencyId) => completedTaskIds.has(dependencyId)))
+    .sort(
+      (left, right) => right.priority - left.priority
+        || left.createdAt.localeCompare(right.createdAt)
+        || left.taskId.localeCompare(right.taskId),
+    );
 }
 
 export async function claimTask(

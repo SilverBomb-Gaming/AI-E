@@ -6,7 +6,8 @@ import test from "node:test";
 import { appendAutonomousStep, createAutonomousSession, markAwaitingApproval } from "./autonomousSession";
 import { listExecutionNodes, resetExecutionNodeRegistry } from "./executionNodeRegistry";
 import { runAutonomousSession } from "./runAutonomousSession";
-import { getTask, listTasks } from "./taskQueueStore";
+import { createTaskEnvelope } from "./taskEnvelope";
+import { enqueueTask, getTask, listTasks } from "./taskQueueStore";
 import type { AnalysisInput, ExecutionActionPreview, FreeAnalysisResponse } from "./types";
 
 function makeSafeAction(description: string): ExecutionActionPreview {
@@ -1330,4 +1331,138 @@ test("runAutonomousSession stops when different actions keep producing the same 
   assert.equal(session.status, "failed");
   assert.equal(session.steps[1]?.repeatedOutput, true);
   assert.match(session.completedReason ?? "", /same output|stalled/i);
+});
+
+test("runAutonomousSession continues into the next runnable generated queued task after successful completion", async () => {
+  const taskDirectory = path.resolve(process.cwd(), "temp-phase7b-chain-store");
+  await rm(taskDirectory, { recursive: true, force: true });
+  await mkdir(taskDirectory, { recursive: true });
+  process.env.AIE_TASK_QUEUE_DIR = taskDirectory;
+
+  try {
+    const seedSession = createAutonomousSession({
+      goal: "Complete the generated queued task backlog in priority order.",
+      sessionId: "phase7b-chain-session",
+      maxSteps: 4,
+      sessionMode: "repo-coding",
+    });
+    const firstTask = await enqueueTask(createTaskEnvelope({
+      taskId: "phase7b-task-1",
+      sessionId: seedSession.sessionId,
+      stepIndex: 1,
+      priority: 10,
+      action: makeSafeAction("Execute generated queued task 1."),
+    }));
+    await enqueueTask(createTaskEnvelope({
+      taskId: "phase7b-task-2",
+      sessionId: seedSession.sessionId,
+      stepIndex: 2,
+      priority: 5,
+      dependsOnTaskIds: [firstTask.taskId],
+      action: makeSafeAction("Execute generated queued task 2."),
+    }));
+
+    let analysisCalls = 0;
+    const session = await runAutonomousSession({
+      goal: seedSession.goal,
+      maxSteps: 4,
+      existingSession: seedSession,
+      queuedTask: firstTask,
+      dependencies: {
+        runAnalysis: async () => {
+          analysisCalls += 1;
+          return {
+            what_happened: "Unexpected analysis call.",
+            what_matters: ["The queued-task chain should not need a fresh analysis step here."],
+            what_to_do_next: ["Stop."],
+            upgrade_hint: "",
+            proposedAction: "Stop.",
+            expectedOutcome: "Stop.",
+            execution: makeSafeAction("Unexpected analysis path."),
+          };
+        },
+        executeAction: async (action) => ({
+          status: "success",
+          output: `${action.description} completed successfully and validated the expected outcome.`,
+        }),
+        saveAutonomousSession: async () => {},
+      },
+    });
+
+    assert.equal(analysisCalls, 0);
+    assert.equal(session.status, "completed");
+    assert.equal(session.steps.length, 2);
+    assert.deepEqual(session.steps.map((step) => step.taskId), ["phase7b-task-1", "phase7b-task-2"]);
+    assert.equal(session.workflowContinuity.taskChain.chainStatus, "completed");
+    assert.deepEqual(session.workflowContinuity.taskChain.completedTaskIds, ["phase7b-task-1", "phase7b-task-2"]);
+    assert.equal(session.workflowContinuity.taskChain.nextRecommendedTaskId, undefined);
+  } finally {
+    delete process.env.AIE_TASK_QUEUE_DIR;
+    await rm(taskDirectory, { recursive: true, force: true });
+  }
+});
+
+test("runAutonomousSession does not advance to the next generated queued task after a failed task", async () => {
+  const taskDirectory = path.resolve(process.cwd(), "temp-phase7b-chain-failure-store");
+  await rm(taskDirectory, { recursive: true, force: true });
+  await mkdir(taskDirectory, { recursive: true });
+  process.env.AIE_TASK_QUEUE_DIR = taskDirectory;
+
+  try {
+    const seedSession = createAutonomousSession({
+      goal: "Stop the generated queued task chain when the active task fails.",
+      sessionId: "phase7b-chain-failure-session",
+      maxSteps: 4,
+      sessionMode: "repo-coding",
+    });
+    const firstTask = await enqueueTask(createTaskEnvelope({
+      taskId: "phase7b-fail-task-1",
+      sessionId: seedSession.sessionId,
+      stepIndex: 1,
+      priority: 10,
+      action: makeSafeAction("Execute generated queued task that fails."),
+    }));
+    await enqueueTask(createTaskEnvelope({
+      taskId: "phase7b-fail-task-2",
+      sessionId: seedSession.sessionId,
+      stepIndex: 2,
+      priority: 5,
+      dependsOnTaskIds: [firstTask.taskId],
+      action: makeSafeAction("Execute generated queued task 2 after failure."),
+    }));
+
+    const session = await runAutonomousSession({
+      goal: seedSession.goal,
+      maxSteps: 4,
+      existingSession: seedSession,
+      queuedTask: firstTask,
+      dependencies: {
+        runAnalysis: async () => ({
+          what_happened: "Unexpected analysis call.",
+          what_matters: ["The queued-task chain should stay on the current bounded task."],
+          what_to_do_next: ["Stop."],
+          upgrade_hint: "",
+          proposedAction: "Stop.",
+          expectedOutcome: "Stop.",
+          execution: makeSafeAction("Unexpected analysis path."),
+        }),
+        executeAction: async () => ({
+          status: "failed",
+          error: "The first generated queued task failed.",
+          output: "The first generated queued task failed.",
+        }),
+        saveAutonomousSession: async () => {},
+      },
+    });
+
+    const secondTask = await getTask("phase7b-fail-task-2");
+
+    assert.equal(session.steps.length, 1);
+    assert.notEqual(session.status, "completed");
+    assert.equal(session.workflowContinuity.taskChain.completedTaskIds.length, 0);
+    assert.equal(secondTask?.status, "queued");
+  } finally {
+    delete process.env.AIE_TASK_QUEUE_DIR;
+    await rm(taskDirectory, { recursive: true, force: true });
+  }
 });

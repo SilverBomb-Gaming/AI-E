@@ -84,6 +84,7 @@ test("taskQueueStore persists claims, runnable filtering, and explicit finalizat
         taskId: "task-old-safe",
         sessionId: "session-queue-2",
         stepIndex: 1,
+        priority: 1,
         action: makeAction(),
       }),
       createdAt: "2026-04-21T00:00:00.000Z",
@@ -94,6 +95,7 @@ test("taskQueueStore persists claims, runnable filtering, and explicit finalizat
         taskId: "task-dangerous",
         sessionId: "session-queue-3",
         stepIndex: 1,
+        priority: 10,
         action: {
           ...makeAction(),
           id: "dangerous-action",
@@ -108,10 +110,23 @@ test("taskQueueStore persists claims, runnable filtering, and explicit finalizat
         taskId: "task-new-safe",
         sessionId: "session-queue-4",
         stepIndex: 1,
+        priority: 5,
         action: makeAction(),
       }),
       createdAt: "2026-04-21T00:00:02.000Z",
       updatedAt: "2026-04-21T00:00:02.000Z",
+    });
+    await enqueueTask({
+      ...createTaskEnvelope({
+        taskId: "task-dependent-safe",
+        sessionId: "session-queue-5",
+        stepIndex: 1,
+        priority: 9,
+        dependsOnTaskIds: ["task-old-safe"],
+        action: makeAction(),
+      }),
+      createdAt: "2026-04-21T00:00:03.000Z",
+      updatedAt: "2026-04-21T00:00:03.000Z",
     });
 
     const runnable = await getRunnableTasks();
@@ -124,8 +139,9 @@ test("taskQueueStore persists claims, runnable filtering, and explicit finalizat
       ? await finalizeTask(claimed.taskId, "completed", { statusReason: "Completed through explicit finalizeTask." })
       : null;
     const completedTasks = await listTasksByStatus("completed");
+    const runnableAfterCompletion = await getRunnableTasks();
 
-    assert.deepEqual(runnable.map((task) => task.taskId), ["task-old-safe", "task-new-safe"]);
+    assert.deepEqual(runnable.map((task) => task.taskId), ["task-new-safe", "task-old-safe"]);
     assert.equal(claimed?.status, "dispatching");
     assert.equal(claimed?.claimToken, "claim-token-1");
     assert.equal(claimed?.runnerMode, "local-node");
@@ -135,6 +151,7 @@ test("taskQueueStore persists claims, runnable filtering, and explicit finalizat
     assert.equal(completed?.status, "completed");
     assert.equal(typeof completed?.completedAt, "string");
     assert.deepEqual(completedTasks.map((task) => task.taskId), ["task-old-safe"]);
+    assert.deepEqual(runnableAfterCompletion.map((task) => task.taskId), ["task-dependent-safe", "task-new-safe"]);
   } finally {
     delete process.env.AIE_TASK_QUEUE_DIR;
     await rm(taskDirectory, { recursive: true, force: true });
