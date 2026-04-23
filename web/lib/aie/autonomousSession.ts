@@ -799,6 +799,12 @@ function deriveFeaturePlanningMetadata(bundles: AutonomousFeatureBundleSummary[]
       bundle.dependsOnFeatureIds.filter((featureId) => !completedFeatureIds.has(featureId)),
     ]),
   );
+  const unlockMap = new Map<string, string[]>();
+  for (const bundle of bundles) {
+    for (const dependencyId of bundle.dependsOnFeatureIds) {
+      unlockMap.set(dependencyId, uniqueStrings([...(unlockMap.get(dependencyId) ?? []), bundle.featureId]));
+    }
+  }
   const dependencyDepthMemo = new Map<string, number>();
   const longestPathMemo = new Map<string, number>();
   const downstreamMemo = new Map<string, string[]>();
@@ -878,13 +884,68 @@ function deriveFeaturePlanningMetadata(bundles: AutonomousFeatureBundleSummary[]
     return downstream;
   };
 
-  return bundles.map((bundle) => {
-    const blockedByFeatures = blockedByMap.get(bundle.featureId) ?? [];
+  const bundlesWithDependencies = bundles.map((bundle) => ({
+    ...bundle,
+    blockedByFeatures: blockedByMap.get(bundle.featureId) ?? [],
+    unlocksFeatures: [...(unlockMap.get(bundle.featureId) ?? [])],
+  }));
+  const hydratedBundleById = new Map(bundlesWithDependencies.map((bundle) => [bundle.featureId, bundle]));
+
+  const getHydratedLongestUnlockPath = (featureId: string, trail = new Set<string>()): number => {
+    if (longestPathMemo.has(featureId)) {
+      return longestPathMemo.get(featureId) ?? 0;
+    }
+    if (trail.has(featureId)) {
+      return 0;
+    }
+
+    const bundle = hydratedBundleById.get(featureId);
+    const remainingUnlocks = (bundle?.unlocksFeatures ?? []).filter((unlockId) => !completedFeatureIds.has(unlockId));
+    if (remainingUnlocks.length === 0) {
+      longestPathMemo.set(featureId, 0);
+      return 0;
+    }
+
+    const nextTrail = new Set(trail);
+    nextTrail.add(featureId);
+    const longest = Math.max(...remainingUnlocks.map((unlockId) => 1 + getHydratedLongestUnlockPath(unlockId, nextTrail)));
+    longestPathMemo.set(featureId, longest);
+    return longest;
+  };
+
+  const getHydratedDownstreamFeatureIds = (featureId: string, trail = new Set<string>()): string[] => {
+    if (downstreamMemo.has(featureId)) {
+      return downstreamMemo.get(featureId) ?? [];
+    }
+    if (trail.has(featureId)) {
+      return [];
+    }
+
+    const bundle = hydratedBundleById.get(featureId);
+    if (!bundle) {
+      return [];
+    }
+
+    const nextTrail = new Set(trail);
+    nextTrail.add(featureId);
+    let downstream: string[] = [];
+    for (const unlockId of bundle.unlocksFeatures) {
+      if (completedFeatureIds.has(unlockId)) {
+        continue;
+      }
+      downstream = uniqueStrings([unlockId, ...downstream, ...getHydratedDownstreamFeatureIds(unlockId, nextTrail)]);
+    }
+    downstreamMemo.set(featureId, downstream);
+    return downstream;
+  };
+
+  return bundlesWithDependencies.map((bundle) => {
+    const blockedByFeatures = bundle.blockedByFeatures;
     const remainingUnlocks = bundle.unlocksFeatures.filter((featureId) => !completedFeatureIds.has(featureId));
     const blockedUnlockCount = remainingUnlocks.filter((featureId) => (blockedByMap.get(featureId) ?? []).includes(bundle.featureId)).length;
-    const downstreamFeatureCount = getDownstreamFeatureIds(bundle.featureId).length;
+    const downstreamFeatureCount = getHydratedDownstreamFeatureIds(bundle.featureId).length;
     const dependencyDepth = getDependencyDepth(bundle.featureId);
-    const criticalPathWeight = dependencyDepth + getLongestUnlockPath(bundle.featureId) + (blockedUnlockCount > 0 ? 1 : 0);
+    const criticalPathWeight = dependencyDepth + getHydratedLongestUnlockPath(bundle.featureId) + (blockedUnlockCount > 0 ? 1 : 0);
     const unlockScore = (blockedUnlockCount * 3) + (remainingUnlocks.length * 2) + downstreamFeatureCount;
     const planningScore = bundle.featureStatus === "completed"
       ? 0

@@ -551,6 +551,9 @@ function deriveFeatureDependencyGraph(params: {
   for (const feature of featureEntries) {
     feature.blockedByFeatures = feature.dependsOnFeatureIds.filter((dependencyId) => !completedFeatureIds.has(dependencyId));
     feature.unlocksFeatures = unlockMap.get(feature.featureId) ?? [];
+  }
+
+  for (const feature of featureEntries) {
     const remainingUnlocks = feature.unlocksFeatures.filter((unlockId) => !completedFeatureIds.has(unlockId));
     const blockedUnlockCount = remainingUnlocks.filter((unlockId) => featureById.get(unlockId)?.dependsOnFeatureIds.includes(feature.featureId)).length;
     const isCompleted = feature.totalTaskCount > 0 && feature.completedTaskCount >= feature.totalTaskCount;
