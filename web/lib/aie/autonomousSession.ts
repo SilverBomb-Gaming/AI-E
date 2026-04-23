@@ -536,7 +536,79 @@ export type AutonomousSession = {
   latestRecoveryState?: AutonomousRecoveryState;
   latestCompletion?: AutonomousCompletionState;
   workflowContinuity: AutonomousWorkflowContinuityState;
+  oversight: AutonomousSessionOversight;
   steps: AutonomousStepRecord[];
+};
+
+export type AutonomousTaskReviewStatus = "active" | "completed" | "blocked" | "failed" | "skipped" | "pending";
+
+export type AutonomousTaskReviewRecord = {
+  taskId: string;
+  title: string;
+  status: AutonomousTaskReviewStatus;
+  whySelected: string;
+  outputsProduced: string[];
+  validationResult: string;
+  repoActionsGenerated: boolean;
+  approvalNeeded: boolean;
+  transitionSummary: string;
+};
+
+export type AutonomousOperatorAttentionKind =
+  | "waiting-for-approval"
+  | "blocked-by-dependency"
+  | "failed-task-requires-judgment"
+  | "session-limit-reached"
+  | "unsafe-manual-review";
+
+export type AutonomousOperatorAttentionItem = {
+  kind: AutonomousOperatorAttentionKind;
+  summary: string;
+  recommendedOperatorAction: string;
+};
+
+export type AutonomousOperatorControlAction =
+  | "pause-session"
+  | "resume-session"
+  | "skip-current-task"
+  | "force-stop"
+  | "approve-repo-action"
+  | "reject-repo-action";
+
+export type AutonomousOperatorControlGuide = {
+  action: AutonomousOperatorControlAction;
+  label: string;
+  available: boolean;
+  description: string;
+  likelyConsequence: string;
+};
+
+export type AutonomousSessionSummaryArtifact = {
+  sessionId: string;
+  startTime: string;
+  endTime: string;
+  tasksAttempted: number;
+  tasksCompleted: number;
+  tasksBlocked: number;
+  tasksFailed: number;
+  approvalsRequested: number;
+  approvalsExecuted: number;
+  currentPauseReason: string;
+  recommendedNextStep: string;
+  keyFilesOrAssetsChanged: string[];
+  validationSummary: string;
+  safeToResume: boolean;
+};
+
+export type AutonomousSessionOversight = {
+  summary: AutonomousSessionSummaryArtifact;
+  operatorAttention: AutonomousOperatorAttentionItem[];
+  controls: AutonomousOperatorControlGuide[];
+  taskReviews: AutonomousTaskReviewRecord[];
+  currentTaskId?: string;
+  recentCompletedTaskIds: string[];
+  blockedTaskIds: string[];
+  pendingApprovalActionIds: string[];
 };
 
 type CreateAutonomousSessionParams = {
@@ -590,6 +662,321 @@ type AppendAutonomousStepParams = {
   completionConfidence?: GoalEvaluation["confidence"];
   timestamp?: string;
 };
+
+function uniqueStrings(values: Array<string | undefined | null>): string[] {
+  return [...new Set(values.map((value) => normalizeText(value)).filter(Boolean))];
+}
+
+function summarizeTaskReviewTitle(step: AutonomousStepRecord, taskId: string): string {
+  const actionSummary = normalizeText(step.proposedAction);
+  if (actionSummary) {
+    return actionSummary.length > 96 ? `${actionSummary.slice(0, 93)}...` : actionSummary;
+  }
+
+  return `Task ${taskId}`;
+}
+
+function summarizeTaskReviewValidation(taskSteps: AutonomousStepRecord[]): string {
+  const validationStep = [...taskSteps].reverse().find((step) => step.goalStatus || step.executionResult?.status || step.diagnosis);
+  if (!validationStep) {
+    return "No validation result was recorded for this task.";
+  }
+
+  if (validationStep.goalStatus) {
+    return `Goal status: ${validationStep.goalStatus}${validationStep.executionResult?.status ? ` | runtime=${validationStep.executionResult.status}` : ""}`;
+  }
+
+  if (validationStep.executionResult?.status) {
+    return `Runtime status: ${validationStep.executionResult.status}`;
+  }
+
+  return validationStep.diagnosis || "No validation result was recorded for this task.";
+}
+
+function summarizeTaskReviewTransition(status: AutonomousTaskReviewStatus, taskSteps: AutonomousStepRecord[]): string {
+  const lastStep = taskSteps.at(-1);
+  const reason = normalizeText(
+    lastStep?.failureReason
+    || lastStep?.stallReason
+    || lastStep?.diagnosis
+    || lastStep?.queueStateSummary
+    || lastStep?.dispatchStatusSummary,
+  );
+
+  if (status === "completed") {
+    return reason || "This task completed and the bounded session advanced.";
+  }
+
+  if (status === "failed" || status === "blocked") {
+    return reason || "This task stopped without a successful bounded outcome and needs operator review.";
+  }
+
+  if (status === "skipped") {
+    return reason || "The operator skipped this task and the session moved to the next runnable task.";
+  }
+
+  if (status === "active") {
+    return reason || "This task is currently active inside the bounded session.";
+  }
+
+  return reason || "This task has not produced a terminal result yet.";
+}
+
+function deriveAutonomousTaskReviewRecords(session: AutonomousSession): AutonomousTaskReviewRecord[] {
+  const outputArtifacts = session.workflowContinuity.coding.outputArtifacts ?? [];
+  const repoActionPaths = uniqueStrings([
+    ...session.workflowContinuity.coding.pendingRepoActions.flatMap((action) => action.artifactFilePaths),
+    ...session.workflowContinuity.coding.approvedRepoActions.flatMap((action) => action.artifactFilePaths),
+    ...session.workflowContinuity.coding.executedRepoActions.flatMap((action) => action.artifactFilePaths),
+  ]);
+  const reviewGroups = new Map<string, AutonomousStepRecord[]>();
+
+  for (const step of session.steps) {
+    const taskId = normalizeText(step.taskId) || `step-${step.index}`;
+    reviewGroups.set(taskId, [...(reviewGroups.get(taskId) ?? []), step]);
+  }
+
+  for (const taskId of session.workflowContinuity.taskChain.completedTaskIds) {
+    if (!reviewGroups.has(taskId)) {
+      reviewGroups.set(taskId, []);
+    }
+  }
+
+  for (const taskId of session.workflowContinuity.taskChain.blockedTaskIds) {
+    if (!reviewGroups.has(taskId)) {
+      reviewGroups.set(taskId, []);
+    }
+  }
+
+  for (const taskId of session.workflowContinuity.taskChain.skippedTaskIds) {
+    if (!reviewGroups.has(taskId)) {
+      reviewGroups.set(taskId, []);
+    }
+  }
+
+  if (session.workflowContinuity.taskChain.currentTaskId && !reviewGroups.has(session.workflowContinuity.taskChain.currentTaskId)) {
+    reviewGroups.set(session.workflowContinuity.taskChain.currentTaskId, []);
+  }
+
+  return [...reviewGroups.entries()].map(([taskId, taskSteps]) => {
+    const firstStep = taskSteps[0];
+    const taskStepIndexes = new Set(taskSteps.map((step) => step.index));
+    const artifactPaths = uniqueStrings(
+      outputArtifacts
+        .filter((artifact) => taskStepIndexes.has(artifact.stepIndex))
+        .map((artifact) => artifact.filePath),
+    );
+    const outputSummaries = uniqueStrings([
+      ...artifactPaths.map((filePath) => `Changed ${filePath}`),
+      ...taskSteps.map((step) => step.executionResult?.diffSummary),
+      ...taskSteps.map((step) => step.executionResult?.output),
+    ]).slice(0, 6);
+    const repoActionsGenerated = artifactPaths.some((filePath) => repoActionPaths.includes(filePath));
+    const approvalNeeded = Boolean(
+      repoActionsGenerated
+      || (session.status === "awaiting-approval" && normalizeText(session.taskId) === taskId && session.pendingAction)
+      || (session.workflowContinuity.coding.operatorConfirmationRequired && normalizeText(session.taskId) === taskId),
+    );
+
+    let status: AutonomousTaskReviewStatus = "pending";
+    if (session.workflowContinuity.taskChain.currentTaskId === taskId || session.sessionLoop.currentActiveTaskId === taskId) {
+      status = "active";
+    } else if (session.workflowContinuity.taskChain.completedTaskIds.includes(taskId) || session.sessionLoop.completedTaskIds.includes(taskId)) {
+      status = "completed";
+    } else if (session.workflowContinuity.taskChain.skippedTaskIds.includes(taskId) || session.sessionLoop.skippedTaskIds.includes(taskId)) {
+      status = "skipped";
+    } else if (session.sessionLoop.blockedTaskIds.includes(taskId)) {
+      status = session.sessionLoop.failureCount > 0 && taskSteps.some((step) => step.failureReason || step.executionResult?.status === "failed")
+        ? "failed"
+        : "blocked";
+    } else if (session.workflowContinuity.taskChain.blockedTaskIds.includes(taskId)) {
+      status = "blocked";
+    }
+
+    return {
+      taskId,
+      title: summarizeTaskReviewTitle(firstStep ?? { index: 0, goal: session.goal, timestamp: session.updatedAt }, taskId),
+      status,
+      whySelected: firstStep?.planningHintSummary || firstStep?.selectedNodeReason || "No explicit task-selection rationale was recorded.",
+      outputsProduced: outputSummaries.length ? outputSummaries : ["No task outputs were recorded."],
+      validationResult: summarizeTaskReviewValidation(taskSteps),
+      repoActionsGenerated,
+      approvalNeeded,
+      transitionSummary: summarizeTaskReviewTransition(status, taskSteps),
+    };
+  });
+}
+
+function deriveAutonomousOperatorAttention(session: AutonomousSession, taskReviews: AutonomousTaskReviewRecord[]): AutonomousOperatorAttentionItem[] {
+  const attention: AutonomousOperatorAttentionItem[] = [];
+
+  if (session.status === "awaiting-approval" || session.sessionLoop.pauseReason === "approval-required") {
+    attention.push({
+      kind: "waiting-for-approval",
+      summary: session.stateReason || session.sessionLoop.pauseSummary || "The bounded session is waiting for approval before it can continue.",
+      recommendedOperatorAction: "Approve or reject the pending repo action so the bounded session can continue safely.",
+    });
+  }
+
+  if (session.sessionLoop.pauseReason === "dependency-missing") {
+    attention.push({
+      kind: "blocked-by-dependency",
+      summary: session.sessionLoop.pauseSummary || session.stateReason || "A required dependency is missing for the current bounded task.",
+      recommendedOperatorAction: "Resolve the missing dependency or reroute the session before resuming.",
+    });
+  }
+
+  if (taskReviews.some((review) => review.status === "failed" || review.status === "blocked")) {
+    attention.push({
+      kind: "failed-task-requires-judgment",
+      summary: "At least one task stopped without a successful bounded outcome and needs operator judgment.",
+      recommendedOperatorAction: "Inspect the failed or blocked task review entry before resuming or skipping.",
+    });
+  }
+
+  if (["max-tasks-reached", "max-failures-reached", "max-runtime-reached", "session-limit-reached"].includes(session.sessionLoop.pauseReason ?? "")) {
+    attention.push({
+      kind: "session-limit-reached",
+      summary: session.sessionLoop.pauseSummary || "The bounded session stopped because it reached a configured limit.",
+      recommendedOperatorAction: "Review the session summary, then decide whether to resume with updated bounds or leave the session stopped.",
+    });
+  }
+
+  if (
+    session.status === "blocked"
+    || session.status === "failed"
+    || session.workflowContinuity.escalation.likelyNeedsOperatorInterventionNow
+    || session.workflowContinuity.handoff.waitingOnOperatorDecision
+  ) {
+    attention.push({
+      kind: "unsafe-manual-review",
+      summary: session.stateReason || session.completedReason || session.workflowContinuity.escalation.escalationSummary || "The session requires manual review before any further bounded execution.",
+      recommendedOperatorAction: "Review the operator-attention reasons and select an explicit intervention before proceeding.",
+    });
+  }
+
+  return attention;
+}
+
+function deriveAutonomousOperatorControls(session: AutonomousSession): AutonomousOperatorControlGuide[] {
+  const resumeAvailable = canResumeAutonomousSession(session, false);
+  const approvalAvailable = session.status === "awaiting-approval" && Boolean(session.pendingAction);
+  const activeOrPausable = session.status === "active" || session.status === "paused" || session.status === "awaiting-approval";
+
+  return [
+    {
+      action: "pause-session",
+      label: "Pause session",
+      available: session.status === "active",
+      description: "Stop after the current bounded step and preserve the persisted session state.",
+      likelyConsequence: "AI-E will not continue into another bounded step until you explicitly resume.",
+    },
+    {
+      action: "resume-session",
+      label: "Resume session",
+      available: resumeAvailable,
+      description: "Continue the stored bounded session from its current persisted state.",
+      likelyConsequence: approvalAvailable
+        ? "Resume is still blocked until you explicitly approve the pending repo action."
+        : "AI-E will continue using the current limits, task chain, and operator steering state.",
+    },
+    {
+      action: "skip-current-task",
+      label: "Skip current task",
+      available: activeOrPausable,
+      description: "Mark the current bounded task as skipped and move to the next runnable queued task.",
+      likelyConsequence: "The current task will not be retried automatically in this session.",
+    },
+    {
+      action: "force-stop",
+      label: "Force stop",
+      available: activeOrPausable,
+      description: "Terminate the bounded session immediately and keep its current state for review.",
+      likelyConsequence: "The session will stop and require an explicit later decision before any new run continues the work.",
+    },
+    {
+      action: "approve-repo-action",
+      label: "Approve repo action",
+      available: approvalAvailable,
+      description: "Allow the pending approval-gated repo action to execute inside the existing bounded session.",
+      likelyConsequence: "The session can continue through the current approval gate using the persisted pending action.",
+    },
+    {
+      action: "reject-repo-action",
+      label: "Reject repo action",
+      available: approvalAvailable,
+      description: "Decline the pending approval-gated repo action without weakening approval rules.",
+      likelyConsequence: "The pending repo action will not execute and the session will remain stopped until rerouted or resumed differently.",
+    },
+  ];
+}
+
+function deriveAutonomousSessionOversight(session: AutonomousSession): AutonomousSessionOversight {
+  const taskReviews = deriveAutonomousTaskReviewRecords(session);
+  const changedPaths = uniqueStrings([
+    ...session.workflowContinuity.coding.outputArtifacts.map((artifact) => artifact.filePath),
+    ...session.workflowContinuity.coding.pendingRepoActions.flatMap((action) => action.artifactFilePaths),
+    ...session.workflowContinuity.coding.approvedRepoActions.flatMap((action) => action.artifactFilePaths),
+    ...session.workflowContinuity.coding.executedRepoActions.flatMap((action) => action.artifactFilePaths),
+  ]);
+  const approvalActionIds = uniqueStrings([
+    ...session.workflowContinuity.coding.pendingRepoActions.map((action) => action.actionId),
+    ...session.workflowContinuity.coding.approvedRepoActions.map((action) => action.actionId),
+    ...session.workflowContinuity.coding.executedRepoActions.map((action) => action.actionId),
+  ]);
+  const attention = deriveAutonomousOperatorAttention(session, taskReviews);
+  const currentTaskId = normalizeText(session.sessionLoop.currentActiveTaskId || session.workflowContinuity.taskChain.currentTaskId) || undefined;
+
+  return {
+    summary: {
+      sessionId: session.sessionId,
+      startTime: session.sessionLoop.sessionStartedAt,
+      endTime: session.updatedAt,
+      tasksAttempted: uniqueStrings([
+        ...taskReviews.map((review) => review.taskId.startsWith("step-") ? undefined : review.taskId),
+        currentTaskId,
+      ]).length,
+      tasksCompleted: session.sessionLoop.completedTaskIds.length,
+      tasksBlocked: uniqueStrings([...session.sessionLoop.blockedTaskIds, ...session.workflowContinuity.taskChain.blockedTaskIds]).length,
+      tasksFailed: taskReviews.filter((review) => review.status === "failed").length,
+      approvalsRequested: approvalActionIds.length,
+      approvalsExecuted: session.workflowContinuity.coding.executedRepoActions.length,
+      currentPauseReason: session.sessionLoop.pauseReason || session.stateReason || "No pause reason is currently recorded.",
+      recommendedNextStep:
+        session.workflowContinuity.loopHealth.recommendedNextActionSummary
+        || session.workflowContinuity.progress.nextIntendedStep
+        || session.sessionLoop.nextRecommendedTaskId
+        || "No recommended next step is currently recorded.",
+      keyFilesOrAssetsChanged: changedPaths,
+      validationSummary:
+        session.workflowContinuity.coding.lastValidationResultSummary
+        || session.workflowContinuity.coding.lastValidationSummary
+        || session.latestCompletion?.reason
+        || "No validation summary is currently recorded.",
+      safeToResume: canResumeAutonomousSession(session, false),
+    },
+    operatorAttention: attention,
+    controls: deriveAutonomousOperatorControls(session),
+    taskReviews,
+    currentTaskId,
+    recentCompletedTaskIds: session.sessionLoop.completedTaskIds.slice(-5).reverse(),
+    blockedTaskIds: uniqueStrings([...session.sessionLoop.blockedTaskIds, ...session.workflowContinuity.taskChain.blockedTaskIds]),
+    pendingApprovalActionIds: session.workflowContinuity.coding.pendingRepoActions.map((action) => action.actionId),
+  };
+}
+
+function refreshAutonomousSessionDerivedState(session: AutonomousSession): AutonomousSession {
+  const withContinuity: AutonomousSession = {
+    ...session,
+    workflowContinuity: deriveAutonomousWorkflowContinuity(session),
+    oversight: session.oversight,
+  };
+
+  return {
+    ...withContinuity,
+    oversight: deriveAutonomousSessionOversight(withContinuity),
+  };
+}
 
 export type UpdateAutonomousSessionSteeringParams = {
   action?: AutonomousOperatorSteeringAction;
@@ -4475,13 +4862,34 @@ export function createAutonomousSession(params: CreateAutonomousSessionParams): 
         recommendedNextPhase: "planning",
       },
     },
+    oversight: {
+      summary: {
+        sessionId: "",
+        startTime: timestamp,
+        endTime: timestamp,
+        tasksAttempted: 0,
+        tasksCompleted: 0,
+        tasksBlocked: 0,
+        tasksFailed: 0,
+        approvalsRequested: 0,
+        approvalsExecuted: 0,
+        currentPauseReason: "No pause reason is currently recorded.",
+        recommendedNextStep: "No recommended next step is currently recorded.",
+        keyFilesOrAssetsChanged: [],
+        validationSummary: "No validation summary is currently recorded.",
+        safeToResume: false,
+      },
+      operatorAttention: [],
+      controls: [],
+      taskReviews: [],
+      recentCompletedTaskIds: [],
+      blockedTaskIds: [],
+      pendingApprovalActionIds: [],
+    },
     steps: [],
   };
 
-  return {
-    ...session,
-    workflowContinuity: deriveAutonomousWorkflowContinuity(session),
-  };
+  return refreshAutonomousSessionDerivedState(session);
 }
 
 export function appendAutonomousStep(
@@ -4585,10 +4993,7 @@ export function appendAutonomousStep(
     steps: [...session.steps, step],
   };
 
-  let derivedSession: AutonomousSession = {
-    ...nextSession,
-    workflowContinuity: deriveAutonomousWorkflowContinuity(nextSession),
-  };
+  let derivedSession = refreshAutonomousSessionDerivedState(nextSession);
 
   if (
     derivedSession.sessionMode === "repo-coding"
@@ -4610,10 +5015,7 @@ export function appendAutonomousStep(
       },
     };
 
-    derivedSession = {
-      ...derivedSession,
-      workflowContinuity: deriveAutonomousWorkflowContinuity(derivedSession),
-    };
+    derivedSession = refreshAutonomousSessionDerivedState(derivedSession);
   }
 
   return derivedSession;
@@ -4634,10 +5036,7 @@ export function updateAutonomousSessionStatus(
     workflowContinuity: session.workflowContinuity,
   };
 
-  return {
-    ...nextSession,
-    workflowContinuity: deriveAutonomousWorkflowContinuity(nextSession),
-  };
+  return refreshAutonomousSessionDerivedState(nextSession);
 }
 
 export function pauseAutonomousSession(
@@ -4652,10 +5051,7 @@ export function pauseAutonomousSession(
     workflowContinuity: session.workflowContinuity,
   };
 
-  return {
-    ...nextSession,
-    workflowContinuity: deriveAutonomousWorkflowContinuity(nextSession),
-  };
+  return refreshAutonomousSessionDerivedState(nextSession);
 }
 
 export function markAwaitingApproval(
@@ -4670,10 +5066,7 @@ export function markAwaitingApproval(
     workflowContinuity: session.workflowContinuity,
   };
 
-  return {
-    ...nextSession,
-    workflowContinuity: deriveAutonomousWorkflowContinuity(nextSession),
-  };
+  return refreshAutonomousSessionDerivedState(nextSession);
 }
 
 export function canResumeAutonomousSession(session: AutonomousSession, approved = false): boolean {
@@ -4703,10 +5096,7 @@ export function resumeAutonomousSession(
     workflowContinuity: session.workflowContinuity,
   };
 
-  return {
-    ...nextSession,
-    workflowContinuity: deriveAutonomousWorkflowContinuity(nextSession),
-  };
+  return refreshAutonomousSessionDerivedState(nextSession);
 }
 
 export function normalizeAutonomousSession(value: unknown): AutonomousSession | null {
@@ -4797,6 +5187,7 @@ export function normalizeAutonomousSession(value: unknown): AutonomousSession | 
       escalation: createDefaultAutonomousWorkflowRecommendationEscalationState(),
       handoff: createDefaultAutonomousWorkflowRecommendationHandoffState(),
       coding: createDefaultAutonomousWorkflowCodingState(),
+      taskChain: createDefaultAutonomousWorkflowTaskChainState(),
       loopHealth: {
         currentPhaseRepeatCount: 1,
         recentPhaseOutcomes: [],
@@ -4808,14 +5199,38 @@ export function normalizeAutonomousSession(value: unknown): AutonomousSession | 
         recommendedNextPhase: "planning",
       },
     },
+    oversight: {
+      summary: {
+        sessionId: normalizeText(source.sessionId),
+        startTime: normalizeText(typeof source.createdAt === "string" ? source.createdAt : "") || createTimestamp(),
+        endTime: normalizeText(typeof source.updatedAt === "string" ? source.updatedAt : "") || createTimestamp(),
+        tasksAttempted: 0,
+        tasksCompleted: 0,
+        tasksBlocked: 0,
+        tasksFailed: 0,
+        approvalsRequested: 0,
+        approvalsExecuted: 0,
+        currentPauseReason: "No pause reason is currently recorded.",
+        recommendedNextStep: "No recommended next step is currently recorded.",
+        keyFilesOrAssetsChanged: [],
+        validationSummary: "No validation summary is currently recorded.",
+        safeToResume: false,
+      },
+      operatorAttention: [],
+      controls: [],
+      taskReviews: [],
+      recentCompletedTaskIds: [],
+      blockedTaskIds: [],
+      pendingApprovalActionIds: [],
+    },
     steps,
   };
 
-  return {
+  return refreshAutonomousSessionDerivedState({
     ...normalized,
     sessionLoop: normalizeAutonomousSessionLoopState(source.sessionLoop) ?? normalized.sessionLoop,
     workflowContinuity: normalizeAutonomousWorkflowContinuityState(source.workflowContinuity) ?? deriveAutonomousWorkflowContinuity(normalized),
-  };
+  });
 }
 
 export function buildAutonomousSessionContextBlock(session: AutonomousSession, limit = 4): string {
@@ -5417,10 +5832,7 @@ export function updateAutonomousSessionSteering(
     },
   };
 
-  let derivedSession: AutonomousSession = {
-    ...nextSession,
-    workflowContinuity: deriveAutonomousWorkflowContinuity(nextSession),
-  };
+  let derivedSession = refreshAutonomousSessionDerivedState(nextSession);
 
   if (
     requestedAction === "confirm-deliverable-acceptance"
@@ -5445,10 +5857,7 @@ export function updateAutonomousSessionSteering(
       },
     };
 
-    derivedSession = {
-      ...derivedSession,
-      workflowContinuity: deriveAutonomousWorkflowContinuity(derivedSession),
-    };
+    derivedSession = refreshAutonomousSessionDerivedState(derivedSession);
   }
 
   return derivedSession;
@@ -5464,10 +5873,7 @@ export function clearAutonomousSessionSteering(session: AutonomousSession): Auto
     },
   };
 
-  return {
-    ...nextSession,
-    workflowContinuity: deriveAutonomousWorkflowContinuity(nextSession),
-  };
+  return refreshAutonomousSessionDerivedState(nextSession);
 }
 
 export function appendRecoveryMetadata(

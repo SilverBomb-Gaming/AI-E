@@ -202,6 +202,55 @@ test("autonomous sessions persist workflow continuity across awaiting approval s
   assert.match(normalized?.workflowContinuity.memory.pendingOperatorContext ?? "", /approval is required/i);
 });
 
+test("autonomous sessions derive operator oversight summaries, attention, and task reviews", () => {
+  const inspected = appendAutonomousStep(createAutonomousSession({ goal: "Productize operator-facing oversight for the bounded session." }), {
+    taskId: "task-inspect",
+    proposedAction: "Inspect the autonomous operator surface.",
+    planningHintSummary: "Review the highest-signal session state first.",
+    executionResult: {
+      status: "success",
+      output: "Inspection confirmed that the operator surface needs a clearer summary.",
+      changedPaths: ["web/app/autonomous/page.tsx"],
+      diffSummary: "Collected the operator-facing oversight requirements.",
+    },
+    nextDecision: "continue",
+  });
+  const failedValidation = appendAutonomousStep(inspected, {
+    taskId: "task-validate",
+    proposedAction: "Run the bounded validation check.",
+    executionResult: {
+      status: "failed",
+      error: "Validation still needs an approval-gated repo action.",
+    },
+    failureReason: "Validation still needs an approval-gated repo action.",
+    nextDecision: "pause",
+  });
+  const awaiting = markAwaitingApproval(failedValidation, {
+    id: "approve-operator-summary",
+    type: "file-write",
+    scope: "caution",
+    description: "Apply the operator-facing oversight update.",
+    expectedOutcome: "The operator surface should show clearer oversight summaries.",
+    requiresApproval: true,
+    metadata: {
+      sourceActionType: "file-write",
+      targetPath: "web/app/autonomous/page.tsx",
+      allowedRoot: "web",
+      content: "oversight",
+    },
+  }, "Approval is required before applying the operator-facing oversight update.");
+
+  assert.equal(awaiting.oversight.summary.tasksAttempted, 2);
+  assert.equal(awaiting.oversight.summary.safeToResume, false);
+  assert.ok(awaiting.oversight.summary.keyFilesOrAssetsChanged.includes("web/app/autonomous/page.tsx"));
+  assert.match(awaiting.oversight.summary.currentPauseReason, /approval/i);
+  assert.ok(awaiting.oversight.operatorAttention.some((item) => item.kind === "waiting-for-approval"));
+  assert.ok(awaiting.oversight.controls.some((control) => control.action === "approve-repo-action" && control.available));
+  assert.ok(awaiting.oversight.controls.some((control) => control.action === "resume-session" && !control.available));
+  assert.ok(awaiting.oversight.taskReviews.some((review) => review.taskId === "task-inspect" && /Inspect the autonomous operator surface/i.test(review.title)));
+  assert.ok(awaiting.oversight.taskReviews.some((review) => review.taskId === "task-validate"));
+});
+
 test("autonomous sessions derive implementation and fix loop memory from changed paths", () => {
   const implemented = appendAutonomousStep(createAutonomousSession({ goal: "Stabilize the bounded production loop." }), {
     proposedAction: "Apply the bounded fix patch.",

@@ -203,6 +203,30 @@ This keeps the system safe, bounded, and inspectable:
 - autonomous continuation still uses the persisted queue, lease, and trust boundaries already in place
 - the loop records why it paused and what it recommends next before asking the operator to intervene
 
+## Phase 7D operator oversight
+
+AI-E now productizes the existing autonomous studio loop into a clearer operator-facing oversight layer without changing the runner, queue, approval rules, or session scheduler.
+
+The new oversight view is derived directly from the persisted `AutonomousSession` spine:
+
+- `AutonomousSession.oversight.summary` provides a compact session review artifact with start/end time, attempted/completed/blocked/failed task counts, approval counts, current pause reason, recommended next step, validation summary, changed files/assets, and a derived `safeToResume` signal
+- `AutonomousSession.oversight.operatorAttention` highlights the cases that need judgment now, such as approval gates, blocked dependencies, failed or blocked tasks, session-limit stops, and unsafe manual-review states
+- `AutonomousSession.oversight.controls` explains which intervention controls are currently available and what each control is likely to do before the operator clicks it
+- `AutonomousSession.oversight.taskReviews` derives a per-task review from existing task ids, step records, repo-action state, and output artifacts so operators can see why a task was selected, what it produced, whether approval was needed, and why it advanced or stopped
+
+Operator-facing surfaces now reuse the same oversight snapshot:
+
+- the browser autonomous page starts with session summary, attention, control consequences, current task state, pending approvals, and per-task review cards before the raw persisted trace
+- `headless_autonomy.ts` includes the oversight block in JSON and prepends the same readable review sections in text mode
+- `local_node.ts` mirrors the same oversight summary in both session reports and queue-run reports
+
+This slice intentionally does not add a new autonomy primitive:
+
+- no second scheduler
+- no extra planner separate from the current bounded runner
+- no hidden session state outside the persisted `AutonomousSession`
+- no new task-title or queue-control primitive beyond the current task, step, approval, and steering truth already carried by the session
+
 ## Phase 4E execution adapters
 
 AI-E now routes bounded execution through adapter selection instead of a single hard-coded runtime switch.

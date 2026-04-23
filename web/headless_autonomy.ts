@@ -250,11 +250,36 @@ export function formatHeadlessSessionSummary(session: AutonomousSession): string
       completionStatus: session.latestCompletion?.status ?? null,
       completedReason: session.completedReason ?? session.stateReason ?? null,
       pendingAction: session.pendingAction?.description ?? null,
+      oversight: session.oversight,
       workflowContinuity: session.workflowContinuity,
     },
     null,
     2,
   );
+}
+
+function formatHeadlessTaskReviewSummaries(session: AutonomousSession): string {
+  if (!session.oversight.taskReviews.length) {
+    return "No per-task review records were generated.";
+  }
+
+  return session.oversight.taskReviews.map((review) => [
+    `${review.taskId} | ${review.status} | ${review.title}`,
+    `selected=${review.whySelected}`,
+    `validation=${review.validationResult}`,
+    `repoActions=${review.repoActionsGenerated ? "yes" : "no"}`,
+    `approvalNeeded=${review.approvalNeeded ? "yes" : "no"}`,
+    `outcome=${review.transitionSummary}`,
+    `outputs=${review.outputsProduced.join(" | ")}`,
+  ].join("\n")).join("\n\n");
+}
+
+function formatHeadlessOperatorAttention(session: AutonomousSession): string {
+  if (!session.oversight.operatorAttention.length) {
+    return "No operator attention is currently required.";
+  }
+
+  return session.oversight.operatorAttention.map((item) => `${item.kind}: ${item.summary} Next action: ${item.recommendedOperatorAction}`).join("\n");
 }
 
 export function formatHeadlessStepSummaries(session: AutonomousSession): string {
@@ -323,6 +348,7 @@ export function formatHeadlessSessionReport(session: AutonomousSession, options?
         remoteDispatchPlanned: session.remoteDispatchPlanned ?? null,
         planningHintSummary: session.planningHintSummary ?? null,
         sessionLoop: session.sessionLoop,
+        oversight: session.oversight,
         workflowContinuity: session.workflowContinuity,
         failureReason: session.failureReason ?? null,
         retryCount: session.latestRecoveryState?.retryCount ?? null,
@@ -366,6 +392,37 @@ export function formatHeadlessSessionReport(session: AutonomousSession, options?
     `Session ID: ${session.sessionId}`,
     `Status: ${session.status}`,
     `Goal: ${session.goal}`,
+    "",
+    "Session summary:",
+    `- Start: ${session.oversight.summary.startTime}`,
+    `- End: ${session.oversight.summary.endTime}`,
+    `- Tasks attempted: ${session.oversight.summary.tasksAttempted}`,
+    `- Tasks completed: ${session.oversight.summary.tasksCompleted}`,
+    `- Tasks blocked: ${session.oversight.summary.tasksBlocked}`,
+    `- Tasks failed: ${session.oversight.summary.tasksFailed}`,
+    `- Approvals requested: ${session.oversight.summary.approvalsRequested}`,
+    `- Approvals executed: ${session.oversight.summary.approvalsExecuted}`,
+    `- Current pause reason: ${session.oversight.summary.currentPauseReason}`,
+    `- Recommended next step: ${session.oversight.summary.recommendedNextStep}`,
+    `- Validation summary: ${session.oversight.summary.validationSummary}`,
+    `- Safe to resume now: ${session.oversight.summary.safeToResume ? "yes" : "no"}`,
+    `- Key files/assets changed: ${session.oversight.summary.keyFilesOrAssetsChanged.join(", ") || "No files or assets changed."}`,
+    "",
+    "Current session status:",
+    `- Current task: ${session.oversight.currentTaskId ?? "No current task recorded."}`,
+    `- Recent completed tasks: ${session.oversight.recentCompletedTaskIds.join(", ") || "No completed tasks recorded."}`,
+    `- Blocked tasks: ${session.oversight.blockedTaskIds.join(", ") || "No blocked tasks recorded."}`,
+    `- Pending approvals: ${session.oversight.pendingApprovalActionIds.join(", ") || "No pending approvals."}`,
+    "",
+    "Needs operator attention:",
+    formatHeadlessOperatorAttention(session),
+    "",
+    "Operator controls:",
+    ...session.oversight.controls.map((control) => `- ${control.label} (${control.available ? "available" : "not available"}): ${control.description} Consequence: ${control.likelyConsequence}`),
+    "",
+    "Per-task review:",
+    formatHeadlessTaskReviewSummaries(session),
+    "",
     `Latest adapter: ${session.executionAdapterId ?? "unknown"}`,
     `Execution node: ${session.executionNodeId ?? "unknown"} (${session.executionNodeMode ?? "unknown"})`,
     `Node capabilities: ${session.nodeCapabilitySummary ?? "No node capabilities recorded."}`,
@@ -627,8 +684,17 @@ export function formatHeadlessQueueRunReport(summary: QueueExecutionSummary, opt
     `Chain depth: ${chain?.depth ?? "unknown"}`,
     `Session loop limits: tasks=${summary.session?.sessionLoop?.maxTasksPerSession ?? "unknown"}, failures=${summary.session?.sessionLoop?.maxFailuresPerSession ?? "unknown"}${typeof summary.session?.sessionLoop?.maxRuntimeMs === "number" ? `, runtimeMs=${summary.session.sessionLoop.maxRuntimeMs}` : ""}`,
     `Session loop progress: completed=${summary.session?.sessionLoop?.completedTaskIds?.length ?? "unknown"}, skipped=${summary.session?.sessionLoop?.skippedTaskIds?.length ?? "unknown"}, blocked=${summary.session?.sessionLoop?.blockedTaskIds?.length ?? "unknown"}, failures=${summary.session?.sessionLoop?.failureCount ?? "unknown"}`,
+    `Session summary tasks attempted: ${summary.session?.oversight?.summary?.tasksAttempted ?? "unknown"}`,
+    `Session summary tasks completed: ${summary.session?.oversight?.summary?.tasksCompleted ?? "unknown"}`,
+    `Session summary tasks blocked: ${summary.session?.oversight?.summary?.tasksBlocked ?? "unknown"}`,
+    `Session summary tasks failed: ${summary.session?.oversight?.summary?.tasksFailed ?? "unknown"}`,
+    `Session summary approvals requested: ${summary.session?.oversight?.summary?.approvalsRequested ?? "unknown"}`,
+    `Session summary approvals executed: ${summary.session?.oversight?.summary?.approvalsExecuted ?? "unknown"}`,
+    `Session summary validation: ${summary.session?.oversight?.summary?.validationSummary ?? "unknown"}`,
+    `Session safe to resume now: ${typeof summary.session?.oversight?.summary?.safeToResume === "boolean" ? String(summary.session.oversight.summary.safeToResume) : "unknown"}`,
     `Session pause reason: ${summary.session?.sessionLoop?.pauseReason ?? "unknown"}`,
     `Session pause summary: ${summary.session?.sessionLoop?.pauseSummary ?? "unknown"}`,
+    `Needs operator attention: ${summary.session?.oversight?.operatorAttention?.length ? summary.session.oversight.operatorAttention.map((item) => `${item.kind}:${item.summary}`).join(" | ") : "none"}`,
     `Production-loop phase: ${summary.session?.workflowContinuity?.progress.chainPhase ?? "unknown"}`,
     `Session mode: ${summary.session?.sessionMode ?? "unknown"}`,
     `Coding loop phase: ${summary.session?.workflowContinuity?.coding?.codingLoopPhase ?? "unknown"}`,

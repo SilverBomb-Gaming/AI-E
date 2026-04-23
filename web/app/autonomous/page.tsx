@@ -308,7 +308,7 @@ export default function AutonomousPage() {
     }
   }
 
-  const canResume = session?.status === "paused" || session?.status === "awaiting-approval";
+  const canResume = session?.oversight.summary.safeToResume ?? false;
 
   return (
     <main className="page-shell mx-auto max-w-6xl px-6 py-10 lg:px-10 lg:py-14">
@@ -564,7 +564,87 @@ export default function AutonomousPage() {
             </p>
           ) : (
             <div className="mt-5 space-y-5">
+              <div className="grid gap-4 lg:grid-cols-2">
+                <div className="rounded-[1.2rem] border border-ocean/10 bg-ocean/5 p-4 text-sm leading-7 text-ink/80">
+                  <p className="text-xs font-semibold uppercase tracking-[0.2em] text-ink/45">Session summary</p>
+                  <p className="mt-2"><strong>Session ID:</strong> {session.oversight.summary.sessionId}</p>
+                  <p><strong>Start:</strong> {session.oversight.summary.startTime}</p>
+                  <p><strong>End:</strong> {session.oversight.summary.endTime}</p>
+                  <p><strong>Tasks attempted:</strong> {session.oversight.summary.tasksAttempted}</p>
+                  <p><strong>Tasks completed:</strong> {session.oversight.summary.tasksCompleted}</p>
+                  <p><strong>Tasks blocked:</strong> {session.oversight.summary.tasksBlocked}</p>
+                  <p><strong>Tasks failed:</strong> {session.oversight.summary.tasksFailed}</p>
+                  <p><strong>Approvals requested:</strong> {session.oversight.summary.approvalsRequested}</p>
+                  <p><strong>Approvals executed:</strong> {session.oversight.summary.approvalsExecuted}</p>
+                  <p><strong>Current pause reason:</strong> {session.oversight.summary.currentPauseReason}</p>
+                  <p><strong>Recommended next step:</strong> {session.oversight.summary.recommendedNextStep}</p>
+                  <p><strong>Validation summary:</strong> {session.oversight.summary.validationSummary}</p>
+                  <p><strong>Safe to resume now:</strong> {session.oversight.summary.safeToResume ? "Yes" : "No"}</p>
+                  <p><strong>Key files/assets changed:</strong> {session.oversight.summary.keyFilesOrAssetsChanged.join(", ") || "No files or assets changed yet."}</p>
+                </div>
+
+                <div className="rounded-[1.2rem] border border-gold/20 bg-gold/10 p-4 text-sm leading-7 text-ink/80">
+                  <p className="text-xs font-semibold uppercase tracking-[0.2em] text-ink/45">Needs operator attention</p>
+                  {session.oversight.operatorAttention.length ? (
+                    <div className="mt-2 space-y-3">
+                      {session.oversight.operatorAttention.map((item) => (
+                        <div key={`${item.kind}-${item.summary}`} className="rounded-[1rem] border border-gold/20 bg-white/70 p-3">
+                          <p><strong>{item.kind}</strong></p>
+                          <p>{item.summary}</p>
+                          <p><strong>Next action:</strong> {item.recommendedOperatorAction}</p>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="mt-2">No operator attention is currently required.</p>
+                  )}
+                  <div className="mt-4 rounded-[1rem] border border-ink/10 bg-white/70 p-3">
+                    <p><strong>Current task:</strong> {session.oversight.currentTaskId || "No active task recorded yet."}</p>
+                    <p><strong>Recent completed tasks:</strong> {session.oversight.recentCompletedTaskIds.join(", ") || "No completed tasks recorded yet."}</p>
+                    <p><strong>Blocked tasks:</strong> {session.oversight.blockedTaskIds.join(", ") || "No blocked tasks recorded yet."}</p>
+                    <p><strong>Pending approvals:</strong> {session.oversight.pendingApprovalActionIds.join(", ") || "No pending approvals."}</p>
+                  </div>
+                </div>
+              </div>
+
               <div className="rounded-[1.2rem] border border-ink/10 bg-white/70 p-4 text-sm leading-7 text-ink/80">
+                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-ink/45">Control consequences</p>
+                <div className="mt-3 grid gap-3 md:grid-cols-2">
+                  {session.oversight.controls.map((control) => (
+                    <div key={control.action} className="rounded-[1rem] border border-ink/10 bg-white/80 p-3">
+                      <p><strong>{control.label}</strong> {control.available ? "(available)" : "(not available)"}</p>
+                      <p>{control.description}</p>
+                      <p><strong>Likely consequence:</strong> {control.likelyConsequence}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="rounded-[1.2rem] border border-ink/10 bg-white/70 p-4 text-sm leading-7 text-ink/80">
+                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-ink/45">Per-task review</p>
+                <div className="mt-3 space-y-3">
+                  {session.oversight.taskReviews.length ? session.oversight.taskReviews.map((review) => (
+                    <article key={review.taskId} className="rounded-[1rem] border border-ink/10 bg-white/80 p-3">
+                      <div className="flex items-center justify-between gap-4">
+                        <p className="font-semibold text-ink">{review.title}</p>
+                        <span className="rounded-full border border-ink/10 bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-ink/65">
+                          {review.status}
+                        </span>
+                      </div>
+                      <p className="mt-2 text-xs text-ink/55">{review.taskId}</p>
+                      <p className="mt-2"><strong>Why selected:</strong> {review.whySelected}</p>
+                      <p><strong>Outputs produced:</strong> {review.outputsProduced.join(" | ")}</p>
+                      <p><strong>Validation result:</strong> {review.validationResult}</p>
+                      <p><strong>Repo actions generated:</strong> {review.repoActionsGenerated ? "Yes" : "No"}</p>
+                      <p><strong>Approval needed:</strong> {review.approvalNeeded ? "Yes" : "No"}</p>
+                      <p><strong>Why it advanced/stopped:</strong> {review.transitionSummary}</p>
+                    </article>
+                  )) : <p>No per-task review records were generated yet.</p>}
+                </div>
+              </div>
+
+              <div className="rounded-[1.2rem] border border-ink/10 bg-white/70 p-4 text-sm leading-7 text-ink/80">
+                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-ink/45">Raw persisted session state</p>
                 <p><strong>Session ID:</strong> {session.sessionId}</p>
                 <p><strong>Goal:</strong> {session.goal}</p>
                 <p><strong>Next step index:</strong> {session.currentStepIndex}</p>
@@ -817,6 +897,7 @@ export default function AutonomousPage() {
               ) : null}
 
               <div className="space-y-3">
+                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-ink/45">Raw step trace</p>
                 {session.steps.map((step) => (
                   <article key={`${step.index}-${step.timestamp}`} className="rounded-[1.2rem] border border-ink/10 bg-white/75 p-4">
                     <div className="flex items-center justify-between gap-4">

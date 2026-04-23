@@ -74,8 +74,14 @@ test("headless_autonomy persists a bounded session and prints a matching summary
     assert.equal(typeof summary.executionNodeId, "string");
     assert.match(String(summary.nodeCapabilitySummary ?? ""), /validation-check/i);
     assert.equal(summary.taskStatus, "completed");
+    assert.equal(typeof summary.oversight, "object");
     assert.match(formatHeadlessSessionReport(session, { verbose: true }), /Step 1/i);
     assert.match(formatHeadlessSessionReport(session), /Session mode:/i);
+    assert.match(formatHeadlessSessionReport(session), /Session summary:/i);
+    assert.match(formatHeadlessSessionReport(session), /Needs operator attention:/i);
+    assert.match(formatHeadlessSessionReport(session), /Operator controls:/i);
+    assert.match(formatHeadlessSessionReport(session), /Per-task review:/i);
+    assert.match(formatHeadlessSessionReport(session), /Safe to resume now:/i);
     assert.match(formatHeadlessSessionReport(session), /Session loop limits:/i);
     assert.match(formatHeadlessSessionReport(session), /Session loop progress:/i);
     assert.match(formatHeadlessSessionReport(session), /Session pause reason:/i);
@@ -223,6 +229,7 @@ test("headless_autonomy queue entrypoints run one queued task and print a queue 
     assert.match(output, /Dispatch ack: aie-dispatch-headless-ack-1/i);
     assert.match(output, /Dispatch transport: completed/i);
     assert.match(output, /Dispatch summary: dispatch=1 \| type=result \| status=completed/i);
+    assert.match(output, /Needs operator attention:/i);
     assert.match(output, /Session mode:/i);
     assert.match(output, /Session loop limits:/i);
     assert.match(output, /Session loop progress:/i);
