@@ -340,6 +340,78 @@ test("autonomous sessions expose blocked and ready features from the persisted d
   assert.match(buildAutonomousSessionContextBlock(normalized ?? session), /Ready feature bundles: feature-a/i);
 });
 
+test("autonomous sessions expose planning recommendations and near-term feature sequence", () => {
+  const session = createAutonomousSession({ goal: "Choose the highest-value feature path, not just the next ready task." });
+  const normalized = normalizeAutonomousSession({
+    ...session,
+    workflowContinuity: {
+      ...session.workflowContinuity,
+      taskChain: {
+        ...session.workflowContinuity.taskChain,
+        generatedTaskQueue: [
+          {
+            taskId: "task-feature-a",
+            priority: 1,
+            dependsOnTaskIds: [],
+            dependsOnFeatureIds: [],
+            featureId: "feature-a",
+            featureTitle: "Feature A",
+            featureDescription: "Foundation work.",
+            status: "queued",
+          },
+          {
+            taskId: "task-feature-b",
+            priority: 2,
+            dependsOnTaskIds: [],
+            dependsOnFeatureIds: ["feature-a"],
+            featureId: "feature-b",
+            featureTitle: "Feature B",
+            featureDescription: "Unlocks a deeper critical path.",
+            status: "queued",
+          },
+          {
+            taskId: "task-feature-c",
+            priority: 9,
+            dependsOnTaskIds: [],
+            dependsOnFeatureIds: ["feature-a"],
+            featureId: "feature-c",
+            featureTitle: "Feature C",
+            featureDescription: "Higher immediate priority but shorter downstream path.",
+            status: "queued",
+          },
+          {
+            taskId: "task-feature-d",
+            priority: 3,
+            dependsOnTaskIds: [],
+            dependsOnFeatureIds: ["feature-b"],
+            featureId: "feature-d",
+            featureTitle: "Feature D",
+            featureDescription: "Depends on Feature B.",
+            status: "queued",
+          },
+        ],
+        nextRecommendedTaskId: "task-feature-a",
+        nextRecommendedFeatureId: "feature-a",
+        chainStatus: "selecting-next-task",
+      },
+    },
+  });
+
+  assert.ok(normalized);
+  assert.equal(normalized?.oversight.topRecommendedFeatureId, "feature-a");
+  assert.deepEqual(normalized?.oversight.recommendedFeatureSequence, ["feature-a", "feature-b", "feature-d"]);
+  assert.deepEqual(normalized?.oversight.nextLikelyFeatureIds, ["feature-b", "feature-d"]);
+  assert.equal(normalized?.oversight.summary.topRecommendedFeatureId, "feature-a");
+  assert.deepEqual(normalized?.oversight.summary.nextLikelyFeatureIds, ["feature-b", "feature-d"]);
+  assert.match(normalized?.oversight.topRecommendedPlanningReason ?? "", /unlocks|critical path/i);
+  assert.ok(
+    (normalized?.oversight.featureBundles.find((bundle) => bundle.featureId === "feature-a")?.planningScore ?? 0)
+      > (normalized?.oversight.featureBundles.find((bundle) => bundle.featureId === "feature-c")?.planningScore ?? 0),
+  );
+  assert.match(buildAutonomousSessionContextBlock(normalized ?? session), /Top recommended feature: feature-a/i);
+  assert.match(buildAutonomousSessionContextBlock(normalized ?? session), /Near-term feature path: feature-b, feature-d/i);
+});
+
 test("autonomous sessions derive implementation and fix loop memory from changed paths", () => {
   const implemented = appendAutonomousStep(createAutonomousSession({ goal: "Stabilize the bounded production loop." }), {
     proposedAction: "Apply the bounded fix patch.",

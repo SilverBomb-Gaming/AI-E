@@ -1698,6 +1698,115 @@ test("runAutonomousSession skips blocked features and prioritizes unlockers befo
   }
 });
 
+test("runAutonomousSession prefers the deeper critical path when ready features have similar unlock counts", async () => {
+  const taskDirectory = path.resolve(process.cwd(), "temp-phase7d-feature-planning-store");
+  await rm(taskDirectory, { recursive: true, force: true });
+  await mkdir(taskDirectory, { recursive: true });
+  process.env.AIE_TASK_QUEUE_DIR = taskDirectory;
+
+  try {
+    const seedSession = createAutonomousSession({
+      goal: "Prefer the longer critical path over a shorter high-priority branch.",
+      sessionId: "phase7d-feature-planning-session",
+      maxSteps: 6,
+      sessionMode: "repo-coding",
+    });
+    await enqueueTask(createTaskEnvelope({
+      taskId: "phase7d-feature-a-1",
+      sessionId: seedSession.sessionId,
+      stepIndex: 1,
+      priority: 1,
+      featureId: "feature-a",
+      featureTitle: "Feature A",
+      action: makeSafeAction("Execute feature A task 1."),
+    }));
+    await enqueueTask(createTaskEnvelope({
+      taskId: "phase7d-feature-b-1",
+      sessionId: seedSession.sessionId,
+      stepIndex: 2,
+      priority: 2,
+      dependsOnFeatureIds: ["feature-a"],
+      featureId: "feature-b",
+      featureTitle: "Feature B",
+      action: makeSafeAction("Execute feature B task 1."),
+    }));
+    await enqueueTask(createTaskEnvelope({
+      taskId: "phase7d-feature-c-1",
+      sessionId: seedSession.sessionId,
+      stepIndex: 3,
+      priority: 10,
+      dependsOnFeatureIds: ["feature-a"],
+      featureId: "feature-c",
+      featureTitle: "Feature C",
+      action: makeSafeAction("Execute feature C task 1."),
+    }));
+    await enqueueTask(createTaskEnvelope({
+      taskId: "phase7d-feature-d-1",
+      sessionId: seedSession.sessionId,
+      stepIndex: 4,
+      priority: 1,
+      dependsOnFeatureIds: ["feature-b"],
+      featureId: "feature-d",
+      featureTitle: "Feature D",
+      action: makeSafeAction("Execute feature D task 1."),
+    }));
+    await enqueueTask(createTaskEnvelope({
+      taskId: "phase7d-feature-e-1",
+      sessionId: seedSession.sessionId,
+      stepIndex: 5,
+      priority: 1,
+      dependsOnFeatureIds: ["feature-c"],
+      featureId: "feature-e",
+      featureTitle: "Feature E",
+      action: makeSafeAction("Execute feature E task 1."),
+    }));
+    await enqueueTask(createTaskEnvelope({
+      taskId: "phase7d-feature-f-1",
+      sessionId: seedSession.sessionId,
+      stepIndex: 6,
+      priority: 1,
+      dependsOnFeatureIds: ["feature-d"],
+      featureId: "feature-f",
+      featureTitle: "Feature F",
+      action: makeSafeAction("Execute feature F task 1."),
+    }));
+
+    const session = await runAutonomousSession({
+      goal: seedSession.goal,
+      maxSteps: 6,
+      existingSession: seedSession,
+      dependencies: {
+        runAnalysis: async () => ({
+          what_happened: "Unexpected analysis call.",
+          what_matters: ["Queued feature execution should remain planning-aware."],
+          what_to_do_next: ["Stop."],
+          upgrade_hint: "",
+          proposedAction: "Stop.",
+          expectedOutcome: "Stop.",
+          execution: makeSafeAction("Unexpected analysis path."),
+        }),
+        executeAction: async (action) => ({
+          status: "success",
+          output: `${action.description} completed successfully.`,
+        }),
+        saveAutonomousSession: async () => {},
+      },
+    });
+
+    assert.deepEqual(session.steps.map((step) => step.taskId), [
+      "phase7d-feature-a-1",
+      "phase7d-feature-b-1",
+      "phase7d-feature-d-1",
+      "phase7d-feature-f-1",
+      "phase7d-feature-c-1",
+      "phase7d-feature-e-1",
+    ]);
+  } finally {
+    delete process.env.AIE_TASK_QUEUE_DIR;
+    await rm(taskDirectory, { recursive: true, force: true });
+  }
+});
+
 test("runAutonomousSession can skip the current queued task and continue to the next runnable task", async () => {
   const taskDirectory = path.resolve(process.cwd(), "temp-phase7c-skip-task-store");
   await rm(taskDirectory, { recursive: true, force: true });

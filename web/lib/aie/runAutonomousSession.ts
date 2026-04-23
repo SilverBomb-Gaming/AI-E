@@ -338,6 +338,29 @@ function mergeUniqueFeatureIds(...lists: Array<string[] | undefined>): string[] 
   return [...new Set(lists.flatMap((list) => list ?? []).map((value) => normalizeText(value)).filter(Boolean))];
 }
 
+function sortFeatureGraphForPlanning(
+  features: DerivedFeatureDependencyGraphEntry[],
+  preferredFeatureIds: string[] = [],
+): DerivedFeatureDependencyGraphEntry[] {
+  const preferenceIndex = new Map(preferredFeatureIds.map((featureId, index) => [featureId, index]));
+
+  return [...features].sort((left, right) => {
+    const leftPreference = preferenceIndex.get(left.featureId);
+    const rightPreference = preferenceIndex.get(right.featureId);
+    if (leftPreference !== undefined || rightPreference !== undefined) {
+      return (leftPreference ?? Number.POSITIVE_INFINITY) - (rightPreference ?? Number.POSITIVE_INFINITY);
+    }
+
+    return right.planningScore - left.planningScore
+      || right.unlockScore - left.unlockScore
+      || right.criticalPathWeight - left.criticalPathWeight
+      || right.downstreamFeatureCount - left.downstreamFeatureCount
+      || right.highestTaskPriority - left.highestTaskPriority
+      || left.firstQueuedIndex - right.firstQueuedIndex
+      || left.featureId.localeCompare(right.featureId);
+  });
+}
+
 function deriveFeatureDependencyGraph(params: {
   session: AutonomousSession;
   queuedTasks: TaskEnvelope[];
@@ -369,6 +392,12 @@ function deriveFeatureDependencyGraph(params: {
       blockedByFeatures: [],
       unlocksFeatures: [],
       dependencyStatusSummary: previous?.dependencyStatusSummary,
+      planningScore: previous?.planningScore ?? 0,
+      unlockScore: previous?.unlockScore ?? 0,
+      downstreamFeatureCount: previous?.downstreamFeatureCount ?? 0,
+      dependencyDepth: previous?.dependencyDepth ?? 0,
+      criticalPathWeight: previous?.criticalPathWeight ?? 0,
+      recommendedPlanningReason: previous?.recommendedPlanningReason,
       featureStatus: previous?.featureStatus ?? "planned",
       completedTaskCount: 0,
       totalTaskCount: 0,
@@ -434,6 +463,9 @@ function deriveFeatureDependencyGraph(params: {
       .map((feature) => feature.featureId),
   );
   const unlockMap = new Map<string, string[]>();
+  const dependencyDepthMemo = new Map<string, number>();
+  const longestPathMemo = new Map<string, number>();
+  const downstreamMemo = new Map<string, string[]>();
 
   for (const feature of featureEntries) {
     feature.dependsOnFeatureIds = mergeUniqueFeatureIds(feature.dependsOnFeatureIds.filter((dependencyId) => dependencyId !== feature.featureId));
@@ -442,16 +474,127 @@ function deriveFeatureDependencyGraph(params: {
     }
   }
 
+  const featureById = new Map(featureEntries.map((feature) => [feature.featureId, feature]));
+  const getDependencyDepth = (featureId: string, trail = new Set<string>()): number => {
+    if (dependencyDepthMemo.has(featureId)) {
+      return dependencyDepthMemo.get(featureId) ?? 0;
+    }
+    if (trail.has(featureId)) {
+      return 0;
+    }
+
+    const feature = featureById.get(featureId);
+    if (!feature || feature.dependsOnFeatureIds.length === 0) {
+      dependencyDepthMemo.set(featureId, 0);
+      return 0;
+    }
+
+    const nextTrail = new Set(trail);
+    nextTrail.add(featureId);
+    const depth = Math.max(
+      0,
+      ...feature.dependsOnFeatureIds.map((dependencyId) =>
+        featureById.has(dependencyId)
+          ? 1 + getDependencyDepth(dependencyId, nextTrail)
+          : 1),
+    );
+    dependencyDepthMemo.set(featureId, depth);
+    return depth;
+  };
+  const getLongestUnlockPath = (featureId: string, trail = new Set<string>()): number => {
+    if (longestPathMemo.has(featureId)) {
+      return longestPathMemo.get(featureId) ?? 0;
+    }
+    if (trail.has(featureId)) {
+      return 0;
+    }
+
+    const feature = featureById.get(featureId);
+    const remainingUnlocks = (feature?.unlocksFeatures ?? []).filter((unlockId) => !completedFeatureIds.has(unlockId));
+    if (remainingUnlocks.length === 0) {
+      longestPathMemo.set(featureId, 0);
+      return 0;
+    }
+
+    const nextTrail = new Set(trail);
+    nextTrail.add(featureId);
+    const longest = Math.max(...remainingUnlocks.map((unlockId) => 1 + getLongestUnlockPath(unlockId, nextTrail)));
+    longestPathMemo.set(featureId, longest);
+    return longest;
+  };
+  const getDownstreamFeatureIds = (featureId: string, trail = new Set<string>()): string[] => {
+    if (downstreamMemo.has(featureId)) {
+      return downstreamMemo.get(featureId) ?? [];
+    }
+    if (trail.has(featureId)) {
+      return [];
+    }
+
+    const feature = featureById.get(featureId);
+    if (!feature) {
+      return [];
+    }
+
+    const nextTrail = new Set(trail);
+    nextTrail.add(featureId);
+    let downstream: string[] = [];
+    for (const unlockId of feature.unlocksFeatures) {
+      if (completedFeatureIds.has(unlockId)) {
+        continue;
+      }
+      downstream = mergeUniqueFeatureIds([unlockId], downstream, getDownstreamFeatureIds(unlockId, nextTrail));
+    }
+    downstreamMemo.set(featureId, downstream);
+    return downstream;
+  };
+
   for (const feature of featureEntries) {
     feature.blockedByFeatures = feature.dependsOnFeatureIds.filter((dependencyId) => !completedFeatureIds.has(dependencyId));
     feature.unlocksFeatures = unlockMap.get(feature.featureId) ?? [];
+    const remainingUnlocks = feature.unlocksFeatures.filter((unlockId) => !completedFeatureIds.has(unlockId));
+    const blockedUnlockCount = remainingUnlocks.filter((unlockId) => featureById.get(unlockId)?.dependsOnFeatureIds.includes(feature.featureId)).length;
+    const isCompleted = feature.totalTaskCount > 0 && feature.completedTaskCount >= feature.totalTaskCount;
+    feature.downstreamFeatureCount = getDownstreamFeatureIds(feature.featureId).length;
+    feature.dependencyDepth = getDependencyDepth(feature.featureId);
+    feature.criticalPathWeight = feature.dependencyDepth + getLongestUnlockPath(feature.featureId) + (blockedUnlockCount > 0 ? 1 : 0);
+    feature.unlockScore = (blockedUnlockCount * 3) + (remainingUnlocks.length * 2) + feature.downstreamFeatureCount;
+    feature.planningScore = isCompleted
+      ? 0
+      : (feature.currentTaskId ? 6 : 0)
+        + (feature.nextRecommendedTaskId ? 2 : 0)
+        + feature.completedTaskCount
+        + feature.totalTaskCount
+        + (feature.blockedByFeatures.length === 0 ? 1 : 0)
+        + (feature.unlockScore * 2)
+        + feature.criticalPathWeight
+        + Math.max(0, feature.highestTaskPriority);
     feature.dependencyStatusSummary = feature.blockedByFeatures.length > 0
       ? `Blocked by feature dependencies: ${feature.blockedByFeatures.join(", ")}.`
       : feature.dependsOnFeatureIds.length > 0
         ? `Ready: dependencies satisfied (${feature.dependsOnFeatureIds.join(", ")}).`
         : "Ready: no feature dependencies.";
+    const planningReasons: string[] = [];
+    if (blockedUnlockCount > 0) {
+      planningReasons.push(`unlocks ${blockedUnlockCount} currently blocked feature${blockedUnlockCount === 1 ? "" : "s"}`);
+    } else if (remainingUnlocks.length > 0) {
+      planningReasons.push(`unlocks ${remainingUnlocks.length} downstream feature${remainingUnlocks.length === 1 ? "" : "s"}`);
+    }
+    if (feature.downstreamFeatureCount > 0) {
+      planningReasons.push(`${feature.downstreamFeatureCount} downstream feature${feature.downstreamFeatureCount === 1 ? "" : "s"} total`);
+    }
+    if (feature.criticalPathWeight > 0) {
+      planningReasons.push(`critical path weight ${feature.criticalPathWeight}`);
+    }
+    if (feature.dependencyDepth > 0) {
+      planningReasons.push(`dependency depth ${feature.dependencyDepth}`);
+    }
+    if (feature.highestTaskPriority > 0) {
+      planningReasons.push(`priority ${feature.highestTaskPriority}`);
+    }
+    feature.recommendedPlanningReason = planningReasons.length > 0
+      ? `Prioritize ${feature.featureId} because it ${planningReasons.join(", ")}.`
+      : `Prioritize ${feature.featureId} because it is ready and preserves project momentum.`;
 
-    const isCompleted = feature.totalTaskCount > 0 && feature.completedTaskCount >= feature.totalTaskCount;
     feature.featureStatus = isCompleted
       ? "completed"
       : feature.blockedByFeatures.length > 0 || feature.blockedTaskIds.length > 0
@@ -480,6 +623,7 @@ function choosePreferredFeatureId(params: {
   const readyFeatures = featureGraph.filter(
     (feature) => feature.hasRunnableTask && feature.blockedByFeatures.length === 0 && feature.featureStatus !== "completed",
   );
+  const nextRecommendedFeatureId = normalizeText(params.session.workflowContinuity.taskChain.nextRecommendedFeatureId);
   const currentFeatureId = normalizeText(params.session.workflowContinuity.taskChain.currentFeatureId);
   if (currentFeatureId) {
     const currentFeature = readyFeatures.find((feature) => feature.featureId === currentFeatureId);
@@ -504,19 +648,10 @@ function choosePreferredFeatureId(params: {
     }
   }
 
-  const nextRecommendedFeatureId = normalizeText(params.session.workflowContinuity.taskChain.nextRecommendedFeatureId);
-  if (nextRecommendedFeatureId) {
-    const recommendedFeature = readyFeatures.find((feature) => feature.featureId === nextRecommendedFeatureId);
-    if (recommendedFeature?.hasRunnableTask && recommendedFeature.blockedByFeatures.length === 0) {
-      return nextRecommendedFeatureId;
-    }
-  }
-
-  return readyFeatures
-    .sort((left, right) => right.unlocksFeatures.length - left.unlocksFeatures.length
-      || right.highestTaskPriority - left.highestTaskPriority
-      || left.firstQueuedIndex - right.firstQueuedIndex
-      || left.featureId.localeCompare(right.featureId))[0]?.featureId;
+  return sortFeatureGraphForPlanning(
+    readyFeatures,
+    [nextRecommendedFeatureId].filter((value): value is string => Boolean(value)),
+  )[0]?.featureId;
 }
 
 function chooseNextRecommendedTaskId(params: {

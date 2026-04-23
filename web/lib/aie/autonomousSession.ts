@@ -458,6 +458,12 @@ export type AutonomousFeatureBundleSummary = {
   blockedByFeatures: string[];
   unlocksFeatures: string[];
   dependencyStatusSummary?: string;
+  planningScore: number;
+  unlockScore: number;
+  downstreamFeatureCount: number;
+  dependencyDepth: number;
+  criticalPathWeight: number;
+  recommendedPlanningReason?: string;
   featureStatus: AutonomousFeatureBundleStatus;
   completedTaskCount: number;
   totalTaskCount: number;
@@ -627,6 +633,10 @@ export type AutonomousSessionSummaryArtifact = {
   currentFeatureId?: string;
   currentFeatureTitle?: string;
   currentFeatureProgress?: string;
+  topRecommendedFeatureId?: string;
+  topRecommendedFeatureTitle?: string;
+  topRecommendedPlanningReason?: string;
+  nextLikelyFeatureIds: string[];
   readyFeatures: number;
   completedFeatures: number;
   blockedFeatures: number;
@@ -646,6 +656,11 @@ export type AutonomousSessionOversight = {
   featureBundles: AutonomousFeatureBundleSummary[];
   readyFeatureIds: string[];
   featureDependencyGraph: string[];
+  topRecommendedFeatureId?: string;
+  topRecommendedFeatureTitle?: string;
+  topRecommendedPlanningReason?: string;
+  recommendedFeatureSequence: string[];
+  nextLikelyFeatureIds: string[];
   recentCompletedTaskIds: string[];
   blockedTaskIds: string[];
   completedFeatureIds: string[];
@@ -771,6 +786,217 @@ function buildAutonomousFeatureProgressLabel(bundle: AutonomousFeatureBundleSumm
   return `${bundle.completedTaskCount}/${bundle.totalTaskCount} tasks completed`;
 }
 
+function deriveFeaturePlanningMetadata(bundles: AutonomousFeatureBundleSummary[]): AutonomousFeatureBundleSummary[] {
+  const bundleById = new Map(bundles.map((bundle) => [bundle.featureId, bundle]));
+  const completedFeatureIds = new Set(
+    bundles
+      .filter((bundle) => bundle.totalTaskCount > 0 && bundle.completedTaskCount >= bundle.totalTaskCount)
+      .map((bundle) => bundle.featureId),
+  );
+  const blockedByMap = new Map(
+    bundles.map((bundle) => [
+      bundle.featureId,
+      bundle.dependsOnFeatureIds.filter((featureId) => !completedFeatureIds.has(featureId)),
+    ]),
+  );
+  const dependencyDepthMemo = new Map<string, number>();
+  const longestPathMemo = new Map<string, number>();
+  const downstreamMemo = new Map<string, string[]>();
+
+  const getDependencyDepth = (featureId: string, trail = new Set<string>()): number => {
+    if (dependencyDepthMemo.has(featureId)) {
+      return dependencyDepthMemo.get(featureId) ?? 0;
+    }
+    if (trail.has(featureId)) {
+      return 0;
+    }
+
+    const bundle = bundleById.get(featureId);
+    if (!bundle || bundle.dependsOnFeatureIds.length === 0) {
+      dependencyDepthMemo.set(featureId, 0);
+      return 0;
+    }
+
+    const nextTrail = new Set(trail);
+    nextTrail.add(featureId);
+    const depth = Math.max(
+      0,
+      ...bundle.dependsOnFeatureIds.map((dependencyId) =>
+        bundleById.has(dependencyId)
+          ? 1 + getDependencyDepth(dependencyId, nextTrail)
+          : 1),
+    );
+    dependencyDepthMemo.set(featureId, depth);
+    return depth;
+  };
+
+  const getLongestUnlockPath = (featureId: string, trail = new Set<string>()): number => {
+    if (longestPathMemo.has(featureId)) {
+      return longestPathMemo.get(featureId) ?? 0;
+    }
+    if (trail.has(featureId)) {
+      return 0;
+    }
+
+    const bundle = bundleById.get(featureId);
+    const remainingUnlocks = (bundle?.unlocksFeatures ?? []).filter((unlockId) => !completedFeatureIds.has(unlockId));
+    if (remainingUnlocks.length === 0) {
+      longestPathMemo.set(featureId, 0);
+      return 0;
+    }
+
+    const nextTrail = new Set(trail);
+    nextTrail.add(featureId);
+    const longest = Math.max(...remainingUnlocks.map((unlockId) => 1 + getLongestUnlockPath(unlockId, nextTrail)));
+    longestPathMemo.set(featureId, longest);
+    return longest;
+  };
+
+  const getDownstreamFeatureIds = (featureId: string, trail = new Set<string>()): string[] => {
+    if (downstreamMemo.has(featureId)) {
+      return downstreamMemo.get(featureId) ?? [];
+    }
+    if (trail.has(featureId)) {
+      return [];
+    }
+
+    const bundle = bundleById.get(featureId);
+    if (!bundle) {
+      return [];
+    }
+
+    const nextTrail = new Set(trail);
+    nextTrail.add(featureId);
+    let downstream: string[] = [];
+    for (const unlockId of bundle.unlocksFeatures) {
+      if (completedFeatureIds.has(unlockId)) {
+        continue;
+      }
+      downstream = uniqueStrings([unlockId, ...downstream, ...getDownstreamFeatureIds(unlockId, nextTrail)]);
+    }
+    downstreamMemo.set(featureId, downstream);
+    return downstream;
+  };
+
+  return bundles.map((bundle) => {
+    const blockedByFeatures = blockedByMap.get(bundle.featureId) ?? [];
+    const remainingUnlocks = bundle.unlocksFeatures.filter((featureId) => !completedFeatureIds.has(featureId));
+    const blockedUnlockCount = remainingUnlocks.filter((featureId) => (blockedByMap.get(featureId) ?? []).includes(bundle.featureId)).length;
+    const downstreamFeatureCount = getDownstreamFeatureIds(bundle.featureId).length;
+    const dependencyDepth = getDependencyDepth(bundle.featureId);
+    const criticalPathWeight = dependencyDepth + getLongestUnlockPath(bundle.featureId) + (blockedUnlockCount > 0 ? 1 : 0);
+    const unlockScore = (blockedUnlockCount * 3) + (remainingUnlocks.length * 2) + downstreamFeatureCount;
+    const planningScore = bundle.featureStatus === "completed"
+      ? 0
+      : (bundle.currentTaskId ? 6 : 0)
+        + (bundle.nextRecommendedTaskId ? 2 : 0)
+        + bundle.completedTaskCount
+        + bundle.totalTaskCount
+        + (blockedByFeatures.length === 0 ? 1 : 0)
+        + (unlockScore * 2)
+        + criticalPathWeight;
+    const planningReasons: string[] = [];
+    if (blockedUnlockCount > 0) {
+      planningReasons.push(`unlocks ${blockedUnlockCount} currently blocked feature${blockedUnlockCount === 1 ? "" : "s"}`);
+    } else if (remainingUnlocks.length > 0) {
+      planningReasons.push(`unlocks ${remainingUnlocks.length} downstream feature${remainingUnlocks.length === 1 ? "" : "s"}`);
+    }
+    if (downstreamFeatureCount > 0) {
+      planningReasons.push(`${downstreamFeatureCount} downstream feature${downstreamFeatureCount === 1 ? "" : "s"} total`);
+    }
+    if (criticalPathWeight > 0) {
+      planningReasons.push(`critical path weight ${criticalPathWeight}`);
+    }
+    if (dependencyDepth > 0) {
+      planningReasons.push(`dependency depth ${dependencyDepth}`);
+    }
+    if (bundle.totalTaskCount > 0) {
+      planningReasons.push(`${bundle.completedTaskCount}/${bundle.totalTaskCount} tasks completed`);
+    }
+
+    return {
+      ...bundle,
+      blockedByFeatures,
+      planningScore,
+      unlockScore,
+      downstreamFeatureCount,
+      dependencyDepth,
+      criticalPathWeight,
+      recommendedPlanningReason: planningReasons.length > 0
+        ? `Prioritize ${bundle.featureId} because it ${planningReasons.join(", ")}.`
+        : `Prioritize ${bundle.featureId} because it is ready and preserves project momentum.`,
+    };
+  });
+}
+
+function sortFeatureBundlesForPlanning(
+  bundles: AutonomousFeatureBundleSummary[],
+  preferredFeatureIds: string[] = [],
+): AutonomousFeatureBundleSummary[] {
+  const preferenceIndex = new Map(preferredFeatureIds.map((featureId, index) => [featureId, index]));
+
+  return [...bundles].sort((left, right) => {
+    const leftPreference = preferenceIndex.get(left.featureId);
+    const rightPreference = preferenceIndex.get(right.featureId);
+    if (leftPreference !== undefined || rightPreference !== undefined) {
+      return (leftPreference ?? Number.POSITIVE_INFINITY) - (rightPreference ?? Number.POSITIVE_INFINITY);
+    }
+
+    return right.planningScore - left.planningScore
+      || right.unlockScore - left.unlockScore
+      || right.criticalPathWeight - left.criticalPathWeight
+      || right.downstreamFeatureCount - left.downstreamFeatureCount
+      || left.featureTitle.localeCompare(right.featureTitle)
+      || left.featureId.localeCompare(right.featureId);
+  });
+}
+
+function deriveRecommendedFeatureSequence(session: AutonomousSession, bundles: AutonomousFeatureBundleSummary[], horizon = 3): string[] {
+  const currentFeatureId = normalizeText(session.workflowContinuity.taskChain.currentFeatureId) || undefined;
+  const nextRecommendedFeatureId = normalizeText(session.workflowContinuity.taskChain.nextRecommendedFeatureId) || undefined;
+  const sequence: string[] = [];
+  const simulatedCompletion = new Set(
+    bundles
+      .filter((bundle) => bundle.featureStatus === "completed")
+      .map((bundle) => bundle.featureId),
+  );
+
+  for (let index = 0; index < horizon; index += 1) {
+    const simulatedBundles = deriveFeaturePlanningMetadata(
+      bundles.map((bundle) =>
+        simulatedCompletion.has(bundle.featureId)
+          ? {
+              ...bundle,
+              featureStatus: "completed",
+              completedTaskCount: Math.max(bundle.completedTaskCount, bundle.totalTaskCount),
+              blockedByFeatures: [],
+            }
+          : bundle),
+    );
+    const readyBundles = simulatedBundles.filter((bundle) =>
+      !simulatedCompletion.has(bundle.featureId)
+      && bundle.featureStatus !== "completed"
+      && bundle.blockedByFeatures.length === 0,
+    );
+    if (readyBundles.length === 0) {
+      break;
+    }
+
+    const preferredFeatureIds = index === 0
+      ? [currentFeatureId, nextRecommendedFeatureId].filter((value): value is string => Boolean(value))
+      : [];
+    const nextBundle = sortFeatureBundlesForPlanning(readyBundles, preferredFeatureIds)[0];
+    if (!nextBundle) {
+      break;
+    }
+
+    sequence.push(nextBundle.featureId);
+    simulatedCompletion.add(nextBundle.featureId);
+  }
+
+  return sequence;
+}
+
 function deriveAutonomousFeatureBundles(session: AutonomousSession): AutonomousFeatureBundleSummary[] {
   const queue = session.workflowContinuity.taskChain.generatedTaskQueue;
   const currentTaskId = normalizeText(session.workflowContinuity.taskChain.currentTaskId) || undefined;
@@ -787,6 +1013,12 @@ function deriveAutonomousFeatureBundles(session: AutonomousSession): AutonomousF
       blockedByFeatures: [...feature.blockedByFeatures],
       unlocksFeatures: [...feature.unlocksFeatures],
       dependencyStatusSummary: feature.dependencyStatusSummary,
+      planningScore: feature.planningScore,
+      unlockScore: feature.unlockScore,
+      downstreamFeatureCount: feature.downstreamFeatureCount,
+      dependencyDepth: feature.dependencyDepth,
+      criticalPathWeight: feature.criticalPathWeight,
+      recommendedPlanningReason: feature.recommendedPlanningReason,
       featureStatus: feature.featureStatus,
       completedTaskCount: feature.completedTaskCount,
       totalTaskCount: feature.totalTaskCount,
@@ -810,6 +1042,12 @@ function deriveAutonomousFeatureBundles(session: AutonomousSession): AutonomousF
         blockedByFeatures: [],
         unlocksFeatures: [],
         dependencyStatusSummary: undefined,
+        planningScore: 0,
+        unlockScore: 0,
+        downstreamFeatureCount: 0,
+        dependencyDepth: 0,
+        criticalPathWeight: 0,
+        recommendedPlanningReason: undefined,
         featureStatus: "planned",
         completedTaskCount: entry.status === "completed" || entry.status === "skipped" ? 1 : 0,
         totalTaskCount: 1,
@@ -865,6 +1103,12 @@ function deriveAutonomousFeatureBundles(session: AutonomousSession): AutonomousF
         blockedByFeatures: [],
         unlocksFeatures: [],
         dependencyStatusSummary: undefined,
+        planningScore: 0,
+        unlockScore: 0,
+        downstreamFeatureCount: 0,
+        dependencyDepth: 0,
+        criticalPathWeight: 0,
+        recommendedPlanningReason: undefined,
         featureStatus: "planned",
         completedTaskCount: stepCountsAsCompleted ? 1 : 0,
         totalTaskCount: 1,
@@ -913,8 +1157,9 @@ function deriveAutonomousFeatureBundles(session: AutonomousSession): AutonomousF
     }
   }
 
-  return bundles
-    .map((bundle) => {
+  return deriveFeaturePlanningMetadata(
+    bundles
+      .map((bundle) => {
       const hasBlockedTasks = bundle.blockedTaskIds.length > 0;
       const isCurrent = Boolean(bundle.currentTaskId);
       const hasNextRecommendation = Boolean(bundle.nextRecommendedTaskId);
@@ -950,7 +1195,8 @@ function deriveAutonomousFeatureBundles(session: AutonomousSession): AutonomousF
               : "planned",
       };
     })
-    .sort((left, right) => left.featureTitle.localeCompare(right.featureTitle) || left.featureId.localeCompare(right.featureId));
+      .sort((left, right) => left.featureTitle.localeCompare(right.featureTitle) || left.featureId.localeCompare(right.featureId)),
+  );
 }
 
 function deriveAutonomousTaskReviewRecords(session: AutonomousSession): AutonomousTaskReviewRecord[] {
@@ -1175,6 +1421,9 @@ function deriveAutonomousSessionOversight(session: AutonomousSession): Autonomou
   const featureDependencyGraph = featureBundles
     .filter((bundle) => bundle.dependsOnFeatureIds.length > 0)
     .map((bundle) => `${bundle.featureId} <- ${bundle.dependsOnFeatureIds.join(", ")}`);
+  const recommendedFeatureSequence = deriveRecommendedFeatureSequence(session, featureBundles);
+  const topRecommendedFeature = featureBundles.find((bundle) => bundle.featureId === recommendedFeatureSequence[0]);
+  const nextLikelyFeatureIds = recommendedFeatureSequence.slice(1);
 
   return {
     summary: {
@@ -1194,11 +1443,16 @@ function deriveAutonomousSessionOversight(session: AutonomousSession): Autonomou
       recommendedNextStep:
         session.workflowContinuity.loopHealth.recommendedNextActionSummary
         || session.workflowContinuity.progress.nextIntendedStep
+        || topRecommendedFeature?.featureTitle
         || session.sessionLoop.nextRecommendedTaskId
         || "No recommended next step is currently recorded.",
       currentFeatureId: currentFeature?.featureId,
       currentFeatureTitle: currentFeature?.featureTitle,
       currentFeatureProgress: currentFeature ? buildAutonomousFeatureProgressLabel(currentFeature) : undefined,
+      topRecommendedFeatureId: topRecommendedFeature?.featureId,
+      topRecommendedFeatureTitle: topRecommendedFeature?.featureTitle,
+      topRecommendedPlanningReason: topRecommendedFeature?.recommendedPlanningReason,
+      nextLikelyFeatureIds,
       readyFeatures: readyFeatureIds.length,
       completedFeatures: completedFeatureIds.length,
       blockedFeatures: blockedFeatureIds.length,
@@ -1219,6 +1473,11 @@ function deriveAutonomousSessionOversight(session: AutonomousSession): Autonomou
     featureBundles,
     readyFeatureIds,
     featureDependencyGraph,
+    topRecommendedFeatureId: topRecommendedFeature?.featureId,
+    topRecommendedFeatureTitle: topRecommendedFeature?.featureTitle,
+    topRecommendedPlanningReason: topRecommendedFeature?.recommendedPlanningReason,
+    recommendedFeatureSequence,
+    nextLikelyFeatureIds,
     recentCompletedTaskIds: session.sessionLoop.completedTaskIds.slice(-5).reverse(),
     blockedTaskIds: uniqueStrings([...session.sessionLoop.blockedTaskIds, ...session.workflowContinuity.taskChain.blockedTaskIds]),
     completedFeatureIds,
@@ -1577,6 +1836,12 @@ function normalizeAutonomousFeatureBundleSummary(value: unknown): AutonomousFeat
     blockedByFeatures: normalizeUniqueTaskIdList(source.blockedByFeatures),
     unlocksFeatures: normalizeUniqueTaskIdList(source.unlocksFeatures),
     dependencyStatusSummary: normalizeText(typeof source.dependencyStatusSummary === "string" ? source.dependencyStatusSummary : "") || undefined,
+    planningScore: Number.isFinite(Number(source.planningScore)) ? Number(source.planningScore) : 0,
+    unlockScore: Number.isFinite(Number(source.unlockScore)) ? Number(source.unlockScore) : 0,
+    downstreamFeatureCount: Number.isFinite(Number(source.downstreamFeatureCount)) ? Math.max(0, Math.floor(Number(source.downstreamFeatureCount))) : 0,
+    dependencyDepth: Number.isFinite(Number(source.dependencyDepth)) ? Math.max(0, Math.floor(Number(source.dependencyDepth))) : 0,
+    criticalPathWeight: Number.isFinite(Number(source.criticalPathWeight)) ? Math.max(0, Math.floor(Number(source.criticalPathWeight))) : 0,
+    recommendedPlanningReason: normalizeText(typeof source.recommendedPlanningReason === "string" ? source.recommendedPlanningReason : "") || undefined,
     featureStatus: normalizeAutonomousFeatureBundleStatus(source.featureStatus) ?? "planned",
     completedTaskCount: Number.isFinite(Number(source.completedTaskCount)) ? Math.max(0, Math.floor(Number(source.completedTaskCount))) : 0,
     totalTaskCount: Number.isFinite(Number(source.totalTaskCount)) ? Math.max(0, Math.floor(Number(source.totalTaskCount))) : 0,
@@ -5627,6 +5892,18 @@ export function buildAutonomousSessionContextBlock(session: AutonomousSession, l
 
   if (session.oversight.featureDependencyGraph.length > 0) {
     lines.push(`- Feature dependency graph: ${session.oversight.featureDependencyGraph.slice(0, 5).join(" | ")}`);
+  }
+
+  if (session.oversight.topRecommendedFeatureId) {
+    lines.push(`- Top recommended feature: ${session.oversight.topRecommendedFeatureId}`);
+  }
+
+  if (session.oversight.topRecommendedPlanningReason) {
+    lines.push(`- Planning rationale: ${session.oversight.topRecommendedPlanningReason}`);
+  }
+
+  if (session.oversight.nextLikelyFeatureIds.length > 0) {
+    lines.push(`- Near-term feature path: ${session.oversight.nextLikelyFeatureIds.slice(0, 3).join(", ")}`);
   }
 
   if (session.sessionLoop.pauseReason) {
