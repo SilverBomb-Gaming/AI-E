@@ -418,6 +418,14 @@ AI-E is now hardened for repeated real-task operation without changing the core 
 
 Basic usage expectations stay unchanged: run the bounded session, inspect the coding and approval summaries, approve only the explicit pending repo action when the materialized preview is acceptable, and treat completion as valid only when the session status, completion state, and repo-action state all agree.
 
+## Phase 6C: completion trust and action alignment
+
+AI-E now fail-closes repo-coding completion unless the validated deliverable yields an approval-ready repo action through the existing supervised write path.
+
+- repeated validation success is no longer enough to accept or complete a mutation-intent repo task when no materialized repo-action preview exists
+- operator confirmation no longer bypasses the approval system: confirmation can accept the deliverable, but the session only finalizes when the recomputed coding state says there are no pending repo actions and loop termination is actually safe
+- incomplete repo outputs remain inspectable through coding continuity summaries, which now keep the session open with an explicit acceptance reason instead of silently closing on validation-only evidence
+
 Still deferred beyond 4M-D:
 
 - autonomous peer-to-peer replication or any direct node-to-node handoff channel

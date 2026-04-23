@@ -293,7 +293,7 @@ test("runAutonomousSession keeps a successful validation in needs-verification b
   assert.equal(session.steps[1]?.goalStatus, "complete");
 });
 
-test("runAutonomousSession closes a repo-coding loop after deterministic deliverable acceptance", async () => {
+test("runAutonomousSession keeps a repo-coding loop open until approval-ready output exists", async () => {
   resetExecutionNodeRegistry();
   const responses: FreeAnalysisResponse[] = [
     {
@@ -327,7 +327,7 @@ test("runAutonomousSession closes a repo-coding loop after deterministic deliver
 
   const session = await runAutonomousSession({
     goal: "Deliver a bounded repo coding fix and close it cleanly.",
-    maxSteps: 4,
+    maxSteps: 3,
     dependencies: {
       runAnalysis: async () => responses.shift() as FreeAnalysisResponse,
       executeAction: async (action) => {
@@ -354,11 +354,12 @@ test("runAutonomousSession closes a repo-coding loop after deterministic deliver
     },
   });
 
-  assert.equal(session.status, "completed");
-  assert.equal(session.workflowContinuity.coding.deliverableAccepted, true);
-  assert.equal(session.workflowContinuity.coding.completionState, "accepted");
-  assert.equal(session.workflowContinuity.coding.shouldTerminateLoop, true);
-  assert.equal(session.latestCompletion?.status, "complete");
+  assert.equal(session.status, "max-step-limit");
+  assert.equal(session.workflowContinuity.coding.deliverableAccepted, false);
+  assert.equal(session.workflowContinuity.coding.completionState, "in-progress");
+  assert.equal(session.workflowContinuity.coding.shouldTerminateLoop, false);
+  assert.match(session.workflowContinuity.coding.acceptanceReason ?? "", /approval-ready repo action/i);
+  assert.notEqual(session.latestCompletion?.status, "complete");
   resetExecutionNodeRegistry();
 });
 

@@ -295,11 +295,12 @@ test("repo coding sessions mark correction pending and validation recovered afte
   assert.equal(recovered.workflowContinuity.coding.validationFirstActive, true);
   assert.equal(recovered.workflowContinuity.coding.currentCorrectionTarget, undefined);
   assert.equal(recovered.workflowContinuity.coding.deliverableAccepted, false);
-  assert.equal(recovered.workflowContinuity.coding.completionState, "ready-for-acceptance");
-  assert.equal(recovered.workflowContinuity.coding.operatorConfirmationRequired, true);
+  assert.equal(recovered.workflowContinuity.coding.completionState, "in-progress");
+  assert.equal(recovered.workflowContinuity.coding.operatorConfirmationRequired, false);
   assert.equal(recovered.workflowContinuity.coding.shouldTerminateLoop, false);
   assert.equal(recovered.workflowContinuity.coding.currentTargetStatus, "accepted");
   assert.equal(recovered.workflowContinuity.coding.correctionMaintainsDeliverable, true);
+  assert.match(recovered.workflowContinuity.coding.acceptanceReason ?? "", /approval-ready repo action/i);
   assert.match(recovered.workflowContinuity.coding.codingSummary ?? "", /last-validation=passed/i);
 });
 
@@ -365,7 +366,7 @@ test("repo coding sessions track bounded output artifacts across implementation 
   assert.match(buildAutonomousSessionContextBlock(recovered), /Output artifacts:/i);
 });
 
-test("repo coding sessions accept a deliverable after repeated successful validation without regression", () => {
+test("repo coding sessions keep repeated validation in progress until a repo action can be derived", () => {
   const created = createAutonomousSession({
     goal: "Deliver a bounded repo coding fix and close it cleanly.",
     sessionMode: "repo-coding",
@@ -403,14 +404,14 @@ test("repo coding sessions accept a deliverable after repeated successful valida
   });
 
   assert.equal(firstSuccess.workflowContinuity.coding.completionState, "in-progress");
-  assert.equal(accepted.workflowContinuity.coding.deliverableAccepted, true);
-  assert.equal(accepted.workflowContinuity.coding.completionState, "accepted");
-  assert.equal(accepted.workflowContinuity.coding.acceptanceConfidence, "high");
+  assert.equal(accepted.workflowContinuity.coding.deliverableAccepted, false);
+  assert.equal(accepted.workflowContinuity.coding.completionState, "in-progress");
+  assert.equal(accepted.workflowContinuity.coding.acceptanceConfidence, "low");
   assert.equal(accepted.workflowContinuity.coding.operatorConfirmationRequired, false);
-  assert.equal(accepted.workflowContinuity.coding.shouldTerminateLoop, true);
-  assert.match(accepted.workflowContinuity.coding.acceptanceReason ?? "", /repeated successful validation/i);
-  assert.equal(accepted.latestCompletion?.status, "complete");
-  assert.match(buildAutonomousSessionContextBlock(accepted), /Completion state: accepted/i);
+  assert.equal(accepted.workflowContinuity.coding.shouldTerminateLoop, false);
+  assert.match(accepted.workflowContinuity.coding.acceptanceReason ?? "", /approval-ready repo action/i);
+  assert.notEqual(accepted.latestCompletion?.status, "complete");
+  assert.match(buildAutonomousSessionContextBlock(accepted), /Completion state: in-progress/i);
 });
 
 test("repo coding sessions derive supervised repo actions from accepted materialized outputs", () => {
@@ -511,11 +512,13 @@ test("repo coding sessions do not derive supervised repo actions from incomplete
     nextDecision: "continue",
   });
 
-  assert.equal(accepted.workflowContinuity.coding.deliverableAccepted, true);
+  assert.equal(accepted.workflowContinuity.coding.deliverableAccepted, false);
+  assert.equal(accepted.workflowContinuity.coding.completionState, "in-progress");
   assert.equal(accepted.workflowContinuity.coding.operatorConfirmationRequired, false);
-  assert.equal(accepted.workflowContinuity.coding.shouldTerminateLoop, true);
+  assert.equal(accepted.workflowContinuity.coding.shouldTerminateLoop, false);
   assert.equal(accepted.workflowContinuity.coding.pendingRepoActions.length, 0);
   assert.equal(accepted.workflowContinuity.coding.repoActionSummary, undefined);
+  assert.match(accepted.workflowContinuity.coding.acceptanceReason ?? "", /approval-ready repo action/i);
 });
 
 test("repo coding sessions allow bounded operator confirmation and rejection for deliverable closure", () => {
@@ -534,10 +537,24 @@ test("repo coding sessions allow bounded operator confirmation and rejection for
   const corrected = appendAutonomousStep(failedValidation, {
     proposedAction: "Apply the bounded correction patch to web/lib/aie/autonomousSession.ts.",
     expectedOutcome: "The bounded deliverable should be ready for validation.",
+    executedActionPreview: {
+      id: "confirmed-repo-action-preview",
+      type: "file-write",
+      scope: "caution",
+      description: "Prepare the bounded deliverable output for web/sandbox/confirmed-repo-action.txt.",
+      expectedOutcome: "The bounded deliverable should be ready for validation.",
+      requiresApproval: true,
+      metadata: {
+        sourceActionType: "file-write",
+        targetPath: "web/sandbox/confirmed-repo-action.txt",
+        allowedRoot: "web/sandbox",
+        content: "confirmed bounded deliverable output",
+      },
+    },
     executionResult: {
       status: "success",
       output: "Correction patch applied cleanly.",
-      changedPaths: ["web/lib/aie/autonomousSession.ts"],
+      changedPaths: ["web/sandbox/confirmed-repo-action.txt"],
       diffSummary: "Prepared deliverable closure state.",
     },
     nextDecision: "continue",
@@ -567,10 +584,11 @@ test("repo coding sessions allow bounded operator confirmation and rejection for
   assert.match(rejected.workflowContinuity.coding.acceptanceReason ?? "", /needs one more bounded correction/i);
   assert.equal(confirmed.workflowContinuity.coding.completionState, "accepted");
   assert.equal(confirmed.workflowContinuity.coding.deliverableAccepted, true);
-  assert.equal(confirmed.workflowContinuity.coding.shouldTerminateLoop, true);
-  assert.equal(confirmed.status, "completed");
-  assert.equal(confirmed.latestCompletion?.status, "complete");
-  assert.match(confirmed.completedReason ?? "", /deliverable is accepted and can close/i);
+  assert.equal(confirmed.workflowContinuity.coding.pendingRepoActions.length, 1);
+  assert.equal(confirmed.workflowContinuity.coding.shouldTerminateLoop, false);
+  assert.notEqual(confirmed.status, "completed");
+  assert.notEqual(confirmed.latestCompletion?.status, "complete");
+  assert.equal(confirmed.completedReason, undefined);
 });
 
 test("repo coding sessions surface escalation and supervised recovery as coding loop phases", () => {

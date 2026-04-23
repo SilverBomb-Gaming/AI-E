@@ -1,4 +1,5 @@
 import type { FailureClassification } from "./failureClassifier";
+import { isReadOnlyGoal } from "./goalEvaluator";
 import type { GoalCompletionStatus, GoalEvaluation } from "./goalEvaluator";
 import type { AutonomousActionFamily } from "./autonomousPlanning";
 import type { ExecutionAdapterId } from "./executionAdapters";
@@ -2044,17 +2045,28 @@ function deriveAutonomousWorkflowCodingState(params: {
     operatorNote: params.session.workflowContinuity.steering.operatorNote,
     overrideReason: params.session.workflowContinuity.steering.overrideReason,
   });
+  const mutationIntentRequiresApprovalReadyOutput = sessionMode === "repo-coding" && !isReadOnlyGoal(
+    params.session.goal,
+    currentDeliverableTarget || expectedOutputForm,
+  );
+  const candidateRepoActions = deriveAutonomousWorkflowRepoActions({
+    session: params.session,
+    outputArtifacts,
+    deliverableAccepted: true,
+  });
+  const approvalReadyOutputSatisfied = !mutationIntentRequiresApprovalReadyOutput || candidateRepoActions.length > 0;
   const deliverableAccepted = Boolean(
     lastValidationStep?.executionResult?.status === "success"
     && !acceptanceSignalsConflict
     && !operatorAcceptanceDecision.rejected
+    && approvalReadyOutputSatisfied
     && (operatorAcceptanceDecision.confirmed || repeatedValidationSuccessWithoutRegression)
   );
   const completionState: AutonomousWorkflowCodingCompletionState = operatorAcceptanceDecision.rejected
     ? "rejected"
     : deliverableAccepted
       ? "accepted"
-      : lastValidationStep?.executionResult?.status === "success" && stableCorrectionValidation
+      : lastValidationStep?.executionResult?.status === "success" && stableCorrectionValidation && approvalReadyOutputSatisfied
         ? "ready-for-acceptance"
         : "in-progress";
   const operatorConfirmationRequired = completionState === "ready-for-acceptance" || acceptanceSignalsConflict;
@@ -2080,14 +2092,14 @@ function deriveAutonomousWorkflowCodingState(params: {
           ? lastOutputSummary
             ? `Successful validation after bounded correction made the produced output ${lastOutputSummary} ready for acceptance.`
             : "Successful validation after bounded correction made the deliverable ready for acceptance."
+          : lastValidationStep?.executionResult?.status === "success" && !approvalReadyOutputSatisfied
+            ? lastOutputSummary
+              ? `Validation passed, but acceptance is blocked until the produced output ${lastOutputSummary} yields an approval-ready repo action.`
+              : "Validation passed, but acceptance is blocked until the session produces an approval-ready repo action for the requested repo change."
           : acceptanceSignalsConflict
             ? "Conflicting deliverable or validation signals require operator confirmation before closure."
             : undefined);
-  const repoActions = deriveAutonomousWorkflowRepoActions({
-    session: params.session,
-    outputArtifacts,
-    deliverableAccepted,
-  });
+  const repoActions = deliverableAccepted ? candidateRepoActions : [];
   const pendingRepoActions = repoActions.filter((action) => action.approvalStatus === "pending");
   const approvedRepoActions = repoActions.filter((action) => action.approvalStatus === "approved");
   const executedRepoActions = repoActions.filter((action) => action.approvalStatus === "executed");
@@ -4995,20 +5007,23 @@ export function updateAutonomousSessionSteering(
     },
   };
 
+  let derivedSession: AutonomousSession = {
+    ...nextSession,
+    workflowContinuity: deriveAutonomousWorkflowContinuity(nextSession),
+  };
+
   if (
     requestedAction === "confirm-deliverable-acceptance"
-    && (
-      session.workflowContinuity.coding.completionState === "ready-for-acceptance"
-      || session.workflowContinuity.coding.completionState === "accepted"
-    )
+    && derivedSession.workflowContinuity.coding.deliverableAccepted
+    && derivedSession.workflowContinuity.coding.shouldTerminateLoop
   ) {
     const completionReason = operatorNote
       || overrideReason
-      || session.workflowContinuity.coding.acceptanceReason
-      || session.workflowContinuity.coding.acceptanceSummary
+      || derivedSession.workflowContinuity.coding.acceptanceReason
+      || derivedSession.workflowContinuity.coding.acceptanceSummary
       || "Operator confirmed the bounded deliverable acceptance.";
-    nextSession = {
-      ...nextSession,
+    derivedSession = {
+      ...derivedSession,
       status: "completed",
       completedReason: completionReason,
       stateReason: completionReason,
@@ -5016,15 +5031,17 @@ export function updateAutonomousSessionSteering(
         status: "complete",
         isComplete: true,
         reason: completionReason,
-        confidence: "high",
+        confidence: derivedSession.workflowContinuity.coding.acceptanceConfidence,
       },
+    };
+
+    derivedSession = {
+      ...derivedSession,
+      workflowContinuity: deriveAutonomousWorkflowContinuity(derivedSession),
     };
   }
 
-  return {
-    ...nextSession,
-    workflowContinuity: deriveAutonomousWorkflowContinuity(nextSession),
-  };
+  return derivedSession;
 }
 
 export function clearAutonomousSessionSteering(session: AutonomousSession): AutonomousSession {
