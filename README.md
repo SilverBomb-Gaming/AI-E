@@ -27,6 +27,65 @@ Boundaries and stop conditions:
 
 The intended operating model is: define a bounded goal, start a session, watch the session summary and operator-attention output, approve gated repo actions when appropriate, and intervene only when the system gives you a concrete reason to do so.
 
+## Operator-Light Planner
+
+AI-E now also includes an Operator-Light Planner for the post-100% expansion phase. This layer takes rough operator intent and converts it into a deterministic execution packet for Codex, Copilot, or future autonomous agents without directly mutating code from vague instructions.
+
+What the Operator-Light Planner does:
+
+- accepts a rough request and turns it into a structured plan packet
+- always separates planning, implementation, validation, commit, and follow-up responsibilities
+- calls out assumptions, missing information, risk, repo targets, and whether human playtesting is required
+- always includes GitHub procedure guidance so downstream execution stays reviewable
+- keeps the system planning-first rather than over-eager when the request is vague or risky
+
+Current contract:
+
+- module path: `web/lib/aie/operatorLightPlanner.ts`
+- main entry point: `createOperatorLightPlan(request)`
+- output fields: `interpreted_goal`, `assumptions`, `missing_information`, `risk_level`, `repo_targets`, `execution_steps`, `validation_steps`, `git_commit_plan`, `playtest_required`, and `next_operator_decision`
+
+Example input:
+
+```ts
+const request = {
+  rawRequest: "Make the enemies smarter and add better grenade stuff.",
+  projectName: "BABYLON Unity gameplay project",
+};
+```
+
+Example output:
+
+```ts
+{
+  interpreted_goal: "Plan a bounded gameplay improvement pass for enemy behavior and grenade interactions without directly mutating code from the rough request.",
+  assumptions: [
+    "Assume the target project is BABYLON Unity gameplay project.",
+    "Do not execute code changes directly from this rough request; inspect first and turn approved scope into a staged handoff.",
+    "Treat gameplay-affecting work as playtest-sensitive even when automated checks pass.",
+  ],
+  missing_information: [
+    "The exact enemy behavior change is not specified.",
+    "The exact grenade behavior, damage model, or reaction scope is not specified.",
+  ],
+  risk_level: "medium",
+  repo_targets: [
+    "enemy AI scripts",
+    "grenade gameplay scripts",
+    "gameplay scenes or test levels",
+    "playmode or gameplay validation tests",
+  ],
+  playtest_required: true,
+  next_operator_decision: "Approve the narrow implementation slice and identify the required playtest owner, scene, or validation session before execution starts.",
+}
+```
+
+Why this matters for the expansion phase:
+
+- AI-E can accept rougher operator input without pretending that vague requests are safe to execute immediately
+- downstream coding agents receive a cleaner handoff packet with explicit blockers and validation expectations
+- the planner stays deliberately separate from autonomous execution so this commit adds structure without adding unattended repo mutation
+
 ## Constraint Router
 
 Build the system that uses everything else, safely.
