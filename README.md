@@ -161,6 +161,57 @@ Current limitation:
 - no database, cloud persistence, or UI browser is added yet
 - it is not wired into autonomous execution yet
 
+## Approval-Gated Artifact Execution Consumer
+
+AI-E now also includes an approval-gated execution consumer for stored session artifacts. This is the first safe bridge from durable refinement and planning records toward future execution, but it does not execute anything. It only answers whether a stored artifact is eligible to move into a later execution chain.
+
+What the execution consumer does:
+
+- reads a stored session artifact and evaluates execution readiness
+- requires explicit approval before an artifact can be marked ready
+- blocks high-risk, underspecified, or incomplete artifacts
+- explains why an artifact is blocked and recommends the next operator action
+- keeps execution readiness separate from actual execution
+
+Current contract:
+
+- module path: `web/lib/aie/artifactExecutionConsumer.ts`
+- main entry points: `evaluateArtifactForExecution(artifact)`, `listArtifactExecutionBlockers(artifact)`, and `summarizeExecutionDecision(decision)`
+- decision statuses: `ready`, `blocked`, `needs_approval`, `needs_clarification`, `needs_validation_plan`, and `high_risk_blocked`
+
+What “ready” means here:
+
+- the artifact status is already `approved`
+- the artifact risk is not `high` or `blocked`
+- blocking missing information has been resolved
+- validation steps exist
+- git commit guidance exists
+- the next operator decision no longer asks for clarification
+- playtest scope is explicitly identified through the artifact flag
+
+What this does not do yet:
+
+- it does not run git commands, shell commands, or repo mutations
+- it does not auto-approve artifacts or change their status
+- it does not wire directly into autonomous execution or UI flows in this commit
+
+How it fits into the future bridge:
+
+```text
+conversation
+-> refinement
+-> planning
+-> session artifact
+-> approval gate
+-> future execution chain
+```
+
+Why approval comes first:
+
+- stored artifacts should not become executable just because they exist
+- operators need a deterministic gate that confirms readiness before any execution bridge consumes the plan
+- later execution chains should consume reviewed artifacts, not infer approval from chat state
+
 ## Operator-Light Planner
 
 AI-E now also includes an Operator-Light Planner for the post-100% expansion phase. This layer takes rough operator intent and converts it into a deterministic execution packet for Codex, Copilot, or future autonomous agents without directly mutating code from vague instructions.
