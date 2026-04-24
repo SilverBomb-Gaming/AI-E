@@ -76,7 +76,29 @@ namespace EnemyAIDemo
 
             navMeshInstance = NavMesh.AddNavMeshData(navMeshData);
             navMeshBuilt = true;
+            ActivateAgents();
             Debug.Log("[ENEMY_AI_DEMO] Runtime NavMesh built successfully.");
+        }
+
+        private void ActivateAgents()
+        {
+            NavMeshAgent[] agents = FindObjectsByType<NavMeshAgent>(FindObjectsSortMode.None);
+
+            foreach (NavMeshAgent agent in agents)
+            {
+                if (agent == null)
+                {
+                    continue;
+                }
+
+                if (!NavMesh.SamplePosition(agent.transform.position, out NavMeshHit hit, 2f, NavMesh.AllAreas))
+                {
+                    continue;
+                }
+
+                agent.enabled = true;
+                agent.Warp(hit.position);
+            }
         }
     }
 }

@@ -3,6 +3,7 @@ using EnemyAIDemo;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
+using UnityEngine.AI;
 
 namespace EnemyAIDemo.Editor
 {
@@ -155,6 +156,7 @@ namespace EnemyAIDemo.Editor
             agent.acceleration = 12f;
             agent.angularSpeed = 720f;
             agent.stoppingDistance = 0.05f;
+            agent.enabled = false;
 
             enemy.AddComponent<EnemyTargetDetector>();
             enemy.AddComponent<EnemyAIController>();
