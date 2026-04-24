@@ -98,6 +98,69 @@ Current limitation:
 - no live LLM clarification or conversational memory expansion is used in this commit
 - it is not wired into UI or autonomous execution yet
 
+## Session Artifact Persistence
+
+AI-E now also includes a deterministic session artifact layer for intake and planning packets. This layer turns conversational refinement results and Operator-Light Planner outputs into durable structured records that can be reviewed, stored, resumed, or handed off later without depending on chat history.
+
+What the session artifact layer does:
+
+- stores conversational refinement outputs as structured artifacts
+- stores operator planning packets as structured artifacts
+- combines refinement plus planning into one intake packet for future review or resume flows
+- keeps artifact status explicit instead of implying approval or execution
+- stays file-ready and deterministic without adding a database dependency yet
+
+Current contract:
+
+- module path: `web/lib/aie/sessionArtifacts.ts`
+- main entry points: `createSessionArtifact(input)`, `createCombinedIntakePacket(refinement, plan)`, `updateSessionArtifactStatus(artifact, status)`, and `summarizeSessionArtifact(artifact)`
+- artifact types: `conversational_refinement`, `operator_plan`, and `combined_intake_packet`
+- status values: `planned`, `awaiting_clarification`, `approved`, `executing`, `validated`, `blocked`, and `archived`
+
+How it fits with refinement and planning:
+
+```text
+raw user request
+-> conversational refinement result
+-> operator plan
+-> session artifact record
+-> future review, resume, or execution handoff
+```
+
+Example artifact summary:
+
+```text
+Artifact combined_intake_packet-20260424120000-make-enemies-smarter-when-grenade
+Type: combined_intake_packet
+Status: planned
+Created: 2026-04-24T12:00:00.000Z
+Source request: make enemies smarter when grenade blows up
+Interpreted intent: Improve enemy AI reaction to grenade explosions.
+Planner-ready request: Add enemy reaction behavior to grenade explosions in BABYLON.
+Risk: low
+Clarity: 90
+Confidence: 88
+Missing information: none.
+Follow-up questions: none.
+Repo targets: enemy AI scripts, grenade gameplay scripts, gameplay scenes or test levels, playmode or gameplay validation tests
+Execution steps: 3
+Validation steps: 3
+Playtest required: yes.
+Next operator decision: Approve the narrow implementation slice and identify the required playtest owner, scene, or validation session before execution starts.
+```
+
+Why this exists:
+
+- refinement and planning packets need to survive beyond one chat turn
+- future agents or operators need a stable structured handoff surface
+- execution should later consume reviewed artifacts rather than infer state from conversation transcripts
+
+Current limitation:
+
+- this commit only provides deterministic in-memory and file-ready structures
+- no database, cloud persistence, or UI browser is added yet
+- it is not wired into autonomous execution yet
+
 ## Operator-Light Planner
 
 AI-E now also includes an Operator-Light Planner for the post-100% expansion phase. This layer takes rough operator intent and converts it into a deterministic execution packet for Codex, Copilot, or future autonomous agents without directly mutating code from vague instructions.
