@@ -27,6 +27,77 @@ Boundaries and stop conditions:
 
 The intended operating model is: define a bounded goal, start a session, watch the session summary and operator-attention output, approve gated repo actions when appropriate, and intervene only when the system gives you a concrete reason to do so.
 
+## Conversational Intent Refinement
+
+AI-E now also includes a deterministic conversational refinement layer that runs before the Operator-Light Planner. This layer helps AI-E understand rough, vague, emotional, or low-detail user requests and either turn them into planner-ready task language or ask one small set of useful follow-up questions.
+
+What the Conversational Intent Refinement layer does:
+
+- accepts a raw user request before planning
+- estimates whether the user is speaking in plain language, mixed language, or technical language
+- detects ambiguity, risky autonomy asks, and missing detail without shaming the user
+- asks at most 1 to 3 targeted follow-up questions when narrowing is needed
+- produces planner-ready request text only when the request is clear enough and safe enough to plan
+
+Current contract:
+
+- module path: `web/lib/aie/conversationalIntentRefinement.ts`
+- main entry point: `refineConversationalIntent(request)`
+- optional adapter: `convertRefinementToPlannerRequest(refinement, sourceRequest)`
+- output fields: `original_request`, `interpreted_intent`, `user_level_estimate`, `clarity_score`, `confidence_score`, `ambiguity_flags`, `missing_information`, `follow_up_questions`, `simplified_rest_above_user_request`, `planner_ready_request`, `should_ask_follow_up`, `should_create_plan`, `risk_level`, and `next_action`
+
+How it fits with the Operator-Light Planner:
+
+```text
+rough user message
+-> conversational intent refinement
+-> planner-ready request or small follow-up question set
+-> Operator-Light Planner
+-> structured execution packet
+```
+
+Example input:
+
+```ts
+const request = {
+  rawRequest: "i dont know how to say it but make it feel less boring",
+};
+```
+
+Example output:
+
+```ts
+{
+  original_request: "i dont know how to say it but make it feel less boring",
+  interpreted_intent: "Improve player engagement or game feel.",
+  user_level_estimate: "plain-language",
+  clarity_score: 52,
+  confidence_score: 58,
+  ambiguity_flags: ["missing-target-area", "low-vocabulary-uncertainty", "playtest-sensitive"],
+  follow_up_questions: [
+    "Should we start with combat feel, enemy behavior, movement, visuals, or level pacing?"
+  ],
+  simplified_rest_above_user_request: "You want the game to feel less boring, but AI-E still needs one clear area to improve first.",
+  planner_ready_request: null,
+  should_ask_follow_up: true,
+  should_create_plan: false,
+  risk_level: "medium",
+  next_action: "simplify",
+}
+```
+
+Why this exists:
+
+- users do not always describe tasks with technical vocabulary or precise scope
+- AI-E should preserve the user’s meaning without pretending unclear requests are ready for execution
+- downstream planning gets cleaner input, and risky broad asks are narrowed before they reach the planner
+
+Current limitation:
+
+- this version is deterministic and rule-based only
+- no live LLM clarification or conversational memory expansion is used in this commit
+- it is not wired into UI or autonomous execution yet
+
 ## Operator-Light Planner
 
 AI-E now also includes an Operator-Light Planner for the post-100% expansion phase. This layer takes rough operator intent and converts it into a deterministic execution packet for Codex, Copilot, or future autonomous agents without directly mutating code from vague instructions.
