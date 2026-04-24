@@ -330,6 +330,68 @@ Future next step:
 
 - connect the dry-run report to a reviewed patch-preparation layer that still preserves approval, validation, and reporting boundaries
 
+## Reviewed Patch Preparation Layer
+
+AI-E now also includes a reviewed patch preparation layer that converts a valid dry-run execution report into a review-only patch plan. This is still not real file mutation. It prepares structured patch intent for operator review without writing files or applying patches.
+
+What the patch preparation layer does:
+
+- consumes only dry-run reports that are ready, review-required, mutation-free, and validation-backed
+- turns proposed file targets into planned change groups with explicit review and validation expectations
+- blocks patch planning when dry-run requirements are incomplete, risky, or no longer review-safe
+- keeps patch preparation separate from actual file writes or patch application
+
+Current contract:
+
+- module path: `web/lib/aie/reviewedPatchPreparation.ts`
+- main entry points: `prepareReviewedPatchPlan(input)`, `validateDryRunForPatchPreparation(report)`, and `summarizeReviewedPatchPreparation(result)`
+- patch preparation statuses: `patch_plan_ready`, `patch_plan_blocked`, `patch_plan_needs_review`, `patch_plan_invalid_dry_run`, and `high_risk_blocked`
+
+How it fits into the bounded bridge:
+
+```text
+conversation
+-> refinement
+-> planning
+-> artifact
+-> approval gate
+-> reviewed handoff
+-> dry-run runner
+-> reviewed patch plan
+-> future patch application gate
+```
+
+Why this is still not real file mutation:
+
+- the layer does not write files or apply patches
+- the layer does not call git or shell commands
+- every planned change group remains review-required and mutation-free
+- the output is a plan for review, not an implementation action
+
+Allowed patch actions in this version:
+
+- inspect target files
+- propose file-level changes
+- draft patch instructions
+- identify tests to run
+- summarize expected diff
+
+Disallowed patch actions in this version:
+
+- write files
+- apply patches
+- commit changes
+- push branches
+- deploy
+- run destructive commands
+- access secrets
+- auto-approve implementation
+- bypass validation
+
+Future next step:
+
+- connect the reviewed patch plan to a reviewed patch application gate that still requires operator review before any mutation is allowed
+
 ## Operator-Light Planner
 
 AI-E now also includes an Operator-Light Planner for the post-100% expansion phase. This layer takes rough operator intent and converts it into a deterministic execution packet for Codex, Copilot, or future autonomous agents without directly mutating code from vague instructions.
