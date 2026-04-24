@@ -270,6 +270,66 @@ Future next step:
 
 - connect this reviewed handoff packet to a dry-run execution-chain runner that still respects approval, validation, and reporting boundaries
 
+## Execution-Chain Dry-Run Runner
+
+AI-E now also includes a dry-run execution runner that consumes a reviewed execution handoff packet and simulates how that handoff would move through an execution chain. This is still not real execution. It produces a deterministic simulation report without mutating the repo.
+
+What the dry-run runner does:
+
+- validates that a reviewed handoff packet includes the required review, action, validation, and commit metadata
+- simulates each execution step as a non-mutating reviewed step
+- blocks dry-runs when a step would require a disallowed action such as deploy, destructive commands, or bypassing validation
+- carries forward validation, risk, playtest, and reporting expectations into a deterministic dry-run report
+
+Current contract:
+
+- module path: `web/lib/aie/executionDryRunRunner.ts`
+- main entry points: `runExecutionDryRun(input)`, `validateDryRunPacket(packet)`, and `summarizeDryRunReport(report)`
+- dry-run statuses: `dry_run_ready`, `dry_run_blocked`, `dry_run_needs_review`, and `dry_run_invalid_packet`
+
+How it fits in the bounded bridge:
+
+```text
+conversation
+-> refinement
+-> planning
+-> artifact
+-> approval gate
+-> reviewed handoff
+-> dry-run report
+-> future reviewed patch preparation
+```
+
+Why this is still not real execution:
+
+- the runner does not modify files
+- the runner does not call git or shell commands
+- the runner does not push branches, deploy, access secrets, or spend money
+- every simulated step remains review-required and mutation-free
+
+Allowed dry-run behavior:
+
+- inspect files
+- propose changes
+- prepare patch
+- run tests
+- summarize results
+
+Disallowed dry-run behavior:
+
+- auto-approve execution
+- push without review
+- modify unrelated files
+- run destructive commands
+- deploy
+- spend money
+- access secrets
+- bypass validation
+
+Future next step:
+
+- connect the dry-run report to a reviewed patch-preparation layer that still preserves approval, validation, and reporting boundaries
+
 ## Operator-Light Planner
 
 AI-E now also includes an Operator-Light Planner for the post-100% expansion phase. This layer takes rough operator intent and converts it into a deterministic execution packet for Codex, Copilot, or future autonomous agents without directly mutating code from vague instructions.
