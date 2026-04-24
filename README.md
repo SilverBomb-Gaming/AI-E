@@ -212,6 +212,64 @@ Why approval comes first:
 - operators need a deterministic gate that confirms readiness before any execution bridge consumes the plan
 - later execution chains should consume reviewed artifacts, not infer approval from chat state
 
+## Reviewed Execution Bridge Adapter
+
+AI-E now also includes a reviewed execution bridge adapter that converts an approved artifact plus a `ready` execution decision into a reviewed execution handoff packet. This is still not execution. It is a structured handoff for a future dry-run runner or reviewed execution chain.
+
+What the reviewed bridge does:
+
+- consumes only approved artifacts that already passed the execution readiness gate
+- produces a reviewed execution handoff packet with scoped actions and completion reporting requirements
+- blocks handoff creation when approval, readiness, validation, commit guidance, or risk requirements are not met
+- keeps allowed and disallowed actions explicit inside the handoff packet
+
+Current contract:
+
+- module path: `web/lib/aie/reviewedExecutionBridge.ts`
+- main entry points: `createReviewedExecutionHandoff(input)`, `buildExecutionHandoffPacket(artifact, decision)`, and `summarizeReviewedExecutionBridge(result)`
+- bridge statuses: `handoff_ready`, `blocked`, `needs_review`, `needs_approval`, and `high_risk_blocked`
+
+How it fits with the current bounded pipeline:
+
+```text
+conversation
+-> refinement
+-> planning
+-> artifact
+-> approval gate
+-> reviewed execution handoff
+-> future dry-run runner
+```
+
+Why this is still not autonomous execution:
+
+- the bridge creates a packet only after explicit approval and a `ready` gate decision
+- it does not run git commands, shell commands, or repo mutations
+- it does not approve artifacts, mutate status, or bypass validation requirements
+
+Allowed actions in this version:
+
+- inspect files
+- propose changes
+- prepare patch
+- run tests
+- summarize results
+
+Disallowed actions in this version:
+
+- auto-approve execution
+- push without review
+- modify unrelated files
+- run destructive commands
+- deploy
+- spend money
+- access secrets
+- bypass validation
+
+Future next step:
+
+- connect this reviewed handoff packet to a dry-run execution-chain runner that still respects approval, validation, and reporting boundaries
+
 ## Operator-Light Planner
 
 AI-E now also includes an Operator-Light Planner for the post-100% expansion phase. This layer takes rough operator intent and converts it into a deterministic execution packet for Codex, Copilot, or future autonomous agents without directly mutating code from vague instructions.
