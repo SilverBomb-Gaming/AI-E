@@ -1419,6 +1419,46 @@ Milestone direction:
 
 - this is the transition from session management as a passive state layer into supervised active work-cycle execution
 
+## Supervised Runtime Loop Controller
+
+AI-E now also includes a supervised runtime loop controller that can repeatedly invoke the bounded session runtime over multiple cycles without introducing background threads, hidden recursion, or approval bypass. This is the first layer that simulates controlled continuous operation while still stopping at the same validation and approval boundaries as the one-cycle runtime.
+
+What the runtime loop controller does:
+
+- calls the session runtime repeatedly in a bounded sequential loop
+- stops immediately when approval, validation, rollback, or blocking boundaries are encountered
+- completes when the session goal is reached
+- enforces a configured maximum cycle count for each operator-triggered run
+- returns a loop state that can be resumed later by another explicit trigger
+
+Current contract:
+
+- module path: `web/lib/aie/runtimeLoopController.ts`
+- main types: `RuntimeLoopState`, `RuntimeLoopResult`, `LoopStatus`, and `LoopControlConfig`
+- main entry points: `startRuntimeLoop(session, config)`, `runNextCycle(loopState)`, `evaluateLoopState(loopState)`, `stopRuntimeLoop(loopState)`, and `summarizeLoop(loopState)`
+- statuses: `loop_idle`, `loop_running`, `loop_paused`, `loop_blocked`, and `loop_completed`
+
+Example loop behavior:
+
+```text
+Operator invokes startRuntimeLoop(session, { max_cycles: 3 })
+Loop runs one bounded session cycle
+Loop reevaluates supervision boundaries
+Loop continues into the next safe cycle if allowed
+Loop stops and returns state when paused, blocked, completed, or cycle-capped
+```
+
+Why this improves supervised autonomy:
+
+- AI-E can now continue safe work across multiple cycles instead of requiring a manual trigger for every single step
+- max-cycle enforcement keeps the loop bounded even when work remains
+- explicit loop state makes the next operator or controller handoff deterministic and reviewable
+- the continuous-operation path still uses the same approval-aware session runtime instead of inventing a second executor
+
+Milestone direction:
+
+- this is the layer that lets AI-E keep working safely across repeated cycles without manual step-by-step triggers
+
 ## Operator-Light Planner
 
 AI-E now also includes an Operator-Light Planner for the post-100% expansion phase. This layer takes rough operator intent and converts it into a deterministic execution packet for Codex, Copilot, or future autonomous agents without directly mutating code from vague instructions.
