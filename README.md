@@ -1686,6 +1686,55 @@ Milestone direction:
 
 - this moves AI-E from having a scheduled trigger to having a supervised service that can continuously call that trigger.
 
+## Production Runtime Entrypoint
+
+AI-E now also includes an explicit production-style runtime entrypoint that can intentionally launch the bounded background runtime service from a command or script. This gives the operator a real start command without introducing auto-start behavior, uncontrolled daemons, approval bypasses, or deployment side effects.
+
+What the production runtime entrypoint does:
+
+- loads runtime configuration with safe bounded defaults
+- initializes the background runtime service, queue, and history layers explicitly
+- starts a supervised bounded runtime run only when the command is invoked
+- returns and prints a readable runtime summary for completed, paused, or blocked exits
+- keeps dry-run support available for safe validation before a real runtime invocation
+
+Current contract:
+
+- module path: `web/lib/aie/runtimeEntrypoint.ts`
+- script path: `web/scripts/runBackgroundRuntime.ts`
+- main entry points: `loadRuntimeEntrypointConfig(config)`, `runBackgroundRuntimeEntrypoint(config)`, and `summarizeRuntimeEntrypoint(result)`
+- supported config fields: `tick_interval_ms`, `max_ticks_per_run`, `max_runs_per_invocation`, `operator_away_mode`, `require_supervised_scope`, and `dry_run_mode`
+
+Example command:
+
+```text
+npm run aie:runtime
+```
+
+Safe dry-run example:
+
+```text
+npm run aie:runtime -- --dry-run
+```
+
+What this still guarantees:
+
+- the runtime service starts only when explicitly invoked
+- approvals and validation boundaries are still enforced through the existing scheduler, queue, trigger, and history layers
+- there is still no uncontrolled daemon, auto-approval flow, unsafe file mutation, or deployment path here
+- dry-run mode can validate startup behavior without starting the bounded tick loop
+
+Why this improves the runtime environment:
+
+- AI-E now has a real intentional start command for the supervised background runtime service
+- runtime configuration and exit summaries are reviewable instead of being implicit library wiring
+- productization improves because operators can launch the bounded runtime stack directly when they are away
+- the runtime environment improves without weakening any of the existing supervised autonomy safety guarantees
+
+Milestone direction:
+
+- this moves AI-E from having a background runtime service implementation to having a clear runtime start command.
+
 ## Operator-Light Planner
 
 AI-E now also includes an Operator-Light Planner for the post-100% expansion phase. This layer takes rough operator intent and converts it into a deterministic execution packet for Codex, Copilot, or future autonomous agents without directly mutating code from vague instructions.

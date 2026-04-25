@@ -26,6 +26,7 @@ export type BackgroundRuntimeServiceStopReason =
 export type BackgroundRuntimeServiceConfig = {
   tick_interval_ms: number;
   max_ticks_per_run: number;
+  max_runs_per_invocation?: number;
   stop_on_blocker?: boolean;
   stop_on_error?: boolean;
   operator_away_mode?: boolean;
@@ -63,6 +64,7 @@ export type BackgroundRuntimeServiceState = {
   config: {
     tick_interval_ms: number;
     max_ticks_per_run: number;
+    max_runs_per_invocation: number;
     stop_on_blocker: boolean;
     stop_on_error: boolean;
     operator_away_mode: boolean;
@@ -84,6 +86,7 @@ function normalizeConfig(config: BackgroundRuntimeServiceConfig): BackgroundRunt
   return {
     tick_interval_ms: Math.max(1, Math.floor(config.tick_interval_ms)),
     max_ticks_per_run: Math.max(1, Math.floor(config.max_ticks_per_run)),
+    max_runs_per_invocation: Math.max(1, Math.floor(config.max_runs_per_invocation ?? 1)),
     stop_on_blocker: config.stop_on_blocker !== false,
     stop_on_error: config.stop_on_error !== false,
     operator_away_mode: config.operator_away_mode !== false,
@@ -100,6 +103,7 @@ function buildServiceId(config: BackgroundRuntimeServiceState["config"]): string
     "background-runtime-service",
     String(config.tick_interval_ms),
     String(config.max_ticks_per_run),
+    String(config.max_runs_per_invocation),
     config.stop_on_blocker ? "stop-blocker" : "continue-blocker",
     config.operator_away_mode ? "away" : "local",
   ].join("-");
@@ -159,7 +163,7 @@ export function createBackgroundRuntimeService(config: BackgroundRuntimeServiceC
     config: normalized,
     trigger_state: createTimeTrigger({
       interval_ms: normalized.tick_interval_ms,
-      max_runs_per_invocation: 1,
+      max_runs_per_invocation: normalized.max_runs_per_invocation,
       allow_empty_runs: false,
       require_fresh_approvals: true,
       require_fresh_context: true,
@@ -288,6 +292,7 @@ export function summarizeBackgroundRuntimeService(service: BackgroundRuntimeServ
     `Service status: ${service.status}`,
     `Ticks attempted: ${service.ticks_attempted}/${service.config.max_ticks_per_run}`,
     `Ticks completed: ${service.ticks_completed}`,
+    `Max runs per invocation: ${service.config.max_runs_per_invocation}`,
     `Last tick at: ${service.last_tick_at ?? "none"}`,
     `Stop reason: ${service.stop_reason}`,
     `Tick history entries: ${service.tick_history.length}`,
