@@ -1009,6 +1009,47 @@ Why this improves execution safety:
 - AI-E can detect broken or unsafe post-mutation state without mutating files during validation
 - rollback becomes an evidence-based recommendation instead of a manual guess
 
+## Commit Gate And Completion Report
+
+AI-E now also includes a commit gate layer that runs after controlled execution validation. This layer decides whether a validated change set is safe to commit, whether it still needs operator review, or whether it should stay blocked and recommend rollback.
+
+What the commit gate does:
+
+- consumes the controlled validation result and reviewed application packet
+- checks commit eligibility using validation status, risk level, playtest requirements, and unexpected change signals
+- produces a structured completion report before any commit happens
+- keeps commit and push behind explicit operator approval
+
+Current contract:
+
+- module path: `web/lib/aie/commitGate.ts`
+- main entry points: `evaluateCommitEligibility(input)`, `buildCompletionReport(input)`, and `summarizeCommitGate(result)`
+- statuses: `commit_ready`, `commit_blocked`, and `commit_needs_review`
+
+Commit gate flow:
+
+```text
+application packet
+-> controlled patch execution
+-> controlled execution validation
+-> commit gate and completion report
+-> commit / review / rollback recommendation
+```
+
+Completion report includes:
+
+- original request and interpreted goal
+- files changed and diff summary
+- validation result and validation summary
+- risk level and rollback availability
+- recommended next action and gate explanation
+
+Why this improves execution safety:
+
+- AI-E now decides whether validated changes are actually commit-eligible instead of assuming validation alone is enough
+- every reviewed execution now produces an operator-facing completion report before commit or push is considered
+- unsafe or uncertain change sets can be stopped before commit while still preserving rollback evidence
+
 ## Operator-Light Planner
 
 AI-E now also includes an Operator-Light Planner for the post-100% expansion phase. This layer takes rough operator intent and converts it into a deterministic execution packet for Codex, Copilot, or future autonomous agents without directly mutating code from vague instructions.
