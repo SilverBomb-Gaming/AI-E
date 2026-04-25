@@ -1094,6 +1094,44 @@ Why this improves execution safety:
 - commit and push approvals are now separate control points instead of one implied action
 - the full execution chain is controlled end to end without auto-commit or auto-push behavior
 
+## Bounded Autonomous Task Chaining
+
+AI-E now also includes a bounded autonomous task-chain coordinator for supervised multi-step work. This layer can plan a small ordered sequence of related steps, require approval before the chain begins, and stop immediately when any step fails or requires further approval.
+
+What the task-chain layer does:
+
+- turns a bounded request into ordered task steps
+- enforces a hard max step limit
+- requires explicit chain approval before execution starts
+- advances only when each step clears the existing validation and approval gates
+- pauses the chain on failed validation, rollback recommendation, or missing commit or push approval
+- produces a clear chain report while leaving real execution to the existing controlled pipeline
+
+Current contract:
+
+- module path: `web/lib/aie/autonomousTaskChain.ts`
+- main entry points: `createAutonomousTaskChain(input)`, `evaluateTaskChainReadiness(chain)`, `advanceTaskChain(chain, stepResult)`, `pauseTaskChain(chain, reason)`, `completeTaskChain(chain)`, and `summarizeTaskChain(chain)`
+- statuses: `chain_planned`, `awaiting_chain_approval`, `chain_ready`, `chain_running`, `chain_paused`, `chain_blocked`, and `chain_completed`
+
+Example:
+
+```text
+Operator: Improve grenade gameplay in three safe steps.
+
+AI-E chain:
+1. Add damage radius
+2. Add VFX/SFX hook
+3. Add cooldown/inventory rule
+
+Each step is still planned, reviewed, applied only with approval, validated, and paused immediately if a safety gate fails.
+```
+
+Why this improves supervised autonomy:
+
+- AI-E can now coordinate a bounded sequence without requiring a brand new prompt for every adjacent task
+- every step still flows through the same controlled execution, validation, commit, and push approval gates
+- this is supervised autonomy only, not uncontrolled background execution or overnight agent behavior
+
 ## Operator-Light Planner
 
 AI-E now also includes an Operator-Light Planner for the post-100% expansion phase. This layer takes rough operator intent and converts it into a deterministic execution packet for Codex, Copilot, or future autonomous agents without directly mutating code from vague instructions.
