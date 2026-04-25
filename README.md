@@ -1552,6 +1552,46 @@ Milestone direction:
 
 - this moves AI-E from running one supervised background session while the operator is away to managing a bounded queue of supervised background sessions safely
 
+## Background Run History and Operator-Away Digest
+
+AI-E now also includes a background run history layer that preserves deterministic queue-run records and an operator-away digest that summarizes what happened while the operator was away. This adds memory and reporting for background queue passes without adding any new execution powers.
+
+What the history and digest layer does:
+
+- records each background session queue run as a deterministic history record
+- preserves approvals needed, blockers, next actions, and safe-to-continue state
+- aggregates multiple queue records into one operator-away digest
+- highlights completed work, paused work, blocked or skipped work, and recommended next actions
+- stays file-ready and in-memory only, with no database or shell dependency
+
+Current contract:
+
+- module path: `web/lib/aie/backgroundRunHistory.ts`
+- main types: `BackgroundRunHistory`, `BackgroundRunHistoryRecord`, `OperatorAwayDigest`, `DigestSection`, `DigestStatus`, and `DigestRecommendation`
+- main entry points: `createBackgroundRunHistory()`, `appendBackgroundRunRecord(history, queueResult)`, `buildOperatorAwayDigest(history, window)`, and `summarizeOperatorAwayDigest(digest)`
+- digest statuses: `digest_empty`, `digest_ready`, `digest_needs_attention`, and `digest_blocked`
+
+Example operator-away digest:
+
+```text
+3 sessions considered
+1 completed
+1 paused for approval
+1 skipped as stale
+next action: review paused session approval
+```
+
+Why this improves supervised autonomy:
+
+- AI-E can now remember what happened across multiple operator-away queue passes instead of only reporting one pass at a time
+- the operator gets a single digest that surfaces approvals, blockers, completed work, and next actions quickly
+- history records are deterministic and file-ready, which makes later persistence straightforward without changing the current execution model
+- blockers stay visible instead of being hidden behind aggregate counts
+
+Milestone direction:
+
+- this moves AI-E from being able to run a background session queue to being able to report clearly on what happened while the operator was away
+
 ## Operator-Light Planner
 
 AI-E now also includes an Operator-Light Planner for the post-100% expansion phase. This layer takes rough operator intent and converts it into a deterministic execution packet for Codex, Copilot, or future autonomous agents without directly mutating code from vague instructions.
