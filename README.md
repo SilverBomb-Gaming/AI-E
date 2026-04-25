@@ -1506,6 +1506,52 @@ Milestone direction:
 
 - this is the first real step toward AI-E working while the operator is away without weakening approval or safety constraints
 
+## Background Session Queue
+
+AI-E now also includes a background session queue that can manage multiple background-capable sessions during an operator-away pass, evaluate them in a stable order, run only the safe eligible sessions, and aggregate the results into a single queue-level report.
+
+What the background session queue does:
+
+- registers background-capable sessions in deterministic queue order
+- evaluates each queued session through the existing background runtime scheduler
+- runs only the eligible sessions and respects per-pass session limits
+- skips blocked sessions safely when configured
+- pauses or blocks the queue when safety policy requires it
+- produces a multi-session operator-away report summarizing what happened
+
+Current contract:
+
+- module path: `web/lib/aie/backgroundSessionQueue.ts`
+- main types: `BackgroundSessionQueue`, `BackgroundQueuedSession`, `BackgroundQueueResult`, `BackgroundQueueStatus`, `BackgroundQueueReport`, and `QueueRunPolicy`
+- main entry points: `createBackgroundSessionQueue(config)`, `enqueueBackgroundSession(queue, session)`, `evaluateQueuedSession(queue, queuedSession)`, `runBackgroundSessionQueue(queue)`, `buildQueueRunReport(result)`, and `summarizeBackgroundQueue(result)`
+- queue statuses: `queue_idle`, `queue_running`, `queue_paused`, `queue_completed`, and `queue_blocked`
+- queued session statuses: `queued`, `eligible`, `running`, `skipped`, `paused`, `blocked`, and `completed`
+
+Example operator-away queue:
+
+```text
+1. BABYLON grenade polish
+2. AI-E docs cleanup
+3. Enemy AI follow-up
+
+Queue pass:
+- runs eligible sessions
+- pauses sessions needing approval
+- skips unsafe sessions when configured
+- reports all queue outcomes together
+```
+
+Why this improves supervised autonomy:
+
+- AI-E can now manage multiple supervised background sessions instead of only one session per operator-away pass
+- queue-level policy makes session selection deterministic and reviewable
+- blocked sessions can be skipped without weakening scheduler safety checks
+- one report can now summarize an entire operator-away queue pass instead of isolated per-session results
+
+Milestone direction:
+
+- this moves AI-E from running one supervised background session while the operator is away to managing a bounded queue of supervised background sessions safely
+
 ## Operator-Light Planner
 
 AI-E now also includes an Operator-Light Planner for the post-100% expansion phase. This layer takes rough operator intent and converts it into a deterministic execution packet for Codex, Copilot, or future autonomous agents without directly mutating code from vague instructions.
