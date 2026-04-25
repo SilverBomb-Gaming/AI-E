@@ -13,6 +13,7 @@ import {
   type ConversationalRefinementResult,
   type UserLevelEstimate,
 } from "./conversationalIntentRefinement";
+import { normalizeUserInput } from "./intentNormalization";
 
 export type ConversationalLoopStatus =
   | "awaiting_clarification"
@@ -197,6 +198,10 @@ function buildComposedRequest(session: ConversationalLoopSession): string {
   ].join(" "));
 }
 
+function buildNormalizedRequest(rawRequest: string): string {
+  return normalizeUserInput(rawRequest).normalized_input;
+}
+
 function createLoopQuestions(
   prompts: string[],
   createdAt: string,
@@ -345,7 +350,7 @@ export function evaluateConversationalLoop(
   updatedAt?: string,
 ): ConversationalLoopResult {
   const timestamp = normalizeText(updatedAt) || new Date().toISOString();
-  const composedRequest = buildComposedRequest(session);
+  const composedRequest = buildNormalizedRequest(buildComposedRequest(session));
   const refinement = refineConversationalIntent({
     ...session.source_request,
     rawRequest: composedRequest,
@@ -416,7 +421,11 @@ export function startConversationalLoop(
   input: ConversationalLoopInput,
 ): ConversationalLoopResult {
   const createdAt = normalizeText(input.createdAt) || new Date().toISOString();
-  const baseRefinement = input.existingRefinement ?? refineConversationalIntent(input);
+  const normalizedStartRequest = buildNormalizedRequest(input.rawRequest);
+  const baseRefinement = input.existingRefinement ?? refineConversationalIntent({
+    ...input,
+    rawRequest: normalizedStartRequest,
+  });
   const adaptiveDecision = determineAdaptiveNextAction(buildAdaptiveSnapshot({
     clarity_score: baseRefinement.clarity_score,
     confidence_score: baseRefinement.confidence_score,
@@ -494,7 +503,7 @@ export function startConversationalLoop(
     next_action: nextAction,
     blockers: buildBlockers(baseRefinement),
     source_request: {
-      rawRequest: normalizeText(input.rawRequest),
+      rawRequest: normalizedStartRequest,
       projectName: input.projectName,
       repoName: input.repoName,
       repoRoot: input.repoRoot,

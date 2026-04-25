@@ -224,6 +224,50 @@ Why this improves conversational decisions:
 - the conversational loop can explain why it is asking instead of silently applying thresholds
 - stop conditions and question budgets now use calibrated confidence instead of one coarse heuristic
 
+## Intent Normalization Layer
+
+AI-E now also includes a deterministic intent normalization layer that runs before conversational refinement. This layer helps AI-E handle slang, broken grammar, indirect phrasing, and vague emotional wording by mapping noisy input into cleaner structured intent without inventing missing details.
+
+What the normalization layer does:
+
+- normalizes slang and simplified shorthand into cleaner intent language
+- repairs a small set of broken-grammar gameplay phrases into readable task language
+- extracts likely targets and actions from noisy input
+- flags low specificity, mixed signals, indirect phrasing, and uncertainty instead of guessing
+
+Current contract:
+
+- module path: `web/lib/aie/intentNormalization.ts`
+- main entry points: `normalizeUserInput(input)`, `extractIntentComponents(input)`, `mapSynonyms(input)`, `detectTargets(input)`, and `detectActions(input)`
+- output fields: `original_input`, `normalized_input`, `extracted_intent`, `detected_targets`, `detected_actions`, `normalization_flags`, and `normalization_confidence`
+
+How it fits into conversational intake:
+
+```text
+raw user input
+-> intent normalization
+-> conversational refinement
+-> adaptive conversational loop
+-> planner-ready request
+```
+
+Examples:
+
+```text
+Input: enemy AI dumb make better
+Output: improve enemy ai behavior
+
+Input: game boring idk why
+Output: improve game engagement
+Flags: indirect-phrasing, low-specificity
+```
+
+Why this improves robustness:
+
+- AI-E can now tolerate messier real-world phrasing before refinement begins
+- cleaner normalized input improves downstream ambiguity and confidence scoring
+- uncertainty is surfaced as flags instead of being hidden behind forced interpretation
+
 AI-E now also includes a deterministic conversational refinement layer that runs before the Operator-Light Planner. This layer helps AI-E understand rough, vague, emotional, or low-detail user requests and either turn them into planner-ready task language or ask one small set of useful follow-up questions.
 
 What the Conversational Intent Refinement layer does:
