@@ -130,6 +130,49 @@ Current limitation:
 - no live LLM dialogue policy or learning layer exists yet
 - this still does not modify execution, patching, or autonomous runtime behavior
 
+## Session Context Memory
+
+AI-E now also includes a deterministic session context memory layer that carries clarified intent, lightweight user preferences, and recent goals forward across multiple interactions inside one session. This is structured carryover, not raw chat history.
+
+What the session context layer does:
+
+- stores recent planner-ready intent snapshots from completed conversational loops
+- extracts lightweight preferences such as focus area or preferred system emphasis
+- tracks recurring targets, last planner-ready request, and confidence history
+- augments new requests only when the previous context is still relevant
+- avoids storing raw transcript logs, sensitive content, or long-term persistence
+
+Current contract:
+
+- module path: `web/lib/aie/sessionContextMemory.ts`
+- main entry points: `createSessionContext(session_id)`, `updateSessionContext(context, loopSession)`, `extractPreferences(loopSession)`, `mergeIntentSnapshots(context, loopSession)`, `getContextAugmentedRequest(context, newInput)`, and `summarizeSessionContext(context)`
+- stored fields: `session_id`, `created_at`, `updated_at`, `recent_intents`, `resolved_preferences`, `recurring_targets`, `last_planner_ready_request`, `confidence_history`, `conversation_summary`, and `context_version`
+
+How it differs from the conversational loop:
+
+- the conversational loop handles short-term clarification inside one request
+- session context memory carries the resolved outcomes of prior clarified requests into the next request
+- the context layer stores structured summaries and preferences, not raw turn-by-turn chat history
+
+Example carryover:
+
+```text
+Session 1:
+User: make game better
+AI-E: narrows to enemies, then grenade reaction behavior
+Stored context: focus-area=enemies, recent intent=Improve enemy AI reaction to grenade explosions.
+
+Session 2:
+User: improve combat feel
+AI-E: reuses the relevant enemy/combat preference when building the augmented request context
+```
+
+Current limitation:
+
+- this version is deterministic and in-memory only
+- no disk, database, or long-term persistence is added yet
+- context reuse is relevance-gated and intentionally lightweight to avoid pollution
+
 AI-E now also includes a deterministic conversational refinement layer that runs before the Operator-Light Planner. This layer helps AI-E understand rough, vague, emotional, or low-detail user requests and either turn them into planner-ready task language or ask one small set of useful follow-up questions.
 
 What the Conversational Intent Refinement layer does:
