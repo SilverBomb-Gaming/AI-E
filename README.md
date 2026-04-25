@@ -81,6 +81,55 @@ Current limitation:
 - no live LLM dialogue or external API calls are used
 - it is not wired into autonomous execution yet
 
+## Adaptive Conversational Questioning
+
+AI-E now also includes adaptive conversational questioning on top of the multi-turn loop. This upgrade decides when AI-E should ask a follow-up, when confidence is high enough to proceed to planning, and when it should stop asking because more clarification is no longer adding enough signal.
+
+What the adaptive layer does:
+
+- upgrades confidence scoring with deterministic bonuses and penalties from missing information, answer quality, and risk
+- evaluates whether another question is necessary or whether AI-E can proceed with bounded assumptions
+- prioritizes scope-defining questions ahead of system-impact and validation-critical questions
+- stops asking after confidence is sufficient, follow-up value is diminishing, vague answers repeat, or the request becomes high risk
+
+Current contract:
+
+- module path: `web/lib/aie/adaptiveConversationalLogic.ts`
+- main entry points: `computeConfidenceScore(session)`, `shouldAskFollowUp(session)`, `selectBestFollowUpQuestion(session)`, `shouldStopAsking(session)`, and `determineNextAction(session)`
+- adaptive loop fields: `confidence_score`, `clarity_score`, `question_necessity`, `question_priority`, and `stop_reason`
+
+How it improves the loop:
+
+```text
+raw user message
+-> multi-turn loop session
+-> adaptive confidence / question necessity check
+-> ask one better question or proceed to planning
+```
+
+Example:
+
+```text
+User: make game better
+AI-E: Which part should improve first: enemies, weapons, or controls?
+User: enemies
+AI-E: What should enemies do better first?
+User: when grenade blows up
+AI-E: proceeds to planning without asking more questions
+```
+
+Why this improves usability:
+
+- AI-E asks fewer but higher-value questions
+- the system can stop asking once confidence is high enough instead of forcing extra clarification
+- repeated vague answers no longer trap the conversation in an endless clarification loop
+
+Current limitation:
+
+- the scoring remains deterministic and rule-based only
+- no live LLM dialogue policy or learning layer exists yet
+- this still does not modify execution, patching, or autonomous runtime behavior
+
 AI-E now also includes a deterministic conversational refinement layer that runs before the Operator-Light Planner. This layer helps AI-E understand rough, vague, emotional, or low-detail user requests and either turn them into planner-ready task language or ask one small set of useful follow-up questions.
 
 What the Conversational Intent Refinement layer does:

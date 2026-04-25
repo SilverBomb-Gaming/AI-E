@@ -42,6 +42,8 @@ test("make enemies smarter when grenade blows up becomes planner_ready quickly",
 
   assert.equal(result.status, "planner_ready");
   assert.equal(result.next_action, "create-plan");
+  assert.equal(result.session.stop_reason, "confidence_sufficient");
+  assert.equal(result.session.questions.length, 0);
   assert.equal(result.planner_ready_request?.rawRequest, "Add enemy reaction behavior to grenade explosions in BABYLON.");
 });
 
@@ -110,6 +112,7 @@ test("summary is readable", () => {
   assert.match(summary, /Conversation session:/i);
   assert.match(summary, /Status:/i);
   assert.match(summary, /Current interpretation:/i);
+  assert.match(summary, /Question necessity:/i);
 });
 
 test("works with existing conversationalIntentRefinement output", () => {

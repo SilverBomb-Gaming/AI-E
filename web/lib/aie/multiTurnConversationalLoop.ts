@@ -1,5 +1,12 @@
 import type { OperatorRequest } from "./operatorLightPlanner";
 import {
+  computeConfidenceScore,
+  determineNextAction as determineAdaptiveNextAction,
+  type AdaptiveStopReason,
+  type QuestionNecessity,
+  type QuestionPriority,
+} from "./adaptiveConversationalLogic";
+import {
   convertRefinementToPlannerRequest,
   refineConversationalIntent,
   type ConversationalRefinementRequest,
@@ -61,6 +68,9 @@ export type ConversationalLoopSession = {
   user_level_estimate: UserLevelEstimate;
   clarity_score: number;
   confidence_score: number;
+  question_necessity: QuestionNecessity;
+  question_priority: QuestionPriority;
+  stop_reason: AdaptiveStopReason;
   missing_information: string[];
   questions: ConversationalLoopQuestion[];
   answers: ConversationalLoopAnswer[];
@@ -203,6 +213,29 @@ function createLoopQuestions(
   return [...existingQuestions, ...newQuestions].slice(0, 3);
 }
 
+function buildAdaptiveSnapshot(
+  sessionLike: Pick<ConversationalLoopSession, "clarity_score" | "confidence_score" | "missing_information" | "answers" | "questions" | "latest_refinement">,
+  refinement: ConversationalRefinementResult,
+) {
+  return {
+    clarity_score: sessionLike.clarity_score,
+    confidence_score: sessionLike.confidence_score,
+    missing_information: [...refinement.missing_information],
+    answers: sessionLike.answers.map((answer) => ({ answer: answer.answer })),
+    questions: sessionLike.questions.map((question) => ({ prompt: question.prompt, answered: question.answered })),
+    latest_refinement: {
+      risk_level: refinement.risk_level,
+      follow_up_questions: [...refinement.follow_up_questions],
+      planner_ready_request: refinement.planner_ready_request,
+      should_create_plan: refinement.should_create_plan,
+      ambiguity_flags: [...refinement.ambiguity_flags],
+      missing_information: [...refinement.missing_information],
+      clarity_score: refinement.clarity_score,
+      confidence_score: refinement.confidence_score,
+    },
+  };
+}
+
 function buildBlockers(refinement: ConversationalRefinementResult): ConversationalLoopBlocker[] {
   const blockers: ConversationalLoopBlocker[] = [];
 
@@ -245,40 +278,58 @@ function deriveStatus(refinement: ConversationalRefinementResult): Conversationa
   return "awaiting_clarification";
 }
 
-function deriveNextAction(refinement: ConversationalRefinementResult, status: ConversationalLoopStatus): ConversationalLoopNextAction {
-  if (status === "planner_ready") {
-    return "create-plan";
-  }
-
-  if (status === "blocked") {
-    return "block";
-  }
-
-  if (status === "needs_review") {
-    return "needs-review";
-  }
-
-  return refinement.follow_up_questions.length > 0 ? "ask-follow-up" : "await-answer";
-}
-
 function createPlannerReadyRequest(
   session: ConversationalLoopSession,
   refinement: ConversationalRefinementResult,
+  stopReason: AdaptiveStopReason,
 ): OperatorRequest | null {
-  return convertRefinementToPlannerRequest(refinement, {
+  const converted = convertRefinementToPlannerRequest(refinement, {
     ...session.source_request,
     rawRequest: buildComposedRequest(session),
   });
+
+  if (converted) {
+    return converted;
+  }
+
+  if (!stopReason || refinement.risk_level === "high" || refinement.risk_level === "blocked") {
+    return null;
+  }
+
+  return {
+    rawRequest: `Create a narrow first-pass plan for: ${refinement.interpreted_intent}. Proceed with explicit assumptions for unresolved details and preserve required validation.`,
+    projectName: session.source_request.projectName,
+    repoName: session.source_request.repoName,
+    repoRoot: session.source_request.repoRoot,
+    branchName: session.source_request.branchName,
+    operatorContext: unique([
+      ...(session.source_request.operatorContext ?? []),
+      `Original user request: ${session.original_request}`,
+      `Current interpretation: ${refinement.interpreted_intent}`,
+      `Proceeding with assumptions because: ${stopReason}`,
+    ]),
+    knownConstraints: unique([
+      ...(session.source_request.knownConstraints ?? []),
+      ...refinement.missing_information,
+      `Proceed using bounded assumptions after conversational stop condition: ${stopReason}.`,
+    ]),
+  };
 }
 
 function appendEvaluationTranscript(
   transcript: ConversationalLoopTurn[],
+  newQuestions: string[],
   refinement: ConversationalRefinementResult,
   status: ConversationalLoopStatus,
   nextAction: ConversationalLoopNextAction,
   createdAt: string,
 ): ConversationalLoopTurn[] {
   const nextTranscript = [...transcript];
+  newQuestions.forEach((question) => {
+    nextTranscript.push(
+      toTranscriptTurn("ai-e", "question", question, createdAt, nextTranscript.length),
+    );
+  });
   nextTranscript.push(
     toTranscriptTurn("system", "interpretation", refinement.interpreted_intent, createdAt, nextTranscript.length),
     toTranscriptTurn("system", "status", `Status: ${status}. Next action: ${nextAction}.`, createdAt, nextTranscript.length + 1),
@@ -296,12 +347,36 @@ export function evaluateConversationalLoop(
     ...session.source_request,
     rawRequest: composedRequest,
   });
-  const status = deriveStatus(refinement);
-  const nextAction = deriveNextAction(refinement, status);
-  const questions = createLoopQuestions(refinement.follow_up_questions, timestamp, session.questions).map((question) => ({
+  const adaptiveDecision = determineAdaptiveNextAction(
+    buildAdaptiveSnapshot(session, refinement),
+    session.clarity_score,
+  );
+
+  let status: ConversationalLoopStatus = deriveStatus(refinement);
+  let nextAction: ConversationalLoopNextAction = "await-answer";
+
+  if (refinement.risk_level === "high" || refinement.risk_level === "blocked") {
+    status = refinement.ambiguity_flags.includes("risky-autonomy") ? "blocked" : "needs_review";
+    nextAction = status === "blocked" ? "block" : "needs-review";
+  } else if (adaptiveDecision.proceed_to_planning) {
+    status = "planner_ready";
+    nextAction = "create-plan";
+  } else if (adaptiveDecision.should_ask_follow_up && adaptiveDecision.selected_follow_up_question) {
+    status = "awaiting_clarification";
+    nextAction = "ask-follow-up";
+  }
+
+  const selectedQuestion = adaptiveDecision.should_ask_follow_up && adaptiveDecision.selected_follow_up_question
+    ? [adaptiveDecision.selected_follow_up_question]
+    : [];
+  const previousPromptSet = new Set(session.questions.map((question) => question.prompt));
+  const questions = createLoopQuestions(selectedQuestion, timestamp, session.questions).map((question) => ({
     ...question,
     answered: session.answers.some((answer) => answer.question_id === question.question_id),
   }));
+  const newQuestionPrompts = questions
+    .filter((question) => !previousPromptSet.has(question.prompt))
+    .map((question) => question.prompt);
 
   const nextSession: ConversationalLoopSession = {
     ...session,
@@ -309,15 +384,18 @@ export function evaluateConversationalLoop(
     current_interpretation: refinement.interpreted_intent,
     user_level_estimate: refinement.user_level_estimate,
     clarity_score: refinement.clarity_score,
-    confidence_score: refinement.confidence_score,
+    confidence_score: computeConfidenceScore(buildAdaptiveSnapshot(session, refinement)),
+    question_necessity: adaptiveDecision.question_necessity,
+    question_priority: adaptiveDecision.question_priority,
+    stop_reason: adaptiveDecision.stop_reason,
     missing_information: [...refinement.missing_information],
     questions,
-    planner_ready_request: status === "planner_ready" ? createPlannerReadyRequest(session, refinement) : null,
+    planner_ready_request: status === "planner_ready" ? createPlannerReadyRequest(session, refinement, adaptiveDecision.stop_reason) : null,
     status,
     next_action: nextAction,
     blockers: buildBlockers(refinement),
     latest_refinement: refinement,
-    transcript: appendEvaluationTranscript(session.transcript, refinement, status, nextAction, timestamp),
+    transcript: appendEvaluationTranscript(session.transcript, newQuestionPrompts, refinement, status, nextAction, timestamp),
   };
 
   return {
@@ -333,9 +411,33 @@ export function startConversationalLoop(
 ): ConversationalLoopResult {
   const createdAt = normalizeText(input.createdAt) || new Date().toISOString();
   const baseRefinement = input.existingRefinement ?? refineConversationalIntent(input);
-  const status = deriveStatus(baseRefinement);
-  const nextAction = deriveNextAction(baseRefinement, status);
-  const questions = createLoopQuestions(baseRefinement.follow_up_questions, createdAt);
+  const adaptiveDecision = determineAdaptiveNextAction(buildAdaptiveSnapshot({
+    clarity_score: baseRefinement.clarity_score,
+    confidence_score: baseRefinement.confidence_score,
+    missing_information: [...baseRefinement.missing_information],
+    answers: [],
+    questions: [],
+    latest_refinement: baseRefinement,
+  }, baseRefinement));
+
+  let status: ConversationalLoopStatus = deriveStatus(baseRefinement);
+  let nextAction: ConversationalLoopNextAction = "await-answer";
+
+  if (baseRefinement.risk_level === "high" || baseRefinement.risk_level === "blocked") {
+    status = baseRefinement.ambiguity_flags.includes("risky-autonomy") ? "blocked" : "needs_review";
+    nextAction = status === "blocked" ? "block" : "needs-review";
+  } else if (adaptiveDecision.proceed_to_planning) {
+    status = "planner_ready";
+    nextAction = "create-plan";
+  } else if (adaptiveDecision.should_ask_follow_up && adaptiveDecision.selected_follow_up_question) {
+    status = "awaiting_clarification";
+    nextAction = "ask-follow-up";
+  }
+
+  const selectedQuestions = adaptiveDecision.should_ask_follow_up && adaptiveDecision.selected_follow_up_question
+    ? [adaptiveDecision.selected_follow_up_question]
+    : [];
+  const questions = createLoopQuestions(selectedQuestions, createdAt);
   const transcript: ConversationalLoopTurn[] = [
     toTranscriptTurn("user", "request", normalizeText(input.rawRequest), createdAt, 0),
     ...questions.map((question, index) => toTranscriptTurn("ai-e", "question", question.prompt, createdAt, index + 1)),
@@ -351,13 +453,33 @@ export function startConversationalLoop(
     current_interpretation: baseRefinement.interpreted_intent,
     user_level_estimate: baseRefinement.user_level_estimate,
     clarity_score: baseRefinement.clarity_score,
-    confidence_score: baseRefinement.confidence_score,
+    confidence_score: adaptiveDecision.confidence_score,
+    question_necessity: adaptiveDecision.question_necessity,
+    question_priority: adaptiveDecision.question_priority,
+    stop_reason: adaptiveDecision.stop_reason,
     missing_information: [...baseRefinement.missing_information],
     questions,
     answers: [],
     transcript,
     planner_ready_request: status === "planner_ready"
-      ? convertRefinementToPlannerRequest(baseRefinement, input)
+      ? (convertRefinementToPlannerRequest(baseRefinement, input) ?? {
+        rawRequest: `Create a narrow first-pass plan for: ${baseRefinement.interpreted_intent}. Proceed with explicit assumptions for unresolved details and preserve required validation.`,
+        projectName: input.projectName,
+        repoName: input.repoName,
+        repoRoot: input.repoRoot,
+        branchName: input.branchName,
+        operatorContext: unique([
+          ...(input.operatorContext ?? []),
+          `Original user request: ${normalizeText(input.rawRequest)}`,
+          `Current interpretation: ${baseRefinement.interpreted_intent}`,
+          `Proceeding with assumptions because: ${adaptiveDecision.stop_reason ?? "confidence_sufficient"}`,
+        ]),
+        knownConstraints: unique([
+          ...(input.knownConstraints ?? []),
+          ...baseRefinement.missing_information,
+          `Proceed using bounded assumptions after conversational stop condition: ${adaptiveDecision.stop_reason ?? "confidence_sufficient"}.`,
+        ]),
+      })
       : null,
     status,
     next_action: nextAction,
@@ -409,6 +531,9 @@ export function answerConversationalLoopQuestion(
       ],
       next_action: "await-answer",
       status: "awaiting_clarification",
+      question_necessity: session.question_necessity,
+      question_priority: session.question_priority,
+      stop_reason: session.stop_reason,
     };
 
     return {
@@ -461,6 +586,9 @@ export function summarizeConversationalLoop(session: ConversationalLoopSession):
     `Current interpretation: ${session.current_interpretation}`,
     `Clarity: ${session.clarity_score}`,
     `Confidence: ${session.confidence_score}`,
+    `Question necessity: ${session.question_necessity}`,
+    `Question priority: ${session.question_priority}`,
+    `Stop reason: ${session.stop_reason ?? "none"}`,
     answeredLines.length > 0 ? `Answers: ${answeredLines.join(" | ")}` : "Answers: none.",
     unansweredQuestions.length > 0 ? `Open questions: ${unansweredQuestions.join(" | ")}` : "Open questions: none.",
     session.planner_ready_request ? `Planner-ready request: ${session.planner_ready_request.rawRequest}` : "Planner-ready request: none.",
