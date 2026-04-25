@@ -1592,6 +1592,53 @@ Milestone direction:
 
 - this moves AI-E from being able to run a background session queue to being able to report clearly on what happened while the operator was away
 
+## Time-Based Runtime Trigger
+
+AI-E now also includes a time-based runtime trigger that can automatically invoke bounded background session queue passes at defined intervals, append the results to background run history, and preserve all existing approval and validation boundaries. This is still supervised autonomy and does not introduce threads, free-running execution, or unsafe background behavior.
+
+What the time-based trigger does:
+
+- checks whether the configured interval has elapsed since the last run
+- triggers one or more bounded background queue passes when the interval is satisfied
+- appends each queue result into background run history
+- prevents duplicate triggering inside the configured interval window
+- returns deterministic trigger state and summary information for the caller
+
+Current contract:
+
+- module path: `web/lib/aie/timeBasedRuntimeTrigger.ts`
+- main types: `TimeTriggerConfig`, `TimeTriggerState`, `TimeTriggerResult`, and `TimeTriggerStatus`
+- main entry points: `createTimeTrigger(config)`, `shouldTriggerRun(state, now)`, `runTimeTriggeredCycle(state, queue, history, now)`, `updateTriggerState(state, result)`, and `summarizeTrigger(result)`
+- statuses: `trigger_idle`, `trigger_waiting`, `trigger_running`, `trigger_skipped`, and `trigger_completed`
+
+Example timed behavior:
+
+```text
+Every 10 minutes:
+- check queued sessions
+- run eligible background queue passes
+- store run results in history
+- update the operator-away digest inputs
+```
+
+What this still guarantees:
+
+- approvals are still required
+- validation and rollback rules are still enforced
+- queue and scheduler safety checks are still the only execution path
+- there are no background threads or uncontrolled continuous loops
+
+Why this improves supervised autonomy:
+
+- AI-E can now trigger safe background queue passes over time without manual intervention for each pass
+- interval-based deduplication prevents accidental duplicate queue execution inside the same window
+- queue results and history stay connected automatically, so operator-away reporting reflects real scheduled passes
+- the entire operator-away system remains bounded because each invocation still has explicit run limits
+
+Milestone direction:
+
+- AI-E runs while I’m away is 100% complete for the supervised scope.
+
 ## Operator-Light Planner
 
 AI-E now also includes an Operator-Light Planner for the post-100% expansion phase. This layer takes rough operator intent and converts it into a deterministic execution packet for Codex, Copilot, or future autonomous agents without directly mutating code from vague instructions.
