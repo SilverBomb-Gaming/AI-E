@@ -1778,6 +1778,52 @@ Milestone direction:
 
 - this moves AI-E from having a runtime start command to having clear safe runtime operating modes.
 
+## Runtime State Store and Boot Resume
+
+AI-E now also includes a runtime state store so the bounded runtime can remember its last service state across process restarts and decide whether boot resume is safe before the runtime starts again.
+
+What the runtime state store does:
+
+- saves a deterministic runtime service snapshot keyed by runtime id
+- loads prior runtime state at boot without requiring an external database
+- validates whether the prior runtime state is clean, blocked, stale, or corrupt
+- only permits boot resume when the prior state is fresh and safe
+- reports previous shutdown reason, stored tick history, and boot-resume status in the runtime summary
+
+Current contract:
+
+- module path: `web/lib/aie/runtimeStateStore.ts`
+- main entry points: `createRuntimeStateStore()`, `saveRuntimeState(store, serviceState)`, `loadRuntimeState(store, runtime_id)`, `validateRuntimeState(record, now)`, `evaluateBootResume(store, runtime_id, now)`, and `summarizeBootResume(result)`
+- boot-resume statuses: `no_prior_state`, `resume_ready`, `resume_blocked`, `resume_requires_review`, and `state_corrupt`
+
+Example boot flow:
+
+```text
+AI-E starts
+-> loads prior runtime state
+-> checks freshness and prior stop reason
+-> either resumes safely through the normal entrypoint or asks the operator to review
+```
+
+What this still guarantees:
+
+- boot resume never bypasses approval freshness
+- boot resume never bypasses context freshness
+- boot resume never auto-approves anything
+- the state store never runs cycles directly
+- the runtime only resumes through the existing bounded scheduler and session safety gates
+
+Why this improves the runtime environment:
+
+- AI-E can now remember its last runtime state across process restarts
+- stale or unsafe prior runtime states are surfaced for operator review instead of being resumed automatically
+- previous shutdown reason and stored tick history remain visible at the runtime boundary
+- the runtime environment improves without weakening any existing supervised autonomy constraints
+
+Milestone direction:
+
+- this moves AI-E from having a runtime that starts safely to having a runtime that survives restarts safely.
+
 ## Operator-Light Planner
 
 AI-E now also includes an Operator-Light Planner for the post-100% expansion phase. This layer takes rough operator intent and converts it into a deterministic execution packet for Codex, Copilot, or future autonomous agents without directly mutating code from vague instructions.

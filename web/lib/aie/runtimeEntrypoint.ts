@@ -25,6 +25,14 @@ import {
   summarizeRuntimeProfile,
   type RuntimeProfile,
 } from "./runtimeProfiles";
+import {
+  createRuntimeStateStore,
+  evaluateBootResume,
+  saveRuntimeState,
+  summarizeBootResume,
+  type RuntimeBootResumeResult,
+  type RuntimeStateStore,
+} from "./runtimeStateStore";
 
 const DEFAULT_TICK_INTERVAL_MS = 60_000;
 const DEFAULT_MAX_TICKS_PER_RUN = 3;
@@ -74,11 +82,13 @@ export type RuntimeEntrypointDependencies = {
   history?: BackgroundRunHistory;
   clock?: BackgroundRuntimeClock;
   summaryWriter?: (summary: string) => void;
+  runtime_state_store?: RuntimeStateStore;
 };
 
 export type RuntimeEntrypointResult = {
   status: RuntimeEntrypointStatus;
   config: LoadedRuntimeEntrypointConfig;
+  boot_resume: RuntimeBootResumeResult;
   service: BackgroundRuntimeServiceState;
   service_result: BackgroundRuntimeServiceResult | null;
   queue: BackgroundSessionQueue;
@@ -220,6 +230,7 @@ export function summarizeRuntimeEntrypoint(result: RuntimeEntrypointResult): str
   const lines = [
     `Runtime entrypoint status: ${result.status}`,
     `Reason: ${result.reason}`,
+    summarizeBootResume(result.boot_resume),
     `Runtime profile: ${result.config.profile_name}`,
     `Runtime profile description: ${result.config.profile_description}`,
     `Dry run mode: ${result.config.dry_run_mode}`,
@@ -257,6 +268,7 @@ export function runBackgroundRuntimeEntrypoint(
   const config = loadRuntimeEntrypointConfig(configInput);
   const queue = dependencies.queue ?? createDefaultQueue(config);
   const history = dependencies.history ?? createBackgroundRunHistory();
+  const runtimeStateStore = dependencies.runtime_state_store ?? createRuntimeStateStore();
   const service = createBackgroundRuntimeService({
     tick_interval_ms: config.tick_interval_ms,
     max_ticks_per_run: config.max_ticks_per_run,
@@ -268,6 +280,36 @@ export function runBackgroundRuntimeEntrypoint(
     require_fresh_approvals: config.require_fresh_approvals,
     require_fresh_context: config.require_fresh_context,
   });
+  const bootResume = evaluateBootResume(runtimeStateStore, service.service_id, config.started_at);
+
+  if (bootResume.status === "resume_blocked" || bootResume.status === "state_corrupt" || bootResume.status === "resume_requires_review") {
+    const blockedService: BackgroundRuntimeServiceState = {
+      ...service,
+      status: bootResume.status === "resume_requires_review" ? "service_paused" : "service_blocked",
+      started_at: config.started_at,
+      stopped_at: config.started_at,
+    };
+    saveRuntimeState(runtimeStateStore, blockedService, config.profile_name);
+    const bootBlockedResult: RuntimeEntrypointResult = {
+      status: bootResume.status === "resume_requires_review" ? "entrypoint_paused" : "entrypoint_blocked",
+      config,
+      boot_resume: bootResume,
+      service: blockedService,
+      service_result: null,
+      queue,
+      history,
+      digest: buildOperatorAwayDigest(history),
+      reason: bootResume.reason,
+      summary: "",
+    };
+    const summary = summarizeRuntimeEntrypoint(bootBlockedResult);
+    const finalized = {
+      ...bootBlockedResult,
+      summary,
+    };
+    dependencies.summaryWriter?.(summary);
+    return finalized;
+  }
 
   if (config.dry_run_mode) {
     const pausedService: BackgroundRuntimeServiceState = {
@@ -279,6 +321,7 @@ export function runBackgroundRuntimeEntrypoint(
     const dryRunResult: RuntimeEntrypointResult = {
       status: "entrypoint_paused",
       config,
+      boot_resume: bootResume,
       service: pausedService,
       service_result: null,
       queue,
@@ -287,6 +330,7 @@ export function runBackgroundRuntimeEntrypoint(
       reason: "Dry-run mode validated the runtime entrypoint configuration without starting the background runtime service.",
       summary: "",
     };
+    saveRuntimeState(runtimeStateStore, pausedService, config.profile_name);
     const summary = summarizeRuntimeEntrypoint(dryRunResult);
     const finalized = {
       ...dryRunResult,
@@ -306,6 +350,7 @@ export function runBackgroundRuntimeEntrypoint(
   const result: RuntimeEntrypointResult = {
     status: serviceResult.status === "service_blocked" ? "entrypoint_blocked" : "entrypoint_completed",
     config,
+    boot_resume: bootResume,
     service: serviceResult.service,
     service_result: serviceResult,
     queue: serviceResult.queue,
@@ -314,6 +359,7 @@ export function runBackgroundRuntimeEntrypoint(
     reason: serviceResult.reason,
     summary: "",
   };
+  saveRuntimeState(runtimeStateStore, serviceResult.service, config.profile_name);
   const summary = summarizeRuntimeEntrypoint(result);
   const finalized = {
     ...result,
