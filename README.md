@@ -492,6 +492,78 @@ Future next step:
 
 - connect `draft_ready` outputs to a reviewed patch application executor that still preserves human approval before any file mutation is allowed
 
+## Reviewed Patch Application Executor
+
+AI-E now also includes a reviewed patch application executor that converts a `draft_ready` reviewed patch draft result into an application packet. This is still not automatic file mutation. It is a bounded executor-preparation layer that packages the reviewed draft into a final pre-mutation handoff packet.
+
+What the reviewed patch application executor does:
+
+- consumes only `draft_ready` reviewed patch draft results
+- verifies the reviewed draft still requires operator review and keeps every change description mutation-free
+- confirms validation requirements, commit guidance, and required disallowed draft actions remain explicit
+- produces an application packet with exact review-only instructions or blocks with the next operator action
+
+Current contract:
+
+- module path: `web/lib/aie/reviewedPatchApplicationExecutor.ts`
+- main entry points: `createReviewedPatchApplicationPacket(input)`, `validateDraftResultForApplicationPacket(draftResult)`, and `summarizeReviewedPatchApplicationExecutor(result)`
+- executor statuses: `application_packet_ready`, `application_packet_blocked`, `application_packet_needs_review`, `invalid_patch_draft`, and `high_risk_blocked`
+
+How it fits into the bounded bridge:
+
+```text
+conversation
+-> refinement
+-> planning
+-> artifact
+-> approval gate
+-> reviewed handoff
+-> dry-run
+-> patch plan
+-> application gate
+-> draft
+-> application executor
+-> future controlled patch mutation layer
+```
+
+What `application_packet_ready` means:
+
+- the reviewed patch draft result is `draft_ready`
+- the reviewed patch draft still exists and requires explicit operator review
+- every change description remains review-required and mutation-free
+- validation requirements, git commit guidance, and required disallowed draft actions still exist
+- the output is still a review-only packet, not a file-writing step
+
+Allowed executor actions in this version:
+
+- inspect target files
+- prepare reviewed implementation notes
+- generate patch proposal text
+- list exact validation commands
+- summarize expected changes
+
+Disallowed executor actions in this version:
+
+- write files automatically
+- apply patches automatically
+- commit automatically
+- push automatically
+- deploy
+- run destructive commands
+- access secrets
+- auto-approve implementation
+- bypass validation
+
+Why this is still not real patch application:
+
+- the executor does not write files or apply patches
+- the executor does not call git or shell commands
+- the executor only produces a bounded application packet for later human review
+
+Future next step:
+
+- connect `application_packet_ready` outputs to a future controlled patch mutation layer that still requires explicit human approval before any file change is allowed
+
 ## Operator-Light Planner
 
 AI-E now also includes an Operator-Light Planner for the post-100% expansion phase. This layer takes rough operator intent and converts it into a deterministic execution packet for Codex, Copilot, or future autonomous agents without directly mutating code from vague instructions.
