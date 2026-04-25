@@ -1217,6 +1217,44 @@ Why this improves real-world autonomous workflows:
 - completed steps are not repeated, but the next step is still re-entered through the normal gated flow
 - interrupted chains remain supervised because recovery never auto-approves or bypasses validation
 
+## Long-Lived Chain Persistence And Approval Freshness
+
+AI-E now also includes a persistence and approval freshness layer for longer-lived bounded chains. This layer stores chain state durably in a file-ready record, checks whether approvals have expired, detects stale validation or context, and forces safe reapproval or revalidation before continuation.
+
+What the persistence and freshness layer does:
+
+- persists chain state after safe progress checkpoints
+- tracks approval timestamps and validity windows for chain, step, commit, and push approvals
+- marks expired approvals as requiring reapproval
+- detects stale chain context or validation snapshots after time gaps
+- blocks unsafe continuation of outdated chains until freshness checks pass
+
+Current contract:
+
+- module paths: `web/lib/aie/chainPersistence.ts` and `web/lib/aie/approvalFreshness.ts`
+- main entry points: `persistChainState(chain)`, `loadChainState(chain_id)`, `evaluateApprovalFreshness(approvalState)`, `evaluateContextStaleness(chain)`, `requireReapprovalIfNeeded(chain)`, and `summarizePersistenceState(record)`
+- statuses: `fresh`, `stale`, `expired`, `requires_reapproval`, and `requires_revalidation`
+
+Example:
+
+```text
+Step 1 completed
+Step 2 completed
+Chain paused
+
+Later:
+AI-E checks approval freshness and context freshness.
+If approvals expired, it requires reapproval.
+If context is stale, it requires revalidation.
+Only then does the resumed chain continue.
+```
+
+Why this improves long-lived autonomous safety:
+
+- AI-E can now continue work safely even after time gaps instead of assuming old approvals still hold
+- stale context is surfaced explicitly before a resumed chain can continue
+- longer-lived workflows remain supervised because neither approval nor validation is silently carried forward forever
+
 ## Operator-Light Planner
 
 AI-E now also includes an Operator-Light Planner for the post-100% expansion phase. This layer takes rough operator intent and converts it into a deterministic execution packet for Codex, Copilot, or future autonomous agents without directly mutating code from vague instructions.
