@@ -268,6 +268,65 @@ Why this improves robustness:
 - cleaner normalized input improves downstream ambiguity and confidence scoring
 - uncertainty is surfaced as flags instead of being hidden behind forced interpretation
 
+## Conversational Tone Adaptation
+
+AI-E now also includes a deterministic conversational tone adaptation layer that chooses how to explain, clarify, and hand off work based on user wording, estimated skill level, request style, and confidence. This layer changes communication guidance only. It does not change planning logic, execution behavior, or safety boundaries.
+
+Response modes:
+
+- `beginner_friendly`
+- `standard`
+- `technical`
+- `handoff_only`
+- `clarification_minimal`
+- `safety_review`
+
+Current contract:
+
+- module path: `web/lib/aie/conversationalToneAdaptation.ts`
+- main entry points: `detectUserSkillSignals(input)`, `selectResponseMode(input)`, `buildToneAdaptationGuidance(input)`, and `summarizeToneAdaptation(result)`
+- output fields: `response_mode`, `user_level_estimate`, `detail_level`, `should_use_plain_language`, `should_include_examples`, `should_include_technical_terms`, `should_use_handoff_format`, `should_minimize_questions`, `safety_tone_required`, `reasons`, and `adapted_guidance`
+
+How it helps any-user usability:
+
+- beginner or low-vocabulary users get simpler explanations and example-driven clarifications
+- technical users get concise contract-and-test phrasing instead of tutorial-style over-explaining
+- handoff requests can skip explanatory prose and stay in direct handoff format
+- risky autonomy requests are framed as safety reviews with blockers and one safe next step
+
+Examples:
+
+```text
+Beginner input: idk make enemy less dumb
+Mode: beginner_friendly
+Effect: plain-language guidance and a simple example-based follow-up
+
+Technical input: Add deterministic artifact eligibility gate with tests
+Mode: technical
+Effect: concise implementation guidance with precise contract and validation terms
+
+Handoff input: next handoff please
+Mode: handoff_only
+Effect: concise handoff formatting with minimal explanatory prose
+```
+
+Integration path:
+
+```text
+raw user input
+-> intent normalization
+-> conversational refinement
+-> tone adaptation guidance
+-> adaptive conversational loop
+-> planner-ready request
+```
+
+Why this layer matters:
+
+- AI-E can now meet users where they are without permanently classifying them
+- communication becomes more useful for public-facing usage without weakening deterministic behavior
+- the loop can keep the same planning outputs while changing only response framing
+
 AI-E now also includes a deterministic conversational refinement layer that runs before the Operator-Light Planner. This layer helps AI-E understand rough, vague, emotional, or low-detail user requests and either turn them into planner-ready task language or ask one small set of useful follow-up questions.
 
 What the Conversational Intent Refinement layer does:

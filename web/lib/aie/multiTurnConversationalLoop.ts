@@ -13,6 +13,10 @@ import {
   type ConversationalRefinementResult,
   type UserLevelEstimate,
 } from "./conversationalIntentRefinement";
+import {
+  buildToneAdaptationGuidance,
+  type ToneAdaptationResult,
+} from "./conversationalToneAdaptation";
 import { normalizeUserInput } from "./intentNormalization";
 
 export type ConversationalLoopStatus =
@@ -85,6 +89,7 @@ export type ConversationalLoopSession = {
   blockers: ConversationalLoopBlocker[];
   source_request: ConversationalRefinementRequest;
   latest_refinement: ConversationalRefinementResult;
+  tone_adaptation: ToneAdaptationResult;
 };
 
 export type ConversationalLoopInput = ConversationalRefinementRequest & {
@@ -200,6 +205,25 @@ function buildComposedRequest(session: ConversationalLoopSession): string {
 
 function buildNormalizedRequest(rawRequest: string): string {
   return normalizeUserInput(rawRequest).normalized_input;
+}
+
+function buildToneAdaptation(
+  rawRequest: string,
+  normalizedInput: string,
+  refinement: ConversationalRefinementResult,
+  confidenceScore: number,
+): ToneAdaptationResult {
+  return buildToneAdaptationGuidance({
+    rawRequest,
+    normalizedInput,
+    user_level_estimate: refinement.user_level_estimate,
+    confidence_score: confidenceScore,
+    clarity_score: refinement.clarity_score,
+    ambiguity_flags: refinement.ambiguity_flags,
+    risk_level: refinement.risk_level,
+    should_create_plan: refinement.should_create_plan,
+    current_interpretation: refinement.interpreted_intent,
+  });
 }
 
 function createLoopQuestions(
@@ -385,6 +409,8 @@ export function evaluateConversationalLoop(
   const newQuestionPrompts = questions
     .filter((question) => !previousPromptSet.has(question.prompt))
     .map((question) => question.prompt);
+  const confidenceScore = computeConfidenceScore(buildAdaptiveSnapshot(session, refinement));
+  const toneAdaptation = buildToneAdaptation(session.original_request, composedRequest, refinement, confidenceScore);
 
   const nextSession: ConversationalLoopSession = {
     ...session,
@@ -392,7 +418,7 @@ export function evaluateConversationalLoop(
     current_interpretation: refinement.interpreted_intent,
     user_level_estimate: refinement.user_level_estimate,
     clarity_score: refinement.clarity_score,
-    confidence_score: computeConfidenceScore(buildAdaptiveSnapshot(session, refinement)),
+    confidence_score: confidenceScore,
     ambiguity_score: adaptiveDecision.ambiguity_score,
     completeness_score: adaptiveDecision.completeness_score,
     question_necessity: adaptiveDecision.question_necessity,
@@ -406,6 +432,7 @@ export function evaluateConversationalLoop(
     next_action: nextAction,
     blockers: buildBlockers(refinement),
     latest_refinement: refinement,
+    tone_adaptation: toneAdaptation,
     transcript: appendEvaluationTranscript(session.transcript, newQuestionPrompts, refinement, status, nextAction, timestamp),
   };
 
@@ -452,6 +479,7 @@ export function startConversationalLoop(
   const selectedQuestions = adaptiveDecision.should_ask_follow_up && adaptiveDecision.selected_follow_up_question
     ? [adaptiveDecision.selected_follow_up_question]
     : [];
+  const toneAdaptation = buildToneAdaptation(input.rawRequest, normalizedStartRequest, baseRefinement, adaptiveDecision.confidence_score);
   const questions = createLoopQuestions(selectedQuestions, createdAt);
   const transcript: ConversationalLoopTurn[] = [
     toTranscriptTurn("user", "request", normalizeText(input.rawRequest), createdAt, 0),
@@ -512,6 +540,7 @@ export function startConversationalLoop(
       knownConstraints: input.knownConstraints ? unique([...input.knownConstraints]) : undefined,
     },
     latest_refinement: baseRefinement,
+    tone_adaptation: toneAdaptation,
   };
 
   return {
@@ -613,6 +642,7 @@ export function summarizeConversationalLoop(session: ConversationalLoopSession):
     `Question priority: ${session.question_priority}`,
     `Stop reason: ${session.stop_reason ?? "none"}`,
     `Decision reason: ${session.decision_reason}`,
+    `Response mode: ${session.tone_adaptation.response_mode}`,
     answeredLines.length > 0 ? `Answers: ${answeredLines.join(" | ")}` : "Answers: none.",
     unansweredQuestions.length > 0 ? `Open questions: ${unansweredQuestions.join(" | ")}` : "Open questions: none.",
     session.planner_ready_request ? `Planner-ready request: ${session.planner_ready_request.rawRequest}` : "Planner-ready request: none.",
