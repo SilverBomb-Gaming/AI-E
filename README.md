@@ -1378,6 +1378,47 @@ Milestone direction:
 
 - this is the first full session wrapper for AI-E autonomous studio operation and a major step toward supervised long-running studio work
 
+## Session Runtime Integration And Execution Loop
+
+AI-E now also includes a supervised session runtime loop that actively drives one bounded work cycle per invocation on top of the autonomous work-session manager. This moves the system from passive session state tracking into active supervised cycle execution without introducing unbounded looping.
+
+What the session runtime layer does:
+
+- evaluates whether a work session is idle, ready, running, paused, blocked, or completed
+- resumes a paused session only when checkpoint recovery and approval state make that safe
+- executes exactly one deterministic safe cycle per invocation
+- advances the active task chain for approval-free controlled steps
+- pauses immediately when approval or validation boundaries are encountered
+- records a readable runtime result for operator review
+
+Current contract:
+
+- module path: `web/lib/aie/sessionRuntime.ts`
+- main types: `SessionRuntimeState`, `SessionRuntimeResult`, `RuntimeCycle`, and `RuntimeStatus`
+- main entry points: `runSessionCycle(session)`, `evaluateRuntimeState(session)`, `buildRuntimeResult(session)`, and `summarizeRuntime(result)`
+- statuses: `runtime_idle`, `runtime_ready`, `runtime_running`, `runtime_paused`, `runtime_blocked`, and `runtime_completed`
+
+Example runtime behavior:
+
+```text
+Operator invokes runSessionCycle(session)
+Runtime evaluates whether the session can move safely
+Runtime resumes from checkpoint if safe
+Runtime executes one approval-free bounded step
+Runtime returns an updated session plus a runtime status
+```
+
+Why this improves supervised autonomy:
+
+- AI-E can now actively move a supervised session forward instead of waiting for every cycle to be triggered manually in pieces
+- one-cycle execution keeps the runtime bounded and deterministic, which avoids hidden loops or runaway continuation
+- approval, validation, and rollback boundaries remain intact because the runtime stops immediately when a gate is encountered
+- runtime summaries make the execution outcome reviewable at the session level rather than only at the lower chain layer
+
+Milestone direction:
+
+- this is the transition from session management as a passive state layer into supervised active work-cycle execution
+
 ## Operator-Light Planner
 
 AI-E now also includes an Operator-Light Planner for the post-100% expansion phase. This layer takes rough operator intent and converts it into a deterministic execution packet for Codex, Copilot, or future autonomous agents without directly mutating code from vague instructions.
