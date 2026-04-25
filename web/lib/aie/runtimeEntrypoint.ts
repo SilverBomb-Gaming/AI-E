@@ -19,6 +19,12 @@ import {
   type BackgroundQueueResult,
   type BackgroundSessionQueue,
 } from "./backgroundSessionQueue";
+import {
+  DEFAULT_RUNTIME_PROFILE_NAME,
+  resolveRuntimeProfile,
+  summarizeRuntimeProfile,
+  type RuntimeProfile,
+} from "./runtimeProfiles";
 
 const DEFAULT_TICK_INTERVAL_MS = 60_000;
 const DEFAULT_MAX_TICKS_PER_RUN = 3;
@@ -28,22 +34,33 @@ const DEFAULT_MAX_CYCLES_PER_SESSION = 1;
 const DEFAULT_STARTED_AT = "2026-04-25T00:00:00.000Z";
 
 export type RuntimeEntrypointConfig = {
+  profile_name?: string;
   tick_interval_ms?: number;
   max_ticks_per_run?: number;
   max_runs_per_invocation?: number;
   operator_away_mode?: boolean;
   require_supervised_scope?: boolean;
   dry_run_mode?: boolean;
+  require_fresh_approvals?: boolean;
+  require_fresh_context?: boolean;
+  stop_on_blocker?: boolean;
+  stop_on_error?: boolean;
   started_at?: string;
 };
 
 export type LoadedRuntimeEntrypointConfig = {
+  profile_name: string;
+  profile_description: string;
   tick_interval_ms: number;
   max_ticks_per_run: number;
   max_runs_per_invocation: number;
   operator_away_mode: boolean;
   require_supervised_scope: boolean;
   dry_run_mode: boolean;
+  require_fresh_approvals: boolean;
+  require_fresh_context: boolean;
+  stop_on_blocker: boolean;
+  stop_on_error: boolean;
   started_at: string;
 };
 
@@ -110,6 +127,13 @@ function resolveBoolean(override: boolean | undefined, envValue: string | undefi
   return override ?? readOptionalBoolean(envValue) ?? fallback;
 }
 
+function validateBoolean(value: boolean, field: keyof LoadedRuntimeEntrypointConfig): boolean {
+  if (typeof value !== "boolean") {
+    throw new Error(`Invalid runtime entrypoint config: ${field} must be a boolean.`);
+  }
+  return value;
+}
+
 function validatePositiveInteger(value: number, field: keyof LoadedRuntimeEntrypointConfig): number {
   if (!Number.isFinite(value) || !Number.isInteger(value) || value < 1) {
     throw new Error(`Invalid runtime entrypoint config: ${field} must be a finite positive integer.`);
@@ -138,8 +162,8 @@ function createDefaultQueue(config: LoadedRuntimeEntrypointConfig): BackgroundSe
     skip_blocked_sessions: false,
     stop_on_first_failure: true,
     operator_away_mode: config.operator_away_mode,
-    require_fresh_approvals: config.require_supervised_scope,
-    require_fresh_context: config.require_supervised_scope,
+    require_fresh_approvals: config.require_fresh_approvals,
+    require_fresh_context: config.require_fresh_context,
   });
 }
 
@@ -149,30 +173,37 @@ function buildLatestQueueSummary(result: RuntimeEntrypointResult): string | null
 }
 
 export function loadRuntimeEntrypointConfig(input: RuntimeEntrypointConfig = {}): LoadedRuntimeEntrypointConfig {
+  const profile = resolveRuntimeProfile(
+    input.profile_name ?? process.env.AIE_RUNTIME_PROFILE ?? DEFAULT_RUNTIME_PROFILE_NAME,
+    {
+      tick_interval_ms: input.tick_interval_ms ?? readOptionalNumber(process.env.AIE_RUNTIME_TICK_INTERVAL_MS),
+      max_ticks_per_run: input.max_ticks_per_run ?? readOptionalNumber(process.env.AIE_RUNTIME_MAX_TICKS_PER_RUN),
+      max_runs_per_invocation: input.max_runs_per_invocation ?? readOptionalNumber(process.env.AIE_RUNTIME_MAX_RUNS_PER_INVOCATION),
+      operator_away_mode: input.operator_away_mode ?? readOptionalBoolean(process.env.AIE_RUNTIME_OPERATOR_AWAY_MODE),
+      dry_run_mode: input.dry_run_mode ?? readOptionalBoolean(process.env.AIE_RUNTIME_DRY_RUN_MODE),
+      require_fresh_approvals: input.require_fresh_approvals ?? readOptionalBoolean(process.env.AIE_RUNTIME_REQUIRE_FRESH_APPROVALS),
+      require_fresh_context: input.require_fresh_context ?? readOptionalBoolean(process.env.AIE_RUNTIME_REQUIRE_FRESH_CONTEXT),
+      stop_on_blocker: input.stop_on_blocker ?? readOptionalBoolean(process.env.AIE_RUNTIME_STOP_ON_BLOCKER),
+      stop_on_error: input.stop_on_error ?? readOptionalBoolean(process.env.AIE_RUNTIME_STOP_ON_ERROR),
+    },
+  );
   const config: LoadedRuntimeEntrypointConfig = {
-    tick_interval_ms: validatePositiveInteger(
-      resolveNumber(input.tick_interval_ms, process.env.AIE_RUNTIME_TICK_INTERVAL_MS, DEFAULT_TICK_INTERVAL_MS),
-      "tick_interval_ms",
-    ),
-    max_ticks_per_run: validatePositiveInteger(
-      resolveNumber(input.max_ticks_per_run, process.env.AIE_RUNTIME_MAX_TICKS_PER_RUN, DEFAULT_MAX_TICKS_PER_RUN),
-      "max_ticks_per_run",
-    ),
-    max_runs_per_invocation: validatePositiveInteger(
-      resolveNumber(
-        input.max_runs_per_invocation,
-        process.env.AIE_RUNTIME_MAX_RUNS_PER_INVOCATION,
-        DEFAULT_MAX_RUNS_PER_INVOCATION,
-      ),
-      "max_runs_per_invocation",
-    ),
-    operator_away_mode: resolveBoolean(input.operator_away_mode, process.env.AIE_RUNTIME_OPERATOR_AWAY_MODE, true),
+    profile_name: profile.profile_name,
+    profile_description: profile.description,
+    tick_interval_ms: validatePositiveInteger(profile.tick_interval_ms, "tick_interval_ms"),
+    max_ticks_per_run: validatePositiveInteger(profile.max_ticks_per_run, "max_ticks_per_run"),
+    max_runs_per_invocation: validatePositiveInteger(profile.max_runs_per_invocation, "max_runs_per_invocation"),
+    operator_away_mode: validateBoolean(profile.operator_away_mode, "operator_away_mode"),
     require_supervised_scope: resolveBoolean(
       input.require_supervised_scope,
       process.env.AIE_RUNTIME_REQUIRE_SUPERVISED_SCOPE,
       true,
     ),
-    dry_run_mode: resolveBoolean(input.dry_run_mode, process.env.AIE_RUNTIME_DRY_RUN_MODE, false),
+    dry_run_mode: validateBoolean(profile.dry_run_mode, "dry_run_mode"),
+    require_fresh_approvals: validateBoolean(profile.require_fresh_approvals, "require_fresh_approvals"),
+    require_fresh_context: validateBoolean(profile.require_fresh_context, "require_fresh_context"),
+    stop_on_blocker: validateBoolean(profile.stop_on_blocker, "stop_on_blocker"),
+    stop_on_error: validateBoolean(profile.stop_on_error, "stop_on_error"),
     started_at: input.started_at ?? process.env.AIE_RUNTIME_STARTED_AT ?? new Date().toISOString(),
   };
 
@@ -189,9 +220,24 @@ export function summarizeRuntimeEntrypoint(result: RuntimeEntrypointResult): str
   const lines = [
     `Runtime entrypoint status: ${result.status}`,
     `Reason: ${result.reason}`,
+    `Runtime profile: ${result.config.profile_name}`,
+    `Runtime profile description: ${result.config.profile_description}`,
     `Dry run mode: ${result.config.dry_run_mode}`,
     `Operator away mode: ${result.config.operator_away_mode}`,
     `Require supervised scope: ${result.config.require_supervised_scope}`,
+    summarizeRuntimeProfile({
+      profile_name: result.config.profile_name,
+      description: result.config.profile_description,
+      tick_interval_ms: result.config.tick_interval_ms,
+      max_ticks_per_run: result.config.max_ticks_per_run,
+      max_runs_per_invocation: result.config.max_runs_per_invocation,
+      operator_away_mode: result.config.operator_away_mode,
+      dry_run_mode: result.config.dry_run_mode,
+      require_fresh_approvals: result.config.require_fresh_approvals,
+      require_fresh_context: result.config.require_fresh_context,
+      stop_on_blocker: result.config.stop_on_blocker,
+      stop_on_error: result.config.stop_on_error,
+    }),
     summarizeBackgroundRuntimeService(result.service),
     summarizeOperatorAwayDigest(result.digest),
   ];
@@ -215,10 +261,12 @@ export function runBackgroundRuntimeEntrypoint(
     tick_interval_ms: config.tick_interval_ms,
     max_ticks_per_run: config.max_ticks_per_run,
     max_runs_per_invocation: config.max_runs_per_invocation,
-    stop_on_blocker: true,
-    stop_on_error: true,
+    stop_on_blocker: config.stop_on_blocker,
+    stop_on_error: config.stop_on_error,
     operator_away_mode: config.operator_away_mode,
     require_supervised_scope: config.require_supervised_scope,
+    require_fresh_approvals: config.require_fresh_approvals,
+    require_fresh_context: config.require_fresh_context,
   });
 
   if (config.dry_run_mode) {

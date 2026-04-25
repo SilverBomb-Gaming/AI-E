@@ -18,7 +18,21 @@ function parseNumberArg(value: string, flag: string): number {
 function parseCliArgs(argv: string[]): RuntimeEntrypointConfig {
   const config: RuntimeEntrypointConfig = {};
 
-  for (const arg of argv) {
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+    if (arg.startsWith("--profile=")) {
+      config.profile_name = arg.slice("--profile=".length);
+      continue;
+    }
+    if (arg === "--profile") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("Missing value for --profile");
+      }
+      config.profile_name = value;
+      index += 1;
+      continue;
+    }
     if (arg === "--dry-run") {
       config.dry_run_mode = true;
       continue;

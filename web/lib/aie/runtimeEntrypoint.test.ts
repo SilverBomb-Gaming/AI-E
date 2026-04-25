@@ -100,9 +100,14 @@ test("loads default safe config", () => {
   assert.equal(config.tick_interval_ms, 60_000);
   assert.equal(config.max_ticks_per_run, 3);
   assert.equal(config.max_runs_per_invocation, 1);
-  assert.equal(config.operator_away_mode, true);
+  assert.equal(config.profile_name, "local_supervised");
+  assert.equal(config.operator_away_mode, false);
   assert.equal(config.require_supervised_scope, true);
   assert.equal(config.dry_run_mode, false);
+  assert.equal(config.require_fresh_approvals, true);
+  assert.equal(config.require_fresh_context, true);
+  assert.equal(config.stop_on_blocker, true);
+  assert.equal(config.stop_on_error, true);
 });
 
 test("rejects invalid unbounded config", () => {
@@ -133,12 +138,14 @@ test("starts bounded runtime service", () => {
 
 test("returns readable summary", () => {
   const result = runBackgroundRuntimeEntrypoint({
+    profile_name: "dry_run",
     dry_run_mode: true,
     started_at: "2026-04-25T10:10:00.000Z",
   });
   const summary = summarizeRuntimeEntrypoint(result);
 
   assert.match(summary, /Runtime entrypoint status:/);
+  assert.match(summary, /Runtime profile:/);
   assert.match(summary, /Dry run mode:/);
   assert.match(summary, /Service status:/);
 });
@@ -185,6 +192,7 @@ test("exits cleanly when service completes", () => {
 
 test("exits cleanly when service pauses or blocks", () => {
   const paused = runBackgroundRuntimeEntrypoint({
+    profile_name: "dry_run",
     dry_run_mode: true,
     started_at: "2026-04-25T10:10:00.000Z",
   });
@@ -249,6 +257,7 @@ test("no auto-start on import", async () => {
 test("integrates with backgroundRuntimeService", () => {
   const result = runBackgroundRuntimeEntrypoint(
     {
+      profile_name: "bounded_batch",
       tick_interval_ms: 60_000,
       max_ticks_per_run: 1,
       max_runs_per_invocation: 2,
@@ -263,4 +272,6 @@ test("integrates with backgroundRuntimeService", () => {
 
   assert.equal(result.service_result?.status, "service_completed");
   assert.equal(result.service.trigger_state.config.max_runs_per_invocation, 2);
+  assert.equal(result.service.config.require_fresh_approvals, true);
+  assert.equal(result.service.config.require_fresh_context, true);
 });

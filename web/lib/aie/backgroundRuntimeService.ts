@@ -31,6 +31,8 @@ export type BackgroundRuntimeServiceConfig = {
   stop_on_error?: boolean;
   operator_away_mode?: boolean;
   require_supervised_scope?: boolean;
+  require_fresh_approvals?: boolean;
+  require_fresh_context?: boolean;
 };
 
 export type BackgroundRuntimeClock = {
@@ -69,6 +71,8 @@ export type BackgroundRuntimeServiceState = {
     stop_on_error: boolean;
     operator_away_mode: boolean;
     require_supervised_scope: boolean;
+    require_fresh_approvals: boolean;
+    require_fresh_context: boolean;
   };
   trigger_state: TimeTriggerState;
 };
@@ -91,6 +95,8 @@ function normalizeConfig(config: BackgroundRuntimeServiceConfig): BackgroundRunt
     stop_on_error: config.stop_on_error !== false,
     operator_away_mode: config.operator_away_mode !== false,
     require_supervised_scope: config.require_supervised_scope !== false,
+    require_fresh_approvals: config.require_fresh_approvals !== false,
+    require_fresh_context: config.require_fresh_context !== false,
   };
 }
 
@@ -165,8 +171,8 @@ export function createBackgroundRuntimeService(config: BackgroundRuntimeServiceC
       interval_ms: normalized.tick_interval_ms,
       max_runs_per_invocation: normalized.max_runs_per_invocation,
       allow_empty_runs: false,
-      require_fresh_approvals: true,
-      require_fresh_context: true,
+      require_fresh_approvals: normalized.require_fresh_approvals,
+      require_fresh_context: normalized.require_fresh_context,
     }),
   };
 }
@@ -293,6 +299,8 @@ export function summarizeBackgroundRuntimeService(service: BackgroundRuntimeServ
     `Ticks attempted: ${service.ticks_attempted}/${service.config.max_ticks_per_run}`,
     `Ticks completed: ${service.ticks_completed}`,
     `Max runs per invocation: ${service.config.max_runs_per_invocation}`,
+    `Require fresh approvals: ${service.config.require_fresh_approvals}`,
+    `Require fresh context: ${service.config.require_fresh_context}`,
     `Last tick at: ${service.last_tick_at ?? "none"}`,
     `Stop reason: ${service.stop_reason}`,
     `Tick history entries: ${service.tick_history.length}`,

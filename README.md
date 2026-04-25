@@ -1735,6 +1735,49 @@ Milestone direction:
 
 - this moves AI-E from having a background runtime service implementation to having a clear runtime start command.
 
+## Runtime Configuration Profiles
+
+AI-E now also includes named runtime configuration profiles so the production runtime entrypoint can start in clear, safe preset operating modes instead of relying only on raw low-level flags.
+
+What the runtime profile system does:
+
+- exposes named safe preset modes for bounded runtime startup
+- maps each profile to reviewed runtime settings such as tick interval, tick limits, and bounded run counts
+- preserves dry-run, freshness, blocker-stop, and error-stop behavior through the entrypoint
+- rejects unknown profiles and unsafe overrides before the runtime service starts
+- keeps runtime startup readable by printing the selected profile in the summary output
+
+Current contract:
+
+- module path: `web/lib/aie/runtimeProfiles.ts`
+- main entry points: `listRuntimeProfiles()`, `getRuntimeProfile(name)`, `resolveRuntimeProfile(name, overrides)`, `validateRuntimeProfile(profile)`, and `summarizeRuntimeProfile(profile)`
+- available profile names: `dry_run`, `local_supervised`, `operator_away_safe`, `conservative_validation`, and `bounded_batch`
+
+Example commands:
+
+```text
+npm run aie:runtime -- --profile dry_run
+npm run aie:runtime -- --profile operator_away_safe
+```
+
+What this still guarantees:
+
+- profiles do not bypass approval gates
+- profiles do not disable freshness checks or validation expectations
+- profiles do not allow infinite runtime loops or uncontrolled daemon behavior
+- profiles only configure bounded supervised runtime behavior through the existing entrypoint and service stack
+
+Why this improves the runtime environment:
+
+- AI-E now has clear safe operating modes for runtime startup instead of only low-level numeric flags
+- operator-away and dry-run startup become easier to understand and harder to misconfigure
+- runtime startup remains bounded and reviewable even when overrides are supplied
+- the runtime environment improves without weakening any supervised autonomy constraints
+
+Milestone direction:
+
+- this moves AI-E from having a runtime start command to having clear safe runtime operating modes.
+
 ## Operator-Light Planner
 
 AI-E now also includes an Operator-Light Planner for the post-100% expansion phase. This layer takes rough operator intent and converts it into a deterministic execution packet for Codex, Copilot, or future autonomous agents without directly mutating code from vague instructions.
