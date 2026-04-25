@@ -1459,6 +1459,53 @@ Milestone direction:
 
 - this is the layer that lets AI-E keep working safely across repeated cycles without manual step-by-step triggers
 
+## Background Runtime and Scheduler
+
+AI-E now also includes a background runtime scheduler that can evaluate whether a supervised work session is safe to continue while the operator is away, trigger a bounded runtime loop batch, and return a structured report describing what happened. This is scheduled supervised operation, not unsupervised free-running AI.
+
+What the background runtime scheduler does:
+
+- checks whether a session is eligible for a bounded background run
+- requires fresh approvals and fresh context before operator-away execution can start
+- delegates bounded execution to the runtime loop controller instead of running work directly
+- stops immediately on missing approval, stale approval, stale context, validation failure, rollback recommendation, or loop limits
+- returns a deterministic background run report for later operator review
+
+Current contract:
+
+- module path: `web/lib/aie/backgroundRuntimeScheduler.ts`
+- main types: `BackgroundRuntimeScheduler`, `BackgroundRuntimeConfig`, `BackgroundRunRequest`, `BackgroundRunResult`, `BackgroundRunStatus`, `BackgroundRunBlocker`, and `BackgroundRunReport`
+- main entry points: `createBackgroundRuntimeScheduler(config)`, `evaluateBackgroundRunEligibility(session, scheduler)`, `runBackgroundRuntimeCycle(session, scheduler)`, `buildBackgroundRunReport(result)`, and `summarizeBackgroundRun(result)`
+- statuses: `scheduler_idle`, `run_eligible`, `run_started`, `run_paused`, `run_blocked`, `run_completed`, and `run_skipped`
+
+Example background behavior:
+
+```text
+Operator configures a background scheduler with bounded max cycles
+Scheduler checks session approval freshness and context freshness
+Scheduler starts a bounded runtime loop run only when the session is eligible
+Scheduler stops at the first safety boundary or cycle cap
+Scheduler returns a report for the operator to review later
+```
+
+What this does not mean:
+
+- AI-E is not free-running unsupervised in the background
+- approvals are not bypassed or renewed automatically
+- validation and rollback boundaries still stop the run immediately
+- commit and push gates remain approval-bound and are never auto-approved here
+
+Why this improves supervised autonomy:
+
+- AI-E can now simulate “while I’m away” supervised operation using the same bounded runtime layers
+- operator-away runs are reviewable because every run produces an explicit report with blockers and next action
+- freshness checks reduce the chance of background work continuing on stale approvals or stale context
+- scheduled operation remains deterministic because the scheduler only triggers bounded runtime loop batches
+
+Milestone direction:
+
+- this is the first real step toward AI-E working while the operator is away without weakening approval or safety constraints
+
 ## Operator-Light Planner
 
 AI-E now also includes an Operator-Light Planner for the post-100% expansion phase. This layer takes rough operator intent and converts it into a deterministic execution packet for Codex, Copilot, or future autonomous agents without directly mutating code from vague instructions.
