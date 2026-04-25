@@ -1336,6 +1336,48 @@ Milestone direction:
 
 - this is the first step toward AI-E continuing useful work intelligently without needing every next step spelled out by the operator
 
+## Autonomous Work Session Manager
+
+AI-E now also includes a supervised autonomous work-session manager that wraps the existing chain, recovery, persistence, approval freshness, and orchestration-memory layers into one bounded session lifecycle.
+
+What the work-session manager does:
+
+- creates a long-running supervised session from an operator goal
+- requires explicit session approval before the session can run
+- tracks goal state, orchestration memory, the active chain, checkpoints, and session cycles in one place
+- pauses when approvals are needed or when validation/rollback evidence makes continuation unsafe
+- resumes from the latest checkpoint instead of restarting blindly
+- completes only when the tracked goal state reaches an explicit completed condition
+
+Current contract:
+
+- module path: `web/lib/aie/autonomousWorkSession.ts`
+- main types: `AutonomousWorkSession`, `WorkSessionStatus`, `WorkSessionCycle`, `WorkSessionDecision`, and `WorkSessionReport`
+- main entry points: `createAutonomousWorkSession(input)`, `evaluateWorkSessionReadiness(session)`, `advanceWorkSession(session, cycleResult)`, `pauseWorkSession(session, reason)`, `resumeWorkSession(session)`, `completeWorkSession(session)`, and `summarizeWorkSession(session)`
+- statuses: `session_planned`, `awaiting_session_approval`, `session_running`, `session_paused`, `session_blocked`, and `session_completed`
+
+Example session lifecycle:
+
+```text
+Create session from operator goal
+Session waits for explicit approval
+Approved session advances one bounded cycle
+Session pauses if approval or validation review is required
+Session resumes from the latest checkpoint
+Session completes when goal memory marks the goal done
+```
+
+Why this improves supervised autonomy:
+
+- AI-E now has a single session wrapper for long-running supervised work instead of isolated chain and orchestration passes
+- session-level pause and resume reduce drift because checkpoints, approvals, and goal memory stay attached to one lifecycle
+- bounded cycle limits prevent simple infinite continuation loops
+- completion reporting is explicit, readable, and aligned with the work-session state instead of being inferred externally
+
+Milestone direction:
+
+- this is the first full session wrapper for AI-E autonomous studio operation and a major step toward supervised long-running studio work
+
 ## Operator-Light Planner
 
 AI-E now also includes an Operator-Light Planner for the post-100% expansion phase. This layer takes rough operator intent and converts it into a deterministic execution packet for Codex, Copilot, or future autonomous agents without directly mutating code from vague instructions.
