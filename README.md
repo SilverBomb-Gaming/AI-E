@@ -1639,6 +1639,53 @@ Milestone direction:
 
 - AI-E runs while I’m away is 100% complete for the supervised scope.
 
+## Background Runtime Service
+
+AI-E now also includes a background runtime service that repeatedly wakes up, checks the time-based trigger, runs bounded background queue work when eligible, and records a deterministic tick history. This is the first continuous-runner layer, but it remains supervised, bounded, and approval-controlled.
+
+What the background runtime service does:
+
+- starts a deterministic supervised service loop
+- wakes up on caller-provided tick times instead of using uncontrolled timers in core logic
+- invokes the time-based runtime trigger only through its public API
+- records each tick result and preserves the full tick history
+- stops cleanly on max tick limits, explicit stop, or blockers when configured
+
+Current contract:
+
+- module path: `web/lib/aie/backgroundRuntimeService.ts`
+- main types: `BackgroundRuntimeServiceConfig`, `BackgroundRuntimeServiceState`, `BackgroundRuntimeServiceResult`, `BackgroundRuntimeTickResult`, `BackgroundRuntimeServiceStatus`, and `BackgroundRuntimeServiceStopReason`
+- main entry points: `createBackgroundRuntimeService(config)`, `startBackgroundRuntimeService(service, queue, history, clock)`, `runBackgroundRuntimeTick(service, queue, history, now)`, `stopBackgroundRuntimeService(service, reason)`, and `summarizeBackgroundRuntimeService(service)`
+- statuses: `service_idle`, `service_running`, `service_paused`, `service_stopped`, `service_blocked`, and `service_completed`
+
+Example service behavior:
+
+```text
+Service starts with a bounded max tick count
+Each tick asks the deterministic clock for the next time
+The service calls the time-based runtime trigger once per tick
+Tick results are recorded into service tick history
+The service stops at max ticks or a configured blocker boundary
+```
+
+What this still does not do:
+
+- it does not run forever uncontrollably
+- it does not bypass approvals or validation
+- it does not deploy anything or access secrets
+- it does not replace the scheduler, queue, trigger, or digest safety layers
+
+Why this improves the runtime environment:
+
+- AI-E now has a real continuous supervised runner over the existing trigger stack instead of only standalone trigger logic
+- deterministic tick history makes service behavior reviewable and testable
+- production timer wiring can stay outside the core module because the service loop itself is pure and bounded
+- the runtime environment improves without weakening any existing supervised autonomy boundaries
+
+Milestone direction:
+
+- this moves AI-E from having a scheduled trigger to having a supervised service that can continuously call that trigger.
+
 ## Operator-Light Planner
 
 AI-E now also includes an Operator-Light Planner for the post-100% expansion phase. This layer takes rough operator intent and converts it into a deterministic execution packet for Codex, Copilot, or future autonomous agents without directly mutating code from vague instructions.
