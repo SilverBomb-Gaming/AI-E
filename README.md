@@ -327,6 +327,68 @@ Why this layer matters:
 - communication becomes more useful for public-facing usage without weakening deterministic behavior
 - the loop can keep the same planning outputs while changing only response framing
 
+## Conversational Readiness Orchestrator
+
+AI-E now also includes a deterministic conversational readiness orchestrator that combines normalization, confidence scoring, tone adaptation, session context, conversational refinement, and multi-turn loop state into one answer to a single question: is this request ready for planning right now?
+
+Why it exists:
+
+- the conversational stack is now strong enough that readiness should be decided in one place
+- planning gates need one explainable answer instead of several separate conversational signals
+- the orchestrator preserves existing module behavior while producing one unified readiness result
+
+Status meanings:
+
+- `ready_for_planning`: the request is normalized, confident enough, bounded enough, and has a planner-ready request
+- `needs_clarification`: one or more answerable gaps still block safe planning
+- `needs_review`: risk, context conflict, or broader impact requires human review before planning
+- `blocked`: the request is unsafe or cannot be transformed into a bounded planning task
+
+Current contract:
+
+- module path: `web/lib/aie/conversationalReadinessOrchestrator.ts`
+- main entry points: `evaluateConversationalReadiness(input)`, `buildPlannerReadinessPacket(input)`, `listConversationalReadinessBlockers(input)`, and `summarizeConversationalReadiness(result)`
+- unified inputs considered: intent normalization, intent confidence scoring, tone adaptation, session context memory, conversational refinement, and multi-turn loop state
+
+Example flow:
+
+```text
+Input: enemy no react grenade
+-> normalized to improve enemy reaction to grenades
+-> confidence scored
+-> tone guidance selected
+-> session context checked
+-> ready_for_planning packet produced
+
+Input: do everything automatically overnight
+-> blocked
+```
+
+Planner readiness packet fields:
+
+- `readiness_id`
+- `created_at`
+- `original_request`
+- `normalized_input`
+- `interpreted_intent`
+- `planner_ready_request`
+- `confidence_score`
+- `ambiguity_score`
+- `completeness_score`
+- `tone_guidance`
+- `session_context_summary`
+- `missing_information`
+- `assumptions`
+- `risk_level`
+- `next_action`
+- `explanation`
+
+Why this helps:
+
+- AI-E can now answer readiness with one deterministic and explainable decision
+- conversational modules remain composable, but readiness no longer has to be inferred across multiple surfaces
+- session context and tone guidance now participate directly in the planning-readiness decision without changing execution behavior
+
 AI-E now also includes a deterministic conversational refinement layer that runs before the Operator-Light Planner. This layer helps AI-E understand rough, vague, emotional, or low-detail user requests and either turn them into planner-ready task language or ask one small set of useful follow-up questions.
 
 What the Conversational Intent Refinement layer does:
