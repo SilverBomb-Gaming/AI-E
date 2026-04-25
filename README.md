@@ -1050,6 +1050,50 @@ Why this improves execution safety:
 - every reviewed execution now produces an operator-facing completion report before commit or push is considered
 - unsafe or uncertain change sets can be stopped before commit while still preserving rollback evidence
 
+## Commit And Push Approval Gates
+
+AI-E now also includes final approval gates for commit and push. These gates sit after the commit gate and require explicit operator approval before any repository-history action is considered eligible.
+
+What the approval gates do:
+
+- require a separate explicit boolean approval for commit
+- require a separate explicit boolean approval for push
+- block push unless commit approval has already been granted
+- record approval decisions in immutable approval logs
+- keep all commit and push actions non-automatic and operator-controlled
+
+Current contract:
+
+- module path: `web/lib/aie/commitAndPushGate.ts`
+- main entry points: `evaluateCommitApproval(input)`, `evaluatePushApproval(input)`, `buildApprovalLog(input)`, and `summarizeApproval(result)`
+- statuses: `commit_awaiting_approval`, `commit_approved`, `commit_blocked`, `push_awaiting_approval`, `push_approved`, and `push_blocked`
+
+Approval flow:
+
+```text
+application packet
+-> controlled patch execution
+-> controlled execution validation
+-> commit gate and completion report
+-> explicit commit approval gate
+-> explicit push approval gate
+```
+
+Example:
+
+```text
+AI-E: Commit is ready. Approve?
+User: Yes
+AI-E: Push is ready. Approve?
+User: Yes
+```
+
+Why this improves execution safety:
+
+- AI-E cannot modify repository history without explicit operator consent
+- commit and push approvals are now separate control points instead of one implied action
+- the full execution chain is controlled end to end without auto-commit or auto-push behavior
+
 ## Operator-Light Planner
 
 AI-E now also includes an Operator-Light Planner for the post-100% expansion phase. This layer takes rough operator intent and converts it into a deterministic execution packet for Codex, Copilot, or future autonomous agents without directly mutating code from vague instructions.
