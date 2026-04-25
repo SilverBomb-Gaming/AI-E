@@ -39,6 +39,7 @@ export type ReviewedPatchApplicationDecision = {
   source_dry_run_id: string;
   source_handoff_id: string;
   source_artifact_id: string;
+  source_patch_plan: ReviewedPatchPlan;
   created_at: string;
   status: ReviewedPatchApplicationStatus;
   eligible_for_application: boolean;
@@ -250,6 +251,20 @@ export function evaluatePatchPlanForApplication(
     source_dry_run_id: patchPlan.source_dry_run_id,
     source_handoff_id: patchPlan.source_handoff_id,
     source_artifact_id: patchPlan.source_artifact_id,
+    source_patch_plan: {
+      ...patchPlan,
+      proposed_file_targets: [...patchPlan.proposed_file_targets],
+      planned_change_groups: patchPlan.planned_change_groups.map((group) => ({ ...group })),
+      validation_requirements: patchPlan.validation_requirements.map((item) => ({ ...item })),
+      git_commit_plan: {
+        ...patchPlan.git_commit_plan,
+        stage_only: [...patchPlan.git_commit_plan.stage_only],
+        github_procedure: [...patchPlan.git_commit_plan.github_procedure],
+      },
+      allowed_patch_actions: [...patchPlan.allowed_patch_actions],
+      disallowed_patch_actions: [...patchPlan.disallowed_patch_actions],
+      completion_report_requirements: [...patchPlan.completion_report_requirements],
+    },
     created_at: createdAt,
     status: "application_eligible",
     eligible_for_application: true,

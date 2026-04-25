@@ -442,6 +442,56 @@ Future next step:
 
 - connect `application_eligible` decisions to a reviewed patch draft generator that still avoids direct file mutation and preserves approval boundaries
 
+## Reviewed Patch Draft Generator
+
+AI-E now also includes a reviewed patch draft generator that converts an `application_eligible` decision into a structured, review-only patch draft. This is still not real patch application. It provides the final human-readable checkpoint before any future controlled mutation layer would exist.
+
+What the patch draft generator does:
+
+- consumes only application-eligible decisions that still carry the reviewed patch plan context
+- turns planned change groups into human-readable change descriptions
+- summarizes the likely diff shape and affected targets without generating actual diffs or edits
+- blocks draft generation when review, validation, commit guidance, or patch-plan context is missing
+
+Current contract:
+
+- module path: `web/lib/aie/reviewedPatchDraftGenerator.ts`
+- main entry points: `generateReviewedPatchDraft(input)`, `validateApplicationDecisionForDraft(decision)`, and `summarizeReviewedPatchDraft(result)`
+- draft statuses: `draft_ready`, `draft_blocked`, `draft_needs_review`, `invalid_application_decision`, and `high_risk_blocked`
+
+How it fits into the bounded bridge:
+
+```text
+conversation
+-> refinement
+-> planning
+-> artifact
+-> approval
+-> handoff
+-> dry-run
+-> patch plan
+-> application gate
+-> draft
+-> future reviewed patch application executor
+```
+
+What `draft_ready` means:
+
+- the application decision is `application_eligible`
+- operator review remains explicitly required
+- the source patch plan, planned change groups, validation requirements, and commit guidance all still exist
+- the output is a review-only description of intended changes, not a mutation step
+
+Why this is still not real patch application:
+
+- the generator does not write files or apply patches
+- the generator does not call git or shell commands
+- it produces descriptions, scope summaries, and expected diff language only
+
+Future next step:
+
+- connect `draft_ready` outputs to a reviewed patch application executor that still preserves human approval before any file mutation is allowed
+
 ## Operator-Light Planner
 
 AI-E now also includes an Operator-Light Planner for the post-100% expansion phase. This layer takes rough operator intent and converts it into a deterministic execution packet for Codex, Copilot, or future autonomous agents without directly mutating code from vague instructions.
