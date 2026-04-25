@@ -1,6 +1,13 @@
 import type { AutonomousTaskChain, AutonomousTaskStepRequiredGate } from "./autonomousTaskChain";
 import type { ChainPersistenceRecord } from "./chainPersistence";
 import { evaluateContextStaleness, requireReapprovalIfNeeded } from "./approvalFreshness";
+import {
+  detectDuplicateStep,
+  evaluateGoalCompletion,
+  summarizeGoalState,
+  type GoalStatus,
+  type OrchestrationMemory,
+} from "./orchestrationMemory";
 
 export type OrchestrationStatus =
   | "orchestration_ready"
@@ -23,9 +30,11 @@ export type OrchestrationPlan = {
   chain_id: string;
   created_at: string;
   prior_chain_status: AutonomousTaskChain["status"];
+  goal_status: GoalStatus;
   requires_supervisor_approval: boolean;
   max_proposed_steps: number;
   context_summary: string;
+  goal_summary: string;
   proposed_steps: OrchestrationStep[];
   status: OrchestrationStatus;
 };
@@ -39,7 +48,8 @@ export type OrchestrationBlocker = {
     | "stale_context"
     | "reapproval_required"
     | "supervisor_approval_required"
-    | "no_novel_steps";
+    | "no_novel_steps"
+    | "goal_completed";
   message: string;
   recommended_action: "approve" | "review" | "revise" | "revalidate";
 };
@@ -55,6 +65,7 @@ export type OrchestrationDecision = {
 export type AutonomousOrchestratorInput = {
   chain: AutonomousTaskChain;
   persistenceRecord?: ChainPersistenceRecord | null;
+  memory?: OrchestrationMemory | null;
   maxProposedSteps?: number;
   confidence?: number;
   minimumConfidence?: number;
@@ -98,7 +109,11 @@ function unique<T>(values: T[]): T[] {
   return [...new Set(values)];
 }
 
-function summarizeChainContext(chain: AutonomousTaskChain, persistenceRecord?: ChainPersistenceRecord | null): string {
+function summarizeChainContext(
+  chain: AutonomousTaskChain,
+  persistenceRecord?: ChainPersistenceRecord | null,
+  memory?: OrchestrationMemory | null,
+): string {
   const completedCount = chain.steps.filter((step) => step.status === "completed").length;
   const lastCompletedStep = chain.steps.filter((step) => step.status === "completed").at(-1);
   const validationSummary = persistenceRecord
@@ -109,6 +124,7 @@ function summarizeChainContext(chain: AutonomousTaskChain, persistenceRecord?: C
     `Prior chain status: ${chain.status}.`,
     `Last completed step: ${lastCompletedStep?.title ?? "none"}.`,
     `Persisted validation: ${validationSummary}.`,
+    memory ? summarizeGoalState(memory).replace(/\n/g, " ") : "No persistent goal memory recorded.",
   ].join(" ");
 }
 
@@ -147,6 +163,7 @@ function chooseLimit(value: number | undefined): number {
 
 function buildCandidateSteps(input: {
   chain: AutonomousTaskChain;
+  memory?: OrchestrationMemory | null;
   planId: string;
   confidence: number;
   maxProposedSteps: number;
@@ -177,6 +194,7 @@ function buildCandidateSteps(input: {
 
   return candidates
     .filter((candidate) => !existingTitles.has(normalizeText(candidate.title).toLowerCase()))
+    .filter((candidate) => !input.memory || !detectDuplicateStep(input.memory, { title: candidate.title }).is_duplicate)
     .slice(0, input.maxProposedSteps)
     .map((candidate, index) => ({
       step_id: buildStepId(input.planId, index + 1, candidate.title),
@@ -194,6 +212,7 @@ export function decideAutonomousOrchestration(input: AutonomousOrchestratorInput
   const maxProposedSteps = chooseLimit(input.maxProposedSteps);
   const confidence = deriveConfidence(input);
   const minimumConfidence = clampConfidence(input.minimumConfidence ?? 0.65);
+  const goalState = input.memory ? evaluateGoalCompletion(input.memory) : null;
   const blockers: OrchestrationBlocker[] = [];
 
   if (!Number.isInteger(maxProposedSteps) || maxProposedSteps <= 0) {
@@ -228,6 +247,14 @@ export function decideAutonomousOrchestration(input: AutonomousOrchestratorInput
     });
   }
 
+  if (goalState?.status === "completed") {
+    blockers.push({
+      code: "goal_completed",
+      message: goalState.completion_reason ?? "Persistent orchestration memory already marks this goal as completed.",
+      recommended_action: "review",
+    });
+  }
+
   if (input.persistenceRecord) {
     const contextStaleness = evaluateContextStaleness({
       chain: input.chain,
@@ -257,10 +284,11 @@ export function decideAutonomousOrchestration(input: AutonomousOrchestratorInput
   }
 
   const planId = buildPlanId(input.chain.chain_id, now);
-  const proposedSteps = blockers.some((blocker) => blocker.code === "max_steps_invalid" || blocker.code === "chain_not_completed" || blocker.code === "high_risk_chain" || blocker.code === "low_confidence" || blocker.code === "stale_context")
+  const proposedSteps = blockers.some((blocker) => blocker.code === "max_steps_invalid" || blocker.code === "chain_not_completed" || blocker.code === "high_risk_chain" || blocker.code === "low_confidence" || blocker.code === "stale_context" || blocker.code === "goal_completed")
     ? []
     : buildCandidateSteps({
       chain: input.chain,
+      memory: input.memory,
       planId,
       confidence,
       maxProposedSteps,
@@ -301,9 +329,11 @@ export function decideAutonomousOrchestration(input: AutonomousOrchestratorInput
     chain_id: input.chain.chain_id,
     created_at: now,
     prior_chain_status: input.chain.status,
+    goal_status: goalState?.status ?? "active",
     requires_supervisor_approval: true,
     max_proposed_steps: maxProposedSteps,
-    context_summary: summarizeChainContext(input.chain, input.persistenceRecord),
+    context_summary: summarizeChainContext(input.chain, input.persistenceRecord, input.memory),
+    goal_summary: input.memory ? summarizeGoalState(input.memory) : `Goal status: ${goalState?.status ?? "active"}`,
     proposed_steps: proposedSteps,
     status,
   };
@@ -328,6 +358,7 @@ export function decideAutonomousOrchestration(input: AutonomousOrchestratorInput
 export function summarizeOrchestration(decision: OrchestrationDecision): string {
   return [
     `Status: ${decision.status}`,
+    `Goal status: ${decision.plan.goal_status}`,
     `Confidence: ${decision.confidence.toFixed(2)}`,
     `Proposed steps: ${decision.plan.proposed_steps.length}`,
     `Context: ${decision.plan.context_summary}`,

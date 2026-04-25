@@ -1295,6 +1295,43 @@ Why this improves supervised autonomy:
 - continuation remains bounded because only a small deterministic set of next steps is proposed
 - supervision remains intact because orchestration never bypasses approval, freshness checks, or validation gates
 
+## Persistent Goal Tracking And Orchestration Memory
+
+AI-E now also includes a persistent orchestration memory layer so supervised orchestration can remember what it already proposed or completed across cycles. This keeps the system working toward a goal over time instead of treating each orchestration pass as a fresh blank slate.
+
+What the orchestration memory layer does:
+
+- stores a persistent goal record across orchestration cycles
+- records proposed continuation steps and completed steps
+- suppresses duplicate or looping suggestions from prior cycles
+- evaluates whether the goal is still active, nearing completion, completed, or stalled
+- keeps continuation bounded because it only informs planning and completion checks
+
+Current contract:
+
+- module path: `web/lib/aie/orchestrationMemory.ts`
+- main types: `OrchestrationMemory`, `GoalState`, `CompletedStep`, `ProposedStep`, and `GoalStatus`
+- main entry points: `createOrchestrationMemory(goal)`, `updateOrchestrationMemory(memory, step)`, `detectDuplicateStep(memory, step)`, `evaluateGoalCompletion(memory)`, and `summarizeGoalState(memory)`
+- statuses: `active`, `nearing_completion`, `completed`, and `stalled`
+
+Example:
+
+```text
+Cycle 1 proposes a follow-up step
+Cycle 2 sees the same step title again
+
+AI-E suppresses the duplicate proposal,
+keeps the original goal in memory,
+and continues looking for the next novel bounded step.
+```
+
+Why this improves supervised autonomy:
+
+- AI-E now remembers what it already suggested and what it already finished
+- long-lived goal tracking reduces drift across multi-cycle orchestration
+- duplicate suppression prevents simple loops from being re-proposed as novel work
+- goal completion is surfaced explicitly before more continuation is proposed
+
 Milestone direction:
 
 - this is the first step toward AI-E continuing useful work intelligently without needing every next step spelled out by the operator
