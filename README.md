@@ -966,6 +966,49 @@ Why this layer matters:
 - rollback support makes reviewed file mutation reversible without destructive commands
 - the layer still does not auto-approve, deploy, push, or bypass validation
 
+## Controlled Execution Validation
+
+AI-E now also includes a controlled execution validation layer that runs after reviewed file mutation. This layer checks whether the applied files match the approved diff, whether any unexpected files changed, and whether the result is safe to keep or should be rolled back.
+
+What the validation layer does:
+
+- runs only after controlled patch execution reports an applied result
+- validates only the files touched by the executor
+- compares actual file contents against the approved preview diff
+- detects missing files, content mismatches, and unexpected changed files
+- converts validation outcomes into a deterministic recommendation: keep changes, rollback, or review
+
+Current contract:
+
+- module path: `web/lib/aie/controlledExecutionValidation.ts`
+- main entry points: `runControlledValidation(input)`, `validateChangedFiles(input)`, `evaluateValidationResult(result)`, `buildValidationReport(result)`, and `summarizeValidation(result)`
+- statuses: `validation_passed`, `validation_failed`, `validation_needs_review`, and `validation_blocked`
+
+Validation flow:
+
+```text
+application packet
+-> controlled patch execution
+-> controlled execution validation
+-> keep changes / rollback recommendation / review required
+```
+
+Example:
+
+```text
+AI-E: Changes applied. Running validation...
+-> validation_passed -> safe to keep
+
+AI-E: Changes applied. Running validation...
+-> validation_failed -> recommend rollback
+```
+
+Why this improves execution safety:
+
+- applied changes are now checked before anything like commit or push is considered
+- AI-E can detect broken or unsafe post-mutation state without mutating files during validation
+- rollback becomes an evidence-based recommendation instead of a manual guess
+
 ## Operator-Light Planner
 
 AI-E now also includes an Operator-Light Planner for the post-100% expansion phase. This layer takes rough operator intent and converts it into a deterministic execution packet for Codex, Copilot, or future autonomous agents without directly mutating code from vague instructions.
