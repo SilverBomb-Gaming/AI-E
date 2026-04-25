@@ -924,6 +924,48 @@ Future next step:
 
 - connect `application_packet_ready` outputs to a future controlled patch mutation layer that still requires explicit human approval before any file change is allowed
 
+## Controlled Patch Execution Layer
+
+AI-E now also includes a controlled patch execution layer that can safely apply real file changes from a reviewed application packet, but only after exact diff preview, explicit human approval, and bounded execution-policy checks. This is the first real file-mutation layer in the reviewed patch flow.
+
+Core behavior:
+
+- always generates an exact diff preview before any mutation
+- requires explicit approval before applying reviewed file changes
+- only mutates files listed in the reviewed application packet targets
+- revalidates packet safety before applying changes
+- captures rollback data before mutation and can restore prior file state
+- logs preview, validation, apply, and rollback steps
+
+Current contract:
+
+- module path: `web/lib/aie/controlledPatchExecutor.ts`
+- main entry points: `generatePatchDiff(applicationPacket, fileChanges)`, `validateExecutionSafety(applicationPacket, previewDiff)`, `applyPatch(applicationPacket, previewDiff, rollbackPoint)`, `createRollbackPoint(applicationPacket, previewDiff)`, `rollbackExecution(rollbackPoint)`, `executeControlledPatch(input)`, and `summarizeExecution(result)`
+- statuses: `awaiting_approval`, `ready_to_apply`, `applied`, `blocked`, and `rolled_back`
+
+Diff preview format:
+
+- `file_path`
+- `change_type`
+- `before_snapshot`
+- `after_snapshot`
+- `summary_of_change`
+
+Approval flow example:
+
+```text
+AI-E: Here's what will change -> approve?
+User: yes
+AI-E: applies the reviewed file changes safely and stores rollback data
+```
+
+Why this layer matters:
+
+- AI-E can now move from reviewed planning into real bounded file mutation
+- exact diff visibility stays in front of approval instead of after the write
+- rollback support makes reviewed file mutation reversible without destructive commands
+- the layer still does not auto-approve, deploy, push, or bypass validation
+
 ## Operator-Light Planner
 
 AI-E now also includes an Operator-Light Planner for the post-100% expansion phase. This layer takes rough operator intent and converts it into a deterministic execution packet for Codex, Copilot, or future autonomous agents without directly mutating code from vague instructions.
