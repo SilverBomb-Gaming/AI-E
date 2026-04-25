@@ -1182,6 +1182,41 @@ Why this improves supervised autonomy:
 - every step still flows through the same controlled execution, validation, commit, and push approval gates
 - this is supervised autonomy only, not uncontrolled background execution or overnight agent behavior
 
+## Autonomous Chain Recovery
+
+AI-E now also includes an autonomous chain recovery layer for interrupted or paused bounded task chains. This layer stores safe checkpoints, validates the last successful state, and resumes from the next unfinished step rather than restarting the full chain.
+
+What the recovery layer does:
+
+- creates a checkpoint after successful progress so completed work can be preserved
+- validates checkpoint integrity and prior validation state before resuming
+- resumes only from the last successful step boundary
+- requires renewed approval when approvals are missing or stale
+- blocks unsafe resume attempts instead of guessing that prior state is still safe
+
+Current contract:
+
+- module path: `web/lib/aie/autonomousChainRecovery.ts`
+- main entry points: `createChainCheckpoint(chain)`, `evaluateRecoveryEligibility(chain, checkpoint)`, `resumeTaskChain(chain, checkpoint)`, `validateCheckpoint(checkpoint)`, and `summarizeRecovery(result)`
+- statuses: `recoverable`, `not_recoverable`, `requires_restart`, and `awaiting_reapproval`
+
+Example:
+
+```text
+Step 1: completed
+Step 2: completed
+Step 3: paused awaiting approval
+
+Later:
+AI-E validates the checkpoint and resumes at Step 3, not Step 1.
+```
+
+Why this improves real-world autonomous workflows:
+
+- AI-E can now continue where it left off instead of discarding safe partial progress
+- completed steps are not repeated, but the next step is still re-entered through the normal gated flow
+- interrupted chains remain supervised because recovery never auto-approves or bypasses validation
+
 ## Operator-Light Planner
 
 AI-E now also includes an Operator-Light Planner for the post-100% expansion phase. This layer takes rough operator intent and converts it into a deterministic execution packet for Codex, Copilot, or future autonomous agents without directly mutating code from vague instructions.
