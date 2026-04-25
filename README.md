@@ -392,6 +392,56 @@ Future next step:
 
 - connect the reviewed patch plan to a reviewed patch application gate that still requires operator review before any mutation is allowed
 
+## Reviewed Patch Application Gate
+
+AI-E now also includes a reviewed patch application gate that evaluates whether a reviewed patch plan is eligible to move toward a future patch draft or application review step. This is still not file mutation. It is a gatekeeper that decides whether the reviewed plan remains safe enough to advance.
+
+What the patch application gate does:
+
+- consumes reviewed patch plans only after patch preparation reports them ready
+- verifies that planned change groups remain review-required and mutation-free
+- confirms validation requirements, commit guidance, and explicit disallowed actions are still present
+- returns an eligibility decision or a blocked result with the next operator action
+
+Current contract:
+
+- module path: `web/lib/aie/reviewedPatchApplicationGate.ts`
+- main entry points: `evaluatePatchPlanForApplication(input)`, `listPatchApplicationBlockers(patchPlan)`, and `summarizePatchApplicationGate(result)`
+- application statuses: `application_eligible`, `application_blocked`, `needs_operator_review`, `invalid_patch_plan`, and `high_risk_blocked`
+
+How it fits into the bounded bridge:
+
+```text
+conversation
+-> refinement
+-> planning
+-> artifact
+-> approval gate
+-> reviewed handoff
+-> dry-run
+-> patch plan
+-> application gate
+-> future reviewed patch draft generator
+```
+
+What `application_eligible` means:
+
+- the patch preparation result is `patch_plan_ready`
+- operator review is still explicitly required
+- planned change groups exist and remain mutation-free
+- validation requirements and git commit guidance still exist
+- required disallowed patch actions are still explicit
+
+Why this is still not file mutation:
+
+- the gate does not write files or apply patches
+- the gate does not call git or shell commands
+- the gate only returns an eligibility decision for a later reviewed draft layer
+
+Future next step:
+
+- connect `application_eligible` decisions to a reviewed patch draft generator that still avoids direct file mutation and preserves approval boundaries
+
 ## Operator-Light Planner
 
 AI-E now also includes an Operator-Light Planner for the post-100% expansion phase. This layer takes rough operator intent and converts it into a deterministic execution packet for Codex, Copilot, or future autonomous agents without directly mutating code from vague instructions.
