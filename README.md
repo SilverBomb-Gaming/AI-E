@@ -173,6 +173,57 @@ Current limitation:
 - no disk, database, or long-term persistence is added yet
 - context reuse is relevance-gated and intentionally lightweight to avoid pollution
 
+## Intent Confidence Calibration
+
+AI-E now also includes an intent confidence calibration layer that makes conversational decisions more predictable, explainable, and consistent. This layer separates ambiguity scoring from completeness scoring, then combines them with the existing clarity signal to decide whether AI-E should proceed, ask one question, ask up to two prioritized questions, or block for review.
+
+What the calibration layer does:
+
+- computes a deterministic `ambiguity_score` from vague wording, missing targets, missing actions, missing scope, conflicting signals, and risky autonomy patterns
+- computes a deterministic `completeness_score` from target-system coverage, action coverage, scope coverage, and missing-field severity
+- combines clarity, completeness, and inverse ambiguity into a calibrated `confidence_score`
+- emits a `decision_reason` so the loop can explain why it asked, proceeded, or blocked
+
+Current contract:
+
+- module path: `web/lib/aie/intentConfidenceScoring.ts`
+- main entry points: `computeAmbiguityScore(input)`, `computeCompletenessScore(input)`, `computeConfidenceScore(input)`, `buildConfidenceBreakdown(input)`, and `determineConfidenceDecision(result)`
+- computed fields: `ambiguity_score`, `completeness_score`, `confidence_score`, `critical_missing_fields`, `non_critical_missing_fields`, `ambiguity_flags`, and `decision_reason`
+
+How AI-E now decides:
+
+```text
+confidence >= 0.8
+-> proceed to planning
+
+0.5 <= confidence < 0.8
+-> ask one focused question
+
+confidence < 0.5
+-> ask one or two prioritized questions
+
+high ambiguity + high risk
+-> block or needs review
+```
+
+Examples:
+
+```text
+User: make game better
+Result: low completeness, high ambiguity
+AI-E: asks one focused scope-defining question
+
+User: make enemies react to grenades
+Result: high completeness, low ambiguity
+AI-E: proceeds to planning
+```
+
+Why this improves conversational decisions:
+
+- ambiguity and incompleteness are no longer treated as the same problem
+- the conversational loop can explain why it is asking instead of silently applying thresholds
+- stop conditions and question budgets now use calibrated confidence instead of one coarse heuristic
+
 AI-E now also includes a deterministic conversational refinement layer that runs before the Operator-Light Planner. This layer helps AI-E understand rough, vague, emotional, or low-detail user requests and either turn them into planner-ready task language or ask one small set of useful follow-up questions.
 
 What the Conversational Intent Refinement layer does:

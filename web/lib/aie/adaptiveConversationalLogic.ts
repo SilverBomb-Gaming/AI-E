@@ -1,4 +1,9 @@
 import type { PlanRiskLevel } from "./operatorLightPlanner";
+import {
+  computeConfidenceScore as computeIntentConfidenceScore,
+  scoreIntentConfidence,
+  type IntentConfidenceResult,
+} from "./intentConfidenceScoring";
 
 export type QuestionNecessity = "low" | "medium" | "high";
 
@@ -42,6 +47,10 @@ export type AdaptiveDecision = {
   should_ask_follow_up: boolean;
   selected_follow_up_question: string | null;
   proceed_to_planning: boolean;
+  decision_reason: string;
+  ambiguity_score: number;
+  completeness_score: number;
+  confidence_result: IntentConfidenceResult;
 };
 
 export type StopAskingResult = {
@@ -55,7 +64,7 @@ type PrioritizedQuestion = {
   score: number;
 };
 
-const CONFIDENCE_THRESHOLD = 75;
+const CONFIDENCE_THRESHOLD = 0.8;
 const MAX_FOLLOW_UPS = 3;
 const VAGUE_PATTERNS = [
   /^better$/i,
@@ -165,29 +174,19 @@ function buildFallbackQuestion(snapshot: AdaptiveConversationSnapshot): Prioriti
 }
 
 export function computeConfidenceScore(snapshot: AdaptiveConversationSnapshot): number {
-  let score = snapshot.latest_refinement.confidence_score;
-  const criticalMissingCount = countCriticalMissingInformation(snapshot);
-
-  if (snapshot.latest_refinement.planner_ready_request || snapshot.latest_refinement.should_create_plan) {
-    score += 12;
-  }
-
-  if (snapshot.missing_information.length === 0) {
-    score += 8;
-  }
-
-  score += Math.min(snapshot.answers.length * 6, 12);
-  score -= criticalMissingCount * 12;
-
-  if (hasRepeatedVagueAnswers(snapshot.answers)) {
-    score -= 16;
-  }
-
-  if (snapshot.latest_refinement.risk_level === "high" || snapshot.latest_refinement.risk_level === "blocked") {
-    score = Math.min(score, 30);
-  }
-
-  return clampScore(score);
+  return computeIntentConfidenceScore({
+    original_request: "",
+    interpreted_intent: "",
+    clarity_score: snapshot.latest_refinement.clarity_score,
+    follow_up_questions: snapshot.latest_refinement.follow_up_questions,
+    missing_information: snapshot.latest_refinement.missing_information,
+    ambiguity_flags: snapshot.latest_refinement.ambiguity_flags,
+    answers: snapshot.answers,
+    questions: snapshot.questions,
+    planner_ready_request: snapshot.latest_refinement.planner_ready_request,
+    should_create_plan: snapshot.latest_refinement.should_create_plan,
+    risk_level: snapshot.latest_refinement.risk_level,
+  });
 }
 
 export function selectBestFollowUpQuestion(snapshot: AdaptiveConversationSnapshot): {
@@ -273,7 +272,20 @@ export function determineNextAction(
   snapshot: AdaptiveConversationSnapshot,
   previousClarityScore?: number,
 ): AdaptiveDecision {
-  const confidenceScore = computeConfidenceScore(snapshot);
+  const confidenceResult = scoreIntentConfidence({
+    original_request: "",
+    interpreted_intent: "",
+    clarity_score: snapshot.latest_refinement.clarity_score,
+    follow_up_questions: snapshot.latest_refinement.follow_up_questions,
+    missing_information: snapshot.latest_refinement.missing_information,
+    ambiguity_flags: snapshot.latest_refinement.ambiguity_flags,
+    answers: snapshot.answers,
+    questions: snapshot.questions,
+    planner_ready_request: snapshot.latest_refinement.planner_ready_request,
+    should_create_plan: snapshot.latest_refinement.should_create_plan,
+    risk_level: snapshot.latest_refinement.risk_level,
+  });
+  const confidenceScore = confidenceResult.confidence_score;
   const stopResult = shouldStopAsking(snapshot, previousClarityScore);
   const bestQuestion = selectBestFollowUpQuestion(snapshot);
   const criticalMissingCount = countCriticalMissingInformation(snapshot);
@@ -285,7 +297,7 @@ export function determineNextAction(
     questionNecessity = "high";
   }
 
-  const proceedToPlanning = snapshot.latest_refinement.should_create_plan
+  const proceedToPlanning = confidenceResult.decision.proceed_to_planning
     || (stopResult.should_stop && snapshot.latest_refinement.risk_level !== "high" && snapshot.latest_refinement.risk_level !== "blocked");
 
   return {
@@ -296,5 +308,9 @@ export function determineNextAction(
     should_ask_follow_up: !proceedToPlanning && shouldAskFollowUp(snapshot, previousClarityScore),
     selected_follow_up_question: bestQuestion.question,
     proceed_to_planning: proceedToPlanning,
+    decision_reason: confidenceResult.decision_reason,
+    ambiguity_score: confidenceResult.ambiguity_score,
+    completeness_score: confidenceResult.completeness_score,
+    confidence_result: confidenceResult,
   };
 }

@@ -68,9 +68,12 @@ export type ConversationalLoopSession = {
   user_level_estimate: UserLevelEstimate;
   clarity_score: number;
   confidence_score: number;
+  ambiguity_score: number;
+  completeness_score: number;
   question_necessity: QuestionNecessity;
   question_priority: QuestionPriority;
   stop_reason: AdaptiveStopReason;
+  decision_reason: string;
   missing_information: string[];
   questions: ConversationalLoopQuestion[];
   answers: ConversationalLoopAnswer[];
@@ -385,9 +388,12 @@ export function evaluateConversationalLoop(
     user_level_estimate: refinement.user_level_estimate,
     clarity_score: refinement.clarity_score,
     confidence_score: computeConfidenceScore(buildAdaptiveSnapshot(session, refinement)),
+    ambiguity_score: adaptiveDecision.ambiguity_score,
+    completeness_score: adaptiveDecision.completeness_score,
     question_necessity: adaptiveDecision.question_necessity,
     question_priority: adaptiveDecision.question_priority,
     stop_reason: adaptiveDecision.stop_reason,
+    decision_reason: adaptiveDecision.decision_reason,
     missing_information: [...refinement.missing_information],
     questions,
     planner_ready_request: status === "planner_ready" ? createPlannerReadyRequest(session, refinement, adaptiveDecision.stop_reason) : null,
@@ -454,9 +460,12 @@ export function startConversationalLoop(
     user_level_estimate: baseRefinement.user_level_estimate,
     clarity_score: baseRefinement.clarity_score,
     confidence_score: adaptiveDecision.confidence_score,
+    ambiguity_score: adaptiveDecision.ambiguity_score,
+    completeness_score: adaptiveDecision.completeness_score,
     question_necessity: adaptiveDecision.question_necessity,
     question_priority: adaptiveDecision.question_priority,
     stop_reason: adaptiveDecision.stop_reason,
+    decision_reason: adaptiveDecision.decision_reason,
     missing_information: [...baseRefinement.missing_information],
     questions,
     answers: [],
@@ -531,9 +540,12 @@ export function answerConversationalLoopQuestion(
       ],
       next_action: "await-answer",
       status: "awaiting_clarification",
+      ambiguity_score: session.ambiguity_score,
+      completeness_score: session.completeness_score,
       question_necessity: session.question_necessity,
       question_priority: session.question_priority,
       stop_reason: session.stop_reason,
+      decision_reason: session.decision_reason,
     };
 
     return {
@@ -586,9 +598,12 @@ export function summarizeConversationalLoop(session: ConversationalLoopSession):
     `Current interpretation: ${session.current_interpretation}`,
     `Clarity: ${session.clarity_score}`,
     `Confidence: ${session.confidence_score}`,
+    `Ambiguity: ${session.ambiguity_score}`,
+    `Completeness: ${session.completeness_score}`,
     `Question necessity: ${session.question_necessity}`,
     `Question priority: ${session.question_priority}`,
     `Stop reason: ${session.stop_reason ?? "none"}`,
+    `Decision reason: ${session.decision_reason}`,
     answeredLines.length > 0 ? `Answers: ${answeredLines.join(" | ")}` : "Answers: none.",
     unansweredQuestions.length > 0 ? `Open questions: ${unansweredQuestions.join(" | ")}` : "Open questions: none.",
     session.planner_ready_request ? `Planner-ready request: ${session.planner_ready_request.rawRequest}` : "Planner-ready request: none.",

@@ -113,6 +113,7 @@ test("summary is readable", () => {
   assert.match(summary, /Status:/i);
   assert.match(summary, /Current interpretation:/i);
   assert.match(summary, /Question necessity:/i);
+  assert.match(summary, /Decision reason:/i);
 });
 
 test("works with existing conversationalIntentRefinement output", () => {

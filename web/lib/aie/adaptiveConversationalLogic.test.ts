@@ -21,7 +21,7 @@ test("high-confidence request skips questions and becomes planner_ready", () => 
 
   assert.equal(result.status, "planner_ready");
   assert.equal(result.session.questions.length, 0);
-  assert.ok(result.session.confidence_score >= 75);
+  assert.ok(result.session.confidence_score >= 0.8);
 });
 
 test("medium-confidence request asks one question then proceeds", () => {
@@ -193,6 +193,7 @@ test("determineNextAction proceeds when confidence is high enough", () => {
 
   assert.equal(decision.proceed_to_planning, true);
   assert.equal(decision.should_ask_follow_up, false);
+  assert.match(decision.decision_reason, /threshold|confidence/i);
 });
 
 test("computeConfidenceScore penalizes critical ambiguity and rewards answers", () => {
