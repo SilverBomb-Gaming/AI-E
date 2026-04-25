@@ -268,6 +268,56 @@ Why this improves robustness:
 - cleaner normalized input improves downstream ambiguity and confidence scoring
 - uncertainty is surfaced as flags instead of being hidden behind forced interpretation
 
+## Intent Decomposition And Recovery
+
+AI-E now also includes a deterministic intent decomposition layer that sits around the front of conversational intake. This layer breaks multi-intent requests into structured sub-intents, recovers likely meanings from extremely vague prompts, and flags conflicting signals before planning begins.
+
+What the decomposition layer does:
+
+- splits multi-part requests into ordered sub-intents
+- preserves the original user input while producing cleaner structured summaries
+- generates 1 to 3 bounded recovery candidates for very weak or low-signal prompts
+- prioritizes more specific intents ahead of broader vague ones
+- routes conflicting or unclear phrasing toward clarification instead of guessing
+
+Current contract:
+
+- module path: `web/lib/aie/intentDecomposition.ts`
+- main entry points: `decomposeIntent(input)`, `detectMultipleIntents(input)`, `recoverVagueIntent(input)`, `prioritizeIntents(intents)`, and `summarizeDecomposition(result)`
+- output fields: `original_input`, `normalized_input`, `sub_intents`, `recovery_candidates`, `primary_intent`, `multiple_intents_detected`, `conflicting_signals_detected`, `should_route_to_clarification`, `decomposition_flags`, and `decomposition_confidence`
+
+How it fits into conversational intake:
+
+```text
+raw user input
+-> intent decomposition and recovery
+-> intent normalization
+-> conversational refinement
+-> adaptive conversational loop
+-> planner-ready request
+```
+
+Examples:
+
+```text
+Input: fix docs and improve enemy reaction to grenades
+Output: two ordered sub-intents
+
+Input: make it better
+Output: 1-3 likely recovery candidates
+Flags: vague-intent-recovery, needs-clarification
+
+Input: make enemies faster and slower
+Output: clarification route
+Flags: conflicting-signals
+```
+
+Why this completes any-user prompt handling:
+
+- AI-E can now break apart messy compound prompts instead of treating them as one blurred request
+- extremely vague input can be recovered into bounded clarification candidates without hallucinating a final plan
+- conflicting phrasing is now surfaced explicitly before it pollutes downstream planning
+
 ## Conversational Tone Adaptation
 
 AI-E now also includes a deterministic conversational tone adaptation layer that chooses how to explain, clarify, and hand off work based on user wording, estimated skill level, request style, and confidence. This layer changes communication guidance only. It does not change planning logic, execution behavior, or safety boundaries.
