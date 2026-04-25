@@ -29,6 +29,58 @@ The intended operating model is: define a bounded goal, start a session, watch t
 
 ## Conversational Intent Refinement
 
+## Multi-Turn Conversational Loop
+
+AI-E now also includes a deterministic multi-turn conversational loop that runs before conversational refinement and planning. This layer lets AI-E ask a small number of useful follow-up questions, remember clarification answers inside one session, and only produce a planner-ready request when the user intent becomes clear enough.
+
+What the multi-turn loop does:
+
+- starts a clarification session from a raw user request
+- runs conversational intent refinement on the current interpreted request state
+- asks at most 1 to 3 follow-up questions at a time when ambiguity remains
+- stores user answers, updated interpretation, missing information, and transcript turns inside the session
+- produces a planner-ready request only when the clarified request is specific enough and safe enough
+- blocks unsafe or overly broad autonomy requests before they can reach planning
+
+Current contract:
+
+- module path: `web/lib/aie/multiTurnConversationalLoop.ts`
+- main entry points: `startConversationalLoop(input)`, `answerConversationalLoopQuestion(session, answer)`, `evaluateConversationalLoop(session)`, and `summarizeConversationalLoop(session)`
+- session statuses: `awaiting_clarification`, `planner_ready`, `blocked`, and `needs_review`
+
+How it fits into the bounded intake bridge:
+
+```text
+raw user message
+-> multi-turn conversational loop
+-> conversational intent refinement
+-> planner-ready request
+-> Operator-Light Planner
+```
+
+Example:
+
+```text
+User: make game better
+AI-E: Which part should improve first: enemies, weapons, controls, visuals, or level design?
+User: enemies
+AI-E: What should enemies do better first: react faster, aim better, flank smarter, or respond to player actions more clearly?
+User: when grenade blows up
+AI-E: creates a planner-ready request for enemy reaction behavior to grenade explosions
+```
+
+Why this improves any-user usability:
+
+- vague or low-vocabulary requests no longer depend on chat history alone to become actionable
+- the system preserves the original request, questions asked, answers received, updated interpretation, and next action in one deterministic session record
+- downstream refinement and planning receive clearer bounded input without pretending unclear intent is already execution-ready
+
+Current limitation:
+
+- this version is deterministic and rule-based only
+- no live LLM dialogue or external API calls are used
+- it is not wired into autonomous execution yet
+
 AI-E now also includes a deterministic conversational refinement layer that runs before the Operator-Light Planner. This layer helps AI-E understand rough, vague, emotional, or low-detail user requests and either turn them into planner-ready task language or ask one small set of useful follow-up questions.
 
 What the Conversational Intent Refinement layer does:
