@@ -1255,6 +1255,50 @@ Why this improves long-lived autonomous safety:
 - stale context is surfaced explicitly before a resumed chain can continue
 - longer-lived workflows remain supervised because neither approval nor validation is silently carried forward forever
 
+## Supervised Autonomous Task Orchestration
+
+AI-E now also includes a supervised autonomous orchestration layer that can suggest what to do next after a bounded chain completes, while staying approval-aware, confidence-gated, and explicitly bounded. This layer does not execute work itself. It only proposes the next supervised continuation steps from prior chain context and persisted results.
+
+What the orchestration layer does:
+
+- proposes logical next tasks after a completed chain
+- uses prior chain context and persisted validation state
+- stops when continuation confidence is too low
+- limits the number of proposed follow-up steps
+- requires explicit approval before any continuation can run
+- refuses to continue when persisted context is stale or reapproval is required
+
+Current contract:
+
+- module path: `web/lib/aie/autonomousOrchestrator.ts`
+- main types: `OrchestrationPlan`, `OrchestrationStep`, `OrchestrationDecision`, and `OrchestrationStatus`
+- main entry points: `decideAutonomousOrchestration(input)` and `summarizeOrchestration(decision)`
+- statuses: `orchestration_ready`, `awaiting_supervisor_approval`, `orchestration_blocked`, and `orchestration_complete`
+
+Example:
+
+```text
+Bounded chain completed
+Persisted validation is still fresh
+Confidence is high enough to continue
+
+AI-E proposes:
+1. review follow-up opportunities
+2. plan the next bounded improvement
+
+Execution does not continue until explicit approval is granted.
+```
+
+Why this improves supervised autonomy:
+
+- AI-E can now suggest what to do next instead of stopping at the original request boundary
+- continuation remains bounded because only a small deterministic set of next steps is proposed
+- supervision remains intact because orchestration never bypasses approval, freshness checks, or validation gates
+
+Milestone direction:
+
+- this is the first step toward AI-E continuing useful work intelligently without needing every next step spelled out by the operator
+
 ## Operator-Light Planner
 
 AI-E now also includes an Operator-Light Planner for the post-100% expansion phase. This layer takes rough operator intent and converts it into a deterministic execution packet for Codex, Copilot, or future autonomous agents without directly mutating code from vague instructions.
