@@ -131,7 +131,7 @@ Current behavior:
 
 Current safety boundary:
 
-- live mode is visibility-first and does not enable dangerous runtime mutation
+- live mode reads persisted runtime state and applies only bounded approved mutations through the runtime mutation executor
 - demo mode still allows local UI state transitions for approve, pause, resume, and retry
 - seeded demo data is never presented as live runtime state
 
@@ -157,7 +157,72 @@ Safety boundary:
 - this layer does not run shell commands, commit, push, deploy, or bypass approvals
 - it does not mutate repo files directly
 - it validates the requested action against the current operator state and only produces safe runtime intents
-- accepted live actions are intent-producing only for now; live mutation remains pending a later bounded integration step
+- accepted live actions can now be handed to the runtime mutation executor for bounded persisted state updates
+
+## Runtime Mutation Executor
+
+AI-E can now execute safe runtime intents and persist runtime state changes through the runtime state store.
+
+Current contract:
+
+- module path: `web/lib/aie/runtimeMutationExecutor.ts`
+- post-mutation loop controller: `web/lib/aie/executionLoopController.ts`
+- supported runtime intents: `grant_session_approval`, `pause_active_goal`, `resume_paused_goal`, `mark_goal_retry_requested`, and `no_op`
+- output statuses: `mutation_applied`, `mutation_rejected`, and `mutation_no_op`
+
+Execution flow:
+
+- operator clicks Approve, Pause, Resume, or Retry
+- the safe runtime action bridge validates the request and produces a runtime intent
+- the runtime mutation executor validates the persisted live runtime state again before mutation
+- the updated operator snapshot is persisted only through `web/lib/aie/runtimeStateStore.ts`
+- approval, resume, and retry mutations may trigger one bounded background queue pass through the execution loop controller
+- that bounded pass reuses the existing background queue and session runtime, then rebuilds the dashboard from the queue result
+- the operator dashboard refreshes against the persisted live runtime state
+
+Example:
+
+- operator clicks Approve on a live runtime approval requirement
+- flow: `approve_goal -> grant_session_approval -> mutation applied -> session unblocked`
+
+Safety boundary:
+
+- the executor does not run shell commands or modify repo files
+- it does not bypass validation layers, approval freshness checks, session constraints, or dependency constraints
+- the post-mutation execution loop is bounded by queue/session limits and does not create a second autonomous runtime path
+- persisted changes are bounded to the runtime state store and include deterministic audit events
+
+## Continuous Runtime Loop
+
+AI-E can now run repeated bounded execution cycles over time against persisted live runtime state instead of stopping after a single post-mutation pass.
+
+Current contract:
+
+- module path: `web/lib/aie/continuousRuntimeLoop.ts`
+- entry points: `runContinuousRuntimeLoop()`, `loadContinuousRuntimeLoopConfig()`, `createContinuousRuntimeLoopClock()`, and `summarizeContinuousRuntimeLoop()`
+- loop statuses: `loop_running`, `loop_completed`, `loop_blocked`, `loop_paused`, `loop_stopped`, and `loop_error`
+- trigger sources: runtime entrypoint start, time-based trigger, and accepted live operator mutations
+
+Execution flow:
+
+- load the persisted runtime state from `web/lib/aie/runtimeStateStore.ts`
+- stop immediately if validation, approval, blocked-only, paused-only, or completed-only conditions already apply
+- run one bounded execution pass through `web/lib/aie/executionLoopController.ts`
+- persist the updated operator dashboard and continuous loop snapshot
+- advance to the next bounded tick only when the configured interval budget is satisfied
+- stop when work completes, approvals are needed, blockers remain, errors occur, or the max tick bound is reached
+
+Example:
+
+- operator clicks Approve on a live runtime approval requirement
+- flow: `approve_goal -> grant_session_approval -> mutation applied -> continuous loop starts -> bounded execution ticks run -> goals progress -> loop stops when blocked, paused, completed, or max ticks are reached`
+
+Safety boundary:
+
+- this is controlled, repeating, bounded execution rather than unbounded background autonomy
+- each tick still reuses the existing bounded execution loop controller and queue/session runtime guardrails
+- freshness requirements, blocker stops, and max tick limits remain enforced on every run
+- the continuous loop persists only runtime state snapshots and deterministic tick history; it does not bypass repo mutation approvals
 
 ## Conversational Intent Refinement
 

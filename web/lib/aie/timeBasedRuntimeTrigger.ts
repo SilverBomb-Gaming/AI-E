@@ -3,10 +3,18 @@ import {
   type BackgroundRunHistory,
 } from "./backgroundRunHistory";
 import {
+  createContinuousRuntimeLoopClock,
+  runContinuousRuntimeLoop,
+  type ContinuousRuntimeLoopClock,
+  type ContinuousRuntimeLoopConfig,
+  type ContinuousRuntimeLoopResult,
+} from "./continuousRuntimeLoop";
+import {
   runBackgroundSessionQueue,
   type BackgroundQueueResult,
   type BackgroundSessionQueue,
 } from "./backgroundSessionQueue";
+import type { RuntimeStateRecord, RuntimeStateStore } from "./runtimeStateStore";
 
 export type TimeTriggerStatus =
   | "trigger_idle"
@@ -45,6 +53,16 @@ export type TimeTriggerResult = {
   queue: BackgroundSessionQueue;
   history: BackgroundRunHistory;
   run_results: BackgroundQueueResult[];
+  reason: string;
+};
+
+export type TimeTriggeredContinuousLoopResult = {
+  status: TimeTriggerStatus;
+  triggered: boolean;
+  now: string;
+  state: TimeTriggerState;
+  runtime_state: RuntimeStateRecord | null;
+  loop_result: ContinuousRuntimeLoopResult | null;
   reason: string;
 };
 
@@ -203,4 +221,61 @@ export function summarizeTrigger(result: TimeTriggerResult): string {
     `Last run at: ${result.state.last_run_at ?? "none"}`,
     `Reason: ${result.reason}`,
   ].join("\n");
+}
+
+export function runTimeTriggeredContinuousLoop(
+  state: TimeTriggerState,
+  runtimeStateStore: RuntimeStateStore,
+  config: Omit<ContinuousRuntimeLoopConfig, "started_at">,
+  now: string,
+  clock?: ContinuousRuntimeLoopClock,
+): TimeTriggeredContinuousLoopResult {
+  const nextState = cloneState(state);
+  const currentNow = normalizeText(now);
+  if (!shouldTriggerRun(nextState, currentNow)) {
+    return {
+      status: nextState.last_run_at === null ? "trigger_waiting" : "trigger_skipped",
+      triggered: false,
+      now: currentNow,
+      state: {
+        ...nextState,
+        trigger_status: nextState.last_run_at === null ? "trigger_waiting" : "trigger_skipped",
+        last_result: nextState.last_result,
+      },
+      runtime_state: null,
+      loop_result: null,
+      reason: nextState.last_run_at === null
+        ? "Trigger is waiting for a valid scheduled invocation time."
+        : "The configured interval has not elapsed since the last continuous runtime loop run.",
+    };
+  }
+
+  const loopResult = runContinuousRuntimeLoop(
+    runtimeStateStore,
+    {
+      ...config,
+      started_at: currentNow,
+      tick_interval_ms: config.tick_interval_ms ?? nextState.config.interval_ms,
+      max_runs_per_invocation: config.max_runs_per_invocation ?? nextState.config.max_runs_per_invocation,
+    },
+    clock ?? createContinuousRuntimeLoopClock(currentNow, config.tick_interval_ms ?? nextState.config.interval_ms),
+  );
+
+  const completedState: TimeTriggerState = {
+    ...nextState,
+    last_run_at: currentNow,
+    runs_executed: nextState.runs_executed + (loopResult.runtime_state ? 1 : 0),
+    trigger_status: loopResult.runtime_state ? "trigger_completed" : "trigger_skipped",
+    last_result: null,
+  };
+
+  return {
+    status: completedState.trigger_status,
+    triggered: loopResult.runtime_state !== null,
+    now: currentNow,
+    state: completedState,
+    runtime_state: loopResult.runtime_state,
+    loop_result: loopResult,
+    reason: loopResult.reason,
+  };
 }

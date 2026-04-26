@@ -8,12 +8,26 @@ import {
   enqueueBackgroundSession,
 } from "./backgroundSessionQueue";
 import {
+  createBackgroundRuntimeService,
+  stopBackgroundRuntimeService,
+} from "./backgroundRuntimeService";
+import {
+  createContinuousRuntimeLoopClock,
+} from "./continuousRuntimeLoop";
+import {
   createTimeTrigger,
+  runTimeTriggeredContinuousLoop,
   runTimeTriggeredCycle,
   shouldTriggerRun,
   summarizeTrigger,
   updateTriggerState,
 } from "./timeBasedRuntimeTrigger";
+import {
+  createRuntimeStateStore,
+  loadRuntimeState,
+  persistRuntimeStateRecord,
+  saveRuntimeState,
+} from "./runtimeStateStore";
 
 function createSession(goal: string, stepTitle = goal) {
   return createAutonomousWorkSession({
@@ -51,6 +65,63 @@ function createQueue() {
   queue = enqueueBackgroundSession(queue, createSession("BABYLON grenade polish", "Complete BABYLON grenade polish"));
   queue = enqueueBackgroundSession(queue, createSession("AI-E docs cleanup", "Complete AI-E docs cleanup"));
   return queue;
+}
+
+function createLoopStore() {
+  const store = createRuntimeStateStore();
+  const service = createBackgroundRuntimeService({
+    tick_interval_ms: 60_000,
+    max_ticks_per_run: 3,
+    max_runs_per_invocation: 1,
+    operator_away_mode: true,
+    require_supervised_scope: true,
+    require_fresh_approvals: true,
+    require_fresh_context: true,
+  });
+  const record = saveRuntimeState(store, stopBackgroundRuntimeService({
+    ...service,
+    started_at: "2026-04-25T10:00:00.000Z",
+    stopped_at: "2026-04-25T10:00:00.000Z",
+    status: "service_idle",
+  }, "max_ticks_reached"), "bounded_batch");
+  const persisted = loadRuntimeState(store, record.runtime_id);
+
+  if (!persisted) {
+    throw new Error("Expected persisted runtime record.");
+  }
+
+  persisted.operator_dashboard_state = {
+    active_goal: {
+      goal_id: "trigger-goal-active",
+      description: "Advance trigger runtime goal",
+      priority: "high",
+      status: "active",
+      explanation: "The active goal is ready to continue.",
+      recommended_action: null,
+      depends_on_goal_ids: [],
+      blocking_goal_ids: [],
+      conflict_goal_ids: [],
+      last_updated_at: "2026-04-25T10:09:00.000Z",
+    },
+    queued_goals: [],
+    blocked_goals: [],
+    completed_goals: [],
+    paused_goals: [],
+    dependency_blockers: [],
+    conflict_blockers: [],
+    recent_failures: [],
+    recovery_recommendations: [],
+    approvals_required: [],
+    validation_issues: [],
+    runtime_status: { status: "runtime_ready", explanation: "The runtime is ready." },
+    session_status: { status: "session_running", explanation: "The session is running." },
+    queue_status: { status: "queue_running", explanation: "Queued work is available." },
+    scheduler_status: { status: "goal_selected", explanation: "An active goal is selected." },
+    last_updated_at: "2026-04-25T10:10:00.000Z",
+  };
+  persistRuntimeStateRecord(store, persisted);
+
+  return { store, record: persisted };
 }
 
 test("triggers run after interval elapsed", () => {
@@ -257,4 +328,31 @@ test("shouldTriggerRun checks elapsed interval", () => {
 
   assert.equal(shouldTriggerRun(first.state, "2026-04-25T10:10:30.000Z"), false);
   assert.equal(shouldTriggerRun(first.state, "2026-04-25T10:11:00.000Z"), true);
+});
+
+test("time trigger invokes continuous runtime loop when interval elapses", () => {
+  const seeded = createLoopStore();
+  const trigger = createTimeTrigger({
+    interval_ms: 60_000,
+    max_runs_per_invocation: 1,
+    allow_empty_runs: false,
+    require_fresh_approvals: true,
+    require_fresh_context: true,
+  });
+
+  const result = runTimeTriggeredContinuousLoop(
+    trigger,
+    seeded.store,
+    {
+      runtime_id: seeded.record.runtime_id,
+      profile_name: "bounded_batch",
+      max_ticks_per_run: 2,
+    },
+    "2026-04-25T10:10:00.000Z",
+    createContinuousRuntimeLoopClock("2026-04-25T10:10:00.000Z", 60_000),
+  );
+
+  assert.equal(result.status, "trigger_completed");
+  assert.equal(result.triggered, true);
+  assert.equal(result.loop_result?.runtime_state?.continuous_loop?.ticks_attempted, 2);
 });

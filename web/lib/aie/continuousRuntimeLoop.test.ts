@@ -1,0 +1,326 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import {
+  createBackgroundRuntimeService,
+  stopBackgroundRuntimeService,
+} from "./backgroundRuntimeService";
+import type { OperatorDashboardState } from "./operatorDashboardState";
+import {
+  createContinuousRuntimeLoopClock,
+  runContinuousRuntimeLoop,
+  summarizeContinuousRuntimeLoop,
+} from "./continuousRuntimeLoop";
+import {
+  createRuntimeStateStore,
+  loadRuntimeState,
+  persistRuntimeStateRecord,
+  saveRuntimeState,
+} from "./runtimeStateStore";
+
+function createStoppedService() {
+  const service = createBackgroundRuntimeService({
+    tick_interval_ms: 60_000,
+    max_ticks_per_run: 3,
+    max_runs_per_invocation: 1,
+    operator_away_mode: true,
+    require_supervised_scope: true,
+    require_fresh_approvals: true,
+    require_fresh_context: true,
+  });
+
+  return stopBackgroundRuntimeService({
+    ...service,
+    started_at: "2026-04-26T11:50:00.000Z",
+    stopped_at: "2026-04-26T11:55:00.000Z",
+    last_tick_at: "2026-04-26T11:55:00.000Z",
+    status: "service_completed",
+    ticks_attempted: 1,
+    ticks_completed: 1,
+  }, "max_ticks_reached");
+}
+
+function createGoal(overrides: Partial<OperatorDashboardState["queued_goals"][number]> & { goal_id: string; description: string }) {
+  return {
+    goal_id: overrides.goal_id,
+    description: overrides.description,
+    priority: overrides.priority ?? "medium",
+    status: overrides.status ?? "pending",
+    explanation: overrides.explanation ?? `${overrides.description} is ready.`,
+    recommended_action: overrides.recommended_action ?? null,
+    depends_on_goal_ids: [...(overrides.depends_on_goal_ids ?? [])],
+    blocking_goal_ids: [...(overrides.blocking_goal_ids ?? [])],
+    conflict_goal_ids: [...(overrides.conflict_goal_ids ?? [])],
+    last_updated_at: overrides.last_updated_at ?? "2026-04-26T12:00:00.000Z",
+  };
+}
+
+function createDashboardState(): OperatorDashboardState {
+  return {
+    active_goal: createGoal({
+      goal_id: "goal-active",
+      description: "Advance active runtime goal",
+      priority: "high",
+      status: "active",
+      explanation: "The active goal is ready to continue.",
+    }),
+    queued_goals: [createGoal({
+      goal_id: "goal-queued",
+      description: "Queued follow-up runtime goal",
+      priority: "medium",
+    })],
+    blocked_goals: [],
+    completed_goals: [],
+    paused_goals: [],
+    dependency_blockers: [],
+    conflict_blockers: [],
+    recent_failures: [],
+    recovery_recommendations: [],
+    approvals_required: [],
+    validation_issues: [],
+    runtime_status: {
+      status: "runtime_ready",
+      explanation: "The runtime is ready.",
+    },
+    session_status: {
+      status: "session_running",
+      explanation: "The session is running.",
+    },
+    queue_status: {
+      status: "queue_running",
+      explanation: "Queued work is available.",
+    },
+    scheduler_status: {
+      status: "goal_selected",
+      explanation: "An active goal is selected.",
+    },
+    last_updated_at: "2026-04-26T12:00:00.000Z",
+  };
+}
+
+function createSeededRuntimeRecord(mutateState?: (state: OperatorDashboardState) => void) {
+  const store = createRuntimeStateStore({ stale_after_ms: 10 * 60 * 1000 });
+  const service = {
+    ...createStoppedService(),
+    status: "service_idle" as const,
+    stop_reason: "not_started" as const,
+    blockers: [],
+  };
+  const record = saveRuntimeState(store, service, "operator_away_safe");
+  const currentRecord = loadRuntimeState(store, record.runtime_id);
+
+  if (!currentRecord) {
+    throw new Error("Expected a persisted runtime record.");
+  }
+
+  currentRecord.operator_dashboard_state = createDashboardState();
+  mutateState?.(currentRecord.operator_dashboard_state);
+  const persistedRecord = persistRuntimeStateRecord(store, currentRecord);
+
+  return {
+    store,
+    record: persistedRecord,
+  };
+}
+
+test("loop runs multiple cycles", () => {
+  const seeded = createSeededRuntimeRecord();
+  const result = runContinuousRuntimeLoop(
+    seeded.store,
+    {
+      runtime_id: seeded.record.runtime_id,
+      profile_name: "bounded_batch",
+      started_at: "2026-04-26T12:01:00.000Z",
+    },
+    createContinuousRuntimeLoopClock("2026-04-26T12:01:00.000Z", 60_000),
+  );
+
+  assert.equal(result.ticks.length >= 2, true);
+  assert.equal(result.runtime_state?.continuous_loop?.ticks_attempted, result.ticks.length);
+});
+
+test("loop respects tick interval", () => {
+  const seeded = createSeededRuntimeRecord();
+  const times = ["2026-04-26T12:01:00.000Z", "2026-04-26T12:01:30.000Z"];
+  let index = 0;
+  const clock = {
+    nextTickTime() {
+      const value = times[index];
+      if (!value) {
+        throw new Error("No more deterministic clock values available.");
+      }
+      index += 1;
+      return value;
+    },
+  };
+
+  const result = runContinuousRuntimeLoop(seeded.store, {
+    runtime_id: seeded.record.runtime_id,
+    tick_interval_ms: 60_000,
+    max_ticks_per_run: 3,
+    max_runs_per_invocation: 1,
+    started_at: "2026-04-26T12:01:00.000Z",
+  }, clock);
+
+  assert.equal(result.status, "loop_stopped");
+  assert.equal(result.ticks.length, 1);
+  assert.match(result.reason, /tick interval/i);
+});
+
+test("loop stops on blocker", () => {
+  const seeded = createSeededRuntimeRecord((state) => {
+    state.active_goal = null;
+    state.queued_goals = [];
+    state.blocked_goals = [{
+      ...createGoal({
+        goal_id: "goal-blocked",
+        description: "Blocked goal",
+      }),
+      blocker_type: "dependency",
+      blocker_ids: ["goal-prereq"],
+    }];
+  });
+
+  const result = runContinuousRuntimeLoop(seeded.store, {
+    runtime_id: seeded.record.runtime_id,
+    started_at: "2026-04-26T12:01:00.000Z",
+  });
+
+  assert.equal(result.status, "loop_blocked");
+  assert.equal(result.ticks.length, 0);
+});
+
+test("loop stops on validation failure", () => {
+  const seeded = createSeededRuntimeRecord((state) => {
+    state.validation_issues = [{
+      goal_id: "goal-active",
+      source: "session_runtime",
+      status: "validation_failed",
+      recommendation: "review",
+      summary: "Validation failed.",
+    }];
+  });
+
+  const result = runContinuousRuntimeLoop(seeded.store, {
+    runtime_id: seeded.record.runtime_id,
+    started_at: "2026-04-26T12:01:00.000Z",
+  });
+
+  assert.equal(result.status, "loop_blocked");
+  assert.equal(result.ticks.length, 0);
+});
+
+test("loop stops on approval requirement", () => {
+  const seeded = createSeededRuntimeRecord((state) => {
+    state.approvals_required = [{
+      goal_id: "goal-active",
+      approvals_needed: ["session"],
+      reason: "Session approval required.",
+      recommended_action: "Grant session approval.",
+    }];
+  });
+
+  const result = runContinuousRuntimeLoop(seeded.store, {
+    runtime_id: seeded.record.runtime_id,
+    started_at: "2026-04-26T12:01:00.000Z",
+  });
+
+  assert.equal(result.status, "loop_paused");
+  assert.equal(result.ticks.length, 0);
+});
+
+test("loop stops on max ticks", () => {
+  const seeded = createSeededRuntimeRecord();
+  const result = runContinuousRuntimeLoop(
+    seeded.store,
+    {
+      runtime_id: seeded.record.runtime_id,
+      tick_interval_ms: 60_000,
+      max_ticks_per_run: 2,
+      max_runs_per_invocation: 1,
+      started_at: "2026-04-26T12:01:00.000Z",
+    },
+    createContinuousRuntimeLoopClock("2026-04-26T12:01:00.000Z", 60_000),
+  );
+
+  assert.equal(result.status, "loop_stopped");
+  assert.equal(result.runtime_state?.continuous_loop?.ticks_attempted, 2);
+});
+
+test("loop completes when no work remains", () => {
+  const seeded = createSeededRuntimeRecord((state) => {
+    state.active_goal = null;
+    state.queued_goals = [];
+  });
+
+  const result = runContinuousRuntimeLoop(seeded.store, {
+    runtime_id: seeded.record.runtime_id,
+    started_at: "2026-04-26T12:01:00.000Z",
+  });
+
+  assert.equal(result.status, "loop_completed");
+  assert.equal(result.ticks.length, 0);
+});
+
+test("loop persists state after each cycle", () => {
+  const seeded = createSeededRuntimeRecord();
+  const result = runContinuousRuntimeLoop(
+    seeded.store,
+    {
+      runtime_id: seeded.record.runtime_id,
+      tick_interval_ms: 60_000,
+      max_ticks_per_run: 2,
+      max_runs_per_invocation: 1,
+      started_at: "2026-04-26T12:01:00.000Z",
+    },
+    createContinuousRuntimeLoopClock("2026-04-26T12:01:00.000Z", 60_000),
+  );
+  const persisted = loadRuntimeState(seeded.store, seeded.record.runtime_id);
+
+  assert.equal(persisted?.continuous_loop?.ticks_attempted, result.ticks.length);
+  assert.equal(persisted?.last_tick_at, result.runtime_state?.last_tick_at);
+});
+
+test("loop integrates with executionLoopController", () => {
+  const seeded = createSeededRuntimeRecord();
+  const result = runContinuousRuntimeLoop(seeded.store, {
+    runtime_id: seeded.record.runtime_id,
+    tick_interval_ms: 60_000,
+    max_ticks_per_run: 1,
+    max_runs_per_invocation: 1,
+    started_at: "2026-04-26T12:01:00.000Z",
+  }, createContinuousRuntimeLoopClock("2026-04-26T12:01:00.000Z", 60_000));
+
+  assert.equal(result.runtime_state?.last_trigger_result?.status, "loop_executed");
+  assert.equal(result.runtime_state?.operator_dashboard_state?.active_goal?.goal_id, "goal-active");
+});
+
+test("deterministic loop behavior", () => {
+  const firstSeeded = createSeededRuntimeRecord();
+  const secondSeeded = createSeededRuntimeRecord();
+
+  const first = summarizeContinuousRuntimeLoop(runContinuousRuntimeLoop(
+    firstSeeded.store,
+    {
+      runtime_id: firstSeeded.record.runtime_id,
+      tick_interval_ms: 60_000,
+      max_ticks_per_run: 2,
+      max_runs_per_invocation: 1,
+      started_at: "2026-04-26T12:01:00.000Z",
+    },
+    createContinuousRuntimeLoopClock("2026-04-26T12:01:00.000Z", 60_000),
+  ));
+  const second = summarizeContinuousRuntimeLoop(runContinuousRuntimeLoop(
+    secondSeeded.store,
+    {
+      runtime_id: secondSeeded.record.runtime_id,
+      tick_interval_ms: 60_000,
+      max_ticks_per_run: 2,
+      max_runs_per_invocation: 1,
+      started_at: "2026-04-26T12:01:00.000Z",
+    },
+    createContinuousRuntimeLoopClock("2026-04-26T12:01:00.000Z", 60_000),
+  ));
+
+  assert.equal(first, second);
+});

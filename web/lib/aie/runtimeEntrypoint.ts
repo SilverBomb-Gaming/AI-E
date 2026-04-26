@@ -26,8 +26,16 @@ import {
   type RuntimeProfile,
 } from "./runtimeProfiles";
 import {
+  createContinuousRuntimeLoopClock,
+  runContinuousRuntimeLoop,
+  summarizeContinuousRuntimeLoop,
+  type ContinuousRuntimeLoopClock,
+  type ContinuousRuntimeLoopResult,
+} from "./continuousRuntimeLoop";
+import {
   createRuntimeStateStore,
   evaluateBootResume,
+  loadRuntimeState,
   saveRuntimeState,
   summarizeBootResume,
   type RuntimeBootResumeResult,
@@ -81,6 +89,7 @@ export type RuntimeEntrypointDependencies = {
   queue?: BackgroundSessionQueue;
   history?: BackgroundRunHistory;
   clock?: BackgroundRuntimeClock;
+  continuous_loop_clock?: ContinuousRuntimeLoopClock;
   summaryWriter?: (summary: string) => void;
   runtime_state_store?: RuntimeStateStore;
 };
@@ -93,6 +102,7 @@ export type RuntimeEntrypointResult = {
   service_result: BackgroundRuntimeServiceResult | null;
   queue: BackgroundSessionQueue;
   history: BackgroundRunHistory;
+  continuous_loop_result: ContinuousRuntimeLoopResult | null;
   digest: OperatorAwayDigest;
   reason: string;
   summary: string;
@@ -254,6 +264,10 @@ export function summarizeRuntimeEntrypoint(result: RuntimeEntrypointResult): str
     lines.push(latestQueueSummary);
   }
 
+  if (result.continuous_loop_result) {
+    lines.push(summarizeContinuousRuntimeLoop(result.continuous_loop_result));
+  }
+
   return lines.join("\n");
 }
 
@@ -294,6 +308,7 @@ export function runBackgroundRuntimeEntrypoint(
       service_result: null,
       queue,
       history,
+      continuous_loop_result: null,
       digest: buildOperatorAwayDigest(history),
       reason: bootResume.reason,
       summary: "",
@@ -322,6 +337,7 @@ export function runBackgroundRuntimeEntrypoint(
       service_result: null,
       queue,
       history,
+      continuous_loop_result: null,
       digest: buildOperatorAwayDigest(history),
       reason: "Dry-run mode validated the runtime entrypoint configuration without starting the background runtime service.",
       summary: "",
@@ -330,6 +346,67 @@ export function runBackgroundRuntimeEntrypoint(
     const summary = summarizeRuntimeEntrypoint(dryRunResult);
     const finalized = {
       ...dryRunResult,
+      summary,
+    };
+    dependencies.summaryWriter?.(summary);
+    return finalized;
+  }
+
+  const persistedRuntimeRecord = loadRuntimeState(runtimeStateStore, service.service_id);
+  if (persistedRuntimeRecord?.operator_dashboard_state) {
+    const continuousLoopResult = runContinuousRuntimeLoop(
+      runtimeStateStore,
+      {
+        runtime_id: service.service_id,
+        profile_name: config.profile_name,
+        tick_interval_ms: config.tick_interval_ms,
+        max_ticks_per_run: config.max_ticks_per_run,
+        max_runs_per_invocation: config.max_runs_per_invocation,
+        require_fresh_approvals: config.require_fresh_approvals,
+        require_fresh_context: config.require_fresh_context,
+        stop_on_blocker: config.stop_on_blocker,
+        stop_on_error: config.stop_on_error,
+        started_at: config.started_at,
+      },
+      dependencies.continuous_loop_clock ?? createContinuousRuntimeLoopClock(config.started_at, config.tick_interval_ms),
+    );
+
+    const loopRecord = continuousLoopResult.runtime_state;
+    const serviceFromLoop: BackgroundRuntimeServiceState = {
+      ...service,
+      started_at: loopRecord?.last_started_at ?? config.started_at,
+      stopped_at: loopRecord?.last_stopped_at ?? config.started_at,
+      status: loopRecord?.last_status ?? service.status,
+      ticks_attempted: loopRecord?.ticks_attempted ?? service.ticks_attempted,
+      ticks_completed: loopRecord?.ticks_completed ?? service.ticks_completed,
+      last_tick_at: loopRecord?.last_tick_at ?? service.last_tick_at,
+      last_trigger_result: null,
+      tick_history: [],
+      stop_reason: loopRecord?.stop_reason ?? service.stop_reason,
+      blockers: loopRecord?.blockers ?? service.blockers,
+    };
+
+    const loopStatus = continuousLoopResult.status;
+    const result: RuntimeEntrypointResult = {
+      status: loopStatus === "loop_blocked" || loopStatus === "loop_error"
+        ? "entrypoint_blocked"
+        : loopStatus === "loop_paused"
+          ? "entrypoint_paused"
+          : "entrypoint_completed",
+      config,
+      boot_resume: bootResume,
+      service: serviceFromLoop,
+      service_result: null,
+      queue,
+      history,
+      continuous_loop_result: continuousLoopResult,
+      digest: buildOperatorAwayDigest(history),
+      reason: continuousLoopResult.reason,
+      summary: "",
+    };
+    const summary = summarizeRuntimeEntrypoint(result);
+    const finalized = {
+      ...result,
       summary,
     };
     dependencies.summaryWriter?.(summary);
@@ -351,6 +428,7 @@ export function runBackgroundRuntimeEntrypoint(
     service_result: serviceResult,
     queue: serviceResult.queue,
     history: serviceResult.history,
+    continuous_loop_result: null,
     digest: buildOperatorAwayDigest(serviceResult.history),
     reason: serviceResult.reason,
     summary: "",

@@ -1,0 +1,477 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import {
+  createBackgroundRuntimeService,
+  stopBackgroundRuntimeService,
+} from "./backgroundRuntimeService";
+import type { OperatorDashboardState } from "./operatorDashboardState";
+import { createRuntimeStateStore, loadRuntimeState, persistRuntimeStateRecord, saveRuntimeState } from "./runtimeStateStore";
+import {
+  executeRuntimeMutation,
+  summarizeRuntimeMutationResult,
+} from "./runtimeMutationExecutor";
+
+function createStoppedService() {
+  const service = createBackgroundRuntimeService({
+    tick_interval_ms: 60_000,
+    max_ticks_per_run: 3,
+    max_runs_per_invocation: 1,
+    operator_away_mode: true,
+    require_supervised_scope: true,
+    require_fresh_approvals: true,
+    require_fresh_context: true,
+  });
+
+  return stopBackgroundRuntimeService({
+    ...service,
+    started_at: "2026-04-26T11:50:00.000Z",
+    stopped_at: "2026-04-26T11:55:00.000Z",
+    last_tick_at: "2026-04-26T11:55:00.000Z",
+    status: "service_completed",
+    ticks_attempted: 1,
+    ticks_completed: 1,
+  }, "max_ticks_reached");
+}
+
+function createLiveDashboardState(): OperatorDashboardState {
+  return {
+    active_goal: {
+      goal_id: "live-active-goal",
+      description: "Stabilize live runtime lane",
+      priority: "high",
+      status: "active",
+      explanation: "Active live goal.",
+      recommended_action: "Pause when review is required.",
+      depends_on_goal_ids: [],
+      blocking_goal_ids: [],
+      conflict_goal_ids: [],
+      last_updated_at: "2026-04-26T11:59:00.000Z",
+    },
+    queued_goals: [{
+      goal_id: "queued-goal",
+      description: "Queued follow-up goal",
+      priority: "medium",
+      status: "pending",
+      explanation: "Queued follow-up goal.",
+      recommended_action: null,
+      depends_on_goal_ids: [],
+      blocking_goal_ids: [],
+      conflict_goal_ids: [],
+      last_updated_at: "2026-04-26T11:58:00.000Z",
+    }],
+    blocked_goals: [{
+      goal_id: "live-blocked-goal",
+      description: "Retry live runtime lane",
+      priority: "medium",
+      status: "blocked",
+      explanation: "Blocked live goal.",
+      recommended_action: "Retry after review.",
+      depends_on_goal_ids: [],
+      blocking_goal_ids: [],
+      conflict_goal_ids: [],
+      last_updated_at: "2026-04-26T11:57:00.000Z",
+      blocker_type: "status",
+      blocker_ids: [],
+    }],
+    completed_goals: [],
+    paused_goals: [{
+      goal_id: "live-paused-goal",
+      description: "Resume live runtime lane",
+      priority: "medium",
+      status: "paused",
+      explanation: "Paused live goal.",
+      recommended_action: "Resume when ready.",
+      depends_on_goal_ids: [],
+      blocking_goal_ids: [],
+      conflict_goal_ids: [],
+      last_updated_at: "2026-04-26T11:56:00.000Z",
+    }],
+    dependency_blockers: [],
+    conflict_blockers: [],
+    recent_failures: [{
+      report_id: "live-report",
+      created_at: "2026-04-26T11:57:00.000Z",
+      source: "runtime_state_store",
+      category: "stale_context",
+      severity: "medium",
+      recommendation: "request_operator_review",
+      reason: "Review required before retry.",
+    }],
+    recovery_recommendations: [{
+      report_id: "live-report",
+      source: "runtime_state_store",
+      category: "stale_context",
+      severity: "medium",
+      recommendation: "request_operator_review",
+      retry_safe: false,
+      operator_review_required: true,
+      reason: "Review required before retry.",
+    }],
+    approvals_required: [{
+      goal_id: "live-active-goal",
+      approvals_needed: ["session"],
+      reason: "Session approval required.",
+      recommended_action: "Grant session approval.",
+    }],
+    validation_issues: [],
+    runtime_status: {
+      status: "runtime_blocked",
+      explanation: "The runtime is waiting for operator action.",
+    },
+    session_status: {
+      status: "session_waiting_for_approval",
+      explanation: "The session is blocked pending approval.",
+    },
+    queue_status: {
+      status: "queue_running",
+      explanation: "Queued work is available.",
+    },
+    scheduler_status: {
+      status: "goal_selected",
+      explanation: "The runtime has a selected goal.",
+    },
+    last_updated_at: "2026-04-26T12:00:00.000Z",
+  };
+}
+
+function createSeededRuntimeRecord(options: {
+  staleAfterMs?: number;
+  mutateRecord?: (record: ReturnType<typeof loadRuntimeState>) => void;
+  mutateState?: (state: OperatorDashboardState) => void;
+} = {}) {
+  const store = createRuntimeStateStore({ stale_after_ms: options.staleAfterMs ?? 10 * 60 * 1000 });
+  const service = {
+    ...createStoppedService(),
+    status: "service_blocked" as const,
+    stop_reason: "blocker_detected" as const,
+    blockers: [{ code: "approval_required", message: "Fresh approval is required." }],
+  };
+  const record = saveRuntimeState(store, service, "operator_away_safe");
+  const currentRecord = loadRuntimeState(store, record.runtime_id);
+
+  if (!currentRecord) {
+    throw new Error("Expected a persisted runtime record.");
+  }
+
+  currentRecord.operator_dashboard_state = createLiveDashboardState();
+  options.mutateState?.(currentRecord.operator_dashboard_state);
+  options.mutateRecord?.(currentRecord);
+  const persistedRecord = persistRuntimeStateRecord(store, currentRecord);
+
+  return {
+    store,
+    record: persistedRecord,
+    state: persistedRecord.operator_dashboard_state!,
+  };
+}
+
+test("approval intent updates runtime state", () => {
+  const seeded = createSeededRuntimeRecord();
+
+  const result = executeRuntimeMutation({
+    runtime_intent: "grant_session_approval",
+    current_runtime_state: seeded.record,
+    current_dashboard_state: seeded.state,
+    runtime_state_store: seeded.store,
+    runtime_id: seeded.record.runtime_id,
+    timestamp: "2026-04-26T12:01:00.000Z",
+    goal_id: "live-active-goal",
+  });
+
+  assert.equal(result.status, "mutation_applied");
+  assert.equal(result.updated_runtime_state.operator_dashboard_state?.approvals_required.length, 0);
+  assert.equal(result.execution_loop?.status, "loop_executed");
+  assert.equal(result.updated_runtime_state.operator_dashboard_state?.active_goal?.goal_id, "live-active-goal");
+});
+
+test("pause intent pauses active goal", () => {
+  const seeded = createSeededRuntimeRecord({
+    mutateState(state) {
+      state.approvals_required = [];
+      state.runtime_status.status = "runtime_ready";
+      state.session_status.status = "session_running";
+    },
+    mutateRecord(record) {
+      if (!record) {
+        throw new Error("Expected runtime record.");
+      }
+      record.last_status = "service_idle";
+      record.blockers = [];
+    },
+  });
+
+  const result = executeRuntimeMutation({
+    runtime_intent: "pause_active_goal",
+    current_runtime_state: seeded.record,
+    current_dashboard_state: seeded.state,
+    runtime_state_store: seeded.store,
+    runtime_id: seeded.record.runtime_id,
+    timestamp: "2026-04-26T12:01:00.000Z",
+    goal_id: "live-active-goal",
+  });
+
+  assert.equal(result.status, "mutation_applied");
+  assert.equal(result.updated_runtime_state.operator_dashboard_state?.active_goal, null);
+  assert.equal(result.updated_runtime_state.operator_dashboard_state?.paused_goals[0]?.goal_id, "live-active-goal");
+  assert.equal(result.updated_runtime_state.last_status, "service_paused");
+});
+
+test("resume intent resumes paused goal", () => {
+  const seeded = createSeededRuntimeRecord({
+    mutateState(state) {
+      state.active_goal = null;
+      state.approvals_required = [];
+      state.runtime_status.status = "runtime_paused";
+      state.session_status.status = "session_paused";
+    },
+    mutateRecord(record) {
+      if (!record) {
+        throw new Error("Expected runtime record.");
+      }
+      record.last_status = "service_paused";
+      record.blockers = [];
+    },
+  });
+
+  const result = executeRuntimeMutation({
+    runtime_intent: "resume_paused_goal",
+    current_runtime_state: seeded.record,
+    current_dashboard_state: seeded.state,
+    runtime_state_store: seeded.store,
+    runtime_id: seeded.record.runtime_id,
+    timestamp: "2026-04-26T12:01:00.000Z",
+    goal_id: "live-paused-goal",
+  });
+
+  assert.equal(result.status, "mutation_applied");
+  assert.equal(result.execution_loop?.status, "loop_executed");
+  assert.equal(result.updated_runtime_state.operator_dashboard_state?.active_goal?.goal_id, "live-paused-goal");
+  assert.equal(result.updated_runtime_state.operator_dashboard_state?.paused_goals.some((goal) => goal.goal_id === "live-paused-goal"), false);
+});
+
+test("retry intent clears blocker", () => {
+  const seeded = createSeededRuntimeRecord({
+    mutateState(state) {
+      state.approvals_required = [];
+    },
+    mutateRecord(record) {
+      if (!record) {
+        throw new Error("Expected runtime record.");
+      }
+      record.blockers = [];
+      record.last_status = "service_idle";
+    },
+  });
+
+  const result = executeRuntimeMutation({
+    runtime_intent: "mark_goal_retry_requested",
+    current_runtime_state: seeded.record,
+    current_dashboard_state: seeded.state,
+    runtime_state_store: seeded.store,
+    runtime_id: seeded.record.runtime_id,
+    timestamp: "2026-04-26T12:01:00.000Z",
+    goal_id: "live-blocked-goal",
+  });
+
+  assert.equal(result.status, "mutation_applied");
+  assert.equal(result.execution_loop?.status, "loop_executed");
+  assert.equal(result.updated_runtime_state.operator_dashboard_state?.blocked_goals.length, 0);
+  assert.equal(result.updated_runtime_state.operator_dashboard_state?.active_goal?.goal_id, "live-blocked-goal");
+});
+
+test("pause intent does not trigger execution loop", () => {
+  const seeded = createSeededRuntimeRecord({
+    mutateState(state) {
+      state.approvals_required = [];
+      state.runtime_status.status = "runtime_ready";
+      state.session_status.status = "session_running";
+    },
+    mutateRecord(record) {
+      if (!record) {
+        throw new Error("Expected runtime record.");
+      }
+      record.last_status = "service_idle";
+      record.blockers = [];
+    },
+  });
+
+  const result = executeRuntimeMutation({
+    runtime_intent: "pause_active_goal",
+    current_runtime_state: seeded.record,
+    current_dashboard_state: seeded.state,
+    runtime_state_store: seeded.store,
+    runtime_id: seeded.record.runtime_id,
+    timestamp: "2026-04-26T12:01:00.000Z",
+    goal_id: "live-active-goal",
+  });
+
+  assert.equal(result.execution_loop?.status, "loop_not_triggered");
+  assert.equal(result.updated_runtime_state.last_status, "service_paused");
+});
+
+test("invalid intent rejected", () => {
+  const seeded = createSeededRuntimeRecord();
+
+  const result = executeRuntimeMutation({
+    runtime_intent: "no_op",
+    current_runtime_state: seeded.record,
+    current_dashboard_state: seeded.state,
+    runtime_state_store: seeded.store,
+    runtime_id: seeded.record.runtime_id,
+    timestamp: "2026-04-26T12:01:00.000Z",
+  });
+
+  assert.equal(result.status, "mutation_no_op");
+});
+
+test("mutation persists via runtimeStateStore", () => {
+  const seeded = createSeededRuntimeRecord();
+
+  executeRuntimeMutation({
+    runtime_intent: "grant_session_approval",
+    current_runtime_state: seeded.record,
+    current_dashboard_state: seeded.state,
+    runtime_state_store: seeded.store,
+    runtime_id: seeded.record.runtime_id,
+    timestamp: "2026-04-26T12:01:00.000Z",
+    goal_id: "live-active-goal",
+  });
+
+  const persisted = loadRuntimeState(seeded.store, seeded.record.runtime_id);
+  assert.equal(persisted?.operator_dashboard_state?.approvals_required.length, 0);
+  assert.equal(persisted?.persisted_at, "2026-04-26T12:01:00.000Z");
+});
+
+test("approval constraints enforced", () => {
+  const seeded = createSeededRuntimeRecord({ staleAfterMs: 60_000 });
+
+  const result = executeRuntimeMutation({
+    runtime_intent: "grant_session_approval",
+    current_runtime_state: seeded.record,
+    current_dashboard_state: seeded.state,
+    runtime_state_store: seeded.store,
+    runtime_id: seeded.record.runtime_id,
+    timestamp: "2026-04-26T12:05:00.000Z",
+    goal_id: "live-active-goal",
+  });
+
+  assert.equal(result.status, "mutation_rejected");
+  assert.match(result.reason, /requires operator review/i);
+});
+
+test("dependency constraints enforced", () => {
+  const seeded = createSeededRuntimeRecord({
+    mutateState(state) {
+      state.approvals_required = [];
+      state.blocked_goals = [{
+        ...state.blocked_goals[0],
+        blocker_type: "dependency",
+        blocker_ids: ["dep-1"],
+      }];
+    },
+    mutateRecord(record) {
+      if (!record) {
+        throw new Error("Expected runtime record.");
+      }
+      record.blockers = [];
+      record.last_status = "service_idle";
+    },
+  });
+
+  const result = executeRuntimeMutation({
+    runtime_intent: "mark_goal_retry_requested",
+    current_runtime_state: seeded.record,
+    current_dashboard_state: seeded.state,
+    runtime_state_store: seeded.store,
+    runtime_id: seeded.record.runtime_id,
+    timestamp: "2026-04-26T12:01:00.000Z",
+    goal_id: "live-blocked-goal",
+  });
+
+  assert.equal(result.status, "mutation_rejected");
+  assert.match(result.reason, /dependency constraints/i);
+});
+
+test("audit event generated for applied mutation", () => {
+  const seeded = createSeededRuntimeRecord();
+
+  const result = executeRuntimeMutation({
+    runtime_intent: "grant_session_approval",
+    current_runtime_state: seeded.record,
+    current_dashboard_state: seeded.state,
+    runtime_state_store: seeded.store,
+    runtime_id: seeded.record.runtime_id,
+    timestamp: "2026-04-26T12:01:00.000Z",
+    goal_id: "live-active-goal",
+  });
+
+  assert.equal(result.audit_event.status, "mutation_applied");
+  assert.match(result.audit_event.audit_event_id, /runtime-mutation-executor/);
+});
+
+test("audit event generated for rejected mutation", () => {
+  const seeded = createSeededRuntimeRecord({ staleAfterMs: 60_000 });
+
+  const result = executeRuntimeMutation({
+    runtime_intent: "grant_session_approval",
+    current_runtime_state: seeded.record,
+    current_dashboard_state: seeded.state,
+    runtime_state_store: seeded.store,
+    runtime_id: seeded.record.runtime_id,
+    timestamp: "2026-04-26T12:05:00.000Z",
+    goal_id: "live-active-goal",
+  });
+
+  assert.equal(result.audit_event.status, "mutation_rejected");
+});
+
+test("deterministic mutation behavior", () => {
+  const firstSeed = createSeededRuntimeRecord();
+  const secondSeed = createSeededRuntimeRecord();
+
+  const first = summarizeRuntimeMutationResult(executeRuntimeMutation({
+    runtime_intent: "grant_session_approval",
+    current_runtime_state: firstSeed.record,
+    current_dashboard_state: firstSeed.state,
+    runtime_state_store: firstSeed.store,
+    runtime_id: firstSeed.record.runtime_id,
+    timestamp: "2026-04-26T12:01:00.000Z",
+    goal_id: "live-active-goal",
+  }));
+  const second = summarizeRuntimeMutationResult(executeRuntimeMutation({
+    runtime_intent: "grant_session_approval",
+    current_runtime_state: secondSeed.record,
+    current_dashboard_state: secondSeed.state,
+    runtime_state_store: secondSeed.store,
+    runtime_id: secondSeed.record.runtime_id,
+    timestamp: "2026-04-26T12:01:00.000Z",
+    goal_id: "live-active-goal",
+  }));
+
+  assert.equal(first, second);
+});
+
+test("mutation can start continuous runtime follow-up", () => {
+  const seeded = createSeededRuntimeRecord();
+
+  const result = executeRuntimeMutation({
+    runtime_intent: "grant_session_approval",
+    current_runtime_state: seeded.record,
+    current_dashboard_state: seeded.state,
+    runtime_state_store: seeded.store,
+    runtime_id: seeded.record.runtime_id,
+    timestamp: "2026-04-26T12:01:00.000Z",
+    goal_id: "live-active-goal",
+    start_continuous_loop: true,
+    continuous_loop_config: {
+      tick_interval_ms: 60_000,
+      max_ticks_per_run: 2,
+      max_runs_per_invocation: 1,
+    },
+  });
+
+  assert.equal(result.status, "mutation_applied");
+  assert.equal(result.continuous_runtime_loop?.runtime_state?.continuous_loop?.ticks_attempted, 2);
+  assert.equal(result.updated_runtime_state.continuous_loop?.ticks_attempted, 2);
+});

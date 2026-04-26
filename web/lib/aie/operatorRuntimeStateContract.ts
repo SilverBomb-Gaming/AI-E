@@ -8,3 +8,11 @@ export type OperatorRuntimeStateProviderResult = {
   warnings: string[];
   loaded_at: string;
 };
+
+export type OperatorRuntimeMutationDependencies = {
+  runtime_state_store?: import("./runtimeStateStore").RuntimeStateStore | null;
+  runtime_id?: string | null;
+  now?: string;
+  start_continuous_loop?: boolean;
+  continuous_loop_clock?: import("./continuousRuntimeLoop").ContinuousRuntimeLoopClock;
+};

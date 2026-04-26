@@ -13,6 +13,13 @@ import {
   runBackgroundRuntimeEntrypoint,
   summarizeRuntimeEntrypoint,
 } from "./runtimeEntrypoint";
+import { createBackgroundRuntimeService } from "./backgroundRuntimeService";
+import {
+  createRuntimeStateStore,
+  loadRuntimeState,
+  persistRuntimeStateRecord,
+  saveRuntimeState,
+} from "./runtimeStateStore";
 
 function createSession(goal: string, stepTitle = goal) {
   return createAutonomousWorkSession({
@@ -89,6 +96,50 @@ function createClock(times: string[]): BackgroundRuntimeClock {
       index += 1;
       return value;
     },
+  };
+}
+
+function createDashboardState() {
+  return {
+    active_goal: {
+      goal_id: "entrypoint-goal-active",
+      description: "Advance entrypoint runtime goal",
+      priority: "high",
+      status: "active",
+      explanation: "The active entrypoint goal is ready to continue.",
+      recommended_action: null,
+      depends_on_goal_ids: [],
+      blocking_goal_ids: [],
+      conflict_goal_ids: [],
+      last_updated_at: "2026-04-25T10:09:00.000Z",
+    },
+    queued_goals: [],
+    blocked_goals: [],
+    completed_goals: [],
+    paused_goals: [],
+    dependency_blockers: [],
+    conflict_blockers: [],
+    recent_failures: [],
+    recovery_recommendations: [],
+    approvals_required: [],
+    validation_issues: [],
+    runtime_status: {
+      status: "runtime_ready",
+      explanation: "The runtime is ready.",
+    },
+    session_status: {
+      status: "session_running",
+      explanation: "The session is running.",
+    },
+    queue_status: {
+      status: "queue_running",
+      explanation: "Queued work is available.",
+    },
+    scheduler_status: {
+      status: "goal_selected",
+      explanation: "The runtime has a selected goal.",
+    },
+    last_updated_at: "2026-04-25T10:10:00.000Z",
   };
 }
 
@@ -277,4 +328,48 @@ test("integrates with backgroundRuntimeService", () => {
   assert.equal(result.service.trigger_state.config.max_runs_per_invocation, 2);
   assert.equal(result.service.config.require_fresh_approvals, true);
   assert.equal(result.service.config.require_fresh_context, true);
+});
+
+test("prefers continuous runtime loop when persisted dashboard state exists", () => {
+  const store = createRuntimeStateStore();
+  const service = createBackgroundRuntimeService({
+    tick_interval_ms: 60_000,
+    max_ticks_per_run: 2,
+    max_runs_per_invocation: 1,
+    operator_away_mode: true,
+    require_supervised_scope: true,
+    require_fresh_approvals: true,
+    require_fresh_context: true,
+  });
+  const record = saveRuntimeState(store, {
+    ...service,
+    started_at: "2026-04-25T10:00:00.000Z",
+    stopped_at: "2026-04-25T10:00:00.000Z",
+    status: "service_idle",
+  }, "bounded_batch");
+  const persisted = loadRuntimeState(store, record.runtime_id);
+
+  if (!persisted) {
+    throw new Error("Expected persisted runtime record.");
+  }
+
+  persisted.operator_dashboard_state = createDashboardState();
+  persistRuntimeStateRecord(store, persisted);
+
+  const result = runBackgroundRuntimeEntrypoint(
+    {
+      profile_name: "bounded_batch",
+      tick_interval_ms: 60_000,
+      max_ticks_per_run: 2,
+      max_runs_per_invocation: 1,
+      started_at: "2026-04-25T10:10:00.000Z",
+    },
+    {
+      runtime_state_store: store,
+    },
+  );
+
+  assert.equal(result.continuous_loop_result !== null, true);
+  assert.equal(result.service_result, null);
+  assert.equal(result.service.ticks_attempted >= 1, true);
 });
