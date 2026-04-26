@@ -1830,6 +1830,52 @@ Milestone direction:
 
 - this moves AI-E from single-goal bounded execution toward deterministic multi-goal coordination.
 
+## Task Dependency Graph
+
+AI-E now also includes a task dependency graph so multi-goal orchestration can reason about prerequisites, blockers, and conflicts before it chooses the next goal.
+
+What the task dependency graph does:
+
+- models goals and tasks as graph nodes with deterministic status and priority metadata
+- models `depends_on`, `blocks`, `conflicts_with`, and `related_to` relationships as graph edges
+- blocks tasks whose prerequisites are incomplete or circular
+- blocks tasks that conflict with an active task
+- explains why a task is runnable or blocked before the runtime queue touches it
+
+Current contract:
+
+- module path: `web/lib/aie/taskDependencyGraph.ts`
+- main entry points: `createTaskDependencyGraph()`, `evaluateTaskRunnable()`, `getRunnableTasks()`, `detectTaskConflicts()`, `detectCircularDependencies()`, `summarizeTaskDependencyGraph()`, and `explainTaskBlockers()`
+- node statuses: `pending`, `active`, `completed`, `blocked`, `paused`, and `failed`
+- edge types: `depends_on`, `blocks`, `conflicts_with`, and `related_to`
+
+How it improves orchestration decisions:
+
+```text
+Goal A: Fix KBM input
+Goal B: Playtest grenade feature
+Goal B depends_on Goal A
+
+AI-E should not schedule Goal B until Goal A is completed.
+```
+
+What this still guarantees:
+
+- the dependency graph does not execute tasks directly
+- the dependency graph does not bypass approval or validation gates
+- operator priority is preserved, but only among tasks that are actually runnable
+- blocker explanations stay explicit instead of turning into hidden scheduling rules
+
+Why this improves the runtime environment:
+
+- AI-E can now understand “do this before that” and “this goal is not runnable yet”
+- active conflicts no longer have to be inferred from queue order alone
+- multi-goal orchestration remains deterministic while becoming dependency-aware
+
+Milestone direction:
+
+- this moves AI-E from “Which goal has priority?” toward “Which goal is actually safe and ready to run?”
+
 ## Runtime State Store and Boot Resume
 
 AI-E now also includes a runtime state store so the bounded runtime can remember its last service state across process restarts and decide whether boot resume is safe before the runtime starts again.

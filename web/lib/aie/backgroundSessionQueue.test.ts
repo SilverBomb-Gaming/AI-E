@@ -117,8 +117,32 @@ test("uses multi-goal priority ordering before queue execution", () => {
   const result = runBackgroundSessionQueue(queue);
 
   assert.equal(result.goal_schedule.status, "goal_selected");
-  assert.equal(result.goal_schedule.next_goal?.description, "High priority blocker");
+  assert.equal(result.goal_schedule.selected_goal?.description, "High priority blocker");
   assert.equal(result.run_results[0]?.session.operator_goal, "High priority blocker");
+});
+
+test("background queue respects dependency-aware ordering", () => {
+  let queue = createBackgroundSessionQueue({
+    max_sessions_per_run: 1,
+    max_cycles_per_session: 2,
+    skip_blocked_sessions: false,
+    stop_on_first_failure: false,
+    operator_away_mode: true,
+    require_fresh_approvals: true,
+    require_fresh_context: true,
+  });
+  queue = enqueueBackgroundSession(queue, createSession("Playtest grenade feature", [
+    { title: "Playtest grenade feature", requiredGate: "controlled_validation" },
+  ]), { priority: "high", dependency_goal_ids: ["autonomous-work-session-20260425100000-fix-kbm-input"] });
+  queue = enqueueBackgroundSession(queue, createSession("Fix KBM input", [
+    { title: "Fix KBM input", requiredGate: "controlled_validation" },
+  ]), { priority: "medium" });
+
+  const result = runBackgroundSessionQueue(queue);
+
+  assert.equal(result.goal_schedule.selected_goal?.description, "Fix KBM input");
+  assert.equal(result.goal_schedule.dependency_blockers.length, 1);
+  assert.equal(result.run_results[0]?.session.operator_goal, "Fix KBM input");
 });
 
 test("respects max_sessions_per_run", () => {
@@ -240,6 +264,7 @@ test("produces readable queue report", () => {
   assert.match(report.report_id, /^background-queue-report-/);
   assert.match(summary, /Background queue status:/);
   assert.match(summary, /Goal orchestration status:/);
+  assert.match(summary, /Dependency blockers:/);
   assert.match(summary, /Sessions completed:/);
 });
 

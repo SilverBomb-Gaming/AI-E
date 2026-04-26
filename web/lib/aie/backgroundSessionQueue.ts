@@ -47,6 +47,10 @@ export type BackgroundQueuedSession = {
   session_id: string;
   operator_goal: string;
   goal_priority: GoalPriority;
+  dependency_goal_ids: string[];
+  blocking_goal_ids: string[];
+  conflict_goal_ids: string[];
+  related_goal_ids: string[];
   enqueued_at: string;
   order: number;
   status: BackgroundQueuedSessionStatus;
@@ -208,7 +212,13 @@ function cloneQueue(queue: BackgroundSessionQueue): BackgroundSessionQueue {
   return {
     ...queue,
     policy: { ...queue.policy },
-    sessions: queue.sessions.map((session) => ({ ...session })),
+    sessions: queue.sessions.map((session) => ({
+      ...session,
+      dependency_goal_ids: [...session.dependency_goal_ids],
+      blocking_goal_ids: [...session.blocking_goal_ids],
+      conflict_goal_ids: [...session.conflict_goal_ids],
+      related_goal_ids: [...session.related_goal_ids],
+    })),
   };
 }
 
@@ -260,6 +270,10 @@ export function enqueueBackgroundSession(
   session: AutonomousWorkSession,
   options: {
     priority?: GoalPriority;
+    dependency_goal_ids?: string[];
+    blocking_goal_ids?: string[];
+    conflict_goal_ids?: string[];
+    related_goal_ids?: string[];
   } = {},
 ): BackgroundSessionQueue {
   const nextQueue = cloneQueue(queue);
@@ -269,6 +283,10 @@ export function enqueueBackgroundSession(
     session_id: session.session_id,
     operator_goal: session.operator_goal,
     goal_priority: options.priority ?? "medium",
+    dependency_goal_ids: [...(options.dependency_goal_ids ?? [])].sort((left, right) => left.localeCompare(right)),
+    blocking_goal_ids: [...(options.blocking_goal_ids ?? [])].sort((left, right) => left.localeCompare(right)),
+    conflict_goal_ids: [...(options.conflict_goal_ids ?? [])].sort((left, right) => left.localeCompare(right)),
+    related_goal_ids: [...(options.related_goal_ids ?? [])].sort((left, right) => left.localeCompare(right)),
     enqueued_at: deriveQueueTimestamp(nextQueue, order),
     order,
     status: "queued",
@@ -298,6 +316,10 @@ function buildGoalSchedule(queue: BackgroundSessionQueue): GoalSchedulerResult {
   return scheduleNextGoal(createGoalQueue(queue.sessions.map((queuedSession) =>
     createGoalRecordFromSession(queuedSession.session, {
       priority: queuedSession.goal_priority,
+      depends_on_goal_ids: queuedSession.dependency_goal_ids,
+      blocks_goal_ids: queuedSession.blocking_goal_ids,
+      conflicts_with_goal_ids: queuedSession.conflict_goal_ids,
+      related_goal_ids: queuedSession.related_goal_ids,
       created_at: queuedSession.enqueued_at,
       last_updated_at: queuedSession.enqueued_at,
     })
@@ -310,7 +332,7 @@ function buildOrderedSessionIndices(queue: BackgroundSessionQueue, goalSchedule:
     indexBySessionId.set(queuedSession.session_id, index);
   });
 
-  const scheduledIndices = goalSchedule.ordered_goals
+  const scheduledIndices = goalSchedule.runnable_goals
     .map((goal) => indexBySessionId.get(goal.id))
     .filter((index): index is number => index !== undefined);
 
@@ -322,11 +344,19 @@ function buildOrderedSessionIndices(queue: BackgroundSessionQueue, goalSchedule:
   return [...scheduledIndices, ...trailingIndices];
 }
 
+function buildSchedulingBlockedGoalIds(goalSchedule: GoalSchedulerResult): Set<string> {
+  return new Set([
+    ...goalSchedule.dependency_blockers.map((blocker) => blocker.goal_id),
+    ...goalSchedule.conflict_blockers.map((blocker) => blocker.goal_id),
+  ]);
+}
+
 export function runBackgroundSessionQueue(queue: BackgroundSessionQueue): BackgroundQueueResult {
   const nextQueue = cloneQueue(queue);
   const scheduler = createScheduler(nextQueue);
   const goalSchedule = buildGoalSchedule(nextQueue);
   const orderedIndices = buildOrderedSessionIndices(nextQueue, goalSchedule);
+  const schedulingBlockedGoalIds = buildSchedulingBlockedGoalIds(goalSchedule);
   const runResults: BackgroundRunResult[] = [];
   const blockers: BackgroundRunBlocker[] = [];
 
@@ -351,6 +381,9 @@ export function runBackgroundSessionQueue(queue: BackgroundSessionQueue): Backgr
     }
 
     const originalEntry = nextQueue.sessions[index];
+    if (schedulingBlockedGoalIds.has(originalEntry.session_id)) {
+      continue;
+    }
     const evaluatedEntry = evaluateQueuedSession(nextQueue, originalEntry);
     nextQueue.sessions[index] = evaluatedEntry;
     sessionsConsidered += 1;

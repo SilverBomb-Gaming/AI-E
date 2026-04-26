@@ -19,7 +19,10 @@ function createGoal(input: Partial<ReturnType<typeof createGoalRecord>> & { id: 
     status: input.status ?? "pending",
     created_at: input.created_at ?? "2026-04-26T10:00:00.000Z",
     last_updated_at: input.last_updated_at ?? input.created_at ?? "2026-04-26T10:00:00.000Z",
+    depends_on_goal_ids: input.depends_on_goal_ids ?? [],
+    blocks_goal_ids: input.blocks_goal_ids ?? [],
     conflicts_with_goal_ids: input.conflicts_with_goal_ids ?? [],
+    related_goal_ids: input.related_goal_ids ?? [],
   });
 }
 
@@ -55,7 +58,7 @@ test("multiple goals with different priorities select highest priority first", (
   const result = scheduleNextGoal(queue);
 
   assert.equal(result.status, "goal_selected");
-  assert.equal(result.next_goal?.id, "high");
+  assert.equal(result.selected_goal?.id, "high");
   assert.deepEqual(result.ordered_goals.map((goal) => goal.id), ["high", "medium", "low"]);
 });
 
@@ -67,7 +70,7 @@ test("equal priority goals run oldest first", () => {
 
   const result = scheduleNextGoal(queue);
 
-  assert.equal(result.next_goal?.id, "older");
+  assert.equal(result.selected_goal?.id, "older");
   assert.deepEqual(result.ordered_goals.map((goal) => goal.id), ["older", "newer"]);
 });
 
@@ -81,14 +84,14 @@ test("blocked and completed goals are skipped", () => {
   const result = scheduleNextGoal(queue);
 
   assert.equal(result.status, "goal_selected");
-  assert.equal(result.next_goal?.id, "pending");
+  assert.equal(result.selected_goal?.id, "pending");
 });
 
 test("empty queue returns no work", () => {
   const result = scheduleNextGoal(createQueue());
 
   assert.equal(result.status, "no_runnable_goals");
-  assert.equal(result.next_goal, null);
+  assert.equal(result.selected_goal, null);
   assert.match(result.reason, /No goals were queued/i);
 });
 
@@ -118,6 +121,47 @@ test("active goal keeps ownership and session mapping is supported", () => {
   const result = scheduleNextGoal(createQueue([pending, active]));
 
   assert.equal(result.status, "goal_selected");
-  assert.equal(result.next_goal?.id, active.id);
-  assert.equal(result.next_goal?.status, "active");
+  assert.equal(result.selected_goal?.id, active.id);
+  assert.equal(result.selected_goal?.status, "active");
+});
+
+test("orchestrator skips dependency-blocked goal", () => {
+  const queue = createQueue([
+    createGoal({ id: "a", description: "Fix KBM input", priority: "high", status: "pending" }),
+    createGoal({ id: "b", description: "Playtest grenade feature", priority: "high", status: "pending", depends_on_goal_ids: ["a"] }),
+  ]);
+
+  const result = scheduleNextGoal(queue);
+
+  assert.equal(result.status, "goal_selected");
+  assert.equal(result.selected_goal?.id, "a");
+  assert.equal(result.dependency_blockers.length, 1);
+  assert.equal(result.dependency_blockers[0]?.goal_id, "b");
+});
+
+test("orchestrator skips active conflict goal", () => {
+  const queue = createQueue([
+    createGoal({ id: "a", description: "Runtime migration", priority: "medium", status: "active" }),
+    createGoal({ id: "b", description: "Conflicting runtime edit", priority: "high", status: "pending", conflicts_with_goal_ids: ["a"] }),
+  ]);
+
+  const result = scheduleNextGoal(queue);
+
+  assert.equal(result.status, "goal_selected");
+  assert.equal(result.selected_goal?.id, "a");
+  assert.equal(result.conflict_blockers.length, 1);
+  assert.equal(result.conflict_blockers[0]?.goal_id, "b");
+});
+
+test("circular dependency returns no runnable goals with explanation", () => {
+  const queue = createQueue([
+    createGoal({ id: "a", description: "Task A", depends_on_goal_ids: ["b"] }),
+    createGoal({ id: "b", description: "Task B", depends_on_goal_ids: ["a"] }),
+  ]);
+
+  const result = scheduleNextGoal(queue);
+
+  assert.equal(result.status, "no_runnable_goals");
+  assert.equal(result.selected_goal, null);
+  assert.match(result.scheduling_reason, /Circular dependencies detected/i);
 });
