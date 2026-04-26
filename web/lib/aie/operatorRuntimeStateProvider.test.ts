@@ -13,6 +13,7 @@ import {
   resolveOperatorStateSource,
   summarizeOperatorStateProviderResult,
 } from "./operatorRuntimeStateProvider";
+import type { OperatorRuntimeStateProviderResult } from "./operatorRuntimeStateContract";
 import { createRuntimeStateStore, saveRuntimeState } from "./runtimeStateStore";
 
 function createStoppedService() {
@@ -108,7 +109,7 @@ test("demo actions still work", async () => {
   assert.equal(actionResult.dashboard_state?.runtime_status.status, "runtime_paused");
 });
 
-test("live unsupported mutation is rejected safely", () => {
+test("live supported mutation returns runtime intent metadata", () => {
   const store = createRuntimeStateStore({ stale_after_ms: 10 * 60 * 1000 });
   const service = createStoppedService();
   const record = saveRuntimeState(store, service, "operator_away_safe");
@@ -118,13 +119,37 @@ test("live unsupported mutation is rejected safely", () => {
     now: "2026-04-26T12:00:00.000Z",
   });
 
+  if (!providerResult.dashboard_state) {
+    throw new Error("Expected live provider state.");
+  }
+
+  providerResult.dashboard_state = {
+    ...providerResult.dashboard_state,
+    blocked_goals: [{
+      goal_id: "runtime-blocker-1",
+      description: "Retry blocked live runtime lane",
+      priority: "medium",
+      status: "blocked",
+      explanation: "Live retry candidate is blocked pending operator action.",
+      recommended_action: "Retry after review.",
+      depends_on_goal_ids: [],
+      blocking_goal_ids: [],
+      conflict_goal_ids: [],
+      last_updated_at: "2026-04-26T11:57:00.000Z",
+      blocker_type: "status",
+      blocker_ids: [],
+    }],
+  };
+
   const actionResult = applyOperatorActionToProviderState(providerResult, {
     type: "retry_goal",
     goal_id: "runtime-blocker-1",
   });
 
-  assert.equal(actionResult.result, "rejected");
-  assert.equal(actionResult.reason, "live runtime mutation not enabled for this action");
+  assert.equal(actionResult.result, "accepted");
+  assert.equal(actionResult.runtime_intent, "mark_goal_retry_requested");
+  assert.match(actionResult.reason, /action accepted as runtime intent/i);
+  assert.equal(actionResult.audit_event?.status, "action_ready");
 });
 
 test("resolveOperatorStateSource is deterministic", () => {

@@ -8,6 +8,7 @@ import {
   applyOperatorControlAction,
   type OperatorControlAction,
 } from "@/lib/aie/operatorControlSurface";
+import { applyOperatorActionToProviderState } from "@/lib/aie/operatorRuntimeActionHandler";
 import type {
   OperatorDashboardApprovalRequirement,
   OperatorDashboardBlockedGoal,
@@ -15,7 +16,7 @@ import type {
   OperatorDashboardRecoveryRecommendation,
   OperatorDashboardState,
 } from "@/lib/aie/operatorDashboardState";
-import type { OperatorRuntimeStateProviderResult } from "@/lib/aie/operatorRuntimeStateProvider";
+import type { OperatorRuntimeStateProviderResult } from "@/lib/aie/operatorRuntimeStateContract";
 
 function getStatusClassName(status: string): string {
   if (/completed|ready/i.test(status)) {
@@ -233,19 +234,24 @@ async function executeAction(
   message: string;
   isRejected: boolean;
 }> {
+  const runtimeResult = applyOperatorActionToProviderState(providerResult, action);
+
   if (!providerResult.dashboard_state) {
     return {
       providerResult,
-      message: "No dashboard state is available for this operator action.",
+      message: runtimeResult.reason,
       isRejected: true,
     };
   }
 
   if (providerResult.source === "live_runtime") {
     return {
-      providerResult,
-      message: "live runtime mutation not enabled for this action",
-      isRejected: true,
+      providerResult: {
+        ...providerResult,
+        warnings: runtimeResult.warnings,
+      },
+      message: runtimeResult.reason,
+      isRejected: runtimeResult.result !== "accepted",
     };
   }
 
@@ -303,7 +309,7 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
               <p className="section-label">Operator Dashboard v0</p>
               <h1 className="headline text-4xl font-semibold text-ink lg:text-5xl">See runtime state, blockers, and operator actions in one surface.</h1>
               <p className="max-w-2xl text-base leading-8 body-muted">
-                This minimal UI uses the dashboard-state read model plus a runtime state provider to show what AI-E is doing, what is blocked, and what the operator can change next.
+                This minimal UI uses the dashboard-state read model plus a runtime state provider and safe action bridge to show what AI-E is doing, what is blocked, and what the operator can change next.
               </p>
             </div>
             <div className="flex flex-wrap gap-3">

@@ -1,36 +1,21 @@
-import { applyOperatorControlAction, type OperatorControlAction } from "./operatorControlSurface";
 import { createOperatorDashboardDemoState } from "./operatorDashboardDemoState";
+import {
+  applyOperatorActionToProviderState,
+  type OperatorRuntimeActionResult,
+} from "./operatorRuntimeActionHandler";
 import type {
   OperatorDashboardApprovalRequirement,
   OperatorDashboardFailure,
   OperatorDashboardRecoveryRecommendation,
-  OperatorDashboardState,
   OperatorDashboardValidationIssue,
 } from "./operatorDashboardState";
+import type { OperatorRuntimeStateProviderResult, OperatorStateSource } from "./operatorRuntimeStateContract";
 import {
   evaluateBootResume,
   type RuntimeBootResumeResult,
   type RuntimeStateRecord,
   type RuntimeStateStore,
 } from "./runtimeStateStore";
-
-export type OperatorStateSource = "live_runtime" | "demo_seed" | "unavailable";
-
-export type OperatorRuntimeStateProviderResult = {
-  source: OperatorStateSource;
-  dashboard_state: OperatorDashboardState | null;
-  warnings: string[];
-  loaded_at: string;
-};
-
-export type OperatorRuntimeActionResult = {
-  source: OperatorStateSource;
-  action: OperatorControlAction;
-  result: "accepted" | "rejected";
-  reason: string;
-  dashboard_state: OperatorDashboardState | null;
-  warnings: string[];
-};
 
 export type OperatorRuntimeStateProviderDependencies = {
   runtime_state_store?: RuntimeStateStore | null;
@@ -337,43 +322,6 @@ export async function loadOperatorDashboardState(
   };
 }
 
-export function applyOperatorActionToProviderState(
-  providerResult: OperatorRuntimeStateProviderResult,
-  action: OperatorControlAction,
-): OperatorRuntimeActionResult {
-  if (!providerResult.dashboard_state) {
-    return {
-      source: providerResult.source,
-      action,
-      result: "rejected",
-      reason: "No dashboard state is available for this operator action.",
-      dashboard_state: providerResult.dashboard_state,
-      warnings: providerResult.warnings,
-    };
-  }
-
-  if (providerResult.source === "live_runtime") {
-    return {
-      source: providerResult.source,
-      action,
-      result: "rejected",
-      reason: "live runtime mutation not enabled for this action",
-      dashboard_state: providerResult.dashboard_state,
-      warnings: providerResult.warnings,
-    };
-  }
-
-  const controlResult = applyOperatorControlAction(providerResult.dashboard_state, action);
-  return {
-    source: providerResult.source,
-    action,
-    result: controlResult.changed ? "accepted" : "rejected",
-    reason: controlResult.message,
-    dashboard_state: controlResult.state,
-    warnings: providerResult.warnings,
-  };
-}
-
 export function summarizeOperatorStateProviderResult(result: OperatorRuntimeStateProviderResult): string {
   return [
     `Operator state source: ${result.source}`,
@@ -384,3 +332,5 @@ export function summarizeOperatorStateProviderResult(result: OperatorRuntimeStat
     `Warnings: ${result.warnings.length > 0 ? result.warnings.join(" | ") : "none"}`,
   ].join("\n");
 }
+
+export { applyOperatorActionToProviderState };

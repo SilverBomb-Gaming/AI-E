@@ -135,6 +135,30 @@ Current safety boundary:
 - demo mode still allows local UI state transitions for approve, pause, resume, and retry
 - seeded demo data is never presented as live runtime state
 
+## Safe Runtime Action Bridge
+
+AI-E can now translate supported live operator actions into safe runtime intents.
+
+Current contract:
+
+- module path: `web/lib/aie/safeRuntimeActionBridge.ts`
+- supported operator actions: `approve_goal`, `pause_goal`, `resume_goal`, `retry_goal`
+- supported runtime intents: `grant_session_approval`, `pause_active_goal`, `resume_paused_goal`, `mark_goal_retry_requested`, and `no_op`
+
+Example:
+
+- operator clicks Approve on a live runtime approval requirement
+- bridge result: `status: action_ready`
+- runtime intent: `grant_session_approval`
+- reason: `session approval is required and may be granted through the runtime approval path`
+
+Safety boundary:
+
+- this layer does not run shell commands, commit, push, deploy, or bypass approvals
+- it does not mutate repo files directly
+- it validates the requested action against the current operator state and only produces safe runtime intents
+- accepted live actions are intent-producing only for now; live mutation remains pending a later bounded integration step
+
 ## Conversational Intent Refinement
 
 ## Multi-Turn Conversational Loop
