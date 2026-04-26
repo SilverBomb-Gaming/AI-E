@@ -143,11 +143,14 @@ test("returns readable summary", () => {
     started_at: "2026-04-25T10:10:00.000Z",
   });
   const summary = summarizeRuntimeEntrypoint(result);
+  const runtimeProfileMatches = summary.match(/Runtime profile:/g) ?? [];
 
   assert.match(summary, /Runtime entrypoint status:/);
   assert.match(summary, /Runtime profile:/);
+  assert.match(summary, /Profile description:/);
   assert.match(summary, /Dry run mode:/);
   assert.match(summary, /Service status:/);
+  assert.equal(runtimeProfileMatches.length, 1);
 });
 
 test("dry_run_mode does not mutate state unexpectedly", () => {

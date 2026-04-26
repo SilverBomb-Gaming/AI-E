@@ -231,10 +231,6 @@ export function summarizeRuntimeEntrypoint(result: RuntimeEntrypointResult): str
     `Runtime entrypoint status: ${result.status}`,
     `Reason: ${result.reason}`,
     summarizeBootResume(result.boot_resume),
-    `Runtime profile: ${result.config.profile_name}`,
-    `Runtime profile description: ${result.config.profile_description}`,
-    `Dry run mode: ${result.config.dry_run_mode}`,
-    `Operator away mode: ${result.config.operator_away_mode}`,
     `Require supervised scope: ${result.config.require_supervised_scope}`,
     summarizeRuntimeProfile({
       profile_name: result.config.profile_name,

@@ -1708,12 +1708,14 @@ Current contract:
 Example command:
 
 ```text
+cd "E:\AI projects 2025\AI-E\web"
 npm run aie:runtime
 ```
 
 Safe dry-run example:
 
 ```text
+cd "E:\AI projects 2025\AI-E\web"
 npm run aie:runtime -- --dry-run
 ```
 
@@ -1756,9 +1758,13 @@ Current contract:
 Example commands:
 
 ```text
+cd "E:\AI projects 2025\AI-E\web"
+npm run aie:runtime -- --dry-run
 npm run aie:runtime -- --profile dry_run
-npm run aie:runtime -- --profile operator_away_safe
+npm run aie:runtime -- --profile operator_away_safe --dry-run
 ```
+
+Run runtime commands from the `/web` directory so the `aie:runtime` script resolves from the web package root.
 
 What this still guarantees:
 
