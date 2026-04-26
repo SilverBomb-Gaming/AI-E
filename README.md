@@ -27,6 +27,52 @@ Boundaries and stop conditions:
 
 The intended operating model is: define a bounded goal, start a session, watch the session summary and operator-attention output, approve gated repo actions when appropriate, and intervene only when the system gives you a concrete reason to do so.
 
+## Failure Recovery Intelligence
+
+AI-E now also includes a deterministic failure recovery intelligence layer that explains what likely failed and recommends the safest next recovery step without taking that step automatically.
+
+What the failure recovery layer does:
+
+- classifies bounded failure outcomes into deterministic recovery categories
+- explains why the classification was chosen
+- estimates recovery severity and confidence
+- recommends the safest next action: retry once, retry after refresh, rollback, operator review, dependency block, conflict block, or fixed blocking
+- preserves blocker details and validation context inside the recovery decision
+- annotates paused or blocked validation/runtime results with a structured `recovery_report`
+
+Current contract:
+
+- module path: `web/lib/aie/failureRecoveryIntelligence.ts`
+- main entry points: `classifyFailure()`, `evaluateRecoveryDecision()`, `buildRecoveryReport()`, `summarizeRecoveryReport()`, `isRetrySafe()`, and `requiresOperatorReview()`
+- failure categories: `validation_failure`, `test_failure`, `execution_error`, `stale_context`, `stale_approval`, `dependency_blocked`, `conflict_blocked`, `unsafe_mutation`, `missing_file`, `unexpected_file_change`, `rollback_recommended`, and `unknown`
+- recovery actions: `retry_once`, `retry_after_refresh`, `rollback`, `request_operator_review`, `block_until_fixed`, `mark_dependency_blocked`, `mark_conflict_blocked`, and `no_action_needed`
+
+Example:
+
+```text
+Validation failed because an expected file was missing.
+
+AI-E recovery report:
+- category: missing_file
+- severity: high
+- recommendation: request_operator_review
+- retry_safe: false
+- reason: missing output file suggests the task did not complete correctly
+```
+
+Why this improves operator visibility:
+
+- AI-E no longer stops with only a pause or block state
+- the runtime can now explain what kind of failure occurred and why that interpretation was chosen
+- retryable and non-retryable failures are separated deterministically
+- rollback stays explicit and review-gated instead of becoming automatic behavior
+
+Important limitation:
+
+- this layer does not recover automatically yet
+- it does not auto-retry, auto-rollback, auto-approve, mutate files, or bypass validation
+- it only classifies and recommends so the operator can choose the actual recovery action
+
 ## Conversational Intent Refinement
 
 ## Multi-Turn Conversational Loop

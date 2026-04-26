@@ -1,6 +1,7 @@
 import { readFile, stat } from "node:fs/promises";
 
 import { assertAllowedExecutionPath, getDefaultAllowedExecutionRoots } from "./executionPathPolicy";
+import { buildRecoveryReport, type RecoveryReport } from "./failureRecoveryIntelligence";
 import type { ControlledExecutionDiff, ControlledExecutionResult } from "./controlledPatchExecutor";
 import type { ReviewedPatchApplicationPacket } from "./reviewedPatchApplicationExecutor";
 
@@ -63,6 +64,7 @@ export type ControlledValidationResult = {
   checks: ValidationCheck[];
   failures: ValidationFailure[];
   explanation: string;
+  recovery_report: RecoveryReport | null;
   report: ControlledValidationReport;
 };
 
@@ -124,6 +126,30 @@ function shouldRequireReviewForRequirement(title: string, details: string): bool
     || combined.includes("manual review")
     || combined.includes("requires reviewer")
     || combined.includes("human review");
+}
+
+function buildValidationRecoveryReport(result: Pick<ControlledValidationResult, "created_at" | "status" | "recommendation" | "explanation" | "failures">): RecoveryReport | null {
+  if (result.status === "validation_passed") {
+    return null;
+  }
+
+  return buildRecoveryReport({
+    created_at: result.created_at,
+    source: "controlled_validation",
+    status: result.status,
+    message: result.explanation,
+    explanation: result.explanation,
+    failures: result.failures.map((failure) => ({
+      code: failure.code,
+      message: failure.message,
+      file_path: failure.file_path,
+      expected: failure.expected,
+      actual: failure.actual,
+    })),
+    validation_status: result.status,
+    validation_recommendation: result.recommendation,
+    rollback_recommended: result.recommendation === "rollback",
+  });
 }
 
 export async function validateChangedFiles(input: ControlledValidationInput): Promise<{ checks: ValidationCheck[]; failures: ValidationFailure[] }> {
@@ -342,6 +368,7 @@ export async function runControlledValidation(input: ControlledValidationInput):
         message: `Controlled execution validation requires an applied execution result, but received ${input.executionResult.status}.`,
       }],
       explanation: `Controlled execution validation is blocked because execution status is ${input.executionResult.status}, not applied.`,
+      recovery_report: null,
       report: {
         validation_id: validationId,
         created_at: createdAt,
@@ -354,7 +381,10 @@ export async function runControlledValidation(input: ControlledValidationInput):
       },
     };
 
-    return blockedResult;
+    return {
+      ...blockedResult,
+      recovery_report: buildValidationRecoveryReport(blockedResult),
+    };
   }
 
   if (!input.applicationPacket) {
@@ -374,6 +404,7 @@ export async function runControlledValidation(input: ControlledValidationInput):
         message: "Controlled execution validation requires a reviewed application packet.",
       }],
       explanation: "Controlled execution validation is blocked because no reviewed application packet was provided.",
+      recovery_report: null,
       report: {
         validation_id: validationId,
         created_at: createdAt,
@@ -386,7 +417,10 @@ export async function runControlledValidation(input: ControlledValidationInput):
       },
     };
 
-    return blockedResult;
+    return {
+      ...blockedResult,
+      recovery_report: buildValidationRecoveryReport(blockedResult),
+    };
   }
 
   const { checks: fileChecks, failures } = await validateChangedFiles(input);
@@ -439,6 +473,7 @@ export async function runControlledValidation(input: ControlledValidationInput):
     checks,
     failures,
     explanation: evaluation.explanation,
+    recovery_report: null,
     report: {
       validation_id: validationId,
       created_at: createdAt,
@@ -453,6 +488,7 @@ export async function runControlledValidation(input: ControlledValidationInput):
 
   return {
     ...result,
+    recovery_report: buildValidationRecoveryReport(result),
     report: buildValidationReport(result),
   };
 }
@@ -464,5 +500,6 @@ export function summarizeValidation(result: ControlledValidationResult): string 
     `Checks: ${result.checks.length}`,
     `Failures: ${result.failures.length}`,
     `Explanation: ${result.explanation}`,
+    `Recovery: ${result.recovery_report ? result.recovery_report.decision.recommendation : "none"}`,
   ].join("\n");
 }

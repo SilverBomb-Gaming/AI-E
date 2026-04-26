@@ -9,6 +9,7 @@ import {
   summarizeLoop,
   type RuntimeLoopState,
 } from "./runtimeLoopController";
+import { buildRecoveryReport, type RecoveryReport } from "./failureRecoveryIntelligence";
 import type { AutonomousWorkSession } from "./autonomousWorkSession";
 
 export type BackgroundRunStatus =
@@ -97,6 +98,7 @@ export type BackgroundRunResult = {
   safe_to_continue_later: boolean;
   next_operator_action: string;
   validation_summary: string;
+  recovery_report: RecoveryReport | null;
   report: BackgroundRunReport;
 };
 
@@ -184,6 +186,28 @@ function buildResult(input: {
 }): BackgroundRunResult {
   const blockers = input.blockers ?? [];
   const approvalsNeeded = unique(input.approvalsNeeded ?? blockers.flatMap((blocker) => blocker.approvals_needed ?? []));
+  const validationSummary = buildValidationSummary(input.session);
+  const recoveryReport = (input.status === "run_paused" || input.status === "run_blocked" || input.status === "run_skipped")
+    ? buildRecoveryReport({
+      created_at: input.request.requested_at,
+      source: "background_runtime",
+      status: input.status,
+      message: input.stopReason,
+      explanation: input.stopReason,
+      blockers: blockers.map((blocker) => ({
+        code: blocker.code,
+        message: blocker.message,
+        severity: blocker.severity,
+        approvals_needed: blocker.approvals_needed,
+      })),
+      validation_status: input.session.latest_persistence_record.validation_snapshot.status,
+      validation_recommendation: input.session.latest_persistence_record.validation_snapshot.recommendation,
+      rollback_recommended: input.session.latest_persistence_record.validation_snapshot.recommendation === "rollback",
+      details: {
+        validation_summary: validationSummary,
+      },
+    })
+    : null;
   const report = buildBackgroundRunReport({
     status: input.status,
     scheduler: input.scheduler,
@@ -197,7 +221,7 @@ function buildResult(input: {
     stop_reason: input.stopReason,
     safe_to_continue_later: input.safeToContinueLater,
     next_operator_action: input.nextOperatorAction,
-    validation_summary: buildValidationSummary(input.session),
+    validation_summary: validationSummary,
   });
 
   return {
@@ -213,7 +237,8 @@ function buildResult(input: {
     stop_reason: input.stopReason,
     safe_to_continue_later: input.safeToContinueLater,
     next_operator_action: input.nextOperatorAction,
-    validation_summary: buildValidationSummary(input.session),
+    validation_summary: validationSummary,
+    recovery_report: recoveryReport,
     report,
   };
 }
@@ -520,6 +545,7 @@ export function summarizeBackgroundRun(result: BackgroundRunResult): string {
     `Stop reason: ${result.stop_reason}`,
     `Approvals needed: ${result.approvals_needed.join(", ") || "none"}`,
     `Validation summary: ${result.validation_summary}`,
+    `Recovery recommendation: ${result.recovery_report?.decision.recommendation ?? "none"}`,
     `Loop summary: ${result.loop_state ? summarizeLoop(result.loop_state).replace(/\n/g, " | ") : "none"}`,
   ].join("\n");
 }

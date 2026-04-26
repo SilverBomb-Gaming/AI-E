@@ -17,6 +17,7 @@ import {
   decideAutonomousOrchestration,
   type OrchestrationDecision,
 } from "./autonomousOrchestrator";
+import { buildRecoveryReport, type RecoveryReport } from "./failureRecoveryIntelligence";
 import {
   createOrchestrationMemory,
   evaluateGoalCompletion,
@@ -76,6 +77,7 @@ export type WorkSessionDecision = {
   }>;
   orchestration_decision: OrchestrationDecision | null;
   explanation: string;
+  recovery_report: RecoveryReport | null;
 };
 
 export type WorkSessionReport = {
@@ -257,6 +259,33 @@ function buildSessionReport(
   };
 }
 
+function buildWorkSessionRecoveryReport(
+  session: AutonomousWorkSession,
+  status: WorkSessionStatus,
+  blockers: WorkSessionDecision["blockers"],
+  explanation: string,
+): RecoveryReport | null {
+  if (status === "session_running" || status === "session_completed") {
+    return null;
+  }
+
+  return buildRecoveryReport({
+    created_at: session.updated_at,
+    source: "work_session",
+    status,
+    message: explanation,
+    explanation,
+    blockers: blockers.map((blocker) => ({
+      code: blocker.code,
+      message: blocker.message,
+      recommended_action: blocker.recommended_action,
+    })),
+    validation_status: session.latest_persistence_record.validation_snapshot.status,
+    validation_recommendation: session.latest_persistence_record.validation_snapshot.recommendation,
+    rollback_recommended: session.latest_persistence_record.validation_snapshot.recommendation === "rollback",
+  });
+}
+
 function withUpdatedGoalState(session: AutonomousWorkSession): AutonomousWorkSession {
   const goalState = evaluateGoalCompletion(session.orchestration_memory);
   const nextSession: AutonomousWorkSession = {
@@ -395,52 +424,65 @@ export function evaluateWorkSessionReadiness(session: AutonomousWorkSession, now
       }],
       orchestration_decision: null,
       explanation: goalState.completion_reason ?? "The work session goal is already complete.",
+      recovery_report: null,
     };
   }
 
   if (currentSession.status === "session_blocked") {
+    const blockers = [{
+      code: "session_blocked" as const,
+      message: currentSession.session_report.pause_reason ?? "This work session is blocked and needs review before continuing.",
+      recommended_action: "review" as const,
+    }];
+    const explanation = currentSession.session_report.pause_reason ?? "This work session is blocked and needs review before continuing.";
+
     return {
       status: "session_blocked",
       can_advance: false,
-      blockers: [{
-        code: "session_blocked",
-        message: currentSession.session_report.pause_reason ?? "This work session is blocked and needs review before continuing.",
-        recommended_action: "review",
-      }],
+      blockers,
       orchestration_decision: null,
-      explanation: currentSession.session_report.pause_reason ?? "This work session is blocked and needs review before continuing.",
+      explanation,
+      recovery_report: buildWorkSessionRecoveryReport(currentSession, "session_blocked", blockers, explanation),
     };
   }
 
   if (currentSession.status === "session_paused") {
+    const blockers = [{
+      code: "session_paused" as const,
+      message: currentSession.session_report.pause_reason ?? "This work session is paused and must be resumed explicitly.",
+      recommended_action: "resume" as const,
+    }];
+    const explanation = currentSession.session_report.pause_reason ?? "This work session is paused and must be resumed explicitly.";
+
     return {
       status: "session_paused",
       can_advance: false,
-      blockers: [{
-        code: "session_paused",
-        message: currentSession.session_report.pause_reason ?? "This work session is paused and must be resumed explicitly.",
-        recommended_action: "resume",
-      }],
+      blockers,
       orchestration_decision: null,
-      explanation: currentSession.session_report.pause_reason ?? "This work session is paused and must be resumed explicitly.",
+      explanation,
+      recovery_report: buildWorkSessionRecoveryReport(currentSession, "session_paused", blockers, explanation),
     };
   }
 
   if (!hasFreshSessionApproval(currentSession, currentTime)) {
+    const blockers = [{
+      code: (currentSession.approval_state.session_approval_granted ? "session_reapproval_required" : "session_approval_required") as const,
+      message: currentSession.approval_state.session_approval_granted
+        ? "The work session approval is stale and must be renewed before supervised continuation."
+        : "Explicit session approval is required before the work session can run.",
+      recommended_action: "approve" as const,
+    }];
+    const explanation = currentSession.approval_state.session_approval_granted
+      ? "The work session approval is stale and must be renewed before supervised continuation."
+      : "Explicit session approval is required before the work session can run.";
+
     return {
       status: "awaiting_session_approval",
       can_advance: false,
-      blockers: [{
-        code: currentSession.approval_state.session_approval_granted ? "session_reapproval_required" : "session_approval_required",
-        message: currentSession.approval_state.session_approval_granted
-          ? "The work session approval is stale and must be renewed before supervised continuation."
-          : "Explicit session approval is required before the work session can run.",
-        recommended_action: "approve",
-      }],
+      blockers,
       orchestration_decision: null,
-      explanation: currentSession.approval_state.session_approval_granted
-        ? "The work session approval is stale and must be renewed before supervised continuation."
-        : "Explicit session approval is required before the work session can run.",
+      explanation,
+      recovery_report: buildWorkSessionRecoveryReport(currentSession, "awaiting_session_approval", blockers, explanation),
     };
   }
 
@@ -448,44 +490,56 @@ export function evaluateWorkSessionReadiness(session: AutonomousWorkSession, now
     currentSession.latest_persistence_record.validation_snapshot.status === "validation_failed"
     || currentSession.latest_persistence_record.validation_snapshot.status === "validation_blocked"
   ) {
+    const blockers = [{
+      code: "validation_failed" as const,
+      message: "The last persisted validation snapshot failed, so the work session must pause for review.",
+      recommended_action: "pause" as const,
+    }];
+    const explanation = "The last persisted validation snapshot failed, so the work session must pause for review.";
+
     return {
       status: "session_paused",
       can_advance: false,
-      blockers: [{
-        code: "validation_failed",
-        message: "The last persisted validation snapshot failed, so the work session must pause for review.",
-        recommended_action: "pause",
-      }],
+      blockers,
       orchestration_decision: null,
-      explanation: "The last persisted validation snapshot failed, so the work session must pause for review.",
+      explanation,
+      recovery_report: buildWorkSessionRecoveryReport(currentSession, "session_paused", blockers, explanation),
     };
   }
 
   if (currentSession.latest_persistence_record.validation_snapshot.recommendation === "rollback") {
+    const blockers = [{
+      code: "rollback_recommended" as const,
+      message: "The last persisted validation snapshot recommended rollback, so the work session must pause.",
+      recommended_action: "pause" as const,
+    }];
+    const explanation = "The last persisted validation snapshot recommended rollback, so the work session must pause.";
+
     return {
       status: "session_paused",
       can_advance: false,
-      blockers: [{
-        code: "rollback_recommended",
-        message: "The last persisted validation snapshot recommended rollback, so the work session must pause.",
-        recommended_action: "pause",
-      }],
+      blockers,
       orchestration_decision: null,
-      explanation: "The last persisted validation snapshot recommended rollback, so the work session must pause.",
+      explanation,
+      recovery_report: buildWorkSessionRecoveryReport(currentSession, "session_paused", blockers, explanation),
     };
   }
 
   if (currentSession.cycle_history.length >= currentSession.max_cycles) {
+    const blockers = [{
+      code: "cycle_limit_reached" as const,
+      message: `The supervised work session reached its bounded max cycle limit of ${currentSession.max_cycles}.`,
+      recommended_action: "review" as const,
+    }];
+    const explanation = `The supervised work session reached its bounded max cycle limit of ${currentSession.max_cycles}.`;
+
     return {
       status: "session_blocked",
       can_advance: false,
-      blockers: [{
-        code: "cycle_limit_reached",
-        message: `The supervised work session reached its bounded max cycle limit of ${currentSession.max_cycles}.`,
-        recommended_action: "review",
-      }],
+      blockers,
       orchestration_decision: null,
-      explanation: `The supervised work session reached its bounded max cycle limit of ${currentSession.max_cycles}.`,
+      explanation,
+      recovery_report: buildWorkSessionRecoveryReport(currentSession, "session_blocked", blockers, explanation),
     };
   }
 
@@ -500,16 +554,19 @@ export function evaluateWorkSessionReadiness(session: AutonomousWorkSession, now
     : null;
 
   if (orchestrationDecision?.status === "orchestration_blocked") {
+    const blockers = [{
+      code: "orchestration_blocked" as const,
+      message: orchestrationDecision.explanation,
+      recommended_action: "review" as const,
+    }];
+
     return {
       status: "session_blocked",
       can_advance: false,
-      blockers: [{
-        code: "orchestration_blocked",
-        message: orchestrationDecision.explanation,
-        recommended_action: "review",
-      }],
+      blockers,
       orchestration_decision: orchestrationDecision,
       explanation: orchestrationDecision.explanation,
+      recovery_report: buildWorkSessionRecoveryReport(currentSession, "session_blocked", blockers, orchestrationDecision.explanation),
     };
   }
 
@@ -519,6 +576,7 @@ export function evaluateWorkSessionReadiness(session: AutonomousWorkSession, now
     blockers: [],
     orchestration_decision: orchestrationDecision,
     explanation: orchestrationDecision?.explanation ?? "The supervised work session is ready to advance one bounded cycle.",
+    recovery_report: null,
   };
 }
 

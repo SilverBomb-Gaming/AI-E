@@ -14,6 +14,7 @@ import {
   type AutonomousWorkSession,
   type WorkSessionStatus,
 } from "./autonomousWorkSession";
+import { buildRecoveryReport, type RecoveryReport } from "./failureRecoveryIntelligence";
 
 export type RuntimeStatus =
   | "runtime_idle"
@@ -44,6 +45,7 @@ export type SessionRuntimeResult = {
   state: SessionRuntimeState;
   cycle: RuntimeCycle | null;
   explanation: string;
+  recovery_report: RecoveryReport | null;
 };
 
 function normalizeText(value: string | null | undefined): string {
@@ -169,6 +171,29 @@ function mapSessionStatusToRuntimeStatus(status: WorkSessionStatus): RuntimeStat
   }
 }
 
+function buildRuntimeRecoveryReport(session: AutonomousWorkSession, state: SessionRuntimeState, explanation: string): RecoveryReport | null {
+  if (state.status !== "runtime_paused" && state.status !== "runtime_blocked") {
+    return null;
+  }
+
+  const readiness = evaluateWorkSessionReadiness(session, deriveInvocationTime(session));
+  return buildRecoveryReport({
+    created_at: session.updated_at,
+    source: "session_runtime",
+    status: state.status,
+    message: explanation,
+    explanation,
+    blockers: readiness.blockers.map((blocker) => ({
+      code: blocker.code,
+      message: blocker.message,
+      recommended_action: blocker.recommended_action,
+    })),
+    validation_status: session.latest_persistence_record.validation_snapshot.status,
+    validation_recommendation: session.latest_persistence_record.validation_snapshot.recommendation,
+    rollback_recommended: session.latest_persistence_record.validation_snapshot.recommendation === "rollback",
+  });
+}
+
 export function evaluateRuntimeState(session: AutonomousWorkSession): SessionRuntimeState {
   const now = deriveInvocationTime(session);
 
@@ -248,6 +273,7 @@ export function evaluateRuntimeState(session: AutonomousWorkSession): SessionRun
 export function buildRuntimeResult(session: AutonomousWorkSession): SessionRuntimeResult {
   const state = evaluateRuntimeState(session);
   const latestCycle = session.current_cycle ?? session.cycle_history.at(-1) ?? null;
+  const explanation = state.reason;
   return {
     status: state.status === "runtime_ready" ? "runtime_running" : state.status,
     session,
@@ -261,7 +287,8 @@ export function buildRuntimeResult(session: AutonomousWorkSession): SessionRunti
         session_status: session.status,
       }
       : null,
-    explanation: state.reason,
+    explanation,
+    recovery_report: buildRuntimeRecoveryReport(session, state, explanation),
   };
 }
 
@@ -383,6 +410,7 @@ export function summarizeRuntime(result: SessionRuntimeResult): string {
     `Can run cycle: ${result.state.can_run_cycle}`,
     `Reason: ${result.state.reason}`,
     `Cycle summary: ${result.cycle?.summary ?? "none"}`,
+    `Recovery recommendation: ${result.recovery_report?.decision.recommendation ?? "none"}`,
     `Session summary: ${summarizeWorkSession(result.session).replace(/\n/g, " | ")}`,
   ].join("\n");
 }
