@@ -73,6 +73,45 @@ Important limitation:
 - it does not auto-retry, auto-rollback, auto-approve, mutate files, or bypass validation
 - it only classifies and recommends so the operator can choose the actual recovery action
 
+## Operator Dashboard State
+
+AI-E now also includes a deterministic operator dashboard state layer that produces one structured snapshot of what the system is doing, what is blocked, and what needs operator attention.
+
+What the dashboard state layer does:
+
+- gathers goal state from orchestration, dependency scheduling, background queueing, runtime state, and failure recovery reports
+- exposes one unified operator-facing snapshot instead of forcing the operator to inspect separate internal modules
+- explains why goals are blocked, why one goal is selected, and what the recommended next action is
+- groups work into active, queued, blocked, paused, and completed slices
+- surfaces approvals, validation issues, recent failures, and recovery recommendations in the same structure
+
+Current contract:
+
+- module path: `web/lib/aie/operatorDashboardState.ts`
+- main entry points: `buildOperatorDashboardState()`, `summarizeOperatorDashboardState()`, `extractActionableItems()`, and `groupGoalsByStatus()`
+- core output fields: `active_goal`, `queued_goals`, `blocked_goals`, `completed_goals`, `paused_goals`, `dependency_blockers`, `conflict_blockers`, `recent_failures`, `recovery_recommendations`, `approvals_required`, `validation_issues`, `runtime_status`, `session_status`, `queue_status`, `scheduler_status`, and `last_updated_at`
+
+Example:
+
+```text
+Active goal: Fix KBM input
+Blocked goal: Test grenade feature
+Reason: depends_on Fix KBM input
+Recommended action: complete KBM fix before testing grenade
+```
+
+Why this improves usability:
+
+- AI-E can now explain its entire current state in one snapshot
+- blocked work and operator-needed actions are explicit instead of hidden inside internal results
+- this creates the structured foundation for a later UI or operator dashboard without changing execution behavior
+
+Important limitation:
+
+- this is not a UI yet
+- it does not execute, mutate state, bypass gates, or auto-resolve blockers
+- it is a read-only operator-facing state layer for visibility and control
+
 ## Conversational Intent Refinement
 
 ## Multi-Turn Conversational Loop
