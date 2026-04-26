@@ -1,10 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useState, useTransition, type ReactNode } from "react";
+import { useRouter } from "next/navigation";
+import { useEffect, useState, useTransition, type ReactNode } from "react";
 
 import {
-  runOperatorControlAction,
+  applyOperatorControlAction,
   type OperatorControlAction,
 } from "@/lib/aie/operatorControlSurface";
 import type {
@@ -14,6 +15,7 @@ import type {
   OperatorDashboardRecoveryRecommendation,
   OperatorDashboardState,
 } from "@/lib/aie/operatorDashboardState";
+import type { OperatorRuntimeStateProviderResult } from "@/lib/aie/operatorRuntimeStateProvider";
 
 function getStatusClassName(status: string): string {
   if (/completed|ready/i.test(status)) {
@@ -199,30 +201,90 @@ function RecoveryRow({
   );
 }
 
+function getSourceLabel(source: OperatorRuntimeStateProviderResult["source"]): string {
+  switch (source) {
+    case "live_runtime":
+      return "Live Runtime";
+    case "unavailable":
+      return "Unavailable";
+    case "demo_seed":
+    default:
+      return "Demo Seed";
+  }
+}
+
+function getSourceExplanation(result: OperatorRuntimeStateProviderResult): string {
+  switch (result.source) {
+    case "live_runtime":
+      return "This dashboard is connected to live AI-E runtime state.";
+    case "unavailable":
+      return "No runtime state is available.";
+    case "demo_seed":
+    default:
+      return "This dashboard is using seeded demo state. It demonstrates AI-E reasoning and controls but is not connected to live runtime state yet.";
+  }
+}
+
 async function executeAction(
-  state: OperatorDashboardState,
+  providerResult: OperatorRuntimeStateProviderResult,
   action: OperatorControlAction,
-): Promise<{ state: OperatorDashboardState; message: string }> {
-  const result = await runOperatorControlAction(state, action);
+): Promise<{
+  providerResult: OperatorRuntimeStateProviderResult;
+  message: string;
+  isRejected: boolean;
+}> {
+  if (!providerResult.dashboard_state) {
+    return {
+      providerResult,
+      message: "No dashboard state is available for this operator action.",
+      isRejected: true,
+    };
+  }
+
+  if (providerResult.source === "live_runtime") {
+    return {
+      providerResult,
+      message: "live runtime mutation not enabled for this action",
+      isRejected: true,
+    };
+  }
+
+  const result = applyOperatorControlAction(providerResult.dashboard_state, action);
   return {
-    state: result.state,
+    providerResult: {
+      ...providerResult,
+      dashboard_state: result.state,
+    },
     message: result.message,
+    isRejected: !result.changed,
   };
 }
 
-export function OperatorDashboardClient({ initialState }: { initialState: OperatorDashboardState }) {
-  const [dashboardState, setDashboardState] = useState<OperatorDashboardState>(initialState);
+export function OperatorDashboardClient({ initialProviderResult }: { initialProviderResult: OperatorRuntimeStateProviderResult }) {
+  const router = useRouter();
+  const [providerResult, setProviderResult] = useState<OperatorRuntimeStateProviderResult>(initialProviderResult);
   const [error, setError] = useState<string | null>(null);
-  const [message, setMessage] = useState<string | null>("Local operator state loaded.");
+  const [message, setMessage] = useState<string | null>(`${getSourceLabel(initialProviderResult.source)} state loaded.`);
   const [isPending, startTransition] = useTransition();
+
+  useEffect(() => {
+    setProviderResult(initialProviderResult);
+    setError(null);
+    setMessage(`${getSourceLabel(initialProviderResult.source)} state loaded.`);
+  }, [initialProviderResult]);
+
+  const dashboardState: OperatorDashboardState | null = providerResult.dashboard_state;
 
   function handleAction(action: OperatorControlAction) {
     setError(null);
     startTransition(() => {
-      void executeAction(dashboardState, action)
+      void executeAction(providerResult, action)
         .then((result) => {
-          setDashboardState(result.state);
+          setProviderResult(result.providerResult);
           setMessage(result.message);
+          if (result.isRejected) {
+            setError(result.message);
+          }
         })
         .catch((nextError) => {
           setError(nextError instanceof Error ? nextError.message : "The control action failed.");
@@ -230,7 +292,7 @@ export function OperatorDashboardClient({ initialState }: { initialState: Operat
     });
   }
 
-  const firstBlockedGoal = dashboardState.blocked_goals[0] ?? null;
+  const firstBlockedGoal = dashboardState?.blocked_goals[0] ?? null;
 
   return (
     <main className="page-shell min-h-screen px-6 py-10 lg:px-10 lg:py-14">
@@ -241,7 +303,7 @@ export function OperatorDashboardClient({ initialState }: { initialState: Operat
               <p className="section-label">Operator Dashboard v0</p>
               <h1 className="headline text-4xl font-semibold text-ink lg:text-5xl">See runtime state, blockers, and operator actions in one surface.</h1>
               <p className="max-w-2xl text-base leading-8 body-muted">
-                This minimal UI uses the dashboard-state read model plus a local control surface to show what AI-E is doing, what is blocked, and what the operator can change next.
+                This minimal UI uses the dashboard-state read model plus a runtime state provider to show what AI-E is doing, what is blocked, and what the operator can change next.
               </p>
             </div>
             <div className="flex flex-wrap gap-3">
@@ -249,33 +311,40 @@ export function OperatorDashboardClient({ initialState }: { initialState: Operat
                 Home
               </Link>
               <ActionButton
-                label="Refresh local state"
+                label="Refresh state"
                 onClick={() => {
-                  setDashboardState(initialState);
-                  setMessage("Local operator state reloaded.");
+                  setMessage("Refreshing operator state...");
+                  router.refresh();
                 }}
                 disabled={isPending}
               />
             </div>
           </div>
+          <div className={`mt-6 rounded-[1.5rem] border p-4 ${providerResult.source === "live_runtime" ? "border-emerald-200 bg-emerald-50/70" : providerResult.source === "demo_seed" ? "border-amber-200 bg-amber-50/70" : "border-coral/20 bg-coral/10"}`}>
+            <p className="text-xs uppercase tracking-[0.18em] text-slate">State Source: {getSourceLabel(providerResult.source)}</p>
+            <p className="mt-2 text-sm leading-7 body-muted">{getSourceExplanation(providerResult)}</p>
+            {providerResult.warnings.length > 0 ? (
+              <p className="mt-2 text-sm leading-7 body-muted">{providerResult.warnings.join(" ")}</p>
+            ) : null}
+          </div>
           <div className="mt-6 grid gap-3 md:grid-cols-3">
             <div className="rounded-[1.5rem] border border-ink/10 bg-white/80 p-4">
               <p className="text-xs uppercase tracking-[0.18em] text-slate">Runtime</p>
               <div className="mt-2 flex items-center gap-2">
-                <StatusBadge status={dashboardState.runtime_status.status} />
+                <StatusBadge status={dashboardState?.runtime_status.status ?? "unavailable"} />
               </div>
-              <p className="mt-3 text-sm leading-7 body-muted">{dashboardState.runtime_status.explanation}</p>
+              <p className="mt-3 text-sm leading-7 body-muted">{dashboardState?.runtime_status.explanation ?? "No runtime state is available."}</p>
             </div>
             <div className="rounded-[1.5rem] border border-ink/10 bg-white/80 p-4">
               <p className="text-xs uppercase tracking-[0.18em] text-slate">Queue</p>
               <div className="mt-2 flex items-center gap-2">
-                <StatusBadge status={dashboardState.queue_status.status} />
+                <StatusBadge status={dashboardState?.queue_status.status ?? "unavailable"} />
               </div>
-              <p className="mt-3 text-sm leading-7 body-muted">{dashboardState.queue_status.explanation}</p>
+              <p className="mt-3 text-sm leading-7 body-muted">{dashboardState?.queue_status.explanation ?? "No queue state is available."}</p>
             </div>
             <div className="rounded-[1.5rem] border border-ink/10 bg-white/80 p-4">
               <p className="text-xs uppercase tracking-[0.18em] text-slate">Updated</p>
-              <p className="mt-3 text-sm leading-7 body-muted">{dashboardState.last_updated_at}</p>
+              <p className="mt-3 text-sm leading-7 body-muted">{dashboardState?.last_updated_at ?? providerResult.loaded_at}</p>
               {message ? <p className="mt-2 text-sm font-medium text-ocean">{message}</p> : null}
               {error ? <p className="mt-2 text-sm font-medium text-ember">{error}</p> : null}
             </div>
@@ -284,7 +353,7 @@ export function OperatorDashboardClient({ initialState }: { initialState: Operat
 
         <div className="grid gap-6 lg:grid-cols-2">
           <SectionCard eyebrow="1" title="Active Goal">
-            {dashboardState.active_goal ? (
+            {dashboardState?.active_goal ? (
               <GoalRow goal={dashboardState.active_goal}>
                 <ActionButton
                   label="Pause"
@@ -300,13 +369,13 @@ export function OperatorDashboardClient({ initialState }: { initialState: Operat
 
           <SectionCard eyebrow="2" title="Goal Queue">
             <div className="space-y-4">
-              {dashboardState.queued_goals.length ? dashboardState.queued_goals.map((goal) => (
+              {dashboardState?.queued_goals.length ? dashboardState.queued_goals.map((goal) => (
                 <GoalRow key={goal.goal_id} goal={goal} />
               )) : <p className="text-sm leading-7 body-muted">No queued goals.</p>}
               <div className="border-t border-ink/10 pt-4">
                 <p className="text-xs uppercase tracking-[0.18em] text-slate">Paused goals</p>
                 <div className="mt-3 space-y-4">
-                  {dashboardState.paused_goals.length ? dashboardState.paused_goals.map((goal) => (
+                  {dashboardState?.paused_goals.length ? dashboardState.paused_goals.map((goal) => (
                     <GoalRow key={goal.goal_id} goal={goal}>
                       <ActionButton
                         label="Resume"
@@ -323,7 +392,7 @@ export function OperatorDashboardClient({ initialState }: { initialState: Operat
 
           <SectionCard eyebrow="3" title="Blocked Goals">
             <div className="space-y-4">
-              {dashboardState.blocked_goals.length ? dashboardState.blocked_goals.map((goal) => (
+              {dashboardState?.blocked_goals.length ? dashboardState.blocked_goals.map((goal) => (
                 <BlockedGoalRow
                   key={goal.goal_id}
                   goal={goal}
@@ -336,7 +405,7 @@ export function OperatorDashboardClient({ initialState }: { initialState: Operat
 
           <SectionCard eyebrow="4" title="Recovery Recommendations">
             <div className="space-y-4">
-              {dashboardState.recovery_recommendations.length ? dashboardState.recovery_recommendations.map((recommendation) => (
+              {dashboardState?.recovery_recommendations.length ? dashboardState.recovery_recommendations.map((recommendation) => (
                 <RecoveryRow
                   key={recommendation.report_id}
                   recommendation={recommendation}
@@ -350,7 +419,7 @@ export function OperatorDashboardClient({ initialState }: { initialState: Operat
 
           <SectionCard eyebrow="5" title="Approvals Required">
             <div className="space-y-4">
-              {dashboardState.approvals_required.length ? dashboardState.approvals_required.map((approval) => (
+              {dashboardState?.approvals_required.length ? dashboardState.approvals_required.map((approval) => (
                 <ApprovalRow
                   key={`${approval.goal_id ?? "global"}-${approval.reason}`}
                   approval={approval}
@@ -365,13 +434,13 @@ export function OperatorDashboardClient({ initialState }: { initialState: Operat
             <div className="space-y-4">
               <article className="rounded-[1.5rem] border border-ink/10 bg-white/80 p-4">
                 <div className="flex flex-wrap items-center gap-2">
-                  <StatusBadge status={dashboardState.runtime_status.status} />
-                  <StatusBadge status={dashboardState.session_status.status} />
-                  <StatusBadge status={dashboardState.scheduler_status.status} />
+                  <StatusBadge status={dashboardState?.runtime_status.status ?? "unavailable"} />
+                  <StatusBadge status={dashboardState?.session_status.status ?? "unavailable"} />
+                  <StatusBadge status={dashboardState?.scheduler_status.status ?? "unavailable"} />
                 </div>
-                <p className="mt-3 text-sm leading-7 body-muted">{dashboardState.runtime_status.explanation}</p>
-                <p className="mt-2 text-sm leading-7 body-muted">{dashboardState.session_status.explanation}</p>
-                <p className="mt-2 text-sm leading-7 body-muted">{dashboardState.scheduler_status.explanation}</p>
+                <p className="mt-3 text-sm leading-7 body-muted">{dashboardState?.runtime_status.explanation ?? "No runtime state is available."}</p>
+                <p className="mt-2 text-sm leading-7 body-muted">{dashboardState?.session_status.explanation ?? "No session state is available."}</p>
+                <p className="mt-2 text-sm leading-7 body-muted">{dashboardState?.scheduler_status.explanation ?? "No scheduler state is available."}</p>
               </article>
             </div>
           </SectionCard>

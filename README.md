@@ -112,6 +112,29 @@ Important limitation:
 - it does not execute, mutate state, bypass gates, or auto-resolve blockers
 - it is a read-only operator-facing state layer for visibility and control
 
+## Operator Dashboard Runtime Provider
+
+The operator dashboard UI can now distinguish between seeded demo state and live runtime-backed state.
+
+Current source modes:
+
+- `live_runtime`: the dashboard is reading persisted AI-E runtime state through `web/lib/aie/operatorRuntimeStateProvider.ts`
+- `demo_seed`: no live runtime state was available, so the dashboard falls back to seeded demo data for safe UI testing
+- `unavailable`: a live runtime source was attempted but could not be read safely
+
+Current behavior:
+
+- `/operator` loads provider state on the server
+- if a live runtime state store and runtime id are available, the UI shows live runtime metadata and labels it clearly
+- if no live runtime state exists, the UI falls back to the seeded dashboard demo state and labels it clearly
+- unsupported live actions are rejected safely with the reason `live runtime mutation not enabled for this action`
+
+Current safety boundary:
+
+- live mode is visibility-first and does not enable dangerous runtime mutation
+- demo mode still allows local UI state transitions for approve, pause, resume, and retry
+- seeded demo data is never presented as live runtime state
+
 ## Conversational Intent Refinement
 
 ## Multi-Turn Conversational Loop
