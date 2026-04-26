@@ -97,6 +97,30 @@ test("processes eligible sessions", () => {
   assert.equal(result.sessions_completed, 2);
 });
 
+test("uses multi-goal priority ordering before queue execution", () => {
+  let queue = createBackgroundSessionQueue({
+    max_sessions_per_run: 1,
+    max_cycles_per_session: 2,
+    skip_blocked_sessions: false,
+    stop_on_first_failure: false,
+    operator_away_mode: true,
+    require_fresh_approvals: true,
+    require_fresh_context: true,
+  });
+  queue = enqueueBackgroundSession(queue, createSession("Low priority cleanup", [
+    { title: "Complete low priority cleanup", requiredGate: "controlled_validation" },
+  ]), { priority: "low" });
+  queue = enqueueBackgroundSession(queue, createSession("High priority blocker", [
+    { title: "Complete high priority blocker", requiredGate: "controlled_validation" },
+  ]), { priority: "high" });
+
+  const result = runBackgroundSessionQueue(queue);
+
+  assert.equal(result.goal_schedule.status, "goal_selected");
+  assert.equal(result.goal_schedule.next_goal?.description, "High priority blocker");
+  assert.equal(result.run_results[0]?.session.operator_goal, "High priority blocker");
+});
+
 test("respects max_sessions_per_run", () => {
   let queue = createBackgroundSessionQueue({
     max_sessions_per_run: 1,
@@ -215,6 +239,7 @@ test("produces readable queue report", () => {
 
   assert.match(report.report_id, /^background-queue-report-/);
   assert.match(summary, /Background queue status:/);
+  assert.match(summary, /Goal orchestration status:/);
   assert.match(summary, /Sessions completed:/);
 });
 

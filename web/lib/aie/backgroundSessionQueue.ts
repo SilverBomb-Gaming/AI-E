@@ -7,6 +7,14 @@ import {
   type BackgroundRunResult,
 } from "./backgroundRuntimeScheduler";
 import type { AutonomousWorkSession } from "./autonomousWorkSession";
+import {
+  createGoalQueue,
+  createGoalRecordFromSession,
+  scheduleNextGoal,
+  summarizeGoalScheduler,
+  type GoalPriority,
+  type GoalSchedulerResult,
+} from "./multiGoalOrchestrator";
 
 export type BackgroundQueueStatus =
   | "queue_idle"
@@ -38,6 +46,7 @@ export type BackgroundQueuedSession = {
   queue_entry_id: string;
   session_id: string;
   operator_goal: string;
+  goal_priority: GoalPriority;
   enqueued_at: string;
   order: number;
   status: BackgroundQueuedSessionStatus;
@@ -70,6 +79,7 @@ export type BackgroundQueueReport = {
 export type BackgroundQueueResult = {
   status: BackgroundQueueStatus;
   queue: BackgroundSessionQueue;
+  goal_schedule: GoalSchedulerResult;
   run_results: BackgroundRunResult[];
   blockers: BackgroundRunBlocker[];
   sessions_considered: number;
@@ -248,6 +258,9 @@ export function createBackgroundSessionQueue(config: {
 export function enqueueBackgroundSession(
   queue: BackgroundSessionQueue,
   session: AutonomousWorkSession,
+  options: {
+    priority?: GoalPriority;
+  } = {},
 ): BackgroundSessionQueue {
   const nextQueue = cloneQueue(queue);
   const order = nextQueue.sessions.length + 1;
@@ -255,6 +268,7 @@ export function enqueueBackgroundSession(
     queue_entry_id: createEntryId(nextQueue, session, order),
     session_id: session.session_id,
     operator_goal: session.operator_goal,
+    goal_priority: options.priority ?? "medium",
     enqueued_at: deriveQueueTimestamp(nextQueue, order),
     order,
     status: "queued",
@@ -280,9 +294,39 @@ export function evaluateQueuedSession(
   };
 }
 
+function buildGoalSchedule(queue: BackgroundSessionQueue): GoalSchedulerResult {
+  return scheduleNextGoal(createGoalQueue(queue.sessions.map((queuedSession) =>
+    createGoalRecordFromSession(queuedSession.session, {
+      priority: queuedSession.goal_priority,
+      created_at: queuedSession.enqueued_at,
+      last_updated_at: queuedSession.enqueued_at,
+    })
+  )));
+}
+
+function buildOrderedSessionIndices(queue: BackgroundSessionQueue, goalSchedule: GoalSchedulerResult): number[] {
+  const indexBySessionId = new Map<string, number>();
+  queue.sessions.forEach((queuedSession, index) => {
+    indexBySessionId.set(queuedSession.session_id, index);
+  });
+
+  const scheduledIndices = goalSchedule.ordered_goals
+    .map((goal) => indexBySessionId.get(goal.id))
+    .filter((index): index is number => index !== undefined);
+
+  const seen = new Set<number>(scheduledIndices);
+  const trailingIndices = queue.sessions
+    .map((_, index) => index)
+    .filter((index) => !seen.has(index));
+
+  return [...scheduledIndices, ...trailingIndices];
+}
+
 export function runBackgroundSessionQueue(queue: BackgroundSessionQueue): BackgroundQueueResult {
   const nextQueue = cloneQueue(queue);
   const scheduler = createScheduler(nextQueue);
+  const goalSchedule = buildGoalSchedule(nextQueue);
+  const orderedIndices = buildOrderedSessionIndices(nextQueue, goalSchedule);
   const runResults: BackgroundRunResult[] = [];
   const blockers: BackgroundRunBlocker[] = [];
 
@@ -298,7 +342,7 @@ export function runBackgroundSessionQueue(queue: BackgroundSessionQueue): Backgr
     : "Review the queue report after this operator-away pass.";
   let safeToContinueLater = nextQueue.sessions.length > 0;
 
-  for (let index = 0; index < nextQueue.sessions.length; index += 1) {
+  for (const index of orderedIndices) {
     if (sessionsRun >= nextQueue.policy.max_sessions_per_run) {
       status = "queue_running";
       nextOperatorAction = "Trigger another bounded queue pass to continue processing the remaining sessions.";
@@ -428,6 +472,7 @@ export function runBackgroundSessionQueue(queue: BackgroundSessionQueue): Backgr
   return buildQueueResult({
     status,
     queue: nextQueue,
+    goal_schedule: goalSchedule,
     run_results: runResults,
     blockers: uniqueBlockers(blockers),
     sessions_considered: sessionsConsidered,
@@ -461,6 +506,7 @@ export function buildQueueRunReport(result: BackgroundQueueResult): BackgroundQu
 export function summarizeBackgroundQueue(result: BackgroundQueueResult): string {
   return [
     `Background queue status: ${result.status}`,
+    summarizeGoalScheduler(result.goal_schedule).replace(/\n/g, " | "),
     `Sessions considered: ${result.sessions_considered}`,
     `Sessions run: ${result.sessions_run}`,
     `Sessions skipped: ${result.sessions_skipped}`,

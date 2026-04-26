@@ -1784,6 +1784,52 @@ Milestone direction:
 
 - this moves AI-E from having a runtime start command to having clear safe runtime operating modes.
 
+## Multi-Goal Orchestration
+
+AI-E now also includes a deterministic multi-goal orchestration layer so the bounded runtime can reason about more than one goal without trying to execute multiple goals at the same time.
+
+What the multi-goal orchestration layer does:
+
+- accepts multiple goal records instead of assuming one active goal globally
+- tracks each goal with priority, status, creation time, and last-updated time
+- picks the next runnable goal using priority-first ordering and oldest-first tie breaking
+- skips blocked, paused, and completed goals when selecting the next runnable goal
+- preserves fairness and safety by keeping only one goal runnable at a time in the initial version
+
+Current contract:
+
+- module path: `web/lib/aie/multiGoalOrchestrator.ts`
+- main entry points: `createGoalRecord()`, `createGoalQueue()`, `insertGoal()`, `removeGoal()`, `reprioritizeGoal()`, `createGoalRecordFromSession()`, `scheduleNextGoal()`, and `summarizeGoalScheduler()`
+- goal priorities: `high`, `medium`, and `low`
+- goal statuses: `pending`, `active`, `paused`, `completed`, and `blocked`
+
+How it fits into the current bounded runtime stack:
+
+```text
+multiple goals
+-> multi-goal orchestrator
+-> background session queue
+-> existing runtime scheduler
+-> one bounded session run at a time
+```
+
+What this still guarantees:
+
+- the orchestrator does not execute work directly
+- the orchestrator does not bypass approval freshness or validation gates
+- the runtime still runs only one goal at a time in this version
+- queue ordering remains deterministic for repeated runs with the same input state
+
+Why this improves the runtime environment:
+
+- AI-E can now coordinate competing goals instead of relying only on enqueue order
+- higher-priority work can run first without broadening the execution surface
+- paused, blocked, or completed goals no longer need to be manually filtered before each bounded pass
+
+Milestone direction:
+
+- this moves AI-E from single-goal bounded execution toward deterministic multi-goal coordination.
+
 ## Runtime State Store and Boot Resume
 
 AI-E now also includes a runtime state store so the bounded runtime can remember its last service state across process restarts and decide whether boot resume is safe before the runtime starts again.
