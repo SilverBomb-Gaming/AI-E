@@ -39,6 +39,7 @@ export type ContinuousRuntimeLoopConfig = {
   started_at?: string;
   runtime_intent?: SafeRuntimeIntent;
   goal_id?: string | null;
+  existing_queue?: BackgroundSessionQueue | null;
 };
 
 export type LoadedContinuousRuntimeLoopConfig = RuntimeProfile & {
@@ -52,6 +53,7 @@ export type ContinuousRuntimeLoopResult = {
   status: ContinuousLoopStatus;
   config: LoadedContinuousRuntimeLoopConfig;
   runtime_state: RuntimeStateRecord | null;
+  last_queue: BackgroundSessionQueue | null;
   reason: string;
   ticks: ContinuousLoopTickHistoryEntry[];
   summary: string;
@@ -148,12 +150,14 @@ function buildResult(
   status: ContinuousLoopStatus,
   runtimeState: RuntimeStateRecord | null,
   reason: string,
+  lastQueue: BackgroundSessionQueue | null,
 ): ContinuousRuntimeLoopResult {
   const ticks = runtimeState?.continuous_loop?.tick_history ?? [];
   return {
     status,
     config,
     runtime_state: runtimeState,
+    last_queue: lastQueue,
     reason,
     ticks,
     summary: runtimeState
@@ -161,6 +165,7 @@ function buildResult(
         status,
         config,
         runtime_state: runtimeState,
+        last_queue: lastQueue,
         reason,
         ticks,
         summary: "",
@@ -371,18 +376,18 @@ export function runContinuousRuntimeLoop(
   const runtimeId = normalizeText(config.runtime_id);
 
   if (!runtimeId) {
-    return buildResult(config, "loop_error", null, "A runtime id is required before the continuous runtime loop can start.");
+    return buildResult(config, "loop_error", null, "A runtime id is required before the continuous runtime loop can start.", input.existing_queue ?? null);
   }
 
   const persistedRecord = loadRuntimeState(store, runtimeId);
   if (!persistedRecord) {
-    return buildResult(config, "loop_error", null, "No persisted runtime state record was found for the continuous runtime loop.");
+    return buildResult(config, "loop_error", null, "No persisted runtime state record was found for the continuous runtime loop.", input.existing_queue ?? null);
   }
 
   if (config.dry_run_mode) {
     const pausedRecord = finalizeRecord(persistedRecord, "loop_paused", "Dry-run mode validated the continuous runtime loop configuration without starting loop ticks.", config.started_at);
     persistRuntimeStateRecord(store, pausedRecord);
-    return buildResult(config, "loop_paused", pausedRecord, pausedRecord.continuous_loop?.reason ?? "Dry-run mode enabled.");
+    return buildResult(config, "loop_paused", pausedRecord, pausedRecord.continuous_loop?.reason ?? "Dry-run mode enabled.", input.existing_queue ?? null);
   }
 
   const loopClock = clock ?? createContinuousRuntimeLoopClock(config.started_at, config.tick_interval_ms);
@@ -393,7 +398,7 @@ export function runContinuousRuntimeLoop(
     let finalStatus: ContinuousLoopStatus = "loop_running";
     let finalReason = "Continuous runtime loop is running bounded execution cycles.";
     let stoppedAt = config.started_at;
-    let existingQueue: BackgroundSessionQueue | null = null;
+    let existingQueue: BackgroundSessionQueue | null = input.existing_queue ?? null;
 
     for (let tickIndex = 1; tickIndex <= config.max_ticks_per_run; tickIndex += 1) {
       const stopBeforeTick = evaluateStopCondition(currentRecord);
@@ -455,12 +460,12 @@ export function runContinuousRuntimeLoop(
 
     const finalizedRecord = finalizeRecord(currentRecord, finalStatus, finalReason, stoppedAt);
     persistRuntimeStateRecord(store, finalizedRecord);
-    return buildResult(config, finalStatus, finalizedRecord, finalReason);
+    return buildResult(config, finalStatus, finalizedRecord, finalReason, existingQueue);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const failedRecord = finalizeRecord(persistedRecord, "loop_error", message, config.started_at);
     persistRuntimeStateRecord(store, failedRecord);
-    return buildResult(config, "loop_error", failedRecord, message);
+    return buildResult(config, "loop_error", failedRecord, message, input.existing_queue ?? null);
   }
 }
 

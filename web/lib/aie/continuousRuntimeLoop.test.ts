@@ -295,6 +295,63 @@ test("loop integrates with executionLoopController", () => {
   assert.equal(result.runtime_state?.operator_dashboard_state?.active_goal?.goal_id, "goal-active");
 });
 
+test("loop can continue across separate invocations when queue state is preserved", () => {
+  const seeded = createSeededRuntimeRecord((state) => {
+    state.active_goal = createGoal({
+      goal_id: "goal-approval-gate",
+      description: "Complete live runtime approval gate",
+      priority: "high",
+      status: "active",
+    });
+    state.queued_goals = [
+      createGoal({
+        goal_id: "goal-queued-prereq",
+        description: "Complete queued prerequisite cycle",
+        priority: "medium",
+      }),
+      createGoal({
+        goal_id: "goal-dependent",
+        description: "Complete dependent follow-up cycle",
+        priority: "medium",
+        depends_on_goal_ids: ["goal-queued-prereq"],
+      }),
+    ];
+  });
+
+  const first = runContinuousRuntimeLoop(seeded.store, {
+    runtime_id: seeded.record.runtime_id,
+    tick_interval_ms: 1_000,
+    max_ticks_per_run: 1,
+    max_runs_per_invocation: 1,
+    started_at: "2026-04-26T12:01:00.000Z",
+  }, createContinuousRuntimeLoopClock("2026-04-26T12:01:00.000Z", 1_000));
+
+  const second = runContinuousRuntimeLoop(seeded.store, {
+    runtime_id: seeded.record.runtime_id,
+    tick_interval_ms: 1_000,
+    max_ticks_per_run: 1,
+    max_runs_per_invocation: 1,
+    started_at: "2026-04-26T12:01:01.000Z",
+    existing_queue: first.last_queue,
+  }, createContinuousRuntimeLoopClock("2026-04-26T12:01:01.000Z", 1_000));
+
+  const third = runContinuousRuntimeLoop(seeded.store, {
+    runtime_id: seeded.record.runtime_id,
+    tick_interval_ms: 1_000,
+    max_ticks_per_run: 1,
+    max_runs_per_invocation: 1,
+    started_at: "2026-04-26T12:01:02.000Z",
+    existing_queue: second.last_queue,
+  }, createContinuousRuntimeLoopClock("2026-04-26T12:01:02.000Z", 1_000));
+
+  assert.equal(first.runtime_state?.operator_dashboard_state?.active_goal?.goal_id, "goal-queued-prereq");
+  assert.equal(first.runtime_state?.operator_dashboard_state?.completed_goals.some((goal) => goal.goal_id === "goal-approval-gate"), true);
+  assert.equal(second.runtime_state?.operator_dashboard_state?.active_goal?.goal_id, "goal-dependent");
+  assert.equal(second.runtime_state?.operator_dashboard_state?.completed_goals.some((goal) => goal.goal_id === "goal-queued-prereq"), true);
+  assert.equal(third.runtime_state?.operator_dashboard_state?.active_goal, null);
+  assert.equal(third.runtime_state?.operator_dashboard_state?.completed_goals.some((goal) => goal.goal_id === "goal-dependent"), true);
+});
+
 test("deterministic loop behavior", () => {
   const firstSeeded = createSeededRuntimeRecord();
   const secondSeeded = createSeededRuntimeRecord();

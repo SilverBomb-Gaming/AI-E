@@ -16,6 +16,7 @@ import {
   evaluateBootResume,
   loadRuntimeState,
   persistRuntimeStateRecord,
+  type StoredContinuousLoopConfig,
   type RuntimeStateRecord,
   type RuntimeStateStore,
 } from "./runtimeStateStore";
@@ -56,6 +57,17 @@ export type RuntimeMutationExecutorInput = {
   continuous_loop_clock?: ContinuousRuntimeLoopClock;
   continuous_loop_config?: Partial<Omit<ContinuousRuntimeLoopConfig, "runtime_id">>;
 };
+
+function resolveContinuousLoopConfig(
+  record: RuntimeStateRecord,
+  overrides: Partial<Omit<ContinuousRuntimeLoopConfig, "runtime_id">> | undefined,
+): Partial<Omit<ContinuousRuntimeLoopConfig, "runtime_id">> {
+  const storedConfig = record.continuous_loop_config ?? null;
+  return {
+    ...((storedConfig ?? {}) as StoredContinuousLoopConfig),
+    ...(overrides ?? {}),
+  };
+}
 
 function normalizeText(value: string | null | undefined): string {
   return String(value ?? "")
@@ -302,6 +314,7 @@ export function executeRuntimeMutation(input: RuntimeMutationExecutorInput): Run
   applyRecordMetadata(input.runtime_intent, nextRecord);
 
   const persistedNextRecord = persistRuntimeStateRecord(input.runtime_state_store, nextRecord);
+  const effectiveContinuousLoopConfig = resolveContinuousLoopConfig(persistedNextRecord, input.continuous_loop_config);
   const executionLoop = persistedNextRecord.operator_dashboard_state
     ? runExecutionLoopController({
       runtime_intent: input.runtime_intent,
@@ -331,11 +344,11 @@ export function executeRuntimeMutation(input: RuntimeMutationExecutorInput): Run
         profile_name: persistedNextRecord.profile_name,
         started_at: input.timestamp,
         runtime_intent: "no_op",
-        ...(input.continuous_loop_config ?? {}),
+        ...effectiveContinuousLoopConfig,
       },
       input.continuous_loop_clock ?? createContinuousRuntimeLoopClock(
         input.timestamp,
-        input.continuous_loop_config?.tick_interval_ms ?? 60_000,
+        effectiveContinuousLoopConfig.tick_interval_ms ?? 60_000,
       ),
     );
 
@@ -353,6 +366,7 @@ export function executeRuntimeMutation(input: RuntimeMutationExecutorInput): Run
   executedRecord.operator_dashboard_state = executionLoop.updated_dashboard_state;
   executedRecord.persisted_at = input.timestamp;
   const persistedExecutedRecord = persistRuntimeStateRecord(input.runtime_state_store, executedRecord);
+  const executedContinuousLoopConfig = resolveContinuousLoopConfig(persistedExecutedRecord, input.continuous_loop_config);
 
   if (!input.start_continuous_loop || input.runtime_intent === "pause_active_goal" || !persistedExecutedRecord.operator_dashboard_state) {
     return buildResult(
@@ -371,11 +385,11 @@ export function executeRuntimeMutation(input: RuntimeMutationExecutorInput): Run
       profile_name: persistedExecutedRecord.profile_name,
       started_at: input.timestamp,
       runtime_intent: "no_op",
-      ...(input.continuous_loop_config ?? {}),
+      ...executedContinuousLoopConfig,
     },
     input.continuous_loop_clock ?? createContinuousRuntimeLoopClock(
       input.timestamp,
-      input.continuous_loop_config?.tick_interval_ms ?? 60_000,
+      executedContinuousLoopConfig.tick_interval_ms ?? 60_000,
     ),
   );
 

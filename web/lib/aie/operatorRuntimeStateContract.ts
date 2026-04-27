@@ -1,3 +1,5 @@
+import type { ContinuousRuntimeLoopConfig } from "./continuousRuntimeLoop";
+
 import type { OperatorDashboardState } from "./operatorDashboardState";
 
 export type OperatorStateSource = "live_runtime" | "demo_seed" | "unavailable";
@@ -15,4 +17,5 @@ export type OperatorRuntimeMutationDependencies = {
   now?: string;
   start_continuous_loop?: boolean;
   continuous_loop_clock?: import("./continuousRuntimeLoop").ContinuousRuntimeLoopClock;
+  continuous_loop_config?: Partial<Omit<ContinuousRuntimeLoopConfig, "runtime_id" | "started_at" | "runtime_intent" | "goal_id">>;
 };

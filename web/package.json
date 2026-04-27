@@ -15,6 +15,7 @@
     "trace:capture": "tsx training_dataset_capture.ts"
   },
   "dependencies": {
+    "@playwright/test": "^1.59.1",
     "next": "14.2.24",
     "playwright": "^1.59.1",
     "react": "18.3.1",

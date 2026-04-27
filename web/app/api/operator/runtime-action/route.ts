@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
 
+import { scheduleOperatorRuntimeLiveLoop } from "@/lib/aie/operatorRuntimeLiveLoopScheduler";
 import type { OperatorControlAction } from "@/lib/aie/operatorControlSurface";
 import { applyOperatorActionToProviderState } from "@/lib/aie/operatorRuntimeActionHandler";
 import { getOperatorRuntimeId, getOperatorRuntimeStateStore } from "@/lib/aie/operatorRuntimeServerStore";
 import { loadOperatorDashboardState } from "@/lib/aie/operatorRuntimeStateProvider";
+import { loadRuntimeState } from "@/lib/aie/runtimeStateStore";
 
 export const runtime = "nodejs";
 
@@ -71,12 +73,33 @@ export async function POST(request: Request) {
   });
 
   try {
+    const persistedRuntimeState = runtimeStateStore && runtimeId
+      ? loadRuntimeState(runtimeStateStore, runtimeId)
+      : null;
     const actionResult = applyOperatorActionToProviderState(providerResult, action, {
       runtime_state_store: runtimeStateStore,
       runtime_id: runtimeId,
       now,
       start_continuous_loop: true,
+      continuous_loop_config: {
+        ...(persistedRuntimeState?.continuous_loop_config ?? {}),
+        max_ticks_per_run: 1,
+      },
     });
+
+    if (runtimeStateStore && runtimeId && actionResult.result === "accepted") {
+      const updatedRuntimeState = loadRuntimeState(runtimeStateStore, runtimeId);
+      if (updatedRuntimeState) {
+        scheduleOperatorRuntimeLiveLoop(
+          runtimeStateStore,
+          runtimeId,
+          updatedRuntimeState.profile_name,
+          updatedRuntimeState.continuous_loop_config ?? {},
+          actionResult.continuous_loop_queue ?? null,
+        );
+      }
+    }
+
     const refreshedProviderResult = await loadOperatorDashboardState({
       runtime_state_store: runtimeStateStore,
       runtime_id: runtimeId,

@@ -39,6 +39,7 @@ export type SafeRuntimeActionBridgeResult = {
   status: SafeRuntimeActionBridgeStatus;
   action: OperatorControlAction;
   source: OperatorStateSource;
+  goal_id: string | null;
   runtime_intent: SafeRuntimeIntent;
   reason: string;
   warnings: string[];
@@ -98,6 +99,7 @@ function buildResult(
     status,
     action,
     source,
+    goal_id: action.goal_id ?? null,
     runtime_intent: runtimeIntent,
     reason,
     warnings: unique(warnings),
@@ -307,6 +309,7 @@ export function summarizeSafeRuntimeActionBridgeResult(result: SafeRuntimeAction
   return [
     `Safe runtime bridge status: ${result.status}`,
     `Action type: ${result.action.type}`,
+    `Goal id: ${result.goal_id ?? "global"}`,
     `Source: ${result.source}`,
     `Runtime intent: ${result.runtime_intent}`,
     `Reason: ${result.reason}`,

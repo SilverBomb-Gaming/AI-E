@@ -7,6 +7,7 @@ import type {
   OperatorDashboardApprovalRequirement,
   OperatorDashboardFailure,
   OperatorDashboardRecoveryRecommendation,
+  OperatorDashboardState,
   OperatorDashboardValidationIssue,
 } from "./operatorDashboardState";
 import type { OperatorRuntimeStateProviderResult, OperatorStateSource } from "./operatorRuntimeStateContract";
@@ -203,6 +204,13 @@ function buildLiveOperatorDashboardState(
   bootResume: RuntimeBootResumeResult,
   loadedAt: string,
 ): OperatorDashboardState {
+  if (record.operator_dashboard_state) {
+    return {
+      ...record.operator_dashboard_state,
+      last_updated_at: record.operator_dashboard_state.last_updated_at || record.persisted_at,
+    };
+  }
+
   const approvalsRequired = buildLiveApprovals(bootResume);
   const validationIssues = buildLiveValidationIssues(bootResume);
   const recoverySignals = buildLiveRecoveryRecommendation(bootResume, loadedAt);

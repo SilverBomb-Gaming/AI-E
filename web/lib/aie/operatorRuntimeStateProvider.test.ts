@@ -14,7 +14,7 @@ import {
   summarizeOperatorStateProviderResult,
 } from "./operatorRuntimeStateProvider";
 import type { OperatorRuntimeStateProviderResult } from "./operatorRuntimeStateContract";
-import { createRuntimeStateStore, saveRuntimeState } from "./runtimeStateStore";
+import { createRuntimeStateStore, loadRuntimeState, persistRuntimeStateRecord, saveRuntimeState } from "./runtimeStateStore";
 
 function createStoppedService() {
   const service = createBackgroundRuntimeService({
@@ -139,17 +139,30 @@ test("live supported mutation returns runtime intent metadata", () => {
       blocker_type: "status",
       blocker_ids: [],
     }],
+    approvals_required: [],
   };
+
+  const currentRecord = loadRuntimeState(store, record.runtime_id);
+  if (!currentRecord) {
+    throw new Error("Expected persisted runtime record.");
+  }
+  currentRecord.operator_dashboard_state = providerResult.dashboard_state;
+  persistRuntimeStateRecord(store, currentRecord);
 
   const actionResult = applyOperatorActionToProviderState(providerResult, {
     type: "retry_goal",
     goal_id: "runtime-blocker-1",
+  }, {
+    runtime_state_store: store,
+    runtime_id: record.runtime_id,
+    now: "2026-04-26T12:00:00.000Z",
   });
 
   assert.equal(actionResult.result, "accepted");
   assert.equal(actionResult.runtime_intent, "mark_goal_retry_requested");
-  assert.match(actionResult.reason, /action accepted as runtime intent/i);
-  assert.equal(actionResult.audit_event?.status, "action_ready");
+  assert.match(actionResult.reason, /returned to the queue for retry/i);
+  assert.equal(actionResult.audit_event?.status, "mutation_applied");
+  assert.equal(actionResult.dashboard_state?.blocked_goals.length, 0);
 });
 
 test("resolveOperatorStateSource is deterministic", () => {

@@ -453,7 +453,18 @@ test("deterministic mutation behavior", () => {
 });
 
 test("mutation can start continuous runtime follow-up", () => {
-  const seeded = createSeededRuntimeRecord();
+  const seeded = createSeededRuntimeRecord({
+    mutateRecord(record) {
+      if (!record) {
+        throw new Error("Expected runtime record.");
+      }
+      record.continuous_loop_config = {
+        tick_interval_ms: 1_000,
+        max_ticks_per_run: 2,
+        max_runs_per_invocation: 2,
+      };
+    },
+  });
 
   const result = executeRuntimeMutation({
     runtime_intent: "grant_session_approval",
@@ -465,13 +476,13 @@ test("mutation can start continuous runtime follow-up", () => {
     goal_id: "live-active-goal",
     start_continuous_loop: true,
     continuous_loop_config: {
-      tick_interval_ms: 60_000,
       max_ticks_per_run: 2,
-      max_runs_per_invocation: 1,
     },
   });
 
   assert.equal(result.status, "mutation_applied");
   assert.equal(result.continuous_runtime_loop?.runtime_state?.continuous_loop?.ticks_attempted, 2);
   assert.equal(result.updated_runtime_state.continuous_loop?.ticks_attempted, 2);
+  assert.equal(result.continuous_runtime_loop?.config.tick_interval_ms, 1_000);
+  assert.equal(result.continuous_runtime_loop?.config.max_runs_per_invocation, 2);
 });

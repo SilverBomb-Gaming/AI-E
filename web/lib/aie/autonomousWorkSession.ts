@@ -119,6 +119,7 @@ export type AutonomousWorkSession = {
 
 export type CreateAutonomousWorkSessionInput = {
   operatorGoal: string;
+  sessionId?: string;
   createdAt?: string;
   maxCycles?: number;
   maxChainSteps?: number;
@@ -344,6 +345,7 @@ function cloneSession(session: AutonomousWorkSession): AutonomousWorkSession {
 export function createAutonomousWorkSession(input: CreateAutonomousWorkSessionInput): AutonomousWorkSession {
   const createdAt = normalizeText(input.createdAt) || new Date().toISOString();
   const operatorGoal = normalizeText(input.operatorGoal) || "Untitled operator goal";
+  const sessionId = normalizeText(input.sessionId) || buildSessionId(operatorGoal, createdAt);
   const sessionApprovalGranted = input.sessionApproval === true;
   const chainResult = createAutonomousTaskChain({
     originalRequest: operatorGoal,
@@ -371,7 +373,7 @@ export function createAutonomousWorkSession(input: CreateAutonomousWorkSessionIn
   });
 
   const session: AutonomousWorkSession = {
-    session_id: buildSessionId(operatorGoal, createdAt),
+    session_id: sessionId,
     created_at: createdAt,
     updated_at: createdAt,
     operator_goal: operatorGoal,
@@ -391,7 +393,7 @@ export function createAutonomousWorkSession(input: CreateAutonomousWorkSessionIn
     cycle_history: [],
     max_cycles: clampMaxCycles(input.maxCycles),
     session_report: {
-      report_id: buildReportId(buildSessionId(operatorGoal, createdAt), createdAt),
+      report_id: buildReportId(sessionId, createdAt),
       created_at: createdAt,
       updated_at: createdAt,
       status: "session_planned",

@@ -59,6 +59,16 @@ export type ContinuousLoopStateRecord = {
   tick_history: ContinuousLoopTickHistoryEntry[];
 };
 
+export type StoredContinuousLoopConfig = {
+  tick_interval_ms?: number;
+  max_ticks_per_run?: number;
+  max_runs_per_invocation?: number;
+  require_fresh_approvals?: boolean;
+  require_fresh_context?: boolean;
+  stop_on_blocker?: boolean;
+  stop_on_error?: boolean;
+};
+
 export type RuntimeStateRecord = {
   runtime_id: string;
   profile_name: string;
@@ -86,6 +96,7 @@ export type RuntimeStateRecord = {
     reason: string;
   }>;
   continuous_loop: ContinuousLoopStateRecord | null;
+  continuous_loop_config?: StoredContinuousLoopConfig | null;
   operator_dashboard_state: OperatorDashboardState | null;
   persisted_at: string;
 };
@@ -207,6 +218,30 @@ function isContinuousLoopStateRecord(value: unknown): value is ContinuousLoopSta
     && typeof (value as { reason?: unknown }).reason === "string"
     && Array.isArray((value as { tick_history?: unknown }).tick_history)
     && ((value as { tick_history?: unknown[] }).tick_history ?? []).every(isContinuousLoopTickHistoryEntry)
+  );
+}
+
+function isStoredContinuousLoopConfig(value: unknown): value is StoredContinuousLoopConfig {
+  return Boolean(
+    value
+    && typeof value === "object"
+    && (((value as { tick_interval_ms?: unknown }).tick_interval_ms === undefined)
+      || (isFiniteNonNegativeInteger((value as { tick_interval_ms?: unknown }).tick_interval_ms)
+        && Number((value as { tick_interval_ms?: unknown }).tick_interval_ms) >= 1))
+    && (((value as { max_ticks_per_run?: unknown }).max_ticks_per_run === undefined)
+      || (isFiniteNonNegativeInteger((value as { max_ticks_per_run?: unknown }).max_ticks_per_run)
+        && Number((value as { max_ticks_per_run?: unknown }).max_ticks_per_run) >= 1))
+    && (((value as { max_runs_per_invocation?: unknown }).max_runs_per_invocation === undefined)
+      || (isFiniteNonNegativeInteger((value as { max_runs_per_invocation?: unknown }).max_runs_per_invocation)
+        && Number((value as { max_runs_per_invocation?: unknown }).max_runs_per_invocation) >= 1))
+    && (((value as { require_fresh_approvals?: unknown }).require_fresh_approvals === undefined)
+      || typeof (value as { require_fresh_approvals?: unknown }).require_fresh_approvals === "boolean")
+    && (((value as { require_fresh_context?: unknown }).require_fresh_context === undefined)
+      || typeof (value as { require_fresh_context?: unknown }).require_fresh_context === "boolean")
+    && (((value as { stop_on_blocker?: unknown }).stop_on_blocker === undefined)
+      || typeof (value as { stop_on_blocker?: unknown }).stop_on_blocker === "boolean")
+    && (((value as { stop_on_error?: unknown }).stop_on_error === undefined)
+      || typeof (value as { stop_on_error?: unknown }).stop_on_error === "boolean")
   );
 }
 
@@ -384,6 +419,9 @@ function validateRecordShape(record: unknown): RuntimeStateRecord {
   if (candidate.continuous_loop !== null && candidate.continuous_loop !== undefined && !isContinuousLoopStateRecord(candidate.continuous_loop)) {
     throw new Error("Runtime state record continuous_loop must be null or a valid continuous runtime loop snapshot.");
   }
+  if (candidate.continuous_loop_config !== null && candidate.continuous_loop_config !== undefined && !isStoredContinuousLoopConfig(candidate.continuous_loop_config)) {
+    throw new Error("Runtime state record continuous_loop_config must be null or a valid stored continuous loop config.");
+  }
   if (candidate.operator_dashboard_state !== null && candidate.operator_dashboard_state !== undefined && !isOperatorDashboardState(candidate.operator_dashboard_state)) {
     throw new Error("Runtime state record operator_dashboard_state must be null or a valid operator dashboard snapshot.");
   }
@@ -523,6 +561,7 @@ export function saveRuntimeState(
       reason: tick.reason,
     })),
     continuous_loop: existingRecord?.continuous_loop ?? null,
+    continuous_loop_config: existingRecord?.continuous_loop_config ?? null,
     operator_dashboard_state: existingRecord?.operator_dashboard_state ?? null,
     persisted_at: serviceState.stopped_at
       ?? serviceState.last_tick_at

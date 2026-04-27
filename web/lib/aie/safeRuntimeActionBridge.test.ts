@@ -151,6 +151,7 @@ test("approve_goal creates grant_session_approval intent", () => {
   });
 
   assert.equal(result.status, "action_ready");
+  assert.equal(result.goal_id, "live-active-goal");
   assert.equal(result.runtime_intent, "grant_session_approval");
 });
 

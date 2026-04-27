@@ -8,7 +8,6 @@ import {
   applyOperatorControlAction,
   type OperatorControlAction,
 } from "@/lib/aie/operatorControlSurface";
-import { applyOperatorActionToProviderState } from "@/lib/aie/operatorRuntimeActionHandler";
 import type {
   OperatorDashboardApprovalRequirement,
   OperatorDashboardBlockedGoal,
@@ -234,24 +233,44 @@ async function executeAction(
   message: string;
   isRejected: boolean;
 }> {
-  const runtimeResult = applyOperatorActionToProviderState(providerResult, action);
-
   if (!providerResult.dashboard_state) {
     return {
       providerResult,
-      message: runtimeResult.reason,
+      message: "No dashboard state is available for this operator action.",
       isRejected: true,
     };
   }
 
   if (providerResult.source === "live_runtime") {
-    return {
-      providerResult: {
-        ...providerResult,
-        warnings: runtimeResult.warnings,
+    const response = await fetch("/api/operator/runtime-action", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
       },
-      message: runtimeResult.reason,
-      isRejected: runtimeResult.result !== "accepted",
+      body: JSON.stringify({ action }),
+    });
+    const payload = await response.json() as {
+      error?: string;
+      providerResult?: OperatorRuntimeStateProviderResult;
+      actionResult?: {
+        result: "accepted" | "rejected";
+        reason: string;
+      };
+    };
+
+    if (!response.ok || !payload.actionResult) {
+      const message = payload.error ?? "The live runtime action could not be applied.";
+      return {
+        providerResult,
+        message,
+        isRejected: true,
+      };
+    }
+
+    return {
+      providerResult: payload.providerResult ?? providerResult,
+      message: payload.actionResult.reason,
+      isRejected: payload.actionResult.result !== "accepted",
     };
   }
 
@@ -279,6 +298,22 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
     setMessage(`${getSourceLabel(initialProviderResult.source)} state loaded.`);
   }, [initialProviderResult]);
 
+  useEffect(() => {
+    if (providerResult.source !== "live_runtime") {
+      return undefined;
+    }
+
+    const intervalId = window.setInterval(() => {
+      if (document.visibilityState === "visible") {
+        router.refresh();
+      }
+    }, 1000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [providerResult.source, router]);
+
   const dashboardState: OperatorDashboardState | null = providerResult.dashboard_state;
 
   function handleAction(action: OperatorControlAction) {
@@ -288,6 +323,9 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
         .then((result) => {
           setProviderResult(result.providerResult);
           setMessage(result.message);
+          if (providerResult.source === "live_runtime" && !result.isRejected) {
+            router.refresh();
+          }
           if (result.isRejected) {
             setError(result.message);
           }
@@ -309,7 +347,7 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
               <p className="section-label">Operator Dashboard v0</p>
               <h1 className="headline text-4xl font-semibold text-ink lg:text-5xl">See runtime state, blockers, and operator actions in one surface.</h1>
               <p className="max-w-2xl text-base leading-8 body-muted">
-                This minimal UI uses the dashboard-state read model plus a runtime state provider and safe action bridge to show what AI-E is doing, what is blocked, and what the operator can change next.
+                This minimal UI uses the dashboard-state read model plus a runtime state provider, safe action bridge, and runtime mutation executor to show what AI-E is doing, what is blocked, and what the operator can change next.
               </p>
             </div>
             <div className="flex flex-wrap gap-3">

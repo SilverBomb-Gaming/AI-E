@@ -203,6 +203,17 @@ This keeps the system safe, bounded, and inspectable:
 - autonomous continuation still uses the persisted queue, lease, and trust boundaries already in place
 - the loop records why it paused and what it recommends next before asking the operator to intervene
 
+## Continuous Runtime Verified
+
+AI-E's live operator runtime has now been verified as a real continuous runtime, not a demo-only fallback.
+
+- one operator approval can hand control back to the persisted runtime and let bounded autonomous execution continue without a second manual kick
+- the proof was run against the live runtime-backed `/operator` surface rather than the seeded demo fallback
+- the final operator state persists across refresh, so the autonomous progression remains visible after reload
+- approval freshness, context freshness, blocker stops, and bounded tick limits remain enforced during the live loop
+
+Proof utilities for this verification live under `scripts/seedContinuousRuntimeProof.ts` and `scripts/continuousRuntimeSemanticSmoke.js`.
+
 ## Phase 7D operator oversight
 
 AI-E now productizes the existing autonomous studio loop into a clearer operator-facing oversight layer without changing the runner, queue, approval rules, or session scheduler.

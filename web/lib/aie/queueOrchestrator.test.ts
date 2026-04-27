@@ -13,7 +13,7 @@ import {
   runSingleQueuedTask,
 } from "./queueOrchestrator";
 import { runAutonomousSession } from "./runAutonomousSession";
-import { createTaskEnvelope } from "./taskEnvelope";
+import { createTaskEnvelope, updateTaskEnvelopeStatus, type TaskEnvelope, type TaskEnvelopeStatus, type TaskEnvelopeTransitionMetadata } from "./taskEnvelope";
 import { enqueueTask, getTask, updateTaskDispatchMetadata, updateTaskStatus } from "./taskQueueStore";
 import type { FreeAnalysisResponse } from "./types";
 
@@ -235,11 +235,47 @@ test("queueOrchestrator finalizes failed execution and prevents duplicate claims
     }));
     const claimed = await claimNextRunnableTask({ runtimeMode: "headless", cwd: process.cwd() });
     const duplicate = await claimNextRunnableTask({ taskId: "task-run-failure", runtimeMode: "headless", cwd: process.cwd() });
+    let isolatedTask: TaskEnvelope | null = claimed?.task ?? null;
+    const readIsolatedTask = async (taskId: string) => {
+      if (!isolatedTask || isolatedTask.taskId !== taskId) {
+        return null;
+      }
+
+      return isolatedTask;
+    };
+    const writeIsolatedTask = async (
+      taskId: string,
+      status: TaskEnvelopeStatus,
+      metadata?: TaskEnvelopeTransitionMetadata,
+    ) => {
+      if (!isolatedTask || isolatedTask.taskId !== taskId) {
+        return null;
+      }
+
+      isolatedTask = updateTaskEnvelopeStatus(isolatedTask, status, metadata);
+      return isolatedTask;
+    };
+    const writeIsolatedDispatchMetadata = async (
+      taskId: string,
+      metadata: TaskEnvelopeTransitionMetadata,
+    ) => {
+      if (!isolatedTask || isolatedTask.taskId !== taskId) {
+        return null;
+      }
+
+      isolatedTask = updateTaskEnvelopeStatus(isolatedTask, isolatedTask.status, metadata);
+      return isolatedTask;
+    };
     const summary = claimed
       ? await executeQueuedTask(
           claimed,
           { runtimeMode: "headless", cwd: process.cwd(), maxSteps: 1 },
           {
+            getTask: readIsolatedTask,
+            updateTaskStatus: writeIsolatedTask,
+            finalizeTask: writeIsolatedTask,
+            updateTaskDispatchMetadata: writeIsolatedDispatchMetadata,
+            saveAutonomousSession: async () => {},
             runAutonomousSession: async (params) => runAutonomousSession({
               ...params,
               dependencies: {
@@ -258,13 +294,14 @@ test("queueOrchestrator finalizes failed execution and prevents duplicate claims
                   output: "Queued validation failed.",
                 }),
                 saveAutonomousSession: async () => {},
+                updateTaskStatus: writeIsolatedTask,
               },
             }),
           },
         )
       : null;
 
-    const persisted = await getTask("task-run-failure");
+    const persisted = await readIsolatedTask("task-run-failure");
 
     assert.equal(claimed?.task.taskId, "task-run-failure");
     assert.equal(duplicate, null);

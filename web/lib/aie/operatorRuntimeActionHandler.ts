@@ -1,4 +1,5 @@
 import { applyOperatorControlAction, type OperatorControlAction } from "./operatorControlSurface";
+import type { BackgroundSessionQueue } from "./backgroundSessionQueue";
 import {
   executeRuntimeMutation,
   type RuntimeMutationAuditEvent,
@@ -23,6 +24,7 @@ export type OperatorRuntimeActionResult = {
   warnings: string[];
   runtime_intent?: SafeRuntimeIntent;
   audit_event?: RuntimeMutationAuditEvent;
+  continuous_loop_queue?: BackgroundSessionQueue | null;
 };
 
 function normalizeText(value: string | null | undefined): string {
@@ -104,6 +106,7 @@ export function applyOperatorActionToProviderState(
       source_audit_event: bridgeResult.audit_event,
       start_continuous_loop: dependencies.start_continuous_loop === true,
       continuous_loop_clock: dependencies.continuous_loop_clock,
+      continuous_loop_config: dependencies.continuous_loop_config,
     });
 
     return {
@@ -115,6 +118,7 @@ export function applyOperatorActionToProviderState(
       warnings: unique([...providerResult.warnings, ...bridgeResult.warnings]),
       runtime_intent: bridgeResult.runtime_intent,
       audit_event: mutationResult.audit_event,
+      continuous_loop_queue: mutationResult.continuous_runtime_loop?.last_queue ?? mutationResult.execution_loop?.queue_result?.queue ?? null,
     };
   }
 
