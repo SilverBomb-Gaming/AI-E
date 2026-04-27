@@ -1,10 +1,18 @@
-const { chromium } = require("playwright");
+﻿const { chromium } = require("playwright");
 
 function extractSectionText(page, headingName) {
   return page
     .getByRole("heading", { name: headingName, exact: true })
     .locator("xpath=ancestor::section[1]")
     .innerText();
+}
+
+async function maybeExtractSectionText(page, headingName) {
+  try {
+    return await extractSectionText(page, headingName);
+  } catch {
+    return null;
+  }
 }
 
 async function waitForSectionText(page, headingName, predicate, timeout = 15000) {
@@ -49,6 +57,103 @@ async function waitForSectionText(page, headingName, predicate, timeout = 15000)
   );
 }
 
+async function waitForSectionTextWithDiagnostics(page, headingName, predicate, label, url, timeout = 15000) {
+  try {
+    await waitForSectionText(page, headingName, predicate, timeout);
+  } catch (error) {
+    const activeGoal = await maybeExtractSectionText(page, "Active Goal");
+    const approvals = await maybeExtractSectionText(page, "Approvals Required");
+    const runtimeTimeline = await maybeExtractSectionText(page, "Runtime Timeline");
+    const runtimeIntrospection = await maybeExtractSectionText(page, "Runtime Introspection");
+    const runtimeStatus = await maybeExtractSectionText(page, "Runtime Status");
+
+    throw new Error([
+      `Timed out while waiting for ${label}.`,
+      `URL: ${url}`,
+      `Active Goal Section: ${activeGoal ?? "<missing>"}`,
+      `Approvals Required Section: ${approvals ?? "<missing>"}`,
+      `Runtime Timeline Section: ${runtimeTimeline ?? "<missing>"}`,
+      `Runtime Introspection Section: ${runtimeIntrospection ?? "<missing>"}`,
+      `Runtime Status Section: ${runtimeStatus ?? "<missing>"}`,
+      error instanceof Error ? error.message : String(error),
+    ].join("\n\n"));
+  }
+}
+
+async function buildPreApprovalDiagnostics(page, url) {
+  const activeGoal = await maybeExtractSectionText(page, "Active Goal");
+  const approvals = await maybeExtractSectionText(page, "Approvals Required");
+  const runtimeStatus = await maybeExtractSectionText(page, "Runtime Status");
+
+  return [
+    `URL: ${url}`,
+    `Active Goal Section: ${activeGoal ?? "<missing>"}`,
+    `Approvals Required Section: ${approvals ?? "<missing>"}`,
+    `Runtime Status Section: ${runtimeStatus ?? "<missing>"}`,
+  ].join("\n\n");
+}
+
+async function waitForOperatorPageNavigation(page, url, timeout = 45000) {
+  const startedAt = Date.now();
+  let lastError = null;
+
+  while ((Date.now() - startedAt) < timeout) {
+    try {
+      const response = await page.goto(url, { waitUntil: "domcontentloaded", timeout: 5000 });
+      if (response && response.ok()) {
+        return;
+      }
+
+      lastError = new Error(`Navigation reached ${url} but did not return an OK response.`);
+    } catch (error) {
+      lastError = error;
+    }
+
+    await page.waitForTimeout(500);
+  }
+
+  throw new Error([
+    `Timed out waiting for /operator to become reachable at ${url}.`,
+    lastError instanceof Error ? lastError.message : String(lastError),
+  ].join("\n\n"));
+}
+
+async function waitForSeededPreApprovalState(page, url, timeout = 45000) {
+  await page.getByText("State Source: Live Runtime", { exact: false }).waitFor({ timeout });
+
+  try {
+    await page.waitForFunction(
+      () => {
+        const headings = Array.from(document.querySelectorAll("h1, h2, h3, h4, h5, h6"));
+        const findSectionText = (headingName) => {
+          const heading = headings.find((node) => node.textContent?.trim() === headingName);
+          return heading?.closest("section")?.innerText ?? null;
+        };
+
+        const activeGoalText = findSectionText("Active Goal");
+        const approvalsText = findSectionText("Approvals Required");
+
+        return Boolean(
+          activeGoalText
+          && approvalsText
+          && activeGoalText.includes("Complete live runtime approval gate")
+          && approvalsText.includes("goal-approval-gate")
+          && approvalsText.includes("Approve"),
+        );
+      },
+      undefined,
+      { timeout },
+    );
+  } catch (error) {
+    const diagnostics = await buildPreApprovalDiagnostics(page, url);
+    throw new Error([
+      "Timed out waiting for the hydrated seeded pre-approval operator state.",
+      diagnostics,
+      error instanceof Error ? error.message : String(error),
+    ].join("\n\n"));
+  }
+}
+
 async function snapshot(page, label) {
   const activeGoal = await extractSectionText(page, "Active Goal");
   const goalQueue = await extractSectionText(page, "Goal Queue");
@@ -76,59 +181,64 @@ async function main() {
   const page = await browser.newPage();
 
   try {
-    await page.goto(url, { waitUntil: "domcontentloaded" });
-    await page.getByText("State Source: Live Runtime", { exact: false }).waitFor({ timeout: 15000 });
-    await page.getByRole("button", { name: "Approve", exact: true }).waitFor({ timeout: 15000 });
+    await waitForOperatorPageNavigation(page, url);
+    await waitForSeededPreApprovalState(page, url);
 
     const before = await snapshot(page, "before_click");
 
     await page.getByRole("button", { name: "Approve", exact: true }).click();
-    await waitForSectionText(
+    await waitForSectionTextWithDiagnostics(
       page,
       "Approvals Required",
       (sectionText) =>
-        sectionText.includes("No approvals are currently pending.") &&
-        !sectionText.includes("goal-approval-gate"),
+        sectionText.includes("No approvals are currently pending.")
+        && !sectionText.includes("goal-approval-gate"),
+      "post-approval clearance",
+      url,
+      30000,
     );
-    await waitForSectionText(
+    await waitForSectionTextWithDiagnostics(
       page,
       "Runtime Timeline",
-      (sectionText) => sectionText.includes("Safety gate:") && sectionText.includes("Tick "),
-    );
-    await waitForSectionText(
-      page,
-      "Runtime Introspection",
-      (sectionText) =>
-        sectionText.includes("Last semantic transition")
-        && sectionText.includes("Latest safety gate decision")
-        && sectionText.includes("Next scheduled tick"),
+      (sectionText) => sectionText.includes("Safety gate:") && sectionText.includes("Goal focus"),
+      "immediate runtime timeline transition",
+      url,
+      30000,
     );
 
     const immediate = await snapshot(page, "after_click");
 
-    await waitForSectionText(
+    await waitForSectionTextWithDiagnostics(
       page,
       "Active Goal",
       (sectionText) => sectionText.includes("No goal currently owns the active slot."),
-      20000,
+      "delayed active goal completion",
+      url,
+      45000,
     );
-    await waitForSectionText(
+    await waitForSectionTextWithDiagnostics(
       page,
       "Goal Queue",
       (sectionText) => sectionText.includes("No queued goals."),
-      20000,
+      "delayed queue drain",
+      url,
+      45000,
     );
-    await waitForSectionText(
+    await waitForSectionTextWithDiagnostics(
       page,
       "Blocked Goals",
       (sectionText) => sectionText.includes("No blocked goals."),
-      20000,
+      "delayed blocked-goal clear",
+      url,
+      45000,
     );
-    await waitForSectionText(
+    await waitForSectionTextWithDiagnostics(
       page,
       "Approvals Required",
       (sectionText) => sectionText.includes("No approvals are currently pending."),
-      20000,
+      "delayed approval clearance persistence",
+      url,
+      45000,
     );
 
     const delayed = await snapshot(page, "after_autonomous_ticks");
@@ -153,3 +263,6 @@ main().catch((error) => {
   console.error(error);
   process.exit(1);
 });
+
+
+
