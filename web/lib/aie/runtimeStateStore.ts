@@ -34,12 +34,48 @@ export type ContinuousLoopStatus =
 
 export type ContinuousLoopTickHistoryEntry = {
   tick_id: string;
+  event_id: string;
+  runtime_id: string;
   attempted_at: string;
+  timestamp: string;
   tick_index: number;
   status: ContinuousLoopStatus;
+  event_type: "tick_executed" | "goal_transition" | "tick_blocked" | "tick_observed";
   triggered: boolean;
   run_results_recorded: number;
   reason: string;
+  active_goal_before: {
+    goal_id: string | null;
+    goal_label: string | null;
+  } | null;
+  active_goal_after: {
+    goal_id: string | null;
+    goal_label: string | null;
+  } | null;
+  mutation_applied: string | null;
+  safety_gate_result: "passed" | "blocked" | "not_triggered";
+  scheduler_decision: string | null;
+  persistence_result: "persisted_to_runtime_state";
+  goal_transition: {
+    changed: boolean;
+    from_goal_id: string | null;
+    to_goal_id: string | null;
+    from_goal_label: string | null;
+    to_goal_label: string | null;
+    summary: string;
+  };
+  semantic_progression: {
+    queue_count_before: number;
+    queue_count_after: number;
+    blocked_count_before: number;
+    blocked_count_after: number;
+    runtime_status_before: string;
+    runtime_status_after: string;
+    scheduler_status_before: string;
+    scheduler_status_after: string;
+  };
+  mutation_summary: string;
+  next_scheduled_action: string | null;
 };
 
 export type ContinuousLoopStateRecord = {
@@ -181,12 +217,78 @@ function isContinuousLoopTickHistoryEntry(value: unknown): value is ContinuousLo
     value
     && typeof value === "object"
     && typeof (value as { tick_id?: unknown }).tick_id === "string"
+    && typeof (value as { event_id?: unknown }).event_id === "string"
+    && typeof (value as { runtime_id?: unknown }).runtime_id === "string"
     && isIsoTimestamp((value as { attempted_at?: unknown }).attempted_at)
+    && isIsoTimestamp((value as { timestamp?: unknown }).timestamp)
     && isFiniteNonNegativeInteger((value as { tick_index?: unknown }).tick_index)
     && isContinuousLoopStatus((value as { status?: unknown }).status)
+    && (
+      (value as { event_type?: unknown }).event_type === "tick_executed"
+      || (value as { event_type?: unknown }).event_type === "goal_transition"
+      || (value as { event_type?: unknown }).event_type === "tick_blocked"
+      || (value as { event_type?: unknown }).event_type === "tick_observed"
+    )
     && typeof (value as { triggered?: unknown }).triggered === "boolean"
     && isFiniteNonNegativeInteger((value as { run_results_recorded?: unknown }).run_results_recorded)
     && typeof (value as { reason?: unknown }).reason === "string"
+    && (
+      (value as { active_goal_before?: unknown }).active_goal_before === null
+      || Boolean(
+        (value as { active_goal_before?: { goal_id?: unknown; goal_label?: unknown } }).active_goal_before
+        && (((value as { active_goal_before?: { goal_id?: unknown } }).active_goal_before?.goal_id === null)
+          || typeof (value as { active_goal_before?: { goal_id?: unknown } }).active_goal_before?.goal_id === "string")
+        && (((value as { active_goal_before?: { goal_label?: unknown } }).active_goal_before?.goal_label === null)
+          || typeof (value as { active_goal_before?: { goal_label?: unknown } }).active_goal_before?.goal_label === "string")
+      )
+    )
+    && (
+      (value as { active_goal_after?: unknown }).active_goal_after === null
+      || Boolean(
+        (value as { active_goal_after?: { goal_id?: unknown; goal_label?: unknown } }).active_goal_after
+        && (((value as { active_goal_after?: { goal_id?: unknown } }).active_goal_after?.goal_id === null)
+          || typeof (value as { active_goal_after?: { goal_id?: unknown } }).active_goal_after?.goal_id === "string")
+        && (((value as { active_goal_after?: { goal_label?: unknown } }).active_goal_after?.goal_label === null)
+          || typeof (value as { active_goal_after?: { goal_label?: unknown } }).active_goal_after?.goal_label === "string")
+      )
+    )
+    && (((value as { mutation_applied?: unknown }).mutation_applied === null)
+      || typeof (value as { mutation_applied?: unknown }).mutation_applied === "string")
+    && (
+      (value as { safety_gate_result?: unknown }).safety_gate_result === "passed"
+      || (value as { safety_gate_result?: unknown }).safety_gate_result === "blocked"
+      || (value as { safety_gate_result?: unknown }).safety_gate_result === "not_triggered"
+    )
+    && (((value as { scheduler_decision?: unknown }).scheduler_decision === null)
+      || typeof (value as { scheduler_decision?: unknown }).scheduler_decision === "string")
+    && (value as { persistence_result?: unknown }).persistence_result === "persisted_to_runtime_state"
+    && Boolean(
+      (value as { goal_transition?: unknown }).goal_transition
+      && typeof (value as { goal_transition?: { changed?: unknown } }).goal_transition?.changed === "boolean"
+      && (((value as { goal_transition?: { from_goal_id?: unknown } }).goal_transition?.from_goal_id === null)
+        || typeof (value as { goal_transition?: { from_goal_id?: unknown } }).goal_transition?.from_goal_id === "string")
+      && (((value as { goal_transition?: { to_goal_id?: unknown } }).goal_transition?.to_goal_id === null)
+        || typeof (value as { goal_transition?: { to_goal_id?: unknown } }).goal_transition?.to_goal_id === "string")
+      && (((value as { goal_transition?: { from_goal_label?: unknown } }).goal_transition?.from_goal_label === null)
+        || typeof (value as { goal_transition?: { from_goal_label?: unknown } }).goal_transition?.from_goal_label === "string")
+      && (((value as { goal_transition?: { to_goal_label?: unknown } }).goal_transition?.to_goal_label === null)
+        || typeof (value as { goal_transition?: { to_goal_label?: unknown } }).goal_transition?.to_goal_label === "string")
+      && typeof (value as { goal_transition?: { summary?: unknown } }).goal_transition?.summary === "string"
+    )
+    && Boolean(
+      (value as { semantic_progression?: unknown }).semantic_progression
+      && isFiniteNonNegativeInteger((value as { semantic_progression?: { queue_count_before?: unknown } }).semantic_progression?.queue_count_before)
+      && isFiniteNonNegativeInteger((value as { semantic_progression?: { queue_count_after?: unknown } }).semantic_progression?.queue_count_after)
+      && isFiniteNonNegativeInteger((value as { semantic_progression?: { blocked_count_before?: unknown } }).semantic_progression?.blocked_count_before)
+      && isFiniteNonNegativeInteger((value as { semantic_progression?: { blocked_count_after?: unknown } }).semantic_progression?.blocked_count_after)
+      && typeof (value as { semantic_progression?: { runtime_status_before?: unknown } }).semantic_progression?.runtime_status_before === "string"
+      && typeof (value as { semantic_progression?: { runtime_status_after?: unknown } }).semantic_progression?.runtime_status_after === "string"
+      && typeof (value as { semantic_progression?: { scheduler_status_before?: unknown } }).semantic_progression?.scheduler_status_before === "string"
+      && typeof (value as { semantic_progression?: { scheduler_status_after?: unknown } }).semantic_progression?.scheduler_status_after === "string"
+    )
+    && typeof (value as { mutation_summary?: unknown }).mutation_summary === "string"
+    && (((value as { next_scheduled_action?: unknown }).next_scheduled_action === null)
+      || typeof (value as { next_scheduled_action?: unknown }).next_scheduled_action === "string")
   );
 }
 
@@ -341,6 +443,25 @@ function isDashboardValidationIssue(value: unknown): value is OperatorDashboardV
   );
 }
 
+function isDashboardRuntimeObservability(value: unknown): boolean {
+  return Boolean(
+    value
+    && typeof value === "object"
+    && isFiniteNonNegativeInteger((value as { current_tick?: unknown }).current_tick)
+    && (((value as { last_tick_at?: unknown }).last_tick_at === null) || isIsoTimestamp((value as { last_tick_at?: unknown }).last_tick_at))
+    && (((value as { last_mutation?: unknown }).last_mutation === null) || typeof (value as { last_mutation?: unknown }).last_mutation === "string")
+    && (((value as { last_semantic_transition?: unknown }).last_semantic_transition === null)
+      || typeof (value as { last_semantic_transition?: unknown }).last_semantic_transition === "string")
+    && (((value as { latest_safety_gate_decision?: unknown }).latest_safety_gate_decision === null)
+      || typeof (value as { latest_safety_gate_decision?: unknown }).latest_safety_gate_decision === "string")
+    && (((value as { next_scheduled_action?: unknown }).next_scheduled_action === null) || typeof (value as { next_scheduled_action?: unknown }).next_scheduled_action === "string")
+    && (((value as { next_scheduled_tick_at?: unknown }).next_scheduled_tick_at === null)
+      || isIsoTimestamp((value as { next_scheduled_tick_at?: unknown }).next_scheduled_tick_at))
+    && Array.isArray((value as { event_log?: unknown }).event_log)
+    && ((value as { event_log?: unknown[] }).event_log ?? []).every(isContinuousLoopTickHistoryEntry)
+  );
+}
+
 function isOperatorDashboardState(value: unknown): value is OperatorDashboardState {
   return Boolean(
     value
@@ -370,6 +491,8 @@ function isOperatorDashboardState(value: unknown): value is OperatorDashboardSta
     && isDashboardStatusLine((value as { session_status?: unknown }).session_status)
     && isDashboardStatusLine((value as { queue_status?: unknown }).queue_status)
     && isDashboardStatusLine((value as { scheduler_status?: unknown }).scheduler_status)
+    && (((value as { runtime_observability?: unknown }).runtime_observability === undefined)
+      || isDashboardRuntimeObservability((value as { runtime_observability?: unknown }).runtime_observability))
     && isIsoTimestamp((value as { last_updated_at?: unknown }).last_updated_at),
   );
 }

@@ -96,6 +96,61 @@ export type OperatorDashboardStatusLine = {
   explanation: string;
 };
 
+export type OperatorRuntimeObservabilityEvent = {
+  tick_id: string;
+  event_id: string;
+  runtime_id: string;
+  timestamp: string;
+  tick_index: number;
+  event_type: "tick_executed" | "goal_transition" | "tick_blocked" | "tick_observed";
+  attempted_at: string;
+  status: string;
+  reason: string;
+  active_goal_before: {
+    goal_id: string | null;
+    goal_label: string | null;
+  } | null;
+  active_goal_after: {
+    goal_id: string | null;
+    goal_label: string | null;
+  } | null;
+  mutation_applied: string | null;
+  safety_gate_result: "passed" | "blocked" | "not_triggered";
+  scheduler_decision: string | null;
+  persistence_result: "persisted_to_runtime_state";
+  goal_transition: {
+    changed: boolean;
+    from_goal_id: string | null;
+    to_goal_id: string | null;
+    from_goal_label: string | null;
+    to_goal_label: string | null;
+    summary: string;
+  } | null;
+  semantic_progression: {
+    queue_count_before: number;
+    queue_count_after: number;
+    blocked_count_before: number;
+    blocked_count_after: number;
+    runtime_status_before: string;
+    runtime_status_after: string;
+    scheduler_status_before: string;
+    scheduler_status_after: string;
+  } | null;
+  mutation_summary: string | null;
+  next_scheduled_action: string | null;
+};
+
+export type OperatorRuntimeObservability = {
+  current_tick: number;
+  last_tick_at: string | null;
+  last_mutation: string | null;
+  last_semantic_transition: string | null;
+  latest_safety_gate_decision: string | null;
+  next_scheduled_action: string | null;
+  next_scheduled_tick_at: string | null;
+  event_log: OperatorRuntimeObservabilityEvent[];
+};
+
 export type OperatorDashboardActionItem = {
   kind: "approval" | "dependency" | "conflict" | "recovery" | "validation";
   goal_id: string | null;
@@ -121,6 +176,7 @@ export type OperatorDashboardState = {
   session_status: OperatorDashboardStatusLine;
   queue_status: OperatorDashboardStatusLine;
   scheduler_status: OperatorDashboardStatusLine;
+  runtime_observability?: OperatorRuntimeObservability;
   last_updated_at: string;
 };
 
@@ -857,6 +913,16 @@ export function buildOperatorDashboardState(context: OperatorDashboardContext): 
     session_status: deriveSessionStatus(context),
     queue_status: deriveQueueStatus(context),
     scheduler_status: deriveSchedulerStatus(context, goalSchedule),
+    runtime_observability: {
+      current_tick: 0,
+      last_tick_at: null,
+      last_mutation: null,
+      last_semantic_transition: null,
+      latest_safety_gate_decision: null,
+      next_scheduled_action: null,
+      next_scheduled_tick_at: null,
+      event_log: [],
+    },
     last_updated_at: deriveLastUpdatedAt(context, goals, reports),
   };
 }

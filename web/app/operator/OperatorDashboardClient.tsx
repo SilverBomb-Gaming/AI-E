@@ -14,6 +14,7 @@ import type {
   OperatorDashboardGoal,
   OperatorDashboardRecoveryRecommendation,
   OperatorDashboardState,
+  OperatorRuntimeObservabilityEvent,
 } from "@/lib/aie/operatorDashboardState";
 import type { OperatorRuntimeStateProviderResult } from "@/lib/aie/operatorRuntimeStateContract";
 
@@ -199,6 +200,26 @@ function RecoveryRow({
       </div>
     </article>
   );
+}
+
+function describeRuntimeEvent(event: OperatorRuntimeObservabilityEvent): string {
+  if (event.goal_transition?.summary) {
+    return event.goal_transition.summary;
+  }
+
+  if (event.mutation_applied) {
+    return event.mutation_applied;
+  }
+
+  return event.reason;
+}
+
+function formatSafetyGateDecision(value: OperatorRuntimeObservabilityEvent["safety_gate_result"] | string | null | undefined): string {
+  if (!value) {
+    return "No safety gate decision has been recorded yet.";
+  }
+
+  return value.replace(/_/g, " ");
 }
 
 function getSourceLabel(source: OperatorRuntimeStateProviderResult["source"]): string {
@@ -488,7 +509,48 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
               </article>
             </div>
           </SectionCard>
+
+          <SectionCard eyebrow="7" title="Runtime Introspection">
+            <div className="grid gap-4 md:grid-cols-2">
+              <article className="rounded-[1.5rem] border border-ink/10 bg-white/80 p-4">
+                <p className="text-xs uppercase tracking-[0.18em] text-slate">Current tick</p>
+                <p className="mt-2 text-2xl font-semibold text-ink">{dashboardState?.runtime_observability?.current_tick ?? 0}</p>
+                <p className="mt-3 text-sm leading-7 body-muted">Last tick at: {dashboardState?.runtime_observability?.last_tick_at ?? "none"}</p>
+                <p className="mt-2 text-sm leading-7 body-muted">Next scheduled tick: {dashboardState?.runtime_observability?.next_scheduled_tick_at ?? "none"}</p>
+              </article>
+              <article className="rounded-[1.5rem] border border-ink/10 bg-white/80 p-4">
+                <p className="text-xs uppercase tracking-[0.18em] text-slate">Last mutation</p>
+                <p className="mt-2 text-sm leading-7 body-muted">{dashboardState?.runtime_observability?.last_mutation ?? "No runtime mutation has been persisted yet."}</p>
+                <p className="mt-3 text-xs uppercase tracking-[0.18em] text-slate">Last semantic transition</p>
+                <p className="mt-2 text-sm leading-7 body-muted">{dashboardState?.runtime_observability?.last_semantic_transition ?? "No semantic transition has been recorded yet."}</p>
+                <p className="mt-3 text-xs uppercase tracking-[0.18em] text-slate">Latest safety gate decision</p>
+                <p className="mt-2 text-sm leading-7 body-muted">{formatSafetyGateDecision(dashboardState?.runtime_observability?.latest_safety_gate_decision)}</p>
+                <p className="mt-3 text-xs uppercase tracking-[0.18em] text-slate">Next scheduled action</p>
+                <p className="mt-2 text-sm leading-7 body-muted">{dashboardState?.runtime_observability?.next_scheduled_action ?? "No further bounded action is currently scheduled."}</p>
+              </article>
+            </div>
+          </SectionCard>
         </div>
+
+        <SectionCard eyebrow="8" title="Runtime Timeline">
+          <div className="space-y-4">
+            {dashboardState?.runtime_observability?.event_log.length ? dashboardState.runtime_observability.event_log.slice().reverse().map((event) => (
+              <article key={event.event_id} className="rounded-[1.5rem] border border-ink/10 bg-white/80 p-4">
+                <div className="flex flex-wrap items-center gap-2">
+                  <StatusBadge status={event.status} />
+                  <StatusBadge status={event.event_type} />
+                  <p className="text-xs uppercase tracking-[0.18em] text-slate">Tick {event.tick_index}</p>
+                  <p className="text-xs uppercase tracking-[0.18em] text-slate">{event.timestamp}</p>
+                </div>
+                <p className="mt-3 text-sm leading-7 body-muted">{describeRuntimeEvent(event)}</p>
+                {event.mutation_applied ? <p className="mt-2 text-sm leading-7 body-muted">Mutation: {event.mutation_applied}</p> : null}
+                <p className="mt-2 text-xs leading-6 text-slate">Safety gate: {formatSafetyGateDecision(event.safety_gate_result)}</p>
+                {event.scheduler_decision ? <p className="mt-2 text-xs leading-6 text-slate">Scheduler: {event.scheduler_decision}</p> : null}
+                {event.next_scheduled_action ? <p className="mt-2 text-xs leading-6 text-slate">Next: {event.next_scheduled_action}</p> : null}
+              </article>
+            )) : <p className="text-sm leading-7 body-muted">No runtime events have been recorded yet.</p>}
+          </div>
+        </SectionCard>
       </div>
     </main>
   );

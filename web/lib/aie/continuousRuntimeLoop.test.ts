@@ -187,7 +187,9 @@ test("loop stops on blocker", () => {
   });
 
   assert.equal(result.status, "loop_blocked");
-  assert.equal(result.ticks.length, 0);
+  assert.equal(result.ticks.length, 1);
+  assert.equal(result.ticks[0]?.event_type, "tick_blocked");
+  assert.equal(result.ticks[0]?.safety_gate_result, "blocked");
 });
 
 test("loop stops on validation failure", () => {
@@ -207,7 +209,9 @@ test("loop stops on validation failure", () => {
   });
 
   assert.equal(result.status, "loop_blocked");
-  assert.equal(result.ticks.length, 0);
+  assert.equal(result.ticks.length, 1);
+  assert.equal(result.ticks[0]?.event_type, "tick_blocked");
+  assert.equal(result.ticks[0]?.safety_gate_result, "blocked");
 });
 
 test("loop stops on approval requirement", () => {
@@ -226,7 +230,10 @@ test("loop stops on approval requirement", () => {
   });
 
   assert.equal(result.status, "loop_paused");
-  assert.equal(result.ticks.length, 0);
+  assert.equal(result.ticks.length, 1);
+  assert.equal(result.ticks[0]?.event_type, "tick_blocked");
+  assert.equal(result.ticks[0]?.safety_gate_result, "blocked");
+  assert.equal(result.ticks[0]?.mutation_applied, null);
 });
 
 test("loop stops on max ticks", () => {
@@ -245,6 +252,12 @@ test("loop stops on max ticks", () => {
 
   assert.equal(result.status, "loop_stopped");
   assert.equal(result.runtime_state?.continuous_loop?.ticks_attempted, 2);
+  assert.equal(result.runtime_state?.continuous_loop?.tick_history[0]?.goal_transition.changed, false);
+  assert.match(result.runtime_state?.continuous_loop?.tick_history[0]?.mutation_summary ?? "", /runtime/i);
+  assert.equal(result.runtime_state?.continuous_loop?.tick_history[0]?.runtime_id, seeded.record.runtime_id);
+  assert.equal(result.runtime_state?.continuous_loop?.tick_history[0]?.event_type, "tick_executed");
+  assert.equal(result.runtime_state?.continuous_loop?.tick_history[0]?.safety_gate_result, "passed");
+  assert.equal(result.runtime_state?.continuous_loop?.tick_history[0]?.persistence_result, "persisted_to_runtime_state");
 });
 
 test("loop completes when no work remains", () => {
@@ -259,7 +272,9 @@ test("loop completes when no work remains", () => {
   });
 
   assert.equal(result.status, "loop_completed");
-  assert.equal(result.ticks.length, 0);
+  assert.equal(result.ticks.length, 1);
+  assert.equal(result.ticks[0]?.event_type, "tick_observed");
+  assert.equal(result.ticks[0]?.safety_gate_result, "not_triggered");
 });
 
 test("loop persists state after each cycle", () => {

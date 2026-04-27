@@ -224,6 +224,71 @@ Safety boundary:
 - freshness requirements, blocker stops, and max tick limits remain enforced on every run
 - the continuous loop persists only runtime state snapshots and deterministic tick history; it does not bypass repo mutation approvals
 
+## Autonomy Layer Status
+
+AI-E has achieved single-agent time-based continuous execution, but not yet full self-directed studio autonomy.
+
+Current layer status:
+
+- runtime state provider: shipped
+- operator control surface: shipped
+- safe runtime action bridge: shipped
+- runtime mutation executor: shipped
+- bounded execution loop: shipped
+- continuous runtime loop: shipped
+- runtime persistence: shipped
+- live browser proof at `/operator`: shipped
+- observability layer: shipped with persisted runtime timeline events, semantic transitions, and safety-gate visibility
+- multi-agent orchestration: scaffolded, bounded, and not yet driving live runtime execution
+- fully self-directed operation: not started
+
+What this means today:
+
+- AI-E can continue bounded work across time after one safe operator action
+- `/operator` can now show the latest tick, last mutation, last semantic transition, next scheduled tick, latest safety gate decision, and a persisted runtime timeline
+- pre-tick review gates and approval gates are now logged as persisted runtime events instead of appearing as silent stops
+- timestamp-only observations are tracked separately from semantic progress so the system does not over-claim autonomy
+
+What is not true yet:
+
+- AI-E does not have unbounded background autonomy
+- AI-E does not recursively spawn agents
+- AI-E does not bypass review gates, approval freshness, or bounded execution limits
+- AI-E does not yet run a live planner and executor pair against the continuous runtime loop
+
+Roadmap checkpoints:
+
+- Layer 1: observable single-agent execution
+  - status: complete
+  - proof surface: `web/lib/aie/continuousRuntimeLoop.ts`, `web/lib/aie/operatorRuntimeStateProvider.ts`, and `/operator`
+- Layer 2: traceable semantic progression and gate visibility
+  - status: complete
+  - proof surface: persisted runtime timeline events with semantic transitions and safety-gate results
+- Layer 3: extensible multi-agent runtime contract
+  - status: scaffolded
+  - proof surface: `web/lib/aie/orchestrationSession.ts` and `web/lib/aie/agentRuntimeRegistry.ts`
+- Layer 4: fully self-directed studio operation
+  - status: not complete
+  - note: do not treat this layer as 100%
+
+## Multi-Agent Orchestration Scaffold
+
+AI-E now includes a safe initial multi-agent scaffold that reuses the existing planner and executor vocabulary without creating a second autonomous runtime path.
+
+Current contract:
+
+- orchestration vocabulary: `web/lib/aie/orchestrationSession.ts`
+- bounded agent registry scaffold: `web/lib/aie/agentRuntimeRegistry.ts`
+- focused regression coverage: `web/lib/aie/agentRuntimeRegistry.test.ts`
+
+Current safety boundary:
+
+- the scaffold is capped to the known `planner-agent` and `executor-agent` roles
+- each agent can own at most one bounded goal at a time
+- child-agent spawning is disabled explicitly
+- pause and resume are modeled, but no unbounded agent loop is started from this scaffold
+- live continuous runtime execution remains single-agent until the planner or executor handoff path is wired into the owning runtime loop intentionally
+
 ## Conversational Intent Refinement
 
 ## Multi-Turn Conversational Loop

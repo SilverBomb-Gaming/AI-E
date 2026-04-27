@@ -83,6 +83,121 @@ function buildTickId(runtimeId: string, attemptedAt: string): string {
   return `continuous-runtime-loop-tick-${sanitizeTimestamp(attemptedAt)}-${runtimeId}`;
 }
 
+function buildRuntimeEventType(params: {
+  triggered: boolean;
+  blocked: boolean;
+  goalTransitionChanged: boolean;
+}): ContinuousLoopTickHistoryEntry["event_type"] {
+  if (params.blocked) {
+    return "tick_blocked";
+  }
+
+  if (params.goalTransitionChanged) {
+    return "goal_transition";
+  }
+
+  if (params.triggered) {
+    return "tick_executed";
+  }
+
+  return "tick_observed";
+}
+
+function summarizeActiveGoal(goal: RuntimeStateRecord["operator_dashboard_state"]["active_goal"] | null | undefined) {
+  if (!goal) {
+    return null;
+  }
+
+  return {
+    goal_id: goal.goal_id,
+    goal_label: goal.description,
+  };
+}
+
+function hasSemanticProgress(goalTransition: ContinuousLoopTickHistoryEntry["goal_transition"], semanticProgression: ContinuousLoopTickHistoryEntry["semantic_progression"]) {
+  return goalTransition.changed
+    || semanticProgression.queue_count_before !== semanticProgression.queue_count_after
+    || semanticProgression.blocked_count_before !== semanticProgression.blocked_count_after
+    || semanticProgression.runtime_status_before !== semanticProgression.runtime_status_after
+    || semanticProgression.scheduler_status_before !== semanticProgression.scheduler_status_after;
+}
+
+function appendStopConditionEvent(
+  record: RuntimeStateRecord,
+  loopState: ContinuousLoopStateRecord,
+  attemptedAt: string,
+  status: ContinuousLoopStatus,
+  reason: string,
+): RuntimeStateRecord {
+  const nextRecord = cloneRuntimeStateRecord(record);
+  const currentTickIndex = (loopState.ticks_attempted ?? 0) + 1;
+  const tickId = buildTickId(record.runtime_id, attemptedAt);
+  const activeGoal = summarizeActiveGoal(record.operator_dashboard_state?.active_goal);
+  const blocked = status === "loop_blocked" || status === "loop_paused";
+
+  nextRecord.last_tick_at = attemptedAt;
+  nextRecord.persisted_at = attemptedAt;
+  nextRecord.continuous_loop = {
+    ...loopState,
+    status,
+    started_at: loopState.started_at ?? attemptedAt,
+    stopped_at: null,
+    last_tick_at: attemptedAt,
+    ticks_attempted: loopState.ticks_attempted + 1,
+    ticks_completed: loopState.ticks_completed,
+    last_trigger_result: {
+      status,
+      reason,
+      triggered: false,
+      run_results_recorded: 0,
+    },
+    reason,
+    tick_history: [...loopState.tick_history, {
+      tick_id: tickId,
+      event_id: tickId,
+      runtime_id: record.runtime_id,
+      attempted_at: attemptedAt,
+      timestamp: attemptedAt,
+      tick_index: currentTickIndex,
+      status,
+      event_type: blocked ? "tick_blocked" : "tick_observed",
+      triggered: false,
+      run_results_recorded: 0,
+      reason,
+      active_goal_before: activeGoal,
+      active_goal_after: activeGoal,
+      mutation_applied: null,
+      safety_gate_result: blocked ? "blocked" : "not_triggered",
+      scheduler_decision: record.operator_dashboard_state?.scheduler_status.explanation || null,
+      persistence_result: "persisted_to_runtime_state",
+      goal_transition: {
+        changed: false,
+        from_goal_id: activeGoal?.goal_id ?? null,
+        to_goal_id: activeGoal?.goal_id ?? null,
+        from_goal_label: activeGoal?.goal_label ?? null,
+        to_goal_label: activeGoal?.goal_label ?? null,
+        summary: activeGoal
+          ? `Goal focus remained on ${activeGoal.goal_label}.`
+          : "No active goal owned the slot before or after the runtime gate decision.",
+      },
+      semantic_progression: {
+        queue_count_before: record.operator_dashboard_state?.queued_goals.length ?? 0,
+        queue_count_after: record.operator_dashboard_state?.queued_goals.length ?? 0,
+        blocked_count_before: record.operator_dashboard_state?.blocked_goals.length ?? 0,
+        blocked_count_after: record.operator_dashboard_state?.blocked_goals.length ?? 0,
+        runtime_status_before: record.operator_dashboard_state?.runtime_status.status ?? record.last_status,
+        runtime_status_after: record.operator_dashboard_state?.runtime_status.status ?? record.last_status,
+        scheduler_status_before: record.operator_dashboard_state?.scheduler_status.status ?? "scheduler_idle",
+        scheduler_status_after: record.operator_dashboard_state?.scheduler_status.status ?? "scheduler_idle",
+      },
+      mutation_summary: reason,
+      next_scheduled_action: record.operator_dashboard_state?.scheduler_status.explanation || null,
+    }],
+  };
+
+  return nextRecord;
+}
+
 function cloneContinuousLoopState(state: ContinuousLoopStateRecord | null | undefined): ContinuousLoopStateRecord {
   if (!state) {
     return {
@@ -275,6 +390,94 @@ function appendBlocker(record: RuntimeStateRecord, code: string, message: string
   record.blockers = [...record.blockers, { code, message }];
 }
 
+function describeGoalTransition(record: RuntimeStateRecord, execution: ExecutionLoopControllerResult) {
+  const previousGoal = record.operator_dashboard_state?.active_goal ?? null;
+  const nextGoal = execution.updated_dashboard_state.active_goal ?? null;
+
+  if (previousGoal?.goal_id !== nextGoal?.goal_id) {
+    if (previousGoal && nextGoal) {
+      return {
+        changed: true,
+        from_goal_id: previousGoal.goal_id,
+        to_goal_id: nextGoal.goal_id,
+        from_goal_label: previousGoal.description,
+        to_goal_label: nextGoal.description,
+        summary: `Goal focus changed from ${previousGoal.description} to ${nextGoal.description}.`,
+      };
+    }
+
+    if (previousGoal && !nextGoal) {
+      return {
+        changed: true,
+        from_goal_id: previousGoal.goal_id,
+        to_goal_id: null,
+        from_goal_label: previousGoal.description,
+        to_goal_label: null,
+        summary: `Goal focus cleared after ${previousGoal.description} completed or yielded control.`,
+      };
+    }
+
+    return {
+      changed: true,
+      from_goal_id: null,
+      to_goal_id: nextGoal?.goal_id ?? null,
+      from_goal_label: null,
+      to_goal_label: nextGoal?.description ?? null,
+      summary: `Goal focus advanced to ${nextGoal?.description ?? "the next runnable goal"}.`,
+    };
+  }
+
+  return {
+    changed: false,
+    from_goal_id: previousGoal?.goal_id ?? null,
+    to_goal_id: nextGoal?.goal_id ?? null,
+    from_goal_label: previousGoal?.description ?? null,
+    to_goal_label: nextGoal?.description ?? null,
+    summary: previousGoal
+      ? `Goal focus stayed on ${previousGoal.description}.`
+      : "No active goal owned the slot before or after this tick.",
+  };
+}
+
+function summarizeSemanticProgression(record: RuntimeStateRecord, execution: ExecutionLoopControllerResult) {
+  const previousState = record.operator_dashboard_state;
+  const nextState = execution.updated_dashboard_state;
+
+  return {
+    queue_count_before: previousState?.queued_goals.length ?? 0,
+    queue_count_after: nextState.queued_goals.length,
+    blocked_count_before: previousState?.blocked_goals.length ?? 0,
+    blocked_count_after: nextState.blocked_goals.length,
+    runtime_status_before: previousState?.runtime_status.status ?? record.last_status,
+    runtime_status_after: nextState.runtime_status.status,
+    scheduler_status_before: previousState?.scheduler_status.status ?? "scheduler_idle",
+    scheduler_status_after: nextState.scheduler_status.status,
+  };
+}
+
+function summarizeMutation(record: RuntimeStateRecord, execution: ExecutionLoopControllerResult): string {
+  const progression = summarizeSemanticProgression(record, execution);
+  const parts = [execution.reason];
+
+  if (progression.queue_count_before !== progression.queue_count_after) {
+    parts.push(`Queue ${progression.queue_count_before} -> ${progression.queue_count_after}`);
+  }
+
+  if (progression.blocked_count_before !== progression.blocked_count_after) {
+    parts.push(`Blocked ${progression.blocked_count_before} -> ${progression.blocked_count_after}`);
+  }
+
+  if (progression.runtime_status_before !== progression.runtime_status_after) {
+    parts.push(`Runtime ${progression.runtime_status_before} -> ${progression.runtime_status_after}`);
+  }
+
+  if (progression.scheduler_status_before !== progression.scheduler_status_after) {
+    parts.push(`Scheduler ${progression.scheduler_status_before} -> ${progression.scheduler_status_after}`);
+  }
+
+  return parts.join(" | ");
+}
+
 function applyExecutionResult(
   record: RuntimeStateRecord,
   loopState: ContinuousLoopStateRecord,
@@ -284,14 +487,41 @@ function applyExecutionResult(
   execution: ExecutionLoopControllerResult,
 ): RuntimeStateRecord {
   const nextRecord = cloneRuntimeStateRecord(record);
+  const goalTransition = describeGoalTransition(record, execution);
+  const semanticProgression = summarizeSemanticProgression(record, execution);
+  const mutationSummary = summarizeMutation(record, execution);
+  const semanticProgressDetected = hasSemanticProgress(goalTransition, semanticProgression);
+  const tickId = buildTickId(config.runtime_id, attemptedAt);
   const tickHistoryEntry: ContinuousLoopTickHistoryEntry = {
-    tick_id: buildTickId(config.runtime_id, attemptedAt),
+    tick_id: tickId,
+    event_id: tickId,
+    runtime_id: config.runtime_id,
     attempted_at: attemptedAt,
+    timestamp: attemptedAt,
     tick_index: tickIndex,
     status: execution.status === "loop_blocked" ? "loop_blocked" : "loop_running",
+    event_type: buildRuntimeEventType({
+      triggered: execution.triggered,
+      blocked: execution.status === "loop_blocked",
+      goalTransitionChanged: goalTransition.changed,
+    }),
     triggered: execution.triggered,
     run_results_recorded: execution.queue_result ? 1 : 0,
     reason: execution.reason,
+    active_goal_before: summarizeActiveGoal(record.operator_dashboard_state?.active_goal),
+    active_goal_after: summarizeActiveGoal(execution.updated_dashboard_state.active_goal),
+    mutation_applied: semanticProgressDetected ? mutationSummary : null,
+    safety_gate_result: execution.status === "loop_blocked"
+      ? "blocked"
+      : execution.triggered
+        ? "passed"
+        : "not_triggered",
+    scheduler_decision: execution.updated_dashboard_state.scheduler_status.explanation || null,
+    persistence_result: "persisted_to_runtime_state",
+    goal_transition: goalTransition,
+    semantic_progression: semanticProgression,
+    mutation_summary: mutationSummary,
+    next_scheduled_action: execution.updated_dashboard_state.scheduler_status.explanation || null,
   };
 
   nextRecord.operator_dashboard_state = execution.updated_dashboard_state;
@@ -403,9 +633,12 @@ export function runContinuousRuntimeLoop(
     for (let tickIndex = 1; tickIndex <= config.max_ticks_per_run; tickIndex += 1) {
       const stopBeforeTick = evaluateStopCondition(currentRecord);
       if (stopBeforeTick) {
+        const stopAttemptedAt = loopState.last_tick_at ?? config.started_at;
+        currentRecord = appendStopConditionEvent(currentRecord, loopState, stopAttemptedAt, stopBeforeTick.status, stopBeforeTick.reason);
+        loopState = cloneContinuousLoopState(currentRecord.continuous_loop);
         finalStatus = stopBeforeTick.status;
         finalReason = stopBeforeTick.reason;
-        stoppedAt = currentRecord.last_tick_at ?? config.started_at;
+        stoppedAt = currentRecord.last_tick_at ?? stopAttemptedAt;
         break;
       }
 

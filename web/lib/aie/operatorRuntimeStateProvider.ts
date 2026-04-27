@@ -7,6 +7,8 @@ import type {
   OperatorDashboardApprovalRequirement,
   OperatorDashboardFailure,
   OperatorDashboardRecoveryRecommendation,
+  OperatorRuntimeObservability,
+  OperatorRuntimeObservabilityEvent,
   OperatorDashboardState,
   OperatorDashboardValidationIssue,
 } from "./operatorDashboardState";
@@ -199,14 +201,119 @@ function buildLiveRecoveryRecommendation(
   };
 }
 
+function toRuntimeObservabilityEvent(
+  tick: NonNullable<RuntimeStateRecord["continuous_loop"]>["tick_history"][number],
+): OperatorRuntimeObservabilityEvent {
+  return {
+    tick_id: tick.tick_id,
+    event_id: tick.event_id,
+    runtime_id: tick.runtime_id,
+    timestamp: tick.timestamp,
+    tick_index: tick.tick_index,
+    event_type: tick.event_type,
+    attempted_at: tick.attempted_at,
+    status: tick.status,
+    reason: tick.reason,
+    active_goal_before: tick.active_goal_before ? { ...tick.active_goal_before } : null,
+    active_goal_after: tick.active_goal_after ? { ...tick.active_goal_after } : null,
+    mutation_applied: tick.mutation_applied,
+    safety_gate_result: tick.safety_gate_result,
+    scheduler_decision: tick.scheduler_decision,
+    persistence_result: tick.persistence_result,
+    goal_transition: tick.goal_transition ? { ...tick.goal_transition } : null,
+    semantic_progression: tick.semantic_progression ? { ...tick.semantic_progression } : null,
+    mutation_summary: tick.mutation_summary,
+    next_scheduled_action: tick.next_scheduled_action,
+  };
+}
+
+function describeSemanticTransition(event: OperatorRuntimeObservabilityEvent | null): string | null {
+  if (!event) {
+    return null;
+  }
+
+  if (event.goal_transition?.changed) {
+    return event.goal_transition.summary;
+  }
+
+  if (event.mutation_applied) {
+    return event.mutation_applied;
+  }
+
+  return null;
+}
+
+function inferNextScheduledTickAt(record: RuntimeStateRecord): string | null {
+  const lastTickAt = record.continuous_loop?.last_tick_at ?? record.last_tick_at;
+  const tickIntervalMs = record.continuous_loop_config?.tick_interval_ms ?? null;
+  const loopStatus = record.continuous_loop?.status ?? null;
+
+  if (!lastTickAt || !tickIntervalMs) {
+    return null;
+  }
+
+  if (loopStatus === "loop_completed" || loopStatus === "loop_blocked" || loopStatus === "loop_paused" || loopStatus === "loop_error") {
+    return null;
+  }
+
+  const lastTickMs = Date.parse(lastTickAt);
+  if (Number.isNaN(lastTickMs)) {
+    return null;
+  }
+
+  return new Date(lastTickMs + tickIntervalMs).toISOString();
+}
+
+function inferNextScheduledAction(record: RuntimeStateRecord): string | null {
+  const state = record.operator_dashboard_state;
+  if (!state) {
+    return null;
+  }
+
+  if (state.approvals_required.length > 0) {
+    return "Await operator approval before the next bounded runtime tick.";
+  }
+
+  if (state.active_goal) {
+    return `Continue ${state.active_goal.description} on the next bounded tick.`;
+  }
+
+  if (state.queued_goals[0]) {
+    return `Select ${state.queued_goals[0].description} on the next bounded tick.`;
+  }
+
+  return state.scheduler_status.explanation || null;
+}
+
+function buildRuntimeObservability(record: RuntimeStateRecord): OperatorRuntimeObservability {
+  const eventLog = (record.continuous_loop?.tick_history ?? []).slice(-10).map(toRuntimeObservabilityEvent);
+  const lastEvent = eventLog.length > 0 ? eventLog[eventLog.length - 1] : null;
+  const lastMutationEvent = [...eventLog].reverse().find((event) => event.mutation_applied) ?? null;
+  const lastSemanticEvent = [...eventLog].reverse().find((event) => describeSemanticTransition(event)) ?? null;
+
+  return {
+    current_tick: record.continuous_loop?.ticks_attempted ?? 0,
+    last_tick_at: record.continuous_loop?.last_tick_at ?? record.last_tick_at,
+    last_mutation: lastMutationEvent?.mutation_applied ?? null,
+    last_semantic_transition: describeSemanticTransition(lastSemanticEvent),
+    latest_safety_gate_decision: lastEvent?.safety_gate_result ?? null,
+    next_scheduled_action: inferNextScheduledAction(record),
+    next_scheduled_tick_at: inferNextScheduledTickAt(record),
+    event_log: eventLog,
+  };
+}
+
 function buildLiveOperatorDashboardState(
   record: RuntimeStateRecord,
   bootResume: RuntimeBootResumeResult,
   loadedAt: string,
 ): OperatorDashboardState {
+  const runtimeObservability = buildRuntimeObservability(record);
+
   if (record.operator_dashboard_state) {
     return {
       ...record.operator_dashboard_state,
+      runtime_observability: runtimeObservability,
       last_updated_at: record.operator_dashboard_state.last_updated_at || record.persisted_at,
     };
   }
@@ -247,6 +354,7 @@ function buildLiveOperatorDashboardState(
       status: record.last_trigger_result?.status ?? bootResume.status,
       explanation: record.last_trigger_result?.reason ?? bootResume.reason,
     },
+    runtime_observability: runtimeObservability,
     last_updated_at: record.persisted_at,
   };
 }

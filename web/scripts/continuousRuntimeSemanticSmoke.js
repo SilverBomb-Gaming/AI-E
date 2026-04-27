@@ -55,6 +55,8 @@ async function snapshot(page, label) {
   const blockedGoals = await extractSectionText(page, "Blocked Goals");
   const approvals = await extractSectionText(page, "Approvals Required");
   const runtimeStatus = await extractSectionText(page, "Runtime Status");
+  const runtimeIntrospection = await extractSectionText(page, "Runtime Introspection");
+  const runtimeTimeline = await extractSectionText(page, "Runtime Timeline");
 
   return {
     label,
@@ -63,6 +65,8 @@ async function snapshot(page, label) {
     blockedGoals,
     approvals,
     runtimeStatus,
+    runtimeIntrospection,
+    runtimeTimeline,
   };
 }
 
@@ -85,6 +89,19 @@ async function main() {
       (sectionText) =>
         sectionText.includes("No approvals are currently pending.") &&
         !sectionText.includes("goal-approval-gate"),
+    );
+    await waitForSectionText(
+      page,
+      "Runtime Timeline",
+      (sectionText) => sectionText.includes("Safety gate:") && sectionText.includes("Tick "),
+    );
+    await waitForSectionText(
+      page,
+      "Runtime Introspection",
+      (sectionText) =>
+        sectionText.includes("Last semantic transition")
+        && sectionText.includes("Latest safety gate decision")
+        && sectionText.includes("Next scheduled tick"),
     );
 
     const immediate = await snapshot(page, "after_click");

@@ -88,6 +88,22 @@ function cloneState(state: OperatorDashboardState): OperatorDashboardState {
     session_status: { ...state.session_status },
     queue_status: { ...state.queue_status },
     scheduler_status: { ...state.scheduler_status },
+    runtime_observability: state.runtime_observability ? {
+      current_tick: state.runtime_observability.current_tick,
+      last_tick_at: state.runtime_observability.last_tick_at,
+      last_mutation: state.runtime_observability.last_mutation,
+      last_semantic_transition: state.runtime_observability.last_semantic_transition,
+      latest_safety_gate_decision: state.runtime_observability.latest_safety_gate_decision,
+      next_scheduled_action: state.runtime_observability.next_scheduled_action,
+      next_scheduled_tick_at: state.runtime_observability.next_scheduled_tick_at,
+      event_log: state.runtime_observability.event_log.map((event) => ({
+        ...event,
+        active_goal_before: event.active_goal_before ? { ...event.active_goal_before } : null,
+        active_goal_after: event.active_goal_after ? { ...event.active_goal_after } : null,
+        goal_transition: event.goal_transition ? { ...event.goal_transition } : null,
+        semantic_progression: event.semantic_progression ? { ...event.semantic_progression } : null,
+      })),
+    } : undefined,
     last_updated_at: state.last_updated_at,
   };
 }
