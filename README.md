@@ -256,6 +256,29 @@ What is not true yet:
 - AI-E does not bypass review gates, approval freshness, or bounded execution limits
 - AI-E does not yet run a live planner and executor pair against the continuous runtime loop
 
+## Multi-Agent Runtime Roadmap
+
+Layer 4 is active but not complete.
+
+Single-agent continuous execution is complete.
+
+Deterministic proof is complete.
+
+Multi-agent orchestration is in progress.
+
+Current phase plan:
+
+- Phase 1: Agent Registry Hardening
+- Phase 2: Multi-Agent Runtime Projection
+- Phase 3: Bounded Agent Assignment Loop
+- Phase 4: Execution Chains
+- Phase 5: Deterministic Proof Upgrade
+
+Current Layer 4 reporting rule:
+
+- Layer 4: In Progress
+- Only declare Layer 4 complete when the registry, assignment loop, execution chains, operator visibility, deterministic proof, trace validation, safety boundaries, and persistence checks are all true together.
+
 Roadmap checkpoints:
 
 - Layer 1: observable single-agent execution
@@ -280,14 +303,15 @@ Current contract:
 - orchestration vocabulary: `web/lib/aie/orchestrationSession.ts`
 - bounded agent registry scaffold: `web/lib/aie/agentRuntimeRegistry.ts`
 - focused regression coverage: `web/lib/aie/agentRuntimeRegistry.test.ts`
+- bounded execution chain snapshots: `web/lib/aie/executionChainState.ts`
 
 Current safety boundary:
 
-- the scaffold is capped to the known `planner-agent` and `executor-agent` roles
+- the scaffold is capped to the known `planner-agent`, `executor-agent`, `validator-agent`, and `reporter-agent` roles
 - each agent can own at most one bounded goal at a time
 - child-agent spawning is disabled explicitly
-- pause and resume are modeled, but no unbounded agent loop is started from this scaffold
-- live continuous runtime execution remains single-agent until the planner or executor handoff path is wired into the owning runtime loop intentionally
+- pause, resume, blocked, and idle transitions are modeled, but no unbounded agent loop is started from this scaffold
+- live continuous runtime execution now projects bounded agent and chain state through the owning runtime loop without bypassing the existing approval and stop gates
 
 ## Conversational Intent Refinement
 

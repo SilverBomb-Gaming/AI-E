@@ -66,6 +66,8 @@ test("provider returns live_runtime when runtime state exists", () => {
   assert.equal(result.source, "live_runtime");
   assert.equal(result.dashboard_state?.runtime_status.status, record.last_status);
   assert.equal(result.dashboard_state?.runtime_observability?.current_tick, 0);
+  assert.equal(result.dashboard_state?.agent_runtime?.agents.length, 4);
+  assert.equal(result.dashboard_state?.execution_chains?.length, 0);
 });
 
 test("provider maps persisted continuous loop history into runtime observability", () => {
@@ -150,6 +152,89 @@ test("provider maps persisted continuous loop history into runtime observability
       next_scheduled_action: "All queued goals are paused, blocked, completed, dependency-blocked, or conflict with an active goal.",
     }],
   };
+  currentRecord.agent_runtime_registry = {
+    registry_id: "aie-agent-registry-20260426120000",
+    runtime_id: record.runtime_id,
+    orchestration_id: null,
+    multi_agent_session_id: "multi-agent-session-test",
+    recursion_guard_enabled: true,
+    max_agents: 4,
+    agents: [
+      {
+        agent_id: "planner-agent",
+        role: "planner",
+        status: "idle",
+        assigned_goal_ids: [],
+        current_goal_id: null,
+        last_tick_at: "2026-04-26T12:02:00.000Z",
+        last_event_id: "tick-2-planner",
+        last_event_summary: "planner-agent selected Complete queued prerequisite cycle for bounded execution.",
+        safety_scope: "planning_only",
+        approval_state: "not_required",
+        failure_count: 0,
+        can_spawn_agents: false,
+        max_concurrent_goals: 1,
+      },
+      {
+        agent_id: "executor-agent",
+        role: "executor",
+        status: "idle",
+        assigned_goal_ids: [],
+        current_goal_id: null,
+        last_tick_at: "2026-04-26T12:02:00.000Z",
+        last_event_id: "tick-2-executor",
+        last_event_summary: "executor-agent completed or yielded Complete queued prerequisite cycle.",
+        safety_scope: "bounded_execution_only",
+        approval_state: "approved",
+        failure_count: 0,
+        can_spawn_agents: false,
+        max_concurrent_goals: 1,
+      },
+      {
+        agent_id: "validator-agent",
+        role: "validator",
+        status: "idle",
+        assigned_goal_ids: [],
+        current_goal_id: null,
+        last_tick_at: "2026-04-26T12:02:00.000Z",
+        last_event_id: "tick-2-validator",
+        last_event_summary: "validator-agent cleared the bounded runtime transition.",
+        safety_scope: "validation_only",
+        approval_state: "not_required",
+        failure_count: 0,
+        can_spawn_agents: false,
+        max_concurrent_goals: 1,
+      },
+      {
+        agent_id: "reporter-agent",
+        role: "reporter",
+        status: "idle",
+        assigned_goal_ids: [],
+        current_goal_id: null,
+        last_tick_at: "2026-04-26T12:02:00.000Z",
+        last_event_id: "tick-2-reporter",
+        last_event_summary: "reporter-agent persisted chain telemetry.",
+        safety_scope: "reporting_only",
+        approval_state: "not_required",
+        failure_count: 0,
+        can_spawn_agents: false,
+        max_concurrent_goals: 1,
+      },
+    ],
+  };
+  currentRecord.execution_chains = [{
+    chain_id: "execution-chain-goal-a-20260426120200",
+    parent_goal_id: "goal-a",
+    current_step: 2,
+    total_steps: 4,
+    status: "completed",
+    agent_ids: ["planner-agent", "executor-agent", "validator-agent", "reporter-agent"],
+    started_at: "2026-04-26T12:01:00.000Z",
+    completed_at: "2026-04-26T12:02:00.000Z",
+    failure_reason: null,
+    last_transition: "Completed bounded runtime tick.",
+    safety_status: "safe",
+  }];
   persistRuntimeStateRecord(store, currentRecord);
 
   const result = loadLiveOperatorDashboardState({
@@ -165,6 +250,9 @@ test("provider maps persisted continuous loop history into runtime observability
   assert.equal(result.dashboard_state?.runtime_observability?.event_log[0]?.goal_transition?.changed, true);
   assert.equal(result.dashboard_state?.runtime_observability?.event_log[0]?.event_type, "goal_transition");
   assert.match(result.dashboard_state?.runtime_observability?.next_scheduled_action ?? "", /queued goals/i);
+  assert.equal(result.dashboard_state?.agent_runtime?.idle_agents.length, 4);
+  assert.equal(result.dashboard_state?.agent_runtime?.agents[0]?.last_event_summary?.includes("planner-agent"), true);
+  assert.equal(result.dashboard_state?.execution_chains?.[0]?.chain_id, "execution-chain-goal-a-20260426120200");
 });
 
 test("provider does not treat timestamp-only runtime observations as semantic progress", () => {

@@ -5,6 +5,7 @@ import {
 } from "./operatorRuntimeActionHandler";
 import type {
   OperatorDashboardApprovalRequirement,
+  OperatorDashboardAgentRuntime,
   OperatorDashboardFailure,
   OperatorDashboardRecoveryRecommendation,
   OperatorRuntimeObservability,
@@ -12,6 +13,7 @@ import type {
   OperatorDashboardState,
   OperatorDashboardValidationIssue,
 } from "./operatorDashboardState";
+import { createAgentRuntimeRegistry, type AgentRuntimeNode } from "./agentRuntimeRegistry";
 import type { OperatorRuntimeStateProviderResult, OperatorStateSource } from "./operatorRuntimeStateContract";
 import {
   evaluateBootResume,
@@ -19,6 +21,7 @@ import {
   type RuntimeStateRecord,
   type RuntimeStateStore,
 } from "./runtimeStateStore";
+import type { ExecutionChainRecord } from "./executionChainState";
 
 export type OperatorRuntimeStateProviderDependencies = {
   runtime_state_store?: RuntimeStateStore | null;
@@ -303,17 +306,51 @@ function buildRuntimeObservability(record: RuntimeStateRecord): OperatorRuntimeO
   };
 }
 
+function cloneAgentRuntimeNode(agent: AgentRuntimeNode): AgentRuntimeNode {
+  return {
+    ...agent,
+    assigned_goal_ids: [...agent.assigned_goal_ids],
+  };
+}
+
+function buildAgentRuntime(record: RuntimeStateRecord, loadedAt: string): OperatorDashboardAgentRuntime {
+  const registry = record.agent_runtime_registry ?? createAgentRuntimeRegistry({
+    runtime_id: record.runtime_id,
+    now: loadedAt,
+  });
+  const agents = registry.agents.map(cloneAgentRuntimeNode);
+
+  return {
+    agents,
+    active_agents: agents.filter((agent) => agent.status === "assigned"),
+    idle_agents: agents.filter((agent) => agent.status === "idle"),
+    blocked_agents: agents.filter((agent) => agent.status === "blocked"),
+    paused_agents: agents.filter((agent) => agent.status === "paused"),
+  };
+}
+
+function buildExecutionChains(record: RuntimeStateRecord): ExecutionChainRecord[] {
+  return (record.execution_chains ?? []).map((chain) => ({
+    ...chain,
+    agent_ids: [...chain.agent_ids],
+  }));
+}
+
 function buildLiveOperatorDashboardState(
   record: RuntimeStateRecord,
   bootResume: RuntimeBootResumeResult,
   loadedAt: string,
 ): OperatorDashboardState {
   const runtimeObservability = buildRuntimeObservability(record);
+  const agentRuntime = buildAgentRuntime(record, loadedAt);
+  const executionChains = buildExecutionChains(record);
 
   if (record.operator_dashboard_state) {
     return {
       ...record.operator_dashboard_state,
       runtime_observability: runtimeObservability,
+      agent_runtime: agentRuntime,
+      execution_chains: executionChains,
       last_updated_at: record.operator_dashboard_state.last_updated_at || record.persisted_at,
     };
   }
@@ -355,6 +392,8 @@ function buildLiveOperatorDashboardState(
       explanation: record.last_trigger_result?.reason ?? bootResume.reason,
     },
     runtime_observability: runtimeObservability,
+    agent_runtime: agentRuntime,
+    execution_chains: executionChains,
     last_updated_at: record.persisted_at,
   };
 }

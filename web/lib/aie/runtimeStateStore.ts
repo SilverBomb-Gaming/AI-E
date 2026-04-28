@@ -5,6 +5,7 @@ import type {
 } from "./backgroundRuntimeService";
 import type {
   OperatorDashboardApprovalRequirement,
+  OperatorDashboardAgentRuntime,
   OperatorDashboardBlockedGoal,
   OperatorDashboardBlocker,
   OperatorDashboardFailure,
@@ -14,6 +15,9 @@ import type {
   OperatorDashboardStatusLine,
   OperatorDashboardValidationIssue,
 } from "./operatorDashboardState";
+import type { AgentRuntimeApprovalState, AgentRuntimeId, AgentRuntimeNode, AgentRuntimeRegistry, AgentRuntimeRole, AgentRuntimeSafetyScope, AgentRuntimeStatus } from "./agentRuntimeRegistry";
+import { createAgentRuntimeRegistry } from "./agentRuntimeRegistry";
+import type { ExecutionChainRecord, ExecutionChainSafetyStatus, ExecutionChainStatus } from "./executionChainState";
 
 const DEFAULT_RUNTIME_STATE_STALE_AFTER_MS = 15 * 60 * 1000;
 
@@ -133,6 +137,8 @@ export type RuntimeStateRecord = {
   }>;
   continuous_loop: ContinuousLoopStateRecord | null;
   continuous_loop_config?: StoredContinuousLoopConfig | null;
+  agent_runtime_registry?: AgentRuntimeRegistry | null;
+  execution_chains?: ExecutionChainRecord[] | null;
   operator_dashboard_state: OperatorDashboardState | null;
   persisted_at: string;
 };
@@ -323,6 +329,89 @@ function isContinuousLoopStateRecord(value: unknown): value is ContinuousLoopSta
   );
 }
 
+function isAgentRuntimeRole(value: unknown): value is AgentRuntimeRole {
+  return value === "planner" || value === "executor" || value === "validator" || value === "reporter";
+}
+
+function isAgentRuntimeId(value: unknown): value is AgentRuntimeId {
+  return value === "planner-agent" || value === "executor-agent" || value === "validator-agent" || value === "reporter-agent";
+}
+
+function isAgentRuntimeStatus(value: unknown): value is AgentRuntimeStatus {
+  return value === "idle" || value === "assigned" || value === "paused" || value === "blocked";
+}
+
+function isAgentRuntimeSafetyScope(value: unknown): value is AgentRuntimeSafetyScope {
+  return value === "planning_only" || value === "bounded_execution_only" || value === "validation_only" || value === "reporting_only";
+}
+
+function isAgentRuntimeApprovalState(value: unknown): value is AgentRuntimeApprovalState {
+  return value === "not_required" || value === "approval_pending" || value === "approved" || value === "rejected";
+}
+
+function isAgentRuntimeNode(value: unknown): value is AgentRuntimeNode {
+  return Boolean(
+    value
+    && typeof value === "object"
+    && isAgentRuntimeId((value as { agent_id?: unknown }).agent_id)
+    && isAgentRuntimeRole((value as { role?: unknown }).role)
+    && isAgentRuntimeStatus((value as { status?: unknown }).status)
+    && Array.isArray((value as { assigned_goal_ids?: unknown }).assigned_goal_ids)
+    && ((value as { assigned_goal_ids?: unknown[] }).assigned_goal_ids ?? []).every((goalId) => typeof goalId === "string")
+    && (((value as { current_goal_id?: unknown }).current_goal_id === null) || typeof (value as { current_goal_id?: unknown }).current_goal_id === "string")
+    && (((value as { last_tick_at?: unknown }).last_tick_at === null) || isIsoTimestamp((value as { last_tick_at?: unknown }).last_tick_at))
+    && (((value as { last_event_id?: unknown }).last_event_id === null) || typeof (value as { last_event_id?: unknown }).last_event_id === "string")
+    && (((value as { last_event_summary?: unknown }).last_event_summary === null) || typeof (value as { last_event_summary?: unknown }).last_event_summary === "string")
+    && isAgentRuntimeSafetyScope((value as { safety_scope?: unknown }).safety_scope)
+    && isAgentRuntimeApprovalState((value as { approval_state?: unknown }).approval_state)
+    && isFiniteNonNegativeInteger((value as { failure_count?: unknown }).failure_count)
+    && (value as { can_spawn_agents?: unknown }).can_spawn_agents === false
+    && (value as { max_concurrent_goals?: unknown }).max_concurrent_goals === 1,
+  );
+}
+
+function isAgentRuntimeRegistry(value: unknown): value is AgentRuntimeRegistry {
+  return Boolean(
+    value
+    && typeof value === "object"
+    && typeof (value as { registry_id?: unknown }).registry_id === "string"
+    && (((value as { runtime_id?: unknown }).runtime_id === null) || typeof (value as { runtime_id?: unknown }).runtime_id === "string")
+    && (((value as { orchestration_id?: unknown }).orchestration_id === null) || typeof (value as { orchestration_id?: unknown }).orchestration_id === "string")
+    && typeof (value as { multi_agent_session_id?: unknown }).multi_agent_session_id === "string"
+    && (value as { recursion_guard_enabled?: unknown }).recursion_guard_enabled === true
+    && (value as { max_agents?: unknown }).max_agents === 4
+    && Array.isArray((value as { agents?: unknown }).agents)
+    && ((value as { agents?: unknown[] }).agents ?? []).every(isAgentRuntimeNode),
+  );
+}
+
+function isExecutionChainStatus(value: unknown): value is ExecutionChainStatus {
+  return value === "pending" || value === "active" || value === "completed" || value === "blocked";
+}
+
+function isExecutionChainSafetyStatus(value: unknown): value is ExecutionChainSafetyStatus {
+  return value === "safe" || value === "approval_required" || value === "blocked";
+}
+
+function isExecutionChainRecord(value: unknown): value is ExecutionChainRecord {
+  return Boolean(
+    value
+    && typeof value === "object"
+    && typeof (value as { chain_id?: unknown }).chain_id === "string"
+    && (((value as { parent_goal_id?: unknown }).parent_goal_id === null) || typeof (value as { parent_goal_id?: unknown }).parent_goal_id === "string")
+    && isFiniteNonNegativeInteger((value as { current_step?: unknown }).current_step)
+    && isFiniteNonNegativeInteger((value as { total_steps?: unknown }).total_steps)
+    && isExecutionChainStatus((value as { status?: unknown }).status)
+    && Array.isArray((value as { agent_ids?: unknown }).agent_ids)
+    && ((value as { agent_ids?: unknown[] }).agent_ids ?? []).every(isAgentRuntimeId)
+    && isIsoTimestamp((value as { started_at?: unknown }).started_at)
+    && (((value as { completed_at?: unknown }).completed_at === null) || isIsoTimestamp((value as { completed_at?: unknown }).completed_at))
+    && (((value as { failure_reason?: unknown }).failure_reason === null) || typeof (value as { failure_reason?: unknown }).failure_reason === "string")
+    && typeof (value as { last_transition?: unknown }).last_transition === "string"
+    && isExecutionChainSafetyStatus((value as { safety_status?: unknown }).safety_status),
+  );
+}
+
 function isStoredContinuousLoopConfig(value: unknown): value is StoredContinuousLoopConfig {
   return Boolean(
     value
@@ -353,6 +442,23 @@ function isDashboardStatusLine(value: unknown): value is OperatorDashboardStatus
     && typeof value === "object"
     && typeof (value as { status?: unknown }).status === "string"
     && typeof (value as { explanation?: unknown }).explanation === "string",
+  );
+}
+
+function isDashboardAgentRuntime(value: unknown): value is OperatorDashboardAgentRuntime {
+  return Boolean(
+    value
+    && typeof value === "object"
+    && Array.isArray((value as { agents?: unknown }).agents)
+    && ((value as { agents?: unknown[] }).agents ?? []).every(isAgentRuntimeNode)
+    && Array.isArray((value as { active_agents?: unknown }).active_agents)
+    && ((value as { active_agents?: unknown[] }).active_agents ?? []).every(isAgentRuntimeNode)
+    && Array.isArray((value as { idle_agents?: unknown }).idle_agents)
+    && ((value as { idle_agents?: unknown[] }).idle_agents ?? []).every(isAgentRuntimeNode)
+    && Array.isArray((value as { blocked_agents?: unknown }).blocked_agents)
+    && ((value as { blocked_agents?: unknown[] }).blocked_agents ?? []).every(isAgentRuntimeNode)
+    && Array.isArray((value as { paused_agents?: unknown }).paused_agents)
+    && ((value as { paused_agents?: unknown[] }).paused_agents ?? []).every(isAgentRuntimeNode),
   );
 }
 
@@ -493,6 +599,11 @@ function isOperatorDashboardState(value: unknown): value is OperatorDashboardSta
     && isDashboardStatusLine((value as { scheduler_status?: unknown }).scheduler_status)
     && (((value as { runtime_observability?: unknown }).runtime_observability === undefined)
       || isDashboardRuntimeObservability((value as { runtime_observability?: unknown }).runtime_observability))
+    && (((value as { agent_runtime?: unknown }).agent_runtime === undefined)
+      || isDashboardAgentRuntime((value as { agent_runtime?: unknown }).agent_runtime))
+    && (((value as { execution_chains?: unknown }).execution_chains === undefined)
+      || (Array.isArray((value as { execution_chains?: unknown }).execution_chains)
+        && ((value as { execution_chains?: unknown[] }).execution_chains ?? []).every(isExecutionChainRecord)))
     && isIsoTimestamp((value as { last_updated_at?: unknown }).last_updated_at),
   );
 }
@@ -544,6 +655,12 @@ function validateRecordShape(record: unknown): RuntimeStateRecord {
   }
   if (candidate.continuous_loop_config !== null && candidate.continuous_loop_config !== undefined && !isStoredContinuousLoopConfig(candidate.continuous_loop_config)) {
     throw new Error("Runtime state record continuous_loop_config must be null or a valid stored continuous loop config.");
+  }
+  if (candidate.agent_runtime_registry !== null && candidate.agent_runtime_registry !== undefined && !isAgentRuntimeRegistry(candidate.agent_runtime_registry)) {
+    throw new Error("Runtime state record agent_runtime_registry must be null or a valid bounded agent runtime registry.");
+  }
+  if (candidate.execution_chains !== null && candidate.execution_chains !== undefined && (!Array.isArray(candidate.execution_chains) || !candidate.execution_chains.every(isExecutionChainRecord))) {
+    throw new Error("Runtime state record execution_chains must be null or valid execution chain snapshots.");
   }
   if (candidate.operator_dashboard_state !== null && candidate.operator_dashboard_state !== undefined && !isOperatorDashboardState(candidate.operator_dashboard_state)) {
     throw new Error("Runtime state record operator_dashboard_state must be null or a valid operator dashboard snapshot.");
@@ -685,6 +802,11 @@ export function saveRuntimeState(
     })),
     continuous_loop: existingRecord?.continuous_loop ?? null,
     continuous_loop_config: existingRecord?.continuous_loop_config ?? null,
+    agent_runtime_registry: existingRecord?.agent_runtime_registry ?? createAgentRuntimeRegistry({
+      runtime_id: serviceState.service_id,
+      now: serviceState.stopped_at ?? serviceState.last_tick_at ?? serviceState.started_at ?? serviceState.created_at,
+    }),
+    execution_chains: existingRecord?.execution_chains ?? [],
     operator_dashboard_state: existingRecord?.operator_dashboard_state ?? null,
     persisted_at: serviceState.stopped_at
       ?? serviceState.last_tick_at

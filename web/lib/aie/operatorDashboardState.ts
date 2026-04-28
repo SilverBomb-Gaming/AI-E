@@ -30,6 +30,8 @@ import type {
   RecoveryRecommendation,
   RecoveryReport,
 } from "./failureRecoveryIntelligence";
+import type { AgentRuntimeNode } from "./agentRuntimeRegistry";
+import type { ExecutionChainRecord } from "./executionChainState";
 
 export type OperatorDashboardGoal = {
   goal_id: string;
@@ -151,6 +153,14 @@ export type OperatorRuntimeObservability = {
   event_log: OperatorRuntimeObservabilityEvent[];
 };
 
+export type OperatorDashboardAgentRuntime = {
+  agents: AgentRuntimeNode[];
+  active_agents: AgentRuntimeNode[];
+  idle_agents: AgentRuntimeNode[];
+  blocked_agents: AgentRuntimeNode[];
+  paused_agents: AgentRuntimeNode[];
+};
+
 export type OperatorDashboardActionItem = {
   kind: "approval" | "dependency" | "conflict" | "recovery" | "validation";
   goal_id: string | null;
@@ -177,6 +187,8 @@ export type OperatorDashboardState = {
   queue_status: OperatorDashboardStatusLine;
   scheduler_status: OperatorDashboardStatusLine;
   runtime_observability?: OperatorRuntimeObservability;
+  agent_runtime?: OperatorDashboardAgentRuntime;
+  execution_chains?: ExecutionChainRecord[];
   last_updated_at: string;
 };
 
@@ -923,6 +935,14 @@ export function buildOperatorDashboardState(context: OperatorDashboardContext): 
       next_scheduled_tick_at: null,
       event_log: [],
     },
+    agent_runtime: {
+      agents: [],
+      active_agents: [],
+      idle_agents: [],
+      blocked_agents: [],
+      paused_agents: [],
+    },
+    execution_chains: [],
     last_updated_at: deriveLastUpdatedAt(context, goals, reports),
   };
 }

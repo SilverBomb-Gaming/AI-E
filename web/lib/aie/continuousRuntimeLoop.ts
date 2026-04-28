@@ -15,11 +15,23 @@ import {
   type RuntimeStateStore,
 } from "./runtimeStateStore";
 import {
+  assignGoalToAgentRuntime,
+  createAgentRuntimeRegistry,
+  EXECUTOR_AGENT_ID,
+  markAgentBlocked,
+  markAgentIdle,
+  PLANNER_AGENT_ID,
+  REPORTER_AGENT_ID,
+  VALIDATOR_AGENT_ID,
+  type AgentRuntimeRegistry,
+} from "./agentRuntimeRegistry";
+import {
   runExecutionLoopController,
   type ExecutionLoopControllerResult,
 } from "./executionLoopController";
 import type { BackgroundSessionQueue } from "./backgroundSessionQueue";
 import type { SafeRuntimeIntent } from "./safeRuntimeActionBridge";
+import { createExecutionChainId, type ExecutionChainRecord } from "./executionChainState";
 
 export type ContinuousRuntimeLoopClock = {
   nextTickTime(): string;
@@ -478,6 +490,148 @@ function summarizeMutation(record: RuntimeStateRecord, execution: ExecutionLoopC
   return parts.join(" | ");
 }
 
+const CHAIN_AGENT_IDS = [PLANNER_AGENT_ID, EXECUTOR_AGENT_ID, VALIDATOR_AGENT_ID, REPORTER_AGENT_ID] as const;
+
+function resolveFocusedGoal(record: RuntimeStateRecord, execution: ExecutionLoopControllerResult): {
+  goal_id: string | null;
+  goal_label: string | null;
+} {
+  const previousGoal = record.operator_dashboard_state?.active_goal ?? record.operator_dashboard_state?.queued_goals[0] ?? null;
+  const nextGoal = execution.updated_dashboard_state.active_goal ?? execution.updated_dashboard_state.queued_goals[0] ?? null;
+  const focusedGoal = previousGoal ?? nextGoal;
+
+  return {
+    goal_id: focusedGoal?.goal_id ?? null,
+    goal_label: focusedGoal?.description ?? null,
+  };
+}
+
+function buildAgentRuntimeProjection(
+  record: RuntimeStateRecord,
+  execution: ExecutionLoopControllerResult,
+  attemptedAt: string,
+  tickId: string,
+  mutationSummary: string,
+): { registry: AgentRuntimeRegistry; event_summary: string } {
+  const focusedGoal = resolveFocusedGoal(record, execution);
+  let registry = record.agent_runtime_registry ?? createAgentRuntimeRegistry({
+    runtime_id: record.runtime_id,
+    now: attemptedAt,
+  });
+
+  const plannerSummary = focusedGoal.goal_id
+    ? `planner-agent selected ${focusedGoal.goal_label ?? focusedGoal.goal_id} for bounded execution.`
+    : "planner-agent found no runnable goal to assign.";
+  registry = markAgentIdle(registry, {
+    agent_id: PLANNER_AGENT_ID,
+    timestamp: attemptedAt,
+    event_id: `${tickId}-planner`,
+    event_summary: plannerSummary,
+  });
+
+  if (execution.updated_dashboard_state.active_goal?.goal_id) {
+    const executorAgent = registry.agents.find((agent) => agent.agent_id === EXECUTOR_AGENT_ID) ?? null;
+    if (executorAgent?.current_goal_id && executorAgent.current_goal_id !== execution.updated_dashboard_state.active_goal.goal_id) {
+      registry = markAgentIdle(registry, {
+        agent_id: EXECUTOR_AGENT_ID,
+        timestamp: attemptedAt,
+        event_id: `${tickId}-executor-reset`,
+        event_summary: `executor-agent cleared stale ownership of ${executorAgent.current_goal_id} before the next bounded assignment.`,
+      });
+    }
+
+    registry = assignGoalToAgentRuntime(registry, {
+      agent_id: EXECUTOR_AGENT_ID,
+      goal_id: execution.updated_dashboard_state.active_goal.goal_id,
+      timestamp: attemptedAt,
+      event_id: `${tickId}-executor`,
+      event_summary: `executor-agent is advancing ${execution.updated_dashboard_state.active_goal.description}.`,
+    });
+  } else {
+    registry = markAgentIdle(registry, {
+      agent_id: EXECUTOR_AGENT_ID,
+      timestamp: attemptedAt,
+      event_id: `${tickId}-executor`,
+      event_summary: focusedGoal.goal_id
+        ? `executor-agent completed or yielded ${focusedGoal.goal_label ?? focusedGoal.goal_id}.`
+        : "executor-agent has no active bounded goal.",
+    });
+  }
+
+  if (execution.status === "loop_blocked") {
+    registry = markAgentBlocked(registry, {
+      agent_id: VALIDATOR_AGENT_ID,
+      timestamp: attemptedAt,
+      event_id: `${tickId}-validator`,
+      event_summary: `validator-agent blocked the bounded chain: ${execution.reason}`,
+    });
+  } else {
+    registry = markAgentIdle(registry, {
+      agent_id: VALIDATOR_AGENT_ID,
+      timestamp: attemptedAt,
+      event_id: `${tickId}-validator`,
+      event_summary: "validator-agent cleared the bounded runtime transition.",
+    });
+  }
+
+  registry = markAgentIdle(registry, {
+    agent_id: REPORTER_AGENT_ID,
+    timestamp: attemptedAt,
+    event_id: `${tickId}-reporter`,
+    event_summary: `reporter-agent persisted chain telemetry: ${mutationSummary}`,
+  });
+
+  const summaries = registry.agents
+    .map((agent) => agent.last_event_summary)
+    .filter((summary): summary is string => Boolean(summary));
+
+  return {
+    registry,
+    event_summary: summaries.join(" | "),
+  };
+}
+
+function buildExecutionChainProjection(
+  record: RuntimeStateRecord,
+  execution: ExecutionLoopControllerResult,
+  attemptedAt: string,
+  mutationSummary: string,
+): { chains: ExecutionChainRecord[]; chain_summary: string } {
+  const focusedGoal = resolveFocusedGoal(record, execution);
+  const existingChains = [...(record.execution_chains ?? [])];
+  const activeChain = [...existingChains].reverse().find((chain) => chain.status === "active" || chain.status === "pending") ?? null;
+  const canReuseActiveChain = activeChain && activeChain.parent_goal_id === focusedGoal.goal_id;
+  const nextStatus = execution.status === "loop_blocked"
+    ? "blocked"
+    : (execution.updated_dashboard_state.active_goal || execution.updated_dashboard_state.queued_goals.length > 0)
+      ? "active"
+      : "completed";
+  const safetyStatus = execution.status === "loop_blocked"
+    ? "blocked"
+    : execution.updated_dashboard_state.approvals_required.length > 0
+      ? "approval_required"
+      : "safe";
+  const nextChain: ExecutionChainRecord = {
+    chain_id: canReuseActiveChain ? activeChain.chain_id : createExecutionChainId(focusedGoal.goal_id, attemptedAt),
+    parent_goal_id: focusedGoal.goal_id,
+    current_step: (canReuseActiveChain ? activeChain.current_step : 0) + 1,
+    total_steps: CHAIN_AGENT_IDS.length,
+    status: nextStatus,
+    agent_ids: [...CHAIN_AGENT_IDS],
+    started_at: canReuseActiveChain ? activeChain.started_at : attemptedAt,
+    completed_at: nextStatus === "completed" || nextStatus === "blocked" ? attemptedAt : null,
+    failure_reason: nextStatus === "blocked" ? execution.reason : null,
+    last_transition: mutationSummary,
+    safety_status: safetyStatus,
+  };
+  const nextChains = [...existingChains.filter((chain) => chain.chain_id !== nextChain.chain_id), nextChain].slice(-10);
+
+  return {
+    chains: nextChains,
+    chain_summary: `Execution chain ${nextChain.chain_id} is ${nextChain.status} at step ${nextChain.current_step}/${nextChain.total_steps}.`,
+  };
+}
+
 function applyExecutionResult(
   record: RuntimeStateRecord,
   loopState: ContinuousLoopStateRecord,
@@ -489,9 +643,16 @@ function applyExecutionResult(
   const nextRecord = cloneRuntimeStateRecord(record);
   const goalTransition = describeGoalTransition(record, execution);
   const semanticProgression = summarizeSemanticProgression(record, execution);
-  const mutationSummary = summarizeMutation(record, execution);
-  const semanticProgressDetected = hasSemanticProgress(goalTransition, semanticProgression);
+  const baseMutationSummary = summarizeMutation(record, execution);
   const tickId = buildTickId(config.runtime_id, attemptedAt);
+  const agentRuntimeProjection = buildAgentRuntimeProjection(record, execution, attemptedAt, tickId, baseMutationSummary);
+  const executionChainProjection = buildExecutionChainProjection(record, execution, attemptedAt, baseMutationSummary);
+  const mutationSummary = [
+    baseMutationSummary,
+    agentRuntimeProjection.event_summary,
+    executionChainProjection.chain_summary,
+  ].filter(Boolean).join(" | ");
+  const semanticProgressDetected = hasSemanticProgress(goalTransition, semanticProgression);
   const tickHistoryEntry: ContinuousLoopTickHistoryEntry = {
     tick_id: tickId,
     event_id: tickId,
@@ -525,6 +686,8 @@ function applyExecutionResult(
   };
 
   nextRecord.operator_dashboard_state = execution.updated_dashboard_state;
+  nextRecord.agent_runtime_registry = agentRuntimeProjection.registry;
+  nextRecord.execution_chains = executionChainProjection.chains;
   nextRecord.last_tick_at = attemptedAt;
   nextRecord.persisted_at = attemptedAt;
   nextRecord.ticks_attempted += 1;

@@ -8,6 +8,7 @@ import {
   applyOperatorControlAction,
   type OperatorControlAction,
 } from "@/lib/aie/operatorControlSurface";
+import type { AgentRuntimeNode } from "@/lib/aie/agentRuntimeRegistry";
 import type {
   OperatorDashboardApprovalRequirement,
   OperatorDashboardBlockedGoal,
@@ -16,6 +17,7 @@ import type {
   OperatorDashboardState,
   OperatorRuntimeObservabilityEvent,
 } from "@/lib/aie/operatorDashboardState";
+import type { ExecutionChainRecord } from "@/lib/aie/executionChainState";
 import type { OperatorRuntimeStateProviderResult } from "@/lib/aie/operatorRuntimeStateContract";
 
 function getStatusClassName(status: string): string {
@@ -202,6 +204,41 @@ function RecoveryRow({
   );
 }
 
+function AgentRuntimeRow({ agent }: { agent: AgentRuntimeNode }) {
+  return (
+    <article className="rounded-[1.5rem] border border-ink/10 bg-white/80 p-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <h3 className="headline text-lg font-semibold text-ink">{agent.agent_id}</h3>
+        <StatusBadge status={agent.role} />
+        <StatusBadge status={agent.status} />
+      </div>
+      <p className="mt-3 text-sm leading-7 body-muted">{agent.last_event_summary ?? "No agent event has been recorded yet."}</p>
+      <p className="mt-2 text-xs leading-6 text-slate">Assigned goals: {agent.assigned_goal_ids.length ? agent.assigned_goal_ids.join(", ") : "none"}</p>
+      <p className="mt-1 text-xs leading-6 text-slate">Current goal: {agent.current_goal_id ?? "none"}</p>
+      <p className="mt-1 text-xs leading-6 text-slate">Approval state: {agent.approval_state}</p>
+      <p className="mt-1 text-xs leading-6 text-slate">Safety scope: {agent.safety_scope}</p>
+    </article>
+  );
+}
+
+function ExecutionChainRow({ chain }: { chain: ExecutionChainRecord }) {
+  return (
+    <article className="rounded-[1.5rem] border border-ink/10 bg-white/80 p-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <h3 className="headline text-lg font-semibold text-ink">{chain.chain_id}</h3>
+        <StatusBadge status={chain.status} />
+        <StatusBadge status={chain.safety_status} />
+      </div>
+      <p className="mt-3 text-sm leading-7 body-muted">{chain.last_transition}</p>
+      <p className="mt-2 text-xs leading-6 text-slate">Parent goal: {chain.parent_goal_id ?? "runtime"}</p>
+      <p className="mt-1 text-xs leading-6 text-slate">Step: {chain.current_step}/{chain.total_steps}</p>
+      <p className="mt-1 text-xs leading-6 text-slate">Agents: {chain.agent_ids.join(", ")}</p>
+      <p className="mt-1 text-xs leading-6 text-slate">Completed at: {chain.completed_at ?? "in progress"}</p>
+      {chain.failure_reason ? <p className="mt-1 text-xs leading-6 text-ember">Failure: {chain.failure_reason}</p> : null}
+    </article>
+  );
+}
+
 function describeRuntimeEvent(event: OperatorRuntimeObservabilityEvent): string {
   if (event.goal_transition?.summary) {
     return event.goal_transition.summary;
@@ -311,6 +348,7 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
   const [providerResult, setProviderResult] = useState<OperatorRuntimeStateProviderResult>(initialProviderResult);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(`${getSourceLabel(initialProviderResult.source)} state loaded.`);
+  const [isHydrated, setIsHydrated] = useState(false);
   const [isPending, startTransition] = useTransition();
 
   useEffect(() => {
@@ -318,6 +356,10 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
     setError(null);
     setMessage(`${getSourceLabel(initialProviderResult.source)} state loaded.`);
   }, [initialProviderResult]);
+
+  useEffect(() => {
+    setIsHydrated(true);
+  }, []);
 
   useEffect(() => {
     if (providerResult.source !== "live_runtime") {
@@ -388,6 +430,7 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
           <div className={`mt-6 rounded-[1.5rem] border p-4 ${providerResult.source === "live_runtime" ? "border-emerald-200 bg-emerald-50/70" : providerResult.source === "demo_seed" ? "border-amber-200 bg-amber-50/70" : "border-coral/20 bg-coral/10"}`}>
             <p className="text-xs uppercase tracking-[0.18em] text-slate">State Source: {getSourceLabel(providerResult.source)}</p>
             <p className="mt-2 text-sm leading-7 body-muted">{getSourceExplanation(providerResult)}</p>
+            <p className="mt-2 text-xs uppercase tracking-[0.18em] text-slate">Client Controls: {isHydrated ? "Ready" : "Loading"}</p>
             {providerResult.warnings.length > 0 ? (
               <p className="mt-2 text-sm leading-7 body-muted">{providerResult.warnings.join(" ")}</p>
             ) : null}
@@ -530,9 +573,33 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
               </article>
             </div>
           </SectionCard>
+
+          <SectionCard eyebrow="8" title="Agent Runtime">
+            <div className="space-y-4">
+              <article className="rounded-[1.5rem] border border-ink/10 bg-white/80 p-4">
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                  <p className="text-xs leading-6 text-slate">Active agents: {dashboardState?.agent_runtime?.active_agents.length ?? 0}</p>
+                  <p className="text-xs leading-6 text-slate">Idle agents: {dashboardState?.agent_runtime?.idle_agents.length ?? 0}</p>
+                  <p className="text-xs leading-6 text-slate">Blocked agents: {dashboardState?.agent_runtime?.blocked_agents.length ?? 0}</p>
+                  <p className="text-xs leading-6 text-slate">Paused agents: {dashboardState?.agent_runtime?.paused_agents.length ?? 0}</p>
+                </div>
+              </article>
+              {dashboardState?.agent_runtime?.agents.length ? dashboardState.agent_runtime.agents.map((agent) => (
+                <AgentRuntimeRow key={agent.agent_id} agent={agent} />
+              )) : <p className="text-sm leading-7 body-muted">No agent runtime state has been recorded yet.</p>}
+            </div>
+          </SectionCard>
         </div>
 
-        <SectionCard eyebrow="8" title="Runtime Timeline">
+        <SectionCard eyebrow="9" title="Execution Chains">
+          <div className="space-y-4">
+            {dashboardState?.execution_chains?.length ? dashboardState.execution_chains.slice().reverse().map((chain) => (
+              <ExecutionChainRow key={chain.chain_id} chain={chain} />
+            )) : <p className="text-sm leading-7 body-muted">No execution chains have been recorded yet.</p>}
+          </div>
+        </SectionCard>
+
+        <SectionCard eyebrow="10" title="Runtime Timeline">
           <div className="space-y-4">
             {dashboardState?.runtime_observability?.event_log.length ? dashboardState.runtime_observability.event_log.slice().reverse().map((event) => (
               <article key={event.event_id} className="rounded-[1.5rem] border border-ink/10 bg-white/80 p-4">

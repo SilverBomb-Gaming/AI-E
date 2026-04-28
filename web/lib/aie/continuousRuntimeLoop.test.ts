@@ -137,6 +137,8 @@ test("loop runs multiple cycles", () => {
 
   assert.equal(result.ticks.length >= 2, true);
   assert.equal(result.runtime_state?.continuous_loop?.ticks_attempted, result.ticks.length);
+  assert.equal(result.runtime_state?.agent_runtime_registry?.agents.length, 4);
+  assert.equal((result.runtime_state?.execution_chains ?? []).length >= 1, true);
 });
 
 test("loop respects tick interval", () => {
@@ -258,6 +260,8 @@ test("loop stops on max ticks", () => {
   assert.equal(result.runtime_state?.continuous_loop?.tick_history[0]?.event_type, "tick_executed");
   assert.equal(result.runtime_state?.continuous_loop?.tick_history[0]?.safety_gate_result, "passed");
   assert.equal(result.runtime_state?.continuous_loop?.tick_history[0]?.persistence_result, "persisted_to_runtime_state");
+  assert.match(result.runtime_state?.continuous_loop?.tick_history[0]?.mutation_summary ?? "", /executor-agent/i);
+  assert.match(result.runtime_state?.continuous_loop?.tick_history[0]?.mutation_summary ?? "", /execution chain/i);
 });
 
 test("loop completes when no work remains", () => {
@@ -294,6 +298,8 @@ test("loop persists state after each cycle", () => {
 
   assert.equal(persisted?.continuous_loop?.ticks_attempted, result.ticks.length);
   assert.equal(persisted?.last_tick_at, result.runtime_state?.last_tick_at);
+  assert.equal(persisted?.agent_runtime_registry?.agents.some((agent) => agent.agent_id === "reporter-agent"), true);
+  assert.equal((persisted?.execution_chains ?? []).length >= 1, true);
 });
 
 test("loop integrates with executionLoopController", () => {
@@ -308,6 +314,8 @@ test("loop integrates with executionLoopController", () => {
 
   assert.equal(result.runtime_state?.last_trigger_result?.status, "loop_executed");
   assert.equal(result.runtime_state?.operator_dashboard_state?.active_goal?.goal_id, "goal-active");
+  assert.equal(result.runtime_state?.agent_runtime_registry?.agents.find((agent) => agent.agent_id === "executor-agent")?.status, "assigned");
+  assert.equal(result.runtime_state?.execution_chains?.[0]?.status, "active");
 });
 
 test("loop can continue across separate invocations when queue state is preserved", () => {

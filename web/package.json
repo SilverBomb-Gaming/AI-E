@@ -11,6 +11,7 @@
     "test:trace": "tsx --test lib/aie/*.test.ts",
     "aie:runtime": "tsx scripts/runBackgroundRuntime.ts",
     "proof:continuous-runtime": "tsx scripts/launchContinuousRuntimeProof.ts",
+    "proof:multi-agent-runtime": "tsx scripts/launchContinuousRuntimeProof.ts",
     "readiness": "tsx training_readiness_check.ts",
     "trace:readiness": "tsx training_readiness_check.ts",
     "trace:capture": "tsx training_dataset_capture.ts"

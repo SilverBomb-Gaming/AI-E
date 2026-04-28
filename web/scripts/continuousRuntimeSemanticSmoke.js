@@ -66,6 +66,8 @@ async function waitForSectionTextWithDiagnostics(page, headingName, predicate, l
     const runtimeTimeline = await maybeExtractSectionText(page, "Runtime Timeline");
     const runtimeIntrospection = await maybeExtractSectionText(page, "Runtime Introspection");
     const runtimeStatus = await maybeExtractSectionText(page, "Runtime Status");
+    const agentRuntime = await maybeExtractSectionText(page, "Agent Runtime");
+    const executionChains = await maybeExtractSectionText(page, "Execution Chains");
 
     throw new Error([
       `Timed out while waiting for ${label}.`,
@@ -75,6 +77,8 @@ async function waitForSectionTextWithDiagnostics(page, headingName, predicate, l
       `Runtime Timeline Section: ${runtimeTimeline ?? "<missing>"}`,
       `Runtime Introspection Section: ${runtimeIntrospection ?? "<missing>"}`,
       `Runtime Status Section: ${runtimeStatus ?? "<missing>"}`,
+      `Agent Runtime Section: ${agentRuntime ?? "<missing>"}`,
+      `Execution Chains Section: ${executionChains ?? "<missing>"}`,
       error instanceof Error ? error.message : String(error),
     ].join("\n\n"));
   }
@@ -84,12 +88,16 @@ async function buildPreApprovalDiagnostics(page, url) {
   const activeGoal = await maybeExtractSectionText(page, "Active Goal");
   const approvals = await maybeExtractSectionText(page, "Approvals Required");
   const runtimeStatus = await maybeExtractSectionText(page, "Runtime Status");
+  const agentRuntime = await maybeExtractSectionText(page, "Agent Runtime");
+  const executionChains = await maybeExtractSectionText(page, "Execution Chains");
 
   return [
     `URL: ${url}`,
     `Active Goal Section: ${activeGoal ?? "<missing>"}`,
     `Approvals Required Section: ${approvals ?? "<missing>"}`,
     `Runtime Status Section: ${runtimeStatus ?? "<missing>"}`,
+    `Agent Runtime Section: ${agentRuntime ?? "<missing>"}`,
+    `Execution Chains Section: ${executionChains ?? "<missing>"}`,
   ].join("\n\n");
 }
 
@@ -99,7 +107,7 @@ async function waitForOperatorPageNavigation(page, url, timeout = 45000) {
 
   while ((Date.now() - startedAt) < timeout) {
     try {
-      const response = await page.goto(url, { waitUntil: "domcontentloaded", timeout: 5000 });
+      const response = await page.goto(url, { waitUntil: "domcontentloaded", timeout: 15000 });
       if (response && response.ok()) {
         return;
       }
@@ -120,6 +128,7 @@ async function waitForOperatorPageNavigation(page, url, timeout = 45000) {
 
 async function waitForSeededPreApprovalState(page, url, timeout = 45000) {
   await page.getByText("State Source: Live Runtime", { exact: false }).waitFor({ timeout });
+  await page.getByText("Client Controls: Ready", { exact: false }).waitFor({ timeout });
 
   try {
     await page.waitForFunction(
@@ -161,6 +170,8 @@ async function snapshot(page, label) {
   const approvals = await extractSectionText(page, "Approvals Required");
   const runtimeStatus = await extractSectionText(page, "Runtime Status");
   const runtimeIntrospection = await extractSectionText(page, "Runtime Introspection");
+  const agentRuntime = await extractSectionText(page, "Agent Runtime");
+  const executionChains = await extractSectionText(page, "Execution Chains");
   const runtimeTimeline = await extractSectionText(page, "Runtime Timeline");
 
   return {
@@ -171,6 +182,8 @@ async function snapshot(page, label) {
     approvals,
     runtimeStatus,
     runtimeIntrospection,
+    agentRuntime,
+    executionChains,
     runtimeTimeline,
   };
 }
@@ -200,8 +213,29 @@ async function main() {
     await waitForSectionTextWithDiagnostics(
       page,
       "Runtime Timeline",
-      (sectionText) => sectionText.includes("Safety gate:") && sectionText.includes("Goal focus"),
+      (sectionText) => sectionText.includes("Safety gate:") && sectionText.includes("executor-agent") && sectionText.includes("Execution chain"),
       "immediate runtime timeline transition",
+      url,
+      30000,
+    );
+    await waitForSectionTextWithDiagnostics(
+      page,
+      "Agent Runtime",
+      (sectionText) => sectionText.includes("planner-agent") && sectionText.includes("executor-agent") && sectionText.includes("approved"),
+      "agent runtime assignment",
+      url,
+      30000,
+    );
+    await waitForSectionTextWithDiagnostics(
+      page,
+      "Execution Chains",
+      (sectionText) => {
+        const normalized = sectionText.toLowerCase();
+        return normalized.includes("execution-chain-")
+          && (normalized.includes("active") || normalized.includes("completed"))
+          && normalized.includes("step:");
+      },
+      "execution chain progression",
       url,
       30000,
     );
@@ -237,6 +271,18 @@ async function main() {
       "Approvals Required",
       (sectionText) => sectionText.includes("No approvals are currently pending."),
       "delayed approval clearance persistence",
+      url,
+      45000,
+    );
+    await waitForSectionTextWithDiagnostics(
+      page,
+      "Execution Chains",
+      (sectionText) => {
+        const normalized = sectionText.toLowerCase();
+        return normalized.includes("execution-chain-")
+          && (normalized.includes("completed") || normalized.includes("active"));
+      },
+      "delayed execution chain persistence",
       url,
       45000,
     );
