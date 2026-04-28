@@ -9,12 +9,14 @@ import type {
   OperatorDashboardValidationIssue,
 } from "./operatorDashboardState";
 import {
+  createOvernightAutonomyPolicyId,
   createSupervisedAutonomySessionId,
+  type OvernightAutonomyAllowedAgentRole,
   type SupervisedAutonomyApprovalPolicy,
   type SupervisedAutonomyRecoveryPolicy,
 } from "./supervisedAutonomySession";
 
-export type OperatorControlActionType = "approve_goal" | "pause_goal" | "resume_goal" | "retry_goal" | "start_supervised_session" | "pause_session" | "resume_session" | "stop_session" | "request_operator_review";
+export type OperatorControlActionType = "approve_goal" | "pause_goal" | "resume_goal" | "retry_goal" | "start_supervised_session" | "pause_session" | "resume_session" | "stop_session" | "request_operator_review" | "approve_review_item" | "reject_review_item" | "defer_review_item";
 
 export type SupervisedSessionControlInput = {
   max_duration_ms?: number;
@@ -22,11 +24,25 @@ export type SupervisedSessionControlInput = {
   max_chain_count?: number;
   approval_policy?: SupervisedAutonomyApprovalPolicy;
   recovery_policy?: SupervisedAutonomyRecoveryPolicy;
+  overnight_mode_enabled?: boolean;
+  max_runtime_hours?: number;
+  allowed_time_window_start?: string;
+  allowed_time_window_end?: string;
+  max_tick_count?: number;
+  max_retries_per_chain?: number;
+  max_recovery_attempts?: number;
+  requires_operator_review_before_commit?: boolean;
+  allowed_agent_roles?: OvernightAutonomyAllowedAgentRole[];
+  disallowed_actions?: string[];
+  shutdown_on_failure_count?: number;
+  checkpoint_interval_ticks?: number;
+  review_queue_enabled?: boolean;
 };
 
 export type OperatorControlAction = {
   type: OperatorControlActionType;
   goal_id?: string | null;
+  review_id?: string | null;
   supervised_session_input?: SupervisedSessionControlInput;
 };
 
@@ -80,7 +96,13 @@ function cloneActionItem(item: OperatorDashboardActionItem): OperatorDashboardAc
 }
 
 function cloneSupervisedSessionInput(input: SupervisedSessionControlInput | undefined): SupervisedSessionControlInput | undefined {
-  return input ? { ...input } : undefined;
+  return input
+    ? {
+      ...input,
+      allowed_agent_roles: input.allowed_agent_roles ? [...input.allowed_agent_roles] : undefined,
+      disallowed_actions: input.disallowed_actions ? [...input.disallowed_actions] : undefined,
+    }
+    : undefined;
 }
 
 function cloneState(state: OperatorDashboardState): OperatorDashboardState {
@@ -128,6 +150,17 @@ function cloneState(state: OperatorDashboardState): OperatorDashboardState {
       active_chain_ids: [...state.supervised_session.active_chain_ids],
       completed_chain_ids: [...state.supervised_session.completed_chain_ids],
       failed_chain_ids: [...state.supervised_session.failed_chain_ids],
+      overnight_policy: state.supervised_session.overnight_policy
+        ? {
+          ...state.supervised_session.overnight_policy,
+          allowed_time_window: { ...state.supervised_session.overnight_policy.allowed_time_window },
+          allowed_agent_roles: [...state.supervised_session.overnight_policy.allowed_agent_roles],
+          disallowed_actions: [...state.supervised_session.overnight_policy.disallowed_actions],
+        }
+        : state.supervised_session.overnight_policy,
+      review_queue: state.supervised_session.review_queue?.map((item) => ({ ...item })),
+      active_recovery: state.supervised_session.active_recovery ? { ...state.supervised_session.active_recovery } : state.supervised_session.active_recovery,
+      resume_state: state.supervised_session.resume_state ? { ...state.supervised_session.resume_state } : state.supervised_session.resume_state,
     } : undefined,
     supervised_checkpoints: state.supervised_checkpoints?.map((checkpoint) => ({
       ...checkpoint,
@@ -218,9 +251,31 @@ function buildSupervisedSession(state: OperatorDashboardState, input: Supervised
   const approvalPolicy = input?.approval_policy ?? state.supervised_session?.approval_policy ?? "operator_must_approve_start";
   const recoveryPolicy = input?.recovery_policy ?? state.supervised_session?.recovery_policy ?? "request_operator_review";
   const needsApproval = approvalPolicy !== "preapproved_with_limits";
+  const sessionId = createSupervisedAutonomySessionId("local-runtime", createdAt);
+  const overnightPolicy = input?.overnight_mode_enabled
+    ? {
+      policy_id: createOvernightAutonomyPolicyId(sessionId, createdAt),
+      session_id: sessionId,
+      max_runtime_hours: input.max_runtime_hours ?? Math.max(1, Math.ceil((input?.max_duration_ms ?? 28_800_000) / 3_600_000)),
+      allowed_time_window: {
+        start_time: input.allowed_time_window_start ?? "22:00",
+        end_time: input.allowed_time_window_end ?? "06:00",
+      },
+      max_tick_count: input.max_tick_count ?? input?.tick_budget ?? 12,
+      max_chain_count: input?.max_chain_count ?? state.supervised_session?.max_chain_count ?? 8,
+      max_retries_per_chain: input.max_retries_per_chain ?? 1,
+      max_recovery_attempts: input.max_recovery_attempts ?? 2,
+      requires_operator_review_before_commit: input.requires_operator_review_before_commit ?? true,
+      allowed_agent_roles: input.allowed_agent_roles ?? ["planner", "executor", "validator"],
+      disallowed_actions: input.disallowed_actions ?? ["commit_changes", "push_branch", "delete_artifacts"],
+      shutdown_on_failure_count: input.shutdown_on_failure_count ?? 2,
+      checkpoint_interval_ticks: input.checkpoint_interval_ticks ?? 1,
+      review_queue_enabled: input.review_queue_enabled ?? true,
+    }
+    : null;
 
   return {
-    session_id: createSupervisedAutonomySessionId("local-runtime", createdAt),
+    session_id: sessionId,
     runtime_id: "local-runtime",
     status: needsApproval ? "pending_approval" : "running",
     started_at: createdAt,
@@ -243,6 +298,87 @@ function buildSupervisedSession(state: OperatorDashboardState, input: Supervised
     next_scheduled_tick_at: needsApproval ? null : createdAt,
     latest_timeline_event_id: null,
     pending_operator_review: false,
+    overnight_policy: overnightPolicy,
+    review_queue: [],
+    active_recovery: null,
+    resume_state: overnightPolicy
+      ? {
+        resume_status: "resume_ready" as const,
+        restart_count: 0,
+        resumed_from_checkpoint_id: null,
+        resumed_at: null,
+        preserved_review_queue_count: 0,
+        shutdown_reason: null,
+      }
+      : null,
+    failure_count: 0,
+  };
+}
+
+function applyReviewDecision(
+  state: OperatorDashboardState,
+  action: OperatorControlAction,
+  decision: "approved" | "rejected" | "deferred",
+): OperatorControlResult {
+  const session = state.supervised_session;
+  if (!session || !session.review_queue || session.review_queue.length === 0) {
+    return {
+      action,
+      changed: false,
+      message: "No overnight review queue items are available.",
+      state,
+    };
+  }
+
+  const reviewId = action.review_id ?? session.review_queue[0]?.review_id ?? null;
+  const reviewQueue = session.review_queue.map((item) => item.review_id === reviewId ? { ...item, status: decision } : item);
+  const pendingReviewCount = reviewQueue.filter((item) => item.status === "pending").length;
+  if (!reviewQueue.some((item) => item.review_id === reviewId)) {
+    return {
+      action,
+      changed: false,
+      message: "The requested overnight review item was not found.",
+      state,
+    };
+  }
+
+  state.supervised_session = {
+    ...session,
+    review_queue: reviewQueue,
+    pending_operator_review: pendingReviewCount > 0,
+    status: pendingReviewCount > 0 ? "waiting_for_operator" : session.status === "waiting_for_operator" ? "paused" : session.status,
+    active_recovery: pendingReviewCount > 0 ? session.active_recovery : null,
+    resume_state: session.resume_state
+      ? {
+        ...session.resume_state,
+        preserved_review_queue_count: pendingReviewCount,
+      }
+      : session.resume_state,
+  };
+  state.runtime_status = pendingReviewCount > 0
+    ? {
+      status: "runtime_blocked",
+      explanation: "Overnight autonomy is waiting for remaining operator review items.",
+    }
+    : {
+      status: "runtime_paused",
+      explanation: "The overnight review item was handled and the session is awaiting the next operator action.",
+    };
+  state.session_status = pendingReviewCount > 0
+    ? {
+      status: "session_waiting_for_approval",
+      explanation: "Overnight review queue items are still waiting for operator decisions.",
+    }
+    : {
+      status: "session_paused",
+      explanation: "The overnight review item was handled.",
+    };
+  updateLastUpdated(state);
+  return {
+    action,
+    changed: true,
+    message: `The overnight review item was ${decision}.`,
+    state,
   };
 }
 
@@ -611,6 +747,18 @@ export function applyOperatorControlAction(state: OperatorDashboardState, action
         message: "Operator review was requested for the supervised session.",
         state: nextState,
       };
+    }
+
+    case "approve_review_item": {
+      return applyReviewDecision(nextState, action, "approved");
+    }
+
+    case "reject_review_item": {
+      return applyReviewDecision(nextState, action, "rejected");
+    }
+
+    case "defer_review_item": {
+      return applyReviewDecision(nextState, action, "deferred");
     }
   }
 }

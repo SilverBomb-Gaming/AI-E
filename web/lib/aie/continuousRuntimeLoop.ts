@@ -33,7 +33,10 @@ import type { BackgroundSessionQueue } from "./backgroundSessionQueue";
 import type { SafeRuntimeIntent } from "./safeRuntimeActionBridge";
 import { createExecutionChainId, type ExecutionChainRecord } from "./executionChainState";
 import {
+  createOvernightAutonomyRecoveryId,
+  createOvernightAutonomyReviewId,
   createSupervisedAutonomyCheckpointId,
+  type OvernightAutonomyRecoveryOutcome,
   type SupervisedAutonomyCheckpointRecord,
   type SupervisedAutonomyRecoveryAction,
   type SupervisedAutonomySessionRecord,
@@ -358,6 +361,39 @@ function evaluateStopCondition(record: RuntimeStateRecord): { status: Continuous
   }
 
   if (supervisedSession) {
+    if (supervisedSession.overnight_policy) {
+      const runtimeWindowStart = supervisedSession.overnight_policy.allowed_time_window.start_time;
+      const runtimeWindowEnd = supervisedSession.overnight_policy.allowed_time_window.end_time;
+      const lastTickOrStart = record.last_tick_at ?? supervisedSession.next_scheduled_tick_at ?? record.persisted_at;
+      if (!isWithinAllowedTimeWindow(lastTickOrStart, runtimeWindowStart, runtimeWindowEnd)) {
+        return {
+          status: "loop_paused",
+          reason: "Continuous runtime loop paused because the overnight autonomy window is closed.",
+        };
+      }
+
+      if (supervisedSession.ticks_completed >= supervisedSession.overnight_policy.max_tick_count) {
+        return {
+          status: "loop_stopped",
+          reason: "Continuous runtime loop stopped because the overnight autonomy tick budget was exhausted.",
+        };
+      }
+
+      if (supervisedSession.duration_ms >= supervisedSession.overnight_policy.max_runtime_hours * 3_600_000) {
+        return {
+          status: "loop_stopped",
+          reason: "Continuous runtime loop stopped because the overnight runtime-hour limit was reached.",
+        };
+      }
+
+      if ((supervisedSession.failure_count ?? 0) >= supervisedSession.overnight_policy.shutdown_on_failure_count) {
+        return {
+          status: "loop_blocked",
+          reason: "Continuous runtime loop stopped because the overnight failure threshold was reached.",
+        };
+      }
+    }
+
     if (supervisedSession.status === "pending_approval") {
       return {
         status: "loop_paused",
@@ -451,6 +487,75 @@ function evaluateStopCondition(record: RuntimeStateRecord): { status: Continuous
   }
 
   return null;
+}
+
+function isWithinAllowedTimeWindow(timestamp: string, startTime: string, endTime: string): boolean {
+  const parsedTimestamp = parseTimestamp(timestamp);
+  if (parsedTimestamp === null) {
+    return true;
+  }
+
+  const date = new Date(parsedTimestamp);
+  const minutes = (date.getUTCHours() * 60) + date.getUTCMinutes();
+  const [startHour = "0", startMinute = "0"] = startTime.split(":");
+  const [endHour = "0", endMinute = "0"] = endTime.split(":");
+  const startMinutes = (Number(startHour) * 60) + Number(startMinute);
+  const endMinutes = (Number(endHour) * 60) + Number(endMinute);
+
+  if (Number.isNaN(startMinutes) || Number.isNaN(endMinutes)) {
+    return true;
+  }
+
+  if (startMinutes === endMinutes) {
+    return true;
+  }
+
+  if (startMinutes < endMinutes) {
+    return minutes >= startMinutes && minutes <= endMinutes;
+  }
+
+  return minutes >= startMinutes || minutes <= endMinutes;
+}
+
+function determineOvernightRecoveryOutcome(
+  session: SupervisedAutonomySessionRecord,
+  failureCount: number,
+): OvernightAutonomyRecoveryOutcome {
+  const policy = session.overnight_policy;
+  if (!policy) {
+    return "request_operator_review";
+  }
+
+  const currentRecoveryAttempts = session.active_recovery?.recovery_attempt_count ?? 0;
+  const currentRetryCount = session.active_recovery?.retry_count_for_chain ?? 0;
+
+  if (failureCount >= policy.shutdown_on_failure_count || currentRecoveryAttempts >= policy.max_recovery_attempts) {
+    return "stop_session";
+  }
+
+  if (currentRetryCount < policy.max_retries_per_chain) {
+    return "retry_once";
+  }
+
+  if (policy.review_queue_enabled) {
+    return "request_operator_review";
+  }
+
+  return "pause_chain";
+}
+
+function mapOvernightOutcomeToLegacyRecoveryAction(outcome: OvernightAutonomyRecoveryOutcome): SupervisedAutonomyRecoveryAction {
+  switch (outcome) {
+    case "retry_once":
+      return "retry_once";
+    case "pause_chain":
+      return "pause_chain";
+    case "stop_session":
+    case "mark_failed":
+      return "stop_session";
+    default:
+      return "request_operator_review";
+  }
 }
 
 function appendBlocker(record: RuntimeStateRecord, code: string, message: string) {
@@ -718,8 +823,18 @@ function determineSupervisedSessionStatus(
   record: RuntimeStateRecord,
   execution: ExecutionLoopControllerResult,
   recoveryAction: SupervisedAutonomyRecoveryAction,
+  overnightOutcome?: OvernightAutonomyRecoveryOutcome | null,
 ): SupervisedAutonomySessionRecord["status"] {
   if (execution.status === "loop_blocked") {
+    if (overnightOutcome === "retry_once" || overnightOutcome === "retry_later" || overnightOutcome === "reassign_agent" || overnightOutcome === "rollback_to_checkpoint") {
+      return "recovering";
+    }
+    if (overnightOutcome === "stop_session" || overnightOutcome === "mark_failed") {
+      return "failed";
+    }
+    if (overnightOutcome === "pause_chain") {
+      return "paused";
+    }
     if (recoveryAction === "retry_once") {
       return "recovering";
     }
@@ -796,8 +911,12 @@ function updateSupervisedSessionAfterExecution(
   const failedChainIds = (nextRecord.execution_chains ?? [])
     .filter((chain) => chain.status === "blocked")
     .map((chain) => chain.chain_id);
-  const recoveryAction = determineSupervisedRecoveryAction(existingSession, execution);
-  const nextStatus = determineSupervisedSessionStatus(existingSession, record, execution, recoveryAction);
+  const baseRecoveryAction = determineSupervisedRecoveryAction(existingSession, execution);
+  const overnightOutcome = execution.status === "loop_blocked" && existingSession.overnight_policy
+    ? determineOvernightRecoveryOutcome(existingSession, (existingSession.failure_count ?? 0) + 1)
+    : null;
+  const recoveryAction = overnightOutcome ? mapOvernightOutcomeToLegacyRecoveryAction(overnightOutcome) : baseRecoveryAction;
+  const nextStatus = determineSupervisedSessionStatus(existingSession, record, execution, recoveryAction, overnightOutcome);
   const nextScheduledTickAt = (nextStatus === "running" || nextStatus === "recovering")
     ? new Date((parseTimestamp(attemptedAt) ?? Date.parse(attemptedAt)) + config.tick_interval_ms).toISOString()
     : null;
@@ -806,6 +925,31 @@ function updateSupervisedSessionAfterExecution(
       ? "review_required"
       : "blocked"
     : "passed";
+  const nextFailureCount = execution.status === "loop_blocked" ? (existingSession.failure_count ?? 0) + 1 : 0;
+  const pendingReviewQueue = [...(existingSession.review_queue ?? [])];
+  if (existingSession.overnight_policy && execution.status === "loop_blocked" && (existingSession.overnight_policy.review_queue_enabled || overnightOutcome === "request_operator_review")) {
+    pendingReviewQueue.push({
+      review_id: createOvernightAutonomyReviewId(existingSession.session_id, attemptedAt),
+      session_id: existingSession.session_id,
+      source_event_id: tickId,
+      source_chain_id: failedChainIds[0] ?? null,
+      source_agent_id: null,
+      severity: nextFailureCount >= existingSession.overnight_policy.shutdown_on_failure_count ? "critical" : "high",
+      title: "Overnight recovery decision requires operator review",
+      summary: execution.reason,
+      recommended_action: overnightOutcome === "stop_session"
+        ? "Stop the session and inspect the latest checkpoint."
+        : "Review the failure, then approve, reject, or defer the queued recovery item.",
+      required_operator_decision: overnightOutcome === "stop_session" ? "reject" : "approve",
+      created_at: attemptedAt,
+      status: "pending",
+    });
+  }
+  const shouldPersistCheckpoint = !existingSession.overnight_policy
+    || execution.status === "loop_blocked"
+    || nextStatus === "completed"
+    || nextStatus === "failed"
+    || (tickIndex % existingSession.overnight_policy.checkpoint_interval_ticks) === 0;
 
   nextRecord.supervised_session = {
     ...existingSession,
@@ -816,7 +960,7 @@ function updateSupervisedSessionAfterExecution(
     active_chain_ids: activeChainIds,
     completed_chain_ids: completedChainIds,
     failed_chain_ids: failedChainIds,
-    last_checkpoint_at: attemptedAt,
+    last_checkpoint_at: shouldPersistCheckpoint ? attemptedAt : existingSession.last_checkpoint_at,
     stop_reason: nextStatus === "completed"
       ? "session_completed"
       : nextStatus === "failed"
@@ -825,15 +969,51 @@ function updateSupervisedSessionAfterExecution(
     last_recovery_action: execution.status === "loop_blocked" ? recoveryAction : "none",
     next_scheduled_tick_at: nextScheduledTickAt,
     latest_timeline_event_id: tickId,
-    pending_operator_review: nextStatus === "waiting_for_operator" || checkpointSafetyStatus === "review_required",
+    pending_operator_review: nextStatus === "waiting_for_operator" || checkpointSafetyStatus === "review_required" || pendingReviewQueue.some((item) => item.status === "pending"),
+    review_queue: pendingReviewQueue,
+    active_recovery: execution.status === "loop_blocked" && overnightOutcome
+      ? {
+        recovery_id: createOvernightAutonomyRecoveryId(existingSession.session_id, attemptedAt),
+        session_id: existingSession.session_id,
+        source_event_id: tickId,
+        source_chain_id: failedChainIds[0] ?? null,
+        source_agent_id: null,
+        selected_outcome: overnightOutcome,
+        retry_count_for_chain: overnightOutcome === "retry_once"
+          ? (existingSession.active_recovery?.retry_count_for_chain ?? 0) + 1
+          : existingSession.active_recovery?.retry_count_for_chain ?? 0,
+        recovery_attempt_count: (existingSession.active_recovery?.recovery_attempt_count ?? 0) + 1,
+        rollback_checkpoint_id: (existingSession.overnight_policy?.checkpoint_interval_ticks ?? 0) > 0
+          ? (record.supervised_checkpoints ?? []).at(-1)?.checkpoint_id ?? null
+          : null,
+        summary: execution.reason,
+        created_at: attemptedAt,
+      }
+      : null,
+    resume_state: existingSession.resume_state
+      ? {
+        ...existingSession.resume_state,
+        preserved_review_queue_count: pendingReviewQueue.filter((item) => item.status === "pending").length,
+        shutdown_reason: nextStatus === "failed" ? execution.reason : null,
+      }
+      : existingSession.resume_state,
+    failure_count: nextFailureCount,
   };
 
-  const checkpoint = buildSupervisedCheckpoint(nextRecord, nextRecord.supervised_session, attemptedAt, tickIndex, checkpointSafetyStatus, tickId);
-  nextRecord.supervised_checkpoints = [...(record.supervised_checkpoints ?? []).filter((existing) => existing.checkpoint_id !== checkpoint.checkpoint_id), checkpoint].slice(-20);
+  if (shouldPersistCheckpoint) {
+    const checkpoint = buildSupervisedCheckpoint(nextRecord, nextRecord.supervised_session, attemptedAt, tickIndex, checkpointSafetyStatus, tickId);
+    nextRecord.supervised_checkpoints = [...(record.supervised_checkpoints ?? []).filter((existing) => existing.checkpoint_id !== checkpoint.checkpoint_id), checkpoint].slice(-20);
+
+    return [
+      `Supervised session ${nextRecord.supervised_session.session_id} is ${nextRecord.supervised_session.status}.`,
+      `Checkpoint ${checkpoint.checkpoint_id} persisted.`,
+      execution.status === "loop_blocked" ? `Recovery action ${recoveryAction} recorded.` : null,
+    ].filter(Boolean).join(" ");
+  }
 
   return [
     `Supervised session ${nextRecord.supervised_session.session_id} is ${nextRecord.supervised_session.status}.`,
-    `Checkpoint ${checkpoint.checkpoint_id} persisted.`,
+    "Checkpoint persistence deferred until the configured overnight interval.",
     execution.status === "loop_blocked" ? `Recovery action ${recoveryAction} recorded.` : null,
   ].filter(Boolean).join(" ");
 }
@@ -980,6 +1160,34 @@ function finalizeRecord(
 
   if (nextRecord.supervised_session) {
     const durationMs = Math.max(0, (parseTimestamp(stoppedAt) ?? 0) - (parseTimestamp(nextRecord.supervised_session.started_at) ?? 0));
+    const overnightOutcome = (status === "loop_blocked" || status === "loop_error") && nextRecord.supervised_session.overnight_policy
+      ? determineOvernightRecoveryOutcome(nextRecord.supervised_session, (nextRecord.supervised_session.failure_count ?? 0) + 1)
+      : null;
+    const nextFailureCount = (status === "loop_blocked" || status === "loop_error")
+      ? (nextRecord.supervised_session.failure_count ?? 0) + 1
+      : nextRecord.supervised_session.failure_count ?? 0;
+    const reviewQueue = [...(nextRecord.supervised_session.review_queue ?? [])];
+    const finalTimelineEventId = nextRecord.continuous_loop?.tick_history.at(-1)?.event_id ?? nextRecord.supervised_session.latest_timeline_event_id;
+    if ((status === "loop_blocked" || status === "loop_error")
+      && nextRecord.supervised_session.overnight_policy
+      && (nextRecord.supervised_session.overnight_policy.review_queue_enabled || overnightOutcome === "request_operator_review")) {
+      reviewQueue.push({
+        review_id: createOvernightAutonomyReviewId(nextRecord.supervised_session.session_id, stoppedAt),
+        session_id: nextRecord.supervised_session.session_id,
+        source_event_id: finalTimelineEventId ?? `overnight-stop-${sanitizeTimestamp(stoppedAt)}`,
+        source_chain_id: nextRecord.supervised_session.failed_chain_ids[0] ?? null,
+        source_agent_id: null,
+        severity: nextFailureCount >= nextRecord.supervised_session.overnight_policy.shutdown_on_failure_count ? "critical" : "high",
+        title: "Overnight stop condition requires operator review",
+        summary: reason,
+        recommended_action: overnightOutcome === "stop_session"
+          ? "Stop the overnight session and inspect the last checkpoint before resuming."
+          : "Review the blocked overnight session and choose the next safe operator action.",
+        required_operator_decision: overnightOutcome === "stop_session" ? "reject" : "approve",
+        created_at: stoppedAt,
+        status: "pending",
+      });
+    }
     const finalizedSessionStatus = preserveRunningSession
       ? nextRecord.supervised_session.status
       : status === "loop_completed"
@@ -1004,9 +1212,49 @@ function finalizeRecord(
       failed_chain_ids: (nextRecord.execution_chains ?? []).filter((chain) => chain.status === "blocked").map((chain) => chain.chain_id),
       stop_reason: preserveRunningSession ? nextRecord.supervised_session.stop_reason : reason,
       next_scheduled_tick_at: preserveRunningSession ? nextRecord.supervised_session.next_scheduled_tick_at : null,
-      latest_timeline_event_id: nextRecord.continuous_loop?.tick_history.at(-1)?.event_id ?? nextRecord.supervised_session.latest_timeline_event_id,
-      pending_operator_review: preserveRunningSession ? nextRecord.supervised_session.pending_operator_review : status === "loop_blocked" || status === "loop_error",
+      latest_timeline_event_id: finalTimelineEventId,
+      pending_operator_review: preserveRunningSession ? nextRecord.supervised_session.pending_operator_review : status === "loop_blocked" || status === "loop_error" || reviewQueue.some((item) => item.status === "pending"),
+      review_queue: reviewQueue,
+      active_recovery: overnightOutcome
+        ? {
+          recovery_id: createOvernightAutonomyRecoveryId(nextRecord.supervised_session.session_id, stoppedAt),
+          session_id: nextRecord.supervised_session.session_id,
+          source_event_id: finalTimelineEventId ?? `overnight-stop-${sanitizeTimestamp(stoppedAt)}`,
+          source_chain_id: nextRecord.supervised_session.failed_chain_ids[0] ?? null,
+          source_agent_id: null,
+          selected_outcome: overnightOutcome,
+          retry_count_for_chain: nextRecord.supervised_session.active_recovery?.retry_count_for_chain ?? 0,
+          recovery_attempt_count: (nextRecord.supervised_session.active_recovery?.recovery_attempt_count ?? 0) + 1,
+          rollback_checkpoint_id: nextRecord.supervised_checkpoints?.at(-1)?.checkpoint_id ?? null,
+          summary: reason,
+          created_at: stoppedAt,
+        }
+        : nextRecord.supervised_session.active_recovery,
+      resume_state: nextRecord.supervised_session.resume_state
+        ? {
+          ...nextRecord.supervised_session.resume_state,
+          preserved_review_queue_count: reviewQueue.filter((item) => item.status === "pending").length,
+          shutdown_reason: status === "loop_blocked" || status === "loop_error" ? reason : nextRecord.supervised_session.resume_state.shutdown_reason,
+        }
+        : nextRecord.supervised_session.resume_state,
+      failure_count: nextFailureCount,
     };
+
+    if ((status === "loop_blocked" || status === "loop_error") && nextRecord.supervised_session.overnight_policy) {
+      const checkpoint = buildSupervisedCheckpoint(
+        nextRecord,
+        nextRecord.supervised_session,
+        stoppedAt,
+        nextRecord.continuous_loop?.ticks_attempted ?? 0,
+        "blocked",
+        finalTimelineEventId,
+      );
+      nextRecord.supervised_checkpoints = [
+        ...(nextRecord.supervised_checkpoints ?? []).filter((existing) => existing.checkpoint_id !== checkpoint.checkpoint_id),
+        checkpoint,
+      ].slice(-20);
+      nextRecord.supervised_session.last_checkpoint_at = stoppedAt;
+    }
   }
 
   syncSupervisedStateToDashboard(nextRecord);
@@ -1050,6 +1298,22 @@ export function runContinuousRuntimeLoop(
 
   try {
     let currentRecord = cloneRuntimeStateRecord(persistedRecord);
+    const latestCheckpoint = currentRecord.supervised_checkpoints?.at(-1) ?? null;
+    if (currentRecord.supervised_session?.overnight_policy && currentRecord.supervised_session.resume_state && latestCheckpoint) {
+      currentRecord.supervised_session = {
+        ...currentRecord.supervised_session,
+        resume_state: {
+          ...currentRecord.supervised_session.resume_state,
+          resume_status: "resumed_from_checkpoint",
+          restart_count: currentRecord.supervised_session.resume_state.restart_count + 1,
+          resumed_from_checkpoint_id: latestCheckpoint.checkpoint_id,
+          resumed_at: config.started_at,
+          preserved_review_queue_count: currentRecord.supervised_session.review_queue?.filter((item) => item.status === "pending").length ?? 0,
+          shutdown_reason: null,
+        },
+      };
+      syncSupervisedStateToDashboard(currentRecord);
+    }
     let loopState = cloneContinuousLoopState(currentRecord.continuous_loop);
     let finalStatus: ContinuousLoopStatus = "loop_running";
     let finalReason = "Continuous runtime loop is running bounded execution cycles.";

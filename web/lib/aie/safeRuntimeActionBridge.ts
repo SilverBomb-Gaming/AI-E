@@ -21,6 +21,9 @@ export type SafeRuntimeIntent =
   | "resume_supervised_session"
   | "stop_supervised_session"
   | "request_supervised_operator_review"
+  | "approve_review_queue_item"
+  | "reject_review_queue_item"
+  | "defer_review_queue_item"
   | "no_op";
 
 export type SafeRuntimeActionBridgeStatus =
@@ -411,6 +414,87 @@ export function createSafeRuntimeActionBridgeResult(
         "request_supervised_operator_review",
         "the supervised session may be paused for operator review",
         providerResult.warnings,
+        createdAt,
+      );
+    }
+
+    case "approve_review_item": {
+      const reviewItem = action.review_id
+        ? state.supervised_session?.review_queue?.find((item) => item.review_id === action.review_id) ?? null
+        : state.supervised_session?.review_queue?.[0] ?? null;
+      if (!reviewItem) {
+        return buildResult(
+          source,
+          action,
+          "action_rejected",
+          "no_op",
+          "no overnight review item exists for a live approval request",
+          providerResult.warnings,
+          createdAt,
+        );
+      }
+
+      return buildResult(
+        source,
+        action,
+        "action_ready",
+        "approve_review_queue_item",
+        "the overnight review item may be approved through the runtime review queue boundary",
+        [...providerResult.warnings, `Review target: ${reviewItem.review_id}`],
+        createdAt,
+      );
+    }
+
+    case "reject_review_item": {
+      const reviewItem = action.review_id
+        ? state.supervised_session?.review_queue?.find((item) => item.review_id === action.review_id) ?? null
+        : state.supervised_session?.review_queue?.[0] ?? null;
+      if (!reviewItem) {
+        return buildResult(
+          source,
+          action,
+          "action_rejected",
+          "no_op",
+          "no overnight review item exists for a live rejection request",
+          providerResult.warnings,
+          createdAt,
+        );
+      }
+
+      return buildResult(
+        source,
+        action,
+        "action_ready",
+        "reject_review_queue_item",
+        "the overnight review item may be rejected through the runtime review queue boundary",
+        [...providerResult.warnings, `Review target: ${reviewItem.review_id}`],
+        createdAt,
+      );
+    }
+
+    case "defer_review_item": {
+      const reviewItem = action.review_id
+        ? state.supervised_session?.review_queue?.find((item) => item.review_id === action.review_id) ?? null
+        : state.supervised_session?.review_queue?.[0] ?? null;
+      if (!reviewItem) {
+        return buildResult(
+          source,
+          action,
+          "action_rejected",
+          "no_op",
+          "no overnight review item exists for a live defer request",
+          providerResult.warnings,
+          createdAt,
+        );
+      }
+
+      return buildResult(
+        source,
+        action,
+        "action_ready",
+        "defer_review_queue_item",
+        "the overnight review item may be deferred through the runtime review queue boundary",
+        [...providerResult.warnings, `Review target: ${reviewItem.review_id}`],
         createdAt,
       );
     }

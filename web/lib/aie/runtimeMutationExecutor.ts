@@ -151,6 +151,12 @@ function createActionFromIntent(intent: SafeRuntimeIntent, goalId: string | null
       return { type: "stop_session" };
     case "request_supervised_operator_review":
       return { type: "request_operator_review" };
+    case "approve_review_queue_item":
+      return { type: "approve_review_item", review_id: goalId ?? null };
+    case "reject_review_queue_item":
+      return { type: "reject_review_item", review_id: goalId ?? null };
+    case "defer_review_queue_item":
+      return { type: "defer_review_item", review_id: goalId ?? null };
     case "no_op":
     default:
       return null;
@@ -278,6 +284,19 @@ function validateMutationRequest(
       return null;
     }
 
+    case "approve_review_queue_item":
+    case "reject_review_queue_item":
+    case "defer_review_queue_item": {
+      const reviewId = input.action?.review_id ?? input.goal_id ?? null;
+      const reviewItem = reviewId
+        ? persistedRecord.supervised_session?.review_queue?.find((item) => item.review_id === reviewId) ?? null
+        : persistedRecord.supervised_session?.review_queue?.[0] ?? null;
+      if (!reviewItem) {
+        return "no overnight review queue item is available for the requested runtime mutation";
+      }
+      return null;
+    }
+
     default:
       return "the requested runtime mutation intent is not supported";
   }
@@ -324,6 +343,13 @@ function applyRecordMetadata(
     case "stop_supervised_session":
     case "request_supervised_operator_review": {
       record.last_status = "service_paused";
+      break;
+    }
+
+    case "approve_review_queue_item":
+    case "reject_review_queue_item":
+    case "defer_review_queue_item": {
+      record.last_status = record.supervised_session?.pending_operator_review ? "service_blocked" : "service_paused";
       break;
     }
 
@@ -499,6 +525,9 @@ export function executeRuntimeMutation(input: RuntimeMutationExecutorInput): Run
       || input.runtime_intent === "pause_supervised_session"
       || input.runtime_intent === "stop_supervised_session"
       || input.runtime_intent === "request_supervised_operator_review"
+      || input.runtime_intent === "approve_review_queue_item"
+      || input.runtime_intent === "reject_review_queue_item"
+      || input.runtime_intent === "defer_review_queue_item"
       || persistedNextRecord.supervised_session?.status === "pending_approval"
       || !persistedNextRecord.operator_dashboard_state) {
       return baseResult;
@@ -541,6 +570,9 @@ export function executeRuntimeMutation(input: RuntimeMutationExecutorInput): Run
     || input.runtime_intent === "pause_supervised_session"
     || input.runtime_intent === "stop_supervised_session"
     || input.runtime_intent === "request_supervised_operator_review"
+    || input.runtime_intent === "approve_review_queue_item"
+    || input.runtime_intent === "reject_review_queue_item"
+    || input.runtime_intent === "defer_review_queue_item"
     || persistedExecutedRecord.supervised_session?.status === "pending_approval"
     || !persistedExecutedRecord.operator_dashboard_state) {
     return buildResult(

@@ -86,6 +86,32 @@ test("start_supervised_session creates a bounded pending-approval session", () =
   assert.equal(result.state.approvals_required.length > 0, true);
 });
 
+test("start_supervised_session can initialize overnight autonomy policy state", () => {
+  const initialState = createOperatorDashboardDemoState();
+
+  const result = applyOperatorControlAction(initialState, {
+    type: "start_supervised_session",
+    supervised_session_input: {
+      approval_policy: "preapproved_with_limits",
+      overnight_mode_enabled: true,
+      max_runtime_hours: 6,
+      max_tick_count: 9,
+      max_chain_count: 3,
+      max_retries_per_chain: 1,
+      max_recovery_attempts: 2,
+      checkpoint_interval_ticks: 2,
+      review_queue_enabled: true,
+    },
+  });
+
+  assert.equal(result.changed, true);
+  assert.equal(result.state.supervised_session?.status, "running");
+  assert.equal(result.state.supervised_session?.overnight_policy?.max_runtime_hours, 6);
+  assert.equal(result.state.supervised_session?.overnight_policy?.max_tick_count, 9);
+  assert.equal(result.state.supervised_session?.review_queue?.length, 0);
+  assert.equal(result.state.supervised_session?.resume_state?.resume_status, "resume_ready");
+});
+
 test("pause_session pauses the supervised session", () => {
   const initialState = applyOperatorControlAction(createOperatorDashboardDemoState(), {
     type: "start_supervised_session",

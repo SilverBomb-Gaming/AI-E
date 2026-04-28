@@ -14,10 +14,13 @@
     "proof:continuous-runtime": "tsx scripts/launchContinuousRuntimeProof.ts",
     "proof:multi-agent-runtime": "tsx scripts/launchContinuousRuntimeProof.ts",
     "proof:supervised-autonomy": "tsx scripts/launchSupervisedAutonomyProof.ts",
+    "proof:overnight-autonomy": "tsx scripts/launchOvernightAutonomyProof.ts",
     "proof:continuous-runtime:safe": "set NODE_OPTIONS=--max-old-space-size=4096 && set AIE_RESOURCE_SAFE_MODE=1 && tsx scripts/launchContinuousRuntimeProof.ts",
     "proof:multi-agent-runtime:safe": "set NODE_OPTIONS=--max-old-space-size=4096 && set AIE_RESOURCE_SAFE_MODE=1 && tsx scripts/launchContinuousRuntimeProof.ts",
     "proof:supervised-autonomy:safe": "set NODE_OPTIONS=--max-old-space-size=4096 && set AIE_RESOURCE_SAFE_MODE=1 && tsx scripts/launchSupervisedAutonomyProof.ts",
+    "proof:overnight-autonomy:safe": "set NODE_OPTIONS=--max-old-space-size=4096 && set AIE_RESOURCE_SAFE_MODE=1 && tsx scripts/launchOvernightAutonomyProof.ts",
     "validate:layer5:safe": "npm run proof:continuous-runtime:safe && npm run proof:multi-agent-runtime:safe && npm run proof:supervised-autonomy:safe && npm run test:trace:safe",
+    "validate:layer6:safe": "npm run proof:continuous-runtime:safe && npm run proof:multi-agent-runtime:safe && npm run proof:supervised-autonomy:safe && npm run proof:overnight-autonomy:safe && npm run test:trace:safe",
     "readiness": "tsx training_readiness_check.ts",
     "trace:readiness": "tsx training_readiness_check.ts",
     "trace:capture": "tsx training_dataset_capture.ts"

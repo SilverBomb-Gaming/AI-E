@@ -21,6 +21,71 @@ import type {
 import type { ExecutionChainRecord } from "@/lib/aie/executionChainState";
 import type { OperatorRuntimeStateProviderResult } from "@/lib/aie/operatorRuntimeStateContract";
 
+function ToggleInput({
+  label,
+  checked,
+  onChange,
+}: {
+  label: string;
+  checked: boolean;
+  onChange: (nextValue: boolean) => void;
+}) {
+  return (
+    <label className="flex items-center justify-between gap-3 rounded-[1.25rem] border border-ink/10 bg-white/80 p-4 text-sm text-ink">
+      <span className="text-xs uppercase tracking-[0.18em] text-slate">{label}</span>
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(event) => onChange(event.target.checked)}
+        className="h-4 w-4 rounded border border-ink/10"
+      />
+    </label>
+  );
+}
+
+function ReviewQueueRow({
+  reviewId,
+  title,
+  summary,
+  status,
+  severity,
+  onApprove,
+  onReject,
+  onDefer,
+  disabled,
+}: {
+  reviewId: string;
+  title: string;
+  summary: string;
+  status: string;
+  severity: string;
+  onApprove: () => void;
+  onReject: () => void;
+  onDefer: () => void;
+  disabled: boolean;
+}) {
+  return (
+    <article className="rounded-[1.5rem] border border-ink/10 bg-white/80 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="space-y-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="headline text-lg font-semibold text-ink">{title}</h3>
+            <StatusBadge status={severity} />
+            <StatusBadge status={status} />
+          </div>
+          <p className="text-sm leading-7 body-muted">{summary}</p>
+          <p className="text-xs text-slate">Review id: {reviewId}</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <ActionButton label="Approve Review" onClick={onApprove} disabled={disabled} tone="accent" />
+          <ActionButton label="Reject Review" onClick={onReject} disabled={disabled} tone="warning" />
+          <ActionButton label="Defer Review" onClick={onDefer} disabled={disabled} />
+        </div>
+      </div>
+    </article>
+  );
+}
+
 function SupervisedSessionField({ label, value }: { label: string; value: string }) {
   return (
     <article className="rounded-[1.25rem] border border-ink/10 bg-white/80 p-4">
@@ -387,6 +452,13 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
   const [tickBudget, setTickBudget] = useState("12");
   const [maxChainCount, setMaxChainCount] = useState("8");
   const [approvalPolicy, setApprovalPolicy] = useState<SupervisedSessionControlInput["approval_policy"]>("operator_must_approve_start");
+  const [overnightModeEnabled, setOvernightModeEnabled] = useState(false);
+  const [allowedTimeWindowStart, setAllowedTimeWindowStart] = useState("22:00");
+  const [allowedTimeWindowEnd, setAllowedTimeWindowEnd] = useState("06:00");
+  const [maxRetriesPerChain, setMaxRetriesPerChain] = useState("1");
+  const [maxRecoveryAttempts, setMaxRecoveryAttempts] = useState("2");
+  const [checkpointIntervalTicks, setCheckpointIntervalTicks] = useState("1");
+  const [reviewQueueEnabled, setReviewQueueEnabled] = useState(true);
   const [isPending, startTransition] = useTransition();
 
   useEffect(() => {
@@ -400,6 +472,13 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
       setTickBudget(String(session.tick_budget));
       setMaxChainCount(String(session.max_chain_count));
       setApprovalPolicy(session.approval_policy);
+      setOvernightModeEnabled(Boolean(session.overnight_policy));
+      setAllowedTimeWindowStart(session.overnight_policy?.allowed_time_window.start_time ?? "22:00");
+      setAllowedTimeWindowEnd(session.overnight_policy?.allowed_time_window.end_time ?? "06:00");
+      setMaxRetriesPerChain(String(session.overnight_policy?.max_retries_per_chain ?? 1));
+      setMaxRecoveryAttempts(String(session.overnight_policy?.max_recovery_attempts ?? 2));
+      setCheckpointIntervalTicks(String(session.overnight_policy?.checkpoint_interval_ticks ?? 1));
+      setReviewQueueEnabled(session.overnight_policy?.review_queue_enabled ?? true);
     }
   }, [initialProviderResult]);
 
@@ -431,6 +510,9 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
     const parsedHours = Number(maxDurationHours);
     const parsedTickBudget = Number(tickBudget);
     const parsedMaxChainCount = Number(maxChainCount);
+    const parsedMaxRetriesPerChain = Number(maxRetriesPerChain);
+    const parsedMaxRecoveryAttempts = Number(maxRecoveryAttempts);
+    const parsedCheckpointIntervalTicks = Number(checkpointIntervalTicks);
 
     return {
       max_duration_ms: Number.isFinite(parsedHours) && parsedHours > 0 ? Math.trunc(parsedHours * 3_600_000) : 28_800_000,
@@ -438,6 +520,15 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
       max_chain_count: Number.isFinite(parsedMaxChainCount) && parsedMaxChainCount > 0 ? Math.trunc(parsedMaxChainCount) : 8,
       approval_policy: approvalPolicy ?? "operator_must_approve_start",
       recovery_policy: activeSession?.recovery_policy ?? "request_operator_review",
+      overnight_mode_enabled: overnightModeEnabled,
+      max_runtime_hours: Number.isFinite(parsedHours) && parsedHours > 0 ? parsedHours : 8,
+      allowed_time_window_start: allowedTimeWindowStart,
+      allowed_time_window_end: allowedTimeWindowEnd,
+      max_tick_count: Number.isFinite(parsedTickBudget) && parsedTickBudget > 0 ? Math.trunc(parsedTickBudget) : 12,
+      max_retries_per_chain: Number.isFinite(parsedMaxRetriesPerChain) && parsedMaxRetriesPerChain >= 0 ? Math.trunc(parsedMaxRetriesPerChain) : 1,
+      max_recovery_attempts: Number.isFinite(parsedMaxRecoveryAttempts) && parsedMaxRecoveryAttempts >= 0 ? Math.trunc(parsedMaxRecoveryAttempts) : 2,
+      checkpoint_interval_ticks: Number.isFinite(parsedCheckpointIntervalTicks) && parsedCheckpointIntervalTicks > 0 ? Math.trunc(parsedCheckpointIntervalTicks) : 1,
+      review_queue_enabled: reviewQueueEnabled,
     };
   }
 
@@ -683,6 +774,13 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
                     <option value="preapproved_with_limits">preapproved_with_limits</option>
                   </select>
                 </label>
+                <ToggleInput label="Overnight Mode" checked={overnightModeEnabled} onChange={setOvernightModeEnabled} />
+                <ToggleInput label="Review Queue Enabled" checked={reviewQueueEnabled} onChange={setReviewQueueEnabled} />
+                <SessionInput label="Allowed Window Start" value={allowedTimeWindowStart} onChange={setAllowedTimeWindowStart} type="text" />
+                <SessionInput label="Allowed Window End" value={allowedTimeWindowEnd} onChange={setAllowedTimeWindowEnd} type="text" />
+                <SessionInput label="Max Retries Per Chain" value={maxRetriesPerChain} onChange={setMaxRetriesPerChain} />
+                <SessionInput label="Max Recovery Attempts" value={maxRecoveryAttempts} onChange={setMaxRecoveryAttempts} />
+                <SessionInput label="Checkpoint Interval Ticks" value={checkpointIntervalTicks} onChange={setCheckpointIntervalTicks} />
               </div>
 
               <div className="flex flex-wrap gap-2">
@@ -715,6 +813,18 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
                   onClick={() => handleAction({ type: "request_operator_review" })}
                   disabled={isPending || !activeSession}
                 />
+                <ActionButton
+                  label="Start Overnight Session"
+                  onClick={() => handleAction({
+                    type: "start_supervised_session",
+                    supervised_session_input: {
+                      ...buildSupervisedSessionInput(),
+                      overnight_mode_enabled: true,
+                    },
+                  })}
+                  disabled={isPending}
+                  tone="accent"
+                />
               </div>
 
               <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -729,6 +839,23 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
                 <SupervisedSessionField label="Next Scheduled Tick" value={activeSession?.next_scheduled_tick_at ?? dashboardState?.runtime_observability?.next_scheduled_tick_at ?? "none"} />
               </div>
 
+              {activeSession?.overnight_policy ? (
+                <article className="rounded-[1.5rem] border border-ocean/20 bg-ocean/5 p-4">
+                  <p className="text-xs uppercase tracking-[0.18em] text-slate">Overnight Policy</p>
+                  <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                    <SupervisedSessionField label="Runtime Hours" value={String(activeSession.overnight_policy.max_runtime_hours)} />
+                    <SupervisedSessionField label="Allowed Window" value={`${activeSession.overnight_policy.allowed_time_window.start_time} - ${activeSession.overnight_policy.allowed_time_window.end_time}`} />
+                    <SupervisedSessionField label="Review Queue" value={activeSession.overnight_policy.review_queue_enabled ? "enabled" : "disabled"} />
+                    <SupervisedSessionField label="Max Recovery Attempts" value={String(activeSession.overnight_policy.max_recovery_attempts)} />
+                    <SupervisedSessionField label="Checkpoint Interval" value={String(activeSession.overnight_policy.checkpoint_interval_ticks)} />
+                    <SupervisedSessionField label="Failure Count" value={String(activeSession.failure_count ?? 0)} />
+                    <SupervisedSessionField label="Resume Status" value={activeSession.resume_state?.resume_status ?? "not_applicable"} />
+                    <SupervisedSessionField label="Resumed From Checkpoint" value={activeSession.resume_state?.resumed_from_checkpoint_id ?? "none"} />
+                    <SupervisedSessionField label="Preserved Reviews" value={String(activeSession.resume_state?.preserved_review_queue_count ?? 0)} />
+                  </div>
+                </article>
+              ) : null}
+
               {latestCheckpoint ? (
                 <article className="rounded-[1.5rem] border border-ink/10 bg-white/80 p-4">
                   <p className="text-xs uppercase tracking-[0.18em] text-slate">Latest Checkpoint</p>
@@ -740,9 +867,39 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
               ) : null}
             </div>
           </SectionCard>
+
+          <SectionCard eyebrow="10" title="Overnight Autonomy">
+            <div className="space-y-4">
+              {activeSession?.review_queue?.length ? activeSession.review_queue.map((reviewItem) => (
+                <ReviewQueueRow
+                  key={reviewItem.review_id}
+                  reviewId={reviewItem.review_id}
+                  title={reviewItem.title}
+                  summary={reviewItem.summary}
+                  status={reviewItem.status}
+                  severity={reviewItem.severity}
+                  onApprove={() => handleAction({ type: "approve_review_item", review_id: reviewItem.review_id })}
+                  onReject={() => handleAction({ type: "reject_review_item", review_id: reviewItem.review_id })}
+                  onDefer={() => handleAction({ type: "defer_review_item", review_id: reviewItem.review_id })}
+                  disabled={isPending}
+                />
+              )) : <p className="text-sm leading-7 body-muted">No overnight review items are queued.</p>}
+
+              {activeSession?.active_recovery ? (
+                <article className="rounded-[1.5rem] border border-ink/10 bg-white/80 p-4">
+                  <p className="text-xs uppercase tracking-[0.18em] text-slate">Active Recovery</p>
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <StatusBadge status={activeSession.active_recovery.selected_outcome} />
+                  </div>
+                  <p className="mt-3 text-sm leading-7 body-muted">{activeSession.active_recovery.summary}</p>
+                  <p className="mt-2 text-xs text-slate">Recovery attempts: {activeSession.active_recovery.recovery_attempt_count}</p>
+                </article>
+              ) : null}
+            </div>
+          </SectionCard>
         </div>
 
-        <SectionCard eyebrow="10" title="Execution Chains">
+        <SectionCard eyebrow="11" title="Execution Chains">
           <div className="space-y-4">
             {dashboardState?.execution_chains?.length ? dashboardState.execution_chains.slice().reverse().map((chain) => (
               <ExecutionChainRow key={chain.chain_id} chain={chain} />
@@ -750,7 +907,7 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
           </div>
         </SectionCard>
 
-        <SectionCard eyebrow="11" title="Runtime Timeline">
+        <SectionCard eyebrow="12" title="Runtime Timeline">
           <div className="space-y-4">
             {dashboardState?.runtime_observability?.event_log.length ? dashboardState.runtime_observability.event_log.slice().reverse().map((event) => (
               <article key={event.event_id} className="rounded-[1.5rem] border border-ink/10 bg-white/80 p-4">

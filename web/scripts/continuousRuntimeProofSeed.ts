@@ -10,14 +10,18 @@ import {
   saveRuntimeState,
   type RuntimeStateStore,
 } from "../lib/aie/runtimeStateStore";
-import { createSupervisedAutonomySessionId } from "../lib/aie/supervisedAutonomySession";
+import {
+  createOvernightAutonomyPolicyId,
+  createOvernightAutonomyReviewId,
+  createSupervisedAutonomySessionId,
+} from "../lib/aie/supervisedAutonomySession";
 
 export type ContinuousRuntimeProofSeedPayload = {
   runtimeId: string;
   store: RuntimeStateStore;
 };
 
-export type ContinuousRuntimeProofSeedMode = "continuous-runtime" | "supervised-autonomy";
+export type ContinuousRuntimeProofSeedMode = "continuous-runtime" | "supervised-autonomy" | "overnight-autonomy";
 
 export type ContinuousRuntimeProofSeedOptions = {
   runtimeId?: string;
@@ -101,8 +105,8 @@ export function createContinuousRuntimeProofSeedPayload(options: ContinuousRunti
     tick_history: [],
   };
   currentRecord.continuous_loop_config = {
-    tick_interval_ms: mode === "supervised-autonomy" ? 10_000 : 1_000,
-    max_ticks_per_run: mode === "supervised-autonomy" ? 1 : 3,
+    tick_interval_ms: mode === "continuous-runtime" ? 1_000 : 10_000,
+    max_ticks_per_run: mode === "continuous-runtime" ? 3 : 1,
     max_runs_per_invocation: 1,
     require_fresh_approvals: true,
     require_fresh_context: true,
@@ -181,13 +185,13 @@ export function createContinuousRuntimeProofSeedPayload(options: ContinuousRunti
     last_updated_at: new Date(nowMs).toISOString(),
   };
 
-  if (mode === "supervised-autonomy") {
+  if (mode === "supervised-autonomy" || mode === "overnight-autonomy") {
     const startedAt = new Date(nowMs).toISOString();
     const sessionId = createSupervisedAutonomySessionId(record.runtime_id, startedAt);
     const supervisedSession = {
       session_id: sessionId,
       runtime_id: record.runtime_id,
-      status: "pending_approval" as const,
+      status: mode === "overnight-autonomy" ? "waiting_for_operator" as const : "pending_approval" as const,
       started_at: startedAt,
       stopped_at: null,
       duration_ms: 0,
@@ -207,20 +211,100 @@ export function createContinuousRuntimeProofSeedPayload(options: ContinuousRunti
       last_recovery_action: "none" as const,
       next_scheduled_tick_at: null,
       latest_timeline_event_id: null,
-      pending_operator_review: false,
+      pending_operator_review: mode === "overnight-autonomy",
+      overnight_policy: mode === "overnight-autonomy"
+        ? {
+          policy_id: createOvernightAutonomyPolicyId(sessionId, startedAt),
+          session_id: sessionId,
+          max_runtime_hours: 8,
+          allowed_time_window: {
+            start_time: "22:00",
+            end_time: "06:00",
+          },
+          max_tick_count: 6,
+          max_chain_count: 4,
+          max_retries_per_chain: 1,
+          max_recovery_attempts: 2,
+          requires_operator_review_before_commit: true,
+          allowed_agent_roles: ["planner", "executor", "validator"],
+          disallowed_actions: ["commit_changes", "push_branch"],
+          shutdown_on_failure_count: 2,
+          checkpoint_interval_ticks: 1,
+          review_queue_enabled: true,
+        }
+        : null,
+      review_queue: mode === "overnight-autonomy"
+        ? [{
+          review_id: createOvernightAutonomyReviewId(sessionId, startedAt),
+          session_id: sessionId,
+          source_event_id: `overnight-proof-review-${nowMs}`,
+          source_chain_id: "execution-chain-proof",
+          source_agent_id: "validator-agent",
+          severity: "high" as const,
+          title: "Review bounded overnight recovery",
+          summary: "The overnight session paused after a bounded recovery event and needs an operator decision.",
+          recommended_action: "Approve the queued overnight recovery item to clear the review gate.",
+          required_operator_decision: "approve" as const,
+          created_at: startedAt,
+          status: "pending" as const,
+        }]
+        : [],
+      active_recovery: mode === "overnight-autonomy"
+        ? {
+          recovery_id: `overnight-proof-recovery-${nowMs}`,
+          session_id: sessionId,
+          source_event_id: `overnight-proof-review-${nowMs}`,
+          source_chain_id: "execution-chain-proof",
+          source_agent_id: "validator-agent",
+          selected_outcome: "request_operator_review" as const,
+          retry_count_for_chain: 1,
+          recovery_attempt_count: 1,
+          rollback_checkpoint_id: `supervised-checkpoint-${sessionId}-seeded-1`,
+          summary: "A bounded overnight recovery decision was escalated for operator review.",
+          created_at: startedAt,
+        }
+        : null,
+      resume_state: mode === "overnight-autonomy"
+        ? {
+          resume_status: "resumed_from_checkpoint" as const,
+          restart_count: 1,
+          resumed_from_checkpoint_id: `supervised-checkpoint-${sessionId}-seeded-1`,
+          resumed_at: startedAt,
+          preserved_review_queue_count: 1,
+          shutdown_reason: null,
+        }
+        : null,
+      failure_count: mode === "overnight-autonomy" ? 1 : 0,
     };
 
     currentRecord.supervised_session = supervisedSession;
-    currentRecord.supervised_checkpoints = [];
+    currentRecord.supervised_checkpoints = mode === "overnight-autonomy"
+      ? [{
+        checkpoint_id: `supervised-checkpoint-${sessionId}-seeded-1`,
+        session_id: sessionId,
+        timestamp: startedAt,
+        tick_index: 1,
+        agent_states: [],
+        active_chains: ["execution-chain-proof"],
+        queued_goals: currentRecord.operator_dashboard_state.queued_goals.map((goal) => goal.goal_id),
+        completed_goals: [],
+        safety_status: "review_required" as const,
+        latest_timeline_event_id: `overnight-proof-review-${nowMs}`,
+      }]
+      : [];
     currentRecord.operator_dashboard_state.supervised_session = { ...supervisedSession };
-    currentRecord.operator_dashboard_state.supervised_checkpoints = [];
+    currentRecord.operator_dashboard_state.supervised_checkpoints = [...currentRecord.supervised_checkpoints];
     currentRecord.operator_dashboard_state.session_status = {
       status: "session_waiting_for_approval",
-      explanation: "The supervised autonomy session is pending operator approval.",
+      explanation: mode === "overnight-autonomy"
+        ? "The overnight autonomy session is waiting for operator review."
+        : "The supervised autonomy session is pending operator approval.",
     };
     currentRecord.operator_dashboard_state.runtime_observability = {
       ...currentRecord.operator_dashboard_state.runtime_observability,
-      next_scheduled_action: "Approve the pending supervised session to start bounded autonomous ticks.",
+      next_scheduled_action: mode === "overnight-autonomy"
+        ? "Resolve the overnight review queue item before the next bounded resume."
+        : "Approve the pending supervised session to start bounded autonomous ticks.",
     };
   }
 

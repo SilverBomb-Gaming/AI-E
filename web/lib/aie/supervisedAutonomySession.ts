@@ -25,6 +25,106 @@ export type SupervisedAutonomyRecoveryPolicy =
   | "request_operator_review"
   | "stop_session";
 
+export type OvernightAutonomyAllowedAgentRole =
+  | "planner"
+  | "executor"
+  | "validator"
+  | "reporter";
+
+export type OvernightAutonomyDisallowedAction = string;
+
+export type OvernightAutonomyReviewItemSeverity =
+  | "low"
+  | "medium"
+  | "high"
+  | "critical";
+
+export type OvernightAutonomyReviewItemStatus =
+  | "pending"
+  | "approved"
+  | "rejected"
+  | "deferred"
+  | "expired";
+
+export type OvernightAutonomyOperatorDecision =
+  | "approve"
+  | "reject"
+  | "defer";
+
+export type OvernightAutonomyRecoveryOutcome =
+  | "retry_once"
+  | "retry_later"
+  | "reassign_agent"
+  | "pause_chain"
+  | "request_operator_review"
+  | "stop_session"
+  | "rollback_to_checkpoint"
+  | "mark_failed";
+
+export type OvernightAutonomyResumeStatus =
+  | "not_applicable"
+  | "resume_ready"
+  | "resumed_from_checkpoint"
+  | "resume_blocked";
+
+export type OvernightAutonomyPolicyRecord = {
+  policy_id: string;
+  session_id: string;
+  max_runtime_hours: number;
+  allowed_time_window: {
+    start_time: string;
+    end_time: string;
+  };
+  max_tick_count: number;
+  max_chain_count: number;
+  max_retries_per_chain: number;
+  max_recovery_attempts: number;
+  requires_operator_review_before_commit: boolean;
+  allowed_agent_roles: OvernightAutonomyAllowedAgentRole[];
+  disallowed_actions: OvernightAutonomyDisallowedAction[];
+  shutdown_on_failure_count: number;
+  checkpoint_interval_ticks: number;
+  review_queue_enabled: boolean;
+};
+
+export type OvernightAutonomyReviewQueueItemRecord = {
+  review_id: string;
+  session_id: string;
+  source_event_id: string;
+  source_chain_id: string | null;
+  source_agent_id: string | null;
+  severity: OvernightAutonomyReviewItemSeverity;
+  title: string;
+  summary: string;
+  recommended_action: string;
+  required_operator_decision: OvernightAutonomyOperatorDecision;
+  created_at: string;
+  status: OvernightAutonomyReviewItemStatus;
+};
+
+export type OvernightAutonomyRecoveryStateRecord = {
+  recovery_id: string;
+  session_id: string;
+  source_event_id: string;
+  source_chain_id: string | null;
+  source_agent_id: string | null;
+  selected_outcome: OvernightAutonomyRecoveryOutcome;
+  retry_count_for_chain: number;
+  recovery_attempt_count: number;
+  rollback_checkpoint_id: string | null;
+  summary: string;
+  created_at: string;
+};
+
+export type OvernightAutonomyResumeStateRecord = {
+  resume_status: OvernightAutonomyResumeStatus;
+  restart_count: number;
+  resumed_from_checkpoint_id: string | null;
+  resumed_at: string | null;
+  preserved_review_queue_count: number;
+  shutdown_reason: string | null;
+};
+
 export type SupervisedAutonomyRecoveryAction =
   | "none"
   | "retry_once"
@@ -63,6 +163,11 @@ export type SupervisedAutonomySessionRecord = {
   next_scheduled_tick_at: string | null;
   latest_timeline_event_id: string | null;
   pending_operator_review: boolean;
+  overnight_policy?: OvernightAutonomyPolicyRecord | null;
+  review_queue?: OvernightAutonomyReviewQueueItemRecord[];
+  active_recovery?: OvernightAutonomyRecoveryStateRecord | null;
+  resume_state?: OvernightAutonomyResumeStateRecord | null;
+  failure_count?: number;
 };
 
 export type SupervisedAutonomyCheckpointRecord = {
@@ -93,4 +198,16 @@ export function createSupervisedAutonomySessionId(runtimeId: string, startedAt: 
 
 export function createSupervisedAutonomyCheckpointId(sessionId: string, timestamp: string, tickIndex: number): string {
   return `supervised-checkpoint-${sessionId}-${sanitizeTimestamp(timestamp)}-${tickIndex}`;
+}
+
+export function createOvernightAutonomyPolicyId(sessionId: string, timestamp: string): string {
+  return `overnight-policy-${sessionId}-${sanitizeTimestamp(timestamp)}`;
+}
+
+export function createOvernightAutonomyReviewId(sessionId: string, timestamp: string): string {
+  return `overnight-review-${sessionId}-${sanitizeTimestamp(timestamp)}`;
+}
+
+export function createOvernightAutonomyRecoveryId(sessionId: string, timestamp: string): string {
+  return `overnight-recovery-${sessionId}-${sanitizeTimestamp(timestamp)}`;
 }

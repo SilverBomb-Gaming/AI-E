@@ -19,6 +19,16 @@ import type { AgentRuntimeApprovalState, AgentRuntimeId, AgentRuntimeNode, Agent
 import { createAgentRuntimeRegistry } from "./agentRuntimeRegistry";
 import type { ExecutionChainRecord, ExecutionChainSafetyStatus, ExecutionChainStatus } from "./executionChainState";
 import type {
+  OvernightAutonomyAllowedAgentRole,
+  OvernightAutonomyOperatorDecision,
+  OvernightAutonomyPolicyRecord,
+  OvernightAutonomyRecoveryOutcome,
+  OvernightAutonomyRecoveryStateRecord,
+  OvernightAutonomyResumeStateRecord,
+  OvernightAutonomyResumeStatus,
+  OvernightAutonomyReviewItemSeverity,
+  OvernightAutonomyReviewItemStatus,
+  OvernightAutonomyReviewQueueItemRecord,
   SupervisedAutonomyApprovalPolicy,
   SupervisedAutonomyCheckpointRecord,
   SupervisedAutonomyRecoveryAction,
@@ -469,6 +479,140 @@ function isSupervisedAutonomySafetyStatus(value: unknown): value is SupervisedAu
   return value === "passed" || value === "blocked" || value === "review_required";
 }
 
+function isOvernightAutonomyAllowedAgentRole(value: unknown): value is OvernightAutonomyAllowedAgentRole {
+  return value === "planner"
+    || value === "executor"
+    || value === "validator"
+    || value === "reporter";
+}
+
+function isOvernightAutonomyReviewItemSeverity(value: unknown): value is OvernightAutonomyReviewItemSeverity {
+  return value === "low"
+    || value === "medium"
+    || value === "high"
+    || value === "critical";
+}
+
+function isOvernightAutonomyReviewItemStatus(value: unknown): value is OvernightAutonomyReviewItemStatus {
+  return value === "pending"
+    || value === "approved"
+    || value === "rejected"
+    || value === "deferred"
+    || value === "expired";
+}
+
+function isOvernightAutonomyOperatorDecision(value: unknown): value is OvernightAutonomyOperatorDecision {
+  return value === "approve" || value === "reject" || value === "defer";
+}
+
+function isOvernightAutonomyRecoveryOutcome(value: unknown): value is OvernightAutonomyRecoveryOutcome {
+  return value === "retry_once"
+    || value === "retry_later"
+    || value === "reassign_agent"
+    || value === "pause_chain"
+    || value === "request_operator_review"
+    || value === "stop_session"
+    || value === "rollback_to_checkpoint"
+    || value === "mark_failed";
+}
+
+function isOvernightAutonomyResumeStatus(value: unknown): value is OvernightAutonomyResumeStatus {
+  return value === "not_applicable"
+    || value === "resume_ready"
+    || value === "resumed_from_checkpoint"
+    || value === "resume_blocked";
+}
+
+function isOvernightAutonomyPolicyRecord(value: unknown): value is OvernightAutonomyPolicyRecord {
+  return Boolean(
+    value
+    && typeof value === "object"
+    && typeof (value as { policy_id?: unknown }).policy_id === "string"
+    && typeof (value as { session_id?: unknown }).session_id === "string"
+    && typeof (value as { max_runtime_hours?: unknown }).max_runtime_hours === "number"
+    && Number.isFinite((value as { max_runtime_hours?: unknown }).max_runtime_hours)
+    && Number((value as { max_runtime_hours?: unknown }).max_runtime_hours) > 0
+    && Boolean(
+      (value as { allowed_time_window?: unknown }).allowed_time_window
+      && typeof (value as { allowed_time_window?: { start_time?: unknown } }).allowed_time_window?.start_time === "string"
+      && typeof (value as { allowed_time_window?: { end_time?: unknown } }).allowed_time_window?.end_time === "string"
+    )
+    && isFiniteNonNegativeInteger((value as { max_tick_count?: unknown }).max_tick_count)
+    && Number((value as { max_tick_count?: unknown }).max_tick_count) >= 1
+    && isFiniteNonNegativeInteger((value as { max_chain_count?: unknown }).max_chain_count)
+    && Number((value as { max_chain_count?: unknown }).max_chain_count) >= 1
+    && isFiniteNonNegativeInteger((value as { max_retries_per_chain?: unknown }).max_retries_per_chain)
+    && isFiniteNonNegativeInteger((value as { max_recovery_attempts?: unknown }).max_recovery_attempts)
+    && typeof (value as { requires_operator_review_before_commit?: unknown }).requires_operator_review_before_commit === "boolean"
+    && Array.isArray((value as { allowed_agent_roles?: unknown }).allowed_agent_roles)
+    && ((value as { allowed_agent_roles?: unknown[] }).allowed_agent_roles ?? []).every(isOvernightAutonomyAllowedAgentRole)
+    && Array.isArray((value as { disallowed_actions?: unknown }).disallowed_actions)
+    && ((value as { disallowed_actions?: unknown[] }).disallowed_actions ?? []).every((action) => typeof action === "string")
+    && isFiniteNonNegativeInteger((value as { shutdown_on_failure_count?: unknown }).shutdown_on_failure_count)
+    && isFiniteNonNegativeInteger((value as { checkpoint_interval_ticks?: unknown }).checkpoint_interval_ticks)
+    && Number((value as { checkpoint_interval_ticks?: unknown }).checkpoint_interval_ticks) >= 1
+    && typeof (value as { review_queue_enabled?: unknown }).review_queue_enabled === "boolean"
+  );
+}
+
+function isOvernightAutonomyReviewQueueItemRecord(value: unknown): value is OvernightAutonomyReviewQueueItemRecord {
+  return Boolean(
+    value
+    && typeof value === "object"
+    && typeof (value as { review_id?: unknown }).review_id === "string"
+    && typeof (value as { session_id?: unknown }).session_id === "string"
+    && typeof (value as { source_event_id?: unknown }).source_event_id === "string"
+    && (((value as { source_chain_id?: unknown }).source_chain_id === null)
+      || typeof (value as { source_chain_id?: unknown }).source_chain_id === "string")
+    && (((value as { source_agent_id?: unknown }).source_agent_id === null)
+      || typeof (value as { source_agent_id?: unknown }).source_agent_id === "string")
+    && isOvernightAutonomyReviewItemSeverity((value as { severity?: unknown }).severity)
+    && typeof (value as { title?: unknown }).title === "string"
+    && typeof (value as { summary?: unknown }).summary === "string"
+    && typeof (value as { recommended_action?: unknown }).recommended_action === "string"
+    && isOvernightAutonomyOperatorDecision((value as { required_operator_decision?: unknown }).required_operator_decision)
+    && isIsoTimestamp((value as { created_at?: unknown }).created_at)
+    && isOvernightAutonomyReviewItemStatus((value as { status?: unknown }).status)
+  );
+}
+
+function isOvernightAutonomyRecoveryStateRecord(value: unknown): value is OvernightAutonomyRecoveryStateRecord {
+  return Boolean(
+    value
+    && typeof value === "object"
+    && typeof (value as { recovery_id?: unknown }).recovery_id === "string"
+    && typeof (value as { session_id?: unknown }).session_id === "string"
+    && typeof (value as { source_event_id?: unknown }).source_event_id === "string"
+    && (((value as { source_chain_id?: unknown }).source_chain_id === null)
+      || typeof (value as { source_chain_id?: unknown }).source_chain_id === "string")
+    && (((value as { source_agent_id?: unknown }).source_agent_id === null)
+      || typeof (value as { source_agent_id?: unknown }).source_agent_id === "string")
+    && isOvernightAutonomyRecoveryOutcome((value as { selected_outcome?: unknown }).selected_outcome)
+    && isFiniteNonNegativeInteger((value as { retry_count_for_chain?: unknown }).retry_count_for_chain)
+    && isFiniteNonNegativeInteger((value as { recovery_attempt_count?: unknown }).recovery_attempt_count)
+    && (((value as { rollback_checkpoint_id?: unknown }).rollback_checkpoint_id === null)
+      || typeof (value as { rollback_checkpoint_id?: unknown }).rollback_checkpoint_id === "string")
+    && typeof (value as { summary?: unknown }).summary === "string"
+    && isIsoTimestamp((value as { created_at?: unknown }).created_at)
+  );
+}
+
+function isOvernightAutonomyResumeStateRecord(value: unknown): value is OvernightAutonomyResumeStateRecord {
+  return Boolean(
+    value
+    && typeof value === "object"
+    && isOvernightAutonomyResumeStatus((value as { resume_status?: unknown }).resume_status)
+    && isFiniteNonNegativeInteger((value as { restart_count?: unknown }).restart_count)
+    && (((value as { resumed_from_checkpoint_id?: unknown }).resumed_from_checkpoint_id === null)
+      || typeof (value as { resumed_from_checkpoint_id?: unknown }).resumed_from_checkpoint_id === "string")
+    && (((value as { resumed_at?: unknown }).resumed_at === null)
+      || isIsoTimestamp((value as { resumed_at?: unknown }).resumed_at))
+    && isFiniteNonNegativeInteger((value as { preserved_review_queue_count?: unknown }).preserved_review_queue_count)
+    && (((value as { shutdown_reason?: unknown }).shutdown_reason === null)
+      || typeof (value as { shutdown_reason?: unknown }).shutdown_reason === "string")
+  );
+}
+
 function isSupervisedAutonomySessionRecord(value: unknown): value is SupervisedAutonomySessionRecord {
   return Boolean(
     value
@@ -503,6 +647,20 @@ function isSupervisedAutonomySessionRecord(value: unknown): value is SupervisedA
     && (((value as { next_scheduled_tick_at?: unknown }).next_scheduled_tick_at === null) || isIsoTimestamp((value as { next_scheduled_tick_at?: unknown }).next_scheduled_tick_at))
     && (((value as { latest_timeline_event_id?: unknown }).latest_timeline_event_id === null) || typeof (value as { latest_timeline_event_id?: unknown }).latest_timeline_event_id === "string")
     && typeof (value as { pending_operator_review?: unknown }).pending_operator_review === "boolean"
+    && (((value as { overnight_policy?: unknown }).overnight_policy === undefined)
+      || ((value as { overnight_policy?: unknown }).overnight_policy === null)
+      || isOvernightAutonomyPolicyRecord((value as { overnight_policy?: unknown }).overnight_policy))
+    && (((value as { review_queue?: unknown }).review_queue === undefined)
+      || (Array.isArray((value as { review_queue?: unknown }).review_queue)
+        && ((value as { review_queue?: unknown[] }).review_queue ?? []).every(isOvernightAutonomyReviewQueueItemRecord)))
+    && (((value as { active_recovery?: unknown }).active_recovery === undefined)
+      || ((value as { active_recovery?: unknown }).active_recovery === null)
+      || isOvernightAutonomyRecoveryStateRecord((value as { active_recovery?: unknown }).active_recovery))
+    && (((value as { resume_state?: unknown }).resume_state === undefined)
+      || ((value as { resume_state?: unknown }).resume_state === null)
+      || isOvernightAutonomyResumeStateRecord((value as { resume_state?: unknown }).resume_state))
+    && (((value as { failure_count?: unknown }).failure_count === undefined)
+      || isFiniteNonNegativeInteger((value as { failure_count?: unknown }).failure_count))
   );
 }
 

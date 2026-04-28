@@ -402,6 +402,72 @@ test("loop persists bounded supervised recovery decision on failure", () => {
   assert.equal(result.runtime_state?.supervised_session?.pending_operator_review, true);
 });
 
+test("loop enforces overnight recovery queue and resume metadata", () => {
+  const seeded = attachSupervisedSession(createSeededRuntimeRecord((state) => {
+    state.validation_issues = [{
+      goal_id: "goal-active",
+      source: "session_runtime",
+      status: "validation_failed",
+      recommendation: "review",
+      summary: "Validation failed.",
+    }];
+  }), {
+    recovery_policy: "request_operator_review",
+    overnight_policy: {
+      policy_id: "overnight-policy-1",
+      session_id: "overnight-session-1",
+      max_runtime_hours: 6,
+      allowed_time_window: {
+        start_time: "00:00",
+        end_time: "23:59",
+      },
+      max_tick_count: 4,
+      max_chain_count: 4,
+      max_retries_per_chain: 0,
+      max_recovery_attempts: 2,
+      requires_operator_review_before_commit: true,
+      allowed_agent_roles: ["planner", "executor", "validator"],
+      disallowed_actions: ["commit_changes"],
+      shutdown_on_failure_count: 2,
+      checkpoint_interval_ticks: 1,
+      review_queue_enabled: true,
+    },
+    review_queue: [],
+    active_recovery: null,
+    resume_state: {
+      resume_status: "resume_ready",
+      restart_count: 0,
+      resumed_from_checkpoint_id: null,
+      resumed_at: null,
+      preserved_review_queue_count: 0,
+      shutdown_reason: null,
+    },
+    failure_count: 0,
+  });
+
+  const first = runContinuousRuntimeLoop(seeded.store, {
+    runtime_id: seeded.record.runtime_id,
+    started_at: "2026-04-26T12:01:00.000Z",
+  });
+
+  assert.equal(first.status, "loop_blocked");
+  assert.equal(first.runtime_state?.supervised_session?.review_queue?.length, 1);
+  assert.equal(first.runtime_state?.supervised_session?.active_recovery?.selected_outcome, "request_operator_review");
+  assert.equal(first.runtime_state?.supervised_session?.failure_count, 1);
+
+  const second = runContinuousRuntimeLoop(seeded.store, {
+    runtime_id: seeded.record.runtime_id,
+    tick_interval_ms: 60_000,
+    max_ticks_per_run: 1,
+    max_runs_per_invocation: 1,
+    started_at: "2026-04-26T12:05:00.000Z",
+  }, createContinuousRuntimeLoopClock("2026-04-26T12:05:00.000Z", 60_000));
+
+  assert.equal(second.runtime_state?.supervised_session?.resume_state?.resume_status, "resumed_from_checkpoint");
+  assert.equal(second.runtime_state?.supervised_session?.resume_state?.restart_count, 1);
+  assert.equal(Boolean(second.runtime_state?.supervised_session?.resume_state?.resumed_from_checkpoint_id), true);
+});
+
 test("loop integrates with executionLoopController", () => {
   const seeded = createSeededRuntimeRecord();
   const result = runContinuousRuntimeLoop(seeded.store, {

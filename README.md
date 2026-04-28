@@ -258,13 +258,17 @@ What is not true yet:
 
 ## Multi-Agent Runtime Roadmap
 
-Layer 4 is active but not complete.
+Layer 4 is complete.
 
 Single-agent continuous execution is complete.
 
 Deterministic proof is complete.
 
-Multi-agent orchestration is in progress.
+Multi-agent orchestration is complete within bounded runtime limits.
+
+Layer 5 supervised autonomy is 100% complete.
+
+Layer 6 resilient overnight autonomy is in progress.
 
 Current phase plan:
 
@@ -276,8 +280,18 @@ Current phase plan:
 
 Current Layer 4 reporting rule:
 
-- Layer 4: In Progress
-- Only declare Layer 4 complete when the registry, assignment loop, execution chains, operator visibility, deterministic proof, trace validation, safety boundaries, and persistence checks are all true together.
+- Layer 4: 100% COMPLETE
+- Registry, assignment loop, execution chains, operator visibility, deterministic proof, trace validation, safety boundaries, and persistence checks are all verified together.
+
+Current Layer 5 reporting rule:
+
+- Layer 5: 100% COMPLETE
+- Persisted supervised sessions, checkpoint persistence, bounded long-running controls, bounded recovery handling, the `/operator` supervised session panel, deterministic `proof:supervised-autonomy`, and full validation are all verified together.
+
+Current Layer 6 reporting rule:
+
+- Layer 6: IN PROGRESS
+- Only declare Layer 6 complete when the overnight policy contract, persisted operator review queue, bounded recovery loop, restart and resume proof, overnight `/operator` panel, deterministic `proof:overnight-autonomy`, full validation, and commit/push are all complete together.
 
 Roadmap checkpoints:
 
@@ -290,9 +304,15 @@ Roadmap checkpoints:
 - Layer 3: extensible multi-agent runtime contract
   - status: scaffolded
   - proof surface: `web/lib/aie/orchestrationSession.ts` and `web/lib/aie/agentRuntimeRegistry.ts`
-- Layer 4: fully self-directed studio operation
-  - status: not complete
-  - note: do not treat this layer as 100%
+- Layer 4: bounded multi-agent runtime orchestration
+  - status: complete
+  - proof surface: `web/lib/aie/continuousRuntimeLoop.ts`, `web/lib/aie/agentRuntimeRegistry.ts`, `web/lib/aie/executionChainState.ts`, `/operator`, and the Layer 4 runtime proofs
+- Layer 5: long-running supervised autonomy sessions
+  - status: complete
+  - proof surface: persisted supervised session state, checkpoints, bounded session controls, and `npm run proof:supervised-autonomy`
+- Layer 6: resilient overnight autonomy recovery
+  - status: in progress
+  - proof surface: overnight policy state, persisted review queue decisions, bounded recovery and resume metadata, `/operator`, and `npm run proof:overnight-autonomy:safe`
 
 ## Multi-Agent Orchestration Scaffold
 
