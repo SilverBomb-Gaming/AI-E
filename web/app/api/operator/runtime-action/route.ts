@@ -22,6 +22,11 @@ function normalizeAction(value: unknown): OperatorControlAction | null {
     && candidate.type !== "pause_goal"
     && candidate.type !== "resume_goal"
     && candidate.type !== "retry_goal"
+    && candidate.type !== "start_supervised_session"
+    && candidate.type !== "pause_session"
+    && candidate.type !== "resume_session"
+    && candidate.type !== "stop_session"
+    && candidate.type !== "request_operator_review"
   ) {
     return null;
   }
@@ -33,6 +38,30 @@ function normalizeAction(value: unknown): OperatorControlAction | null {
       : candidate.goal_id === null || candidate.goal_id === undefined
         ? null
         : null,
+    supervised_session_input: candidate.supervised_session_input && typeof candidate.supervised_session_input === "object"
+      ? {
+        max_duration_ms: typeof (candidate.supervised_session_input as Record<string, unknown>).max_duration_ms === "number"
+          ? Math.max(1, Math.trunc((candidate.supervised_session_input as Record<string, unknown>).max_duration_ms as number))
+          : undefined,
+        tick_budget: typeof (candidate.supervised_session_input as Record<string, unknown>).tick_budget === "number"
+          ? Math.max(1, Math.trunc((candidate.supervised_session_input as Record<string, unknown>).tick_budget as number))
+          : undefined,
+        max_chain_count: typeof (candidate.supervised_session_input as Record<string, unknown>).max_chain_count === "number"
+          ? Math.max(1, Math.trunc((candidate.supervised_session_input as Record<string, unknown>).max_chain_count as number))
+          : undefined,
+        approval_policy: (candidate.supervised_session_input as Record<string, unknown>).approval_policy === "operator_must_approve_start"
+          || (candidate.supervised_session_input as Record<string, unknown>).approval_policy === "operator_must_approve_sensitive"
+          || (candidate.supervised_session_input as Record<string, unknown>).approval_policy === "preapproved_with_limits"
+          ? (candidate.supervised_session_input as Record<string, unknown>).approval_policy as "operator_must_approve_start" | "operator_must_approve_sensitive" | "preapproved_with_limits"
+          : undefined,
+        recovery_policy: (candidate.supervised_session_input as Record<string, unknown>).recovery_policy === "retry_once"
+          || (candidate.supervised_session_input as Record<string, unknown>).recovery_policy === "pause_chain"
+          || (candidate.supervised_session_input as Record<string, unknown>).recovery_policy === "request_operator_review"
+          || (candidate.supervised_session_input as Record<string, unknown>).recovery_policy === "stop_session"
+          ? (candidate.supervised_session_input as Record<string, unknown>).recovery_policy as "retry_once" | "pause_chain" | "request_operator_review" | "stop_session"
+          : undefined,
+      }
+      : undefined,
   };
 }
 
@@ -87,7 +116,13 @@ export async function POST(request: Request) {
       },
     });
 
-    if (runtimeStateStore && runtimeId && actionResult.result === "accepted") {
+    if (runtimeStateStore
+      && runtimeId
+      && actionResult.result === "accepted"
+      && actionResult.runtime_intent !== "pause_active_goal"
+      && actionResult.runtime_intent !== "pause_supervised_session"
+      && actionResult.runtime_intent !== "stop_supervised_session"
+      && actionResult.runtime_intent !== "request_supervised_operator_review") {
       const updatedRuntimeState = loadRuntimeState(runtimeStateStore, runtimeId);
       if (updatedRuntimeState) {
         scheduleOperatorRuntimeLiveLoop(

@@ -185,6 +185,58 @@ test("retry_goal creates mark_goal_retry_requested intent", () => {
   assert.equal(result.runtime_intent, "mark_goal_retry_requested");
 });
 
+test("start_supervised_session creates start intent", () => {
+  const providerResult = createLiveProviderResult();
+  providerResult.dashboard_state = {
+    ...providerResult.dashboard_state!,
+    supervised_session: null,
+  };
+
+  const result = createSafeRuntimeActionBridgeResult(providerResult, {
+    type: "start_supervised_session",
+  });
+
+  assert.equal(result.status, "action_ready");
+  assert.equal(result.runtime_intent, "start_supervised_session");
+});
+
+test("pause_session creates pause supervised intent", () => {
+  const providerResult = createLiveProviderResult();
+  providerResult.dashboard_state = {
+    ...providerResult.dashboard_state!,
+    supervised_session: {
+      session_id: "session-1",
+      runtime_id: "runtime-1",
+      status: "running",
+      started_at: "2026-04-26T12:00:00.000Z",
+      stopped_at: null,
+      duration_ms: 0,
+      max_duration_ms: 3600000,
+      tick_budget: 4,
+      ticks_completed: 0,
+      max_chain_count: 4,
+      agent_ids: ["planner-agent"],
+      active_chain_ids: [],
+      completed_chain_ids: [],
+      failed_chain_ids: [],
+      safety_scope: "bounded_multi_agent_runtime",
+      approval_policy: "operator_must_approve_start",
+      recovery_policy: "request_operator_review",
+      last_checkpoint_at: null,
+      stop_reason: null,
+      last_recovery_action: "none",
+      next_scheduled_tick_at: null,
+      latest_timeline_event_id: null,
+      pending_operator_review: false,
+    },
+  };
+
+  const result = createSafeRuntimeActionBridgeResult(providerResult, { type: "pause_session" });
+
+  assert.equal(result.status, "action_ready");
+  assert.equal(result.runtime_intent, "pause_supervised_session");
+});
+
 test("rejects approval when no approval required", () => {
   const providerResult = createLiveProviderResult();
   providerResult.dashboard_state = {

@@ -332,9 +332,9 @@ function normalizeDispatchDelay(value: unknown): number {
 }
 
 function normalizeDispatchTimeout(value: unknown): number {
-  const numericValue = Number(value ?? 1_000);
+  const numericValue = Number(value ?? 5_000);
   if (!Number.isFinite(numericValue)) {
-    return 1_000;
+    return 5_000;
   }
 
   return Math.max(1, Math.floor(numericValue));
@@ -849,7 +849,7 @@ export async function executeQueuedTask(
         if (retryable) {
           await clearNodeActivity(selectedNode.node.id, currentTask);
           const persistedLatestTask = await resolved.getTask(currentTask.taskId);
-          if (persistedLatestTask && isTerminalTaskStatus(persistedLatestTask.status) && persistedLatestTask.status !== "failed") {
+          if (persistedLatestTask && isTerminalTaskStatus(persistedLatestTask.status)) {
             await clearNodeActivity(selectedNode.node.id, persistedLatestTask);
             return summarizeTerminalTask(persistedLatestTask, latestSession);
           }

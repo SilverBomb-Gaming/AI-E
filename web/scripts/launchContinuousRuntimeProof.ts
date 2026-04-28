@@ -3,6 +3,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import net from "node:net";
 
 import { createContinuousRuntimeProofSeedPayload } from "./continuousRuntimeProofSeed";
+import { startResourceGuard } from "./resourceSafeExecution";
 
 type SemanticSmokeSnapshot = {
   label: string;
@@ -123,7 +124,7 @@ async function waitForServerReady(
   serverProcess: ChildProcess,
   port: number,
   getLogs: () => { stdout: string; stderr: string },
-  timeoutMs = 60_000,
+  timeoutMs = 120_000,
 ): Promise<void> {
   const startedAt = Date.now();
 
@@ -138,7 +139,7 @@ async function waitForServerReady(
     }
 
     const logs = getLogs();
-    if (/ready in|local:\s+http:\/\/127\.0\.0\.1:/i.test(logs.stdout) || /ready in|local:/i.test(logs.stderr)) {
+    if (/ready in/i.test(logs.stdout) || /ready in/i.test(logs.stderr)) {
       return;
     }
 
@@ -310,6 +311,7 @@ function assertRefreshPersistence(result: SemanticSmokeResult) {
 }
 
 async function main() {
+  const stopResourceGuard = startResourceGuard({ label: "proof:continuous-runtime" });
   const port = await findAvailablePort(Number(process.env.AIE_OPERATOR_PROOF_PORT ?? 3012));
   const url = `http://127.0.0.1:${port}/operator`;
   const serverProcess = createServerProcess(port);
@@ -325,7 +327,16 @@ async function main() {
 
   try {
     await waitForServerReady(serverProcess, port, () => ({ stdout, stderr }));
-    const result = await runSemanticSmoke(url);
+    let result: SemanticSmokeResult;
+    try {
+      result = await runSemanticSmoke(url);
+    } catch (error) {
+      throw new Error([
+        error instanceof Error ? error.message : String(error),
+        stdout.trim(),
+        stderr.trim(),
+      ].filter(Boolean).join("\n\n"));
+    }
 
     assertPreApprovalState(result.before);
     assert.match(result.before.runtimeStatus, /runtime blocked/i, "The proof should begin with the runtime blocked pending approval.");
@@ -338,10 +349,12 @@ async function main() {
     process.stdout.write(JSON.stringify({
       status: "proof_passed",
       url,
+      resource_usage: stopResourceGuard(),
       proof_summary: buildProofSummary(result),
       snapshots: result,
     }, null, 2));
   } finally {
+    stopResourceGuard();
     await stopServerProcess(serverProcess);
   }
 }

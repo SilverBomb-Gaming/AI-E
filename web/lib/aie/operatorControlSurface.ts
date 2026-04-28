@@ -8,12 +8,26 @@ import type {
   OperatorDashboardState,
   OperatorDashboardValidationIssue,
 } from "./operatorDashboardState";
+import {
+  createSupervisedAutonomySessionId,
+  type SupervisedAutonomyApprovalPolicy,
+  type SupervisedAutonomyRecoveryPolicy,
+} from "./supervisedAutonomySession";
 
-export type OperatorControlActionType = "approve_goal" | "pause_goal" | "resume_goal" | "retry_goal";
+export type OperatorControlActionType = "approve_goal" | "pause_goal" | "resume_goal" | "retry_goal" | "start_supervised_session" | "pause_session" | "resume_session" | "stop_session" | "request_operator_review";
+
+export type SupervisedSessionControlInput = {
+  max_duration_ms?: number;
+  tick_budget?: number;
+  max_chain_count?: number;
+  approval_policy?: SupervisedAutonomyApprovalPolicy;
+  recovery_policy?: SupervisedAutonomyRecoveryPolicy;
+};
 
 export type OperatorControlAction = {
   type: OperatorControlActionType;
   goal_id?: string | null;
+  supervised_session_input?: SupervisedSessionControlInput;
 };
 
 export type OperatorControlResult = {
@@ -65,6 +79,10 @@ function cloneActionItem(item: OperatorDashboardActionItem): OperatorDashboardAc
   return { ...item };
 }
 
+function cloneSupervisedSessionInput(input: SupervisedSessionControlInput | undefined): SupervisedSessionControlInput | undefined {
+  return input ? { ...input } : undefined;
+}
+
 function cloneState(state: OperatorDashboardState): OperatorDashboardState {
   return {
     active_goal: state.active_goal ? cloneGoal(state.active_goal) : null,
@@ -104,6 +122,20 @@ function cloneState(state: OperatorDashboardState): OperatorDashboardState {
         semantic_progression: event.semantic_progression ? { ...event.semantic_progression } : null,
       })),
     } : undefined,
+    supervised_session: state.supervised_session ? {
+      ...state.supervised_session,
+      agent_ids: [...state.supervised_session.agent_ids],
+      active_chain_ids: [...state.supervised_session.active_chain_ids],
+      completed_chain_ids: [...state.supervised_session.completed_chain_ids],
+      failed_chain_ids: [...state.supervised_session.failed_chain_ids],
+    } : undefined,
+    supervised_checkpoints: state.supervised_checkpoints?.map((checkpoint) => ({
+      ...checkpoint,
+      agent_states: checkpoint.agent_states.map((agentState) => ({ ...agentState })),
+      active_chains: [...checkpoint.active_chains],
+      queued_goals: [...checkpoint.queued_goals],
+      completed_goals: [...checkpoint.completed_goals],
+    })),
     last_updated_at: state.last_updated_at,
   };
 }
@@ -177,6 +209,43 @@ function removeMatchingRecoverySignals(state: OperatorDashboardState): void {
   }
 }
 
+function nextStateTimestamp(state: OperatorDashboardState): string {
+  return nextTimestamp(state);
+}
+
+function buildSupervisedSession(state: OperatorDashboardState, input: SupervisedSessionControlInput | undefined) {
+  const createdAt = nextStateTimestamp(state);
+  const approvalPolicy = input?.approval_policy ?? state.supervised_session?.approval_policy ?? "operator_must_approve_start";
+  const recoveryPolicy = input?.recovery_policy ?? state.supervised_session?.recovery_policy ?? "request_operator_review";
+  const needsApproval = approvalPolicy !== "preapproved_with_limits";
+
+  return {
+    session_id: createSupervisedAutonomySessionId("local-runtime", createdAt),
+    runtime_id: "local-runtime",
+    status: needsApproval ? "pending_approval" : "running",
+    started_at: createdAt,
+    stopped_at: null,
+    duration_ms: 0,
+    max_duration_ms: input?.max_duration_ms ?? state.supervised_session?.max_duration_ms ?? 28_800_000,
+    tick_budget: input?.tick_budget ?? state.supervised_session?.tick_budget ?? 12,
+    ticks_completed: 0,
+    max_chain_count: input?.max_chain_count ?? state.supervised_session?.max_chain_count ?? 8,
+    agent_ids: state.agent_runtime?.agents.map((agent) => agent.agent_id) ?? [],
+    active_chain_ids: [],
+    completed_chain_ids: [],
+    failed_chain_ids: [],
+    safety_scope: "bounded_multi_agent_runtime" as const,
+    approval_policy: approvalPolicy,
+    recovery_policy: recoveryPolicy,
+    last_checkpoint_at: null,
+    stop_reason: null,
+    last_recovery_action: "none" as const,
+    next_scheduled_tick_at: needsApproval ? null : createdAt,
+    latest_timeline_event_id: null,
+    pending_operator_review: false,
+  };
+}
+
 export function applyOperatorControlAction(state: OperatorDashboardState, action: OperatorControlAction): OperatorControlResult {
   const nextState = cloneState(state);
 
@@ -201,6 +270,14 @@ export function applyOperatorControlAction(state: OperatorDashboardState, action
           status: "session_running",
           explanation: "The active operator workflow can continue on the next cycle.",
         };
+        if (nextState.supervised_session?.status === "pending_approval") {
+          nextState.supervised_session = {
+            ...nextState.supervised_session,
+            status: "running",
+            next_scheduled_tick_at: nextTimestamp(nextState),
+            pending_operator_review: false,
+          };
+        }
       }
 
       updateLastUpdated(nextState);
@@ -344,6 +421,194 @@ export function applyOperatorControlAction(state: OperatorDashboardState, action
         action,
         changed: true,
         message: "The blocked goal was returned to the queue for retry.",
+        state: nextState,
+      };
+    }
+
+    case "start_supervised_session": {
+      if (nextState.supervised_session && ["pending_approval", "running", "paused", "waiting_for_operator", "recovering"].includes(nextState.supervised_session.status)) {
+        return {
+          action,
+          changed: false,
+          message: "A supervised session is already active or awaiting operator action.",
+          state: nextState,
+        };
+      }
+
+      nextState.supervised_session = buildSupervisedSession(nextState, cloneSupervisedSessionInput(action.supervised_session_input));
+      nextState.supervised_checkpoints = [];
+      if (nextState.supervised_session.approval_policy !== "preapproved_with_limits") {
+        nextState.approvals_required = [{
+          goal_id: nextState.active_goal?.goal_id ?? null,
+          approvals_needed: ["session"],
+          reason: "Operator approval is required before supervised autonomy can start.",
+          recommended_action: "Approve the supervised session to begin bounded ticks.",
+        }];
+        nextState.runtime_status = {
+          status: "runtime_blocked",
+          explanation: "Supervised autonomy is waiting for operator approval.",
+        };
+        nextState.session_status = {
+          status: "session_waiting_for_approval",
+          explanation: "The supervised session is configured and waiting for approval to start.",
+        };
+      } else {
+        nextState.runtime_status = {
+          status: "runtime_ready",
+          explanation: "Supervised autonomy is configured and ready to run within its hard limits.",
+        };
+        nextState.session_status = {
+          status: "session_running",
+          explanation: "The supervised session is active within its configured limits.",
+        };
+      }
+      updateLastUpdated(nextState);
+      return {
+        action,
+        changed: true,
+        message: "The supervised autonomy session was configured.",
+        state: nextState,
+      };
+    }
+
+    case "pause_session": {
+      if (!nextState.supervised_session || !["running", "recovering", "pending_approval"].includes(nextState.supervised_session.status)) {
+        return {
+          action,
+          changed: false,
+          message: "No running supervised session is available to pause.",
+          state: nextState,
+        };
+      }
+
+      nextState.supervised_session = {
+        ...nextState.supervised_session,
+        status: "paused",
+        next_scheduled_tick_at: null,
+        pending_operator_review: false,
+      };
+      nextState.runtime_status = {
+        status: "runtime_paused",
+        explanation: "The supervised autonomy session was paused by the operator.",
+      };
+      nextState.session_status = {
+        status: "session_paused",
+        explanation: "The supervised autonomy session is paused until resumed.",
+      };
+      updateLastUpdated(nextState);
+      return {
+        action,
+        changed: true,
+        message: "The supervised autonomy session was paused.",
+        state: nextState,
+      };
+    }
+
+    case "resume_session": {
+      if (!nextState.supervised_session || !["paused", "waiting_for_operator", "stopped_by_operator"].includes(nextState.supervised_session.status)) {
+        return {
+          action,
+          changed: false,
+          message: "No supervised session is available to resume.",
+          state: nextState,
+        };
+      }
+
+      const requiresApproval = nextState.approvals_required.length > 0 && nextState.supervised_session.approval_policy !== "preapproved_with_limits";
+      nextState.supervised_session = {
+        ...nextState.supervised_session,
+        status: requiresApproval ? "pending_approval" : "running",
+        stopped_at: null,
+        stop_reason: null,
+        next_scheduled_tick_at: requiresApproval ? null : nextTimestamp(nextState),
+        pending_operator_review: false,
+      };
+      nextState.runtime_status = {
+        status: requiresApproval ? "runtime_blocked" : "runtime_ready",
+        explanation: requiresApproval
+          ? "The supervised session requires approval before it can resume."
+          : "The supervised session is ready to resume bounded execution.",
+      };
+      nextState.session_status = {
+        status: requiresApproval ? "session_waiting_for_approval" : "session_running",
+        explanation: requiresApproval
+          ? "The supervised session is waiting for approval before resuming."
+          : "The supervised session is running again within its limits.",
+      };
+      updateLastUpdated(nextState);
+      return {
+        action,
+        changed: true,
+        message: requiresApproval ? "The supervised session is waiting for approval before resuming." : "The supervised autonomy session was resumed.",
+        state: nextState,
+      };
+    }
+
+    case "stop_session": {
+      if (!nextState.supervised_session || ["completed", "failed", "stopped_by_operator"].includes(nextState.supervised_session.status)) {
+        return {
+          action,
+          changed: false,
+          message: "No supervised session is currently running.",
+          state: nextState,
+        };
+      }
+
+      nextState.supervised_session = {
+        ...nextState.supervised_session,
+        status: "stopped_by_operator",
+        stopped_at: nextTimestamp(nextState),
+        stop_reason: "Stopped by operator.",
+        next_scheduled_tick_at: null,
+        pending_operator_review: false,
+      };
+      nextState.runtime_status = {
+        status: "runtime_paused",
+        explanation: "The supervised autonomy session was stopped by the operator.",
+      };
+      nextState.session_status = {
+        status: "session_paused",
+        explanation: "The supervised autonomy session was stopped by the operator.",
+      };
+      updateLastUpdated(nextState);
+      return {
+        action,
+        changed: true,
+        message: "The supervised autonomy session was stopped.",
+        state: nextState,
+      };
+    }
+
+    case "request_operator_review": {
+      if (!nextState.supervised_session) {
+        return {
+          action,
+          changed: false,
+          message: "No supervised session is active to send for operator review.",
+          state: nextState,
+        };
+      }
+
+      nextState.supervised_session = {
+        ...nextState.supervised_session,
+        status: "waiting_for_operator",
+        last_recovery_action: "request_operator_review",
+        next_scheduled_tick_at: null,
+        pending_operator_review: true,
+      };
+      nextState.runtime_status = {
+        status: "runtime_blocked",
+        explanation: "The supervised autonomy session is waiting for operator review.",
+      };
+      nextState.session_status = {
+        status: "session_waiting_for_approval",
+        explanation: "Operator review was requested before bounded autonomy can continue.",
+      };
+      updateLastUpdated(nextState);
+      return {
+        action,
+        changed: true,
+        message: "Operator review was requested for the supervised session.",
         state: nextState,
       };
     }

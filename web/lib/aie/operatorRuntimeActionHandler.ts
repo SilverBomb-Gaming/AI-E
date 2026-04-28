@@ -96,6 +96,7 @@ export function applyOperatorActionToProviderState(
     }
 
     const mutationResult = executeRuntimeMutation({
+      action,
       runtime_intent: bridgeResult.runtime_intent,
       current_runtime_state: currentRuntimeState,
       current_dashboard_state: providerResult.dashboard_state,

@@ -32,6 +32,10 @@ import type {
 } from "./failureRecoveryIntelligence";
 import type { AgentRuntimeNode } from "./agentRuntimeRegistry";
 import type { ExecutionChainRecord } from "./executionChainState";
+import type {
+  SupervisedAutonomyCheckpointRecord,
+  SupervisedAutonomySessionRecord,
+} from "./supervisedAutonomySession";
 
 export type OperatorDashboardGoal = {
   goal_id: string;
@@ -189,6 +193,8 @@ export type OperatorDashboardState = {
   runtime_observability?: OperatorRuntimeObservability;
   agent_runtime?: OperatorDashboardAgentRuntime;
   execution_chains?: ExecutionChainRecord[];
+  supervised_session?: SupervisedAutonomySessionRecord | null;
+  supervised_checkpoints?: SupervisedAutonomyCheckpointRecord[];
   last_updated_at: string;
 };
 

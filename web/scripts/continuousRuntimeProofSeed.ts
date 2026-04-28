@@ -10,10 +10,18 @@ import {
   saveRuntimeState,
   type RuntimeStateStore,
 } from "../lib/aie/runtimeStateStore";
+import { createSupervisedAutonomySessionId } from "../lib/aie/supervisedAutonomySession";
 
 export type ContinuousRuntimeProofSeedPayload = {
   runtimeId: string;
   store: RuntimeStateStore;
+};
+
+export type ContinuousRuntimeProofSeedMode = "continuous-runtime" | "supervised-autonomy";
+
+export type ContinuousRuntimeProofSeedOptions = {
+  runtimeId?: string;
+  mode?: ContinuousRuntimeProofSeedMode;
 };
 
 function isoOffset(baseMs: number, offsetMs: number): string {
@@ -63,9 +71,10 @@ function createStoppedService(runtimeId: string, nowMs: number) {
   }, "max_ticks_reached");
 }
 
-export function createContinuousRuntimeProofSeedPayload(runtimeId?: string): ContinuousRuntimeProofSeedPayload {
+export function createContinuousRuntimeProofSeedPayload(options: ContinuousRuntimeProofSeedOptions = {}): ContinuousRuntimeProofSeedPayload {
   const nowMs = Date.now();
-  const freshRuntimeId = runtimeId?.trim() || `live-semantic-proof-${nowMs}`;
+  const mode = options.mode ?? "continuous-runtime";
+  const freshRuntimeId = options.runtimeId?.trim() || `live-semantic-proof-${nowMs}`;
   const store = createRuntimeStateStore({ stale_after_ms: 10 * 60 * 1000 });
   const service = {
     ...createStoppedService(freshRuntimeId, nowMs),
@@ -92,8 +101,8 @@ export function createContinuousRuntimeProofSeedPayload(runtimeId?: string): Con
     tick_history: [],
   };
   currentRecord.continuous_loop_config = {
-    tick_interval_ms: 1_000,
-    max_ticks_per_run: 3,
+    tick_interval_ms: mode === "supervised-autonomy" ? 10_000 : 1_000,
+    max_ticks_per_run: mode === "supervised-autonomy" ? 1 : 3,
     max_runs_per_invocation: 1,
     require_fresh_approvals: true,
     require_fresh_context: true,
@@ -167,8 +176,53 @@ export function createContinuousRuntimeProofSeedPayload(runtimeId?: string): Con
       next_scheduled_tick_at: null,
       event_log: [],
     },
+    supervised_session: undefined,
+    supervised_checkpoints: [],
     last_updated_at: new Date(nowMs).toISOString(),
   };
+
+  if (mode === "supervised-autonomy") {
+    const startedAt = new Date(nowMs).toISOString();
+    const sessionId = createSupervisedAutonomySessionId(record.runtime_id, startedAt);
+    const supervisedSession = {
+      session_id: sessionId,
+      runtime_id: record.runtime_id,
+      status: "pending_approval" as const,
+      started_at: startedAt,
+      stopped_at: null,
+      duration_ms: 0,
+      max_duration_ms: 8 * 60 * 60 * 1000,
+      tick_budget: 6,
+      ticks_completed: 0,
+      max_chain_count: 4,
+      agent_ids: [],
+      active_chain_ids: [],
+      completed_chain_ids: [],
+      failed_chain_ids: [],
+      safety_scope: "bounded_multi_agent_runtime" as const,
+      approval_policy: "operator_must_approve_start" as const,
+      recovery_policy: "request_operator_review" as const,
+      last_checkpoint_at: null,
+      stop_reason: null,
+      last_recovery_action: "none" as const,
+      next_scheduled_tick_at: null,
+      latest_timeline_event_id: null,
+      pending_operator_review: false,
+    };
+
+    currentRecord.supervised_session = supervisedSession;
+    currentRecord.supervised_checkpoints = [];
+    currentRecord.operator_dashboard_state.supervised_session = { ...supervisedSession };
+    currentRecord.operator_dashboard_state.supervised_checkpoints = [];
+    currentRecord.operator_dashboard_state.session_status = {
+      status: "session_waiting_for_approval",
+      explanation: "The supervised autonomy session is pending operator approval.",
+    };
+    currentRecord.operator_dashboard_state.runtime_observability = {
+      ...currentRecord.operator_dashboard_state.runtime_observability,
+      next_scheduled_action: "Approve the pending supervised session to start bounded autonomous ticks.",
+    };
+  }
 
   persistRuntimeStateRecord(store, currentRecord);
 

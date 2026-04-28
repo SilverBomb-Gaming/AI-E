@@ -13,6 +13,7 @@ import {
 import type { OperatorDashboardBlockedGoal, OperatorDashboardState } from "./operatorDashboardState";
 import {
   cloneRuntimeStateRecord,
+  type ContinuousLoopStateRecord,
   evaluateBootResume,
   loadRuntimeState,
   persistRuntimeStateRecord,
@@ -45,6 +46,7 @@ export type RuntimeMutationResult = {
 };
 
 export type RuntimeMutationExecutorInput = {
+  action?: OperatorControlAction;
   runtime_intent: SafeRuntimeIntent;
   current_runtime_state: RuntimeStateRecord;
   current_dashboard_state: OperatorDashboardState;
@@ -139,6 +141,16 @@ function createActionFromIntent(intent: SafeRuntimeIntent, goalId: string | null
       return { type: "resume_goal", goal_id: goalId ?? null };
     case "mark_goal_retry_requested":
       return { type: "retry_goal", goal_id: goalId ?? null };
+    case "start_supervised_session":
+      return { type: "start_supervised_session" };
+    case "pause_supervised_session":
+      return { type: "pause_session" };
+    case "resume_supervised_session":
+      return { type: "resume_session" };
+    case "stop_supervised_session":
+      return { type: "stop_session" };
+    case "request_supervised_operator_review":
+      return { type: "request_operator_review" };
     case "no_op":
     default:
       return null;
@@ -231,6 +243,41 @@ function validateMutationRequest(
       return null;
     }
 
+    case "start_supervised_session": {
+      if (persistedRecord.supervised_session && ["pending_approval", "running", "paused", "waiting_for_operator", "recovering"].includes(persistedRecord.supervised_session.status)) {
+        return "a supervised autonomy session is already active for this runtime";
+      }
+      return null;
+    }
+
+    case "pause_supervised_session": {
+      if (!persistedRecord.supervised_session || !["running", "recovering", "pending_approval"].includes(persistedRecord.supervised_session.status)) {
+        return "no running supervised session is available for a live pause mutation";
+      }
+      return null;
+    }
+
+    case "resume_supervised_session": {
+      if (!persistedRecord.supervised_session || !["paused", "waiting_for_operator", "stopped_by_operator"].includes(persistedRecord.supervised_session.status)) {
+        return "no paused supervised session is available for a live resume mutation";
+      }
+      return null;
+    }
+
+    case "stop_supervised_session": {
+      if (!persistedRecord.supervised_session || ["completed", "failed", "stopped_by_operator"].includes(persistedRecord.supervised_session.status)) {
+        return "no running supervised session is available for a live stop mutation";
+      }
+      return null;
+    }
+
+    case "request_supervised_operator_review": {
+      if (!persistedRecord.supervised_session) {
+        return "no supervised session is available for a live operator review mutation";
+      }
+      return null;
+    }
+
     default:
       return "the requested runtime mutation intent is not supported";
   }
@@ -267,10 +314,116 @@ function applyRecordMetadata(
       break;
     }
 
+    case "start_supervised_session":
+    case "resume_supervised_session": {
+      record.last_status = "service_idle";
+      break;
+    }
+
+    case "pause_supervised_session":
+    case "stop_supervised_session":
+    case "request_supervised_operator_review": {
+      record.last_status = "service_paused";
+      break;
+    }
+
     case "no_op":
     default:
       break;
   }
+}
+
+function buildControlLoopState(record: RuntimeStateRecord): ContinuousLoopStateRecord {
+  return record.continuous_loop ?? {
+    status: "loop_stopped",
+    started_at: null,
+    stopped_at: null,
+    last_tick_at: null,
+    ticks_attempted: 0,
+    ticks_completed: 0,
+    last_trigger_result: null,
+    reason: "Continuous runtime loop has not started yet.",
+    tick_history: [],
+  };
+}
+
+function appendSupervisedSessionControlEvent(
+  record: RuntimeStateRecord,
+  input: RuntimeMutationExecutorInput,
+  reason: string,
+): void {
+  const loopState = buildControlLoopState(record);
+  const eventId = `supervised-session-control-${sanitizeTimestamp(input.timestamp)}-${input.runtime_intent}`;
+  const runtimeStatus = record.operator_dashboard_state?.runtime_status.status ?? record.last_status;
+  const schedulerStatus = record.operator_dashboard_state?.scheduler_status.status ?? "scheduler_idle";
+
+  record.continuous_loop = {
+    ...loopState,
+    reason,
+    tick_history: [...loopState.tick_history, {
+      tick_id: eventId,
+      event_id: eventId,
+      runtime_id: input.runtime_id,
+      attempted_at: input.timestamp,
+      timestamp: input.timestamp,
+      tick_index: loopState.ticks_attempted,
+      status: record.last_status === "service_paused" ? "loop_paused" : loopState.status,
+      event_type: "tick_observed",
+      triggered: false,
+      run_results_recorded: 0,
+      reason,
+      active_goal_before: record.operator_dashboard_state?.active_goal ? {
+        goal_id: record.operator_dashboard_state.active_goal.goal_id,
+        goal_label: record.operator_dashboard_state.active_goal.description,
+      } : null,
+      active_goal_after: record.operator_dashboard_state?.active_goal ? {
+        goal_id: record.operator_dashboard_state.active_goal.goal_id,
+        goal_label: record.operator_dashboard_state.active_goal.description,
+      } : null,
+      mutation_applied: `${input.runtime_intent} persisted for supervised session state.`,
+      safety_gate_result: record.supervised_session?.pending_operator_review ? "blocked" : "not_triggered",
+      scheduler_decision: record.operator_dashboard_state?.scheduler_status.explanation ?? null,
+      persistence_result: "persisted_to_runtime_state",
+      goal_transition: {
+        changed: false,
+        from_goal_id: record.operator_dashboard_state?.active_goal?.goal_id ?? null,
+        to_goal_id: record.operator_dashboard_state?.active_goal?.goal_id ?? null,
+        from_goal_label: record.operator_dashboard_state?.active_goal?.description ?? null,
+        to_goal_label: record.operator_dashboard_state?.active_goal?.description ?? null,
+        summary: `Supervised session control event recorded for ${input.runtime_intent}.`,
+      },
+      semantic_progression: {
+        queue_count_before: record.operator_dashboard_state?.queued_goals.length ?? 0,
+        queue_count_after: record.operator_dashboard_state?.queued_goals.length ?? 0,
+        blocked_count_before: record.operator_dashboard_state?.blocked_goals.length ?? 0,
+        blocked_count_after: record.operator_dashboard_state?.blocked_goals.length ?? 0,
+        runtime_status_before: runtimeStatus,
+        runtime_status_after: runtimeStatus,
+        scheduler_status_before: schedulerStatus,
+        scheduler_status_after: schedulerStatus,
+      },
+      mutation_summary: `${input.runtime_intent} recorded for supervised session.`,
+      next_scheduled_action: record.supervised_session?.next_scheduled_tick_at
+        ? `Next scheduled tick at ${record.supervised_session.next_scheduled_tick_at}.`
+        : null,
+    }],
+  };
+
+  if (record.supervised_session) {
+    record.supervised_session.latest_timeline_event_id = eventId;
+  }
+}
+
+function syncSupervisedStateToDashboard(record: RuntimeStateRecord): void {
+  if (!record.operator_dashboard_state) {
+    return;
+  }
+
+  record.operator_dashboard_state = {
+    ...record.operator_dashboard_state,
+    supervised_session: record.supervised_session ?? null,
+    supervised_checkpoints: [...(record.supervised_checkpoints ?? [])],
+  };
 }
 
 export function executeRuntimeMutation(input: RuntimeMutationExecutorInput): RuntimeMutationResult {
@@ -298,7 +451,7 @@ export function executeRuntimeMutation(input: RuntimeMutationExecutorInput): Run
     return reject(input, persistedRecord, validationFailure);
   }
 
-  const action = createActionFromIntent(input.runtime_intent, input.goal_id);
+  const action = input.action ?? createActionFromIntent(input.runtime_intent, input.goal_id);
   if (!action) {
     return buildResult(input, "mutation_no_op", cloneRuntimeStateRecord(persistedRecord), "the requested runtime intent does not mutate persisted runtime state");
   }
@@ -310,8 +463,16 @@ export function executeRuntimeMutation(input: RuntimeMutationExecutorInput): Run
 
   const nextRecord = cloneRuntimeStateRecord(persistedRecord);
   nextRecord.operator_dashboard_state = controlResult.state;
+  nextRecord.supervised_session = controlResult.state.supervised_session ?? nextRecord.supervised_session ?? null;
+  nextRecord.supervised_checkpoints = controlResult.state.supervised_checkpoints ?? nextRecord.supervised_checkpoints ?? [];
+  if (nextRecord.supervised_session) {
+    nextRecord.supervised_session.runtime_id = runtimeId;
+  }
+  syncSupervisedStateToDashboard(nextRecord);
   nextRecord.persisted_at = input.timestamp;
   applyRecordMetadata(input.runtime_intent, nextRecord);
+  appendSupervisedSessionControlEvent(nextRecord, input, controlResult.message);
+  syncSupervisedStateToDashboard(nextRecord);
 
   const persistedNextRecord = persistRuntimeStateRecord(input.runtime_state_store, nextRecord);
   const effectiveContinuousLoopConfig = resolveContinuousLoopConfig(persistedNextRecord, input.continuous_loop_config);
@@ -333,7 +494,13 @@ export function executeRuntimeMutation(input: RuntimeMutationExecutorInput): Run
       executionLoop,
     );
 
-    if (!input.start_continuous_loop || input.runtime_intent === "pause_active_goal" || !persistedNextRecord.operator_dashboard_state) {
+    if (!input.start_continuous_loop
+      || input.runtime_intent === "pause_active_goal"
+      || input.runtime_intent === "pause_supervised_session"
+      || input.runtime_intent === "stop_supervised_session"
+      || input.runtime_intent === "request_supervised_operator_review"
+      || persistedNextRecord.supervised_session?.status === "pending_approval"
+      || !persistedNextRecord.operator_dashboard_state) {
       return baseResult;
     }
 
@@ -365,10 +532,17 @@ export function executeRuntimeMutation(input: RuntimeMutationExecutorInput): Run
   const executedRecord = cloneRuntimeStateRecord(persistedNextRecord);
   executedRecord.operator_dashboard_state = executionLoop.updated_dashboard_state;
   executedRecord.persisted_at = input.timestamp;
+  syncSupervisedStateToDashboard(executedRecord);
   const persistedExecutedRecord = persistRuntimeStateRecord(input.runtime_state_store, executedRecord);
   const executedContinuousLoopConfig = resolveContinuousLoopConfig(persistedExecutedRecord, input.continuous_loop_config);
 
-  if (!input.start_continuous_loop || input.runtime_intent === "pause_active_goal" || !persistedExecutedRecord.operator_dashboard_state) {
+  if (!input.start_continuous_loop
+    || input.runtime_intent === "pause_active_goal"
+    || input.runtime_intent === "pause_supervised_session"
+    || input.runtime_intent === "stop_supervised_session"
+    || input.runtime_intent === "request_supervised_operator_review"
+    || persistedExecutedRecord.supervised_session?.status === "pending_approval"
+    || !persistedExecutedRecord.operator_dashboard_state) {
     return buildResult(
       input,
       "mutation_applied",

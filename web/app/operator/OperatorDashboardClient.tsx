@@ -7,6 +7,7 @@ import { useEffect, useState, useTransition, type ReactNode } from "react";
 import {
   applyOperatorControlAction,
   type OperatorControlAction,
+  type SupervisedSessionControlInput,
 } from "@/lib/aie/operatorControlSurface";
 import type { AgentRuntimeNode } from "@/lib/aie/agentRuntimeRegistry";
 import type {
@@ -19,6 +20,39 @@ import type {
 } from "@/lib/aie/operatorDashboardState";
 import type { ExecutionChainRecord } from "@/lib/aie/executionChainState";
 import type { OperatorRuntimeStateProviderResult } from "@/lib/aie/operatorRuntimeStateContract";
+
+function SupervisedSessionField({ label, value }: { label: string; value: string }) {
+  return (
+    <article className="rounded-[1.25rem] border border-ink/10 bg-white/80 p-4">
+      <p className="text-xs uppercase tracking-[0.18em] text-slate">{label}</p>
+      <p className="mt-2 text-sm leading-7 body-muted">{value}</p>
+    </article>
+  );
+}
+
+function SessionInput({
+  label,
+  value,
+  onChange,
+  type = "number",
+}: {
+  label: string;
+  value: string;
+  onChange: (nextValue: string) => void;
+  type?: "number" | "text";
+}) {
+  return (
+    <label className="flex flex-col gap-2 rounded-[1.25rem] border border-ink/10 bg-white/80 p-4 text-sm text-ink">
+      <span className="text-xs uppercase tracking-[0.18em] text-slate">{label}</span>
+      <input
+        type={type}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="rounded-xl border border-ink/10 bg-white px-3 py-2 text-sm text-ink outline-none"
+      />
+    </label>
+  );
+}
 
 function getStatusClassName(status: string): string {
   if (/completed|ready/i.test(status)) {
@@ -349,12 +383,24 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(`${getSourceLabel(initialProviderResult.source)} state loaded.`);
   const [isHydrated, setIsHydrated] = useState(false);
+  const [maxDurationHours, setMaxDurationHours] = useState("8");
+  const [tickBudget, setTickBudget] = useState("12");
+  const [maxChainCount, setMaxChainCount] = useState("8");
+  const [approvalPolicy, setApprovalPolicy] = useState<SupervisedSessionControlInput["approval_policy"]>("operator_must_approve_start");
   const [isPending, startTransition] = useTransition();
 
   useEffect(() => {
     setProviderResult(initialProviderResult);
     setError(null);
     setMessage(`${getSourceLabel(initialProviderResult.source)} state loaded.`);
+
+    const session = initialProviderResult.dashboard_state?.supervised_session;
+    if (session) {
+      setMaxDurationHours(String(Math.max(1, Math.round(session.max_duration_ms / 3_600_000))));
+      setTickBudget(String(session.tick_budget));
+      setMaxChainCount(String(session.max_chain_count));
+      setApprovalPolicy(session.approval_policy);
+    }
   }, [initialProviderResult]);
 
   useEffect(() => {
@@ -378,6 +424,22 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
   }, [providerResult.source, router]);
 
   const dashboardState: OperatorDashboardState | null = providerResult.dashboard_state;
+  const latestCheckpoint = dashboardState?.supervised_checkpoints?.slice(-1)[0] ?? null;
+  const activeSession = dashboardState?.supervised_session ?? null;
+
+  function buildSupervisedSessionInput(): SupervisedSessionControlInput {
+    const parsedHours = Number(maxDurationHours);
+    const parsedTickBudget = Number(tickBudget);
+    const parsedMaxChainCount = Number(maxChainCount);
+
+    return {
+      max_duration_ms: Number.isFinite(parsedHours) && parsedHours > 0 ? Math.trunc(parsedHours * 3_600_000) : 28_800_000,
+      tick_budget: Number.isFinite(parsedTickBudget) && parsedTickBudget > 0 ? Math.trunc(parsedTickBudget) : 12,
+      max_chain_count: Number.isFinite(parsedMaxChainCount) && parsedMaxChainCount > 0 ? Math.trunc(parsedMaxChainCount) : 8,
+      approval_policy: approvalPolicy ?? "operator_must_approve_start",
+      recovery_policy: activeSession?.recovery_policy ?? "request_operator_review",
+    };
+  }
 
   function handleAction(action: OperatorControlAction) {
     setError(null);
@@ -589,9 +651,98 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
               )) : <p className="text-sm leading-7 body-muted">No agent runtime state has been recorded yet.</p>}
             </div>
           </SectionCard>
+
+          <SectionCard eyebrow="9" title="Supervised Autonomy Session">
+            <div className="space-y-4">
+              <article className="rounded-[1.5rem] border border-ink/10 bg-white/80 p-4">
+                <div className="flex flex-wrap items-center gap-2">
+                  <StatusBadge status={activeSession?.status ?? "not_started"} />
+                  <StatusBadge status={activeSession?.approval_policy ?? "approval_policy_unset"} />
+                  <StatusBadge status={latestCheckpoint?.safety_status ?? (activeSession?.pending_operator_review ? "review_required" : "not_started")} />
+                </div>
+                <p className="mt-3 text-sm leading-7 body-muted">
+                  {activeSession
+                    ? `Session ${activeSession.session_id} is ${activeSession.status.replace(/_/g, " ")} with ${activeSession.ticks_completed}/${activeSession.tick_budget} ticks consumed.`
+                    : "No supervised autonomy session is currently configured."}
+                </p>
+              </article>
+
+              <div className="grid gap-4 md:grid-cols-2">
+                <SessionInput label="Max Duration (hours)" value={maxDurationHours} onChange={setMaxDurationHours} />
+                <SessionInput label="Tick Budget" value={tickBudget} onChange={setTickBudget} />
+                <SessionInput label="Max Chain Count" value={maxChainCount} onChange={setMaxChainCount} />
+                <label className="flex flex-col gap-2 rounded-[1.25rem] border border-ink/10 bg-white/80 p-4 text-sm text-ink">
+                  <span className="text-xs uppercase tracking-[0.18em] text-slate">Approval Policy</span>
+                  <select
+                    value={approvalPolicy ?? "operator_must_approve_start"}
+                    onChange={(event) => setApprovalPolicy(event.target.value as SupervisedSessionControlInput["approval_policy"])}
+                    className="rounded-xl border border-ink/10 bg-white px-3 py-2 text-sm text-ink outline-none"
+                  >
+                    <option value="operator_must_approve_start">operator_must_approve_start</option>
+                    <option value="operator_must_approve_sensitive">operator_must_approve_sensitive</option>
+                    <option value="preapproved_with_limits">preapproved_with_limits</option>
+                  </select>
+                </label>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <ActionButton
+                  label="Start Supervised Session"
+                  onClick={() => handleAction({ type: "start_supervised_session", supervised_session_input: buildSupervisedSessionInput() })}
+                  disabled={isPending}
+                  tone="accent"
+                />
+                <ActionButton
+                  label="Pause Session"
+                  onClick={() => handleAction({ type: "pause_session" })}
+                  disabled={isPending || !activeSession}
+                  tone="warning"
+                />
+                <ActionButton
+                  label="Resume Session"
+                  onClick={() => handleAction({ type: "resume_session" })}
+                  disabled={isPending || !activeSession}
+                  tone="accent"
+                />
+                <ActionButton
+                  label="Stop Session"
+                  onClick={() => handleAction({ type: "stop_session" })}
+                  disabled={isPending || !activeSession}
+                  tone="warning"
+                />
+                <ActionButton
+                  label="Request Operator Review"
+                  onClick={() => handleAction({ type: "request_operator_review" })}
+                  disabled={isPending || !activeSession}
+                />
+              </div>
+
+              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                <SupervisedSessionField label="Elapsed Time" value={activeSession ? `${Math.round(activeSession.duration_ms / 1000)}s` : "none"} />
+                <SupervisedSessionField label="Max Duration" value={activeSession ? `${Math.round(activeSession.max_duration_ms / 3_600_000)}h` : `${maxDurationHours}h`} />
+                <SupervisedSessionField label="Ticks Completed / Budget" value={activeSession ? `${activeSession.ticks_completed} / ${activeSession.tick_budget}` : `0 / ${tickBudget}`} />
+                <SupervisedSessionField label="Active Agents" value={activeSession ? String(activeSession.agent_ids.length) : "0"} />
+                <SupervisedSessionField label="Active Chains" value={activeSession ? String(activeSession.active_chain_ids.length) : "0"} />
+                <SupervisedSessionField label="Last Checkpoint" value={activeSession?.last_checkpoint_at ?? "none"} />
+                <SupervisedSessionField label="Last Recovery Action" value={activeSession?.last_recovery_action ?? "none"} />
+                <SupervisedSessionField label="Safety Status" value={latestCheckpoint?.safety_status ?? (activeSession?.pending_operator_review ? "review_required" : "passed") } />
+                <SupervisedSessionField label="Next Scheduled Tick" value={activeSession?.next_scheduled_tick_at ?? dashboardState?.runtime_observability?.next_scheduled_tick_at ?? "none"} />
+              </div>
+
+              {latestCheckpoint ? (
+                <article className="rounded-[1.5rem] border border-ink/10 bg-white/80 p-4">
+                  <p className="text-xs uppercase tracking-[0.18em] text-slate">Latest Checkpoint</p>
+                  <p className="mt-2 text-sm leading-7 body-muted">{latestCheckpoint.checkpoint_id}</p>
+                  <p className="mt-2 text-xs leading-6 text-slate">Timestamp: {latestCheckpoint.timestamp}</p>
+                  <p className="mt-1 text-xs leading-6 text-slate">Queued goals: {latestCheckpoint.queued_goals.length ? latestCheckpoint.queued_goals.join(", ") : "none"}</p>
+                  <p className="mt-1 text-xs leading-6 text-slate">Completed goals: {latestCheckpoint.completed_goals.length ? latestCheckpoint.completed_goals.join(", ") : "none"}</p>
+                </article>
+              ) : null}
+            </div>
+          </SectionCard>
         </div>
 
-        <SectionCard eyebrow="9" title="Execution Chains">
+        <SectionCard eyebrow="10" title="Execution Chains">
           <div className="space-y-4">
             {dashboardState?.execution_chains?.length ? dashboardState.execution_chains.slice().reverse().map((chain) => (
               <ExecutionChainRow key={chain.chain_id} chain={chain} />
@@ -599,7 +750,7 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
           </div>
         </SectionCard>
 
-        <SectionCard eyebrow="10" title="Runtime Timeline">
+        <SectionCard eyebrow="11" title="Runtime Timeline">
           <div className="space-y-4">
             {dashboardState?.runtime_observability?.event_log.length ? dashboardState.runtime_observability.event_log.slice().reverse().map((event) => (
               <article key={event.event_id} className="rounded-[1.5rem] border border-ink/10 bg-white/80 p-4">

@@ -22,6 +22,10 @@ import {
   type RuntimeStateStore,
 } from "./runtimeStateStore";
 import type { ExecutionChainRecord } from "./executionChainState";
+import type {
+  SupervisedAutonomyCheckpointRecord,
+  SupervisedAutonomySessionRecord,
+} from "./supervisedAutonomySession";
 
 export type OperatorRuntimeStateProviderDependencies = {
   runtime_state_store?: RuntimeStateStore | null;
@@ -336,6 +340,30 @@ function buildExecutionChains(record: RuntimeStateRecord): ExecutionChainRecord[
   }));
 }
 
+function buildSupervisedSession(record: RuntimeStateRecord): SupervisedAutonomySessionRecord | null {
+  if (!record.supervised_session) {
+    return null;
+  }
+
+  return {
+    ...record.supervised_session,
+    agent_ids: [...record.supervised_session.agent_ids],
+    active_chain_ids: [...record.supervised_session.active_chain_ids],
+    completed_chain_ids: [...record.supervised_session.completed_chain_ids],
+    failed_chain_ids: [...record.supervised_session.failed_chain_ids],
+  };
+}
+
+function buildSupervisedCheckpoints(record: RuntimeStateRecord): SupervisedAutonomyCheckpointRecord[] {
+  return (record.supervised_checkpoints ?? []).map((checkpoint) => ({
+    ...checkpoint,
+    agent_states: checkpoint.agent_states.map((agentState) => ({ ...agentState })),
+    active_chains: [...checkpoint.active_chains],
+    queued_goals: [...checkpoint.queued_goals],
+    completed_goals: [...checkpoint.completed_goals],
+  }));
+}
+
 function buildLiveOperatorDashboardState(
   record: RuntimeStateRecord,
   bootResume: RuntimeBootResumeResult,
@@ -344,6 +372,8 @@ function buildLiveOperatorDashboardState(
   const runtimeObservability = buildRuntimeObservability(record);
   const agentRuntime = buildAgentRuntime(record, loadedAt);
   const executionChains = buildExecutionChains(record);
+  const supervisedSession = buildSupervisedSession(record);
+  const supervisedCheckpoints = buildSupervisedCheckpoints(record);
 
   if (record.operator_dashboard_state) {
     return {
@@ -351,6 +381,8 @@ function buildLiveOperatorDashboardState(
       runtime_observability: runtimeObservability,
       agent_runtime: agentRuntime,
       execution_chains: executionChains,
+      supervised_session: supervisedSession,
+      supervised_checkpoints: supervisedCheckpoints,
       last_updated_at: record.operator_dashboard_state.last_updated_at || record.persisted_at,
     };
   }
@@ -394,6 +426,8 @@ function buildLiveOperatorDashboardState(
     runtime_observability: runtimeObservability,
     agent_runtime: agentRuntime,
     execution_chains: executionChains,
+    supervised_session: supervisedSession,
+    supervised_checkpoints: supervisedCheckpoints,
     last_updated_at: record.persisted_at,
   };
 }

@@ -16,6 +16,11 @@ export type SafeRuntimeIntent =
   | "pause_active_goal"
   | "resume_paused_goal"
   | "mark_goal_retry_requested"
+  | "start_supervised_session"
+  | "pause_supervised_session"
+  | "resume_supervised_session"
+  | "stop_supervised_session"
+  | "request_supervised_operator_review"
   | "no_op";
 
 export type SafeRuntimeActionBridgeStatus =
@@ -286,6 +291,126 @@ export function createSafeRuntimeActionBridgeResult(
         "mark_goal_retry_requested",
         "a blocked goal or recovery recommendation exists and may be marked for retry through the runtime queue boundary",
         [...providerResult.warnings, `Retry target: ${retryCandidate.blockedGoal?.goal_id ?? action.goal_id ?? "recovery"}`],
+        createdAt,
+      );
+    }
+
+    case "start_supervised_session": {
+      if (state.supervised_session && ["pending_approval", "running", "paused", "waiting_for_operator", "recovering"].includes(state.supervised_session.status)) {
+        return buildResult(
+          source,
+          action,
+          "action_rejected",
+          "no_op",
+          "a supervised session is already active for this live runtime state",
+          providerResult.warnings,
+          createdAt,
+        );
+      }
+
+      return buildResult(
+        source,
+        action,
+        "action_ready",
+        "start_supervised_session",
+        "the live runtime may create a bounded supervised autonomy session with explicit limits",
+        providerResult.warnings,
+        createdAt,
+      );
+    }
+
+    case "pause_session": {
+      if (!state.supervised_session || !["running", "recovering", "pending_approval"].includes(state.supervised_session.status)) {
+        return buildResult(
+          source,
+          action,
+          "action_rejected",
+          "no_op",
+          "no running supervised session exists for a live pause request",
+          providerResult.warnings,
+          createdAt,
+        );
+      }
+
+      return buildResult(
+        source,
+        action,
+        "action_ready",
+        "pause_supervised_session",
+        "the active supervised session may be paused through the runtime session boundary",
+        providerResult.warnings,
+        createdAt,
+      );
+    }
+
+    case "resume_session": {
+      if (!state.supervised_session || !["paused", "waiting_for_operator", "stopped_by_operator"].includes(state.supervised_session.status)) {
+        return buildResult(
+          source,
+          action,
+          "action_rejected",
+          "no_op",
+          "no paused supervised session exists for a live resume request",
+          providerResult.warnings,
+          createdAt,
+        );
+      }
+
+      return buildResult(
+        source,
+        action,
+        "action_ready",
+        "resume_supervised_session",
+        "the bounded supervised session may resume within its stored limits",
+        providerResult.warnings,
+        createdAt,
+      );
+    }
+
+    case "stop_session": {
+      if (!state.supervised_session || ["completed", "failed", "stopped_by_operator"].includes(state.supervised_session.status)) {
+        return buildResult(
+          source,
+          action,
+          "action_rejected",
+          "no_op",
+          "no running supervised session exists for a live stop request",
+          providerResult.warnings,
+          createdAt,
+        );
+      }
+
+      return buildResult(
+        source,
+        action,
+        "action_ready",
+        "stop_supervised_session",
+        "the bounded supervised session may be stopped by the operator",
+        providerResult.warnings,
+        createdAt,
+      );
+    }
+
+    case "request_operator_review": {
+      if (!state.supervised_session) {
+        return buildResult(
+          source,
+          action,
+          "action_rejected",
+          "no_op",
+          "no supervised session exists for a live operator-review request",
+          providerResult.warnings,
+          createdAt,
+        );
+      }
+
+      return buildResult(
+        source,
+        action,
+        "action_ready",
+        "request_supervised_operator_review",
+        "the supervised session may be paused for operator review",
+        providerResult.warnings,
         createdAt,
       );
     }

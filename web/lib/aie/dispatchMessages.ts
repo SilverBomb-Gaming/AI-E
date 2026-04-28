@@ -134,7 +134,7 @@ function isExecutionAction(value: unknown): value is ExecutionAction {
     normalizeText(source.id) &&
       normalizeText(source.description) &&
       normalizeText(source.expectedOutcome) &&
-      source.requiresApproval === true &&
+      typeof source.requiresApproval === "boolean" &&
       typeof source.metadata === "object" &&
       (source.scope === "safe" || source.scope === "caution" || source.scope === "dangerous"),
   );

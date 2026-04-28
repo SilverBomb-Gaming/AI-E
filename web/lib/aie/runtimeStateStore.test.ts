@@ -16,9 +16,14 @@ import {
   createRuntimeStateStore,
   evaluateBootResume,
   loadRuntimeState,
+  persistRuntimeStateRecord,
   saveRuntimeState,
   summarizeBootResume,
 } from "./runtimeStateStore";
+import {
+  createSupervisedAutonomyCheckpointId,
+  createSupervisedAutonomySessionId,
+} from "./supervisedAutonomySession";
 import { runBackgroundRuntimeEntrypoint } from "./runtimeEntrypoint";
 
 function createSession(goal: string) {
@@ -119,6 +124,71 @@ test("loads runtime state", () => {
 
   assert.equal(record?.runtime_id, service.service_id);
   assert.equal(record?.last_status, "service_stopped");
+});
+
+test("persists supervised autonomy session and checkpoints", () => {
+  const store = createRuntimeStateStore();
+  const service = createStoppedService();
+  const saved = saveRuntimeState(store, service, "local_supervised");
+  const record = loadRuntimeState(store, saved.runtime_id);
+
+  if (!record) {
+    throw new Error("Expected persisted runtime record.");
+  }
+
+  const sessionId = createSupervisedAutonomySessionId(record.runtime_id, "2026-04-28T16:00:00.000Z");
+  record.supervised_session = {
+    session_id: sessionId,
+    runtime_id: record.runtime_id,
+    status: "running",
+    started_at: "2026-04-28T16:00:00.000Z",
+    stopped_at: null,
+    duration_ms: 60_000,
+    max_duration_ms: 28_800_000,
+    tick_budget: 8,
+    ticks_completed: 1,
+    max_chain_count: 6,
+    agent_ids: ["planner-agent", "executor-agent", "validator-agent", "reporter-agent"],
+    active_chain_ids: ["execution-chain-goal-a"],
+    completed_chain_ids: [],
+    failed_chain_ids: [],
+    safety_scope: "bounded_multi_agent_runtime",
+    approval_policy: "operator_must_approve_start",
+    recovery_policy: "request_operator_review",
+    last_checkpoint_at: "2026-04-28T16:01:00.000Z",
+    stop_reason: null,
+    last_recovery_action: "none",
+    next_scheduled_tick_at: "2026-04-28T16:02:00.000Z",
+    latest_timeline_event_id: "tick-1",
+    pending_operator_review: false,
+  };
+  record.supervised_checkpoints = [{
+    checkpoint_id: createSupervisedAutonomyCheckpointId(sessionId, "2026-04-28T16:01:00.000Z", 1),
+    session_id: sessionId,
+    timestamp: "2026-04-28T16:01:00.000Z",
+    tick_index: 1,
+    agent_states: [{
+      agent_id: "executor-agent",
+      status: "assigned",
+      current_goal_id: "goal-a",
+      failure_count: 0,
+    }],
+    active_chains: ["execution-chain-goal-a"],
+    queued_goals: ["goal-b"],
+    completed_goals: ["goal-bootstrap"],
+    safety_status: "passed",
+    latest_timeline_event_id: "tick-1",
+  }];
+
+  persistRuntimeStateRecord(store, record);
+
+  const reloaded = loadRuntimeState(store, record.runtime_id);
+
+  assert.equal(reloaded?.supervised_session?.session_id, sessionId);
+  assert.equal(reloaded?.supervised_session?.tick_budget, 8);
+  assert.equal(reloaded?.supervised_checkpoints?.length, 1);
+  assert.equal(reloaded?.supervised_checkpoints?.[0]?.checkpoint_id.includes(sessionId), true);
+  assert.equal(reloaded?.supervised_checkpoints?.[0]?.queued_goals[0], "goal-b");
 });
 
 test("no prior state returns no_prior_state", () => {

@@ -17,6 +17,9 @@ import {
   persistRuntimeStateRecord,
   saveRuntimeState,
 } from "./runtimeStateStore";
+import {
+  createSupervisedAutonomySessionId,
+} from "./supervisedAutonomySession";
 
 function createStoppedService() {
   const service = createBackgroundRuntimeService({
@@ -120,6 +123,46 @@ function createSeededRuntimeRecord(mutateState?: (state: OperatorDashboardState)
   return {
     store,
     record: persistedRecord,
+  };
+}
+
+function attachSupervisedSession(seeded: ReturnType<typeof createSeededRuntimeRecord>, overrides: Partial<NonNullable<ReturnType<typeof loadRuntimeState>["supervised_session"]>> = {}) {
+  const currentRecord = loadRuntimeState(seeded.store, seeded.record.runtime_id);
+
+  if (!currentRecord) {
+    throw new Error("Expected persisted runtime record.");
+  }
+
+  currentRecord.supervised_session = {
+    session_id: createSupervisedAutonomySessionId(seeded.record.runtime_id, "2026-04-26T12:00:00.000Z"),
+    runtime_id: seeded.record.runtime_id,
+    status: "running",
+    started_at: "2026-04-26T12:00:00.000Z",
+    stopped_at: null,
+    duration_ms: 0,
+    max_duration_ms: 3_600_000,
+    tick_budget: 4,
+    ticks_completed: 0,
+    max_chain_count: 4,
+    agent_ids: ["planner-agent", "executor-agent", "validator-agent", "reporter-agent"],
+    active_chain_ids: [],
+    completed_chain_ids: [],
+    failed_chain_ids: [],
+    safety_scope: "bounded_multi_agent_runtime",
+    approval_policy: "operator_must_approve_start",
+    recovery_policy: "request_operator_review",
+    last_checkpoint_at: null,
+    stop_reason: null,
+    last_recovery_action: "none",
+    next_scheduled_tick_at: null,
+    latest_timeline_event_id: null,
+    pending_operator_review: false,
+    ...overrides,
+  };
+
+  return {
+    store: seeded.store,
+    record: persistRuntimeStateRecord(seeded.store, currentRecord),
   };
 }
 
@@ -300,6 +343,63 @@ test("loop persists state after each cycle", () => {
   assert.equal(persisted?.last_tick_at, result.runtime_state?.last_tick_at);
   assert.equal(persisted?.agent_runtime_registry?.agents.some((agent) => agent.agent_id === "reporter-agent"), true);
   assert.equal((persisted?.execution_chains ?? []).length >= 1, true);
+});
+
+test("loop writes supervised session checkpoints", () => {
+  const seeded = attachSupervisedSession(createSeededRuntimeRecord());
+  const result = runContinuousRuntimeLoop(
+    seeded.store,
+    {
+      runtime_id: seeded.record.runtime_id,
+      tick_interval_ms: 60_000,
+      max_ticks_per_run: 2,
+      max_runs_per_invocation: 1,
+      started_at: "2026-04-26T12:01:00.000Z",
+    },
+    createContinuousRuntimeLoopClock("2026-04-26T12:01:00.000Z", 60_000),
+  );
+
+  assert.equal((result.runtime_state?.supervised_checkpoints ?? []).length >= 1, true);
+  assert.equal(result.runtime_state?.supervised_session?.ticks_completed, result.runtime_state?.continuous_loop?.ticks_completed);
+  assert.equal(result.runtime_state?.supervised_session?.last_checkpoint_at, result.runtime_state?.last_tick_at);
+});
+
+test("loop enforces supervised session tick budget", () => {
+  const seeded = attachSupervisedSession(createSeededRuntimeRecord(), {
+    tick_budget: 0 + 1,
+    ticks_completed: 1,
+  });
+
+  const result = runContinuousRuntimeLoop(seeded.store, {
+    runtime_id: seeded.record.runtime_id,
+    started_at: "2026-04-26T12:01:00.000Z",
+  });
+
+  assert.equal(result.status, "loop_stopped");
+  assert.match(result.reason, /tick budget/i);
+});
+
+test("loop persists bounded supervised recovery decision on failure", () => {
+  const seeded = attachSupervisedSession(createSeededRuntimeRecord((state) => {
+    state.validation_issues = [{
+      goal_id: "goal-active",
+      source: "session_runtime",
+      status: "validation_failed",
+      recommendation: "review",
+      summary: "Validation failed.",
+    }];
+  }), {
+    recovery_policy: "request_operator_review",
+  });
+
+  const result = runContinuousRuntimeLoop(seeded.store, {
+    runtime_id: seeded.record.runtime_id,
+    started_at: "2026-04-26T12:01:00.000Z",
+  });
+
+  assert.equal(result.status, "loop_blocked");
+  assert.equal(result.runtime_state?.supervised_session?.status, "safety_blocked");
+  assert.equal(result.runtime_state?.supervised_session?.pending_operator_review, true);
 });
 
 test("loop integrates with executionLoopController", () => {

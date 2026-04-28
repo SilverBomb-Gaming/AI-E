@@ -492,7 +492,7 @@ function normalizeTaskExecutionLease(value: unknown): TaskExecutionLease | undef
 function assertTaskTransitionAllowed(envelope: TaskEnvelope, nextStatus: TaskEnvelopeStatus): void {
   const allowedTransitions: Record<TaskEnvelopeStatus, TaskEnvelopeStatus[]> = {
     pending: ["queued", "assigned", "blocked", "rejected"],
-    assigned: ["pending", "dispatching", "running", "blocked", "failed", "completed", "rejected"],
+    assigned: ["pending", "dispatching", "awaiting-ack", "running", "blocked", "failed", "completed", "rejected"],
     running: ["executing", "completed", "failed", "blocked", "retrying", "rejected"],
     queued: ["assigned", "dispatching", "blocked", "failed", "rejected"],
     dispatching: ["awaiting-ack", "retrying", "failed", "rejected", "executing"],

@@ -65,3 +65,84 @@ test("retry_goal returns a blocked goal to the queue and clears one recovery sig
   assert.equal(result.state.queued_goals[0]?.goal_id, blockedGoalId);
   assert.equal(result.state.recovery_recommendations.length, Math.max(0, initialRecoveryCount - 1));
 });
+
+test("start_supervised_session creates a bounded pending-approval session", () => {
+  const initialState = createOperatorDashboardDemoState();
+
+  const result = applyOperatorControlAction(initialState, {
+    type: "start_supervised_session",
+    supervised_session_input: {
+      max_duration_ms: 7_200_000,
+      tick_budget: 6,
+      max_chain_count: 4,
+      approval_policy: "operator_must_approve_start",
+      recovery_policy: "request_operator_review",
+    },
+  });
+
+  assert.equal(result.changed, true);
+  assert.equal(result.state.supervised_session?.status, "pending_approval");
+  assert.equal(result.state.supervised_session?.tick_budget, 6);
+  assert.equal(result.state.approvals_required.length > 0, true);
+});
+
+test("pause_session pauses the supervised session", () => {
+  const initialState = applyOperatorControlAction(createOperatorDashboardDemoState(), {
+    type: "start_supervised_session",
+    supervised_session_input: {
+      approval_policy: "preapproved_with_limits",
+    },
+  }).state;
+
+  const result = applyOperatorControlAction(initialState, { type: "pause_session" });
+
+  assert.equal(result.changed, true);
+  assert.equal(result.state.supervised_session?.status, "paused");
+  assert.equal(result.state.supervised_session?.next_scheduled_tick_at, null);
+});
+
+test("resume_session restarts a paused supervised session", () => {
+  const pausedState = applyOperatorControlAction(
+    applyOperatorControlAction(createOperatorDashboardDemoState(), {
+      type: "start_supervised_session",
+      supervised_session_input: {
+        approval_policy: "preapproved_with_limits",
+      },
+    }).state,
+    { type: "pause_session" },
+  ).state;
+
+  const result = applyOperatorControlAction(pausedState, { type: "resume_session" });
+
+  assert.equal(result.changed, true);
+  assert.equal(result.state.supervised_session?.status, "running");
+});
+
+test("stop_session marks the supervised session as operator-stopped", () => {
+  const initialState = applyOperatorControlAction(createOperatorDashboardDemoState(), {
+    type: "start_supervised_session",
+    supervised_session_input: {
+      approval_policy: "preapproved_with_limits",
+    },
+  }).state;
+
+  const result = applyOperatorControlAction(initialState, { type: "stop_session" });
+
+  assert.equal(result.changed, true);
+  assert.equal(result.state.supervised_session?.status, "stopped_by_operator");
+});
+
+test("request_operator_review moves the supervised session into waiting state", () => {
+  const initialState = applyOperatorControlAction(createOperatorDashboardDemoState(), {
+    type: "start_supervised_session",
+    supervised_session_input: {
+      approval_policy: "preapproved_with_limits",
+    },
+  }).state;
+
+  const result = applyOperatorControlAction(initialState, { type: "request_operator_review" });
+
+  assert.equal(result.changed, true);
+  assert.equal(result.state.supervised_session?.status, "waiting_for_operator");
+  assert.equal(result.state.supervised_session?.pending_operator_review, true);
+});

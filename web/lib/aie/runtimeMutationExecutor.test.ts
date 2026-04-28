@@ -310,6 +310,204 @@ test("pause intent does not trigger execution loop", () => {
   assert.equal(result.updated_runtime_state.last_status, "service_paused");
 });
 
+test("start supervised session persists bounded session metadata", () => {
+  const seeded = createSeededRuntimeRecord({
+    mutateState(state) {
+      state.approvals_required = [];
+      state.supervised_session = null;
+      state.supervised_checkpoints = [];
+    },
+    mutateRecord(record) {
+      if (!record) {
+        throw new Error("Expected runtime record.");
+      }
+      record.blockers = [];
+      record.last_status = "service_idle";
+      record.supervised_session = null;
+      record.supervised_checkpoints = [];
+    },
+  });
+
+  const result = executeRuntimeMutation({
+    runtime_intent: "start_supervised_session",
+    current_runtime_state: seeded.record,
+    current_dashboard_state: seeded.state,
+    runtime_state_store: seeded.store,
+    runtime_id: seeded.record.runtime_id,
+    timestamp: "2026-04-26T12:01:00.000Z",
+    start_continuous_loop: true,
+  });
+
+  assert.equal(result.status, "mutation_applied");
+  assert.equal(result.updated_runtime_state.supervised_session?.runtime_id, seeded.record.runtime_id);
+  assert.equal(result.updated_runtime_state.supervised_session?.status, "pending_approval");
+  assert.equal(result.continuous_runtime_loop, null);
+});
+
+test("pause supervised session does not trigger loop", () => {
+  const runningSession = {
+    session_id: "session-1",
+    runtime_id: "runtime-1",
+    status: "running" as const,
+    started_at: "2026-04-26T12:00:00.000Z",
+    stopped_at: null,
+    duration_ms: 0,
+    max_duration_ms: 3600000,
+    tick_budget: 4,
+    ticks_completed: 0,
+    max_chain_count: 4,
+    agent_ids: ["planner-agent"],
+    active_chain_ids: [],
+    completed_chain_ids: [],
+    failed_chain_ids: [],
+    safety_scope: "bounded_multi_agent_runtime" as const,
+    approval_policy: "operator_must_approve_start" as const,
+    recovery_policy: "request_operator_review" as const,
+    last_checkpoint_at: null,
+    stop_reason: null,
+    last_recovery_action: "none" as const,
+    next_scheduled_tick_at: null,
+    latest_timeline_event_id: null,
+    pending_operator_review: false,
+  };
+
+  const seeded = createSeededRuntimeRecord({
+    mutateState(state) {
+      state.approvals_required = [];
+      state.supervised_session = runningSession;
+    },
+    mutateRecord(record) {
+      if (!record) {
+        throw new Error("Expected runtime record.");
+      }
+      record.blockers = [];
+      record.last_status = "service_idle";
+      record.supervised_session = {
+        ...runningSession,
+        runtime_id: record.runtime_id,
+      };
+    },
+  });
+
+  const result = executeRuntimeMutation({
+    runtime_intent: "pause_supervised_session",
+    current_runtime_state: seeded.record,
+    current_dashboard_state: seeded.state,
+    runtime_state_store: seeded.store,
+    runtime_id: seeded.record.runtime_id,
+    timestamp: "2026-04-26T12:01:00.000Z",
+    start_continuous_loop: true,
+  });
+
+  assert.equal(result.status, "mutation_applied");
+  assert.equal(result.updated_runtime_state.supervised_session?.status, "paused");
+  assert.equal(result.continuous_runtime_loop, null);
+});
+
+test("pause supervised session after approval preserves paused state", () => {
+  const seeded = createSeededRuntimeRecord({
+    mutateState(state) {
+      state.approvals_required = [{
+        goal_id: "live-active-goal",
+        approvals_needed: ["session"],
+        reason: "Session approval required.",
+        recommended_action: "Grant session approval.",
+      }];
+      state.supervised_session = {
+        session_id: "session-approval",
+        runtime_id: "runtime-1",
+        status: "pending_approval",
+        started_at: "2026-04-26T12:00:00.000Z",
+        stopped_at: null,
+        duration_ms: 0,
+        max_duration_ms: 3600000,
+        tick_budget: 4,
+        ticks_completed: 0,
+        max_chain_count: 4,
+        agent_ids: [],
+        active_chain_ids: [],
+        completed_chain_ids: [],
+        failed_chain_ids: [],
+        safety_scope: "bounded_multi_agent_runtime",
+        approval_policy: "operator_must_approve_start",
+        recovery_policy: "request_operator_review",
+        last_checkpoint_at: null,
+        stop_reason: null,
+        last_recovery_action: "none",
+        next_scheduled_tick_at: null,
+        latest_timeline_event_id: null,
+        pending_operator_review: false,
+      };
+      state.supervised_checkpoints = [];
+    },
+    mutateRecord(record) {
+      if (!record) {
+        throw new Error("Expected runtime record.");
+      }
+      record.blockers = [{ code: "approval_required", message: "Fresh approval is required." }];
+      record.last_status = "service_blocked";
+      record.supervised_session = {
+        session_id: "session-approval",
+        runtime_id: record.runtime_id,
+        status: "pending_approval",
+        started_at: "2026-04-26T12:00:00.000Z",
+        stopped_at: null,
+        duration_ms: 0,
+        max_duration_ms: 3600000,
+        tick_budget: 4,
+        ticks_completed: 0,
+        max_chain_count: 4,
+        agent_ids: [],
+        active_chain_ids: [],
+        completed_chain_ids: [],
+        failed_chain_ids: [],
+        safety_scope: "bounded_multi_agent_runtime",
+        approval_policy: "operator_must_approve_start",
+        recovery_policy: "request_operator_review",
+        last_checkpoint_at: null,
+        stop_reason: null,
+        last_recovery_action: "none",
+        next_scheduled_tick_at: null,
+        latest_timeline_event_id: null,
+        pending_operator_review: false,
+      };
+      record.supervised_checkpoints = [];
+      record.continuous_loop_config = {
+        tick_interval_ms: 10_000,
+        max_ticks_per_run: 1,
+        max_runs_per_invocation: 1,
+      };
+    },
+  });
+
+  const approved = executeRuntimeMutation({
+    runtime_intent: "grant_session_approval",
+    current_runtime_state: seeded.record,
+    current_dashboard_state: seeded.state,
+    runtime_state_store: seeded.store,
+    runtime_id: seeded.record.runtime_id,
+    timestamp: "2026-04-26T12:00:15.000Z",
+    goal_id: "live-active-goal",
+    start_continuous_loop: true,
+    continuous_loop_config: { max_ticks_per_run: 1, tick_interval_ms: 10_000 },
+  });
+
+  const paused = executeRuntimeMutation({
+    runtime_intent: "pause_supervised_session",
+    current_runtime_state: approved.updated_runtime_state,
+    current_dashboard_state: approved.updated_runtime_state.operator_dashboard_state!,
+    runtime_state_store: seeded.store,
+    runtime_id: seeded.record.runtime_id,
+    timestamp: "2026-04-26T12:00:20.000Z",
+    start_continuous_loop: true,
+  });
+
+  assert.equal(paused.status, "mutation_applied");
+  assert.equal(paused.updated_runtime_state.supervised_session?.status, "paused");
+  assert.equal(paused.updated_runtime_state.operator_dashboard_state?.supervised_session?.status, "paused");
+  assert.equal(paused.continuous_runtime_loop, null);
+});
+
 test("invalid intent rejected", () => {
   const seeded = createSeededRuntimeRecord();
 

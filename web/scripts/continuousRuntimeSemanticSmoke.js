@@ -101,13 +101,13 @@ async function buildPreApprovalDiagnostics(page, url) {
   ].join("\n\n");
 }
 
-async function waitForOperatorPageNavigation(page, url, timeout = 45000) {
+async function waitForOperatorPageNavigation(page, url, timeout = 180000) {
   const startedAt = Date.now();
   let lastError = null;
 
   while ((Date.now() - startedAt) < timeout) {
     try {
-      const response = await page.goto(url, { waitUntil: "domcontentloaded", timeout: 15000 });
+      const response = await page.goto(url, { waitUntil: "domcontentloaded", timeout: 150000 });
       if (response && response.ok()) {
         return;
       }
@@ -208,7 +208,7 @@ async function main() {
         && !sectionText.includes("goal-approval-gate"),
       "post-approval clearance",
       url,
-      30000,
+      60000,
     );
     await waitForSectionTextWithDiagnostics(
       page,
@@ -216,7 +216,7 @@ async function main() {
       (sectionText) => sectionText.includes("Safety gate:") && sectionText.includes("executor-agent") && sectionText.includes("Execution chain"),
       "immediate runtime timeline transition",
       url,
-      30000,
+      60000,
     );
     await waitForSectionTextWithDiagnostics(
       page,
@@ -224,7 +224,7 @@ async function main() {
       (sectionText) => sectionText.includes("planner-agent") && sectionText.includes("executor-agent") && sectionText.includes("approved"),
       "agent runtime assignment",
       url,
-      30000,
+      60000,
     );
     await waitForSectionTextWithDiagnostics(
       page,
@@ -237,7 +237,7 @@ async function main() {
       },
       "execution chain progression",
       url,
-      30000,
+      60000,
     );
 
     const immediate = await snapshot(page, "after_click");

@@ -18,6 +18,16 @@ import type {
 import type { AgentRuntimeApprovalState, AgentRuntimeId, AgentRuntimeNode, AgentRuntimeRegistry, AgentRuntimeRole, AgentRuntimeSafetyScope, AgentRuntimeStatus } from "./agentRuntimeRegistry";
 import { createAgentRuntimeRegistry } from "./agentRuntimeRegistry";
 import type { ExecutionChainRecord, ExecutionChainSafetyStatus, ExecutionChainStatus } from "./executionChainState";
+import type {
+  SupervisedAutonomyApprovalPolicy,
+  SupervisedAutonomyCheckpointRecord,
+  SupervisedAutonomyRecoveryAction,
+  SupervisedAutonomyRecoveryPolicy,
+  SupervisedAutonomySafetyScope,
+  SupervisedAutonomySafetyStatus,
+  SupervisedAutonomySessionRecord,
+  SupervisedAutonomySessionStatus,
+} from "./supervisedAutonomySession";
 
 const DEFAULT_RUNTIME_STATE_STALE_AFTER_MS = 15 * 60 * 1000;
 
@@ -139,6 +149,8 @@ export type RuntimeStateRecord = {
   continuous_loop_config?: StoredContinuousLoopConfig | null;
   agent_runtime_registry?: AgentRuntimeRegistry | null;
   execution_chains?: ExecutionChainRecord[] | null;
+  supervised_session?: SupervisedAutonomySessionRecord | null;
+  supervised_checkpoints?: SupervisedAutonomyCheckpointRecord[] | null;
   operator_dashboard_state: OperatorDashboardState | null;
   persisted_at: string;
 };
@@ -412,6 +424,115 @@ function isExecutionChainRecord(value: unknown): value is ExecutionChainRecord {
   );
 }
 
+function isSupervisedAutonomySessionStatus(value: unknown): value is SupervisedAutonomySessionStatus {
+  return value === "pending_approval"
+    || value === "running"
+    || value === "paused"
+    || value === "waiting_for_operator"
+    || value === "recovering"
+    || value === "completed"
+    || value === "failed"
+    || value === "stopped_by_operator"
+    || value === "safety_blocked";
+}
+
+function isSupervisedAutonomySafetyScope(value: unknown): value is SupervisedAutonomySafetyScope {
+  return value === "bounded_runtime_only"
+    || value === "bounded_multi_agent_runtime"
+    || value === "bounded_execution_only";
+}
+
+function isSupervisedAutonomyApprovalPolicy(value: unknown): value is SupervisedAutonomyApprovalPolicy {
+  return value === "operator_must_approve_start"
+    || value === "operator_must_approve_sensitive"
+    || value === "preapproved_with_limits";
+}
+
+function isSupervisedAutonomyRecoveryPolicy(value: unknown): value is SupervisedAutonomyRecoveryPolicy {
+  return value === "retry_once"
+    || value === "pause_chain"
+    || value === "request_operator_review"
+    || value === "stop_session";
+}
+
+function isSupervisedAutonomyRecoveryAction(value: unknown): value is SupervisedAutonomyRecoveryAction {
+  return value === "none"
+    || value === "retry_once"
+    || value === "pause_chain"
+    || value === "mark_agent_blocked"
+    || value === "request_operator_review"
+    || value === "stop_session"
+    || value === "record_failure_event";
+}
+
+function isSupervisedAutonomySafetyStatus(value: unknown): value is SupervisedAutonomySafetyStatus {
+  return value === "passed" || value === "blocked" || value === "review_required";
+}
+
+function isSupervisedAutonomySessionRecord(value: unknown): value is SupervisedAutonomySessionRecord {
+  return Boolean(
+    value
+    && typeof value === "object"
+    && typeof (value as { session_id?: unknown }).session_id === "string"
+    && typeof (value as { runtime_id?: unknown }).runtime_id === "string"
+    && isSupervisedAutonomySessionStatus((value as { status?: unknown }).status)
+    && isIsoTimestamp((value as { started_at?: unknown }).started_at)
+    && (((value as { stopped_at?: unknown }).stopped_at === null) || isIsoTimestamp((value as { stopped_at?: unknown }).stopped_at))
+    && isFiniteNonNegativeInteger((value as { duration_ms?: unknown }).duration_ms)
+    && isFiniteNonNegativeInteger((value as { max_duration_ms?: unknown }).max_duration_ms)
+    && Number((value as { max_duration_ms?: unknown }).max_duration_ms) >= 1
+    && isFiniteNonNegativeInteger((value as { tick_budget?: unknown }).tick_budget)
+    && Number((value as { tick_budget?: unknown }).tick_budget) >= 1
+    && isFiniteNonNegativeInteger((value as { ticks_completed?: unknown }).ticks_completed)
+    && isFiniteNonNegativeInteger((value as { max_chain_count?: unknown }).max_chain_count)
+    && Number((value as { max_chain_count?: unknown }).max_chain_count) >= 1
+    && Array.isArray((value as { agent_ids?: unknown }).agent_ids)
+    && ((value as { agent_ids?: unknown[] }).agent_ids ?? []).every((agentId) => typeof agentId === "string")
+    && Array.isArray((value as { active_chain_ids?: unknown }).active_chain_ids)
+    && ((value as { active_chain_ids?: unknown[] }).active_chain_ids ?? []).every((chainId) => typeof chainId === "string")
+    && Array.isArray((value as { completed_chain_ids?: unknown }).completed_chain_ids)
+    && ((value as { completed_chain_ids?: unknown[] }).completed_chain_ids ?? []).every((chainId) => typeof chainId === "string")
+    && Array.isArray((value as { failed_chain_ids?: unknown }).failed_chain_ids)
+    && ((value as { failed_chain_ids?: unknown[] }).failed_chain_ids ?? []).every((chainId) => typeof chainId === "string")
+    && isSupervisedAutonomySafetyScope((value as { safety_scope?: unknown }).safety_scope)
+    && isSupervisedAutonomyApprovalPolicy((value as { approval_policy?: unknown }).approval_policy)
+    && isSupervisedAutonomyRecoveryPolicy((value as { recovery_policy?: unknown }).recovery_policy)
+    && (((value as { last_checkpoint_at?: unknown }).last_checkpoint_at === null) || isIsoTimestamp((value as { last_checkpoint_at?: unknown }).last_checkpoint_at))
+    && (((value as { stop_reason?: unknown }).stop_reason === null) || typeof (value as { stop_reason?: unknown }).stop_reason === "string")
+    && isSupervisedAutonomyRecoveryAction((value as { last_recovery_action?: unknown }).last_recovery_action)
+    && (((value as { next_scheduled_tick_at?: unknown }).next_scheduled_tick_at === null) || isIsoTimestamp((value as { next_scheduled_tick_at?: unknown }).next_scheduled_tick_at))
+    && (((value as { latest_timeline_event_id?: unknown }).latest_timeline_event_id === null) || typeof (value as { latest_timeline_event_id?: unknown }).latest_timeline_event_id === "string")
+    && typeof (value as { pending_operator_review?: unknown }).pending_operator_review === "boolean"
+  );
+}
+
+function isSupervisedAutonomyCheckpointRecord(value: unknown): value is SupervisedAutonomyCheckpointRecord {
+  return Boolean(
+    value
+    && typeof value === "object"
+    && typeof (value as { checkpoint_id?: unknown }).checkpoint_id === "string"
+    && typeof (value as { session_id?: unknown }).session_id === "string"
+    && isIsoTimestamp((value as { timestamp?: unknown }).timestamp)
+    && isFiniteNonNegativeInteger((value as { tick_index?: unknown }).tick_index)
+    && Array.isArray((value as { agent_states?: unknown }).agent_states)
+    && ((value as { agent_states?: Array<{ agent_id?: unknown; status?: unknown; current_goal_id?: unknown; failure_count?: unknown }> }).agent_states ?? []).every((agentState) => Boolean(
+      agentState
+      && typeof agentState.agent_id === "string"
+      && typeof agentState.status === "string"
+      && (agentState.current_goal_id === null || typeof agentState.current_goal_id === "string")
+      && isFiniteNonNegativeInteger(agentState.failure_count)
+    ))
+    && Array.isArray((value as { active_chains?: unknown }).active_chains)
+    && ((value as { active_chains?: unknown[] }).active_chains ?? []).every((chainId) => typeof chainId === "string")
+    && Array.isArray((value as { queued_goals?: unknown }).queued_goals)
+    && ((value as { queued_goals?: unknown[] }).queued_goals ?? []).every((goalId) => typeof goalId === "string")
+    && Array.isArray((value as { completed_goals?: unknown }).completed_goals)
+    && ((value as { completed_goals?: unknown[] }).completed_goals ?? []).every((goalId) => typeof goalId === "string")
+    && isSupervisedAutonomySafetyStatus((value as { safety_status?: unknown }).safety_status)
+    && (((value as { latest_timeline_event_id?: unknown }).latest_timeline_event_id === null) || typeof (value as { latest_timeline_event_id?: unknown }).latest_timeline_event_id === "string")
+  );
+}
+
 function isStoredContinuousLoopConfig(value: unknown): value is StoredContinuousLoopConfig {
   return Boolean(
     value
@@ -604,6 +725,12 @@ function isOperatorDashboardState(value: unknown): value is OperatorDashboardSta
     && (((value as { execution_chains?: unknown }).execution_chains === undefined)
       || (Array.isArray((value as { execution_chains?: unknown }).execution_chains)
         && ((value as { execution_chains?: unknown[] }).execution_chains ?? []).every(isExecutionChainRecord)))
+    && (((value as { supervised_session?: unknown }).supervised_session === undefined)
+      || ((value as { supervised_session?: unknown }).supervised_session === null)
+      || isSupervisedAutonomySessionRecord((value as { supervised_session?: unknown }).supervised_session))
+    && (((value as { supervised_checkpoints?: unknown }).supervised_checkpoints === undefined)
+      || (Array.isArray((value as { supervised_checkpoints?: unknown }).supervised_checkpoints)
+        && ((value as { supervised_checkpoints?: unknown[] }).supervised_checkpoints ?? []).every(isSupervisedAutonomyCheckpointRecord)))
     && isIsoTimestamp((value as { last_updated_at?: unknown }).last_updated_at),
   );
 }
@@ -661,6 +788,12 @@ function validateRecordShape(record: unknown): RuntimeStateRecord {
   }
   if (candidate.execution_chains !== null && candidate.execution_chains !== undefined && (!Array.isArray(candidate.execution_chains) || !candidate.execution_chains.every(isExecutionChainRecord))) {
     throw new Error("Runtime state record execution_chains must be null or valid execution chain snapshots.");
+  }
+  if (candidate.supervised_session !== null && candidate.supervised_session !== undefined && !isSupervisedAutonomySessionRecord(candidate.supervised_session)) {
+    throw new Error("Runtime state record supervised_session must be null or a valid supervised autonomy session snapshot.");
+  }
+  if (candidate.supervised_checkpoints !== null && candidate.supervised_checkpoints !== undefined && (!Array.isArray(candidate.supervised_checkpoints) || !candidate.supervised_checkpoints.every(isSupervisedAutonomyCheckpointRecord))) {
+    throw new Error("Runtime state record supervised_checkpoints must be null or valid supervised autonomy checkpoints.");
   }
   if (candidate.operator_dashboard_state !== null && candidate.operator_dashboard_state !== undefined && !isOperatorDashboardState(candidate.operator_dashboard_state)) {
     throw new Error("Runtime state record operator_dashboard_state must be null or a valid operator dashboard snapshot.");
@@ -807,6 +940,8 @@ export function saveRuntimeState(
       now: serviceState.stopped_at ?? serviceState.last_tick_at ?? serviceState.started_at ?? serviceState.created_at,
     }),
     execution_chains: existingRecord?.execution_chains ?? [],
+    supervised_session: existingRecord?.supervised_session ?? null,
+    supervised_checkpoints: existingRecord?.supervised_checkpoints ?? [],
     operator_dashboard_state: existingRecord?.operator_dashboard_state ?? null,
     persisted_at: serviceState.stopped_at
       ?? serviceState.last_tick_at

@@ -15,6 +15,10 @@ import {
 } from "./operatorRuntimeStateProvider";
 import type { OperatorRuntimeStateProviderResult } from "./operatorRuntimeStateContract";
 import { createRuntimeStateStore, loadRuntimeState, persistRuntimeStateRecord, saveRuntimeState } from "./runtimeStateStore";
+import {
+  createSupervisedAutonomyCheckpointId,
+  createSupervisedAutonomySessionId,
+} from "./supervisedAutonomySession";
 
 function createStoppedService() {
   const service = createBackgroundRuntimeService({
@@ -253,6 +257,74 @@ test("provider maps persisted continuous loop history into runtime observability
   assert.equal(result.dashboard_state?.agent_runtime?.idle_agents.length, 4);
   assert.equal(result.dashboard_state?.agent_runtime?.agents[0]?.last_event_summary?.includes("planner-agent"), true);
   assert.equal(result.dashboard_state?.execution_chains?.[0]?.chain_id, "execution-chain-goal-a-20260426120200");
+});
+
+test("provider projects supervised session and checkpoint state", () => {
+  const store = createRuntimeStateStore({ stale_after_ms: 10 * 60 * 1000 });
+  const service = createStoppedService();
+  const record = saveRuntimeState(store, service, "operator_away_safe");
+  const currentRecord = loadRuntimeState(store, record.runtime_id);
+
+  if (!currentRecord) {
+    throw new Error("Expected persisted runtime record.");
+  }
+
+  const sessionId = createSupervisedAutonomySessionId(record.runtime_id, "2026-04-28T16:00:00.000Z");
+  currentRecord.supervised_session = {
+    session_id: sessionId,
+    runtime_id: record.runtime_id,
+    status: "paused",
+    started_at: "2026-04-28T16:00:00.000Z",
+    stopped_at: null,
+    duration_ms: 120_000,
+    max_duration_ms: 28_800_000,
+    tick_budget: 12,
+    ticks_completed: 2,
+    max_chain_count: 8,
+    agent_ids: ["planner-agent", "executor-agent", "validator-agent", "reporter-agent"],
+    active_chain_ids: ["execution-chain-goal-a"],
+    completed_chain_ids: ["execution-chain-goal-bootstrap"],
+    failed_chain_ids: [],
+    safety_scope: "bounded_multi_agent_runtime",
+    approval_policy: "operator_must_approve_start",
+    recovery_policy: "request_operator_review",
+    last_checkpoint_at: "2026-04-28T16:02:00.000Z",
+    stop_reason: null,
+    last_recovery_action: "request_operator_review",
+    next_scheduled_tick_at: "2026-04-28T16:03:00.000Z",
+    latest_timeline_event_id: "tick-2",
+    pending_operator_review: true,
+  };
+  currentRecord.supervised_checkpoints = [{
+    checkpoint_id: createSupervisedAutonomyCheckpointId(sessionId, "2026-04-28T16:02:00.000Z", 2),
+    session_id: sessionId,
+    timestamp: "2026-04-28T16:02:00.000Z",
+    tick_index: 2,
+    agent_states: [{
+      agent_id: "executor-agent",
+      status: "paused",
+      current_goal_id: "goal-a",
+      failure_count: 1,
+    }],
+    active_chains: ["execution-chain-goal-a"],
+    queued_goals: ["goal-b"],
+    completed_goals: ["goal-bootstrap"],
+    safety_status: "review_required",
+    latest_timeline_event_id: "tick-2",
+  }];
+  persistRuntimeStateRecord(store, currentRecord);
+
+  const result = loadLiveOperatorDashboardState({
+    runtime_state_store: store,
+    runtime_id: record.runtime_id,
+    now: "2026-04-28T16:03:00.000Z",
+  });
+
+  assert.equal(result.dashboard_state?.supervised_session?.session_id, sessionId);
+  assert.equal(result.dashboard_state?.supervised_session?.status, "paused");
+  assert.equal(result.dashboard_state?.supervised_session?.pending_operator_review, true);
+  assert.equal(result.dashboard_state?.supervised_checkpoints?.length, 1);
+  assert.equal(result.dashboard_state?.supervised_checkpoints?.[0]?.safety_status, "review_required");
 });
 
 test("provider does not treat timestamp-only runtime observations as semantic progress", () => {
