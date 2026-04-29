@@ -10,7 +10,7 @@ type ExecutionPlan = {
 };
 
 type ExecutionReceipt = {
-  status: "invalid" | "awaiting_approval" | "approved_for_dry_run";
+  status: "invalid" | "awaiting_approval" | "approved_for_dry_run" | "denied";
   receiptId: string;
   receiptTimestamp: string;
   approvalId?: string;
@@ -18,7 +18,7 @@ type ExecutionReceipt = {
   plan: ExecutionPlan;
 };
 
-type ApprovalState = "pending" | "approved";
+type ApprovalState = "pending" | "approved" | "denied";
 
 const ALLOWED_ACTIONS = ["inspect_codebase", "target_engine", "check_null_references"];
 
@@ -98,6 +98,17 @@ function buildReceipt(plan: ExecutionPlan, approvalState: ApprovalState): Execut
       receiptId,
       receiptTimestamp,
       approvalId: "approval_local_0001",
+      plan,
+    };
+  }
+
+  if (plan.requiresApproval && approvalState === "denied") {
+    return {
+      status: "denied",
+      receiptId,
+      receiptTimestamp,
+      approvalId: "approval_local_0001",
+      reason: "Execution plan was explicitly denied.",
       plan,
     };
   }

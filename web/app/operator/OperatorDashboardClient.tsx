@@ -196,6 +196,24 @@ function ActionButton({
   );
 }
 
+function StudioMetricCard({
+  label,
+  value,
+  detail,
+}: {
+  label: string;
+  value: string;
+  detail: string;
+}) {
+  return (
+    <article className="rounded-[1.5rem] border border-ink/10 bg-white/80 p-4">
+      <p className="text-xs uppercase tracking-[0.18em] text-slate">{label}</p>
+      <p className="mt-2 headline text-3xl font-semibold text-ink">{value}</p>
+      <p className="mt-2 text-sm leading-7 body-muted">{detail}</p>
+    </article>
+  );
+}
+
 function GoalRow({
   goal,
   children,
@@ -681,6 +699,7 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
   }, [providerResult.source, router]);
 
   const dashboardState: OperatorDashboardState | null = providerResult.dashboard_state;
+  const studioOperations = dashboardState?.studio_operations ?? null;
   const latestCheckpoint = dashboardState?.supervised_checkpoints?.slice(-1)[0] ?? null;
   const activeSession = dashboardState?.supervised_session ?? null;
 
@@ -789,6 +808,127 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
             </div>
           </div>
         </section>
+
+        <SectionCard eyebrow="0" title="Studio Command Center">
+          {studioOperations ? (
+            <div className="space-y-6">
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                <StudioMetricCard
+                  label="Studio Status"
+                  value={studioOperations.studio_status.replace(/_/g, " ")}
+                  detail={`Health score ${studioOperations.health_score} with ${studioOperations.resource_pressure} resource pressure.`}
+                />
+                <StudioMetricCard
+                  label="Sessions"
+                  value={`${studioOperations.active_session_count}`}
+                  detail={`${studioOperations.blocked_session_count} blocked • ${studioOperations.paused_session_count} paused`}
+                />
+                <StudioMetricCard
+                  label="Review Queue"
+                  value={`${studioOperations.pending_review_count}`}
+                  detail={`${studioOperations.pending_delivery_count} pending deliveries and ${studioOperations.active_delivery_count} active delivery items.`}
+                />
+                <StudioMetricCard
+                  label="Execution Chains"
+                  value={`${studioOperations.active_chain_count}`}
+                  detail={`${studioOperations.blocked_chain_count} blocked chains currently need attention.`}
+                />
+              </div>
+
+              <div className="grid gap-6 lg:grid-cols-[1.4fr_1fr]">
+                <div className="space-y-4 rounded-[1.5rem] border border-ink/10 bg-white/80 p-5">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="text-xs uppercase tracking-[0.18em] text-slate">Top Risks</p>
+                      <h3 className="headline mt-2 text-xl font-semibold text-ink">Whole-system health at a glance.</h3>
+                    </div>
+                    <StatusBadge status={studioOperations.resource_pressure} />
+                  </div>
+                  <div className="space-y-3">
+                    {studioOperations.recent_risks.length > 0 ? studioOperations.recent_risks.map((risk) => (
+                      <article key={risk.id} className="rounded-[1.25rem] border border-ink/10 bg-white p-4">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <StatusBadge status={risk.severity} />
+                          <p className="text-xs uppercase tracking-[0.18em] text-slate">{risk.source.replace(/_/g, " ")}</p>
+                        </div>
+                        <p className="mt-3 text-sm leading-7 body-muted">{risk.summary}</p>
+                      </article>
+                    )) : <p className="text-sm leading-7 body-muted">No studio risks are currently recorded.</p>}
+                  </div>
+                </div>
+
+                <div className="space-y-4 rounded-[1.5rem] border border-ink/10 bg-white/80 p-5">
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.18em] text-slate">Recommended Operator Actions</p>
+                    <h3 className="headline mt-2 text-xl font-semibold text-ink">Safe command-center controls.</h3>
+                  </div>
+                  <div className="space-y-3">
+                    {studioOperations.recommended_operator_actions.length > 0 ? studioOperations.recommended_operator_actions.map((item) => (
+                      <article key={item.action} className="rounded-[1.25rem] border border-ink/10 bg-white p-4">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <StatusBadge status={item.priority} />
+                          <p className="text-xs uppercase tracking-[0.18em] text-slate">{item.action.replace(/_/g, " ")}</p>
+                        </div>
+                        <p className="mt-3 text-sm leading-7 body-muted">{item.reason}</p>
+                      </article>
+                    )) : <p className="text-sm leading-7 body-muted">No recommended operator actions are currently recorded.</p>}
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid gap-6 lg:grid-cols-2">
+                <section className="rounded-[1.5rem] border border-ink/10 bg-white/80 p-5">
+                  <p className="text-xs uppercase tracking-[0.18em] text-slate">Priority Work</p>
+                  <div className="mt-4 space-y-3">
+                    {studioOperations.top_priority_work.length > 0 ? studioOperations.top_priority_work.map((item) => (
+                      <article key={`${item.kind}-${item.id}`} className="rounded-[1.25rem] border border-ink/10 bg-white p-4">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <StatusBadge status={item.priority} />
+                          <StatusBadge status={item.status} />
+                          <p className="text-xs uppercase tracking-[0.18em] text-slate">{item.kind}</p>
+                        </div>
+                        <h3 className="headline mt-3 text-lg font-semibold text-ink">{item.title}</h3>
+                        <p className="mt-2 text-sm leading-7 body-muted">{item.summary}</p>
+                      </article>
+                    )) : <p className="text-sm leading-7 body-muted">No priority work is currently active.</p>}
+                  </div>
+                </section>
+
+                <section className="rounded-[1.5rem] border border-ink/10 bg-white/80 p-5">
+                  <p className="text-xs uppercase tracking-[0.18em] text-slate">Command Center Controls</p>
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <ActionButton label="Pause All Sessions" onClick={() => handleAction({ type: "pause_all_sessions" })} disabled={isPending} tone="warning" />
+                    <ActionButton label="Resume Safe Sessions" onClick={() => handleAction({ type: "resume_safe_sessions" })} disabled={isPending} tone="accent" />
+                    <ActionButton label="Prioritize Review Queue" onClick={() => handleAction({ type: "prioritize_review_queue" })} disabled={isPending} />
+                    <ActionButton label="Prioritize Delivery Queue" onClick={() => handleAction({ type: "prioritize_delivery_queue" })} disabled={isPending} />
+                    <ActionButton label="Acknowledge Studio Risk" onClick={() => handleAction({ type: "acknowledge_studio_risk" })} disabled={isPending} />
+                    <ActionButton label="Request Studio Summary" onClick={() => handleAction({ type: "request_studio_summary" })} disabled={isPending} />
+                  </div>
+                  <p className="mt-4 text-sm leading-7 body-muted">
+                    These controls are operator-gated. They only reprioritize, pause, resume, acknowledge, or summarize persisted runtime state and do not trigger hidden execution.
+                  </p>
+                  <p className="mt-3 text-xs text-slate">
+                    Risk acknowledgements: {dashboardState?.studio_risk_acknowledgements?.length ?? 0}
+                    {dashboardState?.studio_risk_acknowledgements?.[0]?.acknowledged_at ? ` • Latest at ${dashboardState.studio_risk_acknowledgements[0].acknowledged_at}` : ""}
+                  </p>
+                  {dashboardState?.studio_summary_package ? (
+                    <article className="mt-4 rounded-[1.25rem] border border-ink/10 bg-white p-4">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <h3 className="headline text-lg font-semibold text-ink">Studio Summary</h3>
+                        <p className="text-xs uppercase tracking-[0.18em] text-slate">Requested {dashboardState.studio_summary_package.requested_at}</p>
+                      </div>
+                      <p className="mt-3 text-sm leading-7 body-muted">{dashboardState.studio_summary_package.narrative}</p>
+                      <p className="mt-3 text-xs text-slate">Next action: {dashboardState.studio_summary_package.recommended_next_operator_action.replace(/_/g, " ")}</p>
+                      <p className="mt-1 text-xs text-slate">Latest validation/proof: {dashboardState.studio_summary_package.latest_validation_status ?? "none recorded"}</p>
+                    </article>
+                  ) : null}
+                </section>
+              </div>
+            </div>
+          ) : (
+            <p className="text-sm leading-7 body-muted">Studio command-center health is not available for the current operator state source.</p>
+          )}
+        </SectionCard>
 
         <div className="grid gap-6 lg:grid-cols-2">
           <SectionCard eyebrow="1" title="Active Goal">

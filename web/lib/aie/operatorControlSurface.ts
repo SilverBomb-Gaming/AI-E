@@ -16,7 +16,9 @@ import type {
   AutonomousWorkItem,
   AutonomousWorkItemPolicyFeedback,
 } from "./autonomousWorkPlanning";
+import { aggregateStudioHealthFromDashboardState } from "./studioHealthAggregator";
 import type { AutonomousSessionPriority } from "./autonomousSessionRegistry";
+import { createStudioOperationsSummary } from "./studioOperationsSummary";
 import {
   createOvernightAutonomyPolicyId,
   createSupervisedAutonomySessionId,
@@ -25,7 +27,7 @@ import {
   type SupervisedAutonomyRecoveryPolicy,
 } from "./supervisedAutonomySession";
 
-export type OperatorControlActionType = "approve_goal" | "pause_goal" | "resume_goal" | "retry_goal" | "pause_autonomous_session" | "resume_autonomous_session" | "reprioritize_autonomous_session" | "merge_autonomous_sessions" | "terminate_autonomous_session" | "start_supervised_session" | "pause_session" | "resume_session" | "stop_session" | "request_operator_review" | "approve_review_item" | "reject_review_item" | "defer_review_item" | "approve_work_item" | "reject_work_item" | "defer_work_item" | "approve_review_package" | "reject_review_package" | "approve_delivery_package" | "reject_delivery_package" | "request_delivery_changes" | "archive_delivery_package";
+export type OperatorControlActionType = "approve_goal" | "pause_goal" | "resume_goal" | "retry_goal" | "pause_all_sessions" | "resume_safe_sessions" | "prioritize_review_queue" | "prioritize_delivery_queue" | "acknowledge_studio_risk" | "request_studio_summary" | "pause_autonomous_session" | "resume_autonomous_session" | "reprioritize_autonomous_session" | "merge_autonomous_sessions" | "terminate_autonomous_session" | "start_supervised_session" | "pause_session" | "resume_session" | "stop_session" | "request_operator_review" | "approve_review_item" | "reject_review_item" | "defer_review_item" | "approve_work_item" | "reject_work_item" | "defer_work_item" | "approve_review_package" | "reject_review_package" | "approve_delivery_package" | "reject_delivery_package" | "request_delivery_changes" | "archive_delivery_package";
 
 export type SupervisedSessionControlInput = {
   max_duration_ms?: number;
@@ -227,6 +229,21 @@ function cloneState(state: OperatorDashboardState): OperatorDashboardState {
       coordination_groups: state.autonomous_sessions.coordination_groups.map((group) => ({ ...group, session_ids: [...group.session_ids] })),
       coordination_dependencies: state.autonomous_sessions.coordination_dependencies.map((dependency) => ({ ...dependency })),
     } : undefined,
+    studio_operations: state.studio_operations ? {
+      ...state.studio_operations,
+      top_priority_work: state.studio_operations.top_priority_work.map((item) => ({ ...item })),
+      recent_risks: state.studio_operations.recent_risks.map((item) => ({ ...item })),
+      recommended_operator_actions: state.studio_operations.recommended_operator_actions.map((item) => ({ ...item })),
+    } : undefined,
+    studio_risk_acknowledgements: state.studio_risk_acknowledgements?.map((item) => ({ ...item })),
+    studio_summary_package: state.studio_summary_package ? {
+      ...state.studio_summary_package,
+      what_is_running: [...state.studio_summary_package.what_is_running],
+      what_is_blocked: [...state.studio_summary_package.what_is_blocked],
+      what_needs_review: [...state.studio_summary_package.what_needs_review],
+      what_is_delivery_ready: [...state.studio_summary_package.what_is_delivery_ready],
+      risks: [...state.studio_summary_package.risks],
+    } : state.studio_summary_package,
     supervised_session: state.supervised_session ? {
       ...state.supervised_session,
       agent_ids: [...state.supervised_session.agent_ids],
@@ -266,6 +283,44 @@ function nextTimestamp(state: OperatorDashboardState): string {
 
 function updateLastUpdated(state: OperatorDashboardState): void {
   state.last_updated_at = nextTimestamp(state);
+  state.studio_operations = aggregateStudioHealthFromDashboardState(state);
+  if (state.studio_summary_package) {
+    state.studio_summary_package = createStudioOperationsSummary(state, state.studio_summary_package.requested_at);
+  }
+}
+
+function reviewPackagePriority(item: AutonomousReviewPackage): number {
+  if (item.status === "pending") {
+    return item.recommended_decision === "approve" ? 0 : 1;
+  }
+  if (item.status === "deferred" || item.status === "request_changes") {
+    return 2;
+  }
+  return 3;
+}
+
+function deliveryPackagePriority(item: AutonomousDeliveryPackage): number {
+  if (item.status === "approved_for_commit") {
+    return 0;
+  }
+  if (item.status === "pr_ready" || item.status === "pr_opened") {
+    return 1;
+  }
+  if (item.status === "awaiting_operator_approval") {
+    return 2;
+  }
+  return 3;
+}
+
+function canResumeSafeSession(state: OperatorDashboardState, sessionId: string): boolean {
+  const session = state.autonomous_sessions?.sessions.find((candidate) => candidate.session_id === sessionId) ?? null;
+  if (!session || session.status !== "paused") {
+    return false;
+  }
+  if (session.blocked_by_conflict || session.tick_budget_remaining <= 0) {
+    return false;
+  }
+  return true;
 }
 
 function recalculateAutonomousSessionSummary(state: OperatorDashboardState): void {
@@ -868,6 +923,191 @@ export function applyOperatorControlAction(state: OperatorDashboardState, action
         action,
         changed: true,
         message: "The blocked goal was returned to the queue for retry.",
+        state: nextState,
+      };
+    }
+
+    case "pause_all_sessions": {
+      let changed = false;
+      for (const session of nextState.autonomous_sessions?.sessions ?? []) {
+        if (session.status === "running" || session.status === "pending") {
+          session.status = "paused";
+          session.is_runnable = false;
+          session.blocked_by_conflict = false;
+          changed = true;
+        }
+      }
+      if (nextState.supervised_session && ["running", "recovering", "pending_approval"].includes(nextState.supervised_session.status)) {
+        nextState.supervised_session = {
+          ...nextState.supervised_session,
+          status: "paused",
+          next_scheduled_tick_at: null,
+          pending_operator_review: false,
+        };
+        changed = true;
+      }
+      if (nextState.active_goal) {
+        nextState.paused_goals = [
+          markGoal(nextState.active_goal, {
+            status: "paused",
+            explanation: "Paused by the studio command center.",
+            recommended_action: "Resume this goal through the command center when it is safe to continue.",
+            last_updated_at: nextTimestamp(nextState),
+          }),
+          ...nextState.paused_goals.filter((goal) => goal.goal_id !== nextState.active_goal?.goal_id),
+        ];
+        nextState.active_goal = null;
+        changed = true;
+      }
+      if (!changed) {
+        return {
+          action,
+          changed: false,
+          message: "All autonomous sessions are already paused or idle.",
+          state: nextState,
+        };
+      }
+      recalculateAutonomousSessionSummary(nextState);
+      nextState.runtime_status = {
+        status: "runtime_paused",
+        explanation: "The studio command center paused all runnable sessions.",
+      };
+      nextState.session_status = {
+        status: "session_paused",
+        explanation: "All safe session execution is paused until the operator resumes it.",
+      };
+      updateLastUpdated(nextState);
+      return {
+        action,
+        changed: true,
+        message: "All runnable sessions were paused through the studio command center.",
+        state: nextState,
+      };
+    }
+
+    case "resume_safe_sessions": {
+      let resumedCount = 0;
+      for (const session of nextState.autonomous_sessions?.sessions ?? []) {
+        if (canResumeSafeSession(nextState, session.session_id)) {
+          session.status = "pending";
+          session.is_runnable = true;
+          session.blocked_by_conflict = false;
+          resumedCount += 1;
+        }
+      }
+      if (nextState.supervised_session
+        && nextState.supervised_session.status === "paused"
+        && nextState.approvals_required.length === 0
+        && !nextState.supervised_session.pending_operator_review) {
+        nextState.supervised_session = {
+          ...nextState.supervised_session,
+          status: "running",
+          next_scheduled_tick_at: nextTimestamp(nextState),
+        };
+        resumedCount += 1;
+      }
+      if (resumedCount === 0) {
+        return {
+          action,
+          changed: false,
+          message: "No paused safe sessions are available to resume.",
+          state: nextState,
+        };
+      }
+      recalculateAutonomousSessionSummary(nextState);
+      nextState.runtime_status = {
+        status: "runtime_ready",
+        explanation: "The studio command center resumed safe paused sessions.",
+      };
+      nextState.session_status = {
+        status: "session_running",
+        explanation: `${resumedCount} paused session${resumedCount === 1 ? " was" : "s were"} resumed after safety checks.`,
+      };
+      updateLastUpdated(nextState);
+      return {
+        action,
+        changed: true,
+        message: `${resumedCount} safe paused session${resumedCount === 1 ? " was" : "s were"} resumed.`,
+        state: nextState,
+      };
+    }
+
+    case "prioritize_review_queue": {
+      const reviewPackages = nextState.review_packages ?? [];
+      if (reviewPackages.length === 0) {
+        return {
+          action,
+          changed: false,
+          message: "No review packages are available to reprioritize.",
+          state: nextState,
+        };
+      }
+      nextState.review_packages = [...reviewPackages].sort((left, right) => {
+        return reviewPackagePriority(left) - reviewPackagePriority(right) || left.work_item_id.localeCompare(right.work_item_id);
+      });
+      updateLastUpdated(nextState);
+      return {
+        action,
+        changed: true,
+        message: "The review queue was reprioritized for operator attention.",
+        state: nextState,
+      };
+    }
+
+    case "prioritize_delivery_queue": {
+      const deliveryPackages = nextState.delivery_packages ?? [];
+      if (deliveryPackages.length === 0) {
+        return {
+          action,
+          changed: false,
+          message: "No delivery packages are available to reprioritize.",
+          state: nextState,
+        };
+      }
+      nextState.delivery_packages = [...deliveryPackages].sort((left, right) => {
+        return deliveryPackagePriority(left) - deliveryPackagePriority(right) || left.work_item_id.localeCompare(right.work_item_id);
+      });
+      updateLastUpdated(nextState);
+      return {
+        action,
+        changed: true,
+        message: "The delivery queue was reprioritized for operator action.",
+        state: nextState,
+      };
+    }
+
+    case "acknowledge_studio_risk": {
+      const topRisk = nextState.studio_operations?.recent_risks[0] ?? aggregateStudioHealthFromDashboardState(nextState).recent_risks[0] ?? null;
+      if (!topRisk) {
+        return {
+          action,
+          changed: false,
+          message: "No studio risk is currently available to acknowledge.",
+          state: nextState,
+        };
+      }
+      const acknowledgedAt = nextTimestamp(nextState);
+      const acknowledgements = nextState.studio_risk_acknowledgements ?? [];
+      const alreadyAcknowledged = acknowledgements.some((item) => item.risk_id === topRisk.id);
+      nextState.studio_risk_acknowledgements = alreadyAcknowledged
+        ? acknowledgements.map((item) => item.risk_id === topRisk.id ? { ...item, acknowledged_at: acknowledgedAt } : item)
+        : [{ risk_id: topRisk.id, acknowledged_at: acknowledgedAt }, ...acknowledgements];
+      updateLastUpdated(nextState);
+      return {
+        action,
+        changed: true,
+        message: `Studio risk ${topRisk.id} was acknowledged.`,
+        state: nextState,
+      };
+    }
+
+    case "request_studio_summary": {
+      nextState.studio_summary_package = createStudioOperationsSummary(nextState, nextTimestamp(nextState));
+      updateLastUpdated(nextState);
+      return {
+        action,
+        changed: true,
+        message: "A fresh studio summary package was generated from live operator state.",
         state: nextState,
       };
     }

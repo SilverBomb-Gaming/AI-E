@@ -28,7 +28,7 @@ export type ContinuousRuntimeProofSeedPayload = {
   store: RuntimeStateStore;
 };
 
-export type ContinuousRuntimeProofSeedMode = "continuous-runtime" | "supervised-autonomy" | "overnight-autonomy" | "autonomous-planning" | "delivery-pipeline" | "multi-session";
+export type ContinuousRuntimeProofSeedMode = "continuous-runtime" | "supervised-autonomy" | "overnight-autonomy" | "autonomous-planning" | "delivery-pipeline" | "multi-session" | "studio-command-center";
 
 export type ContinuousRuntimeProofSeedOptions = {
   runtimeId?: string;
@@ -116,6 +116,7 @@ export function createContinuousRuntimeProofSeedPayload(options: ContinuousRunti
       ? 1_000
       : mode === "autonomous-planning"
         || mode === "multi-session"
+        || mode === "studio-command-center"
         || mode === "delivery-pipeline"
         ? 250
         : 10_000,
@@ -123,6 +124,7 @@ export function createContinuousRuntimeProofSeedPayload(options: ContinuousRunti
       ? 3
       : mode === "autonomous-planning"
         || mode === "multi-session"
+        || mode === "studio-command-center"
         || mode === "delivery-pipeline"
         ? 4
         : 1,
@@ -476,6 +478,123 @@ export function createContinuousRuntimeProofSeedPayload(options: ContinuousRunti
       autonomous_sessions: demoState.autonomous_sessions,
       supervised_session: undefined,
       supervised_checkpoints: [],
+      last_updated_at: seededAt,
+    };
+    currentRecord.supervised_session = null;
+    currentRecord.supervised_checkpoints = [];
+  }
+
+  if (mode === "studio-command-center") {
+    const seededAt = new Date(nowMs).toISOString();
+    const demoState = createOperatorDashboardDemoState();
+    const reviewPackage = createAutonomousReviewPackage({
+      package_id: "studio-review-package-1",
+      work_item_id: "studio-review-work-item",
+      chain_id: "studio-review-chain",
+      status: "pending",
+      summary: "A bounded review package is waiting behind a blocked studio lane.",
+      files_changed: ["web/app/operator/OperatorDashboardClient.tsx"],
+      tests_run: ["npx tsx --test lib/aie/studioHealthAggregator.test.ts"],
+      proof_results: ["proof:multi-session:safe -> proof_passed"],
+      risks: ["A blocked bugfix session still needs operator attention."],
+      recommended_decision: "approve",
+      rollback_notes: "Revert the bounded studio dashboard patch and restore the last approved runtime state.",
+      operator_actions: ["approve", "reject", "defer", "request_changes", "open_pr", "archive"],
+    });
+    const deliveryPackage = createAutonomousDeliveryPackage({
+      delivery_package_id: "studio-delivery-package-1",
+      review_package_id: reviewPackage.package_id,
+      work_item_id: "studio-delivery-work-item",
+      chain_id: "studio-delivery-chain",
+      branch_name: "autonomy/studio-delivery-work-item",
+      commit_plan: [
+        "Stage the bounded studio command-center changes.",
+        "Capture trace and proof evidence before delivery approval.",
+        "Prepare rollback notes for operator signoff.",
+      ],
+      files_changed: ["web/app/operator/OperatorDashboardClient.tsx", "web/lib/aie/studioHealthAggregator.ts"],
+      validation_results: ["npx tsx --test lib/aie/runtimeMutationExecutor.test.ts lib/aie/safeRuntimeActionBridge.test.ts"],
+      proof_results: ["proof:delivery-pipeline:safe -> proof_passed"],
+      risk_summary: "Delivery is pending while the studio command center still shows blocked runtime work.",
+      rollback_plan: "Revert the studio command-center patch and restore the last approved runtime state.",
+      release_notes: "Delivery-ready bounded studio command-center patch awaiting operator approval.",
+      recommended_pr_title: "AI-E: deliver studio command center",
+      recommended_pr_body: "Summary: Delivery-ready bounded studio command-center patch awaiting operator approval.",
+      operator_decision: null,
+      status: "awaiting_operator_approval",
+      created_at: seededAt,
+      updated_at: seededAt,
+    });
+
+    currentRecord.last_status = "service_idle";
+    currentRecord.stop_reason = "not_started";
+    currentRecord.blockers = [];
+    currentRecord.continuous_loop.reason = "Continuous runtime loop is ready for bounded studio command-center operator supervision.";
+    currentRecord.operator_dashboard_state = {
+      ...currentRecord.operator_dashboard_state,
+      active_goal: null,
+      queued_goals: demoState.queued_goals,
+      blocked_goals: demoState.blocked_goals,
+      completed_goals: demoState.completed_goals,
+      paused_goals: [],
+      dependency_blockers: demoState.dependency_blockers,
+      conflict_blockers: demoState.conflict_blockers,
+      recent_failures: demoState.recent_failures,
+      recovery_recommendations: demoState.recovery_recommendations,
+      approvals_required: [],
+      validation_issues: [],
+      runtime_status: {
+        status: "runtime_ready",
+        explanation: "The studio command center is supervising the bounded runtime from live persisted state.",
+      },
+      session_status: {
+        status: "session_running",
+        explanation: "One autonomous session is runnable while another is blocked for operator attention.",
+      },
+      queue_status: {
+        status: "queue_running",
+        explanation: "Studio work is bounded by review, delivery, and multi-session safety gates.",
+      },
+      scheduler_status: {
+        status: "goal_selected",
+        explanation: "The studio command center is highlighting the next operator-safe decision.",
+      },
+      runtime_observability: {
+        ...currentRecord.operator_dashboard_state.runtime_observability,
+        current_tick: 0,
+        next_scheduled_action: "Review the blocked session, the pending review package, and the pending delivery queue before resuming safe work.",
+        latest_safety_gate_decision: "passed",
+      },
+      proposed_work_items: demoState.proposed_work_items,
+      scheduled_work_items: demoState.scheduled_work_items,
+      running_work_items: demoState.running_work_items,
+      review_packages: [reviewPackage],
+      delivery_packages: [deliveryPackage],
+      planning_recommendations: demoState.planning_recommendations,
+      planning_policy_feedback: demoState.planning_policy_feedback ?? createAutonomousWorkItemPolicyFeedback(),
+      autonomous_sessions: demoState.autonomous_sessions ? {
+        ...demoState.autonomous_sessions,
+        sessions: demoState.autonomous_sessions.sessions.map((session) => session.session_id === "demo-session-feature-ui"
+          ? {
+            ...session,
+            status: "running",
+            blocked_by_conflict: false,
+            ready_on_dependency: true,
+          }
+          : {
+            ...session,
+            status: "blocked",
+            blocked_by_conflict: true,
+            ready_on_dependency: false,
+          }),
+        blocked_session_ids: ["demo-session-bugfix-delivery"],
+        runnable_session_ids: ["demo-session-feature-ui"],
+        ready_session_ids: ["demo-session-feature-ui"],
+      } : undefined,
+      supervised_session: undefined,
+      supervised_checkpoints: [],
+      studio_risk_acknowledgements: [],
+      studio_summary_package: null,
       last_updated_at: seededAt,
     };
     currentRecord.supervised_session = null;

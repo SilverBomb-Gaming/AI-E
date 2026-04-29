@@ -4,6 +4,10 @@ import {
   type WorkSessionStatus,
 } from "./autonomousWorkSession";
 import {
+  projectApprovedWorkItemsToExecution,
+  type AutonomousWorkPlanningProjectionResult,
+} from "./autonomousWorkPlanningExecutor";
+import {
   buildOperatorDashboardState,
   type OperatorDashboardGoal,
   type OperatorDashboardState,
@@ -176,6 +180,16 @@ function collectDistinctGoals(state: OperatorDashboardState): OperatorDashboardG
   return [...goals.values()];
 }
 
+function projectPlanningWork(input: ExecutionLoopControllerInput): AutonomousWorkPlanningProjectionResult {
+  return projectApprovedWorkItemsToExecution({
+    state: input.dashboard_state,
+    timestamp: input.timestamp,
+    max_new_work_items: Math.max(1, input.max_sessions_per_run ?? 1),
+    max_chain_count: input.dashboard_state.supervised_session?.max_chain_count ?? null,
+    existing_chain_count: input.dashboard_state.execution_chains?.length ?? 0,
+  });
+}
+
 function resolveEffectiveStatus(
   goal: OperatorDashboardGoal,
   input: ExecutionLoopControllerInput,
@@ -189,6 +203,20 @@ function resolveEffectiveStatus(
   }
 
   return goal.status;
+}
+
+function preserveDashboardExtensions(
+  dashboardState: OperatorDashboardState,
+  projectedState: OperatorDashboardState,
+): OperatorDashboardState {
+  return {
+    ...dashboardState,
+    autonomous_sessions: projectedState.autonomous_sessions ? structuredClone(projectedState.autonomous_sessions) : projectedState.autonomous_sessions,
+    delivery_packages: projectedState.delivery_packages ? structuredClone(projectedState.delivery_packages) : projectedState.delivery_packages,
+    studio_operations: projectedState.studio_operations ? structuredClone(projectedState.studio_operations) : projectedState.studio_operations,
+    studio_risk_acknowledgements: projectedState.studio_risk_acknowledgements ? structuredClone(projectedState.studio_risk_acknowledgements) : projectedState.studio_risk_acknowledgements,
+    studio_summary_package: projectedState.studio_summary_package ? structuredClone(projectedState.studio_summary_package) : projectedState.studio_summary_package,
+  };
 }
 
 export function runExecutionLoopController(input: ExecutionLoopControllerInput): ExecutionLoopControllerResult {
@@ -212,7 +240,9 @@ export function runExecutionLoopController(input: ExecutionLoopControllerInput):
     };
   }
 
-  const goals = collectDistinctGoals(input.dashboard_state);
+  const planningProjection = projectPlanningWork(input);
+  const projectedState = planningProjection.state;
+  const goals = collectDistinctGoals(projectedState);
   const runnableGoals = goals.filter((goal) => {
     const status = resolveEffectiveStatus(goal, input);
     return status === "active" || status === "pending";
@@ -223,7 +253,7 @@ export function runExecutionLoopController(input: ExecutionLoopControllerInput):
       status: "loop_not_triggered",
       triggered: false,
       reason: "No runnable goals are available for the bounded execution loop.",
-      updated_dashboard_state: input.dashboard_state,
+      updated_dashboard_state: projectedState,
       queue_result: null,
     };
   }
@@ -241,7 +271,7 @@ export function runExecutionLoopController(input: ExecutionLoopControllerInput):
   if (!input.existing_queue) {
     for (const goal of goals) {
       const effectiveStatus = resolveEffectiveStatus(goal, input);
-      const session = buildSessionForGoal(goal, input.dashboard_state, input, effectiveStatus);
+      const session = buildSessionForGoal(goal, projectedState, input, effectiveStatus);
       queue = enqueueBackgroundSession(queue, session, {
         priority: goal.priority as GoalPriority,
         dependency_goal_ids: goal.depends_on_goal_ids,
@@ -252,15 +282,22 @@ export function runExecutionLoopController(input: ExecutionLoopControllerInput):
   }
 
   const queueResult = runBackgroundSessionQueue(queue);
-  const updatedDashboardState = buildOperatorDashboardState({
+  const updatedDashboardState = preserveDashboardExtensions(buildOperatorDashboardState({
     background_queue_result: queueResult,
+    autonomous_work_items: [
+      ...(projectedState.proposed_work_items ?? []),
+      ...(projectedState.scheduled_work_items ?? []),
+      ...(projectedState.running_work_items ?? []),
+    ],
+    review_packages: projectedState.review_packages ?? [],
+    planning_policy_feedback: projectedState.planning_policy_feedback,
     generated_at: input.timestamp,
-  });
+  }), projectedState);
 
   return {
     status: "loop_executed",
     triggered: true,
-    reason: queueResult.next_operator_action,
+    reason: [planningProjection.reason, queueResult.next_operator_action].filter(Boolean).join(" "),
     updated_dashboard_state: updatedDashboardState,
     queue_result: queueResult,
   };

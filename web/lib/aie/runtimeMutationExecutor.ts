@@ -141,6 +141,18 @@ function createActionFromIntent(intent: SafeRuntimeIntent, goalId: string | null
       return { type: "resume_goal", goal_id: goalId ?? null };
     case "mark_goal_retry_requested":
       return { type: "retry_goal", goal_id: goalId ?? null };
+    case "pause_all_sessions":
+      return { type: "pause_all_sessions" };
+    case "resume_safe_sessions":
+      return { type: "resume_safe_sessions" };
+    case "prioritize_review_queue":
+      return { type: "prioritize_review_queue" };
+    case "prioritize_delivery_queue":
+      return { type: "prioritize_delivery_queue" };
+    case "acknowledge_studio_risk":
+      return { type: "acknowledge_studio_risk" };
+    case "request_studio_summary":
+      return { type: "request_studio_summary" };
     case "start_supervised_session":
       return { type: "start_supervised_session" };
     case "pause_supervised_session":
@@ -264,6 +276,50 @@ function validateMutationRequest(
       if (blockedGoal && blockedGoal.blocker_type !== "status" && blockedGoal.blocker_ids.length > 0) {
         return "dependency constraints still block the requested retry mutation";
       }
+      return null;
+    }
+
+    case "pause_all_sessions": {
+      const hasRunnableSession = state.autonomous_sessions?.sessions.some((candidate) => candidate.status === "running" || candidate.status === "pending")
+        || Boolean(state.supervised_session && ["running", "recovering", "pending_approval"].includes(state.supervised_session.status))
+        || Boolean(state.active_goal);
+      if (!hasRunnableSession) {
+        return "no runnable session is available for a studio-wide pause mutation";
+      }
+      return null;
+    }
+
+    case "resume_safe_sessions": {
+      const hasSafePausedSession = state.autonomous_sessions?.sessions.some((candidate) => candidate.status === "paused" && !candidate.blocked_by_conflict && candidate.tick_budget_remaining > 0)
+        || Boolean(state.supervised_session && state.supervised_session.status === "paused" && !state.supervised_session.pending_operator_review && state.approvals_required.length === 0);
+      if (!hasSafePausedSession) {
+        return "no paused safe session is available for a studio-wide resume mutation";
+      }
+      return null;
+    }
+
+    case "prioritize_review_queue": {
+      if ((state.review_packages?.length ?? 0) === 0) {
+        return "no review package is available for the requested studio reprioritization mutation";
+      }
+      return null;
+    }
+
+    case "prioritize_delivery_queue": {
+      if ((state.delivery_packages?.length ?? 0) === 0) {
+        return "no delivery package is available for the requested studio reprioritization mutation";
+      }
+      return null;
+    }
+
+    case "acknowledge_studio_risk": {
+      if ((state.studio_operations?.recent_risks.length ?? 0) === 0 && state.recovery_recommendations.length === 0 && state.validation_issues.length === 0) {
+        return "no studio risk is available for acknowledgement";
+      }
+      return null;
+    }
+
+    case "request_studio_summary": {
       return null;
     }
 
@@ -452,6 +508,20 @@ function applyRecordMetadata(
       break;
     }
 
+    case "pause_all_sessions": {
+      record.last_status = "service_paused";
+      break;
+    }
+
+    case "resume_safe_sessions":
+    case "prioritize_review_queue":
+    case "prioritize_delivery_queue":
+    case "acknowledge_studio_risk":
+    case "request_studio_summary": {
+      record.last_status = "service_idle";
+      break;
+    }
+
     case "start_supervised_session":
     case "resume_supervised_session": {
       record.last_status = "service_idle";
@@ -515,8 +585,15 @@ function appendSupervisedSessionControlEvent(
     || input.runtime_intent === "reprioritize_autonomous_session"
     || input.runtime_intent === "merge_autonomous_sessions"
     || input.runtime_intent === "terminate_autonomous_session";
+  const isStudioIntent = input.runtime_intent === "pause_all_sessions"
+    || input.runtime_intent === "resume_safe_sessions"
+    || input.runtime_intent === "prioritize_review_queue"
+    || input.runtime_intent === "prioritize_delivery_queue"
+    || input.runtime_intent === "acknowledge_studio_risk"
+    || input.runtime_intent === "request_studio_summary";
   const loopState = buildControlLoopState(record);
-  const eventId = `${isAutonomousSessionIntent ? "autonomous-session-control" : "supervised-session-control"}-${sanitizeTimestamp(input.timestamp)}-${input.runtime_intent}`;
+  const eventScope = isStudioIntent ? "studio-command-center-control" : isAutonomousSessionIntent ? "autonomous-session-control" : "supervised-session-control";
+  const eventId = `${eventScope}-${sanitizeTimestamp(input.timestamp)}-${input.runtime_intent}`;
   const runtimeStatus = record.operator_dashboard_state?.runtime_status.status ?? record.last_status;
   const schedulerStatus = record.operator_dashboard_state?.scheduler_status.status ?? "scheduler_idle";
 
@@ -545,6 +622,8 @@ function appendSupervisedSessionControlEvent(
       } : null,
       mutation_applied: isAutonomousSessionIntent
         ? `${input.runtime_intent} persisted for autonomous session state.`
+        : isStudioIntent
+          ? `${input.runtime_intent} persisted for studio command center state.`
         : `${input.runtime_intent} persisted for supervised session state.`,
       safety_gate_result: record.supervised_session?.pending_operator_review ? "blocked" : "not_triggered",
       scheduler_decision: record.operator_dashboard_state?.scheduler_status.explanation ?? null,
@@ -557,6 +636,8 @@ function appendSupervisedSessionControlEvent(
         to_goal_label: record.operator_dashboard_state?.active_goal?.description ?? null,
         summary: isAutonomousSessionIntent
           ? `Autonomous session control event recorded for ${input.runtime_intent}.`
+          : isStudioIntent
+            ? `Studio command center control event recorded for ${input.runtime_intent}.`
           : `Supervised session control event recorded for ${input.runtime_intent}.`,
       },
       semantic_progression: {
@@ -571,6 +652,8 @@ function appendSupervisedSessionControlEvent(
       },
       mutation_summary: isAutonomousSessionIntent
         ? `${input.runtime_intent} recorded for autonomous session state.`
+        : isStudioIntent
+          ? `${input.runtime_intent} recorded for studio command center state.`
         : `${input.runtime_intent} recorded for supervised session.`,
       next_scheduled_action: record.supervised_session?.next_scheduled_tick_at
         ? `Next scheduled tick at ${record.supervised_session.next_scheduled_tick_at}.`
@@ -578,7 +661,7 @@ function appendSupervisedSessionControlEvent(
     }],
   };
 
-  if (record.supervised_session && !isAutonomousSessionIntent) {
+  if (record.supervised_session && !isAutonomousSessionIntent && !isStudioIntent) {
     record.supervised_session.latest_timeline_event_id = eventId;
   }
 }
@@ -665,6 +748,12 @@ export function executeRuntimeMutation(input: RuntimeMutationExecutorInput): Run
 
     if (!input.start_continuous_loop
       || input.runtime_intent === "pause_active_goal"
+      || input.runtime_intent === "pause_all_sessions"
+      || input.runtime_intent === "resume_safe_sessions"
+      || input.runtime_intent === "prioritize_review_queue"
+      || input.runtime_intent === "prioritize_delivery_queue"
+      || input.runtime_intent === "acknowledge_studio_risk"
+      || input.runtime_intent === "request_studio_summary"
       || input.runtime_intent === "pause_autonomous_session"
       || input.runtime_intent === "resume_autonomous_session"
       || input.runtime_intent === "reprioritize_autonomous_session"

@@ -67,6 +67,8 @@ import {
   evaluateSessionCoordination,
   type SessionCoordinatorState,
 } from "./sessionCoordinator";
+import type { StudioOperationsState } from "./studioOperationsState";
+import type { StudioOperationsSummaryPackage } from "./studioOperationsSummary";
 import type {
   SupervisedAutonomyCheckpointRecord,
   SupervisedAutonomySessionRecord,
@@ -307,6 +309,9 @@ export type OperatorDashboardState = {
   planning_recommendations?: OperatorDashboardPlanningRecommendation[];
   planning_policy_feedback?: AutonomousWorkItemPolicyFeedback;
   autonomous_sessions?: OperatorDashboardAutonomousSessionState;
+  studio_operations?: StudioOperationsState;
+  studio_risk_acknowledgements?: import("./studioOperationsState").StudioRiskAcknowledgement[];
+  studio_summary_package?: StudioOperationsSummaryPackage | null;
   supervised_session?: SupervisedAutonomySessionRecord | null;
   supervised_checkpoints?: SupervisedAutonomyCheckpointRecord[];
   last_updated_at: string;

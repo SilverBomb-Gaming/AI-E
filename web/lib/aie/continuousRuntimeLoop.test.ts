@@ -5,6 +5,7 @@ import {
   createBackgroundRuntimeService,
   stopBackgroundRuntimeService,
 } from "./backgroundRuntimeService";
+import { createOperatorDashboardDemoState } from "./operatorDashboardDemoState";
 import type { OperatorDashboardState } from "./operatorDashboardState";
 import {
   createAutonomousWorkItem,
@@ -185,6 +186,46 @@ test("loop runs multiple cycles", () => {
   assert.equal(result.runtime_state?.continuous_loop?.ticks_attempted, result.ticks.length);
   assert.equal(result.runtime_state?.agent_runtime_registry?.agents.length, 4);
   assert.equal((result.runtime_state?.execution_chains ?? []).length >= 1, true);
+});
+
+test("loop preserves studio command-center state slices across bounded ticks", () => {
+  const seeded = createSeededRuntimeRecord((state) => {
+    const demoState = createOperatorDashboardDemoState();
+    state.autonomous_sessions = demoState.autonomous_sessions;
+    state.delivery_packages = demoState.delivery_packages;
+    state.studio_risk_acknowledgements = [{
+      risk_id: "studio-risk-1",
+      acknowledged_at: "2026-04-26T12:00:00.000Z",
+    }];
+    state.studio_summary_package = {
+      requested_at: "2026-04-26T12:00:00.000Z",
+      generated_at: state.last_updated_at,
+      what_is_running: ["Goal: Advance active runtime goal"],
+      what_is_blocked: ["No blocked goals, sessions, or chains are currently recorded."],
+      what_needs_review: ["No operator approvals or review packages are currently waiting."],
+      what_is_delivery_ready: ["Delivery: demo-work-delivery-ready (awaiting_operator_approval)"],
+      risks: ["Studio risk preserved across bounded execution ticks."],
+      recommended_next_operator_action: "request_studio_summary",
+      latest_validation_status: null,
+      narrative: "Studio summary should survive bounded loop execution.",
+    };
+  });
+
+  const result = runContinuousRuntimeLoop(
+    seeded.store,
+    {
+      runtime_id: seeded.record.runtime_id,
+      profile_name: "bounded_batch",
+      started_at: "2026-04-26T12:01:00.000Z",
+    },
+    createContinuousRuntimeLoopClock("2026-04-26T12:01:00.000Z", 60_000),
+  );
+
+  assert.equal(result.ticks.length >= 1, true);
+  assert.equal(result.runtime_state?.operator_dashboard_state?.autonomous_sessions?.sessions.length, 2);
+  assert.equal(result.runtime_state?.operator_dashboard_state?.delivery_packages?.[0]?.work_item_id, "demo-work-delivery-ready");
+  assert.equal(result.runtime_state?.operator_dashboard_state?.studio_risk_acknowledgements?.[0]?.risk_id, "studio-risk-1");
+  assert.equal(result.runtime_state?.operator_dashboard_state?.studio_summary_package?.requested_at, "2026-04-26T12:00:00.000Z");
 });
 
 test("loop respects tick interval", () => {

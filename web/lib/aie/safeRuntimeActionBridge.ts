@@ -16,6 +16,12 @@ export type SafeRuntimeIntent =
   | "pause_active_goal"
   | "resume_paused_goal"
   | "mark_goal_retry_requested"
+  | "pause_all_sessions"
+  | "resume_safe_sessions"
+  | "prioritize_review_queue"
+  | "prioritize_delivery_queue"
+  | "acknowledge_studio_risk"
+  | "request_studio_summary"
   | "pause_autonomous_session"
   | "resume_autonomous_session"
   | "reprioritize_autonomous_session"
@@ -332,6 +338,50 @@ export function createSafeRuntimeActionBridgeResult(
         [...providerResult.warnings, `Retry target: ${retryCandidate.blockedGoal?.goal_id ?? action.goal_id ?? "recovery"}`],
         createdAt,
       );
+    }
+
+    case "pause_all_sessions": {
+      const hasRunnableSession = state.autonomous_sessions?.sessions.some((session) => session.status === "running" || session.status === "pending")
+        || (state.supervised_session ? ["running", "recovering", "pending_approval"].includes(state.supervised_session.status) : false)
+        || Boolean(state.active_goal);
+      if (!hasRunnableSession) {
+        return buildResult(source, action, "action_rejected", "no_op", "no runnable session exists for a studio-wide pause request", providerResult.warnings, createdAt);
+      }
+      return buildResult(source, action, "action_ready", "pause_all_sessions", "all runnable autonomous work may be paused through the studio command center", providerResult.warnings, createdAt);
+    }
+
+    case "resume_safe_sessions": {
+      const hasSafePausedSession = state.autonomous_sessions?.sessions.some((session) => session.status === "paused" && !session.blocked_by_conflict && session.tick_budget_remaining > 0)
+        || Boolean(state.supervised_session && state.supervised_session.status === "paused" && !state.supervised_session.pending_operator_review && state.approvals_required.length === 0);
+      if (!hasSafePausedSession) {
+        return buildResult(source, action, "action_rejected", "no_op", "no paused safe session exists for a studio-wide resume request", providerResult.warnings, createdAt);
+      }
+      return buildResult(source, action, "action_ready", "resume_safe_sessions", "paused safe sessions may resume through the studio command center", providerResult.warnings, createdAt);
+    }
+
+    case "prioritize_review_queue": {
+      if ((state.review_packages?.length ?? 0) === 0) {
+        return buildResult(source, action, "action_rejected", "no_op", "no review packages exist for a studio review-queue reprioritization request", providerResult.warnings, createdAt);
+      }
+      return buildResult(source, action, "action_ready", "prioritize_review_queue", "review package ordering may be safely reprioritized through the studio command center", providerResult.warnings, createdAt);
+    }
+
+    case "prioritize_delivery_queue": {
+      if ((state.delivery_packages?.length ?? 0) === 0) {
+        return buildResult(source, action, "action_rejected", "no_op", "no delivery packages exist for a studio delivery-queue reprioritization request", providerResult.warnings, createdAt);
+      }
+      return buildResult(source, action, "action_ready", "prioritize_delivery_queue", "delivery package ordering may be safely reprioritized through the studio command center", providerResult.warnings, createdAt);
+    }
+
+    case "acknowledge_studio_risk": {
+      if ((state.studio_operations?.recent_risks.length ?? 0) === 0 && state.recovery_recommendations.length === 0 && state.validation_issues.length === 0) {
+        return buildResult(source, action, "action_rejected", "no_op", "no studio risk exists for acknowledgement in the current live runtime state", providerResult.warnings, createdAt);
+      }
+      return buildResult(source, action, "action_ready", "acknowledge_studio_risk", "the current top studio risk may be acknowledged without triggering hidden execution", providerResult.warnings, createdAt);
+    }
+
+    case "request_studio_summary": {
+      return buildResult(source, action, "action_ready", "request_studio_summary", "a studio summary package may be generated from the current live runtime state", providerResult.warnings, createdAt);
     }
 
     case "pause_autonomous_session":

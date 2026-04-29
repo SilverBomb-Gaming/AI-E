@@ -22,6 +22,7 @@
     "proof:autonomous-planning:safe": "node --import tsx scripts/launchAutonomousPlanningProof.ts",
     "proof:delivery-pipeline:safe": "node --import tsx scripts/launchDeliveryPipelineProof.ts",
     "proof:multi-session:safe": "node --import tsx scripts/launchMultiSessionProof.ts",
+    "proof:studio-command-center:safe": "node --import tsx scripts/launchStudioCommandCenterProof.ts",
     "validate:layer5:safe": "npm run proof:continuous-runtime:safe && npm run proof:multi-agent-runtime:safe && npm run proof:supervised-autonomy:safe && npm run test:trace:safe",
     "validate:layer6:safe": "npm run proof:continuous-runtime:safe && npm run proof:multi-agent-runtime:safe && npm run proof:supervised-autonomy:safe && npm run proof:overnight-autonomy:safe && npm run test:trace:safe",
     "readiness": "tsx training_readiness_check.ts",

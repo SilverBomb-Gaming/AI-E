@@ -308,8 +308,13 @@ Current Layer 8 reporting rule:
 
 Current Layer 9 reporting rule:
 
-- Layer 9: IN PROGRESS
-- Only declare Layer 9 complete when the persisted multi-session registry, weighted-fair scheduler, resource allocation limits, conflict detection, session coordination, `/operator` multi-session controls, deterministic `proof:multi-session:safe`, previous safe proofs, `test:trace:safe`, and commit/push are all complete together.
+- Layer 9: 100% COMPLETE
+- Verified capabilities: persisted multi-session registry, weighted-fair scheduler, bounded resource allocation, conflict detection, session coordination, `/operator` multi-session controls, deterministic `proof:multi-session:safe`, previous safe proofs, `test:trace:safe`, and commit/push.
+
+Current Layer 10 reporting rule:
+
+- Layer 10: IN PROGRESS
+- Only declare Layer 10 complete when the studio command-center state contract, provider-boundary studio aggregator, `/operator` studio command-center UI, safe studio actions, persisted studio summary package, deterministic `proof:studio-command-center:safe`, all previous safe proofs, `test:trace:safe`, and commit/push are all complete together.
 
 Roadmap checkpoints:
 
@@ -338,8 +343,11 @@ Roadmap checkpoints:
   - status: in progress
   - proof surface: bounded delivery packages, operator approval gates, PR summary recommendations, `/operator`, and `npm run proof:delivery-pipeline:safe`
 - Layer 9: coordinated multi-session orchestration
-  - status: in progress
+  - status: complete
   - proof surface: persisted autonomous session state, weighted-fair scheduling, bounded resource allocation, conflict and coordination visibility, `/operator`, and `npm run proof:multi-session:safe`
+- Layer 10: autonomous studio operations command center
+  - status: in progress
+  - proof surface: provider-boundary studio health aggregation, studio command-center operator controls, persisted studio risk acknowledgements and summary package state, `/operator`, and `npm run proof:studio-command-center:safe`
 
 
 ## Multi-Agent Orchestration Scaffold

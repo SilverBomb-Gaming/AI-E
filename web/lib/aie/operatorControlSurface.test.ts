@@ -262,6 +262,100 @@ test("reprioritize_autonomous_session updates session ordering priority", () => 
   assert.equal(result.state.autonomous_sessions?.sessions.find((session) => session.session_id === "demo-session-bugfix-delivery")?.priority, "critical");
 });
 
+test("pause_all_sessions pauses active autonomous work safely", () => {
+  const initialState = createOperatorDashboardDemoState();
+
+  const result = applyOperatorControlAction(initialState, {
+    type: "pause_all_sessions",
+  });
+
+  assert.equal(result.changed, true);
+  assert.equal(result.state.autonomous_sessions?.sessions.every((session) => session.status !== "running" && session.status !== "pending"), true);
+  assert.equal(result.state.runtime_status.status, "runtime_paused");
+});
+
+test("resume_safe_sessions skips blocked sessions and resumes only safe paused sessions", () => {
+  const initialState = applyOperatorControlAction(createOperatorDashboardDemoState(), {
+    type: "pause_all_sessions",
+  }).state;
+  if (!initialState.autonomous_sessions) {
+    throw new Error("Expected autonomous sessions in demo seed.");
+  }
+  initialState.autonomous_sessions.sessions[1] = {
+    ...initialState.autonomous_sessions.sessions[1],
+    blocked_by_conflict: true,
+    ready_on_dependency: false,
+  };
+
+  const result = applyOperatorControlAction(initialState, {
+    type: "resume_safe_sessions",
+  });
+
+  assert.equal(result.changed, true);
+  assert.equal(result.state.autonomous_sessions?.sessions.find((session) => session.session_id === "demo-session-feature-ui")?.status, "pending");
+  assert.equal(result.state.autonomous_sessions?.sessions.find((session) => session.session_id === "demo-session-bugfix-delivery")?.status, "paused");
+});
+
+test("acknowledge_studio_risk persists the current top studio risk acknowledgement", () => {
+  const initialState = createOperatorDashboardDemoState();
+
+  const result = applyOperatorControlAction(initialState, {
+    type: "acknowledge_studio_risk",
+  });
+
+  assert.equal(result.changed, true);
+  assert.equal((result.state.studio_risk_acknowledgements?.length ?? 0) > 0, true);
+});
+
+test("prioritize_review_queue updates review ordering safely", () => {
+  const initialState = createOperatorDashboardDemoState();
+  const baseReviewPackage = initialState.review_packages?.[0];
+  if (!baseReviewPackage) {
+    throw new Error("Expected review package.");
+  }
+  initialState.review_packages = [
+    ...(initialState.review_packages ?? []),
+    {
+      ...baseReviewPackage,
+    },
+  ];
+  if (!initialState.review_packages?.[1]) {
+    throw new Error("Expected duplicated review package.");
+  }
+  initialState.review_packages[0] = {
+    ...initialState.review_packages[0],
+    package_id: "review-low-priority",
+    work_item_id: "review-low-priority",
+    status: "deferred",
+    recommended_decision: "defer",
+  };
+  initialState.review_packages[1] = {
+    ...initialState.review_packages[1],
+    package_id: "review-high-priority",
+    work_item_id: "review-high-priority",
+    status: "pending",
+    recommended_decision: "approve",
+  };
+
+  const result = applyOperatorControlAction(initialState, {
+    type: "prioritize_review_queue",
+  });
+
+  assert.equal(result.changed, true);
+  assert.equal(result.state.review_packages?.[0]?.package_id, "review-high-priority");
+});
+
+test("request_studio_summary creates a persisted studio summary package", () => {
+  const initialState = createOperatorDashboardDemoState();
+
+  const result = applyOperatorControlAction(initialState, {
+    type: "request_studio_summary",
+  });
+
+  assert.equal(result.changed, true);
+  assert.equal(result.state.studio_summary_package?.recommended_next_operator_action.length ? true : false, true);
+});
+
 test("merge_autonomous_sessions consolidates the source session into the target", () => {
   const initialState = createOperatorDashboardDemoState();
 

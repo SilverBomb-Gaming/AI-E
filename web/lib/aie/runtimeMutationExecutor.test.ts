@@ -351,6 +351,131 @@ test("pause autonomous session persists through live runtime mutation without st
   );
 });
 
+test("pause_all_sessions pauses active autonomous sessions without starting loops", () => {
+  const seeded = createSeededRuntimeRecord({
+    mutateState(state) {
+      state.approvals_required = [];
+      state.runtime_status.status = "runtime_ready";
+      state.session_status.status = "session_running";
+    },
+    mutateRecord(record) {
+      if (!record) {
+        throw new Error("Expected runtime record.");
+      }
+      record.last_status = "service_idle";
+      record.blockers = [];
+    },
+  });
+
+  const result = executeRuntimeMutation({
+    runtime_intent: "pause_all_sessions",
+    current_runtime_state: seeded.record,
+    current_dashboard_state: seeded.state,
+    runtime_state_store: seeded.store,
+    runtime_id: seeded.record.runtime_id,
+    timestamp: "2026-04-26T12:01:00.000Z",
+    start_continuous_loop: true,
+  });
+
+  assert.equal(result.status, "mutation_applied");
+  assert.equal(result.updated_runtime_state.operator_dashboard_state?.autonomous_sessions?.sessions.some((session) => session.status === "running" || session.status === "pending"), false);
+  assert.equal(result.continuous_runtime_loop, null);
+  assert.equal(result.updated_runtime_state.last_status, "service_paused");
+});
+
+test("resume_safe_sessions skips blocked paused sessions in persisted runtime state", () => {
+  const seeded = createSeededRuntimeRecord({
+    mutateState(state) {
+      state.approvals_required = [];
+      if (!state.autonomous_sessions) {
+        throw new Error("Expected autonomous sessions.");
+      }
+      state.autonomous_sessions.sessions = state.autonomous_sessions.sessions.map((session) => ({
+        ...session,
+        status: "paused",
+        blocked_by_conflict: session.session_id === "demo-session-bugfix-delivery",
+      }));
+    },
+    mutateRecord(record) {
+      if (!record) {
+        throw new Error("Expected runtime record.");
+      }
+      record.last_status = "service_paused";
+      record.blockers = [];
+    },
+  });
+
+  const result = executeRuntimeMutation({
+    runtime_intent: "resume_safe_sessions",
+    current_runtime_state: seeded.record,
+    current_dashboard_state: seeded.state,
+    runtime_state_store: seeded.store,
+    runtime_id: seeded.record.runtime_id,
+    timestamp: "2026-04-26T12:01:00.000Z",
+    start_continuous_loop: true,
+  });
+
+  assert.equal(result.status, "mutation_applied");
+  assert.equal(result.updated_runtime_state.operator_dashboard_state?.autonomous_sessions?.sessions.find((session) => session.session_id === "demo-session-feature-ui")?.status, "pending");
+  assert.equal(result.updated_runtime_state.operator_dashboard_state?.autonomous_sessions?.sessions.find((session) => session.session_id === "demo-session-bugfix-delivery")?.status, "paused");
+  assert.equal(result.continuous_runtime_loop, null);
+});
+
+test("acknowledge_studio_risk persists an acknowledgement record", () => {
+  const seeded = createSeededRuntimeRecord();
+
+  const result = executeRuntimeMutation({
+    runtime_intent: "acknowledge_studio_risk",
+    current_runtime_state: seeded.record,
+    current_dashboard_state: seeded.state,
+    runtime_state_store: seeded.store,
+    runtime_id: seeded.record.runtime_id,
+    timestamp: "2026-04-26T12:01:00.000Z",
+  });
+
+  assert.equal(result.status, "mutation_applied");
+  assert.equal((result.updated_runtime_state.operator_dashboard_state?.studio_risk_acknowledgements?.length ?? 0) > 0, true);
+});
+
+test("prioritize_review_queue updates persisted review ordering safely", () => {
+  const seeded = createSeededRuntimeRecord({
+    mutateState(state) {
+      const firstReview = createOperatorDashboardDemoState().review_packages?.[0];
+      if (!firstReview) {
+        throw new Error("Expected review package.");
+      }
+      state.review_packages = [
+        {
+          ...firstReview,
+          package_id: "review-low-priority",
+          work_item_id: "review-low-priority",
+          status: "deferred",
+          recommended_decision: "defer",
+        },
+        {
+          ...firstReview,
+          package_id: "review-high-priority",
+          work_item_id: "review-high-priority",
+          status: "pending",
+          recommended_decision: "approve",
+        },
+      ];
+    },
+  });
+
+  const result = executeRuntimeMutation({
+    runtime_intent: "prioritize_review_queue",
+    current_runtime_state: seeded.record,
+    current_dashboard_state: seeded.state,
+    runtime_state_store: seeded.store,
+    runtime_id: seeded.record.runtime_id,
+    timestamp: "2026-04-26T12:01:00.000Z",
+  });
+
+  assert.equal(result.status, "mutation_applied");
+  assert.equal(result.updated_runtime_state.operator_dashboard_state?.review_packages?.[0]?.package_id, "review-high-priority");
+});
+
 test("start supervised session persists bounded session metadata", () => {
   const seeded = createSeededRuntimeRecord({
     mutateState(state) {

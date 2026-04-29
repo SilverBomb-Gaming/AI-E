@@ -186,6 +186,68 @@ test("retry_goal creates mark_goal_retry_requested intent", () => {
   assert.equal(result.runtime_intent, "mark_goal_retry_requested");
 });
 
+test("pause_all_sessions creates the studio pause intent", () => {
+  const providerResult = createLiveProviderResult();
+  providerResult.dashboard_state = {
+    ...providerResult.dashboard_state!,
+    approvals_required: [],
+  };
+
+  const result = createSafeRuntimeActionBridgeResult(providerResult, {
+    type: "pause_all_sessions",
+  });
+
+  assert.equal(result.status, "action_ready");
+  assert.equal(result.runtime_intent, "pause_all_sessions");
+});
+
+test("resume_safe_sessions creates the studio resume intent", () => {
+  const providerResult = createLiveProviderResult();
+  providerResult.dashboard_state = {
+    ...providerResult.dashboard_state!,
+    approvals_required: [],
+    autonomous_sessions: {
+      ...providerResult.dashboard_state!.autonomous_sessions!,
+      sessions: providerResult.dashboard_state!.autonomous_sessions!.sessions.map((session) => ({
+        ...session,
+        status: session.session_id === "demo-session-feature-ui" ? "paused" : "blocked",
+        blocked_by_conflict: session.session_id === "demo-session-bugfix-delivery",
+      })),
+    },
+  };
+
+  const result = createSafeRuntimeActionBridgeResult(providerResult, {
+    type: "resume_safe_sessions",
+  });
+
+  assert.equal(result.status, "action_ready");
+  assert.equal(result.runtime_intent, "resume_safe_sessions");
+});
+
+test("acknowledge_studio_risk creates the studio acknowledgement intent", () => {
+  const result = createSafeRuntimeActionBridgeResult(createLiveProviderResult(), {
+    type: "acknowledge_studio_risk",
+  });
+
+  assert.equal(result.status, "action_ready");
+  assert.equal(result.runtime_intent, "acknowledge_studio_risk");
+});
+
+test("prioritize_review_queue rejects when no review packages exist", () => {
+  const providerResult = createLiveProviderResult();
+  providerResult.dashboard_state = {
+    ...providerResult.dashboard_state!,
+    review_packages: [],
+  };
+
+  const result = createSafeRuntimeActionBridgeResult(providerResult, {
+    type: "prioritize_review_queue",
+  });
+
+  assert.equal(result.status, "action_rejected");
+  assert.equal(result.runtime_intent, "no_op");
+});
+
 test("start_supervised_session creates start intent", () => {
   const providerResult = createLiveProviderResult();
   providerResult.dashboard_state = {

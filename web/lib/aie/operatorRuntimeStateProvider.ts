@@ -21,6 +21,7 @@ import {
   type RuntimeStateRecord,
   type RuntimeStateStore,
 } from "./runtimeStateStore";
+import { aggregateStudioHealthFromDashboardState } from "./studioHealthAggregator";
 import type { ExecutionChainRecord } from "./executionChainState";
 import type {
   SupervisedAutonomyCheckpointRecord,
@@ -376,7 +377,7 @@ function buildLiveOperatorDashboardState(
   const supervisedCheckpoints = buildSupervisedCheckpoints(record);
 
   if (record.operator_dashboard_state) {
-    return {
+    const dashboardState = {
       ...record.operator_dashboard_state,
       runtime_observability: runtimeObservability,
       agent_runtime: agentRuntime,
@@ -385,13 +386,18 @@ function buildLiveOperatorDashboardState(
       supervised_checkpoints: supervisedCheckpoints,
       last_updated_at: record.operator_dashboard_state.last_updated_at || record.persisted_at,
     };
+
+    return {
+      ...dashboardState,
+      studio_operations: aggregateStudioHealthFromDashboardState(dashboardState),
+    };
   }
 
   const approvalsRequired = buildLiveApprovals(bootResume);
   const validationIssues = buildLiveValidationIssues(bootResume);
   const recoverySignals = buildLiveRecoveryRecommendation(bootResume, loadedAt);
 
-  return {
+  const dashboardState = {
     active_goal: null,
     queued_goals: [],
     blocked_goals: [],
@@ -453,6 +459,11 @@ function buildLiveOperatorDashboardState(
     supervised_checkpoints: supervisedCheckpoints,
     last_updated_at: record.persisted_at,
   };
+
+  return {
+    ...dashboardState,
+    studio_operations: aggregateStudioHealthFromDashboardState(dashboardState),
+  };
 }
 
 export function resolveOperatorStateSource(
@@ -473,9 +484,13 @@ export function resolveOperatorStateSource(
 export function loadDemoOperatorDashboardState(
   loadedAt = createLoadedAt(),
 ): OperatorRuntimeStateProviderResult {
+  const dashboardState = createOperatorDashboardDemoState();
   return {
     source: "demo_seed",
-    dashboard_state: createOperatorDashboardDemoState(),
+    dashboard_state: {
+      ...dashboardState,
+      studio_operations: aggregateStudioHealthFromDashboardState(dashboardState),
+    },
     warnings: buildDemoWarnings(),
     loaded_at: loadedAt,
   };
