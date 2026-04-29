@@ -267,6 +267,65 @@ function validateMutationRequest(
       return null;
     }
 
+    case "pause_autonomous_session": {
+      const sessionId = input.action?.session_id ?? null;
+      const session = sessionId
+        ? state.autonomous_sessions?.sessions.find((candidate) => candidate.session_id === sessionId) ?? null
+        : null;
+      if (!session || session.status !== "running") {
+        return "no running autonomous session is available for a live pause mutation";
+      }
+      return null;
+    }
+
+    case "resume_autonomous_session": {
+      const sessionId = input.action?.session_id ?? null;
+      const session = sessionId
+        ? state.autonomous_sessions?.sessions.find((candidate) => candidate.session_id === sessionId) ?? null
+        : null;
+      if (!session || !["paused", "blocked"].includes(session.status)) {
+        return "no paused autonomous session is available for a live resume mutation";
+      }
+      return null;
+    }
+
+    case "reprioritize_autonomous_session": {
+      const sessionId = input.action?.session_id ?? null;
+      const session = sessionId
+        ? state.autonomous_sessions?.sessions.find((candidate) => candidate.session_id === sessionId) ?? null
+        : null;
+      if (!session || !input.action?.session_priority) {
+        return "a target autonomous session and priority are required for a live reprioritize mutation";
+      }
+      return null;
+    }
+
+    case "merge_autonomous_sessions": {
+      const sourceSessionId = input.action?.session_id ?? null;
+      const targetSessionId = input.action?.target_session_id ?? null;
+      const sourceSession = sourceSessionId
+        ? state.autonomous_sessions?.sessions.find((candidate) => candidate.session_id === sourceSessionId) ?? null
+        : null;
+      const targetSession = targetSessionId
+        ? state.autonomous_sessions?.sessions.find((candidate) => candidate.session_id === targetSessionId) ?? null
+        : null;
+      if (!sourceSession || !targetSession || sourceSession.session_id === targetSession.session_id) {
+        return "two distinct autonomous sessions are required for a live merge mutation";
+      }
+      return null;
+    }
+
+    case "terminate_autonomous_session": {
+      const sessionId = input.action?.session_id ?? null;
+      const session = sessionId
+        ? state.autonomous_sessions?.sessions.find((candidate) => candidate.session_id === sessionId) ?? null
+        : null;
+      if (!session || ["completed", "failed"].includes(session.status)) {
+        return "no active autonomous session is available for a live terminate mutation";
+      }
+      return null;
+    }
+
     case "start_supervised_session": {
       if (persistedRecord.supervised_session && ["pending_approval", "running", "paused", "waiting_for_operator", "recovering"].includes(persistedRecord.supervised_session.status)) {
         return "a supervised autonomy session is already active for this runtime";
@@ -451,8 +510,13 @@ function appendSupervisedSessionControlEvent(
   input: RuntimeMutationExecutorInput,
   reason: string,
 ): void {
+  const isAutonomousSessionIntent = input.runtime_intent === "pause_autonomous_session"
+    || input.runtime_intent === "resume_autonomous_session"
+    || input.runtime_intent === "reprioritize_autonomous_session"
+    || input.runtime_intent === "merge_autonomous_sessions"
+    || input.runtime_intent === "terminate_autonomous_session";
   const loopState = buildControlLoopState(record);
-  const eventId = `supervised-session-control-${sanitizeTimestamp(input.timestamp)}-${input.runtime_intent}`;
+  const eventId = `${isAutonomousSessionIntent ? "autonomous-session-control" : "supervised-session-control"}-${sanitizeTimestamp(input.timestamp)}-${input.runtime_intent}`;
   const runtimeStatus = record.operator_dashboard_state?.runtime_status.status ?? record.last_status;
   const schedulerStatus = record.operator_dashboard_state?.scheduler_status.status ?? "scheduler_idle";
 
@@ -479,7 +543,9 @@ function appendSupervisedSessionControlEvent(
         goal_id: record.operator_dashboard_state.active_goal.goal_id,
         goal_label: record.operator_dashboard_state.active_goal.description,
       } : null,
-      mutation_applied: `${input.runtime_intent} persisted for supervised session state.`,
+      mutation_applied: isAutonomousSessionIntent
+        ? `${input.runtime_intent} persisted for autonomous session state.`
+        : `${input.runtime_intent} persisted for supervised session state.`,
       safety_gate_result: record.supervised_session?.pending_operator_review ? "blocked" : "not_triggered",
       scheduler_decision: record.operator_dashboard_state?.scheduler_status.explanation ?? null,
       persistence_result: "persisted_to_runtime_state",
@@ -489,7 +555,9 @@ function appendSupervisedSessionControlEvent(
         to_goal_id: record.operator_dashboard_state?.active_goal?.goal_id ?? null,
         from_goal_label: record.operator_dashboard_state?.active_goal?.description ?? null,
         to_goal_label: record.operator_dashboard_state?.active_goal?.description ?? null,
-        summary: `Supervised session control event recorded for ${input.runtime_intent}.`,
+        summary: isAutonomousSessionIntent
+          ? `Autonomous session control event recorded for ${input.runtime_intent}.`
+          : `Supervised session control event recorded for ${input.runtime_intent}.`,
       },
       semantic_progression: {
         queue_count_before: record.operator_dashboard_state?.queued_goals.length ?? 0,
@@ -501,14 +569,16 @@ function appendSupervisedSessionControlEvent(
         scheduler_status_before: schedulerStatus,
         scheduler_status_after: schedulerStatus,
       },
-      mutation_summary: `${input.runtime_intent} recorded for supervised session.`,
+      mutation_summary: isAutonomousSessionIntent
+        ? `${input.runtime_intent} recorded for autonomous session state.`
+        : `${input.runtime_intent} recorded for supervised session.`,
       next_scheduled_action: record.supervised_session?.next_scheduled_tick_at
         ? `Next scheduled tick at ${record.supervised_session.next_scheduled_tick_at}.`
         : null,
     }],
   };
 
-  if (record.supervised_session) {
+  if (record.supervised_session && !isAutonomousSessionIntent) {
     record.supervised_session.latest_timeline_event_id = eventId;
   }
 }
@@ -595,6 +665,11 @@ export function executeRuntimeMutation(input: RuntimeMutationExecutorInput): Run
 
     if (!input.start_continuous_loop
       || input.runtime_intent === "pause_active_goal"
+      || input.runtime_intent === "pause_autonomous_session"
+      || input.runtime_intent === "resume_autonomous_session"
+      || input.runtime_intent === "reprioritize_autonomous_session"
+      || input.runtime_intent === "merge_autonomous_sessions"
+      || input.runtime_intent === "terminate_autonomous_session"
       || input.runtime_intent === "pause_supervised_session"
       || input.runtime_intent === "stop_supervised_session"
       || input.runtime_intent === "request_supervised_operator_review"
@@ -644,6 +719,11 @@ export function executeRuntimeMutation(input: RuntimeMutationExecutorInput): Run
 
   if (!input.start_continuous_loop
     || input.runtime_intent === "pause_active_goal"
+    || input.runtime_intent === "pause_autonomous_session"
+    || input.runtime_intent === "resume_autonomous_session"
+    || input.runtime_intent === "reprioritize_autonomous_session"
+    || input.runtime_intent === "merge_autonomous_sessions"
+    || input.runtime_intent === "terminate_autonomous_session"
     || input.runtime_intent === "pause_supervised_session"
     || input.runtime_intent === "stop_supervised_session"
     || input.runtime_intent === "request_supervised_operator_review"

@@ -5,6 +5,7 @@ import {
   createBackgroundRuntimeService,
   stopBackgroundRuntimeService,
 } from "./backgroundRuntimeService";
+import { createOperatorDashboardDemoState } from "./operatorDashboardDemoState";
 import type { OperatorDashboardState } from "./operatorDashboardState";
 import { createRuntimeStateStore, loadRuntimeState, persistRuntimeStateRecord, saveRuntimeState } from "./runtimeStateStore";
 import {
@@ -131,6 +132,7 @@ function createLiveDashboardState(): OperatorDashboardState {
       status: "goal_selected",
       explanation: "The runtime has a selected goal.",
     },
+    autonomous_sessions: createOperatorDashboardDemoState().autonomous_sessions,
     last_updated_at: "2026-04-26T12:00:00.000Z",
   };
 }
@@ -308,6 +310,45 @@ test("pause intent does not trigger execution loop", () => {
 
   assert.equal(result.execution_loop?.status, "loop_not_triggered");
   assert.equal(result.updated_runtime_state.last_status, "service_paused");
+});
+
+test("pause autonomous session persists through live runtime mutation without starting loops", () => {
+  const seeded = createSeededRuntimeRecord({
+    mutateState(state) {
+      state.approvals_required = [];
+      state.runtime_status.status = "runtime_ready";
+      state.session_status.status = "session_running";
+    },
+    mutateRecord(record) {
+      if (!record) {
+        throw new Error("Expected runtime record.");
+      }
+      record.last_status = "service_idle";
+      record.blockers = [];
+    },
+  });
+
+  const result = executeRuntimeMutation({
+    action: {
+      type: "pause_autonomous_session",
+      session_id: "demo-session-feature-ui",
+    },
+    runtime_intent: "pause_autonomous_session",
+    current_runtime_state: seeded.record,
+    current_dashboard_state: seeded.state,
+    runtime_state_store: seeded.store,
+    runtime_id: seeded.record.runtime_id,
+    timestamp: "2026-04-26T12:01:00.000Z",
+    start_continuous_loop: true,
+  });
+
+  assert.equal(result.status, "mutation_applied");
+  assert.equal(result.execution_loop?.status, "loop_not_triggered");
+  assert.equal(result.continuous_runtime_loop, null);
+  assert.equal(
+    result.updated_runtime_state.operator_dashboard_state?.autonomous_sessions?.sessions.find((session) => session.session_id === "demo-session-feature-ui")?.status,
+    "paused",
+  );
 });
 
 test("start supervised session persists bounded session metadata", () => {

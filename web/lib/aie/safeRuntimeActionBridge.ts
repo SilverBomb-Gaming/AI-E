@@ -16,6 +16,11 @@ export type SafeRuntimeIntent =
   | "pause_active_goal"
   | "resume_paused_goal"
   | "mark_goal_retry_requested"
+  | "pause_autonomous_session"
+  | "resume_autonomous_session"
+  | "reprioritize_autonomous_session"
+  | "merge_autonomous_sessions"
+  | "terminate_autonomous_session"
   | "start_supervised_session"
   | "pause_supervised_session"
   | "resume_supervised_session"
@@ -85,18 +90,25 @@ function createAuditEvent(
   reason: string,
   createdAt: string,
 ): SafeRuntimeActionAuditEvent {
+  const actionTargetId = action.goal_id
+    ?? action.session_id
+    ?? action.target_session_id
+    ?? action.work_item_id
+    ?? action.package_id
+    ?? "global";
+
   return {
     audit_event_id: [
       "safe-runtime-action-bridge",
       sanitizeTimestamp(createdAt),
       source,
       action.type,
-      action.goal_id ?? action.work_item_id ?? action.package_id ?? "global",
+      actionTargetId,
     ].join("-"),
     created_at: createdAt,
     source,
     action_type: action.type,
-    goal_id: action.goal_id ?? action.work_item_id ?? action.package_id ?? null,
+    goal_id: actionTargetId === "global" ? null : actionTargetId,
     status,
     runtime_intent: runtimeIntent,
     reason,
@@ -112,11 +124,18 @@ function buildResult(
   warnings: string[],
   createdAt: string,
 ): SafeRuntimeActionBridgeResult {
+  const actionTargetId = action.goal_id
+    ?? action.session_id
+    ?? action.target_session_id
+    ?? action.work_item_id
+    ?? action.package_id
+    ?? null;
+
   return {
     status,
     action,
     source,
-    goal_id: action.goal_id ?? action.work_item_id ?? action.package_id ?? null,
+    goal_id: actionTargetId,
     runtime_intent: runtimeIntent,
     reason,
     warnings: unique(warnings),
@@ -160,6 +179,14 @@ function resolveRetryCandidate(
     : state.blocked_goals[0] ?? null;
   const recommendation = state.recovery_recommendations[0] ?? null;
   return { blockedGoal, recommendation };
+}
+
+function resolveAutonomousSession(state: OperatorDashboardState, sessionId: string | null | undefined) {
+  if (!sessionId) {
+    return null;
+  }
+
+  return state.autonomous_sessions?.sessions.find((session) => session.session_id === sessionId) ?? null;
 }
 
 export function createSafeRuntimeActionBridgeResult(
@@ -308,17 +335,131 @@ export function createSafeRuntimeActionBridgeResult(
     }
 
     case "pause_autonomous_session":
-    case "resume_autonomous_session":
-    case "reprioritize_autonomous_session":
-    case "merge_autonomous_sessions":
-    case "terminate_autonomous_session": {
+    {
+      const session = resolveAutonomousSession(state, action.session_id);
+      if (!session || session.status !== "running") {
+        return buildResult(
+          source,
+          action,
+          "action_rejected",
+          "no_op",
+          "no running autonomous session exists for a live pause request",
+          providerResult.warnings,
+          createdAt,
+        );
+      }
+
       return buildResult(
         source,
         action,
-        "action_unsupported",
-        "no_op",
-        "live runtime mutation for multi-session orchestration controls is not implemented yet; use the persisted dashboard state for local review only",
-        providerResult.warnings,
+        "action_ready",
+        "pause_autonomous_session",
+        "the selected autonomous session may be paused through the persisted multi-session control path",
+        [...providerResult.warnings, `Session target: ${session.session_id}`],
+        createdAt,
+      );
+    }
+
+    case "resume_autonomous_session":
+    {
+      const session = resolveAutonomousSession(state, action.session_id);
+      if (!session || !["paused", "blocked"].includes(session.status)) {
+        return buildResult(
+          source,
+          action,
+          "action_rejected",
+          "no_op",
+          "no paused autonomous session exists for a live resume request",
+          providerResult.warnings,
+          createdAt,
+        );
+      }
+
+      return buildResult(
+        source,
+        action,
+        "action_ready",
+        "resume_autonomous_session",
+        "the selected autonomous session may resume through the persisted multi-session control path",
+        [...providerResult.warnings, `Session target: ${session.session_id}`],
+        createdAt,
+      );
+    }
+
+    case "reprioritize_autonomous_session":
+    {
+      const session = resolveAutonomousSession(state, action.session_id);
+      if (!session || !action.session_priority) {
+        return buildResult(
+          source,
+          action,
+          "action_rejected",
+          "no_op",
+          "a target autonomous session and priority are required for a live reprioritize request",
+          providerResult.warnings,
+          createdAt,
+        );
+      }
+
+      return buildResult(
+        source,
+        action,
+        "action_ready",
+        "reprioritize_autonomous_session",
+        "the selected autonomous session priority may be updated through the persisted multi-session control path",
+        [...providerResult.warnings, `Session target: ${session.session_id}`, `Priority: ${action.session_priority}`],
+        createdAt,
+      );
+    }
+
+    case "merge_autonomous_sessions":
+    {
+      const sourceSession = resolveAutonomousSession(state, action.session_id);
+      const targetSession = resolveAutonomousSession(state, action.target_session_id);
+      if (!sourceSession || !targetSession || sourceSession.session_id === targetSession.session_id) {
+        return buildResult(
+          source,
+          action,
+          "action_rejected",
+          "no_op",
+          "two distinct autonomous sessions are required for a live merge request",
+          providerResult.warnings,
+          createdAt,
+        );
+      }
+
+      return buildResult(
+        source,
+        action,
+        "action_ready",
+        "merge_autonomous_sessions",
+        "the selected autonomous sessions may be merged through the persisted multi-session control path",
+        [...providerResult.warnings, `Merge source: ${sourceSession.session_id}`, `Merge target: ${targetSession.session_id}`],
+        createdAt,
+      );
+    }
+
+    case "terminate_autonomous_session": {
+      const session = resolveAutonomousSession(state, action.session_id);
+      if (!session || ["completed", "failed"].includes(session.status)) {
+        return buildResult(
+          source,
+          action,
+          "action_rejected",
+          "no_op",
+          "no active autonomous session exists for a live terminate request",
+          providerResult.warnings,
+          createdAt,
+        );
+      }
+
+      return buildResult(
+        source,
+        action,
+        "action_ready",
+        "terminate_autonomous_session",
+        "the selected autonomous session may be terminated through the persisted multi-session control path",
+        [...providerResult.warnings, `Session target: ${session.session_id}`],
         createdAt,
       );
     }

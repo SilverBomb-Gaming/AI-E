@@ -55,6 +55,7 @@ function createLiveProviderResult(): OperatorRuntimeStateProviderResult {
 
   liveResult.dashboard_state = {
     ...liveResult.dashboard_state,
+    autonomous_sessions: createOperatorDashboardDemoState().autonomous_sessions,
     active_goal: {
       goal_id: "live-active-goal",
       description: "Stabilize live runtime lane",
@@ -235,6 +236,27 @@ test("pause_session creates pause supervised intent", () => {
 
   assert.equal(result.status, "action_ready");
   assert.equal(result.runtime_intent, "pause_supervised_session");
+});
+
+test("pause_autonomous_session creates live multi-session intent", () => {
+  const result = createSafeRuntimeActionBridgeResult(createLiveProviderResult(), {
+    type: "pause_autonomous_session",
+    session_id: "demo-session-feature-ui",
+  });
+
+  assert.equal(result.status, "action_ready");
+  assert.equal(result.goal_id, "demo-session-feature-ui");
+  assert.equal(result.runtime_intent, "pause_autonomous_session");
+});
+
+test("merge_autonomous_sessions requires distinct live sessions", () => {
+  const result = createSafeRuntimeActionBridgeResult(createLiveProviderResult(), {
+    type: "merge_autonomous_sessions",
+    session_id: "demo-session-feature-ui",
+    target_session_id: "demo-session-feature-ui",
+  });
+
+  assert.equal(result.status, "action_rejected");
 });
 
 test("rejects approval when no approval required", () => {

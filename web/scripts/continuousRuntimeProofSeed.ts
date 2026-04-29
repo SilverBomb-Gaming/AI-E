@@ -21,13 +21,14 @@ import {
   createOvernightAutonomyReviewId,
   createSupervisedAutonomySessionId,
 } from "../lib/aie/supervisedAutonomySession";
+import { createOperatorDashboardDemoState } from "../lib/aie/operatorDashboardDemoState";
 
 export type ContinuousRuntimeProofSeedPayload = {
   runtimeId: string;
   store: RuntimeStateStore;
 };
 
-export type ContinuousRuntimeProofSeedMode = "continuous-runtime" | "supervised-autonomy" | "overnight-autonomy" | "autonomous-planning" | "delivery-pipeline";
+export type ContinuousRuntimeProofSeedMode = "continuous-runtime" | "supervised-autonomy" | "overnight-autonomy" | "autonomous-planning" | "delivery-pipeline" | "multi-session";
 
 export type ContinuousRuntimeProofSeedOptions = {
   runtimeId?: string;
@@ -114,12 +115,14 @@ export function createContinuousRuntimeProofSeedPayload(options: ContinuousRunti
     tick_interval_ms: mode === "continuous-runtime"
       ? 1_000
       : mode === "autonomous-planning"
+        || mode === "multi-session"
         || mode === "delivery-pipeline"
         ? 250
         : 10_000,
     max_ticks_per_run: mode === "continuous-runtime"
       ? 3
       : mode === "autonomous-planning"
+        || mode === "multi-session"
         || mode === "delivery-pipeline"
         ? 4
         : 1,
@@ -413,6 +416,64 @@ export function createContinuousRuntimeProofSeedPayload(options: ContinuousRunti
       delivery_packages: [deliveryPackage],
       planning_recommendations: [],
       planning_policy_feedback: createAutonomousWorkItemPolicyFeedback(),
+      supervised_session: undefined,
+      supervised_checkpoints: [],
+      last_updated_at: seededAt,
+    };
+    currentRecord.supervised_session = null;
+    currentRecord.supervised_checkpoints = [];
+  }
+
+  if (mode === "multi-session") {
+    const seededAt = new Date(nowMs).toISOString();
+    const demoState = createOperatorDashboardDemoState();
+
+    currentRecord.last_status = "service_idle";
+    currentRecord.stop_reason = "not_started";
+    currentRecord.blockers = [];
+    currentRecord.continuous_loop.reason = "Continuous runtime loop is ready for bounded multi-session orchestration review.";
+    currentRecord.operator_dashboard_state = {
+      ...currentRecord.operator_dashboard_state,
+      active_goal: null,
+      queued_goals: [],
+      blocked_goals: [],
+      completed_goals: [],
+      paused_goals: [],
+      dependency_blockers: [],
+      conflict_blockers: [],
+      recent_failures: [],
+      recovery_recommendations: [],
+      approvals_required: [],
+      validation_issues: [],
+      runtime_status: {
+        status: "runtime_ready",
+        explanation: "The runtime is ready to coordinate multiple bounded autonomous sessions.",
+      },
+      session_status: {
+        status: "session_running",
+        explanation: "Multiple autonomous sessions are active under shared safety constraints.",
+      },
+      queue_status: {
+        status: "queue_running",
+        explanation: "Session work remains bounded by scheduler, resource, and conflict gates.",
+      },
+      scheduler_status: {
+        status: "goal_selected",
+        explanation: "The bounded scheduler is coordinating runnable autonomous sessions.",
+      },
+      runtime_observability: {
+        ...currentRecord.operator_dashboard_state.runtime_observability,
+        next_scheduled_action: "Review or adjust the bounded autonomous session schedule.",
+        latest_safety_gate_decision: "passed",
+      },
+      proposed_work_items: [],
+      scheduled_work_items: [],
+      running_work_items: [],
+      review_packages: [],
+      delivery_packages: [],
+      planning_recommendations: [],
+      planning_policy_feedback: createAutonomousWorkItemPolicyFeedback(),
+      autonomous_sessions: demoState.autonomous_sessions,
       supervised_session: undefined,
       supervised_checkpoints: [],
       last_updated_at: seededAt,

@@ -22,6 +22,11 @@ function normalizeAction(value: unknown): OperatorControlAction | null {
     && candidate.type !== "pause_goal"
     && candidate.type !== "resume_goal"
     && candidate.type !== "retry_goal"
+    && candidate.type !== "pause_autonomous_session"
+    && candidate.type !== "resume_autonomous_session"
+    && candidate.type !== "reprioritize_autonomous_session"
+    && candidate.type !== "merge_autonomous_sessions"
+    && candidate.type !== "terminate_autonomous_session"
     && candidate.type !== "start_supervised_session"
     && candidate.type !== "pause_session"
     && candidate.type !== "resume_session"
@@ -55,6 +60,22 @@ function normalizeAction(value: unknown): OperatorControlAction | null {
       : candidate.review_id === null || candidate.review_id === undefined
         ? null
         : null,
+    session_id: typeof candidate.session_id === "string"
+      ? candidate.session_id.trim() || null
+      : candidate.session_id === null || candidate.session_id === undefined
+        ? null
+        : null,
+    target_session_id: typeof candidate.target_session_id === "string"
+      ? candidate.target_session_id.trim() || null
+      : candidate.target_session_id === null || candidate.target_session_id === undefined
+        ? null
+        : null,
+    session_priority: candidate.session_priority === "critical"
+      || candidate.session_priority === "high"
+      || candidate.session_priority === "medium"
+      || candidate.session_priority === "low"
+      ? candidate.session_priority
+      : null,
     work_item_id: typeof candidate.work_item_id === "string"
       ? candidate.work_item_id.trim() || null
       : candidate.work_item_id === null || candidate.work_item_id === undefined
@@ -190,6 +211,11 @@ export async function POST(request: Request) {
       && runtimeId
       && actionResult.result === "accepted"
       && actionResult.runtime_intent !== "pause_active_goal"
+      && actionResult.runtime_intent !== "pause_autonomous_session"
+      && actionResult.runtime_intent !== "resume_autonomous_session"
+      && actionResult.runtime_intent !== "reprioritize_autonomous_session"
+      && actionResult.runtime_intent !== "merge_autonomous_sessions"
+      && actionResult.runtime_intent !== "terminate_autonomous_session"
       && actionResult.runtime_intent !== "pause_supervised_session"
       && actionResult.runtime_intent !== "stop_supervised_session"
       && actionResult.runtime_intent !== "request_supervised_operator_review"
