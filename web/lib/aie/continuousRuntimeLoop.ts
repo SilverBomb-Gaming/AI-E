@@ -5,6 +5,12 @@ import {
   type RuntimeProfile,
 } from "./runtimeProfiles";
 import {
+  createAutonomousReviewPackage,
+  type AutonomousReviewOperatorAction,
+  type AutonomousReviewPackage,
+  type AutonomousWorkItem,
+} from "./autonomousWorkPlanning";
+import {
   cloneRuntimeStateRecord,
   loadRuntimeState,
   persistRuntimeStateRecord,
@@ -465,7 +471,10 @@ function evaluateStopCondition(record: RuntimeStateRecord): { status: Continuous
     };
   }
 
-  if (!state.active_goal && state.queued_goals.length === 0) {
+  const hasRunnablePlanningWork = (state.proposed_work_items ?? []).some((item) => item.status === "approved_for_planning")
+    || (state.scheduled_work_items ?? []).some((item) => item.status === "scheduled");
+
+  if (!state.active_goal && state.queued_goals.length === 0 && !hasRunnablePlanningWork) {
     if (state.blocked_goals.length > 0) {
       return {
         status: "loop_blocked",
@@ -759,14 +768,18 @@ function buildExecutionChainProjection(
   execution: ExecutionLoopControllerResult,
   attemptedAt: string,
   mutationSummary: string,
-): { chains: ExecutionChainRecord[]; chain_summary: string } {
+): { chains: ExecutionChainRecord[]; chain_summary: string; primary_chain: ExecutionChainRecord } {
   const focusedGoal = resolveFocusedGoal(record, execution);
   const existingChains = [...(record.execution_chains ?? [])];
   const activeChain = [...existingChains].reverse().find((chain) => chain.status === "active" || chain.status === "pending") ?? null;
   const canReuseActiveChain = activeChain && activeChain.parent_goal_id === focusedGoal.goal_id;
+  const nextStep = (canReuseActiveChain ? activeChain.current_step : 0) + 1;
+  const reachedReviewBoundary = nextStep >= CHAIN_AGENT_IDS.length;
   const nextStatus = execution.status === "loop_blocked"
     ? "blocked"
-    : (execution.updated_dashboard_state.active_goal || execution.updated_dashboard_state.queued_goals.length > 0)
+    : reachedReviewBoundary
+      ? "completed"
+      : (execution.updated_dashboard_state.active_goal || execution.updated_dashboard_state.queued_goals.length > 0)
       ? "active"
       : "completed";
   const safetyStatus = execution.status === "loop_blocked"
@@ -777,7 +790,7 @@ function buildExecutionChainProjection(
   const nextChain: ExecutionChainRecord = {
     chain_id: canReuseActiveChain ? activeChain.chain_id : createExecutionChainId(focusedGoal.goal_id, attemptedAt),
     parent_goal_id: focusedGoal.goal_id,
-    current_step: (canReuseActiveChain ? activeChain.current_step : 0) + 1,
+    current_step: nextStep,
     total_steps: CHAIN_AGENT_IDS.length,
     status: nextStatus,
     agent_ids: [...CHAIN_AGENT_IDS],
@@ -792,7 +805,144 @@ function buildExecutionChainProjection(
   return {
     chains: nextChains,
     chain_summary: `Execution chain ${nextChain.chain_id} is ${nextChain.status} at step ${nextChain.current_step}/${nextChain.total_steps}.`,
+    primary_chain: nextChain,
   };
+}
+
+function buildAutonomousReviewPackageId(workItemId: string, chainId: string, timestamp: string): string {
+  return ["autonomous-review-package", workItemId, chainId, sanitizeTimestamp(timestamp)].join("-");
+}
+
+function removeAutonomousWorkItem(state: OperatorDashboardState, workItemId: string): AutonomousWorkItem | null {
+  for (const bucket of ["proposed_work_items", "scheduled_work_items", "running_work_items"] as const) {
+    const items = state[bucket] ?? [];
+    const index = items.findIndex((item) => item.work_item_id === workItemId);
+    if (index >= 0) {
+      const [item] = items.splice(index, 1);
+      state[bucket] = items;
+      return item ?? null;
+    }
+  }
+  return null;
+}
+
+function upsertAutonomousWorkItem(
+  state: OperatorDashboardState,
+  bucket: "proposed_work_items" | "scheduled_work_items" | "running_work_items",
+  item: AutonomousWorkItem,
+): void {
+  removeAutonomousWorkItem(state, item.work_item_id);
+  state[bucket] = [item, ...(state[bucket] ?? [])];
+}
+
+function upsertReviewPackage(state: OperatorDashboardState, nextPackage: AutonomousReviewPackage): void {
+  const reviewPackages = state.review_packages ?? [];
+  const existingIndex = reviewPackages.findIndex((item) => item.work_item_id === nextPackage.work_item_id && item.chain_id === nextPackage.chain_id);
+  if (existingIndex >= 0) {
+    reviewPackages[existingIndex] = nextPackage;
+  } else {
+    reviewPackages.unshift(nextPackage);
+  }
+  state.review_packages = reviewPackages;
+}
+
+function buildReviewPackageForWorkItem(
+  workItem: AutonomousWorkItem,
+  chain: ExecutionChainRecord,
+  attemptedAt: string,
+  reason: string,
+): AutonomousReviewPackage {
+  const recommendedDecision: AutonomousReviewOperatorAction = chain.status === "blocked" ? "request_changes" : "approve";
+  const risks = chain.status === "blocked"
+    ? [reason, `${workItem.risk_level} risk work stopped at a bounded review boundary.`]
+    : workItem.risk_level === "high"
+      ? ["High-risk work requires explicit operator review before any further scope expansion."]
+      : ["No commit or push actions were attempted."];
+
+  return createAutonomousReviewPackage({
+    package_id: buildAutonomousReviewPackageId(workItem.work_item_id, chain.chain_id, attemptedAt),
+    work_item_id: workItem.work_item_id,
+    chain_id: chain.chain_id,
+    status: "pending",
+    summary: chain.status === "blocked"
+      ? `Bounded execution for ${workItem.title} stopped and requires operator review.`
+      : `Bounded execution for ${workItem.title} reached a review-ready completion boundary.`,
+    files_changed: [...workItem.expected_outputs],
+    tests_run: [],
+    proof_results: [],
+    risks,
+    recommended_decision: recommendedDecision,
+    rollback_notes: chain.status === "blocked"
+      ? "Review the blocked bounded chain before retrying or expanding scope."
+      : "No rollback is required yet; operator review should confirm whether follow-up execution is safe.",
+    operator_actions: ["approve", "reject", "defer", "request_changes", "archive"],
+  });
+}
+
+function applyAutonomousPlanningExecutionLinkage(
+  state: OperatorDashboardState,
+  chain: ExecutionChainRecord,
+  attemptedAt: string,
+  reason: string,
+): string | null {
+  if (!chain.parent_goal_id) {
+    return null;
+  }
+
+  const workItem = removeAutonomousWorkItem(state, chain.parent_goal_id);
+  if (!workItem) {
+    return null;
+  }
+
+  const updatedWorkItem: AutonomousWorkItem = {
+    ...workItem,
+    status: chain.status === "active"
+      ? "running"
+      : chain.status === "completed" || chain.status === "blocked"
+        ? "needs_review"
+        : "scheduled",
+    updated_at: attemptedAt,
+  };
+
+  if (chain.status === "active") {
+    upsertAutonomousWorkItem(state, "running_work_items", updatedWorkItem);
+    state.scheduler_status = {
+      status: state.scheduler_status.status,
+      explanation: `${state.scheduler_status.explanation} Linked ${updatedWorkItem.work_item_id} to ${chain.chain_id}.`.trim(),
+    };
+    return `Autonomous work item ${updatedWorkItem.work_item_id} is now running in ${chain.chain_id}.`;
+  }
+
+  if (chain.status === "completed" || chain.status === "blocked") {
+    upsertAutonomousWorkItem(state, "proposed_work_items", updatedWorkItem);
+    if (state.active_goal?.goal_id === updatedWorkItem.work_item_id) {
+      state.active_goal = null;
+    }
+    state.queued_goals = state.queued_goals.filter((goal) => goal.goal_id !== updatedWorkItem.work_item_id);
+    state.completed_goals = [
+      ...state.completed_goals.filter((goal) => goal.goal_id !== updatedWorkItem.work_item_id),
+      {
+        goal_id: updatedWorkItem.work_item_id,
+        description: updatedWorkItem.title,
+        priority: updatedWorkItem.priority,
+        status: "completed",
+        explanation: chain.status === "blocked"
+          ? `Bounded execution for ${updatedWorkItem.title} stopped and moved to operator review.`
+          : `Bounded execution for ${updatedWorkItem.title} reached a review boundary.`,
+        recommended_action: "Review the generated package before any further runtime work.",
+        depends_on_goal_ids: [...updatedWorkItem.dependency_ids],
+        blocking_goal_ids: [],
+        conflict_goal_ids: [],
+        last_updated_at: attemptedAt,
+      },
+    ];
+    const reviewPackage = buildReviewPackageForWorkItem(updatedWorkItem, chain, attemptedAt, reason);
+    upsertReviewPackage(state, reviewPackage);
+    return `Autonomous work item ${updatedWorkItem.work_item_id} produced review package ${reviewPackage.package_id}.`;
+  }
+
+  upsertAutonomousWorkItem(state, "scheduled_work_items", updatedWorkItem);
+  return null;
 }
 
 function determineSupervisedRecoveryAction(
@@ -1045,8 +1195,15 @@ function applyExecutionResult(
   const tickId = buildTickId(config.runtime_id, attemptedAt);
   const agentRuntimeProjection = buildAgentRuntimeProjection(record, execution, attemptedAt, tickId, baseMutationSummary);
   const executionChainProjection = buildExecutionChainProjection(record, execution, attemptedAt, baseMutationSummary);
+  const planningLinkageSummary = applyAutonomousPlanningExecutionLinkage(
+    execution.updated_dashboard_state,
+    executionChainProjection.primary_chain,
+    attemptedAt,
+    execution.reason,
+  );
   const mutationSummary = [
     baseMutationSummary,
+    planningLinkageSummary,
     agentRuntimeProjection.event_summary,
     executionChainProjection.chain_summary,
   ].filter(Boolean).join(" | ");

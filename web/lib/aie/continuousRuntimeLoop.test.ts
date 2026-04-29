@@ -7,6 +7,9 @@ import {
 } from "./backgroundRuntimeService";
 import type { OperatorDashboardState } from "./operatorDashboardState";
 import {
+  createAutonomousWorkItem,
+} from "./autonomousWorkPlanning";
+import {
   createContinuousRuntimeLoopClock,
   runContinuousRuntimeLoop,
   summarizeContinuousRuntimeLoop,
@@ -331,7 +334,7 @@ test("loop persists state after each cycle", () => {
     {
       runtime_id: seeded.record.runtime_id,
       tick_interval_ms: 60_000,
-      max_ticks_per_run: 2,
+      max_ticks_per_run: 4,
       max_runs_per_invocation: 1,
       started_at: "2026-04-26T12:01:00.000Z",
     },
@@ -482,6 +485,63 @@ test("loop integrates with executionLoopController", () => {
   assert.equal(result.runtime_state?.operator_dashboard_state?.active_goal?.goal_id, "goal-active");
   assert.equal(result.runtime_state?.agent_runtime_registry?.agents.find((agent) => agent.agent_id === "executor-agent")?.status, "assigned");
   assert.equal(result.runtime_state?.execution_chains?.[0]?.status, "active");
+});
+
+test("approved planning work becomes chain-linked runtime work and generates a review package", () => {
+  const seeded = attachSupervisedSession(createSeededRuntimeRecord((state) => {
+    state.active_goal = null;
+    state.queued_goals = [];
+    state.proposed_work_items = [
+      createAutonomousWorkItem({
+        work_item_id: "planning-goal-1",
+        title: "Planning goal one",
+        summary: "A bounded planning item that should schedule into the runtime queue.",
+        source: "test",
+        proposed_by_agent_id: "planner-agent",
+        priority: "medium",
+        risk_level: "low",
+        estimated_tick_cost: 1,
+        required_agent_roles: ["planner"],
+        required_approval_level: "none",
+        dependency_ids: [],
+        expected_outputs: ["runner_artifacts/planning-goal-1-summary.json"],
+        safety_scope: "bounded_runtime_only",
+        status: "approved_for_planning",
+        created_at: "2026-04-26T12:00:00.000Z",
+        updated_at: "2026-04-26T12:00:00.000Z",
+      }),
+    ];
+    state.scheduled_work_items = [];
+    state.running_work_items = [];
+    state.review_packages = [];
+    state.planning_recommendations = [{
+      work_item_id: "planning-goal-1",
+      title: "Planning goal one",
+      score: 42,
+      explanation: "The bounded planner ranked this work item highest.",
+      requires_operator_review: false,
+    }];
+  }));
+
+  const result = runContinuousRuntimeLoop(
+    seeded.store,
+    {
+      runtime_id: seeded.record.runtime_id,
+      tick_interval_ms: 60_000,
+      max_ticks_per_run: 4,
+      max_runs_per_invocation: 1,
+      started_at: "2026-04-26T12:01:00.000Z",
+    },
+    createContinuousRuntimeLoopClock("2026-04-26T12:01:00.000Z", 60_000),
+  );
+
+  assert.equal(result.runtime_state?.execution_chains?.some((chain) => chain.parent_goal_id === "planning-goal-1"), true);
+  assert.equal(result.runtime_state?.operator_dashboard_state?.review_packages?.some((item) => item.work_item_id === "planning-goal-1"), true);
+  assert.equal(result.runtime_state?.operator_dashboard_state?.proposed_work_items?.some((item) => item.work_item_id === "planning-goal-1" && item.status === "needs_review"), true);
+  assert.match(result.runtime_state?.continuous_loop?.tick_history[0]?.mutation_summary ?? "", /planning-goal-1/i);
+
+  const reloaded = loadRuntimeState(seeded.store, seeded.record.runtime_id);
+  assert.equal(reloaded?.operator_dashboard_state?.review_packages?.some((item) => item.work_item_id === "planning-goal-1"), true);
 });
 
 test("loop can continue across separate invocations when queue state is preserved", () => {

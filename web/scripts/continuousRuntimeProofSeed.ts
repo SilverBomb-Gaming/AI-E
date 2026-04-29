@@ -2,6 +2,10 @@ import {
   createBackgroundRuntimeService,
   stopBackgroundRuntimeService,
 } from "../lib/aie/backgroundRuntimeService";
+import {
+  createAutonomousWorkItem,
+  createAutonomousWorkItemPolicyFeedback,
+} from "../lib/aie/autonomousWorkPlanning";
 import type { OperatorDashboardState } from "../lib/aie/operatorDashboardState";
 import {
   createRuntimeStateStore,
@@ -21,7 +25,7 @@ export type ContinuousRuntimeProofSeedPayload = {
   store: RuntimeStateStore;
 };
 
-export type ContinuousRuntimeProofSeedMode = "continuous-runtime" | "supervised-autonomy" | "overnight-autonomy";
+export type ContinuousRuntimeProofSeedMode = "continuous-runtime" | "supervised-autonomy" | "overnight-autonomy" | "autonomous-planning";
 
 export type ContinuousRuntimeProofSeedOptions = {
   runtimeId?: string;
@@ -105,8 +109,16 @@ export function createContinuousRuntimeProofSeedPayload(options: ContinuousRunti
     tick_history: [],
   };
   currentRecord.continuous_loop_config = {
-    tick_interval_ms: mode === "continuous-runtime" ? 1_000 : 10_000,
-    max_ticks_per_run: mode === "continuous-runtime" ? 3 : 1,
+    tick_interval_ms: mode === "continuous-runtime"
+      ? 1_000
+      : mode === "autonomous-planning"
+        ? 250
+        : 10_000,
+    max_ticks_per_run: mode === "continuous-runtime"
+      ? 3
+      : mode === "autonomous-planning"
+        ? 4
+        : 1,
     max_runs_per_invocation: 1,
     require_fresh_approvals: true,
     require_fresh_context: true,
@@ -184,6 +196,137 @@ export function createContinuousRuntimeProofSeedPayload(options: ContinuousRunti
     supervised_checkpoints: [],
     last_updated_at: new Date(nowMs).toISOString(),
   };
+
+  if (mode === "autonomous-planning") {
+    const planningStartedAt = new Date(nowMs).toISOString();
+    const sessionId = createSupervisedAutonomySessionId(record.runtime_id, planningStartedAt);
+    const seededLowRiskItem = createAutonomousWorkItem({
+      work_item_id: "planning-goal-1",
+      title: "Deterministic planning candidate",
+      summary: "A bounded planning work item that should schedule into the runtime queue after operator approval.",
+      source: "proof_seed",
+      proposed_by_agent_id: "planner-agent",
+      priority: "high",
+      risk_level: "low",
+      estimated_tick_cost: 1,
+      required_agent_roles: ["planner"],
+      required_approval_level: "none",
+      dependency_ids: [],
+      expected_outputs: ["runner_artifacts/planning-goal-1-summary.json"],
+      safety_scope: "bounded_runtime_only",
+      status: "proposed",
+      created_at: planningStartedAt,
+      updated_at: planningStartedAt,
+    });
+    const seededHighRiskItem = createAutonomousWorkItem({
+      work_item_id: "planning-high-risk-1",
+      title: "High-risk planning escalation",
+      summary: "A high-risk planning work item that must remain gated for explicit operator review.",
+      source: "proof_seed",
+      proposed_by_agent_id: "planner-agent",
+      priority: "medium",
+      risk_level: "high",
+      estimated_tick_cost: 1,
+      required_agent_roles: ["planner", "validator"],
+      required_approval_level: "operator_approval",
+      dependency_ids: [],
+      expected_outputs: ["runner_artifacts/high-risk-planning-summary.json"],
+      safety_scope: "bounded_multi_agent_runtime",
+      status: "proposed",
+      created_at: planningStartedAt,
+      updated_at: planningStartedAt,
+    });
+    const supervisedSession = {
+      session_id: sessionId,
+      runtime_id: record.runtime_id,
+      status: "running" as const,
+      started_at: planningStartedAt,
+      stopped_at: null,
+      duration_ms: 0,
+      max_duration_ms: 60 * 60 * 1000,
+      tick_budget: 6,
+      ticks_completed: 0,
+      max_chain_count: 4,
+      agent_ids: ["planner-agent", "executor-agent", "validator-agent", "reporter-agent"],
+      active_chain_ids: [],
+      completed_chain_ids: [],
+      failed_chain_ids: [],
+      safety_scope: "bounded_multi_agent_runtime" as const,
+      approval_policy: "operator_must_approve_start" as const,
+      recovery_policy: "request_operator_review" as const,
+      last_checkpoint_at: null,
+      stop_reason: null,
+      last_recovery_action: "none" as const,
+      next_scheduled_tick_at: null,
+      latest_timeline_event_id: null,
+      pending_operator_review: false,
+      overnight_policy: null,
+      review_queue: [],
+      active_recovery: null,
+      resume_state: null,
+      failure_count: 0,
+    };
+
+    currentRecord.last_status = "service_idle";
+    currentRecord.stop_reason = "not_started";
+    currentRecord.blockers = [];
+    currentRecord.continuous_loop.reason = "Continuous runtime loop is ready to execute approved autonomous planning work.";
+    currentRecord.operator_dashboard_state = {
+      ...currentRecord.operator_dashboard_state,
+      active_goal: null,
+      queued_goals: [],
+      blocked_goals: [],
+      completed_goals: [],
+      paused_goals: [],
+      approvals_required: [],
+      runtime_status: {
+        status: "runtime_ready",
+        explanation: "The runtime is ready to execute approved autonomous work items.",
+      },
+      session_status: {
+        status: "session_running",
+        explanation: "The supervised session is active and ready for bounded planning execution.",
+      },
+      queue_status: {
+        status: "queue_running",
+        explanation: "Approved autonomous work will be scheduled into the existing bounded runtime queue.",
+      },
+      scheduler_status: {
+        status: "goal_selected",
+        explanation: "Deterministic planning recommendations are ready for operator approval.",
+      },
+      runtime_observability: {
+        ...currentRecord.operator_dashboard_state.runtime_observability,
+        next_scheduled_action: "Approve the top-ranked autonomous work item to start the bounded planning execution chain.",
+      },
+      proposed_work_items: [seededLowRiskItem, seededHighRiskItem],
+      scheduled_work_items: [],
+      running_work_items: [],
+      review_packages: [],
+      planning_recommendations: [
+        {
+          work_item_id: seededLowRiskItem.work_item_id,
+          title: seededLowRiskItem.title,
+          score: 42,
+          explanation: "Top-ranked bounded candidate with low risk and immediate runtime budget fit.",
+          requires_operator_review: false,
+        },
+        {
+          work_item_id: seededHighRiskItem.work_item_id,
+          title: seededHighRiskItem.title,
+          score: 11,
+          explanation: "Lower-ranked because high-risk work remains gated behind explicit operator approval.",
+          requires_operator_review: true,
+        },
+      ],
+      planning_policy_feedback: createAutonomousWorkItemPolicyFeedback(),
+      supervised_session: { ...supervisedSession },
+      supervised_checkpoints: [],
+      last_updated_at: planningStartedAt,
+    };
+    currentRecord.supervised_session = supervisedSession;
+    currentRecord.supervised_checkpoints = [];
+  }
 
   if (mode === "supervised-autonomy" || mode === "overnight-autonomy") {
     const startedAt = new Date(nowMs).toISOString();
