@@ -157,6 +157,24 @@ function createActionFromIntent(intent: SafeRuntimeIntent, goalId: string | null
       return { type: "reject_review_item", review_id: goalId ?? null };
     case "defer_review_queue_item":
       return { type: "defer_review_item", review_id: goalId ?? null };
+    case "approve_autonomous_work_item":
+      return { type: "approve_work_item", work_item_id: goalId ?? null };
+    case "reject_autonomous_work_item":
+      return { type: "reject_work_item", work_item_id: goalId ?? null };
+    case "defer_autonomous_work_item":
+      return { type: "defer_work_item", work_item_id: goalId ?? null };
+    case "approve_autonomous_review_package":
+      return { type: "approve_review_package", package_id: goalId ?? null };
+    case "reject_autonomous_review_package":
+      return { type: "reject_review_package", package_id: goalId ?? null };
+    case "approve_autonomous_delivery_package":
+      return { type: "approve_delivery_package", package_id: goalId ?? null };
+    case "reject_autonomous_delivery_package":
+      return { type: "reject_delivery_package", package_id: goalId ?? null };
+    case "request_changes_autonomous_delivery_package":
+      return { type: "request_delivery_changes", package_id: goalId ?? null };
+    case "archive_autonomous_delivery_package":
+      return { type: "archive_delivery_package", package_id: goalId ?? null };
     case "no_op":
     default:
       return null;
@@ -297,6 +315,48 @@ function validateMutationRequest(
       return null;
     }
 
+    case "approve_autonomous_work_item":
+    case "reject_autonomous_work_item":
+    case "defer_autonomous_work_item": {
+      const workItemId = input.action?.work_item_id ?? input.goal_id ?? null;
+      const workItem = workItemId
+        ? state.proposed_work_items?.find((item) => item.work_item_id === workItemId)
+          ?? state.scheduled_work_items?.find((item) => item.work_item_id === workItemId)
+          ?? state.running_work_items?.find((item) => item.work_item_id === workItemId)
+          ?? null
+        : state.proposed_work_items?.[0] ?? null;
+      if (!workItem) {
+        return "no autonomous work item is available for the requested runtime mutation";
+      }
+      return null;
+    }
+
+    case "approve_autonomous_review_package":
+    case "reject_autonomous_review_package": {
+      const packageId = input.action?.package_id ?? input.goal_id ?? null;
+      const reviewPackage = packageId
+        ? state.review_packages?.find((item) => item.package_id === packageId) ?? null
+        : state.review_packages?.find((item) => item.status === "pending") ?? null;
+      if (!reviewPackage) {
+        return "no autonomous review package is available for the requested runtime mutation";
+      }
+      return null;
+    }
+
+    case "approve_autonomous_delivery_package":
+    case "reject_autonomous_delivery_package":
+    case "request_changes_autonomous_delivery_package":
+    case "archive_autonomous_delivery_package": {
+      const packageId = input.action?.package_id ?? input.goal_id ?? null;
+      const deliveryPackage = packageId
+        ? state.delivery_packages?.find((item) => item.delivery_package_id === packageId) ?? null
+        : state.delivery_packages?.[0] ?? null;
+      if (!deliveryPackage) {
+        return "no autonomous delivery package is available for the requested runtime mutation";
+      }
+      return null;
+    }
+
     default:
       return "the requested runtime mutation intent is not supported";
   }
@@ -350,6 +410,19 @@ function applyRecordMetadata(
     case "reject_review_queue_item":
     case "defer_review_queue_item": {
       record.last_status = record.supervised_session?.pending_operator_review ? "service_blocked" : "service_paused";
+      break;
+    }
+
+    case "approve_autonomous_work_item":
+    case "reject_autonomous_work_item":
+    case "defer_autonomous_work_item":
+    case "approve_autonomous_review_package":
+    case "reject_autonomous_review_package":
+    case "approve_autonomous_delivery_package":
+    case "reject_autonomous_delivery_package":
+    case "request_changes_autonomous_delivery_package":
+    case "archive_autonomous_delivery_package": {
+      record.last_status = "service_idle";
       break;
     }
 
@@ -528,6 +601,10 @@ export function executeRuntimeMutation(input: RuntimeMutationExecutorInput): Run
       || input.runtime_intent === "approve_review_queue_item"
       || input.runtime_intent === "reject_review_queue_item"
       || input.runtime_intent === "defer_review_queue_item"
+      || input.runtime_intent === "reject_autonomous_work_item"
+      || input.runtime_intent === "defer_autonomous_work_item"
+      || input.runtime_intent === "approve_autonomous_review_package"
+      || input.runtime_intent === "reject_autonomous_review_package"
       || persistedNextRecord.supervised_session?.status === "pending_approval"
       || !persistedNextRecord.operator_dashboard_state) {
       return baseResult;

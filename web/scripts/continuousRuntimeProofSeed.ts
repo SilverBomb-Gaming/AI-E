@@ -3,6 +3,8 @@ import {
   stopBackgroundRuntimeService,
 } from "../lib/aie/backgroundRuntimeService";
 import {
+  createAutonomousDeliveryPackage,
+  createAutonomousReviewPackage,
   createAutonomousWorkItem,
   createAutonomousWorkItemPolicyFeedback,
 } from "../lib/aie/autonomousWorkPlanning";
@@ -25,7 +27,7 @@ export type ContinuousRuntimeProofSeedPayload = {
   store: RuntimeStateStore;
 };
 
-export type ContinuousRuntimeProofSeedMode = "continuous-runtime" | "supervised-autonomy" | "overnight-autonomy" | "autonomous-planning";
+export type ContinuousRuntimeProofSeedMode = "continuous-runtime" | "supervised-autonomy" | "overnight-autonomy" | "autonomous-planning" | "delivery-pipeline";
 
 export type ContinuousRuntimeProofSeedOptions = {
   runtimeId?: string;
@@ -112,11 +114,13 @@ export function createContinuousRuntimeProofSeedPayload(options: ContinuousRunti
     tick_interval_ms: mode === "continuous-runtime"
       ? 1_000
       : mode === "autonomous-planning"
+        || mode === "delivery-pipeline"
         ? 250
         : 10_000,
     max_ticks_per_run: mode === "continuous-runtime"
       ? 3
       : mode === "autonomous-planning"
+        || mode === "delivery-pipeline"
         ? 4
         : 1,
     max_runs_per_invocation: 1,
@@ -325,6 +329,95 @@ export function createContinuousRuntimeProofSeedPayload(options: ContinuousRunti
       last_updated_at: planningStartedAt,
     };
     currentRecord.supervised_session = supervisedSession;
+    currentRecord.supervised_checkpoints = [];
+  }
+
+  if (mode === "delivery-pipeline") {
+    const seededAt = new Date(nowMs).toISOString();
+    const reviewPackage = createAutonomousReviewPackage({
+      package_id: "delivery-proof-review-package",
+      work_item_id: "delivery-proof-work-item",
+      chain_id: "delivery-proof-chain",
+      status: "approved",
+      summary: "A reviewed bounded change set is ready for delivery packaging.",
+      files_changed: ["web/lib/aie/operatorControlSurface.ts", "web/app/operator/OperatorDashboardClient.tsx"],
+      tests_run: ["npm run test:trace:safe"],
+      proof_results: ["proof:autonomous-planning:safe -> proof_passed"],
+      risks: ["Operator approval is still required before commit."],
+      recommended_decision: "open_pr",
+      rollback_notes: "Revert the bounded change set and restore the last approved dashboard state.",
+      operator_actions: ["approve", "reject", "request_changes", "open_pr", "archive"],
+    });
+    const deliveryPackage = createAutonomousDeliveryPackage({
+      delivery_package_id: "delivery-delivery-proof-review-package",
+      review_package_id: reviewPackage.package_id,
+      work_item_id: reviewPackage.work_item_id,
+      chain_id: reviewPackage.chain_id,
+      branch_name: "autonomy/delivery-proof-work-item",
+      commit_plan: [
+        "Stage the reviewed delivery pipeline changes.",
+        "Capture validation and proof evidence before commit approval.",
+        "Prepare PR summary and rollback notes for operator signoff.",
+      ],
+      files_changed: [...reviewPackage.files_changed],
+      validation_results: [...reviewPackage.tests_run],
+      proof_results: [...reviewPackage.proof_results],
+      risk_summary: "Operator approval is still required before commit.",
+      rollback_plan: reviewPackage.rollback_notes,
+      release_notes: "Delivery-ready package seeded for the bounded operator approval proof.",
+      recommended_pr_title: "AI-E: deliver delivery-proof-work-item",
+      recommended_pr_body: "Summary: Delivery-ready package seeded for the bounded operator approval proof.\n\nValidation evidence: npm run test:trace:safe\n\nProof evidence: proof:autonomous-planning:safe -> proof_passed\n\nRollback notes: Revert the bounded change set and restore the last approved dashboard state.",
+      operator_decision: null,
+      status: "awaiting_operator_approval",
+      created_at: seededAt,
+      updated_at: seededAt,
+    });
+
+    currentRecord.last_status = "service_idle";
+    currentRecord.stop_reason = "not_started";
+    currentRecord.blockers = [];
+    currentRecord.continuous_loop.reason = "Continuous runtime loop is ready for bounded delivery-package approval.";
+    currentRecord.operator_dashboard_state = {
+      ...currentRecord.operator_dashboard_state,
+      active_goal: null,
+      queued_goals: [],
+      blocked_goals: [],
+      completed_goals: [],
+      paused_goals: [],
+      approvals_required: [],
+      runtime_status: {
+        status: "runtime_ready",
+        explanation: "The runtime is ready for bounded delivery approval handling.",
+      },
+      session_status: {
+        status: "session_idle",
+        explanation: "No supervised session is required for this delivery approval proof.",
+      },
+      queue_status: {
+        status: "queue_idle",
+        explanation: "No queued runtime work is pending; the operator is reviewing a delivery package.",
+      },
+      scheduler_status: {
+        status: "scheduler_idle",
+        explanation: "The bounded scheduler is waiting for an operator delivery decision.",
+      },
+      runtime_observability: {
+        ...currentRecord.operator_dashboard_state.runtime_observability,
+        next_scheduled_action: "Approve the delivery package to record bounded commit authorization.",
+        latest_safety_gate_decision: "passed",
+      },
+      proposed_work_items: [],
+      scheduled_work_items: [],
+      running_work_items: [],
+      review_packages: [reviewPackage],
+      delivery_packages: [deliveryPackage],
+      planning_recommendations: [],
+      planning_policy_feedback: createAutonomousWorkItemPolicyFeedback(),
+      supervised_session: undefined,
+      supervised_checkpoints: [],
+      last_updated_at: seededAt,
+    };
+    currentRecord.supervised_session = null;
     currentRecord.supervised_checkpoints = [];
   }
 

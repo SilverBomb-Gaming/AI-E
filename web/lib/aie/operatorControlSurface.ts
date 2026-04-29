@@ -1,4 +1,5 @@
 import type {
+  OperatorDashboardPlanningRecommendation,
   OperatorDashboardActionItem,
   OperatorDashboardApprovalRequirement,
   OperatorDashboardBlockedGoal,
@@ -8,6 +9,12 @@ import type {
   OperatorDashboardState,
   OperatorDashboardValidationIssue,
 } from "./operatorDashboardState";
+import type {
+  AutonomousDeliveryPackage,
+  AutonomousReviewPackage,
+  AutonomousWorkItem,
+  AutonomousWorkItemPolicyFeedback,
+} from "./autonomousWorkPlanning";
 import {
   createOvernightAutonomyPolicyId,
   createSupervisedAutonomySessionId,
@@ -16,7 +23,7 @@ import {
   type SupervisedAutonomyRecoveryPolicy,
 } from "./supervisedAutonomySession";
 
-export type OperatorControlActionType = "approve_goal" | "pause_goal" | "resume_goal" | "retry_goal" | "start_supervised_session" | "pause_session" | "resume_session" | "stop_session" | "request_operator_review" | "approve_review_item" | "reject_review_item" | "defer_review_item";
+export type OperatorControlActionType = "approve_goal" | "pause_goal" | "resume_goal" | "retry_goal" | "start_supervised_session" | "pause_session" | "resume_session" | "stop_session" | "request_operator_review" | "approve_review_item" | "reject_review_item" | "defer_review_item" | "approve_work_item" | "reject_work_item" | "defer_work_item" | "approve_review_package" | "reject_review_package" | "approve_delivery_package" | "reject_delivery_package" | "request_delivery_changes" | "archive_delivery_package";
 
 export type SupervisedSessionControlInput = {
   max_duration_ms?: number;
@@ -43,6 +50,8 @@ export type OperatorControlAction = {
   type: OperatorControlActionType;
   goal_id?: string | null;
   review_id?: string | null;
+  work_item_id?: string | null;
+  package_id?: string | null;
   supervised_session_input?: SupervisedSessionControlInput;
 };
 
@@ -95,6 +104,44 @@ function cloneActionItem(item: OperatorDashboardActionItem): OperatorDashboardAc
   return { ...item };
 }
 
+function cloneWorkItem(item: AutonomousWorkItem): AutonomousWorkItem {
+  return {
+    ...item,
+    required_agent_roles: [...item.required_agent_roles],
+    dependency_ids: [...item.dependency_ids],
+    expected_outputs: [...item.expected_outputs],
+  };
+}
+
+function cloneReviewPackage(item: AutonomousReviewPackage): AutonomousReviewPackage {
+  return {
+    ...item,
+    files_changed: [...item.files_changed],
+    tests_run: [...item.tests_run],
+    proof_results: [...item.proof_results],
+    risks: [...item.risks],
+    operator_actions: [...item.operator_actions],
+  };
+}
+
+function cloneDeliveryPackage(item: AutonomousDeliveryPackage): AutonomousDeliveryPackage {
+  return {
+    ...item,
+    commit_plan: [...item.commit_plan],
+    files_changed: [...item.files_changed],
+    validation_results: [...item.validation_results],
+    proof_results: [...item.proof_results],
+  };
+}
+
+function clonePlanningRecommendation(item: OperatorDashboardPlanningRecommendation): OperatorDashboardPlanningRecommendation {
+  return { ...item };
+}
+
+function clonePlanningPolicyFeedback(value: AutonomousWorkItemPolicyFeedback | undefined): AutonomousWorkItemPolicyFeedback | undefined {
+  return value ? { ...value } : undefined;
+}
+
 function cloneSupervisedSessionInput(input: SupervisedSessionControlInput | undefined): SupervisedSessionControlInput | undefined {
   return input
     ? {
@@ -144,6 +191,13 @@ function cloneState(state: OperatorDashboardState): OperatorDashboardState {
         semantic_progression: event.semantic_progression ? { ...event.semantic_progression } : null,
       })),
     } : undefined,
+    proposed_work_items: state.proposed_work_items?.map((item) => cloneWorkItem(item)),
+    scheduled_work_items: state.scheduled_work_items?.map((item) => cloneWorkItem(item)),
+    running_work_items: state.running_work_items?.map((item) => cloneWorkItem(item)),
+    review_packages: state.review_packages?.map((item) => cloneReviewPackage(item)),
+    delivery_packages: state.delivery_packages?.map((item) => cloneDeliveryPackage(item)),
+    planning_recommendations: state.planning_recommendations?.map((item) => clonePlanningRecommendation(item)),
+    planning_policy_feedback: clonePlanningPolicyFeedback(state.planning_policy_feedback),
     supervised_session: state.supervised_session ? {
       ...state.supervised_session,
       agent_ids: [...state.supervised_session.agent_ids],
@@ -244,6 +298,178 @@ function removeMatchingRecoverySignals(state: OperatorDashboardState): void {
 
 function nextStateTimestamp(state: OperatorDashboardState): string {
   return nextTimestamp(state);
+}
+
+function buildGoalFromWorkItem(workItem: AutonomousWorkItem, updatedAt: string): OperatorDashboardGoal {
+  return {
+    goal_id: workItem.work_item_id,
+    description: workItem.title,
+    explanation: workItem.summary,
+    priority: workItem.priority,
+    status: workItem.status === "running" ? "active" : workItem.status === "completed" ? "completed" : "pending",
+    recommended_action: workItem.status === "scheduled"
+      ? "Let the bounded scheduler pick up this approved work item."
+      : workItem.status === "completed"
+        ? "Review the package outcome and close the item when ready."
+        : null,
+    depends_on_goal_ids: [...workItem.dependency_ids],
+    blocking_goal_ids: [],
+    conflict_goal_ids: [],
+    last_updated_at: updatedAt,
+  };
+}
+
+function removeQueuedGoal(state: OperatorDashboardState, goalId: string): void {
+  state.queued_goals = state.queued_goals.filter((goal) => goal.goal_id !== goalId);
+  state.paused_goals = state.paused_goals.filter((goal) => goal.goal_id !== goalId);
+  state.blocked_goals = state.blocked_goals.filter((goal) => goal.goal_id !== goalId);
+}
+
+function upsertQueuedGoal(state: OperatorDashboardState, goal: OperatorDashboardGoal): void {
+  removeQueuedGoal(state, goal.goal_id);
+  if (state.active_goal?.goal_id === goal.goal_id) {
+    state.active_goal = goal.status === "active" ? goal : state.active_goal;
+    return;
+  }
+  state.queued_goals = [goal, ...state.queued_goals];
+}
+
+function removePlanningRecommendation(state: OperatorDashboardState, workItemId: string): void {
+  state.planning_recommendations = (state.planning_recommendations ?? []).filter((item) => item.work_item_id !== workItemId);
+}
+
+function ensurePlanningFeedback(state: OperatorDashboardState): AutonomousWorkItemPolicyFeedback {
+  const existing = state.planning_policy_feedback;
+  if (existing) {
+    return existing;
+  }
+  const created = {
+    approvals_recorded: 0,
+    rejections_recorded: 0,
+    deferrals_recorded: 0,
+    request_changes_recorded: 0,
+    last_feedback_at: null,
+  };
+  state.planning_policy_feedback = created;
+  return created;
+}
+
+function locateWorkItem(state: OperatorDashboardState, workItemId: string | null | undefined): {
+  bucket: "proposed_work_items" | "scheduled_work_items" | "running_work_items";
+  index: number;
+  item: AutonomousWorkItem;
+} | null {
+  const targetId = workItemId ?? state.proposed_work_items?.[0]?.work_item_id ?? state.scheduled_work_items?.[0]?.work_item_id ?? state.running_work_items?.[0]?.work_item_id ?? null;
+  if (!targetId) {
+    return null;
+  }
+
+  for (const bucket of ["proposed_work_items", "scheduled_work_items", "running_work_items"] as const) {
+    const index = state[bucket]?.findIndex((item) => item.work_item_id === targetId) ?? -1;
+    if (index >= 0) {
+      const item = state[bucket]?.[index] ?? null;
+      if (item) {
+        return { bucket, index, item };
+      }
+    }
+  }
+
+  return null;
+}
+
+function moveWorkItem(
+  state: OperatorDashboardState,
+  targetBucket: "proposed_work_items" | "scheduled_work_items" | "running_work_items",
+  nextItem: AutonomousWorkItem,
+): void {
+  for (const bucket of ["proposed_work_items", "scheduled_work_items", "running_work_items"] as const) {
+    state[bucket] = (state[bucket] ?? []).filter((item) => item.work_item_id !== nextItem.work_item_id);
+  }
+
+  state[targetBucket] = [nextItem, ...(state[targetBucket] ?? [])];
+}
+
+function locateReviewPackage(state: OperatorDashboardState, packageId: string | null | undefined): {
+  index: number;
+  item: AutonomousReviewPackage;
+} | null {
+  const targetId = packageId ?? state.review_packages?.[0]?.package_id ?? null;
+  if (!targetId) {
+    return null;
+  }
+  const index = state.review_packages?.findIndex((item) => item.package_id === targetId) ?? -1;
+  if (index < 0 || !state.review_packages) {
+    return null;
+  }
+  const item = state.review_packages[index];
+  return item ? { index, item } : null;
+}
+
+function locateDeliveryPackage(state: OperatorDashboardState, packageId: string | null | undefined): {
+  index: number;
+  item: AutonomousDeliveryPackage;
+} | null {
+  const targetId = packageId ?? state.delivery_packages?.[0]?.delivery_package_id ?? null;
+  if (!targetId) {
+    return null;
+  }
+  const index = state.delivery_packages?.findIndex((item) => item.delivery_package_id === targetId) ?? -1;
+  if (index < 0 || !state.delivery_packages) {
+    return null;
+  }
+  const item = state.delivery_packages[index];
+  return item ? { index, item } : null;
+}
+
+function slugifyForBranch(value: string): string {
+  const slug = value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  return slug || "delivery-package";
+}
+
+function buildDeliveryPackageFromReviewPackage(
+  reviewPackage: AutonomousReviewPackage,
+  updatedAt: string,
+  existingPackage?: AutonomousDeliveryPackage,
+): AutonomousDeliveryPackage {
+  const prTitle = `AI-E: deliver ${reviewPackage.work_item_id}`;
+  return {
+    delivery_package_id: existingPackage?.delivery_package_id ?? `delivery-${reviewPackage.package_id}`,
+    review_package_id: reviewPackage.package_id,
+    work_item_id: reviewPackage.work_item_id,
+    chain_id: reviewPackage.chain_id,
+    branch_name: existingPackage?.branch_name ?? `autonomy/${slugifyForBranch(reviewPackage.work_item_id || reviewPackage.package_id)}`,
+    commit_plan: [
+      `Stage reviewed changes for ${reviewPackage.work_item_id}.`,
+      "Run the bounded validation bundle and capture evidence.",
+      "Prepare the PR summary, rollback notes, and operator approval record.",
+    ],
+    files_changed: [...reviewPackage.files_changed],
+    validation_results: [...reviewPackage.tests_run],
+    proof_results: [...reviewPackage.proof_results],
+    risk_summary: reviewPackage.risks.length ? reviewPackage.risks.join("; ") : "No additional delivery risks recorded.",
+    rollback_plan: reviewPackage.rollback_notes || "Revert the reviewed change set and restore the previous delivery branch state.",
+    release_notes: reviewPackage.summary,
+    recommended_pr_title: prTitle,
+    recommended_pr_body: [
+      `Summary: ${reviewPackage.summary}`,
+      `Validation evidence: ${reviewPackage.tests_run.length ? reviewPackage.tests_run.join(", ") : "No validation evidence recorded yet."}`,
+      `Proof evidence: ${reviewPackage.proof_results.length ? reviewPackage.proof_results.join(", ") : "No proof evidence recorded yet."}`,
+      `Rollback notes: ${reviewPackage.rollback_notes || "No rollback notes recorded."}`,
+    ].join("\n\n"),
+    operator_decision: existingPackage?.operator_decision ?? null,
+    status: existingPackage?.status && existingPackage.status !== "rejected" && existingPackage.status !== "archived"
+      ? existingPackage.status
+      : "awaiting_operator_approval",
+    created_at: existingPackage?.created_at ?? updatedAt,
+    updated_at: updatedAt,
+  };
+}
+
+function upsertDeliveryPackage(state: OperatorDashboardState, nextItem: AutonomousDeliveryPackage): void {
+  state.delivery_packages = [
+    nextItem,
+    ...(state.delivery_packages ?? []).filter((item) => item.delivery_package_id !== nextItem.delivery_package_id),
+  ];
 }
 
 function buildSupervisedSession(state: OperatorDashboardState, input: SupervisedSessionControlInput | undefined) {
@@ -759,6 +985,279 @@ export function applyOperatorControlAction(state: OperatorDashboardState, action
 
     case "defer_review_item": {
       return applyReviewDecision(nextState, action, "deferred");
+    }
+
+    case "approve_work_item": {
+      const resolved = locateWorkItem(nextState, action.work_item_id);
+      if (!resolved) {
+        return {
+          action,
+          changed: false,
+          message: "No autonomous work item is available to approve.",
+          state: nextState,
+        };
+      }
+
+      const updatedAt = nextTimestamp(nextState);
+      const approvedItem: AutonomousWorkItem = {
+        ...cloneWorkItem(resolved.item),
+        status: "scheduled",
+        updated_at: updatedAt,
+      };
+      moveWorkItem(nextState, "scheduled_work_items", approvedItem);
+      upsertQueuedGoal(nextState, buildGoalFromWorkItem(approvedItem, updatedAt));
+      removePlanningRecommendation(nextState, approvedItem.work_item_id);
+      nextState.queue_status = {
+        status: "queue_running",
+        explanation: `${approvedItem.title} was approved and added to the bounded work queue.`,
+      };
+      nextState.scheduler_status = {
+        status: "goal_selected",
+        explanation: `${approvedItem.title} is ready for bounded scheduling.`,
+      };
+      const feedback = ensurePlanningFeedback(nextState);
+      feedback.approvals_recorded += 1;
+      feedback.last_feedback_at = updatedAt;
+      updateLastUpdated(nextState);
+      return {
+        action,
+        changed: true,
+        message: "The autonomous work item was approved and queued.",
+        state: nextState,
+      };
+    }
+
+    case "reject_work_item": {
+      const resolved = locateWorkItem(nextState, action.work_item_id);
+      if (!resolved) {
+        return {
+          action,
+          changed: false,
+          message: "No autonomous work item is available to reject.",
+          state: nextState,
+        };
+      }
+
+      const updatedAt = nextTimestamp(nextState);
+      const rejectedItem: AutonomousWorkItem = {
+        ...cloneWorkItem(resolved.item),
+        status: "rejected",
+        updated_at: updatedAt,
+      };
+      moveWorkItem(nextState, "proposed_work_items", rejectedItem);
+      removeQueuedGoal(nextState, rejectedItem.work_item_id);
+      removePlanningRecommendation(nextState, rejectedItem.work_item_id);
+      const feedback = ensurePlanningFeedback(nextState);
+      feedback.rejections_recorded += 1;
+      feedback.last_feedback_at = updatedAt;
+      updateLastUpdated(nextState);
+      return {
+        action,
+        changed: true,
+        message: "The autonomous work item was rejected.",
+        state: nextState,
+      };
+    }
+
+    case "defer_work_item": {
+      const resolved = locateWorkItem(nextState, action.work_item_id);
+      if (!resolved) {
+        return {
+          action,
+          changed: false,
+          message: "No autonomous work item is available to defer.",
+          state: nextState,
+        };
+      }
+
+      const updatedAt = nextTimestamp(nextState);
+      const deferredItem: AutonomousWorkItem = {
+        ...cloneWorkItem(resolved.item),
+        status: "needs_review",
+        updated_at: updatedAt,
+      };
+      moveWorkItem(nextState, "proposed_work_items", deferredItem);
+      removeQueuedGoal(nextState, deferredItem.work_item_id);
+      const feedback = ensurePlanningFeedback(nextState);
+      feedback.deferrals_recorded += 1;
+      feedback.last_feedback_at = updatedAt;
+      updateLastUpdated(nextState);
+      return {
+        action,
+        changed: true,
+        message: "The autonomous work item was deferred for later review.",
+        state: nextState,
+      };
+    }
+
+    case "approve_review_package": {
+      const resolved = locateReviewPackage(nextState, action.package_id);
+      if (!resolved || !nextState.review_packages) {
+        return {
+          action,
+          changed: false,
+          message: "No review package is available to approve.",
+          state: nextState,
+        };
+      }
+
+      const updatedAt = nextTimestamp(nextState);
+      nextState.review_packages[resolved.index] = {
+        ...cloneReviewPackage(resolved.item),
+        status: "approved",
+      };
+      const existingDeliveryPackage = nextState.delivery_packages?.find((item) => item.review_package_id === resolved.item.package_id);
+      upsertDeliveryPackage(nextState, buildDeliveryPackageFromReviewPackage(resolved.item, updatedAt, existingDeliveryPackage));
+      const workItem = locateWorkItem(nextState, resolved.item.work_item_id);
+      if (workItem) {
+        const completedItem: AutonomousWorkItem = {
+          ...cloneWorkItem(workItem.item),
+          status: "completed",
+          updated_at: updatedAt,
+        };
+        nextState[workItem.bucket] = (nextState[workItem.bucket] ?? []).filter((item) => item.work_item_id !== completedItem.work_item_id);
+        nextState.completed_goals = [buildGoalFromWorkItem(completedItem, updatedAt), ...nextState.completed_goals.filter((goal) => goal.goal_id !== completedItem.work_item_id)];
+      }
+      updateLastUpdated(nextState);
+      return {
+        action,
+        changed: true,
+        message: "The review package was approved and a delivery package is ready for operator approval.",
+        state: nextState,
+      };
+    }
+
+    case "reject_review_package": {
+      const resolved = locateReviewPackage(nextState, action.package_id);
+      if (!resolved || !nextState.review_packages) {
+        return {
+          action,
+          changed: false,
+          message: "No review package is available to reject.",
+          state: nextState,
+        };
+      }
+
+      const updatedAt = nextTimestamp(nextState);
+      nextState.review_packages[resolved.index] = {
+        ...cloneReviewPackage(resolved.item),
+        status: "rejected",
+      };
+      updateLastUpdated(nextState);
+      return {
+        action,
+        changed: true,
+        message: "The review package was rejected.",
+        state: nextState,
+      };
+    }
+
+    case "approve_delivery_package": {
+      const resolved = locateDeliveryPackage(nextState, action.package_id);
+      if (!resolved || !nextState.delivery_packages) {
+        return {
+          action,
+          changed: false,
+          message: "No delivery package is available to approve for commit.",
+          state: nextState,
+        };
+      }
+
+      const updatedAt = nextTimestamp(nextState);
+      nextState.delivery_packages[resolved.index] = {
+        ...cloneDeliveryPackage(resolved.item),
+        operator_decision: "approve_for_commit",
+        status: "approved_for_commit",
+        updated_at: updatedAt,
+      };
+      updateLastUpdated(nextState);
+      return {
+        action,
+        changed: true,
+        message: "The delivery package was approved for commit.",
+        state: nextState,
+      };
+    }
+
+    case "reject_delivery_package": {
+      const resolved = locateDeliveryPackage(nextState, action.package_id);
+      if (!resolved || !nextState.delivery_packages) {
+        return {
+          action,
+          changed: false,
+          message: "No delivery package is available to reject.",
+          state: nextState,
+        };
+      }
+
+      const updatedAt = nextTimestamp(nextState);
+      nextState.delivery_packages[resolved.index] = {
+        ...cloneDeliveryPackage(resolved.item),
+        operator_decision: "reject_delivery",
+        status: "rejected",
+        updated_at: updatedAt,
+      };
+      updateLastUpdated(nextState);
+      return {
+        action,
+        changed: true,
+        message: "The delivery package was rejected.",
+        state: nextState,
+      };
+    }
+
+    case "request_delivery_changes": {
+      const resolved = locateDeliveryPackage(nextState, action.package_id);
+      if (!resolved || !nextState.delivery_packages) {
+        return {
+          action,
+          changed: false,
+          message: "No delivery package is available for a change request.",
+          state: nextState,
+        };
+      }
+
+      const updatedAt = nextTimestamp(nextState);
+      nextState.delivery_packages[resolved.index] = {
+        ...cloneDeliveryPackage(resolved.item),
+        operator_decision: "request_changes",
+        status: "draft",
+        updated_at: updatedAt,
+      };
+      updateLastUpdated(nextState);
+      return {
+        action,
+        changed: true,
+        message: "The delivery package was sent back for changes.",
+        state: nextState,
+      };
+    }
+
+    case "archive_delivery_package": {
+      const resolved = locateDeliveryPackage(nextState, action.package_id);
+      if (!resolved || !nextState.delivery_packages) {
+        return {
+          action,
+          changed: false,
+          message: "No delivery package is available to archive.",
+          state: nextState,
+        };
+      }
+
+      const updatedAt = nextTimestamp(nextState);
+      nextState.delivery_packages[resolved.index] = {
+        ...cloneDeliveryPackage(resolved.item),
+        operator_decision: "archive",
+        status: "archived",
+        updated_at: updatedAt,
+      };
+      updateLastUpdated(nextState);
+      return {
+        action,
+        changed: true,
+        message: "The delivery package was archived.",
+        state: nextState,
+      };
     }
   }
 }

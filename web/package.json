@@ -20,6 +20,7 @@
     "proof:supervised-autonomy:safe": "set NODE_OPTIONS=--max-old-space-size=4096 && set AIE_RESOURCE_SAFE_MODE=1 && tsx scripts/launchSupervisedAutonomyProof.ts",
     "proof:overnight-autonomy:safe": "set NODE_OPTIONS=--max-old-space-size=4096 && set AIE_RESOURCE_SAFE_MODE=1 && tsx scripts/launchOvernightAutonomyProof.ts",
     "proof:autonomous-planning:safe": "node --import tsx scripts/launchAutonomousPlanningProof.ts",
+    "proof:delivery-pipeline:safe": "node --import tsx scripts/launchDeliveryPipelineProof.ts",
     "validate:layer5:safe": "npm run proof:continuous-runtime:safe && npm run proof:multi-agent-runtime:safe && npm run proof:supervised-autonomy:safe && npm run test:trace:safe",
     "validate:layer6:safe": "npm run proof:continuous-runtime:safe && npm run proof:multi-agent-runtime:safe && npm run proof:supervised-autonomy:safe && npm run proof:overnight-autonomy:safe && npm run test:trace:safe",
     "readiness": "tsx training_readiness_check.ts",

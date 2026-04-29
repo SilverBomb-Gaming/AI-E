@@ -30,6 +30,15 @@ function normalizeAction(value: unknown): OperatorControlAction | null {
     && candidate.type !== "approve_review_item"
     && candidate.type !== "reject_review_item"
     && candidate.type !== "defer_review_item"
+    && candidate.type !== "approve_work_item"
+    && candidate.type !== "reject_work_item"
+    && candidate.type !== "defer_work_item"
+    && candidate.type !== "approve_review_package"
+    && candidate.type !== "reject_review_package"
+    && candidate.type !== "approve_delivery_package"
+    && candidate.type !== "reject_delivery_package"
+    && candidate.type !== "request_delivery_changes"
+    && candidate.type !== "archive_delivery_package"
   ) {
     return null;
   }
@@ -44,6 +53,16 @@ function normalizeAction(value: unknown): OperatorControlAction | null {
     review_id: typeof candidate.review_id === "string"
       ? candidate.review_id.trim() || null
       : candidate.review_id === null || candidate.review_id === undefined
+        ? null
+        : null,
+    work_item_id: typeof candidate.work_item_id === "string"
+      ? candidate.work_item_id.trim() || null
+      : candidate.work_item_id === null || candidate.work_item_id === undefined
+        ? null
+        : null,
+    package_id: typeof candidate.package_id === "string"
+      ? candidate.package_id.trim() || null
+      : candidate.package_id === null || candidate.package_id === undefined
         ? null
         : null,
     supervised_session_input: candidate.supervised_session_input && typeof candidate.supervised_session_input === "object"

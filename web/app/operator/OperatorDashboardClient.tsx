@@ -9,6 +9,7 @@ import {
   type OperatorControlAction,
   type SupervisedSessionControlInput,
 } from "@/lib/aie/operatorControlSurface";
+import type { AutonomousDeliveryPackage, AutonomousReviewPackage, AutonomousWorkItem } from "@/lib/aie/autonomousWorkPlanning";
 import type { AgentRuntimeNode } from "@/lib/aie/agentRuntimeRegistry";
 import type {
   OperatorDashboardApprovalRequirement,
@@ -298,6 +299,124 @@ function RecoveryRow({
           disabled={disabled}
           tone="warning"
         />
+      </div>
+    </article>
+  );
+}
+
+function WorkItemRow({
+  item,
+  onApprove,
+  onReject,
+  onDefer,
+  disabled,
+}: {
+  item: AutonomousWorkItem;
+  onApprove: () => void;
+  onReject: () => void;
+  onDefer: () => void;
+  disabled: boolean;
+}) {
+  return (
+    <article className="rounded-[1.5rem] border border-ink/10 bg-white/80 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="space-y-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="headline text-lg font-semibold text-ink">{item.title}</h3>
+            <StatusBadge status={item.status} />
+            <StatusBadge status={item.risk_level} />
+          </div>
+          <p className="text-sm leading-7 body-muted">{item.summary}</p>
+          <p className="text-xs text-slate">Priority: {item.priority} | Tick cost: {item.estimated_tick_cost} | Approval: {item.required_approval_level}</p>
+          <p className="text-xs text-slate">Agent roles: {item.required_agent_roles.length ? item.required_agent_roles.join(", ") : "none"}</p>
+          <p className="text-xs text-slate">Expected outputs: {item.expected_outputs.length ? item.expected_outputs.join(", ") : "none"}</p>
+        </div>
+        {item.status !== "completed" && item.status !== "rejected" ? (
+          <div className="flex flex-wrap gap-2">
+            <ActionButton label="Approve + Queue" onClick={onApprove} disabled={disabled} tone="accent" />
+            <ActionButton label="Reject" onClick={onReject} disabled={disabled} tone="warning" />
+            <ActionButton label="Defer" onClick={onDefer} disabled={disabled} />
+          </div>
+        ) : null}
+      </div>
+    </article>
+  );
+}
+
+function ReviewPackageRow({
+  item,
+  onApprove,
+  onReject,
+  disabled,
+}: {
+  item: AutonomousReviewPackage;
+  onApprove: () => void;
+  onReject: () => void;
+  disabled: boolean;
+}) {
+  return (
+    <article className="rounded-[1.5rem] border border-ink/10 bg-white/80 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="space-y-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="headline text-lg font-semibold text-ink">{item.work_item_id}</h3>
+            <StatusBadge status={item.status} />
+            <StatusBadge status={item.recommended_decision} />
+          </div>
+          <p className="text-sm leading-7 body-muted">{item.summary}</p>
+          <p className="text-xs text-slate">Chain: {item.chain_id} | Files: {item.files_changed.length} | Tests: {item.tests_run.length} | Proofs: {item.proof_results.length}</p>
+          <p className="text-xs text-slate">Risks: {item.risks.length ? item.risks.join(", ") : "none recorded"}</p>
+          <p className="text-xs text-slate">Rollback: {item.rollback_notes}</p>
+        </div>
+        {item.status === "pending" ? (
+          <div className="flex flex-wrap gap-2">
+            <ActionButton label="Approve Package" onClick={onApprove} disabled={disabled} tone="accent" />
+            <ActionButton label="Reject Package" onClick={onReject} disabled={disabled} tone="warning" />
+          </div>
+        ) : null}
+      </div>
+    </article>
+  );
+}
+
+function DeliveryPackageRow({
+  item,
+  onApproveForCommit,
+  onRejectDelivery,
+  onRequestChanges,
+  onArchive,
+  disabled,
+}: {
+  item: AutonomousDeliveryPackage;
+  onApproveForCommit: () => void;
+  onRejectDelivery: () => void;
+  onRequestChanges: () => void;
+  onArchive: () => void;
+  disabled: boolean;
+}) {
+  return (
+    <article className="rounded-[1.5rem] border border-ink/10 bg-white/80 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="space-y-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="headline text-lg font-semibold text-ink">{item.work_item_id}</h3>
+            <StatusBadge status={item.status} />
+            {item.operator_decision ? <StatusBadge status={item.operator_decision} /> : null}
+          </div>
+          <p className="text-sm leading-7 body-muted">{item.release_notes}</p>
+          <p className="text-xs text-slate">Branch: {item.branch_name} | Files: {item.files_changed.length} | Validation: {item.validation_results.length} | Proofs: {item.proof_results.length}</p>
+          <p className="text-xs text-slate">Commit plan: {item.commit_plan.length ? item.commit_plan.join(" | ") : "none recorded"}</p>
+          <p className="text-xs text-slate">Rollback: {item.rollback_plan}</p>
+          <p className="text-xs text-slate">PR title: {item.recommended_pr_title}</p>
+        </div>
+        {item.status !== "archived" && item.status !== "rejected" ? (
+          <div className="flex flex-wrap gap-2">
+            <ActionButton label="Approve For Commit" onClick={onApproveForCommit} disabled={disabled} tone="accent" />
+            <ActionButton label="Reject Delivery" onClick={onRejectDelivery} disabled={disabled} tone="warning" />
+            <ActionButton label="Request Changes" onClick={onRequestChanges} disabled={disabled} />
+            <ActionButton label="Archive Package" onClick={onArchive} disabled={disabled} />
+          </div>
+        ) : null}
       </div>
     </article>
   );
@@ -703,6 +822,92 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
                 <p className="mt-2 text-sm leading-7 body-muted">{dashboardState?.session_status.explanation ?? "No session state is available."}</p>
                 <p className="mt-2 text-sm leading-7 body-muted">{dashboardState?.scheduler_status.explanation ?? "No scheduler state is available."}</p>
               </article>
+            </div>
+          </SectionCard>
+
+          <SectionCard eyebrow="6A" title="Autonomous Work Planning">
+            <div className="space-y-4">
+              <article className="rounded-[1.5rem] border border-ink/10 bg-white/80 p-4">
+                <p className="text-xs uppercase tracking-[0.18em] text-slate">Planning policy feedback</p>
+                <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                  <p className="text-xs leading-6 text-slate">Approvals: {dashboardState?.planning_policy_feedback?.approvals_recorded ?? 0}</p>
+                  <p className="text-xs leading-6 text-slate">Rejections: {dashboardState?.planning_policy_feedback?.rejections_recorded ?? 0}</p>
+                  <p className="text-xs leading-6 text-slate">Deferrals: {dashboardState?.planning_policy_feedback?.deferrals_recorded ?? 0}</p>
+                  <p className="text-xs leading-6 text-slate">Last feedback: {dashboardState?.planning_policy_feedback?.last_feedback_at ?? "none"}</p>
+                </div>
+                <div className="mt-4 space-y-2">
+                  {(dashboardState?.planning_recommendations ?? []).slice(0, 3).map((recommendation) => (
+                    <p key={recommendation.work_item_id} className="text-sm leading-7 body-muted">
+                      {recommendation.title}: score {recommendation.score} | {recommendation.explanation}
+                    </p>
+                  ))}
+                </div>
+              </article>
+
+              <div className="space-y-4">
+                {dashboardState?.proposed_work_items?.length ? dashboardState.proposed_work_items.map((item) => (
+                  <WorkItemRow
+                    key={item.work_item_id}
+                    item={item}
+                    onApprove={() => handleAction({ type: "approve_work_item", work_item_id: item.work_item_id })}
+                    onReject={() => handleAction({ type: "reject_work_item", work_item_id: item.work_item_id })}
+                    onDefer={() => handleAction({ type: "defer_work_item", work_item_id: item.work_item_id })}
+                    disabled={isPending}
+                  />
+                )) : <p className="text-sm leading-7 body-muted">No proposed work items are waiting for operator review.</p>}
+              </div>
+
+              <article className="rounded-[1.5rem] border border-ink/10 bg-white/80 p-4">
+                <p className="text-xs uppercase tracking-[0.18em] text-slate">Scheduled and running work</p>
+                <div className="mt-3 grid gap-3 md:grid-cols-2">
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.18em] text-slate">Scheduled</p>
+                    <div className="mt-2 space-y-2">
+                      {dashboardState?.scheduled_work_items?.length ? dashboardState.scheduled_work_items.map((item) => (
+                        <p key={item.work_item_id} className="text-sm leading-7 body-muted">{item.title} [{item.status}]</p>
+                      )) : <p className="text-sm leading-7 body-muted">No scheduled work items.</p>}
+                    </div>
+                  </div>
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.18em] text-slate">Running</p>
+                    <div className="mt-2 space-y-2">
+                      {dashboardState?.running_work_items?.length ? dashboardState.running_work_items.map((item) => (
+                        <p key={item.work_item_id} className="text-sm leading-7 body-muted">{item.title} [{item.status}]</p>
+                      )) : <p className="text-sm leading-7 body-muted">No running work items.</p>}
+                    </div>
+                  </div>
+                </div>
+              </article>
+            </div>
+          </SectionCard>
+
+          <SectionCard eyebrow="6B" title="Review Packages">
+            <div className="space-y-4">
+              {dashboardState?.review_packages?.length ? dashboardState.review_packages.map((item) => (
+                <ReviewPackageRow
+                  key={item.package_id}
+                  item={item}
+                  onApprove={() => handleAction({ type: "approve_review_package", package_id: item.package_id })}
+                  onReject={() => handleAction({ type: "reject_review_package", package_id: item.package_id })}
+                  disabled={isPending}
+                />
+              )) : <p className="text-sm leading-7 body-muted">No autonomous review packages are waiting for operator decision.</p>}
+            </div>
+          </SectionCard>
+
+          <SectionCard eyebrow="6C" title="Delivery Pipeline">
+            <div className="space-y-4">
+              {dashboardState?.delivery_packages?.length ? dashboardState.delivery_packages.map((item) => (
+                <DeliveryPackageRow
+                  key={item.delivery_package_id}
+                  item={item}
+                  onApproveForCommit={() => handleAction({ type: "approve_delivery_package", package_id: item.delivery_package_id })}
+                  onRejectDelivery={() => handleAction({ type: "reject_delivery_package", package_id: item.delivery_package_id })}
+                  onRequestChanges={() => handleAction({ type: "request_delivery_changes", package_id: item.delivery_package_id })}
+                  onArchive={() => handleAction({ type: "archive_delivery_package", package_id: item.delivery_package_id })}
+                  disabled={isPending}
+                />
+              )) : <p className="text-sm leading-7 body-muted">No delivery packages are waiting for operator approval.</p>}
             </div>
           </SectionCard>
 

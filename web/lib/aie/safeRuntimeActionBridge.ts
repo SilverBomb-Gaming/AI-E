@@ -24,6 +24,15 @@ export type SafeRuntimeIntent =
   | "approve_review_queue_item"
   | "reject_review_queue_item"
   | "defer_review_queue_item"
+  | "approve_autonomous_work_item"
+  | "reject_autonomous_work_item"
+  | "defer_autonomous_work_item"
+  | "approve_autonomous_review_package"
+  | "reject_autonomous_review_package"
+  | "approve_autonomous_delivery_package"
+  | "reject_autonomous_delivery_package"
+  | "request_changes_autonomous_delivery_package"
+  | "archive_autonomous_delivery_package"
   | "no_op";
 
 export type SafeRuntimeActionBridgeStatus =
@@ -82,12 +91,12 @@ function createAuditEvent(
       sanitizeTimestamp(createdAt),
       source,
       action.type,
-      action.goal_id ?? "global",
+      action.goal_id ?? action.work_item_id ?? action.package_id ?? "global",
     ].join("-"),
     created_at: createdAt,
     source,
     action_type: action.type,
-    goal_id: action.goal_id ?? null,
+    goal_id: action.goal_id ?? action.work_item_id ?? action.package_id ?? null,
     status,
     runtime_intent: runtimeIntent,
     reason,
@@ -107,7 +116,7 @@ function buildResult(
     status,
     action,
     source,
-    goal_id: action.goal_id ?? null,
+    goal_id: action.goal_id ?? action.work_item_id ?? action.package_id ?? null,
     runtime_intent: runtimeIntent,
     reason,
     warnings: unique(warnings),
@@ -497,6 +506,102 @@ export function createSafeRuntimeActionBridgeResult(
         [...providerResult.warnings, `Review target: ${reviewItem.review_id}`],
         createdAt,
       );
+    }
+
+    case "approve_work_item": {
+      const workItem = action.work_item_id
+        ? state.proposed_work_items?.find((item) => item.work_item_id === action.work_item_id)
+          ?? state.scheduled_work_items?.find((item) => item.work_item_id === action.work_item_id)
+          ?? null
+        : state.proposed_work_items?.[0] ?? null;
+      if (!workItem) {
+        return buildResult(source, action, "action_rejected", "no_op", "no autonomous work item exists for a live approval request", providerResult.warnings, createdAt);
+      }
+      return buildResult(source, action, "action_ready", "approve_autonomous_work_item", "the autonomous work item may be approved and queued through the bounded runtime planning path", [...providerResult.warnings, `Work item target: ${workItem.work_item_id}`], createdAt);
+    }
+
+    case "reject_work_item": {
+      const workItem = action.work_item_id
+        ? state.proposed_work_items?.find((item) => item.work_item_id === action.work_item_id)
+          ?? state.scheduled_work_items?.find((item) => item.work_item_id === action.work_item_id)
+          ?? null
+        : state.proposed_work_items?.[0] ?? null;
+      if (!workItem) {
+        return buildResult(source, action, "action_rejected", "no_op", "no autonomous work item exists for a live rejection request", providerResult.warnings, createdAt);
+      }
+      return buildResult(source, action, "action_ready", "reject_autonomous_work_item", "the autonomous work item may be rejected through the bounded runtime planning path", [...providerResult.warnings, `Work item target: ${workItem.work_item_id}`], createdAt);
+    }
+
+    case "defer_work_item": {
+      const workItem = action.work_item_id
+        ? state.proposed_work_items?.find((item) => item.work_item_id === action.work_item_id)
+          ?? state.scheduled_work_items?.find((item) => item.work_item_id === action.work_item_id)
+          ?? null
+        : state.proposed_work_items?.[0] ?? null;
+      if (!workItem) {
+        return buildResult(source, action, "action_rejected", "no_op", "no autonomous work item exists for a live defer request", providerResult.warnings, createdAt);
+      }
+      return buildResult(source, action, "action_ready", "defer_autonomous_work_item", "the autonomous work item may be deferred for later operator review", [...providerResult.warnings, `Work item target: ${workItem.work_item_id}`], createdAt);
+    }
+
+    case "approve_review_package": {
+      const reviewPackage = action.package_id
+        ? state.review_packages?.find((item) => item.package_id === action.package_id) ?? null
+        : state.review_packages?.find((item) => item.status === "pending") ?? null;
+      if (!reviewPackage) {
+        return buildResult(source, action, "action_rejected", "no_op", "no autonomous review package exists for a live approval request", providerResult.warnings, createdAt);
+      }
+      return buildResult(source, action, "action_ready", "approve_autonomous_review_package", "the autonomous review package may be approved through the bounded review handoff path", [...providerResult.warnings, `Package target: ${reviewPackage.package_id}`], createdAt);
+    }
+
+    case "reject_review_package": {
+      const reviewPackage = action.package_id
+        ? state.review_packages?.find((item) => item.package_id === action.package_id) ?? null
+        : state.review_packages?.find((item) => item.status === "pending") ?? null;
+      if (!reviewPackage) {
+        return buildResult(source, action, "action_rejected", "no_op", "no autonomous review package exists for a live rejection request", providerResult.warnings, createdAt);
+      }
+      return buildResult(source, action, "action_ready", "reject_autonomous_review_package", "the autonomous review package may be rejected through the bounded review handoff path", [...providerResult.warnings, `Package target: ${reviewPackage.package_id}`], createdAt);
+    }
+
+    case "approve_delivery_package": {
+      const deliveryPackage = action.package_id
+        ? state.delivery_packages?.find((item) => item.delivery_package_id === action.package_id) ?? null
+        : state.delivery_packages?.find((item) => item.status === "awaiting_operator_approval") ?? null;
+      if (!deliveryPackage) {
+        return buildResult(source, action, "action_rejected", "no_op", "no autonomous delivery package exists for a live approval request", providerResult.warnings, createdAt);
+      }
+      return buildResult(source, action, "action_ready", "approve_autonomous_delivery_package", "the autonomous delivery package may be approved for commit through the bounded delivery handoff path", [...providerResult.warnings, `Delivery package target: ${deliveryPackage.delivery_package_id}`], createdAt);
+    }
+
+    case "reject_delivery_package": {
+      const deliveryPackage = action.package_id
+        ? state.delivery_packages?.find((item) => item.delivery_package_id === action.package_id) ?? null
+        : state.delivery_packages?.find((item) => item.status === "awaiting_operator_approval") ?? null;
+      if (!deliveryPackage) {
+        return buildResult(source, action, "action_rejected", "no_op", "no autonomous delivery package exists for a live rejection request", providerResult.warnings, createdAt);
+      }
+      return buildResult(source, action, "action_ready", "reject_autonomous_delivery_package", "the autonomous delivery package may be rejected through the bounded delivery handoff path", [...providerResult.warnings, `Delivery package target: ${deliveryPackage.delivery_package_id}`], createdAt);
+    }
+
+    case "request_delivery_changes": {
+      const deliveryPackage = action.package_id
+        ? state.delivery_packages?.find((item) => item.delivery_package_id === action.package_id) ?? null
+        : state.delivery_packages?.find((item) => item.status === "awaiting_operator_approval") ?? null;
+      if (!deliveryPackage) {
+        return buildResult(source, action, "action_rejected", "no_op", "no autonomous delivery package exists for a live change request", providerResult.warnings, createdAt);
+      }
+      return buildResult(source, action, "action_ready", "request_changes_autonomous_delivery_package", "the autonomous delivery package may be returned for bounded changes", [...providerResult.warnings, `Delivery package target: ${deliveryPackage.delivery_package_id}`], createdAt);
+    }
+
+    case "archive_delivery_package": {
+      const deliveryPackage = action.package_id
+        ? state.delivery_packages?.find((item) => item.delivery_package_id === action.package_id) ?? null
+        : state.delivery_packages?.[0] ?? null;
+      if (!deliveryPackage) {
+        return buildResult(source, action, "action_rejected", "no_op", "no autonomous delivery package exists for archival", providerResult.warnings, createdAt);
+      }
+      return buildResult(source, action, "action_ready", "archive_autonomous_delivery_package", "the autonomous delivery package may be archived through the bounded delivery handoff path", [...providerResult.warnings, `Delivery package target: ${deliveryPackage.delivery_package_id}`], createdAt);
     }
 
     default: {

@@ -172,3 +172,67 @@ test("request_operator_review moves the supervised session into waiting state", 
   assert.equal(result.state.supervised_session?.status, "waiting_for_operator");
   assert.equal(result.state.supervised_session?.pending_operator_review, true);
 });
+
+test("approve_work_item moves a proposed item into the bounded queue", () => {
+  const initialState = createOperatorDashboardDemoState();
+
+  const result = applyOperatorControlAction(initialState, {
+    type: "approve_work_item",
+    work_item_id: "demo-work-risky-refactor",
+  });
+
+  assert.equal(result.changed, true);
+  assert.equal(result.state.scheduled_work_items?.some((item) => item.work_item_id === "demo-work-risky-refactor"), true);
+  assert.equal(result.state.queued_goals.some((goal) => goal.goal_id === "demo-work-risky-refactor"), true);
+});
+
+test("defer_work_item records planning feedback without queueing the item", () => {
+  const initialState = createOperatorDashboardDemoState();
+
+  const result = applyOperatorControlAction(initialState, {
+    type: "defer_work_item",
+    work_item_id: "demo-work-risky-refactor",
+  });
+
+  assert.equal(result.changed, true);
+  assert.equal(result.state.proposed_work_items?.find((item) => item.work_item_id === "demo-work-risky-refactor")?.status, "needs_review");
+  assert.equal(result.state.planning_policy_feedback?.deferrals_recorded, 2);
+});
+
+test("approve_review_package marks the package approved and closes the work item", () => {
+  const initialState = createOperatorDashboardDemoState();
+
+  const result = applyOperatorControlAction(initialState, {
+    type: "approve_review_package",
+    package_id: "demo-review-package",
+  });
+
+  assert.equal(result.changed, true);
+  assert.equal(result.state.review_packages?.find((item) => item.package_id === "demo-review-package")?.status, "approved");
+  assert.equal(result.state.delivery_packages?.some((item) => item.review_package_id === "demo-review-package"), true);
+  assert.equal(result.state.delivery_packages?.find((item) => item.review_package_id === "demo-review-package")?.status, "awaiting_operator_approval");
+});
+
+test("approve_delivery_package marks the package approved for commit", () => {
+  const initialState = createOperatorDashboardDemoState();
+
+  const result = applyOperatorControlAction(initialState, {
+    type: "approve_delivery_package",
+    package_id: "delivery-demo-review-package-approved",
+  });
+
+  assert.equal(result.changed, true);
+  assert.equal(result.state.delivery_packages?.find((item) => item.delivery_package_id === "delivery-demo-review-package-approved")?.status, "approved_for_commit");
+});
+
+test("request_delivery_changes returns the package to draft", () => {
+  const initialState = createOperatorDashboardDemoState();
+
+  const result = applyOperatorControlAction(initialState, {
+    type: "request_delivery_changes",
+    package_id: "delivery-demo-review-package-approved",
+  });
+
+  assert.equal(result.changed, true);
+  assert.equal(result.state.delivery_packages?.find((item) => item.delivery_package_id === "delivery-demo-review-package-approved")?.status, "draft");
+});

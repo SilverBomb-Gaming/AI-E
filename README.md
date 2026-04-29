@@ -301,6 +301,11 @@ Current Layer 7 reporting rule:
 - Layer 7: IN PROGRESS
 - Only declare Layer 7 complete when the work item planner, prioritization engine, review package generator, operator planning UI, deterministic `proof:autonomous-planning`, previous safe proofs, `test:trace:safe`, and commit/push are all complete together.
 
+Current Layer 8 reporting rule:
+
+- Layer 8: IN PROGRESS
+- Only declare Layer 8 complete when delivery packages, operator delivery approval gates, PR summary recommendations, validation evidence, rollback notes, deterministic `proof:delivery-pipeline`, previous safe proofs, `test:trace:safe`, and commit/push are all complete together.
+
 Roadmap checkpoints:
 
 - Layer 1: observable single-agent execution
@@ -324,6 +329,10 @@ Roadmap checkpoints:
 - Layer 7: autonomous work planning and operator review queue intelligence
   - status: in progress
   - proof surface: bounded work items, deterministic prioritization, review packages, `/operator`, and `npm run proof:autonomous-planning:safe`
+- Layer 8: autonomous PR and delivery pipeline
+  - status: in progress
+  - proof surface: bounded delivery packages, operator approval gates, PR summary recommendations, `/operator`, and `npm run proof:delivery-pipeline:safe`
+
 
 ## Multi-Agent Orchestration Scaffold
 

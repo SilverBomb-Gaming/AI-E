@@ -16,6 +16,19 @@ import {
   type TaskGraphNode,
   type TaskRunnableEvaluation,
 } from "./taskDependencyGraph";
+import {
+  createAutonomousDeliveryPackage,
+  createAutonomousReviewPackage,
+  createAutonomousWorkItem,
+  createAutonomousWorkItemPolicyFeedback,
+  createGoalRecordFromWorkItem,
+  rankAutonomousWorkItems,
+  type AutonomousDeliveryPackage,
+  type AutonomousReviewPackage,
+  type AutonomousWorkItem,
+  type AutonomousWorkItemPolicyFeedback,
+  type RankedAutonomousWorkItem,
+} from "./autonomousWorkPlanning";
 import type {
   BackgroundQueuedSession,
   BackgroundQueueResult,
@@ -166,12 +179,20 @@ export type OperatorDashboardAgentRuntime = {
 };
 
 export type OperatorDashboardActionItem = {
-  kind: "approval" | "dependency" | "conflict" | "recovery" | "validation";
+  kind: "approval" | "dependency" | "conflict" | "recovery" | "validation" | "planning" | "review_package" | "delivery_package";
   goal_id: string | null;
   title: string;
   reason: string;
   recommended_action: string;
   priority: "high" | "medium" | "low";
+};
+
+export type OperatorDashboardPlanningRecommendation = {
+  work_item_id: string;
+  title: string;
+  score: number;
+  explanation: string;
+  requires_operator_review: boolean;
 };
 
 export type OperatorDashboardState = {
@@ -193,6 +214,13 @@ export type OperatorDashboardState = {
   runtime_observability?: OperatorRuntimeObservability;
   agent_runtime?: OperatorDashboardAgentRuntime;
   execution_chains?: ExecutionChainRecord[];
+  proposed_work_items?: AutonomousWorkItem[];
+  scheduled_work_items?: AutonomousWorkItem[];
+  running_work_items?: AutonomousWorkItem[];
+  review_packages?: AutonomousReviewPackage[];
+  delivery_packages?: AutonomousDeliveryPackage[];
+  planning_recommendations?: OperatorDashboardPlanningRecommendation[];
+  planning_policy_feedback?: AutonomousWorkItemPolicyFeedback;
   supervised_session?: SupervisedAutonomySessionRecord | null;
   supervised_checkpoints?: SupervisedAutonomyCheckpointRecord[];
   last_updated_at: string;
@@ -207,6 +235,11 @@ export type OperatorDashboardContext = {
   background_run_result?: BackgroundRunResult | null;
   runtime_result?: SessionRuntimeResult | null;
   recovery_reports?: RecoveryReport[];
+  autonomous_work_items?: AutonomousWorkItem[];
+  review_packages?: AutonomousReviewPackage[];
+  delivery_packages?: AutonomousDeliveryPackage[];
+  planning_policy_feedback?: AutonomousWorkItemPolicyFeedback;
+  planning_budget?: number;
   generated_at?: string;
 };
 
@@ -372,6 +405,10 @@ function goalRecordFromQueuedSession(queuedSession: BackgroundQueuedSession): Go
   });
 }
 
+function goalRecordFromWorkItem(workItem: AutonomousWorkItem): GoalRecord {
+  return createGoalRecordFromWorkItem(workItem);
+}
+
 function collectGoalRecords(context: OperatorDashboardContext): GoalRecord[] {
   const goalMap = new Map<string, GoalRecord>();
 
@@ -409,7 +446,63 @@ function collectGoalRecords(context: OperatorDashboardContext): GoalRecord[] {
     goalMap.set(goal.id, mergeGoalRecord(goalMap.get(goal.id), goal));
   }
 
+  for (const workItem of context.autonomous_work_items ?? []) {
+    if (workItem.status === "proposed" || workItem.status === "rejected" || workItem.status === "needs_review") {
+      continue;
+    }
+    const goal = goalRecordFromWorkItem(workItem);
+    goalMap.set(goal.id, mergeGoalRecord(goalMap.get(goal.id), goal));
+  }
+
   return [...goalMap.values()].sort(sortGoals);
+}
+
+function buildPlanningState(context: OperatorDashboardContext): {
+  proposed_work_items: AutonomousWorkItem[];
+  scheduled_work_items: AutonomousWorkItem[];
+  running_work_items: AutonomousWorkItem[];
+  review_packages: AutonomousReviewPackage[];
+  delivery_packages: AutonomousDeliveryPackage[];
+  planning_recommendations: OperatorDashboardPlanningRecommendation[];
+  planning_policy_feedback: AutonomousWorkItemPolicyFeedback;
+} {
+  const workItems = (context.autonomous_work_items ?? []).map((item) => createAutonomousWorkItem(item));
+  const reviewPackages = (context.review_packages ?? []).map((item) => createAutonomousReviewPackage(item));
+  const deliveryPackages = (context.delivery_packages ?? []).map((item) => createAutonomousDeliveryPackage(item));
+  const planningPolicyFeedback = createAutonomousWorkItemPolicyFeedback(context.planning_policy_feedback);
+  const rankedItems = rankAutonomousWorkItems(workItems, {
+    current_runtime_budget: context.planning_budget ?? 4,
+    operator_preference: planningPolicyFeedback.approvals_recorded > planningPolicyFeedback.rejections_recorded ? 3 : 2,
+    review_queue_pressure: reviewPackages.length,
+  });
+
+  const rankedLookup = new Map(rankedItems.map((ranked) => [ranked.item.work_item_id, ranked]));
+  const sortRanked = (items: AutonomousWorkItem[]) => [...items].sort((left, right) => {
+    const leftRank = rankedLookup.get(left.work_item_id);
+    const rightRank = rankedLookup.get(right.work_item_id);
+    if (leftRank && rightRank && leftRank.score !== rightRank.score) {
+      return rightRank.score - leftRank.score;
+    }
+    return left.work_item_id.localeCompare(right.work_item_id);
+  });
+
+  return {
+    proposed_work_items: sortRanked(workItems.filter((item) => item.status === "proposed" || item.status === "approved_for_planning" || item.status === "blocked" || item.status === "needs_review")),
+    scheduled_work_items: sortRanked(workItems.filter((item) => item.status === "scheduled")),
+    running_work_items: sortRanked(workItems.filter((item) => item.status === "running")),
+    review_packages: [...reviewPackages].sort((left, right) => left.work_item_id.localeCompare(right.work_item_id)),
+    delivery_packages: [...deliveryPackages].sort((left, right) => left.work_item_id.localeCompare(right.work_item_id)),
+    planning_recommendations: rankedItems
+      .filter((ranked) => ranked.item.status === "proposed" || ranked.item.status === "approved_for_planning")
+      .map((ranked) => ({
+        work_item_id: ranked.item.work_item_id,
+        title: ranked.item.title,
+        score: ranked.score,
+        explanation: ranked.explanation,
+        requires_operator_review: ranked.requires_operator_review,
+      })),
+    planning_policy_feedback: planningPolicyFeedback,
+  };
 }
 
 function deriveGoalSchedule(context: OperatorDashboardContext, goals: GoalRecord[]): GoalSchedulerResult {
@@ -914,6 +1007,7 @@ export function buildOperatorDashboardState(context: OperatorDashboardContext): 
   const completedGoals = sortGoalSnapshots(goalSnapshots.filter((goal) => goal.status === "completed"));
   const pausedGoals = sortGoalSnapshots(goalSnapshots.filter((goal) => goal.status === "paused"));
   const activeGoal = selectedGoalId ? goalSnapshotMap.get(selectedGoalId) ?? null : null;
+  const planningState = buildPlanningState(context);
 
   return {
     active_goal: activeGoal,
@@ -949,6 +1043,13 @@ export function buildOperatorDashboardState(context: OperatorDashboardContext): 
       paused_agents: [],
     },
     execution_chains: [],
+    proposed_work_items: planningState.proposed_work_items,
+    scheduled_work_items: planningState.scheduled_work_items,
+    running_work_items: planningState.running_work_items,
+    review_packages: planningState.review_packages,
+    delivery_packages: planningState.delivery_packages,
+    planning_recommendations: planningState.planning_recommendations,
+    planning_policy_feedback: planningState.planning_policy_feedback,
     last_updated_at: deriveLastUpdatedAt(context, goals, reports),
   };
 }
@@ -1018,6 +1119,45 @@ export function extractActionableItems(state: OperatorDashboardState): OperatorD
     });
   }
 
+  for (const recommendation of state.planning_recommendations ?? []) {
+    items.push({
+      kind: "planning",
+      goal_id: recommendation.work_item_id,
+      title: `Planning recommendation for ${recommendation.title}`,
+      reason: recommendation.explanation,
+      recommended_action: recommendation.requires_operator_review ? "Request operator approval before scheduling." : "Approve and send to execution chain.",
+      priority: recommendation.requires_operator_review ? "high" : "medium",
+    });
+  }
+
+  for (const reviewPackage of state.review_packages ?? []) {
+    if (reviewPackage.status !== "pending") {
+      continue;
+    }
+    items.push({
+      kind: "review_package",
+      goal_id: reviewPackage.work_item_id,
+      title: `Review package for ${reviewPackage.work_item_id}`,
+      reason: reviewPackage.summary,
+      recommended_action: reviewPackage.recommended_decision.replace(/_/g, " "),
+      priority: reviewPackage.risks.length > 0 ? "high" : "medium",
+    });
+  }
+
+  for (const deliveryPackage of state.delivery_packages ?? []) {
+    if (deliveryPackage.status !== "awaiting_operator_approval") {
+      continue;
+    }
+    items.push({
+      kind: "delivery_package",
+      goal_id: deliveryPackage.work_item_id,
+      title: `Delivery package for ${deliveryPackage.work_item_id}`,
+      reason: deliveryPackage.release_notes,
+      recommended_action: deliveryPackage.recommended_pr_title,
+      priority: deliveryPackage.risk_summary === "No additional delivery risks recorded." ? "medium" : "high",
+    });
+  }
+
   return items.sort((left, right) => {
     const priorityOrder = { high: 0, medium: 1, low: 2 };
     const priorityDelta = priorityOrder[left.priority] - priorityOrder[right.priority];
@@ -1041,6 +1181,9 @@ export function summarizeOperatorDashboardState(state: OperatorDashboardState): 
     `Approvals required: ${state.approvals_required.length}`,
     `Validation issues: ${state.validation_issues.length}`,
     `Recovery recommendations: ${state.recovery_recommendations.length}`,
+    `Proposed work items: ${state.proposed_work_items?.length ?? 0}`,
+    `Review packages: ${state.review_packages?.length ?? 0}`,
+    `Delivery packages: ${state.delivery_packages?.length ?? 0}`,
     `Runtime status: ${state.runtime_status.status}`,
     `Queue status: ${state.queue_status.status}`,
     `Operator action items: ${actionableItems.length > 0 ? actionableItems.map((item) => `${item.title} -> ${item.recommended_action}`).join(" | ") : "none"}`,

@@ -16,6 +16,12 @@ import {
   type GoalRecord,
 } from "./multiGoalOrchestrator";
 import {
+  createAutonomousDeliveryPackage,
+  createAutonomousReviewPackage,
+  createAutonomousWorkItem,
+  createAutonomousWorkItemPolicyFeedback,
+} from "./autonomousWorkPlanning";
+import {
   buildOperatorDashboardState,
   extractActionableItems,
   groupGoalsByStatus,
@@ -203,4 +209,112 @@ test("readable summary", () => {
   assert.match(summary, /Active goal:/);
   assert.match(summary, /Blocked goals:/);
   assert.match(summary, /Operator action items:/);
+});
+
+test("autonomous planning ranks bounded work deterministically and flags high-risk approval", () => {
+  const state = buildOperatorDashboardState({
+    autonomous_work_items: [
+      createAutonomousWorkItem({
+        work_item_id: "work-high-risk",
+        title: "Refactor runtime mutation bridge",
+        summary: "Touches high risk runtime mutation code.",
+        source: "planner-analysis",
+        proposed_by_agent_id: "planner-agent",
+        priority: "high",
+        risk_level: "high",
+        estimated_tick_cost: 5,
+        required_agent_roles: ["planner", "validator"],
+        required_approval_level: "operator_approval",
+        dependency_ids: [],
+        expected_outputs: ["mutation-plan.md"],
+        safety_scope: "bounded_multi_agent_runtime",
+        status: "proposed",
+        created_at: "2026-04-29T12:00:00.000Z",
+        updated_at: "2026-04-29T12:00:00.000Z",
+      }),
+      createAutonomousWorkItem({
+        work_item_id: "work-safe-followup",
+        title: "Package overnight proof results",
+        summary: "Creates a bounded review artifact from existing proof data.",
+        source: "review-queue",
+        proposed_by_agent_id: "reporter-agent",
+        priority: "medium",
+        risk_level: "low",
+        estimated_tick_cost: 2,
+        required_agent_roles: ["reporter"],
+        required_approval_level: "none",
+        dependency_ids: ["work-high-risk"],
+        expected_outputs: ["review-packet.json"],
+        safety_scope: "bounded_runtime_only",
+        status: "approved_for_planning",
+        created_at: "2026-04-29T12:01:00.000Z",
+        updated_at: "2026-04-29T12:01:00.000Z",
+      }),
+    ],
+    planning_policy_feedback: createAutonomousWorkItemPolicyFeedback({ approvals_recorded: 3 }),
+    planning_budget: 3,
+  });
+
+  assert.equal(state.proposed_work_items?.length, 2);
+  assert.equal(state.planning_recommendations?.[0]?.work_item_id, "work-safe-followup");
+  assert.equal(state.planning_recommendations?.some((item) => item.work_item_id === "work-high-risk" && item.requires_operator_review), true);
+  assert.equal(extractActionableItems(state).some((item) => item.kind === "planning" && /operator approval/i.test(item.recommended_action)), true);
+});
+
+test("review packages surface concise decision-ready action items", () => {
+  const state = buildOperatorDashboardState({
+    review_packages: [
+      createAutonomousReviewPackage({
+        package_id: "package-1",
+        work_item_id: "work-safe-followup",
+        chain_id: "execution-chain-safe-followup",
+        status: "pending",
+        summary: "The bounded review packet is ready for operator decision.",
+        files_changed: ["web/lib/aie/operatorDashboardState.ts"],
+        tests_run: ["npm run test:trace:safe"],
+        proof_results: ["proof:overnight-autonomy:safe -> proof_passed"],
+        risks: ["No code execution changes"],
+        recommended_decision: "open_pr",
+        rollback_notes: "No rollback required; package contains summary artifacts only.",
+        operator_actions: ["approve", "reject", "defer", "request_changes", "open_pr", "archive"],
+      }),
+    ],
+  });
+
+  assert.equal(state.review_packages?.length, 1);
+  const actionableItems = extractActionableItems(state);
+  assert.equal(actionableItems.some((item) => item.kind === "review_package" && item.goal_id === "work-safe-followup"), true);
+});
+
+test("delivery packages surface concise delivery-ready action items", () => {
+  const state = buildOperatorDashboardState({
+    delivery_packages: [
+      createAutonomousDeliveryPackage({
+        delivery_package_id: "delivery-proof-summary",
+        review_package_id: "review-proof-summary",
+        work_item_id: "work-proof-summary",
+        chain_id: "chain-proof-summary",
+        branch_name: "autonomy/work-proof-summary",
+        commit_plan: ["Stage reviewed changes", "Run validation"],
+        files_changed: ["web/lib/aie/operatorControlSurface.ts"],
+        validation_results: ["npm run test:trace:safe"],
+        proof_results: ["proof:autonomous-planning:safe -> proof_passed"],
+        risk_summary: "Operator approval still required before commit.",
+        rollback_plan: "Revert the reviewed change set.",
+        release_notes: "Delivery-ready package with validation evidence.",
+        recommended_pr_title: "AI-E: deliver work-proof-summary",
+        recommended_pr_body: "Summary: Delivery-ready package with validation evidence.",
+        operator_decision: null,
+        status: "awaiting_operator_approval",
+        created_at: "2026-04-29T12:00:00.000Z",
+        updated_at: "2026-04-29T12:00:00.000Z",
+      }),
+    ],
+  });
+
+  const actionableItems = extractActionableItems(state);
+  const summary = summarizeOperatorDashboardState(state);
+
+  assert.equal(actionableItems.some((item) => item.kind === "delivery_package" && item.goal_id === "work-proof-summary"), true);
+  assert.match(summary, /Delivery packages: 1/);
 });
