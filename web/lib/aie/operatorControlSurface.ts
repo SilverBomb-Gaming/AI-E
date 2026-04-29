@@ -17,6 +17,15 @@ import type {
   AutonomousWorkItemPolicyFeedback,
 } from "./autonomousWorkPlanning";
 import { aggregateStudioHealthFromDashboardState } from "./studioHealthAggregator";
+import { createMetaIntelligenceSummaryPackage } from "./metaIntelligenceSummary";
+import {
+  buildMetaIntelligenceState,
+  detectMetaPatterns,
+} from "./metaPatternDetector";
+import {
+  deriveMetaPolicyState,
+  recommendMetaPolicyAdjustments,
+} from "./metaPolicyRecommender";
 import type { AutonomousSessionPriority } from "./autonomousSessionRegistry";
 import { createStudioOperationsSummary } from "./studioOperationsSummary";
 import {
@@ -27,7 +36,7 @@ import {
   type SupervisedAutonomyRecoveryPolicy,
 } from "./supervisedAutonomySession";
 
-export type OperatorControlActionType = "approve_goal" | "pause_goal" | "resume_goal" | "retry_goal" | "pause_all_sessions" | "resume_safe_sessions" | "prioritize_review_queue" | "prioritize_delivery_queue" | "acknowledge_studio_risk" | "request_studio_summary" | "pause_autonomous_session" | "resume_autonomous_session" | "reprioritize_autonomous_session" | "merge_autonomous_sessions" | "terminate_autonomous_session" | "start_supervised_session" | "pause_session" | "resume_session" | "stop_session" | "request_operator_review" | "approve_review_item" | "reject_review_item" | "defer_review_item" | "approve_work_item" | "reject_work_item" | "defer_work_item" | "approve_review_package" | "reject_review_package" | "approve_delivery_package" | "reject_delivery_package" | "request_delivery_changes" | "archive_delivery_package";
+export type OperatorControlActionType = "approve_goal" | "pause_goal" | "resume_goal" | "retry_goal" | "pause_all_sessions" | "resume_safe_sessions" | "prioritize_review_queue" | "prioritize_delivery_queue" | "acknowledge_studio_risk" | "request_studio_summary" | "approve_policy_recommendation" | "reject_policy_recommendation" | "defer_policy_recommendation" | "request_meta_summary" | "acknowledge_pattern" | "pause_autonomous_session" | "resume_autonomous_session" | "reprioritize_autonomous_session" | "merge_autonomous_sessions" | "terminate_autonomous_session" | "start_supervised_session" | "pause_session" | "resume_session" | "stop_session" | "request_operator_review" | "approve_review_item" | "reject_review_item" | "defer_review_item" | "approve_work_item" | "reject_work_item" | "defer_work_item" | "approve_review_package" | "reject_review_package" | "approve_delivery_package" | "reject_delivery_package" | "request_delivery_changes" | "archive_delivery_package";
 
 export type SupervisedSessionControlInput = {
   max_duration_ms?: number;
@@ -59,6 +68,9 @@ export type OperatorControlAction = {
   review_id?: string | null;
   work_item_id?: string | null;
   package_id?: string | null;
+  recommendation_id?: string | null;
+  pattern_id?: string | null;
+  rationale?: string | null;
   supervised_session_input?: SupervisedSessionControlInput;
 };
 
@@ -244,6 +256,38 @@ function cloneState(state: OperatorDashboardState): OperatorDashboardState {
       what_is_delivery_ready: [...state.studio_summary_package.what_is_delivery_ready],
       risks: [...state.studio_summary_package.risks],
     } : state.studio_summary_package,
+    meta_intelligence: state.meta_intelligence ? {
+      ...state.meta_intelligence,
+      top_failure_patterns: [...state.meta_intelligence.top_failure_patterns],
+      top_success_patterns: [...state.meta_intelligence.top_success_patterns],
+      recommended_policy_adjustments: [...state.meta_intelligence.recommended_policy_adjustments],
+      safety_notes: [...state.meta_intelligence.safety_notes],
+    } : state.meta_intelligence,
+    meta_detected_patterns: state.meta_detected_patterns?.map((item) => ({
+      ...item,
+      evidence: [...item.evidence],
+      affected_sessions: [...item.affected_sessions],
+      affected_agents: [...item.affected_agents],
+    })),
+    meta_policy_recommendations: state.meta_policy_recommendations?.map((item) => ({
+      ...item,
+      evidence: [...item.evidence],
+    })),
+    meta_policy_state: state.meta_policy_state ? {
+      ...state.meta_policy_state,
+      paused_agent_roles: [...state.meta_policy_state.paused_agent_roles],
+    } : state.meta_policy_state,
+    meta_operator_decision_history: state.meta_operator_decision_history?.map((item) => ({ ...item })),
+    meta_summary_package: state.meta_summary_package ? {
+      ...state.meta_summary_package,
+      what_improved: [...state.meta_summary_package.what_improved],
+      what_degraded: [...state.meta_summary_package.what_degraded],
+      what_patterns_emerged: [...state.meta_summary_package.what_patterns_emerged],
+      recommended_changes: [...state.meta_summary_package.recommended_changes],
+      safe_change_reasons: [...state.meta_summary_package.safe_change_reasons],
+      requires_operator_approval: [...state.meta_summary_package.requires_operator_approval],
+      should_not_change: [...state.meta_summary_package.should_not_change],
+    } : state.meta_summary_package,
     supervised_session: state.supervised_session ? {
       ...state.supervised_session,
       agent_ids: [...state.supervised_session.agent_ids],
@@ -284,8 +328,86 @@ function nextTimestamp(state: OperatorDashboardState): string {
 function updateLastUpdated(state: OperatorDashboardState): void {
   state.last_updated_at = nextTimestamp(state);
   state.studio_operations = aggregateStudioHealthFromDashboardState(state);
+  state.meta_policy_state = deriveMetaPolicyState(state, state.meta_policy_state);
+  state.meta_detected_patterns = detectMetaPatterns({
+    studio_operations_state: state.studio_operations,
+    runtime_timeline_events: state.runtime_observability?.event_log,
+    execution_chains: state.execution_chains,
+    review_packages: state.review_packages,
+    delivery_packages: state.delivery_packages,
+    recovery_events: state.recovery_recommendations,
+    operator_decisions: state.meta_operator_decision_history,
+    autonomous_sessions: state.autonomous_sessions,
+    agent_runtime: state.agent_runtime,
+  });
+  state.meta_policy_recommendations = recommendMetaPolicyAdjustments({
+    detected_patterns: state.meta_detected_patterns,
+    current_policy_state: state.meta_policy_state,
+    overnight_policy: state.supervised_session?.overnight_policy,
+    recovery_policy: state.supervised_session?.recovery_policy ?? null,
+    planning_priority_weights: (state.planning_recommendations ?? []).map((item) => `${item.work_item_id}:${item.score}`),
+    delivery_gating_rules: (state.delivery_packages ?? []).map((item) => `${item.delivery_package_id}:${item.status}`),
+    operator_decision_history: state.meta_operator_decision_history,
+    timestamp: state.last_updated_at,
+  });
+  state.meta_intelligence = buildMetaIntelligenceState(state, state.meta_detected_patterns, state.meta_policy_recommendations);
   if (state.studio_summary_package) {
     state.studio_summary_package = createStudioOperationsSummary(state, state.studio_summary_package.requested_at);
+  }
+  if (state.meta_summary_package) {
+    state.meta_summary_package = createMetaIntelligenceSummaryPackage(state, state.meta_summary_package.requested_at);
+  }
+}
+
+function appendMetaDecision(
+  state: OperatorDashboardState,
+  decision: NonNullable<OperatorDashboardState["meta_operator_decision_history"]>[number],
+): void {
+  state.meta_operator_decision_history = [decision, ...(state.meta_operator_decision_history ?? [])];
+}
+
+function applyApprovedMetaRecommendation(state: OperatorDashboardState, recommendationId: string): boolean {
+  const policyState = state.meta_policy_state;
+  const recommendation = state.meta_policy_recommendations?.find((item) => item.recommendation_id === recommendationId) ?? null;
+  if (!policyState || !recommendation) {
+    return false;
+  }
+
+  switch (recommendation.target) {
+    case "concurrency":
+      state.meta_policy_state = { ...policyState, concurrency_mode: recommendation.requested_policy_value, last_updated_at: state.last_updated_at };
+      return true;
+    case "tick_budget":
+      state.meta_policy_state = { ...policyState, tick_budget_mode: recommendation.requested_policy_value, last_updated_at: state.last_updated_at };
+      return true;
+    case "review_timing":
+      state.meta_policy_state = { ...policyState, review_timing_mode: recommendation.requested_policy_value, last_updated_at: state.last_updated_at };
+      return true;
+    case "work_type_priority":
+      state.meta_policy_state = { ...policyState, work_type_priority_mode: recommendation.requested_policy_value, last_updated_at: state.last_updated_at };
+      return true;
+    case "checkpoint_frequency":
+      state.meta_policy_state = { ...policyState, checkpoint_frequency_mode: recommendation.requested_policy_value, last_updated_at: state.last_updated_at };
+      return true;
+    case "proof_timeout":
+      state.meta_policy_state = { ...policyState, proof_timeout_mode: recommendation.requested_policy_value, last_updated_at: state.last_updated_at };
+      return true;
+    case "resource_safe_mode":
+      state.meta_policy_state = { ...policyState, resource_safe_mode_enabled: /true/i.test(recommendation.requested_policy_value), last_updated_at: state.last_updated_at };
+      return true;
+    case "agent_role_pause": {
+      const requestedRole = recommendation.requested_policy_value.replace(/^paused_agent_role=/, "");
+      state.meta_policy_state = {
+        ...policyState,
+        paused_agent_roles: requestedRole && !policyState.paused_agent_roles.includes(requestedRole)
+          ? [...policyState.paused_agent_roles, requestedRole]
+          : [...policyState.paused_agent_roles],
+        last_updated_at: state.last_updated_at,
+      };
+      return true;
+    }
+    default:
+      return false;
   }
 }
 
@@ -1108,6 +1230,129 @@ export function applyOperatorControlAction(state: OperatorDashboardState, action
         action,
         changed: true,
         message: "A fresh studio summary package was generated from live operator state.",
+        state: nextState,
+      };
+    }
+
+    case "approve_policy_recommendation": {
+      const recommendation = nextState.meta_policy_recommendations?.find((item) => item.recommendation_id === (action.recommendation_id ?? nextState.meta_policy_recommendations?.[0]?.recommendation_id ?? null)) ?? null;
+      if (!recommendation) {
+        return {
+          action,
+          changed: false,
+          message: "No meta-intelligence recommendation is available to approve.",
+          state: nextState,
+        };
+      }
+      nextState.meta_policy_recommendations = (nextState.meta_policy_recommendations ?? []).map((item) => item.recommendation_id === recommendation.recommendation_id ? { ...item, status: "approved", last_updated_at: nextTimestamp(nextState) } : item);
+      appendMetaDecision(nextState, {
+        decision_id: `meta-decision-${recommendation.recommendation_id}-approve-${nextTimestamp(nextState).replace(/[^0-9]/g, "").slice(0, 14)}`,
+        decision_type: "approve_policy_recommendation",
+        recommendation_id: recommendation.recommendation_id,
+        pattern_id: null,
+        rationale: action.rationale ?? `Approved ${recommendation.title}.`,
+        created_at: nextTimestamp(nextState),
+      });
+      applyApprovedMetaRecommendation(nextState, recommendation.recommendation_id);
+      updateLastUpdated(nextState);
+      return {
+        action,
+        changed: true,
+        message: `Meta-intelligence recommendation ${recommendation.recommendation_id} was approved and persisted to policy state.`,
+        state: nextState,
+      };
+    }
+
+    case "reject_policy_recommendation": {
+      const recommendation = nextState.meta_policy_recommendations?.find((item) => item.recommendation_id === (action.recommendation_id ?? nextState.meta_policy_recommendations?.[0]?.recommendation_id ?? null)) ?? null;
+      if (!recommendation) {
+        return {
+          action,
+          changed: false,
+          message: "No meta-intelligence recommendation is available to reject.",
+          state: nextState,
+        };
+      }
+      nextState.meta_policy_recommendations = (nextState.meta_policy_recommendations ?? []).map((item) => item.recommendation_id === recommendation.recommendation_id ? { ...item, status: "rejected", last_updated_at: nextTimestamp(nextState) } : item);
+      appendMetaDecision(nextState, {
+        decision_id: `meta-decision-${recommendation.recommendation_id}-reject-${nextTimestamp(nextState).replace(/[^0-9]/g, "").slice(0, 14)}`,
+        decision_type: "reject_policy_recommendation",
+        recommendation_id: recommendation.recommendation_id,
+        pattern_id: null,
+        rationale: action.rationale ?? `Rejected ${recommendation.title}.`,
+        created_at: nextTimestamp(nextState),
+      });
+      updateLastUpdated(nextState);
+      return {
+        action,
+        changed: true,
+        message: `Meta-intelligence recommendation ${recommendation.recommendation_id} was rejected and remains auditable.`,
+        state: nextState,
+      };
+    }
+
+    case "defer_policy_recommendation": {
+      const recommendation = nextState.meta_policy_recommendations?.find((item) => item.recommendation_id === (action.recommendation_id ?? nextState.meta_policy_recommendations?.[0]?.recommendation_id ?? null)) ?? null;
+      if (!recommendation) {
+        return {
+          action,
+          changed: false,
+          message: "No meta-intelligence recommendation is available to defer.",
+          state: nextState,
+        };
+      }
+      nextState.meta_policy_recommendations = (nextState.meta_policy_recommendations ?? []).map((item) => item.recommendation_id === recommendation.recommendation_id ? { ...item, status: "deferred", last_updated_at: nextTimestamp(nextState) } : item);
+      appendMetaDecision(nextState, {
+        decision_id: `meta-decision-${recommendation.recommendation_id}-defer-${nextTimestamp(nextState).replace(/[^0-9]/g, "").slice(0, 14)}`,
+        decision_type: "defer_policy_recommendation",
+        recommendation_id: recommendation.recommendation_id,
+        pattern_id: null,
+        rationale: action.rationale ?? `Deferred ${recommendation.title}.`,
+        created_at: nextTimestamp(nextState),
+      });
+      updateLastUpdated(nextState);
+      return {
+        action,
+        changed: true,
+        message: `Meta-intelligence recommendation ${recommendation.recommendation_id} was deferred for later review.`,
+        state: nextState,
+      };
+    }
+
+    case "request_meta_summary": {
+      nextState.meta_summary_package = createMetaIntelligenceSummaryPackage(nextState, nextTimestamp(nextState));
+      updateLastUpdated(nextState);
+      return {
+        action,
+        changed: true,
+        message: "A fresh meta-intelligence summary package was generated from live operator state.",
+        state: nextState,
+      };
+    }
+
+    case "acknowledge_pattern": {
+      const pattern = nextState.meta_detected_patterns?.find((item) => item.pattern_id === (action.pattern_id ?? nextState.meta_detected_patterns?.[0]?.pattern_id ?? null)) ?? null;
+      if (!pattern) {
+        return {
+          action,
+          changed: false,
+          message: "No meta-intelligence pattern is available to acknowledge.",
+          state: nextState,
+        };
+      }
+      appendMetaDecision(nextState, {
+        decision_id: `meta-decision-${pattern.pattern_id}-ack-${nextTimestamp(nextState).replace(/[^0-9]/g, "").slice(0, 14)}`,
+        decision_type: "acknowledge_pattern",
+        recommendation_id: null,
+        pattern_id: pattern.pattern_id,
+        rationale: action.rationale ?? `Acknowledged ${pattern.summary}.`,
+        created_at: nextTimestamp(nextState),
+      });
+      updateLastUpdated(nextState);
+      return {
+        action,
+        changed: true,
+        message: `Meta-intelligence pattern ${pattern.pattern_id} was acknowledged.`,
         state: nextState,
       };
     }

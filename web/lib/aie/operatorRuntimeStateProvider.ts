@@ -22,6 +22,9 @@ import {
   type RuntimeStateStore,
 } from "./runtimeStateStore";
 import { aggregateStudioHealthFromDashboardState } from "./studioHealthAggregator";
+import { createMetaIntelligenceSummaryPackage } from "./metaIntelligenceSummary";
+import { buildMetaIntelligenceState, detectMetaPatterns } from "./metaPatternDetector";
+import { deriveMetaPolicyState, recommendMetaPolicyAdjustments } from "./metaPolicyRecommender";
 import type { ExecutionChainRecord } from "./executionChainState";
 import type {
   SupervisedAutonomyCheckpointRecord,
@@ -293,6 +296,40 @@ function inferNextScheduledAction(record: RuntimeStateRecord): string | null {
   return state.scheduler_status.explanation || null;
 }
 
+function hydrateMetaIntelligenceSlices(state: OperatorDashboardState): OperatorDashboardState {
+  const nextState: OperatorDashboardState = {
+    ...state,
+    meta_operator_decision_history: [...(state.meta_operator_decision_history ?? [])],
+  };
+  nextState.meta_policy_state = deriveMetaPolicyState(nextState, nextState.meta_policy_state);
+  nextState.meta_detected_patterns = detectMetaPatterns({
+    studio_operations_state: nextState.studio_operations,
+    runtime_timeline_events: nextState.runtime_observability?.event_log,
+    execution_chains: nextState.execution_chains,
+    review_packages: nextState.review_packages,
+    delivery_packages: nextState.delivery_packages,
+    recovery_events: nextState.recovery_recommendations,
+    operator_decisions: nextState.meta_operator_decision_history,
+    autonomous_sessions: nextState.autonomous_sessions,
+    agent_runtime: nextState.agent_runtime,
+  });
+  nextState.meta_policy_recommendations = recommendMetaPolicyAdjustments({
+    detected_patterns: nextState.meta_detected_patterns,
+    current_policy_state: nextState.meta_policy_state,
+    overnight_policy: nextState.supervised_session?.overnight_policy,
+    recovery_policy: nextState.supervised_session?.recovery_policy ?? null,
+    planning_priority_weights: (nextState.planning_recommendations ?? []).map((item) => `${item.work_item_id}:${item.score}`),
+    delivery_gating_rules: (nextState.delivery_packages ?? []).map((item) => `${item.delivery_package_id}:${item.status}`),
+    operator_decision_history: nextState.meta_operator_decision_history,
+    timestamp: nextState.last_updated_at,
+  });
+  nextState.meta_intelligence = buildMetaIntelligenceState(nextState, nextState.meta_detected_patterns, nextState.meta_policy_recommendations);
+  if (nextState.meta_summary_package) {
+    nextState.meta_summary_package = createMetaIntelligenceSummaryPackage(nextState, nextState.meta_summary_package.requested_at);
+  }
+  return nextState;
+}
+
 function buildRuntimeObservability(record: RuntimeStateRecord): OperatorRuntimeObservability {
   const eventLog = (record.continuous_loop?.tick_history ?? []).slice(-10).map(toRuntimeObservabilityEvent);
   const lastEvent = eventLog.length > 0 ? eventLog[eventLog.length - 1] : null;
@@ -387,10 +424,10 @@ function buildLiveOperatorDashboardState(
       last_updated_at: record.operator_dashboard_state.last_updated_at || record.persisted_at,
     };
 
-    return {
+    return hydrateMetaIntelligenceSlices({
       ...dashboardState,
       studio_operations: aggregateStudioHealthFromDashboardState(dashboardState),
-    };
+    });
   }
 
   const approvalsRequired = buildLiveApprovals(bootResume);
@@ -460,10 +497,10 @@ function buildLiveOperatorDashboardState(
     last_updated_at: record.persisted_at,
   };
 
-  return {
+  return hydrateMetaIntelligenceSlices({
     ...dashboardState,
     studio_operations: aggregateStudioHealthFromDashboardState(dashboardState),
-  };
+  });
 }
 
 export function resolveOperatorStateSource(
@@ -487,10 +524,10 @@ export function loadDemoOperatorDashboardState(
   const dashboardState = createOperatorDashboardDemoState();
   return {
     source: "demo_seed",
-    dashboard_state: {
+    dashboard_state: hydrateMetaIntelligenceSlices({
       ...dashboardState,
       studio_operations: aggregateStudioHealthFromDashboardState(dashboardState),
-    },
+    }),
     warnings: buildDemoWarnings(),
     loaded_at: loadedAt,
   };

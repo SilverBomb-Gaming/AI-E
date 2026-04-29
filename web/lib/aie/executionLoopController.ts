@@ -216,6 +216,12 @@ function preserveDashboardExtensions(
     studio_operations: projectedState.studio_operations ? structuredClone(projectedState.studio_operations) : projectedState.studio_operations,
     studio_risk_acknowledgements: projectedState.studio_risk_acknowledgements ? structuredClone(projectedState.studio_risk_acknowledgements) : projectedState.studio_risk_acknowledgements,
     studio_summary_package: projectedState.studio_summary_package ? structuredClone(projectedState.studio_summary_package) : projectedState.studio_summary_package,
+    meta_intelligence: projectedState.meta_intelligence ? structuredClone(projectedState.meta_intelligence) : projectedState.meta_intelligence,
+    meta_detected_patterns: projectedState.meta_detected_patterns ? structuredClone(projectedState.meta_detected_patterns) : projectedState.meta_detected_patterns,
+    meta_policy_recommendations: projectedState.meta_policy_recommendations ? structuredClone(projectedState.meta_policy_recommendations) : projectedState.meta_policy_recommendations,
+    meta_policy_state: projectedState.meta_policy_state ? structuredClone(projectedState.meta_policy_state) : projectedState.meta_policy_state,
+    meta_operator_decision_history: projectedState.meta_operator_decision_history ? structuredClone(projectedState.meta_operator_decision_history) : projectedState.meta_operator_decision_history,
+    meta_summary_package: projectedState.meta_summary_package ? structuredClone(projectedState.meta_summary_package) : projectedState.meta_summary_package,
   };
 }
 

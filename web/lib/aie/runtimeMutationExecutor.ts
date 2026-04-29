@@ -153,6 +153,16 @@ function createActionFromIntent(intent: SafeRuntimeIntent, goalId: string | null
       return { type: "acknowledge_studio_risk" };
     case "request_studio_summary":
       return { type: "request_studio_summary" };
+    case "approve_policy_recommendation":
+      return { type: "approve_policy_recommendation", recommendation_id: goalId ?? null };
+    case "reject_policy_recommendation":
+      return { type: "reject_policy_recommendation", recommendation_id: goalId ?? null };
+    case "defer_policy_recommendation":
+      return { type: "defer_policy_recommendation", recommendation_id: goalId ?? null };
+    case "request_meta_summary":
+      return { type: "request_meta_summary" };
+    case "acknowledge_pattern":
+      return { type: "acknowledge_pattern", pattern_id: goalId ?? null };
     case "start_supervised_session":
       return { type: "start_supervised_session" };
     case "pause_supervised_session":
@@ -320,6 +330,34 @@ function validateMutationRequest(
     }
 
     case "request_studio_summary": {
+      return null;
+    }
+
+    case "approve_policy_recommendation":
+    case "reject_policy_recommendation":
+    case "defer_policy_recommendation": {
+      const recommendationId = input.action?.recommendation_id ?? input.goal_id ?? null;
+      const recommendation = recommendationId
+        ? state.meta_policy_recommendations?.find((item) => item.recommendation_id === recommendationId) ?? null
+        : state.meta_policy_recommendations?.[0] ?? null;
+      if (!recommendation) {
+        return "no meta-intelligence recommendation is available for the requested runtime mutation";
+      }
+      return null;
+    }
+
+    case "request_meta_summary": {
+      return null;
+    }
+
+    case "acknowledge_pattern": {
+      const patternId = input.action?.pattern_id ?? input.goal_id ?? null;
+      const pattern = patternId
+        ? state.meta_detected_patterns?.find((item) => item.pattern_id === patternId) ?? null
+        : state.meta_detected_patterns?.[0] ?? null;
+      if (!pattern) {
+        return "no meta-intelligence pattern is available for the requested runtime mutation";
+      }
       return null;
     }
 
@@ -522,6 +560,15 @@ function applyRecordMetadata(
       break;
     }
 
+    case "approve_policy_recommendation":
+    case "reject_policy_recommendation":
+    case "defer_policy_recommendation":
+    case "request_meta_summary":
+    case "acknowledge_pattern": {
+      record.last_status = "service_idle";
+      break;
+    }
+
     case "start_supervised_session":
     case "resume_supervised_session": {
       record.last_status = "service_idle";
@@ -591,8 +638,13 @@ function appendSupervisedSessionControlEvent(
     || input.runtime_intent === "prioritize_delivery_queue"
     || input.runtime_intent === "acknowledge_studio_risk"
     || input.runtime_intent === "request_studio_summary";
+  const isMetaIntent = input.runtime_intent === "approve_policy_recommendation"
+    || input.runtime_intent === "reject_policy_recommendation"
+    || input.runtime_intent === "defer_policy_recommendation"
+    || input.runtime_intent === "request_meta_summary"
+    || input.runtime_intent === "acknowledge_pattern";
   const loopState = buildControlLoopState(record);
-  const eventScope = isStudioIntent ? "studio-command-center-control" : isAutonomousSessionIntent ? "autonomous-session-control" : "supervised-session-control";
+  const eventScope = isMetaIntent ? "meta-intelligence-control" : isStudioIntent ? "studio-command-center-control" : isAutonomousSessionIntent ? "autonomous-session-control" : "supervised-session-control";
   const eventId = `${eventScope}-${sanitizeTimestamp(input.timestamp)}-${input.runtime_intent}`;
   const runtimeStatus = record.operator_dashboard_state?.runtime_status.status ?? record.last_status;
   const schedulerStatus = record.operator_dashboard_state?.scheduler_status.status ?? "scheduler_idle";
@@ -622,6 +674,8 @@ function appendSupervisedSessionControlEvent(
       } : null,
       mutation_applied: isAutonomousSessionIntent
         ? `${input.runtime_intent} persisted for autonomous session state.`
+        : isMetaIntent
+          ? `${input.runtime_intent} persisted for meta intelligence state.`
         : isStudioIntent
           ? `${input.runtime_intent} persisted for studio command center state.`
         : `${input.runtime_intent} persisted for supervised session state.`,
@@ -636,6 +690,8 @@ function appendSupervisedSessionControlEvent(
         to_goal_label: record.operator_dashboard_state?.active_goal?.description ?? null,
         summary: isAutonomousSessionIntent
           ? `Autonomous session control event recorded for ${input.runtime_intent}.`
+          : isMetaIntent
+            ? `Meta-intelligence control event recorded for ${input.runtime_intent}.`
           : isStudioIntent
             ? `Studio command center control event recorded for ${input.runtime_intent}.`
           : `Supervised session control event recorded for ${input.runtime_intent}.`,
@@ -652,6 +708,8 @@ function appendSupervisedSessionControlEvent(
       },
       mutation_summary: isAutonomousSessionIntent
         ? `${input.runtime_intent} recorded for autonomous session state.`
+        : isMetaIntent
+          ? `${input.runtime_intent} recorded for meta intelligence state.`
         : isStudioIntent
           ? `${input.runtime_intent} recorded for studio command center state.`
         : `${input.runtime_intent} recorded for supervised session.`,
@@ -754,6 +812,11 @@ export function executeRuntimeMutation(input: RuntimeMutationExecutorInput): Run
       || input.runtime_intent === "prioritize_delivery_queue"
       || input.runtime_intent === "acknowledge_studio_risk"
       || input.runtime_intent === "request_studio_summary"
+      || input.runtime_intent === "approve_policy_recommendation"
+      || input.runtime_intent === "reject_policy_recommendation"
+      || input.runtime_intent === "defer_policy_recommendation"
+      || input.runtime_intent === "request_meta_summary"
+      || input.runtime_intent === "acknowledge_pattern"
       || input.runtime_intent === "pause_autonomous_session"
       || input.runtime_intent === "resume_autonomous_session"
       || input.runtime_intent === "reprioritize_autonomous_session"

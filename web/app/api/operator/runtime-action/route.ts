@@ -28,6 +28,11 @@ function normalizeAction(value: unknown): OperatorControlAction | null {
     && candidate.type !== "prioritize_delivery_queue"
     && candidate.type !== "acknowledge_studio_risk"
     && candidate.type !== "request_studio_summary"
+    && candidate.type !== "approve_policy_recommendation"
+    && candidate.type !== "reject_policy_recommendation"
+    && candidate.type !== "defer_policy_recommendation"
+    && candidate.type !== "request_meta_summary"
+    && candidate.type !== "acknowledge_pattern"
     && candidate.type !== "pause_autonomous_session"
     && candidate.type !== "resume_autonomous_session"
     && candidate.type !== "reprioritize_autonomous_session"
@@ -90,6 +95,21 @@ function normalizeAction(value: unknown): OperatorControlAction | null {
     package_id: typeof candidate.package_id === "string"
       ? candidate.package_id.trim() || null
       : candidate.package_id === null || candidate.package_id === undefined
+        ? null
+        : null,
+    recommendation_id: typeof candidate.recommendation_id === "string"
+      ? candidate.recommendation_id.trim() || null
+      : candidate.recommendation_id === null || candidate.recommendation_id === undefined
+        ? null
+        : null,
+    pattern_id: typeof candidate.pattern_id === "string"
+      ? candidate.pattern_id.trim() || null
+      : candidate.pattern_id === null || candidate.pattern_id === undefined
+        ? null
+        : null,
+    rationale: typeof candidate.rationale === "string"
+      ? candidate.rationale.trim() || null
+      : candidate.rationale === null || candidate.rationale === undefined
         ? null
         : null,
     supervised_session_input: candidate.supervised_session_input && typeof candidate.supervised_session_input === "object"

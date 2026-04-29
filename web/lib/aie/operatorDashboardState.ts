@@ -70,6 +70,13 @@ import {
 import type { StudioOperationsState } from "./studioOperationsState";
 import type { StudioOperationsSummaryPackage } from "./studioOperationsSummary";
 import type {
+  MetaDetectedPattern,
+  MetaIntelligenceState,
+  MetaOperatorDecisionRecord,
+  MetaPolicyAdjustment,
+  MetaPolicyState,
+} from "./metaIntelligenceState";
+import type {
   SupervisedAutonomyCheckpointRecord,
   SupervisedAutonomySessionRecord,
 } from "./supervisedAutonomySession";
@@ -312,6 +319,12 @@ export type OperatorDashboardState = {
   studio_operations?: StudioOperationsState;
   studio_risk_acknowledgements?: import("./studioOperationsState").StudioRiskAcknowledgement[];
   studio_summary_package?: StudioOperationsSummaryPackage | null;
+  meta_intelligence?: MetaIntelligenceState;
+  meta_detected_patterns?: MetaDetectedPattern[];
+  meta_policy_recommendations?: MetaPolicyAdjustment[];
+  meta_policy_state?: MetaPolicyState;
+  meta_operator_decision_history?: MetaOperatorDecisionRecord[];
+  meta_summary_package?: import("./metaIntelligenceSummary").MetaIntelligenceSummaryPackage | null;
   supervised_session?: SupervisedAutonomySessionRecord | null;
   supervised_checkpoints?: SupervisedAutonomyCheckpointRecord[];
   last_updated_at: string;

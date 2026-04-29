@@ -37,6 +37,7 @@ function createStoppedService() {
 
 function createLiveDashboardState(): OperatorDashboardState {
   return {
+    ...createOperatorDashboardDemoState(),
     active_goal: {
       goal_id: "live-active-goal",
       description: "Stabilize live runtime lane",
@@ -132,7 +133,6 @@ function createLiveDashboardState(): OperatorDashboardState {
       status: "goal_selected",
       explanation: "The runtime has a selected goal.",
     },
-    autonomous_sessions: createOperatorDashboardDemoState().autonomous_sessions,
     last_updated_at: "2026-04-26T12:00:00.000Z",
   };
 }
@@ -435,6 +435,74 @@ test("acknowledge_studio_risk persists an acknowledgement record", () => {
 
   assert.equal(result.status, "mutation_applied");
   assert.equal((result.updated_runtime_state.operator_dashboard_state?.studio_risk_acknowledgements?.length ?? 0) > 0, true);
+});
+
+test("approve_policy_recommendation persists meta policy changes without starting loops", () => {
+  const seeded = createSeededRuntimeRecord({
+    mutateState(state) {
+      state.approvals_required = [];
+      state.runtime_status.status = "runtime_ready";
+      state.session_status.status = "session_running";
+    },
+    mutateRecord(record) {
+      if (!record) {
+        throw new Error("Expected runtime record.");
+      }
+      record.last_status = "service_idle";
+      record.blockers = [];
+    },
+  });
+  const recommendationId = seeded.state.meta_policy_recommendations?.[0]?.recommendation_id ?? null;
+
+  const result = executeRuntimeMutation({
+    action: {
+      type: "approve_policy_recommendation",
+      recommendation_id: recommendationId,
+    },
+    runtime_intent: "approve_policy_recommendation",
+    current_runtime_state: seeded.record,
+    current_dashboard_state: seeded.state,
+    runtime_state_store: seeded.store,
+    runtime_id: seeded.record.runtime_id,
+    timestamp: "2026-04-26T12:01:00.000Z",
+    start_continuous_loop: true,
+  });
+
+  assert.equal(result.status, "mutation_applied");
+  assert.equal(result.execution_loop?.status, "loop_not_triggered");
+  assert.equal(result.updated_runtime_state.operator_dashboard_state?.meta_operator_decision_history?.[0]?.recommendation_id, recommendationId);
+  assert.equal(Boolean(result.updated_runtime_state.operator_dashboard_state?.meta_policy_state?.last_updated_at), true);
+});
+
+test("request_meta_summary persists a meta summary package without starting loops", () => {
+  const seeded = createSeededRuntimeRecord({
+    mutateState(state) {
+      state.approvals_required = [];
+      state.runtime_status.status = "runtime_ready";
+      state.session_status.status = "session_running";
+    },
+    mutateRecord(record) {
+      if (!record) {
+        throw new Error("Expected runtime record.");
+      }
+      record.last_status = "service_idle";
+      record.blockers = [];
+    },
+  });
+
+  const result = executeRuntimeMutation({
+    runtime_intent: "request_meta_summary",
+    current_runtime_state: seeded.record,
+    current_dashboard_state: seeded.state,
+    runtime_state_store: seeded.store,
+    runtime_id: seeded.record.runtime_id,
+    timestamp: "2026-04-26T12:01:00.000Z",
+    start_continuous_loop: true,
+  });
+
+  assert.equal(result.status, "mutation_applied");
+  assert.equal(result.execution_loop?.status, "loop_not_triggered");
+  assert.equal(Boolean(result.updated_runtime_state.operator_dashboard_state?.meta_summary_package?.narrative), true);
 });
 
 test("prioritize_review_queue updates persisted review ordering safely", () => {

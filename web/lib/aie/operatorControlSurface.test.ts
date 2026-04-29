@@ -237,6 +237,34 @@ test("request_delivery_changes returns the package to draft", () => {
   assert.equal(result.state.delivery_packages?.find((item) => item.delivery_package_id === "delivery-demo-review-package-approved")?.status, "draft");
 });
 
+test("approve_policy_recommendation persists the approved meta policy state", () => {
+  const initialState = createOperatorDashboardDemoState();
+  const recommendationId = initialState.meta_policy_recommendations?.find((item) => item.target === "concurrency")?.recommendation_id
+    ?? initialState.meta_policy_recommendations?.[0]?.recommendation_id
+    ?? null;
+
+  const result = applyOperatorControlAction(initialState, {
+    type: "approve_policy_recommendation",
+    recommendation_id: recommendationId,
+  });
+
+  assert.equal(result.changed, true);
+  assert.equal(result.state.meta_policy_recommendations?.find((item) => item.recommendation_id === recommendationId)?.status, "approved");
+  assert.equal(result.state.meta_operator_decision_history?.[0]?.recommendation_id, recommendationId);
+});
+
+test("request_meta_summary generates a persisted meta summary package", () => {
+  const initialState = createOperatorDashboardDemoState();
+
+  const result = applyOperatorControlAction(initialState, {
+    type: "request_meta_summary",
+  });
+
+  assert.equal(result.changed, true);
+  assert.equal(Boolean(result.state.meta_summary_package?.narrative), true);
+  assert.equal(result.state.meta_summary_package?.should_not_change.includes("Do not modify code automatically."), true);
+});
+
 test("pause_autonomous_session pauses the selected multi-session worker", () => {
   const initialState = createOperatorDashboardDemoState();
 

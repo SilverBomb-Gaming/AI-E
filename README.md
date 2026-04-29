@@ -135,6 +135,34 @@ Current safety boundary:
 - demo mode still allows local UI state transitions for approve, pause, resume, and retry
 - seeded demo data is never presented as live runtime state
 
+## Meta-Intelligence / Self-Improvement Layer
+
+AI-E now also includes a bounded meta-intelligence layer that evaluates how the autonomous studio is operating without allowing the system to rewrite itself, weaken safety, or silently broaden autonomy.
+
+What the meta-intelligence layer does:
+
+- preserves deterministic performance memory in the operator dashboard state
+- detects recurring operational patterns from persisted runtime evidence
+- produces bounded advisory policy recommendations with explicit safety rationale
+- tracks operator decisions over those recommendations and patterns
+- generates an operator-readable meta summary package on request
+- renders this state in the `/operator` Meta-Intelligence panel and routes actions through the same safe live mutation path
+
+Current contract:
+
+- state contract: `web/lib/aie/metaIntelligenceState.ts`
+- pattern detector: `web/lib/aie/metaPatternDetector.ts`
+- policy recommender: `web/lib/aie/metaPolicyRecommender.ts`
+- summary package generator: `web/lib/aie/metaIntelligenceSummary.ts`
+- proof: `npm run proof:meta-intelligence:safe`
+
+Important safety boundary:
+
+- recommendations remain advisory until an operator explicitly approves them
+- approved changes update persisted policy state only; they do not modify code or auto-edit prompts
+- the layer cannot weaken safety gates, expand autonomy scope, auto-mutate policy silently, or self-modify the system
+- all live actions remain bounded to acknowledgement, approval, rejection, deferral, and summary generation through the existing safe runtime bridge and runtime mutation executor
+
 ## Safe Runtime Action Bridge
 
 AI-E can now translate supported live operator actions into safe runtime intents.
@@ -142,8 +170,8 @@ AI-E can now translate supported live operator actions into safe runtime intents
 Current contract:
 
 - module path: `web/lib/aie/safeRuntimeActionBridge.ts`
-- supported operator actions: `approve_goal`, `pause_goal`, `resume_goal`, `retry_goal`
-- supported runtime intents: `grant_session_approval`, `pause_active_goal`, `resume_paused_goal`, `mark_goal_retry_requested`, and `no_op`
+- supported operator actions: `approve_goal`, `pause_goal`, `resume_goal`, `retry_goal`, `pause_all_sessions`, `resume_safe_sessions`, `prioritize_review_queue`, `prioritize_delivery_queue`, `acknowledge_studio_risk`, `request_studio_summary`, `approve_policy_recommendation`, `reject_policy_recommendation`, `defer_policy_recommendation`, `request_meta_summary`, and `acknowledge_pattern`
+- supported runtime intents: `grant_session_approval`, `pause_active_goal`, `resume_paused_goal`, `mark_goal_retry_requested`, `pause_all_sessions`, `resume_safe_sessions`, `prioritize_review_queue`, `prioritize_delivery_queue`, `acknowledge_studio_risk`, `request_studio_summary`, `approve_policy_recommendation`, `reject_policy_recommendation`, `defer_policy_recommendation`, `request_meta_summary`, `acknowledge_pattern`, and `no_op`
 
 Example:
 
@@ -167,7 +195,7 @@ Current contract:
 
 - module path: `web/lib/aie/runtimeMutationExecutor.ts`
 - post-mutation loop controller: `web/lib/aie/executionLoopController.ts`
-- supported runtime intents: `grant_session_approval`, `pause_active_goal`, `resume_paused_goal`, `mark_goal_retry_requested`, and `no_op`
+- supported runtime intents: `grant_session_approval`, `pause_active_goal`, `resume_paused_goal`, `mark_goal_retry_requested`, `pause_all_sessions`, `resume_safe_sessions`, `prioritize_review_queue`, `prioritize_delivery_queue`, `acknowledge_studio_risk`, `request_studio_summary`, `approve_policy_recommendation`, `reject_policy_recommendation`, `defer_policy_recommendation`, `request_meta_summary`, `acknowledge_pattern`, and `no_op`
 - output statuses: `mutation_applied`, `mutation_rejected`, and `mutation_no_op`
 
 Execution flow:
@@ -316,6 +344,11 @@ Current Layer 10 reporting rule:
 - Layer 10: IN PROGRESS
 - Only declare Layer 10 complete when the studio command-center state contract, provider-boundary studio aggregator, `/operator` studio command-center UI, safe studio actions, persisted studio summary package, deterministic `proof:studio-command-center:safe`, all previous safe proofs, `test:trace:safe`, and commit/push are all complete together.
 
+Current Layer 11 reporting rule:
+
+- Layer 11: IN PROGRESS
+- Only declare Layer 11 complete when the performance-memory contract, pattern detector, bounded policy recommender, `/operator` Meta-Intelligence panel, safe meta actions, persisted meta summary package, deterministic `proof:meta-intelligence:safe`, all previous safe proofs, `test:trace:safe`, and commit/push are all complete together.
+
 Roadmap checkpoints:
 
 - Layer 1: observable single-agent execution
@@ -348,6 +381,9 @@ Roadmap checkpoints:
 - Layer 10: autonomous studio operations command center
   - status: in progress
   - proof surface: provider-boundary studio health aggregation, studio command-center operator controls, persisted studio risk acknowledgements and summary package state, `/operator`, and `npm run proof:studio-command-center:safe`
+- Layer 11: self-improving system / meta-intelligence
+  - status: in progress
+  - proof surface: persisted meta-intelligence state, deterministic pattern detection, bounded policy recommendations, meta summary package state, `/operator`, and `npm run proof:meta-intelligence:safe`
 
 
 ## Multi-Agent Orchestration Scaffold

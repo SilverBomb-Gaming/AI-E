@@ -700,6 +700,8 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
 
   const dashboardState: OperatorDashboardState | null = providerResult.dashboard_state;
   const studioOperations = dashboardState?.studio_operations ?? null;
+  const metaIntelligence = dashboardState?.meta_intelligence ?? null;
+  const metaPolicyState = dashboardState?.meta_policy_state ?? null;
   const latestCheckpoint = dashboardState?.supervised_checkpoints?.slice(-1)[0] ?? null;
   const activeSession = dashboardState?.supervised_session ?? null;
 
@@ -927,6 +929,158 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
             </div>
           ) : (
             <p className="text-sm leading-7 body-muted">Studio command-center health is not available for the current operator state source.</p>
+          )}
+        </SectionCard>
+
+        <SectionCard eyebrow="0.5" title="Meta-Intelligence">
+          {metaIntelligence ? (
+            <div className="space-y-6">
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                <StudioMetricCard
+                  label="Observed Sessions"
+                  value={`${metaIntelligence.total_sessions}`}
+                  detail={`${metaIntelligence.successful_sessions} successful • ${metaIntelligence.blocked_sessions} blocked`}
+                />
+                <StudioMetricCard
+                  label="Proof + Trace Failures"
+                  value={`${metaIntelligence.proof_failure_count + metaIntelligence.trace_failure_count}`}
+                  detail={`${metaIntelligence.proof_failure_count} proof • ${metaIntelligence.trace_failure_count} trace`}
+                />
+                <StudioMetricCard
+                  label="Operator Interventions"
+                  value={`${metaIntelligence.operator_intervention_count}`}
+                  detail={`${metaIntelligence.recovery_event_count} recovery events and ${metaIntelligence.resource_pressure_events} resource pressure signals.`}
+                />
+                <StudioMetricCard
+                  label="Avg Completion"
+                  value={`${metaIntelligence.average_ticks_to_completion}`}
+                  detail={`Average review delay ${metaIntelligence.average_review_delay}h in the current observed window.`}
+                />
+              </div>
+
+              <div className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
+                <section className="rounded-[1.5rem] border border-ink/10 bg-white/80 p-5">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="text-xs uppercase tracking-[0.18em] text-slate">Detected Patterns</p>
+                      <h3 className="headline mt-2 text-xl font-semibold text-ink">Recurring operational behavior.</h3>
+                    </div>
+                    <p className="text-xs uppercase tracking-[0.18em] text-slate">Window ends {metaIntelligence.observed_window_end}</p>
+                  </div>
+                  <div className="mt-4 space-y-3">
+                    {dashboardState?.meta_detected_patterns?.length ? dashboardState.meta_detected_patterns.map((pattern) => (
+                      <article key={pattern.pattern_id} className="rounded-[1.25rem] border border-ink/10 bg-white p-4">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <StatusBadge status={pattern.severity} />
+                            <p className="text-xs uppercase tracking-[0.18em] text-slate">{pattern.category.replace(/_/g, " ")}</p>
+                          </div>
+                          <ActionButton
+                            label="Acknowledge"
+                            onClick={() => handleAction({ type: "acknowledge_pattern", pattern_id: pattern.pattern_id })}
+                            disabled={isPending}
+                          />
+                        </div>
+                        <p className="mt-3 text-sm leading-7 body-muted">{pattern.summary}</p>
+                        <p className="mt-3 text-xs text-slate">Recommended action: {pattern.recommended_action.replace(/_/g, " ")}</p>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          {pattern.evidence.slice(0, 3).map((item) => (
+                            <span key={item} className="rounded-full border border-ink/10 bg-white px-3 py-1 text-xs text-slate">{item}</span>
+                          ))}
+                        </div>
+                      </article>
+                    )) : <p className="text-sm leading-7 body-muted">No recurring meta-intelligence patterns are recorded yet.</p>}
+                  </div>
+                </section>
+
+                <section className="rounded-[1.5rem] border border-ink/10 bg-white/80 p-5">
+                  <p className="text-xs uppercase tracking-[0.18em] text-slate">Persisted Policy State</p>
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                    <SupervisedSessionField label="Concurrency" value={metaPolicyState?.concurrency_mode ?? "not set"} />
+                    <SupervisedSessionField label="Tick Budget" value={metaPolicyState?.tick_budget_mode ?? "not set"} />
+                    <SupervisedSessionField label="Review Timing" value={metaPolicyState?.review_timing_mode ?? "not set"} />
+                    <SupervisedSessionField label="Checkpoint Frequency" value={metaPolicyState?.checkpoint_frequency_mode ?? "not set"} />
+                    <SupervisedSessionField label="Proof Timeout" value={metaPolicyState?.proof_timeout_mode ?? "not set"} />
+                    <SupervisedSessionField label="Resource Safe Mode" value={String(metaPolicyState?.resource_safe_mode_enabled ?? false)} />
+                  </div>
+                  <p className="mt-4 text-xs text-slate">Paused agent roles: {metaPolicyState?.paused_agent_roles.length ? metaPolicyState.paused_agent_roles.join(", ") : "none"}</p>
+                </section>
+              </div>
+
+              <div className="grid gap-6 lg:grid-cols-2">
+                <section className="rounded-[1.5rem] border border-ink/10 bg-white/80 p-5">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="text-xs uppercase tracking-[0.18em] text-slate">Policy Recommendations</p>
+                      <h3 className="headline mt-2 text-xl font-semibold text-ink">Advisory changes only.</h3>
+                    </div>
+                    <ActionButton label="Request Meta Summary" onClick={() => handleAction({ type: "request_meta_summary" })} disabled={isPending} />
+                  </div>
+                  <div className="mt-4 space-y-3">
+                    {dashboardState?.meta_policy_recommendations?.length ? dashboardState.meta_policy_recommendations.map((item) => (
+                      <article key={item.recommendation_id} className="rounded-[1.25rem] border border-ink/10 bg-white p-4">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <StatusBadge status={item.impact} />
+                          <StatusBadge status={item.status} />
+                          <p className="text-xs uppercase tracking-[0.18em] text-slate">{item.target.replace(/_/g, " ")}</p>
+                        </div>
+                        <h3 className="headline mt-3 text-lg font-semibold text-ink">{item.title}</h3>
+                        <p className="mt-2 text-sm leading-7 body-muted">{item.summary}</p>
+                        <p className="mt-3 text-xs text-slate">Current: {item.current_policy_value}</p>
+                        <p className="mt-1 text-xs text-slate">Requested: {item.requested_policy_value}</p>
+                        <p className="mt-3 text-xs text-slate">{item.safe_rationale}</p>
+                        <div className="mt-4 flex flex-wrap gap-2">
+                          <ActionButton
+                            label="Approve"
+                            onClick={() => handleAction({ type: "approve_policy_recommendation", recommendation_id: item.recommendation_id })}
+                            disabled={isPending || item.status === "approved"}
+                            tone="accent"
+                          />
+                          <ActionButton
+                            label="Reject"
+                            onClick={() => handleAction({ type: "reject_policy_recommendation", recommendation_id: item.recommendation_id })}
+                            disabled={isPending || item.status === "rejected"}
+                            tone="warning"
+                          />
+                          <ActionButton
+                            label="Defer"
+                            onClick={() => handleAction({ type: "defer_policy_recommendation", recommendation_id: item.recommendation_id })}
+                            disabled={isPending || item.status === "deferred"}
+                          />
+                        </div>
+                      </article>
+                    )) : <p className="text-sm leading-7 body-muted">No bounded policy recommendation is currently waiting for review.</p>}
+                  </div>
+                </section>
+
+                <section className="rounded-[1.5rem] border border-ink/10 bg-white/80 p-5">
+                  <p className="text-xs uppercase tracking-[0.18em] text-slate">Meta Summary Package</p>
+                  {dashboardState?.meta_summary_package ? (
+                    <article className="mt-4 rounded-[1.25rem] border border-ink/10 bg-white p-4">
+                      <p className="text-xs uppercase tracking-[0.18em] text-slate">Requested {dashboardState.meta_summary_package.requested_at}</p>
+                      <p className="mt-3 text-sm leading-7 body-muted">{dashboardState.meta_summary_package.narrative}</p>
+                      <p className="mt-4 text-xs uppercase tracking-[0.18em] text-slate">Recommended Changes</p>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {dashboardState.meta_summary_package.recommended_changes.map((item) => (
+                          <span key={item} className="rounded-full border border-ink/10 bg-white px-3 py-1 text-xs text-slate">{item}</span>
+                        ))}
+                      </div>
+                      <p className="mt-4 text-xs uppercase tracking-[0.18em] text-slate">Must Not Change</p>
+                      <div className="mt-2 space-y-2">
+                        {dashboardState.meta_summary_package.should_not_change.map((item) => (
+                          <p key={item} className="text-sm leading-7 body-muted">{item}</p>
+                        ))}
+                      </div>
+                    </article>
+                  ) : (
+                    <p className="mt-4 text-sm leading-7 body-muted">No meta summary has been requested yet.</p>
+                  )}
+                  <p className="mt-4 text-xs text-slate">Operator decisions recorded: {dashboardState?.meta_operator_decision_history?.length ?? 0}</p>
+                </section>
+              </div>
+            </div>
+          ) : (
+            <p className="text-sm leading-7 body-muted">Meta-intelligence state is not available for the current operator state source.</p>
           )}
         </SectionCard>
 

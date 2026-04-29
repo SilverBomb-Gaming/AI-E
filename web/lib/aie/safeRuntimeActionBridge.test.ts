@@ -53,9 +53,12 @@ function createLiveProviderResult(): OperatorRuntimeStateProviderResult {
     throw new Error("Expected live provider result to include dashboard state.");
   }
 
+  const demoState = createOperatorDashboardDemoState();
+
   liveResult.dashboard_state = {
     ...liveResult.dashboard_state,
-    autonomous_sessions: createOperatorDashboardDemoState().autonomous_sessions,
+    ...demoState,
+    autonomous_sessions: demoState.autonomous_sessions,
     active_goal: {
       goal_id: "live-active-goal",
       description: "Stabilize live runtime lane",
@@ -110,6 +113,13 @@ function createLiveProviderResult(): OperatorRuntimeStateProviderResult {
       operator_review_required: true,
       reason: "Review the live retry state before requeueing.",
     }],
+    meta_intelligence: demoState.meta_intelligence,
+    meta_detected_patterns: demoState.meta_detected_patterns,
+    meta_policy_recommendations: demoState.meta_policy_recommendations,
+    meta_policy_state: demoState.meta_policy_state,
+    meta_operator_decision_history: demoState.meta_operator_decision_history,
+    meta_summary_package: demoState.meta_summary_package,
+    last_updated_at: "2026-04-26T12:00:00.000Z",
   };
 
   return liveResult;
@@ -231,6 +241,32 @@ test("acknowledge_studio_risk creates the studio acknowledgement intent", () => 
 
   assert.equal(result.status, "action_ready");
   assert.equal(result.runtime_intent, "acknowledge_studio_risk");
+});
+
+test("approve_policy_recommendation creates the meta approval intent", () => {
+  const providerResult = createLiveProviderResult();
+  const recommendationId = providerResult.dashboard_state?.meta_policy_recommendations?.[0]?.recommendation_id ?? null;
+
+  const result = createSafeRuntimeActionBridgeResult(providerResult, {
+    type: "approve_policy_recommendation",
+    recommendation_id: recommendationId,
+  });
+
+  assert.equal(result.status, "action_ready");
+  assert.equal(result.runtime_intent, "approve_policy_recommendation");
+});
+
+test("acknowledge_pattern creates the meta pattern acknowledgement intent", () => {
+  const providerResult = createLiveProviderResult();
+  const patternId = providerResult.dashboard_state?.meta_detected_patterns?.[0]?.pattern_id ?? null;
+
+  const result = createSafeRuntimeActionBridgeResult(providerResult, {
+    type: "acknowledge_pattern",
+    pattern_id: patternId,
+  });
+
+  assert.equal(result.status, "action_ready");
+  assert.equal(result.runtime_intent, "acknowledge_pattern");
 });
 
 test("prioritize_review_queue rejects when no review packages exist", () => {

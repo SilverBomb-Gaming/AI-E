@@ -22,6 +22,11 @@ export type SafeRuntimeIntent =
   | "prioritize_delivery_queue"
   | "acknowledge_studio_risk"
   | "request_studio_summary"
+  | "approve_policy_recommendation"
+  | "reject_policy_recommendation"
+  | "defer_policy_recommendation"
+  | "request_meta_summary"
+  | "acknowledge_pattern"
   | "pause_autonomous_session"
   | "resume_autonomous_session"
   | "reprioritize_autonomous_session"
@@ -97,6 +102,8 @@ function createAuditEvent(
   createdAt: string,
 ): SafeRuntimeActionAuditEvent {
   const actionTargetId = action.goal_id
+    ?? action.recommendation_id
+    ?? action.pattern_id
     ?? action.session_id
     ?? action.target_session_id
     ?? action.work_item_id
@@ -131,6 +138,8 @@ function buildResult(
   createdAt: string,
 ): SafeRuntimeActionBridgeResult {
   const actionTargetId = action.goal_id
+    ?? action.recommendation_id
+    ?? action.pattern_id
     ?? action.session_id
     ?? action.target_session_id
     ?? action.work_item_id
@@ -382,6 +391,54 @@ export function createSafeRuntimeActionBridgeResult(
 
     case "request_studio_summary": {
       return buildResult(source, action, "action_ready", "request_studio_summary", "a studio summary package may be generated from the current live runtime state", providerResult.warnings, createdAt);
+    }
+
+    case "approve_policy_recommendation": {
+      const recommendationId = action.recommendation_id ?? state.meta_policy_recommendations?.[0]?.recommendation_id ?? null;
+      const recommendation = recommendationId
+        ? state.meta_policy_recommendations?.find((item) => item.recommendation_id === recommendationId) ?? null
+        : null;
+      if (!recommendation) {
+        return buildResult(source, action, "action_rejected", "no_op", "no meta-intelligence recommendation exists for approval in the current live runtime state", providerResult.warnings, createdAt);
+      }
+      return buildResult(source, action, "action_ready", "approve_policy_recommendation", "a bounded policy recommendation may be approved and persisted without modifying code", [...providerResult.warnings, `Recommendation target: ${recommendation.recommendation_id}`], createdAt);
+    }
+
+    case "reject_policy_recommendation": {
+      const recommendationId = action.recommendation_id ?? state.meta_policy_recommendations?.[0]?.recommendation_id ?? null;
+      const recommendation = recommendationId
+        ? state.meta_policy_recommendations?.find((item) => item.recommendation_id === recommendationId) ?? null
+        : null;
+      if (!recommendation) {
+        return buildResult(source, action, "action_rejected", "no_op", "no meta-intelligence recommendation exists for rejection in the current live runtime state", providerResult.warnings, createdAt);
+      }
+      return buildResult(source, action, "action_ready", "reject_policy_recommendation", "a bounded policy recommendation may be rejected while remaining auditable", [...providerResult.warnings, `Recommendation target: ${recommendation.recommendation_id}`], createdAt);
+    }
+
+    case "defer_policy_recommendation": {
+      const recommendationId = action.recommendation_id ?? state.meta_policy_recommendations?.[0]?.recommendation_id ?? null;
+      const recommendation = recommendationId
+        ? state.meta_policy_recommendations?.find((item) => item.recommendation_id === recommendationId) ?? null
+        : null;
+      if (!recommendation) {
+        return buildResult(source, action, "action_rejected", "no_op", "no meta-intelligence recommendation exists for deferral in the current live runtime state", providerResult.warnings, createdAt);
+      }
+      return buildResult(source, action, "action_ready", "defer_policy_recommendation", "a bounded policy recommendation may be deferred for later operator review", [...providerResult.warnings, `Recommendation target: ${recommendation.recommendation_id}`], createdAt);
+    }
+
+    case "request_meta_summary": {
+      return buildResult(source, action, "action_ready", "request_meta_summary", "a meta-intelligence summary package may be generated from the current live runtime state", providerResult.warnings, createdAt);
+    }
+
+    case "acknowledge_pattern": {
+      const patternId = action.pattern_id ?? state.meta_detected_patterns?.[0]?.pattern_id ?? null;
+      const pattern = patternId
+        ? state.meta_detected_patterns?.find((item) => item.pattern_id === patternId) ?? null
+        : null;
+      if (!pattern) {
+        return buildResult(source, action, "action_rejected", "no_op", "no meta-intelligence pattern exists for acknowledgement in the current live runtime state", providerResult.warnings, createdAt);
+      }
+      return buildResult(source, action, "action_ready", "acknowledge_pattern", "a detected meta-intelligence pattern may be acknowledged without widening autonomy scope", [...providerResult.warnings, `Pattern target: ${pattern.pattern_id}`], createdAt);
     }
 
     case "pause_autonomous_session":

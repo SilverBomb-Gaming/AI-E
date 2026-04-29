@@ -70,6 +70,38 @@ function cloneState(state: OperatorDashboardState): OperatorDashboardState {
     })),
     planning_recommendations: state.planning_recommendations?.map((item) => ({ ...item })),
     planning_policy_feedback: state.planning_policy_feedback ? { ...state.planning_policy_feedback } : undefined,
+    meta_intelligence: state.meta_intelligence ? {
+      ...state.meta_intelligence,
+      top_failure_patterns: [...state.meta_intelligence.top_failure_patterns],
+      top_success_patterns: [...state.meta_intelligence.top_success_patterns],
+      recommended_policy_adjustments: [...state.meta_intelligence.recommended_policy_adjustments],
+      safety_notes: [...state.meta_intelligence.safety_notes],
+    } : state.meta_intelligence,
+    meta_detected_patterns: state.meta_detected_patterns?.map((item) => ({
+      ...item,
+      evidence: [...item.evidence],
+      affected_sessions: [...item.affected_sessions],
+      affected_agents: [...item.affected_agents],
+    })),
+    meta_policy_recommendations: state.meta_policy_recommendations?.map((item) => ({
+      ...item,
+      evidence: [...item.evidence],
+    })),
+    meta_policy_state: state.meta_policy_state ? {
+      ...state.meta_policy_state,
+      paused_agent_roles: [...state.meta_policy_state.paused_agent_roles],
+    } : state.meta_policy_state,
+    meta_operator_decision_history: state.meta_operator_decision_history?.map((item) => ({ ...item })),
+    meta_summary_package: state.meta_summary_package ? {
+      ...state.meta_summary_package,
+      what_improved: [...state.meta_summary_package.what_improved],
+      what_degraded: [...state.meta_summary_package.what_degraded],
+      what_patterns_emerged: [...state.meta_summary_package.what_patterns_emerged],
+      recommended_changes: [...state.meta_summary_package.recommended_changes],
+      safe_change_reasons: [...state.meta_summary_package.safe_change_reasons],
+      requires_operator_approval: [...state.meta_summary_package.requires_operator_approval],
+      should_not_change: [...state.meta_summary_package.should_not_change],
+    } : state.meta_summary_package,
     runtime_observability: state.runtime_observability ? {
       ...state.runtime_observability,
       event_log: state.runtime_observability.event_log.map((event) => ({
