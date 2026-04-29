@@ -268,7 +268,9 @@ Multi-agent orchestration is complete within bounded runtime limits.
 
 Layer 5 supervised autonomy is 100% complete.
 
-Layer 6 resilient overnight autonomy is in progress.
+Layer 6 - Resilient Overnight Autonomy: 100% COMPLETE
+
+Layer 7 - Autonomous Work Planning + Operator Review Queue Intelligence is in progress.
 
 Current phase plan:
 
@@ -290,8 +292,14 @@ Current Layer 5 reporting rule:
 
 Current Layer 6 reporting rule:
 
-- Layer 6: IN PROGRESS
-- Only declare Layer 6 complete when the overnight policy contract, persisted operator review queue, bounded recovery loop, restart and resume proof, overnight `/operator` panel, deterministic `proof:overnight-autonomy`, full validation, and commit/push are all complete together.
+- Layer 6 - Resilient Overnight Autonomy: 100% COMPLETE
+- Verified capabilities: overnight autonomy policy, operator review queue, bounded recovery loop, restart and resume from checkpoint, overnight `/operator` UI controls, all four safe proofs passing, `test:trace:safe` passing at 741/741, and stable resource-safe validation.
+- This does not mean fully independent product shipping, unsupervised monetization, self-modifying autonomy, or autonomous deployment without review.
+
+Current Layer 7 reporting rule:
+
+- Layer 7: IN PROGRESS
+- Only declare Layer 7 complete when the work item planner, prioritization engine, review package generator, operator planning UI, deterministic `proof:autonomous-planning`, previous safe proofs, `test:trace:safe`, and commit/push are all complete together.
 
 Roadmap checkpoints:
 
@@ -311,8 +319,11 @@ Roadmap checkpoints:
   - status: complete
   - proof surface: persisted supervised session state, checkpoints, bounded session controls, and `npm run proof:supervised-autonomy`
 - Layer 6: resilient overnight autonomy recovery
-  - status: in progress
+  - status: complete
   - proof surface: overnight policy state, persisted review queue decisions, bounded recovery and resume metadata, `/operator`, and `npm run proof:overnight-autonomy:safe`
+- Layer 7: autonomous work planning and operator review queue intelligence
+  - status: in progress
+  - proof surface: bounded work items, deterministic prioritization, review packages, `/operator`, and `npm run proof:autonomous-planning:safe`
 
 ## Multi-Agent Orchestration Scaffold
 
