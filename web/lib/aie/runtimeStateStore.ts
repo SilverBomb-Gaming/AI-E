@@ -4,8 +4,21 @@ import type {
   BackgroundRuntimeServiceStopReason,
 } from "./backgroundRuntimeService";
 import type {
+  AutonomousReviewPackage,
+  AutonomousReviewPackageStatus,
+  AutonomousWorkItem,
+  AutonomousWorkItemPolicyFeedback,
+  AutonomousWorkItemStatus,
+  OperatorDashboardPlanningRecommendation,
+} from "./autonomousWorkPlanning";
+import type {
   OperatorDashboardApprovalRequirement,
   OperatorDashboardAgentRuntime,
+  OperatorDashboardAutonomousSession,
+  OperatorDashboardAutonomousSessionConflict,
+  OperatorDashboardAutonomousSessionDependency,
+  OperatorDashboardAutonomousSessionGroup,
+  OperatorDashboardAutonomousSessionState,
   OperatorDashboardBlockedGoal,
   OperatorDashboardBlocker,
   OperatorDashboardFailure,
@@ -828,6 +841,209 @@ function isDashboardValidationIssue(value: unknown): value is OperatorDashboardV
   );
 }
 
+function isAutonomousWorkItemStatus(value: unknown): value is AutonomousWorkItemStatus {
+  return value === "proposed"
+    || value === "approved_for_planning"
+    || value === "rejected"
+    || value === "scheduled"
+    || value === "running"
+    || value === "completed"
+    || value === "needs_review"
+    || value === "blocked"
+    || value === "failed";
+}
+
+function isAutonomousReviewPackageStatus(value: unknown): value is AutonomousReviewPackageStatus {
+  return value === "pending"
+    || value === "approved"
+    || value === "rejected"
+    || value === "deferred"
+    || value === "request_changes"
+    || value === "archived";
+}
+
+function isDashboardAutonomousWorkItem(value: unknown): value is AutonomousWorkItem {
+  return Boolean(
+    value
+    && typeof value === "object"
+    && typeof (value as { work_item_id?: unknown }).work_item_id === "string"
+    && typeof (value as { title?: unknown }).title === "string"
+    && typeof (value as { summary?: unknown }).summary === "string"
+    && typeof (value as { source?: unknown }).source === "string"
+    && typeof (value as { proposed_by_agent_id?: unknown }).proposed_by_agent_id === "string"
+    && isDashboardGoal({
+      goal_id: (value as { work_item_id?: unknown }).work_item_id,
+      description: (value as { title?: unknown }).title,
+      explanation: (value as { summary?: unknown }).summary,
+      priority: (value as { priority?: unknown }).priority,
+      status: "pending",
+      recommended_action: null,
+      depends_on_goal_ids: [],
+      blocking_goal_ids: [],
+      conflict_goal_ids: [],
+      last_updated_at: (value as { updated_at?: unknown }).updated_at,
+    })
+    && typeof (value as { risk_level?: unknown }).risk_level === "string"
+    && typeof (value as { estimated_tick_cost?: unknown }).estimated_tick_cost === "number"
+    && Number.isFinite((value as { estimated_tick_cost?: unknown }).estimated_tick_cost)
+    && Array.isArray((value as { required_agent_roles?: unknown }).required_agent_roles)
+    && ((value as { required_agent_roles?: unknown[] }).required_agent_roles ?? []).every((role) => typeof role === "string")
+    && typeof (value as { required_approval_level?: unknown }).required_approval_level === "string"
+    && Array.isArray((value as { dependency_ids?: unknown }).dependency_ids)
+    && ((value as { dependency_ids?: unknown[] }).dependency_ids ?? []).every((entry) => typeof entry === "string")
+    && Array.isArray((value as { expected_outputs?: unknown }).expected_outputs)
+    && ((value as { expected_outputs?: unknown[] }).expected_outputs ?? []).every((entry) => typeof entry === "string")
+    && typeof (value as { safety_scope?: unknown }).safety_scope === "string"
+    && isAutonomousWorkItemStatus((value as { status?: unknown }).status)
+    && isIsoTimestamp((value as { created_at?: unknown }).created_at)
+    && isIsoTimestamp((value as { updated_at?: unknown }).updated_at),
+  );
+}
+
+function isDashboardReviewPackage(value: unknown): value is AutonomousReviewPackage {
+  return Boolean(
+    value
+    && typeof value === "object"
+    && typeof (value as { package_id?: unknown }).package_id === "string"
+    && typeof (value as { work_item_id?: unknown }).work_item_id === "string"
+    && typeof (value as { chain_id?: unknown }).chain_id === "string"
+    && isAutonomousReviewPackageStatus((value as { status?: unknown }).status)
+    && typeof (value as { summary?: unknown }).summary === "string"
+    && Array.isArray((value as { files_changed?: unknown }).files_changed)
+    && ((value as { files_changed?: unknown[] }).files_changed ?? []).every((entry) => typeof entry === "string")
+    && Array.isArray((value as { tests_run?: unknown }).tests_run)
+    && ((value as { tests_run?: unknown[] }).tests_run ?? []).every((entry) => typeof entry === "string")
+    && Array.isArray((value as { proof_results?: unknown }).proof_results)
+    && ((value as { proof_results?: unknown[] }).proof_results ?? []).every((entry) => typeof entry === "string")
+    && Array.isArray((value as { risks?: unknown }).risks)
+    && ((value as { risks?: unknown[] }).risks ?? []).every((entry) => typeof entry === "string")
+    && typeof (value as { recommended_decision?: unknown }).recommended_decision === "string"
+    && typeof (value as { rollback_notes?: unknown }).rollback_notes === "string"
+    && Array.isArray((value as { operator_actions?: unknown }).operator_actions)
+    && ((value as { operator_actions?: unknown[] }).operator_actions ?? []).every((entry) => typeof entry === "string"),
+  );
+}
+
+function isDashboardPlanningRecommendation(value: unknown): value is OperatorDashboardPlanningRecommendation {
+  return Boolean(
+    value
+    && typeof value === "object"
+    && typeof (value as { work_item_id?: unknown }).work_item_id === "string"
+    && typeof (value as { title?: unknown }).title === "string"
+    && typeof (value as { score?: unknown }).score === "number"
+    && Number.isFinite((value as { score?: unknown }).score)
+    && typeof (value as { explanation?: unknown }).explanation === "string"
+    && typeof (value as { requires_operator_review?: unknown }).requires_operator_review === "boolean",
+  );
+}
+
+function isDashboardPlanningPolicyFeedback(value: unknown): value is AutonomousWorkItemPolicyFeedback {
+  return Boolean(
+    value
+    && typeof value === "object"
+    && isFiniteNonNegativeInteger((value as { approvals_recorded?: unknown }).approvals_recorded)
+    && isFiniteNonNegativeInteger((value as { rejections_recorded?: unknown }).rejections_recorded)
+    && isFiniteNonNegativeInteger((value as { deferrals_recorded?: unknown }).deferrals_recorded)
+    && isFiniteNonNegativeInteger((value as { request_changes_recorded?: unknown }).request_changes_recorded)
+    && (((value as { last_feedback_at?: unknown }).last_feedback_at === null)
+      || isIsoTimestamp((value as { last_feedback_at?: unknown }).last_feedback_at)),
+  );
+}
+
+function isDashboardAutonomousSession(value: unknown): value is OperatorDashboardAutonomousSession {
+  return Boolean(
+    value
+    && typeof value === "object"
+    && typeof (value as { session_id?: unknown }).session_id === "string"
+    && typeof (value as { session_type?: unknown }).session_type === "string"
+    && typeof (value as { priority?: unknown }).priority === "string"
+    && typeof (value as { status?: unknown }).status === "string"
+    && isFiniteNonNegativeInteger((value as { logical_cpu_units?: unknown }).logical_cpu_units)
+    && Array.isArray((value as { assigned_agent_ids?: unknown }).assigned_agent_ids)
+    && ((value as { assigned_agent_ids?: unknown[] }).assigned_agent_ids ?? []).every((item) => typeof item === "string")
+    && isFiniteNonNegativeInteger((value as { active_chain_count?: unknown }).active_chain_count)
+    && isFiniteNonNegativeInteger((value as { queued_work_item_count?: unknown }).queued_work_item_count)
+    && isFiniteNonNegativeInteger((value as { consumed_ticks?: unknown }).consumed_ticks)
+    && isFiniteNonNegativeInteger((value as { tick_budget_remaining?: unknown }).tick_budget_remaining)
+    && isFiniteNonNegativeInteger((value as { chain_budget_remaining?: unknown }).chain_budget_remaining)
+    && (((value as { coordination_group_id?: unknown }).coordination_group_id === null) || typeof (value as { coordination_group_id?: unknown }).coordination_group_id === "string")
+    && (((value as { parent_session_id?: unknown }).parent_session_id === null) || typeof (value as { parent_session_id?: unknown }).parent_session_id === "string")
+    && typeof (value as { is_runnable?: unknown }).is_runnable === "boolean"
+    && typeof (value as { blocked_by_conflict?: unknown }).blocked_by_conflict === "boolean"
+    && typeof (value as { ready_on_dependency?: unknown }).ready_on_dependency === "boolean"
+  );
+}
+
+function isDashboardAutonomousSessionConflict(value: unknown): value is OperatorDashboardAutonomousSessionConflict {
+  return Boolean(
+    value
+    && typeof value === "object"
+    && typeof (value as { conflict_id?: unknown }).conflict_id === "string"
+    && typeof (value as { kind?: unknown }).kind === "string"
+    && typeof (value as { resolution?: unknown }).resolution === "string"
+    && typeof (value as { left_session_id?: unknown }).left_session_id === "string"
+    && typeof (value as { right_session_id?: unknown }).right_session_id === "string"
+    && Array.isArray((value as { shared_targets?: unknown }).shared_targets)
+    && ((value as { shared_targets?: unknown[] }).shared_targets ?? []).every((item) => typeof item === "string")
+    && (((value as { blocking_session_id?: unknown }).blocking_session_id === null) || typeof (value as { blocking_session_id?: unknown }).blocking_session_id === "string")
+    && typeof (value as { explanation?: unknown }).explanation === "string"
+  );
+}
+
+function isDashboardAutonomousSessionDependency(value: unknown): value is OperatorDashboardAutonomousSessionDependency {
+  return Boolean(
+    value
+    && typeof value === "object"
+    && typeof (value as { source_session_id?: unknown }).source_session_id === "string"
+    && typeof (value as { target_session_id?: unknown }).target_session_id === "string"
+    && typeof (value as { relationship?: unknown }).relationship === "string"
+    && typeof (value as { status?: unknown }).status === "string"
+    && typeof (value as { reason?: unknown }).reason === "string"
+  );
+}
+
+function isDashboardAutonomousSessionGroup(value: unknown): value is OperatorDashboardAutonomousSessionGroup {
+  return Boolean(
+    value
+    && typeof value === "object"
+    && typeof (value as { coordination_group_id?: unknown }).coordination_group_id === "string"
+    && Array.isArray((value as { session_ids?: unknown }).session_ids)
+    && ((value as { session_ids?: unknown[] }).session_ids ?? []).every((item) => typeof item === "string")
+    && typeof (value as { status?: unknown }).status === "string"
+    && (((value as { shared_goal?: unknown }).shared_goal === null) || typeof (value as { shared_goal?: unknown }).shared_goal === "string")
+  );
+}
+
+function isDashboardAutonomousSessionState(value: unknown): value is OperatorDashboardAutonomousSessionState {
+  return Boolean(
+    value
+    && typeof value === "object"
+    && Array.isArray((value as { sessions?: unknown }).sessions)
+    && ((value as { sessions?: unknown[] }).sessions ?? []).every(isDashboardAutonomousSession)
+    && (((value as { selected_session_id?: unknown }).selected_session_id === null) || typeof (value as { selected_session_id?: unknown }).selected_session_id === "string")
+    && Array.isArray((value as { runnable_session_ids?: unknown }).runnable_session_ids)
+    && ((value as { runnable_session_ids?: unknown[] }).runnable_session_ids ?? []).every((item) => typeof item === "string")
+    && Array.isArray((value as { blocked_session_ids?: unknown }).blocked_session_ids)
+    && ((value as { blocked_session_ids?: unknown[] }).blocked_session_ids ?? []).every((item) => typeof item === "string")
+    && Array.isArray((value as { ready_session_ids?: unknown }).ready_session_ids)
+    && ((value as { ready_session_ids?: unknown[] }).ready_session_ids ?? []).every((item) => typeof item === "string")
+    && isDashboardStatusLine((value as { scheduler_status?: unknown }).scheduler_status)
+    && isDashboardStatusLine((value as { resource_status?: unknown }).resource_status)
+    && isFiniteNonNegativeInteger((value as { max_logical_cpu_units?: unknown }).max_logical_cpu_units)
+    && isFiniteNonNegativeInteger((value as { max_concurrent_chains?: unknown }).max_concurrent_chains)
+    && isFiniteNonNegativeInteger((value as { total_logical_cpu_units?: unknown }).total_logical_cpu_units)
+    && isFiniteNonNegativeInteger((value as { total_active_chains?: unknown }).total_active_chains)
+    && Array.isArray((value as { assigned_agent_ids?: unknown }).assigned_agent_ids)
+    && ((value as { assigned_agent_ids?: unknown[] }).assigned_agent_ids ?? []).every((item) => typeof item === "string")
+    && Array.isArray((value as { conflicts?: unknown }).conflicts)
+    && ((value as { conflicts?: unknown[] }).conflicts ?? []).every(isDashboardAutonomousSessionConflict)
+    && Array.isArray((value as { coordination_groups?: unknown }).coordination_groups)
+    && ((value as { coordination_groups?: unknown[] }).coordination_groups ?? []).every(isDashboardAutonomousSessionGroup)
+    && Array.isArray((value as { coordination_dependencies?: unknown }).coordination_dependencies)
+    && ((value as { coordination_dependencies?: unknown[] }).coordination_dependencies ?? []).every(isDashboardAutonomousSessionDependency)
+  );
+}
+
 function isDashboardRuntimeObservability(value: unknown): boolean {
   return Boolean(
     value
@@ -883,6 +1099,25 @@ function isOperatorDashboardState(value: unknown): value is OperatorDashboardSta
     && (((value as { execution_chains?: unknown }).execution_chains === undefined)
       || (Array.isArray((value as { execution_chains?: unknown }).execution_chains)
         && ((value as { execution_chains?: unknown[] }).execution_chains ?? []).every(isExecutionChainRecord)))
+    && (((value as { proposed_work_items?: unknown }).proposed_work_items === undefined)
+      || (Array.isArray((value as { proposed_work_items?: unknown }).proposed_work_items)
+        && ((value as { proposed_work_items?: unknown[] }).proposed_work_items ?? []).every(isDashboardAutonomousWorkItem)))
+    && (((value as { scheduled_work_items?: unknown }).scheduled_work_items === undefined)
+      || (Array.isArray((value as { scheduled_work_items?: unknown }).scheduled_work_items)
+        && ((value as { scheduled_work_items?: unknown[] }).scheduled_work_items ?? []).every(isDashboardAutonomousWorkItem)))
+    && (((value as { running_work_items?: unknown }).running_work_items === undefined)
+      || (Array.isArray((value as { running_work_items?: unknown }).running_work_items)
+        && ((value as { running_work_items?: unknown[] }).running_work_items ?? []).every(isDashboardAutonomousWorkItem)))
+    && (((value as { review_packages?: unknown }).review_packages === undefined)
+      || (Array.isArray((value as { review_packages?: unknown }).review_packages)
+        && ((value as { review_packages?: unknown[] }).review_packages ?? []).every(isDashboardReviewPackage)))
+    && (((value as { planning_recommendations?: unknown }).planning_recommendations === undefined)
+      || (Array.isArray((value as { planning_recommendations?: unknown }).planning_recommendations)
+        && ((value as { planning_recommendations?: unknown[] }).planning_recommendations ?? []).every(isDashboardPlanningRecommendation)))
+    && (((value as { planning_policy_feedback?: unknown }).planning_policy_feedback === undefined)
+      || isDashboardPlanningPolicyFeedback((value as { planning_policy_feedback?: unknown }).planning_policy_feedback))
+    && (((value as { autonomous_sessions?: unknown }).autonomous_sessions === undefined)
+      || isDashboardAutonomousSessionState((value as { autonomous_sessions?: unknown }).autonomous_sessions))
     && (((value as { supervised_session?: unknown }).supervised_session === undefined)
       || ((value as { supervised_session?: unknown }).supervised_session === null)
       || isSupervisedAutonomySessionRecord((value as { supervised_session?: unknown }).supervised_session))

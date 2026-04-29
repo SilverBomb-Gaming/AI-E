@@ -307,6 +307,22 @@ export function createSafeRuntimeActionBridgeResult(
       );
     }
 
+    case "pause_autonomous_session":
+    case "resume_autonomous_session":
+    case "reprioritize_autonomous_session":
+    case "merge_autonomous_sessions":
+    case "terminate_autonomous_session": {
+      return buildResult(
+        source,
+        action,
+        "action_unsupported",
+        "no_op",
+        "live runtime mutation for multi-session orchestration controls is not implemented yet; use the persisted dashboard state for local review only",
+        providerResult.warnings,
+        createdAt,
+      );
+    }
+
     case "start_supervised_session": {
       if (state.supervised_session && ["pending_approval", "running", "paused", "waiting_for_operator", "recovering"].includes(state.supervised_session.status)) {
         return buildResult(

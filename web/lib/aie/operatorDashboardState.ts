@@ -45,6 +45,28 @@ import type {
 } from "./failureRecoveryIntelligence";
 import type { AgentRuntimeNode } from "./agentRuntimeRegistry";
 import type { ExecutionChainRecord } from "./executionChainState";
+import {
+  createAutonomousSessionRegistry,
+  type AutonomousSessionPriority,
+  type AutonomousSessionRecord,
+  type AutonomousSessionRegistry,
+} from "./autonomousSessionRegistry";
+import {
+  createMultiSessionSchedulerState,
+  scheduleNextAutonomousSession,
+  type MultiSessionSchedulerState,
+} from "./multiSessionScheduler";
+import {
+  createSessionResourceAllocatorConfig,
+  summarizeSessionResourceUsage,
+  type SessionResourceAllocatorConfig,
+} from "./sessionResourceAllocator";
+import { detectSessionConflicts } from "./sessionConflictDetector";
+import {
+  createSessionCoordinatorState,
+  evaluateSessionCoordination,
+  type SessionCoordinatorState,
+} from "./sessionCoordinator";
 import type {
   SupervisedAutonomyCheckpointRecord,
   SupervisedAutonomySessionRecord,
@@ -195,6 +217,69 @@ export type OperatorDashboardPlanningRecommendation = {
   requires_operator_review: boolean;
 };
 
+export type OperatorDashboardAutonomousSession = {
+  session_id: string;
+  session_type: AutonomousSessionRecord["session_type"];
+  priority: AutonomousSessionPriority;
+  status: AutonomousSessionRecord["status"];
+  logical_cpu_units: number;
+  assigned_agent_ids: string[];
+  active_chain_count: number;
+  queued_work_item_count: number;
+  consumed_ticks: number;
+  tick_budget_remaining: number;
+  chain_budget_remaining: number;
+  coordination_group_id: string | null;
+  parent_session_id: string | null;
+  is_runnable: boolean;
+  blocked_by_conflict: boolean;
+  ready_on_dependency: boolean;
+};
+
+export type OperatorDashboardAutonomousSessionConflict = {
+  conflict_id: string;
+  kind: "shared_file" | "shared_goal" | "overlapping_chain" | "incompatible_scope";
+  resolution: "block_one_session" | "queue_work" | "request_operator_review" | "merge_scopes_if_safe";
+  left_session_id: string;
+  right_session_id: string;
+  shared_targets: string[];
+  blocking_session_id: string | null;
+  explanation: string;
+};
+
+export type OperatorDashboardAutonomousSessionDependency = {
+  source_session_id: string;
+  target_session_id: string;
+  relationship: "unlocks" | "triggers";
+  status: "pending" | "ready" | "satisfied" | "blocked";
+  reason: string;
+};
+
+export type OperatorDashboardAutonomousSessionGroup = {
+  coordination_group_id: string;
+  session_ids: string[];
+  status: "active" | "blocked" | "completed";
+  shared_goal: string | null;
+};
+
+export type OperatorDashboardAutonomousSessionState = {
+  sessions: OperatorDashboardAutonomousSession[];
+  selected_session_id: string | null;
+  runnable_session_ids: string[];
+  blocked_session_ids: string[];
+  ready_session_ids: string[];
+  scheduler_status: OperatorDashboardStatusLine;
+  resource_status: OperatorDashboardStatusLine;
+  max_logical_cpu_units: number;
+  max_concurrent_chains: number;
+  total_logical_cpu_units: number;
+  total_active_chains: number;
+  assigned_agent_ids: string[];
+  conflicts: OperatorDashboardAutonomousSessionConflict[];
+  coordination_groups: OperatorDashboardAutonomousSessionGroup[];
+  coordination_dependencies: OperatorDashboardAutonomousSessionDependency[];
+};
+
 export type OperatorDashboardState = {
   active_goal: OperatorDashboardGoal | null;
   queued_goals: OperatorDashboardGoal[];
@@ -221,6 +306,7 @@ export type OperatorDashboardState = {
   delivery_packages?: AutonomousDeliveryPackage[];
   planning_recommendations?: OperatorDashboardPlanningRecommendation[];
   planning_policy_feedback?: AutonomousWorkItemPolicyFeedback;
+  autonomous_sessions?: OperatorDashboardAutonomousSessionState;
   supervised_session?: SupervisedAutonomySessionRecord | null;
   supervised_checkpoints?: SupervisedAutonomyCheckpointRecord[];
   last_updated_at: string;
@@ -240,6 +326,13 @@ export type OperatorDashboardContext = {
   delivery_packages?: AutonomousDeliveryPackage[];
   planning_policy_feedback?: AutonomousWorkItemPolicyFeedback;
   planning_budget?: number;
+  autonomous_session_registry?: AutonomousSessionRegistry | null;
+  autonomous_session_scheduler?: MultiSessionSchedulerState | null;
+  session_resource_allocator_config?: Partial<SessionResourceAllocatorConfig>;
+  session_file_targets?: Record<string, string[]>;
+  session_goal_targets?: Record<string, string[]>;
+  session_incompatible_scope_pairs?: Array<[string, string]>;
+  session_coordinator?: SessionCoordinatorState | null;
   generated_at?: string;
 };
 
@@ -271,6 +364,10 @@ function sortByTimestampDesc<T extends { created_at: string }>(left: T, right: T
     return timestampDelta;
   }
   return JSON.stringify(left).localeCompare(JSON.stringify(right));
+}
+
+function uniqueStrings(values: Array<string | null | undefined>): string[] {
+  return [...new Set(values.map((value) => normalizeText(value)).filter(Boolean))].sort((left, right) => left.localeCompare(right));
 }
 
 function priorityRank(priority: GoalPriority): number {
@@ -502,6 +599,107 @@ function buildPlanningState(context: OperatorDashboardContext): {
         requires_operator_review: ranked.requires_operator_review,
       })),
     planning_policy_feedback: planningPolicyFeedback,
+  };
+}
+
+function buildAutonomousSessionState(context: OperatorDashboardContext): OperatorDashboardAutonomousSessionState {
+  const generatedAt = normalizeText(context.generated_at) || EMPTY_TIMESTAMP;
+  const registry = context.autonomous_session_registry
+    ? createAutonomousSessionRegistry(context.autonomous_session_registry)
+    : createAutonomousSessionRegistry({
+      created_at: generatedAt,
+      updated_at: generatedAt,
+      global_tick_budget: 12,
+      sessions: [],
+    });
+  const schedulerState = createMultiSessionSchedulerState(context.autonomous_session_scheduler ?? {
+    global_tick_budget: registry.global_tick_budget,
+  });
+  const schedulerResult = scheduleNextAutonomousSession(registry, schedulerState);
+  const resourceConfig = createSessionResourceAllocatorConfig(context.session_resource_allocator_config);
+  const resourceUsage = summarizeSessionResourceUsage(registry);
+  const conflicts = detectSessionConflicts({
+    registry,
+    session_file_targets: context.session_file_targets,
+    session_goal_targets: context.session_goal_targets,
+    incompatible_scope_pairs: context.session_incompatible_scope_pairs,
+  });
+  const coordination = evaluateSessionCoordination({
+    registry,
+    coordinator: createSessionCoordinatorState(context.session_coordinator ?? {}),
+  });
+  const runnableSessionIds = schedulerResult.runnable_sessions.map((session) => session.session_id);
+  const blockedSessionIds = uniqueStrings([...conflicts.blocked_session_ids, ...coordination.blocked_session_ids]);
+  const readySessionIds = uniqueStrings(coordination.ready_session_ids);
+
+  return {
+    sessions: registry.sessions.map((session) => {
+      const consumedTicks = schedulerState.per_session_ticks[session.session_id] ?? 0;
+      return {
+        session_id: session.session_id,
+        session_type: session.session_type,
+        priority: session.priority,
+        status: session.status,
+        logical_cpu_units: session.allocated_resources.logical_cpu_units,
+        assigned_agent_ids: [...session.assigned_agent_ids],
+        active_chain_count: session.active_chain_ids.length,
+        queued_work_item_count: session.queued_work_item_ids.length,
+        consumed_ticks: consumedTicks,
+        tick_budget_remaining: Math.max(0, session.max_tick_budget - consumedTicks),
+        chain_budget_remaining: Math.max(0, session.max_chain_budget - session.active_chain_ids.length),
+        coordination_group_id: session.coordination_group_id,
+        parent_session_id: session.parent_session_id,
+        is_runnable: runnableSessionIds.includes(session.session_id),
+        blocked_by_conflict: blockedSessionIds.includes(session.session_id),
+        ready_on_dependency: readySessionIds.includes(session.session_id),
+      };
+    }),
+    selected_session_id: schedulerResult.selected_session?.session_id ?? null,
+    runnable_session_ids: runnableSessionIds,
+    blocked_session_ids: blockedSessionIds,
+    ready_session_ids: readySessionIds,
+    scheduler_status: {
+      status: schedulerResult.status,
+      explanation: schedulerResult.reason,
+    },
+    resource_status: {
+      status: registry.sessions.length === 0
+        ? "resource_idle"
+        : resourceUsage.total_logical_cpu_units > resourceConfig.max_logical_cpu_units || resourceUsage.total_active_chains > resourceConfig.max_concurrent_chains
+          ? "resource_pressure"
+          : "resource_balanced",
+      explanation: registry.sessions.length === 0
+        ? "No autonomous sessions are registered for bounded parallel execution yet."
+        : `Using ${resourceUsage.total_logical_cpu_units}/${resourceConfig.max_logical_cpu_units} logical CPU units and ${resourceUsage.total_active_chains}/${resourceConfig.max_concurrent_chains} active chains across ${registry.sessions.length} sessions.`,
+    },
+    max_logical_cpu_units: resourceConfig.max_logical_cpu_units,
+    max_concurrent_chains: resourceConfig.max_concurrent_chains,
+    total_logical_cpu_units: resourceUsage.total_logical_cpu_units,
+    total_active_chains: resourceUsage.total_active_chains,
+    assigned_agent_ids: [...resourceUsage.assigned_agent_ids],
+    conflicts: conflicts.conflicts.map((conflict) => ({
+      conflict_id: conflict.conflict_id,
+      kind: conflict.kind,
+      resolution: conflict.resolution,
+      left_session_id: conflict.left_session_id,
+      right_session_id: conflict.right_session_id,
+      shared_targets: [...conflict.shared_targets],
+      blocking_session_id: conflict.blocking_session_id,
+      explanation: conflict.explanation,
+    })),
+    coordination_groups: coordination.groups.map((group) => ({
+      coordination_group_id: group.coordination_group_id,
+      session_ids: [...group.session_ids],
+      status: group.status,
+      shared_goal: group.shared_goal,
+    })),
+    coordination_dependencies: coordination.dependencies.map((dependency) => ({
+      source_session_id: dependency.source_session_id,
+      target_session_id: dependency.target_session_id,
+      relationship: dependency.relationship,
+      status: dependency.status,
+      reason: dependency.reason,
+    })),
   };
 }
 
@@ -1008,6 +1206,7 @@ export function buildOperatorDashboardState(context: OperatorDashboardContext): 
   const pausedGoals = sortGoalSnapshots(goalSnapshots.filter((goal) => goal.status === "paused"));
   const activeGoal = selectedGoalId ? goalSnapshotMap.get(selectedGoalId) ?? null : null;
   const planningState = buildPlanningState(context);
+  const autonomousSessionState = buildAutonomousSessionState(context);
 
   return {
     active_goal: activeGoal,
@@ -1050,6 +1249,7 @@ export function buildOperatorDashboardState(context: OperatorDashboardContext): 
     delivery_packages: planningState.delivery_packages,
     planning_recommendations: planningState.planning_recommendations,
     planning_policy_feedback: planningState.planning_policy_feedback,
+    autonomous_sessions: autonomousSessionState,
     last_updated_at: deriveLastUpdatedAt(context, goals, reports),
   };
 }
@@ -1130,6 +1330,22 @@ export function extractActionableItems(state: OperatorDashboardState): OperatorD
     });
   }
 
+  for (const conflict of state.autonomous_sessions?.conflicts ?? []) {
+    if (conflict.resolution !== "block_one_session" && conflict.resolution !== "request_operator_review") {
+      continue;
+    }
+    items.push({
+      kind: "conflict",
+      goal_id: conflict.blocking_session_id,
+      title: `Session conflict: ${conflict.left_session_id} vs ${conflict.right_session_id}`,
+      reason: conflict.explanation,
+      recommended_action: conflict.resolution === "block_one_session"
+        ? `Inspect ${conflict.blocking_session_id ?? conflict.right_session_id} before resuming parallel work.`
+        : "Review the overlapping execution scope before allowing both sessions to continue.",
+      priority: conflict.kind === "shared_file" || conflict.kind === "overlapping_chain" ? "high" : "medium",
+    });
+  }
+
   for (const reviewPackage of state.review_packages ?? []) {
     if (reviewPackage.status !== "pending") {
       continue;
@@ -1182,6 +1398,7 @@ export function summarizeOperatorDashboardState(state: OperatorDashboardState): 
     `Validation issues: ${state.validation_issues.length}`,
     `Recovery recommendations: ${state.recovery_recommendations.length}`,
     `Proposed work items: ${state.proposed_work_items?.length ?? 0}`,
+    `Autonomous sessions: ${state.autonomous_sessions?.sessions.length ?? 0}`,
     `Review packages: ${state.review_packages?.length ?? 0}`,
     `Delivery packages: ${state.delivery_packages?.length ?? 0}`,
     `Runtime status: ${state.runtime_status.status}`,

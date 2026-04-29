@@ -2,6 +2,7 @@ import type {
   OperatorDashboardPlanningRecommendation,
   OperatorDashboardActionItem,
   OperatorDashboardApprovalRequirement,
+  OperatorDashboardAutonomousSession,
   OperatorDashboardBlockedGoal,
   OperatorDashboardFailure,
   OperatorDashboardGoal,
@@ -15,6 +16,7 @@ import type {
   AutonomousWorkItem,
   AutonomousWorkItemPolicyFeedback,
 } from "./autonomousWorkPlanning";
+import type { AutonomousSessionPriority } from "./autonomousSessionRegistry";
 import {
   createOvernightAutonomyPolicyId,
   createSupervisedAutonomySessionId,
@@ -23,7 +25,7 @@ import {
   type SupervisedAutonomyRecoveryPolicy,
 } from "./supervisedAutonomySession";
 
-export type OperatorControlActionType = "approve_goal" | "pause_goal" | "resume_goal" | "retry_goal" | "start_supervised_session" | "pause_session" | "resume_session" | "stop_session" | "request_operator_review" | "approve_review_item" | "reject_review_item" | "defer_review_item" | "approve_work_item" | "reject_work_item" | "defer_work_item" | "approve_review_package" | "reject_review_package" | "approve_delivery_package" | "reject_delivery_package" | "request_delivery_changes" | "archive_delivery_package";
+export type OperatorControlActionType = "approve_goal" | "pause_goal" | "resume_goal" | "retry_goal" | "pause_autonomous_session" | "resume_autonomous_session" | "reprioritize_autonomous_session" | "merge_autonomous_sessions" | "terminate_autonomous_session" | "start_supervised_session" | "pause_session" | "resume_session" | "stop_session" | "request_operator_review" | "approve_review_item" | "reject_review_item" | "defer_review_item" | "approve_work_item" | "reject_work_item" | "defer_work_item" | "approve_review_package" | "reject_review_package" | "approve_delivery_package" | "reject_delivery_package" | "request_delivery_changes" | "archive_delivery_package";
 
 export type SupervisedSessionControlInput = {
   max_duration_ms?: number;
@@ -49,6 +51,9 @@ export type SupervisedSessionControlInput = {
 export type OperatorControlAction = {
   type: OperatorControlActionType;
   goal_id?: string | null;
+  session_id?: string | null;
+  target_session_id?: string | null;
+  session_priority?: AutonomousSessionPriority;
   review_id?: string | null;
   work_item_id?: string | null;
   package_id?: string | null;
@@ -138,6 +143,13 @@ function clonePlanningRecommendation(item: OperatorDashboardPlanningRecommendati
   return { ...item };
 }
 
+function cloneAutonomousSession(item: OperatorDashboardAutonomousSession): OperatorDashboardAutonomousSession {
+  return {
+    ...item,
+    assigned_agent_ids: [...item.assigned_agent_ids],
+  };
+}
+
 function clonePlanningPolicyFeedback(value: AutonomousWorkItemPolicyFeedback | undefined): AutonomousWorkItemPolicyFeedback | undefined {
   return value ? { ...value } : undefined;
 }
@@ -198,6 +210,23 @@ function cloneState(state: OperatorDashboardState): OperatorDashboardState {
     delivery_packages: state.delivery_packages?.map((item) => cloneDeliveryPackage(item)),
     planning_recommendations: state.planning_recommendations?.map((item) => clonePlanningRecommendation(item)),
     planning_policy_feedback: clonePlanningPolicyFeedback(state.planning_policy_feedback),
+    autonomous_sessions: state.autonomous_sessions ? {
+      sessions: state.autonomous_sessions.sessions.map((item) => cloneAutonomousSession(item)),
+      selected_session_id: state.autonomous_sessions.selected_session_id,
+      runnable_session_ids: [...state.autonomous_sessions.runnable_session_ids],
+      blocked_session_ids: [...state.autonomous_sessions.blocked_session_ids],
+      ready_session_ids: [...state.autonomous_sessions.ready_session_ids],
+      scheduler_status: { ...state.autonomous_sessions.scheduler_status },
+      resource_status: { ...state.autonomous_sessions.resource_status },
+      max_logical_cpu_units: state.autonomous_sessions.max_logical_cpu_units,
+      max_concurrent_chains: state.autonomous_sessions.max_concurrent_chains,
+      total_logical_cpu_units: state.autonomous_sessions.total_logical_cpu_units,
+      total_active_chains: state.autonomous_sessions.total_active_chains,
+      assigned_agent_ids: [...state.autonomous_sessions.assigned_agent_ids],
+      conflicts: state.autonomous_sessions.conflicts.map((conflict) => ({ ...conflict, shared_targets: [...conflict.shared_targets] })),
+      coordination_groups: state.autonomous_sessions.coordination_groups.map((group) => ({ ...group, session_ids: [...group.session_ids] })),
+      coordination_dependencies: state.autonomous_sessions.coordination_dependencies.map((dependency) => ({ ...dependency })),
+    } : undefined,
     supervised_session: state.supervised_session ? {
       ...state.supervised_session,
       agent_ids: [...state.supervised_session.agent_ids],
@@ -237,6 +266,62 @@ function nextTimestamp(state: OperatorDashboardState): string {
 
 function updateLastUpdated(state: OperatorDashboardState): void {
   state.last_updated_at = nextTimestamp(state);
+}
+
+function recalculateAutonomousSessionSummary(state: OperatorDashboardState): void {
+  if (!state.autonomous_sessions) {
+    return;
+  }
+
+  const selectedSession = state.autonomous_sessions.sessions.find((session) => session.status === "running")
+    ?? state.autonomous_sessions.sessions.find((session) => session.status === "pending")
+    ?? null;
+  state.autonomous_sessions.selected_session_id = selectedSession?.session_id ?? null;
+  state.autonomous_sessions.runnable_session_ids = state.autonomous_sessions.sessions
+    .filter((session) => session.status === "running" || session.status === "pending")
+    .map((session) => session.session_id);
+  state.autonomous_sessions.blocked_session_ids = state.autonomous_sessions.sessions
+    .filter((session) => session.blocked_by_conflict || session.status === "blocked" || session.status === "failed")
+    .map((session) => session.session_id);
+  state.autonomous_sessions.ready_session_ids = state.autonomous_sessions.sessions
+    .filter((session) => session.ready_on_dependency)
+    .map((session) => session.session_id);
+  state.autonomous_sessions.total_logical_cpu_units = state.autonomous_sessions.sessions
+    .filter((session) => session.status === "running" || session.status === "pending")
+    .reduce((total, session) => total + session.logical_cpu_units, 0);
+  state.autonomous_sessions.total_active_chains = state.autonomous_sessions.sessions
+    .filter((session) => session.status === "running" || session.status === "pending")
+    .reduce((total, session) => total + session.active_chain_count, 0);
+  state.autonomous_sessions.assigned_agent_ids = [...new Set(state.autonomous_sessions.sessions.flatMap((session) => session.assigned_agent_ids))].sort((left, right) => left.localeCompare(right));
+  state.autonomous_sessions.resource_status = {
+    status: state.autonomous_sessions.sessions.length === 0
+      ? "resource_idle"
+      : state.autonomous_sessions.total_logical_cpu_units > state.autonomous_sessions.max_logical_cpu_units
+        || state.autonomous_sessions.total_active_chains > state.autonomous_sessions.max_concurrent_chains
+        ? "resource_pressure"
+        : "resource_balanced",
+    explanation: state.autonomous_sessions.sessions.length === 0
+      ? "No autonomous sessions are registered for bounded parallel execution yet."
+      : `Using ${state.autonomous_sessions.total_logical_cpu_units}/${state.autonomous_sessions.max_logical_cpu_units} logical CPU units and ${state.autonomous_sessions.total_active_chains}/${state.autonomous_sessions.max_concurrent_chains} active chains across ${state.autonomous_sessions.sessions.length} sessions.`,
+  };
+  state.autonomous_sessions.scheduler_status = {
+    status: selectedSession ? "session_selected" : "no_runnable_sessions",
+    explanation: selectedSession
+      ? `Selected ${selectedSession.session_id} for the next bounded multi-session tick.`
+      : "No runnable autonomous sessions remain after applying bounded status rules.",
+  };
+}
+
+function findAutonomousSession(state: OperatorDashboardState, sessionId: string | null | undefined): OperatorDashboardAutonomousSession | null {
+  if (!state.autonomous_sessions) {
+    return null;
+  }
+
+  if (sessionId) {
+    return state.autonomous_sessions.sessions.find((session) => session.session_id === sessionId) ?? null;
+  }
+
+  return state.autonomous_sessions.sessions[0] ?? null;
 }
 
 function markGoal(goal: OperatorDashboardGoal, updates: Partial<OperatorDashboardGoal>): OperatorDashboardGoal {
@@ -783,6 +868,148 @@ export function applyOperatorControlAction(state: OperatorDashboardState, action
         action,
         changed: true,
         message: "The blocked goal was returned to the queue for retry.",
+        state: nextState,
+      };
+    }
+
+    case "pause_autonomous_session": {
+      const session = findAutonomousSession(nextState, action.session_id);
+      if (!session || session.status !== "running") {
+        return {
+          action,
+          changed: false,
+          message: "No running autonomous session is available to pause.",
+          state: nextState,
+        };
+      }
+
+      session.status = "paused";
+      session.is_runnable = false;
+      session.blocked_by_conflict = false;
+      recalculateAutonomousSessionSummary(nextState);
+      updateLastUpdated(nextState);
+      return {
+        action,
+        changed: true,
+        message: `Autonomous session ${session.session_id} was paused.`,
+        state: nextState,
+      };
+    }
+
+    case "resume_autonomous_session": {
+      const session = findAutonomousSession(nextState, action.session_id);
+      if (!session || !["paused", "blocked"].includes(session.status)) {
+        return {
+          action,
+          changed: false,
+          message: "No paused autonomous session is available to resume.",
+          state: nextState,
+        };
+      }
+
+      session.status = "pending";
+      session.is_runnable = true;
+      session.blocked_by_conflict = false;
+      recalculateAutonomousSessionSummary(nextState);
+      updateLastUpdated(nextState);
+      return {
+        action,
+        changed: true,
+        message: `Autonomous session ${session.session_id} was resumed.`,
+        state: nextState,
+      };
+    }
+
+    case "reprioritize_autonomous_session": {
+      const session = findAutonomousSession(nextState, action.session_id);
+      const nextPriority = action.session_priority ?? null;
+      if (!session || !nextPriority) {
+        return {
+          action,
+          changed: false,
+          message: "A target autonomous session and priority are required to reprioritize session work.",
+          state: nextState,
+        };
+      }
+
+      session.priority = nextPriority;
+      recalculateAutonomousSessionSummary(nextState);
+      updateLastUpdated(nextState);
+      return {
+        action,
+        changed: true,
+        message: `Autonomous session ${session.session_id} priority changed to ${nextPriority}.`,
+        state: nextState,
+      };
+    }
+
+    case "merge_autonomous_sessions": {
+      if (!nextState.autonomous_sessions) {
+        return {
+          action,
+          changed: false,
+          message: "No autonomous session state is available to merge.",
+          state: nextState,
+        };
+      }
+
+      const sourceSession = findAutonomousSession(nextState, action.session_id);
+      const targetSession = findAutonomousSession(nextState, action.target_session_id);
+      if (!sourceSession || !targetSession || sourceSession.session_id === targetSession.session_id) {
+        return {
+          action,
+          changed: false,
+          message: "Two distinct autonomous sessions are required for a merge.",
+          state: nextState,
+        };
+      }
+
+      targetSession.assigned_agent_ids = [...new Set([...targetSession.assigned_agent_ids, ...sourceSession.assigned_agent_ids])].sort((left, right) => left.localeCompare(right));
+      targetSession.active_chain_count += sourceSession.active_chain_count;
+      targetSession.queued_work_item_count += sourceSession.queued_work_item_count;
+      targetSession.logical_cpu_units += sourceSession.logical_cpu_units;
+      targetSession.parent_session_id = targetSession.parent_session_id ?? sourceSession.parent_session_id ?? sourceSession.session_id;
+      sourceSession.status = "completed";
+      sourceSession.is_runnable = false;
+      sourceSession.active_chain_count = 0;
+      sourceSession.queued_work_item_count = 0;
+      sourceSession.logical_cpu_units = 0;
+      sourceSession.assigned_agent_ids = [];
+      nextState.autonomous_sessions.conflicts = nextState.autonomous_sessions.conflicts.filter((conflict) => {
+        return conflict.left_session_id !== sourceSession.session_id && conflict.right_session_id !== sourceSession.session_id;
+      });
+      recalculateAutonomousSessionSummary(nextState);
+      updateLastUpdated(nextState);
+      return {
+        action,
+        changed: true,
+        message: `Merged autonomous session ${sourceSession.session_id} into ${targetSession.session_id}.`,
+        state: nextState,
+      };
+    }
+
+    case "terminate_autonomous_session": {
+      const session = findAutonomousSession(nextState, action.session_id);
+      if (!session || ["completed", "failed"].includes(session.status)) {
+        return {
+          action,
+          changed: false,
+          message: "No active autonomous session is available to terminate.",
+          state: nextState,
+        };
+      }
+
+      session.status = "failed";
+      session.is_runnable = false;
+      session.blocked_by_conflict = true;
+      session.active_chain_count = 0;
+      session.tick_budget_remaining = 0;
+      recalculateAutonomousSessionSummary(nextState);
+      updateLastUpdated(nextState);
+      return {
+        action,
+        changed: true,
+        message: `Autonomous session ${session.session_id} was terminated.`,
         state: nextState,
       };
     }

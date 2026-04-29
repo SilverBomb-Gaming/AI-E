@@ -22,11 +22,16 @@ import {
   createAutonomousWorkItemPolicyFeedback,
 } from "./autonomousWorkPlanning";
 import {
+  createAutonomousSessionRecord,
+  createAutonomousSessionRegistry,
+} from "./autonomousSessionRegistry";
+import {
   buildOperatorDashboardState,
   extractActionableItems,
   groupGoalsByStatus,
   summarizeOperatorDashboardState,
 } from "./operatorDashboardState";
+import { createMultiSessionSchedulerState } from "./multiSessionScheduler";
 import { buildRuntimeResult } from "./sessionRuntime";
 
 function createGoal(input: Partial<GoalRecord> & { id: string; description: string }): GoalRecord {
@@ -317,4 +322,65 @@ test("delivery packages surface concise delivery-ready action items", () => {
 
   assert.equal(actionableItems.some((item) => item.kind === "delivery_package" && item.goal_id === "work-proof-summary"), true);
   assert.match(summary, /Delivery packages: 1/);
+});
+
+test("autonomous sessions surface parallel orchestration state", () => {
+  const registry = createAutonomousSessionRegistry({
+    runtime_id: "runtime-openclaw",
+    created_at: "2026-04-29T12:00:00.000Z",
+    updated_at: "2026-04-29T12:00:00.000Z",
+    global_tick_budget: 6,
+    sessions: [
+      createAutonomousSessionRecord({
+        session_id: "session-feature-a",
+        runtime_id: "runtime-openclaw",
+        session_type: "feature",
+        priority: "high",
+        status: "running",
+        active_chain_ids: ["chain-a"],
+        assigned_agent_ids: ["planner-agent"],
+        queued_work_item_ids: ["goal-openclaw-ui"],
+        start_time: "2026-04-29T12:00:00.000Z",
+      }),
+      createAutonomousSessionRecord({
+        session_id: "session-bugfix-b",
+        runtime_id: "runtime-openclaw",
+        session_type: "bugfix",
+        priority: "medium",
+        status: "pending",
+        active_chain_ids: ["chain-b"],
+        assigned_agent_ids: ["validator-agent"],
+        queued_work_item_ids: ["goal-openclaw-ui"],
+        coordination_group_id: "group-1",
+        start_time: "2026-04-29T12:01:00.000Z",
+      }),
+    ],
+  });
+
+  const state = buildOperatorDashboardState({
+    autonomous_session_registry: registry,
+    autonomous_session_scheduler: createMultiSessionSchedulerState({
+      global_tick_budget: 6,
+      per_session_ticks: { "session-feature-a": 1 },
+    }),
+    session_file_targets: {
+      "session-feature-a": ["web/app/operator/OperatorDashboardClient.tsx"],
+      "session-bugfix-b": ["web/app/operator/OperatorDashboardClient.tsx"],
+    },
+    session_goal_targets: {
+      "session-feature-a": ["goal-openclaw-ui"],
+      "session-bugfix-b": ["goal-openclaw-ui"],
+    },
+    session_coordinator: {
+      groups: [{ coordination_group_id: "group-1", session_ids: ["session-feature-a", "session-bugfix-b"], status: "active", shared_goal: "OpenClaw UI" }],
+      dependencies: [{ source_session_id: "session-feature-a", target_session_id: "session-bugfix-b", relationship: "unlocks", status: "pending", reason: "Bugfix waits for feature stabilization." }],
+    },
+    generated_at: "2026-04-29T12:05:00.000Z",
+  });
+
+  assert.equal(state.autonomous_sessions?.sessions.length, 2);
+  assert.equal(state.autonomous_sessions?.selected_session_id, "session-bugfix-b");
+  assert.equal(state.autonomous_sessions?.conflicts.some((conflict) => conflict.kind === "shared_file"), true);
+  assert.equal(extractActionableItems(state).some((item) => item.kind === "conflict"), true);
+  assert.match(summarizeOperatorDashboardState(state), /Autonomous sessions: 2/);
 });

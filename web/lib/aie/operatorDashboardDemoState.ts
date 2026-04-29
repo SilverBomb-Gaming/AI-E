@@ -1,6 +1,8 @@
 import { createAutonomousWorkSession } from "./autonomousWorkSession";
 import { createAutonomousDeliveryPackage, createAutonomousReviewPackage, createAutonomousWorkItem, createAutonomousWorkItemPolicyFeedback } from "./autonomousWorkPlanning";
+import { createAutonomousSessionRecord, createAutonomousSessionRegistry } from "./autonomousSessionRegistry";
 import { buildRecoveryReport } from "./failureRecoveryIntelligence";
+import { createMultiSessionSchedulerState } from "./multiSessionScheduler";
 import { createGoalQueue, createGoalRecord } from "./multiGoalOrchestrator";
 import { buildOperatorDashboardState, type OperatorDashboardState } from "./operatorDashboardState";
 import { buildRuntimeResult } from "./sessionRuntime";
@@ -70,6 +72,43 @@ export function createOperatorDashboardDemoState(): OperatorDashboardState {
     ],
     validation_status: "validation_failed",
     validation_recommendation: "review_required",
+  });
+
+  const autonomousSessionRegistry = createAutonomousSessionRegistry({
+    runtime_id: "demo-runtime",
+    created_at: "2026-04-26T11:54:00.000Z",
+    updated_at: "2026-04-26T11:59:00.000Z",
+    global_tick_budget: 8,
+    sessions: [
+      createAutonomousSessionRecord({
+        session_id: "demo-session-feature-ui",
+        runtime_id: "demo-runtime",
+        session_type: "feature",
+        priority: "high",
+        status: "running",
+        allocated_resources: { logical_cpu_units: 2, tick_budget: 5, chain_slots: 2, agent_assignments_allowed: 2 },
+        active_chain_ids: ["chain-ui-runtime"],
+        queued_work_item_ids: ["demo-work-proof-summary"],
+        assigned_agent_ids: ["planner-agent", "reporter-agent"],
+        start_time: "2026-04-26T11:54:00.000Z",
+        last_tick: "2026-04-26T11:58:00.000Z",
+        coordination_group_id: "demo-group-ui",
+      }),
+      createAutonomousSessionRecord({
+        session_id: "demo-session-bugfix-delivery",
+        runtime_id: "demo-runtime",
+        session_type: "bugfix",
+        priority: "medium",
+        status: "pending",
+        allocated_resources: { logical_cpu_units: 1, tick_budget: 4, chain_slots: 1, agent_assignments_allowed: 1 },
+        active_chain_ids: ["chain-delivery-proof"],
+        queued_work_item_ids: ["demo-work-risky-refactor"],
+        assigned_agent_ids: ["validator-agent"],
+        start_time: "2026-04-26T11:56:00.000Z",
+        coordination_group_id: "demo-group-ui",
+        parent_session_id: "demo-session-feature-ui",
+      }),
+    ],
   });
 
   return buildOperatorDashboardState({
@@ -158,6 +197,32 @@ export function createOperatorDashboardDemoState(): OperatorDashboardState {
     ],
     planning_policy_feedback: createAutonomousWorkItemPolicyFeedback({ approvals_recorded: 2, deferrals_recorded: 1 }),
     planning_budget: 3,
+    autonomous_session_registry: autonomousSessionRegistry,
+    autonomous_session_scheduler: createMultiSessionSchedulerState({
+      global_tick_budget: 8,
+      global_ticks_consumed: 2,
+      per_session_ticks: {
+        "demo-session-feature-ui": 2,
+        "demo-session-bugfix-delivery": 1,
+      },
+    }),
+    session_resource_allocator_config: {
+      max_logical_cpu_units: 6,
+      max_concurrent_chains: 4,
+      max_chains_per_session: 2,
+    },
+    session_file_targets: {
+      "demo-session-feature-ui": ["web/app/operator/OperatorDashboardClient.tsx"],
+      "demo-session-bugfix-delivery": ["web/app/operator/OperatorDashboardClient.tsx"],
+    },
+    session_goal_targets: {
+      "demo-session-feature-ui": ["goal-operator-dashboard"],
+      "demo-session-bugfix-delivery": ["goal-operator-dashboard"],
+    },
+    session_coordinator: {
+      groups: [{ coordination_group_id: "demo-group-ui", session_ids: ["demo-session-feature-ui", "demo-session-bugfix-delivery"], status: "active", shared_goal: "Operator dashboard handoff" }],
+      dependencies: [{ source_session_id: "demo-session-feature-ui", target_session_id: "demo-session-bugfix-delivery", relationship: "unlocks", status: "pending", reason: "Bugfix session waits for the feature session to stabilize the dashboard lane." }],
+    },
     generated_at: DEMO_TIMESTAMP,
   });
 }

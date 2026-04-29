@@ -306,6 +306,11 @@ Current Layer 8 reporting rule:
 - Layer 8: IN PROGRESS
 - Only declare Layer 8 complete when delivery packages, operator delivery approval gates, PR summary recommendations, validation evidence, rollback notes, deterministic `proof:delivery-pipeline`, previous safe proofs, `test:trace:safe`, and commit/push are all complete together.
 
+Current Layer 9 reporting rule:
+
+- Layer 9: IN PROGRESS
+- Only declare Layer 9 complete when the persisted multi-session registry, weighted-fair scheduler, resource allocation limits, conflict detection, session coordination, `/operator` multi-session controls, deterministic `proof:multi-session:safe`, previous safe proofs, `test:trace:safe`, and commit/push are all complete together.
+
 Roadmap checkpoints:
 
 - Layer 1: observable single-agent execution
@@ -332,6 +337,9 @@ Roadmap checkpoints:
 - Layer 8: autonomous PR and delivery pipeline
   - status: in progress
   - proof surface: bounded delivery packages, operator approval gates, PR summary recommendations, `/operator`, and `npm run proof:delivery-pipeline:safe`
+- Layer 9: coordinated multi-session orchestration
+  - status: in progress
+  - proof surface: persisted autonomous session state, weighted-fair scheduling, bounded resource allocation, conflict and coordination visibility, `/operator`, and `npm run proof:multi-session:safe`
 
 
 ## Multi-Agent Orchestration Scaffold

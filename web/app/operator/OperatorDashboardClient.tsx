@@ -13,6 +13,7 @@ import type { AutonomousDeliveryPackage, AutonomousReviewPackage, AutonomousWork
 import type { AgentRuntimeNode } from "@/lib/aie/agentRuntimeRegistry";
 import type {
   OperatorDashboardApprovalRequirement,
+  OperatorDashboardAutonomousSession,
   OperatorDashboardBlockedGoal,
   OperatorDashboardGoal,
   OperatorDashboardRecoveryRecommendation,
@@ -214,6 +215,64 @@ function GoalRow({
           <p className="text-xs uppercase tracking-[0.18em] text-slate">Priority {goal.priority}</p>
         </div>
         {children ? <div className="flex flex-wrap gap-2">{children}</div> : null}
+      </div>
+    </article>
+  );
+}
+
+function AutonomousSessionRow({
+  session,
+  mergeTargetSessionId,
+  onPause,
+  onResume,
+  onTerminate,
+  onPromote,
+  onMerge,
+  disabled,
+}: {
+  session: OperatorDashboardAutonomousSession;
+  mergeTargetSessionId: string | null;
+  onPause: () => void;
+  onResume: () => void;
+  onTerminate: () => void;
+  onPromote: (priority: "critical" | "high" | "medium" | "low") => void;
+  onMerge: () => void;
+  disabled: boolean;
+}) {
+  return (
+    <article className="rounded-[1.5rem] border border-ink/10 bg-white/80 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="space-y-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="headline text-lg font-semibold text-ink">{session.session_id}</h3>
+            <StatusBadge status={session.status} />
+            <StatusBadge status={session.priority} />
+            <StatusBadge status={session.session_type} />
+          </div>
+          <p className="text-sm leading-7 body-muted">
+            CPU {session.logical_cpu_units} | Chains {session.active_chain_count} | Queued work {session.queued_work_item_count} | Tick budget left {session.tick_budget_remaining}
+          </p>
+          <p className="text-xs text-slate">
+            Agents: {session.assigned_agent_ids.length > 0 ? session.assigned_agent_ids.join(", ") : "none"}
+          </p>
+          <p className="text-xs text-slate">
+            Coordination: {session.coordination_group_id ?? "none"} | Parent: {session.parent_session_id ?? "none"}
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {session.status === "running" ? (
+            <ActionButton label="Pause" onClick={onPause} disabled={disabled} tone="warning" />
+          ) : null}
+          {session.status === "paused" || session.status === "blocked" ? (
+            <ActionButton label="Resume" onClick={onResume} disabled={disabled} tone="accent" />
+          ) : null}
+          <ActionButton label="Critical" onClick={() => onPromote("critical")} disabled={disabled} />
+          <ActionButton label="High" onClick={() => onPromote("high")} disabled={disabled} />
+          <ActionButton label="Medium" onClick={() => onPromote("medium")} disabled={disabled} />
+          <ActionButton label="Low" onClick={() => onPromote("low")} disabled={disabled} />
+          <ActionButton label="Merge" onClick={onMerge} disabled={disabled || !mergeTargetSessionId} />
+          <ActionButton label="Terminate" onClick={onTerminate} disabled={disabled} tone="warning" />
+        </div>
       </div>
     </article>
   );
@@ -908,6 +967,70 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
                   disabled={isPending}
                 />
               )) : <p className="text-sm leading-7 body-muted">No delivery packages are waiting for operator approval.</p>}
+            </div>
+          </SectionCard>
+
+          <SectionCard eyebrow="6D" title="Autonomous Sessions">
+            <div className="space-y-4">
+              <article className="rounded-[1.5rem] border border-ink/10 bg-white/80 p-4">
+                <div className="flex flex-wrap items-center gap-2">
+                  <StatusBadge status={dashboardState?.autonomous_sessions?.scheduler_status.status ?? "no_runnable_sessions"} />
+                  <StatusBadge status={dashboardState?.autonomous_sessions?.resource_status.status ?? "resource_idle"} />
+                </div>
+                <p className="mt-3 text-sm leading-7 body-muted">{dashboardState?.autonomous_sessions?.scheduler_status.explanation ?? "No autonomous session schedule is available."}</p>
+                <p className="mt-2 text-sm leading-7 body-muted">{dashboardState?.autonomous_sessions?.resource_status.explanation ?? "No autonomous session resource state is available."}</p>
+                <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                  <p className="text-xs leading-6 text-slate">Tracked sessions: {dashboardState?.autonomous_sessions?.sessions.length ?? 0}</p>
+                  <p className="text-xs leading-6 text-slate">Selected: {dashboardState?.autonomous_sessions?.selected_session_id ?? "none"}</p>
+                  <p className="text-xs leading-6 text-slate">CPU: {dashboardState?.autonomous_sessions?.total_logical_cpu_units ?? 0} / {dashboardState?.autonomous_sessions?.max_logical_cpu_units ?? 0}</p>
+                  <p className="text-xs leading-6 text-slate">Chains: {dashboardState?.autonomous_sessions?.total_active_chains ?? 0} / {dashboardState?.autonomous_sessions?.max_concurrent_chains ?? 0}</p>
+                </div>
+              </article>
+
+              {dashboardState?.autonomous_sessions?.conflicts.length ? (
+                <article className="rounded-[1.5rem] border border-coral/15 bg-coral/5 p-4">
+                  <p className="text-xs uppercase tracking-[0.18em] text-slate">Conflict safety</p>
+                  <div className="mt-3 space-y-2">
+                    {dashboardState.autonomous_sessions.conflicts.map((conflict) => (
+                      <p key={conflict.conflict_id} className="text-sm leading-7 body-muted">
+                        {conflict.kind}: {conflict.left_session_id} vs {conflict.right_session_id} | {conflict.resolution.replace(/_/g, " ")}
+                      </p>
+                    ))}
+                  </div>
+                </article>
+              ) : null}
+
+              {dashboardState?.autonomous_sessions?.coordination_dependencies.length ? (
+                <article className="rounded-[1.5rem] border border-ink/10 bg-white/80 p-4">
+                  <p className="text-xs uppercase tracking-[0.18em] text-slate">Coordination dependencies</p>
+                  <div className="mt-3 space-y-2">
+                    {dashboardState.autonomous_sessions.coordination_dependencies.map((dependency) => (
+                      <p key={`${dependency.source_session_id}-${dependency.target_session_id}-${dependency.relationship}`} className="text-sm leading-7 body-muted">
+                        {dependency.source_session_id} {dependency.relationship} {dependency.target_session_id} [{dependency.status}]
+                      </p>
+                    ))}
+                  </div>
+                </article>
+              ) : null}
+
+              <div className="space-y-4">
+                {dashboardState?.autonomous_sessions?.sessions.length ? dashboardState.autonomous_sessions.sessions.map((session) => {
+                  const mergeTargetSessionId = dashboardState.autonomous_sessions?.sessions.find((candidate) => candidate.session_id !== session.session_id)?.session_id ?? null;
+                  return (
+                    <AutonomousSessionRow
+                      key={session.session_id}
+                      session={session}
+                      mergeTargetSessionId={mergeTargetSessionId}
+                      onPause={() => handleAction({ type: "pause_autonomous_session", session_id: session.session_id })}
+                      onResume={() => handleAction({ type: "resume_autonomous_session", session_id: session.session_id })}
+                      onTerminate={() => handleAction({ type: "terminate_autonomous_session", session_id: session.session_id })}
+                      onPromote={(priority) => handleAction({ type: "reprioritize_autonomous_session", session_id: session.session_id, session_priority: priority })}
+                      onMerge={() => handleAction({ type: "merge_autonomous_sessions", session_id: session.session_id, target_session_id: mergeTargetSessionId })}
+                      disabled={isPending}
+                    />
+                  );
+                }) : <p className="text-sm leading-7 body-muted">No autonomous sessions are currently registered.</p>}
+              </div>
             </div>
           </SectionCard>
 

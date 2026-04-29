@@ -236,3 +236,55 @@ test("request_delivery_changes returns the package to draft", () => {
   assert.equal(result.changed, true);
   assert.equal(result.state.delivery_packages?.find((item) => item.delivery_package_id === "delivery-demo-review-package-approved")?.status, "draft");
 });
+
+test("pause_autonomous_session pauses the selected multi-session worker", () => {
+  const initialState = createOperatorDashboardDemoState();
+
+  const result = applyOperatorControlAction(initialState, {
+    type: "pause_autonomous_session",
+    session_id: "demo-session-feature-ui",
+  });
+
+  assert.equal(result.changed, true);
+  assert.equal(result.state.autonomous_sessions?.sessions.find((session) => session.session_id === "demo-session-feature-ui")?.status, "paused");
+});
+
+test("reprioritize_autonomous_session updates session ordering priority", () => {
+  const initialState = createOperatorDashboardDemoState();
+
+  const result = applyOperatorControlAction(initialState, {
+    type: "reprioritize_autonomous_session",
+    session_id: "demo-session-bugfix-delivery",
+    session_priority: "critical",
+  });
+
+  assert.equal(result.changed, true);
+  assert.equal(result.state.autonomous_sessions?.sessions.find((session) => session.session_id === "demo-session-bugfix-delivery")?.priority, "critical");
+});
+
+test("merge_autonomous_sessions consolidates the source session into the target", () => {
+  const initialState = createOperatorDashboardDemoState();
+
+  const result = applyOperatorControlAction(initialState, {
+    type: "merge_autonomous_sessions",
+    session_id: "demo-session-bugfix-delivery",
+    target_session_id: "demo-session-feature-ui",
+  });
+
+  assert.equal(result.changed, true);
+  assert.equal(result.state.autonomous_sessions?.sessions.find((session) => session.session_id === "demo-session-bugfix-delivery")?.status, "completed");
+  assert.equal(result.state.autonomous_sessions?.sessions.find((session) => session.session_id === "demo-session-feature-ui")?.queued_work_item_count, 2);
+});
+
+test("terminate_autonomous_session marks the session failed and removes it from runnable work", () => {
+  const initialState = createOperatorDashboardDemoState();
+
+  const result = applyOperatorControlAction(initialState, {
+    type: "terminate_autonomous_session",
+    session_id: "demo-session-feature-ui",
+  });
+
+  assert.equal(result.changed, true);
+  assert.equal(result.state.autonomous_sessions?.sessions.find((session) => session.session_id === "demo-session-feature-ui")?.status, "failed");
+  assert.equal(result.state.autonomous_sessions?.runnable_session_ids.includes("demo-session-feature-ui"), false);
+});
