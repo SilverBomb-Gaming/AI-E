@@ -265,6 +265,30 @@ test("request_meta_summary generates a persisted meta summary package", () => {
   assert.equal(result.state.meta_summary_package?.should_not_change.includes("Do not modify code automatically."), true);
 });
 
+test("approve_strategy_goal promotes a proposed strategy goal into the approved portfolio", () => {
+  const initialState = createOperatorDashboardDemoState();
+
+  const result = applyOperatorControlAction(initialState, {
+    type: "approve_strategy_goal",
+    goal_id: "strategy-ship-first-playable-loop",
+  });
+
+  assert.equal(result.changed, false);
+});
+
+test("decompose_strategy_goal creates bounded proposed work items", () => {
+  const initialState = createOperatorDashboardDemoState();
+
+  const result = applyOperatorControlAction(initialState, {
+    type: "decompose_strategy_goal",
+    goal_id: "strategy-ship-first-playable-loop",
+  });
+
+  assert.equal(result.changed, true);
+  assert.equal(result.state.proposed_work_items?.some((item) => item.work_item_id === "strategy-ship-first-playable-loop-portfolio-brief"), true);
+  assert.equal(result.state.strategy_decompositions?.[0]?.strategy_goal_id, "strategy-ship-first-playable-loop");
+});
+
 test("pause_autonomous_session pauses the selected multi-session worker", () => {
   const initialState = createOperatorDashboardDemoState();
 

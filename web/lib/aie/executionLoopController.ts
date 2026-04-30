@@ -222,6 +222,11 @@ function preserveDashboardExtensions(
     meta_policy_state: projectedState.meta_policy_state ? structuredClone(projectedState.meta_policy_state) : projectedState.meta_policy_state,
     meta_operator_decision_history: projectedState.meta_operator_decision_history ? structuredClone(projectedState.meta_operator_decision_history) : projectedState.meta_operator_decision_history,
     meta_summary_package: projectedState.meta_summary_package ? structuredClone(projectedState.meta_summary_package) : projectedState.meta_summary_package,
+    strategy_goals: projectedState.strategy_goals ? structuredClone(projectedState.strategy_goals) : projectedState.strategy_goals,
+    strategy_portfolio_scores: projectedState.strategy_portfolio_scores ? structuredClone(projectedState.strategy_portfolio_scores) : projectedState.strategy_portfolio_scores,
+    strategy_decision_history: projectedState.strategy_decision_history ? structuredClone(projectedState.strategy_decision_history) : projectedState.strategy_decision_history,
+    strategy_decompositions: projectedState.strategy_decompositions ? structuredClone(projectedState.strategy_decompositions) : projectedState.strategy_decompositions,
+    strategy_summary_package: projectedState.strategy_summary_package ? structuredClone(projectedState.strategy_summary_package) : projectedState.strategy_summary_package,
   };
 }
 

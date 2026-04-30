@@ -163,6 +163,22 @@ function createActionFromIntent(intent: SafeRuntimeIntent, goalId: string | null
       return { type: "request_meta_summary" };
     case "acknowledge_pattern":
       return { type: "acknowledge_pattern", pattern_id: goalId ?? null };
+    case "approve_strategy_goal":
+      return { type: "approve_strategy_goal", goal_id: goalId ?? null };
+    case "reject_strategy_goal":
+      return { type: "reject_strategy_goal", goal_id: goalId ?? null };
+    case "defer_strategy_goal":
+      return { type: "defer_strategy_goal", goal_id: goalId ?? null };
+    case "activate_strategy_goal":
+      return { type: "activate_strategy_goal", goal_id: goalId ?? null };
+    case "pause_strategy_goal":
+      return { type: "pause_strategy_goal", goal_id: goalId ?? null };
+    case "archive_strategy_goal":
+      return { type: "archive_strategy_goal", goal_id: goalId ?? null };
+    case "decompose_strategy_goal":
+      return { type: "decompose_strategy_goal", goal_id: goalId ?? null };
+    case "request_strategy_summary":
+      return { type: "request_strategy_summary" };
     case "start_supervised_session":
       return { type: "start_supervised_session" };
     case "pause_supervised_session":
@@ -358,6 +374,33 @@ function validateMutationRequest(
       if (!pattern) {
         return "no meta-intelligence pattern is available for the requested runtime mutation";
       }
+      return null;
+    }
+
+    case "approve_strategy_goal":
+    case "reject_strategy_goal":
+    case "defer_strategy_goal":
+    case "activate_strategy_goal":
+    case "pause_strategy_goal":
+    case "archive_strategy_goal":
+    case "decompose_strategy_goal": {
+      const strategyGoalId = input.action?.goal_id ?? input.goal_id ?? null;
+      const strategyGoal = strategyGoalId
+        ? state.strategy_goals?.find((item) => item.strategy_goal_id === strategyGoalId) ?? null
+        : state.strategy_goals?.[0] ?? null;
+      if (!strategyGoal) {
+        return "no strategic goal is available for the requested runtime mutation";
+      }
+      if (input.runtime_intent === "activate_strategy_goal" && strategyGoal.blocked_by.length > 0) {
+        return "the selected strategic goal is still blocked and cannot be activated";
+      }
+      if (input.runtime_intent === "decompose_strategy_goal" && !["approved", "active"].includes(strategyGoal.status)) {
+        return "only approved or active strategic goals may be decomposed";
+      }
+      return null;
+    }
+
+    case "request_strategy_summary": {
       return null;
     }
 
@@ -569,6 +612,18 @@ function applyRecordMetadata(
       break;
     }
 
+    case "approve_strategy_goal":
+    case "reject_strategy_goal":
+    case "defer_strategy_goal":
+    case "activate_strategy_goal":
+    case "pause_strategy_goal":
+    case "archive_strategy_goal":
+    case "decompose_strategy_goal":
+    case "request_strategy_summary": {
+      record.last_status = "service_idle";
+      break;
+    }
+
     case "start_supervised_session":
     case "resume_supervised_session": {
       record.last_status = "service_idle";
@@ -643,8 +698,16 @@ function appendSupervisedSessionControlEvent(
     || input.runtime_intent === "defer_policy_recommendation"
     || input.runtime_intent === "request_meta_summary"
     || input.runtime_intent === "acknowledge_pattern";
+  const isStrategyIntent = input.runtime_intent === "approve_strategy_goal"
+    || input.runtime_intent === "reject_strategy_goal"
+    || input.runtime_intent === "defer_strategy_goal"
+    || input.runtime_intent === "activate_strategy_goal"
+    || input.runtime_intent === "pause_strategy_goal"
+    || input.runtime_intent === "archive_strategy_goal"
+    || input.runtime_intent === "decompose_strategy_goal"
+    || input.runtime_intent === "request_strategy_summary";
   const loopState = buildControlLoopState(record);
-  const eventScope = isMetaIntent ? "meta-intelligence-control" : isStudioIntent ? "studio-command-center-control" : isAutonomousSessionIntent ? "autonomous-session-control" : "supervised-session-control";
+  const eventScope = isStrategyIntent ? "strategy-engine-control" : isMetaIntent ? "meta-intelligence-control" : isStudioIntent ? "studio-command-center-control" : isAutonomousSessionIntent ? "autonomous-session-control" : "supervised-session-control";
   const eventId = `${eventScope}-${sanitizeTimestamp(input.timestamp)}-${input.runtime_intent}`;
   const runtimeStatus = record.operator_dashboard_state?.runtime_status.status ?? record.last_status;
   const schedulerStatus = record.operator_dashboard_state?.scheduler_status.status ?? "scheduler_idle";
@@ -674,6 +737,8 @@ function appendSupervisedSessionControlEvent(
       } : null,
       mutation_applied: isAutonomousSessionIntent
         ? `${input.runtime_intent} persisted for autonomous session state.`
+        : isStrategyIntent
+          ? `${input.runtime_intent} persisted for strategy portfolio state.`
         : isMetaIntent
           ? `${input.runtime_intent} persisted for meta intelligence state.`
         : isStudioIntent
@@ -690,6 +755,8 @@ function appendSupervisedSessionControlEvent(
         to_goal_label: record.operator_dashboard_state?.active_goal?.description ?? null,
         summary: isAutonomousSessionIntent
           ? `Autonomous session control event recorded for ${input.runtime_intent}.`
+          : isStrategyIntent
+            ? `Strategy engine control event recorded for ${input.runtime_intent}.`
           : isMetaIntent
             ? `Meta-intelligence control event recorded for ${input.runtime_intent}.`
           : isStudioIntent
@@ -708,6 +775,8 @@ function appendSupervisedSessionControlEvent(
       },
       mutation_summary: isAutonomousSessionIntent
         ? `${input.runtime_intent} recorded for autonomous session state.`
+        : isStrategyIntent
+          ? `${input.runtime_intent} recorded for strategy portfolio state.`
         : isMetaIntent
           ? `${input.runtime_intent} recorded for meta intelligence state.`
         : isStudioIntent
@@ -817,6 +886,14 @@ export function executeRuntimeMutation(input: RuntimeMutationExecutorInput): Run
       || input.runtime_intent === "defer_policy_recommendation"
       || input.runtime_intent === "request_meta_summary"
       || input.runtime_intent === "acknowledge_pattern"
+      || input.runtime_intent === "approve_strategy_goal"
+      || input.runtime_intent === "reject_strategy_goal"
+      || input.runtime_intent === "defer_strategy_goal"
+      || input.runtime_intent === "activate_strategy_goal"
+      || input.runtime_intent === "pause_strategy_goal"
+      || input.runtime_intent === "archive_strategy_goal"
+      || input.runtime_intent === "decompose_strategy_goal"
+      || input.runtime_intent === "request_strategy_summary"
       || input.runtime_intent === "pause_autonomous_session"
       || input.runtime_intent === "resume_autonomous_session"
       || input.runtime_intent === "reprioritize_autonomous_session"

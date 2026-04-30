@@ -102,6 +102,36 @@ function cloneState(state: OperatorDashboardState): OperatorDashboardState {
       requires_operator_approval: [...state.meta_summary_package.requires_operator_approval],
       should_not_change: [...state.meta_summary_package.should_not_change],
     } : state.meta_summary_package,
+    strategy_goals: state.strategy_goals?.map((goal) => ({
+      ...goal,
+      dependency_goal_ids: [...goal.dependency_goal_ids],
+      blocked_by: [...goal.blocked_by],
+      success_criteria: [...goal.success_criteria],
+      expected_outputs: [...goal.expected_outputs],
+      linked_work_item_ids: [...goal.linked_work_item_ids],
+      linked_delivery_package_ids: [...goal.linked_delivery_package_ids],
+    })),
+    strategy_portfolio_scores: state.strategy_portfolio_scores?.map((item) => ({
+      ...item,
+      score_breakdown: { ...item.score_breakdown },
+      risk_notes: [...item.risk_notes],
+    })),
+    strategy_decision_history: state.strategy_decision_history?.map((item) => ({ ...item })),
+    strategy_decompositions: state.strategy_decompositions?.map((item) => ({
+      ...item,
+      proposed_work_items: [...item.proposed_work_items],
+      dependencies: [...item.dependencies],
+      suggested_agent_roles: [...item.suggested_agent_roles],
+      review_gates: [...item.review_gates],
+      delivery_expectations: [...item.delivery_expectations],
+    })),
+    strategy_summary_package: state.strategy_summary_package ? {
+      ...state.strategy_summary_package,
+      current_strategic_goals: [...state.strategy_summary_package.current_strategic_goals],
+      blocked_strategic_work: [...state.strategy_summary_package.blocked_strategic_work],
+      suggested_decomposition: [...state.strategy_summary_package.suggested_decomposition],
+      operator_decisions_needed: [...state.strategy_summary_package.operator_decisions_needed],
+    } : state.strategy_summary_package,
     runtime_observability: state.runtime_observability ? {
       ...state.runtime_observability,
       event_log: state.runtime_observability.event_log.map((event) => ({

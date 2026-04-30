@@ -163,6 +163,34 @@ Important safety boundary:
 - the layer cannot weaken safety gates, expand autonomy scope, auto-mutate policy silently, or self-modify the system
 - all live actions remain bounded to acknowledgement, approval, rejection, deferral, and summary generation through the existing safe runtime bridge and runtime mutation executor
 
+## Strategy Engine / Goal Portfolio Management Layer
+
+AI-E now also includes a bounded strategy engine layer that keeps a deterministic portfolio of strategic studio objectives without allowing the system to auto-approve, auto-activate, or silently broaden execution scope.
+
+What the strategy engine layer does:
+
+- preserves a persisted portfolio of strategic goals with impact, effort, risk, confidence, horizon, dependencies, ownership, and linked work context
+- deterministically ranks the strategy portfolio and recommends the next operator-safe action for each goal
+- produces bounded advisory decompositions into proposed work items only
+- tracks operator decisions over strategic goals and records them in persisted runtime state
+- generates an operator-readable strategy summary package on request
+- renders this state in the `/operator` Strategy Portfolio panel and routes actions through the same safe live mutation path
+
+Current contract:
+
+- strategic goal contract: `web/lib/aie/strategyGoalPortfolio.ts`
+- portfolio scorer: `web/lib/aie/strategyPortfolioScorer.ts`
+- bounded decomposer: `web/lib/aie/strategyGoalDecomposer.ts`
+- summary package generator: `web/lib/aie/strategySummary.ts`
+- proof: `npm run proof:strategy-engine:safe`
+
+Important safety boundary:
+
+- strategic goals remain operator-gated and do not auto-approve or auto-activate
+- decomposition produces advisory proposed work items only and never starts runtime execution automatically
+- linked work still flows through the existing work-item approval, review, and delivery controls
+- all live actions remain bounded to approval, rejection, deferral, activation, pausing, archival, decomposition, and summary generation through the existing safe runtime bridge and runtime mutation executor
+
 ## Safe Runtime Action Bridge
 
 AI-E can now translate supported live operator actions into safe runtime intents.
@@ -170,8 +198,8 @@ AI-E can now translate supported live operator actions into safe runtime intents
 Current contract:
 
 - module path: `web/lib/aie/safeRuntimeActionBridge.ts`
-- supported operator actions: `approve_goal`, `pause_goal`, `resume_goal`, `retry_goal`, `pause_all_sessions`, `resume_safe_sessions`, `prioritize_review_queue`, `prioritize_delivery_queue`, `acknowledge_studio_risk`, `request_studio_summary`, `approve_policy_recommendation`, `reject_policy_recommendation`, `defer_policy_recommendation`, `request_meta_summary`, and `acknowledge_pattern`
-- supported runtime intents: `grant_session_approval`, `pause_active_goal`, `resume_paused_goal`, `mark_goal_retry_requested`, `pause_all_sessions`, `resume_safe_sessions`, `prioritize_review_queue`, `prioritize_delivery_queue`, `acknowledge_studio_risk`, `request_studio_summary`, `approve_policy_recommendation`, `reject_policy_recommendation`, `defer_policy_recommendation`, `request_meta_summary`, `acknowledge_pattern`, and `no_op`
+- supported operator actions: `approve_goal`, `pause_goal`, `resume_goal`, `retry_goal`, `pause_all_sessions`, `resume_safe_sessions`, `prioritize_review_queue`, `prioritize_delivery_queue`, `acknowledge_studio_risk`, `request_studio_summary`, `approve_policy_recommendation`, `reject_policy_recommendation`, `defer_policy_recommendation`, `request_meta_summary`, `acknowledge_pattern`, `approve_strategy_goal`, `reject_strategy_goal`, `defer_strategy_goal`, `activate_strategy_goal`, `pause_strategy_goal`, `archive_strategy_goal`, `decompose_strategy_goal`, and `request_strategy_summary`
+- supported runtime intents: `grant_session_approval`, `pause_active_goal`, `resume_paused_goal`, `mark_goal_retry_requested`, `pause_all_sessions`, `resume_safe_sessions`, `prioritize_review_queue`, `prioritize_delivery_queue`, `acknowledge_studio_risk`, `request_studio_summary`, `approve_policy_recommendation`, `reject_policy_recommendation`, `defer_policy_recommendation`, `request_meta_summary`, `acknowledge_pattern`, `approve_strategy_goal`, `reject_strategy_goal`, `defer_strategy_goal`, `activate_strategy_goal`, `pause_strategy_goal`, `archive_strategy_goal`, `decompose_strategy_goal`, `request_strategy_summary`, and `no_op`
 
 Example:
 
@@ -195,7 +223,7 @@ Current contract:
 
 - module path: `web/lib/aie/runtimeMutationExecutor.ts`
 - post-mutation loop controller: `web/lib/aie/executionLoopController.ts`
-- supported runtime intents: `grant_session_approval`, `pause_active_goal`, `resume_paused_goal`, `mark_goal_retry_requested`, `pause_all_sessions`, `resume_safe_sessions`, `prioritize_review_queue`, `prioritize_delivery_queue`, `acknowledge_studio_risk`, `request_studio_summary`, `approve_policy_recommendation`, `reject_policy_recommendation`, `defer_policy_recommendation`, `request_meta_summary`, `acknowledge_pattern`, and `no_op`
+- supported runtime intents: `grant_session_approval`, `pause_active_goal`, `resume_paused_goal`, `mark_goal_retry_requested`, `pause_all_sessions`, `resume_safe_sessions`, `prioritize_review_queue`, `prioritize_delivery_queue`, `acknowledge_studio_risk`, `request_studio_summary`, `approve_policy_recommendation`, `reject_policy_recommendation`, `defer_policy_recommendation`, `request_meta_summary`, `acknowledge_pattern`, `approve_strategy_goal`, `reject_strategy_goal`, `defer_strategy_goal`, `activate_strategy_goal`, `pause_strategy_goal`, `archive_strategy_goal`, `decompose_strategy_goal`, `request_strategy_summary`, and `no_op`
 - output statuses: `mutation_applied`, `mutation_rejected`, and `mutation_no_op`
 
 Execution flow:
@@ -346,8 +374,13 @@ Current Layer 10 reporting rule:
 
 Current Layer 11 reporting rule:
 
-- Layer 11: IN PROGRESS
-- Only declare Layer 11 complete when the performance-memory contract, pattern detector, bounded policy recommender, `/operator` Meta-Intelligence panel, safe meta actions, persisted meta summary package, deterministic `proof:meta-intelligence:safe`, all previous safe proofs, `test:trace:safe`, and commit/push are all complete together.
+- Layer 11: 100% COMPLETE
+- Verified capabilities: performance-memory contract, pattern detector, bounded policy recommender, `/operator` Meta-Intelligence panel, safe meta actions, persisted meta summary package, deterministic `proof:meta-intelligence:safe`, all previous safe proofs, `test:trace:safe`, and commit/push.
+
+Current Layer 12 reporting rule:
+
+- Layer 12: IN PROGRESS
+- Only declare Layer 12 complete when the strategic goal contract, deterministic portfolio scorer, bounded goal decomposer, `/operator` Strategy Portfolio panel, safe strategy actions, persisted strategy summary package, deterministic `proof:strategy-engine:safe`, all previous safe proofs, `test:trace:safe`, and commit/push are all complete together.
 
 Roadmap checkpoints:
 
@@ -382,8 +415,11 @@ Roadmap checkpoints:
   - status: in progress
   - proof surface: provider-boundary studio health aggregation, studio command-center operator controls, persisted studio risk acknowledgements and summary package state, `/operator`, and `npm run proof:studio-command-center:safe`
 - Layer 11: self-improving system / meta-intelligence
-  - status: in progress
+  - status: complete
   - proof surface: persisted meta-intelligence state, deterministic pattern detection, bounded policy recommendations, meta summary package state, `/operator`, and `npm run proof:meta-intelligence:safe`
+- Layer 12: strategy engine / goal portfolio management
+  - status: in progress
+  - proof surface: persisted strategic goal state, deterministic portfolio ranking, bounded decomposition state, strategy summary package state, `/operator`, and `npm run proof:strategy-engine:safe`
 
 
 ## Multi-Agent Orchestration Scaffold

@@ -77,6 +77,13 @@ import type {
   MetaPolicyState,
 } from "./metaIntelligenceState";
 import type {
+  StrategyGoal,
+  StrategyGoalDecompositionRecord,
+  StrategyGoalDecisionRecord,
+  StrategyPortfolioScore,
+} from "./strategyGoalPortfolio";
+import type { StrategySummaryPackage } from "./strategySummary";
+import type {
   SupervisedAutonomyCheckpointRecord,
   SupervisedAutonomySessionRecord,
 } from "./supervisedAutonomySession";
@@ -325,6 +332,11 @@ export type OperatorDashboardState = {
   meta_policy_state?: MetaPolicyState;
   meta_operator_decision_history?: MetaOperatorDecisionRecord[];
   meta_summary_package?: import("./metaIntelligenceSummary").MetaIntelligenceSummaryPackage | null;
+  strategy_goals?: StrategyGoal[];
+  strategy_portfolio_scores?: StrategyPortfolioScore[];
+  strategy_decision_history?: StrategyGoalDecisionRecord[];
+  strategy_decompositions?: StrategyGoalDecompositionRecord[];
+  strategy_summary_package?: StrategySummaryPackage | null;
   supervised_session?: SupervisedAutonomySessionRecord | null;
   supervised_checkpoints?: SupervisedAutonomyCheckpointRecord[];
   last_updated_at: string;

@@ -18,6 +18,16 @@ import type {
 } from "./autonomousWorkPlanning";
 import { aggregateStudioHealthFromDashboardState } from "./studioHealthAggregator";
 import { createMetaIntelligenceSummaryPackage } from "./metaIntelligenceSummary";
+import { decomposeStrategyGoal } from "./strategyGoalDecomposer";
+import {
+  normalizeStrategyGoal,
+  type StrategyGoal,
+  type StrategyGoalDecompositionRecord,
+  type StrategyGoalDecisionRecord,
+  type StrategyPortfolioScore,
+} from "./strategyGoalPortfolio";
+import { scoreStrategyPortfolio } from "./strategyPortfolioScorer";
+import { createStrategySummary } from "./strategySummary";
 import {
   buildMetaIntelligenceState,
   detectMetaPatterns,
@@ -36,7 +46,7 @@ import {
   type SupervisedAutonomyRecoveryPolicy,
 } from "./supervisedAutonomySession";
 
-export type OperatorControlActionType = "approve_goal" | "pause_goal" | "resume_goal" | "retry_goal" | "pause_all_sessions" | "resume_safe_sessions" | "prioritize_review_queue" | "prioritize_delivery_queue" | "acknowledge_studio_risk" | "request_studio_summary" | "approve_policy_recommendation" | "reject_policy_recommendation" | "defer_policy_recommendation" | "request_meta_summary" | "acknowledge_pattern" | "pause_autonomous_session" | "resume_autonomous_session" | "reprioritize_autonomous_session" | "merge_autonomous_sessions" | "terminate_autonomous_session" | "start_supervised_session" | "pause_session" | "resume_session" | "stop_session" | "request_operator_review" | "approve_review_item" | "reject_review_item" | "defer_review_item" | "approve_work_item" | "reject_work_item" | "defer_work_item" | "approve_review_package" | "reject_review_package" | "approve_delivery_package" | "reject_delivery_package" | "request_delivery_changes" | "archive_delivery_package";
+export type OperatorControlActionType = "approve_goal" | "pause_goal" | "resume_goal" | "retry_goal" | "pause_all_sessions" | "resume_safe_sessions" | "prioritize_review_queue" | "prioritize_delivery_queue" | "acknowledge_studio_risk" | "request_studio_summary" | "approve_policy_recommendation" | "reject_policy_recommendation" | "defer_policy_recommendation" | "request_meta_summary" | "acknowledge_pattern" | "approve_strategy_goal" | "reject_strategy_goal" | "defer_strategy_goal" | "activate_strategy_goal" | "pause_strategy_goal" | "archive_strategy_goal" | "decompose_strategy_goal" | "request_strategy_summary" | "pause_autonomous_session" | "resume_autonomous_session" | "reprioritize_autonomous_session" | "merge_autonomous_sessions" | "terminate_autonomous_session" | "start_supervised_session" | "pause_session" | "resume_session" | "stop_session" | "request_operator_review" | "approve_review_item" | "reject_review_item" | "defer_review_item" | "approve_work_item" | "reject_work_item" | "defer_work_item" | "approve_review_package" | "reject_review_package" | "approve_delivery_package" | "reject_delivery_package" | "request_delivery_changes" | "archive_delivery_package";
 
 export type SupervisedSessionControlInput = {
   max_duration_ms?: number;
@@ -168,6 +178,29 @@ function clonePlanningPolicyFeedback(value: AutonomousWorkItemPolicyFeedback | u
   return value ? { ...value } : undefined;
 }
 
+function cloneStrategyGoal(goal: StrategyGoal): StrategyGoal {
+  return normalizeStrategyGoal(goal);
+}
+
+function cloneStrategyPortfolioScore(score: StrategyPortfolioScore): StrategyPortfolioScore {
+  return {
+    ...score,
+    score_breakdown: { ...score.score_breakdown },
+    risk_notes: [...score.risk_notes],
+  };
+}
+
+function cloneStrategyDecomposition(record: StrategyGoalDecompositionRecord): StrategyGoalDecompositionRecord {
+  return {
+    ...record,
+    proposed_work_items: [...record.proposed_work_items],
+    dependencies: [...record.dependencies],
+    suggested_agent_roles: [...record.suggested_agent_roles],
+    review_gates: [...record.review_gates],
+    delivery_expectations: [...record.delivery_expectations],
+  };
+}
+
 function cloneSupervisedSessionInput(input: SupervisedSessionControlInput | undefined): SupervisedSessionControlInput | undefined {
   return input
     ? {
@@ -288,6 +321,17 @@ function cloneState(state: OperatorDashboardState): OperatorDashboardState {
       requires_operator_approval: [...state.meta_summary_package.requires_operator_approval],
       should_not_change: [...state.meta_summary_package.should_not_change],
     } : state.meta_summary_package,
+    strategy_goals: state.strategy_goals?.map((goal) => cloneStrategyGoal(goal)),
+    strategy_portfolio_scores: state.strategy_portfolio_scores?.map((score) => cloneStrategyPortfolioScore(score)),
+    strategy_decision_history: state.strategy_decision_history?.map((item) => ({ ...item })),
+    strategy_decompositions: state.strategy_decompositions?.map((item) => cloneStrategyDecomposition(item)),
+    strategy_summary_package: state.strategy_summary_package ? {
+      ...state.strategy_summary_package,
+      current_strategic_goals: [...state.strategy_summary_package.current_strategic_goals],
+      blocked_strategic_work: [...state.strategy_summary_package.blocked_strategic_work],
+      suggested_decomposition: [...state.strategy_summary_package.suggested_decomposition],
+      operator_decisions_needed: [...state.strategy_summary_package.operator_decisions_needed],
+    } : state.strategy_summary_package,
     supervised_session: state.supervised_session ? {
       ...state.supervised_session,
       agent_ids: [...state.supervised_session.agent_ids],
@@ -328,6 +372,7 @@ function nextTimestamp(state: OperatorDashboardState): string {
 function updateLastUpdated(state: OperatorDashboardState): void {
   state.last_updated_at = nextTimestamp(state);
   state.studio_operations = aggregateStudioHealthFromDashboardState(state);
+  state.strategy_goals = (state.strategy_goals ?? []).map((goal) => normalizeStrategyGoal(goal));
   state.meta_policy_state = deriveMetaPolicyState(state, state.meta_policy_state);
   state.meta_detected_patterns = detectMetaPatterns({
     studio_operations_state: state.studio_operations,
@@ -351,11 +396,19 @@ function updateLastUpdated(state: OperatorDashboardState): void {
     timestamp: state.last_updated_at,
   });
   state.meta_intelligence = buildMetaIntelligenceState(state, state.meta_detected_patterns, state.meta_policy_recommendations);
+  state.strategy_portfolio_scores = scoreStrategyPortfolio({
+    goals: state.strategy_goals ?? [],
+    state,
+    operator_preferences: (state.meta_policy_recommendations ?? []).map((item) => item.target),
+  });
   if (state.studio_summary_package) {
     state.studio_summary_package = createStudioOperationsSummary(state, state.studio_summary_package.requested_at);
   }
   if (state.meta_summary_package) {
     state.meta_summary_package = createMetaIntelligenceSummaryPackage(state, state.meta_summary_package.requested_at);
+  }
+  if (state.strategy_summary_package) {
+    state.strategy_summary_package = createStrategySummary(state, state.strategy_summary_package.requested_at);
   }
 }
 
@@ -364,6 +417,37 @@ function appendMetaDecision(
   decision: NonNullable<OperatorDashboardState["meta_operator_decision_history"]>[number],
 ): void {
   state.meta_operator_decision_history = [decision, ...(state.meta_operator_decision_history ?? [])];
+}
+
+function appendStrategyDecision(
+  state: OperatorDashboardState,
+  decision: StrategyGoalDecisionRecord,
+): void {
+  state.strategy_decision_history = [decision, ...(state.strategy_decision_history ?? [])];
+}
+
+function findStrategyGoal(state: OperatorDashboardState, goalId: string | null | undefined): StrategyGoal | null {
+  const goals = state.strategy_goals ?? [];
+  if (!goalId) {
+    return goals[0] ?? null;
+  }
+  return goals.find((goal) => goal.strategy_goal_id === goalId) ?? null;
+}
+
+function createStrategyDecisionRecord(
+  state: OperatorDashboardState,
+  goal: StrategyGoal,
+  decisionType: StrategyGoalDecisionRecord["decision_type"],
+  rationale: string,
+): StrategyGoalDecisionRecord {
+  const createdAt = nextTimestamp(state);
+  return {
+    decision_id: `strategy-decision-${goal.strategy_goal_id}-${decisionType}-${createdAt.replace(/[^0-9]/g, "").slice(0, 14)}`,
+    strategy_goal_id: goal.strategy_goal_id,
+    decision_type: decisionType,
+    rationale,
+    created_at: createdAt,
+  };
 }
 
 function applyApprovedMetaRecommendation(state: OperatorDashboardState, recommendationId: string): boolean {
@@ -1353,6 +1437,194 @@ export function applyOperatorControlAction(state: OperatorDashboardState, action
         action,
         changed: true,
         message: `Meta-intelligence pattern ${pattern.pattern_id} was acknowledged.`,
+        state: nextState,
+      };
+    }
+
+    case "approve_strategy_goal": {
+      const goal = findStrategyGoal(nextState, action.goal_id);
+      if (!goal || !["proposed", "under_review"].includes(goal.status)) {
+        return {
+          action,
+          changed: false,
+          message: "No strategic goal is available to approve.",
+          state: nextState,
+        };
+      }
+
+      goal.status = "approved";
+      goal.updated_at = nextTimestamp(nextState);
+      appendStrategyDecision(nextState, createStrategyDecisionRecord(nextState, goal, "approve_strategy_goal", action.rationale ?? `Approved ${goal.title}.`));
+      updateLastUpdated(nextState);
+      return {
+        action,
+        changed: true,
+        message: `Strategic goal ${goal.strategy_goal_id} was approved for portfolio activation planning.`,
+        state: nextState,
+      };
+    }
+
+    case "reject_strategy_goal": {
+      const goal = findStrategyGoal(nextState, action.goal_id);
+      if (!goal || ["rejected", "archived"].includes(goal.status)) {
+        return {
+          action,
+          changed: false,
+          message: "No strategic goal is available to reject.",
+          state: nextState,
+        };
+      }
+
+      goal.status = "rejected";
+      goal.updated_at = nextTimestamp(nextState);
+      appendStrategyDecision(nextState, createStrategyDecisionRecord(nextState, goal, "reject_strategy_goal", action.rationale ?? `Rejected ${goal.title}.`));
+      updateLastUpdated(nextState);
+      return {
+        action,
+        changed: true,
+        message: `Strategic goal ${goal.strategy_goal_id} was rejected and remains auditable.`,
+        state: nextState,
+      };
+    }
+
+    case "defer_strategy_goal": {
+      const goal = findStrategyGoal(nextState, action.goal_id);
+      if (!goal || ["completed", "archived"].includes(goal.status)) {
+        return {
+          action,
+          changed: false,
+          message: "No strategic goal is available to defer.",
+          state: nextState,
+        };
+      }
+
+      goal.status = "under_review";
+      goal.updated_at = nextTimestamp(nextState);
+      appendStrategyDecision(nextState, createStrategyDecisionRecord(nextState, goal, "defer_strategy_goal", action.rationale ?? `Deferred ${goal.title} for later operator review.`));
+      updateLastUpdated(nextState);
+      return {
+        action,
+        changed: true,
+        message: `Strategic goal ${goal.strategy_goal_id} was deferred for later review.`,
+        state: nextState,
+      };
+    }
+
+    case "activate_strategy_goal": {
+      const goal = findStrategyGoal(nextState, action.goal_id);
+      if (!goal || !["approved", "paused"].includes(goal.status)) {
+        return {
+          action,
+          changed: false,
+          message: "No approved strategic goal is available to activate.",
+          state: nextState,
+        };
+      }
+      if (goal.blocked_by.length > 0) {
+        return {
+          action,
+          changed: false,
+          message: "The selected strategic goal is still blocked and cannot be activated.",
+          state: nextState,
+        };
+      }
+
+      goal.status = "active";
+      goal.updated_at = nextTimestamp(nextState);
+      appendStrategyDecision(nextState, createStrategyDecisionRecord(nextState, goal, "activate_strategy_goal", action.rationale ?? `Activated ${goal.title}.`));
+      updateLastUpdated(nextState);
+      return {
+        action,
+        changed: true,
+        message: `Strategic goal ${goal.strategy_goal_id} is now active.`,
+        state: nextState,
+      };
+    }
+
+    case "pause_strategy_goal": {
+      const goal = findStrategyGoal(nextState, action.goal_id);
+      if (!goal || !["active", "approved"].includes(goal.status)) {
+        return {
+          action,
+          changed: false,
+          message: "No active strategic goal is available to pause.",
+          state: nextState,
+        };
+      }
+
+      goal.status = "paused";
+      goal.updated_at = nextTimestamp(nextState);
+      appendStrategyDecision(nextState, createStrategyDecisionRecord(nextState, goal, "pause_strategy_goal", action.rationale ?? `Paused ${goal.title}.`));
+      updateLastUpdated(nextState);
+      return {
+        action,
+        changed: true,
+        message: `Strategic goal ${goal.strategy_goal_id} was paused.`,
+        state: nextState,
+      };
+    }
+
+    case "archive_strategy_goal": {
+      const goal = findStrategyGoal(nextState, action.goal_id);
+      if (!goal || goal.status === "active" || goal.status === "archived") {
+        return {
+          action,
+          changed: false,
+          message: "No strategic goal is available to archive.",
+          state: nextState,
+        };
+      }
+
+      goal.status = "archived";
+      goal.updated_at = nextTimestamp(nextState);
+      appendStrategyDecision(nextState, createStrategyDecisionRecord(nextState, goal, "archive_strategy_goal", action.rationale ?? `Archived ${goal.title}.`));
+      updateLastUpdated(nextState);
+      return {
+        action,
+        changed: true,
+        message: `Strategic goal ${goal.strategy_goal_id} was archived.`,
+        state: nextState,
+      };
+    }
+
+    case "decompose_strategy_goal": {
+      const goal = findStrategyGoal(nextState, action.goal_id);
+      if (!goal || !["approved", "active"].includes(goal.status)) {
+        return {
+          action,
+          changed: false,
+          message: "Only approved or active strategic goals may be decomposed.",
+          state: nextState,
+        };
+      }
+
+      const decomposition = decomposeStrategyGoal(goal, nextTimestamp(nextState));
+      const existingProposed = nextState.proposed_work_items ?? [];
+      const retained = existingProposed.filter((item) => !decomposition.proposed_work_items.some((candidate) => candidate.work_item_id === item.work_item_id));
+      nextState.proposed_work_items = [...decomposition.proposed_work_items, ...retained];
+      nextState.strategy_decompositions = [
+        decomposition.decomposition,
+        ...(nextState.strategy_decompositions ?? []).filter((item) => item.strategy_goal_id !== goal.strategy_goal_id),
+      ];
+      goal.linked_work_item_ids = [...new Set([...goal.linked_work_item_ids, ...decomposition.decomposition.proposed_work_items])];
+      goal.updated_at = nextTimestamp(nextState);
+      appendStrategyDecision(nextState, createStrategyDecisionRecord(nextState, goal, "decompose_strategy_goal", action.rationale ?? `Decomposed ${goal.title} into bounded advisory work items.`));
+      updateLastUpdated(nextState);
+      return {
+        action,
+        changed: true,
+        message: `Strategic goal ${goal.strategy_goal_id} was decomposed into bounded proposed work items.`,
+        state: nextState,
+      };
+    }
+
+    case "request_strategy_summary": {
+      nextState.strategy_summary_package = createStrategySummary(nextState, nextTimestamp(nextState));
+      updateLastUpdated(nextState);
+      return {
+        action,
+        changed: true,
+        message: "A fresh strategy summary package was generated from live operator state.",
         state: nextState,
       };
     }

@@ -505,6 +505,72 @@ test("request_meta_summary persists a meta summary package without starting loop
   assert.equal(Boolean(result.updated_runtime_state.operator_dashboard_state?.meta_summary_package?.narrative), true);
 });
 
+test("request_strategy_summary persists a strategy summary package without starting loops", () => {
+  const seeded = createSeededRuntimeRecord({
+    mutateState(state) {
+      state.approvals_required = [];
+      state.runtime_status.status = "runtime_ready";
+      state.session_status.status = "session_running";
+    },
+    mutateRecord(record) {
+      if (!record) {
+        throw new Error("Expected runtime record.");
+      }
+      record.last_status = "service_idle";
+      record.blockers = [];
+    },
+  });
+
+  const result = executeRuntimeMutation({
+    runtime_intent: "request_strategy_summary",
+    current_runtime_state: seeded.record,
+    current_dashboard_state: seeded.state,
+    runtime_state_store: seeded.store,
+    runtime_id: seeded.record.runtime_id,
+    timestamp: "2026-04-26T12:01:00.000Z",
+    start_continuous_loop: true,
+  });
+
+  assert.equal(result.status, "mutation_applied");
+  assert.equal(result.execution_loop?.status, "loop_not_triggered");
+  assert.equal(Boolean(result.updated_runtime_state.operator_dashboard_state?.strategy_summary_package?.rationale), true);
+});
+
+test("decompose_strategy_goal persists advisory work without starting loops", () => {
+  const seeded = createSeededRuntimeRecord({
+    mutateState(state) {
+      state.approvals_required = [];
+      state.runtime_status.status = "runtime_ready";
+      state.session_status.status = "session_running";
+    },
+    mutateRecord(record) {
+      if (!record) {
+        throw new Error("Expected runtime record.");
+      }
+      record.last_status = "service_idle";
+      record.blockers = [];
+    },
+  });
+
+  const result = executeRuntimeMutation({
+    runtime_intent: "decompose_strategy_goal",
+    action: {
+      type: "decompose_strategy_goal",
+      goal_id: "strategy-ship-first-playable-loop",
+    },
+    current_runtime_state: seeded.record,
+    current_dashboard_state: seeded.state,
+    runtime_state_store: seeded.store,
+    runtime_id: seeded.record.runtime_id,
+    timestamp: "2026-04-26T12:01:00.000Z",
+    start_continuous_loop: true,
+  });
+
+  assert.equal(result.status, "mutation_applied");
+  assert.equal(result.execution_loop?.status, "loop_not_triggered");
+  assert.equal(result.updated_runtime_state.operator_dashboard_state?.proposed_work_items?.some((item) => item.work_item_id === "strategy-ship-first-playable-loop-portfolio-brief"), true);
+});
+
 test("prioritize_review_queue updates persisted review ordering safely", () => {
   const seeded = createSeededRuntimeRecord({
     mutateState(state) {

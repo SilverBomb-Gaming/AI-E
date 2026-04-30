@@ -27,6 +27,14 @@ export type SafeRuntimeIntent =
   | "defer_policy_recommendation"
   | "request_meta_summary"
   | "acknowledge_pattern"
+  | "approve_strategy_goal"
+  | "reject_strategy_goal"
+  | "defer_strategy_goal"
+  | "activate_strategy_goal"
+  | "pause_strategy_goal"
+  | "archive_strategy_goal"
+  | "decompose_strategy_goal"
+  | "request_strategy_summary"
   | "pause_autonomous_session"
   | "resume_autonomous_session"
   | "reprioritize_autonomous_session"
@@ -202,6 +210,14 @@ function resolveAutonomousSession(state: OperatorDashboardState, sessionId: stri
   }
 
   return state.autonomous_sessions?.sessions.find((session) => session.session_id === sessionId) ?? null;
+}
+
+function resolveStrategyGoal(state: OperatorDashboardState, goalId: string | null | undefined) {
+  if (!goalId) {
+    return state.strategy_goals?.[0] ?? null;
+  }
+
+  return state.strategy_goals?.find((goal) => goal.strategy_goal_id === goalId) ?? null;
 }
 
 export function createSafeRuntimeActionBridgeResult(
@@ -439,6 +455,69 @@ export function createSafeRuntimeActionBridgeResult(
         return buildResult(source, action, "action_rejected", "no_op", "no meta-intelligence pattern exists for acknowledgement in the current live runtime state", providerResult.warnings, createdAt);
       }
       return buildResult(source, action, "action_ready", "acknowledge_pattern", "a detected meta-intelligence pattern may be acknowledged without widening autonomy scope", [...providerResult.warnings, `Pattern target: ${pattern.pattern_id}`], createdAt);
+    }
+
+    case "approve_strategy_goal": {
+      const goal = resolveStrategyGoal(state, action.goal_id);
+      if (!goal || !["proposed", "under_review"].includes(goal.status)) {
+        return buildResult(source, action, "action_rejected", "no_op", "no strategic goal exists for approval in the current live runtime state", providerResult.warnings, createdAt);
+      }
+      return buildResult(source, action, "action_ready", "approve_strategy_goal", "a proposed strategic goal may be approved without starting autonomous execution", [...providerResult.warnings, `Strategy goal target: ${goal.strategy_goal_id}`], createdAt);
+    }
+
+    case "reject_strategy_goal": {
+      const goal = resolveStrategyGoal(state, action.goal_id);
+      if (!goal || ["rejected", "archived"].includes(goal.status)) {
+        return buildResult(source, action, "action_rejected", "no_op", "no strategic goal exists for rejection in the current live runtime state", providerResult.warnings, createdAt);
+      }
+      return buildResult(source, action, "action_ready", "reject_strategy_goal", "a strategic goal may be rejected while remaining auditable", [...providerResult.warnings, `Strategy goal target: ${goal.strategy_goal_id}`], createdAt);
+    }
+
+    case "defer_strategy_goal": {
+      const goal = resolveStrategyGoal(state, action.goal_id);
+      if (!goal || ["completed", "archived"].includes(goal.status)) {
+        return buildResult(source, action, "action_rejected", "no_op", "no strategic goal exists for deferral in the current live runtime state", providerResult.warnings, createdAt);
+      }
+      return buildResult(source, action, "action_ready", "defer_strategy_goal", "a strategic goal may be deferred for later operator review", [...providerResult.warnings, `Strategy goal target: ${goal.strategy_goal_id}`], createdAt);
+    }
+
+    case "activate_strategy_goal": {
+      const goal = resolveStrategyGoal(state, action.goal_id);
+      if (!goal || !["approved", "paused"].includes(goal.status)) {
+        return buildResult(source, action, "action_rejected", "no_op", "no approved strategic goal exists for activation in the current live runtime state", providerResult.warnings, createdAt);
+      }
+      if (goal.blocked_by.length > 0) {
+        return buildResult(source, action, "action_rejected", "no_op", "the selected strategic goal is still blocked and cannot be activated", providerResult.warnings, createdAt);
+      }
+      return buildResult(source, action, "action_ready", "activate_strategy_goal", "an approved strategic goal may be activated without starting hidden execution", [...providerResult.warnings, `Strategy goal target: ${goal.strategy_goal_id}`], createdAt);
+    }
+
+    case "pause_strategy_goal": {
+      const goal = resolveStrategyGoal(state, action.goal_id);
+      if (!goal || !["active", "approved"].includes(goal.status)) {
+        return buildResult(source, action, "action_rejected", "no_op", "no active strategic goal exists for pause in the current live runtime state", providerResult.warnings, createdAt);
+      }
+      return buildResult(source, action, "action_ready", "pause_strategy_goal", "an active strategic goal may be paused without widening autonomy scope", [...providerResult.warnings, `Strategy goal target: ${goal.strategy_goal_id}`], createdAt);
+    }
+
+    case "archive_strategy_goal": {
+      const goal = resolveStrategyGoal(state, action.goal_id);
+      if (!goal || goal.status === "active" || goal.status === "archived") {
+        return buildResult(source, action, "action_rejected", "no_op", "no strategic goal exists for archival in the current live runtime state", providerResult.warnings, createdAt);
+      }
+      return buildResult(source, action, "action_ready", "archive_strategy_goal", "a non-active strategic goal may be archived through the bounded portfolio control path", [...providerResult.warnings, `Strategy goal target: ${goal.strategy_goal_id}`], createdAt);
+    }
+
+    case "decompose_strategy_goal": {
+      const goal = resolveStrategyGoal(state, action.goal_id);
+      if (!goal || !["approved", "active"].includes(goal.status)) {
+        return buildResult(source, action, "action_rejected", "no_op", "only approved or active strategic goals may be decomposed in the current live runtime state", providerResult.warnings, createdAt);
+      }
+      return buildResult(source, action, "action_ready", "decompose_strategy_goal", "a strategic goal may be decomposed into bounded proposed work items without automatic execution", [...providerResult.warnings, `Strategy goal target: ${goal.strategy_goal_id}`], createdAt);
+    }
+
+    case "request_strategy_summary": {
+      return buildResult(source, action, "action_ready", "request_strategy_summary", "a strategy portfolio summary package may be generated from the current live runtime state", providerResult.warnings, createdAt);
     }
 
     case "pause_autonomous_session":

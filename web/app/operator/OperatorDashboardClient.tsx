@@ -22,6 +22,7 @@ import type {
 } from "@/lib/aie/operatorDashboardState";
 import type { ExecutionChainRecord } from "@/lib/aie/executionChainState";
 import type { OperatorRuntimeStateProviderResult } from "@/lib/aie/operatorRuntimeStateContract";
+import type { StrategyGoal, StrategyPortfolioScore } from "@/lib/aie/strategyGoalPortfolio";
 
 function ToggleInput({
   label,
@@ -233,6 +234,63 @@ function GoalRow({
           <p className="text-xs uppercase tracking-[0.18em] text-slate">Priority {goal.priority}</p>
         </div>
         {children ? <div className="flex flex-wrap gap-2">{children}</div> : null}
+      </div>
+    </article>
+  );
+}
+
+function StrategyGoalRow({
+  goal,
+  score,
+  onApprove,
+  onReject,
+  onDefer,
+  onActivate,
+  onPause,
+  onArchive,
+  onDecompose,
+  disabled,
+}: {
+  goal: StrategyGoal;
+  score: StrategyPortfolioScore | null;
+  onApprove: () => void;
+  onReject: () => void;
+  onDefer: () => void;
+  onActivate: () => void;
+  onPause: () => void;
+  onArchive: () => void;
+  onDecompose: () => void;
+  disabled: boolean;
+}) {
+  return (
+    <article className="rounded-[1.5rem] border border-ink/10 bg-white/80 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="space-y-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="headline text-lg font-semibold text-ink">{goal.title}</h3>
+            <StatusBadge status={goal.status} />
+            <StatusBadge status={goal.priority} />
+            <StatusBadge status={goal.category} />
+          </div>
+          <p className="text-sm leading-7 body-muted">{goal.summary}</p>
+          <p className="text-xs text-slate">
+            Rank {score?.portfolio_rank ?? "-"} | Portfolio score {score?.score_breakdown.total ?? 0} | Impact {goal.impact_score} | Effort {goal.effort_score} | Risk {goal.risk_score} | Confidence {goal.confidence_score}
+          </p>
+          <p className="text-xs text-slate">Owner: {goal.owner_agent_role} | Horizon: {goal.time_horizon.replace(/_/g, " ")}</p>
+          <p className="text-xs text-slate">Linked work: {goal.linked_work_item_ids.length ? goal.linked_work_item_ids.join(", ") : "none"}</p>
+          <p className="text-xs text-slate">Recommended next action: {score?.recommended_action.replace(/_/g, " ") ?? "none"}</p>
+          {goal.blocked_by.length ? <p className="text-xs text-ember">Blocked by: {goal.blocked_by.join(" | ")}</p> : null}
+          {score?.risk_notes.length ? <p className="text-xs text-slate">Risk notes: {score.risk_notes.join(" | ")}</p> : null}
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <ActionButton label="Approve Strategy Goal" onClick={onApprove} disabled={disabled || !["proposed", "under_review"].includes(goal.status)} tone="accent" />
+          <ActionButton label="Reject Strategy Goal" onClick={onReject} disabled={disabled || ["rejected", "archived"].includes(goal.status)} tone="warning" />
+          <ActionButton label="Defer Strategy Goal" onClick={onDefer} disabled={disabled || ["completed", "archived"].includes(goal.status)} />
+          <ActionButton label="Activate Strategy Goal" onClick={onActivate} disabled={disabled || !["approved", "paused"].includes(goal.status) || goal.blocked_by.length > 0} tone="accent" />
+          <ActionButton label="Pause Strategy Goal" onClick={onPause} disabled={disabled || !["active", "approved"].includes(goal.status)} tone="warning" />
+          <ActionButton label="Archive Strategy Goal" onClick={onArchive} disabled={disabled || goal.status === "active" || goal.status === "archived"} />
+          <ActionButton label="Decompose Strategy Goal" onClick={onDecompose} disabled={disabled || !["approved", "active"].includes(goal.status)} />
+        </div>
       </div>
     </article>
   );
@@ -702,6 +760,14 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
   const studioOperations = dashboardState?.studio_operations ?? null;
   const metaIntelligence = dashboardState?.meta_intelligence ?? null;
   const metaPolicyState = dashboardState?.meta_policy_state ?? null;
+  const strategyGoals = dashboardState?.strategy_goals ?? [];
+  const strategyScores = dashboardState?.strategy_portfolio_scores ?? [];
+  const strategyScoreMap = new Map(strategyScores.map((item) => [item.strategy_goal_id, item]));
+  const proposedStrategyGoals = strategyGoals.filter((goal) => ["proposed", "under_review"].includes(goal.status));
+  const approvedStrategyGoals = strategyGoals.filter((goal) => goal.status === "approved");
+  const activeStrategyGoals = strategyGoals.filter((goal) => goal.status === "active" || goal.status === "paused");
+  const blockedStrategyGoals = strategyGoals.filter((goal) => goal.status === "blocked" || goal.blocked_by.length > 0);
+  const completedStrategyGoals = strategyGoals.filter((goal) => ["completed", "rejected", "archived"].includes(goal.status));
   const latestCheckpoint = dashboardState?.supervised_checkpoints?.slice(-1)[0] ?? null;
   const activeSession = dashboardState?.supervised_session ?? null;
 
@@ -1081,6 +1147,84 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
             </div>
           ) : (
             <p className="text-sm leading-7 body-muted">Meta-intelligence state is not available for the current operator state source.</p>
+          )}
+        </SectionCard>
+
+        <SectionCard eyebrow="0.75" title="Strategy Portfolio">
+          {strategyGoals.length ? (
+            <div className="space-y-6">
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                <StudioMetricCard label="Proposed Strategic Goals" value={`${proposedStrategyGoals.length}`} detail={`${approvedStrategyGoals.length} approved awaiting activation, ${activeStrategyGoals.length} active or paused, and ${blockedStrategyGoals.length} blocked.`} />
+                <StudioMetricCard label="Top Portfolio Score" value={`${strategyScores[0]?.score_breakdown.total ?? 0}`} detail={strategyScores[0] ? `${strategyGoals.find((goal) => goal.strategy_goal_id === strategyScores[0]?.strategy_goal_id)?.title ?? strategyScores[0].strategy_goal_id}` : "No ranked strategy goals yet."} />
+                <StudioMetricCard label="Linked Work Items" value={`${strategyGoals.reduce((total, goal) => total + goal.linked_work_item_ids.length, 0)}`} detail={`${dashboardState?.strategy_decompositions?.length ?? 0} decompositions have been recorded.`} />
+                <StudioMetricCard label="Decisions Needed" value={`${dashboardState?.strategy_summary_package?.operator_decisions_needed.length ?? 0}`} detail={`${completedStrategyGoals.length} completed, rejected, or archived.`} />
+              </div>
+
+              <div className="grid gap-6 lg:grid-cols-[1.15fr_0.85fr]">
+                <section className="rounded-[1.5rem] border border-ink/10 bg-white/80 p-5">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="text-xs uppercase tracking-[0.18em] text-slate">Portfolio Overview</p>
+                      <h3 className="headline mt-2 text-xl font-semibold text-ink">Strategic goals across the studio.</h3>
+                    </div>
+                    <ActionButton label="Request Strategy Summary" onClick={() => handleAction({ type: "request_strategy_summary" })} disabled={isPending} />
+                  </div>
+                  <div className="mt-4 space-y-4">
+                    {[...proposedStrategyGoals, ...approvedStrategyGoals, ...activeStrategyGoals, ...blockedStrategyGoals, ...completedStrategyGoals]
+                      .filter((goal, index, array) => array.findIndex((candidate) => candidate.strategy_goal_id === goal.strategy_goal_id) === index)
+                      .map((goal) => (
+                        <StrategyGoalRow
+                          key={goal.strategy_goal_id}
+                          goal={goal}
+                          score={strategyScoreMap.get(goal.strategy_goal_id) ?? null}
+                          onApprove={() => handleAction({ type: "approve_strategy_goal", goal_id: goal.strategy_goal_id })}
+                          onReject={() => handleAction({ type: "reject_strategy_goal", goal_id: goal.strategy_goal_id })}
+                          onDefer={() => handleAction({ type: "defer_strategy_goal", goal_id: goal.strategy_goal_id })}
+                          onActivate={() => handleAction({ type: "activate_strategy_goal", goal_id: goal.strategy_goal_id })}
+                          onPause={() => handleAction({ type: "pause_strategy_goal", goal_id: goal.strategy_goal_id })}
+                          onArchive={() => handleAction({ type: "archive_strategy_goal", goal_id: goal.strategy_goal_id })}
+                          onDecompose={() => handleAction({ type: "decompose_strategy_goal", goal_id: goal.strategy_goal_id })}
+                          disabled={isPending}
+                        />
+                      ))}
+                  </div>
+                </section>
+
+                <section className="rounded-[1.5rem] border border-ink/10 bg-white/80 p-5">
+                  <p className="text-xs uppercase tracking-[0.18em] text-slate">Strategy Summary Package</p>
+                  {dashboardState?.strategy_summary_package ? (
+                    <article className="mt-4 rounded-[1.25rem] border border-ink/10 bg-white p-4">
+                      <p className="text-xs uppercase tracking-[0.18em] text-slate">Requested {dashboardState.strategy_summary_package.requested_at}</p>
+                      <p className="mt-3 text-sm leading-7 body-muted">{dashboardState.strategy_summary_package.rationale}</p>
+                      <p className="mt-3 text-xs text-slate">Top recommended goal: {dashboardState.strategy_summary_package.top_recommended_goal ?? "none"}</p>
+                      <p className="mt-1 text-xs text-slate">Best next objective: {dashboardState.strategy_summary_package.best_next_objective ?? "none"}</p>
+                      <p className="mt-4 text-xs uppercase tracking-[0.18em] text-slate">Current Strategic Goals</p>
+                      <div className="mt-2 space-y-2">
+                        {dashboardState.strategy_summary_package.current_strategic_goals.map((item) => (
+                          <p key={item} className="text-sm leading-7 body-muted">{item}</p>
+                        ))}
+                      </div>
+                      <p className="mt-4 text-xs uppercase tracking-[0.18em] text-slate">Operator Decisions Needed</p>
+                      <div className="mt-2 space-y-2">
+                        {dashboardState.strategy_summary_package.operator_decisions_needed.length ? dashboardState.strategy_summary_package.operator_decisions_needed.map((item) => (
+                          <p key={item} className="text-sm leading-7 body-muted">{item}</p>
+                        )) : <p className="text-sm leading-7 body-muted">No operator strategy decisions are currently pending.</p>}
+                      </div>
+                      <p className="mt-4 text-xs uppercase tracking-[0.18em] text-slate">Suggested Decomposition</p>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {dashboardState.strategy_summary_package.suggested_decomposition.length ? dashboardState.strategy_summary_package.suggested_decomposition.map((item) => (
+                          <span key={item} className="rounded-full border border-ink/10 bg-white px-3 py-1 text-xs text-slate">{item}</span>
+                        )) : <p className="text-sm leading-7 body-muted">No decomposition has been requested yet.</p>}
+                      </div>
+                    </article>
+                  ) : (
+                    <p className="mt-4 text-sm leading-7 body-muted">No strategy summary has been requested yet.</p>
+                  )}
+                </section>
+              </div>
+            </div>
+          ) : (
+            <p className="text-sm leading-7 body-muted">Strategy portfolio data is not available for the current operator state source.</p>
           )}
         </SectionCard>
 

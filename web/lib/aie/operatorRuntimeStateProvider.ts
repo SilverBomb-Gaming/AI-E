@@ -25,6 +25,9 @@ import { aggregateStudioHealthFromDashboardState } from "./studioHealthAggregato
 import { createMetaIntelligenceSummaryPackage } from "./metaIntelligenceSummary";
 import { buildMetaIntelligenceState, detectMetaPatterns } from "./metaPatternDetector";
 import { deriveMetaPolicyState, recommendMetaPolicyAdjustments } from "./metaPolicyRecommender";
+import { normalizeStrategyGoal } from "./strategyGoalPortfolio";
+import { scoreStrategyPortfolio } from "./strategyPortfolioScorer";
+import { createStrategySummary } from "./strategySummary";
 import type { ExecutionChainRecord } from "./executionChainState";
 import type {
   SupervisedAutonomyCheckpointRecord,
@@ -330,6 +333,31 @@ function hydrateMetaIntelligenceSlices(state: OperatorDashboardState): OperatorD
   return nextState;
 }
 
+function hydrateStrategySlices(state: OperatorDashboardState): OperatorDashboardState {
+  const nextState: OperatorDashboardState = {
+    ...state,
+    strategy_goals: (state.strategy_goals ?? []).map((goal) => normalizeStrategyGoal(goal)),
+    strategy_decision_history: [...(state.strategy_decision_history ?? [])],
+    strategy_decompositions: (state.strategy_decompositions ?? []).map((item) => ({
+      ...item,
+      proposed_work_items: [...item.proposed_work_items],
+      dependencies: [...item.dependencies],
+      suggested_agent_roles: [...item.suggested_agent_roles],
+      review_gates: [...item.review_gates],
+      delivery_expectations: [...item.delivery_expectations],
+    })),
+  };
+  nextState.strategy_portfolio_scores = scoreStrategyPortfolio({
+    goals: nextState.strategy_goals ?? [],
+    state: nextState,
+    operator_preferences: (nextState.meta_policy_recommendations ?? []).map((item) => item.target),
+  });
+  if (nextState.strategy_summary_package) {
+    nextState.strategy_summary_package = createStrategySummary(nextState, nextState.strategy_summary_package.requested_at);
+  }
+  return nextState;
+}
+
 function buildRuntimeObservability(record: RuntimeStateRecord): OperatorRuntimeObservability {
   const eventLog = (record.continuous_loop?.tick_history ?? []).slice(-10).map(toRuntimeObservabilityEvent);
   const lastEvent = eventLog.length > 0 ? eventLog[eventLog.length - 1] : null;
@@ -424,10 +452,10 @@ function buildLiveOperatorDashboardState(
       last_updated_at: record.operator_dashboard_state.last_updated_at || record.persisted_at,
     };
 
-    return hydrateMetaIntelligenceSlices({
+    return hydrateStrategySlices(hydrateMetaIntelligenceSlices({
       ...dashboardState,
       studio_operations: aggregateStudioHealthFromDashboardState(dashboardState),
-    });
+    }));
   }
 
   const approvalsRequired = buildLiveApprovals(bootResume);
@@ -497,10 +525,10 @@ function buildLiveOperatorDashboardState(
     last_updated_at: record.persisted_at,
   };
 
-  return hydrateMetaIntelligenceSlices({
+  return hydrateStrategySlices(hydrateMetaIntelligenceSlices({
     ...dashboardState,
     studio_operations: aggregateStudioHealthFromDashboardState(dashboardState),
-  });
+  }));
 }
 
 export function resolveOperatorStateSource(
@@ -524,10 +552,10 @@ export function loadDemoOperatorDashboardState(
   const dashboardState = createOperatorDashboardDemoState();
   return {
     source: "demo_seed",
-    dashboard_state: hydrateMetaIntelligenceSlices({
+    dashboard_state: hydrateStrategySlices(hydrateMetaIntelligenceSlices({
       ...dashboardState,
       studio_operations: aggregateStudioHealthFromDashboardState(dashboardState),
-    }),
+    })),
     warnings: buildDemoWarnings(),
     loaded_at: loadedAt,
   };

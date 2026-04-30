@@ -9,6 +9,8 @@ import { buildMetaIntelligenceState, detectMetaPatterns } from "./metaPatternDet
 import { deriveMetaPolicyState, recommendMetaPolicyAdjustments } from "./metaPolicyRecommender";
 import { buildOperatorDashboardState, type OperatorDashboardState } from "./operatorDashboardState";
 import { buildRuntimeResult } from "./sessionRuntime";
+import { scoreStrategyPortfolio } from "./strategyPortfolioScorer";
+import { createStrategySummary } from "./strategySummary";
 
 const DEMO_TIMESTAMP = "2026-04-26T12:00:00.000Z";
 
@@ -254,6 +256,104 @@ export function createOperatorDashboardDemoState(): OperatorDashboardState {
   });
   state.meta_intelligence = buildMetaIntelligenceState(state, state.meta_detected_patterns, state.meta_policy_recommendations);
   state.meta_summary_package = createMetaIntelligenceSummaryPackage(state, state.last_updated_at);
+  state.strategy_goals = [
+    {
+      strategy_goal_id: "strategy-ship-first-playable-loop",
+      title: "Ship first playable studio loop",
+      summary: "Prioritize the playable studio loop that proves AI-E can coordinate a bounded milestone from strategy through delivery.",
+      category: "product",
+      priority: "critical",
+      impact_score: 92,
+      effort_score: 56,
+      risk_score: 34,
+      confidence_score: 79,
+      time_horizon: "near_term",
+      status: "approved",
+      owner_agent_role: "planner",
+      dependency_goal_ids: [],
+      blocked_by: [],
+      success_criteria: ["Playable loop milestone approved", "Delivery package reaches operator-ready state"],
+      expected_outputs: ["playable-loop-brief.md", "milestone-proof.json"],
+      linked_work_item_ids: ["demo-work-proof-summary"],
+      linked_delivery_package_ids: ["delivery-demo-review-package-approved"],
+      created_at: "2026-04-26T11:45:00.000Z",
+      updated_at: "2026-04-26T11:58:00.000Z",
+    },
+    {
+      strategy_goal_id: "strategy-harden-runtime-observability",
+      title: "Harden runtime observability",
+      summary: "Improve operator visibility into bounded autonomy health, proof coverage, and recovery signals.",
+      category: "operations",
+      priority: "high",
+      impact_score: 78,
+      effort_score: 44,
+      risk_score: 28,
+      confidence_score: 81,
+      time_horizon: "quarterly",
+      status: "active",
+      owner_agent_role: "reporter",
+      dependency_goal_ids: [],
+      blocked_by: [],
+      success_criteria: ["Runtime introspection exposes the current risk lane", "Operator summary package stays current"],
+      expected_outputs: ["observability-gap-report.md"],
+      linked_work_item_ids: ["demo-work-proof-summary"],
+      linked_delivery_package_ids: [],
+      created_at: "2026-04-26T11:46:00.000Z",
+      updated_at: "2026-04-26T11:59:00.000Z",
+    },
+    {
+      strategy_goal_id: "strategy-expand-creator-templates",
+      title: "Expand creator template coverage",
+      summary: "Prepare a lower-risk tooling strategy that expands reusable creator templates for studio teams.",
+      category: "tooling",
+      priority: "medium",
+      impact_score: 64,
+      effort_score: 30,
+      risk_score: 18,
+      confidence_score: 73,
+      time_horizon: "quarterly",
+      status: "proposed",
+      owner_agent_role: "planner",
+      dependency_goal_ids: [],
+      blocked_by: [],
+      success_criteria: ["Template inventory approved", "Template gaps mapped to current work lanes"],
+      expected_outputs: ["creator-template-coverage.md"],
+      linked_work_item_ids: [],
+      linked_delivery_package_ids: [],
+      created_at: "2026-04-26T11:46:30.000Z",
+      updated_at: "2026-04-26T11:58:30.000Z",
+    },
+    {
+      strategy_goal_id: "strategy-evaluate-live-ops-experiment",
+      title: "Evaluate live-ops experiment",
+      summary: "Assess a higher-risk live-ops idea without activating it until confidence improves.",
+      category: "monetization",
+      priority: "medium",
+      impact_score: 74,
+      effort_score: 52,
+      risk_score: 76,
+      confidence_score: 39,
+      time_horizon: "long_term",
+      status: "blocked",
+      owner_agent_role: "planner",
+      dependency_goal_ids: ["strategy-ship-first-playable-loop"],
+      blocked_by: ["Needs clearer confidence from recent meta patterns", "Depends on first playable loop milestone"],
+      success_criteria: ["Risk review approved", "Experiment remains bounded and operator-gated"],
+      expected_outputs: ["live-ops-experiment-review.md"],
+      linked_work_item_ids: [],
+      linked_delivery_package_ids: [],
+      created_at: "2026-04-26T11:47:00.000Z",
+      updated_at: "2026-04-26T11:57:00.000Z",
+    },
+  ];
+  state.strategy_decision_history = [];
+  state.strategy_decompositions = [];
+  state.strategy_portfolio_scores = scoreStrategyPortfolio({
+    goals: state.strategy_goals,
+    state,
+    operator_preferences: (state.meta_policy_recommendations ?? []).map((item) => item.target),
+  });
+  state.strategy_summary_package = createStrategySummary(state, state.last_updated_at);
   return state;
 }
 

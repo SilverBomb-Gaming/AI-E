@@ -269,6 +269,30 @@ test("acknowledge_pattern creates the meta pattern acknowledgement intent", () =
   assert.equal(result.runtime_intent, "acknowledge_pattern");
 });
 
+test("approve_strategy_goal creates the strategy approval intent", () => {
+  const providerResult = createLiveProviderResult();
+
+  const result = createSafeRuntimeActionBridgeResult(providerResult, {
+    type: "approve_strategy_goal",
+    goal_id: "strategy-ship-first-playable-loop",
+  });
+
+  assert.equal(result.status, "action_rejected");
+  assert.equal(result.runtime_intent, "no_op");
+});
+
+test("activate_strategy_goal creates the strategy activation intent for approved goals", () => {
+  const providerResult = createLiveProviderResult();
+
+  const result = createSafeRuntimeActionBridgeResult(providerResult, {
+    type: "activate_strategy_goal",
+    goal_id: "strategy-ship-first-playable-loop",
+  });
+
+  assert.equal(result.status, "action_ready");
+  assert.equal(result.runtime_intent, "activate_strategy_goal");
+});
+
 test("prioritize_review_queue rejects when no review packages exist", () => {
   const providerResult = createLiveProviderResult();
   providerResult.dashboard_state = {
