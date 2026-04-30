@@ -10,6 +10,11 @@ import {
   type SupervisedSessionControlInput,
 } from "@/lib/aie/operatorControlSurface";
 import type { AutonomousDeliveryPackage, AutonomousReviewPackage, AutonomousWorkItem } from "@/lib/aie/autonomousWorkPlanning";
+import {
+  extractUnityValidationEvidenceFromDeliveryPackage,
+  extractUnityValidationEvidenceFromReviewPackage,
+  UnityValidationEvidencePanel,
+} from "@/lib/aie/unityValidationEvidenceView";
 import type { AgentRuntimeNode } from "@/lib/aie/agentRuntimeRegistry";
 import type {
   OperatorDashboardApprovalRequirement,
@@ -518,6 +523,8 @@ function ReviewPackageRow({
   onReject: () => void;
   disabled: boolean;
 }) {
+  const unityEvidence = extractUnityValidationEvidenceFromReviewPackage(item);
+
   return (
     <article className="rounded-[1.5rem] border border-ink/10 bg-white/80 p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -531,6 +538,7 @@ function ReviewPackageRow({
           <p className="text-xs text-slate">Chain: {item.chain_id} | Files: {item.files_changed.length} | Tests: {item.tests_run.length} | Proofs: {item.proof_results.length}</p>
           <p className="text-xs text-slate">Risks: {item.risks.length ? item.risks.join(", ") : "none recorded"}</p>
           <p className="text-xs text-slate">Rollback: {item.rollback_notes}</p>
+          {unityEvidence ? <UnityValidationEvidencePanel evidence={unityEvidence} /> : null}
         </div>
         {item.status === "pending" ? (
           <div className="flex flex-wrap gap-2">
@@ -558,6 +566,8 @@ function DeliveryPackageRow({
   onArchive: () => void;
   disabled: boolean;
 }) {
+  const unityEvidence = extractUnityValidationEvidenceFromDeliveryPackage(item);
+
   return (
     <article className="rounded-[1.5rem] border border-ink/10 bg-white/80 p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -572,6 +582,7 @@ function DeliveryPackageRow({
           <p className="text-xs text-slate">Commit plan: {item.commit_plan.length ? item.commit_plan.join(" | ") : "none recorded"}</p>
           <p className="text-xs text-slate">Rollback: {item.rollback_plan}</p>
           <p className="text-xs text-slate">PR title: {item.recommended_pr_title}</p>
+          {unityEvidence ? <UnityValidationEvidencePanel evidence={unityEvidence} /> : null}
         </div>
         {item.status !== "archived" && item.status !== "rejected" ? (
           <div className="flex flex-wrap gap-2">

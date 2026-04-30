@@ -264,8 +264,10 @@ test("unavailable bridge returns structured unavailable delivery artifact", asyn
   assert.equal(result.bridge_status, "bridge_unavailable");
   assert.equal(result.artifact_label, "unity_bridge_unavailable_report");
   assert.match(result.blocked_reason ?? "", /endpoint is not running/i);
-  assert.equal(result.review_package, null);
-  assert.equal(result.delivery_package, null);
+  assert.ok(result.review_package);
+  assert.ok(result.delivery_package);
+  assert.ok(result.delivery_package?.validation_results.some((entry) => /Bridge status: bridge_unavailable/i.test(entry)));
+  assert.ok(result.delivery_package?.validation_results.some((entry) => /Scene validation status: not_checked/i.test(entry)));
 });
 
 test("successful read-only bridge returns real bridge validation result", async () => {

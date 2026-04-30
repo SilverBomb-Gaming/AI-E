@@ -122,7 +122,21 @@ function buildBlockedValidationResult(
 
 function createUnityValidationEvidencePackages(
   input: UnityValidationExecutionInput,
-  result: Pick<UnityValidationExecutionResult, "execution_kind" | "bridge_status" | "delivery_summary" | "recommended_next_operator_action" | "validation_checklist" | "raw_evidence_summary" | "evidence_timestamp">,
+  result: Pick<
+    UnityValidationExecutionResult,
+    | "execution_kind"
+    | "bridge_status"
+    | "scene_validation_status"
+    | "checked_scene_name"
+    | "missing_script_count"
+    | "console_error_count"
+    | "object_count"
+    | "delivery_summary"
+    | "recommended_next_operator_action"
+    | "validation_checklist"
+    | "raw_evidence_summary"
+    | "evidence_timestamp"
+  >,
 ): {
   reviewPackage: AutonomousReviewPackage;
   deliveryPackage: AutonomousDeliveryPackage;
@@ -140,7 +154,17 @@ function createUnityValidationEvidencePackages(
     summary,
     files_changed: [],
     tests_run: ["unity read-only validation probe"],
-    proof_results: [result.bridge_status === "bridge_ready" ? "unity read-only bridge -> evidence_captured" : "unity read-only bridge -> unavailable"],
+    proof_results: [
+      result.bridge_status === "bridge_ready" ? "unity read-only bridge -> evidence_captured" : "unity read-only bridge -> unavailable",
+      `Execution kind: ${result.execution_kind}`,
+      `Scene validation status: ${result.scene_validation_status}`,
+      `Checked scene name: ${result.checked_scene_name ?? "none"}`,
+      `Missing script count: ${result.missing_script_count ?? "unknown"}`,
+      `Console error count: ${result.console_error_count ?? "unknown"}`,
+      `Object count: ${result.object_count ?? "unknown"}`,
+      `Evidence timestamp: ${result.evidence_timestamp}`,
+      `Recommended next operator action: ${result.recommended_next_operator_action}`,
+    ],
     risks: ["No Unity or project mutation path enabled."],
     recommended_decision: "approve",
     rollback_notes: "Read-only validation evidence only; no rollback required.",
@@ -159,8 +183,16 @@ function createUnityValidationEvidencePackages(
     ],
     files_changed: [],
     validation_results: [
+      `Execution kind: ${result.execution_kind}`,
       `Bridge status: ${result.bridge_status}`,
+      `Scene validation status: ${result.scene_validation_status}`,
+      `Checked scene name: ${result.checked_scene_name ?? "none"}`,
+      `Missing script count: ${result.missing_script_count ?? "unknown"}`,
+      `Console error count: ${result.console_error_count ?? "unknown"}`,
+      `Object count: ${result.object_count ?? "unknown"}`,
       `Evidence timestamp: ${result.evidence_timestamp}`,
+      `Recommended next operator action: ${result.recommended_next_operator_action}`,
+      ...(result.raw_evidence_summary ? [`Raw evidence summary: ${result.raw_evidence_summary}`] : []),
       ...result.validation_checklist,
     ],
     proof_results: [result.execution_kind],
@@ -295,7 +327,7 @@ export async function executeReviewedUnityValidation(
   });
 
   if (bridgeResult.bridge_status === "bridge_unavailable") {
-    return {
+    const baseResult: UnityValidationExecutionResult = {
       request_id: input.adapter_request_id,
       domain: "Unity",
       request_type: "validation_playtest_request",
@@ -322,6 +354,14 @@ export async function executeReviewedUnityValidation(
       review_package: null,
       delivery_package: null,
       mutating: false,
+    };
+
+    const evidencePackages = createUnityValidationEvidencePackages(input, baseResult);
+
+    return {
+      ...baseResult,
+      review_package: evidencePackages.reviewPackage,
+      delivery_package: evidencePackages.deliveryPackage,
     };
   }
 
