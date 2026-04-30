@@ -71,3 +71,24 @@ test("production pipeline chat requests capture planning-only proposal metadata"
   assert.equal(session.latest_proposal?.production_pipeline_plan?.mutation_policy, "planning_only");
   assert.deepEqual(session.latest_proposal?.production_pipeline_plan?.domains, ["assets", "art", "unity-integration"]);
 });
+
+test("Unity planning chat requests preserve advisory Unity packet metadata without executing work", () => {
+  const session = applyChatMessageToSession({
+    session: createInitialConversationalSession("2026-04-30T12:00:00.000Z"),
+    messageText: "prepare a Unity scene prefab script validation plan for the boss arena",
+    createdAt: "2026-04-30T12:03:00.000Z",
+    requestContext: {
+      projectName: "OpenClaw Unity production project",
+      repoName: "AI-E",
+    },
+  });
+
+  assert.equal(session.latest_proposal?.safe_to_execute, false);
+  assert.ok(session.latest_proposal?.production_pipeline_plan?.unity_planning_packet);
+  assert.deepEqual(session.latest_proposal?.production_pipeline_plan?.unity_planning_packet?.request_types, [
+    "scene_request",
+    "prefab_request",
+    "component_script_request",
+    "validation_playtest_request",
+  ]);
+});

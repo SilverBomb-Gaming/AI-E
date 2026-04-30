@@ -222,10 +222,17 @@ Important safety boundary:
 
 Layer 14 starts as a planning and architecture pass only. This layer expands AI-E toward production-support capability for game development without weakening the Layer 13 conversational guardrails or introducing direct execution from chat.
 
+Current Layer 14 status:
+
+- foundation planning contracts: complete
+- Unity-first planning packet and adapter-interface design: in progress
+- reviewed execution path for any production domain: not implemented yet
+- playtest-ready: no
+
 Layer 14 roadmap:
 
-- phase 1: planning-only contracts for production pipeline requests covering assets, art, audio, and Unity integration
-- phase 2: bounded planning packets and review artifacts for those domains
+- phase 1: planning-only contracts for production pipeline requests covering assets, art, audio, and Unity integration - complete
+- phase 2: bounded planning packets and review artifacts for those domains, starting with Unity integration - in progress
 - phase 3: execution adapters only after reviewable contracts, validation rules, and delivery gates exist
 - phase 4: studio-control observability for production pipeline throughput, blockers, and operator attention
 
@@ -243,6 +250,13 @@ Safe interface design for future production actions:
 - execution path remains explicit: `Strategy -> Planning -> Execution -> Review -> Delivery -> Studio Control`
 - conversational requests may propose production pipeline planning metadata, but they do not execute imports, edits, scene changes, package updates, or engine mutations directly
 - any future production action must still flow through the existing strategy, planning, execution, review, delivery, and studio-control boundaries
+
+Unity-first planning adapter design:
+
+- Unity planning packets now classify bounded request shapes for scenes, prefabs, component or script changes, validation/playtest asks, and asset imports
+- Unity adapter design remains interface-only: it defines planning input, review metadata, approval metadata, and readiness results without executing any Unity or project mutation
+- missing review or missing operator approval must block the Unity adapter from future execution
+- Layer 14 remains not playtest-ready until at least one Unity production action has a reviewed, gated execution path and the full regression suite stays clean
 
 ## Safe Runtime Action Bridge
 

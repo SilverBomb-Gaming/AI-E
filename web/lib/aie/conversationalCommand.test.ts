@@ -36,5 +36,23 @@ test("production pipeline requests stay in advisory planning and do not execute 
   assert.equal(result.response.proposal?.safe_to_execute, false);
   assert.ok(result.response.proposal?.production_pipeline_plan);
   assert.deepEqual(result.response.proposal?.production_pipeline_plan?.domains, ["assets", "audio", "unity-integration"]);
+  assert.ok(result.response.proposal?.production_pipeline_plan?.unity_planning_packet);
   assert.match(result.response.proposal?.production_pipeline_plan?.execution_path ?? "", /Strategy -> Planning -> Execution -> Review -> Delivery -> Studio Control/);
+});
+
+test("Unity integration requests thread Unity planning packet metadata into the advisory proposal flow", () => {
+  const result = processConversationalCommand({
+    rawRequest: "prepare a Unity scene and prefab validation plan for the castle hub room",
+    projectName: "OpenClaw Unity production project",
+    repoName: "AI-E",
+  }, "operator-chat-session", "2026-04-30T12:45:00.000Z");
+
+  assert.ok(result.response.proposal?.production_pipeline_plan?.unity_planning_packet);
+  assert.deepEqual(result.response.proposal?.production_pipeline_plan?.unity_planning_packet?.request_types, [
+    "scene_request",
+    "prefab_request",
+    "validation_playtest_request",
+  ]);
+  assert.match(result.response.assistant_message, /operator approval is still required|needs operator review/i);
+  assert.equal(result.response.proposal?.safe_to_execute, false);
 });

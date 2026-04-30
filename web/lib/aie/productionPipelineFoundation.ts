@@ -22,6 +22,36 @@ export type ProductionPipelineRequestEnvelope = {
   future_interfaces: string[];
 };
 
+export type UnityProductionRequestType =
+  | "scene_request"
+  | "prefab_request"
+  | "component_script_request"
+  | "validation_playtest_request"
+  | "asset_import_request";
+
+export type UnityProductionPlanningRequest = {
+  request_type: UnityProductionRequestType;
+  objective: string;
+  next_safe_stage: ProductionPipelineNextStage;
+  required_review_artifacts: string[];
+  required_approval_gates: string[];
+};
+
+export type UnityProductionPlanningPacket = {
+  packet_id: string;
+  objective: string;
+  domains: ProductionPipelineDomain[];
+  request_types: UnityProductionRequestType[];
+  planning_scope: string[];
+  next_safe_stage: ProductionPipelineNextStage;
+  mutation_policy: ProductionPipelineMutationPolicy;
+  execution_path: "Strategy -> Planning -> Execution -> Review -> Delivery -> Studio Control";
+  required_review_artifacts: string[];
+  required_approval_gates: string[];
+  requests: UnityProductionPlanningRequest[];
+  adapter_status: "design_only";
+};
+
 export type ProductionPipelinePlan = {
   plan_id: string;
   objective: string;
@@ -33,6 +63,7 @@ export type ProductionPipelinePlan = {
   capability_map: ProductionPipelineCapability[];
   safe_interface: ProductionPipelineRequestEnvelope[];
   operator_review_focus: string[];
+  unity_planning_packet: UnityProductionPlanningPacket | null;
 };
 
 const EXECUTION_PATH = "Strategy -> Planning -> Execution -> Review -> Delivery -> Studio Control" as const;
@@ -42,6 +73,14 @@ const DOMAIN_KEYWORDS: Record<ProductionPipelineDomain, string[]> = {
   art: ["art", "concept", "ui", "vfx", "animation", "visual", "look", "style", "paintover"],
   audio: ["audio", "sound", "sfx", "music", "voice", "mix", "ambience", "foley"],
   "unity-integration": ["unity", "scene", "prefab", "scriptableobject", "animator", "timeline", "package", "editor", "integration"],
+};
+
+const UNITY_REQUEST_KEYWORDS: Record<UnityProductionRequestType, string[]> = {
+  scene_request: ["scene", "level", "room", "lighting", "navmesh"],
+  prefab_request: ["prefab", "hud", "ui prefab", "spawnable", "variant"],
+  component_script_request: ["component", "script", "behaviour", "behavior", "monobehaviour", "scriptableobject"],
+  validation_playtest_request: ["validate", "validation", "playtest", "qa", "smoke", "verify", "test"],
+  asset_import_request: ["import", "asset", "texture", "mesh", "sprite", "audio clip", "fbx", "png"],
 };
 
 export const PRODUCTION_PIPELINE_CAPABILITY_MAP: ProductionPipelineCapability[] = [
@@ -87,6 +126,10 @@ function uniqueDomains(domains: ProductionPipelineDomain[]): ProductionPipelineD
   return [...new Set(domains)];
 }
 
+function uniqueUnityRequestTypes(requestTypes: UnityProductionRequestType[]): UnityProductionRequestType[] {
+  return [...new Set(requestTypes)];
+}
+
 function detectProductionPipelineDomains(requestText: string): ProductionPipelineDomain[] {
   const normalized = requestText.toLowerCase();
 
@@ -107,6 +150,115 @@ function resolveNextSafeStage(route: "clarify" | "plan" | "review" | "block"): P
   return "strategy";
 }
 
+function detectUnityProductionRequestTypes(objective: string): UnityProductionRequestType[] {
+  const normalized = objective.toLowerCase();
+
+  return uniqueUnityRequestTypes(
+    Object.entries(UNITY_REQUEST_KEYWORDS)
+      .filter(([, keywords]) => keywords.some((keyword) => normalized.includes(keyword)))
+      .map(([requestType]) => requestType as UnityProductionRequestType),
+  );
+}
+
+function buildUnityPlanningScope(requestTypes: UnityProductionRequestType[]): string[] {
+  return requestTypes.flatMap((requestType) => {
+    switch (requestType) {
+      case "scene_request":
+        return ["scene change planning", "scene validation checklist"];
+      case "prefab_request":
+        return ["prefab boundary review", "prefab rollout checklist"];
+      case "component_script_request":
+        return ["component/script dependency review", "engine integration checklist"];
+      case "validation_playtest_request":
+        return ["playtest plan", "validation evidence checklist"];
+      case "asset_import_request":
+        return ["asset import validation", "import rollback checklist"];
+      default:
+        return [];
+    }
+  });
+}
+
+function buildUnityReviewArtifacts(requestTypes: UnityProductionRequestType[]): string[] {
+  return uniqueDomains([]).concat(...requestTypes.map((requestType) => {
+    switch (requestType) {
+      case "scene_request":
+        return ["scene review packet", "affected-scene diff summary"];
+      case "prefab_request":
+        return ["prefab review packet", "prefab dependency summary"];
+      case "component_script_request":
+        return ["component/script review packet", "script dependency summary"];
+      case "validation_playtest_request":
+        return ["playtest plan", "validation checklist"];
+      case "asset_import_request":
+        return ["asset import review packet", "import source manifest"];
+      default:
+        return [];
+    }
+  })).filter((value, index, values) => values.indexOf(value) === index);
+}
+
+function buildUnityApprovalGates(requestTypes: UnityProductionRequestType[]): string[] {
+  const baseGates = ["operator planning approval", "review package approval"];
+  const requestGates = requestTypes.flatMap((requestType) => {
+    switch (requestType) {
+      case "validation_playtest_request":
+        return ["playtest approval"];
+      case "asset_import_request":
+        return ["import approval"];
+      default:
+        return ["unity execution approval"];
+    }
+  });
+
+  return [...new Set([...baseGates, ...requestGates])];
+}
+
+export function buildUnityProductionPlanningPacket(
+  objective: string,
+  route: "clarify" | "plan" | "review" | "block",
+  domains: ProductionPipelineDomain[],
+): UnityProductionPlanningPacket | null {
+  const normalizedObjective = objective.trim();
+  if (!normalizedObjective) {
+    return null;
+  }
+
+  if (!domains.includes("unity-integration")) {
+    return null;
+  }
+
+  const requestTypes = detectUnityProductionRequestTypes(normalizedObjective);
+  if (requestTypes.length === 0) {
+    return null;
+  }
+
+  const nextSafeStage = resolveNextSafeStage(route);
+  const requiredReviewArtifacts = buildUnityReviewArtifacts(requestTypes);
+  const requiredApprovalGates = buildUnityApprovalGates(requestTypes);
+
+  return {
+    packet_id: `unity-planning-${slugify(normalizedObjective)}`,
+    objective: normalizedObjective,
+    domains,
+    request_types: requestTypes,
+    planning_scope: [...new Set(buildUnityPlanningScope(requestTypes))],
+    next_safe_stage: nextSafeStage,
+    mutation_policy: "planning_only",
+    execution_path: EXECUTION_PATH,
+    required_review_artifacts: requiredReviewArtifacts,
+    required_approval_gates: requiredApprovalGates,
+    requests: requestTypes.map((requestType) => ({
+      request_type: requestType,
+      objective: normalizedObjective,
+      next_safe_stage: nextSafeStage,
+      required_review_artifacts: requiredReviewArtifacts,
+      required_approval_gates: requiredApprovalGates,
+    })),
+    adapter_status: "design_only",
+  };
+}
+
 export function deriveProductionPipelinePlan(
   requestText: string,
   route: "clarify" | "plan" | "review" | "block",
@@ -123,6 +275,7 @@ export function deriveProductionPipelinePlan(
 
   const capabilityMap = PRODUCTION_PIPELINE_CAPABILITY_MAP.filter((capability) => domains.includes(capability.domain));
   const nextSafeStage = resolveNextSafeStage(route);
+  const unityPlanningPacket = buildUnityProductionPlanningPacket(objective, route, domains);
 
   return {
     plan_id: `production-pipeline-${slugify(objective)}`,
@@ -143,5 +296,6 @@ export function deriveProductionPipelinePlan(
       future_interfaces: capability.future_interfaces,
     })),
     operator_review_focus: capabilityMap.flatMap((capability) => capability.operator_review_focus),
+    unity_planning_packet: unityPlanningPacket,
   };
 }
