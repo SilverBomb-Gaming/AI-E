@@ -293,6 +293,7 @@ Current Layer 15 status:
 - dry-run mutation preview adapter foundation: implemented
 - operator-visible review and delivery rendering for Unity mutation preview: implemented
 - final execution authorization gate model for the Unity mutation lane: implemented
+- execution preflight simulation for Unity mutation requests: implemented
 - required gates modeled: production planning packet, review approval, operator approval, dry-run preview, and explicit final execute gate
 - mutation-ready: no
 - playtest-ready: no
@@ -304,6 +305,7 @@ Current Layer 15 boundary:
 - the mutation preview now also shows `FINAL EXECUTION NOT AUTHORIZED` until a separate final authorization record matches the reviewed request scope and expiry window
 - the preview adapter refuses missing review approval, missing operator approval, non-mutation packets, and requests without `dry_run: true`
 - final execution authorization is modeled separately from planning, review, and operator approval, but it still does not enable any real Unity mutation in this layer
+- the mutation lane now also supports a simulation-only execution preflight that predicts affected objects, created objects, risks, conflicts, and final authorization validity without mutating Unity
 - no scene write, GameObject creation, prefab mutation, or Unity-side execute gate exists yet
 - chat remains advisory only with `safe_to_execute: false` and cannot invoke any mutation path directly
 

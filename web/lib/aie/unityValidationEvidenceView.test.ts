@@ -209,3 +209,57 @@ test("mutation preview evidence renders dry-run-only operator details without ex
   assert.doesNotMatch(markup, /<button/i);
   assert.doesNotMatch(markup, /disabled=/i);
 });
+
+test("mutation preflight evidence renders simulation-only operator details", () => {
+  const reviewPackage = createAutonomousReviewPackage({
+    package_id: "unity-mutation-preflight-review-1",
+    work_item_id: "unity-mutation-preflight-1",
+    chain_id: "unity-mutation-preflight-chain-1",
+    status: "approved",
+    summary: "PREFLIGHT SIMULATION: Unity scene object creation request for CheckpointAnchor in EnemyAIDemo. NO UNITY MUTATION PERFORMED.",
+    files_changed: [],
+    tests_run: ["unity mutation execution preflight simulation"],
+    proof_results: [
+      "Execution kind: preflight_simulation",
+      "Preflight state: simulation",
+      "Requested object name: CheckpointAnchor",
+      "Target scene: EnemyAIDemo",
+      "Intended components: Transform, BoxCollider",
+      "Intended transform position: 4, 1, 0",
+      "Intended transform rotation: 0, 0, 0",
+      "Intended transform scale: 1, 1, 1",
+      "Authorization evaluation status: FINAL EXECUTION AUTHORIZATION VALID",
+      "Predicted affected object: Scene:EnemyAIDemo",
+      "Predicted affected object: Component:Transform",
+      "Predicted created object: CheckpointAnchor",
+      "Detected risk: Duplicate object name risk: CheckpointAnchor already exists in the reviewed scene inventory.",
+      "Recommended next operator action: PREFLIGHT SIMULATION completed. Resolve the detected conflicts, keep the request dry-run only, and do not authorize live mutation execution.",
+      "Dry run: true",
+      "Executed: false",
+    ],
+    risks: ["PREFLIGHT SIMULATION", "NO UNITY MUTATION PERFORMED"],
+    recommended_decision: "approve",
+    rollback_notes: "Simulation only; no Unity mutation occurred and no rollback is required.",
+    operator_actions: ["approve", "archive"],
+  });
+
+  const evidence = extractUnityValidationEvidenceFromReviewPackage(reviewPackage);
+
+  assert.ok(evidence);
+  assert.equal(evidence.kind, "mutation_execution_preflight");
+  assert.equal(evidence.preflightState, "simulation");
+  assert.equal(evidence.authorizationEvaluationStatus, "FINAL EXECUTION AUTHORIZATION VALID");
+  assert.deepEqual(evidence.predictedCreatedObjects, ["CheckpointAnchor"]);
+  assert.ok(evidence.predictedAffectedObjects.includes("Scene:EnemyAIDemo"));
+  assert.ok(evidence.detectedRisks.some((entry) => /Duplicate object name risk/i.test(entry)));
+
+  const markup = renderToStaticMarkup(createElement(UnityValidationEvidencePanel, { evidence }));
+  assert.match(markup, /Mutation Execution Preflight/);
+  assert.match(markup, /PREFLIGHT SIMULATION/);
+  assert.match(markup, /NO UNITY MUTATION PERFORMED/);
+  assert.match(markup, /FINAL EXECUTION AUTHORIZATION VALID/);
+  assert.match(markup, /Predicted affected objects/);
+  assert.match(markup, /Predicted created objects/);
+  assert.match(markup, /Detected risks/);
+  assert.doesNotMatch(markup, /<button/i);
+});

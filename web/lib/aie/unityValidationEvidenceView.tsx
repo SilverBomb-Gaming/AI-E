@@ -2,7 +2,7 @@ import React from "react";
 
 import type { AutonomousDeliveryPackage, AutonomousReviewPackage } from "./autonomousWorkPlanning";
 
-export type UnityValidationEvidenceKind = "adapter_preview" | "real_bridge_unavailable" | "real_bridge_read_only" | "scene_object_creation_preview";
+export type UnityValidationEvidenceKind = "adapter_preview" | "real_bridge_unavailable" | "real_bridge_read_only" | "scene_object_creation_preview" | "mutation_execution_preflight";
 
 export type UnityValidationEvidence = {
   kind: UnityValidationEvidenceKind;
@@ -28,6 +28,12 @@ export type UnityValidationEvidence = {
   finalExecutionRequired: boolean | null;
   finalExecutionAuthorized: boolean | null;
   finalExecutionAuthorizationStatus: string | null;
+  preflightState: string | null;
+  authorizationEvaluationStatus: string | null;
+  predictedAffectedObjects: string[];
+  predictedCreatedObjects: string[];
+  detectedConflicts: string[];
+  detectedRisks: string[];
 };
 
 function parseLabeledValue(lines: string[], label: string): string | null {
@@ -71,6 +77,14 @@ function parseList(value: string | null): string[] {
   }
 
   return value.split(/,\s*/).map((item) => item.trim()).filter(Boolean);
+}
+
+function parseRepeatedLabeledValues(lines: string[], label: string): string[] {
+  const prefix = `${label}:`;
+  return lines
+    .filter((line) => line.startsWith(prefix))
+    .map((line) => line.slice(prefix.length).trim())
+    .filter(Boolean);
 }
 
 function parseSummary(summary: string): Partial<UnityValidationEvidence> {
@@ -120,6 +134,19 @@ function parseSummary(summary: string): Partial<UnityValidationEvidence> {
     };
   }
 
+  const preflightMatch = summary.match(/PREFLIGHT SIMULATION: Unity scene object creation request for (.+?) in (.+?)\. NO UNITY MUTATION PERFORMED\./i);
+  if (preflightMatch) {
+    return {
+      kind: "mutation_execution_preflight",
+      bridgeStatus: "preflight_simulation_only",
+      sceneValidationStatus: "not_checked",
+      requestedObjectName: preflightMatch[1]?.trim() ?? null,
+      targetScene: preflightMatch[2]?.trim() ?? null,
+      dryRun: true,
+      executed: false,
+    };
+  }
+
   return {};
 }
 
@@ -131,6 +158,10 @@ function inferKind(lines: string[], summary: string): UnityValidationEvidenceKin
 
   if (executionKind === "dry_run_preview" || executionKind === "preview_blocked") {
     return "scene_object_creation_preview";
+  }
+
+  if (executionKind === "preflight_simulation" || executionKind === "preflight_blocked") {
+    return "mutation_execution_preflight";
   }
 
   if (/unity read-only bridge -> unavailable/i.test(lines.join("\n"))) {
@@ -153,8 +184,12 @@ function isUnityEvidencePackage(workItemId: string, lines: string[], summary: st
     return true;
   }
 
+  if (/unity-mutation-preflight/i.test(workItemId)) {
+    return true;
+  }
+
   const text = [summary, ...lines].join("\n");
-  return /unity read-only validation probe|unity validation preview|unity scene object creation preview|bridge status:|requested object name:|dry run:/i.test(text);
+  return /unity read-only validation probe|unity validation preview|unity scene object creation preview|preflight simulation|no unity mutation performed|bridge status:|requested object name:|dry run:/i.test(text);
 }
 
 function buildEvidence(workItemId: string, summary: string, lines: string[]): UnityValidationEvidence | null {
@@ -215,6 +250,12 @@ function buildEvidence(workItemId: string, summary: string, lines: string[]): Un
     finalExecutionRequired: parseBoolean(parseLabeledValue(lines, "Final execution required")) ?? summaryValues.finalExecutionRequired ?? null,
     finalExecutionAuthorized: parseBoolean(parseLabeledValue(lines, "Final execution authorized")) ?? summaryValues.finalExecutionAuthorized ?? null,
     finalExecutionAuthorizationStatus: parseLabeledValue(lines, "Final execution authorization status") ?? summaryValues.finalExecutionAuthorizationStatus ?? null,
+    preflightState: parseLabeledValue(lines, "Preflight state"),
+    authorizationEvaluationStatus: parseLabeledValue(lines, "Authorization evaluation status"),
+    predictedAffectedObjects: parseRepeatedLabeledValues(lines, "Predicted affected object"),
+    predictedCreatedObjects: parseRepeatedLabeledValues(lines, "Predicted created object"),
+    detectedConflicts: parseRepeatedLabeledValues(lines, "Detected conflict"),
+    detectedRisks: parseRepeatedLabeledValues(lines, "Detected risk"),
   };
 }
 
@@ -232,6 +273,8 @@ export function extractUnityValidationEvidenceFromDeliveryPackage(item: Autonomo
 
 function kindLabel(kind: UnityValidationEvidenceKind): string {
   switch (kind) {
+    case "mutation_execution_preflight":
+      return "Mutation Execution Preflight";
     case "scene_object_creation_preview":
       return "Scene Object Creation Preview";
     case "adapter_preview":
@@ -274,6 +317,19 @@ export function UnityValidationEvidencePanel({ evidence }: { evidence: UnityVali
             </span>
           </>
         ) : null}
+        {evidence.kind === "mutation_execution_preflight" ? (
+          <>
+            <span className="inline-flex rounded-full border border-coral/20 bg-coral/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-ember">
+              PREFLIGHT SIMULATION
+            </span>
+            <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-700">
+              NO UNITY MUTATION PERFORMED
+            </span>
+            <span className="inline-flex rounded-full border border-ink/10 bg-white/80 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-ink/75">
+              {evidence.authorizationEvaluationStatus ?? "FINAL EXECUTION AUTHORIZATION INVALID"}
+            </span>
+          </>
+        ) : null}
       </div>
       <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
         <p className="text-xs leading-6 text-slate">Bridge status: {evidence.bridgeStatus}</p>
@@ -297,6 +353,37 @@ export function UnityValidationEvidencePanel({ evidence }: { evidence: UnityVali
           <p className="text-xs leading-6 text-slate">Final execution required: {String(evidence.finalExecutionRequired ?? true)}</p>
           <p className="text-xs leading-6 text-slate">Final execution authorized: {String(evidence.finalExecutionAuthorized ?? false)}</p>
         </div>
+      ) : null}
+      {evidence.kind === "mutation_execution_preflight" ? (
+        <>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+            <p className="text-xs leading-6 text-slate">Requested object name: {evidence.requestedObjectName ?? "none"}</p>
+            <p className="text-xs leading-6 text-slate">Target scene: {evidence.targetScene ?? "none"}</p>
+            <p className="text-xs leading-6 text-slate">Intended components: {evidence.intendedComponents.length > 0 ? evidence.intendedComponents.join(", ") : "none"}</p>
+            <p className="text-xs leading-6 text-slate">Intended transform position: {evidence.intendedTransformPosition ?? "none"}</p>
+            <p className="text-xs leading-6 text-slate">Intended transform rotation: {evidence.intendedTransformRotation ?? "none"}</p>
+            <p className="text-xs leading-6 text-slate">Intended transform scale: {evidence.intendedTransformScale ?? "none"}</p>
+            <p className="text-xs leading-6 text-slate">Preflight state: {evidence.preflightState ?? "unknown"}</p>
+            <p className="text-xs leading-6 text-slate">Dry run: {String(evidence.dryRun ?? true)}</p>
+            <p className="text-xs leading-6 text-slate">Executed: {String(evidence.executed ?? false)}</p>
+          </div>
+          <div className="mt-2">
+            <p className="text-xs uppercase tracking-[0.18em] text-slate">Predicted affected objects</p>
+            <p className="mt-1 text-xs leading-6 text-slate">{evidence.predictedAffectedObjects.length > 0 ? evidence.predictedAffectedObjects.join(" | ") : "none"}</p>
+          </div>
+          <div className="mt-2">
+            <p className="text-xs uppercase tracking-[0.18em] text-slate">Predicted created objects</p>
+            <p className="mt-1 text-xs leading-6 text-slate">{evidence.predictedCreatedObjects.length > 0 ? evidence.predictedCreatedObjects.join(" | ") : "none"}</p>
+          </div>
+          <div className="mt-2">
+            <p className="text-xs uppercase tracking-[0.18em] text-slate">Detected conflicts</p>
+            <p className="mt-1 text-xs leading-6 text-slate">{evidence.detectedConflicts.length > 0 ? evidence.detectedConflicts.join(" | ") : "none"}</p>
+          </div>
+          <div className="mt-2">
+            <p className="text-xs uppercase tracking-[0.18em] text-slate">Detected risks</p>
+            <p className="mt-1 text-xs leading-6 text-slate">{evidence.detectedRisks.length > 0 ? evidence.detectedRisks.join(" | ") : "none"}</p>
+          </div>
+        </>
       ) : null}
       {evidence.kind === "scene_object_creation_preview" ? (
         <div className="mt-2">

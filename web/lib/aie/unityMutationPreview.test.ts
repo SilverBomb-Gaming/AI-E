@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { buildUnityProductionPlanningPacket } from "./productionPipelineFoundation";
-import { evaluateUnityMutationExecutionAuthorization, previewUnitySceneObjectCreation } from "./unityProductionAdapter";
+import {
+  evaluateUnityMutationExecutionAuthorization,
+  previewUnitySceneObjectCreation,
+  simulateUnityMutationExecutionPreflight,
+} from "./unityProductionAdapter";
 
 function createSceneObjectCreationPacket() {
   const packet = buildUnityProductionPlanningPacket(
@@ -243,4 +247,133 @@ test("valid final authorization reports authorized without executing mutation", 
   assert.equal(result.expiration_status, "valid");
   assert.equal(preview.executed, false);
   assert.equal(preview.final_execution_authorized, false);
+});
+
+test("missing review approval blocks Unity mutation execution preflight", () => {
+  const result = simulateUnityMutationExecutionPreflight({
+    ...createPreviewInput({
+      review_state: {
+        review_package_id: null,
+        review_completed_at: null,
+        approved_by_operator: true,
+        operator_approval_id: "approval-preview-1",
+        delivery_package_id: "delivery-preview-1",
+      },
+    }),
+    authorization: {
+      final_execution_authorization_id: "final-auth-preflight-1",
+      authorized_by_operator: true,
+      authorized_at: "2026-04-30T18:05:00.000Z",
+      authorization_scope: "scene_object_creation_request",
+      target_request_id: "unity-mutation-preview-1",
+      expires_at: "2026-04-30T19:00:00.000Z",
+    },
+  });
+
+  assert.equal(result.preflight_state, "blocked");
+  assert.equal(result.review_approval_status, "missing");
+  assert.equal(result.dry_run, true);
+  assert.equal(result.executed, false);
+  assert.match(result.recommended_operator_action, /blocked until review approval is recorded/i);
+});
+
+test("missing operator approval blocks Unity mutation execution preflight", () => {
+  const result = simulateUnityMutationExecutionPreflight({
+    ...createPreviewInput({
+      review_state: {
+        review_package_id: "review-preview-1",
+        review_completed_at: "2026-04-30T18:00:10.000Z",
+        approved_by_operator: false,
+        operator_approval_id: null,
+        delivery_package_id: "delivery-preview-1",
+      },
+    }),
+    authorization: {
+      final_execution_authorization_id: "final-auth-preflight-2",
+      authorized_by_operator: true,
+      authorized_at: "2026-04-30T18:05:00.000Z",
+      authorization_scope: "scene_object_creation_request",
+      target_request_id: "unity-mutation-preview-1",
+      expires_at: "2026-04-30T19:00:00.000Z",
+    },
+  });
+
+  assert.equal(result.preflight_state, "blocked");
+  assert.equal(result.operator_approval_status, "missing");
+  assert.equal(result.dry_run, true);
+  assert.equal(result.executed, false);
+  assert.match(result.recommended_operator_action, /blocked until operator approval is recorded/i);
+});
+
+test("missing final authorization blocks execution-readiness during Unity mutation preflight", () => {
+  const result = simulateUnityMutationExecutionPreflight({
+    ...createPreviewInput(),
+    authorization: null,
+  });
+
+  assert.equal(result.preflight_state, "blocked");
+  assert.equal(result.authorization_evaluation.authorized, false);
+  assert.equal(result.dry_run, true);
+  assert.equal(result.executed, false);
+  assert.match(result.authorization_evaluation.blocked_reason ?? "", /until a final execution authorization is recorded/i);
+});
+
+test("valid final authorization produces Unity mutation preflight simulation", () => {
+  const result = simulateUnityMutationExecutionPreflight({
+    ...createPreviewInput(),
+    authorization: {
+      final_execution_authorization_id: "final-auth-preflight-3",
+      authorized_by_operator: true,
+      authorized_at: "2026-04-30T18:05:00.000Z",
+      authorization_scope: "scene_object_creation_request",
+      target_request_id: "unity-mutation-preview-1",
+      expires_at: "2026-04-30T19:00:00.000Z",
+    },
+    known_target_scene_names: ["EnemyAIDemo"],
+    known_scene_object_names: ["SpawnAnchor"],
+  });
+
+  assert.equal(result.preflight_state, "simulation");
+  assert.equal(result.authorization_evaluation.authorized, true);
+  assert.deepEqual(result.predicted_created_objects, ["CheckpointAnchor"]);
+  assert.ok(result.predicted_affected_objects.includes("Scene:EnemyAIDemo"));
+  assert.equal(result.dry_run, true);
+  assert.equal(result.executed, false);
+  assert.ok(result.review_package);
+  assert.ok(result.delivery_package);
+  assert.match(result.review_package?.summary ?? "", /PREFLIGHT SIMULATION/i);
+  assert.match(result.delivery_package?.release_notes ?? "", /NO UNITY MUTATION PERFORMED/i);
+});
+
+test("Unity mutation execution preflight detects conflicts deterministically", () => {
+  const result = simulateUnityMutationExecutionPreflight({
+    ...createPreviewInput({
+      requested_object_name: "CheckpointAnchor",
+      target_scene: "MissingScene",
+      intended_components: ["Transform", "UnsupportedMover"],
+      intended_transform: {
+        position: { x: Number.NaN, y: 1, z: 0 },
+        rotation_euler: { x: 0, y: 0, z: 0 },
+        scale: { x: 0, y: 1, z: 1 },
+      },
+    }),
+    authorization: {
+      final_execution_authorization_id: "final-auth-preflight-4",
+      authorized_by_operator: true,
+      authorized_at: "2026-04-30T18:05:00.000Z",
+      authorization_scope: "scene_object_creation_request",
+      target_request_id: "unity-mutation-preview-1",
+      expires_at: "2026-04-30T19:00:00.000Z",
+    },
+    known_target_scene_names: ["EnemyAIDemo"],
+    known_scene_object_names: ["CheckpointAnchor"],
+  });
+
+  assert.equal(result.preflight_state, "simulation");
+  assert.ok(result.detected_conflicts.some((entry) => /Duplicate object name risk/i.test(entry)));
+  assert.ok(result.detected_conflicts.some((entry) => /Missing target scene risk/i.test(entry)));
+  assert.ok(result.detected_conflicts.some((entry) => /Unsupported component risk/i.test(entry)));
+  assert.ok(result.detected_conflicts.some((entry) => /Invalid transform risk/i.test(entry)));
+  assert.equal(result.dry_run, true);
+  assert.equal(result.executed, false);
 });

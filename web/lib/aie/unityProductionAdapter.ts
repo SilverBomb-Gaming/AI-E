@@ -98,6 +98,43 @@ export type UnityMutationExecutionAuthorizationEvaluation = {
   final_execution_authorization_id: string | null;
 };
 
+export type UnityMutationExecutionPreflightInput = UnitySceneObjectCreationPreviewInput & {
+  authorization: UnityMutationExecutionAuthorization | null;
+  evaluated_at?: string;
+  known_target_scene_names?: string[];
+  known_scene_object_names?: string[];
+  supported_components?: string[];
+};
+
+export type UnityMutationExecutionPreflightResult = {
+  request_id: string;
+  domain: "Unity";
+  request_type: "scene_object_creation_request";
+  execution_mode: "mutation_execution_preflight_simulation";
+  execution_kind: "preflight_simulation" | "preflight_blocked";
+  review_approval_id: string | null;
+  review_approval_status: "missing" | "approved";
+  operator_approval_id: string | null;
+  operator_approval_status: "missing" | "approved";
+  target_scene: string;
+  requested_object_name: string;
+  intended_components: string[];
+  intended_transform: UnitySceneObjectCreationPreviewTransform;
+  authorization_evaluation: UnityMutationExecutionAuthorizationEvaluation;
+  predicted_affected_objects: string[];
+  predicted_created_objects: string[];
+  detected_conflicts: string[];
+  detected_risks: string[];
+  recommended_operator_action: string;
+  preflight_state: "blocked" | "simulation";
+  dry_run: true;
+  executed: false;
+  artifact_label: "unity_mutation_execution_preflight";
+  review_package: AutonomousReviewPackage | null;
+  delivery_package: AutonomousDeliveryPackage | null;
+  mutating: false;
+};
+
 export type UnitySceneObjectCreationPreviewResult = {
   request_id: string;
   domain: "Unity";
@@ -125,6 +162,18 @@ export type UnitySceneObjectCreationPreviewResult = {
   delivery_package: AutonomousDeliveryPackage | null;
   mutating: false;
 };
+
+const DEFAULT_SUPPORTED_PREFLIGHT_COMPONENTS = [
+  "Transform",
+  "BoxCollider",
+  "SphereCollider",
+  "CapsuleCollider",
+  "MeshRenderer",
+  "SpriteRenderer",
+  "Rigidbody",
+  "AudioSource",
+  "Light",
+];
 
 function hasCompletedReview(reviewState: UnityProductionAdapterReviewState): boolean {
   return Boolean(reviewState.review_package_id && reviewState.review_completed_at);
@@ -195,6 +244,212 @@ function buildSceneObjectCreationPreviewResult(
 
 function formatVector3(vector: { x: number; y: number; z: number }): string {
   return `${vector.x}, ${vector.y}, ${vector.z}`;
+}
+
+function toNormalizedNameSet(values: string[] | undefined): Set<string> {
+  return new Set((values ?? []).map((value) => value.trim().toLowerCase()).filter(Boolean));
+}
+
+function hasInvalidTransform(transform: UnitySceneObjectCreationPreviewTransform): boolean {
+  const values = [
+    transform.position.x,
+    transform.position.y,
+    transform.position.z,
+    transform.rotation_euler.x,
+    transform.rotation_euler.y,
+    transform.rotation_euler.z,
+    transform.scale.x,
+    transform.scale.y,
+    transform.scale.z,
+  ];
+
+  if (values.some((value) => !Number.isFinite(value))) {
+    return true;
+  }
+
+  return transform.scale.x <= 0 || transform.scale.y <= 0 || transform.scale.z <= 0;
+}
+
+function formatAuthorizationEvaluationStatus(
+  evaluation: UnityMutationExecutionAuthorizationEvaluation,
+): string {
+  return evaluation.authorized ? "FINAL EXECUTION AUTHORIZATION VALID" : "FINAL EXECUTION AUTHORIZATION INVALID";
+}
+
+function buildUnityMutationExecutionPreflightResult(
+  input: UnityMutationExecutionPreflightInput,
+  authorizationEvaluation: UnityMutationExecutionAuthorizationEvaluation,
+): UnityMutationExecutionPreflightResult {
+  const intendedComponents = normalizePreviewComponents(input.intended_components);
+  const detectedConflicts: string[] = [];
+  const detectedRisks: string[] = [];
+  const normalizedObjectName = input.requested_object_name.trim();
+  const normalizedTargetScene = input.target_scene.trim();
+  const knownTargetScenes = toNormalizedNameSet(input.known_target_scene_names);
+  const knownSceneObjects = toNormalizedNameSet(input.known_scene_object_names);
+  const supportedComponents = toNormalizedNameSet(input.supported_components ?? DEFAULT_SUPPORTED_PREFLIGHT_COMPONENTS);
+
+  if (!normalizedTargetScene || (knownTargetScenes.size > 0 && !knownTargetScenes.has(normalizedTargetScene.toLowerCase()))) {
+    const detail = normalizedTargetScene
+      ? `Missing target scene risk: ${normalizedTargetScene} is not present in the reviewed scene list.`
+      : "Missing target scene risk: no target scene was provided for the mutation request.";
+    detectedConflicts.push(detail);
+    detectedRisks.push(detail);
+  }
+
+  if (normalizedObjectName && knownSceneObjects.has(normalizedObjectName.toLowerCase())) {
+    const detail = `Duplicate object name risk: ${normalizedObjectName} already exists in the reviewed scene inventory.`;
+    detectedConflicts.push(detail);
+    detectedRisks.push(detail);
+  }
+
+  const unsupportedComponents = intendedComponents.filter((component) => !supportedComponents.has(component.toLowerCase()));
+  if (unsupportedComponents.length > 0) {
+    const detail = `Unsupported component risk: ${unsupportedComponents.join(", ")} is not supported by the current preflight simulation allowlist.`;
+    detectedConflicts.push(detail);
+    detectedRisks.push(detail);
+  }
+
+  if (hasInvalidTransform(input.intended_transform)) {
+    const detail = "Invalid transform risk: one or more transform values are non-finite or use a non-positive scale.";
+    detectedConflicts.push(detail);
+    detectedRisks.push(detail);
+  }
+
+  const predictedAffectedObjects = [
+    ...(normalizedTargetScene ? [`Scene:${normalizedTargetScene}`] : []),
+    ...(normalizedObjectName && knownSceneObjects.has(normalizedObjectName.toLowerCase()) ? [`SceneObject:${normalizedObjectName}`] : []),
+    ...intendedComponents.map((component) => `Component:${component}`),
+  ];
+  const predictedCreatedObjects = normalizedObjectName ? [normalizedObjectName] : [];
+  const reviewApproved = hasCompletedReview(input.review_state);
+  const operatorApproved = hasApproval(input.review_state);
+
+  const blockedReasons = [
+    ...(reviewApproved ? [] : ["Unity mutation execution preflight is blocked until review approval is recorded."]),
+    ...(operatorApproved ? [] : ["Unity mutation execution preflight is blocked until operator approval is recorded."]),
+    ...(authorizationEvaluation.authorized ? [] : [authorizationEvaluation.blocked_reason ?? "Unity mutation execution preflight requires a valid final execution authorization."]),
+  ];
+
+  const recommendedOperatorAction = blockedReasons.length > 0
+    ? blockedReasons[0]
+    : detectedConflicts.length > 0
+      ? "PREFLIGHT SIMULATION completed. Resolve the detected conflicts, keep the request dry-run only, and do not authorize live mutation execution."
+      : "PREFLIGHT SIMULATION completed. Keep the request dry-run only and hold the live mutation lane disabled until a future reviewed executor exists.";
+
+  return {
+    request_id: input.adapter_request_id,
+    domain: "Unity",
+    request_type: "scene_object_creation_request",
+    execution_mode: "mutation_execution_preflight_simulation",
+    execution_kind: blockedReasons.length > 0 ? "preflight_blocked" : "preflight_simulation",
+    review_approval_id: input.review_state.review_package_id,
+    review_approval_status: reviewApproved ? "approved" : "missing",
+    operator_approval_id: input.review_state.operator_approval_id,
+    operator_approval_status: operatorApproved ? "approved" : "missing",
+    target_scene: normalizedTargetScene,
+    requested_object_name: normalizedObjectName,
+    intended_components: intendedComponents,
+    intended_transform: input.intended_transform,
+    authorization_evaluation: authorizationEvaluation,
+    predicted_affected_objects: predictedAffectedObjects,
+    predicted_created_objects: predictedCreatedObjects,
+    detected_conflicts: detectedConflicts,
+    detected_risks: detectedRisks,
+    recommended_operator_action: recommendedOperatorAction,
+    preflight_state: blockedReasons.length > 0 ? "blocked" : "simulation",
+    dry_run: true,
+    executed: false,
+    artifact_label: "unity_mutation_execution_preflight",
+    review_package: null,
+    delivery_package: null,
+    mutating: false,
+  };
+}
+
+function createUnityMutationExecutionPreflightPackages(
+  input: UnityMutationExecutionPreflightInput,
+  result: UnityMutationExecutionPreflightResult,
+): {
+  reviewPackage: AutonomousReviewPackage;
+  deliveryPackage: AutonomousDeliveryPackage;
+} {
+  const packageSuffix = input.adapter_request_id;
+  const summary = `PREFLIGHT SIMULATION: Unity scene object creation request for ${result.requested_object_name || "unnamed_object"} in ${result.target_scene || "unknown_scene"}. NO UNITY MUTATION PERFORMED.`;
+  const proofResults = [
+    `Execution kind: ${result.execution_kind}`,
+    `Preflight state: ${result.preflight_state}`,
+    `Requested object name: ${result.requested_object_name || "none"}`,
+    `Target scene: ${result.target_scene || "none"}`,
+    `Intended components: ${result.intended_components.length > 0 ? result.intended_components.join(", ") : "none"}`,
+    `Intended transform position: ${formatVector3(result.intended_transform.position)}`,
+    `Intended transform rotation: ${formatVector3(result.intended_transform.rotation_euler)}`,
+    `Intended transform scale: ${formatVector3(result.intended_transform.scale)}`,
+    `Authorization evaluation status: ${formatAuthorizationEvaluationStatus(result.authorization_evaluation)}`,
+    `Final execution authorization id: ${result.authorization_evaluation.final_execution_authorization_id ?? "none"}`,
+    `Authorization scope match: ${String(result.authorization_evaluation.scope_match)}`,
+    `Authorization target request match: ${String(result.authorization_evaluation.target_request_match)}`,
+    `Authorization expiration status: ${result.authorization_evaluation.expiration_status}`,
+    `Dry run: ${String(result.dry_run)}`,
+    `Executed: ${String(result.executed)}`,
+    ...result.predicted_affected_objects.map((item) => `Predicted affected object: ${item}`),
+    ...result.predicted_created_objects.map((item) => `Predicted created object: ${item}`),
+    ...result.detected_conflicts.map((item) => `Detected conflict: ${item}`),
+    ...result.detected_risks.map((item) => `Detected risk: ${item}`),
+    `Recommended next operator action: ${result.recommended_operator_action}`,
+    ...(result.authorization_evaluation.blocked_reason ? [`Blocked reason: ${result.authorization_evaluation.blocked_reason}`] : []),
+  ];
+
+  const reviewPackage = createAutonomousReviewPackage({
+    package_id: `unity-mutation-preflight-review-${packageSuffix}`,
+    work_item_id: `unity-mutation-preflight-${packageSuffix}`,
+    chain_id: `unity-mutation-preflight-chain-${packageSuffix}`,
+    status: result.preflight_state === "simulation" ? "approved" : "pending",
+    summary,
+    files_changed: [],
+    tests_run: ["unity mutation execution preflight simulation"],
+    proof_results: proofResults,
+    risks: [
+      "PREFLIGHT SIMULATION",
+      "NO UNITY MUTATION PERFORMED",
+      ...(result.detected_risks.length > 0 ? result.detected_risks : ["No additional preflight risks detected."]),
+    ],
+    recommended_decision: "approve",
+    rollback_notes: "Simulation only; no Unity mutation occurred and no rollback is required.",
+    operator_actions: ["approve", "archive"],
+  });
+
+  const deliveryPackage = createAutonomousDeliveryPackage({
+    delivery_package_id: `unity-mutation-preflight-delivery-${packageSuffix}`,
+    review_package_id: reviewPackage.package_id,
+    work_item_id: reviewPackage.work_item_id,
+    chain_id: reviewPackage.chain_id,
+    branch_name: "",
+    commit_plan: [
+      "Keep this Unity mutation execution preflight attached to the reviewed delivery lane.",
+      "PREFLIGHT SIMULATION only: do not write scenes, prefabs, assets, or GameObjects.",
+      "Do not enable a live mutation executor from this package.",
+    ],
+    files_changed: [],
+    validation_results: proofResults,
+    proof_results: [result.execution_kind, "PREFLIGHT SIMULATION", "NO UNITY MUTATION PERFORMED"],
+    risk_summary: result.detected_risks.length > 0
+      ? result.detected_risks.join(" | ")
+      : "PREFLIGHT SIMULATION only. No Unity mutation performed.",
+    rollback_plan: "Discard the preflight simulation package if it is no longer needed.",
+    release_notes: summary,
+    recommended_pr_title: "",
+    recommended_pr_body: `Unity mutation execution preflight handoff\n\nSummary: ${summary}\n\nNext operator action: ${result.recommended_operator_action}`,
+    operator_decision: null,
+    status: "awaiting_operator_approval",
+    created_at: input.requested_at,
+    updated_at: input.requested_at,
+  });
+
+  return {
+    reviewPackage,
+    deliveryPackage,
+  };
 }
 
 function createUnitySceneObjectCreationPreviewPackages(
@@ -740,5 +995,30 @@ export function evaluateUnityMutationExecutionAuthorization(input: {
     target_request_match: true,
     expiration_status: expirationStatus,
     final_execution_authorization_id: input.authorization.final_execution_authorization_id,
+  };
+}
+
+export function simulateUnityMutationExecutionPreflight(
+  input: UnityMutationExecutionPreflightInput,
+): UnityMutationExecutionPreflightResult {
+  const authorizationEvaluation = evaluateUnityMutationExecutionAuthorization({
+    preview_result: {
+      request_id: input.adapter_request_id,
+      request_type: "scene_object_creation_request",
+      final_execution_required: true,
+      final_execution_authorized: false,
+      executed: false,
+    },
+    authorization: input.authorization,
+    evaluated_at: input.evaluated_at ?? input.requested_at,
+  });
+
+  const baseResult = buildUnityMutationExecutionPreflightResult(input, authorizationEvaluation);
+  const preflightPackages = createUnityMutationExecutionPreflightPackages(input, baseResult);
+
+  return {
+    ...baseResult,
+    review_package: preflightPackages.reviewPackage,
+    delivery_package: preflightPackages.deliveryPackage,
   };
 }

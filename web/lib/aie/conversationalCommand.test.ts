@@ -57,3 +57,15 @@ test("Unity integration requests thread Unity planning packet metadata into the 
   assert.equal(result.response.proposal?.safe_to_execute, false);
   assert.equal(result.response.proposal?.production_pipeline_plan?.unity_validation_execution_result, null);
 });
+
+test("chat remains receptionist-only for Unity mutation requests", () => {
+  const result = processConversationalCommand({
+    rawRequest: "spawn a new checkpoint anchor directly into the EnemyAIDemo Unity scene right now",
+    projectName: "OpenClaw Unity production project",
+    repoName: "AI-E",
+  }, "operator-chat-session", "2026-04-30T19:05:00.000Z");
+
+  assert.ok(result.response.proposal);
+  assert.equal(result.response.proposal?.safe_to_execute, false);
+  assert.match(result.response.assistant_message, /operator approval is still required|needs operator review/i);
+});
