@@ -291,6 +291,7 @@ Current Layer 15 status:
 - first mutation domain: scene object creation preview
 - planning packet classification for `scene_object_creation_request`: implemented
 - dry-run mutation preview adapter foundation: implemented
+- operator-visible review and delivery rendering for Unity mutation preview: implemented
 - required gates modeled: production planning packet, review approval, operator approval, dry-run preview, and explicit final execute gate
 - mutation-ready: no
 - playtest-ready: no
@@ -298,6 +299,7 @@ Current Layer 15 status:
 Current Layer 15 boundary:
 
 - the new preview path returns deterministic dry-run metadata only
+- the operator UI renders the preview through existing review and delivery package surfaces with explicit `DRY RUN ONLY` and `NOT EXECUTED` labeling
 - the preview adapter refuses missing review approval, missing operator approval, non-mutation packets, and requests without `dry_run: true`
 - no scene write, GameObject creation, prefab mutation, or Unity-side execute gate exists yet
 - chat remains advisory only with `safe_to_execute: false` and cannot invoke any mutation path directly

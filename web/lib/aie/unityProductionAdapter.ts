@@ -100,6 +100,8 @@ export type UnitySceneObjectCreationPreviewResult = {
   required_approval_gates: string[];
   recommended_next_operator_action: string;
   artifact_label: "unity_scene_object_creation_preview";
+  review_package: AutonomousReviewPackage | null;
+  delivery_package: AutonomousDeliveryPackage | null;
   mutating: false;
 };
 
@@ -162,7 +164,90 @@ function buildSceneObjectCreationPreviewResult(
     required_approval_gates: [...input.planning_packet.required_approval_gates],
     recommended_next_operator_action: recommendedNextOperatorAction,
     artifact_label: "unity_scene_object_creation_preview",
+    review_package: null,
+    delivery_package: null,
     mutating: false,
+  };
+}
+
+function formatVector3(vector: { x: number; y: number; z: number }): string {
+  return `${vector.x}, ${vector.y}, ${vector.z}`;
+}
+
+function createUnitySceneObjectCreationPreviewPackages(
+  input: UnitySceneObjectCreationPreviewInput,
+  result: UnitySceneObjectCreationPreviewResult,
+): {
+  reviewPackage: AutonomousReviewPackage;
+  deliveryPackage: AutonomousDeliveryPackage;
+} {
+  const packageSuffix = input.adapter_request_id;
+  const intendedComponents = result.intended_components.length > 0 ? result.intended_components.join(", ") : "none";
+  const summary = `DRY RUN ONLY: Unity scene object creation preview for ${result.requested_object_name} in ${result.target_scene}. NOT EXECUTED.`;
+  const proofResults = [
+    `Execution kind: ${result.execution_kind}`,
+    `Requested object name: ${result.requested_object_name}`,
+    `Target scene: ${result.target_scene}`,
+    `Intended components: ${intendedComponents}`,
+    `Intended transform position: ${formatVector3(result.intended_transform.position)}`,
+    `Intended transform rotation: ${formatVector3(result.intended_transform.rotation_euler)}`,
+    `Intended transform scale: ${formatVector3(result.intended_transform.scale)}`,
+    `Risk level: ${result.risk_level}`,
+    `Dry run: ${String(result.dry_run)}`,
+    `Executed: ${String(result.executed)}`,
+    ...result.required_approval_gates.map((gate) => `Required approval gate: ${gate}`),
+    `Recommended next operator action: ${result.recommended_next_operator_action}`,
+    ...(result.blocked_reason ? [`Blocked reason: ${result.blocked_reason}`] : []),
+  ];
+
+  const reviewPackage = createAutonomousReviewPackage({
+    package_id: `unity-mutation-review-${packageSuffix}`,
+    work_item_id: `unity-mutation-preview-${packageSuffix}`,
+    chain_id: `unity-mutation-preview-chain-${packageSuffix}`,
+    status: result.execution_kind === "dry_run_preview" ? "approved" : "pending",
+    summary,
+    files_changed: [],
+    tests_run: ["unity scene object creation dry-run preview"],
+    proof_results: proofResults,
+    risks: [
+      `Risk level: ${result.risk_level}`,
+      "DRY RUN ONLY",
+      "NOT EXECUTED",
+      "No Unity scene mutation path enabled.",
+    ],
+    recommended_decision: "approve",
+    rollback_notes: "Dry-run mutation preview only; no rollback required.",
+    operator_actions: ["approve", "archive"],
+  });
+
+  const deliveryPackage = createAutonomousDeliveryPackage({
+    delivery_package_id: `unity-mutation-delivery-${packageSuffix}`,
+    review_package_id: reviewPackage.package_id,
+    work_item_id: reviewPackage.work_item_id,
+    chain_id: reviewPackage.chain_id,
+    branch_name: "",
+    commit_plan: [
+      "Keep this Unity mutation preview attached to the reviewed delivery lane.",
+      "DRY RUN ONLY: do not create, spawn, or write any Unity scene object from this package.",
+      "Require the explicit final execute gate before any future mutation adapter is allowed.",
+    ],
+    files_changed: [],
+    validation_results: proofResults,
+    proof_results: [result.execution_kind, "DRY RUN ONLY", "NOT EXECUTED"],
+    risk_summary: `Dry-run Unity mutation preview only. Risk level ${result.risk_level}. No mutation path enabled.`,
+    rollback_plan: "Discard the dry-run mutation preview package if the operator rejects it.",
+    release_notes: summary,
+    recommended_pr_title: "",
+    recommended_pr_body: `Unity mutation preview handoff\n\nSummary: ${summary}\n\nNext operator action: ${result.recommended_next_operator_action}`,
+    operator_decision: null,
+    status: "awaiting_operator_approval",
+    created_at: input.requested_at,
+    updated_at: input.requested_at,
+  });
+
+  return {
+    reviewPackage,
+    deliveryPackage,
   };
 }
 
@@ -498,6 +583,7 @@ export async function executeReviewedUnityValidation(
 export function previewUnitySceneObjectCreation(
   input: UnitySceneObjectCreationPreviewInput,
 ): UnitySceneObjectCreationPreviewResult {
+  const baseResult = (() => {
   if (!isSceneObjectCreationOnlyPacket(input.planning_packet)) {
     return buildSceneObjectCreationPreviewResult(
       input,
@@ -535,4 +621,13 @@ export function previewUnitySceneObjectCreation(
     null,
     "Review the dry-run preview, then require an explicit final execute gate before any future Unity mutation path is allowed.",
   );
+  })();
+
+  const previewPackages = createUnitySceneObjectCreationPreviewPackages(input, baseResult);
+
+  return {
+    ...baseResult,
+    review_package: previewPackages.reviewPackage,
+    delivery_package: previewPackages.deliveryPackage,
+  };
 }

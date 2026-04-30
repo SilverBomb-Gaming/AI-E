@@ -142,3 +142,61 @@ test("review package evidence supports adapter preview and dashboard demo state 
   assert.ok(state.review_packages.some((item) => extractUnityValidationEvidenceFromReviewPackage(item) !== null));
   assert.ok(state.delivery_packages.some((item) => extractUnityValidationEvidenceFromDeliveryPackage(item) !== null));
 });
+
+test("mutation preview evidence renders dry-run-only operator details without execution controls", () => {
+  const reviewPackage = createAutonomousReviewPackage({
+    package_id: "unity-mutation-review-1",
+    work_item_id: "unity-mutation-preview-1",
+    chain_id: "unity-mutation-preview-chain-1",
+    status: "approved",
+    summary: "DRY RUN ONLY: Unity scene object creation preview for CheckpointAnchor in EnemyAIDemo. NOT EXECUTED.",
+    files_changed: [],
+    tests_run: ["unity scene object creation dry-run preview"],
+    proof_results: [
+      "Execution kind: dry_run_preview",
+      "Requested object name: CheckpointAnchor",
+      "Target scene: EnemyAIDemo",
+      "Intended components: Transform, BoxCollider",
+      "Intended transform position: 4, 1, 0",
+      "Intended transform rotation: 0, 0, 0",
+      "Intended transform scale: 1, 1, 1",
+      "Risk level: medium",
+      "Dry run: true",
+      "Executed: false",
+      "Required approval gate: operator planning approval",
+      "Required approval gate: review package approval",
+      "Required approval gate: operator approval",
+      "Required approval gate: dry-run preview approval",
+      "Required approval gate: explicit final execute gate",
+      "Recommended next operator action: Keep the final execute gate disabled until a future reviewed mutation path exists.",
+    ],
+    risks: ["DRY RUN ONLY", "NOT EXECUTED", "No Unity scene mutation path enabled."],
+    recommended_decision: "approve",
+    rollback_notes: "Dry-run mutation preview only; no rollback required.",
+    operator_actions: ["approve", "archive"],
+  });
+
+  const evidence = extractUnityValidationEvidenceFromReviewPackage(reviewPackage);
+
+  assert.ok(evidence);
+  assert.equal(evidence.kind, "scene_object_creation_preview");
+  assert.equal(evidence.requestedObjectName, "CheckpointAnchor");
+  assert.equal(evidence.targetScene, "EnemyAIDemo");
+  assert.deepEqual(evidence.intendedComponents, ["Transform", "BoxCollider"]);
+  assert.equal(evidence.riskLevel, "medium");
+  assert.equal(evidence.dryRun, true);
+  assert.equal(evidence.executed, false);
+  assert.ok(evidence.requiredApprovalGates.includes("explicit final execute gate"));
+
+  const markup = renderToStaticMarkup(createElement(UnityValidationEvidencePanel, { evidence }));
+  assert.match(markup, /Scene Object Creation Preview/);
+  assert.match(markup, /DRY RUN ONLY/);
+  assert.match(markup, /NOT EXECUTED/);
+  assert.match(markup, /Requested object name: CheckpointAnchor/);
+  assert.match(markup, /Target scene: EnemyAIDemo/);
+  assert.match(markup, /Intended components: Transform, BoxCollider/);
+  assert.match(markup, /Dry run: true/);
+  assert.match(markup, /Executed: false/);
+  assert.doesNotMatch(markup, /<button/i);
+  assert.doesNotMatch(markup, /disabled=/i);
+});

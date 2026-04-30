@@ -2,7 +2,7 @@ import React from "react";
 
 import type { AutonomousDeliveryPackage, AutonomousReviewPackage } from "./autonomousWorkPlanning";
 
-export type UnityValidationEvidenceKind = "adapter_preview" | "real_bridge_unavailable" | "real_bridge_read_only";
+export type UnityValidationEvidenceKind = "adapter_preview" | "real_bridge_unavailable" | "real_bridge_read_only" | "scene_object_creation_preview";
 
 export type UnityValidationEvidence = {
   kind: UnityValidationEvidenceKind;
@@ -15,6 +15,16 @@ export type UnityValidationEvidence = {
   evidenceTimestamp: string | null;
   recommendedNextOperatorAction: string | null;
   demoPreview: boolean;
+  requestedObjectName: string | null;
+  targetScene: string | null;
+  intendedComponents: string[];
+  intendedTransformPosition: string | null;
+  intendedTransformRotation: string | null;
+  intendedTransformScale: string | null;
+  riskLevel: string | null;
+  requiredApprovalGates: string[];
+  dryRun: boolean | null;
+  executed: boolean | null;
 };
 
 function parseLabeledValue(lines: string[], label: string): string | null {
@@ -34,6 +44,30 @@ function parseCount(value: string | null): number | null {
 
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function parseBoolean(value: string | null): boolean | null {
+  if (!value) {
+    return null;
+  }
+
+  if (/^true$/i.test(value)) {
+    return true;
+  }
+
+  if (/^false$/i.test(value)) {
+    return false;
+  }
+
+  return null;
+}
+
+function parseList(value: string | null): string[] {
+  if (!value) {
+    return [];
+  }
+
+  return value.split(/,\s*/).map((item) => item.trim()).filter(Boolean);
 }
 
 function parseSummary(summary: string): Partial<UnityValidationEvidence> {
@@ -67,6 +101,19 @@ function parseSummary(summary: string): Partial<UnityValidationEvidence> {
     };
   }
 
+  const mutationPreviewMatch = summary.match(/DRY RUN ONLY: Unity scene object creation preview for (.+?) in (.+?)\. NOT EXECUTED\./i);
+  if (mutationPreviewMatch) {
+    return {
+      kind: "scene_object_creation_preview",
+      bridgeStatus: "dry_run_only",
+      sceneValidationStatus: "not_checked",
+      requestedObjectName: mutationPreviewMatch[1]?.trim() ?? null,
+      targetScene: mutationPreviewMatch[2]?.trim() ?? null,
+      dryRun: true,
+      executed: false,
+    };
+  }
+
   return {};
 }
 
@@ -74,6 +121,10 @@ function inferKind(lines: string[], summary: string): UnityValidationEvidenceKin
   const executionKind = parseLabeledValue(lines, "Execution kind");
   if (executionKind === "adapter_preview" || executionKind === "real_bridge_unavailable" || executionKind === "real_bridge_read_only") {
     return executionKind;
+  }
+
+  if (executionKind === "dry_run_preview" || executionKind === "preview_blocked") {
+    return "scene_object_creation_preview";
   }
 
   if (/unity read-only bridge -> unavailable/i.test(lines.join("\n"))) {
@@ -92,8 +143,12 @@ function isUnityEvidencePackage(workItemId: string, lines: string[], summary: st
     return true;
   }
 
+  if (/unity-mutation-preview/i.test(workItemId)) {
+    return true;
+  }
+
   const text = [summary, ...lines].join("\n");
-  return /unity read-only validation probe|unity validation preview|bridge status:/i.test(text);
+  return /unity read-only validation probe|unity validation preview|unity scene object creation preview|bridge status:|requested object name:|dry run:/i.test(text);
 }
 
 function buildEvidence(workItemId: string, summary: string, lines: string[]): UnityValidationEvidence | null {
@@ -119,6 +174,16 @@ function buildEvidence(workItemId: string, summary: string, lines: string[]): Un
   const evidenceTimestamp = parseLabeledValue(lines, "Evidence timestamp");
   const recommendedNextOperatorAction = parseLabeledValue(lines, "Recommended next operator action")
     ?? (summary.match(/Next operator action:\s*(.+)$/im)?.[1]?.trim() ?? null);
+  const requestedObjectName = parseLabeledValue(lines, "Requested object name")
+    ?? summaryValues.requestedObjectName
+    ?? null;
+  const targetScene = parseLabeledValue(lines, "Target scene")
+    ?? summaryValues.targetScene
+    ?? null;
+  const requiredApprovalGates = lines
+    .filter((line) => line.startsWith("Required approval gate:"))
+    .map((line) => line.slice("Required approval gate:".length).trim())
+    .filter(Boolean);
 
   return {
     kind,
@@ -131,6 +196,16 @@ function buildEvidence(workItemId: string, summary: string, lines: string[]): Un
     evidenceTimestamp,
     recommendedNextOperatorAction,
     demoPreview: /demo preview/i.test([summary, ...lines].join("\n")),
+    requestedObjectName,
+    targetScene,
+    intendedComponents: parseList(parseLabeledValue(lines, "Intended components")),
+    intendedTransformPosition: parseLabeledValue(lines, "Intended transform position"),
+    intendedTransformRotation: parseLabeledValue(lines, "Intended transform rotation"),
+    intendedTransformScale: parseLabeledValue(lines, "Intended transform scale"),
+    riskLevel: parseLabeledValue(lines, "Risk level"),
+    requiredApprovalGates,
+    dryRun: parseBoolean(parseLabeledValue(lines, "Dry run")) ?? summaryValues.dryRun ?? null,
+    executed: parseBoolean(parseLabeledValue(lines, "Executed")) ?? summaryValues.executed ?? null,
   };
 }
 
@@ -148,6 +223,8 @@ export function extractUnityValidationEvidenceFromDeliveryPackage(item: Autonomo
 
 function kindLabel(kind: UnityValidationEvidenceKind): string {
   switch (kind) {
+    case "scene_object_creation_preview":
+      return "Scene Object Creation Preview";
     case "adapter_preview":
       return "Adapter Preview";
     case "real_bridge_unavailable":
@@ -175,6 +252,16 @@ export function UnityValidationEvidencePanel({ evidence }: { evidence: UnityVali
             Demo preview
           </span>
         ) : null}
+        {evidence.kind === "scene_object_creation_preview" ? (
+          <>
+            <span className="inline-flex rounded-full border border-coral/20 bg-coral/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-ember">
+              DRY RUN ONLY
+            </span>
+            <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-700">
+              NOT EXECUTED
+            </span>
+          </>
+        ) : null}
       </div>
       <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
         <p className="text-xs leading-6 text-slate">Bridge status: {evidence.bridgeStatus}</p>
@@ -184,6 +271,25 @@ export function UnityValidationEvidencePanel({ evidence }: { evidence: UnityVali
         <p className="text-xs leading-6 text-slate">Console errors: {formatMetric(evidence.consoleErrorCount)}</p>
         <p className="text-xs leading-6 text-slate">Object count: {formatMetric(evidence.objectCount)}</p>
       </div>
+      {evidence.kind === "scene_object_creation_preview" ? (
+        <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+          <p className="text-xs leading-6 text-slate">Requested object name: {evidence.requestedObjectName ?? "none"}</p>
+          <p className="text-xs leading-6 text-slate">Target scene: {evidence.targetScene ?? "none"}</p>
+          <p className="text-xs leading-6 text-slate">Intended components: {evidence.intendedComponents.length > 0 ? evidence.intendedComponents.join(", ") : "none"}</p>
+          <p className="text-xs leading-6 text-slate">Intended transform position: {evidence.intendedTransformPosition ?? "none"}</p>
+          <p className="text-xs leading-6 text-slate">Intended transform rotation: {evidence.intendedTransformRotation ?? "none"}</p>
+          <p className="text-xs leading-6 text-slate">Intended transform scale: {evidence.intendedTransformScale ?? "none"}</p>
+          <p className="text-xs leading-6 text-slate">Risk level: {evidence.riskLevel ?? "unknown"}</p>
+          <p className="text-xs leading-6 text-slate">Dry run: {String(evidence.dryRun ?? false)}</p>
+          <p className="text-xs leading-6 text-slate">Executed: {String(evidence.executed ?? false)}</p>
+        </div>
+      ) : null}
+      {evidence.kind === "scene_object_creation_preview" ? (
+        <div className="mt-2">
+          <p className="text-xs uppercase tracking-[0.18em] text-slate">Required approval gates</p>
+          <p className="mt-1 text-xs leading-6 text-slate">{evidence.requiredApprovalGates.length > 0 ? evidence.requiredApprovalGates.join(" | ") : "none"}</p>
+        </div>
+      ) : null}
       {evidence.evidenceTimestamp ? <p className="mt-2 text-xs leading-6 text-slate">Evidence timestamp: {evidence.evidenceTimestamp}</p> : null}
       {evidence.recommendedNextOperatorAction ? (
         <p className="mt-1 text-xs leading-6 text-slate">Recommended next operator action: {evidence.recommendedNextOperatorAction}</p>

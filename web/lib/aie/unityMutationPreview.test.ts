@@ -137,5 +137,9 @@ test("scene object creation preview stays deterministic and non-mutating", () =>
   assert.deepEqual(first.intended_transform.position, { x: 4, y: 1, z: 0 });
   assert.equal(first.risk_level, "medium");
   assert.ok(first.required_approval_gates.includes("explicit final execute gate"));
+  assert.ok(first.review_package);
+  assert.ok(first.delivery_package);
+  assert.match(first.review_package?.summary ?? "", /DRY RUN ONLY/i);
+  assert.match(first.delivery_package?.release_notes ?? "", /NOT EXECUTED/i);
   assert.equal(first.mutating, false);
 });
