@@ -55,3 +55,19 @@ test("chat summary stays advisory", () => {
   const summary = summarizeChatSession(session);
   assert.match(summary, /does not execute runtime work/i);
 });
+
+test("production pipeline chat requests capture planning-only proposal metadata", () => {
+  const session = applyChatMessageToSession({
+    session: createInitialConversationalSession("2026-04-30T12:00:00.000Z"),
+    messageText: "prepare an art and Unity integration pipeline plan for HUD prefab updates",
+    createdAt: "2026-04-30T12:01:00.000Z",
+    requestContext: {
+      projectName: "OpenClaw Unity production project",
+      repoName: "AI-E",
+    },
+  });
+
+  assert.ok(session.latest_proposal?.production_pipeline_plan);
+  assert.equal(session.latest_proposal?.production_pipeline_plan?.mutation_policy, "planning_only");
+  assert.deepEqual(session.latest_proposal?.production_pipeline_plan?.domains, ["assets", "art", "unity-integration"]);
+});

@@ -5,6 +5,7 @@ import {
   type OperatorDashboardChatOption,
   type OperatorDashboardChatProposal,
 } from "./conversationalSessionState";
+import { deriveProductionPipelinePlan } from "./productionPipelineFoundation";
 
 export type ConversationalResponse = {
   assistant_message: string;
@@ -18,6 +19,8 @@ export function buildConversationalResponse(
   createdAt: string,
 ): ConversationalResponse {
   const { readiness, route } = decision;
+  const requestText = readiness.planner_ready_request?.rawRequest ?? readiness.interpreted_intent;
+  const productionPipelinePlan = deriveProductionPipelinePlan(requestText, route);
   const proposal = readiness.planner_ready_request
     ? {
       proposal_id: createChatProposalId(sessionId, createdAt, route),
@@ -33,6 +36,7 @@ export function buildConversationalResponse(
       planner_ready_request: readiness.planner_ready_request.rawRequest,
       requires_operator_review: route !== "plan",
       safe_to_execute: false,
+      production_pipeline_plan: productionPipelinePlan,
     }
     : null;
 
@@ -60,9 +64,9 @@ export function buildConversationalResponse(
   ];
 
   const assistantMessage = route === "plan"
-    ? `AI-E can route this toward planning: ${readiness.planner_ready_request?.rawRequest ?? readiness.interpreted_intent}. Operator approval is still required before any planning or execution step.`
+    ? `AI-E can route this toward planning: ${requestText}. ${productionPipelinePlan ? `Production domains: ${productionPipelinePlan.domains.join(", ")}. ` : ""}Operator approval is still required before any planning or execution step.`
     : route === "review"
-      ? `AI-E has a bounded interpretation, but it still needs operator review: ${readiness.explanation}`
+      ? `AI-E has a bounded interpretation, but it still needs operator review: ${readiness.explanation}${productionPipelinePlan ? ` Production pipeline planning stays advisory for ${productionPipelinePlan.domains.join(", ")}.` : ""}`
       : route === "clarify"
         ? `AI-E needs one narrower detail before routing this safely: ${readiness.refinement_result.follow_up_questions[0] ?? readiness.explanation}`
         : `AI-E is blocking this request: ${readiness.explanation}`;

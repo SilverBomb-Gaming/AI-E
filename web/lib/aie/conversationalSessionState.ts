@@ -1,3 +1,5 @@
+import type { ProductionPipelinePlan } from "./productionPipelineFoundation";
+
 export type ConversationalCommandRoute = "clarify" | "plan" | "review" | "block";
 
 export type OperatorDashboardChatMessageRole = "operator" | "ai-e" | "system";
@@ -27,6 +29,7 @@ export type OperatorDashboardChatProposal = {
   planner_ready_request: string | null;
   requires_operator_review: boolean;
   safe_to_execute: false;
+  production_pipeline_plan: ProductionPipelinePlan | null;
 };
 
 export type OperatorDashboardConversationalSession = {

@@ -218,6 +218,32 @@ Important safety boundary:
 - conversational output remains advisory until the operator explicitly moves work into the existing strategy, planning, execution, review, delivery, or studio-control pipeline
 - all live actions remain bounded to chat submission, option selection, summary generation, and session archival through the existing safe runtime bridge and runtime mutation executor
 
+## Layer 14 / Production Pipeline Expansion Foundation
+
+Layer 14 starts as a planning and architecture pass only. This layer expands AI-E toward production-support capability for game development without weakening the Layer 13 conversational guardrails or introducing direct execution from chat.
+
+Layer 14 roadmap:
+
+- phase 1: planning-only contracts for production pipeline requests covering assets, art, audio, and Unity integration
+- phase 2: bounded planning packets and review artifacts for those domains
+- phase 3: execution adapters only after reviewable contracts, validation rules, and delivery gates exist
+- phase 4: studio-control observability for production pipeline throughput, blockers, and operator attention
+
+Production pipeline capability map:
+
+- assets: intake, import validation, packaging, naming, and delivery planning for production assets
+- art: briefs, review packets, style guardrails, and handoff checkpoints for concept, UI, VFX, and gameplay art
+- audio: request packets, mix review structure, implementation checklists, and engine hookup review for SFX, music, voice, and ambience
+- Unity integration: bounded planning for scenes, prefabs, ScriptableObjects, editor-side setup, and runtime validation handoff
+
+Safe interface design for future production actions:
+
+- production pipeline requests are represented as planning-only envelopes with explicit domain, objective, next safe stage, review focus, and future interface hooks
+- mutation policy remains `planning_only` until a later layer adds reviewed execution adapters
+- execution path remains explicit: `Strategy -> Planning -> Execution -> Review -> Delivery -> Studio Control`
+- conversational requests may propose production pipeline planning metadata, but they do not execute imports, edits, scene changes, package updates, or engine mutations directly
+- any future production action must still flow through the existing strategy, planning, execution, review, delivery, and studio-control boundaries
+
 ## Safe Runtime Action Bridge
 
 AI-E can now translate supported live operator actions into safe runtime intents.

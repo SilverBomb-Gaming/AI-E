@@ -107,4 +107,38 @@ test("runtime mutation persists conversational command state without starting ex
   assert.equal(result.status, "mutation_applied");
   assert.match(result.reason, /bounded advisory chat session/i);
   assert.match(result.updated_runtime_state.continuous_loop?.tick_history.slice(-1)[0]?.mutation_applied ?? "", /conversational command state/i);
+  assert.equal(result.execution_loop?.status, "loop_not_triggered");
+  assert.equal(result.continuous_runtime_loop, null);
+});
+
+test("runtime mutation keeps production pipeline chat intake in planning-only mode", () => {
+  const store = createRuntimeStateStore({ stale_after_ms: 10 * 60 * 1000 });
+  const service = createStoppedService();
+  const record = saveRuntimeState(store, service, "operator_away_safe");
+  const persisted = loadRuntimeState(store, record.runtime_id);
+  if (!persisted) {
+    throw new Error("Expected persisted runtime record.");
+  }
+
+  persisted.operator_dashboard_state = createOperatorDashboardDemoState();
+  persisted.persisted_at = "2026-04-26T12:00:00.000Z";
+
+  const result = executeRuntimeMutation({
+    action: {
+      type: "submit_chat_message",
+      message_text: "plan the Unity art and audio production pipeline for OpenClaw room ambience",
+    },
+    runtime_intent: "submit_chat_message",
+    current_runtime_state: persisted,
+    current_dashboard_state: persisted.operator_dashboard_state,
+    runtime_state_store: store,
+    runtime_id: persisted.runtime_id,
+    timestamp: "2026-04-26T12:01:00.000Z",
+    start_continuous_loop: true,
+  });
+
+  assert.equal(result.status, "mutation_applied");
+  assert.equal(result.execution_loop?.status, "loop_not_triggered");
+  assert.equal(result.continuous_runtime_loop, null);
+  assert.equal(result.updated_runtime_state.operator_dashboard_state?.conversational_session?.latest_proposal?.production_pipeline_plan?.mutation_policy, "planning_only");
 });
