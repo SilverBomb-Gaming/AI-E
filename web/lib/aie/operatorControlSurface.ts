@@ -45,8 +45,13 @@ import {
   type SupervisedAutonomyApprovalPolicy,
   type SupervisedAutonomyRecoveryPolicy,
 } from "./supervisedAutonomySession";
+import {
+  applyChatMessageToSession,
+  applyChatOptionSelection,
+  summarizeChatSession,
+} from "./conversationalPipelineAdapter";
 
-export type OperatorControlActionType = "approve_goal" | "pause_goal" | "resume_goal" | "retry_goal" | "pause_all_sessions" | "resume_safe_sessions" | "prioritize_review_queue" | "prioritize_delivery_queue" | "acknowledge_studio_risk" | "request_studio_summary" | "approve_policy_recommendation" | "reject_policy_recommendation" | "defer_policy_recommendation" | "request_meta_summary" | "acknowledge_pattern" | "approve_strategy_goal" | "reject_strategy_goal" | "defer_strategy_goal" | "activate_strategy_goal" | "pause_strategy_goal" | "archive_strategy_goal" | "decompose_strategy_goal" | "request_strategy_summary" | "pause_autonomous_session" | "resume_autonomous_session" | "reprioritize_autonomous_session" | "merge_autonomous_sessions" | "terminate_autonomous_session" | "start_supervised_session" | "pause_session" | "resume_session" | "stop_session" | "request_operator_review" | "approve_review_item" | "reject_review_item" | "defer_review_item" | "approve_work_item" | "reject_work_item" | "defer_work_item" | "approve_review_package" | "reject_review_package" | "approve_delivery_package" | "reject_delivery_package" | "request_delivery_changes" | "archive_delivery_package";
+export type OperatorControlActionType = "approve_goal" | "pause_goal" | "resume_goal" | "retry_goal" | "pause_all_sessions" | "resume_safe_sessions" | "prioritize_review_queue" | "prioritize_delivery_queue" | "acknowledge_studio_risk" | "request_studio_summary" | "approve_policy_recommendation" | "reject_policy_recommendation" | "defer_policy_recommendation" | "request_meta_summary" | "acknowledge_pattern" | "approve_strategy_goal" | "reject_strategy_goal" | "defer_strategy_goal" | "activate_strategy_goal" | "pause_strategy_goal" | "archive_strategy_goal" | "decompose_strategy_goal" | "request_strategy_summary" | "submit_chat_message" | "select_chat_option" | "archive_chat_session" | "request_chat_summary" | "pause_autonomous_session" | "resume_autonomous_session" | "reprioritize_autonomous_session" | "merge_autonomous_sessions" | "terminate_autonomous_session" | "start_supervised_session" | "pause_session" | "resume_session" | "stop_session" | "request_operator_review" | "approve_review_item" | "reject_review_item" | "defer_review_item" | "approve_work_item" | "reject_work_item" | "defer_work_item" | "approve_review_package" | "reject_review_package" | "approve_delivery_package" | "reject_delivery_package" | "request_delivery_changes" | "archive_delivery_package";
 
 export type SupervisedSessionControlInput = {
   max_duration_ms?: number;
@@ -72,6 +77,8 @@ export type SupervisedSessionControlInput = {
 export type OperatorControlAction = {
   type: OperatorControlActionType;
   goal_id?: string | null;
+  option_id?: string | null;
+  message_text?: string | null;
   session_id?: string | null;
   target_session_id?: string | null;
   session_priority?: AutonomousSessionPriority;
@@ -211,6 +218,19 @@ function cloneSupervisedSessionInput(input: SupervisedSessionControlInput | unde
     : undefined;
 }
 
+function cloneConversationalSession(state: OperatorDashboardState): OperatorDashboardState["conversational_session"] {
+  if (!state.conversational_session) {
+    return state.conversational_session;
+  }
+
+  return {
+    ...state.conversational_session,
+    messages: state.conversational_session.messages.map((message) => ({ ...message })),
+    pending_options: state.conversational_session.pending_options.map((option) => ({ ...option })),
+    latest_proposal: state.conversational_session.latest_proposal ? { ...state.conversational_session.latest_proposal } : null,
+  };
+}
+
 function cloneState(state: OperatorDashboardState): OperatorDashboardState {
   return {
     active_goal: state.active_goal ? cloneGoal(state.active_goal) : null,
@@ -332,6 +352,7 @@ function cloneState(state: OperatorDashboardState): OperatorDashboardState {
       suggested_decomposition: [...state.strategy_summary_package.suggested_decomposition],
       operator_decisions_needed: [...state.strategy_summary_package.operator_decisions_needed],
     } : state.strategy_summary_package,
+    conversational_session: cloneConversationalSession(state),
     supervised_session: state.supervised_session ? {
       ...state.supervised_session,
       agent_ids: [...state.supervised_session.agent_ids],
@@ -1625,6 +1646,132 @@ export function applyOperatorControlAction(state: OperatorDashboardState, action
         action,
         changed: true,
         message: "A fresh strategy summary package was generated from live operator state.",
+        state: nextState,
+      };
+    }
+
+    case "submit_chat_message": {
+      const messageText = String(action.message_text ?? "").trim();
+      if (!messageText) {
+        return {
+          action,
+          changed: false,
+          message: "A chat message is required before AI-E can classify a conversational request.",
+          state: nextState,
+        };
+      }
+
+      nextState.conversational_session = applyChatMessageToSession({
+        session: nextState.conversational_session,
+        messageText,
+        createdAt: nextTimestamp(nextState),
+        requestContext: {
+          repoName: "AI-E",
+          repoRoot: "web",
+          operatorContext: [
+            "Route only into bounded operator-safe proposals.",
+            "Do not execute work directly from chat.",
+          ],
+          knownConstraints: [
+            "The chat layer is a receptionist, not the CEO.",
+            "All meaningful work must remain operator-gated.",
+          ],
+        },
+      });
+      updateLastUpdated(nextState);
+      return {
+        action,
+        changed: true,
+        message: "The conversational request was classified into a bounded advisory chat session.",
+        state: nextState,
+      };
+    }
+
+    case "select_chat_option": {
+      const optionId = String(action.option_id ?? "").trim();
+      if (!nextState.conversational_session || !optionId) {
+        return {
+          action,
+          changed: false,
+          message: "A live chat option is required before AI-E can record that operator selection.",
+          state: nextState,
+        };
+      }
+
+      const updatedSession = applyChatOptionSelection(nextState.conversational_session, optionId, nextTimestamp(nextState));
+      if (!updatedSession) {
+        return {
+          action,
+          changed: false,
+          message: "The selected chat option is no longer available in the current conversational session.",
+          state: nextState,
+        };
+      }
+
+      nextState.conversational_session = updatedSession;
+      updateLastUpdated(nextState);
+      return {
+        action,
+        changed: true,
+        message: "The selected chat option was recorded without triggering execution.",
+        state: nextState,
+      };
+    }
+
+    case "request_chat_summary": {
+      if (!nextState.conversational_session || nextState.conversational_session.messages.length === 0) {
+        return {
+          action,
+          changed: false,
+          message: "No conversational session is available to summarize.",
+          state: nextState,
+        };
+      }
+
+      const createdAt = nextTimestamp(nextState);
+      const summary = summarizeChatSession(nextState.conversational_session);
+      nextState.conversational_session = {
+        ...nextState.conversational_session,
+        last_summary: summary,
+        messages: [...nextState.conversational_session.messages, {
+          message_id: `chat-summary-${nextState.conversational_session.session_id}-${createdAt.replace(/[^0-9]/g, "").slice(0, 14)}`,
+          role: "ai-e",
+          kind: "summary",
+          content: summary,
+          created_at: createdAt,
+        }],
+      };
+      updateLastUpdated(nextState);
+      return {
+        action,
+        changed: true,
+        message: "A bounded conversational summary was recorded for the current chat session.",
+        state: nextState,
+      };
+    }
+
+    case "archive_chat_session": {
+      if (!nextState.conversational_session || nextState.conversational_session.status === "archived") {
+        return {
+          action,
+          changed: false,
+          message: "No active conversational session is available to archive.",
+          state: nextState,
+        };
+      }
+
+      nextState.conversational_session = {
+        ...nextState.conversational_session,
+        status: "archived",
+        archived_at: nextTimestamp(nextState),
+        pending_options: [],
+        operator_notice: "This conversational session is archived. No direct execution was triggered.",
+      };
+      updateLastUpdated(nextState);
+      return {
+        action,
+        changed: true,
+        message: "The conversational session was archived without triggering work.",
         state: nextState,
       };
     }

@@ -87,6 +87,7 @@ import type {
   SupervisedAutonomyCheckpointRecord,
   SupervisedAutonomySessionRecord,
 } from "./supervisedAutonomySession";
+import type { OperatorDashboardConversationalSession } from "./conversationalSessionState";
 
 export type OperatorDashboardGoal = {
   goal_id: string;
@@ -337,6 +338,7 @@ export type OperatorDashboardState = {
   strategy_decision_history?: StrategyGoalDecisionRecord[];
   strategy_decompositions?: StrategyGoalDecompositionRecord[];
   strategy_summary_package?: StrategySummaryPackage | null;
+  conversational_session?: OperatorDashboardConversationalSession | null;
   supervised_session?: SupervisedAutonomySessionRecord | null;
   supervised_checkpoints?: SupervisedAutonomyCheckpointRecord[];
   last_updated_at: string;

@@ -28,7 +28,7 @@ export type ContinuousRuntimeProofSeedPayload = {
   store: RuntimeStateStore;
 };
 
-export type ContinuousRuntimeProofSeedMode = "continuous-runtime" | "supervised-autonomy" | "overnight-autonomy" | "autonomous-planning" | "delivery-pipeline" | "multi-session" | "studio-command-center" | "meta-intelligence" | "strategy-engine";
+export type ContinuousRuntimeProofSeedMode = "continuous-runtime" | "supervised-autonomy" | "overnight-autonomy" | "autonomous-planning" | "delivery-pipeline" | "multi-session" | "studio-command-center" | "meta-intelligence" | "strategy-engine" | "conversational-command";
 
 export type ContinuousRuntimeProofSeedOptions = {
   runtimeId?: string;
@@ -119,6 +119,7 @@ export function createContinuousRuntimeProofSeedPayload(options: ContinuousRunti
         || mode === "studio-command-center"
         || mode === "meta-intelligence"
         || mode === "strategy-engine"
+        || mode === "conversational-command"
         || mode === "delivery-pipeline"
         ? 250
         : 10_000,
@@ -129,6 +130,7 @@ export function createContinuousRuntimeProofSeedPayload(options: ContinuousRunti
         || mode === "studio-command-center"
         || mode === "meta-intelligence"
         || mode === "strategy-engine"
+        || mode === "conversational-command"
         || mode === "delivery-pipeline"
         ? 4
         : 1,
@@ -776,6 +778,98 @@ export function createContinuousRuntimeProofSeedPayload(options: ContinuousRunti
       strategy_decision_history: [],
       strategy_decompositions: [],
       strategy_summary_package: null,
+      last_updated_at: seededAt,
+    };
+    currentRecord.supervised_session = demoState.supervised_session ?? null;
+    currentRecord.supervised_checkpoints = demoState.supervised_checkpoints ?? [];
+  }
+
+  if (mode === "conversational-command") {
+    const seededAt = new Date(nowMs).toISOString();
+    const demoState = createOperatorDashboardDemoState();
+
+    currentRecord.last_status = "service_paused";
+    currentRecord.stop_reason = "operator_pause";
+    currentRecord.blockers = [];
+    currentRecord.continuous_loop.reason = "Continuous runtime loop is paused while the operator routes requests through the bounded conversational command layer.";
+    currentRecord.operator_dashboard_state = {
+      ...currentRecord.operator_dashboard_state,
+      active_goal: null,
+      queued_goals: demoState.queued_goals,
+      blocked_goals: demoState.blocked_goals,
+      completed_goals: demoState.completed_goals,
+      paused_goals: demoState.paused_goals,
+      dependency_blockers: demoState.dependency_blockers,
+      conflict_blockers: demoState.conflict_blockers,
+      recent_failures: demoState.recent_failures,
+      recovery_recommendations: demoState.recovery_recommendations,
+      approvals_required: [],
+      validation_issues: [],
+      runtime_status: {
+        status: "runtime_paused",
+        explanation: "The conversational command layer is paused for operator-routed intake and does not execute work directly.",
+      },
+      session_status: {
+        status: "session_paused",
+        explanation: "The bounded runtime is paused while AI-E classifies conversational requests into safe operator-facing proposals.",
+      },
+      queue_status: {
+        status: "queue_idle",
+        explanation: "Conversational routing stays advisory and does not trigger runtime execution automatically.",
+      },
+      scheduler_status: {
+        status: "scheduler_idle",
+        explanation: "The next safe operator action is to submit a chat message, review the proposed route, and request a bounded summary if needed.",
+      },
+      runtime_observability: {
+        ...currentRecord.operator_dashboard_state.runtime_observability,
+        current_tick: 0,
+        next_scheduled_action: "Submit a chat message, review the bounded proposal, optionally select a chat option, and request a persisted summary.",
+        latest_safety_gate_decision: "passed",
+      },
+      proposed_work_items: demoState.proposed_work_items,
+      scheduled_work_items: demoState.scheduled_work_items,
+      running_work_items: demoState.running_work_items,
+      review_packages: demoState.review_packages,
+      delivery_packages: demoState.delivery_packages,
+      planning_recommendations: demoState.planning_recommendations,
+      planning_policy_feedback: demoState.planning_policy_feedback ?? createAutonomousWorkItemPolicyFeedback(),
+      autonomous_sessions: demoState.autonomous_sessions ? {
+        ...demoState.autonomous_sessions,
+        sessions: demoState.autonomous_sessions.sessions.map((session, index) => ({
+          ...session,
+          status: index === 0 ? "paused" : "blocked",
+          blocked_by_conflict: index !== 0,
+          ready_on_dependency: false,
+        })),
+        runnable_session_ids: [],
+        ready_session_ids: [],
+        blocked_session_ids: demoState.autonomous_sessions.sessions.map((session) => session.session_id),
+        scheduler_status: {
+          status: "no_runnable_sessions",
+          explanation: "No autonomous session is runnable while the operator manages conversational command state.",
+        },
+        resource_status: {
+          status: "resource_idle",
+          explanation: "The conversational command proof keeps all autonomous execution paused or blocked.",
+        },
+      } : undefined,
+      supervised_session: demoState.supervised_session,
+      supervised_checkpoints: demoState.supervised_checkpoints,
+      studio_risk_acknowledgements: demoState.studio_risk_acknowledgements,
+      studio_summary_package: demoState.studio_summary_package,
+      meta_intelligence: demoState.meta_intelligence,
+      meta_detected_patterns: demoState.meta_detected_patterns,
+      meta_policy_recommendations: demoState.meta_policy_recommendations,
+      meta_policy_state: demoState.meta_policy_state,
+      meta_operator_decision_history: demoState.meta_operator_decision_history,
+      meta_summary_package: demoState.meta_summary_package,
+      strategy_goals: demoState.strategy_goals,
+      strategy_portfolio_scores: demoState.strategy_portfolio_scores,
+      strategy_decision_history: demoState.strategy_decision_history,
+      strategy_decompositions: demoState.strategy_decompositions,
+      strategy_summary_package: demoState.strategy_summary_package,
+      conversational_session: demoState.conversational_session,
       last_updated_at: seededAt,
     };
     currentRecord.supervised_session = demoState.supervised_session ?? null;

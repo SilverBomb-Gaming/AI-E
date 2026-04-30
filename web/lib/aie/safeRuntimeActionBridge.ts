@@ -35,6 +35,10 @@ export type SafeRuntimeIntent =
   | "archive_strategy_goal"
   | "decompose_strategy_goal"
   | "request_strategy_summary"
+  | "submit_chat_message"
+  | "select_chat_option"
+  | "archive_chat_session"
+  | "request_chat_summary"
   | "pause_autonomous_session"
   | "resume_autonomous_session"
   | "reprioritize_autonomous_session"
@@ -112,6 +116,7 @@ function createAuditEvent(
   const actionTargetId = action.goal_id
     ?? action.recommendation_id
     ?? action.pattern_id
+    ?? action.option_id
     ?? action.session_id
     ?? action.target_session_id
     ?? action.work_item_id
@@ -148,6 +153,7 @@ function buildResult(
   const actionTargetId = action.goal_id
     ?? action.recommendation_id
     ?? action.pattern_id
+    ?? action.option_id
     ?? action.session_id
     ?? action.target_session_id
     ?? action.work_item_id
@@ -218,6 +224,10 @@ function resolveStrategyGoal(state: OperatorDashboardState, goalId: string | nul
   }
 
   return state.strategy_goals?.find((goal) => goal.strategy_goal_id === goalId) ?? null;
+}
+
+function resolveConversationalSession(state: OperatorDashboardState) {
+  return state.conversational_session ?? null;
 }
 
 export function createSafeRuntimeActionBridgeResult(
@@ -518,6 +528,42 @@ export function createSafeRuntimeActionBridgeResult(
 
     case "request_strategy_summary": {
       return buildResult(source, action, "action_ready", "request_strategy_summary", "a strategy portfolio summary package may be generated from the current live runtime state", providerResult.warnings, createdAt);
+    }
+
+    case "submit_chat_message": {
+      if (!normalizeText(action.message_text)) {
+        return buildResult(source, action, "action_rejected", "no_op", "a non-empty chat message is required before the conversational layer can classify it", providerResult.warnings, createdAt);
+      }
+
+      return buildResult(source, action, "action_ready", "submit_chat_message", "a chat request may be classified into a bounded advisory proposal without triggering execution", providerResult.warnings, createdAt);
+    }
+
+    case "select_chat_option": {
+      const session = resolveConversationalSession(state);
+      const optionId = normalizeText(action.option_id);
+      if (!session || !optionId || !session.pending_options.some((option) => option.option_id === optionId)) {
+        return buildResult(source, action, "action_rejected", "no_op", "the selected chat option is not available in the current conversational session", providerResult.warnings, createdAt);
+      }
+
+      return buildResult(source, action, "action_ready", "select_chat_option", "a chat option may be recorded as an operator choice without triggering execution", providerResult.warnings, createdAt);
+    }
+
+    case "archive_chat_session": {
+      const session = resolveConversationalSession(state);
+      if (!session || session.status === "archived") {
+        return buildResult(source, action, "action_rejected", "no_op", "no active conversational session is available to archive", providerResult.warnings, createdAt);
+      }
+
+      return buildResult(source, action, "action_ready", "archive_chat_session", "the operator may archive the current conversational session without triggering execution", providerResult.warnings, createdAt);
+    }
+
+    case "request_chat_summary": {
+      const session = resolveConversationalSession(state);
+      if (!session || session.messages.length === 0) {
+        return buildResult(source, action, "action_rejected", "no_op", "no conversational session is available to summarize", providerResult.warnings, createdAt);
+      }
+
+      return buildResult(source, action, "action_ready", "request_chat_summary", "a bounded chat summary may be generated from the current conversational session", providerResult.warnings, createdAt);
     }
 
     case "pause_autonomous_session":

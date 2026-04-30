@@ -25,6 +25,7 @@
     "proof:studio-command-center:safe": "node --import tsx scripts/launchStudioCommandCenterProof.ts",
     "proof:meta-intelligence:safe": "node --import tsx scripts/launchMetaIntelligenceProof.ts",
     "proof:strategy-engine:safe": "node --import tsx scripts/launchStrategyEngineProof.ts",
+    "proof:conversational-command:safe": "node --import tsx scripts/launchConversationalCommandProof.ts",
     "validate:layer5:safe": "npm run proof:continuous-runtime:safe && npm run proof:multi-agent-runtime:safe && npm run proof:supervised-autonomy:safe && npm run test:trace:safe",
     "validate:layer6:safe": "npm run proof:continuous-runtime:safe && npm run proof:multi-agent-runtime:safe && npm run proof:supervised-autonomy:safe && npm run proof:overnight-autonomy:safe && npm run test:trace:safe",
     "readiness": "tsx training_readiness_check.ts",

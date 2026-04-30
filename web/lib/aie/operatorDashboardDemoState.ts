@@ -11,6 +11,7 @@ import { buildOperatorDashboardState, type OperatorDashboardState } from "./oper
 import { buildRuntimeResult } from "./sessionRuntime";
 import { scoreStrategyPortfolio } from "./strategyPortfolioScorer";
 import { createStrategySummary } from "./strategySummary";
+import { createInitialConversationalSession } from "./conversationalSessionState";
 
 const DEMO_TIMESTAMP = "2026-04-26T12:00:00.000Z";
 
@@ -354,6 +355,7 @@ export function createOperatorDashboardDemoState(): OperatorDashboardState {
     operator_preferences: (state.meta_policy_recommendations ?? []).map((item) => item.target),
   });
   state.strategy_summary_package = createStrategySummary(state, state.last_updated_at);
+  state.conversational_session = createInitialConversationalSession(DEMO_TIMESTAMP);
   return state;
 }
 

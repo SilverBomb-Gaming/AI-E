@@ -239,6 +239,35 @@ function GoalRow({
   );
 }
 
+function ChatMessageRow({
+  role,
+  kind,
+  content,
+  createdAt,
+}: {
+  role: "operator" | "ai-e" | "system";
+  kind: string;
+  content: string;
+  createdAt: string;
+}) {
+  const accentClassName = role === "operator"
+    ? "border-ocean/20 bg-ocean/10"
+    : role === "ai-e"
+      ? "border-emerald-200 bg-emerald-50"
+      : "border-ink/10 bg-white";
+
+  return (
+    <article className={`rounded-[1.25rem] border p-4 ${accentClassName}`}>
+      <div className="flex flex-wrap items-center gap-2">
+        <StatusBadge status={role} />
+        <p className="text-xs uppercase tracking-[0.18em] text-slate">{kind}</p>
+        <p className="text-xs text-slate">{createdAt}</p>
+      </div>
+      <p className="mt-3 text-sm leading-7 body-muted">{content}</p>
+    </article>
+  );
+}
+
 function StrategyGoalRow({
   goal,
   score,
@@ -713,6 +742,7 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
   const [maxRecoveryAttempts, setMaxRecoveryAttempts] = useState("2");
   const [checkpointIntervalTicks, setCheckpointIntervalTicks] = useState("1");
   const [reviewQueueEnabled, setReviewQueueEnabled] = useState(true);
+  const [chatInput, setChatInput] = useState("");
   const [isPending, startTransition] = useTransition();
 
   useEffect(() => {
@@ -770,6 +800,7 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
   const completedStrategyGoals = strategyGoals.filter((goal) => ["completed", "rejected", "archived"].includes(goal.status));
   const latestCheckpoint = dashboardState?.supervised_checkpoints?.slice(-1)[0] ?? null;
   const activeSession = dashboardState?.supervised_session ?? null;
+  const chatSession = dashboardState?.conversational_session ?? null;
 
   function buildSupervisedSessionInput(): SupervisedSessionControlInput {
     const parsedHours = Number(maxDurationHours);
@@ -1226,6 +1257,149 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
           ) : (
             <p className="text-sm leading-7 body-muted">Strategy portfolio data is not available for the current operator state source.</p>
           )}
+        </SectionCard>
+
+        <SectionCard eyebrow="0.9" title="AI-E Chat">
+          <div className="space-y-6">
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+              <StudioMetricCard
+                label="Session Status"
+                value={chatSession?.status.replace(/_/g, " ") ?? "unavailable"}
+                detail={chatSession?.operator_notice ?? "Chat is unavailable for the current operator state source."}
+              />
+              <StudioMetricCard
+                label="Messages"
+                value={`${chatSession?.messages.length ?? 0}`}
+                detail={`${chatSession?.pending_options.length ?? 0} pending operator options and ${chatSession?.latest_proposal ? 1 : 0} active proposal.`}
+              />
+              <StudioMetricCard
+                label="Readiness"
+                value={chatSession?.last_readiness_status?.replace(/_/g, " ") ?? "none"}
+                detail={chatSession?.last_refinement_summary ?? "No conversational routing result has been recorded yet."}
+              />
+              <StudioMetricCard
+                label="Boundary"
+                value="Advisory"
+                detail="This panel clarifies requests and proposes bounded next steps. It does not execute runtime work."
+              />
+            </div>
+
+            <div className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
+              <section className="rounded-[1.5rem] border border-ink/10 bg-white/80 p-5">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.18em] text-slate">Conversational Intake</p>
+                    <h3 className="headline mt-2 text-xl font-semibold text-ink">Reception, not execution.</h3>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <ActionButton
+                      label="Request Chat Summary"
+                      onClick={() => handleAction({ type: "request_chat_summary" })}
+                      disabled={isPending || !chatSession}
+                    />
+                    <ActionButton
+                      label="Archive Session"
+                      onClick={() => handleAction({ type: "archive_chat_session" })}
+                      disabled={isPending || !chatSession || chatSession.status === "archived"}
+                      tone="warning"
+                    />
+                  </div>
+                </div>
+                <p className="mt-4 text-sm leading-7 body-muted">
+                  Chat can narrow intent, surface follow-up questions, and propose a safe routing target. Every outcome stays operator-gated and advisory until you explicitly move it into the existing pipeline.
+                </p>
+                <label className="mt-5 flex flex-col gap-2 rounded-[1.25rem] border border-ink/10 bg-white p-4 text-sm text-ink">
+                  <span className="text-xs uppercase tracking-[0.18em] text-slate">Message to AI-E</span>
+                  <textarea
+                    value={chatInput}
+                    onChange={(event) => setChatInput(event.target.value)}
+                    rows={4}
+                    placeholder="Describe the task, constraint, or ambiguity you want AI-E to route safely."
+                    className="rounded-xl border border-ink/10 bg-white px-3 py-3 text-sm text-ink outline-none"
+                  />
+                </label>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <ActionButton
+                    label="Submit Chat Message"
+                    onClick={() => {
+                      const nextMessage = chatInput.trim();
+                      if (!nextMessage) {
+                        setError("Enter a chat message before submitting it.");
+                        return;
+                      }
+                      handleAction({ type: "submit_chat_message", message_text: nextMessage });
+                      setChatInput("");
+                    }}
+                    disabled={isPending}
+                    tone="accent"
+                  />
+                </div>
+              </section>
+
+              <section className="rounded-[1.5rem] border border-ink/10 bg-white/80 p-5">
+                <p className="text-xs uppercase tracking-[0.18em] text-slate">Proposal + Options</p>
+                {chatSession?.latest_proposal ? (
+                  <article className="mt-4 rounded-[1.25rem] border border-ink/10 bg-white p-4">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <StatusBadge status={chatSession.latest_proposal.route} />
+                      <StatusBadge status={chatSession.latest_proposal.requires_operator_review ? "operator_review" : "operator_gated"} />
+                    </div>
+                    <h3 className="headline mt-3 text-lg font-semibold text-ink">{chatSession.latest_proposal.title}</h3>
+                    <p className="mt-2 text-sm leading-7 body-muted">{chatSession.latest_proposal.summary}</p>
+                    <p className="mt-3 text-xs text-slate">Planner-ready request: {chatSession.latest_proposal.planner_ready_request ?? "not ready yet"}</p>
+                    <p className="mt-1 text-xs text-slate">Safe to execute directly: no</p>
+                  </article>
+                ) : (
+                  <p className="mt-4 text-sm leading-7 body-muted">No conversational proposal has been recorded yet.</p>
+                )}
+
+                <div className="mt-5 space-y-3">
+                  {chatSession?.pending_options.length ? chatSession.pending_options.map((option) => (
+                    <article key={option.option_id} className="rounded-[1.25rem] border border-ink/10 bg-white p-4">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-semibold text-ink">{option.label}</p>
+                          <p className="mt-2 text-sm leading-7 body-muted">{option.description}</p>
+                        </div>
+                        <ActionButton
+                          label="Select"
+                          onClick={() => handleAction({ type: "select_chat_option", option_id: option.option_id })}
+                          disabled={isPending}
+                        />
+                      </div>
+                    </article>
+                  )) : <p className="text-sm leading-7 body-muted">No operator chat options are waiting right now.</p>}
+                </div>
+              </section>
+            </div>
+
+            <section className="rounded-[1.5rem] border border-ink/10 bg-white/80 p-5">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.18em] text-slate">Conversation Log</p>
+                  <h3 className="headline mt-2 text-xl font-semibold text-ink">Persisted advisory history.</h3>
+                </div>
+                <p className="text-xs text-slate">{chatSession?.operator_notice ?? "No active conversational notice."}</p>
+              </div>
+              <div className="mt-4 space-y-3">
+                {chatSession?.messages.length ? chatSession.messages.slice(-8).map((entry) => (
+                  <ChatMessageRow
+                    key={entry.message_id}
+                    role={entry.role}
+                    kind={entry.kind}
+                    content={entry.content}
+                    createdAt={entry.created_at}
+                  />
+                )) : <p className="text-sm leading-7 body-muted">No conversational messages are recorded yet.</p>}
+              </div>
+              {chatSession?.last_summary ? (
+                <article className="mt-4 rounded-[1.25rem] border border-ink/10 bg-white p-4">
+                  <p className="text-xs uppercase tracking-[0.18em] text-slate">Latest Chat Summary</p>
+                  <p className="mt-3 text-sm leading-7 body-muted">{chatSession.last_summary}</p>
+                </article>
+              ) : null}
+            </section>
+          </div>
         </SectionCard>
 
         <div className="grid gap-6 lg:grid-cols-2">

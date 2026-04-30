@@ -191,6 +191,33 @@ Important safety boundary:
 - linked work still flows through the existing work-item approval, review, and delivery controls
 - all live actions remain bounded to approval, rejection, deferral, activation, pausing, archival, decomposition, and summary generation through the existing safe runtime bridge and runtime mutation executor
 
+## Conversational Command Layer
+
+AI-E now also includes a bounded conversational command layer that lets the operator talk to AI-E through the `/operator` surface without turning chat into a side-channel executor.
+
+What the conversational command layer does:
+
+- preserves a persisted conversational session on the operator dashboard
+- classifies incoming chat requests into clarification, review, planning, or blocked routes using existing conversational readiness logic
+- produces bounded advisory proposals, follow-up options, and chat summaries only
+- records operator option selections, summary requests, and session archival in persisted runtime state
+- renders this state in the `/operator` AI-E Chat panel and routes actions through the same safe live mutation path
+
+Current contract:
+
+- conversational session contract: `web/lib/aie/conversationalSessionState.ts`
+- intent router: `web/lib/aie/conversationalIntentRouter.ts`
+- response builder: `web/lib/aie/conversationalResponseBuilder.ts`
+- pipeline adapter: `web/lib/aie/conversationalPipelineAdapter.ts`
+- proof: `npm run proof:conversational-command:safe`
+
+Important safety boundary:
+
+- the chat layer is a receptionist, not the CEO
+- chat does not execute work, approve plans, bypass review, or start runtime loops
+- conversational output remains advisory until the operator explicitly moves work into the existing strategy, planning, execution, review, delivery, or studio-control pipeline
+- all live actions remain bounded to chat submission, option selection, summary generation, and session archival through the existing safe runtime bridge and runtime mutation executor
+
 ## Safe Runtime Action Bridge
 
 AI-E can now translate supported live operator actions into safe runtime intents.
@@ -198,8 +225,8 @@ AI-E can now translate supported live operator actions into safe runtime intents
 Current contract:
 
 - module path: `web/lib/aie/safeRuntimeActionBridge.ts`
-- supported operator actions: `approve_goal`, `pause_goal`, `resume_goal`, `retry_goal`, `pause_all_sessions`, `resume_safe_sessions`, `prioritize_review_queue`, `prioritize_delivery_queue`, `acknowledge_studio_risk`, `request_studio_summary`, `approve_policy_recommendation`, `reject_policy_recommendation`, `defer_policy_recommendation`, `request_meta_summary`, `acknowledge_pattern`, `approve_strategy_goal`, `reject_strategy_goal`, `defer_strategy_goal`, `activate_strategy_goal`, `pause_strategy_goal`, `archive_strategy_goal`, `decompose_strategy_goal`, and `request_strategy_summary`
-- supported runtime intents: `grant_session_approval`, `pause_active_goal`, `resume_paused_goal`, `mark_goal_retry_requested`, `pause_all_sessions`, `resume_safe_sessions`, `prioritize_review_queue`, `prioritize_delivery_queue`, `acknowledge_studio_risk`, `request_studio_summary`, `approve_policy_recommendation`, `reject_policy_recommendation`, `defer_policy_recommendation`, `request_meta_summary`, `acknowledge_pattern`, `approve_strategy_goal`, `reject_strategy_goal`, `defer_strategy_goal`, `activate_strategy_goal`, `pause_strategy_goal`, `archive_strategy_goal`, `decompose_strategy_goal`, `request_strategy_summary`, and `no_op`
+- supported operator actions: `approve_goal`, `pause_goal`, `resume_goal`, `retry_goal`, `pause_all_sessions`, `resume_safe_sessions`, `prioritize_review_queue`, `prioritize_delivery_queue`, `acknowledge_studio_risk`, `request_studio_summary`, `approve_policy_recommendation`, `reject_policy_recommendation`, `defer_policy_recommendation`, `request_meta_summary`, `acknowledge_pattern`, `approve_strategy_goal`, `reject_strategy_goal`, `defer_strategy_goal`, `activate_strategy_goal`, `pause_strategy_goal`, `archive_strategy_goal`, `decompose_strategy_goal`, `request_strategy_summary`, `submit_chat_message`, `select_chat_option`, `archive_chat_session`, and `request_chat_summary`
+- supported runtime intents: `grant_session_approval`, `pause_active_goal`, `resume_paused_goal`, `mark_goal_retry_requested`, `pause_all_sessions`, `resume_safe_sessions`, `prioritize_review_queue`, `prioritize_delivery_queue`, `acknowledge_studio_risk`, `request_studio_summary`, `approve_policy_recommendation`, `reject_policy_recommendation`, `defer_policy_recommendation`, `request_meta_summary`, `acknowledge_pattern`, `approve_strategy_goal`, `reject_strategy_goal`, `defer_strategy_goal`, `activate_strategy_goal`, `pause_strategy_goal`, `archive_strategy_goal`, `decompose_strategy_goal`, `request_strategy_summary`, `submit_chat_message`, `select_chat_option`, `archive_chat_session`, `request_chat_summary`, and `no_op`
 
 Example:
 
@@ -223,7 +250,7 @@ Current contract:
 
 - module path: `web/lib/aie/runtimeMutationExecutor.ts`
 - post-mutation loop controller: `web/lib/aie/executionLoopController.ts`
-- supported runtime intents: `grant_session_approval`, `pause_active_goal`, `resume_paused_goal`, `mark_goal_retry_requested`, `pause_all_sessions`, `resume_safe_sessions`, `prioritize_review_queue`, `prioritize_delivery_queue`, `acknowledge_studio_risk`, `request_studio_summary`, `approve_policy_recommendation`, `reject_policy_recommendation`, `defer_policy_recommendation`, `request_meta_summary`, `acknowledge_pattern`, `approve_strategy_goal`, `reject_strategy_goal`, `defer_strategy_goal`, `activate_strategy_goal`, `pause_strategy_goal`, `archive_strategy_goal`, `decompose_strategy_goal`, `request_strategy_summary`, and `no_op`
+- supported runtime intents: `grant_session_approval`, `pause_active_goal`, `resume_paused_goal`, `mark_goal_retry_requested`, `pause_all_sessions`, `resume_safe_sessions`, `prioritize_review_queue`, `prioritize_delivery_queue`, `acknowledge_studio_risk`, `request_studio_summary`, `approve_policy_recommendation`, `reject_policy_recommendation`, `defer_policy_recommendation`, `request_meta_summary`, `acknowledge_pattern`, `approve_strategy_goal`, `reject_strategy_goal`, `defer_strategy_goal`, `activate_strategy_goal`, `pause_strategy_goal`, `archive_strategy_goal`, `decompose_strategy_goal`, `request_strategy_summary`, `submit_chat_message`, `select_chat_option`, `archive_chat_session`, `request_chat_summary`, and `no_op`
 - output statuses: `mutation_applied`, `mutation_rejected`, and `mutation_no_op`
 
 Execution flow:
@@ -379,8 +406,14 @@ Current Layer 11 reporting rule:
 
 Current Layer 12 reporting rule:
 
-- Layer 12: IN PROGRESS
-- Only declare Layer 12 complete when the strategic goal contract, deterministic portfolio scorer, bounded goal decomposer, `/operator` Strategy Portfolio panel, safe strategy actions, persisted strategy summary package, deterministic `proof:strategy-engine:safe`, all previous safe proofs, `test:trace:safe`, and commit/push are all complete together.
+- Layer 12: 100% COMPLETE
+- Verified capabilities: strategic goal contract, deterministic portfolio scorer, bounded goal decomposer, `/operator` Strategy Portfolio panel, safe strategy actions, persisted strategy summary package, deterministic `proof:strategy-engine:safe`, all previous safe proofs, `test:trace:safe`, and commit/push.
+
+Current Layer 13 reporting rule:
+
+- Layer 13: IN PROGRESS
+- Only declare Layer 13 complete when the conversational session contract, intent router, response builder, pipeline adapter, `/operator` AI-E Chat panel, safe conversational actions, persisted chat summary state, deterministic `proof:conversational-command:safe`, all previous safe proofs, `test:trace:safe`, and commit/push are all complete together.
+- Completion still requires preserving these boundaries: the chat layer is a receptionist, not the CEO; chat must not self-approve, self-execute, bypass review, or create a second execution path.
 
 Roadmap checkpoints:
 
@@ -418,8 +451,11 @@ Roadmap checkpoints:
   - status: complete
   - proof surface: persisted meta-intelligence state, deterministic pattern detection, bounded policy recommendations, meta summary package state, `/operator`, and `npm run proof:meta-intelligence:safe`
 - Layer 12: strategy engine / goal portfolio management
-  - status: in progress
+  - status: complete
   - proof surface: persisted strategic goal state, deterministic portfolio ranking, bounded decomposition state, strategy summary package state, `/operator`, and `npm run proof:strategy-engine:safe`
+- Layer 13: conversational command layer
+  - status: in progress
+  - proof surface: persisted conversational session state, bounded intent routing, chat summary state, `/operator`, and `npm run proof:conversational-command:safe`
 
 
 ## Multi-Agent Orchestration Scaffold

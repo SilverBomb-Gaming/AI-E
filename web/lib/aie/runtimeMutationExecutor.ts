@@ -179,6 +179,14 @@ function createActionFromIntent(intent: SafeRuntimeIntent, goalId: string | null
       return { type: "decompose_strategy_goal", goal_id: goalId ?? null };
     case "request_strategy_summary":
       return { type: "request_strategy_summary" };
+    case "submit_chat_message":
+      return { type: "submit_chat_message", message_text: null };
+    case "select_chat_option":
+      return { type: "select_chat_option", option_id: goalId ?? null };
+    case "archive_chat_session":
+      return { type: "archive_chat_session" };
+    case "request_chat_summary":
+      return { type: "request_chat_summary" };
     case "start_supervised_session":
       return { type: "start_supervised_session" };
     case "pause_supervised_session":
@@ -404,6 +412,39 @@ function validateMutationRequest(
       return null;
     }
 
+    case "submit_chat_message": {
+      if (!normalizeText(input.action?.message_text)) {
+        return "a non-empty chat message is required before a conversational mutation can be applied";
+      }
+      return null;
+    }
+
+    case "select_chat_option": {
+      const optionId = normalizeText(input.action?.option_id ?? input.goal_id);
+      if (!optionId) {
+        return "a chat option id is required before a conversational selection mutation can be applied";
+      }
+      const hasOption = state.conversational_session?.pending_options.some((option) => option.option_id === optionId) ?? false;
+      if (!hasOption) {
+        return "the requested chat option is not available in the current conversational session";
+      }
+      return null;
+    }
+
+    case "archive_chat_session": {
+      if (!state.conversational_session || state.conversational_session.status === "archived") {
+        return "no active conversational session is available for archiving";
+      }
+      return null;
+    }
+
+    case "request_chat_summary": {
+      if (!state.conversational_session || state.conversational_session.messages.length === 0) {
+        return "no conversational session is available for summarization";
+      }
+      return null;
+    }
+
     case "pause_autonomous_session": {
       const sessionId = input.action?.session_id ?? null;
       const session = sessionId
@@ -624,6 +665,14 @@ function applyRecordMetadata(
       break;
     }
 
+    case "submit_chat_message":
+    case "select_chat_option":
+    case "archive_chat_session":
+    case "request_chat_summary": {
+      record.last_status = "service_idle";
+      break;
+    }
+
     case "start_supervised_session":
     case "resume_supervised_session": {
       record.last_status = "service_idle";
@@ -706,8 +755,12 @@ function appendSupervisedSessionControlEvent(
     || input.runtime_intent === "archive_strategy_goal"
     || input.runtime_intent === "decompose_strategy_goal"
     || input.runtime_intent === "request_strategy_summary";
+  const isConversationalIntent = input.runtime_intent === "submit_chat_message"
+    || input.runtime_intent === "select_chat_option"
+    || input.runtime_intent === "archive_chat_session"
+    || input.runtime_intent === "request_chat_summary";
   const loopState = buildControlLoopState(record);
-  const eventScope = isStrategyIntent ? "strategy-engine-control" : isMetaIntent ? "meta-intelligence-control" : isStudioIntent ? "studio-command-center-control" : isAutonomousSessionIntent ? "autonomous-session-control" : "supervised-session-control";
+  const eventScope = isConversationalIntent ? "conversational-command-control" : isStrategyIntent ? "strategy-engine-control" : isMetaIntent ? "meta-intelligence-control" : isStudioIntent ? "studio-command-center-control" : isAutonomousSessionIntent ? "autonomous-session-control" : "supervised-session-control";
   const eventId = `${eventScope}-${sanitizeTimestamp(input.timestamp)}-${input.runtime_intent}`;
   const runtimeStatus = record.operator_dashboard_state?.runtime_status.status ?? record.last_status;
   const schedulerStatus = record.operator_dashboard_state?.scheduler_status.status ?? "scheduler_idle";
@@ -737,6 +790,8 @@ function appendSupervisedSessionControlEvent(
       } : null,
       mutation_applied: isAutonomousSessionIntent
         ? `${input.runtime_intent} persisted for autonomous session state.`
+        : isConversationalIntent
+          ? `${input.runtime_intent} persisted for conversational command state.`
         : isStrategyIntent
           ? `${input.runtime_intent} persisted for strategy portfolio state.`
         : isMetaIntent
@@ -755,6 +810,8 @@ function appendSupervisedSessionControlEvent(
         to_goal_label: record.operator_dashboard_state?.active_goal?.description ?? null,
         summary: isAutonomousSessionIntent
           ? `Autonomous session control event recorded for ${input.runtime_intent}.`
+          : isConversationalIntent
+            ? `Conversational command control event recorded for ${input.runtime_intent}.`
           : isStrategyIntent
             ? `Strategy engine control event recorded for ${input.runtime_intent}.`
           : isMetaIntent
@@ -775,6 +832,8 @@ function appendSupervisedSessionControlEvent(
       },
       mutation_summary: isAutonomousSessionIntent
         ? `${input.runtime_intent} recorded for autonomous session state.`
+        : isConversationalIntent
+          ? `${input.runtime_intent} recorded for conversational command state.`
         : isStrategyIntent
           ? `${input.runtime_intent} recorded for strategy portfolio state.`
         : isMetaIntent
@@ -894,6 +953,10 @@ export function executeRuntimeMutation(input: RuntimeMutationExecutorInput): Run
       || input.runtime_intent === "archive_strategy_goal"
       || input.runtime_intent === "decompose_strategy_goal"
       || input.runtime_intent === "request_strategy_summary"
+      || input.runtime_intent === "submit_chat_message"
+      || input.runtime_intent === "select_chat_option"
+      || input.runtime_intent === "archive_chat_session"
+      || input.runtime_intent === "request_chat_summary"
       || input.runtime_intent === "pause_autonomous_session"
       || input.runtime_intent === "resume_autonomous_session"
       || input.runtime_intent === "reprioritize_autonomous_session"

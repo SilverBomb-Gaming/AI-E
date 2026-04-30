@@ -41,6 +41,10 @@ function normalizeAction(value: unknown): OperatorControlAction | null {
     && candidate.type !== "archive_strategy_goal"
     && candidate.type !== "decompose_strategy_goal"
     && candidate.type !== "request_strategy_summary"
+    && candidate.type !== "submit_chat_message"
+    && candidate.type !== "select_chat_option"
+    && candidate.type !== "archive_chat_session"
+    && candidate.type !== "request_chat_summary"
     && candidate.type !== "pause_autonomous_session"
     && candidate.type !== "resume_autonomous_session"
     && candidate.type !== "reprioritize_autonomous_session"
@@ -72,6 +76,16 @@ function normalizeAction(value: unknown): OperatorControlAction | null {
     goal_id: typeof candidate.goal_id === "string"
       ? candidate.goal_id.trim() || null
       : candidate.goal_id === null || candidate.goal_id === undefined
+        ? null
+        : null,
+    option_id: typeof candidate.option_id === "string"
+      ? candidate.option_id.trim() || null
+      : candidate.option_id === null || candidate.option_id === undefined
+        ? null
+        : null,
+    message_text: typeof candidate.message_text === "string"
+      ? candidate.message_text.trim() || null
+      : candidate.message_text === null || candidate.message_text === undefined
         ? null
         : null,
     review_id: typeof candidate.review_id === "string"
@@ -255,7 +269,11 @@ export async function POST(request: Request) {
       && actionResult.runtime_intent !== "request_supervised_operator_review"
       && actionResult.runtime_intent !== "approve_review_queue_item"
       && actionResult.runtime_intent !== "reject_review_queue_item"
-      && actionResult.runtime_intent !== "defer_review_queue_item") {
+      && actionResult.runtime_intent !== "defer_review_queue_item"
+      && actionResult.runtime_intent !== "submit_chat_message"
+      && actionResult.runtime_intent !== "select_chat_option"
+      && actionResult.runtime_intent !== "archive_chat_session"
+      && actionResult.runtime_intent !== "request_chat_summary") {
       const updatedRuntimeState = loadRuntimeState(runtimeStateStore, runtimeId);
       if (updatedRuntimeState) {
         scheduleOperatorRuntimeLiveLoop(
