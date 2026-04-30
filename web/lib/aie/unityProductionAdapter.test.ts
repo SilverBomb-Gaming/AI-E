@@ -7,6 +7,7 @@ import {
   evaluateUnityProductionAdapterReadiness,
   executeReviewedUnityValidation,
 } from "./unityProductionAdapter";
+import type { UnityReadOnlyRuntimeBridge } from "./unityReadOnlyRuntimeBridge";
 
 function createPlanningPacket() {
   const packet = buildUnityProductionPlanningPacket(
@@ -39,6 +40,22 @@ function createValidationOnlyPacket() {
     requests: packet.requests.filter((request) => request.request_type === "validation_playtest_request"),
     required_review_artifacts: ["playtest plan", "validation checklist"],
     required_approval_gates: ["review package approval", "playtest approval"],
+  };
+}
+
+function createCountingBridge(result: ReturnType<UnityReadOnlyRuntimeBridge["probeValidation"]>) {
+  let callCount = 0;
+
+  const bridge: UnityReadOnlyRuntimeBridge = {
+    probeValidation() {
+      callCount += 1;
+      return result;
+    },
+  };
+
+  return {
+    bridge,
+    getCallCount: () => callCount,
   };
 }
 
@@ -123,6 +140,17 @@ test("review and approval metadata are both required before Unity adapter readin
 });
 
 test("missing review approval blocks Unity validation execution", () => {
+  const countingBridge = createCountingBridge({
+    bridge_status: "bridge_ready",
+    scene_validation_status: "checked_clean",
+    missing_script_count: 0,
+    console_error_count: 0,
+    object_count: 120,
+    checked_scene_name: "CastleHub",
+    evidence_timestamp: "2026-04-30T13:00:30.000Z",
+    summary: "Bridge ran.",
+    recommended_next_operator_action: "Review.",
+  });
   const result = executeReviewedUnityValidation({
     adapter_request_id: "unity-validation-1",
     requested_at: "2026-04-30T13:00:00.000Z",
@@ -135,14 +163,26 @@ test("missing review approval blocks Unity validation execution", () => {
       operator_approval_id: null,
       delivery_package_id: null,
     },
-  });
+  }, { runtime_bridge: countingBridge.bridge });
 
   assert.equal(result.executed, false);
   assert.equal(result.review_approval_status, "missing");
   assert.match(result.blocked_reason ?? "", /blocked until review approval is recorded/i);
+  assert.equal(countingBridge.getCallCount(), 0);
 });
 
 test("missing operator approval blocks Unity validation execution", () => {
+  const countingBridge = createCountingBridge({
+    bridge_status: "bridge_ready",
+    scene_validation_status: "checked_clean",
+    missing_script_count: 0,
+    console_error_count: 0,
+    object_count: 120,
+    checked_scene_name: "CastleHub",
+    evidence_timestamp: "2026-04-30T13:01:30.000Z",
+    summary: "Bridge ran.",
+    recommended_next_operator_action: "Review.",
+  });
   const result = executeReviewedUnityValidation({
     adapter_request_id: "unity-validation-2",
     requested_at: "2026-04-30T13:01:00.000Z",
@@ -155,14 +195,26 @@ test("missing operator approval blocks Unity validation execution", () => {
       operator_approval_id: null,
       delivery_package_id: null,
     },
-  });
+  }, { runtime_bridge: countingBridge.bridge });
 
   assert.equal(result.executed, false);
   assert.equal(result.operator_approval_status, "missing");
   assert.match(result.blocked_reason ?? "", /blocked until operator approval is recorded/i);
+  assert.equal(countingBridge.getCallCount(), 0);
 });
 
 test("non-validation Unity request types are refused by the first execution path", () => {
+  const countingBridge = createCountingBridge({
+    bridge_status: "bridge_ready",
+    scene_validation_status: "checked_clean",
+    missing_script_count: 0,
+    console_error_count: 0,
+    object_count: 120,
+    checked_scene_name: "CastleHub",
+    evidence_timestamp: "2026-04-30T13:03:30.000Z",
+    summary: "Bridge ran.",
+    recommended_next_operator_action: "Review.",
+  });
   const result = executeReviewedUnityValidation({
     adapter_request_id: "unity-validation-3",
     requested_at: "2026-04-30T13:03:00.000Z",
@@ -175,13 +227,21 @@ test("non-validation Unity request types are refused by the first execution path
       operator_approval_id: "approval-8",
       delivery_package_id: "delivery-8",
     },
-  });
+  }, { runtime_bridge: countingBridge.bridge });
 
   assert.equal(result.executed, false);
   assert.match(result.blocked_reason ?? "", /Only validation_playtest_request is executable/i);
+  assert.equal(countingBridge.getCallCount(), 0);
 });
 
-test("validation request with both approvals returns a non-mutating executed preview artifact", () => {
+test("unavailable bridge returns structured unavailable delivery artifact", () => {
+  const countingBridge = createCountingBridge({
+    bridge_status: "bridge_unavailable",
+    reason: "Unity editor endpoint is not running.",
+    evidence_timestamp: "2026-04-30T13:05:30.000Z",
+    recommended_next_operator_action: "Start the verified read-only Unity bridge before retrying.",
+  });
+
   const result = executeReviewedUnityValidation({
     adapter_request_id: "unity-validation-4",
     requested_at: "2026-04-30T13:05:00.000Z",
@@ -194,13 +254,57 @@ test("validation request with both approvals returns a non-mutating executed pre
       operator_approval_id: "approval-9",
       delivery_package_id: "delivery-9",
     },
+  }, { runtime_bridge: countingBridge.bridge });
+
+  assert.equal(countingBridge.getCallCount(), 1);
+  assert.equal(result.executed, false);
+  assert.equal(result.execution_kind, "real_bridge_unavailable");
+  assert.equal(result.bridge_status, "bridge_unavailable");
+  assert.equal(result.artifact_label, "unity_bridge_unavailable_report");
+  assert.match(result.blocked_reason ?? "", /endpoint is not running/i);
+});
+
+test("successful read-only bridge returns real bridge validation result", () => {
+  const countingBridge = createCountingBridge({
+    bridge_status: "bridge_ready",
+    scene_validation_status: "checked_with_findings",
+    missing_script_count: 2,
+    console_error_count: 3,
+    object_count: 487,
+    checked_scene_name: "CastleHub",
+    evidence_timestamp: "2026-04-30T13:06:30.000Z",
+    summary: "Unity read-only validation probe completed for CastleHub with findings recorded for operator review.",
+    recommended_next_operator_action: "Review the read-only bridge findings and decide whether to hold the request in review or rerun after fixes.",
   });
 
+  const result = executeReviewedUnityValidation({
+    adapter_request_id: "unity-validation-5",
+    requested_at: "2026-04-30T13:06:00.000Z",
+    planning_packet: createValidationOnlyPacket(),
+    requested_actions: [],
+    review_state: {
+      review_package_id: "review-10",
+      review_completed_at: "2026-04-30T13:06:10.000Z",
+      approved_by_operator: true,
+      operator_approval_id: "approval-10",
+      delivery_package_id: "delivery-10",
+    },
+  }, { runtime_bridge: countingBridge.bridge });
+
+  assert.equal(countingBridge.getCallCount(), 1);
   assert.equal(result.executed, true);
   assert.equal(result.domain, "Unity");
   assert.equal(result.request_type, "validation_playtest_request");
+  assert.equal(result.execution_kind, "real_bridge_read_only");
+  assert.equal(result.execution_mode, "read_only_runtime_bridge");
+  assert.equal(result.bridge_status, "bridge_ready");
+  assert.equal(result.scene_validation_status, "checked_with_findings");
+  assert.equal(result.missing_script_count, 2);
+  assert.equal(result.console_error_count, 3);
+  assert.equal(result.object_count, 487);
+  assert.equal(result.checked_scene_name, "CastleHub");
   assert.equal(result.mutating, false);
-  assert.equal(result.artifact_label, "adapter_level_validation_preview");
-  assert.match(result.delivery_summary, /Adapter-level Unity validation preview completed/i);
+  assert.equal(result.artifact_label, "unity_read_only_validation_report");
+  assert.match(result.delivery_summary, /read-only validation probe completed/i);
   assert.ok(result.validation_checklist.length >= 2);
 });

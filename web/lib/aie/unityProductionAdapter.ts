@@ -3,6 +3,10 @@ import type {
   UnityProductionRequestType,
   UnityValidationExecutionResult,
 } from "./productionPipelineFoundation";
+import {
+  createUnavailableUnityReadOnlyRuntimeBridge,
+  type UnityReadOnlyRuntimeBridge,
+} from "./unityReadOnlyRuntimeBridge";
 
 export type UnityProductionAdapterAction =
   | "scene_plan_review"
@@ -50,6 +54,10 @@ export type UnityProductionAdapterReadinessResult = {
 
 export type UnityValidationExecutionInput = UnityProductionAdapterInput;
 
+export type UnityValidationExecutionOptions = {
+  runtime_bridge?: UnityReadOnlyRuntimeBridge;
+};
+
 function hasCompletedReview(reviewState: UnityProductionAdapterReviewState): boolean {
   return Boolean(reviewState.review_package_id && reviewState.review_completed_at);
 }
@@ -81,18 +89,35 @@ function buildBlockedValidationResult(
     domain: "Unity",
     request_type: "validation_playtest_request",
     execution_mode: "read_only_validation_preview",
+    execution_kind: "adapter_preview",
     review_approval_id: input.review_state.review_package_id,
     review_approval_status: hasCompletedReview(input.review_state) ? "approved" : "missing",
     operator_approval_id: input.review_state.operator_approval_id,
     operator_approval_status: hasApproval(input.review_state) ? "approved" : "missing",
     executed: false,
     blocked_reason: blockedReason,
+    bridge_status: "bridge_unavailable",
+    scene_validation_status: "not_checked",
+    missing_script_count: null,
+    console_error_count: null,
+    object_count: null,
+    checked_scene_name: null,
+    evidence_timestamp: input.requested_at,
     validation_checklist: buildValidationChecklist(input.planning_packet),
     delivery_summary: "Unity validation preview was not executed. Adapter remains non-mutating and review-gated.",
     recommended_next_operator_action: recommendedNextOperatorAction,
     artifact_label: "adapter_level_validation_preview",
     mutating: false,
   };
+}
+
+function extractSceneNameHint(planningPacket: UnityProductionPlanningPacket): string | null {
+  const sceneMatch = planningPacket.objective.match(/(?:for|on) the ([a-z0-9 _-]+?)(?: room| scene|$)/i);
+  if (sceneMatch?.[1]) {
+    return sceneMatch[1].trim();
+  }
+  const explicitSceneMatch = planningPacket.objective.match(/([a-z0-9 _-]+) scene/i);
+  return explicitSceneMatch?.[1]?.trim() ?? null;
 }
 
 export function mapUnityRequestTypeToAdapterAction(requestType: UnityProductionRequestType): UnityProductionAdapterAction {
@@ -166,6 +191,7 @@ export function evaluateUnityProductionAdapterReadiness(
 
 export function executeReviewedUnityValidation(
   input: UnityValidationExecutionInput,
+  options?: UnityValidationExecutionOptions,
 ): UnityValidationExecutionResult {
   if (!isValidationOnlyPacket(input.planning_packet)) {
     return buildBlockedValidationResult(
@@ -191,21 +217,64 @@ export function executeReviewedUnityValidation(
     );
   }
 
+  const runtimeBridge = options?.runtime_bridge ?? createUnavailableUnityReadOnlyRuntimeBridge();
+  const bridgeResult = runtimeBridge.probeValidation({
+    request_id: input.adapter_request_id,
+    requested_at: input.requested_at,
+    scene_name_hint: extractSceneNameHint(input.planning_packet),
+  });
+
+  if (bridgeResult.bridge_status === "bridge_unavailable") {
+    return {
+      request_id: input.adapter_request_id,
+      domain: "Unity",
+      request_type: "validation_playtest_request",
+      execution_mode: "read_only_validation_preview",
+      execution_kind: "real_bridge_unavailable",
+      review_approval_id: input.review_state.review_package_id,
+      review_approval_status: "approved",
+      operator_approval_id: input.review_state.operator_approval_id,
+      operator_approval_status: "approved",
+      executed: false,
+      blocked_reason: bridgeResult.reason,
+      bridge_status: "bridge_unavailable",
+      scene_validation_status: "not_checked",
+      missing_script_count: null,
+      console_error_count: null,
+      object_count: null,
+      checked_scene_name: null,
+      evidence_timestamp: bridgeResult.evidence_timestamp,
+      validation_checklist: buildValidationChecklist(input.planning_packet),
+      delivery_summary: "A real Unity read-only validation bridge was requested but is currently unavailable. No adapter preview fallback was substituted silently, and no project mutation was performed.",
+      recommended_next_operator_action: bridgeResult.recommended_next_operator_action,
+      artifact_label: "unity_bridge_unavailable_report",
+      mutating: false,
+    };
+  }
+
   return {
     request_id: input.adapter_request_id,
     domain: "Unity",
     request_type: "validation_playtest_request",
-    execution_mode: "read_only_validation_preview",
+    execution_mode: "read_only_runtime_bridge",
+    execution_kind: "real_bridge_read_only",
     review_approval_id: input.review_state.review_package_id,
     review_approval_status: "approved",
     operator_approval_id: input.review_state.operator_approval_id,
     operator_approval_status: "approved",
     executed: true,
     blocked_reason: null,
+    bridge_status: bridgeResult.bridge_status,
+    scene_validation_status: bridgeResult.scene_validation_status,
+    missing_script_count: bridgeResult.missing_script_count,
+    console_error_count: bridgeResult.console_error_count,
+    object_count: bridgeResult.object_count,
+    checked_scene_name: bridgeResult.checked_scene_name,
+    evidence_timestamp: bridgeResult.evidence_timestamp,
     validation_checklist: buildValidationChecklist(input.planning_packet),
-    delivery_summary: "Adapter-level Unity validation preview completed. No Unity runtime bridge was invoked and no project mutation was performed. Review evidence and delivery notes are ready for operator inspection.",
-    recommended_next_operator_action: "Review the validation preview evidence and decide whether to keep the request in delivery prep or connect a future real Unity runtime bridge.",
-    artifact_label: "adapter_level_validation_preview",
+    delivery_summary: bridgeResult.summary,
+    recommended_next_operator_action: bridgeResult.recommended_next_operator_action,
+    artifact_label: "unity_read_only_validation_report",
     mutating: false,
   };
 }

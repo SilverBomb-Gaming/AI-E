@@ -54,21 +54,35 @@ export type UnityProductionPlanningPacket = {
 
 export type UnityValidationApprovalStatus = "missing" | "approved";
 
+export type UnityValidationBridgeExecutionKind = "adapter_preview" | "real_bridge_unavailable" | "real_bridge_read_only";
+
+export type UnityValidationBridgeStatus = "bridge_unavailable" | "bridge_ready";
+
+export type UnityValidationSceneStatus = "not_checked" | "checked_clean" | "checked_with_findings" | "unknown";
+
 export type UnityValidationExecutionResult = {
   request_id: string;
   domain: "Unity";
   request_type: "validation_playtest_request";
-  execution_mode: "read_only_validation_preview";
+  execution_mode: "read_only_validation_preview" | "read_only_runtime_bridge";
+  execution_kind: UnityValidationBridgeExecutionKind;
   review_approval_id: string | null;
   review_approval_status: UnityValidationApprovalStatus;
   operator_approval_id: string | null;
   operator_approval_status: UnityValidationApprovalStatus;
   executed: boolean;
   blocked_reason: string | null;
+  bridge_status: UnityValidationBridgeStatus;
+  scene_validation_status: UnityValidationSceneStatus;
+  missing_script_count: number | null;
+  console_error_count: number | null;
+  object_count: number | null;
+  checked_scene_name: string | null;
+  evidence_timestamp: string;
   validation_checklist: string[];
   delivery_summary: string;
   recommended_next_operator_action: string;
-  artifact_label: "adapter_level_validation_preview";
+  artifact_label: "adapter_level_validation_preview" | "unity_bridge_unavailable_report" | "unity_read_only_validation_report";
   mutating: false;
 };
 
