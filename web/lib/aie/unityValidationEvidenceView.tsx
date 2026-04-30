@@ -25,6 +25,9 @@ export type UnityValidationEvidence = {
   requiredApprovalGates: string[];
   dryRun: boolean | null;
   executed: boolean | null;
+  finalExecutionRequired: boolean | null;
+  finalExecutionAuthorized: boolean | null;
+  finalExecutionAuthorizationStatus: string | null;
 };
 
 function parseLabeledValue(lines: string[], label: string): string | null {
@@ -111,6 +114,9 @@ function parseSummary(summary: string): Partial<UnityValidationEvidence> {
       targetScene: mutationPreviewMatch[2]?.trim() ?? null,
       dryRun: true,
       executed: false,
+      finalExecutionRequired: true,
+      finalExecutionAuthorized: false,
+      finalExecutionAuthorizationStatus: "FINAL EXECUTION NOT AUTHORIZED",
     };
   }
 
@@ -206,6 +212,9 @@ function buildEvidence(workItemId: string, summary: string, lines: string[]): Un
     requiredApprovalGates,
     dryRun: parseBoolean(parseLabeledValue(lines, "Dry run")) ?? summaryValues.dryRun ?? null,
     executed: parseBoolean(parseLabeledValue(lines, "Executed")) ?? summaryValues.executed ?? null,
+    finalExecutionRequired: parseBoolean(parseLabeledValue(lines, "Final execution required")) ?? summaryValues.finalExecutionRequired ?? null,
+    finalExecutionAuthorized: parseBoolean(parseLabeledValue(lines, "Final execution authorized")) ?? summaryValues.finalExecutionAuthorized ?? null,
+    finalExecutionAuthorizationStatus: parseLabeledValue(lines, "Final execution authorization status") ?? summaryValues.finalExecutionAuthorizationStatus ?? null,
   };
 }
 
@@ -260,6 +269,9 @@ export function UnityValidationEvidencePanel({ evidence }: { evidence: UnityVali
             <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-700">
               NOT EXECUTED
             </span>
+            <span className="inline-flex rounded-full border border-ink/10 bg-white/80 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-ink/75">
+              {evidence.finalExecutionAuthorizationStatus ?? "FINAL EXECUTION NOT AUTHORIZED"}
+            </span>
           </>
         ) : null}
       </div>
@@ -282,6 +294,8 @@ export function UnityValidationEvidencePanel({ evidence }: { evidence: UnityVali
           <p className="text-xs leading-6 text-slate">Risk level: {evidence.riskLevel ?? "unknown"}</p>
           <p className="text-xs leading-6 text-slate">Dry run: {String(evidence.dryRun ?? false)}</p>
           <p className="text-xs leading-6 text-slate">Executed: {String(evidence.executed ?? false)}</p>
+          <p className="text-xs leading-6 text-slate">Final execution required: {String(evidence.finalExecutionRequired ?? true)}</p>
+          <p className="text-xs leading-6 text-slate">Final execution authorized: {String(evidence.finalExecutionAuthorized ?? false)}</p>
         </div>
       ) : null}
       {evidence.kind === "scene_object_creation_preview" ? (

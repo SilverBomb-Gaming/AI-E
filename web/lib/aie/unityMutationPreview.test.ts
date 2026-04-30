@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { buildUnityProductionPlanningPacket } from "./productionPipelineFoundation";
-import { previewUnitySceneObjectCreation } from "./unityProductionAdapter";
+import { evaluateUnityMutationExecutionAuthorization, previewUnitySceneObjectCreation } from "./unityProductionAdapter";
 
 function createSceneObjectCreationPacket() {
   const packet = buildUnityProductionPlanningPacket(
@@ -137,9 +137,110 @@ test("scene object creation preview stays deterministic and non-mutating", () =>
   assert.deepEqual(first.intended_transform.position, { x: 4, y: 1, z: 0 });
   assert.equal(first.risk_level, "medium");
   assert.ok(first.required_approval_gates.includes("explicit final execute gate"));
+  assert.equal(first.final_execution_required, true);
+  assert.equal(first.final_execution_authorized, false);
+  assert.equal(first.executed, false);
   assert.ok(first.review_package);
   assert.ok(first.delivery_package);
   assert.match(first.review_package?.summary ?? "", /DRY RUN ONLY/i);
   assert.match(first.delivery_package?.release_notes ?? "", /NOT EXECUTED/i);
+  assert.match(first.delivery_package?.risk_summary ?? "", /Final execution not authorized/i);
   assert.equal(first.mutating, false);
+});
+
+test("missing final authorization blocks future Unity mutation execution", () => {
+  const preview = previewUnitySceneObjectCreation(createPreviewInput());
+  const result = evaluateUnityMutationExecutionAuthorization({
+    preview_result: preview,
+    authorization: null,
+    evaluated_at: "2026-04-30T18:10:00.000Z",
+  });
+
+  assert.equal(result.authorized, false);
+  assert.equal(result.request_id, preview.request_id);
+  assert.equal(result.final_execution_authorization_id, null);
+  assert.match(result.blocked_reason ?? "", /until a final execution authorization is recorded/i);
+});
+
+test("wrong target request id blocks final authorization", () => {
+  const preview = previewUnitySceneObjectCreation(createPreviewInput());
+  const result = evaluateUnityMutationExecutionAuthorization({
+    preview_result: preview,
+    authorization: {
+      final_execution_authorization_id: "final-auth-1",
+      authorized_by_operator: true,
+      authorized_at: "2026-04-30T18:05:00.000Z",
+      authorization_scope: "scene_object_creation_request",
+      target_request_id: "another-request",
+      expires_at: "2026-04-30T19:00:00.000Z",
+    },
+    evaluated_at: "2026-04-30T18:10:00.000Z",
+  });
+
+  assert.equal(result.authorized, false);
+  assert.equal(result.target_request_match, false);
+  assert.match(result.blocked_reason ?? "", /target request id does not match/i);
+});
+
+test("wrong authorization scope blocks final authorization", () => {
+  const preview = previewUnitySceneObjectCreation(createPreviewInput());
+  const result = evaluateUnityMutationExecutionAuthorization({
+    preview_result: preview,
+    authorization: {
+      final_execution_authorization_id: "final-auth-2",
+      authorized_by_operator: true,
+      authorized_at: "2026-04-30T18:05:00.000Z",
+      authorization_scope: "scene_request" as "scene_object_creation_request",
+      target_request_id: preview.request_id,
+      expires_at: "2026-04-30T19:00:00.000Z",
+    },
+    evaluated_at: "2026-04-30T18:10:00.000Z",
+  });
+
+  assert.equal(result.authorized, false);
+  assert.equal(result.scope_match, false);
+  assert.match(result.blocked_reason ?? "", /scope does not match/i);
+});
+
+test("expired final authorization blocks future Unity mutation execution", () => {
+  const preview = previewUnitySceneObjectCreation(createPreviewInput());
+  const result = evaluateUnityMutationExecutionAuthorization({
+    preview_result: preview,
+    authorization: {
+      final_execution_authorization_id: "final-auth-3",
+      authorized_by_operator: true,
+      authorized_at: "2026-04-30T18:05:00.000Z",
+      authorization_scope: "scene_object_creation_request",
+      target_request_id: preview.request_id,
+      expires_at: "2026-04-30T18:09:00.000Z",
+    },
+    evaluated_at: "2026-04-30T18:10:00.000Z",
+  });
+
+  assert.equal(result.authorized, false);
+  assert.equal(result.expiration_status, "expired");
+  assert.match(result.blocked_reason ?? "", /authorization has expired/i);
+});
+
+test("valid final authorization reports authorized without executing mutation", () => {
+  const preview = previewUnitySceneObjectCreation(createPreviewInput());
+  const result = evaluateUnityMutationExecutionAuthorization({
+    preview_result: preview,
+    authorization: {
+      final_execution_authorization_id: "final-auth-4",
+      authorized_by_operator: true,
+      authorized_at: "2026-04-30T18:05:00.000Z",
+      authorization_scope: "scene_object_creation_request",
+      target_request_id: preview.request_id,
+      expires_at: "2026-04-30T19:00:00.000Z",
+    },
+    evaluated_at: "2026-04-30T18:10:00.000Z",
+  });
+
+  assert.equal(result.authorized, true);
+  assert.equal(result.scope_match, true);
+  assert.equal(result.target_request_match, true);
+  assert.equal(result.expiration_status, "valid");
+  assert.equal(preview.executed, false);
+  assert.equal(preview.final_execution_authorized, false);
 });

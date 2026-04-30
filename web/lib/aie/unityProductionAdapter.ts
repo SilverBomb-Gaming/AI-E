@@ -79,6 +79,25 @@ export type UnitySceneObjectCreationPreviewInput = UnityProductionAdapterInput &
   intended_transform: UnitySceneObjectCreationPreviewTransform;
 };
 
+export type UnityMutationExecutionAuthorization = {
+  final_execution_authorization_id: string;
+  authorized_by_operator: boolean;
+  authorized_at: string;
+  authorization_scope: "scene_object_creation_request";
+  target_request_id: string;
+  expires_at: string | null;
+};
+
+export type UnityMutationExecutionAuthorizationEvaluation = {
+  authorized: boolean;
+  blocked_reason: string | null;
+  request_id: string;
+  scope_match: boolean;
+  target_request_match: boolean;
+  expiration_status: "valid" | "expired" | "not_provided";
+  final_execution_authorization_id: string | null;
+};
+
 export type UnitySceneObjectCreationPreviewResult = {
   request_id: string;
   domain: "Unity";
@@ -99,6 +118,8 @@ export type UnitySceneObjectCreationPreviewResult = {
   risk_level: "low" | "medium" | "high";
   required_approval_gates: string[];
   recommended_next_operator_action: string;
+  final_execution_required: true;
+  final_execution_authorized: false;
   artifact_label: "unity_scene_object_creation_preview";
   review_package: AutonomousReviewPackage | null;
   delivery_package: AutonomousDeliveryPackage | null;
@@ -163,6 +184,8 @@ function buildSceneObjectCreationPreviewResult(
     risk_level: inferSceneObjectCreationRiskLevel(intendedComponents),
     required_approval_gates: [...input.planning_packet.required_approval_gates],
     recommended_next_operator_action: recommendedNextOperatorAction,
+    final_execution_required: true,
+    final_execution_authorized: false,
     artifact_label: "unity_scene_object_creation_preview",
     review_package: null,
     delivery_package: null,
@@ -195,6 +218,9 @@ function createUnitySceneObjectCreationPreviewPackages(
     `Risk level: ${result.risk_level}`,
     `Dry run: ${String(result.dry_run)}`,
     `Executed: ${String(result.executed)}`,
+    `Final execution required: ${String(result.final_execution_required)}`,
+    `Final execution authorized: ${String(result.final_execution_authorized)}`,
+    "Final execution authorization status: FINAL EXECUTION NOT AUTHORIZED",
     ...result.required_approval_gates.map((gate) => `Required approval gate: ${gate}`),
     `Recommended next operator action: ${result.recommended_next_operator_action}`,
     ...(result.blocked_reason ? [`Blocked reason: ${result.blocked_reason}`] : []),
@@ -213,6 +239,7 @@ function createUnitySceneObjectCreationPreviewPackages(
       `Risk level: ${result.risk_level}`,
       "DRY RUN ONLY",
       "NOT EXECUTED",
+      "FINAL EXECUTION NOT AUTHORIZED",
       "No Unity scene mutation path enabled.",
     ],
     recommended_decision: "approve",
@@ -234,7 +261,8 @@ function createUnitySceneObjectCreationPreviewPackages(
     files_changed: [],
     validation_results: proofResults,
     proof_results: [result.execution_kind, "DRY RUN ONLY", "NOT EXECUTED"],
-    risk_summary: `Dry-run Unity mutation preview only. Risk level ${result.risk_level}. No mutation path enabled.`,
+    validation_results: proofResults,
+    risk_summary: `Dry-run Unity mutation preview only. Risk level ${result.risk_level}. Final execution not authorized. No mutation path enabled.`,
     rollback_plan: "Discard the dry-run mutation preview package if the operator rejects it.",
     release_notes: summary,
     recommended_pr_title: "",
@@ -629,5 +657,88 @@ export function previewUnitySceneObjectCreation(
     ...baseResult,
     review_package: previewPackages.reviewPackage,
     delivery_package: previewPackages.deliveryPackage,
+  };
+}
+
+export function evaluateUnityMutationExecutionAuthorization(input: {
+  preview_result: Pick<UnitySceneObjectCreationPreviewResult, "request_id" | "request_type" | "final_execution_required" | "final_execution_authorized" | "executed">;
+  authorization: UnityMutationExecutionAuthorization | null;
+  evaluated_at: string;
+}): UnityMutationExecutionAuthorizationEvaluation {
+  if (!input.authorization) {
+    return {
+      authorized: false,
+      blocked_reason: "Unity mutation execution remains blocked until a final execution authorization is recorded.",
+      request_id: input.preview_result.request_id,
+      scope_match: false,
+      target_request_match: false,
+      expiration_status: "not_provided",
+      final_execution_authorization_id: null,
+    };
+  }
+
+  const targetRequestMatch = input.authorization.target_request_id === input.preview_result.request_id;
+  if (!targetRequestMatch) {
+    return {
+      authorized: false,
+      blocked_reason: "Unity mutation execution authorization target request id does not match the reviewed preview request.",
+      request_id: input.preview_result.request_id,
+      scope_match: input.authorization.authorization_scope === input.preview_result.request_type,
+      target_request_match: false,
+      expiration_status: input.authorization.expires_at ? (input.authorization.expires_at <= input.evaluated_at ? "expired" : "valid") : "not_provided",
+      final_execution_authorization_id: input.authorization.final_execution_authorization_id,
+    };
+  }
+
+  const scopeMatch = input.authorization.authorization_scope === input.preview_result.request_type;
+  if (!scopeMatch) {
+    return {
+      authorized: false,
+      blocked_reason: "Unity mutation execution authorization scope does not match the requested mutation lane.",
+      request_id: input.preview_result.request_id,
+      scope_match: false,
+      target_request_match: true,
+      expiration_status: input.authorization.expires_at ? (input.authorization.expires_at <= input.evaluated_at ? "expired" : "valid") : "not_provided",
+      final_execution_authorization_id: input.authorization.final_execution_authorization_id,
+    };
+  }
+
+  const expirationStatus = input.authorization.expires_at
+    ? input.authorization.expires_at <= input.evaluated_at
+      ? "expired"
+      : "valid"
+    : "not_provided";
+  if (expirationStatus === "expired") {
+    return {
+      authorized: false,
+      blocked_reason: "Unity mutation execution authorization has expired and must be renewed before any future mutation path is allowed.",
+      request_id: input.preview_result.request_id,
+      scope_match: true,
+      target_request_match: true,
+      expiration_status: "expired",
+      final_execution_authorization_id: input.authorization.final_execution_authorization_id,
+    };
+  }
+
+  if (!input.authorization.authorized_by_operator) {
+    return {
+      authorized: false,
+      blocked_reason: "Unity mutation execution authorization is present but not operator-authorized.",
+      request_id: input.preview_result.request_id,
+      scope_match: true,
+      target_request_match: true,
+      expiration_status: expirationStatus,
+      final_execution_authorization_id: input.authorization.final_execution_authorization_id,
+    };
+  }
+
+  return {
+    authorized: true,
+    blocked_reason: null,
+    request_id: input.preview_result.request_id,
+    scope_match: true,
+    target_request_match: true,
+    expiration_status: expirationStatus,
+    final_execution_authorization_id: input.authorization.final_execution_authorization_id,
   };
 }

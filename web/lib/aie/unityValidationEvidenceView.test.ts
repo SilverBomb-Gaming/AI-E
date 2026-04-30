@@ -163,6 +163,9 @@ test("mutation preview evidence renders dry-run-only operator details without ex
       "Risk level: medium",
       "Dry run: true",
       "Executed: false",
+      "Final execution required: true",
+      "Final execution authorized: false",
+      "Final execution authorization status: FINAL EXECUTION NOT AUTHORIZED",
       "Required approval gate: operator planning approval",
       "Required approval gate: review package approval",
       "Required approval gate: operator approval",
@@ -186,17 +189,23 @@ test("mutation preview evidence renders dry-run-only operator details without ex
   assert.equal(evidence.riskLevel, "medium");
   assert.equal(evidence.dryRun, true);
   assert.equal(evidence.executed, false);
+  assert.equal(evidence.finalExecutionRequired, true);
+  assert.equal(evidence.finalExecutionAuthorized, false);
+  assert.equal(evidence.finalExecutionAuthorizationStatus, "FINAL EXECUTION NOT AUTHORIZED");
   assert.ok(evidence.requiredApprovalGates.includes("explicit final execute gate"));
 
   const markup = renderToStaticMarkup(createElement(UnityValidationEvidencePanel, { evidence }));
   assert.match(markup, /Scene Object Creation Preview/);
   assert.match(markup, /DRY RUN ONLY/);
   assert.match(markup, /NOT EXECUTED/);
+  assert.match(markup, /FINAL EXECUTION NOT AUTHORIZED/);
   assert.match(markup, /Requested object name: CheckpointAnchor/);
   assert.match(markup, /Target scene: EnemyAIDemo/);
   assert.match(markup, /Intended components: Transform, BoxCollider/);
   assert.match(markup, /Dry run: true/);
   assert.match(markup, /Executed: false/);
+  assert.match(markup, /Final execution required: true/);
+  assert.match(markup, /Final execution authorized: false/);
   assert.doesNotMatch(markup, /<button/i);
   assert.doesNotMatch(markup, /disabled=/i);
 });
