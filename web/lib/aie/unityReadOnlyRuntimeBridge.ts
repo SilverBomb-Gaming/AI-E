@@ -40,9 +40,26 @@ export type UnityReadOnlyRuntimeBridgeConfig = {
   timeoutMs?: number;
   fetchImpl?: typeof fetch;
   commandProbe?: (input: UnityReadOnlyBridgeProbeInput) => Promise<unknown>;
+  unityEditorPath?: string | null;
+  unityProjectPath?: string | null;
+  unityScenePath?: string | null;
+  unityExecuteMethod?: string | null;
+  commandRunner?: (input: {
+    unityEditorPath: string;
+    unityProjectPath: string;
+    unityScenePath: string | null;
+    unityExecuteMethod: string;
+    timeoutMs: number;
+    probeInput: UnityReadOnlyBridgeProbeInput;
+  }) => Promise<unknown>;
 };
 
 type EndpointPayload = {
+  sceneName?: unknown;
+  missingScripts?: unknown;
+  consoleErrors?: unknown;
+  objectCount?: unknown;
+  timestamp?: unknown;
   scene_validation_status?: unknown;
   checked_scene_name?: unknown;
   missing_script_count?: unknown;
@@ -52,6 +69,12 @@ type EndpointPayload = {
   raw_evidence_summary?: unknown;
   recommended_next_operator_action?: unknown;
 };
+
+const DEFAULT_UNITY_EXECUTE_METHOD = "EnemyAIDemo.Editor.UnityValidationProbe.RunValidationProbeFromCommandLine";
+const UNITY_VALIDATION_JSON_PREFIX = "[AIE_UNITY_VALIDATION_JSON]";
+const DEFAULT_UNITY_TIMEOUT_MS = 60_000;
+const MIN_UNITY_TIMEOUT_MS = 250;
+const MAX_UNITY_TIMEOUT_MS = 60_000;
 
 function normalizeText(value: unknown): string | null {
   const text = String(value ?? "").trim();
@@ -68,6 +91,20 @@ function normalizeSceneValidationStatus(value: unknown): UnityReadOnlyBridgeObse
   return value === "checked_clean" || value === "checked_with_findings" || value === "unknown"
     ? value
     : null;
+}
+
+function normalizeTimeoutMs(value: unknown, fallback: number = DEFAULT_UNITY_TIMEOUT_MS): number {
+  const numericValue = typeof value === "number"
+    ? value
+    : typeof value === "string"
+      ? Number(value.trim())
+      : Number.NaN;
+
+  if (!Number.isFinite(numericValue)) {
+    return fallback;
+  }
+
+  return Math.min(MAX_UNITY_TIMEOUT_MS, Math.max(MIN_UNITY_TIMEOUT_MS, Math.trunc(numericValue)));
 }
 
 function buildUnavailableResult(
@@ -107,7 +144,29 @@ function normalizeObservation(
   }
 
   const candidate = payload as EndpointPayload;
-  const sceneValidationStatus = normalizeSceneValidationStatus(candidate.scene_validation_status);
+  const inferredSceneValidationStatus = (() => {
+    const hasLiveCommandShape = [
+      candidate.sceneName,
+      candidate.missingScripts,
+      candidate.consoleErrors,
+      candidate.objectCount,
+      candidate.timestamp,
+    ].some((value) => value !== undefined);
+    if (!hasLiveCommandShape) {
+      return null;
+    }
+
+    const missingScripts = normalizeOptionalCount(candidate.missing_script_count ?? candidate.missingScripts);
+    const consoleErrors = normalizeOptionalCount(candidate.console_error_count ?? candidate.consoleErrors);
+    if (missingScripts === null && consoleErrors === null) {
+      return "unknown";
+    }
+
+    return (missingScripts ?? 0) > 0 || (consoleErrors ?? 0) > 0
+      ? "checked_with_findings"
+      : "checked_clean";
+  })();
+  const sceneValidationStatus = normalizeSceneValidationStatus(candidate.scene_validation_status) ?? inferredSceneValidationStatus;
   if (!sceneValidationStatus) {
     return buildUnavailableResult(
       input,
@@ -117,11 +176,11 @@ function normalizeObservation(
     );
   }
 
-  const checkedSceneName = normalizeText(candidate.checked_scene_name) ?? input.scene_name_hint;
-  const missingScriptCount = normalizeOptionalCount(candidate.missing_script_count);
-  const consoleErrorCount = normalizeOptionalCount(candidate.console_error_count);
-  const objectCount = normalizeOptionalCount(candidate.object_count);
-  const evidenceTimestamp = normalizeText(candidate.evidence_timestamp) ?? input.requested_at;
+  const checkedSceneName = normalizeText(candidate.checked_scene_name ?? candidate.sceneName) ?? input.scene_name_hint;
+  const missingScriptCount = normalizeOptionalCount(candidate.missing_script_count ?? candidate.missingScripts);
+  const consoleErrorCount = normalizeOptionalCount(candidate.console_error_count ?? candidate.consoleErrors);
+  const objectCount = normalizeOptionalCount(candidate.object_count ?? candidate.objectCount);
+  const evidenceTimestamp = normalizeText(candidate.evidence_timestamp ?? candidate.timestamp) ?? input.requested_at;
   const rawEvidenceSummary = normalizeText(candidate.raw_evidence_summary);
   const recommendedNextOperatorAction = normalizeText(candidate.recommended_next_operator_action)
     ?? "Review the Unity validation evidence and decide whether to keep the request in review or continue delivery preparation.";
@@ -163,7 +222,11 @@ export function createConfiguredUnityReadOnlyRuntimeBridge(
   config: UnityReadOnlyRuntimeBridgeConfig = {},
 ): UnityReadOnlyRuntimeBridge {
   const endpointUrl = config.endpointUrl ?? process.env.AIE_UNITY_VALIDATION_ENDPOINT ?? null;
-  const timeoutMs = Math.max(250, Math.trunc(config.timeoutMs ?? 2_000));
+  const unityEditorPath = config.unityEditorPath ?? process.env.AIE_UNITY_EDITOR_PATH ?? null;
+  const unityProjectPath = config.unityProjectPath ?? process.env.AIE_UNITY_PROJECT_PATH ?? null;
+  const unityScenePath = config.unityScenePath ?? process.env.AIE_UNITY_SCENE_PATH ?? null;
+  const unityExecuteMethod = config.unityExecuteMethod ?? process.env.AIE_UNITY_EXECUTE_METHOD ?? DEFAULT_UNITY_EXECUTE_METHOD;
+  const timeoutMs = normalizeTimeoutMs(config.timeoutMs ?? process.env.AIE_UNITY_TIMEOUT_MS);
   const fetchImpl = config.fetchImpl ?? fetch;
 
   return {
@@ -171,6 +234,22 @@ export function createConfiguredUnityReadOnlyRuntimeBridge(
       if (config.commandProbe) {
         try {
           const payload = await config.commandProbe(input);
+          return normalizeObservation(input, "command_probe", payload);
+        } catch (error) {
+          return buildUnavailableResult(input, "command_probe", `Unity command probe failed: ${String(error)}`);
+        }
+      }
+
+      if (unityEditorPath && unityProjectPath) {
+        try {
+          const payload = await (config.commandRunner ?? runUnityCommandProbe)({
+            unityEditorPath,
+            unityProjectPath,
+            unityScenePath,
+            unityExecuteMethod,
+            timeoutMs,
+            probeInput: input,
+          });
           return normalizeObservation(input, "command_probe", payload);
         } catch (error) {
           return buildUnavailableResult(input, "command_probe", `Unity command probe failed: ${String(error)}`);
@@ -214,4 +293,98 @@ export function createConfiguredUnityReadOnlyRuntimeBridge(
       }
     },
   };
+}
+
+async function runUnityCommandProbe(input: {
+  unityEditorPath: string;
+  unityProjectPath: string;
+  unityScenePath: string | null;
+  unityExecuteMethod: string;
+  timeoutMs: number;
+  probeInput: UnityReadOnlyBridgeProbeInput;
+}): Promise<unknown> {
+  const { spawn } = await import("node:child_process");
+
+  return await new Promise<unknown>((resolve, reject) => {
+    const args = [
+      "-batchmode",
+      "-nographics",
+      "-quit",
+      "-projectPath",
+      input.unityProjectPath,
+      "-executeMethod",
+      input.unityExecuteMethod,
+    ];
+
+    const child = spawn(input.unityEditorPath, args, {
+      env: {
+        ...process.env,
+        AIE_UNITY_VALIDATION_REQUEST_ID: input.probeInput.request_id,
+        AIE_UNITY_VALIDATION_REQUESTED_AT: input.probeInput.requested_at,
+        AIE_UNITY_SCENE_NAME_HINT: input.probeInput.scene_name_hint ?? "",
+        ...(input.unityScenePath ? { AIE_UNITY_SCENE_PATH: input.unityScenePath } : {}),
+      },
+      windowsHide: true,
+    });
+
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    const timeoutHandle = setTimeout(() => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      child.kill();
+      reject(new Error(`Unity command probe timed out after ${input.timeoutMs}ms.`));
+    }, input.timeoutMs);
+
+    child.stdout.on("data", (chunk) => {
+      stdout += String(chunk);
+    });
+
+    child.stderr.on("data", (chunk) => {
+      stderr += String(chunk);
+    });
+
+    child.on("error", (error) => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      clearTimeout(timeoutHandle);
+      reject(error);
+    });
+
+    child.on("close", (exitCode) => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      clearTimeout(timeoutHandle);
+
+      if (exitCode !== 0) {
+        reject(new Error(`Unity exited with code ${exitCode}. ${stderr.trim() || stdout.trim()}`.trim()));
+        return;
+      }
+
+      const payloadLine = stdout
+        .split(/\r?\n/)
+        .find((line) => line.startsWith(UNITY_VALIDATION_JSON_PREFIX));
+
+      if (!payloadLine) {
+        reject(new Error(`Unity command probe did not emit ${UNITY_VALIDATION_JSON_PREFIX}. ${stdout.trim()}`.trim()));
+        return;
+      }
+
+      try {
+        resolve(JSON.parse(payloadLine.slice(UNITY_VALIDATION_JSON_PREFIX.length)));
+      } catch (error) {
+        reject(new Error(`Unity command probe emitted malformed JSON: ${String(error)}`));
+      }
+    });
+  });
 }
