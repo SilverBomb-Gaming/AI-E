@@ -177,4 +177,5 @@ test("runtime mutation keeps Unity planning chat intake advisory and non-executi
     "prefab_request",
     "validation_playtest_request",
   ]);
+  assert.equal(result.updated_runtime_state.operator_dashboard_state?.conversational_session?.latest_proposal?.production_pipeline_plan?.unity_validation_execution_result, null);
 });

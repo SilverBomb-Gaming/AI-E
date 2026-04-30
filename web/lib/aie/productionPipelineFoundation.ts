@@ -52,6 +52,26 @@ export type UnityProductionPlanningPacket = {
   adapter_status: "design_only";
 };
 
+export type UnityValidationApprovalStatus = "missing" | "approved";
+
+export type UnityValidationExecutionResult = {
+  request_id: string;
+  domain: "Unity";
+  request_type: "validation_playtest_request";
+  execution_mode: "read_only_validation_preview";
+  review_approval_id: string | null;
+  review_approval_status: UnityValidationApprovalStatus;
+  operator_approval_id: string | null;
+  operator_approval_status: UnityValidationApprovalStatus;
+  executed: boolean;
+  blocked_reason: string | null;
+  validation_checklist: string[];
+  delivery_summary: string;
+  recommended_next_operator_action: string;
+  artifact_label: "adapter_level_validation_preview";
+  mutating: false;
+};
+
 export type ProductionPipelinePlan = {
   plan_id: string;
   objective: string;
@@ -64,6 +84,7 @@ export type ProductionPipelinePlan = {
   safe_interface: ProductionPipelineRequestEnvelope[];
   operator_review_focus: string[];
   unity_planning_packet: UnityProductionPlanningPacket | null;
+  unity_validation_execution_result: UnityValidationExecutionResult | null;
 };
 
 const EXECUTION_PATH = "Strategy -> Planning -> Execution -> Review -> Delivery -> Studio Control" as const;
@@ -297,5 +318,6 @@ export function deriveProductionPipelinePlan(
     })),
     operator_review_focus: capabilityMap.flatMap((capability) => capability.operator_review_focus),
     unity_planning_packet: unityPlanningPacket,
+    unity_validation_execution_result: null,
   };
 }

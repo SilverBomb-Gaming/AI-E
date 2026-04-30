@@ -225,15 +225,15 @@ Layer 14 starts as a planning and architecture pass only. This layer expands AI-
 Current Layer 14 status:
 
 - foundation planning contracts: complete
-- Unity-first planning packet and adapter-interface design: in progress
-- reviewed execution path for any production domain: not implemented yet
+- Unity-first planning packet and adapter-interface design: complete
+- first reviewed Unity validation execution path: implemented as adapter-level validation preview
 - playtest-ready: no
 
 Layer 14 roadmap:
 
 - phase 1: planning-only contracts for production pipeline requests covering assets, art, audio, and Unity integration - complete
-- phase 2: bounded planning packets and review artifacts for those domains, starting with Unity integration - in progress
-- phase 3: execution adapters only after reviewable contracts, validation rules, and delivery gates exist
+- phase 2: bounded planning packets and review artifacts for those domains, starting with Unity integration - complete for planning and review artifacts
+- phase 3: execution adapters only after reviewable contracts, validation rules, and delivery gates exist - in progress with Unity validation preview only
 - phase 4: studio-control observability for production pipeline throughput, blockers, and operator attention
 
 Production pipeline capability map:
@@ -256,7 +256,15 @@ Unity-first planning adapter design:
 - Unity planning packets now classify bounded request shapes for scenes, prefabs, component or script changes, validation/playtest asks, and asset imports
 - Unity adapter design remains interface-only: it defines planning input, review metadata, approval metadata, and readiness results without executing any Unity or project mutation
 - missing review or missing operator approval must block the Unity adapter from future execution
-- Layer 14 remains not playtest-ready until at least one Unity production action has a reviewed, gated execution path and the full regression suite stays clean
+
+First reviewed Unity validation execution path:
+
+- the first reviewed Unity execution slice is `validation_playtest_request` only
+- execution remains read-only and validation-only, producing evidence and delivery-summary artifacts rather than project mutation
+- current execution is an adapter-level validation preview; it does not invoke a real Unity runtime bridge yet
+- review approval and operator approval are both required before the preview execution path can return an executed result
+- non-validation Unity request types are still refused by the execution adapter
+- Layer 14 is still not real Unity playtest-ready until a real Unity runtime bridge is connected and validated through the same gated path
 
 ## Safe Runtime Action Bridge
 

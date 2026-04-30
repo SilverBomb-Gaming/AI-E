@@ -55,4 +55,5 @@ test("Unity integration requests thread Unity planning packet metadata into the 
   ]);
   assert.match(result.response.assistant_message, /operator approval is still required|needs operator review/i);
   assert.equal(result.response.proposal?.safe_to_execute, false);
+  assert.equal(result.response.proposal?.production_pipeline_plan?.unity_validation_execution_result, null);
 });

@@ -1,4 +1,8 @@
-import type { UnityProductionPlanningPacket, UnityProductionRequestType } from "./productionPipelineFoundation";
+import type {
+  UnityProductionPlanningPacket,
+  UnityProductionRequestType,
+  UnityValidationExecutionResult,
+} from "./productionPipelineFoundation";
 
 export type UnityProductionAdapterAction =
   | "scene_plan_review"
@@ -44,12 +48,51 @@ export type UnityProductionAdapterReadinessResult = {
   output: UnityProductionAdapterOutput;
 };
 
+export type UnityValidationExecutionInput = UnityProductionAdapterInput;
+
 function hasCompletedReview(reviewState: UnityProductionAdapterReviewState): boolean {
   return Boolean(reviewState.review_package_id && reviewState.review_completed_at);
 }
 
 function hasApproval(reviewState: UnityProductionAdapterReviewState): boolean {
   return Boolean(reviewState.approved_by_operator && reviewState.operator_approval_id);
+}
+
+function isValidationOnlyPacket(planningPacket: UnityProductionPlanningPacket): boolean {
+  return planningPacket.request_types.length === 1 && planningPacket.request_types[0] === "validation_playtest_request";
+}
+
+function buildValidationChecklist(planningPacket: UnityProductionPlanningPacket): string[] {
+  return [
+    "Confirm reviewed Unity validation scope remains read-only.",
+    "Confirm no scene, prefab, asset, or script mutation is permitted.",
+    ...planningPacket.required_review_artifacts.map((artifact) => `Review artifact present: ${artifact}.`),
+    ...planningPacket.required_approval_gates.map((gate) => `Approval gate satisfied: ${gate}.`),
+  ];
+}
+
+function buildBlockedValidationResult(
+  input: UnityValidationExecutionInput,
+  blockedReason: string,
+  recommendedNextOperatorAction: string,
+): UnityValidationExecutionResult {
+  return {
+    request_id: input.adapter_request_id,
+    domain: "Unity",
+    request_type: "validation_playtest_request",
+    execution_mode: "read_only_validation_preview",
+    review_approval_id: input.review_state.review_package_id,
+    review_approval_status: hasCompletedReview(input.review_state) ? "approved" : "missing",
+    operator_approval_id: input.review_state.operator_approval_id,
+    operator_approval_status: hasApproval(input.review_state) ? "approved" : "missing",
+    executed: false,
+    blocked_reason: blockedReason,
+    validation_checklist: buildValidationChecklist(input.planning_packet),
+    delivery_summary: "Unity validation preview was not executed. Adapter remains non-mutating and review-gated.",
+    recommended_next_operator_action: recommendedNextOperatorAction,
+    artifact_label: "adapter_level_validation_preview",
+    mutating: false,
+  };
 }
 
 export function mapUnityRequestTypeToAdapterAction(requestType: UnityProductionRequestType): UnityProductionAdapterAction {
@@ -118,5 +161,51 @@ export function evaluateUnityProductionAdapterReadiness(
     can_execute: true,
     reason: "Unity adapter design has the required review and approval metadata for a future reviewed execution path.",
     output,
+  };
+}
+
+export function executeReviewedUnityValidation(
+  input: UnityValidationExecutionInput,
+): UnityValidationExecutionResult {
+  if (!isValidationOnlyPacket(input.planning_packet)) {
+    return buildBlockedValidationResult(
+      input,
+      "Only validation_playtest_request is executable through the first Unity reviewed execution path.",
+      "Narrow the Unity packet to a validation/playtest-only request before invoking the execution adapter.",
+    );
+  }
+
+  if (!hasCompletedReview(input.review_state)) {
+    return buildBlockedValidationResult(
+      input,
+      "Unity validation execution is blocked until review approval is recorded.",
+      "Complete the Unity review package before requesting validation execution.",
+    );
+  }
+
+  if (!hasApproval(input.review_state)) {
+    return buildBlockedValidationResult(
+      input,
+      "Unity validation execution is blocked until operator approval is recorded.",
+      "Record explicit operator approval before invoking the Unity validation adapter.",
+    );
+  }
+
+  return {
+    request_id: input.adapter_request_id,
+    domain: "Unity",
+    request_type: "validation_playtest_request",
+    execution_mode: "read_only_validation_preview",
+    review_approval_id: input.review_state.review_package_id,
+    review_approval_status: "approved",
+    operator_approval_id: input.review_state.operator_approval_id,
+    operator_approval_status: "approved",
+    executed: true,
+    blocked_reason: null,
+    validation_checklist: buildValidationChecklist(input.planning_packet),
+    delivery_summary: "Adapter-level Unity validation preview completed. No Unity runtime bridge was invoked and no project mutation was performed. Review evidence and delivery notes are ready for operator inspection.",
+    recommended_next_operator_action: "Review the validation preview evidence and decide whether to keep the request in delivery prep or connect a future real Unity runtime bridge.",
+    artifact_label: "adapter_level_validation_preview",
+    mutating: false,
   };
 }

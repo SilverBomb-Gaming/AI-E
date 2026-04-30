@@ -26,6 +26,7 @@ test("production pipeline planning derives advisory-only plan for multi-domain r
   assert.equal(plan?.mutation_policy, "planning_only");
   assert.match(plan?.summary ?? "", /advisory production-pipeline plan only/i);
   assert.equal(plan?.unity_planning_packet?.adapter_status, "design_only");
+  assert.equal(plan?.unity_validation_execution_result, null);
 });
 
 test("non-production requests do not create a production pipeline plan", () => {
