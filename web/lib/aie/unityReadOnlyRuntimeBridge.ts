@@ -4,40 +4,214 @@ export type UnityReadOnlyBridgeProbeInput = {
   scene_name_hint: string | null;
 };
 
+export type UnityReadOnlyBridgeProbeSource = "http_endpoint" | "command_probe" | "none";
+
 export type UnityReadOnlyBridgeObservation = {
   bridge_status: "bridge_ready";
+  source: Exclude<UnityReadOnlyBridgeProbeSource, "none">;
   scene_validation_status: "checked_clean" | "checked_with_findings" | "unknown";
   missing_script_count: number | null;
   console_error_count: number | null;
   object_count: number | null;
   checked_scene_name: string | null;
   evidence_timestamp: string;
+  raw_evidence_summary: string | null;
   summary: string;
   recommended_next_operator_action: string;
 };
 
 export type UnityReadOnlyBridgeUnavailable = {
   bridge_status: "bridge_unavailable";
+  source: UnityReadOnlyBridgeProbeSource;
   reason: string;
   evidence_timestamp: string;
+  raw_evidence_summary: string | null;
   recommended_next_operator_action: string;
 };
 
 export type UnityReadOnlyBridgeResult = UnityReadOnlyBridgeObservation | UnityReadOnlyBridgeUnavailable;
 
 export type UnityReadOnlyRuntimeBridge = {
-  probeValidation(input: UnityReadOnlyBridgeProbeInput): UnityReadOnlyBridgeResult;
+  probeValidation(input: UnityReadOnlyBridgeProbeInput): Promise<UnityReadOnlyBridgeResult>;
 };
+
+export type UnityReadOnlyRuntimeBridgeConfig = {
+  endpointUrl?: string | null;
+  timeoutMs?: number;
+  fetchImpl?: typeof fetch;
+  commandProbe?: (input: UnityReadOnlyBridgeProbeInput) => Promise<unknown>;
+};
+
+type EndpointPayload = {
+  scene_validation_status?: unknown;
+  checked_scene_name?: unknown;
+  missing_script_count?: unknown;
+  console_error_count?: unknown;
+  object_count?: unknown;
+  evidence_timestamp?: unknown;
+  raw_evidence_summary?: unknown;
+  recommended_next_operator_action?: unknown;
+};
+
+function normalizeText(value: unknown): string | null {
+  const text = String(value ?? "").trim();
+  return text ? text : null;
+}
+
+function normalizeOptionalCount(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.max(0, Math.trunc(value))
+    : null;
+}
+
+function normalizeSceneValidationStatus(value: unknown): UnityReadOnlyBridgeObservation["scene_validation_status"] | null {
+  return value === "checked_clean" || value === "checked_with_findings" || value === "unknown"
+    ? value
+    : null;
+}
+
+function buildUnavailableResult(
+  input: UnityReadOnlyBridgeProbeInput,
+  source: UnityReadOnlyBridgeProbeSource,
+  reason: string,
+  rawEvidenceSummary: string | null = null,
+): UnityReadOnlyBridgeUnavailable {
+  return {
+    bridge_status: "bridge_unavailable",
+    source,
+    reason,
+    evidence_timestamp: input.requested_at,
+    raw_evidence_summary: rawEvidenceSummary,
+    recommended_next_operator_action: "Keep the request in reviewed adapter-preview mode or connect a verified read-only Unity bridge before retrying.",
+  };
+}
+
+function buildSummary(payload: {
+  checked_scene_name: string | null;
+  scene_validation_status: UnityReadOnlyBridgeObservation["scene_validation_status"];
+  missing_script_count: number | null;
+  console_error_count: number | null;
+  object_count: number | null;
+}): string {
+  const sceneLabel = payload.checked_scene_name ?? "the requested scene";
+  return `Unity read-only validation probe completed for ${sceneLabel} with status ${payload.scene_validation_status}, missing scripts ${payload.missing_script_count ?? "unknown"}, console errors ${payload.console_error_count ?? "unknown"}, and object count ${payload.object_count ?? "unknown"}.`;
+}
+
+function normalizeObservation(
+  input: UnityReadOnlyBridgeProbeInput,
+  source: Exclude<UnityReadOnlyBridgeProbeSource, "none">,
+  payload: unknown,
+): UnityReadOnlyBridgeResult {
+  if (!payload || typeof payload !== "object") {
+    return buildUnavailableResult(input, source, "Unity read-only bridge returned a malformed response.");
+  }
+
+  const candidate = payload as EndpointPayload;
+  const sceneValidationStatus = normalizeSceneValidationStatus(candidate.scene_validation_status);
+  if (!sceneValidationStatus) {
+    return buildUnavailableResult(
+      input,
+      source,
+      "Unity read-only bridge response did not include a supported scene validation status.",
+      normalizeText(candidate.raw_evidence_summary),
+    );
+  }
+
+  const checkedSceneName = normalizeText(candidate.checked_scene_name) ?? input.scene_name_hint;
+  const missingScriptCount = normalizeOptionalCount(candidate.missing_script_count);
+  const consoleErrorCount = normalizeOptionalCount(candidate.console_error_count);
+  const objectCount = normalizeOptionalCount(candidate.object_count);
+  const evidenceTimestamp = normalizeText(candidate.evidence_timestamp) ?? input.requested_at;
+  const rawEvidenceSummary = normalizeText(candidate.raw_evidence_summary);
+  const recommendedNextOperatorAction = normalizeText(candidate.recommended_next_operator_action)
+    ?? "Review the Unity validation evidence and decide whether to keep the request in review or continue delivery preparation.";
+
+  return {
+    bridge_status: "bridge_ready",
+    source,
+    scene_validation_status: sceneValidationStatus,
+    missing_script_count: missingScriptCount,
+    console_error_count: consoleErrorCount,
+    object_count: objectCount,
+    checked_scene_name: checkedSceneName,
+    evidence_timestamp: evidenceTimestamp,
+    raw_evidence_summary: rawEvidenceSummary,
+    summary: buildSummary({
+      checked_scene_name: checkedSceneName,
+      scene_validation_status: sceneValidationStatus,
+      missing_script_count: missingScriptCount,
+      console_error_count: consoleErrorCount,
+      object_count: objectCount,
+    }),
+    recommended_next_operator_action: recommendedNextOperatorAction,
+  };
+}
 
 export function createUnavailableUnityReadOnlyRuntimeBridge(reason?: string): UnityReadOnlyRuntimeBridge {
   return {
-    probeValidation(input: UnityReadOnlyBridgeProbeInput): UnityReadOnlyBridgeResult {
-      return {
-        bridge_status: "bridge_unavailable",
-        reason: reason ?? "No Unity read-only runtime endpoint is configured for validation probes.",
-        evidence_timestamp: input.requested_at,
-        recommended_next_operator_action: "Keep the request in reviewed adapter-preview mode or connect a verified read-only Unity bridge before retrying.",
-      };
+    async probeValidation(input: UnityReadOnlyBridgeProbeInput): Promise<UnityReadOnlyBridgeResult> {
+      return buildUnavailableResult(
+        input,
+        "none",
+        reason ?? "No Unity read-only runtime endpoint is configured for validation probes.",
+      );
+    },
+  };
+}
+
+export function createConfiguredUnityReadOnlyRuntimeBridge(
+  config: UnityReadOnlyRuntimeBridgeConfig = {},
+): UnityReadOnlyRuntimeBridge {
+  const endpointUrl = config.endpointUrl ?? process.env.AIE_UNITY_VALIDATION_ENDPOINT ?? null;
+  const timeoutMs = Math.max(250, Math.trunc(config.timeoutMs ?? 2_000));
+  const fetchImpl = config.fetchImpl ?? fetch;
+
+  return {
+    async probeValidation(input: UnityReadOnlyBridgeProbeInput): Promise<UnityReadOnlyBridgeResult> {
+      if (config.commandProbe) {
+        try {
+          const payload = await config.commandProbe(input);
+          return normalizeObservation(input, "command_probe", payload);
+        } catch (error) {
+          return buildUnavailableResult(input, "command_probe", `Unity command probe failed: ${String(error)}`);
+        }
+      }
+
+      if (!endpointUrl) {
+        return buildUnavailableResult(input, "none", "No Unity read-only runtime endpoint is configured for validation probes.");
+      }
+
+      const abortController = new AbortController();
+      const timeoutHandle = setTimeout(() => abortController.abort(), timeoutMs);
+
+      try {
+        const response = await fetchImpl(endpointUrl, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            mode: "validation_probe",
+            request_id: input.request_id,
+            requested_at: input.requested_at,
+            scene_name_hint: input.scene_name_hint,
+            read_only: true,
+          }),
+          signal: abortController.signal,
+        });
+
+        if (!response.ok) {
+          return buildUnavailableResult(input, "http_endpoint", `Unity read-only runtime endpoint returned HTTP ${response.status}.`);
+        }
+
+        const payload = await response.json();
+        return normalizeObservation(input, "http_endpoint", payload);
+      } catch (error) {
+        const reason = error instanceof Error && error.name === "AbortError"
+          ? `Unity read-only runtime endpoint timed out after ${timeoutMs}ms.`
+          : `Unity read-only runtime endpoint could not be reached: ${String(error)}`;
+        return buildUnavailableResult(input, "http_endpoint", reason);
+      } finally {
+        clearTimeout(timeoutHandle);
+      }
     },
   };
 }

@@ -91,5 +91,5 @@ test("Unity planning chat requests preserve advisory Unity packet metadata witho
     "component_script_request",
     "validation_playtest_request",
   ]);
-  assert.equal(session.latest_proposal?.production_pipeline_plan?.unity_validation_execution_result, null);
+    assert.equal(session.latest_proposal?.production_pipeline_plan?.unity_validation_execution_result, null);
 });

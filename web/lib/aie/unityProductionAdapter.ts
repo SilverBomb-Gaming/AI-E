@@ -4,7 +4,13 @@ import type {
   UnityValidationExecutionResult,
 } from "./productionPipelineFoundation";
 import {
-  createUnavailableUnityReadOnlyRuntimeBridge,
+  createAutonomousDeliveryPackage,
+  createAutonomousReviewPackage,
+  type AutonomousDeliveryPackage,
+  type AutonomousReviewPackage,
+} from "./autonomousWorkPlanning";
+import {
+  createConfiguredUnityReadOnlyRuntimeBridge,
   type UnityReadOnlyRuntimeBridge,
 } from "./unityReadOnlyRuntimeBridge";
 
@@ -103,11 +109,75 @@ function buildBlockedValidationResult(
     object_count: null,
     checked_scene_name: null,
     evidence_timestamp: input.requested_at,
+    raw_evidence_summary: null,
     validation_checklist: buildValidationChecklist(input.planning_packet),
     delivery_summary: "Unity validation preview was not executed. Adapter remains non-mutating and review-gated.",
     recommended_next_operator_action: recommendedNextOperatorAction,
     artifact_label: "adapter_level_validation_preview",
+    review_package: null,
+    delivery_package: null,
     mutating: false,
+  };
+}
+
+function createUnityValidationEvidencePackages(
+  input: UnityValidationExecutionInput,
+  result: Pick<UnityValidationExecutionResult, "execution_kind" | "bridge_status" | "delivery_summary" | "recommended_next_operator_action" | "validation_checklist" | "raw_evidence_summary" | "evidence_timestamp">,
+): {
+  reviewPackage: AutonomousReviewPackage;
+  deliveryPackage: AutonomousDeliveryPackage;
+} {
+  const packageSuffix = input.adapter_request_id;
+  const summary = result.raw_evidence_summary
+    ? `${result.delivery_summary} Raw evidence: ${result.raw_evidence_summary}`
+    : result.delivery_summary;
+
+  const reviewPackage = createAutonomousReviewPackage({
+    package_id: `unity-review-${packageSuffix}`,
+    work_item_id: `unity-validation-${packageSuffix}`,
+    chain_id: `unity-validation-chain-${packageSuffix}`,
+    status: "approved",
+    summary,
+    files_changed: [],
+    tests_run: ["unity read-only validation probe"],
+    proof_results: [result.bridge_status === "bridge_ready" ? "unity read-only bridge -> evidence_captured" : "unity read-only bridge -> unavailable"],
+    risks: ["No Unity or project mutation path enabled."],
+    recommended_decision: "approve",
+    rollback_notes: "Read-only validation evidence only; no rollback required.",
+    operator_actions: ["approve", "archive"],
+  });
+
+  const deliveryPackage = createAutonomousDeliveryPackage({
+    delivery_package_id: `unity-delivery-${packageSuffix}`,
+    review_package_id: reviewPackage.package_id,
+    work_item_id: reviewPackage.work_item_id,
+    chain_id: reviewPackage.chain_id,
+    branch_name: "",
+    commit_plan: [
+      "Keep Unity validation evidence attached to the reviewed delivery lane.",
+      "Do not mutate scenes, prefabs, assets, or scripts from this delivery artifact.",
+    ],
+    files_changed: [],
+    validation_results: [
+      `Bridge status: ${result.bridge_status}`,
+      `Evidence timestamp: ${result.evidence_timestamp}`,
+      ...result.validation_checklist,
+    ],
+    proof_results: [result.execution_kind],
+    risk_summary: "Read-only Unity validation evidence only. No mutation path enabled.",
+    rollback_plan: "Discard the evidence handoff package if the validation request is rejected.",
+    release_notes: result.delivery_summary,
+    recommended_pr_title: "",
+    recommended_pr_body: `Unity validation evidence handoff\n\nSummary: ${summary}\n\nNext operator action: ${result.recommended_next_operator_action}`,
+    operator_decision: null,
+    status: "awaiting_operator_approval",
+    created_at: result.evidence_timestamp,
+    updated_at: result.evidence_timestamp,
+  });
+
+  return {
+    reviewPackage,
+    deliveryPackage,
   };
 }
 
@@ -189,10 +259,10 @@ export function evaluateUnityProductionAdapterReadiness(
   };
 }
 
-export function executeReviewedUnityValidation(
+export async function executeReviewedUnityValidation(
   input: UnityValidationExecutionInput,
   options?: UnityValidationExecutionOptions,
-): UnityValidationExecutionResult {
+): Promise<UnityValidationExecutionResult> {
   if (!isValidationOnlyPacket(input.planning_packet)) {
     return buildBlockedValidationResult(
       input,
@@ -217,8 +287,8 @@ export function executeReviewedUnityValidation(
     );
   }
 
-  const runtimeBridge = options?.runtime_bridge ?? createUnavailableUnityReadOnlyRuntimeBridge();
-  const bridgeResult = runtimeBridge.probeValidation({
+  const runtimeBridge = options?.runtime_bridge ?? createConfiguredUnityReadOnlyRuntimeBridge();
+  const bridgeResult = await runtimeBridge.probeValidation({
     request_id: input.adapter_request_id,
     requested_at: input.requested_at,
     scene_name_hint: extractSceneNameHint(input.planning_packet),
@@ -244,15 +314,18 @@ export function executeReviewedUnityValidation(
       object_count: null,
       checked_scene_name: null,
       evidence_timestamp: bridgeResult.evidence_timestamp,
+      raw_evidence_summary: bridgeResult.raw_evidence_summary,
       validation_checklist: buildValidationChecklist(input.planning_packet),
       delivery_summary: "A real Unity read-only validation bridge was requested but is currently unavailable. No adapter preview fallback was substituted silently, and no project mutation was performed.",
       recommended_next_operator_action: bridgeResult.recommended_next_operator_action,
       artifact_label: "unity_bridge_unavailable_report",
+      review_package: null,
+      delivery_package: null,
       mutating: false,
     };
   }
 
-  return {
+  const baseResult: UnityValidationExecutionResult = {
     request_id: input.adapter_request_id,
     domain: "Unity",
     request_type: "validation_playtest_request",
@@ -271,10 +344,21 @@ export function executeReviewedUnityValidation(
     object_count: bridgeResult.object_count,
     checked_scene_name: bridgeResult.checked_scene_name,
     evidence_timestamp: bridgeResult.evidence_timestamp,
+    raw_evidence_summary: bridgeResult.raw_evidence_summary,
     validation_checklist: buildValidationChecklist(input.planning_packet),
     delivery_summary: bridgeResult.summary,
     recommended_next_operator_action: bridgeResult.recommended_next_operator_action,
     artifact_label: "unity_read_only_validation_report",
+    review_package: null,
+    delivery_package: null,
     mutating: false,
+  };
+
+  const evidencePackages = createUnityValidationEvidencePackages(input, baseResult);
+
+  return {
+    ...baseResult,
+    review_package: evidencePackages.reviewPackage,
+    delivery_package: evidencePackages.deliveryPackage,
   };
 }

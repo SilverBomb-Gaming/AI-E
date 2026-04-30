@@ -43,11 +43,11 @@ function createValidationOnlyPacket() {
   };
 }
 
-function createCountingBridge(result: ReturnType<UnityReadOnlyRuntimeBridge["probeValidation"]>) {
+function createCountingBridge(result: Awaited<ReturnType<UnityReadOnlyRuntimeBridge["probeValidation"]>>) {
   let callCount = 0;
 
   const bridge: UnityReadOnlyRuntimeBridge = {
-    probeValidation() {
+    async probeValidation() {
       callCount += 1;
       return result;
     },
@@ -139,7 +139,7 @@ test("review and approval metadata are both required before Unity adapter readin
   assert.equal(result.output.next_step, "ready_for_reviewed_execution");
 });
 
-test("missing review approval blocks Unity validation execution", () => {
+test("missing review approval blocks Unity validation execution", async () => {
   const countingBridge = createCountingBridge({
     bridge_status: "bridge_ready",
     scene_validation_status: "checked_clean",
@@ -151,7 +151,7 @@ test("missing review approval blocks Unity validation execution", () => {
     summary: "Bridge ran.",
     recommended_next_operator_action: "Review.",
   });
-  const result = executeReviewedUnityValidation({
+  const result = await executeReviewedUnityValidation({
     adapter_request_id: "unity-validation-1",
     requested_at: "2026-04-30T13:00:00.000Z",
     planning_packet: createValidationOnlyPacket(),
@@ -171,7 +171,7 @@ test("missing review approval blocks Unity validation execution", () => {
   assert.equal(countingBridge.getCallCount(), 0);
 });
 
-test("missing operator approval blocks Unity validation execution", () => {
+test("missing operator approval blocks Unity validation execution", async () => {
   const countingBridge = createCountingBridge({
     bridge_status: "bridge_ready",
     scene_validation_status: "checked_clean",
@@ -183,7 +183,7 @@ test("missing operator approval blocks Unity validation execution", () => {
     summary: "Bridge ran.",
     recommended_next_operator_action: "Review.",
   });
-  const result = executeReviewedUnityValidation({
+  const result = await executeReviewedUnityValidation({
     adapter_request_id: "unity-validation-2",
     requested_at: "2026-04-30T13:01:00.000Z",
     planning_packet: createValidationOnlyPacket(),
@@ -203,7 +203,7 @@ test("missing operator approval blocks Unity validation execution", () => {
   assert.equal(countingBridge.getCallCount(), 0);
 });
 
-test("non-validation Unity request types are refused by the first execution path", () => {
+test("non-validation Unity request types are refused by the first execution path", async () => {
   const countingBridge = createCountingBridge({
     bridge_status: "bridge_ready",
     scene_validation_status: "checked_clean",
@@ -215,7 +215,7 @@ test("non-validation Unity request types are refused by the first execution path
     summary: "Bridge ran.",
     recommended_next_operator_action: "Review.",
   });
-  const result = executeReviewedUnityValidation({
+  const result = await executeReviewedUnityValidation({
     adapter_request_id: "unity-validation-3",
     requested_at: "2026-04-30T13:03:00.000Z",
     planning_packet: createPlanningPacket(),
@@ -234,15 +234,17 @@ test("non-validation Unity request types are refused by the first execution path
   assert.equal(countingBridge.getCallCount(), 0);
 });
 
-test("unavailable bridge returns structured unavailable delivery artifact", () => {
+test("unavailable bridge returns structured unavailable delivery artifact", async () => {
   const countingBridge = createCountingBridge({
     bridge_status: "bridge_unavailable",
+    source: "http_endpoint",
     reason: "Unity editor endpoint is not running.",
     evidence_timestamp: "2026-04-30T13:05:30.000Z",
+    raw_evidence_summary: null,
     recommended_next_operator_action: "Start the verified read-only Unity bridge before retrying.",
   });
 
-  const result = executeReviewedUnityValidation({
+  const result = await executeReviewedUnityValidation({
     adapter_request_id: "unity-validation-4",
     requested_at: "2026-04-30T13:05:00.000Z",
     planning_packet: createValidationOnlyPacket(),
@@ -262,22 +264,26 @@ test("unavailable bridge returns structured unavailable delivery artifact", () =
   assert.equal(result.bridge_status, "bridge_unavailable");
   assert.equal(result.artifact_label, "unity_bridge_unavailable_report");
   assert.match(result.blocked_reason ?? "", /endpoint is not running/i);
+  assert.equal(result.review_package, null);
+  assert.equal(result.delivery_package, null);
 });
 
-test("successful read-only bridge returns real bridge validation result", () => {
+test("successful read-only bridge returns real bridge validation result", async () => {
   const countingBridge = createCountingBridge({
     bridge_status: "bridge_ready",
+    source: "http_endpoint",
     scene_validation_status: "checked_with_findings",
     missing_script_count: 2,
     console_error_count: 3,
     object_count: 487,
     checked_scene_name: "CastleHub",
     evidence_timestamp: "2026-04-30T13:06:30.000Z",
+    raw_evidence_summary: "Two missing scripts and three console errors were reported.",
     summary: "Unity read-only validation probe completed for CastleHub with findings recorded for operator review.",
     recommended_next_operator_action: "Review the read-only bridge findings and decide whether to hold the request in review or rerun after fixes.",
   });
 
-  const result = executeReviewedUnityValidation({
+  const result = await executeReviewedUnityValidation({
     adapter_request_id: "unity-validation-5",
     requested_at: "2026-04-30T13:06:00.000Z",
     planning_packet: createValidationOnlyPacket(),
@@ -307,4 +313,8 @@ test("successful read-only bridge returns real bridge validation result", () => 
   assert.equal(result.artifact_label, "unity_read_only_validation_report");
   assert.match(result.delivery_summary, /read-only validation probe completed/i);
   assert.ok(result.validation_checklist.length >= 2);
+  assert.ok(result.review_package);
+  assert.ok(result.delivery_package);
+  assert.match(result.delivery_package?.release_notes ?? "", /read-only validation probe completed/i);
+  assert.ok(result.delivery_package?.validation_results.some((entry) => /Bridge status: bridge_ready/i.test(entry)));
 });

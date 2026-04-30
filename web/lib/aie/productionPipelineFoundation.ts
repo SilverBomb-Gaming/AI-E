@@ -1,3 +1,8 @@
+import type {
+  AutonomousDeliveryPackage,
+  AutonomousReviewPackage,
+} from "./autonomousWorkPlanning";
+
 export type ProductionPipelineDomain = "assets" | "art" | "audio" | "unity-integration";
 
 export type ProductionPipelineNextStage = "strategy" | "planning" | "review";
@@ -79,10 +84,13 @@ export type UnityValidationExecutionResult = {
   object_count: number | null;
   checked_scene_name: string | null;
   evidence_timestamp: string;
+  raw_evidence_summary: string | null;
   validation_checklist: string[];
   delivery_summary: string;
   recommended_next_operator_action: string;
   artifact_label: "adapter_level_validation_preview" | "unity_bridge_unavailable_report" | "unity_read_only_validation_report";
+  review_package: AutonomousReviewPackage | null;
+  delivery_package: AutonomousDeliveryPackage | null;
   mutating: false;
 };
 

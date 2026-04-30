@@ -227,14 +227,15 @@ Current Layer 14 status:
 - foundation planning contracts: complete
 - Unity-first planning packet and adapter-interface design: complete
 - first reviewed Unity validation execution path: implemented as adapter-level validation preview
-- Unity read-only bridge interface: implemented
+- Unity read-only bridge interface: implemented with configurable endpoint and command-probe client paths
+- Unity validation evidence handoff into review and delivery packages: implemented for successful read-only bridge runs
 - playtest-ready: no
 
 Layer 14 roadmap:
 
 - phase 1: planning-only contracts for production pipeline requests covering assets, art, audio, and Unity integration - complete
 - phase 2: bounded planning packets and review artifacts for those domains, starting with Unity integration - complete for planning and review artifacts
-- phase 3: execution adapters only after reviewable contracts, validation rules, and delivery gates exist - in progress with Unity validation preview and read-only bridge integration
+- phase 3: execution adapters only after reviewable contracts, validation rules, and delivery gates exist - in progress with Unity validation preview, live read-only endpoint integration, and evidence handoff
 - phase 4: studio-control observability for production pipeline throughput, blockers, and operator attention
 
 Production pipeline capability map:
@@ -269,10 +270,13 @@ First reviewed Unity validation execution path:
 Unity read-only runtime bridge:
 
 - the Unity bridge interface supports validation probes only and returns structured read-only observations rather than mutations
-- the default local bridge returns `bridge_unavailable` with a clear reason when no verified Unity endpoint is present
+- the bridge now supports a configurable HTTP endpoint or command-probe source with timeout protection and strict read-only probe payloads
+- the default local bridge still returns `bridge_unavailable` with a clear reason when no verified Unity endpoint is present
 - the reviewed validation adapter calls the bridge only after review approval and operator approval are both present
-- unavailable bridge results remain structured delivery artifacts; they do not silently fall back to fake real execution
-- successful bridge results are marked as `real_bridge_read_only` and include evidence such as scene validation status, missing script count, console error count, object count, checked scene name, and evidence timestamp
+- unavailable or malformed bridge results remain structured `real_bridge_unavailable` artifacts; they do not silently fall back to fake real execution
+- successful bridge results are marked as `real_bridge_read_only` and include evidence such as scene validation status, missing script count, console error count, object count, checked scene name, evidence timestamp, and raw evidence summary
+- successful read-only bridge runs now attach evidence to the existing review and delivery package model for operator-facing handoff
+- chat still cannot invoke the Unity bridge directly; conversational intake remains planning-only with `safe_to_execute: false`
 - Layer 14 is read-only bridge-ready, but it is still not real Unity playtest-ready unless an actual Unity endpoint is connected and verified through this gated path
 
 ## Safe Runtime Action Bridge
