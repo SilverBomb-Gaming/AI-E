@@ -93,3 +93,20 @@ test("Unity planning chat requests preserve advisory Unity packet metadata witho
   ]);
     assert.equal(session.latest_proposal?.production_pipeline_plan?.unity_validation_execution_result, null);
 });
+
+test("Unity scene object creation chat requests stay advisory and mutation-free", () => {
+  const session = applyChatMessageToSession({
+    session: createInitialConversationalSession("2026-04-30T12:10:00.000Z"),
+    messageText: "prepare a Unity scene object creation preview for adding a checkpoint anchor object to the EnemyAIDemo scene",
+    createdAt: "2026-04-30T12:11:00.000Z",
+    requestContext: {
+      projectName: "OpenClaw Unity production project",
+      repoName: "AI-E",
+    },
+  });
+
+  assert.equal(session.latest_proposal?.safe_to_execute, false);
+  assert.ok(session.latest_proposal?.production_pipeline_plan?.unity_planning_packet?.request_types.includes("scene_object_creation_request"));
+  assert.equal(session.latest_proposal?.production_pipeline_plan?.mutation_policy, "planning_only");
+  assert.equal(session.latest_proposal?.production_pipeline_plan?.unity_validation_execution_result, null);
+});

@@ -136,43 +136,45 @@ test("configured Unity endpoint client normalizes valid read-only payloads", asy
 });
 
 test("configured Unity command probe uses command runner and normalizes live-style payloads", async () => {
-  let callCount = 0;
-  let timeoutMs: number | null = null;
+  await withUnityTimeoutEnv(undefined, async () => {
+    let callCount = 0;
+    let timeoutMs: number | null = null;
 
-  const bridge = createConfiguredUnityReadOnlyRuntimeBridge({
-    unityEditorPath: "C:/Program Files/Unity/Editor/Unity.exe",
-    unityProjectPath: "E:/AI projects 2025/AI-E/orchestrator_lane/Tools/EnemyAIDemoStandalone",
-    unityScenePath: "Assets/Scenes/EnemyAIDemo.unity",
-    commandRunner: async (input) => {
-      callCount += 1;
-      timeoutMs = input.timeoutMs;
-      assert.equal(input.unityScenePath, "Assets/Scenes/EnemyAIDemo.unity");
-      assert.equal(input.probeInput.scene_name_hint, "EnemyAIDemo");
+    const bridge = createConfiguredUnityReadOnlyRuntimeBridge({
+      unityEditorPath: "C:/Program Files/Unity/Editor/Unity.exe",
+      unityProjectPath: "E:/AI projects 2025/AI-E/orchestrator_lane/Tools/EnemyAIDemoStandalone",
+      unityScenePath: "Assets/Scenes/EnemyAIDemo.unity",
+      commandRunner: async (input) => {
+        callCount += 1;
+        timeoutMs = input.timeoutMs;
+        assert.equal(input.unityScenePath, "Assets/Scenes/EnemyAIDemo.unity");
+        assert.equal(input.probeInput.scene_name_hint, "EnemyAIDemo");
 
-      return {
-        sceneName: "EnemyAIDemo",
-        missingScripts: 0,
-        consoleErrors: 0,
-        objectCount: 42,
-        timestamp: "2026-04-30T15:05:00.000Z",
-        recommended_next_operator_action: "Review the live Unity validation evidence.",
-      };
-    },
+        return {
+          sceneName: "EnemyAIDemo",
+          missingScripts: 0,
+          consoleErrors: 0,
+          objectCount: 42,
+          timestamp: "2026-04-30T15:05:00.000Z",
+          recommended_next_operator_action: "Review the live Unity validation evidence.",
+        };
+      },
+    });
+
+    const result = await bridge.probeValidation({
+      request_id: "unity-bridge-4",
+      requested_at: "2026-04-30T15:04:00.000Z",
+      scene_name_hint: "EnemyAIDemo",
+    });
+
+    assert.equal(callCount, 1);
+    assert.equal(timeoutMs, 60_000);
+    assert.equal(result.bridge_status, "bridge_ready");
+    assert.equal(result.source, "command_probe");
+    assert.equal(result.scene_validation_status, "checked_clean");
+    assert.equal(result.checked_scene_name, "EnemyAIDemo");
+    assert.equal(result.object_count, 42);
   });
-
-  const result = await bridge.probeValidation({
-    request_id: "unity-bridge-4",
-    requested_at: "2026-04-30T15:04:00.000Z",
-    scene_name_hint: "EnemyAIDemo",
-  });
-
-  assert.equal(callCount, 1);
-  assert.equal(timeoutMs, 60_000);
-  assert.equal(result.bridge_status, "bridge_ready");
-  assert.equal(result.source, "command_probe");
-  assert.equal(result.scene_validation_status, "checked_clean");
-  assert.equal(result.checked_scene_name, "EnemyAIDemo");
-  assert.equal(result.object_count, 42);
 });
 
 test("configured Unity command probe respects env timeout override", async () => {
@@ -256,21 +258,23 @@ test("configured Unity command probe returns structured unavailable on runner fa
 });
 
 test("configured Unity command probe preserves structured timeout failures", async () => {
-  const bridge = createConfiguredUnityReadOnlyRuntimeBridge({
-    unityEditorPath: "C:/Program Files/Unity/Editor/Unity.exe",
-    unityProjectPath: "E:/AI projects 2025/AI-E/orchestrator_lane/Tools/EnemyAIDemoStandalone",
-    commandRunner: async (input) => {
-      throw new Error(`Unity command probe timed out after ${input.timeoutMs}ms.`);
-    },
-  });
+  await withUnityTimeoutEnv(undefined, async () => {
+    const bridge = createConfiguredUnityReadOnlyRuntimeBridge({
+      unityEditorPath: "C:/Program Files/Unity/Editor/Unity.exe",
+      unityProjectPath: "E:/AI projects 2025/AI-E/orchestrator_lane/Tools/EnemyAIDemoStandalone",
+      commandRunner: async (input) => {
+        throw new Error(`Unity command probe timed out after ${input.timeoutMs}ms.`);
+      },
+    });
 
-  const result = await bridge.probeValidation({
-    request_id: "unity-bridge-8",
-    requested_at: "2026-04-30T15:09:00.000Z",
-    scene_name_hint: "EnemyAIDemo",
-  });
+    const result = await bridge.probeValidation({
+      request_id: "unity-bridge-8",
+      requested_at: "2026-04-30T15:09:00.000Z",
+      scene_name_hint: "EnemyAIDemo",
+    });
 
-  assert.equal(result.bridge_status, "bridge_unavailable");
-  assert.equal(result.source, "command_probe");
-  assert.match(result.reason, /timed out after 60000ms/i);
+    assert.equal(result.bridge_status, "bridge_unavailable");
+    assert.equal(result.source, "command_probe");
+    assert.match(result.reason, /timed out after 60000ms/i);
+  });
 });

@@ -220,17 +220,18 @@ Important safety boundary:
 
 ## Layer 14 / Production Pipeline Expansion Foundation
 
-Layer 14 starts as a planning and architecture pass only. This layer expands AI-E toward production-support capability for game development without weakening the Layer 13 conversational guardrails or introducing direct execution from chat.
+Layer 14 expanded AI-E toward production-support capability for game development without weakening the Layer 13 conversational guardrails or introducing direct execution from chat.
 
 Current Layer 14 status:
 
 - foundation planning contracts: complete
 - Unity-first planning packet and adapter-interface design: complete
-- first reviewed Unity validation execution path: implemented as adapter-level validation preview
-- Unity read-only bridge interface: implemented with configurable endpoint and command-probe client paths
-- Unity validation evidence handoff into review and delivery packages: implemented for read-only bridge and unavailable-bridge results
-- Unity validation evidence visibility in the operator dashboard review and delivery surfaces: implemented
-- playtest-ready: no
+- first reviewed Unity validation execution path: complete
+- Unity read-only bridge interface: complete with configurable endpoint and command-probe client paths
+- Unity validation evidence handoff into review and delivery packages: complete for read-only bridge and unavailable-bridge results
+- Unity validation evidence visibility in the operator dashboard review and delivery surfaces: complete
+- live Unity endpoint verification through the reviewed path: complete
+- playtest-ready: yes for reviewed read-only validation only
 
 Layer 14 roadmap:
 
@@ -279,7 +280,27 @@ Unity read-only runtime bridge:
 - read-only and unavailable bridge results now attach evidence to the existing review and delivery package model for operator-facing handoff
 - the operator dashboard now renders those review and delivery packages with explicit Unity validation evidence, clearly distinguishing adapter preview, bridge unavailable, and real read-only bridge states
 - chat still cannot invoke the Unity bridge directly; conversational intake remains planning-only with `safe_to_execute: false`
-- Layer 14 is read-only bridge-ready, but it is still not real Unity playtest-ready unless an actual Unity endpoint is connected and verified through this gated path; the next remaining Layer 14 milestone is live Unity endpoint verification through that same reviewed path
+- Layer 14 is complete for reviewed read-only Unity validation through the gated path; chat still cannot invoke Unity directly and no mutation path was added in this layer
+
+## Layer 15 / Controlled Unity Mutation Path
+
+Layer 15 starts with architecture only for the first controlled Unity mutation lane. This step does not mutate Unity scenes, assets, prefabs, or scripts. It establishes the reviewed dry-run preview contract for a future mutation path while preserving the existing receptionist-only chat boundary.
+
+Current Layer 15 status:
+
+- first mutation domain: scene object creation preview
+- planning packet classification for `scene_object_creation_request`: implemented
+- dry-run mutation preview adapter foundation: implemented
+- required gates modeled: production planning packet, review approval, operator approval, dry-run preview, and explicit final execute gate
+- mutation-ready: no
+- playtest-ready: no
+
+Current Layer 15 boundary:
+
+- the new preview path returns deterministic dry-run metadata only
+- the preview adapter refuses missing review approval, missing operator approval, non-mutation packets, and requests without `dry_run: true`
+- no scene write, GameObject creation, prefab mutation, or Unity-side execute gate exists yet
+- chat remains advisory only with `safe_to_execute: false` and cannot invoke any mutation path directly
 
 ## Safe Runtime Action Bridge
 

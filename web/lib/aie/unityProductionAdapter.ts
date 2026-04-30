@@ -16,6 +16,7 @@ import {
 
 export type UnityProductionAdapterAction =
   | "scene_plan_review"
+  | "scene_object_creation_preview"
   | "prefab_plan_review"
   | "component_script_plan_review"
   | "validation_playtest_review"
@@ -64,6 +65,44 @@ export type UnityValidationExecutionOptions = {
   runtime_bridge?: UnityReadOnlyRuntimeBridge;
 };
 
+export type UnitySceneObjectCreationPreviewTransform = {
+  position: { x: number; y: number; z: number; };
+  rotation_euler: { x: number; y: number; z: number; };
+  scale: { x: number; y: number; z: number; };
+};
+
+export type UnitySceneObjectCreationPreviewInput = UnityProductionAdapterInput & {
+  dry_run: boolean;
+  requested_object_name: string;
+  target_scene: string;
+  intended_components: string[];
+  intended_transform: UnitySceneObjectCreationPreviewTransform;
+};
+
+export type UnitySceneObjectCreationPreviewResult = {
+  request_id: string;
+  domain: "Unity";
+  request_type: "scene_object_creation_request";
+  execution_mode: "dry_run_mutation_preview";
+  execution_kind: "dry_run_preview" | "preview_blocked";
+  review_approval_id: string | null;
+  review_approval_status: "missing" | "approved";
+  operator_approval_id: string | null;
+  operator_approval_status: "missing" | "approved";
+  dry_run: boolean;
+  executed: false;
+  blocked_reason: string | null;
+  requested_object_name: string;
+  target_scene: string;
+  intended_components: string[];
+  intended_transform: UnitySceneObjectCreationPreviewTransform;
+  risk_level: "low" | "medium" | "high";
+  required_approval_gates: string[];
+  recommended_next_operator_action: string;
+  artifact_label: "unity_scene_object_creation_preview";
+  mutating: false;
+};
+
 function hasCompletedReview(reviewState: UnityProductionAdapterReviewState): boolean {
   return Boolean(reviewState.review_package_id && reviewState.review_completed_at);
 }
@@ -74,6 +113,57 @@ function hasApproval(reviewState: UnityProductionAdapterReviewState): boolean {
 
 function isValidationOnlyPacket(planningPacket: UnityProductionPlanningPacket): boolean {
   return planningPacket.request_types.length === 1 && planningPacket.request_types[0] === "validation_playtest_request";
+}
+
+function isSceneObjectCreationOnlyPacket(planningPacket: UnityProductionPlanningPacket): boolean {
+  return planningPacket.request_types.length === 1 && planningPacket.request_types[0] === "scene_object_creation_request";
+}
+
+function normalizePreviewComponents(components: string[]): string[] {
+  return [...new Set(components.map((component) => component.trim()).filter(Boolean))];
+}
+
+function inferSceneObjectCreationRiskLevel(components: string[]): UnitySceneObjectCreationPreviewResult["risk_level"] {
+  const normalized = components.map((component) => component.toLowerCase());
+  if (normalized.some((component) => component.includes("script") || component.includes("behaviour") || component.includes("behavior") || component.includes("animator") || component.includes("audio"))) {
+    return "high";
+  }
+  if (normalized.length > 1) {
+    return "medium";
+  }
+  return "low";
+}
+
+function buildSceneObjectCreationPreviewResult(
+  input: UnitySceneObjectCreationPreviewInput,
+  blockedReason: string | null,
+  recommendedNextOperatorAction: string,
+): UnitySceneObjectCreationPreviewResult {
+  const intendedComponents = normalizePreviewComponents(input.intended_components);
+
+  return {
+    request_id: input.adapter_request_id,
+    domain: "Unity",
+    request_type: "scene_object_creation_request",
+    execution_mode: "dry_run_mutation_preview",
+    execution_kind: blockedReason ? "preview_blocked" : "dry_run_preview",
+    review_approval_id: input.review_state.review_package_id,
+    review_approval_status: hasCompletedReview(input.review_state) ? "approved" : "missing",
+    operator_approval_id: input.review_state.operator_approval_id,
+    operator_approval_status: hasApproval(input.review_state) ? "approved" : "missing",
+    dry_run: input.dry_run,
+    executed: false,
+    blocked_reason: blockedReason,
+    requested_object_name: input.requested_object_name.trim(),
+    target_scene: input.target_scene.trim(),
+    intended_components: intendedComponents,
+    intended_transform: input.intended_transform,
+    risk_level: inferSceneObjectCreationRiskLevel(intendedComponents),
+    required_approval_gates: [...input.planning_packet.required_approval_gates],
+    recommended_next_operator_action: recommendedNextOperatorAction,
+    artifact_label: "unity_scene_object_creation_preview",
+    mutating: false,
+  };
 }
 
 function buildValidationChecklist(planningPacket: UnityProductionPlanningPacket): string[] {
@@ -226,6 +316,8 @@ export function mapUnityRequestTypeToAdapterAction(requestType: UnityProductionR
   switch (requestType) {
     case "scene_request":
       return "scene_plan_review";
+    case "scene_object_creation_request":
+      return "scene_object_creation_preview";
     case "prefab_request":
       return "prefab_plan_review";
     case "component_script_request":
@@ -401,4 +493,46 @@ export async function executeReviewedUnityValidation(
     review_package: evidencePackages.reviewPackage,
     delivery_package: evidencePackages.deliveryPackage,
   };
+}
+
+export function previewUnitySceneObjectCreation(
+  input: UnitySceneObjectCreationPreviewInput,
+): UnitySceneObjectCreationPreviewResult {
+  if (!isSceneObjectCreationOnlyPacket(input.planning_packet)) {
+    return buildSceneObjectCreationPreviewResult(
+      input,
+      "Only scene_object_creation_request is supported by the Layer 15 dry-run mutation preview path.",
+      "Narrow the Unity packet to a scene object creation request before requesting a dry-run mutation preview.",
+    );
+  }
+
+  if (!input.dry_run) {
+    return buildSceneObjectCreationPreviewResult(
+      input,
+      "Unity scene object creation preview requires dry_run=true and does not permit live mutation execution.",
+      "Reissue the request as a dry-run preview and keep the explicit final execute gate pending.",
+    );
+  }
+
+  if (!hasCompletedReview(input.review_state)) {
+    return buildSceneObjectCreationPreviewResult(
+      input,
+      "Unity scene object creation preview is blocked until review approval is recorded.",
+      "Complete the review package before requesting the dry-run mutation preview.",
+    );
+  }
+
+  if (!hasApproval(input.review_state)) {
+    return buildSceneObjectCreationPreviewResult(
+      input,
+      "Unity scene object creation preview is blocked until operator approval is recorded.",
+      "Record explicit operator approval before requesting the dry-run mutation preview.",
+    );
+  }
+
+  return buildSceneObjectCreationPreviewResult(
+    input,
+    null,
+    "Review the dry-run preview, then require an explicit final execute gate before any future Unity mutation path is allowed.",
+  );
 }

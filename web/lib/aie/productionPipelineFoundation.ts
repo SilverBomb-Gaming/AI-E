@@ -29,6 +29,7 @@ export type ProductionPipelineRequestEnvelope = {
 
 export type UnityProductionRequestType =
   | "scene_request"
+  | "scene_object_creation_request"
   | "prefab_request"
   | "component_script_request"
   | "validation_playtest_request"
@@ -120,6 +121,7 @@ const DOMAIN_KEYWORDS: Record<ProductionPipelineDomain, string[]> = {
 
 const UNITY_REQUEST_KEYWORDS: Record<UnityProductionRequestType, string[]> = {
   scene_request: ["scene", "level", "room", "lighting", "navmesh"],
+  scene_object_creation_request: ["create object", "add object", "spawn object", "scene object", "gameobject", "game object", "empty object"],
   prefab_request: ["prefab", "hud", "ui prefab", "spawnable", "variant"],
   component_script_request: ["component", "script", "behaviour", "behavior", "monobehaviour", "scriptableobject"],
   validation_playtest_request: ["validate", "validation", "playtest", "qa", "smoke", "verify", "test"],
@@ -208,6 +210,8 @@ function buildUnityPlanningScope(requestTypes: UnityProductionRequestType[]): st
     switch (requestType) {
       case "scene_request":
         return ["scene change planning", "scene validation checklist"];
+      case "scene_object_creation_request":
+        return ["scene object creation dry-run preview", "scene mutation safety checklist"];
       case "prefab_request":
         return ["prefab boundary review", "prefab rollout checklist"];
       case "component_script_request":
@@ -227,6 +231,8 @@ function buildUnityReviewArtifacts(requestTypes: UnityProductionRequestType[]): 
     switch (requestType) {
       case "scene_request":
         return ["scene review packet", "affected-scene diff summary"];
+      case "scene_object_creation_request":
+        return ["scene object creation preview", "mutation rollback plan"];
       case "prefab_request":
         return ["prefab review packet", "prefab dependency summary"];
       case "component_script_request":
@@ -245,6 +251,8 @@ function buildUnityApprovalGates(requestTypes: UnityProductionRequestType[]): st
   const baseGates = ["operator planning approval", "review package approval"];
   const requestGates = requestTypes.flatMap((requestType) => {
     switch (requestType) {
+      case "scene_object_creation_request":
+        return ["operator approval", "dry-run preview approval", "explicit final execute gate"];
       case "validation_playtest_request":
         return ["playtest approval"];
       case "asset_import_request":
