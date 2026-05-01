@@ -2,7 +2,7 @@ import React from "react";
 
 import type { AutonomousDeliveryPackage, AutonomousReviewPackage } from "./autonomousWorkPlanning";
 
-export type UnityValidationEvidenceKind = "adapter_preview" | "real_bridge_unavailable" | "real_bridge_read_only" | "scene_object_creation_preview" | "mutation_execution_preflight" | "mutation_execution_plan" | "mutation_execution_chain_plan" | "controlled_mutation_result" | "controlled_rollback_result";
+export type UnityValidationEvidenceKind = "adapter_preview" | "real_bridge_unavailable" | "real_bridge_read_only" | "scene_object_creation_preview" | "mutation_execution_preflight" | "mutation_execution_plan" | "mutation_execution_chain_plan" | "mutation_execution_chain_readiness" | "controlled_mutation_result" | "controlled_rollback_result";
 
 export type UnityValidationEvidence = {
   kind: UnityValidationEvidenceKind;
@@ -16,6 +16,7 @@ export type UnityValidationEvidence = {
   recommendedNextOperatorAction: string | null;
   chainId: string | null;
   chainStatus: string | null;
+  chainReadinessStatus: string | null;
   totalActions: number | null;
   chainReady: boolean | null;
   demoPreview: boolean;
@@ -63,6 +64,8 @@ export type UnityValidationEvidence = {
   detectedRisks: string[];
   executableActions: string[];
   blockedActions: string[];
+  dependencyBlockedActions: string[];
+  missingGates: string[];
   dependencyGraph: string[];
   rollbackGraph: string[];
   gateStatuses: string[];
@@ -211,6 +214,21 @@ function parseSummary(summary: string): Partial<UnityValidationEvidence> {
     };
   }
 
+  const chainReadinessMatch = summary.match(/CHAIN READINESS ONLY: Controlled Unity execution chain (.+?) evaluated as ([a-z_]+)\. NO ACTIONS EXECUTED\./i);
+  if (chainReadinessMatch) {
+    return {
+      kind: "mutation_execution_chain_readiness",
+      bridgeStatus: "chain_readiness_only",
+      sceneValidationStatus: "not_checked",
+      chainId: chainReadinessMatch[1]?.trim() ?? null,
+      chainReadinessStatus: chainReadinessMatch[2]?.trim() ?? null,
+      chainReady: /^ready_for_operator_execution$/i.test(chainReadinessMatch[2] ?? ""),
+      dryRun: true,
+      executed: false,
+      executionMode: "multi_action_chain_readiness_only",
+    };
+  }
+
   const controlledMutationMatch = summary.match(/CONTROLLED UNITY MUTATION: (.+?) (?:created|already existed) in (.+?)\. EXECUTED\. ROLLBACK AVAILABLE\./i);
   if (controlledMutationMatch) {
     return {
@@ -266,6 +284,10 @@ function inferKind(lines: string[], summary: string): UnityValidationEvidenceKin
     return "mutation_execution_chain_plan";
   }
 
+  if (executionKind === "chain_readiness_only" || executionKind === "chain_readiness_blocked") {
+    return "mutation_execution_chain_readiness";
+  }
+
   if (/controlled_mutation_(executed|idempotent|blocked|failed|unavailable)/i.test(executionKind ?? "")) {
     return "controlled_mutation_result";
   }
@@ -299,7 +321,7 @@ function isUnityEvidencePackage(workItemId: string, lines: string[], summary: st
   }
 
   const text = [summary, ...lines].join("\n");
-  return /unity read-only validation probe|unity validation preview|unity scene object creation preview|preflight simulation|execution plan only|chain plan only|controlled unity mutation|controlled unity rollback|mutation disabled|rollback disabled|no unity mutation performed|bridge status:|requested object name:|target object name:|chain id:|dry run:/i.test(text);
+  return /unity read-only validation probe|unity validation preview|unity scene object creation preview|preflight simulation|execution plan only|chain plan only|chain readiness only|controlled unity mutation|controlled unity rollback|mutation disabled|rollback disabled|no unity mutation performed|no actions executed|bridge status:|requested object name:|target object name:|chain id:|dry run:/i.test(text);
 }
 
 function buildEvidence(workItemId: string, summary: string, lines: string[]): UnityValidationEvidence | null {
@@ -351,6 +373,7 @@ function buildEvidence(workItemId: string, summary: string, lines: string[]): Un
     recommendedNextOperatorAction,
     chainId: parseLabeledValue(lines, "Chain id") ?? summaryValues.chainId ?? null,
     chainStatus: parseLabeledValue(lines, "Chain status") ?? summaryValues.chainStatus ?? null,
+    chainReadinessStatus: parseLabeledValue(lines, "Chain readiness") ?? summaryValues.chainReadinessStatus ?? null,
     totalActions: parseCount(parseLabeledValue(lines, "Total actions")) ?? summaryValues.totalActions ?? null,
     chainReady: parseBoolean(parseLabeledValue(lines, "Chain ready")) ?? summaryValues.chainReady ?? null,
     demoPreview: /demo preview/i.test([summary, ...lines].join("\n")),
@@ -398,6 +421,8 @@ function buildEvidence(workItemId: string, summary: string, lines: string[]): Un
     detectedRisks: parseRepeatedLabeledValues(lines, "Detected risk"),
     executableActions: parseList(parseLabeledValue(lines, "Executable actions")),
     blockedActions: parseList(parseLabeledValue(lines, "Blocked actions")),
+    dependencyBlockedActions: parseList(parseLabeledValue(lines, "Dependency blocked actions")),
+    missingGates: parseList(parseLabeledValue(lines, "Missing gates")),
     dependencyGraph: parseRepeatedLabeledValues(lines, "Dependency graph"),
     rollbackGraph: parseRepeatedLabeledValues(lines, "Rollback graph"),
     gateStatuses: parseRepeatedLabeledValues(lines, "Gate status"),
@@ -424,6 +449,8 @@ function kindLabel(kind: UnityValidationEvidenceKind): string {
       return "Mutation Execution Plan";
     case "mutation_execution_chain_plan":
       return "Mutation Execution Chain Plan";
+    case "mutation_execution_chain_readiness":
+      return "Mutation Execution Chain Readiness";
     case "controlled_mutation_result":
       return "Controlled Unity Mutation";
     case "controlled_rollback_result":
@@ -512,6 +539,19 @@ export function UnityValidationEvidencePanel({ evidence }: { evidence: UnityVali
             </span>
             <span className="inline-flex rounded-full border border-ink/10 bg-white/80 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-ink/75">
               NOT EXECUTED
+            </span>
+          </>
+        ) : null}
+        {evidence.kind === "mutation_execution_chain_readiness" ? (
+          <>
+            <span className="inline-flex rounded-full border border-coral/20 bg-coral/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-ember">
+              CHAIN READINESS ONLY
+            </span>
+            <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-700">
+              NO ACTIONS EXECUTED
+            </span>
+            <span className="inline-flex rounded-full border border-ink/10 bg-white/80 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-ink/75">
+              {evidence.chainReadinessStatus ?? "not_ready"}
             </span>
           </>
         ) : null}
@@ -648,11 +688,12 @@ export function UnityValidationEvidencePanel({ evidence }: { evidence: UnityVali
           </div>
         </>
       ) : null}
-      {evidence.kind === "mutation_execution_chain_plan" ? (
+      {evidence.kind === "mutation_execution_chain_plan" || evidence.kind === "mutation_execution_chain_readiness" ? (
         <>
           <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
             <p className="text-xs leading-6 text-slate">Chain id: {evidence.chainId ?? "none"}</p>
             <p className="text-xs leading-6 text-slate">Chain status: {evidence.chainStatus ?? "unknown"}</p>
+            {evidence.kind === "mutation_execution_chain_readiness" ? <p className="text-xs leading-6 text-slate">Chain readiness: {evidence.chainReadinessStatus ?? "unknown"}</p> : null}
             <p className="text-xs leading-6 text-slate">Total actions: {formatMetric(evidence.totalActions)}</p>
             <p className="text-xs leading-6 text-slate">Chain ready: {String(evidence.chainReady ?? false)}</p>
             <p className="text-xs leading-6 text-slate">Dry run: {String(evidence.dryRun ?? true)}</p>
@@ -667,6 +708,22 @@ export function UnityValidationEvidencePanel({ evidence }: { evidence: UnityVali
             <p className="text-xs uppercase tracking-[0.18em] text-slate">Blocked actions</p>
             <p className="mt-1 text-xs leading-6 text-slate">{evidence.blockedActions.length > 0 ? evidence.blockedActions.join(" | ") : "none"}</p>
           </div>
+          {evidence.kind === "mutation_execution_chain_readiness" ? (
+            <>
+              <div className="mt-2">
+                <p className="text-xs uppercase tracking-[0.18em] text-slate">Dependency blocked actions</p>
+                <p className="mt-1 text-xs leading-6 text-slate">{evidence.dependencyBlockedActions.length > 0 ? evidence.dependencyBlockedActions.join(" | ") : "none"}</p>
+              </div>
+              <div className="mt-2">
+                <p className="text-xs uppercase tracking-[0.18em] text-slate">Missing gates</p>
+                <p className="mt-1 text-xs leading-6 text-slate">{evidence.missingGates.length > 0 ? evidence.missingGates.join(" | ") : "none"}</p>
+              </div>
+              <div className="mt-2">
+                <p className="text-xs uppercase tracking-[0.18em] text-slate">Gate statuses</p>
+                <p className="mt-1 text-xs leading-6 text-slate">{evidence.gateStatuses.length > 0 ? evidence.gateStatuses.join(" | ") : "none"}</p>
+              </div>
+            </>
+          ) : null}
           <div className="mt-2">
             <p className="text-xs uppercase tracking-[0.18em] text-slate">Dependency graph</p>
             <p className="mt-1 text-xs leading-6 text-slate">{evidence.dependencyGraph.length > 0 ? evidence.dependencyGraph.join(" | ") : "none"}</p>

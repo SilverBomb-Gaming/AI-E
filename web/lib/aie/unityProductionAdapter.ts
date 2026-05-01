@@ -446,6 +446,20 @@ export type UnityMutationExecutionChainStatus = "chain_planned" | "chain_blocked
 
 export type UnityMutationExecutionChainActionStatus = "planned" | "blocked";
 
+export type UnityMutationExecutionChainReadiness = "not_ready" | "partially_ready" | "ready_for_operator_execution";
+
+export type UnityMutationExecutionChainReadinessGate =
+  | "review_approval"
+  | "operator_approval"
+  | "dry_run_preview"
+  | "preflight_simulation"
+  | "final_execution_authorization"
+  | "live_read_only_validation"
+  | "execution_plan"
+  | "final_mutation_switch";
+
+export type UnityMutationExecutionChainReadinessGateStatus = "approved" | "missing" | "invalid" | "disabled" | "dependency_blocked" | "not_applicable";
+
 export type UnityMutationExecutionChainAction = {
   action_id: string;
   action_type: UnityMutationExecutionChainActionType;
@@ -455,9 +469,40 @@ export type UnityMutationExecutionChainAction = {
   required_approvals: string[];
 };
 
+export type UnityMutationExecutionChainReadinessGateEvaluation = {
+  gate: UnityMutationExecutionChainReadinessGate;
+  status: UnityMutationExecutionChainReadinessGateStatus;
+  detail: string;
+};
+
+export type UnityMutationExecutionChainReadinessActionInput =
+  | (UnityMutationExecutionChainAction & {
+      action_type: "unity_scene_object_creation";
+      preview_result?: UnitySceneObjectCreationPreviewResult | null;
+      preflight_result?: UnityMutationExecutionPreflightResult | null;
+      authorization?: UnityMutationExecutionAuthorization | null;
+      live_validation_result?: UnitySceneObjectCreationExecutionPlanInput["live_validation_result"];
+      execution_plan?: UnitySceneObjectCreationExecutionPlanResult | null;
+      mutation_switch?: UnityMutationExecutionSwitch | null;
+      mutation_execution_mode_enabled?: boolean;
+    })
+  | (UnityMutationExecutionChainAction & {
+      action_type: "unity_scene_object_rollback";
+      authorization?: UnityRollbackExecutionAuthorization | null;
+      live_validation_result?: UnitySceneObjectCreationRollbackExecutionPlanInput["live_validation_result"];
+      execution_plan?: UnitySceneObjectCreationRollbackExecutionPlanResult | null;
+      rollback_switch?: UnityRollbackExecutionSwitch | null;
+      rollback_execution_mode_enabled?: boolean;
+    });
+
 export type UnityMutationExecutionChainInput = UnityProductionAdapterInput & {
   chain_id: string;
   actions: UnityMutationExecutionChainAction[];
+};
+
+export type UnityMutationExecutionChainReadinessInput = UnityProductionAdapterInput & {
+  chain_id: string;
+  actions: UnityMutationExecutionChainReadinessActionInput[];
 };
 
 export type UnityMutationExecutionChainDependencyNode = {
@@ -480,6 +525,14 @@ export type UnityMutationExecutionChainPlannedAction = UnityMutationExecutionCha
   blocked_reason: string | null;
   dry_run: true;
   executed: false;
+};
+
+export type UnityMutationExecutionChainReadinessActionResult = UnityMutationExecutionChainPlannedAction & {
+  gate_statuses: UnityMutationExecutionChainReadinessGateEvaluation[];
+  missing_gates: UnityMutationExecutionChainReadinessGate[];
+  ready_for_operator_execution: boolean;
+  dependency_blockers: string[];
+  readiness: UnityMutationExecutionChainReadiness;
 };
 
 export type UnityMutationExecutionChainPlanResult = {
@@ -509,6 +562,42 @@ export type UnityMutationExecutionChainPlanResult = {
   blocked_reason: string | null;
   recommended_next_operator_action: string;
   artifact_label: "unity_mutation_execution_chain_plan";
+  review_package: AutonomousReviewPackage | null;
+  delivery_package: AutonomousDeliveryPackage | null;
+  mutating: false;
+};
+
+export type UnityMutationExecutionChainReadinessResult = {
+  chain_id: string;
+  chain_status: UnityMutationExecutionChainStatus;
+  chain_readiness: UnityMutationExecutionChainReadiness;
+  domain: "Unity";
+  request_type: "scene_object_creation_request";
+  execution_mode: "multi_action_chain_readiness_only";
+  execution_kind: "chain_readiness_only" | "chain_readiness_blocked";
+  review_approval_id: string | null;
+  review_approval_status: "missing" | "approved";
+  operator_approval_id: string | null;
+  operator_approval_status: "missing" | "approved";
+  ordered_actions: UnityMutationExecutionChainReadinessActionResult[];
+  action_dependencies: UnityMutationExecutionChainDependencyNode[];
+  rollback_plan: UnityMutationExecutionChainRollbackNode[];
+  rollback_order: string[];
+  required_approvals: string[];
+  total_actions: number;
+  ready_actions: string[];
+  blocked_actions: string[];
+  dependency_blocked_actions: string[];
+  executable_actions: string[];
+  missing_gates: string[];
+  dependency_graph: string[];
+  rollback_graph: string[];
+  chain_ready: boolean;
+  dry_run: true;
+  executed: false;
+  blocked_reason: string | null;
+  recommended_next_operator_action: string;
+  artifact_label: "unity_mutation_execution_chain_readiness";
   review_package: AutonomousReviewPackage | null;
   delivery_package: AutonomousDeliveryPackage | null;
   mutating: false;
@@ -1069,6 +1158,314 @@ function createUnityMutationExecutionChainPackages(
     release_notes: summary,
     recommended_pr_title: "",
     recommended_pr_body: `Unity multi-action chain plan handoff\n\nSummary: ${summary}\n\nNext operator action: ${result.recommended_next_operator_action}`,
+    operator_decision: null,
+    status: "awaiting_operator_approval",
+    created_at: input.requested_at,
+    updated_at: input.requested_at,
+  });
+
+  return {
+    reviewPackage,
+    deliveryPackage,
+  };
+}
+
+function evaluateChainReadinessExecutionPlanStatus(
+  executionPlan: UnitySceneObjectCreationExecutionPlanResult | UnitySceneObjectCreationRollbackExecutionPlanResult | null | undefined,
+  expectedRequestId: string,
+  action: UnityMutationExecutionChainReadinessActionInput,
+): {
+  status: UnityMutationExecutionChainReadinessGateStatus;
+  detail: string;
+} {
+  if (!executionPlan) {
+    return {
+      status: "missing",
+      detail: `Execution plan gate is missing for chain action ${action.action_id}.`,
+    };
+  }
+
+  if (action.action_type === "unity_scene_object_creation") {
+    if (
+      executionPlan.request_id !== expectedRequestId
+      || executionPlan.target_scene !== action.target_scene.trim()
+      || executionPlan.requested_object_name !== action.target_object_name.trim()
+      || executionPlan.execution_kind !== "execution_plan_only"
+    ) {
+      return {
+        status: "invalid",
+        detail: `Execution plan gate is invalid for chain action ${action.action_id}.`,
+      };
+    }
+  } else {
+    if (
+      executionPlan.rollback_request_id !== expectedRequestId
+      || executionPlan.target_scene !== action.target_scene.trim()
+      || executionPlan.target_object_name !== action.target_object_name.trim()
+      || executionPlan.execution_kind !== "rollback_plan_only"
+    ) {
+      return {
+        status: "invalid",
+        detail: `Execution plan gate is invalid for chain action ${action.action_id}.`,
+      };
+    }
+  }
+
+  return {
+    status: "approved",
+    detail: `Execution plan gate is present for chain action ${action.action_id}.`,
+  };
+}
+
+function evaluateUnityMutationExecutionChainActionReadiness(
+  input: UnityMutationExecutionChainReadinessInput,
+  action: UnityMutationExecutionChainReadinessActionInput,
+): UnityMutationExecutionChainReadinessActionResult {
+  const requestId = `${input.adapter_request_id}:${action.action_id}`;
+  const reviewApproved = hasCompletedReview(input.review_state);
+  const operatorApproved = hasApproval(input.review_state);
+
+  const reviewGate: UnityMutationExecutionChainReadinessGateEvaluation = {
+    gate: "review_approval",
+    status: reviewApproved ? "approved" : "missing",
+    detail: reviewApproved
+      ? `Review approval gate is recorded for chain action ${action.action_id}.`
+      : `Review approval gate is missing for chain action ${action.action_id}.`,
+  };
+  const operatorGate: UnityMutationExecutionChainReadinessGateEvaluation = {
+    gate: "operator_approval",
+    status: operatorApproved ? "approved" : "missing",
+    detail: operatorApproved
+      ? `Operator approval gate is recorded for chain action ${action.action_id}.`
+      : `Operator approval gate is missing for chain action ${action.action_id}.`,
+  };
+
+  let dryRunGate: UnityMutationExecutionChainReadinessGateEvaluation;
+  let preflightGate: UnityMutationExecutionChainReadinessGateEvaluation;
+  let authorizationGate: UnityMutationExecutionChainReadinessGateEvaluation;
+  let liveValidationGate: UnityMutationExecutionChainReadinessGateEvaluation;
+  let executionPlanGate: UnityMutationExecutionChainReadinessGateEvaluation;
+  let finalMutationSwitchGate: UnityMutationExecutionChainReadinessGateEvaluation;
+
+  if (action.action_type === "unity_scene_object_creation") {
+    const dryRunStatus = evaluateExecutionPlanDryRunPreviewStatus(action.preview_result ?? null, requestId);
+    const preflightStatus = evaluateExecutionPlanPreflightStatus(action.preflight_result ?? null, requestId);
+    const authorizationEvaluation = evaluateUnityMutationExecutionAuthorization({
+      preview_result: action.preview_result ?? {
+        request_id: requestId,
+        request_type: "scene_object_creation_request",
+        final_execution_required: true,
+        final_execution_authorized: false,
+        executed: false,
+      },
+      authorization: action.authorization ?? null,
+      evaluated_at: input.requested_at,
+    });
+    const liveValidationStatus = evaluateExecutionPlanLiveValidationStatus(action.live_validation_result ?? null, action.target_scene.trim());
+    const executionPlanStatus = evaluateChainReadinessExecutionPlanStatus(action.execution_plan ?? null, requestId, action);
+    const mutationSwitchEvaluation = evaluateUnityMutationExecutionSwitch({
+      request_id: requestId,
+      request_type: "scene_object_creation_request",
+      mutation_switch: action.mutation_switch ?? null,
+      evaluated_at: input.requested_at,
+    });
+
+    dryRunGate = {
+      gate: "dry_run_preview",
+      status: dryRunStatus.status === "valid" ? "approved" : dryRunStatus.status,
+      detail: dryRunStatus.detail,
+    };
+    preflightGate = {
+      gate: "preflight_simulation",
+      status: preflightStatus.status === "valid" ? "approved" : preflightStatus.status,
+      detail: preflightStatus.detail,
+    };
+    authorizationGate = {
+      gate: "final_execution_authorization",
+      status: authorizationEvaluation.authorized ? "approved" : action.authorization ? "invalid" : "missing",
+      detail: authorizationEvaluation.authorized
+        ? `Final execution authorization gate is present for chain action ${action.action_id}.`
+        : authorizationEvaluation.blocked_reason ?? `Final execution authorization gate is missing for chain action ${action.action_id}.`,
+    };
+    liveValidationGate = {
+      gate: "live_read_only_validation",
+      status: liveValidationStatus.status === "valid" ? "approved" : liveValidationStatus.status,
+      detail: liveValidationStatus.detail,
+    };
+    executionPlanGate = {
+      gate: "execution_plan",
+      status: executionPlanStatus.status,
+      detail: executionPlanStatus.detail,
+    };
+    finalMutationSwitchGate = {
+      gate: "final_mutation_switch",
+      status: mutationSwitchEvaluation.enabled ? "approved" : action.mutation_switch ? "invalid" : "missing",
+      detail: mutationSwitchEvaluation.enabled
+        ? `Final mutation switch gate is present for chain action ${action.action_id}.`
+        : mutationSwitchEvaluation.blocked_reason ?? `Final mutation switch gate is missing for chain action ${action.action_id}.`,
+    };
+  } else {
+    const authorizationEvaluation = evaluateUnityRollbackExecutionAuthorization({
+      request_id: requestId,
+      target_scene: action.target_scene.trim(),
+      target_object_name: action.target_object_name.trim(),
+      authorization: action.authorization ?? null,
+      evaluated_at: input.requested_at,
+    });
+    const liveValidationStatus = evaluateExecutionPlanLiveValidationStatus(action.live_validation_result ?? null, action.target_scene.trim());
+    const executionPlanStatus = evaluateChainReadinessExecutionPlanStatus(action.execution_plan ?? null, requestId, action);
+    const rollbackSwitchEvaluation = evaluateUnityRollbackExecutionSwitch({
+      request_id: requestId,
+      target_scene: action.target_scene.trim(),
+      target_object_name: action.target_object_name.trim(),
+      rollback_switch: action.rollback_switch ?? null,
+      evaluated_at: input.requested_at,
+    });
+
+    dryRunGate = {
+      gate: "dry_run_preview",
+      status: "not_applicable",
+      detail: `Dry-run preview gate is not applicable to rollback chain action ${action.action_id}.`,
+    };
+    preflightGate = {
+      gate: "preflight_simulation",
+      status: "not_applicable",
+      detail: `Preflight simulation gate is not applicable to rollback chain action ${action.action_id}.`,
+    };
+    authorizationGate = {
+      gate: "final_execution_authorization",
+      status: authorizationEvaluation.authorized ? "approved" : action.authorization ? "invalid" : "missing",
+      detail: authorizationEvaluation.authorized
+        ? `Final rollback authorization gate is present for chain action ${action.action_id}.`
+        : authorizationEvaluation.blocked_reason ?? `Final rollback authorization gate is missing for chain action ${action.action_id}.`,
+    };
+    liveValidationGate = {
+      gate: "live_read_only_validation",
+      status: liveValidationStatus.status === "valid" ? "approved" : liveValidationStatus.status,
+      detail: liveValidationStatus.detail,
+    };
+    executionPlanGate = {
+      gate: "execution_plan",
+      status: executionPlanStatus.status,
+      detail: executionPlanStatus.detail,
+    };
+    finalMutationSwitchGate = {
+      gate: "final_mutation_switch",
+      status: rollbackSwitchEvaluation.enabled ? "approved" : action.rollback_switch ? "invalid" : "missing",
+      detail: rollbackSwitchEvaluation.enabled
+        ? `Final rollback switch gate is present for chain action ${action.action_id}.`
+        : rollbackSwitchEvaluation.blocked_reason ?? `Final rollback switch gate is missing for chain action ${action.action_id}.`,
+    };
+  }
+
+  const gateStatuses = [
+    reviewGate,
+    operatorGate,
+    dryRunGate,
+    preflightGate,
+    authorizationGate,
+    liveValidationGate,
+    executionPlanGate,
+    finalMutationSwitchGate,
+  ];
+  const missingGates = gateStatuses
+    .filter((gate) => gate.status !== "approved" && gate.status !== "not_applicable")
+    .map((gate) => gate.gate);
+  const readyForOperatorExecution = missingGates.length === 0;
+
+  return {
+    action_id: action.action_id.trim(),
+    action_type: action.action_type,
+    target_scene: action.target_scene.trim(),
+    target_object_name: action.target_object_name.trim(),
+    depends_on: [...action.depends_on],
+    required_approvals: [...new Set([...getChainActionRequiredApprovals(action.action_type), ...action.required_approvals])],
+    order: -1,
+    status: readyForOperatorExecution ? "planned" : "blocked",
+    lane_scope: "layer15_single_object_lane",
+    blocked_reason: readyForOperatorExecution ? null : gateStatuses.find((gate) => gate.status !== "approved" && gate.status !== "not_applicable")?.detail ?? null,
+    dry_run: true,
+    executed: false,
+    gate_statuses: gateStatuses,
+    missing_gates: missingGates,
+    ready_for_operator_execution: readyForOperatorExecution,
+    dependency_blockers: [],
+    readiness: readyForOperatorExecution ? "ready_for_operator_execution" : "not_ready",
+  };
+}
+
+function createUnityMutationExecutionChainReadinessPackages(
+  input: UnityMutationExecutionChainReadinessInput,
+  result: UnityMutationExecutionChainReadinessResult,
+): {
+  reviewPackage: AutonomousReviewPackage;
+  deliveryPackage: AutonomousDeliveryPackage;
+} {
+  const summary = `CHAIN READINESS ONLY: Controlled Unity execution chain ${result.chain_id} evaluated as ${result.chain_readiness}. NO ACTIONS EXECUTED.`;
+  const proofResults = [
+    `Execution kind: ${result.execution_kind}`,
+    `Chain id: ${result.chain_id}`,
+    `Chain status: ${result.chain_status}`,
+    `Chain readiness: ${result.chain_readiness}`,
+    `Execution mode: ${result.execution_mode}`,
+    `Total actions: ${String(result.total_actions)}`,
+    `Ready actions: ${result.ready_actions.join(", ") || "none"}`,
+    `Blocked actions: ${result.blocked_actions.join(", ") || "none"}`,
+    `Dependency blocked actions: ${result.dependency_blocked_actions.join(", ") || "none"}`,
+    `Executable actions: ${result.executable_actions.join(", ") || "none"}`,
+    `Missing gates: ${result.missing_gates.join(", ") || "none"}`,
+    `Chain ready: ${String(result.chain_ready)}`,
+    `Dry run: ${String(result.dry_run)}`,
+    `Executed: ${String(result.executed)}`,
+    ...result.required_approvals.map((approval) => `Required approval gate: ${approval}`),
+    ...result.dependency_graph.map((entry) => `Dependency graph: ${entry}`),
+    ...result.rollback_graph.map((entry) => `Rollback graph: ${entry}`),
+    ...result.ordered_actions.map((action) => `Gate status: ${action.action_id} => ${action.gate_statuses.map((gate) => `${gate.gate}=${gate.status}`).join(", ")}`),
+    ...result.ordered_actions.filter((action) => action.dependency_blockers.length > 0).map((action) => `Dependency blocker: ${action.action_id} <= ${action.dependency_blockers.join(", ")}`),
+    `Recommended next operator action: ${result.recommended_next_operator_action}`,
+    ...(result.blocked_reason ? [`Blocked reason: ${result.blocked_reason}`] : []),
+  ];
+
+  const reviewPackage = createAutonomousReviewPackage({
+    package_id: `unity-chain-readiness-review-${result.chain_id}`,
+    work_item_id: `unity-chain-readiness-${result.chain_id}`,
+    chain_id: `unity-chain-readiness-chain-${result.chain_id}`,
+    status: result.execution_kind === "chain_readiness_only" ? "approved" : "pending",
+    summary,
+    files_changed: [],
+    tests_run: ["unity mutation execution chain readiness"],
+    proof_results: proofResults,
+    risks: [
+      "CHAIN READINESS ONLY",
+      "NO ACTIONS EXECUTED",
+      ...(result.blocked_reason ? [result.blocked_reason] : []),
+    ],
+    recommended_decision: "approve",
+    rollback_notes: result.rollback_graph.length > 0
+      ? `ROLLBACK ORDER PREVIEW: ${result.rollback_graph.join(" | ")}`
+      : "No rollback order preview is available for this chain.",
+    operator_actions: ["approve", "archive"],
+  });
+
+  const deliveryPackage = createAutonomousDeliveryPackage({
+    delivery_package_id: `unity-chain-readiness-delivery-${result.chain_id}`,
+    review_package_id: reviewPackage.package_id,
+    work_item_id: reviewPackage.work_item_id,
+    chain_id: reviewPackage.chain_id,
+    branch_name: "",
+    commit_plan: [
+      "Keep this Unity chain readiness artifact attached to the reviewed delivery lane.",
+      "CHAIN READINESS ONLY: do not execute, mutate, or roll back anything from this package.",
+      `NO ACTIONS EXECUTED: ${result.ready_actions.join(", ") || "none ready"}`,
+    ],
+    files_changed: [],
+    validation_results: proofResults,
+    proof_results: ["CHAIN READINESS ONLY", "NO ACTIONS EXECUTED", result.chain_readiness],
+    risk_summary: result.blocked_reason ?? "Chain readiness evaluated without executing any Unity actions.",
+    rollback_plan: result.rollback_graph.join(" | ") || "No rollback order preview available.",
+    release_notes: summary,
+    recommended_pr_title: "",
+    recommended_pr_body: `Unity chain readiness handoff\n\nSummary: ${summary}\n\nNext operator action: ${result.recommended_next_operator_action}`,
     operator_decision: null,
     status: "awaiting_operator_approval",
     created_at: input.requested_at,
@@ -3048,6 +3445,130 @@ export function buildUnityMutationExecutionChainPlan(
     ...baseResult,
     review_package: chainPlanPackages.reviewPackage,
     delivery_package: chainPlanPackages.deliveryPackage,
+  };
+}
+
+export function evaluateUnityMutationExecutionChainReadiness(
+  input: UnityMutationExecutionChainReadinessInput,
+): UnityMutationExecutionChainReadinessResult {
+  const reviewApproved = hasCompletedReview(input.review_state);
+  const operatorApproved = hasApproval(input.review_state);
+  const resolvedPlan = resolveUnityMutationExecutionChainPlan(input);
+  const readinessByActionId = new Map(
+    input.actions.map((action) => [action.action_id.trim(), evaluateUnityMutationExecutionChainActionReadiness(input, action)]),
+  );
+
+  const orderedActions = resolvedPlan.orderedActions.map((plannedAction) => {
+    const baseReadiness = readinessByActionId.get(plannedAction.action_id);
+    if (!baseReadiness) {
+      return {
+        ...plannedAction,
+        gate_statuses: [],
+        missing_gates: [],
+        ready_for_operator_execution: false,
+        dependency_blockers: [],
+        readiness: "not_ready" as UnityMutationExecutionChainReadiness,
+      };
+    }
+
+    const dependencyBlockers = plannedAction.depends_on.filter((dependencyId) => {
+      const dependencyReadiness = readinessByActionId.get(dependencyId);
+      return !dependencyReadiness?.ready_for_operator_execution;
+    });
+    const gateStatuses = dependencyBlockers.length > 0
+      ? [
+          ...baseReadiness.gate_statuses,
+          {
+            gate: "execution_plan" as UnityMutationExecutionChainReadinessGate,
+            status: "dependency_blocked" as UnityMutationExecutionChainReadinessGateStatus,
+            detail: `Chain action ${plannedAction.action_id} is blocked by dependency gates on ${dependencyBlockers.join(", ")}.`,
+          },
+        ]
+      : baseReadiness.gate_statuses;
+    const missingGates = gateStatuses
+      .filter((gate) => gate.status !== "approved" && gate.status !== "not_applicable")
+      .map((gate) => gate.gate);
+    const readyForOperatorExecution = missingGates.length === 0;
+
+    return {
+      ...plannedAction,
+      gate_statuses: gateStatuses,
+      missing_gates: missingGates,
+      ready_for_operator_execution: readyForOperatorExecution,
+      dependency_blockers: dependencyBlockers,
+      readiness: readyForOperatorExecution
+        ? "ready_for_operator_execution"
+        : dependencyBlockers.length > 0 || baseReadiness.ready_for_operator_execution
+          ? "partially_ready"
+          : "not_ready",
+      status: readyForOperatorExecution ? "planned" : "blocked",
+      blocked_reason: readyForOperatorExecution
+        ? null
+        : gateStatuses.find((gate) => gate.status !== "approved" && gate.status !== "not_applicable")?.detail ?? plannedAction.blocked_reason,
+      dry_run: true as const,
+      executed: false as const,
+    };
+  });
+
+  const executableActions = orderedActions.filter((action) => action.ready_for_operator_execution).map((action) => action.action_id);
+  const blockedActions = orderedActions.filter((action) => !action.ready_for_operator_execution).map((action) => action.action_id);
+  const dependencyBlockedActions = orderedActions.filter((action) => action.dependency_blockers.length > 0).map((action) => action.action_id);
+  const missingGates = [...new Set(orderedActions.flatMap((action) => action.missing_gates.map((gate) => `${action.action_id}:${gate}`)))];
+  const chainReadiness: UnityMutationExecutionChainReadiness = executableActions.length === orderedActions.length && orderedActions.length > 0
+    ? "ready_for_operator_execution"
+    : executableActions.length > 0
+      ? "partially_ready"
+      : "not_ready";
+  const blockedReason = resolvedPlan.blockedReason
+    ?? orderedActions.find((action) => action.blocked_reason)?.blocked_reason
+    ?? null;
+
+  const baseResult: UnityMutationExecutionChainReadinessResult = {
+    chain_id: input.chain_id.trim(),
+    chain_status: resolvedPlan.blockedReason ? "chain_blocked" : "chain_planned",
+    chain_readiness: chainReadiness,
+    domain: "Unity",
+    request_type: "scene_object_creation_request",
+    execution_mode: "multi_action_chain_readiness_only",
+    execution_kind: blockedReason ? "chain_readiness_blocked" : "chain_readiness_only",
+    review_approval_id: input.review_state.review_package_id,
+    review_approval_status: reviewApproved ? "approved" : "missing",
+    operator_approval_id: input.review_state.operator_approval_id,
+    operator_approval_status: operatorApproved ? "approved" : "missing",
+    ordered_actions: orderedActions,
+    action_dependencies: resolvedPlan.actionDependencies,
+    rollback_plan: resolvedPlan.rollbackPlan,
+    rollback_order: resolvedPlan.rollbackPlan.map((entry) => entry.source_action_id),
+    required_approvals: resolvedPlan.requiredApprovals,
+    total_actions: orderedActions.length,
+    ready_actions: executableActions,
+    blocked_actions: blockedActions,
+    dependency_blocked_actions: dependencyBlockedActions,
+    executable_actions: executableActions,
+    missing_gates: missingGates,
+    dependency_graph: resolvedPlan.dependencyGraph,
+    rollback_graph: resolvedPlan.rollbackGraph,
+    chain_ready: chainReadiness === "ready_for_operator_execution",
+    dry_run: true,
+    executed: false,
+    blocked_reason: blockedReason,
+    recommended_next_operator_action: chainReadiness === "ready_for_operator_execution"
+      ? "Chain readiness is satisfied for all actions. Hold execution until a future explicit operator execution step authorizes it."
+      : chainReadiness === "partially_ready"
+        ? "Resolve the remaining blocked gates before any future explicit operator execution step is considered."
+        : "Resolve the blocked gates and dependency blockers before any future explicit operator execution step is considered.",
+    artifact_label: "unity_mutation_execution_chain_readiness",
+    review_package: null,
+    delivery_package: null,
+    mutating: false,
+  };
+
+  const readinessPackages = createUnityMutationExecutionChainReadinessPackages(input, baseResult);
+
+  return {
+    ...baseResult,
+    review_package: readinessPackages.reviewPackage,
+    delivery_package: readinessPackages.deliveryPackage,
   };
 }
 

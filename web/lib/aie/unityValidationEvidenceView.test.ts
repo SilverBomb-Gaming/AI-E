@@ -276,6 +276,70 @@ test("chain plan evidence renders read-only multi-action ordering and rollback p
   assert.match(markup, /Rollback graph/);
 });
 
+test("chain readiness evidence renders gate-scored non-executing readiness details", () => {
+  const reviewPackage = createAutonomousReviewPackage({
+    package_id: "unity-chain-readiness-review-1",
+    work_item_id: "unity-chain-readiness-unity-controlled-chain-1",
+    chain_id: "unity-chain-readiness-1",
+    status: "approved",
+    summary: "CHAIN READINESS ONLY: Controlled Unity execution chain unity-controlled-chain-1 evaluated as partially_ready. NO ACTIONS EXECUTED.",
+    files_changed: [],
+    tests_run: ["unity mutation execution chain readiness"],
+    proof_results: [
+      "Execution kind: chain_readiness_only",
+      "Chain id: unity-controlled-chain-1",
+      "Chain status: chain_planned",
+      "Chain readiness: partially_ready",
+      "Execution mode: multi_action_chain_readiness_only",
+      "Total actions: 2",
+      "Ready actions: create-probe",
+      "Blocked actions: rollback-probe",
+      "Dependency blocked actions: rollback-probe",
+      "Executable actions: create-probe",
+      "Missing gates: rollback-probe:execution_plan, rollback-probe:final_mutation_switch",
+      "Chain ready: false",
+      "Dry run: true",
+      "Executed: false",
+      "Required approval gate: review package approval",
+      "Required approval gate: explicit final execute gate",
+      "Dependency graph: create-probe <- none",
+      "Dependency graph: rollback-probe <- create-probe",
+      "Rollback graph: 1. rollback-probe => unity_scene_object_creation",
+      "Rollback graph: 2. create-probe => unity_scene_object_rollback",
+      "Gate status: create-probe => review_approval=approved, operator_approval=approved, dry_run_preview=approved",
+      "Gate status: rollback-probe => execution_plan=dependency_blocked, final_mutation_switch=missing",
+      "Recommended next operator action: Resolve the remaining blocked gates before any future explicit operator execution step is considered.",
+    ],
+    risks: ["CHAIN READINESS ONLY", "NO ACTIONS EXECUTED"],
+    recommended_decision: "approve",
+    rollback_notes: "ROLLBACK ORDER PREVIEW: 1. rollback-probe => unity_scene_object_creation | 2. create-probe => unity_scene_object_rollback",
+    operator_actions: ["approve", "archive"],
+  });
+
+  const evidence = extractUnityValidationEvidenceFromReviewPackage(reviewPackage);
+
+  assert.ok(evidence);
+  assert.equal(evidence.kind, "mutation_execution_chain_readiness");
+  assert.equal(evidence.chainId, "unity-controlled-chain-1");
+  assert.equal(evidence.chainStatus, "chain_planned");
+  assert.equal(evidence.chainReadinessStatus, "partially_ready");
+  assert.equal(evidence.chainReady, false);
+  assert.deepEqual(evidence.executableActions, ["create-probe"]);
+  assert.deepEqual(evidence.blockedActions, ["rollback-probe"]);
+  assert.deepEqual(evidence.dependencyBlockedActions, ["rollback-probe"]);
+  assert.deepEqual(evidence.missingGates, ["rollback-probe:execution_plan", "rollback-probe:final_mutation_switch"]);
+  assert.ok(evidence.gateStatuses.some((entry) => /dependency_blocked/i.test(entry)));
+
+  const markup = renderToStaticMarkup(createElement(UnityValidationEvidencePanel, { evidence }));
+  assert.match(markup, /Mutation Execution Chain Readiness/);
+  assert.match(markup, /CHAIN READINESS ONLY/);
+  assert.match(markup, /NO ACTIONS EXECUTED/);
+  assert.match(markup, /Chain readiness: partially_ready/);
+  assert.match(markup, /Dependency blocked actions/);
+  assert.match(markup, /Missing gates/);
+  assert.match(markup, /Gate statuses/);
+});
+
 test("mutation preflight evidence renders simulation-only operator details", () => {
   const reviewPackage = createAutonomousReviewPackage({
     package_id: "unity-mutation-preflight-review-1",

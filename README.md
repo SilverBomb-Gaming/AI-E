@@ -326,25 +326,30 @@ Current Layer 15 boundary:
 
 ## Layer 16 / Multi-Action Execution Chains
 
-Layer 16 starts with planning only for bounded multi-action Unity execution chains. This step does not execute chained Unity mutations or rollbacks. It adds a reviewed chain model that stays pinned to the verified Layer 15 single-object lane and exposes ordering, dependency, and rollback previews through existing operator-visible evidence surfaces.
+Layer 16 starts with bounded multi-action Unity execution chains that remain review-only. These steps do not execute chained Unity mutations or rollbacks. They stay pinned to the verified Layer 15 single-object lane and expose ordering, rollback, and execution-readiness evidence through the existing operator-visible evidence surfaces.
 
-Current Layer 16 Step 1 status:
+Current Layer 16 status:
 
-- planning-only multi-action chain model: implemented
+- Step 1 planning-only multi-action chain model: implemented
+- Step 2 chain execution-readiness evaluation: implemented
 - supported chain action types: `unity_scene_object_creation` and `unity_scene_object_rollback` only
 - dependency ordering and cycle refusal: implemented
 - rollback order preview: implemented
 - unsupported action type refusal: implemented
-- operator-visible chain preview rendering: implemented
+- per-action gate scoring for review approval, operator approval, dry-run preview, preflight simulation, final authorization, live validation, execution plan, and final switch: implemented
+- dependency-blocked downstream action evaluation: implemented
+- operator-visible chain preview and readiness rendering: implemented
 - chain execution: refused in this step
 - chat execution: still refused with `safe_to_execute: false`
 
-Current Layer 16 Step 1 boundary:
+Current Layer 16 boundary:
 
 - every chain action must stay inside the verified Layer 15 lane for `AIE_ControlledMutationProbe` in `EnemyAIDemo`
-- the chain builder returns `execution_mode: multi_action_chain_plan_only`, `chain_ready: false`, `dry_run: true`, and `executed: false`
+- the planning artifact returns `execution_mode: multi_action_chain_plan_only`, `chain_ready: false`, `dry_run: true`, and `executed: false`
+- the readiness artifact returns `execution_mode: multi_action_chain_readiness_only`, `executed: false`, and never mutates Unity
 - ordering is resolved from declared dependencies and cyclic graphs are blocked explicitly
-- rollback preview is rendered in reverse action order as an operator-visible planning artifact only
+- rollback preview is rendered in reverse action order as an operator-visible artifact only
+- readiness can report `not_ready`, `partially_ready`, or `ready_for_operator_execution`, but this is still advisory and does not authorize execution
 - unsupported mutation types and out-of-lane targets are refused explicitly
 - no real multi-action Unity execution path exists yet
 
