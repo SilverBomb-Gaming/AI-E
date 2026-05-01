@@ -605,6 +605,20 @@ export type UnityMutationExecutionChainReadinessResult = {
 
 export type UnityMutationExecutionChainExecutionStatus = "success" | "partial_failure" | "failed";
 
+export type UnityMutationExecutionChainFailureHandlingStatus = "none_required" | "rollback_recommended" | "manual_review_required";
+
+export type UnityMutationExecutionChainFailureClassification = "none" | "action_failed" | "dependency_failed" | "unsupported_action" | "gate_mismatch" | "runtime_unavailable";
+
+export type UnityMutationExecutionChainRollbackPlan = {
+  rollback_plan_id: string;
+  source_chain_id: string;
+  actions_to_rollback: string[];
+  rollback_order: string[];
+  required_approvals: string[];
+  auto_execute: false;
+  executed: false;
+};
+
 export type UnityMutationExecutionChainExecutionActionResult = {
   action_id: string;
   action_type: UnityMutationExecutionChainActionType;
@@ -646,11 +660,18 @@ export type UnityMutationExecutionChainExecutionResult = {
   operator_approval_id: string | null;
   operator_approval_status: "missing" | "approved";
   action_dependencies: UnityMutationExecutionChainDependencyNode[];
-  rollback_plan: UnityMutationExecutionChainRollbackNode[];
+  rollback_preview_plan: UnityMutationExecutionChainRollbackNode[];
   rollback_order: string[];
   total_actions: number;
   actions_executed_count: number;
   actions_failed_count: number;
+  failure_handling_status: UnityMutationExecutionChainFailureHandlingStatus;
+  failure_classification: UnityMutationExecutionChainFailureClassification;
+  failed_action_id: string | null;
+  successful_action_ids: string[];
+  rollback_plan_required: boolean;
+  rollback_plan: UnityMutationExecutionChainRollbackPlan | null;
+  manual_review_required: boolean;
   per_action_results: UnityMutationExecutionChainExecutionActionResult[];
   final_scene_state: UnityMutationExecutionChainExecutionFinalSceneState;
   blocked_reason: string | null;
@@ -1550,6 +1571,12 @@ function createUnityMutationExecutionChainExecutionPackages(
     `Execution kind: ${result.execution_kind}`,
     `Chain id: ${result.chain_id}`,
     `Execution status: ${result.execution_status}`,
+    `Failure handling status: ${result.failure_handling_status}`,
+    `Failure classification: ${result.failure_classification}`,
+    `Failed action id: ${result.failed_action_id ?? "none"}`,
+    `Successful action ids: ${result.successful_action_ids.join(", ") || "none"}`,
+    `Rollback plan required: ${String(result.rollback_plan_required)}`,
+    `Manual review required: ${String(result.manual_review_required)}`,
     `Chain status: ${result.chain_status}`,
     `Chain readiness: ${result.chain_readiness}`,
     `Execution mode: ${result.execution_mode}`,
@@ -1558,8 +1585,18 @@ function createUnityMutationExecutionChainExecutionPackages(
     `Actions failed count: ${String(result.actions_failed_count)}`,
     `Executed: ${String(result.executed)}`,
     `Final scene state: ${result.final_scene_state.summary}`,
+    ...(result.rollback_plan
+      ? [
+          `Rollback plan id: ${result.rollback_plan.rollback_plan_id}`,
+          `Rollback actions: ${result.rollback_plan.actions_to_rollback.join(", ") || "none"}`,
+          `Rollback order: ${result.rollback_plan.rollback_order.join(", ") || "none"}`,
+          `Rollback auto execute: ${String(result.rollback_plan.auto_execute)}`,
+          `Rollback executed: ${String(result.rollback_plan.executed)}`,
+          ...result.rollback_plan.required_approvals.map((approval) => `Rollback required approval: ${approval}`),
+        ]
+      : []),
     ...result.action_dependencies.map((entry) => `Dependency graph: ${entry.action_id} <= ${entry.depends_on.join(", ") || "none"}`),
-    ...result.rollback_plan.map((entry) => `Rollback graph: ${entry.source_action_id} => ${entry.rollback_action_type} ${entry.target_object_name}`),
+    ...result.rollback_preview_plan.map((entry) => `Rollback graph: ${entry.source_action_id} => ${entry.rollback_action_type} ${entry.target_object_name}`),
     ...result.per_action_results.map((action) => `Action result: ${action.action_id} => ${action.status}${action.failure_reason ? ` (${action.failure_reason})` : ""}`),
     `Recommended next operator action: ${result.recommended_next_operator_action}`,
     ...(result.blocked_reason ? [`Blocked reason: ${result.blocked_reason}`] : []),
@@ -1575,7 +1612,11 @@ function createUnityMutationExecutionChainExecutionPackages(
     tests_run: ["unity mutation execution chain controlled execution"],
     proof_results: proofResults,
     risks: result.actions_failed_count > 0
-      ? ["CHAIN EXECUTION STOPPED", result.blocked_reason ?? "A controlled Unity chain action failed."]
+      ? [
+          "CHAIN EXECUTION STOPPED",
+          result.blocked_reason ?? "A controlled Unity chain action failed.",
+          ...(result.rollback_plan_required ? ["ROLLBACK PLAN REQUIRED", "ROLLBACK NOT AUTO-EXECUTED"] : []),
+        ]
       : ["CONTROLLED UNITY CHAIN EXECUTION"],
     recommended_decision: result.execution_status === "success" ? "approve" : "review_required",
     rollback_notes: result.rollback_order.length > 0
@@ -1594,10 +1635,20 @@ function createUnityMutationExecutionChainExecutionPackages(
       "Controlled Unity chain execution completed through the bounded Layer 15 lanes.",
       `Execution status: ${result.execution_status}`,
       `Final scene state: ${result.final_scene_state.summary}`,
+      ...(result.rollback_plan_required
+        ? [
+            `Rollback plan required: ${result.rollback_plan?.rollback_order.join(", ") || "none"}`,
+            "Rollback remains separately approved and was not auto-executed.",
+          ]
+        : []),
     ],
     files_changed: [],
     validation_results: proofResults,
-    proof_results: [result.execution_status, result.final_scene_state.summary],
+    proof_results: [
+      result.execution_status,
+      result.final_scene_state.summary,
+      ...(result.rollback_plan_required ? ["ROLLBACK PLAN REQUIRED", "ROLLBACK NOT AUTO-EXECUTED"] : []),
+    ],
     risk_summary: result.blocked_reason ?? "Controlled Unity chain execution completed within the approved lane.",
     rollback_plan: result.rollback_order.join(" | ") || "No rollback order preview available.",
     release_notes: summary,
@@ -1637,6 +1688,8 @@ function buildChainExecutionBlockedResult(
   input: UnityMutationExecutionChainExecutionInput,
   readinessResult: UnityMutationExecutionChainReadinessResult | null,
   blockedReason: string,
+  failureClassification: UnityMutationExecutionChainFailureClassification = "gate_mismatch",
+  failedActionId: string | null = null,
 ): UnityMutationExecutionChainExecutionResult {
   return {
     chain_id: input.chain_id.trim(),
@@ -1652,11 +1705,18 @@ function buildChainExecutionBlockedResult(
     operator_approval_id: input.review_state.operator_approval_id,
     operator_approval_status: hasApproval(input.review_state) ? "approved" : "missing",
     action_dependencies: readinessResult?.action_dependencies ?? [],
-    rollback_plan: readinessResult?.rollback_plan ?? [],
+    rollback_preview_plan: readinessResult?.rollback_plan ?? [],
     rollback_order: readinessResult?.rollback_order ?? [],
     total_actions: readinessResult?.total_actions ?? input.actions.length,
     actions_executed_count: 0,
     actions_failed_count: 0,
+    failure_handling_status: failureClassification === "unsupported_action" ? "manual_review_required" : "none_required",
+    failure_classification: failureClassification,
+    failed_action_id: failedActionId,
+    successful_action_ids: [],
+    rollback_plan_required: false,
+    rollback_plan: null,
+    manual_review_required: failureClassification === "unsupported_action",
     per_action_results: [],
     final_scene_state: {
       target_scene: input.actions[0]?.target_scene?.trim() ?? null,
@@ -1682,6 +1742,67 @@ function isSuccessfulChainMutationResult(result: UnitySceneObjectCreationMutatio
 
 function isSuccessfulChainRollbackResult(result: UnitySceneObjectCreationRollbackExecutionResult): boolean {
   return result.execution_kind === "controlled_rollback_executed" || result.execution_kind === "controlled_rollback_idempotent";
+}
+
+function classifyChainExecutionFailure(input: {
+  blockedReason: string | null;
+  failedActionResult: UnityMutationExecutionChainExecutionActionResult | null;
+}): UnityMutationExecutionChainFailureClassification {
+  if (!input.failedActionResult) {
+    return "none";
+  }
+
+  if (input.failedActionResult.failure_reason && /unsupported action type/i.test(input.failedActionResult.failure_reason)) {
+    return "unsupported_action";
+  }
+
+  const result = input.failedActionResult.result;
+  if (result) {
+    if (result.execution_kind === "controlled_mutation_unavailable" || result.execution_kind === "controlled_rollback_unavailable") {
+      return "runtime_unavailable";
+    }
+  }
+
+  if (input.blockedReason && /dependenc/i.test(input.blockedReason)) {
+    return "dependency_failed";
+  }
+
+  if (input.blockedReason && /(not ready|requires|scope|match|gate)/i.test(input.blockedReason)) {
+    return "gate_mismatch";
+  }
+
+  return "action_failed";
+}
+
+export function buildRollbackPlanForExecutedChainActions(input: {
+  chain_id: string;
+  executed_actions: UnityMutationExecutionChainExecutionActionResult[];
+  ordered_actions: UnityMutationExecutionChainReadinessActionInput[];
+}): UnityMutationExecutionChainRollbackPlan | null {
+  const executedSuccesses = input.executed_actions.filter((action) => action.status === "executed");
+  if (executedSuccesses.length === 0) {
+    return null;
+  }
+
+  const executedActionIds = new Set(executedSuccesses.map((action) => action.action_id));
+  const rollbackOrder = [...input.ordered_actions]
+    .map((action) => action.action_id)
+    .filter((actionId) => executedActionIds.has(actionId))
+    .reverse();
+
+  return {
+    rollback_plan_id: `unity-chain-rollback-plan-${input.chain_id}`,
+    source_chain_id: input.chain_id,
+    actions_to_rollback: rollbackOrder,
+    rollback_order: rollbackOrder,
+    required_approvals: [
+      "explicit rollback plan review approval",
+      "explicit final rollback authorization",
+      "explicit final rollback switch enablement",
+    ],
+    auto_execute: false,
+    executed: false,
+  };
 }
 
 export function evaluateUnityMutationExecutionSwitch(input: {
@@ -3787,6 +3908,7 @@ export async function executeUnityMutationExecutionChain(
       input,
       input.readiness_result,
       "Only scene_object_creation_request is executable through the first controlled Unity chain path.",
+      "gate_mismatch",
     );
   }
 
@@ -3795,6 +3917,7 @@ export async function executeUnityMutationExecutionChain(
       input,
       null,
       "Controlled Unity chain execution requires a Step 2 readiness artifact before execution can run.",
+      "gate_mismatch",
     );
   }
 
@@ -3804,6 +3927,7 @@ export async function executeUnityMutationExecutionChain(
       input,
       readinessResult,
       "Controlled Unity chain execution readiness artifact does not match the reviewed chain id.",
+      "gate_mismatch",
     );
   }
 
@@ -3812,6 +3936,7 @@ export async function executeUnityMutationExecutionChain(
       input,
       readinessResult,
       readinessResult.blocked_reason ?? "Controlled Unity chain execution requires every action to be ready_for_operator_execution.",
+      "gate_mismatch",
     );
   }
 
@@ -3821,6 +3946,7 @@ export async function executeUnityMutationExecutionChain(
       input,
       readinessResult,
       "Controlled Unity chain execution is limited to one creation action followed by one rollback action.",
+      "unsupported_action",
     );
   }
 
@@ -3835,6 +3961,7 @@ export async function executeUnityMutationExecutionChain(
       input,
       readinessResult,
       "Controlled Unity chain execution requires an exact create-then-rollback dependency pair.",
+      "unsupported_action",
     );
   }
 
@@ -3848,6 +3975,8 @@ export async function executeUnityMutationExecutionChain(
         input,
         readinessResult,
         `Controlled Unity chain execution is missing the reviewed action payload for ${plannedAction.action_id}.`,
+        "gate_mismatch",
+        plannedAction.action_id,
       );
     }
 
@@ -3856,6 +3985,8 @@ export async function executeUnityMutationExecutionChain(
         input,
         readinessResult,
         plannedAction.blocked_reason ?? `Controlled Unity chain action ${plannedAction.action_id} is not ready for operator execution.`,
+        "gate_mismatch",
+        plannedAction.action_id,
       );
     }
 
@@ -3868,6 +3999,8 @@ export async function executeUnityMutationExecutionChain(
         input,
         readinessResult,
         `Controlled Unity chain action ${plannedAction.action_id} cannot run until dependencies succeed: ${unsatisfiedDependencies.join(", ")}.`,
+        "dependency_failed",
+        plannedAction.action_id,
       );
     }
 
@@ -3949,11 +4082,22 @@ export async function executeUnityMutationExecutionChain(
       input,
       readinessResult,
       `Controlled Unity chain execution does not support action type ${actionInput.action_type}.`,
+      "unsupported_action",
+      actionInput.action_id,
     );
   }
 
   const actionsExecutedCount = actionResults.filter((action) => action.status === "executed").length;
   const actionsFailedCount = actionResults.filter((action) => action.status === "failed").length;
+  const failedAction = actionResults.find((action) => action.status === "failed") ?? null;
+  const successfulActionIds = actionResults.filter((action) => action.status === "executed").map((action) => action.action_id);
+  const rollbackPlan = failedAction
+    ? buildRollbackPlanForExecutedChainActions({
+        chain_id: input.chain_id.trim(),
+        executed_actions: actionResults,
+        ordered_actions: input.actions,
+      })
+    : null;
   const objectCountBefore = input.actions.length > 0 ? extractActionObjectCount(input.actions[0]) : null;
   const objectCountAfter = objectCountBefore !== null
     ? objectCountBefore + actionResults.reduce((total, action) => total + getChainActionCountDelta(action), 0)
@@ -3981,11 +4125,25 @@ export async function executeUnityMutationExecutionChain(
     operator_approval_id: input.review_state.operator_approval_id,
     operator_approval_status: hasApproval(input.review_state) ? "approved" : "missing",
     action_dependencies: readinessResult.action_dependencies,
-    rollback_plan: readinessResult.rollback_plan,
+    rollback_preview_plan: readinessResult.rollback_plan,
     rollback_order: readinessResult.rollback_order,
     total_actions: readinessResult.total_actions,
     actions_executed_count: actionsExecutedCount,
     actions_failed_count: actionsFailedCount,
+    failure_handling_status: failedAction
+      ? rollbackPlan
+        ? "rollback_recommended"
+        : "manual_review_required"
+      : "none_required",
+    failure_classification: classifyChainExecutionFailure({
+      blockedReason: failedAction?.failure_reason ?? null,
+      failedActionResult: failedAction,
+    }),
+    failed_action_id: failedAction?.action_id ?? null,
+    successful_action_ids: successfulActionIds,
+    rollback_plan_required: rollbackPlan !== null,
+    rollback_plan: rollbackPlan,
+    manual_review_required: failedAction !== null,
     per_action_results: actionResults,
     final_scene_state: {
       target_scene: input.actions[0]?.target_scene?.trim() ?? null,
@@ -3996,10 +4154,12 @@ export async function executeUnityMutationExecutionChain(
         ? `Scene ${input.actions[0]?.target_scene?.trim() ?? "unknown"} object count moved from ${String(objectCountBefore)} to ${String(objectCountAfter)}.`
         : "Final scene object count summary is unavailable.",
     },
-    blocked_reason: actionResults.find((action) => action.status === "failed")?.failure_reason ?? null,
+    blocked_reason: failedAction?.failure_reason ?? null,
     recommended_next_operator_action: executionStatus === "success"
       ? "Review the bounded chain execution evidence and rerun read-only validation before any follow-up mutation work."
-      : "Review the failed chain action evidence before retrying any controlled Unity chain execution.",
+      : rollbackPlan
+        ? "Review the failed chain action evidence, approve the rollback plan separately if appropriate, and do not auto-execute rollback."
+        : "Review the failed chain action evidence before retrying any controlled Unity chain execution.",
     dry_run: false,
     executed: actionResults.some((action) => action.executed),
     artifact_label: "unity_mutation_execution_chain_result",

@@ -7,6 +7,7 @@ export type UnityValidationEvidenceKind = "adapter_preview" | "real_bridge_unava
 export type UnityValidationEvidence = {
   kind: UnityValidationEvidenceKind;
   bridgeStatus: string;
+  executionStatus: string | null;
   sceneValidationStatus: string;
   checkedSceneName: string | null;
   missingScriptCount: number | null;
@@ -69,6 +70,14 @@ export type UnityValidationEvidence = {
   dependencyGraph: string[];
   rollbackGraph: string[];
   gateStatuses: string[];
+  failureHandlingStatus: string | null;
+  failureClassification: string | null;
+  failedActionId: string | null;
+  successfulActionIds: string[];
+  rollbackPlanRequired: boolean | null;
+  rollbackActions: string[];
+  rollbackAutoExecute: boolean | null;
+  manualReviewRequired: boolean | null;
 };
 
 function parseLabeledValue(lines: string[], label: string): string | null {
@@ -234,6 +243,7 @@ function parseSummary(summary: string): Partial<UnityValidationEvidence> {
     return {
       kind: "mutation_execution_chain_result",
       bridgeStatus: "controlled_chain_execution",
+      executionStatus: chainExecutionMatch[2]?.trim() ?? null,
       sceneValidationStatus: "not_checked",
       chainId: chainExecutionMatch[1]?.trim() ?? null,
       chainReadinessStatus: null,
@@ -360,6 +370,9 @@ function buildEvidence(workItemId: string, summary: string, lines: string[]): Un
   const sceneValidationStatus = parseLabeledValue(lines, "Scene validation status")
     ?? summaryValues.sceneValidationStatus
     ?? "not_checked";
+  const executionStatus = parseLabeledValue(lines, "Execution status")
+    ?? summaryValues.executionStatus
+    ?? null;
   const checkedSceneName = parseLabeledValue(lines, "Checked scene name")
     ?? summaryValues.checkedSceneName
     ?? null;
@@ -383,6 +396,7 @@ function buildEvidence(workItemId: string, summary: string, lines: string[]): Un
   return {
     kind,
     bridgeStatus,
+    executionStatus,
     sceneValidationStatus,
     checkedSceneName: checkedSceneName && checkedSceneName !== "none" ? checkedSceneName : null,
     missingScriptCount: parseCount(parseLabeledValue(lines, "Missing script count")) ?? summaryValues.missingScriptCount ?? null,
@@ -445,6 +459,14 @@ function buildEvidence(workItemId: string, summary: string, lines: string[]): Un
     dependencyGraph: parseRepeatedLabeledValues(lines, "Dependency graph"),
     rollbackGraph: parseRepeatedLabeledValues(lines, "Rollback graph"),
     gateStatuses: parseRepeatedLabeledValues(lines, "Gate status"),
+    failureHandlingStatus: parseLabeledValue(lines, "Failure handling status"),
+    failureClassification: parseLabeledValue(lines, "Failure classification"),
+    failedActionId: parseLabeledValue(lines, "Failed action id"),
+    successfulActionIds: parseList(parseLabeledValue(lines, "Successful action ids")),
+    rollbackPlanRequired: parseBoolean(parseLabeledValue(lines, "Rollback plan required")),
+    rollbackActions: parseList(parseLabeledValue(lines, "Rollback actions")),
+    rollbackAutoExecute: parseBoolean(parseLabeledValue(lines, "Rollback auto execute")),
+    manualReviewRequired: parseBoolean(parseLabeledValue(lines, "Manual review required")),
   };
 }
 
@@ -584,6 +606,23 @@ export function UnityValidationEvidencePanel({ evidence }: { evidence: UnityVali
             <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-700">
               EXECUTED
             </span>
+            {evidence.executionStatus === "partial_failure" ? (
+              <>
+                <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-700">
+                  PARTIAL FAILURE
+                </span>
+                {evidence.rollbackPlanRequired ? (
+                  <>
+                    <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-700">
+                      ROLLBACK PLAN REQUIRED
+                    </span>
+                    <span className="inline-flex rounded-full border border-ink/10 bg-white/80 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-ink/75">
+                      ROLLBACK NOT AUTO-EXECUTED
+                    </span>
+                  </>
+                ) : null}
+              </>
+            ) : null}
           </>
         ) : null}
         {evidence.kind === "controlled_mutation_result" ? (
@@ -767,6 +806,35 @@ export function UnityValidationEvidencePanel({ evidence }: { evidence: UnityVali
             <p className="text-xs uppercase tracking-[0.18em] text-slate">Required approval gates</p>
             <p className="mt-1 text-xs leading-6 text-slate">{evidence.requiredApprovalGates.length > 0 ? evidence.requiredApprovalGates.join(" | ") : "none"}</p>
           </div>
+          {evidence.kind === "mutation_execution_chain_result" ? (
+            <>
+              <div className="mt-2">
+                <p className="text-xs uppercase tracking-[0.18em] text-slate">Failure handling</p>
+                <p className="mt-1 text-xs leading-6 text-slate">
+                  {[
+                    `status=${evidence.failureHandlingStatus ?? "none"}`,
+                    `classification=${evidence.failureClassification ?? "none"}`,
+                    `failed_action=${evidence.failedActionId ?? "none"}`,
+                    `manual_review=${String(evidence.manualReviewRequired ?? false)}`,
+                  ].join(" | ")}
+                </p>
+              </div>
+              <div className="mt-2">
+                <p className="text-xs uppercase tracking-[0.18em] text-slate">Successful actions</p>
+                <p className="mt-1 text-xs leading-6 text-slate">{evidence.successfulActionIds.length > 0 ? evidence.successfulActionIds.join(" | ") : "none"}</p>
+              </div>
+              <div className="mt-2">
+                <p className="text-xs uppercase tracking-[0.18em] text-slate">Rollback planning</p>
+                <p className="mt-1 text-xs leading-6 text-slate">
+                  {[
+                    `required=${String(evidence.rollbackPlanRequired ?? false)}`,
+                    `actions=${evidence.rollbackActions.join(" | ") || "none"}`,
+                    `auto_execute=${String(evidence.rollbackAutoExecute ?? false)}`,
+                  ].join(" | ")}
+                </p>
+              </div>
+            </>
+          ) : null}
         </>
       ) : null}
       {evidence.kind === "controlled_mutation_result" ? (

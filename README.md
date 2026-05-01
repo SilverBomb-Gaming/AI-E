@@ -333,9 +333,11 @@ Current Layer 16 status:
 - Step 1 planning-only multi-action chain model: implemented
 - Step 2 chain execution-readiness evaluation: implemented
 - Step 3 first controlled multi-action chain execution: implemented for one exact sequential `create -> rollback` pair
+- Step 4 partial failure handling and rollback planning: implemented without automatic rollback execution
 - supported chain action types: `unity_scene_object_creation` and `unity_scene_object_rollback` only
 - dependency ordering and cycle refusal: implemented
 - rollback order preview: implemented
+- rollback planning for already executed successful actions after a later failure: implemented
 - unsupported action type refusal: implemented
 - per-action gate scoring for review approval, operator approval, dry-run preview, preflight simulation, final authorization, live validation, execution plan, and final switch: implemented
 - dependency-blocked downstream action evaluation: implemented
@@ -353,7 +355,10 @@ Current Layer 16 boundary:
 - rollback preview is rendered in reverse action order as an operator-visible artifact only
 - readiness can report `not_ready`, `partially_ready`, or `ready_for_operator_execution`; only `ready_for_operator_execution` can enter the bounded Step 3 execution path
 - execution is limited to one exact sequential `unity_scene_object_creation` action followed by one dependent `unity_scene_object_rollback` action
-- execution stops on the first failure, does not auto-rollback, and never bypasses Layer 15 gates or calls Unity outside the existing reviewed bridge lanes
+- execution stops on the first failure, classifies the failure, preserves the execution trace, and can produce a rollback plan only for already executed successful actions
+- rollback planning remains advisory only: rollback requires separate operator approval, `auto_execute: false`, and `executed: false`
+- rollback is never auto-executed in Layer 16 Step 4 and still uses the separately approved Layer 15 rollback executor when explicitly requested later
+- chain execution never bypasses Layer 15 gates or calls Unity outside the existing reviewed bridge lanes
 - unsupported mutation types and out-of-lane targets are refused explicitly
 - broader multi-action Unity execution paths, branching chains, parallel chains, and new mutation types remain out of scope
 

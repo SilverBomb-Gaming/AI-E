@@ -579,6 +579,13 @@ test("controlled Unity chain execution runs the bounded create then rollback seq
   assert.equal(result.actions_failed_count, 0);
   assert.equal(result.executed, true);
   assert.equal(result.per_action_results.length, 2);
+  assert.equal(result.failure_handling_status, "none_required");
+  assert.equal(result.failure_classification, "none");
+  assert.equal(result.failed_action_id, null);
+  assert.deepEqual(result.successful_action_ids, ["create-probe", "rollback-probe"]);
+  assert.equal(result.rollback_plan_required, false);
+  assert.equal(result.rollback_plan, null);
+  assert.equal(result.manual_review_required, false);
   assert.equal(result.final_scene_state.object_count_before, 13);
   assert.equal(result.final_scene_state.object_count_after, 13);
   assert.equal(result.final_scene_state.object_count_delta, 0);
@@ -665,9 +672,92 @@ test("controlled Unity chain execution stops on the first failed action and repo
   assert.equal(result.execution_kind, "chain_execution_partial_failure");
   assert.equal(result.actions_executed_count, 1);
   assert.equal(result.actions_failed_count, 1);
+  assert.equal(result.failure_handling_status, "rollback_recommended");
+  assert.equal(result.failure_classification, "action_failed");
+  assert.equal(result.failed_action_id, "rollback-probe");
+  assert.deepEqual(result.successful_action_ids, ["create-probe"]);
+  assert.equal(result.rollback_plan_required, true);
+  assert.equal(result.rollback_plan?.auto_execute, false);
+  assert.equal(result.rollback_plan?.executed, false);
+  assert.deepEqual(result.rollback_plan?.actions_to_rollback, ["create-probe"]);
+  assert.deepEqual(result.rollback_plan?.rollback_order, ["create-probe"]);
+  assert.equal(result.manual_review_required, true);
   assert.equal(result.per_action_results[0]?.status, "executed");
   assert.equal(result.per_action_results[1]?.status, "failed");
   assert.match(result.blocked_reason ?? "", /controlled failure/i);
+});
+
+test("controlled Unity chain execution does not require rollback planning when the first action fails", async () => {
+  const result = await executeUnityMutationExecutionChain(createChainExecutionInput(), {
+    mutation_bridge: {
+      async executeSceneObjectCreation() {
+        return {
+          bridge_status: "bridge_failure" as const,
+          source: "command_probe" as const,
+          reason: "Unity mutation bridge reported a controlled failure.",
+          evidence_timestamp: "2026-05-03T12:05:00.000Z",
+          raw_evidence_summary: "Controlled Unity mutation failed.",
+          recommended_next_operator_action: "Investigate the mutation failure.",
+        };
+      },
+      async executeSceneObjectRemoval() {
+        throw new Error("should not execute rollback");
+      },
+    },
+  });
+
+  assert.equal(result.execution_status, "failed");
+  assert.equal(result.actions_executed_count, 0);
+  assert.equal(result.actions_failed_count, 1);
+  assert.equal(result.failure_handling_status, "manual_review_required");
+  assert.equal(result.failure_classification, "action_failed");
+  assert.equal(result.failed_action_id, "create-probe");
+  assert.deepEqual(result.successful_action_ids, []);
+  assert.equal(result.rollback_plan_required, false);
+  assert.equal(result.rollback_plan, null);
+  assert.equal(result.manual_review_required, true);
+});
+
+test("controlled Unity chain execution classifies runtime unavailable failures and still avoids auto rollback", async () => {
+  const result = await executeUnityMutationExecutionChain(createChainExecutionInput(), {
+    mutation_bridge: {
+      async executeSceneObjectCreation(input) {
+        return {
+          bridge_status: "bridge_ready" as const,
+          source: "command_probe" as const,
+          mutation_status: "mutation_executed" as const,
+          mutation_type: "scene_object_creation_request" as const,
+          target_scene: input.target_scene,
+          object_name: input.object_name,
+          created_object_name: input.object_name,
+          scene_saved: true,
+          duplicate_handling: "created" as const,
+          evidence_timestamp: "2026-05-03T12:06:00.000Z",
+          raw_evidence_summary: "Controlled Unity mutation created the probe object.",
+          summary: "Controlled Unity mutation created object AIE_ControlledMutationProbe in EnemyAIDemo with scene_saved true.",
+          rollback_hint: "Rollback requires separate approval.",
+          recommended_next_operator_action: "Review controlled mutation evidence.",
+        };
+      },
+      async executeSceneObjectRemoval() {
+        return {
+          bridge_status: "bridge_unavailable" as const,
+          source: "command_probe" as const,
+          reason: "Unity rollback bridge is unavailable.",
+          evidence_timestamp: "2026-05-03T12:07:00.000Z",
+          raw_evidence_summary: "Controlled Unity rollback bridge unavailable.",
+          recommended_next_operator_action: "Keep rollback disabled until the verified rollback bridge is available.",
+        };
+      },
+    },
+  });
+
+  assert.equal(result.execution_status, "partial_failure");
+  assert.equal(result.failure_handling_status, "rollback_recommended");
+  assert.equal(result.failure_classification, "runtime_unavailable");
+  assert.equal(result.failed_action_id, "rollback-probe");
+  assert.deepEqual(result.rollback_plan?.rollback_order, ["create-probe"]);
+  assert.equal(result.rollback_plan?.auto_execute, false);
 });
 
 test("controlled Unity chain execution refuses unsupported chain shapes", async () => {
@@ -686,5 +776,8 @@ test("controlled Unity chain execution refuses unsupported chain shapes", async 
 
   assert.equal(result.execution_kind, "chain_execution_blocked");
   assert.equal(result.executed, false);
+  assert.equal(result.failure_classification, "unsupported_action");
+  assert.equal(result.failure_handling_status, "manual_review_required");
+  assert.equal(result.rollback_plan_required, false);
   assert.match(result.blocked_reason ?? "", /limited to one creation action followed by one rollback action/i);
 });
