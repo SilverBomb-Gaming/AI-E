@@ -463,6 +463,74 @@ test("chain execution evidence renders partial failure rollback planning details
   assert.match(markup, /auto_execute=false/);
 });
 
+test("chain execution evidence renders controlled failure simulation details distinctly", () => {
+  const reviewPackage = createAutonomousReviewPackage({
+    package_id: "unity-chain-execution-review-3",
+    work_item_id: "unity-chain-execution-unity-controlled-chain-3",
+    chain_id: "unity-chain-execution-chain-3",
+    status: "pending",
+    summary: "CONTROLLED UNITY CHAIN EXECUTION: unity-controlled-chain-3 completed with status partial_failure.",
+    files_changed: [],
+    tests_run: ["unity mutation execution chain controlled execution"],
+    proof_results: [
+      "Execution kind: chain_execution_partial_failure",
+      "Chain id: unity-controlled-chain-3",
+      "Execution status: partial_failure",
+      "Failure handling status: rollback_recommended",
+      "Failure classification: simulated_runtime_unavailable",
+      "Failed action id: rollback-probe",
+      "Successful action ids: create-probe",
+      "Failure simulated: true",
+      "Failure simulation id: failure-simulation-rollback-probe",
+      "Simulated failure kind: simulated_runtime_unavailable",
+      "Simulation target action id: rollback-probe",
+      "Rollback plan required: true",
+      "Manual review required: true",
+      "Chain status: chain_planned",
+      "Chain readiness: ready_for_operator_execution",
+      "Execution mode: controlled_multi_action_chain_runtime_bridge",
+      "Total actions: 2",
+      "Actions executed count: 1",
+      "Actions failed count: 1",
+      "Executed: true",
+      "Final scene state: Scene EnemyAIDemo object count moved from 13 to 14.",
+      "Rollback plan id: unity-chain-rollback-plan-unity-controlled-chain-3",
+      "Rollback actions: create-probe",
+      "Rollback order: create-probe",
+      "Rollback auto execute: false",
+      "Rollback executed: false",
+      "Dependency graph: create-probe <= none",
+      "Dependency graph: rollback-probe <= create-probe",
+      "Rollback graph: rollback-probe => unity_scene_object_creation AIE_ControlledMutationProbe",
+      "Action result: create-probe => executed",
+      "Action result: rollback-probe => failed (Simulated runtime unavailable triggered for chain action rollback-probe by failure simulation failure-simulation-rollback-probe.)",
+      "Recommended next operator action: Review the simulated failure evidence, approve rollback separately if needed, and keep rollback manual.",
+    ],
+    risks: ["CHAIN EXECUTION STOPPED", "CONTROLLED FAILURE SIMULATION", "SIMULATED FAILURE", "ROLLBACK PLAN GENERATED", "ROLLBACK NOT AUTO-EXECUTED"],
+    recommended_decision: "review_required",
+    rollback_notes: "ROLLBACK ORDER PREVIEW: create-probe",
+    operator_actions: ["approve", "archive"],
+  });
+
+  const evidence = extractUnityValidationEvidenceFromReviewPackage(reviewPackage);
+
+  assert.ok(evidence);
+  assert.equal(evidence.kind, "mutation_execution_chain_result");
+  assert.equal(evidence.failureSimulated, true);
+  assert.equal(evidence.failureSimulationId, "failure-simulation-rollback-probe");
+  assert.equal(evidence.simulatedFailureKind, "simulated_runtime_unavailable");
+  assert.equal(evidence.simulationTargetActionId, "rollback-probe");
+
+  const markup = renderToStaticMarkup(createElement(UnityValidationEvidencePanel, { evidence }));
+  assert.match(markup, /CONTROLLED FAILURE SIMULATION/);
+  assert.match(markup, /SIMULATED FAILURE/);
+  assert.match(markup, /ROLLBACK PLAN REQUIRED/);
+  assert.match(markup, /ROLLBACK NOT AUTO-EXECUTED/);
+  assert.match(markup, /simulation_id=failure-simulation-rollback-probe/);
+  assert.match(markup, /kind=simulated_runtime_unavailable/);
+  assert.match(markup, /target_action=rollback-probe/);
+});
+
 test("rollback execution evidence renders manual trigger and remaining actions details", () => {
   const reviewPackage = createAutonomousReviewPackage({
     package_id: "unity-chain-rollback-review-1",

@@ -314,6 +314,24 @@ function createChainExecutionInput(
   };
 }
 
+function createFailureSimulation(
+  overrides: Partial<NonNullable<Parameters<typeof executeUnityMutationExecutionChain>[0]["failure_simulation"]>> & {
+    target_action_id: string;
+    failure_kind: NonNullable<Parameters<typeof executeUnityMutationExecutionChain>[0]["failure_simulation"]>["failure_kind"];
+  },
+) {
+  return {
+    failure_simulation_id: `failure-simulation-${overrides.target_action_id}`,
+    enabled: true,
+    target_action_id: overrides.target_action_id,
+    failure_kind: overrides.failure_kind,
+    enabled_by_operator: true,
+    enabled_at: "2026-05-04T10:00:00.000Z",
+    expires_at: "2026-05-04T11:00:00.000Z",
+    ...overrides,
+  };
+}
+
 function createRollbackExecutionReviewState(
   overrides: Partial<Parameters<typeof executePlannedUnityRollbackFromChain>[0]["review_state"]> = {},
 ): Parameters<typeof executePlannedUnityRollbackFromChain>[0]["review_state"] {
@@ -906,6 +924,214 @@ test("controlled Unity chain execution refuses unsupported chain shapes", async 
   assert.equal(result.failure_handling_status, "manual_review_required");
   assert.equal(result.rollback_plan_required, false);
   assert.match(result.blocked_reason ?? "", /limited to one creation action followed by one rollback action/i);
+});
+
+test("disabled failure simulation does not alter controlled Unity chain execution", async () => {
+  const calls: string[] = [];
+  const result = await executeUnityMutationExecutionChain(createChainExecutionInput({
+    failure_simulation: createFailureSimulation({
+      target_action_id: "rollback-probe",
+      failure_kind: "simulated_action_failure",
+      enabled: false,
+    }),
+  }), {
+    mutation_bridge: {
+      async executeSceneObjectCreation(input) {
+        calls.push(`create:${input.object_name}`);
+        return {
+          bridge_status: "bridge_ready" as const,
+          source: "command_probe" as const,
+          mutation_status: "mutation_executed" as const,
+          mutation_type: "scene_object_creation_request" as const,
+          target_scene: input.target_scene,
+          object_name: input.object_name,
+          created_object_name: input.object_name,
+          scene_saved: true,
+          duplicate_handling: "created" as const,
+          evidence_timestamp: "2026-05-04T10:01:00.000Z",
+          raw_evidence_summary: "Controlled Unity mutation created the probe object.",
+          summary: "Controlled Unity mutation created object AIE_ControlledMutationProbe in EnemyAIDemo with scene_saved true.",
+          rollback_hint: "Rollback requires separate approval.",
+          recommended_next_operator_action: "Review controlled mutation evidence.",
+        };
+      },
+      async executeSceneObjectRemoval(input) {
+        calls.push(`rollback:${input.object_name}`);
+        return {
+          bridge_status: "bridge_ready" as const,
+          source: "command_probe" as const,
+          rollback_status: "rollback_executed" as const,
+          rollback_type: "scene_object_removal" as const,
+          target_scene: input.target_scene,
+          object_name: input.object_name,
+          removed_object_name: input.object_name,
+          scene_saved: true,
+          target_missing_handling: "removed" as const,
+          evidence_timestamp: "2026-05-04T10:02:00.000Z",
+          raw_evidence_summary: "Controlled Unity rollback removed the probe object.",
+          summary: "Controlled Unity rollback removed target AIE_ControlledMutationProbe in EnemyAIDemo with scene_saved true.",
+          recommended_next_operator_action: "Review controlled rollback evidence.",
+        };
+      },
+    },
+  });
+
+  assert.deepEqual(calls, ["create:AIE_ControlledMutationProbe", "rollback:AIE_ControlledMutationProbe"]);
+  assert.equal(result.execution_status, "success");
+  assert.equal(result.failure_simulated, false);
+  assert.equal(result.failure_simulation_id, null);
+  assert.equal(result.simulated_failure_kind, null);
+});
+
+test("expired failure simulation blocks chain execution safely before Unity calls", async () => {
+  let callCount = 0;
+  const result = await executeUnityMutationExecutionChain(createChainExecutionInput({
+    requested_at: "2026-05-04T10:30:00.000Z",
+    failure_simulation: createFailureSimulation({
+      target_action_id: "create-probe",
+      failure_kind: "simulated_gate_mismatch",
+      expires_at: "2026-05-04T09:59:59.000Z",
+    }),
+  }), {
+    mutation_bridge: {
+      async executeSceneObjectCreation() {
+        callCount += 1;
+        throw new Error("should not execute mutation when simulation is expired");
+      },
+      async executeSceneObjectRemoval() {
+        callCount += 1;
+        throw new Error("should not execute rollback when simulation is expired");
+      },
+    },
+  });
+
+  assert.equal(result.execution_status, "failed");
+  assert.equal(result.failure_classification, "gate_mismatch");
+  assert.equal(result.executed, false);
+  assert.equal(callCount, 0);
+  assert.match(result.blocked_reason ?? "", /expired/i);
+});
+
+test("failure simulation on the first action fails without generating a rollback plan", async () => {
+  let callCount = 0;
+  const result = await executeUnityMutationExecutionChain(createChainExecutionInput({
+    failure_simulation: createFailureSimulation({
+      target_action_id: "create-probe",
+      failure_kind: "simulated_action_failure",
+    }),
+  }), {
+    mutation_bridge: {
+      async executeSceneObjectCreation() {
+        callCount += 1;
+        throw new Error("should not execute mutation when first action is simulated");
+      },
+      async executeSceneObjectRemoval() {
+        callCount += 1;
+        throw new Error("should not execute rollback when first action is simulated");
+      },
+    },
+  });
+
+  assert.equal(result.execution_status, "failed");
+  assert.equal(result.actions_executed_count, 0);
+  assert.equal(result.actions_failed_count, 1);
+  assert.equal(result.failure_classification, "simulated_action_failure");
+  assert.equal(result.failure_simulated, true);
+  assert.equal(result.failure_simulation_id, "failure-simulation-create-probe");
+  assert.equal(result.simulated_failure_kind, "simulated_action_failure");
+  assert.equal(result.simulation_target_action_id, "create-probe");
+  assert.equal(result.rollback_plan_required, false);
+  assert.equal(result.rollback_plan, null);
+  assert.equal(result.manual_review_required, true);
+  assert.equal(result.per_action_results[0]?.status, "failed");
+  assert.equal(callCount, 0);
+});
+
+test("failure simulation on the second action generates a manual rollback plan after the first success", async () => {
+  const calls: string[] = [];
+  const result = await executeUnityMutationExecutionChain(createChainExecutionInput({
+    failure_simulation: createFailureSimulation({
+      target_action_id: "rollback-probe",
+      failure_kind: "simulated_action_failure",
+    }),
+  }), {
+    mutation_bridge: {
+      async executeSceneObjectCreation(input) {
+        calls.push(`create:${input.object_name}`);
+        return {
+          bridge_status: "bridge_ready" as const,
+          source: "command_probe" as const,
+          mutation_status: "mutation_executed" as const,
+          mutation_type: "scene_object_creation_request" as const,
+          target_scene: input.target_scene,
+          object_name: input.object_name,
+          created_object_name: input.object_name,
+          scene_saved: true,
+          duplicate_handling: "created" as const,
+          evidence_timestamp: "2026-05-04T10:03:00.000Z",
+          raw_evidence_summary: "Controlled Unity mutation created the probe object.",
+          summary: "Controlled Unity mutation created object AIE_ControlledMutationProbe in EnemyAIDemo with scene_saved true.",
+          rollback_hint: "Rollback requires separate approval.",
+          recommended_next_operator_action: "Review controlled mutation evidence.",
+        };
+      },
+      async executeSceneObjectRemoval() {
+        calls.push("rollback:should-not-run");
+        throw new Error("should not execute rollback when second action is simulated");
+      },
+    },
+  });
+
+  assert.deepEqual(calls, ["create:AIE_ControlledMutationProbe"]);
+  assert.equal(result.execution_status, "partial_failure");
+  assert.equal(result.actions_executed_count, 1);
+  assert.equal(result.actions_failed_count, 1);
+  assert.equal(result.failure_classification, "simulated_action_failure");
+  assert.equal(result.failure_simulated, true);
+  assert.equal(result.simulated_failure_kind, "simulated_action_failure");
+  assert.equal(result.rollback_plan_required, true);
+  assert.deepEqual(result.rollback_plan?.rollback_order, ["create-probe"]);
+  assert.equal(result.rollback_plan?.auto_execute, false);
+});
+
+test("simulated runtime unavailable is classified distinctly and rollback remains manual", async () => {
+  const result = await executeUnityMutationExecutionChain(createChainExecutionInput({
+    failure_simulation: createFailureSimulation({
+      target_action_id: "rollback-probe",
+      failure_kind: "simulated_runtime_unavailable",
+    }),
+  }), {
+    mutation_bridge: {
+      async executeSceneObjectCreation(input) {
+        return {
+          bridge_status: "bridge_ready" as const,
+          source: "command_probe" as const,
+          mutation_status: "mutation_executed" as const,
+          mutation_type: "scene_object_creation_request" as const,
+          target_scene: input.target_scene,
+          object_name: input.object_name,
+          created_object_name: input.object_name,
+          scene_saved: true,
+          duplicate_handling: "created" as const,
+          evidence_timestamp: "2026-05-04T10:04:00.000Z",
+          raw_evidence_summary: "Controlled Unity mutation created the probe object.",
+          summary: "Controlled Unity mutation created object AIE_ControlledMutationProbe in EnemyAIDemo with scene_saved true.",
+          rollback_hint: "Rollback requires separate approval.",
+          recommended_next_operator_action: "Review controlled mutation evidence.",
+        };
+      },
+      async executeSceneObjectRemoval() {
+        throw new Error("should not execute rollback when runtime unavailable is simulated");
+      },
+    },
+  });
+
+  assert.equal(result.execution_status, "partial_failure");
+  assert.equal(result.failure_classification, "simulated_runtime_unavailable");
+  assert.equal(result.failure_simulated, true);
+  assert.equal(result.rollback_plan_required, true);
+  assert.equal(result.rollback_plan?.auto_execute, false);
+  assert.equal(result.rollback_plan?.executed, false);
 });
 
 test("manual Unity rollback from a reviewed chain plan executes successfully", async () => {

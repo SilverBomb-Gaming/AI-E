@@ -78,6 +78,10 @@ export type UnityValidationEvidence = {
   rollbackActions: string[];
   rollbackAutoExecute: boolean | null;
   manualReviewRequired: boolean | null;
+  failureSimulated: boolean | null;
+  failureSimulationId: string | null;
+  simulatedFailureKind: string | null;
+  simulationTargetActionId: string | null;
   rollbackPlanId: string | null;
   actionsExecutedCount: number | null;
   actionsFailedCount: number | null;
@@ -493,6 +497,10 @@ function buildEvidence(workItemId: string, summary: string, lines: string[]): Un
     rollbackActions: parseList(parseLabeledValue(lines, "Rollback actions")),
     rollbackAutoExecute: parseBoolean(parseLabeledValue(lines, "Rollback auto execute")),
     manualReviewRequired: parseBoolean(parseLabeledValue(lines, "Manual review required")),
+    failureSimulated: parseBoolean(parseLabeledValue(lines, "Failure simulated")),
+    failureSimulationId: parseLabeledValue(lines, "Failure simulation id"),
+    simulatedFailureKind: parseLabeledValue(lines, "Simulated failure kind"),
+    simulationTargetActionId: parseLabeledValue(lines, "Simulation target action id"),
     rollbackPlanId: parseLabeledValue(lines, "Rollback plan id") ?? summaryValues.rollbackPlanId ?? null,
     actionsExecutedCount: parseCount(parseLabeledValue(lines, "Actions executed count")),
     actionsFailedCount: parseCount(parseLabeledValue(lines, "Actions failed count")),
@@ -641,6 +649,16 @@ export function UnityValidationEvidencePanel({ evidence }: { evidence: UnityVali
             <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-700">
               EXECUTED
             </span>
+            {evidence.failureSimulated ? (
+              <>
+                <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-700">
+                  CONTROLLED FAILURE SIMULATION
+                </span>
+                <span className="inline-flex rounded-full border border-ink/10 bg-white/80 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-ink/75">
+                  SIMULATED FAILURE
+                </span>
+              </>
+            ) : null}
             {evidence.executionStatus === "partial_failure" ? (
               <>
                 <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-700">
@@ -901,6 +919,19 @@ export function UnityValidationEvidencePanel({ evidence }: { evidence: UnityVali
                   ].join(" | ")}
                 </p>
               </div>
+              {evidence.failureSimulated ? (
+                <div className="mt-2">
+                  <p className="text-xs uppercase tracking-[0.18em] text-slate">Failure simulation</p>
+                  <p className="mt-1 text-xs leading-6 text-slate">
+                    {[
+                      `enabled=${String(evidence.failureSimulated)}`,
+                      `simulation_id=${evidence.failureSimulationId ?? "none"}`,
+                      `kind=${evidence.simulatedFailureKind ?? "none"}`,
+                      `target_action=${evidence.simulationTargetActionId ?? "none"}`,
+                    ].join(" | ")}
+                  </p>
+                </div>
+              ) : null}
               <div className="mt-2">
                 <p className="text-xs uppercase tracking-[0.18em] text-slate">Successful actions</p>
                 <p className="mt-1 text-xs leading-6 text-slate">{evidence.successfulActionIds.length > 0 ? evidence.successfulActionIds.join(" | ") : "none"}</p>
