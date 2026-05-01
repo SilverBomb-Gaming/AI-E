@@ -299,10 +299,11 @@ Current Layer 15 status:
 - final mutation execution switch: implemented and disabled by default
 - first real controlled Unity mutation: executed successfully for `AIE_ControlledMutationProbe` in `EnemyAIDemo`
 - separately approved rollback path for the first controlled Unity mutation: executed successfully for `AIE_ControlledMutationProbe` in `EnemyAIDemo`
+- repeatability and idempotency verification for the controlled Unity mutation lane: verified live for mutation, duplicate mutation, rollback, and missing-target rollback
 - required gates modeled: production planning packet, review approval, operator approval, dry-run preview, preflight simulation, explicit final execute gate, live read-only Unity validation, explicit mutation execution mode enablement, final mutation switch enablement, separate rollback review approval, separate rollback operator approval, explicit final rollback authorization, and explicit rollback switch enablement
 - mutation-ready: yes for the single controlled scene object creation lane
 - rollback-ready: yes for the single controlled scene object creation lane
-- playtest-ready: no
+- playtest-ready: yes for the single controlled scene object creation lane
 
 Current Layer 15 boundary:
 
@@ -318,7 +319,9 @@ Current Layer 15 boundary:
 - the first real Unity mutation created exactly one empty GameObject named `AIE_ControlledMutationProbe` in `EnemyAIDemo`, saved the scene, and preserved clean post-mutation validation with missing scripts `0`, console errors `0`, and object count `14`
 - the separately approved rollback path removed exactly `AIE_ControlledMutationProbe` from `EnemyAIDemo`, saved the scene, and preserved clean post-rollback validation with missing scripts `0`, console errors `0`, and object count `13`
 - rollback remains tightly bounded to the single reviewed target `AIE_ControlledMutationProbe` in `EnemyAIDemo`; missing targets return safe explicit results and broader scene edits remain out of scope
-- broader mutation repeatability, rollback repeatability, and additional mutation types remain future work
+- repeatability is now verified live for the same lane: clean baseline `13`, repeat mutation `13 -> 14`, duplicate mutation idempotent with object count held at `14` and a single target object, repeat rollback `14 -> 13`, and missing-target rollback idempotent with object count held at `13`
+- no broad Unity mutation path exists beyond the single reviewed scene object creation lane and its separately approved rollback lane
+- additional mutation types remain future work
 - chat remains advisory only with `safe_to_execute: false` and cannot invoke any mutation path directly
 
 ## Safe Runtime Action Bridge

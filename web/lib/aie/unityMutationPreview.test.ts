@@ -1092,3 +1092,177 @@ test("controlled rollback reports target-missing behavior safely and explicitly"
   assert.equal(result.removed_object_name, null);
   assert.match(result.delivery_package?.release_notes ?? "", /TARGET ALREADY MISSING/i);
 });
+
+test("repeated controlled mutation and rollback sequence stays bounded and idempotent", async () => {
+  let objectPresent = false;
+  let objectCount = 13;
+
+  const mutationPreview = previewUnitySceneObjectCreation(createPreviewInput({
+    adapter_request_id: "unity-repeat-mutation-1",
+    requested_object_name: "AIE_ControlledMutationProbe",
+  }));
+  const mutationAuthorization = {
+    final_execution_authorization_id: "repeat-mutation-auth-1",
+    authorized_by_operator: true,
+    authorized_at: "2026-05-01T22:05:00.000Z",
+    authorization_scope: "scene_object_creation_request" as const,
+    target_request_id: "unity-repeat-mutation-1",
+    expires_at: "2026-05-01T23:00:00.000Z",
+  };
+  const mutationPreflight = simulateUnityMutationExecutionPreflight({
+    ...createPreviewInput({
+      adapter_request_id: "unity-repeat-mutation-1",
+      requested_object_name: "AIE_ControlledMutationProbe",
+    }),
+    authorization: mutationAuthorization,
+    known_target_scene_names: ["EnemyAIDemo"],
+    known_scene_object_names: [],
+  });
+  const mutationPlanInput = createExecutionPlanInput({
+    adapter_request_id: "unity-repeat-mutation-1",
+    requested_object_name: "AIE_ControlledMutationProbe",
+    preview_result: mutationPreview,
+    authorization: mutationAuthorization,
+    preflight_result: mutationPreflight,
+    mutation_switch: {
+      mutation_switch_id: "repeat-mutation-switch-1",
+      switch_enabled: true,
+      enabled_by_operator: true,
+      enabled_at: "2026-05-01T22:06:00.000Z",
+      target_request_id: "unity-repeat-mutation-1",
+      allowed_mutation_type: "scene_object_creation_request",
+      expires_at: "2026-05-01T23:00:00.000Z",
+    },
+    live_validation_result: createLiveValidationResult({ object_count: objectCount }),
+    mutation_execution_mode_enabled: true,
+  });
+  const mutationExecutionPlan = buildUnitySceneObjectCreationExecutionPlan(mutationPlanInput);
+
+  const mutationInput = createMutationExecutionInput({
+    ...mutationPlanInput,
+    execution_plan: mutationExecutionPlan,
+  });
+
+  const rollbackInput = createRollbackExecutionInput({
+    adapter_request_id: "unity-repeat-rollback-1",
+    target_object_name: "AIE_ControlledMutationProbe",
+    authorization: {
+      final_rollback_authorization_id: "repeat-rollback-auth-1",
+      authorized_by_operator: true,
+      authorized_at: "2026-05-01T22:15:00.000Z",
+      authorization_scope: "scene_object_removal",
+      target_request_id: "unity-repeat-rollback-1",
+      target_scene: "EnemyAIDemo",
+      target_object_name: "AIE_ControlledMutationProbe",
+      expires_at: "2026-05-01T23:00:00.000Z",
+    },
+    rollback_switch: {
+      rollback_switch_id: "repeat-rollback-switch-1",
+      switch_enabled: true,
+      enabled_by_operator: true,
+      enabled_at: "2026-05-01T22:16:00.000Z",
+      target_request_id: "unity-repeat-rollback-1",
+      target_scene: "EnemyAIDemo",
+      target_object_name: "AIE_ControlledMutationProbe",
+      allowed_rollback_type: "scene_object_removal",
+      expires_at: "2026-05-01T23:00:00.000Z",
+    },
+    live_validation_result: createLiveValidationResult({ object_count: 14 }),
+    rollback_execution_mode_enabled: true,
+  });
+
+  const bridge = {
+    async executeSceneObjectCreation() {
+      if (objectPresent) {
+        return {
+          bridge_status: "bridge_ready" as const,
+          source: "command_probe" as const,
+          mutation_status: "mutation_idempotent" as const,
+          mutation_type: "scene_object_creation_request" as const,
+          target_scene: "EnemyAIDemo",
+          object_name: "AIE_ControlledMutationProbe",
+          created_object_name: "AIE_ControlledMutationProbe",
+          scene_saved: false,
+          duplicate_handling: "already_exists_idempotent" as const,
+          evidence_timestamp: "2026-05-01T22:07:00.000Z",
+          raw_evidence_summary: "Controlled Unity mutation confirmed the existing object AIE_ControlledMutationProbe in EnemyAIDemo; no additional scene write was required.",
+          summary: "Controlled Unity mutation confirmed existing object AIE_ControlledMutationProbe in EnemyAIDemo with scene_saved false.",
+          rollback_hint: "Rollback requires separate approval: remove AIE_ControlledMutationProbe from EnemyAIDemo only if it was not expected.",
+          recommended_next_operator_action: "Review the controlled Unity mutation evidence and keep rollback as a separately approved follow-up action.",
+        };
+      }
+
+      objectPresent = true;
+      objectCount += 1;
+      return {
+        bridge_status: "bridge_ready" as const,
+        source: "command_probe" as const,
+        mutation_status: "mutation_executed" as const,
+        mutation_type: "scene_object_creation_request" as const,
+        target_scene: "EnemyAIDemo",
+        object_name: "AIE_ControlledMutationProbe",
+        created_object_name: "AIE_ControlledMutationProbe",
+        scene_saved: true,
+        duplicate_handling: "created" as const,
+        evidence_timestamp: "2026-05-01T22:06:30.000Z",
+        raw_evidence_summary: "Controlled Unity mutation created AIE_ControlledMutationProbe in EnemyAIDemo and saved the scene.",
+        summary: "Controlled Unity mutation created object AIE_ControlledMutationProbe in EnemyAIDemo with scene_saved true.",
+        rollback_hint: "Rollback requires separate approval: remove AIE_ControlledMutationProbe from EnemyAIDemo.",
+        recommended_next_operator_action: "Review the controlled Unity mutation evidence and keep rollback as a separately approved follow-up action.",
+      };
+    },
+    async executeSceneObjectRemoval() {
+      if (!objectPresent) {
+        return {
+          bridge_status: "bridge_ready" as const,
+          source: "command_probe" as const,
+          rollback_status: "rollback_idempotent" as const,
+          rollback_type: "scene_object_removal" as const,
+          target_scene: "EnemyAIDemo",
+          object_name: "AIE_ControlledMutationProbe",
+          removed_object_name: null,
+          scene_saved: false,
+          target_missing_handling: "already_missing_idempotent" as const,
+          evidence_timestamp: "2026-05-01T22:18:00.000Z",
+          raw_evidence_summary: "Controlled Unity rollback confirmed that AIE_ControlledMutationProbe is already absent from EnemyAIDemo; no scene write was required.",
+          summary: "Controlled Unity rollback confirmed missing target AIE_ControlledMutationProbe in EnemyAIDemo with scene_saved false.",
+          recommended_next_operator_action: "Review the controlled Unity rollback evidence and rerun read-only validation before proceeding.",
+        };
+      }
+
+      objectPresent = false;
+      objectCount -= 1;
+      return {
+        bridge_status: "bridge_ready" as const,
+        source: "command_probe" as const,
+        rollback_status: "rollback_executed" as const,
+        rollback_type: "scene_object_removal" as const,
+        target_scene: "EnemyAIDemo",
+        object_name: "AIE_ControlledMutationProbe",
+        removed_object_name: "AIE_ControlledMutationProbe",
+        scene_saved: true,
+        target_missing_handling: "removed" as const,
+        evidence_timestamp: "2026-05-01T22:17:00.000Z",
+        raw_evidence_summary: "Controlled Unity rollback removed AIE_ControlledMutationProbe from EnemyAIDemo and saved the scene.",
+        summary: "Controlled Unity rollback removed target AIE_ControlledMutationProbe in EnemyAIDemo with scene_saved true.",
+        recommended_next_operator_action: "Review the controlled Unity rollback evidence and rerun read-only validation before proceeding.",
+      };
+    },
+  };
+
+  const firstMutation = await executeUnitySceneObjectCreationMutation(mutationInput, { mutation_bridge: bridge });
+  const secondMutation = await executeUnitySceneObjectCreationMutation(mutationInput, { mutation_bridge: bridge });
+  const firstRollback = await executeUnitySceneObjectCreationRollback(rollbackInput, { mutation_bridge: bridge });
+  const secondRollback = await executeUnitySceneObjectCreationRollback(rollbackInput, { mutation_bridge: bridge });
+
+  assert.equal(firstMutation.execution_kind, "controlled_mutation_executed");
+  assert.equal(secondMutation.execution_kind, "controlled_mutation_idempotent");
+  assert.equal(firstRollback.execution_kind, "controlled_rollback_executed");
+  assert.equal(secondRollback.execution_kind, "controlled_rollback_idempotent");
+  assert.equal(firstMutation.scene_saved, true);
+  assert.equal(secondMutation.scene_saved, false);
+  assert.equal(firstRollback.scene_saved, true);
+  assert.equal(secondRollback.scene_saved, false);
+  assert.equal(objectPresent, false);
+  assert.equal(objectCount, 13);
+});
