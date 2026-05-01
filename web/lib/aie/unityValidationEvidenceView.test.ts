@@ -340,6 +340,62 @@ test("chain readiness evidence renders gate-scored non-executing readiness detai
   assert.match(markup, /Gate statuses/);
 });
 
+test("chain execution evidence renders bounded controlled execution details", () => {
+  const reviewPackage = createAutonomousReviewPackage({
+    package_id: "unity-chain-execution-review-1",
+    work_item_id: "unity-chain-execution-unity-controlled-chain-1",
+    chain_id: "unity-chain-execution-chain-1",
+    status: "approved",
+    summary: "CONTROLLED UNITY CHAIN EXECUTION: unity-controlled-chain-1 completed with status success.",
+    files_changed: [],
+    tests_run: ["unity mutation execution chain controlled execution"],
+    proof_results: [
+      "Execution kind: chain_execution_executed",
+      "Chain id: unity-controlled-chain-1",
+      "Execution status: success",
+      "Chain status: chain_planned",
+      "Chain readiness: ready_for_operator_execution",
+      "Execution mode: controlled_multi_action_chain_runtime_bridge",
+      "Total actions: 2",
+      "Actions executed count: 2",
+      "Actions failed count: 0",
+      "Chain ready: true",
+      "Executed: true",
+      "Final scene state: Scene EnemyAIDemo object count moved from 13 to 13.",
+      "Dependency graph: create-probe <= none",
+      "Dependency graph: rollback-probe <= create-probe",
+      "Rollback graph: rollback-probe => unity_scene_object_creation AIE_ControlledMutationProbe",
+      "Rollback graph: create-probe => unity_scene_object_rollback AIE_ControlledMutationProbe",
+      "Action result: create-probe => executed",
+      "Action result: rollback-probe => executed",
+      "Recommended next operator action: Review the bounded chain execution evidence and rerun read-only validation before any follow-up mutation work.",
+    ],
+    risks: ["CONTROLLED UNITY CHAIN EXECUTION"],
+    recommended_decision: "approve",
+    rollback_notes: "ROLLBACK ORDER PREVIEW: rollback-probe -> create-probe",
+    operator_actions: ["approve", "archive"],
+  });
+
+  const evidence = extractUnityValidationEvidenceFromReviewPackage(reviewPackage);
+
+  assert.ok(evidence);
+  assert.equal(evidence.kind, "mutation_execution_chain_result");
+  assert.equal(evidence.chainId, "unity-controlled-chain-1");
+  assert.equal(evidence.chainStatus, "chain_planned");
+  assert.equal(evidence.chainReadinessStatus, "ready_for_operator_execution");
+  assert.equal(evidence.totalActions, 2);
+  assert.equal(evidence.chainReady, true);
+  assert.equal(evidence.executed, true);
+  assert.equal(evidence.executionMode, "controlled_multi_action_chain_runtime_bridge");
+
+  const markup = renderToStaticMarkup(createElement(UnityValidationEvidencePanel, { evidence }));
+  assert.match(markup, /Controlled Unity Chain Execution/);
+  assert.match(markup, /Chain id: unity-controlled-chain-1/);
+  assert.match(markup, /Executed: true/);
+  assert.match(markup, /Execution mode: controlled_multi_action_chain_runtime_bridge/);
+  assert.match(markup, /Dependency graph/);
+});
+
 test("mutation preflight evidence renders simulation-only operator details", () => {
   const reviewPackage = createAutonomousReviewPackage({
     package_id: "unity-mutation-preflight-review-1",

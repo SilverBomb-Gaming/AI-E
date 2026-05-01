@@ -2,7 +2,7 @@ import React from "react";
 
 import type { AutonomousDeliveryPackage, AutonomousReviewPackage } from "./autonomousWorkPlanning";
 
-export type UnityValidationEvidenceKind = "adapter_preview" | "real_bridge_unavailable" | "real_bridge_read_only" | "scene_object_creation_preview" | "mutation_execution_preflight" | "mutation_execution_plan" | "mutation_execution_chain_plan" | "mutation_execution_chain_readiness" | "controlled_mutation_result" | "controlled_rollback_result";
+export type UnityValidationEvidenceKind = "adapter_preview" | "real_bridge_unavailable" | "real_bridge_read_only" | "scene_object_creation_preview" | "mutation_execution_preflight" | "mutation_execution_plan" | "mutation_execution_chain_plan" | "mutation_execution_chain_readiness" | "mutation_execution_chain_result" | "controlled_mutation_result" | "controlled_rollback_result";
 
 export type UnityValidationEvidence = {
   kind: UnityValidationEvidenceKind;
@@ -229,6 +229,21 @@ function parseSummary(summary: string): Partial<UnityValidationEvidence> {
     };
   }
 
+  const chainExecutionMatch = summary.match(/CONTROLLED UNITY CHAIN EXECUTION: (.+?) completed with status ([a-z_]+)\./i);
+  if (chainExecutionMatch) {
+    return {
+      kind: "mutation_execution_chain_result",
+      bridgeStatus: "controlled_chain_execution",
+      sceneValidationStatus: "not_checked",
+      chainId: chainExecutionMatch[1]?.trim() ?? null,
+      chainReadinessStatus: null,
+      chainReady: true,
+      dryRun: false,
+      executed: true,
+      executionMode: "controlled_multi_action_chain_runtime_bridge",
+    };
+  }
+
   const controlledMutationMatch = summary.match(/CONTROLLED UNITY MUTATION: (.+?) (?:created|already existed) in (.+?)\. EXECUTED\. ROLLBACK AVAILABLE\./i);
   if (controlledMutationMatch) {
     return {
@@ -288,6 +303,10 @@ function inferKind(lines: string[], summary: string): UnityValidationEvidenceKin
     return "mutation_execution_chain_readiness";
   }
 
+  if (/chain_execution_(executed|partial_failure|failed|blocked)/i.test(executionKind ?? "")) {
+    return "mutation_execution_chain_result";
+  }
+
   if (/controlled_mutation_(executed|idempotent|blocked|failed|unavailable)/i.test(executionKind ?? "")) {
     return "controlled_mutation_result";
   }
@@ -321,7 +340,7 @@ function isUnityEvidencePackage(workItemId: string, lines: string[], summary: st
   }
 
   const text = [summary, ...lines].join("\n");
-  return /unity read-only validation probe|unity validation preview|unity scene object creation preview|preflight simulation|execution plan only|chain plan only|chain readiness only|controlled unity mutation|controlled unity rollback|mutation disabled|rollback disabled|no unity mutation performed|no actions executed|bridge status:|requested object name:|target object name:|chain id:|dry run:/i.test(text);
+  return /unity read-only validation probe|unity validation preview|unity scene object creation preview|preflight simulation|execution plan only|chain plan only|chain readiness only|controlled unity chain execution|controlled unity mutation|controlled unity rollback|mutation disabled|rollback disabled|no unity mutation performed|no actions executed|bridge status:|requested object name:|target object name:|chain id:|dry run:/i.test(text);
 }
 
 function buildEvidence(workItemId: string, summary: string, lines: string[]): UnityValidationEvidence | null {
@@ -451,6 +470,8 @@ function kindLabel(kind: UnityValidationEvidenceKind): string {
       return "Mutation Execution Chain Plan";
     case "mutation_execution_chain_readiness":
       return "Mutation Execution Chain Readiness";
+    case "mutation_execution_chain_result":
+      return "Controlled Unity Chain Execution";
     case "controlled_mutation_result":
       return "Controlled Unity Mutation";
     case "controlled_rollback_result":
@@ -552,6 +573,16 @@ export function UnityValidationEvidencePanel({ evidence }: { evidence: UnityVali
             </span>
             <span className="inline-flex rounded-full border border-ink/10 bg-white/80 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-ink/75">
               {evidence.chainReadinessStatus ?? "not_ready"}
+            </span>
+          </>
+        ) : null}
+        {evidence.kind === "mutation_execution_chain_result" ? (
+          <>
+            <span className="inline-flex rounded-full border border-coral/20 bg-coral/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-ember">
+              CONTROLLED UNITY CHAIN EXECUTION
+            </span>
+            <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-700">
+              EXECUTED
             </span>
           </>
         ) : null}
@@ -688,16 +719,16 @@ export function UnityValidationEvidencePanel({ evidence }: { evidence: UnityVali
           </div>
         </>
       ) : null}
-      {evidence.kind === "mutation_execution_chain_plan" || evidence.kind === "mutation_execution_chain_readiness" ? (
+      {evidence.kind === "mutation_execution_chain_plan" || evidence.kind === "mutation_execution_chain_readiness" || evidence.kind === "mutation_execution_chain_result" ? (
         <>
           <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
             <p className="text-xs leading-6 text-slate">Chain id: {evidence.chainId ?? "none"}</p>
             <p className="text-xs leading-6 text-slate">Chain status: {evidence.chainStatus ?? "unknown"}</p>
-            {evidence.kind === "mutation_execution_chain_readiness" ? <p className="text-xs leading-6 text-slate">Chain readiness: {evidence.chainReadinessStatus ?? "unknown"}</p> : null}
+            {evidence.kind === "mutation_execution_chain_readiness" || evidence.kind === "mutation_execution_chain_result" ? <p className="text-xs leading-6 text-slate">Chain readiness: {evidence.chainReadinessStatus ?? "unknown"}</p> : null}
             <p className="text-xs leading-6 text-slate">Total actions: {formatMetric(evidence.totalActions)}</p>
             <p className="text-xs leading-6 text-slate">Chain ready: {String(evidence.chainReady ?? false)}</p>
-            <p className="text-xs leading-6 text-slate">Dry run: {String(evidence.dryRun ?? true)}</p>
-            <p className="text-xs leading-6 text-slate">Executed: {String(evidence.executed ?? false)}</p>
+            <p className="text-xs leading-6 text-slate">Dry run: {String(evidence.dryRun ?? (evidence.kind === "mutation_execution_chain_result" ? false : true))}</p>
+            <p className="text-xs leading-6 text-slate">Executed: {String(evidence.executed ?? (evidence.kind === "mutation_execution_chain_result"))}</p>
             <p className="text-xs leading-6 text-slate">Execution mode: {evidence.executionMode ?? "unknown"}</p>
           </div>
           <div className="mt-2">
