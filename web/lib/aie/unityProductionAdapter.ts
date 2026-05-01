@@ -440,6 +440,80 @@ export type UnitySceneObjectCreationRollbackExecutionResult = {
   mutating: boolean;
 };
 
+export type UnityMutationExecutionChainActionType = "unity_scene_object_creation" | "unity_scene_object_rollback";
+
+export type UnityMutationExecutionChainStatus = "chain_planned" | "chain_blocked";
+
+export type UnityMutationExecutionChainActionStatus = "planned" | "blocked";
+
+export type UnityMutationExecutionChainAction = {
+  action_id: string;
+  action_type: UnityMutationExecutionChainActionType;
+  target_scene: string;
+  target_object_name: string;
+  depends_on: string[];
+  required_approvals: string[];
+};
+
+export type UnityMutationExecutionChainInput = UnityProductionAdapterInput & {
+  chain_id: string;
+  actions: UnityMutationExecutionChainAction[];
+};
+
+export type UnityMutationExecutionChainDependencyNode = {
+  action_id: string;
+  depends_on: string[];
+};
+
+export type UnityMutationExecutionChainRollbackNode = {
+  order: number;
+  source_action_id: string;
+  rollback_action_type: UnityMutationExecutionChainActionType;
+  target_scene: string;
+  target_object_name: string;
+};
+
+export type UnityMutationExecutionChainPlannedAction = UnityMutationExecutionChainAction & {
+  order: number;
+  status: UnityMutationExecutionChainActionStatus;
+  lane_scope: "layer15_single_object_lane";
+  blocked_reason: string | null;
+  dry_run: true;
+  executed: false;
+};
+
+export type UnityMutationExecutionChainPlanResult = {
+  chain_id: string;
+  chain_status: UnityMutationExecutionChainStatus;
+  domain: "Unity";
+  request_type: "scene_object_creation_request";
+  execution_mode: "multi_action_chain_plan_only";
+  execution_kind: "chain_plan_only" | "chain_plan_blocked";
+  review_approval_id: string | null;
+  review_approval_status: "missing" | "approved";
+  operator_approval_id: string | null;
+  operator_approval_status: "missing" | "approved";
+  ordered_actions: UnityMutationExecutionChainPlannedAction[];
+  action_dependencies: UnityMutationExecutionChainDependencyNode[];
+  rollback_plan: UnityMutationExecutionChainRollbackNode[];
+  rollback_order: string[];
+  required_approvals: string[];
+  total_actions: number;
+  executable_actions: string[];
+  blocked_actions: string[];
+  dependency_graph: string[];
+  rollback_graph: string[];
+  chain_ready: false;
+  dry_run: true;
+  executed: false;
+  blocked_reason: string | null;
+  recommended_next_operator_action: string;
+  artifact_label: "unity_mutation_execution_chain_plan";
+  review_package: AutonomousReviewPackage | null;
+  delivery_package: AutonomousDeliveryPackage | null;
+  mutating: false;
+};
+
 export type UnitySceneObjectCreationPreviewResult = {
   request_id: string;
   domain: "Unity";
@@ -656,6 +730,354 @@ function evaluateControlledRollbackTarget(
   return {
     status: "approved",
     detail: `Controlled Unity rollback target is limited correctly to ${CONTROLLED_MUTATION_TARGET_OBJECT_NAME} in ${CONTROLLED_MUTATION_TARGET_SCENE}.`,
+  };
+}
+
+function getChainActionRequiredApprovals(actionType: UnityMutationExecutionChainActionType): string[] {
+  return actionType === "unity_scene_object_creation"
+    ? [
+        "review package approval",
+        "operator approval",
+        "explicit final execute gate",
+        "final mutation switch enablement",
+      ]
+    : [
+        "separate rollback review approval",
+        "separate rollback operator approval",
+        "explicit final rollback authorization",
+        "explicit rollback switch enablement",
+      ];
+}
+
+function getChainRollbackActionType(actionType: UnityMutationExecutionChainActionType): UnityMutationExecutionChainActionType {
+  return actionType === "unity_scene_object_creation"
+    ? "unity_scene_object_rollback"
+    : "unity_scene_object_creation";
+}
+
+function resolveUnityMutationExecutionChainPlan(
+  input: UnityMutationExecutionChainInput,
+): {
+  orderedActions: UnityMutationExecutionChainPlannedAction[];
+  actionDependencies: UnityMutationExecutionChainDependencyNode[];
+  rollbackPlan: UnityMutationExecutionChainRollbackNode[];
+  requiredApprovals: string[];
+  dependencyGraph: string[];
+  rollbackGraph: string[];
+  executableActions: string[];
+  blockedActions: string[];
+  blockedReason: string | null;
+} {
+  const reviewApproved = hasCompletedReview(input.review_state);
+  const operatorApproved = hasApproval(input.review_state);
+
+  if (!isSceneObjectCreationOnlyPacket(input.planning_packet)) {
+    return {
+      orderedActions: [],
+      actionDependencies: [],
+      rollbackPlan: [],
+      requiredApprovals: [],
+      dependencyGraph: [],
+      rollbackGraph: [],
+      executableActions: [],
+      blockedActions: [],
+      blockedReason: "Only scene_object_creation_request planning packets can produce a Unity mutation execution chain plan.",
+    };
+  }
+
+  if (!Array.isArray(input.actions) || input.actions.length === 0) {
+    return {
+      orderedActions: [],
+      actionDependencies: [],
+      rollbackPlan: [],
+      requiredApprovals: [],
+      dependencyGraph: [],
+      rollbackGraph: [],
+      executableActions: [],
+      blockedActions: [],
+      blockedReason: "Unity mutation execution chain planning requires at least one supported action.",
+    };
+  }
+
+  const seenActionIds = new Set<string>();
+  const actionMap = new Map<string, UnityMutationExecutionChainAction>();
+  for (const action of input.actions) {
+    const actionId = action.action_id.trim();
+    if (!actionId) {
+      return {
+        orderedActions: [],
+        actionDependencies: [],
+        rollbackPlan: [],
+        requiredApprovals: [],
+        dependencyGraph: [],
+        rollbackGraph: [],
+        executableActions: [],
+        blockedActions: [],
+        blockedReason: "Unity mutation execution chain actions require a non-empty action_id.",
+      };
+    }
+
+    if (seenActionIds.has(actionId)) {
+      return {
+        orderedActions: [],
+        actionDependencies: [],
+        rollbackPlan: [],
+        requiredApprovals: [],
+        dependencyGraph: [],
+        rollbackGraph: [],
+        executableActions: [],
+        blockedActions: [],
+        blockedReason: `Unity mutation execution chain action ids must be unique, but ${actionId} was repeated.`,
+      };
+    }
+
+    seenActionIds.add(actionId);
+    actionMap.set(actionId, {
+      ...action,
+      action_id: actionId,
+      target_scene: action.target_scene.trim(),
+      target_object_name: action.target_object_name.trim(),
+      depends_on: [...new Set(action.depends_on.map((value) => value.trim()).filter(Boolean))],
+      required_approvals: [...new Set(action.required_approvals.map((value) => value.trim()).filter(Boolean))],
+    });
+  }
+
+  for (const action of actionMap.values()) {
+    if (action.action_type !== "unity_scene_object_creation" && action.action_type !== "unity_scene_object_rollback") {
+      return {
+        orderedActions: [],
+        actionDependencies: [],
+        rollbackPlan: [],
+        requiredApprovals: [],
+        dependencyGraph: [],
+        rollbackGraph: [],
+        executableActions: [],
+        blockedActions: [],
+        blockedReason: `Unity mutation execution chain action ${action.action_id} uses unsupported action type ${action.action_type}.`,
+      };
+    }
+
+    if (action.target_scene !== CONTROLLED_MUTATION_TARGET_SCENE || action.target_object_name !== CONTROLLED_MUTATION_TARGET_OBJECT_NAME) {
+      return {
+        orderedActions: [],
+        actionDependencies: [],
+        rollbackPlan: [],
+        requiredApprovals: [],
+        dependencyGraph: [],
+        rollbackGraph: [],
+        executableActions: [],
+        blockedActions: [],
+        blockedReason: `Unity mutation execution chain action ${action.action_id} does not map to the verified Layer 15 lane ${CONTROLLED_MUTATION_TARGET_OBJECT_NAME} in ${CONTROLLED_MUTATION_TARGET_SCENE}.`,
+      };
+    }
+
+    for (const dependencyId of action.depends_on) {
+      if (dependencyId === action.action_id) {
+        return {
+          orderedActions: [],
+          actionDependencies: [],
+          rollbackPlan: [],
+          requiredApprovals: [],
+          dependencyGraph: [],
+          rollbackGraph: [],
+          executableActions: [],
+          blockedActions: [],
+          blockedReason: `Unity mutation execution chain action ${action.action_id} cannot depend on itself.`,
+        };
+      }
+
+      if (!actionMap.has(dependencyId)) {
+        return {
+          orderedActions: [],
+          actionDependencies: [],
+          rollbackPlan: [],
+          requiredApprovals: [],
+          dependencyGraph: [],
+          rollbackGraph: [],
+          executableActions: [],
+          blockedActions: [],
+          blockedReason: `Unity mutation execution chain action ${action.action_id} depends on missing action ${dependencyId}.`,
+        };
+      }
+    }
+  }
+
+  const adjacency = new Map<string, string[]>();
+  const indegree = new Map<string, number>();
+  for (const action of actionMap.values()) {
+    adjacency.set(action.action_id, []);
+    indegree.set(action.action_id, 0);
+  }
+  for (const action of actionMap.values()) {
+    for (const dependencyId of action.depends_on) {
+      adjacency.get(dependencyId)?.push(action.action_id);
+      indegree.set(action.action_id, (indegree.get(action.action_id) ?? 0) + 1);
+    }
+  }
+
+  const sourceQueue = input.actions
+    .map((action) => action.action_id.trim())
+    .filter((actionId) => (indegree.get(actionId) ?? 0) === 0);
+  const orderedActionIds: string[] = [];
+  while (sourceQueue.length > 0) {
+    const current = sourceQueue.shift();
+    if (!current) {
+      break;
+    }
+
+    orderedActionIds.push(current);
+    for (const dependentId of adjacency.get(current) ?? []) {
+      indegree.set(dependentId, (indegree.get(dependentId) ?? 1) - 1);
+      if ((indegree.get(dependentId) ?? 0) === 0) {
+        sourceQueue.push(dependentId);
+      }
+    }
+  }
+
+  if (orderedActionIds.length !== actionMap.size) {
+    return {
+      orderedActions: [],
+      actionDependencies: [],
+      rollbackPlan: [],
+      requiredApprovals: [],
+      dependencyGraph: [],
+      rollbackGraph: [],
+      executableActions: [],
+      blockedActions: [],
+      blockedReason: "Unity mutation execution chain planning refused a cyclic dependency graph.",
+    };
+  }
+
+  const orderedActions = orderedActionIds.map((actionId, index) => {
+    const action = actionMap.get(actionId)!;
+    const requiredApprovals = [...new Set([...getChainActionRequiredApprovals(action.action_type), ...action.required_approvals])];
+    const approvalBlocked = (!reviewApproved || !operatorApproved)
+      ? "Unity mutation execution chain planning still requires review approval and operator approval before future execution review."
+      : null;
+
+    return {
+      ...action,
+      order: index + 1,
+      required_approvals: requiredApprovals,
+      status: approvalBlocked ? "blocked" : "planned",
+      lane_scope: "layer15_single_object_lane" as const,
+      blocked_reason: approvalBlocked,
+      dry_run: true as const,
+      executed: false as const,
+    };
+  });
+
+  const actionDependencies = orderedActions.map((action) => ({
+    action_id: action.action_id,
+    depends_on: action.depends_on,
+  }));
+  const rollbackPlan = [...orderedActions]
+    .reverse()
+    .map((action, index) => ({
+      order: index + 1,
+      source_action_id: action.action_id,
+      rollback_action_type: getChainRollbackActionType(action.action_type),
+      target_scene: action.target_scene,
+      target_object_name: action.target_object_name,
+    }));
+
+  const requiredApprovals = [...new Set(orderedActions.flatMap((action) => action.required_approvals))];
+  const dependencyGraph = orderedActions.map((action) => `${action.action_id} <- ${action.depends_on.length > 0 ? action.depends_on.join(", ") : "none"}`);
+  const rollbackGraph = rollbackPlan.map((entry) => `${entry.order}. ${entry.source_action_id} => ${entry.rollback_action_type}`);
+  const executableActions = orderedActions.filter((action) => action.status === "planned").map((action) => action.action_id);
+  const blockedActions = orderedActions.filter((action) => action.status === "blocked").map((action) => action.action_id);
+
+  return {
+    orderedActions,
+    actionDependencies,
+    rollbackPlan,
+    requiredApprovals,
+    dependencyGraph,
+    rollbackGraph,
+    executableActions,
+    blockedActions,
+    blockedReason: blockedActions.length > 0
+      ? "Unity mutation execution chains remain plan-only in Layer 16 and cannot execute from this foundation."
+      : null,
+  };
+}
+
+function createUnityMutationExecutionChainPackages(
+  input: UnityMutationExecutionChainInput,
+  result: UnityMutationExecutionChainPlanResult,
+): {
+  reviewPackage: AutonomousReviewPackage;
+  deliveryPackage: AutonomousDeliveryPackage;
+} {
+  const summary = `CHAIN PLAN ONLY: Controlled Unity execution chain ${result.chain_id} with ${result.total_actions} actions. NOT EXECUTED.`;
+  const proofResults = [
+    `Execution kind: ${result.execution_kind}`,
+    `Chain id: ${result.chain_id}`,
+    `Chain status: ${result.chain_status}`,
+    `Execution mode: ${result.execution_mode}`,
+    `Total actions: ${String(result.total_actions)}`,
+    `Executable actions: ${result.executable_actions.join(", ") || "none"}`,
+    `Blocked actions: ${result.blocked_actions.join(", ") || "none"}`,
+    `Chain ready: ${String(result.chain_ready)}`,
+    `Dry run: ${String(result.dry_run)}`,
+    `Executed: ${String(result.executed)}`,
+    ...result.required_approvals.map((approval) => `Required approval gate: ${approval}`),
+    ...result.dependency_graph.map((entry) => `Dependency graph: ${entry}`),
+    ...result.rollback_graph.map((entry) => `Rollback graph: ${entry}`),
+    `Recommended next operator action: ${result.recommended_next_operator_action}`,
+    ...(result.blocked_reason ? [`Blocked reason: ${result.blocked_reason}`] : []),
+  ];
+
+  const reviewPackage = createAutonomousReviewPackage({
+    package_id: `unity-chain-plan-review-${result.chain_id}`,
+    work_item_id: `unity-chain-plan-${result.chain_id}`,
+    chain_id: `unity-chain-plan-chain-${result.chain_id}`,
+    status: result.execution_kind === "chain_plan_only" ? "approved" : "pending",
+    summary,
+    files_changed: [],
+    tests_run: ["unity mutation execution chain plan"],
+    proof_results: proofResults,
+    risks: [
+      "CHAIN PLAN ONLY",
+      "NOT EXECUTED",
+      "ROLLBACK ORDER PREVIEW",
+      ...(result.blocked_reason ? [result.blocked_reason] : []),
+    ],
+    recommended_decision: "approve",
+    rollback_notes: result.rollback_graph.length > 0
+      ? `ROLLBACK ORDER PREVIEW: ${result.rollback_graph.join(" | ")}`
+      : "No rollback order preview is available for this chain.",
+    operator_actions: ["approve", "archive"],
+  });
+
+  const deliveryPackage = createAutonomousDeliveryPackage({
+    delivery_package_id: `unity-chain-plan-delivery-${result.chain_id}`,
+    review_package_id: reviewPackage.package_id,
+    work_item_id: reviewPackage.work_item_id,
+    chain_id: reviewPackage.chain_id,
+    branch_name: "",
+    commit_plan: [
+      "Keep this multi-action Unity chain as a planning-only artifact.",
+      "Do not execute the chain from this package.",
+      `ROLLBACK ORDER PREVIEW: ${result.rollback_graph.join(" | ") || "none"}`,
+    ],
+    files_changed: [],
+    validation_results: proofResults,
+    proof_results: ["CHAIN PLAN ONLY", "NOT EXECUTED", "ROLLBACK ORDER PREVIEW"],
+    risk_summary: result.blocked_reason ?? "Chain planning only. No multi-action Unity execution has been enabled.",
+    rollback_plan: result.rollback_graph.join(" | ") || "No rollback order preview available.",
+    release_notes: summary,
+    recommended_pr_title: "",
+    recommended_pr_body: `Unity multi-action chain plan handoff\n\nSummary: ${summary}\n\nNext operator action: ${result.recommended_next_operator_action}`,
+    operator_decision: null,
+    status: "awaiting_operator_approval",
+    created_at: input.requested_at,
+    updated_at: input.requested_at,
+  });
+
+  return {
+    reviewPackage,
+    deliveryPackage,
   };
 }
 
@@ -2575,6 +2997,57 @@ export function buildUnitySceneObjectCreationRollbackPlan(
     ...baseResult,
     review_package: rollbackPlanPackages.reviewPackage,
     delivery_package: rollbackPlanPackages.deliveryPackage,
+  };
+}
+
+export function buildUnityMutationExecutionChainPlan(
+  input: UnityMutationExecutionChainInput,
+): UnityMutationExecutionChainPlanResult {
+  const reviewApproved = hasCompletedReview(input.review_state);
+  const operatorApproved = hasApproval(input.review_state);
+  const resolvedPlan = resolveUnityMutationExecutionChainPlan(input);
+  const chainStatus = resolvedPlan.blockedReason ? "chain_blocked" : "chain_planned";
+
+  const baseResult: UnityMutationExecutionChainPlanResult = {
+    chain_id: input.chain_id.trim(),
+    chain_status: chainStatus,
+    domain: "Unity",
+    request_type: "scene_object_creation_request",
+    execution_mode: "multi_action_chain_plan_only",
+    execution_kind: resolvedPlan.blockedReason ? "chain_plan_blocked" : "chain_plan_only",
+    review_approval_id: input.review_state.review_package_id,
+    review_approval_status: reviewApproved ? "approved" : "missing",
+    operator_approval_id: input.review_state.operator_approval_id,
+    operator_approval_status: operatorApproved ? "approved" : "missing",
+    ordered_actions: resolvedPlan.orderedActions,
+    action_dependencies: resolvedPlan.actionDependencies,
+    rollback_plan: resolvedPlan.rollbackPlan,
+    rollback_order: resolvedPlan.rollbackPlan.map((entry) => entry.source_action_id),
+    required_approvals: resolvedPlan.requiredApprovals,
+    total_actions: resolvedPlan.orderedActions.length,
+    executable_actions: resolvedPlan.executableActions,
+    blocked_actions: resolvedPlan.blockedActions,
+    dependency_graph: resolvedPlan.dependencyGraph,
+    rollback_graph: resolvedPlan.rollbackGraph,
+    chain_ready: false,
+    dry_run: true,
+    executed: false,
+    blocked_reason: resolvedPlan.blockedReason,
+    recommended_next_operator_action: resolvedPlan.blockedReason
+      ? "Revise the requested action graph or keep the chain as a read-only operator preview."
+      : "Review the chain ordering, approvals, and rollback order. Chain execution remains refused in Layer 16 Step 1.",
+    artifact_label: "unity_mutation_execution_chain_plan",
+    review_package: null,
+    delivery_package: null,
+    mutating: false,
+  };
+
+  const chainPlanPackages = createUnityMutationExecutionChainPackages(input, baseResult);
+
+  return {
+    ...baseResult,
+    review_package: chainPlanPackages.reviewPackage,
+    delivery_package: chainPlanPackages.deliveryPackage,
   };
 }
 

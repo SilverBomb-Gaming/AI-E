@@ -324,6 +324,30 @@ Current Layer 15 boundary:
 - additional mutation types remain future work
 - chat remains advisory only with `safe_to_execute: false` and cannot invoke any mutation path directly
 
+## Layer 16 / Multi-Action Execution Chains
+
+Layer 16 starts with planning only for bounded multi-action Unity execution chains. This step does not execute chained Unity mutations or rollbacks. It adds a reviewed chain model that stays pinned to the verified Layer 15 single-object lane and exposes ordering, dependency, and rollback previews through existing operator-visible evidence surfaces.
+
+Current Layer 16 Step 1 status:
+
+- planning-only multi-action chain model: implemented
+- supported chain action types: `unity_scene_object_creation` and `unity_scene_object_rollback` only
+- dependency ordering and cycle refusal: implemented
+- rollback order preview: implemented
+- unsupported action type refusal: implemented
+- operator-visible chain preview rendering: implemented
+- chain execution: refused in this step
+- chat execution: still refused with `safe_to_execute: false`
+
+Current Layer 16 Step 1 boundary:
+
+- every chain action must stay inside the verified Layer 15 lane for `AIE_ControlledMutationProbe` in `EnemyAIDemo`
+- the chain builder returns `execution_mode: multi_action_chain_plan_only`, `chain_ready: false`, `dry_run: true`, and `executed: false`
+- ordering is resolved from declared dependencies and cyclic graphs are blocked explicitly
+- rollback preview is rendered in reverse action order as an operator-visible planning artifact only
+- unsupported mutation types and out-of-lane targets are refused explicitly
+- no real multi-action Unity execution path exists yet
+
 ## Safe Runtime Action Bridge
 
 AI-E can now translate supported live operator actions into safe runtime intents.

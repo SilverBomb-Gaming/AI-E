@@ -210,6 +210,72 @@ test("mutation preview evidence renders dry-run-only operator details without ex
   assert.doesNotMatch(markup, /disabled=/i);
 });
 
+test("chain plan evidence renders read-only multi-action ordering and rollback preview", () => {
+  const reviewPackage = createAutonomousReviewPackage({
+    package_id: "unity-chain-review-1",
+    work_item_id: "unity-chain-plan-unity-controlled-chain-1",
+    chain_id: "unity-chain-preview-1",
+    status: "approved",
+    summary: "CHAIN PLAN ONLY: Controlled Unity execution chain unity-controlled-chain-1 with 2 actions. NOT EXECUTED.",
+    files_changed: [],
+    tests_run: ["unity mutation execution chain plan"],
+    proof_results: [
+      "Execution kind: chain_plan_only",
+      "Chain id: unity-controlled-chain-1",
+      "Chain status: chain_planned",
+      "Execution mode: multi_action_chain_plan_only",
+      "Total actions: 2",
+      "Executable actions: create-probe, rollback-probe",
+      "Blocked actions: none",
+      "Chain ready: false",
+      "Dry run: true",
+      "Executed: false",
+      "Required approval gate: review package approval",
+      "Required approval gate: explicit final execute gate",
+      "Required approval gate: explicit final rollback authorization",
+      "Dependency graph: create-probe <- none",
+      "Dependency graph: rollback-probe <- create-probe",
+      "Rollback graph: 1. rollback-probe => unity_scene_object_creation",
+      "Rollback graph: 2. create-probe => unity_scene_object_rollback",
+      "Recommended next operator action: Review the chain ordering, approvals, and rollback order. Chain execution remains refused in Layer 16 Step 1.",
+    ],
+    risks: ["CHAIN PLAN ONLY", "NOT EXECUTED", "ROLLBACK ORDER PREVIEW"],
+    recommended_decision: "approve",
+    rollback_notes: "ROLLBACK ORDER PREVIEW: 1. rollback-probe => unity_scene_object_creation | 2. create-probe => unity_scene_object_rollback",
+    operator_actions: ["approve", "archive"],
+  });
+
+  const evidence = extractUnityValidationEvidenceFromReviewPackage(reviewPackage);
+
+  assert.ok(evidence);
+  assert.equal(evidence.kind, "mutation_execution_chain_plan");
+  assert.equal(evidence.chainId, "unity-controlled-chain-1");
+  assert.equal(evidence.chainStatus, "chain_planned");
+  assert.equal(evidence.totalActions, 2);
+  assert.equal(evidence.chainReady, false);
+  assert.deepEqual(evidence.executableActions, ["create-probe", "rollback-probe"]);
+  assert.deepEqual(evidence.blockedActions, []);
+  assert.deepEqual(evidence.dependencyGraph, [
+    "create-probe <- none",
+    "rollback-probe <- create-probe",
+  ]);
+  assert.deepEqual(evidence.rollbackGraph, [
+    "1. rollback-probe => unity_scene_object_creation",
+    "2. create-probe => unity_scene_object_rollback",
+  ]);
+
+  const markup = renderToStaticMarkup(createElement(UnityValidationEvidencePanel, { evidence }));
+  assert.match(markup, /Mutation Execution Chain Plan/);
+  assert.match(markup, /CHAIN PLAN ONLY/);
+  assert.match(markup, /ROLLBACK ORDER PREVIEW/);
+  assert.match(markup, /Chain id: unity-controlled-chain-1/);
+  assert.match(markup, /Chain status: chain_planned/);
+  assert.match(markup, /Total actions: 2/);
+  assert.match(markup, /Chain ready: false/);
+  assert.match(markup, /Executable actions/);
+  assert.match(markup, /Rollback graph/);
+});
+
 test("mutation preflight evidence renders simulation-only operator details", () => {
   const reviewPackage = createAutonomousReviewPackage({
     package_id: "unity-mutation-preflight-review-1",

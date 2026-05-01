@@ -2,7 +2,7 @@ import React from "react";
 
 import type { AutonomousDeliveryPackage, AutonomousReviewPackage } from "./autonomousWorkPlanning";
 
-export type UnityValidationEvidenceKind = "adapter_preview" | "real_bridge_unavailable" | "real_bridge_read_only" | "scene_object_creation_preview" | "mutation_execution_preflight" | "mutation_execution_plan" | "controlled_mutation_result" | "controlled_rollback_result";
+export type UnityValidationEvidenceKind = "adapter_preview" | "real_bridge_unavailable" | "real_bridge_read_only" | "scene_object_creation_preview" | "mutation_execution_preflight" | "mutation_execution_plan" | "mutation_execution_chain_plan" | "controlled_mutation_result" | "controlled_rollback_result";
 
 export type UnityValidationEvidence = {
   kind: UnityValidationEvidenceKind;
@@ -14,6 +14,10 @@ export type UnityValidationEvidence = {
   objectCount: number | null;
   evidenceTimestamp: string | null;
   recommendedNextOperatorAction: string | null;
+  chainId: string | null;
+  chainStatus: string | null;
+  totalActions: number | null;
+  chainReady: boolean | null;
   demoPreview: boolean;
   requestedObjectName: string | null;
   targetScene: string | null;
@@ -57,6 +61,10 @@ export type UnityValidationEvidence = {
   predictedCreatedObjects: string[];
   detectedConflicts: string[];
   detectedRisks: string[];
+  executableActions: string[];
+  blockedActions: string[];
+  dependencyGraph: string[];
+  rollbackGraph: string[];
   gateStatuses: string[];
 };
 
@@ -96,7 +104,7 @@ function parseBoolean(value: string | null): boolean | null {
 }
 
 function parseList(value: string | null): string[] {
-  if (!value) {
+  if (!value || /^(none|unknown)$/i.test(value.trim())) {
     return [];
   }
 
@@ -188,6 +196,21 @@ function parseSummary(summary: string): Partial<UnityValidationEvidence> {
     };
   }
 
+  const chainPlanMatch = summary.match(/CHAIN PLAN ONLY: Controlled Unity execution chain (.+?) with ([0-9]+) actions\. NOT EXECUTED\./i);
+  if (chainPlanMatch) {
+    return {
+      kind: "mutation_execution_chain_plan",
+      bridgeStatus: "chain_plan_only",
+      sceneValidationStatus: "not_checked",
+      chainId: chainPlanMatch[1]?.trim() ?? null,
+      totalActions: parseCount(chainPlanMatch[2] ?? null),
+      chainReady: false,
+      dryRun: true,
+      executed: false,
+      executionMode: "multi_action_chain_plan_only",
+    };
+  }
+
   const controlledMutationMatch = summary.match(/CONTROLLED UNITY MUTATION: (.+?) (?:created|already existed) in (.+?)\. EXECUTED\. ROLLBACK AVAILABLE\./i);
   if (controlledMutationMatch) {
     return {
@@ -239,6 +262,10 @@ function inferKind(lines: string[], summary: string): UnityValidationEvidenceKin
     return "mutation_execution_plan";
   }
 
+  if (executionKind === "chain_plan_only" || executionKind === "chain_plan_blocked") {
+    return "mutation_execution_chain_plan";
+  }
+
   if (/controlled_mutation_(executed|idempotent|blocked|failed|unavailable)/i.test(executionKind ?? "")) {
     return "controlled_mutation_result";
   }
@@ -272,7 +299,7 @@ function isUnityEvidencePackage(workItemId: string, lines: string[], summary: st
   }
 
   const text = [summary, ...lines].join("\n");
-  return /unity read-only validation probe|unity validation preview|unity scene object creation preview|preflight simulation|execution plan only|controlled unity mutation|controlled unity rollback|mutation disabled|rollback disabled|no unity mutation performed|bridge status:|requested object name:|target object name:|dry run:/i.test(text);
+  return /unity read-only validation probe|unity validation preview|unity scene object creation preview|preflight simulation|execution plan only|chain plan only|controlled unity mutation|controlled unity rollback|mutation disabled|rollback disabled|no unity mutation performed|bridge status:|requested object name:|target object name:|chain id:|dry run:/i.test(text);
 }
 
 function buildEvidence(workItemId: string, summary: string, lines: string[]): UnityValidationEvidence | null {
@@ -322,6 +349,10 @@ function buildEvidence(workItemId: string, summary: string, lines: string[]): Un
     objectCount: parseCount(parseLabeledValue(lines, "Object count")) ?? summaryValues.objectCount ?? null,
     evidenceTimestamp,
     recommendedNextOperatorAction,
+    chainId: parseLabeledValue(lines, "Chain id") ?? summaryValues.chainId ?? null,
+    chainStatus: parseLabeledValue(lines, "Chain status") ?? summaryValues.chainStatus ?? null,
+    totalActions: parseCount(parseLabeledValue(lines, "Total actions")) ?? summaryValues.totalActions ?? null,
+    chainReady: parseBoolean(parseLabeledValue(lines, "Chain ready")) ?? summaryValues.chainReady ?? null,
     demoPreview: /demo preview/i.test([summary, ...lines].join("\n")),
     requestedObjectName,
     targetScene,
@@ -365,6 +396,10 @@ function buildEvidence(workItemId: string, summary: string, lines: string[]): Un
     predictedCreatedObjects: parseRepeatedLabeledValues(lines, "Predicted created object"),
     detectedConflicts: parseRepeatedLabeledValues(lines, "Detected conflict"),
     detectedRisks: parseRepeatedLabeledValues(lines, "Detected risk"),
+    executableActions: parseList(parseLabeledValue(lines, "Executable actions")),
+    blockedActions: parseList(parseLabeledValue(lines, "Blocked actions")),
+    dependencyGraph: parseRepeatedLabeledValues(lines, "Dependency graph"),
+    rollbackGraph: parseRepeatedLabeledValues(lines, "Rollback graph"),
     gateStatuses: parseRepeatedLabeledValues(lines, "Gate status"),
   };
 }
@@ -387,6 +422,8 @@ function kindLabel(kind: UnityValidationEvidenceKind): string {
       return "Mutation Execution Preflight";
     case "mutation_execution_plan":
       return "Mutation Execution Plan";
+    case "mutation_execution_chain_plan":
+      return "Mutation Execution Chain Plan";
     case "controlled_mutation_result":
       return "Controlled Unity Mutation";
     case "controlled_rollback_result":
@@ -459,6 +496,19 @@ export function UnityValidationEvidencePanel({ evidence }: { evidence: UnityVali
             </span>
             <span className="inline-flex rounded-full border border-ink/10 bg-white/80 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-ink/75">
               {evidence.finalMutationSwitchEvaluationStatus ?? "MUTATION SWITCH DISABLED"}
+            </span>
+            <span className="inline-flex rounded-full border border-ink/10 bg-white/80 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-ink/75">
+              NOT EXECUTED
+            </span>
+          </>
+        ) : null}
+        {evidence.kind === "mutation_execution_chain_plan" ? (
+          <>
+            <span className="inline-flex rounded-full border border-coral/20 bg-coral/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-ember">
+              CHAIN PLAN ONLY
+            </span>
+            <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-700">
+              ROLLBACK ORDER PREVIEW
             </span>
             <span className="inline-flex rounded-full border border-ink/10 bg-white/80 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-ink/75">
               NOT EXECUTED
@@ -595,6 +645,39 @@ export function UnityValidationEvidencePanel({ evidence }: { evidence: UnityVali
                 `expiration=${evidence.finalMutationSwitchExpirationStatus ?? "unknown"}`,
               ].join(" | ")}
             </p>
+          </div>
+        </>
+      ) : null}
+      {evidence.kind === "mutation_execution_chain_plan" ? (
+        <>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+            <p className="text-xs leading-6 text-slate">Chain id: {evidence.chainId ?? "none"}</p>
+            <p className="text-xs leading-6 text-slate">Chain status: {evidence.chainStatus ?? "unknown"}</p>
+            <p className="text-xs leading-6 text-slate">Total actions: {formatMetric(evidence.totalActions)}</p>
+            <p className="text-xs leading-6 text-slate">Chain ready: {String(evidence.chainReady ?? false)}</p>
+            <p className="text-xs leading-6 text-slate">Dry run: {String(evidence.dryRun ?? true)}</p>
+            <p className="text-xs leading-6 text-slate">Executed: {String(evidence.executed ?? false)}</p>
+            <p className="text-xs leading-6 text-slate">Execution mode: {evidence.executionMode ?? "unknown"}</p>
+          </div>
+          <div className="mt-2">
+            <p className="text-xs uppercase tracking-[0.18em] text-slate">Executable actions</p>
+            <p className="mt-1 text-xs leading-6 text-slate">{evidence.executableActions.length > 0 ? evidence.executableActions.join(" | ") : "none"}</p>
+          </div>
+          <div className="mt-2">
+            <p className="text-xs uppercase tracking-[0.18em] text-slate">Blocked actions</p>
+            <p className="mt-1 text-xs leading-6 text-slate">{evidence.blockedActions.length > 0 ? evidence.blockedActions.join(" | ") : "none"}</p>
+          </div>
+          <div className="mt-2">
+            <p className="text-xs uppercase tracking-[0.18em] text-slate">Dependency graph</p>
+            <p className="mt-1 text-xs leading-6 text-slate">{evidence.dependencyGraph.length > 0 ? evidence.dependencyGraph.join(" | ") : "none"}</p>
+          </div>
+          <div className="mt-2">
+            <p className="text-xs uppercase tracking-[0.18em] text-slate">Rollback graph</p>
+            <p className="mt-1 text-xs leading-6 text-slate">{evidence.rollbackGraph.length > 0 ? evidence.rollbackGraph.join(" | ") : "none"}</p>
+          </div>
+          <div className="mt-2">
+            <p className="text-xs uppercase tracking-[0.18em] text-slate">Required approval gates</p>
+            <p className="mt-1 text-xs leading-6 text-slate">{evidence.requiredApprovalGates.length > 0 ? evidence.requiredApprovalGates.join(" | ") : "none"}</p>
           </div>
         </>
       ) : null}
