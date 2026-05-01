@@ -355,3 +355,60 @@ test("mutation execution plan evidence renders plan-only operator details", () =
   assert.match(markup, /Gate statuses/);
   assert.doesNotMatch(markup, /<button/i);
 });
+
+test("controlled mutation evidence renders executed operator details", () => {
+  const deliveryPackage = createAutonomousDeliveryPackage({
+    delivery_package_id: "unity-controlled-mutation-delivery-1",
+    review_package_id: "unity-controlled-mutation-review-1",
+    work_item_id: "unity-controlled-mutation-1",
+    chain_id: "unity-controlled-mutation-chain-1",
+    branch_name: "",
+    commit_plan: [],
+    files_changed: [],
+    validation_results: [
+      "Execution kind: controlled_mutation_executed",
+      "Mutation type: scene_object_creation_request",
+      "Target scene: EnemyAIDemo",
+      "Requested object name: AIE_ControlledMutationProbe",
+      "Created object name: AIE_ControlledMutationProbe",
+      "Mutation enabled: true",
+      "Executed: true",
+      "Scene saved: true",
+      "Duplicate handling: created",
+      "Evidence timestamp: 2026-05-01T20:00:00.000Z",
+      "Rollback hint: Rollback requires separate approval: remove AIE_ControlledMutationProbe from EnemyAIDemo.",
+      "Delivery summary: Controlled Unity mutation created object AIE_ControlledMutationProbe in EnemyAIDemo with scene_saved true.",
+      "Recommended next operator action: Review the controlled Unity mutation evidence and keep rollback as a separately approved follow-up action.",
+    ],
+    proof_results: ["CONTROLLED UNITY MUTATION", "EXECUTED", "ROLLBACK AVAILABLE"],
+    risk_summary: "Controlled Unity mutation executed for AIE_ControlledMutationProbe; rollback remains separately approved.",
+    rollback_plan: "Rollback requires separate approval: remove AIE_ControlledMutationProbe from EnemyAIDemo.",
+    release_notes: "CONTROLLED UNITY MUTATION: AIE_ControlledMutationProbe created in EnemyAIDemo. EXECUTED. ROLLBACK AVAILABLE.",
+    recommended_pr_title: "",
+    recommended_pr_body: "Controlled Unity mutation handoff",
+    operator_decision: null,
+    status: "awaiting_operator_approval",
+    created_at: "2026-05-01T20:00:00.000Z",
+    updated_at: "2026-05-01T20:00:00.000Z",
+  });
+
+  const evidence = extractUnityValidationEvidenceFromDeliveryPackage(deliveryPackage);
+
+  assert.ok(evidence);
+  assert.equal(evidence.kind, "controlled_mutation_result");
+  assert.equal(evidence.mutationType, "scene_object_creation_request");
+  assert.equal(evidence.createdObjectName, "AIE_ControlledMutationProbe");
+  assert.equal(evidence.sceneSaved, true);
+  assert.equal(evidence.rollbackHint, "Rollback requires separate approval: remove AIE_ControlledMutationProbe from EnemyAIDemo.");
+  assert.equal(evidence.duplicateHandling, "created");
+
+  const markup = renderToStaticMarkup(createElement(UnityValidationEvidencePanel, { evidence }));
+  assert.match(markup, /Controlled Unity Mutation/);
+  assert.match(markup, /CONTROLLED UNITY MUTATION/);
+  assert.match(markup, /EXECUTED/);
+  assert.match(markup, /ROLLBACK AVAILABLE/);
+  assert.match(markup, /Created object name: AIE_ControlledMutationProbe/);
+  assert.match(markup, /Scene saved: true/);
+  assert.match(markup, /Rollback hint/);
+  assert.doesNotMatch(markup, /<button/i);
+});

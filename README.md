@@ -297,8 +297,9 @@ Current Layer 15 status:
 - reviewed Unity live read-only bridge cold-start regression check: verified from a fully closed Unity/Hub state for `EnemyAIDemo`
 - first controlled Unity mutation execution plan: implemented as disabled plan-only architecture
 - final mutation execution switch: implemented and disabled by default
+- first real controlled Unity mutation: executed successfully for `AIE_ControlledMutationProbe` in `EnemyAIDemo`
 - required gates modeled: production planning packet, review approval, operator approval, dry-run preview, preflight simulation, explicit final execute gate, live read-only Unity validation, explicit mutation execution mode enablement, and final mutation switch enablement
-- mutation-ready: no
+- mutation-ready: yes for the single controlled scene object creation lane
 - playtest-ready: no
 
 Current Layer 15 boundary:
@@ -312,9 +313,9 @@ Current Layer 15 boundary:
 - the existing approval-gated Unity read-only bridge has been verified to launch cleanly from a cold closed-app state, but it remains validation-only and does not authorize mutation
 - the first controlled Unity mutation execution plan now exists as a fully gated plan artifact, but it always returns `execution_mode: disabled_plan_only`, `mutation_enabled: false`, and `executed: false`
 - the final mutation execution switch now exists as a separate explicit gate, but the default output still reports `final_mutation_switch_enabled: false` and does not execute mutation in this step
-- no scene write, GameObject creation, prefab mutation, or Unity-side execute gate exists yet
-- no real Unity mutation has been performed in Layer 15
-- the first real Unity mutation remains the next explicit step only
+- the first real Unity mutation created exactly one empty GameObject named `AIE_ControlledMutationProbe` in `EnemyAIDemo`, saved the scene, and preserved clean post-mutation validation with missing scripts `0`, console errors `0`, and object count `14`
+- rollback is available as a separately approved future action: remove `AIE_ControlledMutationProbe` from `EnemyAIDemo`
+- broader mutation repeatability, rollback execution, and additional mutation types remain future work
 - chat remains advisory only with `safe_to_execute: false` and cannot invoke any mutation path directly
 
 ## Safe Runtime Action Bridge

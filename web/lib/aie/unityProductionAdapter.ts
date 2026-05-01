@@ -13,6 +13,10 @@ import {
   createConfiguredUnityReadOnlyRuntimeBridge,
   type UnityReadOnlyRuntimeBridge,
 } from "./unityReadOnlyRuntimeBridge";
+import {
+  createConfiguredUnityMutationRuntimeBridge,
+  type UnityMutationRuntimeBridge,
+} from "./unityMutationRuntimeBridge";
 
 export type UnityProductionAdapterAction =
   | "scene_plan_review"
@@ -63,6 +67,10 @@ export type UnityValidationExecutionInput = UnityProductionAdapterInput;
 
 export type UnityValidationExecutionOptions = {
   runtime_bridge?: UnityReadOnlyRuntimeBridge;
+};
+
+export type UnitySceneObjectCreationMutationExecutionOptions = {
+  mutation_bridge?: UnityMutationRuntimeBridge;
 };
 
 export type UnitySceneObjectCreationPreviewTransform = {
@@ -229,6 +237,46 @@ export type UnitySceneObjectCreationExecutionPlanResult = {
   mutating: false;
 };
 
+export type UnitySceneObjectCreationMutationExecutionInput = UnitySceneObjectCreationExecutionPlanInput & {
+  execution_plan: UnitySceneObjectCreationExecutionPlanResult | null;
+  idempotent_on_duplicate?: boolean;
+};
+
+export type UnitySceneObjectCreationMutationExecutionResult = {
+  request_id: string;
+  domain: "Unity";
+  request_type: "scene_object_creation_request";
+  mutation_type: "scene_object_creation_request";
+  execution_mode: "controlled_mutation_runtime_bridge";
+  execution_kind:
+    | "controlled_mutation_executed"
+    | "controlled_mutation_idempotent"
+    | "controlled_mutation_blocked"
+    | "controlled_mutation_failed"
+    | "controlled_mutation_unavailable";
+  review_approval_id: string | null;
+  review_approval_status: "missing" | "approved";
+  operator_approval_id: string | null;
+  operator_approval_status: "missing" | "approved";
+  target_scene: string;
+  requested_object_name: string;
+  created_object_name: string | null;
+  duplicate_handling: "created" | "already_exists_idempotent" | null;
+  mutation_enabled: boolean;
+  executed: boolean;
+  scene_saved: boolean;
+  final_mutation_switch_required: true;
+  final_mutation_switch_enabled: boolean;
+  evidence_timestamp: string;
+  rollback_hint: string;
+  delivery_summary: string;
+  blocked_reason: string | null;
+  artifact_label: "unity_controlled_scene_mutation_result";
+  review_package: AutonomousReviewPackage | null;
+  delivery_package: AutonomousDeliveryPackage | null;
+  mutating: boolean;
+};
+
 export type UnitySceneObjectCreationPreviewResult = {
   request_id: string;
   domain: "Unity";
@@ -374,6 +422,23 @@ function formatMutationSwitchEvaluationStatus(
   evaluation: UnityMutationExecutionSwitchEvaluation,
 ): string {
   return evaluation.enabled ? "FINAL MUTATION SWITCH ENABLED" : "FINAL MUTATION SWITCH DISABLED";
+}
+
+function hasAllRequiredMutationPlanGatesApproved(
+  plan: UnitySceneObjectCreationExecutionPlanResult,
+): boolean {
+  const requiredGates: UnityMutationExecutionPlanGate[] = [
+    "review_approval",
+    "operator_approval",
+    "dry_run_preview",
+    "preflight_simulation",
+    "final_execution_authorization",
+    "live_read_only_validation",
+    "explicit_mutation_execution_mode",
+    "final_mutation_switch",
+  ];
+
+  return requiredGates.every((gate) => plan.gate_statuses.some((entry) => entry.gate === gate && entry.status === "approved"));
 }
 
 export function evaluateUnityMutationExecutionSwitch(input: {
@@ -955,6 +1020,126 @@ function createUnitySceneObjectCreationExecutionPlanPackages(
     status: "awaiting_operator_approval",
     created_at: input.requested_at,
     updated_at: input.requested_at,
+  });
+
+  return {
+    reviewPackage,
+    deliveryPackage,
+  };
+}
+
+function buildBlockedUnitySceneObjectCreationMutationResult(
+  input: UnitySceneObjectCreationMutationExecutionInput,
+  blockedReason: string,
+): UnitySceneObjectCreationMutationExecutionResult {
+  return {
+    request_id: input.adapter_request_id,
+    domain: "Unity",
+    request_type: "scene_object_creation_request",
+    mutation_type: "scene_object_creation_request",
+    execution_mode: "controlled_mutation_runtime_bridge",
+    execution_kind: "controlled_mutation_blocked",
+    review_approval_id: input.review_state.review_package_id,
+    review_approval_status: hasCompletedReview(input.review_state) ? "approved" : "missing",
+    operator_approval_id: input.review_state.operator_approval_id,
+    operator_approval_status: hasApproval(input.review_state) ? "approved" : "missing",
+    target_scene: input.target_scene.trim(),
+    requested_object_name: input.requested_object_name.trim(),
+    created_object_name: null,
+    duplicate_handling: null,
+    mutation_enabled: false,
+    executed: false,
+    scene_saved: false,
+    final_mutation_switch_required: true,
+    final_mutation_switch_enabled: false,
+    evidence_timestamp: input.requested_at,
+    rollback_hint: "Rollback is not available because the controlled Unity mutation did not execute.",
+    delivery_summary: "Controlled Unity mutation did not execute because one or more required gates were not satisfied.",
+    blocked_reason: blockedReason,
+    artifact_label: "unity_controlled_scene_mutation_result",
+    review_package: null,
+    delivery_package: null,
+    mutating: false,
+  };
+}
+
+function createUnitySceneObjectCreationMutationPackages(
+  input: UnitySceneObjectCreationMutationExecutionInput,
+  result: UnitySceneObjectCreationMutationExecutionResult,
+): {
+  reviewPackage: AutonomousReviewPackage;
+  deliveryPackage: AutonomousDeliveryPackage;
+} {
+  const packageSuffix = input.adapter_request_id;
+  const summary = result.execution_kind === "controlled_mutation_executed"
+    ? `CONTROLLED UNITY MUTATION: ${result.created_object_name ?? result.requested_object_name} created in ${result.target_scene}. EXECUTED. ROLLBACK AVAILABLE.`
+    : result.execution_kind === "controlled_mutation_idempotent"
+      ? `CONTROLLED UNITY MUTATION: ${result.created_object_name ?? result.requested_object_name} already existed in ${result.target_scene}. EXECUTED. ROLLBACK AVAILABLE.`
+      : `CONTROLLED UNITY MUTATION: ${result.requested_object_name} in ${result.target_scene} DID NOT COMPLETE. NOT EXECUTED.`;
+
+  const proofResults = [
+    `Execution kind: ${result.execution_kind}`,
+    `Mutation type: ${result.mutation_type}`,
+    `Target scene: ${result.target_scene}`,
+    `Requested object name: ${result.requested_object_name}`,
+    `Created object name: ${result.created_object_name ?? "none"}`,
+    `Mutation enabled: ${String(result.mutation_enabled)}`,
+    `Executed: ${String(result.executed)}`,
+    `Scene saved: ${String(result.scene_saved)}`,
+    `Duplicate handling: ${result.duplicate_handling ?? "none"}`,
+    `Final mutation switch required: ${String(result.final_mutation_switch_required)}`,
+    `Final mutation switch enabled: ${String(result.final_mutation_switch_enabled)}`,
+    `Evidence timestamp: ${result.evidence_timestamp}`,
+    `Rollback hint: ${result.rollback_hint}`,
+    `Delivery summary: ${result.delivery_summary}`,
+    ...(result.blocked_reason ? [`Blocked reason: ${result.blocked_reason}`] : []),
+  ];
+
+  const reviewPackage = createAutonomousReviewPackage({
+    package_id: `unity-controlled-mutation-review-${packageSuffix}`,
+    work_item_id: `unity-controlled-mutation-${packageSuffix}`,
+    chain_id: `unity-controlled-mutation-chain-${packageSuffix}`,
+    status: result.execution_kind === "controlled_mutation_executed" || result.execution_kind === "controlled_mutation_idempotent" ? "approved" : "pending",
+    summary,
+    files_changed: [],
+    tests_run: ["unity controlled scene object creation mutation"],
+    proof_results: proofResults,
+    risks: [
+      "CONTROLLED UNITY MUTATION",
+      result.executed ? "EXECUTED" : "NOT EXECUTED",
+      "ROLLBACK AVAILABLE",
+      ...(result.blocked_reason ? [result.blocked_reason] : []),
+    ],
+    recommended_decision: "approve",
+    rollback_notes: result.rollback_hint,
+    operator_actions: ["approve", "archive"],
+  });
+
+  const deliveryPackage = createAutonomousDeliveryPackage({
+    delivery_package_id: `unity-controlled-mutation-delivery-${packageSuffix}`,
+    review_package_id: reviewPackage.package_id,
+    work_item_id: reviewPackage.work_item_id,
+    chain_id: reviewPackage.chain_id,
+    branch_name: "",
+    commit_plan: [
+      "Keep this controlled Unity mutation evidence attached to the reviewed delivery lane.",
+      `Rollback requires separate future approval: remove ${result.created_object_name ?? result.requested_object_name} from ${result.target_scene}.`,
+      "Do not broaden this mutation beyond the single reviewed scene object creation request.",
+    ],
+    files_changed: [],
+    validation_results: proofResults,
+    proof_results: ["CONTROLLED UNITY MUTATION", result.executed ? "EXECUTED" : "NOT EXECUTED", "ROLLBACK AVAILABLE"],
+    risk_summary: result.executed
+      ? `Controlled Unity mutation executed for ${result.created_object_name ?? result.requested_object_name}; rollback remains separately approved.`
+      : `Controlled Unity mutation did not execute. ${result.blocked_reason ?? "Review the mutation evidence before retrying."}`,
+    rollback_plan: result.rollback_hint,
+    release_notes: summary,
+    recommended_pr_title: "",
+    recommended_pr_body: `Controlled Unity mutation handoff\n\nSummary: ${summary}\n\nNext operator action: ${result.executed ? "Review the mutation evidence and keep rollback as a separate approved follow-up action." : result.blocked_reason ?? "Hold the mutation lane until the blocker is resolved."}`,
+    operator_decision: null,
+    status: "awaiting_operator_approval",
+    created_at: result.evidence_timestamp,
+    updated_at: result.evidence_timestamp,
   });
 
   return {
@@ -1556,5 +1741,136 @@ export function buildUnitySceneObjectCreationExecutionPlan(
     ...baseResult,
     review_package: executionPlanPackages.reviewPackage,
     delivery_package: executionPlanPackages.deliveryPackage,
+  };
+}
+
+export async function executeUnitySceneObjectCreationMutation(
+  input: UnitySceneObjectCreationMutationExecutionInput,
+  options?: UnitySceneObjectCreationMutationExecutionOptions,
+): Promise<UnitySceneObjectCreationMutationExecutionResult> {
+  if (!isSceneObjectCreationOnlyPacket(input.planning_packet)) {
+    return buildBlockedUnitySceneObjectCreationMutationResult(
+      input,
+      "Only scene_object_creation_request is executable through the first controlled Unity mutation path.",
+    );
+  }
+
+  const expectedPlan = buildUnitySceneObjectCreationExecutionPlan(input);
+  if (expectedPlan.execution_kind !== "execution_plan_only") {
+    return buildBlockedUnitySceneObjectCreationMutationResult(
+      input,
+      expectedPlan.blocked_reason ?? "The controlled Unity mutation plan does not satisfy all required gates.",
+    );
+  }
+
+  if (!input.execution_plan) {
+    return buildBlockedUnitySceneObjectCreationMutationResult(
+      input,
+      "Controlled Unity mutation requires an approved execution plan artifact before mutation can run.",
+    );
+  }
+
+  if (
+    input.execution_plan.request_id !== input.adapter_request_id
+    || input.execution_plan.target_scene !== input.target_scene.trim()
+    || input.execution_plan.requested_object_name !== input.requested_object_name.trim()
+  ) {
+    return buildBlockedUnitySceneObjectCreationMutationResult(
+      input,
+      "Controlled Unity mutation execution plan does not match the reviewed request scope.",
+    );
+  }
+
+  if (input.execution_plan.execution_kind !== "execution_plan_only" || !hasAllRequiredMutationPlanGatesApproved(input.execution_plan)) {
+    return buildBlockedUnitySceneObjectCreationMutationResult(
+      input,
+      "Controlled Unity mutation execution plan is not fully approved across the required gate stack.",
+    );
+  }
+
+  if (!expectedPlan.mutation_switch_evaluation.enabled) {
+    return buildBlockedUnitySceneObjectCreationMutationResult(
+      input,
+      expectedPlan.mutation_switch_evaluation.blocked_reason ?? "Controlled Unity mutation requires a valid enabled final mutation switch.",
+    );
+  }
+
+  const mutationBridge = options?.mutation_bridge ?? createConfiguredUnityMutationRuntimeBridge();
+  const bridgeResult = await mutationBridge.executeSceneObjectCreation({
+    request_id: input.adapter_request_id,
+    requested_at: input.requested_at,
+    target_scene: input.target_scene.trim(),
+    object_name: input.requested_object_name.trim(),
+    mutation_type: "scene_object_creation_request",
+    mutation_enabled: true,
+    idempotent_on_duplicate: input.idempotent_on_duplicate ?? true,
+  });
+
+  const baseResult: UnitySceneObjectCreationMutationExecutionResult = bridgeResult.bridge_status === "bridge_ready"
+    ? {
+        request_id: input.adapter_request_id,
+        domain: "Unity",
+        request_type: "scene_object_creation_request",
+        mutation_type: "scene_object_creation_request",
+        execution_mode: "controlled_mutation_runtime_bridge",
+        execution_kind: bridgeResult.mutation_status === "mutation_idempotent" ? "controlled_mutation_idempotent" : "controlled_mutation_executed",
+        review_approval_id: input.review_state.review_package_id,
+        review_approval_status: "approved",
+        operator_approval_id: input.review_state.operator_approval_id,
+        operator_approval_status: "approved",
+        target_scene: bridgeResult.target_scene,
+        requested_object_name: input.requested_object_name.trim(),
+        created_object_name: bridgeResult.created_object_name,
+        duplicate_handling: bridgeResult.duplicate_handling,
+        mutation_enabled: true,
+        executed: bridgeResult.mutation_status === "mutation_executed",
+        scene_saved: bridgeResult.scene_saved,
+        final_mutation_switch_required: true,
+        final_mutation_switch_enabled: true,
+        evidence_timestamp: bridgeResult.evidence_timestamp,
+        rollback_hint: bridgeResult.rollback_hint,
+        delivery_summary: bridgeResult.summary,
+        blocked_reason: null,
+        artifact_label: "unity_controlled_scene_mutation_result",
+        review_package: null,
+        delivery_package: null,
+        mutating: bridgeResult.mutation_status === "mutation_executed",
+      }
+    : {
+        request_id: input.adapter_request_id,
+        domain: "Unity",
+        request_type: "scene_object_creation_request",
+        mutation_type: "scene_object_creation_request",
+        execution_mode: "controlled_mutation_runtime_bridge",
+        execution_kind: bridgeResult.bridge_status === "bridge_unavailable" ? "controlled_mutation_unavailable" : "controlled_mutation_failed",
+        review_approval_id: input.review_state.review_package_id,
+        review_approval_status: "approved",
+        operator_approval_id: input.review_state.operator_approval_id,
+        operator_approval_status: "approved",
+        target_scene: input.target_scene.trim(),
+        requested_object_name: input.requested_object_name.trim(),
+        created_object_name: null,
+        duplicate_handling: null,
+        mutation_enabled: true,
+        executed: false,
+        scene_saved: false,
+        final_mutation_switch_required: true,
+        final_mutation_switch_enabled: true,
+        evidence_timestamp: bridgeResult.evidence_timestamp,
+        rollback_hint: "Rollback is not available because the controlled Unity mutation did not complete.",
+        delivery_summary: bridgeResult.reason,
+        blocked_reason: bridgeResult.reason,
+        artifact_label: "unity_controlled_scene_mutation_result",
+        review_package: null,
+        delivery_package: null,
+        mutating: false,
+      };
+
+  const mutationPackages = createUnitySceneObjectCreationMutationPackages(input, baseResult);
+
+  return {
+    ...baseResult,
+    review_package: mutationPackages.reviewPackage,
+    delivery_package: mutationPackages.deliveryPackage,
   };
 }

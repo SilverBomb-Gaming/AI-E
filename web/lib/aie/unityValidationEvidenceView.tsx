@@ -2,7 +2,7 @@ import React from "react";
 
 import type { AutonomousDeliveryPackage, AutonomousReviewPackage } from "./autonomousWorkPlanning";
 
-export type UnityValidationEvidenceKind = "adapter_preview" | "real_bridge_unavailable" | "real_bridge_read_only" | "scene_object_creation_preview" | "mutation_execution_preflight" | "mutation_execution_plan";
+export type UnityValidationEvidenceKind = "adapter_preview" | "real_bridge_unavailable" | "real_bridge_read_only" | "scene_object_creation_preview" | "mutation_execution_preflight" | "mutation_execution_plan" | "controlled_mutation_result";
 
 export type UnityValidationEvidence = {
   kind: UnityValidationEvidenceKind;
@@ -17,6 +17,11 @@ export type UnityValidationEvidence = {
   demoPreview: boolean;
   requestedObjectName: string | null;
   targetScene: string | null;
+  createdObjectName: string | null;
+  mutationType: string | null;
+  sceneSaved: boolean | null;
+  rollbackHint: string | null;
+  duplicateHandling: string | null;
   intendedComponents: string[];
   intendedTransformPosition: string | null;
   intendedTransformRotation: string | null;
@@ -179,6 +184,21 @@ function parseSummary(summary: string): Partial<UnityValidationEvidence> {
     };
   }
 
+  const controlledMutationMatch = summary.match(/CONTROLLED UNITY MUTATION: (.+?) (?:created|already existed) in (.+?)\. EXECUTED\. ROLLBACK AVAILABLE\./i);
+  if (controlledMutationMatch) {
+    return {
+      kind: "controlled_mutation_result",
+      bridgeStatus: "controlled_mutation",
+      sceneValidationStatus: "not_checked",
+      createdObjectName: controlledMutationMatch[1]?.trim() ?? null,
+      targetScene: controlledMutationMatch[2]?.trim() ?? null,
+      mutationType: "scene_object_creation_request",
+      mutationEnabled: true,
+      executed: true,
+      sceneSaved: true,
+    };
+  }
+
   return {};
 }
 
@@ -198,6 +218,10 @@ function inferKind(lines: string[], summary: string): UnityValidationEvidenceKin
 
   if (executionKind === "execution_plan_only" || executionKind === "execution_plan_blocked") {
     return "mutation_execution_plan";
+  }
+
+  if (/controlled_mutation_(executed|idempotent|blocked|failed|unavailable)/i.test(executionKind ?? "")) {
+    return "controlled_mutation_result";
   }
 
   if (/unity read-only bridge -> unavailable/i.test(lines.join("\n"))) {
@@ -225,7 +249,7 @@ function isUnityEvidencePackage(workItemId: string, lines: string[], summary: st
   }
 
   const text = [summary, ...lines].join("\n");
-  return /unity read-only validation probe|unity validation preview|unity scene object creation preview|preflight simulation|execution plan only|mutation disabled|no unity mutation performed|bridge status:|requested object name:|dry run:/i.test(text);
+  return /unity read-only validation probe|unity validation preview|unity scene object creation preview|preflight simulation|execution plan only|controlled unity mutation|mutation disabled|no unity mutation performed|bridge status:|requested object name:|dry run:/i.test(text);
 }
 
 function buildEvidence(workItemId: string, summary: string, lines: string[]): UnityValidationEvidence | null {
@@ -277,6 +301,11 @@ function buildEvidence(workItemId: string, summary: string, lines: string[]): Un
     demoPreview: /demo preview/i.test([summary, ...lines].join("\n")),
     requestedObjectName,
     targetScene,
+    createdObjectName: parseLabeledValue(lines, "Created object name") ?? summaryValues.createdObjectName ?? null,
+    mutationType: parseLabeledValue(lines, "Mutation type") ?? summaryValues.mutationType ?? null,
+    sceneSaved: parseBoolean(parseLabeledValue(lines, "Scene saved")) ?? summaryValues.sceneSaved ?? null,
+    rollbackHint: parseLabeledValue(lines, "Rollback hint") ?? summaryValues.rollbackHint ?? null,
+    duplicateHandling: parseLabeledValue(lines, "Duplicate handling") ?? summaryValues.duplicateHandling ?? null,
     intendedComponents: parseList(parseLabeledValue(lines, "Intended components")),
     intendedTransformPosition: parseLabeledValue(lines, "Intended transform position"),
     intendedTransformRotation: parseLabeledValue(lines, "Intended transform rotation"),
@@ -330,6 +359,8 @@ function kindLabel(kind: UnityValidationEvidenceKind): string {
       return "Mutation Execution Preflight";
     case "mutation_execution_plan":
       return "Mutation Execution Plan";
+    case "controlled_mutation_result":
+      return "Controlled Unity Mutation";
     case "scene_object_creation_preview":
       return "Scene Object Creation Preview";
     case "adapter_preview":
@@ -401,6 +432,19 @@ export function UnityValidationEvidencePanel({ evidence }: { evidence: UnityVali
             </span>
             <span className="inline-flex rounded-full border border-ink/10 bg-white/80 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-ink/75">
               NOT EXECUTED
+            </span>
+          </>
+        ) : null}
+        {evidence.kind === "controlled_mutation_result" ? (
+          <>
+            <span className="inline-flex rounded-full border border-coral/20 bg-coral/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-ember">
+              CONTROLLED UNITY MUTATION
+            </span>
+            <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-700">
+              EXECUTED
+            </span>
+            <span className="inline-flex rounded-full border border-ink/10 bg-white/80 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-ink/75">
+              ROLLBACK AVAILABLE
             </span>
           </>
         ) : null}
@@ -508,6 +552,24 @@ export function UnityValidationEvidencePanel({ evidence }: { evidence: UnityVali
                 `expiration=${evidence.finalMutationSwitchExpirationStatus ?? "unknown"}`,
               ].join(" | ")}
             </p>
+          </div>
+        </>
+      ) : null}
+      {evidence.kind === "controlled_mutation_result" ? (
+        <>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+            <p className="text-xs leading-6 text-slate">Mutation type: {evidence.mutationType ?? "unknown"}</p>
+            <p className="text-xs leading-6 text-slate">Target scene: {evidence.targetScene ?? "none"}</p>
+            <p className="text-xs leading-6 text-slate">Requested object name: {evidence.requestedObjectName ?? "none"}</p>
+            <p className="text-xs leading-6 text-slate">Created object name: {evidence.createdObjectName ?? "none"}</p>
+            <p className="text-xs leading-6 text-slate">Mutation enabled: {String(evidence.mutationEnabled ?? false)}</p>
+            <p className="text-xs leading-6 text-slate">Executed: {String(evidence.executed ?? false)}</p>
+            <p className="text-xs leading-6 text-slate">Scene saved: {String(evidence.sceneSaved ?? false)}</p>
+            <p className="text-xs leading-6 text-slate">Duplicate handling: {evidence.duplicateHandling ?? "none"}</p>
+          </div>
+          <div className="mt-2">
+            <p className="text-xs uppercase tracking-[0.18em] text-slate">Rollback hint</p>
+            <p className="mt-1 text-xs leading-6 text-slate">{evidence.rollbackHint ?? "none"}</p>
           </div>
         </>
       ) : null}

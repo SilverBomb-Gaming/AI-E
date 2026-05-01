@@ -6,6 +6,7 @@ import {
   buildUnitySceneObjectCreationExecutionPlan,
   evaluateUnityMutationExecutionSwitch,
   evaluateUnityMutationExecutionAuthorization,
+  executeUnitySceneObjectCreationMutation,
   previewUnitySceneObjectCreation,
   simulateUnityMutationExecutionPreflight,
 } from "./unityProductionAdapter";
@@ -114,6 +115,20 @@ function createExecutionPlanInput(
     },
     live_validation_result: createLiveValidationResult(),
     mutation_execution_mode_enabled: true,
+    ...overrides,
+  };
+}
+
+function createMutationExecutionInput(
+  overrides: Partial<Parameters<typeof executeUnitySceneObjectCreationMutation>[0]> = {},
+) {
+  const planInput = createExecutionPlanInput(overrides);
+  const execution_plan = overrides.execution_plan ?? buildUnitySceneObjectCreationExecutionPlan(planInput);
+
+  return {
+    ...planInput,
+    execution_plan,
+    idempotent_on_duplicate: true,
     ...overrides,
   };
 }
@@ -677,4 +692,144 @@ test("valid gate stack creates a disabled Unity mutation execution plan without 
   assert.match(result.review_package?.summary ?? "", /MUTATION DISABLED/i);
   assert.match(result.delivery_package?.release_notes ?? "", /NOT EXECUTED/i);
   assert.ok(result.delivery_package?.validation_results.some((entry) => /Final mutation switch evaluation status: FINAL MUTATION SWITCH ENABLED/i.test(entry)));
+});
+
+test("controlled mutation blocks when the approved execution plan is missing", async () => {
+  let callCount = 0;
+  const result = await executeUnitySceneObjectCreationMutation(createMutationExecutionInput({
+    execution_plan: null,
+  }), {
+    mutation_bridge: {
+      async executeSceneObjectCreation() {
+        callCount += 1;
+        throw new Error("should not execute");
+      },
+    },
+  });
+
+  assert.equal(result.execution_kind, "controlled_mutation_blocked");
+  assert.equal(result.executed, false);
+  assert.equal(callCount, 0);
+  assert.match(result.blocked_reason ?? "", /requires an approved execution plan artifact/i);
+});
+
+test("controlled mutation blocks when a required gate is missing", async () => {
+  let callCount = 0;
+  const result = await executeUnitySceneObjectCreationMutation(createMutationExecutionInput({
+    live_validation_result: null,
+  }), {
+    mutation_bridge: {
+      async executeSceneObjectCreation() {
+        callCount += 1;
+        throw new Error("should not execute");
+      },
+    },
+  });
+
+  assert.equal(result.execution_kind, "controlled_mutation_blocked");
+  assert.equal(result.executed, false);
+  assert.equal(callCount, 0);
+  assert.match(result.blocked_reason ?? "", /Live read-only Unity validation gate is missing/i);
+});
+
+test("controlled mutation blocks when the final mutation switch is disabled", async () => {
+  let callCount = 0;
+  const result = await executeUnitySceneObjectCreationMutation(createMutationExecutionInput({
+    mutation_switch: {
+      mutation_switch_id: "mutation-switch-disabled",
+      switch_enabled: false,
+      enabled_by_operator: true,
+      enabled_at: "2026-04-30T18:06:00.000Z",
+      target_request_id: "unity-mutation-preview-1",
+      allowed_mutation_type: "scene_object_creation_request",
+      expires_at: "2026-04-30T19:00:00.000Z",
+    },
+  }), {
+    mutation_bridge: {
+      async executeSceneObjectCreation() {
+        callCount += 1;
+        throw new Error("should not execute");
+      },
+    },
+  });
+
+  assert.equal(result.execution_kind, "controlled_mutation_blocked");
+  assert.equal(result.executed, false);
+  assert.equal(callCount, 0);
+  assert.match(result.blocked_reason ?? "", /remains disabled/i);
+});
+
+test("valid full gate stack executes the controlled mutation bridge and persists evidence", async () => {
+  let callCount = 0;
+  const result = await executeUnitySceneObjectCreationMutation(createMutationExecutionInput(), {
+    mutation_bridge: {
+      async executeSceneObjectCreation(input) {
+        callCount += 1;
+        assert.equal(input.object_name, "CheckpointAnchor");
+        assert.equal(input.target_scene, "EnemyAIDemo");
+        assert.equal(input.mutation_enabled, true);
+        return {
+          bridge_status: "bridge_ready" as const,
+          source: "command_probe" as const,
+          mutation_status: "mutation_executed" as const,
+          mutation_type: "scene_object_creation_request" as const,
+          target_scene: "EnemyAIDemo",
+          object_name: "CheckpointAnchor",
+          created_object_name: "CheckpointAnchor",
+          scene_saved: true,
+          duplicate_handling: "created" as const,
+          evidence_timestamp: "2026-04-30T18:11:00.000Z",
+          raw_evidence_summary: "Controlled Unity mutation created CheckpointAnchor in EnemyAIDemo and saved the scene.",
+          summary: "Controlled Unity mutation created object CheckpointAnchor in EnemyAIDemo with scene_saved true.",
+          rollback_hint: "Rollback requires separate approval: remove CheckpointAnchor from EnemyAIDemo.",
+          recommended_next_operator_action: "Review the controlled Unity mutation evidence and keep rollback as a separately approved follow-up action.",
+        };
+      },
+    },
+  });
+
+  assert.equal(callCount, 1);
+  assert.equal(result.execution_kind, "controlled_mutation_executed");
+  assert.equal(result.executed, true);
+  assert.equal(result.mutation_enabled, true);
+  assert.equal(result.created_object_name, "CheckpointAnchor");
+  assert.equal(result.scene_saved, true);
+  assert.equal(result.final_mutation_switch_enabled, true);
+  assert.equal(result.mutating, true);
+  assert.ok(result.review_package);
+  assert.ok(result.delivery_package);
+  assert.match(result.review_package?.summary ?? "", /CONTROLLED UNITY MUTATION/i);
+  assert.match(result.delivery_package?.release_notes ?? "", /ROLLBACK AVAILABLE/i);
+  assert.ok(result.delivery_package?.validation_results.some((entry) => /Scene saved: true/i.test(entry)));
+});
+
+test("controlled mutation handles duplicate objects as idempotent success", async () => {
+  const result = await executeUnitySceneObjectCreationMutation(createMutationExecutionInput(), {
+    mutation_bridge: {
+      async executeSceneObjectCreation() {
+        return {
+          bridge_status: "bridge_ready" as const,
+          source: "command_probe" as const,
+          mutation_status: "mutation_idempotent" as const,
+          mutation_type: "scene_object_creation_request" as const,
+          target_scene: "EnemyAIDemo",
+          object_name: "CheckpointAnchor",
+          created_object_name: "CheckpointAnchor",
+          scene_saved: false,
+          duplicate_handling: "already_exists_idempotent" as const,
+          evidence_timestamp: "2026-04-30T18:12:00.000Z",
+          raw_evidence_summary: "Controlled Unity mutation confirmed the existing object CheckpointAnchor in EnemyAIDemo; no additional scene write was required.",
+          summary: "Controlled Unity mutation confirmed existing object CheckpointAnchor in EnemyAIDemo with scene_saved false.",
+          rollback_hint: "Rollback requires separate approval: remove CheckpointAnchor from EnemyAIDemo only if it was not expected.",
+          recommended_next_operator_action: "Review the controlled Unity mutation evidence and keep rollback as a separately approved follow-up action.",
+        };
+      },
+    },
+  });
+
+  assert.equal(result.execution_kind, "controlled_mutation_idempotent");
+  assert.equal(result.executed, false);
+  assert.equal(result.scene_saved, false);
+  assert.equal(result.duplicate_handling, "already_exists_idempotent");
+  assert.equal(result.created_object_name, "CheckpointAnchor");
 });
