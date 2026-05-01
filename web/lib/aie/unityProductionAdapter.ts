@@ -135,6 +135,75 @@ export type UnityMutationExecutionPreflightResult = {
   mutating: false;
 };
 
+export type UnityMutationExecutionPlanGate =
+  | "review_approval"
+  | "operator_approval"
+  | "dry_run_preview"
+  | "preflight_simulation"
+  | "final_execution_authorization"
+  | "live_read_only_validation"
+  | "explicit_mutation_execution_mode";
+
+export type UnityMutationExecutionPlanGateStatus = "approved" | "missing" | "invalid" | "disabled";
+
+export type UnityMutationExecutionPlanGateEvaluation = {
+  gate: UnityMutationExecutionPlanGate;
+  status: UnityMutationExecutionPlanGateStatus;
+  detail: string;
+};
+
+export type UnitySceneObjectCreationExecutionPlanInput = UnitySceneObjectCreationPreviewInput & {
+  preview_result: UnitySceneObjectCreationPreviewResult | null;
+  preflight_result: UnityMutationExecutionPreflightResult | null;
+  authorization: UnityMutationExecutionAuthorization | null;
+  live_validation_result: Pick<
+    UnityValidationExecutionResult,
+    | "request_id"
+    | "execution_kind"
+    | "bridge_status"
+    | "scene_validation_status"
+    | "checked_scene_name"
+    | "missing_script_count"
+    | "console_error_count"
+    | "object_count"
+    | "executed"
+  > | null;
+  mutation_execution_mode_enabled: boolean;
+  evaluated_at?: string;
+};
+
+export type UnitySceneObjectCreationExecutionPlanResult = {
+  request_id: string;
+  domain: "Unity";
+  request_type: "scene_object_creation_request";
+  execution_mode: "disabled_plan_only";
+  execution_kind: "execution_plan_only" | "execution_plan_blocked";
+  review_approval_id: string | null;
+  review_approval_status: "missing" | "approved";
+  operator_approval_id: string | null;
+  operator_approval_status: "missing" | "approved";
+  target_scene: string;
+  requested_object_name: string;
+  intended_components: string[];
+  intended_transform: UnitySceneObjectCreationPreviewTransform;
+  required_gates: UnityMutationExecutionPlanGate[];
+  gate_statuses: UnityMutationExecutionPlanGateEvaluation[];
+  dry_run_preview_status: "valid" | "missing" | "invalid";
+  preflight_status: "valid" | "missing" | "invalid";
+  authorization_evaluation: UnityMutationExecutionAuthorizationEvaluation;
+  live_validation_status: "valid" | "missing" | "invalid";
+  live_validation_summary: string;
+  explicit_mutation_execution_mode_status: "enabled" | "disabled";
+  blocked_reason: string | null;
+  recommended_next_operator_action: string;
+  mutation_enabled: false;
+  executed: false;
+  artifact_label: "unity_mutation_execution_plan";
+  review_package: AutonomousReviewPackage | null;
+  delivery_package: AutonomousDeliveryPackage | null;
+  mutating: false;
+};
+
 export type UnitySceneObjectCreationPreviewResult = {
   request_id: string;
   domain: "Unity";
@@ -274,6 +343,102 @@ function formatAuthorizationEvaluationStatus(
   evaluation: UnityMutationExecutionAuthorizationEvaluation,
 ): string {
   return evaluation.authorized ? "FINAL EXECUTION AUTHORIZATION VALID" : "FINAL EXECUTION AUTHORIZATION INVALID";
+}
+
+function evaluateExecutionPlanDryRunPreviewStatus(
+  previewResult: UnitySceneObjectCreationPreviewResult | null,
+  requestId: string,
+): {
+  status: UnitySceneObjectCreationExecutionPlanResult["dry_run_preview_status"];
+  detail: string;
+} {
+  if (!previewResult) {
+    return {
+      status: "missing",
+      detail: "Dry-run preview gate is missing for this Unity mutation request.",
+    };
+  }
+
+  if (
+    previewResult.request_id !== requestId
+    || previewResult.execution_kind !== "dry_run_preview"
+    || previewResult.executed
+    || !previewResult.dry_run
+  ) {
+    return {
+      status: "invalid",
+      detail: "Dry-run preview gate is invalid for this Unity mutation request.",
+    };
+  }
+
+  return {
+    status: "valid",
+    detail: "Dry-run preview gate is present and matches the reviewed Unity mutation request.",
+  };
+}
+
+function evaluateExecutionPlanPreflightStatus(
+  preflightResult: UnityMutationExecutionPreflightResult | null,
+  requestId: string,
+): {
+  status: UnitySceneObjectCreationExecutionPlanResult["preflight_status"];
+  detail: string;
+} {
+  if (!preflightResult) {
+    return {
+      status: "missing",
+      detail: "Preflight simulation gate is missing for this Unity mutation request.",
+    };
+  }
+
+  if (
+    preflightResult.request_id !== requestId
+    || preflightResult.execution_kind !== "preflight_simulation"
+    || preflightResult.preflight_state !== "simulation"
+    || preflightResult.executed
+  ) {
+    return {
+      status: "invalid",
+      detail: "Preflight simulation gate is invalid for this Unity mutation request.",
+    };
+  }
+
+  return {
+    status: "valid",
+    detail: "Preflight simulation gate is present and matches the reviewed Unity mutation request.",
+  };
+}
+
+function evaluateExecutionPlanLiveValidationStatus(
+  liveValidationResult: UnitySceneObjectCreationExecutionPlanInput["live_validation_result"],
+  targetScene: string,
+): {
+  status: UnitySceneObjectCreationExecutionPlanResult["live_validation_status"];
+  detail: string;
+} {
+  if (!liveValidationResult) {
+    return {
+      status: "missing",
+      detail: "Live read-only Unity validation gate is missing for this mutation plan.",
+    };
+  }
+
+  if (
+    liveValidationResult.execution_kind !== "real_bridge_read_only"
+    || liveValidationResult.bridge_status !== "bridge_ready"
+    || !liveValidationResult.executed
+    || (targetScene && liveValidationResult.checked_scene_name !== targetScene)
+  ) {
+    return {
+      status: "invalid",
+      detail: "Live read-only Unity validation gate is invalid for this mutation plan.",
+    };
+  }
+
+  return {
+    status: "valid",
+    detail: `Live read-only Unity validation gate is present for ${liveValidationResult.checked_scene_name ?? "the reviewed scene"}.`,
+  };
 }
 
 function buildUnityMutationExecutionPreflightResult(
@@ -440,6 +605,200 @@ function createUnityMutationExecutionPreflightPackages(
     release_notes: summary,
     recommended_pr_title: "",
     recommended_pr_body: `Unity mutation execution preflight handoff\n\nSummary: ${summary}\n\nNext operator action: ${result.recommended_operator_action}`,
+    operator_decision: null,
+    status: "awaiting_operator_approval",
+    created_at: input.requested_at,
+    updated_at: input.requested_at,
+  });
+
+  return {
+    reviewPackage,
+    deliveryPackage,
+  };
+}
+
+function buildUnitySceneObjectCreationExecutionPlanResult(
+  input: UnitySceneObjectCreationExecutionPlanInput,
+  authorizationEvaluation: UnityMutationExecutionAuthorizationEvaluation,
+): UnitySceneObjectCreationExecutionPlanResult {
+  const reviewApproved = hasCompletedReview(input.review_state);
+  const operatorApproved = hasApproval(input.review_state);
+  const targetScene = input.target_scene.trim();
+  const requestedObjectName = input.requested_object_name.trim();
+  const intendedComponents = normalizePreviewComponents(input.intended_components);
+  const dryRunPreviewStatus = evaluateExecutionPlanDryRunPreviewStatus(input.preview_result, input.adapter_request_id);
+  const preflightStatus = evaluateExecutionPlanPreflightStatus(input.preflight_result, input.adapter_request_id);
+  const liveValidationStatus = evaluateExecutionPlanLiveValidationStatus(input.live_validation_result, targetScene);
+  const explicitMutationExecutionModeStatus = input.mutation_execution_mode_enabled ? "enabled" : "disabled";
+  const liveValidationSummary = input.live_validation_result
+    ? `Scene ${input.live_validation_result.checked_scene_name ?? "unknown"} reported ${input.live_validation_result.scene_validation_status} with missing scripts ${input.live_validation_result.missing_script_count ?? "unknown"}, console errors ${input.live_validation_result.console_error_count ?? "unknown"}, and object count ${input.live_validation_result.object_count ?? "unknown"}.`
+    : "Live read-only validation has not been provided for this execution plan.";
+
+  const gateStatuses: UnityMutationExecutionPlanGateEvaluation[] = [
+    {
+      gate: "review_approval",
+      status: reviewApproved ? "approved" : "missing",
+      detail: reviewApproved
+        ? "Review approval gate is recorded for this Unity mutation request."
+        : "Unity mutation execution plan is blocked until review approval is recorded.",
+    },
+    {
+      gate: "operator_approval",
+      status: operatorApproved ? "approved" : "missing",
+      detail: operatorApproved
+        ? "Operator approval gate is recorded for this Unity mutation request."
+        : "Unity mutation execution plan is blocked until operator approval is recorded.",
+    },
+    {
+      gate: "dry_run_preview",
+      status: dryRunPreviewStatus.status === "valid" ? "approved" : dryRunPreviewStatus.status,
+      detail: dryRunPreviewStatus.detail,
+    },
+    {
+      gate: "preflight_simulation",
+      status: preflightStatus.status === "valid" ? "approved" : preflightStatus.status,
+      detail: preflightStatus.detail,
+    },
+    {
+      gate: "final_execution_authorization",
+      status: authorizationEvaluation.authorized ? "approved" : input.authorization ? "invalid" : "missing",
+      detail: authorizationEvaluation.authorized
+        ? "Final execution authorization gate is present and valid for this Unity mutation request."
+        : authorizationEvaluation.blocked_reason ?? "Final execution authorization gate is missing for this Unity mutation request.",
+    },
+    {
+      gate: "live_read_only_validation",
+      status: liveValidationStatus.status === "valid" ? "approved" : liveValidationStatus.status,
+      detail: liveValidationStatus.detail,
+    },
+    {
+      gate: "explicit_mutation_execution_mode",
+      status: input.mutation_execution_mode_enabled ? "approved" : "disabled",
+      detail: input.mutation_execution_mode_enabled
+        ? "Explicit mutation execution mode gate is marked enabled, but this layer still returns plan-only output."
+        : "Explicit mutation execution mode gate remains disabled, so the plan cannot be used for live mutation execution.",
+    },
+  ];
+
+  const blockedReasons = gateStatuses
+    .filter((gate) => gate.status !== "approved")
+    .map((gate) => gate.detail);
+
+  return {
+    request_id: input.adapter_request_id,
+    domain: "Unity",
+    request_type: "scene_object_creation_request",
+    execution_mode: "disabled_plan_only",
+    execution_kind: blockedReasons.length > 0 ? "execution_plan_blocked" : "execution_plan_only",
+    review_approval_id: input.review_state.review_package_id,
+    review_approval_status: reviewApproved ? "approved" : "missing",
+    operator_approval_id: input.review_state.operator_approval_id,
+    operator_approval_status: operatorApproved ? "approved" : "missing",
+    target_scene: targetScene,
+    requested_object_name: requestedObjectName,
+    intended_components: intendedComponents,
+    intended_transform: input.intended_transform,
+    required_gates: [
+      "review_approval",
+      "operator_approval",
+      "dry_run_preview",
+      "preflight_simulation",
+      "final_execution_authorization",
+      "live_read_only_validation",
+      "explicit_mutation_execution_mode",
+    ],
+    gate_statuses: gateStatuses,
+    dry_run_preview_status: dryRunPreviewStatus.status,
+    preflight_status: preflightStatus.status,
+    authorization_evaluation: authorizationEvaluation,
+    live_validation_status: liveValidationStatus.status,
+    live_validation_summary: liveValidationSummary,
+    explicit_mutation_execution_mode_status: explicitMutationExecutionModeStatus,
+    blocked_reason: blockedReasons[0] ?? null,
+    recommended_next_operator_action: blockedReasons.length > 0
+      ? blockedReasons[0]
+      : "EXECUTION PLAN ONLY. Keep mutation disabled and do not execute this plan until a later reviewed Unity mutation step explicitly enables execution.",
+    mutation_enabled: false,
+    executed: false,
+    artifact_label: "unity_mutation_execution_plan",
+    review_package: null,
+    delivery_package: null,
+    mutating: false,
+  };
+}
+
+function createUnitySceneObjectCreationExecutionPlanPackages(
+  input: UnitySceneObjectCreationExecutionPlanInput,
+  result: UnitySceneObjectCreationExecutionPlanResult,
+): {
+  reviewPackage: AutonomousReviewPackage;
+  deliveryPackage: AutonomousDeliveryPackage;
+} {
+  const packageSuffix = input.adapter_request_id;
+  const summary = `EXECUTION PLAN ONLY: Controlled Unity scene object creation plan for ${result.requested_object_name || "unnamed_object"} in ${result.target_scene || "unknown_scene"}. MUTATION DISABLED. NOT EXECUTED.`;
+  const proofResults = [
+    `Execution kind: ${result.execution_kind}`,
+    `Execution mode: ${result.execution_mode}`,
+    `Requested object name: ${result.requested_object_name || "none"}`,
+    `Target scene: ${result.target_scene || "none"}`,
+    `Intended components: ${result.intended_components.length > 0 ? result.intended_components.join(", ") : "none"}`,
+    `Intended transform position: ${formatVector3(result.intended_transform.position)}`,
+    `Intended transform rotation: ${formatVector3(result.intended_transform.rotation_euler)}`,
+    `Intended transform scale: ${formatVector3(result.intended_transform.scale)}`,
+    `Dry-run preview status: ${result.dry_run_preview_status}`,
+    `Preflight status: ${result.preflight_status}`,
+    `Authorization evaluation status: ${formatAuthorizationEvaluationStatus(result.authorization_evaluation)}`,
+    `Live validation status: ${result.live_validation_status}`,
+    `Live validation summary: ${result.live_validation_summary}`,
+    `Explicit mutation execution mode status: ${result.explicit_mutation_execution_mode_status}`,
+    `Mutation enabled: ${String(result.mutation_enabled)}`,
+    `Executed: ${String(result.executed)}`,
+    ...result.required_gates.map((gate) => `Required gate: ${gate}`),
+    ...result.gate_statuses.map((gate) => `Gate status: ${gate.gate}=${gate.status} (${gate.detail})`),
+    `Recommended next operator action: ${result.recommended_next_operator_action}`,
+    ...(result.blocked_reason ? [`Blocked reason: ${result.blocked_reason}`] : []),
+  ];
+
+  const reviewPackage = createAutonomousReviewPackage({
+    package_id: `unity-mutation-execution-plan-review-${packageSuffix}`,
+    work_item_id: `unity-mutation-execution-plan-${packageSuffix}`,
+    chain_id: `unity-mutation-execution-plan-chain-${packageSuffix}`,
+    status: result.execution_kind === "execution_plan_only" ? "approved" : "pending",
+    summary,
+    files_changed: [],
+    tests_run: ["unity mutation execution plan gate stack"],
+    proof_results: proofResults,
+    risks: [
+      "EXECUTION PLAN ONLY",
+      "MUTATION DISABLED",
+      "NOT EXECUTED",
+      ...result.gate_statuses.filter((gate) => gate.status !== "approved").map((gate) => gate.detail),
+      "No Unity mutation has been performed.",
+    ],
+    recommended_decision: "approve",
+    rollback_notes: "Plan only; no Unity mutation occurred and no rollback is required.",
+    operator_actions: ["approve", "archive"],
+  });
+
+  const deliveryPackage = createAutonomousDeliveryPackage({
+    delivery_package_id: `unity-mutation-execution-plan-delivery-${packageSuffix}`,
+    review_package_id: reviewPackage.package_id,
+    work_item_id: reviewPackage.work_item_id,
+    chain_id: reviewPackage.chain_id,
+    branch_name: "",
+    commit_plan: [
+      "Keep this Unity mutation execution plan attached to the reviewed delivery lane.",
+      "EXECUTION PLAN ONLY: do not write scenes, create GameObjects, spawn prefabs, or import assets from this package.",
+      "Do not enable a live Unity mutation executor from this package.",
+    ],
+    files_changed: [],
+    validation_results: proofResults,
+    proof_results: [result.execution_kind, "EXECUTION PLAN ONLY", "MUTATION DISABLED", "NOT EXECUTED"],
+    risk_summary: "Execution plan only. Mutation remains disabled and no Unity mutation has been performed.",
+    rollback_plan: "Discard the execution plan package if it is no longer needed.",
+    release_notes: summary,
+    recommended_pr_title: "",
+    recommended_pr_body: `Unity mutation execution plan handoff\n\nSummary: ${summary}\n\nNext operator action: ${result.recommended_next_operator_action}`,
     operator_decision: null,
     status: "awaiting_operator_approval",
     created_at: input.requested_at,
@@ -1020,5 +1379,30 @@ export function simulateUnityMutationExecutionPreflight(
     ...baseResult,
     review_package: preflightPackages.reviewPackage,
     delivery_package: preflightPackages.deliveryPackage,
+  };
+}
+
+export function buildUnitySceneObjectCreationExecutionPlan(
+  input: UnitySceneObjectCreationExecutionPlanInput,
+): UnitySceneObjectCreationExecutionPlanResult {
+  const authorizationEvaluation = evaluateUnityMutationExecutionAuthorization({
+    preview_result: input.preview_result ?? {
+      request_id: input.adapter_request_id,
+      request_type: "scene_object_creation_request",
+      final_execution_required: true,
+      final_execution_authorized: false,
+      executed: false,
+    },
+    authorization: input.authorization,
+    evaluated_at: input.evaluated_at ?? input.requested_at,
+  });
+
+  const baseResult = buildUnitySceneObjectCreationExecutionPlanResult(input, authorizationEvaluation);
+  const executionPlanPackages = createUnitySceneObjectCreationExecutionPlanPackages(input, baseResult);
+
+  return {
+    ...baseResult,
+    review_package: executionPlanPackages.reviewPackage,
+    delivery_package: executionPlanPackages.deliveryPackage,
   };
 }

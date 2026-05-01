@@ -263,3 +263,77 @@ test("mutation preflight evidence renders simulation-only operator details", () 
   assert.match(markup, /Detected risks/);
   assert.doesNotMatch(markup, /<button/i);
 });
+
+test("mutation execution plan evidence renders plan-only operator details", () => {
+  const reviewPackage = createAutonomousReviewPackage({
+    package_id: "unity-mutation-execution-plan-review-1",
+    work_item_id: "unity-mutation-execution-plan-1",
+    chain_id: "unity-mutation-execution-plan-chain-1",
+    status: "approved",
+    summary: "EXECUTION PLAN ONLY: Controlled Unity scene object creation plan for CheckpointAnchor in EnemyAIDemo. MUTATION DISABLED. NOT EXECUTED.",
+    files_changed: [],
+    tests_run: ["unity mutation execution plan gate stack"],
+    proof_results: [
+      "Execution kind: execution_plan_only",
+      "Execution mode: disabled_plan_only",
+      "Requested object name: CheckpointAnchor",
+      "Target scene: EnemyAIDemo",
+      "Intended components: Transform, BoxCollider",
+      "Intended transform position: 4, 1, 0",
+      "Intended transform rotation: 0, 0, 0",
+      "Intended transform scale: 1, 1, 1",
+      "Dry-run preview status: valid",
+      "Preflight status: valid",
+      "Authorization evaluation status: FINAL EXECUTION AUTHORIZATION VALID",
+      "Live validation status: valid",
+      "Live validation summary: Scene EnemyAIDemo reported checked_clean with missing scripts 0, console errors 0, and object count 13.",
+      "Explicit mutation execution mode status: enabled",
+      "Mutation enabled: false",
+      "Executed: false",
+      "Required gate: review_approval",
+      "Required gate: operator_approval",
+      "Required gate: dry_run_preview",
+      "Required gate: preflight_simulation",
+      "Required gate: final_execution_authorization",
+      "Required gate: live_read_only_validation",
+      "Required gate: explicit_mutation_execution_mode",
+      "Gate status: review_approval=approved (Review approval gate is recorded for this Unity mutation request.)",
+      "Gate status: operator_approval=approved (Operator approval gate is recorded for this Unity mutation request.)",
+      "Gate status: dry_run_preview=approved (Dry-run preview gate is present and matches the reviewed Unity mutation request.)",
+      "Gate status: preflight_simulation=approved (Preflight simulation gate is present and matches the reviewed Unity mutation request.)",
+      "Gate status: final_execution_authorization=approved (Final execution authorization gate is present and valid for this Unity mutation request.)",
+      "Gate status: live_read_only_validation=approved (Live read-only Unity validation gate is present for EnemyAIDemo.)",
+      "Gate status: explicit_mutation_execution_mode=approved (Explicit mutation execution mode gate is marked enabled, but this layer still returns plan-only output.)",
+      "Recommended next operator action: EXECUTION PLAN ONLY. Keep mutation disabled and do not execute this plan until a later reviewed Unity mutation step explicitly enables execution.",
+    ],
+    risks: ["EXECUTION PLAN ONLY", "MUTATION DISABLED", "NOT EXECUTED"],
+    recommended_decision: "approve",
+    rollback_notes: "Plan only; no Unity mutation occurred and no rollback is required.",
+    operator_actions: ["approve", "archive"],
+  });
+
+  const evidence = extractUnityValidationEvidenceFromReviewPackage(reviewPackage);
+
+  assert.ok(evidence);
+  assert.equal(evidence.kind, "mutation_execution_plan");
+  assert.equal(evidence.executionMode, "disabled_plan_only");
+  assert.equal(evidence.mutationEnabled, false);
+  assert.equal(evidence.executed, false);
+  assert.equal(evidence.liveValidationStatus, "valid");
+  assert.equal(evidence.dryRunPreviewStatus, "valid");
+  assert.equal(evidence.preflightStatus, "valid");
+  assert.equal(evidence.explicitMutationExecutionModeStatus, "enabled");
+  assert.ok(evidence.gateStatuses.some((entry) => /review_approval=approved/i.test(entry)));
+  assert.ok(evidence.requiredApprovalGates.includes("live_read_only_validation"));
+
+  const markup = renderToStaticMarkup(createElement(UnityValidationEvidencePanel, { evidence }));
+  assert.match(markup, /Mutation Execution Plan/);
+  assert.match(markup, /EXECUTION PLAN ONLY/);
+  assert.match(markup, /MUTATION DISABLED/);
+  assert.match(markup, /NOT EXECUTED/);
+  assert.match(markup, /Execution mode: disabled_plan_only/);
+  assert.match(markup, /Mutation enabled: false/);
+  assert.match(markup, /Live validation status: valid/);
+  assert.match(markup, /Gate statuses/);
+  assert.doesNotMatch(markup, /<button/i);
+});

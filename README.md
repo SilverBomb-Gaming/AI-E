@@ -295,7 +295,8 @@ Current Layer 15 status:
 - final execution authorization gate model for the Unity mutation lane: implemented
 - execution preflight simulation for Unity mutation requests: implemented
 - reviewed Unity live read-only bridge cold-start regression check: verified from a fully closed Unity/Hub state for `EnemyAIDemo`
-- required gates modeled: production planning packet, review approval, operator approval, dry-run preview, and explicit final execute gate
+- first controlled Unity mutation execution plan: implemented as disabled plan-only architecture
+- required gates modeled: production planning packet, review approval, operator approval, dry-run preview, preflight simulation, explicit final execute gate, live read-only Unity validation, and explicit mutation execution mode enablement
 - mutation-ready: no
 - playtest-ready: no
 
@@ -308,7 +309,9 @@ Current Layer 15 boundary:
 - final execution authorization is modeled separately from planning, review, and operator approval, but it still does not enable any real Unity mutation in this layer
 - the mutation lane now also supports a simulation-only execution preflight that predicts affected objects, created objects, risks, conflicts, and final authorization validity without mutating Unity
 - the existing approval-gated Unity read-only bridge has been verified to launch cleanly from a cold closed-app state, but it remains validation-only and does not authorize mutation
+- the first controlled Unity mutation execution plan now exists as a fully gated plan artifact, but it always returns `execution_mode: disabled_plan_only`, `mutation_enabled: false`, and `executed: false`
 - no scene write, GameObject creation, prefab mutation, or Unity-side execute gate exists yet
+- no real Unity mutation has been performed in Layer 15
 - chat remains advisory only with `safe_to_execute: false` and cannot invoke any mutation path directly
 
 ## Safe Runtime Action Bridge

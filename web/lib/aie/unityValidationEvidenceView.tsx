@@ -2,7 +2,7 @@ import React from "react";
 
 import type { AutonomousDeliveryPackage, AutonomousReviewPackage } from "./autonomousWorkPlanning";
 
-export type UnityValidationEvidenceKind = "adapter_preview" | "real_bridge_unavailable" | "real_bridge_read_only" | "scene_object_creation_preview" | "mutation_execution_preflight";
+export type UnityValidationEvidenceKind = "adapter_preview" | "real_bridge_unavailable" | "real_bridge_read_only" | "scene_object_creation_preview" | "mutation_execution_preflight" | "mutation_execution_plan";
 
 export type UnityValidationEvidence = {
   kind: UnityValidationEvidenceKind;
@@ -28,12 +28,20 @@ export type UnityValidationEvidence = {
   finalExecutionRequired: boolean | null;
   finalExecutionAuthorized: boolean | null;
   finalExecutionAuthorizationStatus: string | null;
+  executionMode: string | null;
+  mutationEnabled: boolean | null;
   preflightState: string | null;
+  dryRunPreviewStatus: string | null;
+  preflightStatus: string | null;
   authorizationEvaluationStatus: string | null;
+  liveValidationStatus: string | null;
+  liveValidationSummary: string | null;
+  explicitMutationExecutionModeStatus: string | null;
   predictedAffectedObjects: string[];
   predictedCreatedObjects: string[];
   detectedConflicts: string[];
   detectedRisks: string[];
+  gateStatuses: string[];
 };
 
 function parseLabeledValue(lines: string[], label: string): string | null {
@@ -147,6 +155,20 @@ function parseSummary(summary: string): Partial<UnityValidationEvidence> {
     };
   }
 
+  const executionPlanMatch = summary.match(/EXECUTION PLAN ONLY: Controlled Unity scene object creation plan for (.+?) in (.+?)\. MUTATION DISABLED\. NOT EXECUTED\./i);
+  if (executionPlanMatch) {
+    return {
+      kind: "mutation_execution_plan",
+      bridgeStatus: "execution_plan_only",
+      sceneValidationStatus: "not_checked",
+      requestedObjectName: executionPlanMatch[1]?.trim() ?? null,
+      targetScene: executionPlanMatch[2]?.trim() ?? null,
+      executionMode: "disabled_plan_only",
+      mutationEnabled: false,
+      executed: false,
+    };
+  }
+
   return {};
 }
 
@@ -162,6 +184,10 @@ function inferKind(lines: string[], summary: string): UnityValidationEvidenceKin
 
   if (executionKind === "preflight_simulation" || executionKind === "preflight_blocked") {
     return "mutation_execution_preflight";
+  }
+
+  if (executionKind === "execution_plan_only" || executionKind === "execution_plan_blocked") {
+    return "mutation_execution_plan";
   }
 
   if (/unity read-only bridge -> unavailable/i.test(lines.join("\n"))) {
@@ -189,7 +215,7 @@ function isUnityEvidencePackage(workItemId: string, lines: string[], summary: st
   }
 
   const text = [summary, ...lines].join("\n");
-  return /unity read-only validation probe|unity validation preview|unity scene object creation preview|preflight simulation|no unity mutation performed|bridge status:|requested object name:|dry run:/i.test(text);
+  return /unity read-only validation probe|unity validation preview|unity scene object creation preview|preflight simulation|execution plan only|mutation disabled|no unity mutation performed|bridge status:|requested object name:|dry run:/i.test(text);
 }
 
 function buildEvidence(workItemId: string, summary: string, lines: string[]): UnityValidationEvidence | null {
@@ -222,8 +248,10 @@ function buildEvidence(workItemId: string, summary: string, lines: string[]): Un
     ?? summaryValues.targetScene
     ?? null;
   const requiredApprovalGates = lines
-    .filter((line) => line.startsWith("Required approval gate:"))
-    .map((line) => line.slice("Required approval gate:".length).trim())
+    .filter((line) => line.startsWith("Required approval gate:") || line.startsWith("Required gate:"))
+    .map((line) => line.includes("Required approval gate:")
+      ? line.slice("Required approval gate:".length).trim()
+      : line.slice("Required gate:".length).trim())
     .filter(Boolean);
 
   return {
@@ -250,12 +278,20 @@ function buildEvidence(workItemId: string, summary: string, lines: string[]): Un
     finalExecutionRequired: parseBoolean(parseLabeledValue(lines, "Final execution required")) ?? summaryValues.finalExecutionRequired ?? null,
     finalExecutionAuthorized: parseBoolean(parseLabeledValue(lines, "Final execution authorized")) ?? summaryValues.finalExecutionAuthorized ?? null,
     finalExecutionAuthorizationStatus: parseLabeledValue(lines, "Final execution authorization status") ?? summaryValues.finalExecutionAuthorizationStatus ?? null,
+    executionMode: parseLabeledValue(lines, "Execution mode") ?? summaryValues.executionMode ?? null,
+    mutationEnabled: parseBoolean(parseLabeledValue(lines, "Mutation enabled")) ?? summaryValues.mutationEnabled ?? null,
     preflightState: parseLabeledValue(lines, "Preflight state"),
+    dryRunPreviewStatus: parseLabeledValue(lines, "Dry-run preview status"),
+    preflightStatus: parseLabeledValue(lines, "Preflight status"),
     authorizationEvaluationStatus: parseLabeledValue(lines, "Authorization evaluation status"),
+    liveValidationStatus: parseLabeledValue(lines, "Live validation status"),
+    liveValidationSummary: parseLabeledValue(lines, "Live validation summary"),
+    explicitMutationExecutionModeStatus: parseLabeledValue(lines, "Explicit mutation execution mode status"),
     predictedAffectedObjects: parseRepeatedLabeledValues(lines, "Predicted affected object"),
     predictedCreatedObjects: parseRepeatedLabeledValues(lines, "Predicted created object"),
     detectedConflicts: parseRepeatedLabeledValues(lines, "Detected conflict"),
     detectedRisks: parseRepeatedLabeledValues(lines, "Detected risk"),
+    gateStatuses: parseRepeatedLabeledValues(lines, "Gate status"),
   };
 }
 
@@ -275,6 +311,8 @@ function kindLabel(kind: UnityValidationEvidenceKind): string {
   switch (kind) {
     case "mutation_execution_preflight":
       return "Mutation Execution Preflight";
+    case "mutation_execution_plan":
+      return "Mutation Execution Plan";
     case "scene_object_creation_preview":
       return "Scene Object Creation Preview";
     case "adapter_preview":
@@ -327,6 +365,19 @@ export function UnityValidationEvidencePanel({ evidence }: { evidence: UnityVali
             </span>
             <span className="inline-flex rounded-full border border-ink/10 bg-white/80 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-ink/75">
               {evidence.authorizationEvaluationStatus ?? "FINAL EXECUTION AUTHORIZATION INVALID"}
+            </span>
+          </>
+        ) : null}
+        {evidence.kind === "mutation_execution_plan" ? (
+          <>
+            <span className="inline-flex rounded-full border border-coral/20 bg-coral/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-ember">
+              EXECUTION PLAN ONLY
+            </span>
+            <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-700">
+              MUTATION DISABLED
+            </span>
+            <span className="inline-flex rounded-full border border-ink/10 bg-white/80 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-ink/75">
+              NOT EXECUTED
             </span>
           </>
         ) : null}
@@ -390,6 +441,38 @@ export function UnityValidationEvidencePanel({ evidence }: { evidence: UnityVali
           <p className="text-xs uppercase tracking-[0.18em] text-slate">Required approval gates</p>
           <p className="mt-1 text-xs leading-6 text-slate">{evidence.requiredApprovalGates.length > 0 ? evidence.requiredApprovalGates.join(" | ") : "none"}</p>
         </div>
+      ) : null}
+      {evidence.kind === "mutation_execution_plan" ? (
+        <>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+            <p className="text-xs leading-6 text-slate">Requested object name: {evidence.requestedObjectName ?? "none"}</p>
+            <p className="text-xs leading-6 text-slate">Target scene: {evidence.targetScene ?? "none"}</p>
+            <p className="text-xs leading-6 text-slate">Intended components: {evidence.intendedComponents.length > 0 ? evidence.intendedComponents.join(", ") : "none"}</p>
+            <p className="text-xs leading-6 text-slate">Intended transform position: {evidence.intendedTransformPosition ?? "none"}</p>
+            <p className="text-xs leading-6 text-slate">Intended transform rotation: {evidence.intendedTransformRotation ?? "none"}</p>
+            <p className="text-xs leading-6 text-slate">Intended transform scale: {evidence.intendedTransformScale ?? "none"}</p>
+            <p className="text-xs leading-6 text-slate">Execution mode: {evidence.executionMode ?? "unknown"}</p>
+            <p className="text-xs leading-6 text-slate">Mutation enabled: {String(evidence.mutationEnabled ?? false)}</p>
+            <p className="text-xs leading-6 text-slate">Executed: {String(evidence.executed ?? false)}</p>
+            <p className="text-xs leading-6 text-slate">Dry-run preview status: {evidence.dryRunPreviewStatus ?? "unknown"}</p>
+            <p className="text-xs leading-6 text-slate">Preflight status: {evidence.preflightStatus ?? "unknown"}</p>
+            <p className="text-xs leading-6 text-slate">Live validation status: {evidence.liveValidationStatus ?? "unknown"}</p>
+            <p className="text-xs leading-6 text-slate">Explicit mutation execution mode status: {evidence.explicitMutationExecutionModeStatus ?? "unknown"}</p>
+            <p className="text-xs leading-6 text-slate">Authorization evaluation status: {evidence.authorizationEvaluationStatus ?? "unknown"}</p>
+          </div>
+          <div className="mt-2">
+            <p className="text-xs uppercase tracking-[0.18em] text-slate">Required gates</p>
+            <p className="mt-1 text-xs leading-6 text-slate">{evidence.requiredApprovalGates.length > 0 ? evidence.requiredApprovalGates.join(" | ") : "none"}</p>
+          </div>
+          <div className="mt-2">
+            <p className="text-xs uppercase tracking-[0.18em] text-slate">Gate statuses</p>
+            <p className="mt-1 text-xs leading-6 text-slate">{evidence.gateStatuses.length > 0 ? evidence.gateStatuses.join(" | ") : "none"}</p>
+          </div>
+          <div className="mt-2">
+            <p className="text-xs uppercase tracking-[0.18em] text-slate">Live validation summary</p>
+            <p className="mt-1 text-xs leading-6 text-slate">{evidence.liveValidationSummary ?? "none"}</p>
+          </div>
+        </>
       ) : null}
       {evidence.evidenceTimestamp ? <p className="mt-2 text-xs leading-6 text-slate">Evidence timestamp: {evidence.evidenceTimestamp}</p> : null}
       {evidence.recommendedNextOperatorAction ? (

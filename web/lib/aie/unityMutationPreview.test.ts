@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { buildUnityProductionPlanningPacket } from "./productionPipelineFoundation";
 import {
+  buildUnitySceneObjectCreationExecutionPlan,
   evaluateUnityMutationExecutionAuthorization,
   previewUnitySceneObjectCreation,
   simulateUnityMutationExecutionPreflight,
@@ -56,6 +57,53 @@ function createPreviewInput(overrides: Partial<Parameters<typeof previewUnitySce
       rotation_euler: { x: 0, y: 0, z: 0 },
       scale: { x: 1, y: 1, z: 1 },
     },
+    ...overrides,
+  };
+}
+
+function createLiveValidationResult(
+  overrides: Partial<Parameters<typeof buildUnitySceneObjectCreationExecutionPlan>[0]["live_validation_result"] extends infer T ? NonNullable<T> : never> = {},
+) {
+  return {
+    request_id: "unity-validation-1",
+    execution_kind: "real_bridge_read_only" as const,
+    bridge_status: "bridge_ready" as const,
+    scene_validation_status: "checked_clean" as const,
+    checked_scene_name: "EnemyAIDemo",
+    missing_script_count: 0,
+    console_error_count: 0,
+    object_count: 13,
+    executed: true,
+    ...overrides,
+  };
+}
+
+function createExecutionPlanInput(
+  overrides: Partial<Parameters<typeof buildUnitySceneObjectCreationExecutionPlan>[0]> = {},
+) {
+  const preview_result = overrides.preview_result ?? previewUnitySceneObjectCreation(createPreviewInput());
+  const authorization = overrides.authorization ?? {
+    final_execution_authorization_id: "final-auth-plan-1",
+    authorized_by_operator: true,
+    authorized_at: "2026-04-30T18:05:00.000Z",
+    authorization_scope: "scene_object_creation_request" as const,
+    target_request_id: preview_result.request_id,
+    expires_at: "2026-04-30T19:00:00.000Z",
+  };
+  const preflight_result = overrides.preflight_result ?? simulateUnityMutationExecutionPreflight({
+    ...createPreviewInput(),
+    authorization,
+    known_target_scene_names: ["EnemyAIDemo"],
+    known_scene_object_names: ["SpawnAnchor"],
+  });
+
+  return {
+    ...createPreviewInput(),
+    preview_result,
+    preflight_result,
+    authorization,
+    live_validation_result: createLiveValidationResult(),
+    mutation_execution_mode_enabled: true,
     ...overrides,
   };
 }
@@ -376,4 +424,111 @@ test("Unity mutation execution preflight detects conflicts deterministically", (
   assert.ok(result.detected_conflicts.some((entry) => /Invalid transform risk/i.test(entry)));
   assert.equal(result.dry_run, true);
   assert.equal(result.executed, false);
+});
+
+test("execution plan requires review approval", () => {
+  const result = buildUnitySceneObjectCreationExecutionPlan(createExecutionPlanInput({
+    review_state: {
+      review_package_id: null,
+      review_completed_at: null,
+      approved_by_operator: true,
+      operator_approval_id: "approval-preview-1",
+      delivery_package_id: "delivery-preview-1",
+    },
+  }));
+
+  assert.equal(result.execution_kind, "execution_plan_blocked");
+  assert.equal(result.review_approval_status, "missing");
+  assert.match(result.blocked_reason ?? "", /review approval is recorded/i);
+  assert.equal(result.mutation_enabled, false);
+  assert.equal(result.executed, false);
+});
+
+test("execution plan requires operator approval", () => {
+  const result = buildUnitySceneObjectCreationExecutionPlan(createExecutionPlanInput({
+    review_state: {
+      review_package_id: "review-preview-1",
+      review_completed_at: "2026-04-30T18:00:10.000Z",
+      approved_by_operator: false,
+      operator_approval_id: null,
+      delivery_package_id: "delivery-preview-1",
+    },
+  }));
+
+  assert.equal(result.execution_kind, "execution_plan_blocked");
+  assert.equal(result.operator_approval_status, "missing");
+  assert.match(result.blocked_reason ?? "", /operator approval is recorded/i);
+});
+
+test("execution plan requires dry-run preview", () => {
+  const result = buildUnitySceneObjectCreationExecutionPlan(createExecutionPlanInput({
+    preview_result: null,
+  }));
+
+  assert.equal(result.execution_kind, "execution_plan_blocked");
+  assert.equal(result.dry_run_preview_status, "missing");
+  assert.match(result.blocked_reason ?? "", /Dry-run preview gate is missing/i);
+});
+
+test("execution plan requires preflight simulation", () => {
+  const result = buildUnitySceneObjectCreationExecutionPlan(createExecutionPlanInput({
+    preflight_result: null,
+  }));
+
+  assert.equal(result.execution_kind, "execution_plan_blocked");
+  assert.equal(result.preflight_status, "missing");
+  assert.match(result.blocked_reason ?? "", /Preflight simulation gate is missing/i);
+});
+
+test("execution plan requires valid final authorization", () => {
+  const result = buildUnitySceneObjectCreationExecutionPlan(createExecutionPlanInput({
+    authorization: null,
+  }));
+
+  assert.equal(result.execution_kind, "execution_plan_blocked");
+  assert.equal(result.authorization_evaluation.authorized, false);
+  assert.match(result.blocked_reason ?? "", /final execution authorization is recorded/i);
+});
+
+test("execution plan requires live read-only validation", () => {
+  const result = buildUnitySceneObjectCreationExecutionPlan(createExecutionPlanInput({
+    live_validation_result: null,
+  }));
+
+  assert.equal(result.execution_kind, "execution_plan_blocked");
+  assert.equal(result.live_validation_status, "missing");
+  assert.match(result.blocked_reason ?? "", /Live read-only Unity validation gate is missing/i);
+});
+
+test("execution plan requires explicit mutation execution mode to be enabled", () => {
+  const result = buildUnitySceneObjectCreationExecutionPlan(createExecutionPlanInput({
+    mutation_execution_mode_enabled: false,
+  }));
+
+  assert.equal(result.execution_kind, "execution_plan_blocked");
+  assert.equal(result.explicit_mutation_execution_mode_status, "disabled");
+  assert.match(result.blocked_reason ?? "", /execution mode gate remains disabled/i);
+});
+
+test("valid gate stack creates a disabled Unity mutation execution plan without mutation", () => {
+  const result = buildUnitySceneObjectCreationExecutionPlan(createExecutionPlanInput());
+
+  assert.equal(result.execution_kind, "execution_plan_only");
+  assert.equal(result.execution_mode, "disabled_plan_only");
+  assert.equal(result.mutation_enabled, false);
+  assert.equal(result.executed, false);
+  assert.equal(result.mutating, false);
+  assert.equal(result.live_validation_status, "valid");
+  assert.equal(result.dry_run_preview_status, "valid");
+  assert.equal(result.preflight_status, "valid");
+  assert.equal(result.authorization_evaluation.authorized, true);
+  assert.equal(result.gate_statuses.length, 7);
+  assert.ok(result.gate_statuses.every((gate) => gate.status === "approved"));
+  assert.ok(result.review_package);
+  assert.ok(result.delivery_package);
+  assert.deepEqual(result.review_package?.files_changed, []);
+  assert.deepEqual(result.delivery_package?.files_changed, []);
+  assert.match(result.review_package?.summary ?? "", /EXECUTION PLAN ONLY/i);
+  assert.match(result.review_package?.summary ?? "", /MUTATION DISABLED/i);
+  assert.match(result.delivery_package?.release_notes ?? "", /NOT EXECUTED/i);
 });
