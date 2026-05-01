@@ -294,6 +294,7 @@ Current Layer 15 status:
 - operator-visible review and delivery rendering for Unity mutation preview: implemented
 - final execution authorization gate model for the Unity mutation lane: implemented
 - execution preflight simulation for Unity mutation requests: implemented
+- reviewed Unity live read-only bridge cold-start regression check: verified from a fully closed Unity/Hub state for `EnemyAIDemo`
 - required gates modeled: production planning packet, review approval, operator approval, dry-run preview, and explicit final execute gate
 - mutation-ready: no
 - playtest-ready: no
@@ -306,6 +307,7 @@ Current Layer 15 boundary:
 - the preview adapter refuses missing review approval, missing operator approval, non-mutation packets, and requests without `dry_run: true`
 - final execution authorization is modeled separately from planning, review, and operator approval, but it still does not enable any real Unity mutation in this layer
 - the mutation lane now also supports a simulation-only execution preflight that predicts affected objects, created objects, risks, conflicts, and final authorization validity without mutating Unity
+- the existing approval-gated Unity read-only bridge has been verified to launch cleanly from a cold closed-app state, but it remains validation-only and does not authorize mutation
 - no scene write, GameObject creation, prefab mutation, or Unity-side execute gate exists yet
 - chat remains advisory only with `safe_to_execute: false` and cannot invoke any mutation path directly
 
