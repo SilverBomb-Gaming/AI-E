@@ -2,7 +2,7 @@ import React from "react";
 
 import type { AutonomousDeliveryPackage, AutonomousReviewPackage } from "./autonomousWorkPlanning";
 
-export type UnityValidationEvidenceKind = "adapter_preview" | "real_bridge_unavailable" | "real_bridge_read_only" | "scene_object_creation_preview" | "mutation_execution_preflight" | "mutation_execution_plan" | "controlled_mutation_result";
+export type UnityValidationEvidenceKind = "adapter_preview" | "real_bridge_unavailable" | "real_bridge_read_only" | "scene_object_creation_preview" | "mutation_execution_preflight" | "mutation_execution_plan" | "controlled_mutation_result" | "controlled_rollback_result";
 
 export type UnityValidationEvidence = {
   kind: UnityValidationEvidenceKind;
@@ -18,10 +18,13 @@ export type UnityValidationEvidence = {
   requestedObjectName: string | null;
   targetScene: string | null;
   createdObjectName: string | null;
+  removedObjectName: string | null;
   mutationType: string | null;
+  rollbackType: string | null;
   sceneSaved: boolean | null;
   rollbackHint: string | null;
   duplicateHandling: string | null;
+  targetMissingHandling: string | null;
   intendedComponents: string[];
   intendedTransformPosition: string | null;
   intendedTransformRotation: string | null;
@@ -35,6 +38,7 @@ export type UnityValidationEvidence = {
   finalExecutionAuthorizationStatus: string | null;
   executionMode: string | null;
   mutationEnabled: boolean | null;
+  rollbackEnabled: boolean | null;
   finalMutationSwitchRequired: boolean | null;
   finalMutationSwitchEnabled: boolean | null;
   finalMutationSwitchEvaluationStatus: string | null;
@@ -199,6 +203,21 @@ function parseSummary(summary: string): Partial<UnityValidationEvidence> {
     };
   }
 
+  const controlledRollbackMatch = summary.match(/CONTROLLED UNITY ROLLBACK: (.+?) (?:removed from|already missing from) (.+?)\. EXECUTED\. (?:TARGET REMOVED|TARGET ALREADY MISSING)\./i);
+  if (controlledRollbackMatch) {
+    return {
+      kind: "controlled_rollback_result",
+      bridgeStatus: "controlled_rollback",
+      sceneValidationStatus: "not_checked",
+      removedObjectName: controlledRollbackMatch[1]?.trim() ?? null,
+      targetScene: controlledRollbackMatch[2]?.trim() ?? null,
+      rollbackType: "scene_object_removal",
+      rollbackEnabled: true,
+      executed: true,
+      sceneSaved: true,
+    };
+  }
+
   return {};
 }
 
@@ -222,6 +241,10 @@ function inferKind(lines: string[], summary: string): UnityValidationEvidenceKin
 
   if (/controlled_mutation_(executed|idempotent|blocked|failed|unavailable)/i.test(executionKind ?? "")) {
     return "controlled_mutation_result";
+  }
+
+  if (/controlled_rollback_(executed|idempotent|blocked|failed|unavailable)/i.test(executionKind ?? "")) {
+    return "controlled_rollback_result";
   }
 
   if (/unity read-only bridge -> unavailable/i.test(lines.join("\n"))) {
@@ -249,7 +272,7 @@ function isUnityEvidencePackage(workItemId: string, lines: string[], summary: st
   }
 
   const text = [summary, ...lines].join("\n");
-  return /unity read-only validation probe|unity validation preview|unity scene object creation preview|preflight simulation|execution plan only|controlled unity mutation|mutation disabled|no unity mutation performed|bridge status:|requested object name:|dry run:/i.test(text);
+  return /unity read-only validation probe|unity validation preview|unity scene object creation preview|preflight simulation|execution plan only|controlled unity mutation|controlled unity rollback|mutation disabled|rollback disabled|no unity mutation performed|bridge status:|requested object name:|target object name:|dry run:/i.test(text);
 }
 
 function buildEvidence(workItemId: string, summary: string, lines: string[]): UnityValidationEvidence | null {
@@ -276,6 +299,7 @@ function buildEvidence(workItemId: string, summary: string, lines: string[]): Un
   const recommendedNextOperatorAction = parseLabeledValue(lines, "Recommended next operator action")
     ?? (summary.match(/Next operator action:\s*(.+)$/im)?.[1]?.trim() ?? null);
   const requestedObjectName = parseLabeledValue(lines, "Requested object name")
+    ?? parseLabeledValue(lines, "Target object name")
     ?? summaryValues.requestedObjectName
     ?? null;
   const targetScene = parseLabeledValue(lines, "Target scene")
@@ -302,10 +326,13 @@ function buildEvidence(workItemId: string, summary: string, lines: string[]): Un
     requestedObjectName,
     targetScene,
     createdObjectName: parseLabeledValue(lines, "Created object name") ?? summaryValues.createdObjectName ?? null,
+    removedObjectName: parseLabeledValue(lines, "Removed object name") ?? summaryValues.removedObjectName ?? null,
     mutationType: parseLabeledValue(lines, "Mutation type") ?? summaryValues.mutationType ?? null,
+    rollbackType: parseLabeledValue(lines, "Rollback type") ?? summaryValues.rollbackType ?? null,
     sceneSaved: parseBoolean(parseLabeledValue(lines, "Scene saved")) ?? summaryValues.sceneSaved ?? null,
     rollbackHint: parseLabeledValue(lines, "Rollback hint") ?? summaryValues.rollbackHint ?? null,
     duplicateHandling: parseLabeledValue(lines, "Duplicate handling") ?? summaryValues.duplicateHandling ?? null,
+    targetMissingHandling: parseLabeledValue(lines, "Target missing handling") ?? summaryValues.targetMissingHandling ?? null,
     intendedComponents: parseList(parseLabeledValue(lines, "Intended components")),
     intendedTransformPosition: parseLabeledValue(lines, "Intended transform position"),
     intendedTransformRotation: parseLabeledValue(lines, "Intended transform rotation"),
@@ -319,6 +346,7 @@ function buildEvidence(workItemId: string, summary: string, lines: string[]): Un
     finalExecutionAuthorizationStatus: parseLabeledValue(lines, "Final execution authorization status") ?? summaryValues.finalExecutionAuthorizationStatus ?? null,
     executionMode: parseLabeledValue(lines, "Execution mode") ?? summaryValues.executionMode ?? null,
     mutationEnabled: parseBoolean(parseLabeledValue(lines, "Mutation enabled")) ?? summaryValues.mutationEnabled ?? null,
+    rollbackEnabled: parseBoolean(parseLabeledValue(lines, "Rollback enabled")) ?? summaryValues.rollbackEnabled ?? null,
     finalMutationSwitchRequired: parseBoolean(parseLabeledValue(lines, "Final mutation switch required")) ?? summaryValues.finalMutationSwitchRequired ?? null,
     finalMutationSwitchEnabled: parseBoolean(parseLabeledValue(lines, "Final mutation switch enabled")) ?? summaryValues.finalMutationSwitchEnabled ?? null,
     finalMutationSwitchEvaluationStatus: parseLabeledValue(lines, "Final mutation switch evaluation status") ?? summaryValues.finalMutationSwitchEvaluationStatus ?? null,
@@ -361,6 +389,8 @@ function kindLabel(kind: UnityValidationEvidenceKind): string {
       return "Mutation Execution Plan";
     case "controlled_mutation_result":
       return "Controlled Unity Mutation";
+    case "controlled_rollback_result":
+      return "Controlled Unity Rollback";
     case "scene_object_creation_preview":
       return "Scene Object Creation Preview";
     case "adapter_preview":
@@ -445,6 +475,19 @@ export function UnityValidationEvidencePanel({ evidence }: { evidence: UnityVali
             </span>
             <span className="inline-flex rounded-full border border-ink/10 bg-white/80 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-ink/75">
               ROLLBACK AVAILABLE
+            </span>
+          </>
+        ) : null}
+        {evidence.kind === "controlled_rollback_result" ? (
+          <>
+            <span className="inline-flex rounded-full border border-coral/20 bg-coral/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-ember">
+              CONTROLLED UNITY ROLLBACK
+            </span>
+            <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-700">
+              EXECUTED
+            </span>
+            <span className="inline-flex rounded-full border border-ink/10 bg-white/80 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-ink/75">
+              TARGET REMOVED
             </span>
           </>
         ) : null}
@@ -570,6 +613,20 @@ export function UnityValidationEvidencePanel({ evidence }: { evidence: UnityVali
           <div className="mt-2">
             <p className="text-xs uppercase tracking-[0.18em] text-slate">Rollback hint</p>
             <p className="mt-1 text-xs leading-6 text-slate">{evidence.rollbackHint ?? "none"}</p>
+          </div>
+        </>
+      ) : null}
+      {evidence.kind === "controlled_rollback_result" ? (
+        <>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+            <p className="text-xs leading-6 text-slate">Rollback type: {evidence.rollbackType ?? "unknown"}</p>
+            <p className="text-xs leading-6 text-slate">Target scene: {evidence.targetScene ?? "none"}</p>
+            <p className="text-xs leading-6 text-slate">Target object name: {evidence.requestedObjectName ?? "none"}</p>
+            <p className="text-xs leading-6 text-slate">Removed object name: {evidence.removedObjectName ?? "none"}</p>
+            <p className="text-xs leading-6 text-slate">Rollback enabled: {String(evidence.rollbackEnabled ?? false)}</p>
+            <p className="text-xs leading-6 text-slate">Executed: {String(evidence.executed ?? false)}</p>
+            <p className="text-xs leading-6 text-slate">Scene saved: {String(evidence.sceneSaved ?? false)}</p>
+            <p className="text-xs leading-6 text-slate">Target missing handling: {evidence.targetMissingHandling ?? "none"}</p>
           </div>
         </>
       ) : null}

@@ -41,6 +41,23 @@ test("default unavailable Unity mutation bridge reports structured unavailabilit
   assert.match(result.reason, /No Unity mutation runtime bridge is configured/i);
 });
 
+test("default unavailable Unity rollback bridge reports structured unavailability", async () => {
+  const bridge = createUnavailableUnityMutationRuntimeBridge();
+  const result = await bridge.executeSceneObjectRemoval({
+    request_id: "unity-rollback-bridge-1",
+    requested_at: "2026-05-01T20:10:05.000Z",
+    target_scene: "EnemyAIDemo",
+    object_name: "AIE_ControlledMutationProbe",
+    rollback_type: "scene_object_removal",
+    rollback_enabled: true,
+    idempotent_on_missing: true,
+  });
+
+  assert.equal(result.bridge_status, "bridge_unavailable");
+  assert.equal(result.source, "none");
+  assert.match(result.reason, /No Unity rollback runtime bridge is configured/i);
+});
+
 test("configured Unity mutation bridge normalizes successful mutation payloads", async () => {
   const bridge = createConfiguredUnityMutationRuntimeBridge({
     unityEditorPath: "C:/Program Files/Unity/Editor/Unity.exe",
@@ -181,4 +198,75 @@ test("configured Unity mutation bridge respects env timeout override", async () 
     assert.equal(timeoutMs, 18_000);
     assert.equal(result.bridge_status, "bridge_ready");
   });
+});
+
+test("configured Unity rollback bridge normalizes successful rollback payloads", async () => {
+  const bridge = createConfiguredUnityMutationRuntimeBridge({
+    unityEditorPath: "C:/Program Files/Unity/Editor/Unity.exe",
+    unityProjectPath: "E:/AI projects 2025/AI-E/orchestrator_lane/Tools/EnemyAIDemoStandalone",
+    unityRollbackExecuteMethod: "EnemyAIDemo.Editor.UnityValidationProbe.RunSceneObjectRemovalRollbackFromCommandLine",
+    rollbackCommandRunner: async (input) => {
+      assert.equal(input.rollbackInput.object_name, "AIE_ControlledMutationProbe");
+      assert.equal(input.rollbackInput.rollback_enabled, true);
+      return {
+        rollback_status: "rollback_executed",
+        rollback_type: "scene_object_removal",
+        target_scene: "EnemyAIDemo",
+        object_name: "AIE_ControlledMutationProbe",
+        removed_object_name: "AIE_ControlledMutationProbe",
+        scene_saved: true,
+        target_missing_handling: "removed",
+        evidence_timestamp: "2026-05-01T20:15:00.000Z",
+        raw_evidence_summary: "Controlled Unity rollback removed AIE_ControlledMutationProbe from EnemyAIDemo and saved the scene.",
+      };
+    },
+  });
+
+  const result = await bridge.executeSceneObjectRemoval({
+    request_id: "unity-rollback-bridge-2",
+    requested_at: "2026-05-01T20:14:30.000Z",
+    target_scene: "EnemyAIDemo",
+    object_name: "AIE_ControlledMutationProbe",
+    rollback_type: "scene_object_removal",
+    rollback_enabled: true,
+    idempotent_on_missing: true,
+  });
+
+  assert.equal(result.bridge_status, "bridge_ready");
+  assert.equal(result.rollback_status, "rollback_executed");
+  assert.equal(result.scene_saved, true);
+  assert.equal(result.removed_object_name, "AIE_ControlledMutationProbe");
+});
+
+test("configured Unity rollback bridge normalizes idempotent missing-target payloads", async () => {
+  const bridge = createConfiguredUnityMutationRuntimeBridge({
+    unityEditorPath: "C:/Program Files/Unity/Editor/Unity.exe",
+    unityProjectPath: "E:/AI projects 2025/AI-E/orchestrator_lane/Tools/EnemyAIDemoStandalone",
+    rollbackCommandRunner: async () => ({
+      rollback_status: "rollback_idempotent",
+      rollback_type: "scene_object_removal",
+      target_scene: "EnemyAIDemo",
+      object_name: "AIE_ControlledMutationProbe",
+      removed_object_name: "",
+      scene_saved: false,
+      target_missing_handling: "already_missing_idempotent",
+      evidence_timestamp: "2026-05-01T20:16:00.000Z",
+      raw_evidence_summary: "Controlled Unity rollback confirmed that AIE_ControlledMutationProbe is already absent from EnemyAIDemo; no scene write was required.",
+    }),
+  });
+
+  const result = await bridge.executeSceneObjectRemoval({
+    request_id: "unity-rollback-bridge-3",
+    requested_at: "2026-05-01T20:15:30.000Z",
+    target_scene: "EnemyAIDemo",
+    object_name: "AIE_ControlledMutationProbe",
+    rollback_type: "scene_object_removal",
+    rollback_enabled: true,
+    idempotent_on_missing: true,
+  });
+
+  assert.equal(result.bridge_status, "bridge_ready");
+  assert.equal(result.rollback_status, "rollback_idempotent");
+  assert.equal(result.scene_saved, false);
+  assert.equal(result.target_missing_handling, "already_missing_idempotent");
 });

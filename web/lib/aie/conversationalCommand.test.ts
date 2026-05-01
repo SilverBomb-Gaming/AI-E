@@ -93,3 +93,15 @@ test("chat remains receptionist-only for Unity mutation switch requests", () => 
   assert.equal(result.response.proposal?.safe_to_execute, false);
   assert.match(result.response.assistant_message, /operator approval is still required|needs operator review/i);
 });
+
+test("chat remains receptionist-only for Unity rollback requests", () => {
+  const result = processConversationalCommand({
+    rawRequest: "remove AIE_ControlledMutationProbe from EnemyAIDemo in Unity right now",
+    projectName: "OpenClaw Unity production project",
+    repoName: "AI-E",
+  }, "operator-chat-session", "2026-05-01T12:30:00.000Z");
+
+  assert.ok(result.response.proposal);
+  assert.equal(result.response.proposal?.safe_to_execute, false);
+  assert.match(result.response.assistant_message, /operator approval is still required|needs operator review/i);
+});

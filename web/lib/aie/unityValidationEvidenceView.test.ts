@@ -412,3 +412,60 @@ test("controlled mutation evidence renders executed operator details", () => {
   assert.match(markup, /Rollback hint/);
   assert.doesNotMatch(markup, /<button/i);
 });
+
+test("controlled rollback evidence renders executed operator details", () => {
+  const deliveryPackage = createAutonomousDeliveryPackage({
+    delivery_package_id: "unity-controlled-rollback-delivery-1",
+    review_package_id: "unity-controlled-rollback-review-1",
+    work_item_id: "unity-controlled-rollback-1",
+    chain_id: "unity-controlled-rollback-chain-1",
+    branch_name: "",
+    commit_plan: [],
+    files_changed: [],
+    validation_results: [
+      "Execution kind: controlled_rollback_executed",
+      "Rollback request id: unity-rollback-1",
+      "Rollback type: scene_object_removal",
+      "Target scene: EnemyAIDemo",
+      "Target object name: AIE_ControlledMutationProbe",
+      "Removed object name: AIE_ControlledMutationProbe",
+      "Rollback enabled: true",
+      "Executed: true",
+      "Scene saved: true",
+      "Target missing handling: removed",
+      "Evidence timestamp: 2026-05-01T21:10:00.000Z",
+      "Delivery summary: Controlled Unity rollback removed target AIE_ControlledMutationProbe in EnemyAIDemo with scene_saved true.",
+      "Recommended next operator action: Review the controlled Unity rollback evidence and rerun read-only validation before proceeding.",
+    ],
+    proof_results: ["CONTROLLED UNITY ROLLBACK", "EXECUTED", "TARGET REMOVED"],
+    risk_summary: "Controlled Unity rollback removed the target cleanly for AIE_ControlledMutationProbe.",
+    rollback_plan: "Rollback completed by removing AIE_ControlledMutationProbe from EnemyAIDemo.",
+    release_notes: "CONTROLLED UNITY ROLLBACK: AIE_ControlledMutationProbe removed from EnemyAIDemo. EXECUTED. TARGET REMOVED.",
+    recommended_pr_title: "",
+    recommended_pr_body: "Controlled Unity rollback handoff",
+    operator_decision: null,
+    status: "awaiting_operator_approval",
+    created_at: "2026-05-01T21:10:00.000Z",
+    updated_at: "2026-05-01T21:10:00.000Z",
+  });
+
+  const evidence = extractUnityValidationEvidenceFromDeliveryPackage(deliveryPackage);
+
+  assert.ok(evidence);
+  assert.equal(evidence.kind, "controlled_rollback_result");
+  assert.equal(evidence.rollbackType, "scene_object_removal");
+  assert.equal(evidence.requestedObjectName, "AIE_ControlledMutationProbe");
+  assert.equal(evidence.removedObjectName, "AIE_ControlledMutationProbe");
+  assert.equal(evidence.rollbackEnabled, true);
+  assert.equal(evidence.targetMissingHandling, "removed");
+
+  const markup = renderToStaticMarkup(createElement(UnityValidationEvidencePanel, { evidence }));
+  assert.match(markup, /Controlled Unity Rollback/);
+  assert.match(markup, /CONTROLLED UNITY ROLLBACK/);
+  assert.match(markup, /EXECUTED/);
+  assert.match(markup, /TARGET REMOVED/);
+  assert.match(markup, /Target object name: AIE_ControlledMutationProbe/);
+  assert.match(markup, /Removed object name: AIE_ControlledMutationProbe/);
+  assert.match(markup, /Scene saved: true/);
+  assert.doesNotMatch(markup, /<button/i);
+});

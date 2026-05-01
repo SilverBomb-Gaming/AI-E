@@ -4,8 +4,10 @@ import test from "node:test";
 import { buildUnityProductionPlanningPacket } from "./productionPipelineFoundation";
 import {
   buildUnitySceneObjectCreationExecutionPlan,
+  buildUnitySceneObjectCreationRollbackPlan,
   evaluateUnityMutationExecutionSwitch,
   evaluateUnityMutationExecutionAuthorization,
+  executeUnitySceneObjectCreationRollback,
   executeUnitySceneObjectCreationMutation,
   previewUnitySceneObjectCreation,
   simulateUnityMutationExecutionPreflight,
@@ -129,6 +131,64 @@ function createMutationExecutionInput(
     ...planInput,
     execution_plan,
     idempotent_on_duplicate: true,
+    ...overrides,
+  };
+}
+
+function createRollbackPlanInput(
+  overrides: Partial<Parameters<typeof buildUnitySceneObjectCreationRollbackPlan>[0]> = {},
+) {
+  return {
+    adapter_request_id: "unity-rollback-1",
+    requested_at: "2026-05-01T21:00:00.000Z",
+    planning_packet: createSceneObjectCreationPacket(),
+    requested_actions: [],
+    review_state: {
+      review_package_id: "rollback-review-1",
+      review_completed_at: "2026-05-01T21:00:10.000Z",
+      approved_by_operator: true,
+      operator_approval_id: "rollback-approval-1",
+      delivery_package_id: "rollback-delivery-1",
+    },
+    target_scene: "EnemyAIDemo",
+    target_object_name: "AIE_ControlledMutationProbe",
+    authorization: {
+      final_rollback_authorization_id: "rollback-auth-1",
+      authorized_by_operator: true,
+      authorized_at: "2026-05-01T21:05:00.000Z",
+      authorization_scope: "scene_object_removal" as const,
+      target_request_id: "unity-rollback-1",
+      target_scene: "EnemyAIDemo",
+      target_object_name: "AIE_ControlledMutationProbe",
+      expires_at: "2026-05-01T22:00:00.000Z",
+    },
+    rollback_switch: {
+      rollback_switch_id: "rollback-switch-1",
+      switch_enabled: true,
+      enabled_by_operator: true,
+      enabled_at: "2026-05-01T21:06:00.000Z",
+      target_request_id: "unity-rollback-1",
+      target_scene: "EnemyAIDemo",
+      target_object_name: "AIE_ControlledMutationProbe",
+      allowed_rollback_type: "scene_object_removal" as const,
+      expires_at: "2026-05-01T22:00:00.000Z",
+    },
+    live_validation_result: createLiveValidationResult({ object_count: 14 }),
+    rollback_execution_mode_enabled: true,
+    ...overrides,
+  };
+}
+
+function createRollbackExecutionInput(
+  overrides: Partial<Parameters<typeof executeUnitySceneObjectCreationRollback>[0]> = {},
+) {
+  const planInput = createRollbackPlanInput(overrides);
+  const execution_plan = overrides.execution_plan ?? buildUnitySceneObjectCreationRollbackPlan(planInput);
+
+  return {
+    ...planInput,
+    execution_plan,
+    idempotent_on_missing: true,
     ...overrides,
   };
 }
@@ -704,6 +764,9 @@ test("controlled mutation blocks when the approved execution plan is missing", a
         callCount += 1;
         throw new Error("should not execute");
       },
+      async executeSceneObjectRemoval() {
+        throw new Error("should not execute rollback");
+      },
     },
   });
 
@@ -722,6 +785,9 @@ test("controlled mutation blocks when a required gate is missing", async () => {
       async executeSceneObjectCreation() {
         callCount += 1;
         throw new Error("should not execute");
+      },
+      async executeSceneObjectRemoval() {
+        throw new Error("should not execute rollback");
       },
     },
   });
@@ -749,6 +815,9 @@ test("controlled mutation blocks when the final mutation switch is disabled", as
       async executeSceneObjectCreation() {
         callCount += 1;
         throw new Error("should not execute");
+      },
+      async executeSceneObjectRemoval() {
+        throw new Error("should not execute rollback");
       },
     },
   });
@@ -784,6 +853,9 @@ test("valid full gate stack executes the controlled mutation bridge and persists
           rollback_hint: "Rollback requires separate approval: remove CheckpointAnchor from EnemyAIDemo.",
           recommended_next_operator_action: "Review the controlled Unity mutation evidence and keep rollback as a separately approved follow-up action.",
         };
+      },
+      async executeSceneObjectRemoval() {
+        throw new Error("should not execute rollback");
       },
     },
   });
@@ -824,6 +896,9 @@ test("controlled mutation handles duplicate objects as idempotent success", asyn
           recommended_next_operator_action: "Review the controlled Unity mutation evidence and keep rollback as a separately approved follow-up action.",
         };
       },
+      async executeSceneObjectRemoval() {
+        throw new Error("should not execute rollback");
+      },
     },
   });
 
@@ -832,4 +907,188 @@ test("controlled mutation handles duplicate objects as idempotent success", asyn
   assert.equal(result.scene_saved, false);
   assert.equal(result.duplicate_handling, "already_exists_idempotent");
   assert.equal(result.created_object_name, "CheckpointAnchor");
+});
+
+test("controlled rollback blocks when rollback review approval is missing", async () => {
+  let callCount = 0;
+  const result = await executeUnitySceneObjectCreationRollback(createRollbackExecutionInput({
+    review_state: {
+      review_package_id: null,
+      review_completed_at: null,
+      approved_by_operator: true,
+      operator_approval_id: "rollback-approval-1",
+      delivery_package_id: "rollback-delivery-1",
+    },
+  }), {
+    mutation_bridge: {
+      async executeSceneObjectCreation() {
+        throw new Error("should not execute mutation");
+      },
+      async executeSceneObjectRemoval() {
+        callCount += 1;
+        throw new Error("should not execute rollback");
+      },
+    },
+  });
+
+  assert.equal(result.execution_kind, "controlled_rollback_blocked");
+  assert.equal(result.executed, false);
+  assert.equal(callCount, 0);
+  assert.match(result.blocked_reason ?? "", /rollback review approval is recorded/i);
+});
+
+test("controlled rollback blocks when rollback authorization is missing", async () => {
+  let callCount = 0;
+  const result = await executeUnitySceneObjectCreationRollback(createRollbackExecutionInput({
+    authorization: null,
+  }), {
+    mutation_bridge: {
+      async executeSceneObjectCreation() {
+        throw new Error("should not execute mutation");
+      },
+      async executeSceneObjectRemoval() {
+        callCount += 1;
+        throw new Error("should not execute rollback");
+      },
+    },
+  });
+
+  assert.equal(result.execution_kind, "controlled_rollback_blocked");
+  assert.equal(result.executed, false);
+  assert.equal(callCount, 0);
+  assert.match(result.blocked_reason ?? "", /until a final rollback authorization is recorded/i);
+});
+
+test("controlled rollback blocks when the final rollback switch is disabled", async () => {
+  let callCount = 0;
+  const result = await executeUnitySceneObjectCreationRollback(createRollbackExecutionInput({
+    rollback_switch: {
+      rollback_switch_id: "rollback-switch-disabled",
+      switch_enabled: false,
+      enabled_by_operator: true,
+      enabled_at: "2026-05-01T21:06:00.000Z",
+      target_request_id: "unity-rollback-1",
+      target_scene: "EnemyAIDemo",
+      target_object_name: "AIE_ControlledMutationProbe",
+      allowed_rollback_type: "scene_object_removal",
+      expires_at: "2026-05-01T22:00:00.000Z",
+    },
+  }), {
+    mutation_bridge: {
+      async executeSceneObjectCreation() {
+        throw new Error("should not execute mutation");
+      },
+      async executeSceneObjectRemoval() {
+        callCount += 1;
+        throw new Error("should not execute rollback");
+      },
+    },
+  });
+
+  assert.equal(result.execution_kind, "controlled_rollback_blocked");
+  assert.equal(result.executed, false);
+  assert.equal(callCount, 0);
+  assert.match(result.blocked_reason ?? "", /remains disabled/i);
+});
+
+test("controlled rollback blocks the wrong object target", async () => {
+  let callCount = 0;
+  const result = await executeUnitySceneObjectCreationRollback(createRollbackExecutionInput({
+    target_object_name: "CheckpointAnchor",
+  }), {
+    mutation_bridge: {
+      async executeSceneObjectCreation() {
+        throw new Error("should not execute mutation");
+      },
+      async executeSceneObjectRemoval() {
+        callCount += 1;
+        throw new Error("should not execute rollback");
+      },
+    },
+  });
+
+  assert.equal(result.execution_kind, "controlled_rollback_blocked");
+  assert.equal(result.executed, false);
+  assert.equal(callCount, 0);
+  assert.match(result.blocked_reason ?? "", /limited to AIE_ControlledMutationProbe/i);
+});
+
+test("successful controlled rollback bridge persists rollback evidence", async () => {
+  let callCount = 0;
+  const result = await executeUnitySceneObjectCreationRollback(createRollbackExecutionInput(), {
+    mutation_bridge: {
+      async executeSceneObjectCreation() {
+        throw new Error("should not execute mutation");
+      },
+      async executeSceneObjectRemoval(input) {
+        callCount += 1;
+        assert.equal(input.object_name, "AIE_ControlledMutationProbe");
+        assert.equal(input.target_scene, "EnemyAIDemo");
+        assert.equal(input.rollback_enabled, true);
+        return {
+          bridge_status: "bridge_ready" as const,
+          source: "command_probe" as const,
+          rollback_status: "rollback_executed" as const,
+          rollback_type: "scene_object_removal" as const,
+          target_scene: "EnemyAIDemo",
+          object_name: "AIE_ControlledMutationProbe",
+          removed_object_name: "AIE_ControlledMutationProbe",
+          scene_saved: true,
+          target_missing_handling: "removed" as const,
+          evidence_timestamp: "2026-05-01T21:10:00.000Z",
+          raw_evidence_summary: "Controlled Unity rollback removed AIE_ControlledMutationProbe from EnemyAIDemo and saved the scene.",
+          summary: "Controlled Unity rollback removed target AIE_ControlledMutationProbe in EnemyAIDemo with scene_saved true.",
+          recommended_next_operator_action: "Review the controlled Unity rollback evidence and rerun read-only validation before proceeding.",
+        };
+      },
+    },
+  });
+
+  assert.equal(callCount, 1);
+  assert.equal(result.execution_kind, "controlled_rollback_executed");
+  assert.equal(result.executed, true);
+  assert.equal(result.rollback_enabled, true);
+  assert.equal(result.removed_object_name, "AIE_ControlledMutationProbe");
+  assert.equal(result.scene_saved, true);
+  assert.equal(result.final_rollback_switch_enabled, true);
+  assert.equal(result.mutating, true);
+  assert.ok(result.review_package);
+  assert.ok(result.delivery_package);
+  assert.match(result.review_package?.summary ?? "", /CONTROLLED UNITY ROLLBACK/i);
+  assert.match(result.delivery_package?.release_notes ?? "", /TARGET REMOVED/i);
+  assert.ok(result.delivery_package?.validation_results.some((entry) => /Removed object name: AIE_ControlledMutationProbe/i.test(entry)));
+});
+
+test("controlled rollback reports target-missing behavior safely and explicitly", async () => {
+  const result = await executeUnitySceneObjectCreationRollback(createRollbackExecutionInput(), {
+    mutation_bridge: {
+      async executeSceneObjectCreation() {
+        throw new Error("should not execute mutation");
+      },
+      async executeSceneObjectRemoval() {
+        return {
+          bridge_status: "bridge_ready" as const,
+          source: "command_probe" as const,
+          rollback_status: "rollback_idempotent" as const,
+          rollback_type: "scene_object_removal" as const,
+          target_scene: "EnemyAIDemo",
+          object_name: "AIE_ControlledMutationProbe",
+          removed_object_name: null,
+          scene_saved: false,
+          target_missing_handling: "already_missing_idempotent" as const,
+          evidence_timestamp: "2026-05-01T21:11:00.000Z",
+          raw_evidence_summary: "Controlled Unity rollback confirmed that AIE_ControlledMutationProbe is already absent from EnemyAIDemo; no scene write was required.",
+          summary: "Controlled Unity rollback confirmed missing target AIE_ControlledMutationProbe in EnemyAIDemo with scene_saved false.",
+          recommended_next_operator_action: "Review the controlled Unity rollback evidence and rerun read-only validation before proceeding.",
+        };
+      },
+    },
+  });
+
+  assert.equal(result.execution_kind, "controlled_rollback_idempotent");
+  assert.equal(result.executed, false);
+  assert.equal(result.scene_saved, false);
+  assert.equal(result.target_missing_handling, "already_missing_idempotent");
+  assert.equal(result.removed_object_name, null);
+  assert.match(result.delivery_package?.release_notes ?? "", /TARGET ALREADY MISSING/i);
 });

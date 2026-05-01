@@ -15,6 +15,7 @@ namespace EnemyAIDemo.Editor
     {
         private const string JsonPrefix = "[AIE_UNITY_VALIDATION_JSON]";
         private const string MutationJsonPrefix = "[AIE_UNITY_MUTATION_JSON]";
+        private const string RollbackJsonPrefix = "[AIE_UNITY_ROLLBACK_JSON]";
         private const string ScenePathEnv = "AIE_UNITY_SCENE_PATH";
         private const string RequestIdEnv = "AIE_UNITY_VALIDATION_REQUEST_ID";
         private const string RequestedAtEnv = "AIE_UNITY_VALIDATION_REQUESTED_AT";
@@ -25,6 +26,12 @@ namespace EnemyAIDemo.Editor
         private const string MutationTypeEnv = "AIE_UNITY_MUTATION_TYPE";
         private const string MutationEnabledEnv = "AIE_UNITY_MUTATION_ENABLED";
         private const string MutationIdempotentOnDuplicateEnv = "AIE_UNITY_MUTATION_IDEMPOTENT_ON_DUPLICATE";
+        private const string RollbackRequestIdEnv = "AIE_UNITY_ROLLBACK_REQUEST_ID";
+        private const string RollbackRequestedAtEnv = "AIE_UNITY_ROLLBACK_REQUESTED_AT";
+        private const string RollbackObjectNameEnv = "AIE_UNITY_ROLLBACK_OBJECT_NAME";
+        private const string RollbackTypeEnv = "AIE_UNITY_ROLLBACK_TYPE";
+        private const string RollbackEnabledEnv = "AIE_UNITY_ROLLBACK_ENABLED";
+        private const string RollbackIdempotentOnMissingEnv = "AIE_UNITY_ROLLBACK_IDEMPOTENT_ON_MISSING";
         private const string DefaultScenePath = "Assets/Scenes/EnemyAIDemo.unity";
         private const string DefaultMutationObjectName = "AIE_ControlledMutationProbe";
 
@@ -207,6 +214,137 @@ namespace EnemyAIDemo.Editor
             }
         }
 
+        public static void RunSceneObjectRemovalRollbackFromCommandLine()
+        {
+            string requestId = GetEnvironmentValue(RollbackRequestIdEnv) ?? string.Empty;
+            string requestedAt = GetEnvironmentValue(RollbackRequestedAtEnv) ?? DateTime.UtcNow.ToString("O");
+            string scenePath = GetEnvironmentValue(ScenePathEnv) ?? DefaultScenePath;
+            string objectName = GetEnvironmentValue(RollbackObjectNameEnv) ?? DefaultMutationObjectName;
+            string rollbackType = GetEnvironmentValue(RollbackTypeEnv) ?? "scene_object_removal";
+            bool rollbackEnabled = GetBooleanEnvironmentValue(RollbackEnabledEnv);
+            bool idempotentOnMissing = GetBooleanEnvironmentValue(RollbackIdempotentOnMissingEnv, true);
+
+            try
+            {
+                if (!string.Equals(rollbackType, "scene_object_removal", StringComparison.Ordinal))
+                {
+                    EmitRollbackFailure(
+                        requestId,
+                        requestedAt,
+                        scenePath,
+                        objectName,
+                        rollbackType,
+                        "Unsupported rollback type requested for controlled Unity rollback.");
+                    return;
+                }
+
+                if (!rollbackEnabled)
+                {
+                    EmitRollbackFailure(
+                        requestId,
+                        requestedAt,
+                        scenePath,
+                        objectName,
+                        rollbackType,
+                        "Controlled Unity rollback is disabled and cannot run without explicit rollback enablement.");
+                    return;
+                }
+
+                if (!System.IO.File.Exists(scenePath))
+                {
+                    EmitRollbackFailure(
+                        requestId,
+                        requestedAt,
+                        scenePath,
+                        objectName,
+                        rollbackType,
+                        $"Rollback target scene not found at {scenePath}.");
+                    return;
+                }
+
+                Scene scene = EditorSceneManager.OpenScene(scenePath, OpenSceneMode.Single);
+                string sceneName = string.IsNullOrWhiteSpace(scene.name) ? "UnknownScene" : scene.name;
+                List<GameObject> matches = FindSceneObjectsByName(scene, objectName);
+                if (matches.Count == 0)
+                {
+                    if (idempotentOnMissing)
+                    {
+                        EmitRollbackSuccess(
+                            requestId,
+                            requestedAt,
+                            sceneName,
+                            objectName,
+                            rollbackType,
+                            false,
+                            null,
+                            "rollback_idempotent",
+                            "already_missing_idempotent",
+                            $"Controlled Unity rollback confirmed that {objectName} is already absent from {sceneName}; no scene write was required.");
+                        return;
+                    }
+
+                    EmitRollbackFailure(
+                        requestId,
+                        requestedAt,
+                        sceneName,
+                        objectName,
+                        rollbackType,
+                        $"Controlled Unity rollback could not find {objectName} in {sceneName}.");
+                    return;
+                }
+
+                if (matches.Count > 1)
+                {
+                    EmitRollbackFailure(
+                        requestId,
+                        requestedAt,
+                        sceneName,
+                        objectName,
+                        rollbackType,
+                        $"Controlled Unity rollback found multiple objects named {objectName} in {sceneName} and refused ambiguous removal.");
+                    return;
+                }
+
+                GameObject existing = matches[0];
+                UnityEngine.Object.DestroyImmediate(existing);
+                EditorSceneManager.MarkSceneDirty(scene);
+                bool sceneSaved = EditorSceneManager.SaveScene(scene);
+                if (!sceneSaved)
+                {
+                    EmitRollbackFailure(
+                        requestId,
+                        requestedAt,
+                        sceneName,
+                        objectName,
+                        rollbackType,
+                        $"Controlled Unity rollback removed {objectName} but SaveScene returned false for {sceneName}.");
+                    return;
+                }
+
+                EmitRollbackSuccess(
+                    requestId,
+                    requestedAt,
+                    sceneName,
+                    objectName,
+                    rollbackType,
+                    true,
+                    objectName,
+                    "rollback_executed",
+                    "removed",
+                    $"Controlled Unity rollback removed {objectName} from {sceneName} and saved the scene.");
+            }
+            catch (Exception exception)
+            {
+                EmitRollbackFailure(
+                    requestId,
+                    requestedAt,
+                    scenePath,
+                    objectName,
+                    rollbackType,
+                    $"Controlled Unity rollback failed: {exception}");
+            }
+        }
+
         private static void CountHierarchy(GameObject node, ref int objectCount, ref int missingScripts)
         {
             if (node == null)
@@ -257,6 +395,23 @@ namespace EnemyAIDemo.Editor
             return null;
         }
 
+        private static List<GameObject> FindSceneObjectsByName(Scene scene, string objectName)
+        {
+            List<GameObject> matches = new List<GameObject>();
+            if (string.IsNullOrWhiteSpace(objectName))
+            {
+                return matches;
+            }
+
+            IReadOnlyList<GameObject> rootObjects = scene.GetRootGameObjects();
+            foreach (GameObject root in rootObjects)
+            {
+                FindAllInHierarchy(root, objectName.Trim(), matches);
+            }
+
+            return matches;
+        }
+
         private static GameObject FindInHierarchy(GameObject node, string objectName)
         {
             if (node == null)
@@ -280,6 +435,25 @@ namespace EnemyAIDemo.Editor
             }
 
             return null;
+        }
+
+        private static void FindAllInHierarchy(GameObject node, string objectName, List<GameObject> matches)
+        {
+            if (node == null)
+            {
+                return;
+            }
+
+            if (string.Equals(node.name, objectName, StringComparison.Ordinal))
+            {
+                matches.Add(node);
+            }
+
+            Transform transform = node.transform;
+            for (int index = 0; index < transform.childCount; index++)
+            {
+                FindAllInHierarchy(transform.GetChild(index).gameObject, objectName, matches);
+            }
         }
 
         private static bool GetBooleanEnvironmentValue(string name, bool defaultValue = false)
@@ -322,6 +496,36 @@ namespace EnemyAIDemo.Editor
         {
             string payload = $"{{\"request_id\":\"{EscapeJson(requestId)}\",\"mutation_status\":\"mutation_failed\",\"mutation_type\":\"{EscapeJson(mutationType)}\",\"target_scene\":\"{EscapeJson(targetScene)}\",\"object_name\":\"{EscapeJson(objectName)}\",\"created_object_name\":\"\",\"scene_saved\":false,\"duplicate_handling\":\"created\",\"evidence_timestamp\":\"{EscapeJson(requestedAt)}\",\"raw_evidence_summary\":\"{EscapeJson(reason)}\",\"rollback_hint\":\"{EscapeJson("Rollback not available because the controlled Unity mutation did not complete.")}\",\"recommended_next_operator_action\":\"{EscapeJson("Review the mutation failure evidence, keep the switch disabled, and do not retry until the blocker is understood.")}\"}}";
             Debug.Log(MutationJsonPrefix + payload);
+            EditorApplication.Exit(1);
+        }
+
+        private static void EmitRollbackSuccess(
+            string requestId,
+            string requestedAt,
+            string targetScene,
+            string objectName,
+            string rollbackType,
+            bool sceneSaved,
+            string removedObjectName,
+            string rollbackStatus,
+            string targetMissingHandling,
+            string rawEvidenceSummary)
+        {
+            string payload = $"{{\"request_id\":\"{EscapeJson(requestId)}\",\"rollback_status\":\"{EscapeJson(rollbackStatus)}\",\"rollback_type\":\"{EscapeJson(rollbackType)}\",\"target_scene\":\"{EscapeJson(targetScene)}\",\"object_name\":\"{EscapeJson(objectName)}\",\"removed_object_name\":\"{EscapeJson(removedObjectName ?? string.Empty)}\",\"scene_saved\":{sceneSaved.ToString().ToLowerInvariant()},\"target_missing_handling\":\"{EscapeJson(targetMissingHandling)}\",\"evidence_timestamp\":\"{EscapeJson(requestedAt)}\",\"raw_evidence_summary\":\"{EscapeJson(rawEvidenceSummary)}\",\"recommended_next_operator_action\":\"{EscapeJson("Review the controlled Unity rollback evidence and rerun read-only validation before proceeding.")}\"}}";
+            Debug.Log(RollbackJsonPrefix + payload);
+            EditorApplication.Exit(0);
+        }
+
+        private static void EmitRollbackFailure(
+            string requestId,
+            string requestedAt,
+            string targetScene,
+            string objectName,
+            string rollbackType,
+            string reason)
+        {
+            string payload = $"{{\"request_id\":\"{EscapeJson(requestId)}\",\"rollback_status\":\"rollback_failed\",\"rollback_type\":\"{EscapeJson(rollbackType)}\",\"target_scene\":\"{EscapeJson(targetScene)}\",\"object_name\":\"{EscapeJson(objectName)}\",\"removed_object_name\":\"\",\"scene_saved\":false,\"target_missing_handling\":\"removed\",\"evidence_timestamp\":\"{EscapeJson(requestedAt)}\",\"raw_evidence_summary\":\"{EscapeJson(reason)}\",\"recommended_next_operator_action\":\"{EscapeJson("Review the rollback failure evidence, keep the rollback switch disabled, and do not retry until the blocker is understood.")}\"}}";
+            Debug.Log(RollbackJsonPrefix + payload);
             EditorApplication.Exit(1);
         }
 
