@@ -463,6 +463,63 @@ test("chain execution evidence renders partial failure rollback planning details
   assert.match(markup, /auto_execute=false/);
 });
 
+test("rollback execution evidence renders manual trigger and remaining actions details", () => {
+  const reviewPackage = createAutonomousReviewPackage({
+    package_id: "unity-chain-rollback-review-1",
+    work_item_id: "unity-chain-rollback-unity-chain-rollback-plan-1",
+    chain_id: "unity-chain-rollback-chain-1",
+    status: "pending",
+    summary: "ROLLBACK EXECUTION: Controlled Unity chain rollback plan unity-chain-rollback-plan-1 completed with status partial_failure.",
+    files_changed: [],
+    tests_run: ["unity mutation execution chain manual rollback execution"],
+    proof_results: [
+      "Execution kind: planned_chain_rollback_partial_failure",
+      "Chain id: unity-controlled-chain-1",
+      "Rollback plan id: unity-chain-rollback-plan-1",
+      "Execution status: partial_failure",
+      "Manual trigger: true",
+      "Executed: true",
+      "Actions executed count: 1",
+      "Actions failed count: 1",
+      "Remaining actions not executed: create-probe-3",
+      "Final scene state: Scene EnemyAIDemo object count moved from 14 to 13 during manual rollback execution.",
+      "Evidence timestamp: 2026-05-03T12:27:00.000Z",
+      "Action result: create-probe => executed",
+      "Action result: create-probe-2 => failed (Unity rollback bridge reported a controlled failure.)",
+      "Recommended next operator action: Review the failed rollback evidence and decide whether the remaining rollback actions need a separate follow-up execution step.",
+    ],
+    risks: ["ROLLBACK EXECUTION STOPPED", "MANUAL TRIGGER", "ROLLBACK NOT AUTO-EXECUTED"],
+    recommended_decision: "review_required",
+    rollback_notes: "ROLLBACK PLAN unity-chain-rollback-plan-1: create-probe-3",
+    operator_actions: ["approve", "archive"],
+  });
+
+  const evidence = extractUnityValidationEvidenceFromReviewPackage(reviewPackage);
+
+  assert.ok(evidence);
+  assert.equal(evidence.kind, "planned_chain_rollback_result");
+  assert.equal(evidence.rollbackPlanId, "unity-chain-rollback-plan-1");
+  assert.equal(evidence.executionStatus, "partial_failure");
+  assert.equal(evidence.manualTrigger, true);
+  assert.equal(evidence.actionsExecutedCount, 1);
+  assert.equal(evidence.actionsFailedCount, 1);
+  assert.deepEqual(evidence.perActionResults, [
+    "create-probe => executed",
+    "create-probe-2 => failed (Unity rollback bridge reported a controlled failure.)",
+  ]);
+  assert.deepEqual(evidence.remainingActionsNotExecuted, ["create-probe-3"]);
+
+  const markup = renderToStaticMarkup(createElement(UnityValidationEvidencePanel, { evidence }));
+  assert.match(markup, /Rollback Execution/);
+  assert.match(markup, /ROLLBACK EXECUTION/);
+  assert.match(markup, /EXECUTED/);
+  assert.match(markup, /MANUAL TRIGGER/);
+  assert.match(markup, /PARTIAL FAILURE/);
+  assert.match(markup, /REMAINING ACTIONS NOT EXECUTED/);
+  assert.match(markup, /Per-action result/);
+  assert.match(markup, /create-probe-3/);
+});
+
 test("mutation preflight evidence renders simulation-only operator details", () => {
   const reviewPackage = createAutonomousReviewPackage({
     package_id: "unity-mutation-preflight-review-1",

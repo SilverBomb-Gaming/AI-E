@@ -141,3 +141,15 @@ test("chat remains receptionist-only for Unity chain rollback planning and rollb
   assert.equal(result.response.proposal?.safe_to_execute, false);
   assert.match(result.response.assistant_message, /operator approval is still required|needs operator review|blocking/i);
 });
+
+test("chat remains receptionist-only for explicit manual chain rollback execution requests", () => {
+  const result = processConversationalCommand({
+    rawRequest: "manually execute the reviewed Unity chain rollback plan for AIE_ControlledMutationProbe in EnemyAIDemo now",
+    projectName: "OpenClaw Unity production project",
+    repoName: "AI-E",
+  }, "operator-chat-session", "2026-05-03T12:30:00.000Z");
+
+  assert.ok(result.response.proposal);
+  assert.equal(result.response.proposal?.safe_to_execute, false);
+  assert.match(result.response.assistant_message, /operator approval is still required|needs operator review|blocking/i);
+});

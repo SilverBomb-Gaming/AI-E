@@ -362,6 +362,30 @@ Current Layer 16 boundary:
 - unsupported mutation types and out-of-lane targets are refused explicitly
 - broader multi-action Unity execution paths, branching chains, parallel chains, and new mutation types remain out of scope
 
+## Layer 17 / Controlled Rollback Execution
+
+Layer 17 now starts the controlled recovery loop by allowing a reviewed chain rollback plan to execute, but only through a separately approved manual trigger that stays pinned to the existing Layer 15 rollback lane.
+
+Current Layer 17 status:
+
+- Step 1 controlled rollback execution from chain plans: implemented
+- supported rollback type: `unity_scene_object_removal` only
+- rollback execution entrypoint: `executePlannedUnityRollbackFromChain`
+- rollback plan source: reviewed Layer 16 Step 4 rollback-plan artifact only
+- rollback execution path: sequential only, stop on first failure, no retry, no parallel rollback
+- rollback execution evidence: implemented in the operator-visible evidence surfaces
+- chat execution: still refused with `safe_to_execute: false`
+
+Current Layer 17 boundary:
+
+- rollback remains manual only and is never auto-executed
+- rollback requires separate rollback review approval and separate rollback operator approval; mutation approvals cannot be reused
+- rollback still requires explicit final rollback authorization and explicit final rollback switch per action
+- rollback execution validates scene and object scope before using the existing Layer 15 rollback executor
+- rollback execution never bypasses Layer 15 gates and never calls Unity directly outside the reviewed rollback bridge lane
+- only the verified `AIE_ControlledMutationProbe` removal in `EnemyAIDemo` is supported
+- broader rollback types, auto-recovery, self-healing behavior, and chat-triggered rollback remain out of scope
+
 ## Safe Runtime Action Bridge
 
 AI-E can now translate supported live operator actions into safe runtime intents.

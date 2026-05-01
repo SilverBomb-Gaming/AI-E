@@ -684,6 +684,72 @@ export type UnityMutationExecutionChainExecutionResult = {
   mutating: boolean;
 };
 
+export type UnityPlannedChainRollbackExecutionActionInput = {
+  source_action_id: string;
+  rollback_request_id: string;
+  rollback_action_type: "unity_scene_object_removal";
+  target_scene: string;
+  target_object_name: string;
+  authorization: UnityRollbackExecutionAuthorization | null;
+  live_validation_result?: UnitySceneObjectCreationRollbackExecutionPlanInput["live_validation_result"];
+  execution_plan: UnitySceneObjectCreationRollbackExecutionPlanResult | null;
+  rollback_switch: UnityRollbackExecutionSwitch | null;
+  rollback_execution_mode_enabled?: boolean;
+};
+
+export type UnityPlannedChainRollbackExecutionInput = UnityProductionAdapterInput & {
+  chain_id: string;
+  rollback_plan: UnityMutationExecutionChainRollbackPlan | null;
+  source_execution_result: UnityMutationExecutionChainExecutionResult | null;
+  rollback_actions: UnityPlannedChainRollbackExecutionActionInput[];
+};
+
+export type UnityPlannedChainRollbackExecutionStatus = "success" | "partial_failure" | "failed";
+
+export type UnityPlannedChainRollbackExecutionActionResult = {
+  source_action_id: string;
+  rollback_request_id: string;
+  rollback_action_type: "unity_scene_object_removal";
+  status: "executed" | "failed" | "blocked";
+  executed: boolean;
+  result: UnitySceneObjectCreationRollbackExecutionResult | null;
+  failure_reason: string | null;
+};
+
+export type UnityPlannedChainRollbackExecutionResult = {
+  rollback_plan_id: string | null;
+  chain_id: string;
+  domain: "Unity";
+  request_type: "scene_object_creation_request";
+  rollback_type: "scene_object_removal";
+  execution_mode: "controlled_planned_chain_rollback_runtime_bridge";
+  execution_kind:
+    | "planned_chain_rollback_executed"
+    | "planned_chain_rollback_partial_failure"
+    | "planned_chain_rollback_failed"
+    | "planned_chain_rollback_blocked";
+  review_approval_id: string | null;
+  review_approval_status: "missing" | "approved";
+  operator_approval_id: string | null;
+  operator_approval_status: "missing" | "approved";
+  manual_trigger: true;
+  auto_execute: false;
+  executed: boolean;
+  execution_status: UnityPlannedChainRollbackExecutionStatus;
+  actions_executed_count: number;
+  actions_failed_count: number;
+  per_action_results: UnityPlannedChainRollbackExecutionActionResult[];
+  remaining_actions_not_executed: string[];
+  final_scene_state: UnityMutationExecutionChainExecutionFinalSceneState;
+  evidence_timestamp: string;
+  blocked_reason: string | null;
+  recommended_next_operator_action: string;
+  artifact_label: "unity_mutation_execution_chain_rollback_result";
+  review_package: AutonomousReviewPackage | null;
+  delivery_package: AutonomousDeliveryPackage | null;
+  mutating: boolean;
+};
+
 export type UnitySceneObjectCreationPreviewResult = {
   request_id: string;
   domain: "Unity";
@@ -1666,6 +1732,85 @@ function createUnityMutationExecutionChainExecutionPackages(
   };
 }
 
+function createUnityPlannedChainRollbackExecutionPackages(
+  input: UnityPlannedChainRollbackExecutionInput,
+  result: UnityPlannedChainRollbackExecutionResult,
+): {
+  reviewPackage: AutonomousReviewPackage;
+  deliveryPackage: AutonomousDeliveryPackage;
+} {
+  const summary = `ROLLBACK EXECUTION: Controlled Unity chain rollback plan ${result.rollback_plan_id ?? "unknown"} completed with status ${result.execution_status}.`;
+  const proofResults = [
+    `Execution kind: ${result.execution_kind}`,
+    `Chain id: ${result.chain_id}`,
+    `Rollback plan id: ${result.rollback_plan_id ?? "none"}`,
+    `Execution status: ${result.execution_status}`,
+    `Manual trigger: ${String(result.manual_trigger)}`,
+    `Executed: ${String(result.executed)}`,
+    `Actions executed count: ${String(result.actions_executed_count)}`,
+    `Actions failed count: ${String(result.actions_failed_count)}`,
+    `Remaining actions not executed: ${result.remaining_actions_not_executed.join(", ") || "none"}`,
+    `Final scene state: ${result.final_scene_state.summary}`,
+    `Evidence timestamp: ${result.evidence_timestamp}`,
+    ...result.per_action_results.map((action) => `Action result: ${action.source_action_id} => ${action.status}${action.failure_reason ? ` (${action.failure_reason})` : ""}`),
+    `Recommended next operator action: ${result.recommended_next_operator_action}`,
+    ...(result.blocked_reason ? [`Blocked reason: ${result.blocked_reason}`] : []),
+  ];
+
+  const reviewPackage = createAutonomousReviewPackage({
+    package_id: `unity-chain-rollback-review-${result.rollback_plan_id ?? result.chain_id}`,
+    work_item_id: `unity-chain-rollback-${result.rollback_plan_id ?? result.chain_id}`,
+    chain_id: `unity-chain-rollback-chain-${result.chain_id}`,
+    status: result.execution_status === "success" ? "approved" : "pending",
+    summary,
+    files_changed: [],
+    tests_run: ["unity mutation execution chain manual rollback execution"],
+    proof_results: proofResults,
+    risks: result.execution_status === "success"
+      ? ["ROLLBACK EXECUTION", "MANUAL TRIGGER", "ROLLBACK NOT AUTO-EXECUTED"]
+      : ["ROLLBACK EXECUTION STOPPED", "MANUAL TRIGGER", "ROLLBACK NOT AUTO-EXECUTED"],
+    recommended_decision: result.execution_status === "success" ? "approve" : "review_required",
+    rollback_notes: `ROLLBACK PLAN ${result.rollback_plan_id ?? "unknown"}: ${result.remaining_actions_not_executed.join(" | ") || "fully executed"}`,
+    operator_actions: ["approve", "archive"],
+  });
+
+  const deliveryPackage = createAutonomousDeliveryPackage({
+    delivery_package_id: `unity-chain-rollback-delivery-${result.rollback_plan_id ?? result.chain_id}`,
+    review_package_id: reviewPackage.package_id,
+    work_item_id: reviewPackage.work_item_id,
+    chain_id: reviewPackage.chain_id,
+    branch_name: "",
+    commit_plan: [
+      "Controlled Unity chain rollback executed only through the reviewed Layer 15 rollback lane.",
+      `Execution status: ${result.execution_status}`,
+      `Manual trigger: ${String(result.manual_trigger)}`,
+      `Final scene state: ${result.final_scene_state.summary}`,
+    ],
+    files_changed: [],
+    validation_results: proofResults,
+    proof_results: [
+      "ROLLBACK EXECUTION",
+      "MANUAL TRIGGER",
+      result.execution_status,
+      result.final_scene_state.summary,
+    ],
+    risk_summary: result.blocked_reason ?? "Manual rollback remained separately gated and was never auto-executed.",
+    rollback_plan: `auto_execute=${String(result.auto_execute)} | remaining=${result.remaining_actions_not_executed.join(" | ") || "none"}`,
+    release_notes: summary,
+    recommended_pr_title: "",
+    recommended_pr_body: `Unity chain rollback execution handoff\n\nSummary: ${summary}\n\nNext operator action: ${result.recommended_next_operator_action}`,
+    operator_decision: null,
+    status: "awaiting_operator_approval",
+    created_at: input.requested_at,
+    updated_at: input.requested_at,
+  });
+
+  return {
+    reviewPackage,
+    deliveryPackage,
+  };
+}
+
 function extractActionObjectCount(action: UnityMutationExecutionChainReadinessActionInput): number | null {
   return action.live_validation_result?.object_count ?? null;
 }
@@ -1736,12 +1881,109 @@ function buildChainExecutionBlockedResult(
   };
 }
 
+function buildPlannedChainRollbackBlockedResult(
+  input: UnityPlannedChainRollbackExecutionInput,
+  blockedReason: string,
+): UnityPlannedChainRollbackExecutionResult {
+  const objectCountBefore = input.rollback_actions[0]?.live_validation_result?.object_count ?? null;
+
+  return {
+    rollback_plan_id: input.rollback_plan?.rollback_plan_id ?? null,
+    chain_id: input.chain_id.trim(),
+    domain: "Unity",
+    request_type: "scene_object_creation_request",
+    rollback_type: "scene_object_removal",
+    execution_mode: "controlled_planned_chain_rollback_runtime_bridge",
+    execution_kind: "planned_chain_rollback_blocked",
+    review_approval_id: input.review_state.review_package_id,
+    review_approval_status: hasCompletedReview(input.review_state) ? "approved" : "missing",
+    operator_approval_id: input.review_state.operator_approval_id,
+    operator_approval_status: hasApproval(input.review_state) ? "approved" : "missing",
+    manual_trigger: true,
+    auto_execute: false,
+    executed: false,
+    execution_status: "failed",
+    actions_executed_count: 0,
+    actions_failed_count: 0,
+    per_action_results: [],
+    remaining_actions_not_executed: input.rollback_plan?.rollback_order ?? input.rollback_actions.map((action) => action.source_action_id),
+    final_scene_state: {
+      target_scene: input.rollback_actions[0]?.target_scene?.trim() ?? null,
+      object_count_before: objectCountBefore,
+      object_count_after: objectCountBefore,
+      object_count_delta: 0,
+      summary: "Rollback execution was blocked before any Unity action ran.",
+    },
+    evidence_timestamp: input.requested_at,
+    blocked_reason: blockedReason,
+    recommended_next_operator_action: "Resolve the rollback approval or gate mismatch before retrying manual rollback execution.",
+    artifact_label: "unity_mutation_execution_chain_rollback_result",
+    review_package: null,
+    delivery_package: null,
+    mutating: false,
+  };
+}
+
 function isSuccessfulChainMutationResult(result: UnitySceneObjectCreationMutationExecutionResult): boolean {
   return result.execution_kind === "controlled_mutation_executed" || result.execution_kind === "controlled_mutation_idempotent";
 }
 
 function isSuccessfulChainRollbackResult(result: UnitySceneObjectCreationRollbackExecutionResult): boolean {
   return result.execution_kind === "controlled_rollback_executed" || result.execution_kind === "controlled_rollback_idempotent";
+}
+
+function getPlannedChainRollbackActionCountDelta(
+  actionResult: UnityPlannedChainRollbackExecutionActionResult,
+): number {
+  if (!actionResult.result || actionResult.status !== "executed") {
+    return 0;
+  }
+
+  return actionResult.result.execution_kind === "controlled_rollback_executed" ? -1 : 0;
+}
+
+function hasSeparateRollbackApprovals(
+  input: UnityPlannedChainRollbackExecutionInput,
+): { approved: boolean; blockedReason: string | null; } {
+  if (!hasCompletedReview(input.review_state)) {
+    return {
+      approved: false,
+      blockedReason: "Manual rollback execution requires a separate completed rollback review approval.",
+    };
+  }
+
+  if (!hasApproval(input.review_state)) {
+    return {
+      approved: false,
+      blockedReason: "Manual rollback execution requires a separate operator rollback approval.",
+    };
+  }
+
+  if (!input.source_execution_result) {
+    return {
+      approved: false,
+      blockedReason: "Manual rollback execution requires the source chain execution evidence from Step 4.",
+    };
+  }
+
+  if (input.review_state.review_package_id === input.source_execution_result.review_approval_id) {
+    return {
+      approved: false,
+      blockedReason: "Manual rollback execution cannot reuse the original chain execution review approval.",
+    };
+  }
+
+  if (input.review_state.operator_approval_id === input.source_execution_result.operator_approval_id) {
+    return {
+      approved: false,
+      blockedReason: "Manual rollback execution cannot reuse the original chain execution operator approval.",
+    };
+  }
+
+  return {
+    approved: true,
+    blockedReason: null,
+  };
 }
 
 function classifyChainExecutionFailure(input: {
@@ -4174,6 +4416,243 @@ export async function executeUnityMutationExecutionChain(
     ...baseResult,
     review_package: chainPackages.reviewPackage,
     delivery_package: chainPackages.deliveryPackage,
+  };
+}
+
+export async function executePlannedUnityRollbackFromChain(
+  input: UnityPlannedChainRollbackExecutionInput,
+  options?: UnitySceneObjectCreationRollbackExecutionOptions,
+): Promise<UnityPlannedChainRollbackExecutionResult> {
+  if (!isSceneObjectCreationOnlyPacket(input.planning_packet)) {
+    return buildPlannedChainRollbackBlockedResult(
+      input,
+      "Only scene_object_creation_request is executable through the controlled Unity chain rollback lane.",
+    );
+  }
+
+  if (!input.source_execution_result) {
+    return buildPlannedChainRollbackBlockedResult(
+      input,
+      "Controlled rollback execution requires the reviewed Step 4 chain execution result.",
+    );
+  }
+
+  if (!input.rollback_plan || !input.source_execution_result.rollback_plan_required || !input.source_execution_result.rollback_plan) {
+    return buildPlannedChainRollbackBlockedResult(
+      input,
+      "Controlled rollback execution requires a reviewed rollback plan from the Step 4 partial failure path.",
+    );
+  }
+
+  if (
+    input.chain_id.trim() !== input.source_execution_result.chain_id
+    || input.rollback_plan.source_chain_id !== input.chain_id.trim()
+    || input.rollback_plan.rollback_plan_id !== input.source_execution_result.rollback_plan.rollback_plan_id
+  ) {
+    return buildPlannedChainRollbackBlockedResult(
+      input,
+      "Controlled rollback execution input does not match the reviewed chain rollback plan scope.",
+    );
+  }
+
+  if (input.rollback_plan.auto_execute || input.rollback_plan.executed) {
+    return buildPlannedChainRollbackBlockedResult(
+      input,
+      "Controlled rollback execution refuses any rollback plan marked for auto execution or already executed.",
+    );
+  }
+
+  const separateApprovalStatus = hasSeparateRollbackApprovals(input);
+  if (!separateApprovalStatus.approved) {
+    return buildPlannedChainRollbackBlockedResult(
+      input,
+      separateApprovalStatus.blockedReason ?? "Controlled rollback execution requires separate rollback approvals.",
+    );
+  }
+
+  const rollbackActionIds = input.rollback_plan.rollback_order;
+  if (rollbackActionIds.length === 0) {
+    return buildPlannedChainRollbackBlockedResult(
+      input,
+      "Controlled rollback execution requires at least one rollback action from the reviewed rollback plan.",
+    );
+  }
+
+  const rollbackActionMap = new Map<string, UnityPlannedChainRollbackExecutionActionInput>();
+  for (const action of input.rollback_actions) {
+    const sourceActionId = action.source_action_id.trim();
+    if (!sourceActionId) {
+      return buildPlannedChainRollbackBlockedResult(
+        input,
+        "Controlled rollback execution requires non-empty source_action_id values for every rollback action.",
+      );
+    }
+
+    if (rollbackActionMap.has(sourceActionId)) {
+      return buildPlannedChainRollbackBlockedResult(
+        input,
+        `Controlled rollback execution received duplicate rollback action input for ${sourceActionId}.`,
+      );
+    }
+
+    rollbackActionMap.set(sourceActionId, action);
+  }
+
+  if (rollbackActionMap.size !== rollbackActionIds.length || rollbackActionIds.some((actionId) => !rollbackActionMap.has(actionId))) {
+    return buildPlannedChainRollbackBlockedResult(
+      input,
+      "Controlled rollback execution requires one explicit rollback action payload for every reviewed rollback-plan action.",
+    );
+  }
+
+  const extraRollbackAction = [...rollbackActionMap.keys()].find((actionId) => !rollbackActionIds.includes(actionId));
+  if (extraRollbackAction) {
+    return buildPlannedChainRollbackBlockedResult(
+      input,
+      `Controlled rollback execution received an unexpected rollback action payload for ${extraRollbackAction}.`,
+    );
+  }
+
+  const perActionResults: UnityPlannedChainRollbackExecutionActionResult[] = [];
+
+  for (const sourceActionId of rollbackActionIds) {
+    const rollbackAction = rollbackActionMap.get(sourceActionId);
+    if (!rollbackAction) {
+      return buildPlannedChainRollbackBlockedResult(
+        input,
+        `Controlled rollback execution is missing rollback action payload for ${sourceActionId}.`,
+      );
+    }
+
+    if (rollbackAction.rollback_action_type !== "unity_scene_object_removal") {
+      perActionResults.push({
+        source_action_id: sourceActionId,
+        rollback_request_id: rollbackAction.rollback_request_id,
+        rollback_action_type: "unity_scene_object_removal",
+        status: "failed",
+        executed: false,
+        result: null,
+        failure_reason: `Controlled rollback execution does not support rollback action type ${rollbackAction.rollback_action_type}.`,
+      });
+      break;
+    }
+
+    const controlledTargetStatus = evaluateControlledRollbackTarget(
+      rollbackAction.target_scene.trim(),
+      rollbackAction.target_object_name.trim(),
+    );
+    if (controlledTargetStatus.status !== "approved") {
+      perActionResults.push({
+        source_action_id: sourceActionId,
+        rollback_request_id: rollbackAction.rollback_request_id,
+        rollback_action_type: rollbackAction.rollback_action_type,
+        status: "failed",
+        executed: false,
+        result: null,
+        failure_reason: controlledTargetStatus.detail,
+      });
+      break;
+    }
+
+    const result = await executeUnitySceneObjectCreationRollback({
+      adapter_request_id: rollbackAction.rollback_request_id,
+      requested_at: input.requested_at,
+      planning_packet: input.planning_packet,
+      requested_actions: input.requested_actions,
+      review_state: input.review_state,
+      target_scene: rollbackAction.target_scene,
+      target_object_name: rollbackAction.target_object_name,
+      authorization: rollbackAction.authorization,
+      rollback_switch: rollbackAction.rollback_switch,
+      live_validation_result: rollbackAction.live_validation_result ?? null,
+      rollback_execution_mode_enabled: rollbackAction.rollback_execution_mode_enabled ?? true,
+      execution_plan: rollbackAction.execution_plan,
+      idempotent_on_missing: true,
+    }, options);
+
+    const successful = isSuccessfulChainRollbackResult(result);
+    perActionResults.push({
+      source_action_id: sourceActionId,
+      rollback_request_id: rollbackAction.rollback_request_id,
+      rollback_action_type: rollbackAction.rollback_action_type,
+      status: successful ? "executed" : "failed",
+      executed: result.executed,
+      result,
+      failure_reason: successful ? null : result.blocked_reason ?? result.delivery_summary,
+    });
+
+    if (!successful) {
+      break;
+    }
+  }
+
+  const actionsExecutedCount = perActionResults.filter((action) => action.status === "executed").length;
+  const actionsFailedCount = perActionResults.filter((action) => action.status === "failed").length;
+  const remainingActionsNotExecuted = rollbackActionIds.filter((actionId) => !perActionResults.some((result) => result.source_action_id === actionId));
+  const firstObjectCount = input.rollback_actions.find((action) => action.live_validation_result?.object_count !== undefined)?.live_validation_result?.object_count ?? null;
+  const objectCountAfter = firstObjectCount !== null
+    ? firstObjectCount + perActionResults.reduce((total, action) => total + getPlannedChainRollbackActionCountDelta(action), 0)
+    : null;
+  const executionStatus: UnityPlannedChainRollbackExecutionStatus = actionsFailedCount > 0
+    ? actionsExecutedCount > 0
+      ? "partial_failure"
+      : "failed"
+    : "success";
+  const evidenceTimestamp = [...perActionResults]
+    .reverse()
+    .find((action) => action.result?.evidence_timestamp)?.result?.evidence_timestamp ?? input.requested_at;
+  const baseResult: UnityPlannedChainRollbackExecutionResult = {
+    rollback_plan_id: input.rollback_plan.rollback_plan_id,
+    chain_id: input.chain_id.trim(),
+    domain: "Unity",
+    request_type: "scene_object_creation_request",
+    rollback_type: "scene_object_removal",
+    execution_mode: "controlled_planned_chain_rollback_runtime_bridge",
+    execution_kind: executionStatus === "success"
+      ? "planned_chain_rollback_executed"
+      : executionStatus === "partial_failure"
+        ? "planned_chain_rollback_partial_failure"
+        : "planned_chain_rollback_failed",
+    review_approval_id: input.review_state.review_package_id,
+    review_approval_status: "approved",
+    operator_approval_id: input.review_state.operator_approval_id,
+    operator_approval_status: "approved",
+    manual_trigger: true,
+    auto_execute: false,
+    executed: perActionResults.some((action) => action.executed),
+    execution_status: executionStatus,
+    actions_executed_count: actionsExecutedCount,
+    actions_failed_count: actionsFailedCount,
+    per_action_results: perActionResults,
+    remaining_actions_not_executed: remainingActionsNotExecuted,
+    final_scene_state: {
+      target_scene: input.rollback_actions[0]?.target_scene?.trim() ?? null,
+      object_count_before: firstObjectCount,
+      object_count_after: objectCountAfter,
+      object_count_delta: firstObjectCount !== null && objectCountAfter !== null ? objectCountAfter - firstObjectCount : null,
+      summary: firstObjectCount !== null && objectCountAfter !== null
+        ? `Scene ${input.rollback_actions[0]?.target_scene?.trim() ?? "unknown"} object count moved from ${String(firstObjectCount)} to ${String(objectCountAfter)} during manual rollback execution.`
+        : "Final scene object count summary is unavailable for manual rollback execution.",
+    },
+    evidence_timestamp: evidenceTimestamp,
+    blocked_reason: perActionResults.find((action) => action.status === "failed")?.failure_reason ?? null,
+    recommended_next_operator_action: executionStatus === "success"
+      ? "Review the rollback execution evidence and rerun read-only validation before any further Unity mutation work."
+      : remainingActionsNotExecuted.length > 0
+        ? "Review the failed rollback evidence and decide whether the remaining rollback actions need a separate follow-up execution step."
+        : "Review the failed rollback evidence before attempting another manual rollback run.",
+    artifact_label: "unity_mutation_execution_chain_rollback_result",
+    review_package: null,
+    delivery_package: null,
+    mutating: perActionResults.some((action) => action.result?.mutating === true),
+  };
+
+  const rollbackPackages = createUnityPlannedChainRollbackExecutionPackages(input, baseResult);
+
+  return {
+    ...baseResult,
+    review_package: rollbackPackages.reviewPackage,
+    delivery_package: rollbackPackages.deliveryPackage,
   };
 }
 
