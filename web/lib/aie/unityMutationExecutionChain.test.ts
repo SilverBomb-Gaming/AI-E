@@ -6,6 +6,7 @@ import {
   buildUnityMutationExecutionChainPlan,
   buildUnitySceneObjectCreationExecutionPlan,
   buildUnitySceneObjectCreationRollbackPlan,
+  classifyUnityChainFailureEvidence,
   evaluateUnityMutationExecutionChainReadiness,
   executePlannedUnityRollbackFromChain,
   executeUnityMutationExecutionChain,
@@ -817,7 +818,8 @@ test("controlled Unity chain execution stops on the first failed action and repo
   assert.equal(result.actions_executed_count, 1);
   assert.equal(result.actions_failed_count, 1);
   assert.equal(result.failure_handling_status, "rollback_recommended");
-  assert.equal(result.failure_classification, "action_failed");
+  assert.equal(result.failure_classification, "rollback_failed");
+  assert.equal(result.failure_source, "rollback");
   assert.equal(result.failed_action_id, "rollback-probe");
   assert.deepEqual(result.successful_action_ids, ["create-probe"]);
   assert.equal(result.rollback_plan_required, true);
@@ -898,10 +900,41 @@ test("controlled Unity chain execution classifies runtime unavailable failures a
 
   assert.equal(result.execution_status, "partial_failure");
   assert.equal(result.failure_handling_status, "rollback_recommended");
-  assert.equal(result.failure_classification, "runtime_unavailable");
+  assert.equal(result.failure_classification, "rollback_failed");
+  assert.equal(result.failure_source, "rollback");
+  assert.equal(result.failure_is_simulated, false);
+  assert.equal(result.failure_is_recoverable, true);
+  assert.equal(result.failure_requires_manual_review, true);
   assert.equal(result.failed_action_id, "rollback-probe");
   assert.deepEqual(result.rollback_plan?.rollback_order, ["create-probe"]);
   assert.equal(result.rollback_plan?.auto_execute, false);
+});
+
+test("controlled Unity chain execution classifies real runtime unavailable failures on the mutation lane", async () => {
+  const result = await executeUnityMutationExecutionChain(createChainExecutionInput(), {
+    mutation_bridge: {
+      async executeSceneObjectCreation() {
+        return {
+          bridge_status: "bridge_unavailable" as const,
+          source: "command_probe" as const,
+          reason: "Unity mutation bridge is unavailable.",
+          evidence_timestamp: "2026-05-03T12:06:00.000Z",
+          raw_evidence_summary: "Controlled Unity mutation bridge unavailable.",
+          recommended_next_operator_action: "Keep mutation disabled until the verified mutation bridge is available.",
+        };
+      },
+      async executeSceneObjectRemoval() {
+        throw new Error("should not execute rollback after a mutation-lane runtime outage");
+      },
+    },
+  });
+
+  assert.equal(result.execution_status, "failed");
+  assert.equal(result.failure_classification, "runtime_unavailable");
+  assert.equal(result.failure_source, "runtime");
+  assert.equal(result.failure_is_simulated, false);
+  assert.equal(result.failed_action_id, "create-probe");
+  assert.equal(result.rollback_plan_required, false);
 });
 
 test("controlled Unity chain execution refuses unsupported chain shapes", async () => {
@@ -921,6 +954,7 @@ test("controlled Unity chain execution refuses unsupported chain shapes", async 
   assert.equal(result.execution_kind, "chain_execution_blocked");
   assert.equal(result.executed, false);
   assert.equal(result.failure_classification, "unsupported_action");
+  assert.equal(result.failure_source, "adapter");
   assert.equal(result.failure_handling_status, "manual_review_required");
   assert.equal(result.rollback_plan_required, false);
   assert.match(result.blocked_reason ?? "", /limited to one creation action followed by one rollback action/i);
@@ -1007,6 +1041,8 @@ test("expired failure simulation blocks chain execution safely before Unity call
 
   assert.equal(result.execution_status, "failed");
   assert.equal(result.failure_classification, "gate_mismatch");
+  assert.equal(result.failure_source, "gate");
+  assert.equal(result.failure_is_recoverable, true);
   assert.equal(result.executed, false);
   assert.equal(callCount, 0);
   assert.match(result.blocked_reason ?? "", /expired/i);
@@ -1036,6 +1072,9 @@ test("failure simulation on the first action fails without generating a rollback
   assert.equal(result.actions_executed_count, 0);
   assert.equal(result.actions_failed_count, 1);
   assert.equal(result.failure_classification, "simulated_action_failure");
+  assert.equal(result.failure_source, "simulation");
+  assert.equal(result.failure_is_simulated, true);
+  assert.equal(result.failure_is_recoverable, true);
   assert.equal(result.failure_simulated, true);
   assert.equal(result.failure_simulation_id, "failure-simulation-create-probe");
   assert.equal(result.simulated_failure_kind, "simulated_action_failure");
@@ -1087,6 +1126,8 @@ test("failure simulation on the second action generates a manual rollback plan a
   assert.equal(result.actions_executed_count, 1);
   assert.equal(result.actions_failed_count, 1);
   assert.equal(result.failure_classification, "simulated_action_failure");
+  assert.equal(result.failure_source, "simulation");
+  assert.equal(result.failure_is_simulated, true);
   assert.equal(result.failure_simulated, true);
   assert.equal(result.simulated_failure_kind, "simulated_action_failure");
   assert.equal(result.rollback_plan_required, true);
@@ -1128,10 +1169,56 @@ test("simulated runtime unavailable is classified distinctly and rollback remain
 
   assert.equal(result.execution_status, "partial_failure");
   assert.equal(result.failure_classification, "simulated_runtime_unavailable");
+  assert.equal(result.failure_source, "simulation");
+  assert.equal(result.failure_is_simulated, true);
   assert.equal(result.failure_simulated, true);
   assert.equal(result.rollback_plan_required, true);
   assert.equal(result.rollback_plan?.auto_execute, false);
   assert.equal(result.rollback_plan?.executed, false);
+});
+
+test("controlled Unity chain failure evidence classifies dependency failures distinctly", () => {
+  const evidence = classifyUnityChainFailureEvidence({
+    context: "chain",
+    blockedReason: "Controlled Unity chain action rollback-probe cannot run until dependencies succeed: create-probe.",
+    failedActionResult: null,
+    simulatedFailureKind: null,
+  });
+
+  assert.equal(evidence.classification, "dependency_failed");
+  assert.equal(evidence.source, "dependency");
+  assert.equal(evidence.is_simulated, false);
+  assert.equal(evidence.is_recoverable, true);
+  assert.equal(evidence.requires_manual_review, false);
+});
+
+test("controlled Unity chain execution classifies ambiguous blocked evidence as unknown failure", async () => {
+  const readinessInput = createChainReadinessInput();
+  const readinessResult = evaluateUnityMutationExecutionChainReadiness(readinessInput);
+  const result = await executeUnityMutationExecutionChain(createChainExecutionInput({
+    actions: [],
+    readiness_result: {
+      ...readinessResult,
+      chain_readiness: "ready_for_operator_execution",
+      chain_ready: true,
+      blocked_reason: null,
+      ordered_actions: readinessResult.ordered_actions.map((action) => ({
+        ...action,
+        ready_for_operator_execution: true,
+        blocked_reason: null,
+      })),
+      executable_actions: readinessResult.ordered_actions.map((action) => action.action_id),
+      blocked_actions: [],
+      dependency_blocked_actions: [],
+      missing_gates: [],
+    },
+  }));
+
+  assert.equal(result.execution_status, "failed");
+  assert.equal(result.failure_classification, "unknown_failure");
+  assert.equal(result.failure_source, "unknown");
+  assert.equal(result.failure_requires_manual_review, true);
+  assert.match(result.failure_evidence_summary, /Ambiguous failure evidence/i);
 });
 
 test("manual Unity rollback from a reviewed chain plan executes successfully", async () => {
@@ -1174,6 +1261,7 @@ test("manual Unity rollback from a reviewed chain plan executes successfully", a
   assert.equal(result.executed, true);
   assert.equal(result.actions_executed_count, 1);
   assert.equal(result.actions_failed_count, 0);
+  assert.equal(result.failure_classification, "none");
   assert.deepEqual(result.remaining_actions_not_executed, []);
   assert.equal(result.final_scene_state.object_count_before, 14);
   assert.equal(result.final_scene_state.object_count_after, 13);
@@ -1209,6 +1297,8 @@ test("manual Unity rollback from a reviewed chain plan blocks when rollback appr
 
   assert.equal(result.execution_kind, "planned_chain_rollback_blocked");
   assert.equal(result.execution_status, "failed");
+  assert.equal(result.failure_classification, "gate_mismatch");
+  assert.equal(result.failure_source, "gate");
   assert.equal(result.executed, false);
   assert.equal(callCount, 0);
   assert.match(result.blocked_reason ?? "", /separate completed rollback review approval/i);
@@ -1266,6 +1356,7 @@ test("manual Unity rollback from a reviewed chain plan blocks when the final rol
   assert.equal(result.execution_status, "failed");
   assert.equal(result.actions_executed_count, 0);
   assert.equal(result.actions_failed_count, 1);
+  assert.equal(result.failure_classification, "gate_mismatch");
   assert.equal(callCount, 0);
   assert.equal(result.per_action_results[0]?.status, "failed");
   assert.match(result.per_action_results[0]?.failure_reason ?? "", /rollback switch/i);
@@ -1301,6 +1392,7 @@ test("manual Unity rollback from a reviewed chain plan blocks the wrong target o
   assert.equal(result.execution_status, "failed");
   assert.equal(result.actions_executed_count, 0);
   assert.equal(result.actions_failed_count, 1);
+  assert.equal(result.failure_classification, "gate_mismatch");
   assert.equal(callCount, 0);
   assert.match(result.per_action_results[0]?.failure_reason ?? "", /AIE_ControlledMutationProbe/i);
 });
@@ -1378,6 +1470,10 @@ test("manual Unity rollback from a reviewed chain plan stops on the first failur
   assert.equal(result.execution_kind, "planned_chain_rollback_partial_failure");
   assert.equal(result.actions_executed_count, 1);
   assert.equal(result.actions_failed_count, 1);
+  assert.equal(result.failure_classification, "rollback_failed");
+  assert.equal(result.failure_source, "rollback");
+  assert.equal(result.failure_is_recoverable, true);
+  assert.equal(result.failure_requires_manual_review, true);
   assert.deepEqual(result.remaining_actions_not_executed, []);
   assert.equal(result.per_action_results[0]?.status, "executed");
   assert.equal(result.per_action_results[1]?.status, "failed");

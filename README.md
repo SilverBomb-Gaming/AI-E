@@ -370,6 +370,7 @@ Current Layer 17 status:
 
 - Step 1 controlled rollback execution from chain plans: implemented
 - Step 2 controlled chain failure simulation: implemented
+- Step 3 failure classification hardening and evidence integrity: implemented
 - supported rollback type: `unity_scene_object_removal` only
 - rollback execution entrypoint: `executePlannedUnityRollbackFromChain`
 - rollback plan source: reviewed Layer 16 Step 4 rollback-plan artifact only
@@ -382,6 +383,7 @@ Current Layer 17 boundary:
 
 - rollback remains manual only and is never auto-executed
 - controlled failure simulation is explicit test/recovery tooling only and never masquerades as a real Unity runtime failure
+- failure evidence now distinguishes simulated failures, gate failures, dependency failures, real runtime failures, rollback failures, and unknown failures without introducing auto-recovery
 - rollback requires separate rollback review approval and separate rollback operator approval; mutation approvals cannot be reused
 - simulated failures can stop chain execution and generate rollback planning for prior successful actions, but rollback remains manual and separately gated
 - rollback still requires explicit final rollback authorization and explicit final rollback switch per action

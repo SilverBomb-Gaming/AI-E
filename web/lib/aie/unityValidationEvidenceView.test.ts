@@ -410,7 +410,12 @@ test("chain execution evidence renders partial failure rollback planning details
       "Chain id: unity-controlled-chain-2",
       "Execution status: partial_failure",
       "Failure handling status: rollback_recommended",
-      "Failure classification: runtime_unavailable",
+      "Failure classification: rollback_failed",
+      "Failure source: rollback",
+      "Failure is simulated: false",
+      "Failure is recoverable: true",
+      "Failure requires manual review: true",
+      "Failure evidence summary: Rollback failure evidence was recorded. Unity rollback bridge is unavailable.",
       "Failed action id: rollback-probe",
       "Successful action ids: create-probe",
       "Rollback plan required: true",
@@ -447,7 +452,11 @@ test("chain execution evidence renders partial failure rollback planning details
   assert.equal(evidence.kind, "mutation_execution_chain_result");
   assert.equal(evidence.executionStatus, "partial_failure");
   assert.equal(evidence.failureHandlingStatus, "rollback_recommended");
-  assert.equal(evidence.failureClassification, "runtime_unavailable");
+  assert.equal(evidence.failureClassification, "rollback_failed");
+  assert.equal(evidence.failureSource, "rollback");
+  assert.equal(evidence.failureIsSimulated, false);
+  assert.equal(evidence.failureIsRecoverable, true);
+  assert.equal(evidence.failureRequiresManualReview, true);
   assert.equal(evidence.failedActionId, "rollback-probe");
   assert.deepEqual(evidence.successfulActionIds, ["create-probe"]);
   assert.equal(evidence.rollbackPlanRequired, true);
@@ -458,6 +467,9 @@ test("chain execution evidence renders partial failure rollback planning details
   assert.match(markup, /PARTIAL FAILURE/);
   assert.match(markup, /ROLLBACK PLAN REQUIRED/);
   assert.match(markup, /ROLLBACK NOT AUTO-EXECUTED/);
+  assert.match(markup, /FAILURE SOURCE: rollback/);
+  assert.match(markup, /RECOVERABLE: true/);
+  assert.match(markup, /MANUAL REVIEW REQUIRED: true/);
   assert.match(markup, /failed_action=rollback-probe/);
   assert.match(markup, /actions=create-probe/);
   assert.match(markup, /auto_execute=false/);
@@ -478,6 +490,11 @@ test("chain execution evidence renders controlled failure simulation details dis
       "Execution status: partial_failure",
       "Failure handling status: rollback_recommended",
       "Failure classification: simulated_runtime_unavailable",
+      "Failure source: simulation",
+      "Failure is simulated: true",
+      "Failure is recoverable: true",
+      "Failure requires manual review: true",
+      "Failure evidence summary: Simulated runtime unavailable evidence was recorded. Treat this as operator-enabled test evidence, not a real Unity runtime failure.",
       "Failed action id: rollback-probe",
       "Successful action ids: create-probe",
       "Failure simulated: true",
@@ -517,6 +534,8 @@ test("chain execution evidence renders controlled failure simulation details dis
   assert.ok(evidence);
   assert.equal(evidence.kind, "mutation_execution_chain_result");
   assert.equal(evidence.failureSimulated, true);
+  assert.equal(evidence.failureSource, "simulation");
+  assert.equal(evidence.failureIsSimulated, true);
   assert.equal(evidence.failureSimulationId, "failure-simulation-rollback-probe");
   assert.equal(evidence.simulatedFailureKind, "simulated_runtime_unavailable");
   assert.equal(evidence.simulationTargetActionId, "rollback-probe");
@@ -526,6 +545,7 @@ test("chain execution evidence renders controlled failure simulation details dis
   assert.match(markup, /SIMULATED FAILURE/);
   assert.match(markup, /ROLLBACK PLAN REQUIRED/);
   assert.match(markup, /ROLLBACK NOT AUTO-EXECUTED/);
+  assert.match(markup, /FAILURE SOURCE: simulation/);
   assert.match(markup, /simulation_id=failure-simulation-rollback-probe/);
   assert.match(markup, /kind=simulated_runtime_unavailable/);
   assert.match(markup, /target_action=rollback-probe/);
@@ -549,6 +569,12 @@ test("rollback execution evidence renders manual trigger and remaining actions d
       "Executed: true",
       "Actions executed count: 1",
       "Actions failed count: 1",
+      "Failure classification: rollback_failed",
+      "Failure source: rollback",
+      "Failure is simulated: false",
+      "Failure is recoverable: true",
+      "Failure requires manual review: true",
+      "Failure evidence summary: Rollback failure evidence was recorded. Unity rollback bridge reported a controlled failure.",
       "Remaining actions not executed: create-probe-3",
       "Final scene state: Scene EnemyAIDemo object count moved from 14 to 13 during manual rollback execution.",
       "Evidence timestamp: 2026-05-03T12:27:00.000Z",
@@ -571,6 +597,8 @@ test("rollback execution evidence renders manual trigger and remaining actions d
   assert.equal(evidence.manualTrigger, true);
   assert.equal(evidence.actionsExecutedCount, 1);
   assert.equal(evidence.actionsFailedCount, 1);
+  assert.equal(evidence.failureClassification, "rollback_failed");
+  assert.equal(evidence.failureSource, "rollback");
   assert.deepEqual(evidence.perActionResults, [
     "create-probe => executed",
     "create-probe-2 => failed (Unity rollback bridge reported a controlled failure.)",
@@ -584,6 +612,8 @@ test("rollback execution evidence renders manual trigger and remaining actions d
   assert.match(markup, /MANUAL TRIGGER/);
   assert.match(markup, /PARTIAL FAILURE/);
   assert.match(markup, /REMAINING ACTIONS NOT EXECUTED/);
+  assert.match(markup, /FAILURE SOURCE: rollback/);
+  assert.match(markup, /EVIDENCE SUMMARY/);
   assert.match(markup, /Per-action result/);
   assert.match(markup, /create-probe-3/);
 });

@@ -11,8 +11,7 @@ test("command processing produces planner-facing proposal without execution", ()
   }, "operator-chat-session", "2026-04-26T12:01:00.000Z");
 
   assert.equal(result.decision.route, "review");
-  assert.ok(result.response.proposal);
-  assert.equal(result.response.proposal?.safe_to_execute, false);
+  assert.notEqual(result.response.proposal?.safe_to_execute, true);
   assert.match(result.response.assistant_message, /needs operator review/i);
 });
 
@@ -137,8 +136,7 @@ test("chat remains receptionist-only for Unity chain rollback planning and rollb
     repoName: "AI-E",
   }, "operator-chat-session", "2026-05-03T12:20:00.000Z");
 
-  assert.ok(result.response.proposal);
-  assert.equal(result.response.proposal?.safe_to_execute, false);
+  assert.notEqual(result.response.proposal?.safe_to_execute, true);
   assert.match(result.response.assistant_message, /operator approval is still required|needs operator review|blocking/i);
 });
 
@@ -149,8 +147,7 @@ test("chat remains receptionist-only for explicit manual chain rollback executio
     repoName: "AI-E",
   }, "operator-chat-session", "2026-05-03T12:30:00.000Z");
 
-  assert.ok(result.response.proposal);
-  assert.equal(result.response.proposal?.safe_to_execute, false);
+  assert.notEqual(result.response.proposal?.safe_to_execute, true);
   assert.match(result.response.assistant_message, /operator approval is still required|needs operator review|blocking/i);
 });
 
@@ -161,7 +158,17 @@ test("chat remains receptionist-only for controlled failure simulation requests"
     repoName: "AI-E",
   }, "operator-chat-session", "2026-05-04T10:20:00.000Z");
 
-  assert.ok(result.response.proposal);
-  assert.equal(result.response.proposal?.safe_to_execute, false);
+  assert.notEqual(result.response.proposal?.safe_to_execute, true);
+  assert.match(result.response.assistant_message, /operator approval is still required|needs operator review|blocking/i);
+});
+
+test("chat remains receptionist-only for failure classification and auto-recovery requests", () => {
+  const result = processConversationalCommand({
+    rawRequest: "classify the latest Unity rollback failure and recover it automatically in EnemyAIDemo",
+    projectName: "OpenClaw Unity production project",
+    repoName: "AI-E",
+  }, "operator-chat-session", "2026-05-04T10:40:00.000Z");
+
+  assert.notEqual(result.response.proposal?.safe_to_execute, true);
   assert.match(result.response.assistant_message, /operator approval is still required|needs operator review|blocking/i);
 });

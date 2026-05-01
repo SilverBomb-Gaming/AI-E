@@ -72,6 +72,11 @@ export type UnityValidationEvidence = {
   gateStatuses: string[];
   failureHandlingStatus: string | null;
   failureClassification: string | null;
+  failureSource: string | null;
+  failureIsSimulated: boolean | null;
+  failureIsRecoverable: boolean | null;
+  failureRequiresManualReview: boolean | null;
+  failureEvidenceSummary: string | null;
   failedActionId: string | null;
   successfulActionIds: string[];
   rollbackPlanRequired: boolean | null;
@@ -491,12 +496,18 @@ function buildEvidence(workItemId: string, summary: string, lines: string[]): Un
     gateStatuses: parseRepeatedLabeledValues(lines, "Gate status"),
     failureHandlingStatus: parseLabeledValue(lines, "Failure handling status"),
     failureClassification: parseLabeledValue(lines, "Failure classification"),
+    failureSource: parseLabeledValue(lines, "Failure source"),
+    failureIsSimulated: parseBoolean(parseLabeledValue(lines, "Failure is simulated")),
+    failureIsRecoverable: parseBoolean(parseLabeledValue(lines, "Failure is recoverable")),
+    failureRequiresManualReview: parseBoolean(parseLabeledValue(lines, "Failure requires manual review")),
+    failureEvidenceSummary: parseLabeledValue(lines, "Failure evidence summary"),
     failedActionId: parseLabeledValue(lines, "Failed action id"),
     successfulActionIds: parseList(parseLabeledValue(lines, "Successful action ids")),
     rollbackPlanRequired: parseBoolean(parseLabeledValue(lines, "Rollback plan required")),
     rollbackActions: parseList(parseLabeledValue(lines, "Rollback actions")),
     rollbackAutoExecute: parseBoolean(parseLabeledValue(lines, "Rollback auto execute")),
-    manualReviewRequired: parseBoolean(parseLabeledValue(lines, "Manual review required")),
+    manualReviewRequired: parseBoolean(parseLabeledValue(lines, "Manual review required"))
+      ?? parseBoolean(parseLabeledValue(lines, "Failure requires manual review")),
     failureSimulated: parseBoolean(parseLabeledValue(lines, "Failure simulated")),
     failureSimulationId: parseLabeledValue(lines, "Failure simulation id"),
     simulatedFailureKind: parseLabeledValue(lines, "Simulated failure kind"),
@@ -555,6 +566,15 @@ function kindLabel(kind: UnityValidationEvidenceKind): string {
 
 function formatMetric(value: number | null): string {
   return value === null ? "unknown" : String(value);
+}
+
+function hasFailureEvidence(evidence: UnityValidationEvidence): boolean {
+  return Boolean(
+    evidence.failureClassification
+      || evidence.failureSource
+      || evidence.failureEvidenceSummary
+      || evidence.failureRequiresManualReview !== null,
+  );
 }
 
 export function UnityValidationEvidencePanel({ evidence }: { evidence: UnityValidationEvidence }) {
@@ -676,6 +696,11 @@ export function UnityValidationEvidencePanel({ evidence }: { evidence: UnityVali
                 ) : null}
               </>
             ) : null}
+            {evidence.failureSource ? (
+              <span className="inline-flex rounded-full border border-ink/10 bg-white/80 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-ink/75">
+                FAILURE SOURCE: {evidence.failureSource}
+              </span>
+            ) : null}
           </>
         ) : null}
         {evidence.kind === "planned_chain_rollback_result" ? (
@@ -700,6 +725,11 @@ export function UnityValidationEvidencePanel({ evidence }: { evidence: UnityVali
                   </span>
                 ) : null}
               </>
+            ) : null}
+            {evidence.failureSource ? (
+              <span className="inline-flex rounded-full border border-ink/10 bg-white/80 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-ink/75">
+                FAILURE SOURCE: {evidence.failureSource}
+              </span>
             ) : null}
           </>
         ) : null}
@@ -846,6 +876,21 @@ export function UnityValidationEvidencePanel({ evidence }: { evidence: UnityVali
             <p className="text-xs leading-6 text-slate">Actions failed count: {formatMetric(evidence.actionsFailedCount)}</p>
             <p className="text-xs leading-6 text-slate">Final scene state: {evidence.finalSceneSummary ?? "none"}</p>
           </div>
+          {hasFailureEvidence(evidence) ? (
+            <div className="mt-2 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+              <p className="text-xs leading-6 text-slate">FAILURE SOURCE: {evidence.failureSource ?? "none"}</p>
+              <p className="text-xs leading-6 text-slate">SIMULATED FAILURE: {String(evidence.failureIsSimulated ?? false)}</p>
+              <p className="text-xs leading-6 text-slate">RECOVERABLE: {String(evidence.failureIsRecoverable ?? false)}</p>
+              <p className="text-xs leading-6 text-slate">MANUAL REVIEW REQUIRED: {String((evidence.failureRequiresManualReview ?? evidence.manualReviewRequired) ?? false)}</p>
+              <p className="text-xs leading-6 text-slate">Failure classification: {evidence.failureClassification ?? "none"}</p>
+            </div>
+          ) : null}
+          {evidence.failureEvidenceSummary ? (
+            <div className="mt-2">
+              <p className="text-xs uppercase tracking-[0.18em] text-slate">EVIDENCE SUMMARY</p>
+              <p className="mt-1 text-xs leading-6 text-slate">{evidence.failureEvidenceSummary}</p>
+            </div>
+          ) : null}
           <div className="mt-2">
             <p className="text-xs uppercase tracking-[0.18em] text-slate">Per-action result</p>
             <p className="mt-1 text-xs leading-6 text-slate">{evidence.perActionResults.length > 0 ? evidence.perActionResults.join(" | ") : "none"}</p>
@@ -914,11 +959,26 @@ export function UnityValidationEvidencePanel({ evidence }: { evidence: UnityVali
                   {[
                     `status=${evidence.failureHandlingStatus ?? "none"}`,
                     `classification=${evidence.failureClassification ?? "none"}`,
+                    `source=${evidence.failureSource ?? "none"}`,
                     `failed_action=${evidence.failedActionId ?? "none"}`,
-                    `manual_review=${String(evidence.manualReviewRequired ?? false)}`,
+                    `manual_review=${String((evidence.failureRequiresManualReview ?? evidence.manualReviewRequired) ?? false)}`,
                   ].join(" | ")}
                 </p>
               </div>
+              {hasFailureEvidence(evidence) ? (
+                <div className="mt-2 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                  <p className="text-xs leading-6 text-slate">FAILURE SOURCE: {evidence.failureSource ?? "none"}</p>
+                  <p className="text-xs leading-6 text-slate">SIMULATED FAILURE: {String(evidence.failureIsSimulated ?? evidence.failureSimulated ?? false)}</p>
+                  <p className="text-xs leading-6 text-slate">RECOVERABLE: {String(evidence.failureIsRecoverable ?? false)}</p>
+                  <p className="text-xs leading-6 text-slate">MANUAL REVIEW REQUIRED: {String((evidence.failureRequiresManualReview ?? evidence.manualReviewRequired) ?? false)}</p>
+                </div>
+              ) : null}
+              {evidence.failureEvidenceSummary ? (
+                <div className="mt-2">
+                  <p className="text-xs uppercase tracking-[0.18em] text-slate">EVIDENCE SUMMARY</p>
+                  <p className="mt-1 text-xs leading-6 text-slate">{evidence.failureEvidenceSummary}</p>
+                </div>
+              ) : null}
               {evidence.failureSimulated ? (
                 <div className="mt-2">
                   <p className="text-xs uppercase tracking-[0.18em] text-slate">Failure simulation</p>
