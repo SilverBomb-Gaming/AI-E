@@ -30,6 +30,13 @@ export type UnityValidationEvidence = {
   finalExecutionAuthorizationStatus: string | null;
   executionMode: string | null;
   mutationEnabled: boolean | null;
+  finalMutationSwitchRequired: boolean | null;
+  finalMutationSwitchEnabled: boolean | null;
+  finalMutationSwitchEvaluationStatus: string | null;
+  finalMutationSwitchId: string | null;
+  finalMutationSwitchTargetRequestMatch: boolean | null;
+  finalMutationSwitchMutationTypeMatch: boolean | null;
+  finalMutationSwitchExpirationStatus: string | null;
   preflightState: string | null;
   dryRunPreviewStatus: string | null;
   preflightStatus: string | null;
@@ -165,6 +172,9 @@ function parseSummary(summary: string): Partial<UnityValidationEvidence> {
       targetScene: executionPlanMatch[2]?.trim() ?? null,
       executionMode: "disabled_plan_only",
       mutationEnabled: false,
+      finalMutationSwitchRequired: true,
+      finalMutationSwitchEnabled: false,
+      finalMutationSwitchEvaluationStatus: "FINAL MUTATION SWITCH DISABLED",
       executed: false,
     };
   }
@@ -280,6 +290,13 @@ function buildEvidence(workItemId: string, summary: string, lines: string[]): Un
     finalExecutionAuthorizationStatus: parseLabeledValue(lines, "Final execution authorization status") ?? summaryValues.finalExecutionAuthorizationStatus ?? null,
     executionMode: parseLabeledValue(lines, "Execution mode") ?? summaryValues.executionMode ?? null,
     mutationEnabled: parseBoolean(parseLabeledValue(lines, "Mutation enabled")) ?? summaryValues.mutationEnabled ?? null,
+    finalMutationSwitchRequired: parseBoolean(parseLabeledValue(lines, "Final mutation switch required")) ?? summaryValues.finalMutationSwitchRequired ?? null,
+    finalMutationSwitchEnabled: parseBoolean(parseLabeledValue(lines, "Final mutation switch enabled")) ?? summaryValues.finalMutationSwitchEnabled ?? null,
+    finalMutationSwitchEvaluationStatus: parseLabeledValue(lines, "Final mutation switch evaluation status") ?? summaryValues.finalMutationSwitchEvaluationStatus ?? null,
+    finalMutationSwitchId: parseLabeledValue(lines, "Final mutation switch id") ?? null,
+    finalMutationSwitchTargetRequestMatch: parseBoolean(parseLabeledValue(lines, "Final mutation switch target request match")),
+    finalMutationSwitchMutationTypeMatch: parseBoolean(parseLabeledValue(lines, "Final mutation switch mutation type match")),
+    finalMutationSwitchExpirationStatus: parseLabeledValue(lines, "Final mutation switch expiration status"),
     preflightState: parseLabeledValue(lines, "Preflight state"),
     dryRunPreviewStatus: parseLabeledValue(lines, "Dry-run preview status"),
     preflightStatus: parseLabeledValue(lines, "Preflight status"),
@@ -374,7 +391,13 @@ export function UnityValidationEvidencePanel({ evidence }: { evidence: UnityVali
               EXECUTION PLAN ONLY
             </span>
             <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-700">
+              FINAL MUTATION SWITCH REQUIRED
+            </span>
+            <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-700">
               MUTATION DISABLED
+            </span>
+            <span className="inline-flex rounded-full border border-ink/10 bg-white/80 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-ink/75">
+              {evidence.finalMutationSwitchEvaluationStatus ?? "MUTATION SWITCH DISABLED"}
             </span>
             <span className="inline-flex rounded-full border border-ink/10 bg-white/80 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-ink/75">
               NOT EXECUTED
@@ -454,11 +477,14 @@ export function UnityValidationEvidencePanel({ evidence }: { evidence: UnityVali
             <p className="text-xs leading-6 text-slate">Execution mode: {evidence.executionMode ?? "unknown"}</p>
             <p className="text-xs leading-6 text-slate">Mutation enabled: {String(evidence.mutationEnabled ?? false)}</p>
             <p className="text-xs leading-6 text-slate">Executed: {String(evidence.executed ?? false)}</p>
+            <p className="text-xs leading-6 text-slate">Final mutation switch required: {String(evidence.finalMutationSwitchRequired ?? true)}</p>
+            <p className="text-xs leading-6 text-slate">Final mutation switch enabled: {String(evidence.finalMutationSwitchEnabled ?? false)}</p>
             <p className="text-xs leading-6 text-slate">Dry-run preview status: {evidence.dryRunPreviewStatus ?? "unknown"}</p>
             <p className="text-xs leading-6 text-slate">Preflight status: {evidence.preflightStatus ?? "unknown"}</p>
             <p className="text-xs leading-6 text-slate">Live validation status: {evidence.liveValidationStatus ?? "unknown"}</p>
             <p className="text-xs leading-6 text-slate">Explicit mutation execution mode status: {evidence.explicitMutationExecutionModeStatus ?? "unknown"}</p>
             <p className="text-xs leading-6 text-slate">Authorization evaluation status: {evidence.authorizationEvaluationStatus ?? "unknown"}</p>
+            <p className="text-xs leading-6 text-slate">Final mutation switch evaluation status: {evidence.finalMutationSwitchEvaluationStatus ?? "unknown"}</p>
           </div>
           <div className="mt-2">
             <p className="text-xs uppercase tracking-[0.18em] text-slate">Required gates</p>
@@ -471,6 +497,17 @@ export function UnityValidationEvidencePanel({ evidence }: { evidence: UnityVali
           <div className="mt-2">
             <p className="text-xs uppercase tracking-[0.18em] text-slate">Live validation summary</p>
             <p className="mt-1 text-xs leading-6 text-slate">{evidence.liveValidationSummary ?? "none"}</p>
+          </div>
+          <div className="mt-2">
+            <p className="text-xs uppercase tracking-[0.18em] text-slate">Final mutation switch</p>
+            <p className="mt-1 text-xs leading-6 text-slate">
+              {[
+                `id=${evidence.finalMutationSwitchId ?? "none"}`,
+                `target_match=${String(evidence.finalMutationSwitchTargetRequestMatch ?? false)}`,
+                `mutation_type_match=${String(evidence.finalMutationSwitchMutationTypeMatch ?? false)}`,
+                `expiration=${evidence.finalMutationSwitchExpirationStatus ?? "unknown"}`,
+              ].join(" | ")}
+            </p>
           </div>
         </>
       ) : null}

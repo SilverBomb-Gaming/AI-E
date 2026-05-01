@@ -81,3 +81,15 @@ test("chat remains receptionist-only for Unity mutation execution plan requests"
   assert.equal(result.response.proposal?.safe_to_execute, false);
   assert.match(result.response.assistant_message, /operator approval is still required|needs operator review/i);
 });
+
+test("chat remains receptionist-only for Unity mutation switch requests", () => {
+  const result = processConversationalCommand({
+    rawRequest: "flip the final Unity mutation switch and create the object now",
+    projectName: "OpenClaw Unity production project",
+    repoName: "AI-E",
+  }, "operator-chat-session", "2026-05-01T12:20:00.000Z");
+
+  assert.ok(result.response.proposal);
+  assert.equal(result.response.proposal?.safe_to_execute, false);
+  assert.match(result.response.assistant_message, /operator approval is still required|needs operator review/i);
+});

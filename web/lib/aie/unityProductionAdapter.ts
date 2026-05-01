@@ -88,6 +88,16 @@ export type UnityMutationExecutionAuthorization = {
   expires_at: string | null;
 };
 
+export type UnityMutationExecutionSwitch = {
+  mutation_switch_id: string;
+  switch_enabled: boolean;
+  enabled_by_operator: boolean;
+  enabled_at: string;
+  target_request_id: string;
+  allowed_mutation_type: "scene_object_creation_request";
+  expires_at: string | null;
+};
+
 export type UnityMutationExecutionAuthorizationEvaluation = {
   authorized: boolean;
   blocked_reason: string | null;
@@ -96,6 +106,16 @@ export type UnityMutationExecutionAuthorizationEvaluation = {
   target_request_match: boolean;
   expiration_status: "valid" | "expired" | "not_provided";
   final_execution_authorization_id: string | null;
+};
+
+export type UnityMutationExecutionSwitchEvaluation = {
+  enabled: boolean;
+  blocked_reason: string | null;
+  request_id: string;
+  switch_target_request_match: boolean;
+  allowed_mutation_type_match: boolean;
+  switch_expiration_status: "valid" | "expired" | "not_provided";
+  mutation_switch_id: string | null;
 };
 
 export type UnityMutationExecutionPreflightInput = UnitySceneObjectCreationPreviewInput & {
@@ -142,7 +162,8 @@ export type UnityMutationExecutionPlanGate =
   | "preflight_simulation"
   | "final_execution_authorization"
   | "live_read_only_validation"
-  | "explicit_mutation_execution_mode";
+  | "explicit_mutation_execution_mode"
+  | "final_mutation_switch";
 
 export type UnityMutationExecutionPlanGateStatus = "approved" | "missing" | "invalid" | "disabled";
 
@@ -156,6 +177,7 @@ export type UnitySceneObjectCreationExecutionPlanInput = UnitySceneObjectCreatio
   preview_result: UnitySceneObjectCreationPreviewResult | null;
   preflight_result: UnityMutationExecutionPreflightResult | null;
   authorization: UnityMutationExecutionAuthorization | null;
+  mutation_switch: UnityMutationExecutionSwitch | null;
   live_validation_result: Pick<
     UnityValidationExecutionResult,
     | "request_id"
@@ -191,6 +213,9 @@ export type UnitySceneObjectCreationExecutionPlanResult = {
   dry_run_preview_status: "valid" | "missing" | "invalid";
   preflight_status: "valid" | "missing" | "invalid";
   authorization_evaluation: UnityMutationExecutionAuthorizationEvaluation;
+  final_mutation_switch_required: true;
+  final_mutation_switch_enabled: false;
+  mutation_switch_evaluation: UnityMutationExecutionSwitchEvaluation;
   live_validation_status: "valid" | "missing" | "invalid";
   live_validation_summary: string;
   explicit_mutation_execution_mode_status: "enabled" | "disabled";
@@ -343,6 +368,108 @@ function formatAuthorizationEvaluationStatus(
   evaluation: UnityMutationExecutionAuthorizationEvaluation,
 ): string {
   return evaluation.authorized ? "FINAL EXECUTION AUTHORIZATION VALID" : "FINAL EXECUTION AUTHORIZATION INVALID";
+}
+
+function formatMutationSwitchEvaluationStatus(
+  evaluation: UnityMutationExecutionSwitchEvaluation,
+): string {
+  return evaluation.enabled ? "FINAL MUTATION SWITCH ENABLED" : "FINAL MUTATION SWITCH DISABLED";
+}
+
+export function evaluateUnityMutationExecutionSwitch(input: {
+  request_id: string;
+  request_type: "scene_object_creation_request";
+  mutation_switch: UnityMutationExecutionSwitch | null;
+  evaluated_at: string;
+}): UnityMutationExecutionSwitchEvaluation {
+  if (!input.mutation_switch) {
+    return {
+      enabled: false,
+      blocked_reason: "Unity mutation execution remains blocked until a final mutation switch is recorded.",
+      request_id: input.request_id,
+      switch_target_request_match: false,
+      allowed_mutation_type_match: false,
+      switch_expiration_status: "not_provided",
+      mutation_switch_id: null,
+    };
+  }
+
+  const switchTargetRequestMatch = input.mutation_switch.target_request_id === input.request_id;
+  if (!switchTargetRequestMatch) {
+    return {
+      enabled: false,
+      blocked_reason: "Unity mutation execution switch target request id does not match the reviewed mutation request.",
+      request_id: input.request_id,
+      switch_target_request_match: false,
+      allowed_mutation_type_match: input.mutation_switch.allowed_mutation_type === input.request_type,
+      switch_expiration_status: input.mutation_switch.expires_at ? (input.mutation_switch.expires_at <= input.evaluated_at ? "expired" : "valid") : "not_provided",
+      mutation_switch_id: input.mutation_switch.mutation_switch_id,
+    };
+  }
+
+  const allowedMutationTypeMatch = input.mutation_switch.allowed_mutation_type === input.request_type;
+  if (!allowedMutationTypeMatch) {
+    return {
+      enabled: false,
+      blocked_reason: "Unity mutation execution switch allowed mutation type does not match the requested mutation lane.",
+      request_id: input.request_id,
+      switch_target_request_match: true,
+      allowed_mutation_type_match: false,
+      switch_expiration_status: input.mutation_switch.expires_at ? (input.mutation_switch.expires_at <= input.evaluated_at ? "expired" : "valid") : "not_provided",
+      mutation_switch_id: input.mutation_switch.mutation_switch_id,
+    };
+  }
+
+  const switchExpirationStatus = input.mutation_switch.expires_at
+    ? input.mutation_switch.expires_at <= input.evaluated_at
+      ? "expired"
+      : "valid"
+    : "not_provided";
+  if (switchExpirationStatus === "expired") {
+    return {
+      enabled: false,
+      blocked_reason: "Unity mutation execution switch has expired and must be renewed before any future mutation path is allowed.",
+      request_id: input.request_id,
+      switch_target_request_match: true,
+      allowed_mutation_type_match: true,
+      switch_expiration_status: "expired",
+      mutation_switch_id: input.mutation_switch.mutation_switch_id,
+    };
+  }
+
+  if (!input.mutation_switch.enabled_by_operator) {
+    return {
+      enabled: false,
+      blocked_reason: "Unity mutation execution switch is present but not operator-enabled.",
+      request_id: input.request_id,
+      switch_target_request_match: true,
+      allowed_mutation_type_match: true,
+      switch_expiration_status: switchExpirationStatus,
+      mutation_switch_id: input.mutation_switch.mutation_switch_id,
+    };
+  }
+
+  if (!input.mutation_switch.switch_enabled) {
+    return {
+      enabled: false,
+      blocked_reason: "Unity mutation execution switch is recorded but remains disabled.",
+      request_id: input.request_id,
+      switch_target_request_match: true,
+      allowed_mutation_type_match: true,
+      switch_expiration_status: switchExpirationStatus,
+      mutation_switch_id: input.mutation_switch.mutation_switch_id,
+    };
+  }
+
+  return {
+    enabled: true,
+    blocked_reason: null,
+    request_id: input.request_id,
+    switch_target_request_match: true,
+    allowed_mutation_type_match: true,
+    switch_expiration_status: switchExpirationStatus,
+    mutation_switch_id: input.mutation_switch.mutation_switch_id,
+  };
 }
 
 function evaluateExecutionPlanDryRunPreviewStatus(
@@ -628,6 +755,12 @@ function buildUnitySceneObjectCreationExecutionPlanResult(
   const intendedComponents = normalizePreviewComponents(input.intended_components);
   const dryRunPreviewStatus = evaluateExecutionPlanDryRunPreviewStatus(input.preview_result, input.adapter_request_id);
   const preflightStatus = evaluateExecutionPlanPreflightStatus(input.preflight_result, input.adapter_request_id);
+  const mutationSwitchEvaluation = evaluateUnityMutationExecutionSwitch({
+    request_id: input.adapter_request_id,
+    request_type: "scene_object_creation_request",
+    mutation_switch: input.mutation_switch,
+    evaluated_at: input.evaluated_at ?? input.requested_at,
+  });
   const liveValidationStatus = evaluateExecutionPlanLiveValidationStatus(input.live_validation_result, targetScene);
   const explicitMutationExecutionModeStatus = input.mutation_execution_mode_enabled ? "enabled" : "disabled";
   const liveValidationSummary = input.live_validation_result
@@ -678,6 +811,13 @@ function buildUnitySceneObjectCreationExecutionPlanResult(
         ? "Explicit mutation execution mode gate is marked enabled, but this layer still returns plan-only output."
         : "Explicit mutation execution mode gate remains disabled, so the plan cannot be used for live mutation execution.",
     },
+    {
+      gate: "final_mutation_switch",
+      status: mutationSwitchEvaluation.enabled ? "approved" : input.mutation_switch ? "invalid" : "missing",
+      detail: mutationSwitchEvaluation.enabled
+        ? "Final mutation switch gate is present and enabled for this Unity mutation request."
+        : mutationSwitchEvaluation.blocked_reason ?? "Final mutation switch gate is missing for this Unity mutation request.",
+    },
   ];
 
   const blockedReasons = gateStatuses
@@ -706,11 +846,15 @@ function buildUnitySceneObjectCreationExecutionPlanResult(
       "final_execution_authorization",
       "live_read_only_validation",
       "explicit_mutation_execution_mode",
+      "final_mutation_switch",
     ],
     gate_statuses: gateStatuses,
     dry_run_preview_status: dryRunPreviewStatus.status,
     preflight_status: preflightStatus.status,
     authorization_evaluation: authorizationEvaluation,
+    final_mutation_switch_required: true,
+    final_mutation_switch_enabled: false,
+    mutation_switch_evaluation: mutationSwitchEvaluation,
     live_validation_status: liveValidationStatus.status,
     live_validation_summary: liveValidationSummary,
     explicit_mutation_execution_mode_status: explicitMutationExecutionModeStatus,
@@ -748,6 +892,13 @@ function createUnitySceneObjectCreationExecutionPlanPackages(
     `Dry-run preview status: ${result.dry_run_preview_status}`,
     `Preflight status: ${result.preflight_status}`,
     `Authorization evaluation status: ${formatAuthorizationEvaluationStatus(result.authorization_evaluation)}`,
+    `Final mutation switch required: ${String(result.final_mutation_switch_required)}`,
+    `Final mutation switch enabled: ${String(result.final_mutation_switch_enabled)}`,
+    `Final mutation switch evaluation status: ${formatMutationSwitchEvaluationStatus(result.mutation_switch_evaluation)}`,
+    `Final mutation switch id: ${result.mutation_switch_evaluation.mutation_switch_id ?? "none"}`,
+    `Final mutation switch target request match: ${String(result.mutation_switch_evaluation.switch_target_request_match)}`,
+    `Final mutation switch mutation type match: ${String(result.mutation_switch_evaluation.allowed_mutation_type_match)}`,
+    `Final mutation switch expiration status: ${result.mutation_switch_evaluation.switch_expiration_status}`,
     `Live validation status: ${result.live_validation_status}`,
     `Live validation summary: ${result.live_validation_summary}`,
     `Explicit mutation execution mode status: ${result.explicit_mutation_execution_mode_status}`,
@@ -770,6 +921,7 @@ function createUnitySceneObjectCreationExecutionPlanPackages(
     proof_results: proofResults,
     risks: [
       "EXECUTION PLAN ONLY",
+      "FINAL MUTATION SWITCH REQUIRED",
       "MUTATION DISABLED",
       "NOT EXECUTED",
       ...result.gate_statuses.filter((gate) => gate.status !== "approved").map((gate) => gate.detail),
@@ -793,7 +945,7 @@ function createUnitySceneObjectCreationExecutionPlanPackages(
     ],
     files_changed: [],
     validation_results: proofResults,
-    proof_results: [result.execution_kind, "EXECUTION PLAN ONLY", "MUTATION DISABLED", "NOT EXECUTED"],
+    proof_results: [result.execution_kind, "EXECUTION PLAN ONLY", "FINAL MUTATION SWITCH REQUIRED", "MUTATION SWITCH DISABLED", "NOT EXECUTED"],
     risk_summary: "Execution plan only. Mutation remains disabled and no Unity mutation has been performed.",
     rollback_plan: "Discard the execution plan package if it is no longer needed.",
     release_notes: summary,

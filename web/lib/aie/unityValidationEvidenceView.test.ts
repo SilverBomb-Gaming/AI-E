@@ -285,6 +285,13 @@ test("mutation execution plan evidence renders plan-only operator details", () =
       "Dry-run preview status: valid",
       "Preflight status: valid",
       "Authorization evaluation status: FINAL EXECUTION AUTHORIZATION VALID",
+      "Final mutation switch required: true",
+      "Final mutation switch enabled: false",
+      "Final mutation switch evaluation status: FINAL MUTATION SWITCH ENABLED",
+      "Final mutation switch id: mutation-switch-1",
+      "Final mutation switch target request match: true",
+      "Final mutation switch mutation type match: true",
+      "Final mutation switch expiration status: valid",
       "Live validation status: valid",
       "Live validation summary: Scene EnemyAIDemo reported checked_clean with missing scripts 0, console errors 0, and object count 13.",
       "Explicit mutation execution mode status: enabled",
@@ -297,6 +304,7 @@ test("mutation execution plan evidence renders plan-only operator details", () =
       "Required gate: final_execution_authorization",
       "Required gate: live_read_only_validation",
       "Required gate: explicit_mutation_execution_mode",
+      "Required gate: final_mutation_switch",
       "Gate status: review_approval=approved (Review approval gate is recorded for this Unity mutation request.)",
       "Gate status: operator_approval=approved (Operator approval gate is recorded for this Unity mutation request.)",
       "Gate status: dry_run_preview=approved (Dry-run preview gate is present and matches the reviewed Unity mutation request.)",
@@ -304,9 +312,10 @@ test("mutation execution plan evidence renders plan-only operator details", () =
       "Gate status: final_execution_authorization=approved (Final execution authorization gate is present and valid for this Unity mutation request.)",
       "Gate status: live_read_only_validation=approved (Live read-only Unity validation gate is present for EnemyAIDemo.)",
       "Gate status: explicit_mutation_execution_mode=approved (Explicit mutation execution mode gate is marked enabled, but this layer still returns plan-only output.)",
+      "Gate status: final_mutation_switch=approved (Final mutation switch gate is present and enabled for this Unity mutation request.)",
       "Recommended next operator action: EXECUTION PLAN ONLY. Keep mutation disabled and do not execute this plan until a later reviewed Unity mutation step explicitly enables execution.",
     ],
-    risks: ["EXECUTION PLAN ONLY", "MUTATION DISABLED", "NOT EXECUTED"],
+    risks: ["EXECUTION PLAN ONLY", "FINAL MUTATION SWITCH REQUIRED", "MUTATION DISABLED", "NOT EXECUTED"],
     recommended_decision: "approve",
     rollback_notes: "Plan only; no Unity mutation occurred and no rollback is required.",
     operator_actions: ["approve", "archive"],
@@ -319,6 +328,10 @@ test("mutation execution plan evidence renders plan-only operator details", () =
   assert.equal(evidence.executionMode, "disabled_plan_only");
   assert.equal(evidence.mutationEnabled, false);
   assert.equal(evidence.executed, false);
+  assert.equal(evidence.finalMutationSwitchRequired, true);
+  assert.equal(evidence.finalMutationSwitchEnabled, false);
+  assert.equal(evidence.finalMutationSwitchEvaluationStatus, "FINAL MUTATION SWITCH ENABLED");
+  assert.equal(evidence.finalMutationSwitchId, "mutation-switch-1");
   assert.equal(evidence.liveValidationStatus, "valid");
   assert.equal(evidence.dryRunPreviewStatus, "valid");
   assert.equal(evidence.preflightStatus, "valid");
@@ -329,11 +342,16 @@ test("mutation execution plan evidence renders plan-only operator details", () =
   const markup = renderToStaticMarkup(createElement(UnityValidationEvidencePanel, { evidence }));
   assert.match(markup, /Mutation Execution Plan/);
   assert.match(markup, /EXECUTION PLAN ONLY/);
+  assert.match(markup, /FINAL MUTATION SWITCH REQUIRED/);
   assert.match(markup, /MUTATION DISABLED/);
+  assert.match(markup, /FINAL MUTATION SWITCH ENABLED/);
   assert.match(markup, /NOT EXECUTED/);
   assert.match(markup, /Execution mode: disabled_plan_only/);
   assert.match(markup, /Mutation enabled: false/);
+  assert.match(markup, /Final mutation switch required: true/);
+  assert.match(markup, /Final mutation switch enabled: false/);
   assert.match(markup, /Live validation status: valid/);
+  assert.match(markup, /Final mutation switch/);
   assert.match(markup, /Gate statuses/);
   assert.doesNotMatch(markup, /<button/i);
 });

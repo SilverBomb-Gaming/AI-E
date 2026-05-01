@@ -4,6 +4,7 @@ import test from "node:test";
 import { buildUnityProductionPlanningPacket } from "./productionPipelineFoundation";
 import {
   buildUnitySceneObjectCreationExecutionPlan,
+  evaluateUnityMutationExecutionSwitch,
   evaluateUnityMutationExecutionAuthorization,
   previewUnitySceneObjectCreation,
   simulateUnityMutationExecutionPreflight,
@@ -102,6 +103,15 @@ function createExecutionPlanInput(
     preview_result,
     preflight_result,
     authorization,
+    mutation_switch: {
+      mutation_switch_id: "mutation-switch-1",
+      switch_enabled: true,
+      enabled_by_operator: true,
+      enabled_at: "2026-04-30T18:06:00.000Z",
+      target_request_id: preview_result.request_id,
+      allowed_mutation_type: "scene_object_creation_request",
+      expires_at: "2026-04-30T19:00:00.000Z",
+    },
     live_validation_result: createLiveValidationResult(),
     mutation_execution_mode_enabled: true,
     ...overrides,
@@ -295,6 +305,125 @@ test("valid final authorization reports authorized without executing mutation", 
   assert.equal(result.expiration_status, "valid");
   assert.equal(preview.executed, false);
   assert.equal(preview.final_execution_authorized, false);
+});
+
+test("missing mutation switch blocks future Unity mutation execution", () => {
+  const result = evaluateUnityMutationExecutionSwitch({
+    request_id: "unity-mutation-preview-1",
+    request_type: "scene_object_creation_request",
+    mutation_switch: null,
+    evaluated_at: "2026-04-30T18:10:00.000Z",
+  });
+
+  assert.equal(result.enabled, false);
+  assert.equal(result.mutation_switch_id, null);
+  assert.match(result.blocked_reason ?? "", /until a final mutation switch is recorded/i);
+});
+
+test("wrong switch target request id blocks future Unity mutation execution", () => {
+  const result = evaluateUnityMutationExecutionSwitch({
+    request_id: "unity-mutation-preview-1",
+    request_type: "scene_object_creation_request",
+    mutation_switch: {
+      mutation_switch_id: "mutation-switch-2",
+      switch_enabled: true,
+      enabled_by_operator: true,
+      enabled_at: "2026-04-30T18:06:00.000Z",
+      target_request_id: "another-request",
+      allowed_mutation_type: "scene_object_creation_request",
+      expires_at: "2026-04-30T19:00:00.000Z",
+    },
+    evaluated_at: "2026-04-30T18:10:00.000Z",
+  });
+
+  assert.equal(result.enabled, false);
+  assert.equal(result.switch_target_request_match, false);
+  assert.match(result.blocked_reason ?? "", /target request id does not match/i);
+});
+
+test("wrong switch mutation type blocks future Unity mutation execution", () => {
+  const result = evaluateUnityMutationExecutionSwitch({
+    request_id: "unity-mutation-preview-1",
+    request_type: "scene_object_creation_request",
+    mutation_switch: {
+      mutation_switch_id: "mutation-switch-3",
+      switch_enabled: true,
+      enabled_by_operator: true,
+      enabled_at: "2026-04-30T18:06:00.000Z",
+      target_request_id: "unity-mutation-preview-1",
+      allowed_mutation_type: "scene_request" as "scene_object_creation_request",
+      expires_at: "2026-04-30T19:00:00.000Z",
+    },
+    evaluated_at: "2026-04-30T18:10:00.000Z",
+  });
+
+  assert.equal(result.enabled, false);
+  assert.equal(result.allowed_mutation_type_match, false);
+  assert.match(result.blocked_reason ?? "", /allowed mutation type does not match/i);
+});
+
+test("expired mutation switch blocks future Unity mutation execution", () => {
+  const result = evaluateUnityMutationExecutionSwitch({
+    request_id: "unity-mutation-preview-1",
+    request_type: "scene_object_creation_request",
+    mutation_switch: {
+      mutation_switch_id: "mutation-switch-4",
+      switch_enabled: true,
+      enabled_by_operator: true,
+      enabled_at: "2026-04-30T18:06:00.000Z",
+      target_request_id: "unity-mutation-preview-1",
+      allowed_mutation_type: "scene_object_creation_request",
+      expires_at: "2026-04-30T18:09:00.000Z",
+    },
+    evaluated_at: "2026-04-30T18:10:00.000Z",
+  });
+
+  assert.equal(result.enabled, false);
+  assert.equal(result.switch_expiration_status, "expired");
+  assert.match(result.blocked_reason ?? "", /switch has expired/i);
+});
+
+test("disabled mutation switch blocks future Unity mutation execution", () => {
+  const result = evaluateUnityMutationExecutionSwitch({
+    request_id: "unity-mutation-preview-1",
+    request_type: "scene_object_creation_request",
+    mutation_switch: {
+      mutation_switch_id: "mutation-switch-5",
+      switch_enabled: false,
+      enabled_by_operator: true,
+      enabled_at: "2026-04-30T18:06:00.000Z",
+      target_request_id: "unity-mutation-preview-1",
+      allowed_mutation_type: "scene_object_creation_request",
+      expires_at: "2026-04-30T19:00:00.000Z",
+    },
+    evaluated_at: "2026-04-30T18:10:00.000Z",
+  });
+
+  assert.equal(result.enabled, false);
+  assert.match(result.blocked_reason ?? "", /remains disabled/i);
+});
+
+test("valid mutation switch reports enabled without executing mutation", () => {
+  const result = evaluateUnityMutationExecutionSwitch({
+    request_id: "unity-mutation-preview-1",
+    request_type: "scene_object_creation_request",
+    mutation_switch: {
+      mutation_switch_id: "mutation-switch-6",
+      switch_enabled: true,
+      enabled_by_operator: true,
+      enabled_at: "2026-04-30T18:06:00.000Z",
+      target_request_id: "unity-mutation-preview-1",
+      allowed_mutation_type: "scene_object_creation_request",
+      expires_at: "2026-04-30T19:00:00.000Z",
+    },
+    evaluated_at: "2026-04-30T18:10:00.000Z",
+  });
+
+  assert.equal(result.enabled, true);
+  assert.equal(result.switch_target_request_match, true);
+  assert.equal(result.allowed_mutation_type_match, true);
+  assert.equal(result.switch_expiration_status, "valid");
+  assert.equal(result.mutation_switch_id, "mutation-switch-6");
 });
 
 test("missing review approval blocks Unity mutation execution preflight", () => {
@@ -500,6 +629,18 @@ test("execution plan requires live read-only validation", () => {
   assert.match(result.blocked_reason ?? "", /Live read-only Unity validation gate is missing/i);
 });
 
+test("execution plan requires final mutation switch", () => {
+  const result = buildUnitySceneObjectCreationExecutionPlan(createExecutionPlanInput({
+    mutation_switch: null,
+  }));
+
+  assert.equal(result.execution_kind, "execution_plan_blocked");
+  assert.equal(result.final_mutation_switch_required, true);
+  assert.equal(result.final_mutation_switch_enabled, false);
+  assert.equal(result.mutation_switch_evaluation.enabled, false);
+  assert.match(result.blocked_reason ?? "", /until a final mutation switch is recorded/i);
+});
+
 test("execution plan requires explicit mutation execution mode to be enabled", () => {
   const result = buildUnitySceneObjectCreationExecutionPlan(createExecutionPlanInput({
     mutation_execution_mode_enabled: false,
@@ -515,6 +656,9 @@ test("valid gate stack creates a disabled Unity mutation execution plan without 
 
   assert.equal(result.execution_kind, "execution_plan_only");
   assert.equal(result.execution_mode, "disabled_plan_only");
+  assert.equal(result.final_mutation_switch_required, true);
+  assert.equal(result.final_mutation_switch_enabled, false);
+  assert.equal(result.mutation_switch_evaluation.enabled, true);
   assert.equal(result.mutation_enabled, false);
   assert.equal(result.executed, false);
   assert.equal(result.mutating, false);
@@ -522,7 +666,7 @@ test("valid gate stack creates a disabled Unity mutation execution plan without 
   assert.equal(result.dry_run_preview_status, "valid");
   assert.equal(result.preflight_status, "valid");
   assert.equal(result.authorization_evaluation.authorized, true);
-  assert.equal(result.gate_statuses.length, 7);
+  assert.equal(result.gate_statuses.length, 8);
   assert.ok(result.gate_statuses.every((gate) => gate.status === "approved"));
   assert.ok(result.review_package);
   assert.ok(result.delivery_package);
@@ -530,5 +674,7 @@ test("valid gate stack creates a disabled Unity mutation execution plan without 
   assert.deepEqual(result.delivery_package?.files_changed, []);
   assert.match(result.review_package?.summary ?? "", /EXECUTION PLAN ONLY/i);
   assert.match(result.review_package?.summary ?? "", /MUTATION DISABLED/i);
+  assert.match(result.review_package?.summary ?? "", /MUTATION DISABLED/i);
   assert.match(result.delivery_package?.release_notes ?? "", /NOT EXECUTED/i);
+  assert.ok(result.delivery_package?.validation_results.some((entry) => /Final mutation switch evaluation status: FINAL MUTATION SWITCH ENABLED/i.test(entry)));
 });
