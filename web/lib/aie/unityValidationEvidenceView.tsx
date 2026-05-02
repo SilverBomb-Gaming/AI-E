@@ -687,6 +687,9 @@ export function UnityValidationEvidencePanel({ evidence }: { evidence: UnityVali
                 {evidence.rollbackPlanRequired ? (
                   <>
                     <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-700">
+                      ROLLBACK PLAN GENERATED
+                    </span>
+                    <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-700">
                       ROLLBACK PLAN REQUIRED
                     </span>
                     <span className="inline-flex rounded-full border border-ink/10 bg-white/80 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-ink/75">
@@ -714,6 +717,11 @@ export function UnityValidationEvidencePanel({ evidence }: { evidence: UnityVali
             <span className="inline-flex rounded-full border border-ink/10 bg-white/80 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-ink/75">
               MANUAL TRIGGER
             </span>
+            {evidence.executed && evidence.executionStatus === "success" ? (
+              <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-700">
+                MANUAL ROLLBACK EXECUTED
+              </span>
+            ) : null}
             {evidence.executionStatus === "partial_failure" ? (
               <>
                 <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-700">

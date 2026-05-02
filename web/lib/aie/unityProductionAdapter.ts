@@ -1730,7 +1730,7 @@ function createUnityMutationExecutionChainExecutionPackages(
           "CHAIN EXECUTION STOPPED",
           ...(result.failure_simulated ? ["CONTROLLED FAILURE SIMULATION", "SIMULATED FAILURE"] : []),
           result.blocked_reason ?? "A controlled Unity chain action failed.",
-          ...(result.rollback_plan_required ? ["ROLLBACK PLAN REQUIRED", "ROLLBACK NOT AUTO-EXECUTED"] : []),
+          ...(result.rollback_plan_required ? ["ROLLBACK PLAN REQUIRED", "ROLLBACK PLAN GENERATED", "ROLLBACK NOT AUTO-EXECUTED"] : []),
         ]
       : ["CONTROLLED UNITY CHAIN EXECUTION"],
     recommended_decision: result.execution_status === "success" ? "approve" : "review_required",
@@ -1769,7 +1769,7 @@ function createUnityMutationExecutionChainExecutionPackages(
       result.execution_status,
       result.final_scene_state.summary,
       ...(result.failure_simulated ? ["CONTROLLED FAILURE SIMULATION", "SIMULATED FAILURE"] : []),
-      ...(result.rollback_plan_required ? ["ROLLBACK PLAN REQUIRED", "ROLLBACK NOT AUTO-EXECUTED"] : []),
+      ...(result.rollback_plan_required ? ["ROLLBACK PLAN REQUIRED", "ROLLBACK PLAN GENERATED", "ROLLBACK NOT AUTO-EXECUTED"] : []),
     ],
     risk_summary: result.blocked_reason ?? "Controlled Unity chain execution completed within the approved lane.",
     rollback_plan: result.rollback_order.join(" | ") || "No rollback order preview available.",
@@ -1803,6 +1803,7 @@ function createUnityPlannedChainRollbackExecutionPackages(
     `Execution status: ${result.execution_status}`,
     `Manual trigger: ${String(result.manual_trigger)}`,
     `Executed: ${String(result.executed)}`,
+    ...(result.executed && result.execution_status === "success" ? ["MANUAL ROLLBACK EXECUTED"] : []),
     `Actions executed count: ${String(result.actions_executed_count)}`,
     `Actions failed count: ${String(result.actions_failed_count)}`,
     `Failure classification: ${result.failure_classification}`,
@@ -1830,7 +1831,7 @@ function createUnityPlannedChainRollbackExecutionPackages(
     tests_run: ["unity mutation execution chain manual rollback execution"],
     proof_results: proofResults,
     risks: result.execution_status === "success"
-      ? ["ROLLBACK EXECUTION", "MANUAL TRIGGER", "ROLLBACK NOT AUTO-EXECUTED"]
+      ? ["ROLLBACK EXECUTION", "MANUAL TRIGGER", "MANUAL ROLLBACK EXECUTED", "ROLLBACK NOT AUTO-EXECUTED"]
       : ["ROLLBACK EXECUTION STOPPED", "MANUAL TRIGGER", "ROLLBACK NOT AUTO-EXECUTED"],
     recommended_decision: result.execution_status === "success" ? "approve" : "review_required",
     rollback_notes: `ROLLBACK PLAN ${result.rollback_plan_id ?? "unknown"}: ${result.remaining_actions_not_executed.join(" | ") || "fully executed"}`,
@@ -1854,6 +1855,7 @@ function createUnityPlannedChainRollbackExecutionPackages(
     proof_results: [
       "ROLLBACK EXECUTION",
       "MANUAL TRIGGER",
+      ...(result.executed && result.execution_status === "success" ? ["MANUAL ROLLBACK EXECUTED"] : []),
       result.execution_status,
       result.final_scene_state.summary,
     ],

@@ -543,12 +543,68 @@ test("chain execution evidence renders controlled failure simulation details dis
   const markup = renderToStaticMarkup(createElement(UnityValidationEvidencePanel, { evidence }));
   assert.match(markup, /CONTROLLED FAILURE SIMULATION/);
   assert.match(markup, /SIMULATED FAILURE/);
+  assert.match(markup, /ROLLBACK PLAN GENERATED/);
   assert.match(markup, /ROLLBACK PLAN REQUIRED/);
   assert.match(markup, /ROLLBACK NOT AUTO-EXECUTED/);
   assert.match(markup, /FAILURE SOURCE: simulation/);
   assert.match(markup, /simulation_id=failure-simulation-rollback-probe/);
   assert.match(markup, /kind=simulated_runtime_unavailable/);
   assert.match(markup, /target_action=rollback-probe/);
+});
+
+test("rollback execution evidence renders manual rollback executed for a clean final state", () => {
+  const reviewPackage = createAutonomousReviewPackage({
+    package_id: "unity-chain-rollback-review-success-1",
+    work_item_id: "unity-chain-rollback-unity-chain-rollback-plan-success-1",
+    chain_id: "unity-chain-rollback-chain-success-1",
+    status: "approved",
+    summary: "ROLLBACK EXECUTION: Controlled Unity chain rollback plan unity-chain-rollback-plan-success-1 completed with status success.",
+    files_changed: [],
+    tests_run: ["unity mutation execution chain manual rollback execution"],
+    proof_results: [
+      "Execution kind: planned_chain_rollback_executed",
+      "Chain id: unity-controlled-chain-success-1",
+      "Rollback plan id: unity-chain-rollback-plan-success-1",
+      "Execution status: success",
+      "Manual trigger: true",
+      "Executed: true",
+      "MANUAL ROLLBACK EXECUTED",
+      "Actions executed count: 1",
+      "Actions failed count: 0",
+      "Failure classification: none",
+      "Failure source: none",
+      "Failure is simulated: false",
+      "Failure is recoverable: false",
+      "Failure requires manual review: false",
+      "Failure evidence summary: No failure evidence was recorded.",
+      "Remaining actions not executed: none",
+      "Final scene state: Scene EnemyAIDemo object count moved from 14 to 13 during manual rollback execution.",
+      "Evidence timestamp: 2026-05-05T10:05:00.000Z",
+      "Action result: create-probe => executed",
+      "Recommended next operator action: Review controlled rollback evidence.",
+    ],
+    risks: ["ROLLBACK EXECUTION", "MANUAL TRIGGER", "MANUAL ROLLBACK EXECUTED", "ROLLBACK NOT AUTO-EXECUTED"],
+    recommended_decision: "approve",
+    rollback_notes: "ROLLBACK PLAN unity-chain-rollback-plan-success-1: fully executed",
+    operator_actions: ["approve", "archive"],
+  });
+
+  const evidence = extractUnityValidationEvidenceFromReviewPackage(reviewPackage);
+
+  assert.ok(evidence);
+  assert.equal(evidence.kind, "planned_chain_rollback_result");
+  assert.equal(evidence.executionStatus, "success");
+  assert.equal(evidence.manualTrigger, true);
+  assert.equal(evidence.executed, true);
+  assert.equal(evidence.actionsExecutedCount, 1);
+  assert.equal(evidence.actionsFailedCount, 0);
+  assert.deepEqual(evidence.remainingActionsNotExecuted, []);
+
+  const markup = renderToStaticMarkup(createElement(UnityValidationEvidencePanel, { evidence }));
+  assert.match(markup, /ROLLBACK EXECUTION/);
+  assert.match(markup, /MANUAL TRIGGER/);
+  assert.match(markup, /MANUAL ROLLBACK EXECUTED/);
+  assert.match(markup, /Scene EnemyAIDemo object count moved from 14 to 13 during manual rollback execution/);
 });
 
 test("rollback execution evidence renders manual trigger and remaining actions details", () => {
