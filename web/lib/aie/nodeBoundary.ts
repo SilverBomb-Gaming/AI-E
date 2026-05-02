@@ -92,6 +92,11 @@ export type NodePlanAnnotation = {
   informational_only: true;
 };
 
+export type NodePlanOperatorAcknowledgement = {
+  acknowledged: boolean;
+  acknowledged_at?: string;
+};
+
 export type NodeAdvisoryPlan = {
   plan_id: string;
   planning_stage: NodeAdvisoryPlanningStage;
@@ -102,6 +107,7 @@ export type NodeAdvisoryPlan = {
   validation_gates: string[];
   execution_authority: "system_only";
   annotations?: NodePlanAnnotation[];
+  operator_acknowledgement?: NodePlanOperatorAcknowledgement;
 };
 
 export type NodePlanningMergeResult = {
@@ -1271,6 +1277,27 @@ function clampAnnotationConfidence(value: number): number {
   return Math.max(0, Math.min(1, Math.round(value * 1000) / 1000));
 }
 
+function normalizeOperatorAcknowledgement(
+  value: NodePlanOperatorAcknowledgement | undefined,
+): NodePlanOperatorAcknowledgement {
+  if (!value) {
+    return { acknowledged: false };
+  }
+
+  if (value.acknowledged !== true) {
+    return { acknowledged: false };
+  }
+
+  if (hasNonEmptyString(value.acknowledged_at) && looksLikeIsoTimestamp(value.acknowledged_at)) {
+    return {
+      acknowledged: true,
+      acknowledged_at: value.acknowledged_at.trim(),
+    };
+  }
+
+  return { acknowledged: true };
+}
+
 function normalizeCommandTokens(command: string | undefined): string[] {
   if (!hasNonEmptyString(command)) {
     return [];
@@ -1325,7 +1352,7 @@ function buildPlanAnnotation(insight: ExecutionInsight): NodePlanAnnotation {
 export function attachInsightsToPlan<T extends NodeAdvisoryPlan | CoreNodeTaskTranslationPlan | CoreNodePipelineDraftPlan>(
   plan: T,
   insights: readonly ExecutionInsight[],
-): T & { annotations: NodePlanAnnotation[] } {
+): T & { annotations: NodePlanAnnotation[]; operator_acknowledgement: NodePlanOperatorAcknowledgement } {
   const existingAnnotations = Array.isArray(plan.annotations)
     ? plan.annotations.map((annotation) => ({ ...annotation, informational_only: true as const }))
     : [];
@@ -1347,5 +1374,50 @@ export function attachInsightsToPlan<T extends NodeAdvisoryPlan | CoreNodeTaskTr
     dependency_reasoning: [...plan.dependency_reasoning],
     validation_gates: [...plan.validation_gates],
     annotations: mergedAnnotations,
+    operator_acknowledgement: normalizeOperatorAcknowledgement(plan.operator_acknowledgement),
   };
+}
+
+export function acknowledgePlanInsights<T extends NodeAdvisoryPlan | CoreNodeTaskTranslationPlan | CoreNodePipelineDraftPlan>(
+  plan: T,
+  acknowledgedAt?: string,
+): T & { operator_acknowledgement: NodePlanOperatorAcknowledgement } {
+  const normalizedTimestamp = hasNonEmptyString(acknowledgedAt) && looksLikeIsoTimestamp(acknowledgedAt)
+    ? acknowledgedAt.trim()
+    : new Date().toISOString();
+
+  return {
+    ...plan,
+    planning_suggestions: [...plan.planning_suggestions],
+    validation_insights: [...plan.validation_insights],
+    dependency_reasoning: [...plan.dependency_reasoning],
+    validation_gates: [...plan.validation_gates],
+    annotations: Array.isArray(plan.annotations)
+      ? plan.annotations.map((annotation) => ({ ...annotation, informational_only: true as const }))
+      : plan.annotations,
+    operator_acknowledgement: {
+      acknowledged: true,
+      acknowledged_at: normalizedTimestamp,
+    },
+  };
+}
+
+export function buildInsightAcknowledgementPrompt(
+  plan: Pick<NodeAdvisoryPlan, "annotations" | "operator_acknowledgement">,
+): string | null {
+  if (!Array.isArray(plan.annotations) || plan.annotations.length === 0) {
+    return null;
+  }
+
+  if (plan.operator_acknowledgement?.acknowledged === true) {
+    return null;
+  }
+
+  const lines = ["Insights detected:"];
+  for (const annotation of plan.annotations) {
+    lines.push(`- ${annotation.message} (confidence ${annotation.confidence.toFixed(2)})`);
+  }
+  lines.push("");
+  lines.push("Acknowledge before proceeding? (yes/no)");
+  return lines.join("\n");
 }

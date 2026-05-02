@@ -5,7 +5,9 @@ import path from "node:path";
 import test from "node:test";
 
 import {
+  acknowledgePlanInsights,
   attachInsightsToPlan,
+  buildInsightAcknowledgementPrompt,
   exportNodeTaskDraftToPipeline,
   mergeNodePlanningHints,
   receiveNodeIntent,
@@ -357,6 +359,85 @@ test("insights attach to plans as non-binding annotations", () => {
   assert.ok(annotated.annotations?.some((annotation) => annotation.type === "risk_warning"));
   assert.ok(annotated.annotations?.some((annotation) => annotation.type === "reliability_note" || annotation.type === "pattern_note"));
   assert.ok(annotated.annotations?.every((annotation) => annotation.informational_only === true && annotation.confidence >= 0 && annotation.confidence <= 1));
+  assert.deepEqual(annotated.operator_acknowledgement, { acknowledged: false });
+});
+
+test("operator acknowledgement is recorded without changing execution behavior", () => {
+  const annotated = attachInsightsToPlan(createNodeTaskTranslationPlan({ risk_level: "high" }), generateExecutionInsights([
+    createExecutionOutcomeRecord({
+      outcome_id: "OUT-0000001005",
+      created_at: "2026-05-02T21:00:00.000Z",
+      risk_level: "high",
+      rollback_required: true,
+      rollback_executed: false,
+      success: false,
+      status: "blocked",
+      result_summary: "operator blocked run",
+      error_summary: "operator blocked run",
+      recovery_status: "planned",
+    }),
+  ]));
+
+  const acknowledged = acknowledgePlanInsights(annotated, "2026-05-02T21:05:00.000Z");
+  const translated = translatePlanToNodeTask(acknowledged);
+
+  assert.deepEqual(acknowledged.operator_acknowledgement, {
+    acknowledged: true,
+    acknowledged_at: "2026-05-02T21:05:00.000Z",
+  });
+  assert.equal(acknowledged.execution_path, annotated.execution_path);
+  assert.deepEqual(acknowledged.validation_gates, annotated.validation_gates);
+  assert.equal(translated.status, "draft_generated");
+  assert.equal(translated.execution_triggered, false);
+  assert.equal(translated.node_intake_triggered, false);
+});
+
+test("acknowledgement prompt is visible but non-blocking", () => {
+  const annotated = attachInsightsToPlan(createNodeTaskTranslationPlan({ risk_level: "high" }), generateExecutionInsights([
+    createExecutionOutcomeRecord({
+      outcome_id: "OUT-0000001006",
+      created_at: "2026-05-02T21:10:00.000Z",
+      risk_level: "high",
+      rollback_required: true,
+      rollback_executed: true,
+      success: false,
+      status: "failed",
+      result_summary: "integration regression failure",
+      error_summary: "integration regression failure",
+      recovery_status: "executed",
+    }),
+  ]));
+
+  const prompt = buildInsightAcknowledgementPrompt(annotated);
+
+  assert.ok(prompt);
+  assert.match(prompt ?? "", /Insights detected:/);
+  assert.match(prompt ?? "", /Acknowledge before proceeding\? \(yes\/no\)/);
+});
+
+test("acknowledgement helpers do not mutate the source plan", () => {
+  const source = attachInsightsToPlan(createExportableNodeTaskPlan({ risk_level: "high" }), generateExecutionInsights([
+    createExecutionOutcomeRecord({
+      outcome_id: "OUT-0000001007",
+      created_at: "2026-05-02T21:15:00.000Z",
+      risk_level: "high",
+      rollback_required: true,
+      rollback_executed: false,
+      success: false,
+      status: "blocked",
+      result_summary: "operator blocked run",
+      error_summary: "operator blocked run",
+      recovery_status: "planned",
+    }),
+  ]));
+  const before = JSON.stringify(source);
+
+  const acknowledged = acknowledgePlanInsights(source, "2026-05-02T21:16:00.000Z");
+
+  assert.equal(JSON.stringify(source), before);
+  assert.equal(source.operator_acknowledgement?.acknowledged, false);
+  assert.equal(acknowledged.operator_acknowledgement.acknowledged, true);
+  assert.equal(acknowledged.command, source.command);
 });
 
 test("insight annotations do not change execution path or validation gates", () => {

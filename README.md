@@ -523,6 +523,14 @@ Current Layer 21 Step 1 status:
 - annotated plans remain visible during planning while preserving the existing execution path and validation gates unchanged
 - translation and draft export behavior remain unchanged because annotations are non-binding and do not flow into execution decisions
 
+Current Layer 21 Step 2 status:
+
+- Layer 21 Step 2 - Operator Acknowledgement of Insights: implemented
+- added `operator_acknowledgement` metadata to annotated plans in `web/lib/aie/nodeBoundary.ts`
+- added `acknowledgePlanInsights(plan, acknowledgedAt?)` to record acknowledgement timestamps without changing plan behavior
+- added `buildInsightAcknowledgementPrompt(plan)` for a visible pre-submission acknowledgement prompt when insights are present
+- acknowledgement remains informational only and does not block execution, alter validation gates, or change approval flow
+
 ## Safe Runtime Action Bridge
 
 AI-E can now translate supported live operator actions into safe runtime intents.
