@@ -89,6 +89,7 @@ export type NodePlanAnnotation = {
   message: string;
   confidence: number;
   severity: ExecutionInsight["severity"];
+  suggestion?: string;
   insight_id: string;
   informational_only: true;
 };
@@ -1346,6 +1347,7 @@ function buildPlanAnnotation(insight: ExecutionInsight): NodePlanAnnotation {
     message: insight.description,
     confidence: clampAnnotationConfidence(insight.confidence),
     severity: insight.severity,
+    suggestion: insight.suggestion,
     insight_id: insight.insight_id,
     informational_only: true,
   };
@@ -1418,6 +1420,9 @@ export function buildInsightAcknowledgementPrompt(
   const lines = ["Insights detected:"];
   for (const annotation of plan.annotations) {
     lines.push(`- [${annotation.severity.toUpperCase()}] ${annotation.message} (confidence ${annotation.confidence.toFixed(2)})`);
+    if (annotation.suggestion) {
+      lines.push(`  Suggestion: ${annotation.suggestion}`);
+    }
   }
   lines.push("");
   lines.push("Acknowledge before proceeding? (yes/no)");

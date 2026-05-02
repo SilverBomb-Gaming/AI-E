@@ -85,6 +85,7 @@ test("execution insights render into readable operator-facing categories", () =>
   assert.match(rendered.console_output, /Rollback Frequency Summary/);
   assert.match(rendered.console_output, /Risk-Level Insights/);
   assert.match(rendered.console_output, /\[(LOW|MEDIUM|HIGH|CRITICAL)\]/);
+  assert.match(rendered.console_output, /Suggestion:/);
   assert.match(rendered.console_output, /Confidence:/);
   assert.match(rendered.console_output, /Readable Summary/);
 });

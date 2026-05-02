@@ -8,6 +8,7 @@ export type ExecutionInsight = {
   supporting_metrics: Record<string, number>;
   confidence: number;
   severity: "low" | "medium" | "high" | "critical";
+  suggestion?: string;
 };
 
 export type ExecutionOutcomeAnalytics = {
@@ -184,6 +185,37 @@ function deriveInsightSeverity(
   }
 }
 
+function deriveInsightSuggestion(
+  category: ExecutionInsight["category"],
+  severity: ExecutionInsight["severity"],
+  supportingMetrics: Record<string, number>,
+): string | undefined {
+  if (severity !== "high" && severity !== "critical") {
+    return undefined;
+  }
+
+  switch (category) {
+    case "pattern":
+      return (supportingMetrics.failure_rate ?? 0) >= 0.6
+        ? "Consider running in test mode first and verify the environment before execution."
+        : "Consider verifying dependencies before execution.";
+    case "risk":
+      return (supportingMetrics.rollback_required_rate ?? 0) >= 0.6
+        ? "Rollback frequency is high. Ensure a recovery plan is ready before execution."
+        : "Review rollback readiness before execution.";
+    case "reliability":
+      return (supportingMetrics.failure_rate_delta ?? supportingMetrics.failure_rate ?? 0) >= 0.6
+        ? "This lane shows elevated failure risk. Verify environment and prerequisites before execution."
+        : "Review recent reliability signals before execution.";
+    case "performance":
+      return (1 - (supportingMetrics.success_rate ?? 1)) >= 0.6
+        ? "Node reliability is degraded. Consider validating the environment before execution."
+        : "Review recent node reliability before execution.";
+    default:
+      return undefined;
+  }
+}
+
 export function analyzeExecutionOutcomes(outcomes: readonly ExecutionOutcomeRecord[]): ExecutionOutcomeAnalytics {
   const nodeBuckets = new Map<string, AggregateBucket>();
   const commandBuckets = new Map<string, AggregateBucket>();
@@ -272,6 +304,7 @@ export function generateExecutionInsights(outcomes: readonly ExecutionOutcomeRec
       failure_count: primaryNode.failure_count,
       success_rate: primaryNode.success_rate,
     };
+    const severity = deriveInsightSeverity("performance", supportingMetrics);
     insights.push({
       insight_id: buildInsightId(["node", "performance", primaryNode.node_id]),
       created_at: createdAt,
@@ -279,7 +312,8 @@ export function generateExecutionInsights(outcomes: readonly ExecutionOutcomeRec
       description: `Node ${primaryNode.node_id} handled ${primaryNode.total} tasks with a ${percent(primaryNode.success_rate)}% success rate, indicating ${primaryNode.success_rate >= 0.9 ? "high" : primaryNode.success_rate >= 0.7 ? "moderate" : "low"} reliability.`,
       supporting_metrics: supportingMetrics,
       confidence: metricConfidence(primaryNode.total, primaryNode.success_rate - 0.5),
-      severity: deriveInsightSeverity("performance", supportingMetrics),
+      severity,
+      suggestion: deriveInsightSuggestion("performance", severity, supportingMetrics),
     });
   }
 
@@ -299,6 +333,7 @@ export function generateExecutionInsights(outcomes: readonly ExecutionOutcomeRec
       comparison_failure_rate: lowestFailurePattern?.failure_rate ?? highestFailurePattern.failure_rate,
       failure_rate_delta: comparisonDelta,
     };
+    const severity = deriveInsightSeverity("pattern", supportingMetrics);
     insights.push({
       insight_id: buildInsightId(["command", "pattern", highestFailurePattern.command_pattern]),
       created_at: createdAt,
@@ -306,7 +341,8 @@ export function generateExecutionInsights(outcomes: readonly ExecutionOutcomeRec
       description,
       supporting_metrics: supportingMetrics,
       confidence: metricConfidence(highestFailurePattern.total + (lowestFailurePattern?.total ?? 0), comparisonDelta),
-      severity: deriveInsightSeverity("pattern", supportingMetrics),
+      severity,
+      suggestion: deriveInsightSuggestion("pattern", severity, supportingMetrics),
     });
   }
 
@@ -317,6 +353,7 @@ export function generateExecutionInsights(outcomes: readonly ExecutionOutcomeRec
       rollback_required_rate: rollbackMetrics.rollback_required_rate,
       failure_rate: rollbackMetrics.failure_rate,
     };
+    const severity = deriveInsightSeverity("risk", supportingMetrics);
     insights.push({
       insight_id: buildInsightId(["rollback", "frequency", rollbackMetrics.risk_level]),
       created_at: createdAt,
@@ -324,7 +361,8 @@ export function generateExecutionInsights(outcomes: readonly ExecutionOutcomeRec
       description: `Rollback was required in ${percent(rollbackMetrics.rollback_required_rate)}% of high-risk tasks.`,
       supporting_metrics: supportingMetrics,
       confidence: metricConfidence(rollbackMetrics.total, rollbackMetrics.rollback_required_rate),
-      severity: deriveInsightSeverity("risk", supportingMetrics),
+      severity,
+      suggestion: deriveInsightSuggestion("risk", severity, supportingMetrics),
     });
   } else {
     const supportingMetrics = {
@@ -332,6 +370,7 @@ export function generateExecutionInsights(outcomes: readonly ExecutionOutcomeRec
       rollback_required_rate: analytics.rollback_frequency.rollback_required_rate,
       rollback_executed_rate: analytics.rollback_frequency.rollback_executed_rate,
     };
+    const severity = deriveInsightSeverity("risk", supportingMetrics);
     insights.push({
       insight_id: buildInsightId(["rollback", "frequency", "overall"]),
       created_at: createdAt,
@@ -339,7 +378,8 @@ export function generateExecutionInsights(outcomes: readonly ExecutionOutcomeRec
       description: `Rollback was required in ${percent(analytics.rollback_frequency.rollback_required_rate)}% of observed tasks overall.`,
       supporting_metrics: supportingMetrics,
       confidence: metricConfidence(analytics.rollback_frequency.total, analytics.rollback_frequency.rollback_required_rate),
-      severity: deriveInsightSeverity("risk", supportingMetrics),
+      severity,
+      suggestion: deriveInsightSuggestion("risk", severity, supportingMetrics),
     });
   }
 
@@ -355,6 +395,7 @@ export function generateExecutionInsights(outcomes: readonly ExecutionOutcomeRec
       highest_risk_total: highestRiskFailure.total,
       lowest_risk_total: lowestRiskFailure.total,
     };
+    const severity = deriveInsightSeverity("reliability", supportingMetrics);
     insights.push({
       insight_id: buildInsightId(["risk", "correlation", highestRiskFailure.risk_level, lowestRiskFailure.risk_level]),
       created_at: createdAt,
@@ -362,7 +403,8 @@ export function generateExecutionInsights(outcomes: readonly ExecutionOutcomeRec
       description: `${highestRiskFailure.risk_level} risk tasks fail ${percent(failureDelta)} percentage points more often than ${lowestRiskFailure.risk_level} risk tasks.`,
       supporting_metrics: supportingMetrics,
       confidence: metricConfidence(highestRiskFailure.total + lowestRiskFailure.total, failureDelta),
-      severity: deriveInsightSeverity("reliability", supportingMetrics),
+      severity,
+      suggestion: deriveInsightSuggestion("reliability", severity, supportingMetrics),
     });
   } else if (highestRiskFailure) {
     const supportingMetrics = {
@@ -371,6 +413,7 @@ export function generateExecutionInsights(outcomes: readonly ExecutionOutcomeRec
       rollback_required_rate: highestRiskFailure.rollback_required_rate,
       total_outcomes: highestRiskFailure.total,
     };
+    const severity = deriveInsightSeverity("reliability", supportingMetrics);
     insights.push({
       insight_id: buildInsightId(["risk", "correlation", highestRiskFailure.risk_level]),
       created_at: createdAt,
@@ -378,7 +421,8 @@ export function generateExecutionInsights(outcomes: readonly ExecutionOutcomeRec
       description: `${highestRiskFailure.risk_level} risk tasks currently show a ${percent(highestRiskFailure.failure_rate)}% failure rate across ${highestRiskFailure.total} observed tasks.`,
       supporting_metrics: supportingMetrics,
       confidence: metricConfidence(highestRiskFailure.total, highestRiskFailure.failure_rate),
-      severity: deriveInsightSeverity("reliability", supportingMetrics),
+      severity,
+      suggestion: deriveInsightSuggestion("reliability", severity, supportingMetrics),
     });
   }
 
@@ -391,6 +435,6 @@ export function summarizeExecutionInsights(insights: readonly ExecutionInsight[]
   }
 
   return insights
-    .map((insight) => `${insight.category.toUpperCase()} [${insight.severity.toUpperCase()}]: ${insight.description} Confidence ${insight.confidence.toFixed(2)}.`)
+    .map((insight) => `${insight.category.toUpperCase()} [${insight.severity.toUpperCase()}]: ${insight.description}${insight.suggestion ? ` Suggestion: ${insight.suggestion}` : ""} Confidence ${insight.confidence.toFixed(2)}.`)
     .join("\n");
 }

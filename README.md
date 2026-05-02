@@ -539,6 +539,14 @@ Current Layer 21 Step 3 status:
 - output surfaces now display severity clearly in the CLI insight renderer and the optional acknowledgement prompt
 - severity remains informational only and does not affect execution, approvals, gates, or plan validity
 
+Current Layer 21 Step 4 status:
+
+- Layer 21 Step 4 - Insight-Based Suggestion Layer: implemented
+- added optional read-only suggestions to generated insights and non-binding plan annotations when severity is `high` or `critical`
+- suggestion logic is derived from severity, failure patterns, rollback frequency, and reliability signals in `web/lib/aie/executionInsight.ts`
+- output surfaces now show suggestions in the CLI insight renderer and the optional acknowledgement prompt
+- suggestions remain informational only and do not modify plans, block execution, or auto-apply any change
+
 ## Safe Runtime Action Bridge
 
 AI-E can now translate supported live operator actions into safe runtime intents.

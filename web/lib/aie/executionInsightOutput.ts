@@ -84,6 +84,9 @@ export function renderExecutionInsights(insights: readonly ExecutionInsight[]): 
     lines.push("-".repeat((headings.get(category) ?? "Execution Insights").length));
     for (const insight of matchingInsights) {
       lines.push(`- ${renderSeverity(insight.severity)} ${insight.description}`);
+      if (insight.suggestion) {
+        lines.push(`  -> Suggestion: ${insight.suggestion}`);
+      }
       lines.push(`  Confidence: ${insight.confidence.toFixed(2)}`);
       lines.push(...formatMetrics(insight.supporting_metrics));
     }
