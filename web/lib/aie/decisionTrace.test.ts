@@ -12,7 +12,9 @@ import {
 } from "./nodeBoundary";
 import {
   buildDecisionRecord,
+  queryDecisionRecords,
   recordDecisionTrace,
+  renderDecisionReplay,
   serializeDecisionRecord,
   validateDecisionRecord,
 } from "./decisionTrace";
@@ -163,4 +165,50 @@ test("building a decision record does not mutate the selected plan", () => {
   assert.equal(JSON.stringify(selected), before);
   assert.equal(record.operator_acknowledgement.acknowledged, false);
   assert.equal(record.selected_plan_id, selected.selected_plan_id);
+});
+
+test("queryDecisionRecords returns matching records without affecting stored decision state", async () => {
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "aie-decision-query-"));
+
+  try {
+    const selected = createSelectedPlan();
+    const firstRecord = buildDecisionRecord(selected, "2026-05-02T22:05:00.000Z");
+    const secondRecord = buildDecisionRecord(selected, "2026-05-02T22:06:00.000Z");
+
+    await recordDecisionTrace(firstRecord, { outputDirectory: tempRoot });
+    await recordDecisionTrace(secondRecord, { outputDirectory: tempRoot });
+
+    const queried = await queryDecisionRecords({
+      outputDirectory: tempRoot,
+      selected_plan_id: selected.selected_plan_id,
+      acknowledged: false,
+      minimum_severity: "high",
+      limit: 1,
+    });
+
+    assert.equal(queried.length, 1);
+    assert.equal(queried[0]?.selected_plan_id, selected.selected_plan_id);
+    assert.ok((queried[0]?.decision_context?.available_plans.length ?? 0) >= 2);
+
+    const written = await readFile(path.join(tempRoot, "2026-05-02.jsonl"), "utf-8");
+    assert.equal(written.trim().split(/\r?\n/).length, 2);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("renderDecisionReplay shows the stored decision context in read-only form", () => {
+  const record = buildDecisionRecord(createSelectedPlan(), "2026-05-02T22:05:00.000Z");
+  const before = JSON.stringify(record);
+
+  const replay = renderDecisionReplay(record);
+
+  assert.equal(JSON.stringify(record), before);
+  assert.match(replay, /Decision replay:/);
+  assert.match(replay, /Original plan:/);
+  assert.match(replay, /Available alternatives:/);
+  assert.match(replay, /Insights at decision time:/);
+  assert.match(replay, /Selected plan:/);
+  assert.match(replay, /Acknowledged: no/);
+  assert.match(replay, /Read-only replay only/);
 });

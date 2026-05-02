@@ -575,6 +575,14 @@ Current Layer 22 Step 3 status:
 - decision traces summarize the selected plan together with available alternatives and associated insight severity without changing plan translation behavior
 - building or recording a decision trace does not mutate the source plan or bias future selection logic
 
+Current Layer 22 Step 4 status:
+
+- Layer 22 Step 4 - Decision Replay and Audit View: implemented
+- added `queryDecisionRecords(filters)` and `renderDecisionReplay(record)` in `web/lib/aie/decisionTrace.ts` so past decisions can be inspected from append-only storage without touching live plan state
+- decision records now snapshot replay context for the original plan, available alternatives, selected plan, and insights at decision time
+- added a read-only CLI surface with `npm run decisions` via `web/scripts/showDecisions.ts`
+- replay and audit output are inspection-only and do not trigger execution, mutate plans, or update current operator state
+
 ## Safe Runtime Action Bridge
 
 AI-E can now translate supported live operator actions into safe runtime intents.
