@@ -495,6 +495,14 @@ Current Layer 20 Step 1 status:
 - Node worker behavior remains unchanged while completed results now append stable JSONL learning-substrate records
 - this step establishes the data foundation for future learning without training models or changing Layer 17, 18, or 19 behavior
 
+Current Layer 20 Step 3 status:
+
+- Layer 20 Step 3 - Insight Generation Layer: implemented
+- added `generateExecutionInsights(outcomes)` and deterministic analytics in `web/lib/aie/executionInsight.ts`
+- derives read-only insights for node performance, command success or failure patterns, rollback frequency, and risk-level correlation
+- includes structured supporting metrics plus bounded confidence scores for each generated insight
+- can render optional human-readable summaries without triggering execution, retries, approvals, or plan changes
+
 ## Safe Runtime Action Bridge
 
 AI-E can now translate supported live operator actions into safe runtime intents.
