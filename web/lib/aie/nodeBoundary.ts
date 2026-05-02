@@ -172,6 +172,16 @@ export type NodeDispatchExecutionPayloadDraft = {
   operator_reason: string;
   expected_scope: string;
   argv: string[];
+  workflow_id?: string;
+  task_id?: string;
+  plan_id?: string;
+  risk_level?: NodeTaskRiskLevel;
+  approval_path?: string[];
+  execution_path?: string;
+  evidence_labels?: string[];
+  rollback_required?: boolean;
+  rollback_executed?: boolean;
+  recovery_status?: "not_required" | "planned" | "executed" | "idempotent" | "failed";
 };
 
 export type NodeDispatchDraftRecord = {
@@ -372,6 +382,14 @@ function buildDispatchJobId(taskId: string): string {
   return `JOB-${normalized || "CORE-DRAFT"}`;
 }
 
+function parsedSafeIdentifier(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "") || "unknown";
+}
+
 function defaultWorkingDirectory(): string {
   return REPO_ROOT;
 }
@@ -423,6 +441,19 @@ function buildExecutionPayloadDraft(plan: CoreNodePipelineDraftPlan): NodeDispat
     return null;
   }
 
+  const outcomeMetadata = {
+    workflow_id: `workflow-${parsedSafeIdentifier(plan.plan_id)}`,
+    task_id: `node-task-${plan.plan_id}`,
+    plan_id: plan.plan_id,
+    risk_level: plan.risk_level ?? inferNodeTaskRiskLevel(plan.command),
+    approval_path: ["operator_confirm_submit", "node_intake_review", "node_worker_execution"],
+    execution_path: EXECUTION_PATH,
+    evidence_labels: ["CORE TASK TRANSLATION GENERATED", "TASK STORED AS DRAFT ONLY", "NODE EXECUTION NOT TRIGGERED"],
+    rollback_required: false,
+    rollback_executed: false,
+    recovery_status: "not_required" as const,
+  };
+
   const explicitWorkingDirectory = typeof plan.working_directory === "string" && plan.working_directory.trim()
     ? plan.working_directory.trim()
     : defaultWorkingDirectory();
@@ -454,6 +485,7 @@ function buildExecutionPayloadDraft(plan: CoreNodePipelineDraftPlan): NodeDispat
       operator_reason: typeof plan.operator_reason === "string" ? plan.operator_reason.trim() : "Core-generated Node draft pending operator submission.",
       expected_scope: typeof plan.expected_scope === "string" ? plan.expected_scope.trim() : "bounded node draft",
       argv: plan.argv.map((item) => String(item).trim()).filter((item) => item.length > 0),
+      ...outcomeMetadata,
     };
   }
 
@@ -481,6 +513,7 @@ function buildExecutionPayloadDraft(plan: CoreNodePipelineDraftPlan): NodeDispat
       operator_reason: typeof plan.operator_reason === "string" ? plan.operator_reason.trim() : "Core-generated unittest draft pending operator submission.",
       expected_scope: typeof plan.expected_scope === "string" ? plan.expected_scope.trim() : "bounded node test draft",
       argv: tokens,
+      ...outcomeMetadata,
     };
   }
 
@@ -498,6 +531,7 @@ function buildExecutionPayloadDraft(plan: CoreNodePipelineDraftPlan): NodeDispat
       operator_reason: typeof plan.operator_reason === "string" ? plan.operator_reason.trim() : "Core-generated bounded run draft pending operator submission.",
       expected_scope: typeof plan.expected_scope === "string" ? plan.expected_scope.trim() : "bounded node run draft",
       argv: tokens,
+      ...outcomeMetadata,
     };
   }
 
@@ -515,6 +549,7 @@ function buildExecutionPayloadDraft(plan: CoreNodePipelineDraftPlan): NodeDispat
       operator_reason: typeof plan.operator_reason === "string" ? plan.operator_reason.trim() : "Core-generated pytest draft pending operator submission.",
       expected_scope: typeof plan.expected_scope === "string" ? plan.expected_scope.trim() : "bounded node pytest draft",
       argv: tokens,
+      ...outcomeMetadata,
     };
   }
 

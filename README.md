@@ -481,6 +481,20 @@ Current Layer 19 Step 1 status:
 - Core still cannot sign tasks, submit directly to intake, bypass `--confirm-submit`, or trigger automatic execution
 - Node worker behavior remains unchanged: drafts do nothing in `drafts/tasks/`, submitted jobs enter the normal review and execution pipeline, and operator control remains required
 
+## Layer 20 / Execution Result Learning Substrate
+
+Layer 20 starts the append-only execution outcome substrate for future learning analysis. This step records execution results after they complete and does not introduce autonomy, approval bypasses, or retry behavior.
+
+Current Layer 20 Step 1 status:
+
+- Layer 20 Step 1 - Execution Result Learning Substrate: implemented
+- added append-only execution outcome records under `data/execution_outcomes/`
+- captures completed, failed, and blocked task results from the Core-to-Node operator-confirmed workflow
+- records Core and Node execution evidence, approval path, execution path, task metadata, and result summaries
+- outcome recording is post-result only and does not trigger autonomy, retry, approval, or execution
+- Node worker behavior remains unchanged while completed results now append stable JSONL learning-substrate records
+- this step establishes the data foundation for future learning without training models or changing Layer 17, 18, or 19 behavior
+
 ## Safe Runtime Action Bridge
 
 AI-E can now translate supported live operator actions into safe runtime intents.

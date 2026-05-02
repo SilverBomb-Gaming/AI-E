@@ -3,8 +3,11 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime
+from pathlib import Path
 import time
 
+from ..controller.execution_outcome_models import ExecutionOutcomeRecord
+from ..controller.execution_outcome_store import ExecutionOutcomeStore
 from ..controller.execution_models import LocalCommandExecutionRequest
 from ..controller.execution_runner import ExecutionRunner, ExecutionRunnerError
 from ..controller.node_config import NodeConfigStore
@@ -42,6 +45,7 @@ class NodeWorker:
             stale_after_seconds=self._node_config.stale_after_seconds,
         )
         self._dispatcher = NodeDispatcher(registry_root=self._node_config.registry_root)
+        self._outcome_store = ExecutionOutcomeStore(root_path=self._execution_outcome_root())
         self._registry.update_local_node(status="online", current_job_id="", last_job_status="idle", last_seen_at=_now_iso())
 
     def run_once(self) -> NodeDispatchRecord | None:
@@ -58,16 +62,18 @@ class NodeWorker:
             request = self._request_from_payload(job.execution_payload)
             if job.requested_command_label not in self._node_config.declared_capabilities:
                 failure = f"Node role {node.role} does not declare {job.requested_command_label}."
-                self._dispatcher.refuse_job(job_id=job.job_id, failure_reason=failure, finished_at=_now_iso())
+                blocked_job = self._dispatcher.refuse_job(job_id=job.job_id, failure_reason=failure, finished_at=_now_iso())
                 self._registry.update_local_node(status="online", current_job_id="", last_job_id=job.job_id, last_job_status="refused", last_result_summary=failure, last_seen_at=_now_iso())
-                return self._dispatcher.get_job(job.job_id)
+                finalized = blocked_job or self._dispatcher.get_job(job.job_id)
+                self._record_execution_outcome(job=finalized or job, node=node)
+                return finalized
             result = self._execution_runner.execute(request)
             status = "completed" if not result.timed_out and result.exit_code == 0 else "failed"
             summary = result.output_summary if status == "completed" else (result.first_issue or result.output_summary)
             if status == "completed":
-                self._dispatcher.complete_job(job_id=job.job_id, result_summary=summary, finished_at=result.completed_at or _now_iso())
+                finalized = self._dispatcher.complete_job(job_id=job.job_id, result_summary=summary, finished_at=result.completed_at or _now_iso())
             else:
-                self._dispatcher.fail_job(job_id=job.job_id, failure_reason=summary, finished_at=result.completed_at or _now_iso())
+                finalized = self._dispatcher.fail_job(job_id=job.job_id, failure_reason=summary, finished_at=result.completed_at or _now_iso())
             self._registry.update_local_node(
                 status="online",
                 current_job_id="",
@@ -76,12 +82,16 @@ class NodeWorker:
                 last_result_summary=summary,
                 last_seen_at=_now_iso(),
             )
-            return self._dispatcher.get_job(job.job_id)
+            completed_job = finalized or self._dispatcher.get_job(job.job_id)
+            self._record_execution_outcome(job=completed_job or job, node=node)
+            return completed_job
         except (ExecutionRunnerError, ValueError) as exc:
             message = str(exc).strip() or "Node worker failed to execute the queued job."
-            self._dispatcher.fail_job(job_id=job.job_id, failure_reason=message, finished_at=_now_iso())
+            failed_job = self._dispatcher.fail_job(job_id=job.job_id, failure_reason=message, finished_at=_now_iso())
             self._registry.update_local_node(status="online", current_job_id="", last_job_id=job.job_id, last_job_status="failed", last_result_summary=message, last_seen_at=_now_iso())
-            return self._dispatcher.get_job(job.job_id)
+            finalized = failed_job or self._dispatcher.get_job(job.job_id)
+            self._record_execution_outcome(job=finalized or job, node=node)
+            return finalized
 
     def run_loop(self) -> None:
         while True:
@@ -103,6 +113,81 @@ class NodeWorker:
             expected_scope=str(payload.get("expected_scope", "")).strip(),
             argv=tuple(str(item) for item in (argv or ()) if str(item)),
         )
+
+    def _execution_outcome_root(self) -> Path:
+        repo_root = self._controller_config.repo_root.strip()
+        if repo_root:
+            return Path(repo_root).resolve() / "data" / "execution_outcomes"
+        return Path.cwd() / "data" / "execution_outcomes"
+
+    def _record_execution_outcome(self, *, job: NodeDispatchRecord, node: NodeDescriptor) -> None:
+        if not job.job_id.strip():
+            return
+        payload = job.execution_payload if isinstance(job.execution_payload, dict) else {}
+        created_at = job.finished_at.strip() or _now_iso()
+        status = self._outcome_status(job.status)
+        success = status == "completed"
+        base_evidence = self._tuple_strings(payload.get("evidence_labels"))
+        evidence_labels = self._unique_labels(
+            *base_evidence,
+            "NODE RESULT CAPTURED",
+            "EXECUTION OUTCOME RECORDED",
+            "LEARNING SUBSTRATE APPEND ONLY",
+            "NO AUTONOMY TRIGGERED",
+        )
+        rollback_required = bool(payload.get("rollback_required", False))
+        rollback_executed = bool(payload.get("rollback_executed", False))
+        recovery_status = str(payload.get("recovery_status", "")).strip() or ("not_required" if not rollback_required else "planned")
+        result_summary = job.result_summary.strip()
+        error_summary = "" if success else (job.failure_reason.strip() or job.result_summary.strip())
+
+        record = ExecutionOutcomeRecord(
+            outcome_id=self._outcome_store.generate_outcome_id(),
+            created_at=created_at,
+            source_layer="node",
+            workflow_id=str(payload.get("workflow_id", job.job_id)).strip(),
+            task_id=str(payload.get("task_id", "")).strip(),
+            plan_id=str(payload.get("plan_id", "")).strip(),
+            node_id=node.node_id,
+            target_node_id=job.target_node_id,
+            command=str(payload.get("command_text") or job.requested_command_text).strip(),
+            status=status,
+            success=success,
+            risk_level=str(payload.get("risk_level", "")).strip(),
+            approval_path=self._tuple_strings(payload.get("approval_path")) or (("operator_confirm_submit",) if job.confirmation_required else ()),
+            execution_path=str(payload.get("execution_path", "")).strip() or "Strategy -> Planning -> Execution -> Review -> Delivery -> Studio Control",
+            evidence_labels=evidence_labels,
+            result_summary=result_summary,
+            error_summary=error_summary,
+            rollback_required=rollback_required,
+            rollback_executed=rollback_executed,
+            recovery_status=recovery_status,
+        )
+        self._outcome_store.append(record)
+
+    @staticmethod
+    def _outcome_status(job_status: str) -> str:
+        normalized = job_status.strip().lower()
+        if normalized == "completed":
+            return "completed"
+        if normalized == "refused":
+            return "blocked"
+        return "failed"
+
+    @staticmethod
+    def _tuple_strings(value: object) -> tuple[str, ...]:
+        if not isinstance(value, (list, tuple)):
+            return ()
+        return tuple(str(item).strip() for item in value if str(item).strip())
+
+    @staticmethod
+    def _unique_labels(*labels: str) -> tuple[str, ...]:
+        unique: list[str] = []
+        for label in labels:
+            normalized = str(label).strip()
+            if normalized and normalized not in unique:
+                unique.append(normalized)
+        return tuple(unique)
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
