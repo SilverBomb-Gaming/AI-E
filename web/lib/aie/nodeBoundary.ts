@@ -33,7 +33,10 @@ export type NodeBoundaryEvidenceLabel =
   | "NODE PLANNING HINT RECEIVED"
   | "NODE PLANNING HINT APPLIED"
   | "NODE PLANNING HINT REJECTED"
-  | "NODE PLANNING CONFLICT RESOLVED";
+  | "NODE PLANNING CONFLICT RESOLVED"
+  | "CORE TASK TRANSLATION GENERATED"
+  | "TASK STORED AS DRAFT ONLY"
+  | "NODE EXECUTION NOT TRIGGERED";
 
 export type NodeIntentReceiptStatus = "accepted_for_review" | "rejected_boundary_violation" | "rejected_invalid_envelope";
 
@@ -85,6 +88,45 @@ export type NodePlanningMergeResult = {
     system_reason: string;
   }>;
   evidence_labels: NodeBoundaryEvidenceLabel[];
+};
+
+export type NodeTaskRiskLevel = "low" | "medium" | "high";
+
+export type CoreNodeTaskTranslationPlan = NodeAdvisoryPlan & {
+  node_id: string;
+  target_node_id: string;
+  command: string;
+  requires_sudo?: false;
+  risk_level?: NodeTaskRiskLevel;
+};
+
+export type NodeTaskDraft = {
+  task_id: string;
+  node_id: string;
+  target_node_id: string;
+  command: string;
+  requires_sudo: false;
+  risk_level: NodeTaskRiskLevel;
+  approval_status: "pending";
+  signature: null;
+};
+
+export type NodeTaskDraftValidationResult = {
+  ok: boolean;
+  reason: string | null;
+  evidence_labels: NodeBoundaryEvidenceLabel[];
+  draft: NodeTaskDraft | null;
+};
+
+export type NodeTaskTranslationResult = {
+  status: "draft_generated" | "draft_rejected";
+  reason: string;
+  evidence_labels: NodeBoundaryEvidenceLabel[];
+  draft: NodeTaskDraft | null;
+  stored_as_draft_only: true;
+  submitted_to_node: false;
+  node_intake_triggered: false;
+  execution_triggered: false;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -172,6 +214,152 @@ function hintRequestsGateBypass(hint: string): boolean {
 function hintConflictsWithSystemPlan(hint: string, systemValues: string[]): boolean {
   const normalizedHint = hint.toLowerCase();
   return systemValues.some((value) => normalizedHint === value.toLowerCase());
+}
+
+function inferNodeTaskRiskLevel(command: string): NodeTaskRiskLevel {
+  const normalized = command.toLowerCase();
+
+  if (containsAny(normalized, ["inspect", "summarize", "check", "validate", "verify", "review"])) {
+    return "low";
+  }
+
+  if (containsAny(normalized, ["build", "compile", "test", "trace", "analyze"])) {
+    return "medium";
+  }
+
+  return "high";
+}
+
+function commandLooksUnsafe(command: string): boolean {
+  const normalized = command.toLowerCase();
+
+  return containsAny(normalized, [
+    "sudo",
+    "runas",
+    "chmod 777",
+    "rm -rf",
+    "del /f",
+    "format ",
+    "shutdown",
+    "restart-computer",
+    "invoke-expression",
+    "powershell -encodedcommand",
+    "curl ",
+    "wget ",
+    "| bash",
+    "| sh",
+    "git push",
+    "npm publish",
+    "unity.exe",
+    "start-process",
+  ]);
+}
+
+function parseCoreNodeTaskTranslationPlan(plan: unknown): CoreNodeTaskTranslationPlan | null {
+  if (!isRecord(plan)) {
+    return null;
+  }
+
+  if (
+    !hasNonEmptyString(plan.plan_id)
+    || (plan.planning_stage !== "strategy" && plan.planning_stage !== "planning")
+    || plan.execution_path !== EXECUTION_PATH
+    || !Array.isArray(plan.planning_suggestions)
+    || !Array.isArray(plan.validation_insights)
+    || !Array.isArray(plan.dependency_reasoning)
+    || !Array.isArray(plan.validation_gates)
+    || plan.execution_authority !== "system_only"
+    || !hasNonEmptyString(plan.node_id)
+    || !hasNonEmptyString(plan.target_node_id)
+    || !hasNonEmptyString(plan.command)
+  ) {
+    return null;
+  }
+
+  if (plan.requires_sudo !== undefined && plan.requires_sudo !== false) {
+    return null;
+  }
+
+  if (
+    plan.risk_level !== undefined
+    && plan.risk_level !== "low"
+    && plan.risk_level !== "medium"
+    && plan.risk_level !== "high"
+  ) {
+    return null;
+  }
+
+  return {
+    plan_id: plan.plan_id,
+    planning_stage: plan.planning_stage,
+    execution_path: EXECUTION_PATH,
+    planning_suggestions: (plan.planning_suggestions as unknown[]).filter((item): item is string => typeof item === "string"),
+    validation_insights: (plan.validation_insights as unknown[]).filter((item): item is string => typeof item === "string"),
+    dependency_reasoning: (plan.dependency_reasoning as unknown[]).filter((item): item is string => typeof item === "string"),
+    validation_gates: (plan.validation_gates as unknown[]).filter((item): item is string => typeof item === "string"),
+    execution_authority: "system_only",
+    node_id: plan.node_id,
+    target_node_id: plan.target_node_id,
+    command: plan.command.trim(),
+    requires_sudo: false,
+    risk_level: plan.risk_level,
+  };
+}
+
+export function validateNodeTaskDraft(draft: unknown): NodeTaskDraftValidationResult {
+  const evidenceLabels: NodeBoundaryEvidenceLabel[] = [];
+
+  if (!isRecord(draft)) {
+    return {
+      ok: false,
+      reason: "Node task draft is invalid. Expected a structured unsigned draft object.",
+      evidence_labels: evidenceLabels,
+      draft: null,
+    };
+  }
+
+  if (
+    !hasNonEmptyString(draft.task_id)
+    || !hasNonEmptyString(draft.node_id)
+    || !hasNonEmptyString(draft.target_node_id)
+    || !hasNonEmptyString(draft.command)
+    || draft.requires_sudo !== false
+    || (draft.risk_level !== "low" && draft.risk_level !== "medium" && draft.risk_level !== "high")
+    || draft.approval_status !== "pending"
+    || draft.signature !== null
+  ) {
+    return {
+      ok: false,
+      reason: "Node task draft schema does not match the unsigned pending Node contract.",
+      evidence_labels: evidenceLabels,
+      draft: null,
+    };
+  }
+
+  if (commandLooksUnsafe(draft.command)) {
+    return {
+      ok: false,
+      reason: "Node task draft command is unsafe. Core can only generate bounded safe drafts and cannot encode privileged or execution-triggering commands.",
+      evidence_labels: evidenceLabels,
+      draft: null,
+    };
+  }
+
+  return {
+    ok: true,
+    reason: null,
+    evidence_labels: evidenceLabels,
+    draft: {
+      task_id: draft.task_id,
+      node_id: draft.node_id,
+      target_node_id: draft.target_node_id,
+      command: draft.command,
+      requires_sudo: false,
+      risk_level: draft.risk_level,
+      approval_status: "pending",
+      signature: null,
+    },
+  };
 }
 
 function payloadRequestsDirectRollback(payload: unknown): boolean {
@@ -516,5 +704,62 @@ export function mergeNodePlanningHints(systemPlan: NodeAdvisoryPlan, nodeHints: 
     rejected_hints: rejectedHints,
     conflict_overrides: conflictOverrides,
     evidence_labels: evidenceLabels,
+  };
+}
+
+export function translatePlanToNodeTask(plan: unknown): NodeTaskTranslationResult {
+  const parsedPlan = parseCoreNodeTaskTranslationPlan(plan);
+
+  if (!parsedPlan) {
+    return {
+      status: "draft_rejected",
+      reason: "Core plan cannot be translated into a Node task draft. The plan must include explicit node routing, the bounded execution path, and a safe command.",
+      evidence_labels: [],
+      draft: null,
+      stored_as_draft_only: true,
+      submitted_to_node: false,
+      node_intake_triggered: false,
+      execution_triggered: false,
+    };
+  }
+
+  const draft: NodeTaskDraft = {
+    task_id: `node-task-${parsedPlan.plan_id}`,
+    node_id: parsedPlan.node_id,
+    target_node_id: parsedPlan.target_node_id,
+    command: parsedPlan.command,
+    requires_sudo: false,
+    risk_level: parsedPlan.risk_level ?? inferNodeTaskRiskLevel(parsedPlan.command),
+    approval_status: "pending",
+    signature: null,
+  };
+
+  const validation = validateNodeTaskDraft(draft);
+  if (!validation.ok) {
+    return {
+      status: "draft_rejected",
+      reason: validation.reason ?? "Node task draft validation failed.",
+      evidence_labels: validation.evidence_labels,
+      draft: null,
+      stored_as_draft_only: true,
+      submitted_to_node: false,
+      node_intake_triggered: false,
+      execution_triggered: false,
+    };
+  }
+
+  return {
+    status: "draft_generated",
+    reason: "Core translated the advisory plan into a Node-compatible draft only. Signature, submission, intake, and execution remain blocked pending operator-gated Node intake.",
+    evidence_labels: [
+      "CORE TASK TRANSLATION GENERATED",
+      "TASK STORED AS DRAFT ONLY",
+      "NODE EXECUTION NOT TRIGGERED",
+    ],
+    draft: validation.draft,
+    stored_as_draft_only: true,
+    submitted_to_node: false,
+    node_intake_triggered: false,
+    execution_triggered: false,
   };
 }

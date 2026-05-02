@@ -467,6 +467,13 @@ Current Layer 19 Step 1 status:
 - conflicting Node hints are rejected or overridden in favor of the system plan with explicit evidence labels
 - Node planning hints cannot bypass validation, review, delivery, Studio Control, or manual approval gates
 - execution behavior remains unchanged and Node still cannot execute, approve, rollback, or mutate Unity
+- Layer 19 Step 3 - Core to Node Task Translation Drafts: implemented
+- added `translatePlanToNodeTask(plan)` for unsigned Node-compatible task draft generation
+- Core task translation output is draft-only with `approval_status: pending` and `signature: null`
+- explicit `target_node_id` is required and unsafe commands are rejected during draft validation
+- Core cannot sign tasks, submit tasks, trigger Node intake, or trigger execution from this layer
+- translated drafts remain operator-gated and preserve the required `Strategy -> Planning -> Execution -> Review -> Delivery -> Studio Control` path
+- evidence labels now show draft generation, draft-only storage, and that Node execution was not triggered
 
 ## Safe Runtime Action Bridge
 

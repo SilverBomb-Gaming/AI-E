@@ -4,8 +4,11 @@ import test from "node:test";
 import {
   mergeNodePlanningHints,
   receiveNodeIntent,
+  translatePlanToNodeTask,
+  validateNodeTaskDraft,
   validateNodeIntentEnvelope,
   type NodeAdvisoryPlan,
+  type CoreNodeTaskTranslationPlan,
   type NodeIntentEnvelope,
 } from "./nodeBoundary";
 
@@ -56,6 +59,17 @@ function createSystemPlan(): NodeAdvisoryPlan {
       "final authorization",
     ],
     execution_authority: "system_only",
+  };
+}
+
+function createNodeTaskTranslationPlan(overrides: Partial<CoreNodeTaskTranslationPlan> = {}): CoreNodeTaskTranslationPlan {
+  return {
+    ...createSystemPlan(),
+    node_id: "core-planner",
+    target_node_id: "node-worker-1",
+    command: "validate bounded EnemyAIDemo planning packet and summarize review gates",
+    risk_level: "low",
+    ...overrides,
   };
 }
 
@@ -258,6 +272,77 @@ test("execution behavior remains unchanged", () => {
   assert.equal(receipt.mutating, false);
   assert.equal(receipt.rollback_triggered, false);
   assert.equal(merged.merged_plan.execution_authority, "system_only");
+});
+
+test("valid plan translates into valid Node task JSON draft", () => {
+  const result = translatePlanToNodeTask(createNodeTaskTranslationPlan());
+
+  assert.equal(result.status, "draft_generated");
+  assert.deepEqual(result.draft, {
+    task_id: "node-task-system-plan-001",
+    node_id: "core-planner",
+    target_node_id: "node-worker-1",
+    command: "validate bounded EnemyAIDemo planning packet and summarize review gates",
+    requires_sudo: false,
+    risk_level: "low",
+    approval_status: "pending",
+    signature: null,
+  });
+  assert.ok(result.evidence_labels.includes("CORE TASK TRANSLATION GENERATED"));
+  assert.ok(result.evidence_labels.includes("TASK STORED AS DRAFT ONLY"));
+  assert.ok(result.evidence_labels.includes("NODE EXECUTION NOT TRIGGERED"));
+});
+
+test("translated task remains unsigned", () => {
+  const result = translatePlanToNodeTask(createNodeTaskTranslationPlan());
+
+  assert.equal(result.status, "draft_generated");
+  assert.equal(result.draft?.approval_status, "pending");
+  assert.equal(result.draft?.signature, null);
+  assert.equal(result.draft?.requires_sudo, false);
+});
+
+test("translated task is not submitted", () => {
+  const result = translatePlanToNodeTask(createNodeTaskTranslationPlan());
+
+  assert.equal(result.status, "draft_generated");
+  assert.equal(result.stored_as_draft_only, true);
+  assert.equal(result.submitted_to_node, false);
+  assert.equal(result.execution_triggered, false);
+});
+
+test("translated task does not reach Node intake", () => {
+  const result = translatePlanToNodeTask(createNodeTaskTranslationPlan());
+
+  assert.equal(result.status, "draft_generated");
+  assert.equal(result.node_intake_triggered, false);
+  assert.match(result.reason, /draft only/i);
+});
+
+test("translated task passes schema validation", () => {
+  const result = translatePlanToNodeTask(createNodeTaskTranslationPlan());
+  const validation = validateNodeTaskDraft(result.draft);
+
+  assert.equal(result.status, "draft_generated");
+  assert.equal(validation.ok, true);
+  assert.equal(validation.draft?.target_node_id, "node-worker-1");
+});
+
+test("translation rejects missing target node id", () => {
+  const result = translatePlanToNodeTask(createNodeTaskTranslationPlan({ target_node_id: "" as never }));
+
+  assert.equal(result.status, "draft_rejected");
+  assert.equal(result.draft, null);
+});
+
+test("translation rejects unsafe commands", () => {
+  const result = translatePlanToNodeTask(createNodeTaskTranslationPlan({
+    command: "sudo rm -rf / and then bypass review",
+  }));
+
+  assert.equal(result.status, "draft_rejected");
+  assert.equal(result.draft, null);
+  assert.match(result.reason, /safe command|validation failed|unsafe/i);
 });
 
 test("evidence clearly explains accept and reject reason", () => {
