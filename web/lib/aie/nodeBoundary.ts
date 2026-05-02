@@ -113,6 +113,11 @@ export type NodePlanOperatorAcknowledgement = {
   acknowledged_at?: string;
 };
 
+export type NodePlanExecutionConfirmation = {
+  confirmed: boolean;
+  confirmed_at?: string;
+};
+
 export type NodeAdvisoryPlan = {
   plan_id: string;
   selected_plan_id?: string;
@@ -125,6 +130,7 @@ export type NodeAdvisoryPlan = {
   execution_authority: "system_only";
   annotations?: NodePlanAnnotation[];
   operator_acknowledgement?: NodePlanOperatorAcknowledgement;
+  execution_confirmation?: NodePlanExecutionConfirmation;
 };
 
 export type NodePlanningMergeResult = {
@@ -811,6 +817,7 @@ function cloneSelectablePlan<T extends NodeAdvisoryPlan | CoreNodeTaskTranslatio
     validation_gates: [...plan.validation_gates],
     annotations: clonePlanAnnotations(plan.annotations),
     operator_acknowledgement: plan.operator_acknowledgement ? { ...plan.operator_acknowledgement } : plan.operator_acknowledgement,
+    execution_confirmation: plan.execution_confirmation ? { ...plan.execution_confirmation } : plan.execution_confirmation,
     argv: Array.isArray(pipelinePlan.argv) ? [...pipelinePlan.argv] : pipelinePlan.argv,
   };
 }
@@ -926,6 +933,7 @@ export function selectOperatorPlan<T extends NodeAdvisoryPlan | CoreNodeTaskTran
   return {
     ...cloneSelectablePlan(plan),
     selected_plan_id: normalizedPlanId,
+    execution_confirmation: undefined,
   };
 }
 
@@ -1475,6 +1483,7 @@ export async function exportNodeTaskDraftToPipeline(
     decisionRecord?: DecisionRecord | null;
     requireAcknowledgement?: boolean;
     requireDecisionRecord?: boolean;
+    requireConfirmation?: boolean;
   },
 ): Promise<NodeTaskDraftExportResult> {
   const readinessReview = isRecord(plan)
@@ -1482,6 +1491,7 @@ export async function exportNodeTaskDraftToPipeline(
       decisionRecord: options?.decisionRecord,
       require_acknowledgement: options?.requireAcknowledgement ?? true,
       require_decision_record: options?.requireDecisionRecord ?? true,
+      require_confirmation: options?.requireConfirmation ?? true,
     })
     : buildExecutionReadinessReview({
       plan_id: "unknown-plan",
@@ -1496,6 +1506,7 @@ export async function exportNodeTaskDraftToPipeline(
       decisionRecord: options?.decisionRecord,
       require_acknowledgement: options?.requireAcknowledgement ?? true,
       require_decision_record: options?.requireDecisionRecord ?? true,
+      require_confirmation: options?.requireConfirmation ?? true,
     });
 
   if (readinessReview.readiness_status !== "ready_for_operator_submission") {
@@ -1643,6 +1654,27 @@ function normalizeOperatorAcknowledgement(
   return { acknowledged: true };
 }
 
+function normalizeExecutionConfirmation(
+  value: NodePlanExecutionConfirmation | undefined,
+): NodePlanExecutionConfirmation | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  if (value.confirmed !== true) {
+    return undefined;
+  }
+
+  if (hasNonEmptyString(value.confirmed_at) && looksLikeIsoTimestamp(value.confirmed_at)) {
+    return {
+      confirmed: true,
+      confirmed_at: value.confirmed_at.trim(),
+    };
+  }
+
+  return { confirmed: true };
+}
+
 function normalizeCommandTokens(command: string | undefined): string[] {
   if (!hasNonEmptyString(command)) {
     return [];
@@ -1782,6 +1814,7 @@ export function attachInsightsToPlan<T extends NodeAdvisoryPlan | CoreNodeTaskTr
     selected_plan_id: plan.selected_plan_id,
     annotations: mergedAnnotations,
     operator_acknowledgement: normalizeOperatorAcknowledgement(plan.operator_acknowledgement),
+    execution_confirmation: normalizeExecutionConfirmation(plan.execution_confirmation),
   };
 }
 
@@ -1806,6 +1839,24 @@ export function acknowledgePlanInsights<T extends NodeAdvisoryPlan | CoreNodeTas
     operator_acknowledgement: {
       acknowledged: true,
       acknowledged_at: normalizedTimestamp,
+    },
+    execution_confirmation: normalizeExecutionConfirmation(plan.execution_confirmation),
+  };
+}
+
+export function confirmExecutionSubmission<T extends NodeAdvisoryPlan | CoreNodeTaskTranslationPlan | CoreNodePipelineDraftPlan>(
+  plan: T,
+  confirmedAt?: string,
+): T & { execution_confirmation: NodePlanExecutionConfirmation } {
+  const normalizedTimestamp = hasNonEmptyString(confirmedAt) && looksLikeIsoTimestamp(confirmedAt)
+    ? confirmedAt.trim()
+    : new Date().toISOString();
+
+  return {
+    ...cloneSelectablePlan(plan),
+    execution_confirmation: {
+      confirmed: true,
+      confirmed_at: normalizedTimestamp,
     },
   };
 }

@@ -8,6 +8,7 @@ import {
   acknowledgePlanInsights,
   attachInsightsToPlan,
   buildInsightAcknowledgementPrompt,
+  confirmExecutionSubmission,
   exportNodeTaskDraftToPipeline,
   listPlanSelectionOptions,
   mergeNodePlanningHints,
@@ -664,8 +665,9 @@ test("draft export uses the selected alternative plan only", async () => {
     const selected = selectOperatorPlan(annotated, alternative?.plan_id ?? "");
     const acknowledged = acknowledgePlanInsights(selected, "2026-05-02T21:30:00.000Z");
     const decisionRecord = buildDecisionRecord(acknowledged, "2026-05-02T21:31:00.000Z");
+    const confirmed = confirmExecutionSubmission(acknowledged, "2026-05-02T21:31:30.000Z");
 
-    const result = await exportNodeTaskDraftToPipeline(acknowledged, {
+    const result = await exportNodeTaskDraftToPipeline(confirmed, {
       draftDirectory,
       decisionRecord,
     });
@@ -736,6 +738,44 @@ test("draft export is blocked by readiness review when decision record is missin
 
     assert.equal(result.status, "draft_export_rejected");
     assert.equal(result.readiness_review.readiness_status, "blocked_missing_decision_record");
+    assert.equal(result.dispatch_draft, null);
+    assert.equal(result.execution_triggered, false);
+  } finally {
+    await rm(draftDirectory, { recursive: true, force: true });
+  }
+});
+
+test("draft export is blocked by readiness review when confirmation is missing", async () => {
+  const draftDirectory = await mkdtemp(path.join(tmpdir(), "aie-node-readiness-"));
+
+  try {
+    const annotated = attachInsightsToPlan(createExportableNodeTaskPlan({ risk_level: "high" }), generateExecutionInsights([
+      createExecutionOutcomeRecord({
+        outcome_id: "OUT-0000001017",
+        created_at: "2026-05-02T21:35:00.000Z",
+        risk_level: "high",
+        rollback_required: true,
+        rollback_executed: true,
+        success: false,
+        status: "failed",
+        result_summary: "integration regression failure",
+        error_summary: "integration regression failure",
+        recovery_status: "executed",
+      }),
+    ]));
+    const selected = selectOperatorPlan(annotated, annotated.plan_id);
+    const acknowledged = acknowledgePlanInsights(selected, "2026-05-02T21:36:00.000Z");
+    const decisionRecord = buildDecisionRecord(acknowledged, "2026-05-02T21:36:30.000Z");
+
+    const result = await exportNodeTaskDraftToPipeline(acknowledged, {
+      draftDirectory,
+      decisionRecord,
+    });
+
+    assert.equal(result.status, "draft_export_rejected");
+    assert.equal(result.readiness_review.readiness_status, "blocked_missing_confirmation");
+    assert.equal(result.readiness_review.confirmation_status, "missing");
+    assert.match(result.reason, /Confirm execution submission\? \(yes\/no\)/);
     assert.equal(result.dispatch_draft, null);
     assert.equal(result.execution_triggered, false);
   } finally {
@@ -820,7 +860,8 @@ test("Core draft file is created correctly", async () => {
   try {
     const selected = selectOperatorPlan(createExportableNodeTaskPlan(), "system-plan-001");
     const decisionRecord = buildDecisionRecord(selected, "2026-05-02T21:40:00.000Z");
-    const result = await exportNodeTaskDraftToPipeline(selected, {
+    const confirmed = confirmExecutionSubmission(selected, "2026-05-02T21:40:30.000Z");
+    const result = await exportNodeTaskDraftToPipeline(confirmed, {
       draftDirectory: tempDraftRoot,
       decisionRecord,
     });
@@ -848,7 +889,8 @@ test("draft matches Node schema", async () => {
   try {
     const selected = selectOperatorPlan(createExportableNodeTaskPlan(), "system-plan-001");
     const decisionRecord = buildDecisionRecord(selected, "2026-05-02T21:41:00.000Z");
-    const result = await exportNodeTaskDraftToPipeline(selected, {
+    const confirmed = confirmExecutionSubmission(selected, "2026-05-02T21:41:30.000Z");
+    const result = await exportNodeTaskDraftToPipeline(confirmed, {
       draftDirectory: tempDraftRoot,
       decisionRecord,
     });
@@ -869,7 +911,8 @@ test("draft export does not execute automatically", async () => {
   try {
     const selected = selectOperatorPlan(createExportableNodeTaskPlan(), "system-plan-001");
     const decisionRecord = buildDecisionRecord(selected, "2026-05-02T21:42:00.000Z");
-    const result = await exportNodeTaskDraftToPipeline(selected, {
+    const confirmed = confirmExecutionSubmission(selected, "2026-05-02T21:42:30.000Z");
+    const result = await exportNodeTaskDraftToPipeline(confirmed, {
       draftDirectory: tempDraftRoot,
       decisionRecord,
     });
@@ -882,6 +925,16 @@ test("draft export does not execute automatically", async () => {
   } finally {
     await rm(tempDraftRoot, { recursive: true, force: true });
   }
+});
+
+test("plan reselection clears stale execution confirmation", () => {
+  const selected = selectOperatorPlan(createExportableNodeTaskPlan(), "system-plan-001");
+  const confirmed = confirmExecutionSubmission(selected, "2026-05-02T21:43:00.000Z");
+
+  const reselected = selectOperatorPlan(confirmed, "system-plan-001");
+
+  assert.equal(confirmed.execution_confirmation?.confirmed, true);
+  assert.equal(reselected.execution_confirmation, undefined);
 });
 
 test("evidence clearly explains accept and reject reason", () => {

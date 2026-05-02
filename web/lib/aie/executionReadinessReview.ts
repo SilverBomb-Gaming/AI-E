@@ -4,6 +4,7 @@ import {
   type CoreNodeTaskTranslationPlan,
   type NodeAdvisoryPlan,
   type NodePlanAnnotation,
+  type NodePlanExecutionConfirmation,
 } from "./nodeBoundary";
 import type { DecisionRecord } from "./decisionTrace";
 
@@ -11,11 +12,14 @@ export type ExecutionReadinessStatus =
   | "ready_for_operator_submission"
   | "blocked_missing_selection"
   | "blocked_missing_acknowledgement"
-  | "blocked_missing_decision_record";
+  | "blocked_missing_decision_record"
+  | "blocked_missing_confirmation";
 
 export type ExecutionReadinessAcknowledgementStatus = "not_required" | "acknowledged" | "missing";
 
 export type ExecutionReadinessDecisionRecordStatus = "not_required" | "recorded" | "missing";
+
+export type ExecutionReadinessConfirmationStatus = "not_required" | "confirmed" | "missing";
 
 export type ExecutionReadinessReview = {
   readiness_status: ExecutionReadinessStatus;
@@ -24,6 +28,7 @@ export type ExecutionReadinessReview = {
   highest_severity: NodePlanAnnotation["severity"] | "none";
   acknowledgement_status: ExecutionReadinessAcknowledgementStatus;
   decision_record_status: ExecutionReadinessDecisionRecordStatus;
+  confirmation_status: ExecutionReadinessConfirmationStatus;
   required_operator_actions: string[];
   evidence_labels: string[];
 };
@@ -32,12 +37,23 @@ export type ExecutionReadinessReviewOptions = {
   decisionRecord?: DecisionRecord | null;
   require_acknowledgement?: boolean;
   require_decision_record?: boolean;
+  require_confirmation?: boolean;
 };
 
 type SelectablePlan = NodeAdvisoryPlan | CoreNodeTaskTranslationPlan | CoreNodePipelineDraftPlan;
 
 function hasNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
+}
+
+function hasConfirmedExecutionConfirmation(
+  value: NodePlanExecutionConfirmation | undefined,
+): boolean {
+  if (value?.confirmed !== true) {
+    return false;
+  }
+
+  return !hasNonEmptyString(value.confirmed_at) || !Number.isNaN(Date.parse(value.confirmed_at));
 }
 
 function getHighestSeverity(annotations: NodePlanAnnotation[] | undefined): ExecutionReadinessReview["highest_severity"] {
@@ -90,6 +106,7 @@ export function buildExecutionReadinessReview(
   const hasAnnotations = Array.isArray(plan.annotations) && plan.annotations.length > 0;
   const requireAcknowledgement = options.require_acknowledgement === true;
   const requireDecisionRecord = options.require_decision_record === true;
+  const requireConfirmation = options.require_confirmation === true;
   const acknowledgementStatus: ExecutionReadinessAcknowledgementStatus = !requireAcknowledgement
     ? "not_required"
     : plan.operator_acknowledgement?.acknowledged === true
@@ -104,6 +121,11 @@ export function buildExecutionReadinessReview(
     ? "not_required"
     : decisionRecordMatchesSelection
       ? "recorded"
+      : "missing";
+  const confirmationStatus: ExecutionReadinessConfirmationStatus = !requireConfirmation
+    ? "not_required"
+    : hasConfirmedExecutionConfirmation(plan.execution_confirmation)
+      ? "confirmed"
       : "missing";
 
   const requiredOperatorActions: string[] = [];
@@ -122,6 +144,10 @@ export function buildExecutionReadinessReview(
     readinessStatus = "blocked_missing_decision_record";
     requiredOperatorActions.push("Record the operator decision trace before handoff.");
     evidenceLabels.push("EXECUTION READINESS BLOCKED: MISSING DECISION RECORD");
+  } else if (confirmationStatus === "missing") {
+    readinessStatus = "blocked_missing_confirmation";
+    requiredOperatorActions.push("Confirm execution submission? (yes/no)");
+    evidenceLabels.push("EXECUTION READINESS BLOCKED: MISSING CONFIRMATION");
   } else {
     evidenceLabels.push("EXECUTION READINESS READY FOR OPERATOR SUBMISSION");
   }
@@ -141,6 +167,7 @@ export function buildExecutionReadinessReview(
     highest_severity: getHighestSeverity(plan.annotations),
     acknowledgement_status: acknowledgementStatus,
     decision_record_status: decisionRecordStatus,
+    confirmation_status: confirmationStatus,
     required_operator_actions: requiredOperatorActions,
     evidence_labels: evidenceLabels,
   };
@@ -154,6 +181,7 @@ export function renderExecutionReadinessReview(review: ExecutionReadinessReview)
     `- Highest severity: ${review.highest_severity}`,
     `- Acknowledgement status: ${review.acknowledgement_status}`,
     `- Decision record status: ${review.decision_record_status}`,
+    `- Confirmation status: ${review.confirmation_status}`,
     "",
     "Required operator actions:",
   ];

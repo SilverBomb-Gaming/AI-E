@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   acknowledgePlanInsights,
   attachInsightsToPlan,
+  confirmExecutionSubmission,
   selectOperatorPlan,
   type CoreNodePipelineDraftPlan,
 } from "./nodeBoundary";
@@ -129,11 +130,9 @@ test("blocks readiness when a decision record is required and missing", () => {
   assert.equal(review.decision_record_status, "missing");
 });
 
-test("readiness is ready only when selection, acknowledgement, and decision record exist", () => {
+test("blocks readiness when execution confirmation is required and missing", () => {
   const annotated = createAnnotatedPlan();
-  const alternative = annotated.annotations?.find((annotation) => annotation.type === "plan_adjustment")?.alternative_plan;
-  assert.ok(alternative?.plan_id);
-  const selected = selectOperatorPlan(annotated, alternative.plan_id);
+  const selected = selectOperatorPlan(annotated, annotated.plan_id);
   const acknowledged = acknowledgePlanInsights(selected, "2026-05-02T23:05:00.000Z");
   const decisionRecord = buildDecisionRecord(acknowledged, "2026-05-02T23:06:00.000Z");
 
@@ -141,20 +140,58 @@ test("readiness is ready only when selection, acknowledgement, and decision reco
     decisionRecord,
     require_acknowledgement: true,
     require_decision_record: true,
+    require_confirmation: true,
+  });
+
+  assert.equal(review.readiness_status, "blocked_missing_confirmation");
+  assert.equal(review.confirmation_status, "missing");
+  assert.match(review.required_operator_actions.join("\n"), /Confirm execution submission\? \(yes\/no\)/);
+});
+
+test("readiness is ready only when selection, acknowledgement, decision record, and confirmation exist", () => {
+  const annotated = createAnnotatedPlan();
+  const alternative = annotated.annotations?.find((annotation) => annotation.type === "plan_adjustment")?.alternative_plan;
+  assert.ok(alternative?.plan_id);
+  const selected = selectOperatorPlan(annotated, alternative.plan_id);
+  const acknowledged = acknowledgePlanInsights(selected, "2026-05-02T23:05:00.000Z");
+  const decisionRecord = buildDecisionRecord(acknowledged, "2026-05-02T23:06:00.000Z");
+  const confirmed = confirmExecutionSubmission(acknowledged, "2026-05-02T23:07:00.000Z");
+
+  const review = buildExecutionReadinessReview(confirmed, {
+    decisionRecord,
+    require_acknowledgement: true,
+    require_decision_record: true,
+    require_confirmation: true,
   });
 
   assert.equal(review.readiness_status, "ready_for_operator_submission");
   assert.equal(review.selected_plan_id, alternative.plan_id);
   assert.equal(review.acknowledgement_status, "acknowledged");
   assert.equal(review.decision_record_status, "recorded");
+  assert.equal(review.confirmation_status, "confirmed");
   assert.equal(review.highest_severity === "high" || review.highest_severity === "critical", true);
   assert.deepEqual(review.required_operator_actions, []);
+});
+
+test("confirmExecutionSubmission records timestamp without mutating the source plan", () => {
+  const annotated = createAnnotatedPlan();
+  const selected = selectOperatorPlan(annotated, annotated.plan_id);
+  const acknowledged = acknowledgePlanInsights(selected, "2026-05-02T23:05:00.000Z");
+
+  const confirmed = confirmExecutionSubmission(acknowledged, "2026-05-02T23:07:00.000Z");
+
+  assert.equal(acknowledged.execution_confirmation?.confirmed, undefined);
+  assert.equal(confirmed.execution_confirmation.confirmed, true);
+  assert.equal(confirmed.execution_confirmation.confirmed_at, "2026-05-02T23:07:00.000Z");
+  assert.equal("submitted_to_node" in (confirmed as Record<string, unknown>), false);
+  assert.equal("execution_triggered" in (confirmed as Record<string, unknown>), false);
 });
 
 test("render output includes required missing actions and remains read-only", () => {
   const review = buildExecutionReadinessReview(createAnnotatedPlan(), {
     require_acknowledgement: true,
     require_decision_record: true,
+    require_confirmation: true,
   });
 
   const rendered = renderExecutionReadinessReview(review);
@@ -170,6 +207,7 @@ test("review output contains no execution or submission trigger flags", () => {
   const review = buildExecutionReadinessReview(createAnnotatedPlan(), {
     require_acknowledgement: true,
     require_decision_record: true,
+    require_confirmation: true,
   }) as Record<string, unknown>;
 
   assert.equal("execution_triggered" in review, false);

@@ -595,6 +595,13 @@ Current Layer 23 Step 1 status:
 - draft export now returns readiness metadata and blocks with `blocked_missing_selection`, `blocked_missing_acknowledgement`, or `blocked_missing_decision_record` when the required human-control artifacts are missing
 - the readiness gate is informational and gating metadata only: it does not submit drafts, approve execution, mutate plans, or trigger Node execution
 
+Current Layer 23 Step 2 status:
+
+- Layer 23 Step 2 - Execution Confirmation Gate: implemented
+- added explicit `execution_confirmation` metadata with `confirmed` and `confirmed_at` plus `confirmExecutionSubmission(plan)` in `web/lib/aie/nodeBoundary.ts`
+- readiness review now tracks confirmation separately from acknowledgement and blocks with `blocked_missing_confirmation` until the operator explicitly answers `Confirm execution submission? (yes/no)`
+- confirmation remains non-mutating with respect to plan content and does not auto-submit drafts, bypass readiness, or trigger Node execution
+
 ## Safe Runtime Action Bridge
 
 AI-E can now translate supported live operator actions into safe runtime intents.
