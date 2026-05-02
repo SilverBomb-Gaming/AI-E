@@ -444,6 +444,23 @@ Current Layer 18 boundary:
 - only the verified bounded two-step `AIE_ControlledMutationProbe` and `AIE_ControlledMutationProbe_Companion` chain lane in `EnemyAIDemo` is supported
 - broader branching chains, parallel chains, new mutation types, auto-recovery, and chat-triggered execution remain out of scope
 
+## Layer 19 / Node Boundary Contract
+
+Layer 19 starts with a boundary-only contract between AI-E Core Execution and AI-E Node. This step does not connect Node to execution.
+
+Current Layer 19 Step 1 status:
+
+- Layer 19 Step 1 - Node Boundary Contract: implemented
+- added Node intent envelope
+- added Node boundary guard
+- Node can submit structured intent only
+- Node can receive validation feedback, planning and review status, and evidence summaries
+- Node cannot execute, approve, rollback, or mutate Unity
+- Core execution gates remain unchanged
+- accepted Node intents are reviewable input only and stay on the required `Strategy -> Planning -> Execution -> Review -> Delivery -> Studio Control` path
+- direct Node execution and direct Node rollback requests are explicitly blocked with evidence labels
+- Unity behavior remains unchanged and the verified bounded lane stays isolated from Node
+
 ## Safe Runtime Action Bridge
 
 AI-E can now translate supported live operator actions into safe runtime intents.
