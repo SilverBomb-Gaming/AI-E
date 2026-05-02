@@ -1,12 +1,18 @@
 import assert from "node:assert/strict";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import test from "node:test";
 
 import {
+  exportNodeTaskDraftToPipeline,
   mergeNodePlanningHints,
   receiveNodeIntent,
   translatePlanToNodeTask,
+  validateNodeDispatchDraft,
   validateNodeTaskDraft,
   validateNodeIntentEnvelope,
+  type CoreNodePipelineDraftPlan,
   type NodeAdvisoryPlan,
   type CoreNodeTaskTranslationPlan,
   type NodeIntentEnvelope,
@@ -69,6 +75,23 @@ function createNodeTaskTranslationPlan(overrides: Partial<CoreNodeTaskTranslatio
     target_node_id: "node-worker-1",
     command: "validate bounded EnemyAIDemo planning packet and summarize review gates",
     risk_level: "low",
+    ...overrides,
+  };
+}
+
+function createExportableNodeTaskPlan(overrides: Partial<CoreNodePipelineDraftPlan> = {}): CoreNodePipelineDraftPlan {
+  return {
+    ...createNodeTaskTranslationPlan({
+      command: "python validate_runtime.py",
+      risk_level: "low",
+    }),
+    working_directory: "E:/AI projects 2025/AI-E",
+    target_node_role: "validator",
+    target_node_name: "Validator Node 01",
+    requester_label: "AI-E Core",
+    chat_id: "core-draft",
+    request_source: "core-draft-export",
+    routing_reason: "core draft routed to validator",
     ...overrides,
   };
 }
@@ -343,6 +366,66 @@ test("translation rejects unsafe commands", () => {
   assert.equal(result.status, "draft_rejected");
   assert.equal(result.draft, null);
   assert.match(result.reason, /safe command|validation failed|unsafe/i);
+});
+
+test("Core draft file is created correctly", async () => {
+  const tempDraftRoot = await mkdtemp(path.join(tmpdir(), "aie-core-node-drafts-"));
+
+  try {
+    const result = await exportNodeTaskDraftToPipeline(createExportableNodeTaskPlan(), {
+      draftDirectory: tempDraftRoot,
+    });
+
+    assert.equal(result.status, "draft_exported");
+    assert.equal(result.submitted_to_node, false);
+    assert.equal(result.node_intake_triggered, false);
+    assert.equal(result.execution_triggered, false);
+    assert.ok(result.draft_file_path);
+
+    const written = JSON.parse(await readFile(result.draft_file_path!, "utf-8")) as Record<string, unknown>;
+    assert.equal(written.target_node_id, "node-worker-1");
+    assert.equal(written.requested_command_label, "/run");
+    assert.equal(written.confirmation_required, true);
+    assert.equal((written.execution_payload as Record<string, unknown>).command_text, "python validate_runtime.py");
+  } finally {
+    await rm(tempDraftRoot, { recursive: true, force: true });
+  }
+});
+
+test("draft matches Node schema", async () => {
+  const tempDraftRoot = await mkdtemp(path.join(tmpdir(), "aie-core-node-schema-"));
+
+  try {
+    const result = await exportNodeTaskDraftToPipeline(createExportableNodeTaskPlan(), {
+      draftDirectory: tempDraftRoot,
+    });
+
+    assert.equal(result.status, "draft_exported");
+    const validation = validateNodeDispatchDraft(result.dispatch_draft);
+    assert.equal(validation.ok, true);
+    assert.equal(validation.draft_record?.requested_capability_id, "core.node.dispatch.run");
+    assert.equal(validation.draft_record?.target_node_name, "Validator Node 01");
+  } finally {
+    await rm(tempDraftRoot, { recursive: true, force: true });
+  }
+});
+
+test("draft export does not execute automatically", async () => {
+  const tempDraftRoot = await mkdtemp(path.join(tmpdir(), "aie-core-node-noexec-"));
+
+  try {
+    const result = await exportNodeTaskDraftToPipeline(createExportableNodeTaskPlan(), {
+      draftDirectory: tempDraftRoot,
+    });
+
+    assert.equal(result.status, "draft_exported");
+    assert.equal(result.stored_as_draft_only, true);
+    assert.equal(result.submitted_to_node, false);
+    assert.equal(result.node_intake_triggered, false);
+    assert.equal(result.execution_triggered, false);
+  } finally {
+    await rm(tempDraftRoot, { recursive: true, force: true });
+  }
 });
 
 test("evidence clearly explains accept and reject reason", () => {

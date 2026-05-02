@@ -1,4 +1,18 @@
+import { mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
 const EXECUTION_PATH = "Strategy -> Planning -> Execution -> Review -> Delivery -> Studio Control" as const;
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
+const DEFAULT_CORE_NODE_DRAFT_DIRECTORY = path.join(REPO_ROOT, "drafts", "tasks");
+const BLOCKED_COMMAND_OPERATOR_TOKENS = ["&&", "||", ";", "&", ">>", ">", "<", "|"] as const;
+const ALLOWED_PYTHON_SCRIPTS = new Set(["validate_runtime.py", "diagnostics_smoke.py", "daily_use_smoke.py"]);
+
+export type NodeDispatchCommandLabel = "/run" | "/test";
+export type NodeDispatchTargetRole = "controller" | "executor" | "validator" | "sandbox";
+export type NodeDispatchCommandKind = "run" | "test" | "build";
+export type NodeDispatchCommandFamily = "generic" | "unittest" | "pytest" | "python_script";
+export type NodeDispatchSelectionMode = "node_id";
 
 export type NodeIntentKind = "execution_request" | "validation_request" | "status_request";
 
@@ -129,6 +143,83 @@ export type NodeTaskTranslationResult = {
   execution_triggered: false;
 };
 
+export type CoreNodePipelineDraftPlan = CoreNodeTaskTranslationPlan & {
+  requested_command_label?: NodeDispatchCommandLabel;
+  requested_capability_id?: string;
+  command_kind?: NodeDispatchCommandKind;
+  command_family?: NodeDispatchCommandFamily;
+  working_directory?: string;
+  timeout_seconds?: number;
+  operator_reason?: string;
+  expected_scope?: string;
+  argv?: string[];
+  requester_label?: string;
+  chat_id?: string;
+  request_source?: string;
+  target_node_role?: NodeDispatchTargetRole;
+  target_node_name?: string;
+  routing_reason?: string;
+};
+
+export type NodeDispatchExecutionPayloadDraft = {
+  capability_id: string;
+  command_kind: NodeDispatchCommandKind;
+  command_family: NodeDispatchCommandFamily;
+  command_text: string;
+  command_summary: string;
+  working_directory: string;
+  timeout_seconds: number;
+  operator_reason: string;
+  expected_scope: string;
+  argv: string[];
+};
+
+export type NodeDispatchDraftRecord = {
+  job_id: string;
+  status: "queued";
+  requested_capability_id: string;
+  requested_command_label: NodeDispatchCommandLabel;
+  requested_command_text: string;
+  requested_command_summary: string;
+  target_selection_mode: NodeDispatchSelectionMode;
+  target_selector: string;
+  target_node_id: string;
+  target_node_role: NodeDispatchTargetRole;
+  target_node_name: string;
+  routing_reason: string;
+  request_source: string;
+  requester_label: string;
+  chat_id: string;
+  confirmation_required: true;
+  confirmation_id: string;
+  queued_at: string;
+  started_at: string;
+  finished_at: string;
+  result_summary: string;
+  failure_reason: string;
+  current_job_state: "queued";
+  execution_payload: NodeDispatchExecutionPayloadDraft;
+};
+
+export type NodeDispatchDraftValidationResult = {
+  ok: boolean;
+  reason: string | null;
+  draft_record: NodeDispatchDraftRecord | null;
+};
+
+export type NodeTaskDraftExportResult = {
+  status: "draft_exported" | "draft_export_rejected";
+  reason: string;
+  evidence_labels: NodeBoundaryEvidenceLabel[];
+  draft: NodeTaskDraft | null;
+  dispatch_draft: NodeDispatchDraftRecord | null;
+  draft_file_path: string | null;
+  stored_as_draft_only: true;
+  submitted_to_node: false;
+  node_intake_triggered: false;
+  execution_triggered: false;
+};
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -193,6 +284,10 @@ function containsAny(text: string, candidates: string[]): boolean {
   return candidates.some((candidate) => text.includes(candidate));
 }
 
+function uniqueEvidenceLabels(labels: NodeBoundaryEvidenceLabel[]): NodeBoundaryEvidenceLabel[] {
+  return [...new Set(labels)];
+}
+
 function hintRequestsGateBypass(hint: string): boolean {
   const normalized = hint.toLowerCase();
 
@@ -230,10 +325,14 @@ function inferNodeTaskRiskLevel(command: string): NodeTaskRiskLevel {
   return "high";
 }
 
+function hasBlockedCommandOperator(command: string): boolean {
+  return BLOCKED_COMMAND_OPERATOR_TOKENS.some((token) => command.includes(token));
+}
+
 function commandLooksUnsafe(command: string): boolean {
   const normalized = command.toLowerCase();
 
-  return containsAny(normalized, [
+  return hasBlockedCommandOperator(command) || containsAny(normalized, [
     "sudo",
     "runas",
     "chmod 777",
@@ -253,6 +352,279 @@ function commandLooksUnsafe(command: string): boolean {
     "unity.exe",
     "start-process",
   ]);
+}
+
+function splitCommandTokens(command: string): string[] {
+  return command
+    .trim()
+    .split(/\s+/)
+    .map((token) => token.trim())
+    .filter((token) => token.length > 0);
+}
+
+function buildDispatchJobId(taskId: string): string {
+  const normalized = taskId
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 24);
+
+  return `JOB-${normalized || "CORE-DRAFT"}`;
+}
+
+function defaultWorkingDirectory(): string {
+  return REPO_ROOT;
+}
+
+function parseCoreNodePipelineDraftPlan(plan: unknown): CoreNodePipelineDraftPlan | null {
+  const parsedBasePlan = parseCoreNodeTaskTranslationPlan(plan);
+  if (!parsedBasePlan || !isRecord(plan)) {
+    return null;
+  }
+
+  return {
+    ...parsedBasePlan,
+    requested_command_label: plan.requested_command_label === "/run" || plan.requested_command_label === "/test"
+      ? plan.requested_command_label
+      : undefined,
+    requested_capability_id: hasNonEmptyString(plan.requested_capability_id) ? plan.requested_capability_id.trim() : undefined,
+    command_kind: plan.command_kind === "run" || plan.command_kind === "test" || plan.command_kind === "build"
+      ? plan.command_kind
+      : undefined,
+    command_family: plan.command_family === "generic"
+      || plan.command_family === "unittest"
+      || plan.command_family === "pytest"
+      || plan.command_family === "python_script"
+      ? plan.command_family
+      : undefined,
+    working_directory: hasNonEmptyString(plan.working_directory) ? plan.working_directory.trim() : undefined,
+    timeout_seconds: typeof plan.timeout_seconds === "number" && Number.isFinite(plan.timeout_seconds) ? plan.timeout_seconds : undefined,
+    operator_reason: hasNonEmptyString(plan.operator_reason) ? plan.operator_reason.trim() : undefined,
+    expected_scope: hasNonEmptyString(plan.expected_scope) ? plan.expected_scope.trim() : undefined,
+    argv: Array.isArray(plan.argv)
+      ? plan.argv.map((item) => String(item).trim()).filter((item) => item.length > 0)
+      : undefined,
+    requester_label: hasNonEmptyString(plan.requester_label) ? plan.requester_label.trim() : undefined,
+    chat_id: hasNonEmptyString(plan.chat_id) ? plan.chat_id.trim() : undefined,
+    request_source: hasNonEmptyString(plan.request_source) ? plan.request_source.trim() : undefined,
+    target_node_role: plan.target_node_role === "controller"
+      || plan.target_node_role === "executor"
+      || plan.target_node_role === "validator"
+      || plan.target_node_role === "sandbox"
+      ? plan.target_node_role
+      : undefined,
+    target_node_name: hasNonEmptyString(plan.target_node_name) ? plan.target_node_name.trim() : undefined,
+    routing_reason: hasNonEmptyString(plan.routing_reason) ? plan.routing_reason.trim() : undefined,
+  };
+}
+
+function buildExecutionPayloadDraft(plan: CoreNodePipelineDraftPlan): NodeDispatchExecutionPayloadDraft | null {
+  if (commandLooksUnsafe(plan.command)) {
+    return null;
+  }
+
+  const explicitWorkingDirectory = typeof plan.working_directory === "string" && plan.working_directory.trim()
+    ? plan.working_directory.trim()
+    : defaultWorkingDirectory();
+
+  if (Array.isArray(plan.argv) && plan.argv.length > 0) {
+    const requestedCommandLabel = plan.requested_command_label;
+    const commandKind = plan.command_kind;
+    const commandFamily = plan.command_family;
+    const capabilityId = typeof plan.requested_capability_id === "string" && plan.requested_capability_id.trim()
+      ? plan.requested_capability_id.trim()
+      : requestedCommandLabel === "/test"
+        ? "core.node.dispatch.test"
+        : "core.node.dispatch.run";
+
+    if (!requestedCommandLabel || !commandKind || !commandFamily) {
+      return null;
+    }
+
+    return {
+      capability_id: capabilityId,
+      command_kind: commandKind,
+      command_family: commandFamily,
+      command_text: plan.command,
+      command_summary: plan.command,
+      working_directory: explicitWorkingDirectory,
+      timeout_seconds: typeof plan.timeout_seconds === "number" && Number.isFinite(plan.timeout_seconds)
+        ? Math.max(5, plan.timeout_seconds)
+        : 20,
+      operator_reason: typeof plan.operator_reason === "string" ? plan.operator_reason.trim() : "Core-generated Node draft pending operator submission.",
+      expected_scope: typeof plan.expected_scope === "string" ? plan.expected_scope.trim() : "bounded node draft",
+      argv: plan.argv.map((item) => String(item).trim()).filter((item) => item.length > 0),
+    };
+  }
+
+  const tokens = splitCommandTokens(plan.command);
+  if (tokens.length === 0) {
+    return null;
+  }
+
+  const [first, second, third, ...rest] = tokens;
+  const normalizedFirst = first.toLowerCase();
+  const normalizedSecond = (second ?? "").toLowerCase();
+  const normalizedThird = (third ?? "").toLowerCase();
+
+  if (["python", "python.exe", "py", "py.exe"].includes(normalizedFirst) && normalizedSecond === "-m" && normalizedThird === "unittest") {
+    return {
+      capability_id: "core.node.dispatch.test",
+      command_kind: "test",
+      command_family: "unittest",
+      command_text: plan.command,
+      command_summary: plan.command,
+      working_directory: explicitWorkingDirectory,
+      timeout_seconds: typeof plan.timeout_seconds === "number" && Number.isFinite(plan.timeout_seconds)
+        ? Math.max(5, plan.timeout_seconds)
+        : 20,
+      operator_reason: typeof plan.operator_reason === "string" ? plan.operator_reason.trim() : "Core-generated unittest draft pending operator submission.",
+      expected_scope: typeof plan.expected_scope === "string" ? plan.expected_scope.trim() : "bounded node test draft",
+      argv: tokens,
+    };
+  }
+
+  if (["python", "python.exe", "py", "py.exe"].includes(normalizedFirst) && hasNonEmptyString(second) && ALLOWED_PYTHON_SCRIPTS.has(second)) {
+    return {
+      capability_id: "core.node.dispatch.run",
+      command_kind: "run",
+      command_family: "python_script",
+      command_text: plan.command,
+      command_summary: plan.command,
+      working_directory: explicitWorkingDirectory,
+      timeout_seconds: typeof plan.timeout_seconds === "number" && Number.isFinite(plan.timeout_seconds)
+        ? Math.max(5, plan.timeout_seconds)
+        : 20,
+      operator_reason: typeof plan.operator_reason === "string" ? plan.operator_reason.trim() : "Core-generated bounded run draft pending operator submission.",
+      expected_scope: typeof plan.expected_scope === "string" ? plan.expected_scope.trim() : "bounded node run draft",
+      argv: tokens,
+    };
+  }
+
+  if (normalizedFirst === "pytest") {
+    return {
+      capability_id: "core.node.dispatch.run",
+      command_kind: "run",
+      command_family: "pytest",
+      command_text: plan.command,
+      command_summary: plan.command,
+      working_directory: explicitWorkingDirectory,
+      timeout_seconds: typeof plan.timeout_seconds === "number" && Number.isFinite(plan.timeout_seconds)
+        ? Math.max(5, plan.timeout_seconds)
+        : 20,
+      operator_reason: typeof plan.operator_reason === "string" ? plan.operator_reason.trim() : "Core-generated pytest draft pending operator submission.",
+      expected_scope: typeof plan.expected_scope === "string" ? plan.expected_scope.trim() : "bounded node pytest draft",
+      argv: tokens,
+    };
+  }
+
+  return null;
+}
+
+function buildNodeDispatchDraftRecord(plan: CoreNodePipelineDraftPlan, draft: NodeTaskDraft): NodeDispatchDraftRecord | null {
+  const executionPayload = buildExecutionPayloadDraft(plan);
+  if (!executionPayload) {
+    return null;
+  }
+
+  const requestedCommandLabel: NodeDispatchCommandLabel = executionPayload.command_kind === "test" ? "/test" : "/run";
+
+  return {
+    job_id: buildDispatchJobId(draft.task_id),
+    status: "queued",
+    requested_capability_id: executionPayload.capability_id,
+    requested_command_label: requestedCommandLabel,
+    requested_command_text: draft.command,
+    requested_command_summary: executionPayload.command_summary,
+    target_selection_mode: "node_id",
+    target_selector: draft.target_node_id,
+    target_node_id: draft.target_node_id,
+    target_node_role: plan.target_node_role ?? "executor",
+    target_node_name: (typeof plan.target_node_name === "string" && plan.target_node_name.trim()) || draft.target_node_id,
+    routing_reason: (typeof plan.routing_reason === "string" && plan.routing_reason.trim()) || `core draft routed to node ${draft.target_node_id}`,
+    request_source: (typeof plan.request_source === "string" && plan.request_source.trim()) || "core-draft-export",
+    requester_label: (typeof plan.requester_label === "string" && plan.requester_label.trim()) || draft.node_id,
+    chat_id: (typeof plan.chat_id === "string" && plan.chat_id.trim()) || "core-draft",
+    confirmation_required: true,
+    confirmation_id: "",
+    queued_at: "",
+    started_at: "",
+    finished_at: "",
+    result_summary: "",
+    failure_reason: "",
+    current_job_state: "queued",
+    execution_payload: executionPayload,
+  };
+}
+
+export function validateNodeDispatchDraft(record: unknown): NodeDispatchDraftValidationResult {
+  if (!isRecord(record)) {
+    return {
+      ok: false,
+      reason: "Node dispatch draft is invalid. Expected a structured shared-directory dispatch record.",
+      draft_record: null,
+    };
+  }
+
+  if (
+    !hasNonEmptyString(record.job_id)
+    || record.status !== "queued"
+    || !hasNonEmptyString(record.requested_capability_id)
+    || (record.requested_command_label !== "/run" && record.requested_command_label !== "/test")
+    || !hasNonEmptyString(record.requested_command_text)
+    || !hasNonEmptyString(record.requested_command_summary)
+    || record.target_selection_mode !== "node_id"
+    || !hasNonEmptyString(record.target_selector)
+    || !hasNonEmptyString(record.target_node_id)
+    || !hasNonEmptyString(record.target_node_role)
+    || !hasNonEmptyString(record.target_node_name)
+    || !hasNonEmptyString(record.routing_reason)
+    || !hasNonEmptyString(record.request_source)
+    || !hasNonEmptyString(record.requester_label)
+    || !hasNonEmptyString(record.chat_id)
+    || record.confirmation_required !== true
+    || typeof record.confirmation_id !== "string"
+    || typeof record.queued_at !== "string"
+    || typeof record.started_at !== "string"
+    || typeof record.finished_at !== "string"
+    || typeof record.result_summary !== "string"
+    || typeof record.failure_reason !== "string"
+    || record.current_job_state !== "queued"
+    || !isRecord(record.execution_payload)
+  ) {
+    return {
+      ok: false,
+      reason: "Node dispatch draft schema does not match the shared-directory NodeDispatchRecord contract.",
+      draft_record: null,
+    };
+  }
+
+  const payload = record.execution_payload;
+  const argv = payload.argv;
+  if (
+    !hasNonEmptyString(payload.capability_id)
+    || (payload.command_kind !== "run" && payload.command_kind !== "test" && payload.command_kind !== "build")
+    || (payload.command_family !== "generic" && payload.command_family !== "unittest" && payload.command_family !== "pytest" && payload.command_family !== "python_script")
+    || !hasNonEmptyString(payload.command_text)
+    || !hasNonEmptyString(payload.command_summary)
+    || !hasNonEmptyString(payload.working_directory)
+    || typeof payload.timeout_seconds !== "number"
+    || !Array.isArray(argv)
+    || argv.some((item) => typeof item !== "string" || item.trim().length === 0)
+    || commandLooksUnsafe(payload.command_text)
+  ) {
+    return {
+      ok: false,
+      reason: "Node dispatch draft execution payload is invalid or unsafe for bounded submission.",
+      draft_record: null,
+    };
+  }
+
+  return {
+    ok: true,
+    reason: null,
+    draft_record: record as NodeDispatchDraftRecord,
+  };
 }
 
 function parseCoreNodeTaskTranslationPlan(plan: unknown): CoreNodeTaskTranslationPlan | null {
@@ -757,6 +1129,85 @@ export function translatePlanToNodeTask(plan: unknown): NodeTaskTranslationResul
       "NODE EXECUTION NOT TRIGGERED",
     ],
     draft: validation.draft,
+    stored_as_draft_only: true,
+    submitted_to_node: false,
+    node_intake_triggered: false,
+    execution_triggered: false,
+  };
+}
+
+export async function exportNodeTaskDraftToPipeline(
+  plan: unknown,
+  options?: { draftDirectory?: string },
+): Promise<NodeTaskDraftExportResult> {
+  const translation = translatePlanToNodeTask(plan);
+
+  if (translation.status !== "draft_generated" || !translation.draft) {
+    return {
+      status: "draft_export_rejected",
+      reason: translation.reason,
+      evidence_labels: translation.evidence_labels,
+      draft: null,
+      dispatch_draft: null,
+      draft_file_path: null,
+      stored_as_draft_only: true,
+      submitted_to_node: false,
+      node_intake_triggered: false,
+      execution_triggered: false,
+    };
+  }
+
+  const pipelinePlan = parseCoreNodePipelineDraftPlan(plan);
+  if (!pipelinePlan) {
+    return {
+      status: "draft_export_rejected",
+      reason: "Core task draft cannot be exported to the Node draft pipeline because the bounded pipeline metadata is incomplete.",
+      evidence_labels: translation.evidence_labels,
+      draft: translation.draft,
+      dispatch_draft: null,
+      draft_file_path: null,
+      stored_as_draft_only: true,
+      submitted_to_node: false,
+      node_intake_triggered: false,
+      execution_triggered: false,
+    };
+  }
+
+  const dispatchDraft = buildNodeDispatchDraftRecord(pipelinePlan, translation.draft);
+  const dispatchValidation = validateNodeDispatchDraft(dispatchDraft);
+
+  if (!dispatchDraft || !dispatchValidation.ok || !dispatchValidation.draft_record) {
+    return {
+      status: "draft_export_rejected",
+      reason: dispatchValidation.reason ?? "Core task draft cannot be exported to the Node draft pipeline. Provide a bounded executable command that matches the existing Node dispatch contract.",
+      evidence_labels: translation.evidence_labels,
+      draft: translation.draft,
+      dispatch_draft: null,
+      draft_file_path: null,
+      stored_as_draft_only: true,
+      submitted_to_node: false,
+      node_intake_triggered: false,
+      execution_triggered: false,
+    };
+  }
+
+  const draftDirectory = options?.draftDirectory?.trim() || DEFAULT_CORE_NODE_DRAFT_DIRECTORY;
+  const draftFilePath = path.join(draftDirectory, `${translation.draft.task_id}.json`);
+
+  await mkdir(draftDirectory, { recursive: true });
+  await writeFile(draftFilePath, `${JSON.stringify(dispatchValidation.draft_record, null, 2)}\n`, "utf-8");
+
+  return {
+    status: "draft_exported",
+    reason: "Core exported the Node dispatch draft into the operator-reviewed draft folder only. Submission still requires explicit operator confirmation through the Node draft pipeline.",
+    evidence_labels: uniqueEvidenceLabels([
+      ...translation.evidence_labels,
+      "TASK STORED AS DRAFT ONLY",
+      "NODE EXECUTION NOT TRIGGERED",
+    ]),
+    draft: translation.draft,
+    dispatch_draft: dispatchValidation.draft_record,
+    draft_file_path: draftFilePath,
     stored_as_draft_only: true,
     submitted_to_node: false,
     node_intake_triggered: false,

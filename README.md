@@ -474,6 +474,12 @@ Current Layer 19 Step 1 status:
 - Core cannot sign tasks, submit tasks, trigger Node intake, or trigger execution from this layer
 - translated drafts remain operator-gated and preserve the required `Strategy -> Planning -> Execution -> Review -> Delivery -> Studio Control` path
 - evidence labels now show draft generation, draft-only storage, and that Node execution was not triggered
+- Layer 19 Step 4 - Node Draft Integration / Operator Pipeline Sync: implemented
+- added `exportNodeTaskDraftToPipeline(plan)` to write shared-directory `NodeDispatchRecord` drafts into `drafts/tasks/`
+- Core-generated drafts now use the existing Node draft file shape with bounded execution payload metadata and remain unread by workers until manually submitted
+- manual submission is handled through `submit_draft.py --confirm-submit`, which validates the draft, checks `target_node_id`, and writes the queued job into the existing registry `jobs/` path
+- Core still cannot sign tasks, submit directly to intake, bypass `--confirm-submit`, or trigger automatic execution
+- Node worker behavior remains unchanged: drafts do nothing in `drafts/tasks/`, submitted jobs enter the normal review and execution pipeline, and operator control remains required
 
 ## Safe Runtime Action Bridge
 
