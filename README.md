@@ -413,22 +413,27 @@ Current Layer 18 status:
 - Step 4 chain state snapshot capture: implemented
 - Step 5 bounded multi-action state-aware chain execution: implemented for reviewed two-step `create -> create` and `create -> rollback` chains
 - Layer 18 Step 3 - Multi-Action Rollback Planning: implemented for reviewed two-step `create -> create` rollback recovery
+- Layer 18 Step 4 - Multi-Action Repeatability: implemented for reviewed two-step `create -> create` repeatability proof
 - added rollback planning for multiple executed chain actions
 - rollback plans now preserve reverse execution order across executed chain targets
 - manual rollback can restore `15 -> 13` after two successful creates
 - repeated rollback remains idempotent
+- verified repeated multi-action chain execution
+- confirmed rollback stability across cycles
+- confirmed no state drift
+- confirmed full system repeatability
 - Layer 17 manual recovery guarantees preserved
 - supported scope: the reviewed bounded chain lane for `AIE_ControlledMutationProbe` and `AIE_ControlledMutationProbe_Companion` in `EnemyAIDemo`
 - read-only truth source: `UnityValidationProbe.cs` plus `unityReadOnlyRuntimeBridge.ts`
 - new failure classifications surfaced in chain execution: `state_gate_failed`, `state_verification_failed`, and `dependency_failed`
 - blocked execution evidence now calls out `PRE-ACTION STATE GATE FAILED` and `CHAIN STOPPED BEFORE MUTATION` when a truthful state gate blocks before mutation
-- focused chain tests: `47/47` passing
+- focused chain tests: `48/48` passing
 - bridge plus evidence tests: `25/25` passing
 - broader regression closeout: `npm run test:trace:safe` passed after Layer 18 changes
 - live Unity validation closeout: passed against the real `EnemyAIDemo` scene with clean baseline `13`
-- live scenario A: bounded create then create stopped with `simulated_terminal_stop`, produced a two-target reverse-order rollback plan, and separately approved manual rollback restored `15 -> 13`
-- live scenario B: simulated second-action failure produced a single-target reviewed rollback plan and separately approved manual rollback restored `14 -> 13`
-- live scenario C: repeated manual rollback stayed idempotent with `controlled_rollback_idempotent` evidence and final scene count remained `13`
+- live repeatability validation: repeated 5 reviewed `create -> create` cycles returned `13 -> 15 -> 13` every time with zero missing scripts and zero console errors
+- live repeatability validation: rollback plan fingerprint and rollback execution evidence stayed identical across all cycles
+- live repeatability validation: final reviewed rollback rerun stayed idempotent with `controlled_rollback_idempotent` evidence and final scene count remained `13`
 
 Current Layer 18 boundary:
 
