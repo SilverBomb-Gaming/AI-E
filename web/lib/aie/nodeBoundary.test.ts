@@ -22,6 +22,7 @@ import {
   type CoreNodeTaskTranslationPlan,
   type NodeIntentEnvelope,
 } from "./nodeBoundary";
+import { buildDecisionRecord } from "./decisionTrace";
 import { generateExecutionInsights } from "./executionInsight";
 import type { ExecutionOutcomeRecord } from "./executionOutcome";
 
@@ -661,12 +662,81 @@ test("draft export uses the selected alternative plan only", async () => {
     ]));
     const alternative = annotated.annotations?.find((annotation) => annotation.type === "plan_adjustment")?.alternative_plan;
     const selected = selectOperatorPlan(annotated, alternative?.plan_id ?? "");
+    const acknowledged = acknowledgePlanInsights(selected, "2026-05-02T21:30:00.000Z");
+    const decisionRecord = buildDecisionRecord(acknowledged, "2026-05-02T21:31:00.000Z");
+
+    const result = await exportNodeTaskDraftToPipeline(acknowledged, {
+      draftDirectory,
+      decisionRecord,
+    });
+
+    assert.equal(result.status, "draft_exported");
+    assert.equal(result.readiness_review.readiness_status, "ready_for_operator_submission");
+    assert.equal(result.draft?.command, alternative?.command);
+    assert.equal(result.dispatch_draft?.execution_payload.plan_id, alternative?.plan_id);
+    assert.equal(result.execution_triggered, false);
+  } finally {
+    await rm(draftDirectory, { recursive: true, force: true });
+  }
+});
+
+test("draft export is blocked by readiness review when acknowledgement is missing", async () => {
+  const draftDirectory = await mkdtemp(path.join(tmpdir(), "aie-node-readiness-"));
+
+  try {
+    const annotated = attachInsightsToPlan(createExportableNodeTaskPlan({ risk_level: "high" }), generateExecutionInsights([
+      createExecutionOutcomeRecord({
+        outcome_id: "OUT-0000001015",
+        created_at: "2026-05-02T21:32:00.000Z",
+        risk_level: "high",
+        rollback_required: true,
+        rollback_executed: true,
+        success: false,
+        status: "failed",
+        result_summary: "integration regression failure",
+        error_summary: "integration regression failure",
+        recovery_status: "executed",
+      }),
+    ]));
+    const selected = selectOperatorPlan(annotated, annotated.plan_id);
 
     const result = await exportNodeTaskDraftToPipeline(selected, { draftDirectory });
 
-    assert.equal(result.status, "draft_exported");
-    assert.equal(result.draft?.command, alternative?.command);
-    assert.equal(result.dispatch_draft?.execution_payload.plan_id, alternative?.plan_id);
+    assert.equal(result.status, "draft_export_rejected");
+    assert.equal(result.readiness_review.readiness_status, "blocked_missing_acknowledgement");
+    assert.equal(result.draft, null);
+    assert.equal(result.execution_triggered, false);
+  } finally {
+    await rm(draftDirectory, { recursive: true, force: true });
+  }
+});
+
+test("draft export is blocked by readiness review when decision record is missing", async () => {
+  const draftDirectory = await mkdtemp(path.join(tmpdir(), "aie-node-readiness-"));
+
+  try {
+    const annotated = attachInsightsToPlan(createExportableNodeTaskPlan({ risk_level: "high" }), generateExecutionInsights([
+      createExecutionOutcomeRecord({
+        outcome_id: "OUT-0000001016",
+        created_at: "2026-05-02T21:33:00.000Z",
+        risk_level: "high",
+        rollback_required: true,
+        rollback_executed: true,
+        success: false,
+        status: "failed",
+        result_summary: "integration regression failure",
+        error_summary: "integration regression failure",
+        recovery_status: "executed",
+      }),
+    ]));
+    const selected = selectOperatorPlan(annotated, annotated.plan_id);
+    const acknowledged = acknowledgePlanInsights(selected, "2026-05-02T21:34:00.000Z");
+
+    const result = await exportNodeTaskDraftToPipeline(acknowledged, { draftDirectory });
+
+    assert.equal(result.status, "draft_export_rejected");
+    assert.equal(result.readiness_review.readiness_status, "blocked_missing_decision_record");
+    assert.equal(result.dispatch_draft, null);
     assert.equal(result.execution_triggered, false);
   } finally {
     await rm(draftDirectory, { recursive: true, force: true });
@@ -748,11 +818,15 @@ test("Core draft file is created correctly", async () => {
   const tempDraftRoot = await mkdtemp(path.join(tmpdir(), "aie-core-node-drafts-"));
 
   try {
-    const result = await exportNodeTaskDraftToPipeline(createExportableNodeTaskPlan(), {
+    const selected = selectOperatorPlan(createExportableNodeTaskPlan(), "system-plan-001");
+    const decisionRecord = buildDecisionRecord(selected, "2026-05-02T21:40:00.000Z");
+    const result = await exportNodeTaskDraftToPipeline(selected, {
       draftDirectory: tempDraftRoot,
+      decisionRecord,
     });
 
     assert.equal(result.status, "draft_exported");
+    assert.equal(result.readiness_review.readiness_status, "ready_for_operator_submission");
     assert.equal(result.submitted_to_node, false);
     assert.equal(result.node_intake_triggered, false);
     assert.equal(result.execution_triggered, false);
@@ -772,8 +846,11 @@ test("draft matches Node schema", async () => {
   const tempDraftRoot = await mkdtemp(path.join(tmpdir(), "aie-core-node-schema-"));
 
   try {
-    const result = await exportNodeTaskDraftToPipeline(createExportableNodeTaskPlan(), {
+    const selected = selectOperatorPlan(createExportableNodeTaskPlan(), "system-plan-001");
+    const decisionRecord = buildDecisionRecord(selected, "2026-05-02T21:41:00.000Z");
+    const result = await exportNodeTaskDraftToPipeline(selected, {
       draftDirectory: tempDraftRoot,
+      decisionRecord,
     });
 
     assert.equal(result.status, "draft_exported");
@@ -790,8 +867,11 @@ test("draft export does not execute automatically", async () => {
   const tempDraftRoot = await mkdtemp(path.join(tmpdir(), "aie-core-node-noexec-"));
 
   try {
-    const result = await exportNodeTaskDraftToPipeline(createExportableNodeTaskPlan(), {
+    const selected = selectOperatorPlan(createExportableNodeTaskPlan(), "system-plan-001");
+    const decisionRecord = buildDecisionRecord(selected, "2026-05-02T21:42:00.000Z");
+    const result = await exportNodeTaskDraftToPipeline(selected, {
       draftDirectory: tempDraftRoot,
+      decisionRecord,
     });
 
     assert.equal(result.status, "draft_exported");

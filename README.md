@@ -583,6 +583,18 @@ Current Layer 22 Step 4 status:
 - added a read-only CLI surface with `npm run decisions` via `web/scripts/showDecisions.ts`
 - replay and audit output are inspection-only and do not trigger execution, mutate plans, or update current operator state
 
+## Layer 23 / Execution Readiness Review Gate
+
+Layer 23 adds a final read-only readiness review before a selected plan can be handed off into the operator-reviewed draft export path.
+
+Current Layer 23 Step 1 status:
+
+- Layer 23 Step 1 - Execution Readiness Review Gate: implemented
+- added `web/lib/aie/executionReadinessReview.ts` with `buildExecutionReadinessReview(plan, options)` and `renderExecutionReadinessReview(review)`
+- the readiness review summarizes selected plan state, alternatives considered, highest visible insight severity, operator acknowledgement status, decision record status, and required operator actions
+- draft export now returns readiness metadata and blocks with `blocked_missing_selection`, `blocked_missing_acknowledgement`, or `blocked_missing_decision_record` when the required human-control artifacts are missing
+- the readiness gate is informational and gating metadata only: it does not submit drafts, approve execution, mutate plans, or trigger Node execution
+
 ## Safe Runtime Action Bridge
 
 AI-E can now translate supported live operator actions into safe runtime intents.

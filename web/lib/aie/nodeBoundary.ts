@@ -2,7 +2,12 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import type { DecisionRecord } from "./decisionTrace";
 import type { ExecutionInsight } from "./executionInsight";
+import {
+  buildExecutionReadinessReview,
+  type ExecutionReadinessReview,
+} from "./executionReadinessReview";
 
 const EXECUTION_PATH = "Strategy -> Planning -> Execution -> Review -> Delivery -> Studio Control" as const;
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -260,6 +265,7 @@ export type NodeTaskDraftExportResult = {
   status: "draft_exported" | "draft_export_rejected";
   reason: string;
   evidence_labels: NodeBoundaryEvidenceLabel[];
+  readiness_review: ExecutionReadinessReview;
   draft: NodeTaskDraft | null;
   dispatch_draft: NodeDispatchDraftRecord | null;
   draft_file_path: string | null;
@@ -1464,8 +1470,51 @@ export function translatePlanToNodeTask(plan: unknown): NodeTaskTranslationResul
 
 export async function exportNodeTaskDraftToPipeline(
   plan: unknown,
-  options?: { draftDirectory?: string },
+  options?: {
+    draftDirectory?: string;
+    decisionRecord?: DecisionRecord | null;
+    requireAcknowledgement?: boolean;
+    requireDecisionRecord?: boolean;
+  },
 ): Promise<NodeTaskDraftExportResult> {
+  const readinessReview = isRecord(plan)
+    ? buildExecutionReadinessReview(plan as CoreNodeTaskTranslationPlan | CoreNodePipelineDraftPlan, {
+      decisionRecord: options?.decisionRecord,
+      require_acknowledgement: options?.requireAcknowledgement ?? true,
+      require_decision_record: options?.requireDecisionRecord ?? true,
+    })
+    : buildExecutionReadinessReview({
+      plan_id: "unknown-plan",
+      planning_stage: "planning",
+      execution_path: EXECUTION_PATH,
+      planning_suggestions: [],
+      validation_insights: [],
+      dependency_reasoning: [],
+      validation_gates: [],
+      execution_authority: "system_only",
+    }, {
+      decisionRecord: options?.decisionRecord,
+      require_acknowledgement: options?.requireAcknowledgement ?? true,
+      require_decision_record: options?.requireDecisionRecord ?? true,
+    });
+
+  if (readinessReview.readiness_status !== "ready_for_operator_submission") {
+    return {
+      status: "draft_export_rejected",
+      reason: readinessReview.required_operator_actions[0]
+        ?? `Execution readiness review blocked draft export: ${readinessReview.readiness_status}.`,
+      evidence_labels: [],
+      readiness_review: readinessReview,
+      draft: null,
+      dispatch_draft: null,
+      draft_file_path: null,
+      stored_as_draft_only: true,
+      submitted_to_node: false,
+      node_intake_triggered: false,
+      execution_triggered: false,
+    };
+  }
+
   const resolvedPlan = isRecord(plan)
     ? resolveSelectedPlanForExecution(plan as CoreNodeTaskTranslationPlan | CoreNodePipelineDraftPlan)
     : { ok: true as const, plan };
@@ -1475,6 +1524,7 @@ export async function exportNodeTaskDraftToPipeline(
       status: "draft_export_rejected",
       reason: resolvedPlan.reason,
       evidence_labels: [],
+      readiness_review: readinessReview,
       draft: null,
       dispatch_draft: null,
       draft_file_path: null,
@@ -1492,6 +1542,7 @@ export async function exportNodeTaskDraftToPipeline(
       status: "draft_export_rejected",
       reason: translation.reason,
       evidence_labels: translation.evidence_labels,
+      readiness_review: readinessReview,
       draft: null,
       dispatch_draft: null,
       draft_file_path: null,
@@ -1508,6 +1559,7 @@ export async function exportNodeTaskDraftToPipeline(
       status: "draft_export_rejected",
       reason: "Core task draft cannot be exported to the Node draft pipeline because the bounded pipeline metadata is incomplete.",
       evidence_labels: translation.evidence_labels,
+      readiness_review: readinessReview,
       draft: translation.draft,
       dispatch_draft: null,
       draft_file_path: null,
@@ -1526,6 +1578,7 @@ export async function exportNodeTaskDraftToPipeline(
       status: "draft_export_rejected",
       reason: dispatchValidation.reason ?? "Core task draft cannot be exported to the Node draft pipeline. Provide a bounded executable command that matches the existing Node dispatch contract.",
       evidence_labels: translation.evidence_labels,
+      readiness_review: readinessReview,
       draft: translation.draft,
       dispatch_draft: null,
       draft_file_path: null,
@@ -1550,6 +1603,7 @@ export async function exportNodeTaskDraftToPipeline(
       "TASK STORED AS DRAFT ONLY",
       "NODE EXECUTION NOT TRIGGERED",
     ]),
+    readiness_review: readinessReview,
     draft: translation.draft,
     dispatch_draft: dispatchValidation.draft_record,
     draft_file_path: draftFilePath,
