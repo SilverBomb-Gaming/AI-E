@@ -460,6 +460,13 @@ Current Layer 19 Step 1 status:
 - accepted Node intents are reviewable input only and stay on the required `Strategy -> Planning -> Execution -> Review -> Delivery -> Studio Control` path
 - direct Node execution and direct Node rollback requests are explicitly blocked with evidence labels
 - Unity behavior remains unchanged and the verified bounded lane stays isolated from Node
+- Layer 19 Step 2 - Node Planning Advisory Integration: implemented
+- added advisory `planning_hint`, `validation_hint`, and `dependency_hint` handling
+- Node planning hints are visible during planning but remain non-binding
+- system planning remains authoritative and execution authority stays `system_only`
+- conflicting Node hints are rejected or overridden in favor of the system plan with explicit evidence labels
+- Node planning hints cannot bypass validation, review, delivery, Studio Control, or manual approval gates
+- execution behavior remains unchanged and Node still cannot execute, approve, rollback, or mutate Unity
 
 ## Safe Runtime Action Bridge
 

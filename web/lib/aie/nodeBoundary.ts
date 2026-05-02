@@ -17,13 +17,23 @@ export type NodeIntentEnvelope = {
   };
 };
 
+export type NodePlanningInput = {
+  planning_hint: string[];
+  validation_hint: string[];
+  dependency_hint: string[];
+};
+
 export type NodeBoundaryEvidenceLabel =
   | "NODE INTENT RECEIVED"
   | "NODE BOUNDARY CHECK PASSED"
   | "NODE BOUNDARY CHECK FAILED"
   | "NODE INTENT ACCEPTED FOR REVIEW"
   | "NODE DIRECT EXECUTION BLOCKED"
-  | "NODE DIRECT ROLLBACK BLOCKED";
+  | "NODE DIRECT ROLLBACK BLOCKED"
+  | "NODE PLANNING HINT RECEIVED"
+  | "NODE PLANNING HINT APPLIED"
+  | "NODE PLANNING HINT REJECTED"
+  | "NODE PLANNING CONFLICT RESOLVED";
 
 export type NodeIntentReceiptStatus = "accepted_for_review" | "rejected_boundary_violation" | "rejected_invalid_envelope";
 
@@ -48,6 +58,33 @@ export type NodeIntentReceipt = {
   node_can_rollback: false;
   unity_access: "blocked";
   accepted_intent_kind: NodeIntentKind | null;
+  accepted_planning_input: NodePlanningInput | null;
+};
+
+export type NodeAdvisoryPlanningStage = "strategy" | "planning";
+
+export type NodeAdvisoryPlan = {
+  plan_id: string;
+  planning_stage: NodeAdvisoryPlanningStage;
+  execution_path: typeof EXECUTION_PATH;
+  planning_suggestions: string[];
+  validation_insights: string[];
+  dependency_reasoning: string[];
+  validation_gates: string[];
+  execution_authority: "system_only";
+};
+
+export type NodePlanningMergeResult = {
+  merged_plan: NodeAdvisoryPlan;
+  node_hints_visible: NodePlanningInput;
+  applied_hints: NodePlanningInput;
+  rejected_hints: NodePlanningInput;
+  conflict_overrides: Array<{
+    hint_type: keyof NodePlanningInput;
+    hint: string;
+    system_reason: string;
+  }>;
+  evidence_labels: NodeBoundaryEvidenceLabel[];
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -75,8 +112,66 @@ function flattenStrings(value: unknown): string[] {
   return [];
 }
 
+function normalizeHintList(value: unknown): string[] {
+  if (typeof value === "string") {
+    return value.trim() ? [value.trim()] : [];
+  }
+
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+}
+
+function normalizeNodePlanningInput(payload: unknown): NodePlanningInput {
+  if (!isRecord(payload)) {
+    return {
+      planning_hint: [],
+      validation_hint: [],
+      dependency_hint: [],
+    };
+  }
+
+  return {
+    planning_hint: normalizeHintList(payload.planning_hint),
+    validation_hint: normalizeHintList(payload.validation_hint),
+    dependency_hint: normalizeHintList(payload.dependency_hint),
+  };
+}
+
+function hasAnyNodePlanningHint(input: NodePlanningInput): boolean {
+  return input.planning_hint.length > 0 || input.validation_hint.length > 0 || input.dependency_hint.length > 0;
+}
+
 function containsAny(text: string, candidates: string[]): boolean {
   return candidates.some((candidate) => text.includes(candidate));
+}
+
+function hintRequestsGateBypass(hint: string): boolean {
+  const normalized = hint.toLowerCase();
+
+  return containsAny(normalized, [
+    "skip validation",
+    "bypass validation",
+    "skip gate",
+    "bypass gate",
+    "ignore review",
+    "skip review",
+    "skip studio control",
+    "bypass studio control",
+    "approve automatically",
+    "execute automatically",
+    "run without approval",
+  ]);
+}
+
+function hintConflictsWithSystemPlan(hint: string, systemValues: string[]): boolean {
+  const normalizedHint = hint.toLowerCase();
+  return systemValues.some((value) => normalizedHint === value.toLowerCase());
 }
 
 function payloadRequestsDirectRollback(payload: unknown): boolean {
@@ -268,6 +363,23 @@ export function validateNodeIntentEnvelope(envelope: unknown): NodeIntentValidat
     };
   }
 
+  const planningInput = normalizeNodePlanningInput(parsed.payload);
+  if (hasAnyNodePlanningHint(planningInput)) {
+    evidenceLabels.push("NODE PLANNING HINT RECEIVED");
+  }
+
+  const allHints = [...planningInput.planning_hint, ...planningInput.validation_hint, ...planningInput.dependency_hint];
+  if (allHints.some((hint) => hintRequestsGateBypass(hint))) {
+    evidenceLabels.push("NODE BOUNDARY CHECK FAILED", "NODE PLANNING HINT REJECTED");
+    return {
+      ok: false,
+      category: "boundary_violation",
+      reason: "Node planning hints cannot bypass validation, review, delivery, or Studio Control gates.",
+      evidence_labels: evidenceLabels,
+      envelope: parsed,
+    };
+  }
+
   evidenceLabels.push("NODE BOUNDARY CHECK PASSED");
   return {
     ok: true,
@@ -295,8 +407,11 @@ export function receiveNodeIntent(envelope: unknown): NodeIntentReceipt {
       node_can_rollback: false,
       unity_access: "blocked",
       accepted_intent_kind: null,
+      accepted_planning_input: null,
     };
   }
+
+  const acceptedPlanningInput = normalizeNodePlanningInput(validation.envelope?.payload);
 
   return {
     status: "accepted_for_review",
@@ -311,5 +426,95 @@ export function receiveNodeIntent(envelope: unknown): NodeIntentReceipt {
     node_can_rollback: false,
     unity_access: "blocked",
     accepted_intent_kind: validation.envelope?.intent_kind ?? null,
+    accepted_planning_input: acceptedPlanningInput,
+  };
+}
+
+export function mergeNodePlanningHints(systemPlan: NodeAdvisoryPlan, nodeHints: NodePlanningInput): NodePlanningMergeResult {
+  const evidenceLabels: NodeBoundaryEvidenceLabel[] = [];
+
+  if (hasAnyNodePlanningHint(nodeHints)) {
+    evidenceLabels.push("NODE PLANNING HINT RECEIVED");
+  }
+
+  const appliedHints: NodePlanningInput = {
+    planning_hint: [],
+    validation_hint: [],
+    dependency_hint: [],
+  };
+
+  const rejectedHints: NodePlanningInput = {
+    planning_hint: [],
+    validation_hint: [],
+    dependency_hint: [],
+  };
+
+  const conflictOverrides: NodePlanningMergeResult["conflict_overrides"] = [];
+
+  const mergedPlan: NodeAdvisoryPlan = {
+    ...systemPlan,
+    planning_suggestions: [...systemPlan.planning_suggestions],
+    validation_insights: [...systemPlan.validation_insights],
+    dependency_reasoning: [...systemPlan.dependency_reasoning],
+    validation_gates: [...systemPlan.validation_gates],
+    execution_authority: "system_only",
+    execution_path: EXECUTION_PATH,
+  };
+
+  const applyHint = (
+    hintType: keyof NodePlanningInput,
+    target: "planning_suggestions" | "validation_insights" | "dependency_reasoning",
+    systemReason: string,
+  ) => {
+    for (const hint of nodeHints[hintType]) {
+      if (hintRequestsGateBypass(hint)) {
+        rejectedHints[hintType].push(hint);
+        continue;
+      }
+
+      if (hintConflictsWithSystemPlan(hint, mergedPlan[target])) {
+        rejectedHints[hintType].push(hint);
+        conflictOverrides.push({
+          hint_type: hintType,
+          hint,
+          system_reason: systemReason,
+        });
+        continue;
+      }
+
+      if (!mergedPlan[target].some((item) => item.toLowerCase() === hint.toLowerCase())) {
+        mergedPlan[target].push(hint);
+      }
+      appliedHints[hintType].push(hint);
+    }
+  };
+
+  applyHint("planning_hint", "planning_suggestions", "System planning suggestions remain authoritative.");
+  applyHint("validation_hint", "validation_insights", "System validation gates and insights remain authoritative.");
+  applyHint("dependency_hint", "dependency_reasoning", "System dependency reasoning remains authoritative.");
+
+  if (appliedHints.planning_hint.length || appliedHints.validation_hint.length || appliedHints.dependency_hint.length) {
+    evidenceLabels.push("NODE PLANNING HINT APPLIED");
+  }
+
+  if (rejectedHints.planning_hint.length || rejectedHints.validation_hint.length || rejectedHints.dependency_hint.length) {
+    evidenceLabels.push("NODE PLANNING HINT REJECTED");
+  }
+
+  if (conflictOverrides.length > 0) {
+    evidenceLabels.push("NODE PLANNING CONFLICT RESOLVED");
+  }
+
+  return {
+    merged_plan: mergedPlan,
+    node_hints_visible: {
+      planning_hint: [...nodeHints.planning_hint],
+      validation_hint: [...nodeHints.validation_hint],
+      dependency_hint: [...nodeHints.dependency_hint],
+    },
+    applied_hints: appliedHints,
+    rejected_hints: rejectedHints,
+    conflict_overrides: conflictOverrides,
+    evidence_labels: evidenceLabels,
   };
 }
