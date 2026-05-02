@@ -358,9 +358,11 @@ test("insights attach to plans as non-binding annotations", () => {
   assert.ok((annotated.annotations?.length ?? 0) >= 2);
   assert.ok(annotated.annotations?.some((annotation) => annotation.type === "risk_warning"));
   assert.ok(annotated.annotations?.some((annotation) => annotation.type === "reliability_note" || annotation.type === "pattern_note"));
+  assert.ok(annotated.annotations?.some((annotation) => annotation.type === "plan_adjustment"));
   assert.ok(annotated.annotations?.every((annotation) => annotation.informational_only === true && annotation.confidence >= 0 && annotation.confidence <= 1));
   assert.ok(annotated.annotations?.every((annotation) => ["low", "medium", "high", "critical"].includes(annotation.severity)));
   assert.ok(annotated.annotations?.some((annotation) => annotation.suggestion));
+  assert.ok(annotated.annotations?.filter((annotation) => annotation.type === "plan_adjustment").every((annotation) => (annotation.alternative_plan?.steps.length ?? 0) > 0));
   assert.deepEqual(annotated.operator_acknowledgement, { acknowledged: false });
 });
 
@@ -413,10 +415,42 @@ test("acknowledgement prompt is visible but non-blocking", () => {
   const prompt = buildInsightAcknowledgementPrompt(annotated);
 
   assert.ok(prompt);
+  assert.match(prompt ?? "", /Original plan:/);
   assert.match(prompt ?? "", /Insights detected:/);
   assert.match(prompt ?? "", /\[(LOW|MEDIUM|HIGH|CRITICAL)\]/);
   assert.match(prompt ?? "", /Suggestion:/);
+  assert.match(prompt ?? "", /Alternative plan:/);
   assert.match(prompt ?? "", /Acknowledge before proceeding\? \(yes\/no\)/);
+});
+
+test("plan adjustment alternatives remain separate from the original plan", () => {
+  const source = createNodeTaskTranslationPlan({ risk_level: "high" });
+  const annotated = attachInsightsToPlan(source, generateExecutionInsights([
+    createExecutionOutcomeRecord({
+      outcome_id: "OUT-0000001008",
+      created_at: "2026-05-02T21:20:00.000Z",
+      risk_level: "high",
+      rollback_required: true,
+      rollback_executed: true,
+      success: false,
+      status: "failed",
+      result_summary: "integration regression failure",
+      error_summary: "integration regression failure",
+      recovery_status: "executed",
+    }),
+  ]));
+
+  const adjustment = annotated.annotations?.find((annotation) => annotation.type === "plan_adjustment");
+
+  assert.ok(adjustment);
+  assert.ok(adjustment?.alternative_plan);
+  assert.notDeepEqual(adjustment?.alternative_plan?.steps, [source.command]);
+  assert.equal(source.command, "validate bounded EnemyAIDemo planning packet and summarize review gates");
+  assert.deepEqual(source.validation_gates, [
+    "review approval",
+    "operator approval",
+    "final authorization",
+  ]);
 });
 
 test("acknowledgement helpers do not mutate the source plan", () => {

@@ -547,6 +547,18 @@ Current Layer 21 Step 4 status:
 - output surfaces now show suggestions in the CLI insight renderer and the optional acknowledgement prompt
 - suggestions remain informational only and do not modify plans, block execution, or auto-apply any change
 
+## Layer 22 / Optional Plan Adjustment Suggestions
+
+Layer 22 starts the non-binding alternative-plan layer that proposes optional plan adjustments for the operator without changing the active plan, execution flow, or approval behavior.
+
+Current Layer 22 Step 1 status:
+
+- Layer 22 Step 1 - Optional Plan Adjustment Suggestions: implemented
+- added `plan_adjustment` annotations with separate `alternative_plan.steps` metadata in `web/lib/aie/nodeBoundary.ts`
+- generates optional alternatives such as running in test mode first, splitting execution into smaller reviewed steps, or adding validation and recovery-ready steps before execution
+- the acknowledgement prompt now shows the original plan plus suggested alternatives in separate sections
+- original plans remain unchanged and alternative plans stay advisory until an operator explicitly chooses them
+
 ## Safe Runtime Action Bridge
 
 AI-E can now translate supported live operator actions into safe runtime intents.

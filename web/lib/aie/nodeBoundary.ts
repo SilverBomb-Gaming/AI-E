@@ -82,7 +82,11 @@ export type NodeIntentReceipt = {
 
 export type NodeAdvisoryPlanningStage = "strategy" | "planning";
 
-export type NodePlanAnnotationType = "risk_warning" | "reliability_note" | "pattern_note";
+export type NodePlanAnnotationType = "risk_warning" | "reliability_note" | "pattern_note" | "plan_adjustment";
+
+export type NodePlanAlternative = {
+  steps: string[];
+};
 
 export type NodePlanAnnotation = {
   type: NodePlanAnnotationType;
@@ -90,6 +94,7 @@ export type NodePlanAnnotation = {
   confidence: number;
   severity: ExecutionInsight["severity"];
   suggestion?: string;
+  alternative_plan?: NodePlanAlternative;
   insight_id: string;
   informational_only: true;
 };
@@ -1353,6 +1358,52 @@ function buildPlanAnnotation(insight: ExecutionInsight): NodePlanAnnotation {
   };
 }
 
+function buildPlanAdjustmentAlternative(
+  plan: NodeAdvisoryPlan | CoreNodeTaskTranslationPlan | CoreNodePipelineDraftPlan,
+  insight: ExecutionInsight,
+): NodePlanAlternative | null {
+  if ((insight.severity !== "high" && insight.severity !== "critical") || !insight.suggestion) {
+    return null;
+  }
+
+  const steps: string[] = [];
+  const command = "command" in plan && hasNonEmptyString(plan.command) ? plan.command : "the planned command";
+
+  if (insight.category === "pattern") {
+    steps.push(`run ${command} in test mode first`);
+    steps.push("review the test output before any full execution decision");
+  } else if (insight.category === "risk") {
+    steps.push("add a validation step before execution");
+    steps.push("ensure the recovery plan is ready and reviewed");
+  } else {
+    steps.push("split the plan into smaller reviewed steps");
+    steps.push("verify the environment before each step");
+  }
+
+  return { steps };
+}
+
+function buildPlanAdjustmentAnnotation(
+  plan: NodeAdvisoryPlan | CoreNodeTaskTranslationPlan | CoreNodePipelineDraftPlan,
+  insight: ExecutionInsight,
+): NodePlanAnnotation | null {
+  const alternativePlan = buildPlanAdjustmentAlternative(plan, insight);
+  if (!alternativePlan) {
+    return null;
+  }
+
+  return {
+    type: "plan_adjustment",
+    message: insight.suggestion ?? "Consider an alternative reviewed plan.",
+    confidence: clampAnnotationConfidence(insight.confidence),
+    severity: insight.severity,
+    suggestion: insight.suggestion,
+    alternative_plan: alternativePlan,
+    insight_id: `${insight.insight_id}-plan-adjustment`,
+    informational_only: true,
+  };
+}
+
 export function attachInsightsToPlan<T extends NodeAdvisoryPlan | CoreNodeTaskTranslationPlan | CoreNodePipelineDraftPlan>(
   plan: T,
   insights: readonly ExecutionInsight[],
@@ -1360,12 +1411,19 @@ export function attachInsightsToPlan<T extends NodeAdvisoryPlan | CoreNodeTaskTr
   const existingAnnotations = Array.isArray(plan.annotations)
     ? plan.annotations.map((annotation) => ({ ...annotation, informational_only: true as const }))
     : [];
-  const attachedAnnotations = insights
+  const matchedInsights = insights
     .filter((insight) => insightMatchesPlan(plan, insight))
-    .map((insight) => buildPlanAnnotation(insight));
+    .flatMap((insight) => {
+      const annotations: NodePlanAnnotation[] = [buildPlanAnnotation(insight)];
+      const adjustment = buildPlanAdjustmentAnnotation(plan, insight);
+      if (adjustment) {
+        annotations.push(adjustment);
+      }
+      return annotations;
+    });
 
   const mergedAnnotations = [...existingAnnotations];
-  for (const annotation of attachedAnnotations) {
+  for (const annotation of matchedInsights) {
     if (!mergedAnnotations.some((candidate) => candidate.insight_id === annotation.insight_id)) {
       mergedAnnotations.push(annotation);
     }
@@ -1407,7 +1465,7 @@ export function acknowledgePlanInsights<T extends NodeAdvisoryPlan | CoreNodeTas
 }
 
 export function buildInsightAcknowledgementPrompt(
-  plan: Pick<NodeAdvisoryPlan, "annotations" | "operator_acknowledgement">,
+  plan: Pick<NodeAdvisoryPlan, "annotations" | "operator_acknowledgement" | "planning_suggestions" | "validation_gates" | "execution_path"> & Partial<CoreNodeTaskTranslationPlan>,
 ): string | null {
   if (!Array.isArray(plan.annotations) || plan.annotations.length === 0) {
     return null;
@@ -1417,11 +1475,38 @@ export function buildInsightAcknowledgementPrompt(
     return null;
   }
 
-  const lines = ["Insights detected:"];
-  for (const annotation of plan.annotations) {
+  const lines = ["Original plan:"];
+  if ("command" in plan && hasNonEmptyString(plan.command)) {
+    lines.push(`- run ${plan.command}`);
+  } else if (Array.isArray(plan.planning_suggestions) && plan.planning_suggestions.length > 0) {
+    lines.push(`- ${plan.planning_suggestions[0]}`);
+  } else {
+    lines.push("- review the current bounded plan");
+  }
+
+  const coreAnnotations = plan.annotations.filter((annotation) => annotation.type !== "plan_adjustment");
+  const adjustmentAnnotations = plan.annotations.filter((annotation) => annotation.type === "plan_adjustment");
+
+  lines.push("");
+  lines.push("Insights detected:");
+  for (const annotation of coreAnnotations) {
     lines.push(`- [${annotation.severity.toUpperCase()}] ${annotation.message} (confidence ${annotation.confidence.toFixed(2)})`);
     if (annotation.suggestion) {
       lines.push(`  Suggestion: ${annotation.suggestion}`);
+    }
+  }
+
+  if (adjustmentAnnotations.length > 0) {
+    lines.push("");
+    lines.push("Suggested alternatives:");
+    for (const annotation of adjustmentAnnotations) {
+      lines.push(`- [${annotation.severity.toUpperCase()}] ${annotation.message}`);
+      if (annotation.alternative_plan?.steps.length) {
+        lines.push("  Alternative plan:");
+        for (const step of annotation.alternative_plan.steps) {
+          lines.push(`  - ${step}`);
+        }
+      }
     }
   }
   lines.push("");
