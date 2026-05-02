@@ -412,17 +412,23 @@ Current Layer 18 status:
 - Step 3 post-action state verification: implemented
 - Step 4 chain state snapshot capture: implemented
 - Step 5 bounded multi-action state-aware chain execution: implemented for reviewed two-step `create -> create` and `create -> rollback` chains
+- Layer 18 Step 3 - Multi-Action Rollback Planning: implemented for reviewed two-step `create -> create` rollback recovery
+- added rollback planning for multiple executed chain actions
+- rollback plans now preserve reverse execution order across executed chain targets
+- manual rollback can restore `15 -> 13` after two successful creates
+- repeated rollback remains idempotent
+- Layer 17 manual recovery guarantees preserved
 - supported scope: the reviewed bounded chain lane for `AIE_ControlledMutationProbe` and `AIE_ControlledMutationProbe_Companion` in `EnemyAIDemo`
 - read-only truth source: `UnityValidationProbe.cs` plus `unityReadOnlyRuntimeBridge.ts`
 - new failure classifications surfaced in chain execution: `state_gate_failed`, `state_verification_failed`, and `dependency_failed`
 - blocked execution evidence now calls out `PRE-ACTION STATE GATE FAILED` and `CHAIN STOPPED BEFORE MUTATION` when a truthful state gate blocks before mutation
-- focused chain tests: `44/44` passing
+- focused chain tests: `47/47` passing
 - bridge plus evidence tests: `25/25` passing
 - broader regression closeout: `npm run test:trace:safe` passed after Layer 18 changes
 - live Unity validation closeout: passed against the real `EnemyAIDemo` scene with clean baseline `13`
-- live scenario A: bounded create then create succeeded with `5` state snapshots and final scene `13 -> 15`, then reviewed cleanup restored baseline `13`
-- live scenario B: dependency drift after the first create blocked the second create with `dependency_failed`, `1` action executed, and cleanup restored final scene `13`
-- live scenario C: simulated second-action failure produced a reviewed rollback plan, separately approved manual rollback succeeded, and final scene returned `14 -> 13`
+- live scenario A: bounded create then create stopped with `simulated_terminal_stop`, produced a two-target reverse-order rollback plan, and separately approved manual rollback restored `15 -> 13`
+- live scenario B: simulated second-action failure produced a single-target reviewed rollback plan and separately approved manual rollback restored `14 -> 13`
+- live scenario C: repeated manual rollback stayed idempotent with `controlled_rollback_idempotent` evidence and final scene count remained `13`
 
 Current Layer 18 boundary:
 
