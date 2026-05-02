@@ -511,6 +511,18 @@ Current Layer 20 Step 4 status:
 - added `npm run insights` and `npx tsx scripts/showInsights.ts` for read-only CLI visibility over `data/execution_outcomes/`
 - insight surfacing remains display-only and does not trigger execution, approvals, retries, or plan changes
 
+## Layer 21 / Insight Annotation
+
+Layer 21 starts the non-binding annotation layer that allows generated insights to be attached to plans as informational guidance without influencing execution, approvals, gates, or plan validity.
+
+Current Layer 21 Step 1 status:
+
+- Layer 21 Step 1 - Insight Annotation: implemented
+- added `attachInsightsToPlan(plan, insights)` in `web/lib/aie/nodeBoundary.ts`
+- attaches informational annotations such as risk warnings, reliability notes, and pattern notes to planning objects
+- annotated plans remain visible during planning while preserving the existing execution path and validation gates unchanged
+- translation and draft export behavior remain unchanged because annotations are non-binding and do not flow into execution decisions
+
 ## Safe Runtime Action Bridge
 
 AI-E can now translate supported live operator actions into safe runtime intents.

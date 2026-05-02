@@ -2,6 +2,8 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import type { ExecutionInsight } from "./executionInsight";
+
 const EXECUTION_PATH = "Strategy -> Planning -> Execution -> Review -> Delivery -> Studio Control" as const;
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const DEFAULT_CORE_NODE_DRAFT_DIRECTORY = path.join(REPO_ROOT, "drafts", "tasks");
@@ -80,6 +82,16 @@ export type NodeIntentReceipt = {
 
 export type NodeAdvisoryPlanningStage = "strategy" | "planning";
 
+export type NodePlanAnnotationType = "risk_warning" | "reliability_note" | "pattern_note";
+
+export type NodePlanAnnotation = {
+  type: NodePlanAnnotationType;
+  message: string;
+  confidence: number;
+  insight_id: string;
+  informational_only: true;
+};
+
 export type NodeAdvisoryPlan = {
   plan_id: string;
   planning_stage: NodeAdvisoryPlanningStage;
@@ -89,6 +101,7 @@ export type NodeAdvisoryPlan = {
   dependency_reasoning: string[];
   validation_gates: string[];
   execution_authority: "system_only";
+  annotations?: NodePlanAnnotation[];
 };
 
 export type NodePlanningMergeResult = {
@@ -1247,5 +1260,92 @@ export async function exportNodeTaskDraftToPipeline(
     submitted_to_node: false,
     node_intake_triggered: false,
     execution_triggered: false,
+  };
+}
+
+function clampAnnotationConfidence(value: number): number {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+
+  return Math.max(0, Math.min(1, Math.round(value * 1000) / 1000));
+}
+
+function normalizeCommandTokens(command: string | undefined): string[] {
+  if (!hasNonEmptyString(command)) {
+    return [];
+  }
+
+  return command
+    .toLowerCase()
+    .split(/[^a-z0-9._:-]+/)
+    .map((token) => token.trim())
+    .filter((token) => token.length > 2 && token !== "python" && token !== "python.exe" && token !== "pytest");
+}
+
+function insightMatchesPlan(plan: NodeAdvisoryPlan | CoreNodeTaskTranslationPlan | CoreNodePipelineDraftPlan, insight: ExecutionInsight): boolean {
+  const description = insight.description.toLowerCase();
+
+  if (("target_node_id" in plan && hasNonEmptyString(plan.target_node_id) && description.includes(plan.target_node_id.toLowerCase()))
+    || ("node_id" in plan && hasNonEmptyString(plan.node_id) && description.includes(plan.node_id.toLowerCase()))) {
+    return true;
+  }
+
+  if ("risk_level" in plan && typeof plan.risk_level === "string" && plan.risk_level.trim()) {
+    const riskLevel = plan.risk_level.toLowerCase();
+    if (description.includes(`${riskLevel} risk`) || description.includes(`${riskLevel}-risk`)) {
+      return true;
+    }
+  }
+
+  if ("command" in plan) {
+    const commandTokens = normalizeCommandTokens(plan.command);
+    if (commandTokens.some((token) => description.includes(token))) {
+      return true;
+    }
+  }
+
+  return insight.category === "risk";
+}
+
+function buildPlanAnnotation(insight: ExecutionInsight): NodePlanAnnotation {
+  return {
+    type: insight.category === "risk"
+      ? "risk_warning"
+      : insight.category === "pattern"
+        ? "pattern_note"
+        : "reliability_note",
+    message: insight.description,
+    confidence: clampAnnotationConfidence(insight.confidence),
+    insight_id: insight.insight_id,
+    informational_only: true,
+  };
+}
+
+export function attachInsightsToPlan<T extends NodeAdvisoryPlan | CoreNodeTaskTranslationPlan | CoreNodePipelineDraftPlan>(
+  plan: T,
+  insights: readonly ExecutionInsight[],
+): T & { annotations: NodePlanAnnotation[] } {
+  const existingAnnotations = Array.isArray(plan.annotations)
+    ? plan.annotations.map((annotation) => ({ ...annotation, informational_only: true as const }))
+    : [];
+  const attachedAnnotations = insights
+    .filter((insight) => insightMatchesPlan(plan, insight))
+    .map((insight) => buildPlanAnnotation(insight));
+
+  const mergedAnnotations = [...existingAnnotations];
+  for (const annotation of attachedAnnotations) {
+    if (!mergedAnnotations.some((candidate) => candidate.insight_id === annotation.insight_id)) {
+      mergedAnnotations.push(annotation);
+    }
+  }
+
+  return {
+    ...plan,
+    planning_suggestions: [...plan.planning_suggestions],
+    validation_insights: [...plan.validation_insights],
+    dependency_reasoning: [...plan.dependency_reasoning],
+    validation_gates: [...plan.validation_gates],
+    annotations: mergedAnnotations,
   };
 }

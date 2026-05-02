@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 
 import {
+  attachInsightsToPlan,
   exportNodeTaskDraftToPipeline,
   mergeNodePlanningHints,
   receiveNodeIntent,
@@ -17,6 +18,8 @@ import {
   type CoreNodeTaskTranslationPlan,
   type NodeIntentEnvelope,
 } from "./nodeBoundary";
+import { generateExecutionInsights } from "./executionInsight";
+import type { ExecutionOutcomeRecord } from "./executionOutcome";
 
 function createEnvelope(overrides: Partial<NodeIntentEnvelope> = {}): NodeIntentEnvelope {
   return {
@@ -92,6 +95,36 @@ function createExportableNodeTaskPlan(overrides: Partial<CoreNodePipelineDraftPl
     chat_id: "core-draft",
     request_source: "core-draft-export",
     routing_reason: "core draft routed to validator",
+    ...overrides,
+  };
+}
+
+function createExecutionOutcomeRecord(overrides: Partial<ExecutionOutcomeRecord> = {}): ExecutionOutcomeRecord {
+  return {
+    outcome_id: "OUT-0000001001",
+    created_at: "2026-05-02T20:00:00.000Z",
+    source_layer: "node",
+    workflow_id: "workflow-layer21-step1",
+    task_id: "node-task-layer21-step1",
+    plan_id: "system-plan-001",
+    node_id: "core-planner",
+    target_node_id: "node-worker-1",
+    command: "python validate_runtime.py",
+    status: "completed",
+    success: true,
+    risk_level: "low",
+    approval_path: ["operator_confirm_submit", "node_intake_review", "node_worker_execution"],
+    execution_path: "Strategy -> Planning -> Execution -> Review -> Delivery -> Studio Control",
+    evidence_labels: [
+      "NODE RESULT CAPTURED",
+      "EXECUTION OUTCOME RECORDED",
+      "LEARNING SUBSTRATE APPEND ONLY",
+      "NO AUTONOMY TRIGGERED",
+    ],
+    result_summary: "[OK] bounded validation complete",
+    rollback_required: false,
+    rollback_executed: false,
+    recovery_status: "not_required",
     ...overrides,
   };
 }
@@ -295,6 +328,85 @@ test("execution behavior remains unchanged", () => {
   assert.equal(receipt.mutating, false);
   assert.equal(receipt.rollback_triggered, false);
   assert.equal(merged.merged_plan.execution_authority, "system_only");
+});
+
+test("insights attach to plans as non-binding annotations", () => {
+  const insights = generateExecutionInsights([
+    createExecutionOutcomeRecord(),
+    createExecutionOutcomeRecord({
+      outcome_id: "OUT-0000001002",
+      created_at: "2026-05-02T20:05:00.000Z",
+      target_node_id: "node-worker-1",
+      node_id: "core-planner",
+      risk_level: "high",
+      command: "pytest tests/test_node_draft_integration.py",
+      success: false,
+      status: "failed",
+      rollback_required: true,
+      rollback_executed: true,
+      result_summary: "integration regression failure",
+      error_summary: "integration regression failure",
+      recovery_status: "executed",
+    }),
+  ]);
+
+  const annotated = attachInsightsToPlan(createNodeTaskTranslationPlan({ risk_level: "high" }), insights);
+
+  assert.ok(Array.isArray(annotated.annotations));
+  assert.ok((annotated.annotations?.length ?? 0) >= 2);
+  assert.ok(annotated.annotations?.some((annotation) => annotation.type === "risk_warning"));
+  assert.ok(annotated.annotations?.some((annotation) => annotation.type === "reliability_note" || annotation.type === "pattern_note"));
+  assert.ok(annotated.annotations?.every((annotation) => annotation.informational_only === true && annotation.confidence >= 0 && annotation.confidence <= 1));
+});
+
+test("insight annotations do not change execution path or validation gates", () => {
+  const basePlan = createNodeTaskTranslationPlan({ risk_level: "high" });
+  const annotated = attachInsightsToPlan(basePlan, generateExecutionInsights([
+    createExecutionOutcomeRecord({
+      outcome_id: "OUT-0000001003",
+      created_at: "2026-05-02T20:10:00.000Z",
+      risk_level: "high",
+      rollback_required: true,
+      rollback_executed: false,
+      success: false,
+      status: "blocked",
+      result_summary: "operator blocked run",
+      error_summary: "operator blocked run",
+      recovery_status: "planned",
+    }),
+  ]));
+
+  assert.equal(annotated.execution_path, basePlan.execution_path);
+  assert.equal(annotated.execution_authority, "system_only");
+  assert.deepEqual(annotated.validation_gates, basePlan.validation_gates);
+  assert.equal(annotated.command, basePlan.command);
+});
+
+test("annotated plans translate without changing submission or execution behavior", () => {
+  const basePlan = createExportableNodeTaskPlan({ risk_level: "high" });
+  const annotated = attachInsightsToPlan(basePlan, generateExecutionInsights([
+    createExecutionOutcomeRecord({
+      outcome_id: "OUT-0000001004",
+      created_at: "2026-05-02T20:15:00.000Z",
+      risk_level: "high",
+      rollback_required: true,
+      rollback_executed: true,
+      success: false,
+      status: "failed",
+      result_summary: "integration regression failure",
+      error_summary: "integration regression failure",
+      recovery_status: "executed",
+    }),
+  ]));
+
+  const translated = translatePlanToNodeTask(annotated);
+
+  assert.equal(translated.status, "draft_generated");
+  assert.equal(translated.submitted_to_node, false);
+  assert.equal(translated.node_intake_triggered, false);
+  assert.equal(translated.execution_triggered, false);
+  assert.equal(translated.draft?.target_node_id, basePlan.target_node_id);
+  assert.equal(translated.draft?.command, basePlan.command);
 });
 
 test("valid plan translates into valid Node task JSON draft", () => {
