@@ -135,6 +135,41 @@ test("configured Unity endpoint client normalizes valid read-only payloads", asy
   });
 });
 
+test("configured Unity endpoint client preserves tracked object state in read-only payloads", async () => {
+  await withoutUnityCommandProbeEnv(async () => {
+    const bridge = createConfiguredUnityReadOnlyRuntimeBridge({
+      endpointUrl: "http://127.0.0.1:32123/unity-validation",
+      fetchImpl: async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          scene_validation_status: "checked_clean",
+          checked_scene_name: "EnemyAIDemo",
+          missing_script_count: 0,
+          console_error_count: 0,
+          object_count: 13,
+          tracked_objects: [
+            { name: "AIE_ControlledMutationProbe", type: "GameObject", exists: false },
+          ],
+          evidence_timestamp: "2026-05-02T16:00:00.000Z",
+        }),
+      } as Response),
+    });
+
+    const result = await bridge.probeValidation({
+      request_id: "unity-bridge-tracked-1",
+      requested_at: "2026-05-02T15:59:00.000Z",
+      scene_name_hint: "EnemyAIDemo",
+      tracked_object_names: ["AIE_ControlledMutationProbe"],
+    });
+
+    assert.equal(result.bridge_status, "bridge_ready");
+    assert.deepEqual(result.tracked_objects, [
+      { name: "AIE_ControlledMutationProbe", type: "GameObject", exists: false },
+    ]);
+  });
+});
+
 test("configured Unity command probe uses command runner and normalizes live-style payloads", async () => {
   await withUnityTimeoutEnv(undefined, async () => {
     let callCount = 0;

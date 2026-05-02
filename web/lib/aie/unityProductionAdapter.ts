@@ -71,10 +71,12 @@ export type UnityValidationExecutionOptions = {
 
 export type UnitySceneObjectCreationMutationExecutionOptions = {
   mutation_bridge?: UnityMutationRuntimeBridge;
+  runtime_bridge?: UnityReadOnlyRuntimeBridge;
 };
 
 export type UnitySceneObjectCreationRollbackExecutionOptions = {
   mutation_bridge?: UnityMutationRuntimeBridge;
+  runtime_bridge?: UnityReadOnlyRuntimeBridge;
 };
 
 export type UnitySceneObjectCreationPreviewTransform = {
@@ -607,7 +609,7 @@ export type UnityMutationExecutionChainExecutionStatus = "success" | "partial_fa
 
 export type UnityMutationExecutionChainFailureHandlingStatus = "none_required" | "rollback_recommended" | "manual_review_required";
 
-export type UnityMutationExecutionChainFailureClassification = "none" | "simulated_action_failure" | "simulated_runtime_unavailable" | "simulated_gate_mismatch" | "gate_mismatch" | "dependency_failed" | "runtime_unavailable" | "action_failed" | "rollback_failed" | "unsupported_action" | "unknown_failure";
+export type UnityMutationExecutionChainFailureClassification = "none" | "simulated_action_failure" | "simulated_runtime_unavailable" | "simulated_gate_mismatch" | "gate_mismatch" | "state_gate_failed" | "state_verification_failed" | "dependency_failed" | "runtime_unavailable" | "action_failed" | "rollback_failed" | "unsupported_action" | "unknown_failure";
 
 export type UnityMutationExecutionChainFailureSource = "simulation" | "gate" | "dependency" | "runtime" | "rollback" | "adapter" | "unknown";
 
@@ -653,6 +655,27 @@ export type UnityMutationExecutionChainExecutionActionResult = {
     | UnitySceneObjectCreationRollbackExecutionResult
     | null;
   failure_reason: string | null;
+};
+
+export type ChainStateSnapshot = {
+  objectCount: number;
+  objects: Array<{
+    name: string;
+    type?: string;
+    exists: boolean;
+  }>;
+  missingScripts: number;
+  consoleErrors: number;
+  timestamp: string;
+};
+
+export type UnityMutationExecutionChainStateSnapshotRecord = {
+  stage: "chain_start" | "before_action" | "after_action" | "failure" | "after_rollback";
+  action_id: string | null;
+  snapshot: ChainStateSnapshot;
+  expected: string;
+  observed: string;
+  decision: "continue" | "stop" | "manual_review_required";
 };
 
 export type UnityMutationExecutionChainExecutionFinalSceneState = {
@@ -706,6 +729,7 @@ export type UnityMutationExecutionChainExecutionResult = {
   simulated_failure_kind: UnityMutationExecutionChainFailureSimulationKind | null;
   simulation_target_action_id: string | null;
   per_action_results: UnityMutationExecutionChainExecutionActionResult[];
+  state_snapshots: UnityMutationExecutionChainStateSnapshotRecord[];
   final_scene_state: UnityMutationExecutionChainExecutionFinalSceneState;
   blocked_reason: string | null;
   recommended_next_operator_action: string;
@@ -1712,6 +1736,10 @@ function createUnityMutationExecutionChainExecutionPackages(
     ...result.action_dependencies.map((entry) => `Dependency graph: ${entry.action_id} <= ${entry.depends_on.join(", ") || "none"}`),
     ...result.rollback_preview_plan.map((entry) => `Rollback graph: ${entry.source_action_id} => ${entry.rollback_action_type} ${entry.target_object_name}`),
     ...result.per_action_results.map((action) => `Action result: ${action.action_id} => ${action.status}${action.failure_reason ? ` (${action.failure_reason})` : ""}`),
+    ...result.state_snapshots.map((entry) => `State snapshot: ${entry.stage}${entry.action_id ? `:${entry.action_id}` : ""} => ${describeChainSnapshot(entry.snapshot)}`),
+    ...result.state_snapshots.map((entry) => `State expectation: ${entry.stage}${entry.action_id ? `:${entry.action_id}` : ""} => ${entry.expected}`),
+    ...result.state_snapshots.map((entry) => `State observation: ${entry.stage}${entry.action_id ? `:${entry.action_id}` : ""} => ${entry.observed}`),
+    ...result.state_snapshots.map((entry) => `State decision: ${entry.stage}${entry.action_id ? `:${entry.action_id}` : ""} => ${entry.decision}`),
     `Recommended next operator action: ${result.recommended_next_operator_action}`,
     ...(result.blocked_reason ? [`Blocked reason: ${result.blocked_reason}`] : []),
   ];
@@ -1725,14 +1753,20 @@ function createUnityMutationExecutionChainExecutionPackages(
     files_changed: [],
     tests_run: ["unity mutation execution chain controlled execution"],
     proof_results: proofResults,
-    risks: result.actions_failed_count > 0
+    risks: result.execution_status !== "success"
       ? [
           "CHAIN EXECUTION STOPPED",
+          ...(result.state_snapshots.length > 0 ? ["STATE SNAPSHOT CAPTURED"] : []),
+          ...(result.failure_classification === "state_gate_failed" ? ["PRE-ACTION STATE GATE FAILED", "CHAIN STOPPED BEFORE MUTATION"] : []),
+          ...(result.failure_classification === "state_verification_failed" ? ["STATE DRIFT DETECTED"] : []),
           ...(result.failure_simulated ? ["CONTROLLED FAILURE SIMULATION", "SIMULATED FAILURE"] : []),
           result.blocked_reason ?? "A controlled Unity chain action failed.",
           ...(result.rollback_plan_required ? ["ROLLBACK PLAN REQUIRED", "ROLLBACK PLAN GENERATED", "ROLLBACK NOT AUTO-EXECUTED"] : []),
         ]
-      : ["CONTROLLED UNITY CHAIN EXECUTION"],
+      : [
+          "CONTROLLED UNITY CHAIN EXECUTION",
+          ...(result.state_snapshots.length > 0 ? ["STATE SNAPSHOT CAPTURED", "PRE-ACTION STATE GATE PASSED", "POST-ACTION STATE VERIFIED"] : []),
+        ],
     recommended_decision: result.execution_status === "success" ? "approve" : "review_required",
     rollback_notes: result.rollback_order.length > 0
       ? `ROLLBACK ORDER PREVIEW: ${result.rollback_order.join(" -> ")}`
@@ -1768,6 +1802,11 @@ function createUnityMutationExecutionChainExecutionPackages(
     proof_results: [
       result.execution_status,
       result.final_scene_state.summary,
+      ...(result.state_snapshots.length > 0 ? ["STATE SNAPSHOT CAPTURED"] : []),
+      ...(result.state_snapshots.some((entry) => entry.stage === "before_action" && entry.decision === "continue") ? ["PRE-ACTION STATE GATE PASSED"] : []),
+      ...(result.failure_classification === "state_gate_failed" ? ["PRE-ACTION STATE GATE FAILED", "CHAIN STOPPED BEFORE MUTATION"] : []),
+      ...(result.state_snapshots.some((entry) => (entry.stage === "after_action" || entry.stage === "after_rollback") && entry.decision === "continue") ? ["POST-ACTION STATE VERIFIED"] : []),
+      ...(result.failure_classification === "state_verification_failed" ? ["STATE DRIFT DETECTED"] : []),
       ...(result.failure_simulated ? ["CONTROLLED FAILURE SIMULATION", "SIMULATED FAILURE"] : []),
       ...(result.rollback_plan_required ? ["ROLLBACK PLAN REQUIRED", "ROLLBACK PLAN GENERATED", "ROLLBACK NOT AUTO-EXECUTED"] : []),
     ],
@@ -1899,6 +1938,242 @@ function extractActionObjectCount(action: UnityMutationExecutionChainReadinessAc
   return action.live_validation_result?.object_count ?? null;
 }
 
+function getUniqueTrackedObjectNames(actions: Array<{ target_object_name: string; }>): string[] {
+  return [...new Set(actions.map((action) => action.target_object_name.trim()).filter(Boolean))];
+}
+
+function buildChainStateSnapshot(
+  observation: Awaited<ReturnType<UnityReadOnlyRuntimeBridge["probeValidation"]>> & { bridge_status: "bridge_ready"; },
+  trackedObjectNames: string[],
+): ChainStateSnapshot | null {
+  if (
+    observation.object_count === null
+    || observation.missing_script_count === null
+    || observation.console_error_count === null
+  ) {
+    return null;
+  }
+
+  return {
+    objectCount: observation.object_count,
+    objects: trackedObjectNames.map((name) => {
+      const matched = observation.tracked_objects.find((item) => item.name === name);
+      return {
+        name,
+        type: matched?.type ?? undefined,
+        exists: matched?.exists ?? false,
+      };
+    }),
+    missingScripts: observation.missing_script_count,
+    consoleErrors: observation.console_error_count,
+    timestamp: observation.evidence_timestamp,
+  };
+}
+
+async function captureUnityChainStateSnapshot(input: {
+  runtimeBridge: UnityReadOnlyRuntimeBridge;
+  requestId: string;
+  requestedAt: string;
+  sceneNameHint: string | null;
+  trackedObjectNames: string[];
+}): Promise<{ snapshot: ChainStateSnapshot | null; blockedReason: string | null; }> {
+  const observation = await input.runtimeBridge.probeValidation({
+    request_id: input.requestId,
+    requested_at: input.requestedAt,
+    scene_name_hint: input.sceneNameHint,
+    tracked_object_names: input.trackedObjectNames,
+  });
+
+  if (observation.bridge_status !== "bridge_ready") {
+    return {
+      snapshot: null,
+      blockedReason: observation.reason,
+    };
+  }
+
+  const snapshot = buildChainStateSnapshot(observation, input.trackedObjectNames);
+  if (!snapshot) {
+    return {
+      snapshot: null,
+      blockedReason: "Live Unity state snapshot did not include complete object count, missing script, and console error data.",
+    };
+  }
+
+  return {
+    snapshot,
+    blockedReason: null,
+  };
+}
+
+function describeChainSnapshot(snapshot: ChainStateSnapshot): string {
+  const objectSummary = snapshot.objects.length > 0
+    ? snapshot.objects.map((item) => `${item.name}=${String(item.exists)}`).join(", ")
+    : "none";
+
+  return `object_count=${String(snapshot.objectCount)}, missing_scripts=${String(snapshot.missingScripts)}, console_errors=${String(snapshot.consoleErrors)}, tracked_objects=${objectSummary}`;
+}
+
+function getTrackedObjectExists(snapshot: ChainStateSnapshot, objectName: string): boolean {
+  return snapshot.objects.find((item) => item.name === objectName)?.exists ?? false;
+}
+
+function evaluatePreActionStateGate(input: {
+  action: UnityMutationExecutionChainReadinessActionInput;
+  snapshot: ChainStateSnapshot;
+  dependencyOutputsExist: boolean;
+}): { passed: boolean; expected: string; observed: string; reason: string | null; } {
+  const targetObjectName = input.action.target_object_name.trim();
+  const targetObjectExists = getTrackedObjectExists(input.snapshot, targetObjectName);
+  const expected = input.action.action_type === "unity_scene_object_creation"
+    ? `Scene ${input.action.target_scene.trim()} must stay clean, dependencies must exist, and ${targetObjectName} must be absent before mutation.`
+    : `Scene ${input.action.target_scene.trim()} must stay clean, dependencies must exist, and ${targetObjectName} must exist before rollback.`;
+  const observed = describeChainSnapshot(input.snapshot);
+
+  if (!input.dependencyOutputsExist) {
+    return {
+      passed: false,
+      expected,
+      observed,
+      reason: `State gate blocked ${input.action.action_id} because required dependency outputs were not recorded before execution.`,
+    };
+  }
+
+  if (input.snapshot.missingScripts > 0) {
+    return {
+      passed: false,
+      expected,
+      observed,
+      reason: `State gate blocked ${input.action.action_id} because missing scripts were detected before execution.`,
+    };
+  }
+
+  if (input.snapshot.consoleErrors > 0) {
+    return {
+      passed: false,
+      expected,
+      observed,
+      reason: `State gate blocked ${input.action.action_id} because console errors were detected before execution.`,
+    };
+  }
+
+  if (input.action.action_type === "unity_scene_object_creation" && targetObjectExists) {
+    return {
+      passed: false,
+      expected,
+      observed,
+      reason: `State gate blocked ${input.action.action_id} because ${targetObjectName} already exists before mutation.`,
+    };
+  }
+
+  if (input.action.action_type === "unity_scene_object_rollback" && !targetObjectExists) {
+    return {
+      passed: false,
+      expected,
+      observed,
+      reason: `State gate blocked ${input.action.action_id} because ${targetObjectName} is already absent before rollback.`,
+    };
+  }
+
+  return {
+    passed: true,
+    expected,
+    observed,
+    reason: null,
+  };
+}
+
+function evaluatePostActionStateVerification(input: {
+  action: UnityMutationExecutionChainReadinessActionInput;
+  beforeSnapshot: ChainStateSnapshot;
+  afterSnapshot: ChainStateSnapshot;
+}): { passed: boolean; expected: string; observed: string; reason: string | null; } {
+  const targetObjectName = input.action.target_object_name.trim();
+  const targetObjectExistsAfter = getTrackedObjectExists(input.afterSnapshot, targetObjectName);
+  const expectedDelta = input.action.action_type === "unity_scene_object_creation" ? 1 : -1;
+  const actualDelta = input.afterSnapshot.objectCount - input.beforeSnapshot.objectCount;
+  const expected = input.action.action_type === "unity_scene_object_creation"
+    ? `Object count should increase by 1 and ${targetObjectName} should exist after mutation.`
+    : `Object count should decrease by 1 and ${targetObjectName} should be absent after rollback.`;
+  const observed = describeChainSnapshot(input.afterSnapshot);
+
+  if (input.afterSnapshot.missingScripts > 0) {
+    return {
+      passed: false,
+      expected,
+      observed,
+      reason: `State verification detected drift after ${input.action.action_id}: missing scripts increased above zero.`,
+    };
+  }
+
+  if (input.afterSnapshot.consoleErrors > 0) {
+    return {
+      passed: false,
+      expected,
+      observed,
+      reason: `State verification detected drift after ${input.action.action_id}: console errors increased above zero.`,
+    };
+  }
+
+  if (actualDelta !== expectedDelta) {
+    return {
+      passed: false,
+      expected,
+      observed,
+      reason: `State verification detected drift after ${input.action.action_id}: expected object count delta ${String(expectedDelta)} but observed ${String(actualDelta)}.`,
+    };
+  }
+
+  if (input.action.action_type === "unity_scene_object_creation" && !targetObjectExistsAfter) {
+    return {
+      passed: false,
+      expected,
+      observed,
+      reason: `State verification detected drift after ${input.action.action_id}: ${targetObjectName} was not present after mutation.`,
+    };
+  }
+
+  if (input.action.action_type === "unity_scene_object_rollback" && targetObjectExistsAfter) {
+    return {
+      passed: false,
+      expected,
+      observed,
+      reason: `State verification detected drift after ${input.action.action_id}: ${targetObjectName} still exists after rollback.`,
+    };
+  }
+
+  return {
+    passed: true,
+    expected,
+    observed,
+    reason: null,
+  };
+}
+
+function buildChainFinalSceneStateFromSnapshot(
+  targetScene: string | null,
+  baselineSnapshot: ChainStateSnapshot | null,
+  finalSnapshot: ChainStateSnapshot | null,
+  fallbackSummary: string,
+): UnityMutationExecutionChainExecutionFinalSceneState {
+  if (!baselineSnapshot || !finalSnapshot) {
+    return {
+      target_scene: targetScene,
+      object_count_before: baselineSnapshot?.objectCount ?? null,
+      object_count_after: finalSnapshot?.objectCount ?? null,
+      object_count_delta: baselineSnapshot && finalSnapshot ? finalSnapshot.objectCount - baselineSnapshot.objectCount : null,
+      summary: fallbackSummary,
+    };
+  }
+
+  return {
+    target_scene: targetScene,
+    object_count_before: baselineSnapshot.objectCount,
+    object_count_after: finalSnapshot.objectCount,
+    object_count_delta: finalSnapshot.objectCount - baselineSnapshot.objectCount,
+    summary: `Scene ${targetScene ?? "unknown"} object count moved from ${String(baselineSnapshot.objectCount)} to ${String(finalSnapshot.objectCount)}.`,
+  };
+}
+
 function getChainActionCountDelta(
   actionResult: UnityMutationExecutionChainExecutionActionResult,
 ): number {
@@ -1919,6 +2194,8 @@ function buildChainExecutionBlockedResult(
   blockedReason: string,
   failureClassification: UnityMutationExecutionChainFailureClassification = "gate_mismatch",
   failedActionId: string | null = null,
+  stateSnapshots: UnityMutationExecutionChainStateSnapshotRecord[] = [],
+  finalSceneState?: UnityMutationExecutionChainExecutionFinalSceneState,
 ): UnityMutationExecutionChainExecutionResult {
   const failureEvidence = classifyUnityChainFailureEvidence({
     context: "chain",
@@ -1929,7 +2206,7 @@ function buildChainExecutionBlockedResult(
       : null,
   });
 
-  return {
+  const baseResult: UnityMutationExecutionChainExecutionResult = {
     chain_id: input.chain_id.trim(),
     domain: "Unity",
     request_type: "scene_object_creation_request",
@@ -1965,7 +2242,8 @@ function buildChainExecutionBlockedResult(
     simulated_failure_kind: null,
     simulation_target_action_id: null,
     per_action_results: [],
-    final_scene_state: {
+    state_snapshots: stateSnapshots,
+    final_scene_state: finalSceneState ?? {
       target_scene: input.actions[0]?.target_scene?.trim() ?? null,
       object_count_before: input.actions[0] ? extractActionObjectCount(input.actions[0]) : null,
       object_count_after: input.actions.length > 0 ? extractActionObjectCount(input.actions[input.actions.length - 1]) : null,
@@ -1980,6 +2258,14 @@ function buildChainExecutionBlockedResult(
     review_package: null,
     delivery_package: null,
     mutating: false,
+  };
+
+  const chainPackages = createUnityMutationExecutionChainExecutionPackages(input, baseResult);
+
+  return {
+    ...baseResult,
+    review_package: chainPackages.reviewPackage,
+    delivery_package: chainPackages.deliveryPackage,
   };
 }
 
@@ -2193,7 +2479,11 @@ function isDependencyFailureReason(reason: string): boolean {
 }
 
 function isGateFailureReason(reason: string): boolean {
-  return /approval|switch|target match|scope|expired|not ready|authorization|requires a ready chain|gate mismatch|limited to/i.test(reason);
+  return /approval|switch|target match|scope|expired|not ready|authorization|requires a ready chain|gate mismatch|limited to|state gate/i.test(reason);
+}
+
+function isStateVerificationFailureReason(reason: string): boolean {
+  return /state verification|state drift|object count delta/i.test(reason);
 }
 
 function isUnsupportedFailureReason(reason: string): boolean {
@@ -2272,6 +2562,17 @@ export function classifyUnityChainFailureEvidence(input: {
   }
 
   if (isGateFailureReason(failureReason)) {
+    if (/state gate/i.test(failureReason)) {
+      return createFailureEvidence(
+        "state_gate_failed",
+        "gate",
+        false,
+        true,
+        false,
+        `State gate failure evidence was recorded. ${failureReason}`,
+      );
+    }
+
     return createFailureEvidence(
       "gate_mismatch",
       "gate",
@@ -2279,6 +2580,17 @@ export function classifyUnityChainFailureEvidence(input: {
       true,
       false,
       `Gate mismatch evidence was recorded. ${failureReason}`,
+    );
+  }
+
+  if (isStateVerificationFailureReason(failureReason)) {
+    return createFailureEvidence(
+      "state_verification_failed",
+      "runtime",
+      false,
+      true,
+      true,
+      `State verification failure evidence was recorded. ${failureReason}`,
     );
   }
 
@@ -2332,7 +2644,7 @@ export function buildRollbackPlanForExecutedChainActions(input: {
   executed_actions: UnityMutationExecutionChainExecutionActionResult[];
   ordered_actions: UnityMutationExecutionChainReadinessActionInput[];
 }): UnityMutationExecutionChainRollbackPlan | null {
-  const executedSuccesses = input.executed_actions.filter((action) => action.status === "executed");
+  const executedSuccesses = input.executed_actions.filter((action) => action.executed);
   if (executedSuccesses.length === 0) {
     return null;
   }
@@ -4520,7 +4832,37 @@ export async function executeUnityMutationExecutionChain(
 
   const actionInputsById = new Map(input.actions.map((action) => [action.action_id, action]));
   const actionResults: UnityMutationExecutionChainExecutionActionResult[] = [];
+  const stateSnapshots: UnityMutationExecutionChainStateSnapshotRecord[] = [];
   let triggeredSimulation: UnityMutationExecutionChainFailureSimulationControl | null = null;
+  const runtimeBridge = options?.runtime_bridge ?? createConfiguredUnityReadOnlyRuntimeBridge();
+  const trackedObjectNames = getUniqueTrackedObjectNames(input.actions);
+  const baselineSnapshotCapture = await captureUnityChainStateSnapshot({
+    runtimeBridge,
+    requestId: `${input.adapter_request_id}:chain_start`,
+    requestedAt: input.requested_at,
+    sceneNameHint: input.actions[0]?.target_scene?.trim() ?? null,
+    trackedObjectNames,
+  });
+
+  if (!baselineSnapshotCapture.snapshot) {
+    return buildChainExecutionBlockedResult(
+      input,
+      readinessResult,
+      `State gate blocked chain execution before mutation because the initial state snapshot could not be captured. ${baselineSnapshotCapture.blockedReason ?? ""}`.trim(),
+      "state_gate_failed",
+    );
+  }
+
+  const baselineSnapshot = baselineSnapshotCapture.snapshot;
+  let lastObservedSnapshot: ChainStateSnapshot | null = baselineSnapshot;
+  stateSnapshots.push({
+    stage: "chain_start",
+    action_id: null,
+    snapshot: baselineSnapshot,
+    expected: `Capture baseline state for ${input.actions[0]?.target_scene?.trim() ?? "unknown"} before chain execution begins.`,
+    observed: describeChainSnapshot(baselineSnapshot),
+    decision: "continue",
+  });
 
   for (const plannedAction of orderedReadinessActions) {
     const actionInput = actionInputsById.get(plannedAction.action_id);
@@ -4584,6 +4926,63 @@ export async function executeUnityMutationExecutionChain(
       break;
     }
 
+    const beforeSnapshotCapture = await captureUnityChainStateSnapshot({
+      runtimeBridge,
+      requestId: `${input.adapter_request_id}:${plannedAction.action_id}:before`,
+      requestedAt: input.requested_at,
+      sceneNameHint: plannedAction.target_scene.trim(),
+      trackedObjectNames,
+    });
+    if (!beforeSnapshotCapture.snapshot) {
+      return buildChainExecutionBlockedResult(
+        input,
+        readinessResult,
+        `State gate blocked ${plannedAction.action_id} before mutation because the pre-action state snapshot could not be captured. ${beforeSnapshotCapture.blockedReason ?? ""}`.trim(),
+        "state_gate_failed",
+        plannedAction.action_id,
+        stateSnapshots,
+        buildChainFinalSceneStateFromSnapshot(
+          plannedAction.target_scene.trim(),
+          baselineSnapshot,
+          lastObservedSnapshot,
+          "Chain execution was blocked before any Unity mutation ran.",
+        ),
+      );
+    }
+
+    const beforeSnapshot = beforeSnapshotCapture.snapshot;
+    const preActionGate = evaluatePreActionStateGate({
+      action: actionInput,
+      snapshot: beforeSnapshot,
+      dependencyOutputsExist: unsatisfiedDependencies.length === 0,
+    });
+    stateSnapshots.push({
+      stage: "before_action",
+      action_id: plannedAction.action_id,
+      snapshot: beforeSnapshot,
+      expected: preActionGate.expected,
+      observed: preActionGate.observed,
+      decision: preActionGate.passed ? "continue" : "stop",
+    });
+    lastObservedSnapshot = beforeSnapshot;
+
+    if (!preActionGate.passed) {
+      return buildChainExecutionBlockedResult(
+        input,
+        readinessResult,
+        preActionGate.reason ?? `State gate blocked ${plannedAction.action_id}.`,
+        "state_gate_failed",
+        plannedAction.action_id,
+        stateSnapshots,
+        buildChainFinalSceneStateFromSnapshot(
+          plannedAction.target_scene.trim(),
+          baselineSnapshot,
+          beforeSnapshot,
+          "Chain execution was blocked before any Unity mutation ran.",
+        ),
+      );
+    }
+
     if (actionInput.action_type === "unity_scene_object_creation") {
       const result = await executeUnitySceneObjectCreationMutation({
         ...input,
@@ -4619,6 +5018,73 @@ export async function executeUnityMutationExecutionChain(
       });
 
       if (!successful) {
+        const failureSnapshotCapture = await captureUnityChainStateSnapshot({
+          runtimeBridge,
+          requestId: `${input.adapter_request_id}:${plannedAction.action_id}:failure`,
+          requestedAt: input.requested_at,
+          sceneNameHint: plannedAction.target_scene.trim(),
+          trackedObjectNames,
+        });
+        if (failureSnapshotCapture.snapshot) {
+          stateSnapshots.push({
+            stage: "failure",
+            action_id: plannedAction.action_id,
+            snapshot: failureSnapshotCapture.snapshot,
+            expected: `Capture failure state for ${plannedAction.action_id} after a blocked or failed action result.`,
+            observed: describeChainSnapshot(failureSnapshotCapture.snapshot),
+            decision: "manual_review_required",
+          });
+          lastObservedSnapshot = failureSnapshotCapture.snapshot;
+        }
+        break;
+      }
+
+      const afterSnapshotCapture = await captureUnityChainStateSnapshot({
+        runtimeBridge,
+        requestId: `${input.adapter_request_id}:${plannedAction.action_id}:after`,
+        requestedAt: input.requested_at,
+        sceneNameHint: plannedAction.target_scene.trim(),
+        trackedObjectNames,
+      });
+      if (!afterSnapshotCapture.snapshot) {
+        actionResults[actionResults.length - 1] = {
+          ...actionResults[actionResults.length - 1]!,
+          status: "failed",
+          failure_reason: `State verification detected drift after ${plannedAction.action_id}: post-action state snapshot could not be captured.`,
+        };
+        break;
+      }
+
+      const afterSnapshot = afterSnapshotCapture.snapshot;
+      const postActionVerification = evaluatePostActionStateVerification({
+        action: actionInput,
+        beforeSnapshot,
+        afterSnapshot,
+      });
+      stateSnapshots.push({
+        stage: "after_action",
+        action_id: plannedAction.action_id,
+        snapshot: afterSnapshot,
+        expected: postActionVerification.expected,
+        observed: postActionVerification.observed,
+        decision: postActionVerification.passed ? "continue" : "manual_review_required",
+      });
+      lastObservedSnapshot = afterSnapshot;
+
+      if (!postActionVerification.passed) {
+        actionResults[actionResults.length - 1] = {
+          ...actionResults[actionResults.length - 1]!,
+          status: "failed",
+          failure_reason: postActionVerification.reason,
+        };
+        stateSnapshots.push({
+          stage: "failure",
+          action_id: plannedAction.action_id,
+          snapshot: afterSnapshot,
+          expected: postActionVerification.expected,
+          observed: postActionVerification.observed,
+          decision: "manual_review_required",
+        });
         break;
       }
       continue;
@@ -4653,6 +5119,73 @@ export async function executeUnityMutationExecutionChain(
       });
 
       if (!successful) {
+        const failureSnapshotCapture = await captureUnityChainStateSnapshot({
+          runtimeBridge,
+          requestId: `${input.adapter_request_id}:${plannedAction.action_id}:failure`,
+          requestedAt: input.requested_at,
+          sceneNameHint: plannedAction.target_scene.trim(),
+          trackedObjectNames,
+        });
+        if (failureSnapshotCapture.snapshot) {
+          stateSnapshots.push({
+            stage: "failure",
+            action_id: plannedAction.action_id,
+            snapshot: failureSnapshotCapture.snapshot,
+            expected: `Capture failure state for ${plannedAction.action_id} after a blocked or failed action result.`,
+            observed: describeChainSnapshot(failureSnapshotCapture.snapshot),
+            decision: "manual_review_required",
+          });
+          lastObservedSnapshot = failureSnapshotCapture.snapshot;
+        }
+        break;
+      }
+
+      const afterSnapshotCapture = await captureUnityChainStateSnapshot({
+        runtimeBridge,
+        requestId: `${input.adapter_request_id}:${plannedAction.action_id}:after`,
+        requestedAt: input.requested_at,
+        sceneNameHint: plannedAction.target_scene.trim(),
+        trackedObjectNames,
+      });
+      if (!afterSnapshotCapture.snapshot) {
+        actionResults[actionResults.length - 1] = {
+          ...actionResults[actionResults.length - 1]!,
+          status: "failed",
+          failure_reason: `State verification detected drift after ${plannedAction.action_id}: post-action state snapshot could not be captured.`,
+        };
+        break;
+      }
+
+      const afterSnapshot = afterSnapshotCapture.snapshot;
+      const postActionVerification = evaluatePostActionStateVerification({
+        action: actionInput,
+        beforeSnapshot,
+        afterSnapshot,
+      });
+      stateSnapshots.push({
+        stage: "after_rollback",
+        action_id: plannedAction.action_id,
+        snapshot: afterSnapshot,
+        expected: postActionVerification.expected,
+        observed: postActionVerification.observed,
+        decision: postActionVerification.passed ? "continue" : "manual_review_required",
+      });
+      lastObservedSnapshot = afterSnapshot;
+
+      if (!postActionVerification.passed) {
+        actionResults[actionResults.length - 1] = {
+          ...actionResults[actionResults.length - 1]!,
+          status: "failed",
+          failure_reason: postActionVerification.reason,
+        };
+        stateSnapshots.push({
+          stage: "failure",
+          action_id: plannedAction.action_id,
+          snapshot: afterSnapshot,
+          expected: postActionVerification.expected,
+          observed: postActionVerification.observed,
+          decision: "manual_review_required",
+        });
         break;
       }
       continue;
@@ -4667,7 +5200,7 @@ export async function executeUnityMutationExecutionChain(
     );
   }
 
-  const actionsExecutedCount = actionResults.filter((action) => action.status === "executed").length;
+  const actionsExecutedCount = actionResults.filter((action) => action.executed).length;
   const actionsFailedCount = actionResults.filter((action) => action.status === "failed").length;
   const failedAction = actionResults.find((action) => action.status === "failed") ?? null;
   const successfulActionIds = actionResults.filter((action) => action.status === "executed").map((action) => action.action_id);
@@ -4677,10 +5210,6 @@ export async function executeUnityMutationExecutionChain(
         executed_actions: actionResults,
         ordered_actions: input.actions,
       })
-    : null;
-  const objectCountBefore = input.actions.length > 0 ? extractActionObjectCount(input.actions[0]) : null;
-  const objectCountAfter = objectCountBefore !== null
-    ? objectCountBefore + actionResults.reduce((total, action) => total + getChainActionCountDelta(action), 0)
     : null;
   const executionStatus: UnityMutationExecutionChainExecutionStatus = actionsFailedCount > 0
     ? actionsExecutedCount > 0
@@ -4693,6 +5222,12 @@ export async function executeUnityMutationExecutionChain(
     failedActionResult: failedAction,
     simulatedFailureKind: triggeredSimulation?.failure_kind ?? null,
   });
+  const finalSceneState = buildChainFinalSceneStateFromSnapshot(
+    input.actions[0]?.target_scene?.trim() ?? null,
+    baselineSnapshot,
+    lastObservedSnapshot,
+    "Final scene object count summary is unavailable.",
+  );
   const baseResult: UnityMutationExecutionChainExecutionResult = {
     chain_id: input.chain_id.trim(),
     domain: "Unity",
@@ -4737,15 +5272,8 @@ export async function executeUnityMutationExecutionChain(
     simulated_failure_kind: triggeredSimulation?.failure_kind ?? null,
     simulation_target_action_id: triggeredSimulation?.target_action_id ?? null,
     per_action_results: actionResults,
-    final_scene_state: {
-      target_scene: input.actions[0]?.target_scene?.trim() ?? null,
-      object_count_before: objectCountBefore,
-      object_count_after: objectCountAfter,
-      object_count_delta: objectCountBefore !== null && objectCountAfter !== null ? objectCountAfter - objectCountBefore : null,
-      summary: objectCountBefore !== null && objectCountAfter !== null
-        ? `Scene ${input.actions[0]?.target_scene?.trim() ?? "unknown"} object count moved from ${String(objectCountBefore)} to ${String(objectCountAfter)}.`
-        : "Final scene object count summary is unavailable.",
-    },
+    state_snapshots: stateSnapshots,
+    final_scene_state: finalSceneState,
     blocked_reason: failedAction?.failure_reason ?? null,
     recommended_next_operator_action: executionStatus === "success"
       ? "Review the bounded chain execution evidence and rerun read-only validation before any follow-up mutation work."

@@ -401,6 +401,37 @@ Current Layer 17 boundary:
 - only the verified `AIE_ControlledMutationProbe` removal in `EnemyAIDemo` is supported
 - broader rollback types, auto-recovery, self-healing behavior, chat-triggered rollback, and parallel recovery remain out of scope
 
+## Layer 18 / State-Aware Chain Execution
+
+Layer 18 extends the bounded Unity chain lane with truthful pre-action state gates and post-action verification, while keeping the Layer 17 manual rollback boundary intact.
+
+Current Layer 18 status:
+
+- Step 1 tracked-object read-only state bridge: implemented
+- Step 2 pre-action state gating: implemented
+- Step 3 post-action state verification: implemented
+- Step 4 chain state snapshot capture: implemented
+- supported scope: the existing bounded `create -> rollback` chain for `AIE_ControlledMutationProbe` in `EnemyAIDemo`
+- read-only truth source: `UnityValidationProbe.cs` plus `unityReadOnlyRuntimeBridge.ts`
+- new failure classifications surfaced in chain execution: `state_gate_failed` and `state_verification_failed`
+- blocked execution evidence now calls out `PRE-ACTION STATE GATE FAILED` and `CHAIN STOPPED BEFORE MUTATION` when a truthful state gate blocks before mutation
+- focused chain tests: `39/39` passing
+- bridge plus evidence tests: `25/25` passing
+- broader regression closeout: `npm run test:trace:safe` passed after Layer 18 changes
+- live Unity validation closeout: passed against the real `EnemyAIDemo` scene with clean baseline `13`
+- live scenario A: bounded create then rollback succeeded with `5` state snapshots and final scene `13 -> 13`
+- live scenario B: duplicate target was blocked before mutation with `state_gate_failed`, `0` actions executed, and cleanup restored final scene `13`
+- live scenario C: simulated second-action failure produced a reviewed rollback plan, separately approved manual rollback succeeded, and final scene returned `14 -> 13`
+
+Current Layer 18 boundary:
+
+- state gates use read-only Unity truth and do not infer object existence from synthetic count deltas alone
+- verification remains bounded to the existing reviewed Layer 15 and Layer 17 Unity bridge lanes
+- chain execution still stops on first failure, preserves evidence, and never auto-executes rollback
+- rollback approval remains separate from mutation approval and cannot reuse the original chain execution approval
+- only the verified bounded `AIE_ControlledMutationProbe` chain in `EnemyAIDemo` is supported
+- broader branching chains, parallel chains, new mutation types, auto-recovery, and chat-triggered execution remain out of scope
+
 ## Safe Runtime Action Bridge
 
 AI-E can now translate supported live operator actions into safe runtime intents.

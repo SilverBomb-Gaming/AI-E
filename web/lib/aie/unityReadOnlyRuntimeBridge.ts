@@ -2,6 +2,7 @@ export type UnityReadOnlyBridgeProbeInput = {
   request_id: string;
   requested_at: string;
   scene_name_hint: string | null;
+  tracked_object_names?: string[];
 };
 
 export type UnityReadOnlyBridgeProbeSource = "http_endpoint" | "command_probe" | "none";
@@ -14,6 +15,11 @@ export type UnityReadOnlyBridgeObservation = {
   console_error_count: number | null;
   object_count: number | null;
   checked_scene_name: string | null;
+  tracked_objects: Array<{
+    name: string;
+    type?: string | null;
+    exists: boolean;
+  }>;
   evidence_timestamp: string;
   raw_evidence_summary: string | null;
   summary: string;
@@ -65,6 +71,7 @@ type EndpointPayload = {
   missing_script_count?: unknown;
   console_error_count?: unknown;
   object_count?: unknown;
+  tracked_objects?: unknown;
   evidence_timestamp?: unknown;
   raw_evidence_summary?: unknown;
   recommended_next_operator_action?: unknown;
@@ -91,6 +98,57 @@ function normalizeSceneValidationStatus(value: unknown): UnityReadOnlyBridgeObse
   return value === "checked_clean" || value === "checked_with_findings" || value === "unknown"
     ? value
     : null;
+}
+
+function normalizeTrackedObjects(
+  value: unknown,
+  trackedObjectNames: string[] | undefined,
+): UnityReadOnlyBridgeObservation["tracked_objects"] {
+  const fallbackNames = [...new Set((trackedObjectNames ?? []).map((item) => item.trim()).filter(Boolean))];
+
+  if (!Array.isArray(value)) {
+    return fallbackNames.map((name) => ({
+      name,
+      type: null,
+      exists: false,
+    }));
+  }
+
+  const normalized = value.flatMap((item) => {
+    if (!item || typeof item !== "object") {
+      return [];
+    }
+
+    const candidate = item as {
+      name?: unknown;
+      type?: unknown;
+      exists?: unknown;
+    };
+    const name = normalizeText(candidate.name);
+    if (!name) {
+      return [];
+    }
+
+    const exists = typeof candidate.exists === "boolean"
+      ? candidate.exists
+      : typeof candidate.exists === "string"
+        ? /^true$/i.test(candidate.exists.trim())
+        : false;
+
+    return [{
+      name,
+      type: normalizeText(candidate.type),
+      exists,
+    }];
+  });
+
+  return normalized.length > 0
+    ? normalized
+    : fallbackNames.map((name) => ({
+        name,
+        type: null,
+        exists: false,
+      }));
 }
 
 function normalizeTimeoutMs(value: unknown, fallback: number = DEFAULT_UNITY_TIMEOUT_MS): number {
@@ -180,6 +238,7 @@ function normalizeObservation(
   const missingScriptCount = normalizeOptionalCount(candidate.missing_script_count ?? candidate.missingScripts);
   const consoleErrorCount = normalizeOptionalCount(candidate.console_error_count ?? candidate.consoleErrors);
   const objectCount = normalizeOptionalCount(candidate.object_count ?? candidate.objectCount);
+  const trackedObjects = normalizeTrackedObjects(candidate.tracked_objects, input.tracked_object_names);
   const evidenceTimestamp = normalizeText(candidate.evidence_timestamp ?? candidate.timestamp) ?? input.requested_at;
   const rawEvidenceSummary = normalizeText(candidate.raw_evidence_summary);
   const recommendedNextOperatorAction = normalizeText(candidate.recommended_next_operator_action)
@@ -193,6 +252,7 @@ function normalizeObservation(
     console_error_count: consoleErrorCount,
     object_count: objectCount,
     checked_scene_name: checkedSceneName,
+    tracked_objects: trackedObjects,
     evidence_timestamp: evidenceTimestamp,
     raw_evidence_summary: rawEvidenceSummary,
     summary: buildSummary({
@@ -322,6 +382,7 @@ async function runUnityCommandProbe(input: {
         AIE_UNITY_VALIDATION_REQUEST_ID: input.probeInput.request_id,
         AIE_UNITY_VALIDATION_REQUESTED_AT: input.probeInput.requested_at,
         AIE_UNITY_SCENE_NAME_HINT: input.probeInput.scene_name_hint ?? "",
+        AIE_UNITY_TRACKED_OBJECT_NAMES: (input.probeInput.tracked_object_names ?? []).join("|"),
         ...(input.unityScenePath ? { AIE_UNITY_SCENE_PATH: input.unityScenePath } : {}),
       },
       windowsHide: true,

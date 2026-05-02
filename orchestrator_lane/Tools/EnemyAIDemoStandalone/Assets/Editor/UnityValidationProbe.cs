@@ -20,6 +20,7 @@ namespace EnemyAIDemo.Editor
         private const string RequestIdEnv = "AIE_UNITY_VALIDATION_REQUEST_ID";
         private const string RequestedAtEnv = "AIE_UNITY_VALIDATION_REQUESTED_AT";
         private const string SceneNameHintEnv = "AIE_UNITY_SCENE_NAME_HINT";
+        private const string TrackedObjectNamesEnv = "AIE_UNITY_TRACKED_OBJECT_NAMES";
         private const string MutationRequestIdEnv = "AIE_UNITY_MUTATION_REQUEST_ID";
         private const string MutationRequestedAtEnv = "AIE_UNITY_MUTATION_REQUESTED_AT";
         private const string MutationObjectNameEnv = "AIE_UNITY_MUTATION_OBJECT_NAME";
@@ -72,6 +73,8 @@ namespace EnemyAIDemo.Editor
                     CountHierarchy(root, ref objectCount, ref missingScripts);
                 }
 
+                string trackedObjectsPayload = BuildTrackedObjectsPayload(scene, GetTrackedObjectNames());
+
                 string timestamp = GetEnvironmentValue(RequestedAtEnv) ?? DateTime.UtcNow.ToString("O");
                 string sceneValidationStatus = missingScripts > 0 || consoleErrors > 0
                     ? "checked_with_findings"
@@ -81,7 +84,7 @@ namespace EnemyAIDemo.Editor
                     ? "Review the live Unity findings before continuing delivery."
                     : "Live Unity validation returned a clean read-only result; continue operator review as needed.";
 
-                string payload = $"{{\"requestId\":\"{EscapeJson(GetEnvironmentValue(RequestIdEnv) ?? string.Empty)}\",\"sceneName\":\"{EscapeJson(sceneName)}\",\"missingScripts\":{missingScripts},\"consoleErrors\":{consoleErrors},\"objectCount\":{objectCount},\"timestamp\":\"{EscapeJson(timestamp)}\",\"scene_validation_status\":\"{sceneValidationStatus}\",\"checked_scene_name\":\"{EscapeJson(sceneName)}\",\"missing_script_count\":{missingScripts},\"console_error_count\":{consoleErrors},\"object_count\":{objectCount},\"evidence_timestamp\":\"{EscapeJson(timestamp)}\",\"raw_evidence_summary\":\"{EscapeJson(rawEvidenceSummary)}\",\"recommended_next_operator_action\":\"{EscapeJson(recommendedNextOperatorAction)}\"}}";
+                string payload = $"{{\"requestId\":\"{EscapeJson(GetEnvironmentValue(RequestIdEnv) ?? string.Empty)}\",\"sceneName\":\"{EscapeJson(sceneName)}\",\"missingScripts\":{missingScripts},\"consoleErrors\":{consoleErrors},\"objectCount\":{objectCount},\"timestamp\":\"{EscapeJson(timestamp)}\",\"scene_validation_status\":\"{sceneValidationStatus}\",\"checked_scene_name\":\"{EscapeJson(sceneName)}\",\"missing_script_count\":{missingScripts},\"console_error_count\":{consoleErrors},\"object_count\":{objectCount},\"tracked_objects\":{trackedObjectsPayload},\"evidence_timestamp\":\"{EscapeJson(timestamp)}\",\"raw_evidence_summary\":\"{EscapeJson(rawEvidenceSummary)}\",\"recommended_next_operator_action\":\"{EscapeJson(recommendedNextOperatorAction)}\"}}";
                 Debug.Log(JsonPrefix + payload);
                 EditorApplication.Exit(0);
             }
@@ -373,6 +376,61 @@ namespace EnemyAIDemo.Editor
         private static string BuildSummary(string sceneName, int missingScripts, int consoleErrors, int objectCount)
         {
             return $"Live Unity validation inspected {sceneName} with missing scripts {missingScripts}, console errors {consoleErrors}, and object count {objectCount}.";
+        }
+
+        private static IReadOnlyList<string> GetTrackedObjectNames()
+        {
+            string rawValue = GetEnvironmentValue(TrackedObjectNamesEnv);
+            if (string.IsNullOrWhiteSpace(rawValue))
+            {
+                return Array.Empty<string>();
+            }
+
+            string[] parts = rawValue.Split(new[] { '|' }, StringSplitOptions.RemoveEmptyEntries);
+            List<string> results = new List<string>();
+            foreach (string part in parts)
+            {
+                string normalized = part.Trim();
+                if (string.IsNullOrWhiteSpace(normalized) || results.Contains(normalized))
+                {
+                    continue;
+                }
+
+                results.Add(normalized);
+            }
+
+            return results;
+        }
+
+        private static string BuildTrackedObjectsPayload(Scene scene, IReadOnlyList<string> trackedObjectNames)
+        {
+            if (trackedObjectNames == null || trackedObjectNames.Count == 0)
+            {
+                return "[]";
+            }
+
+            StringBuilder builder = new StringBuilder();
+            builder.Append("[");
+            for (int index = 0; index < trackedObjectNames.Count; index++)
+            {
+                string trackedObjectName = trackedObjectNames[index];
+                GameObject match = FindSceneObjectByName(scene, trackedObjectName);
+                if (index > 0)
+                {
+                    builder.Append(',');
+                }
+
+                builder.Append("{\"name\":\"");
+                builder.Append(EscapeJson(trackedObjectName));
+                builder.Append("\",\"type\":\"");
+                builder.Append(match != null ? "GameObject" : string.Empty);
+                builder.Append("\",\"exists\":");
+                builder.Append(match != null ? "true" : "false");
+                builder.Append("}");
+            }
+
+            builder.Append("]");
+            return builder.ToString();
         }
 
         private static GameObject FindSceneObjectByName(Scene scene, string objectName)
