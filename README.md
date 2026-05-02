@@ -567,6 +567,14 @@ Current Layer 22 Step 2 status:
 - translation and draft export now reject annotated alternative-plan flows until the operator explicitly selects either the original plan or one suggested alternative
 - only the operator-selected plan is used for translation, draft generation, and execution metadata, while the source plan remains unchanged
 
+Current Layer 22 Step 3 status:
+
+- Layer 22 Step 3 - Selection Trace and Decision Logging: implemented
+- added append-only decision records in `web/lib/aie/decisionTrace.ts` with `decision_id`, `timestamp`, `selected_plan_id`, `available_plan_ids`, `insight_summary`, `severity_summary`, and `operator_acknowledgement`
+- decision records are written under `data/decision_records/` and stay logging-only with no execution, approval, or autonomy side effects
+- decision traces summarize the selected plan together with available alternatives and associated insight severity without changing plan translation behavior
+- building or recording a decision trace does not mutate the source plan or bias future selection logic
+
 ## Safe Runtime Action Bridge
 
 AI-E can now translate supported live operator actions into safe runtime intents.
