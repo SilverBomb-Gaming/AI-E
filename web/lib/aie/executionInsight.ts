@@ -7,6 +7,7 @@ export type ExecutionInsight = {
   description: string;
   supporting_metrics: Record<string, number>;
   confidence: number;
+  severity: "low" | "medium" | "high" | "critical";
 };
 
 export type ExecutionOutcomeAnalytics = {
@@ -141,6 +142,48 @@ function metricConfidence(sampleSize: number, signalStrength: number): number {
   return clampConfidence(0.35 + Math.min(sampleSize, 12) * 0.035 + Math.min(Math.abs(signalStrength), 1) * 0.23);
 }
 
+function severityFromSignal(signal: number): ExecutionInsight["severity"] {
+  if (signal >= 0.85) {
+    return "critical";
+  }
+  if (signal >= 0.6) {
+    return "high";
+  }
+  if (signal >= 0.3) {
+    return "medium";
+  }
+  return "low";
+}
+
+function deriveInsightSeverity(
+  category: ExecutionInsight["category"],
+  supportingMetrics: Record<string, number>,
+): ExecutionInsight["severity"] {
+  switch (category) {
+    case "performance":
+      return severityFromSignal(1 - (supportingMetrics.success_rate ?? 1));
+    case "pattern":
+      return severityFromSignal(Math.max(
+        supportingMetrics.failure_rate ?? 0,
+        supportingMetrics.failure_rate_delta ?? 0,
+      ));
+    case "risk":
+      return severityFromSignal(Math.max(
+        supportingMetrics.rollback_required_rate ?? 0,
+        supportingMetrics.failure_rate ?? 0,
+      ));
+    case "reliability":
+      return severityFromSignal(Math.max(
+        supportingMetrics.failure_rate_delta ?? 0,
+        supportingMetrics.failure_rate ?? 0,
+        supportingMetrics.highest_failure_rate ?? 0,
+        supportingMetrics.rollback_required_rate ?? 0,
+      ));
+    default:
+      return "low";
+  }
+}
+
 export function analyzeExecutionOutcomes(outcomes: readonly ExecutionOutcomeRecord[]): ExecutionOutcomeAnalytics {
   const nodeBuckets = new Map<string, AggregateBucket>();
   const commandBuckets = new Map<string, AggregateBucket>();
@@ -223,18 +266,20 @@ export function generateExecutionInsights(outcomes: readonly ExecutionOutcomeRec
 
   const primaryNode = analytics.node_performance[0];
   if (primaryNode) {
+    const supportingMetrics = {
+      total_outcomes: primaryNode.total,
+      success_count: primaryNode.success_count,
+      failure_count: primaryNode.failure_count,
+      success_rate: primaryNode.success_rate,
+    };
     insights.push({
       insight_id: buildInsightId(["node", "performance", primaryNode.node_id]),
       created_at: createdAt,
       category: "performance",
       description: `Node ${primaryNode.node_id} handled ${primaryNode.total} tasks with a ${percent(primaryNode.success_rate)}% success rate, indicating ${primaryNode.success_rate >= 0.9 ? "high" : primaryNode.success_rate >= 0.7 ? "moderate" : "low"} reliability.`,
-      supporting_metrics: {
-        total_outcomes: primaryNode.total,
-        success_count: primaryNode.success_count,
-        failure_count: primaryNode.failure_count,
-        success_rate: primaryNode.success_rate,
-      },
+      supporting_metrics: supportingMetrics,
       confidence: metricConfidence(primaryNode.total, primaryNode.success_rate - 0.5),
+      severity: deriveInsightSeverity("performance", supportingMetrics),
     });
   }
 
@@ -247,48 +292,54 @@ export function generateExecutionInsights(outcomes: readonly ExecutionOutcomeRec
     const description = lowestFailurePattern && lowestFailurePattern.command_pattern !== highestFailurePattern.command_pattern
       ? `Tasks using ${highestFailurePattern.command_pattern} fail ${percent(comparisonDelta)} percentage points more often than ${lowestFailurePattern.command_pattern}.`
       : `Tasks using ${highestFailurePattern.command_pattern} currently show a ${percent(highestFailurePattern.failure_rate)}% failure rate across ${highestFailurePattern.total} outcomes.`;
+    const supportingMetrics = {
+      total_outcomes: highestFailurePattern.total,
+      failure_count: highestFailurePattern.failure_count,
+      failure_rate: highestFailurePattern.failure_rate,
+      comparison_failure_rate: lowestFailurePattern?.failure_rate ?? highestFailurePattern.failure_rate,
+      failure_rate_delta: comparisonDelta,
+    };
     insights.push({
       insight_id: buildInsightId(["command", "pattern", highestFailurePattern.command_pattern]),
       created_at: createdAt,
       category: "pattern",
       description,
-      supporting_metrics: {
-        total_outcomes: highestFailurePattern.total,
-        failure_count: highestFailurePattern.failure_count,
-        failure_rate: highestFailurePattern.failure_rate,
-        comparison_failure_rate: lowestFailurePattern?.failure_rate ?? highestFailurePattern.failure_rate,
-        failure_rate_delta: comparisonDelta,
-      },
+      supporting_metrics: supportingMetrics,
       confidence: metricConfidence(highestFailurePattern.total + (lowestFailurePattern?.total ?? 0), comparisonDelta),
+      severity: deriveInsightSeverity("pattern", supportingMetrics),
     });
   }
 
   const rollbackMetrics = analytics.risk_correlation.find((entry) => entry.risk_level === "high");
   if (rollbackMetrics) {
+    const supportingMetrics = {
+      total_outcomes: rollbackMetrics.total,
+      rollback_required_rate: rollbackMetrics.rollback_required_rate,
+      failure_rate: rollbackMetrics.failure_rate,
+    };
     insights.push({
       insight_id: buildInsightId(["rollback", "frequency", rollbackMetrics.risk_level]),
       created_at: createdAt,
       category: "risk",
       description: `Rollback was required in ${percent(rollbackMetrics.rollback_required_rate)}% of high-risk tasks.`,
-      supporting_metrics: {
-        total_outcomes: rollbackMetrics.total,
-        rollback_required_rate: rollbackMetrics.rollback_required_rate,
-        failure_rate: rollbackMetrics.failure_rate,
-      },
+      supporting_metrics: supportingMetrics,
       confidence: metricConfidence(rollbackMetrics.total, rollbackMetrics.rollback_required_rate),
+      severity: deriveInsightSeverity("risk", supportingMetrics),
     });
   } else {
+    const supportingMetrics = {
+      total_outcomes: analytics.rollback_frequency.total,
+      rollback_required_rate: analytics.rollback_frequency.rollback_required_rate,
+      rollback_executed_rate: analytics.rollback_frequency.rollback_executed_rate,
+    };
     insights.push({
       insight_id: buildInsightId(["rollback", "frequency", "overall"]),
       created_at: createdAt,
       category: "risk",
       description: `Rollback was required in ${percent(analytics.rollback_frequency.rollback_required_rate)}% of observed tasks overall.`,
-      supporting_metrics: {
-        total_outcomes: analytics.rollback_frequency.total,
-        rollback_required_rate: analytics.rollback_frequency.rollback_required_rate,
-        rollback_executed_rate: analytics.rollback_frequency.rollback_executed_rate,
-      },
+      supporting_metrics: supportingMetrics,
       confidence: metricConfidence(analytics.rollback_frequency.total, analytics.rollback_frequency.rollback_required_rate),
+      severity: deriveInsightSeverity("risk", supportingMetrics),
     });
   }
 
@@ -297,33 +348,37 @@ export function generateExecutionInsights(outcomes: readonly ExecutionOutcomeRec
   const lowestRiskFailure = [...analytics.risk_correlation].sort((left, right) => left.failure_rate - right.failure_rate || right.total - left.total)[0];
   if (highestRiskFailure && lowestRiskFailure && highestRiskFailure.risk_level !== lowestRiskFailure.risk_level) {
     const failureDelta = roundMetric(highestRiskFailure.failure_rate - lowestRiskFailure.failure_rate);
+    const supportingMetrics = {
+      highest_failure_rate: highestRiskFailure.failure_rate,
+      lowest_failure_rate: lowestRiskFailure.failure_rate,
+      failure_rate_delta: failureDelta,
+      highest_risk_total: highestRiskFailure.total,
+      lowest_risk_total: lowestRiskFailure.total,
+    };
     insights.push({
       insight_id: buildInsightId(["risk", "correlation", highestRiskFailure.risk_level, lowestRiskFailure.risk_level]),
       created_at: createdAt,
       category: "reliability",
       description: `${highestRiskFailure.risk_level} risk tasks fail ${percent(failureDelta)} percentage points more often than ${lowestRiskFailure.risk_level} risk tasks.`,
-      supporting_metrics: {
-        highest_failure_rate: highestRiskFailure.failure_rate,
-        lowest_failure_rate: lowestRiskFailure.failure_rate,
-        failure_rate_delta: failureDelta,
-        highest_risk_total: highestRiskFailure.total,
-        lowest_risk_total: lowestRiskFailure.total,
-      },
+      supporting_metrics: supportingMetrics,
       confidence: metricConfidence(highestRiskFailure.total + lowestRiskFailure.total, failureDelta),
+      severity: deriveInsightSeverity("reliability", supportingMetrics),
     });
   } else if (highestRiskFailure) {
+    const supportingMetrics = {
+      failure_rate: highestRiskFailure.failure_rate,
+      success_rate: highestRiskFailure.success_rate,
+      rollback_required_rate: highestRiskFailure.rollback_required_rate,
+      total_outcomes: highestRiskFailure.total,
+    };
     insights.push({
       insight_id: buildInsightId(["risk", "correlation", highestRiskFailure.risk_level]),
       created_at: createdAt,
       category: "reliability",
       description: `${highestRiskFailure.risk_level} risk tasks currently show a ${percent(highestRiskFailure.failure_rate)}% failure rate across ${highestRiskFailure.total} observed tasks.`,
-      supporting_metrics: {
-        failure_rate: highestRiskFailure.failure_rate,
-        success_rate: highestRiskFailure.success_rate,
-        rollback_required_rate: highestRiskFailure.rollback_required_rate,
-        total_outcomes: highestRiskFailure.total,
-      },
+      supporting_metrics: supportingMetrics,
       confidence: metricConfidence(highestRiskFailure.total, highestRiskFailure.failure_rate),
+      severity: deriveInsightSeverity("reliability", supportingMetrics),
     });
   }
 
@@ -336,6 +391,6 @@ export function summarizeExecutionInsights(insights: readonly ExecutionInsight[]
   }
 
   return insights
-    .map((insight) => `${insight.category.toUpperCase()}: ${insight.description} Confidence ${insight.confidence.toFixed(2)}.`)
+    .map((insight) => `${insight.category.toUpperCase()} [${insight.severity.toUpperCase()}]: ${insight.description} Confidence ${insight.confidence.toFixed(2)}.`)
     .join("\n");
 }

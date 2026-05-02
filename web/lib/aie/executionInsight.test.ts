@@ -149,16 +149,19 @@ test("execution insights reflect command, rollback, and risk metrics consistentl
   assert.equal(patternInsight?.supporting_metrics.failure_rate, 1);
   assert.equal(patternInsight?.supporting_metrics.comparison_failure_rate, 0);
   assert.equal(patternInsight?.supporting_metrics.failure_rate_delta, 1);
+  assert.equal(patternInsight?.severity, "critical");
   assert.match(patternInsight?.description ?? "", /pytest fail 100 percentage points more often than python:validate_runtime.py/i);
 
   assert.ok(rollbackInsight);
   assert.equal(rollbackInsight?.supporting_metrics.rollback_required_rate, 1);
+  assert.equal(rollbackInsight?.severity, "critical");
   assert.match(rollbackInsight?.description ?? "", /Rollback was required in 100% of high-risk tasks/i);
 
   assert.ok(riskInsight);
   assert.equal(riskInsight?.supporting_metrics.highest_failure_rate, 1);
   assert.equal(riskInsight?.supporting_metrics.lowest_failure_rate, 0);
   assert.equal(riskInsight?.supporting_metrics.failure_rate_delta, 1);
+  assert.equal(riskInsight?.severity, "critical");
 });
 
 test("execution insight confidence values stay bounded and summaries remain read-only", () => {
@@ -170,8 +173,9 @@ test("execution insight confidence values stay bounded and summaries remain read
 
   assert.equal(JSON.stringify(outcomes), JSON.stringify(before));
   assert.ok(insights.every((entry) => entry.confidence >= 0 && entry.confidence <= 1));
-  assert.match(summary, /PERFORMANCE:/);
-  assert.match(summary, /PATTERN:/);
+  assert.ok(insights.every((entry) => ["low", "medium", "high", "critical"].includes(entry.severity)));
+  assert.match(summary, /PERFORMANCE \[/);
+  assert.match(summary, /PATTERN \[/);
   assert.doesNotMatch(summary, /execute|approval triggered|retry/i);
 });
 
@@ -200,8 +204,11 @@ test("execution insights remain readable for sparse single-risk datasets", () =>
 
   assert.ok(rollbackInsight);
   assert.match(rollbackInsight?.description ?? "", /Rollback was required in 0% of observed tasks overall/i);
+  assert.equal(rollbackInsight?.severity, "low");
   assert.ok(reliabilityInsight);
   assert.match(reliabilityInsight?.description ?? "", /low risk tasks currently show a 0% failure rate/i);
+  assert.equal(reliabilityInsight?.severity, "low");
   assert.ok(patternInsight);
   assert.match(patternInsight?.description ?? "", /currently show a 0% failure rate across 1 outcomes/i);
+  assert.equal(patternInsight?.severity, "low");
 });

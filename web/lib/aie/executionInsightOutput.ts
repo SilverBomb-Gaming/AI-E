@@ -38,6 +38,10 @@ function formatMetrics(metrics: Record<string, number>): string[] {
     .map(([key, value]) => `  - ${toTitleCase(key)}: ${value}`);
 }
 
+function renderSeverity(severity: ExecutionInsight["severity"]): string {
+  return `[${severity.toUpperCase()}]`;
+}
+
 export function renderExecutionInsights(insights: readonly ExecutionInsight[]): ExecutionInsightRenderResult {
   const summary = summarizeExecutionInsights(insights);
 
@@ -79,7 +83,7 @@ export function renderExecutionInsights(insights: readonly ExecutionInsight[]): 
     lines.push(headings.get(category) ?? "Execution Insights");
     lines.push("-".repeat((headings.get(category) ?? "Execution Insights").length));
     for (const insight of matchingInsights) {
-      lines.push(`- ${insight.description}`);
+      lines.push(`- ${renderSeverity(insight.severity)} ${insight.description}`);
       lines.push(`  Confidence: ${insight.confidence.toFixed(2)}`);
       lines.push(...formatMetrics(insight.supporting_metrics));
     }

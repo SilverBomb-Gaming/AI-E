@@ -359,6 +359,7 @@ test("insights attach to plans as non-binding annotations", () => {
   assert.ok(annotated.annotations?.some((annotation) => annotation.type === "risk_warning"));
   assert.ok(annotated.annotations?.some((annotation) => annotation.type === "reliability_note" || annotation.type === "pattern_note"));
   assert.ok(annotated.annotations?.every((annotation) => annotation.informational_only === true && annotation.confidence >= 0 && annotation.confidence <= 1));
+  assert.ok(annotated.annotations?.every((annotation) => ["low", "medium", "high", "critical"].includes(annotation.severity)));
   assert.deepEqual(annotated.operator_acknowledgement, { acknowledged: false });
 });
 
@@ -412,6 +413,7 @@ test("acknowledgement prompt is visible but non-blocking", () => {
 
   assert.ok(prompt);
   assert.match(prompt ?? "", /Insights detected:/);
+  assert.match(prompt ?? "", /\[(LOW|MEDIUM|HIGH|CRITICAL)\]/);
   assert.match(prompt ?? "", /Acknowledge before proceeding\? \(yes\/no\)/);
 });
 

@@ -531,6 +531,14 @@ Current Layer 21 Step 2 status:
 - added `buildInsightAcknowledgementPrompt(plan)` for a visible pre-submission acknowledgement prompt when insights are present
 - acknowledgement remains informational only and does not block execution, alter validation gates, or change approval flow
 
+Current Layer 21 Step 3 status:
+
+- Layer 21 Step 3 - Insight Severity Levels: implemented
+- added severity levels (`low`, `medium`, `high`, `critical`) to generated insights and non-binding plan annotations
+- severity is derived from observed failure rate, rollback frequency, and risk-correlation signals in `web/lib/aie/executionInsight.ts`
+- output surfaces now display severity clearly in the CLI insight renderer and the optional acknowledgement prompt
+- severity remains informational only and does not affect execution, approvals, gates, or plan validity
+
 ## Safe Runtime Action Bridge
 
 AI-E can now translate supported live operator actions into safe runtime intents.
