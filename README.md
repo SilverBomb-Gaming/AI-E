@@ -381,6 +381,9 @@ Current Layer 17 status:
 - rollback execution evidence: implemented in the operator-visible evidence surfaces
 - bounded recovery-loop proof: explicit evidence now calls out `SIMULATED FAILURE`, `ROLLBACK PLAN GENERATED`, `ROLLBACK NOT AUTO-EXECUTED`, and `MANUAL ROLLBACK EXECUTED`
 - repeatability proof: bounded recovery loop stays `13 -> 14 -> 13` on consecutive runs, and manual rollback on an already-absent target stays safely at `13`
+- final live stress validation: passed `10` consecutive live `13 -> 14 -> 13` recovery cycles against `AIE_ControlledMutationProbe` in `EnemyAIDemo` with `missing scripts = 0` and `console errors = 0` on every cycle
+- final rollback idempotency closeout: passed with `controlled_rollback_idempotent` / `already_missing_idempotent`, object count held at `13`, and final live validation remained `checked_clean`
+- final regression closeout: `npm run test:trace:safe` passed with `962` tests and `0` failures after the live stress run
 - chat execution: still refused with `safe_to_execute: false`
 
 Current Layer 17 boundary:
