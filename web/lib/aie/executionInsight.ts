@@ -80,8 +80,12 @@ function normalizeCommandPattern(command: string | undefined): string {
   const tokens = command.trim().split(/\s+/);
   const first = (tokens[0] || "unknown").toLowerCase();
   const second = (tokens[1] || "").toLowerCase();
+  const third = (tokens[2] || "").toLowerCase();
 
   if (["python", "python.exe", "py", "py.exe"].includes(first) && second.length > 0) {
+    if (second === "-m" && third.length > 0) {
+      return `python-module:${third}`;
+    }
     return `python:${second}`;
   }
 
@@ -240,14 +244,14 @@ export function generateExecutionInsights(outcomes: readonly ExecutionOutcomeRec
     const comparisonDelta = lowestFailurePattern
       ? roundMetric(highestFailurePattern.failure_rate - lowestFailurePattern.failure_rate)
       : highestFailurePattern.failure_rate;
-    const comparisonText = lowestFailurePattern && lowestFailurePattern.command_pattern !== highestFailurePattern.command_pattern
-      ? `${percent(comparisonDelta)} percentage points more often than ${lowestFailurePattern.command_pattern}`
-      : `at a ${percent(highestFailurePattern.failure_rate)}% failure rate`;
+    const description = lowestFailurePattern && lowestFailurePattern.command_pattern !== highestFailurePattern.command_pattern
+      ? `Tasks using ${highestFailurePattern.command_pattern} fail ${percent(comparisonDelta)} percentage points more often than ${lowestFailurePattern.command_pattern}.`
+      : `Tasks using ${highestFailurePattern.command_pattern} currently show a ${percent(highestFailurePattern.failure_rate)}% failure rate across ${highestFailurePattern.total} outcomes.`;
     insights.push({
       insight_id: buildInsightId(["command", "pattern", highestFailurePattern.command_pattern]),
       created_at: createdAt,
       category: "pattern",
-      description: `Tasks using ${highestFailurePattern.command_pattern} fail ${comparisonText}.`,
+      description,
       supporting_metrics: {
         total_outcomes: highestFailurePattern.total,
         failure_count: highestFailurePattern.failure_count,
@@ -259,26 +263,39 @@ export function generateExecutionInsights(outcomes: readonly ExecutionOutcomeRec
     });
   }
 
-  const highRiskMetrics = analytics.risk_correlation.find((entry) => entry.risk_level === "high");
-  if (highRiskMetrics) {
+  const rollbackMetrics = analytics.risk_correlation.find((entry) => entry.risk_level === "high");
+  if (rollbackMetrics) {
     insights.push({
-      insight_id: buildInsightId(["rollback", "frequency", highRiskMetrics.risk_level]),
+      insight_id: buildInsightId(["rollback", "frequency", rollbackMetrics.risk_level]),
       created_at: createdAt,
       category: "risk",
-      description: `Rollback was required in ${percent(highRiskMetrics.rollback_required_rate)}% of high-risk tasks.`,
+      description: `Rollback was required in ${percent(rollbackMetrics.rollback_required_rate)}% of high-risk tasks.`,
       supporting_metrics: {
-        total_outcomes: highRiskMetrics.total,
-        rollback_required_rate: highRiskMetrics.rollback_required_rate,
-        failure_rate: highRiskMetrics.failure_rate,
+        total_outcomes: rollbackMetrics.total,
+        rollback_required_rate: rollbackMetrics.rollback_required_rate,
+        failure_rate: rollbackMetrics.failure_rate,
       },
-      confidence: metricConfidence(highRiskMetrics.total, highRiskMetrics.rollback_required_rate),
+      confidence: metricConfidence(rollbackMetrics.total, rollbackMetrics.rollback_required_rate),
+    });
+  } else {
+    insights.push({
+      insight_id: buildInsightId(["rollback", "frequency", "overall"]),
+      created_at: createdAt,
+      category: "risk",
+      description: `Rollback was required in ${percent(analytics.rollback_frequency.rollback_required_rate)}% of observed tasks overall.`,
+      supporting_metrics: {
+        total_outcomes: analytics.rollback_frequency.total,
+        rollback_required_rate: analytics.rollback_frequency.rollback_required_rate,
+        rollback_executed_rate: analytics.rollback_frequency.rollback_executed_rate,
+      },
+      confidence: metricConfidence(analytics.rollback_frequency.total, analytics.rollback_frequency.rollback_required_rate),
     });
   }
 
   const sortedRiskMetrics = [...analytics.risk_correlation].sort((left, right) => right.failure_rate - left.failure_rate || right.total - left.total);
   const highestRiskFailure = sortedRiskMetrics[0];
   const lowestRiskFailure = [...analytics.risk_correlation].sort((left, right) => left.failure_rate - right.failure_rate || right.total - left.total)[0];
-  if (highestRiskFailure && lowestRiskFailure) {
+  if (highestRiskFailure && lowestRiskFailure && highestRiskFailure.risk_level !== lowestRiskFailure.risk_level) {
     const failureDelta = roundMetric(highestRiskFailure.failure_rate - lowestRiskFailure.failure_rate);
     insights.push({
       insight_id: buildInsightId(["risk", "correlation", highestRiskFailure.risk_level, lowestRiskFailure.risk_level]),
@@ -293,6 +310,20 @@ export function generateExecutionInsights(outcomes: readonly ExecutionOutcomeRec
         lowest_risk_total: lowestRiskFailure.total,
       },
       confidence: metricConfidence(highestRiskFailure.total + lowestRiskFailure.total, failureDelta),
+    });
+  } else if (highestRiskFailure) {
+    insights.push({
+      insight_id: buildInsightId(["risk", "correlation", highestRiskFailure.risk_level]),
+      created_at: createdAt,
+      category: "reliability",
+      description: `${highestRiskFailure.risk_level} risk tasks currently show a ${percent(highestRiskFailure.failure_rate)}% failure rate across ${highestRiskFailure.total} observed tasks.`,
+      supporting_metrics: {
+        failure_rate: highestRiskFailure.failure_rate,
+        success_rate: highestRiskFailure.success_rate,
+        rollback_required_rate: highestRiskFailure.rollback_required_rate,
+        total_outcomes: highestRiskFailure.total,
+      },
+      confidence: metricConfidence(highestRiskFailure.total, highestRiskFailure.failure_rate),
     });
   }
 

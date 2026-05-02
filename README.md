@@ -503,6 +503,14 @@ Current Layer 20 Step 3 status:
 - includes structured supporting metrics plus bounded confidence scores for each generated insight
 - can render optional human-readable summaries without triggering execution, retries, approvals, or plan changes
 
+Current Layer 20 Step 4 status:
+
+- Layer 20 Step 4 - Insight Surfacing & Operator Visibility: implemented
+- added `renderExecutionInsights(insights)` in `web/lib/aie/executionInsightOutput.ts` for display-only operator-facing summaries
+- surfaces Node reliability, failure patterns, rollback frequency, and risk-level insights in a readable grouped format
+- added `npm run insights` and `npx tsx scripts/showInsights.ts` for read-only CLI visibility over `data/execution_outcomes/`
+- insight surfacing remains display-only and does not trigger execution, approvals, retries, or plan changes
+
 ## Safe Runtime Action Bridge
 
 AI-E can now translate supported live operator actions into safe runtime intents.

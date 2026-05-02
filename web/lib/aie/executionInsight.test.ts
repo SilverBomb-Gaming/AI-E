@@ -182,3 +182,26 @@ test("execution insight generation on empty data stays inert", () => {
   assert.deepEqual(insights, []);
   assert.equal(summary, "No execution insights available.");
 });
+
+test("execution insights remain readable for sparse single-risk datasets", () => {
+  const outcomes = [createExecutionOutcomeRecord({
+    outcome_id: "OUT-0000000099",
+    created_at: "2026-05-02T19:00:00.000Z",
+    command: "python -m app.node.worker --once",
+    risk_level: "low",
+    success: true,
+    status: "completed",
+  })];
+
+  const insights = generateExecutionInsights(outcomes);
+  const rollbackInsight = insights.find((entry) => entry.category === "risk");
+  const reliabilityInsight = insights.find((entry) => entry.category === "reliability");
+  const patternInsight = insights.find((entry) => entry.category === "pattern");
+
+  assert.ok(rollbackInsight);
+  assert.match(rollbackInsight?.description ?? "", /Rollback was required in 0% of observed tasks overall/i);
+  assert.ok(reliabilityInsight);
+  assert.match(reliabilityInsight?.description ?? "", /low risk tasks currently show a 0% failure rate/i);
+  assert.ok(patternInsight);
+  assert.match(patternInsight?.description ?? "", /currently show a 0% failure rate across 1 outcomes/i);
+});

@@ -30,7 +30,8 @@
     "validate:layer6:safe": "npm run proof:continuous-runtime:safe && npm run proof:multi-agent-runtime:safe && npm run proof:supervised-autonomy:safe && npm run proof:overnight-autonomy:safe && npm run test:trace:safe",
     "readiness": "tsx training_readiness_check.ts",
     "trace:readiness": "tsx training_readiness_check.ts",
-    "trace:capture": "tsx training_dataset_capture.ts"
+    "trace:capture": "tsx training_dataset_capture.ts",
+    "insights": "tsx scripts/showInsights.ts"
   },
   "dependencies": {
     "@playwright/test": "^1.59.1",
