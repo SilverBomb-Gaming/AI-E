@@ -855,6 +855,15 @@ const DEFAULT_SUPPORTED_PREFLIGHT_COMPONENTS = [
 
 const CONTROLLED_MUTATION_TARGET_SCENE = "EnemyAIDemo";
 const CONTROLLED_MUTATION_TARGET_OBJECT_NAME = "AIE_ControlledMutationProbe";
+const CONTROLLED_MUTATION_COMPANION_OBJECT_NAME = "AIE_ControlledMutationProbe_Companion";
+const CONTROLLED_CHAIN_CREATION_TARGET_OBJECT_NAMES = new Set([
+  CONTROLLED_MUTATION_TARGET_OBJECT_NAME,
+  CONTROLLED_MUTATION_COMPANION_OBJECT_NAME,
+]);
+const CONTROLLED_ROLLBACK_TARGET_OBJECT_NAMES = new Set([
+  CONTROLLED_MUTATION_TARGET_OBJECT_NAME,
+  CONTROLLED_MUTATION_COMPANION_OBJECT_NAME,
+]);
 
 function hasCompletedReview(reviewState: UnityProductionAdapterReviewState): boolean {
   return Boolean(reviewState.review_package_id && reviewState.review_completed_at);
@@ -1008,6 +1017,38 @@ function hasAllRequiredRollbackPlanGatesApproved(
   return requiredGates.every((gate) => plan.gate_statuses.some((entry) => entry.gate === gate && entry.status === "approved"));
 }
 
+function formatControlledChainCreationTargets(): string {
+  return [...CONTROLLED_CHAIN_CREATION_TARGET_OBJECT_NAMES].join(", ");
+}
+
+function formatControlledRollbackTargets(): string {
+  return [...CONTROLLED_ROLLBACK_TARGET_OBJECT_NAMES].join(", ");
+}
+
+function evaluateControlledChainCreationTarget(
+  targetScene: string,
+  targetObjectName: string,
+): { status: "approved" | "invalid"; detail: string; } {
+  if (targetScene !== CONTROLLED_MUTATION_TARGET_SCENE) {
+    return {
+      status: "invalid",
+      detail: `Controlled Unity chain creation is limited to ${CONTROLLED_MUTATION_TARGET_SCENE}, but received ${targetScene}.`,
+    };
+  }
+
+  if (!CONTROLLED_CHAIN_CREATION_TARGET_OBJECT_NAMES.has(targetObjectName)) {
+    return {
+      status: "invalid",
+      detail: `Controlled Unity chain creation is limited to ${formatControlledChainCreationTargets()}, but received ${targetObjectName}.`,
+    };
+  }
+
+  return {
+    status: "approved",
+    detail: `Controlled Unity chain creation target is limited correctly to ${targetObjectName} in ${CONTROLLED_MUTATION_TARGET_SCENE}.`,
+  };
+}
+
 function evaluateControlledRollbackTarget(
   targetScene: string,
   targetObjectName: string,
@@ -1019,16 +1060,16 @@ function evaluateControlledRollbackTarget(
     };
   }
 
-  if (targetObjectName !== CONTROLLED_MUTATION_TARGET_OBJECT_NAME) {
+  if (!CONTROLLED_ROLLBACK_TARGET_OBJECT_NAMES.has(targetObjectName)) {
     return {
       status: "invalid",
-      detail: `Controlled Unity rollback is limited to ${CONTROLLED_MUTATION_TARGET_OBJECT_NAME}, but received ${targetObjectName}.`,
+      detail: `Controlled Unity rollback is limited to ${formatControlledRollbackTargets()}, but received ${targetObjectName}.`,
     };
   }
 
   return {
     status: "approved",
-    detail: `Controlled Unity rollback target is limited correctly to ${CONTROLLED_MUTATION_TARGET_OBJECT_NAME} in ${CONTROLLED_MUTATION_TARGET_SCENE}.`,
+    detail: `Controlled Unity rollback target is limited correctly to ${targetObjectName} in ${CONTROLLED_MUTATION_TARGET_SCENE}.`,
   };
 }
 
@@ -1156,18 +1197,36 @@ function resolveUnityMutationExecutionChainPlan(
       };
     }
 
-    if (action.target_scene !== CONTROLLED_MUTATION_TARGET_SCENE || action.target_object_name !== CONTROLLED_MUTATION_TARGET_OBJECT_NAME) {
-      return {
-        orderedActions: [],
-        actionDependencies: [],
-        rollbackPlan: [],
-        requiredApprovals: [],
-        dependencyGraph: [],
-        rollbackGraph: [],
-        executableActions: [],
-        blockedActions: [],
-        blockedReason: `Unity mutation execution chain action ${action.action_id} does not map to the verified Layer 15 lane ${CONTROLLED_MUTATION_TARGET_OBJECT_NAME} in ${CONTROLLED_MUTATION_TARGET_SCENE}.`,
-      };
+    if (action.action_type === "unity_scene_object_creation") {
+      const controlledCreationTarget = evaluateControlledChainCreationTarget(action.target_scene, action.target_object_name);
+      if (controlledCreationTarget.status !== "approved") {
+        return {
+          orderedActions: [],
+          actionDependencies: [],
+          rollbackPlan: [],
+          requiredApprovals: [],
+          dependencyGraph: [],
+          rollbackGraph: [],
+          executableActions: [],
+          blockedActions: [],
+          blockedReason: `Unity mutation execution chain action ${action.action_id} does not map to the verified bounded chain creation lane in ${CONTROLLED_MUTATION_TARGET_SCENE}. ${controlledCreationTarget.detail}`,
+        };
+      }
+    } else {
+      const controlledRollbackTarget = evaluateControlledRollbackTarget(action.target_scene, action.target_object_name);
+      if (controlledRollbackTarget.status !== "approved") {
+        return {
+          orderedActions: [],
+          actionDependencies: [],
+          rollbackPlan: [],
+          requiredApprovals: [],
+          dependencyGraph: [],
+          rollbackGraph: [],
+          executableActions: [],
+          blockedActions: [],
+          blockedReason: `Unity mutation execution chain action ${action.action_id} does not map to the verified rollback lane in ${CONTROLLED_MUTATION_TARGET_SCENE}. ${controlledRollbackTarget.detail}`,
+        };
+      }
     }
 
     for (const dependencyId of action.depends_on) {
@@ -2020,8 +2079,15 @@ function getTrackedObjectExists(snapshot: ChainStateSnapshot, objectName: string
 function evaluatePreActionStateGate(input: {
   action: UnityMutationExecutionChainReadinessActionInput;
   snapshot: ChainStateSnapshot;
-  dependencyOutputsExist: boolean;
-}): { passed: boolean; expected: string; observed: string; reason: string | null; } {
+  dependencyActions: UnityMutationExecutionChainReadinessActionInput[];
+  dependencyResults: UnityMutationExecutionChainExecutionActionResult[];
+}): {
+  passed: boolean;
+  expected: string;
+  observed: string;
+  reason: string | null;
+  failureClassification: UnityMutationExecutionChainFailureClassification | null;
+} {
   const targetObjectName = input.action.target_object_name.trim();
   const targetObjectExists = getTrackedObjectExists(input.snapshot, targetObjectName);
   const expected = input.action.action_type === "unity_scene_object_creation"
@@ -2029,13 +2095,31 @@ function evaluatePreActionStateGate(input: {
     : `Scene ${input.action.target_scene.trim()} must stay clean, dependencies must exist, and ${targetObjectName} must exist before rollback.`;
   const observed = describeChainSnapshot(input.snapshot);
 
-  if (!input.dependencyOutputsExist) {
+  if (input.dependencyResults.some((dependency) => dependency.status !== "executed")) {
     return {
       passed: false,
       expected,
       observed,
       reason: `State gate blocked ${input.action.action_id} because required dependency outputs were not recorded before execution.`,
+      failureClassification: "dependency_failed",
     };
+  }
+
+  for (const dependencyAction of input.dependencyActions) {
+    const dependencyTargetObjectName = dependencyAction.target_object_name.trim();
+    const dependencyTargetExists = getTrackedObjectExists(input.snapshot, dependencyTargetObjectName);
+    const dependencyShouldExist = dependencyAction.action_type === "unity_scene_object_creation";
+    if (dependencyTargetExists !== dependencyShouldExist) {
+      return {
+        passed: false,
+        expected,
+        observed,
+        reason: dependencyShouldExist
+          ? `Dependency gate blocked ${input.action.action_id} because ${dependencyTargetObjectName} was not present before execution.`
+          : `Dependency gate blocked ${input.action.action_id} because ${dependencyTargetObjectName} still exists before execution.`,
+        failureClassification: "dependency_failed",
+      };
+    }
   }
 
   if (input.snapshot.missingScripts > 0) {
@@ -2044,6 +2128,7 @@ function evaluatePreActionStateGate(input: {
       expected,
       observed,
       reason: `State gate blocked ${input.action.action_id} because missing scripts were detected before execution.`,
+      failureClassification: "state_gate_failed",
     };
   }
 
@@ -2053,6 +2138,7 @@ function evaluatePreActionStateGate(input: {
       expected,
       observed,
       reason: `State gate blocked ${input.action.action_id} because console errors were detected before execution.`,
+      failureClassification: "state_gate_failed",
     };
   }
 
@@ -2062,6 +2148,7 @@ function evaluatePreActionStateGate(input: {
       expected,
       observed,
       reason: `State gate blocked ${input.action.action_id} because ${targetObjectName} already exists before mutation.`,
+      failureClassification: "state_gate_failed",
     };
   }
 
@@ -2071,6 +2158,7 @@ function evaluatePreActionStateGate(input: {
       expected,
       observed,
       reason: `State gate blocked ${input.action.action_id} because ${targetObjectName} is already absent before rollback.`,
+      failureClassification: "state_gate_failed",
     };
   }
 
@@ -2079,6 +2167,7 @@ function evaluatePreActionStateGate(input: {
     expected,
     observed,
     reason: null,
+    failureClassification: null,
   };
 }
 
@@ -2479,7 +2568,7 @@ function isDependencyFailureReason(reason: string): boolean {
 }
 
 function isGateFailureReason(reason: string): boolean {
-  return /approval|switch|target match|scope|expired|not ready|authorization|requires a ready chain|gate mismatch|limited to|state gate/i.test(reason);
+  return /approval|switch|target match|scope|expired|not ready|authorization|requires a ready chain|requires separate rollback approvals|cannot reuse the original chain execution|gate mismatch|limited to|state gate/i.test(reason);
 }
 
 function isStateVerificationFailureReason(reason: string): boolean {
@@ -2487,7 +2576,7 @@ function isStateVerificationFailureReason(reason: string): boolean {
 }
 
 function isUnsupportedFailureReason(reason: string): boolean {
-  return /does not support action type|does not support rollback action type|limited to one creation action followed by one rollback action|requires an exact create-then-rollback dependency pair/i.test(reason);
+  return /does not support action type|does not support rollback action type|limited to one creation action followed by one rollback action|requires an exact create-then-rollback dependency pair|requires a bounded two-action dependency pair|limited to a bounded two-action dependency pair|requires distinct controlled object targets/i.test(reason);
 }
 
 export function classifyUnityChainFailureEvidence(input: {
@@ -4810,7 +4899,7 @@ export async function executeUnityMutationExecutionChain(
     return buildChainExecutionBlockedResult(
       input,
       readinessResult,
-      "Controlled Unity chain execution is limited to one creation action followed by one rollback action.",
+      "Controlled Unity chain execution is limited to a bounded two-action dependency pair.",
       "unsupported_action",
     );
   }
@@ -4818,14 +4907,15 @@ export async function executeUnityMutationExecutionChain(
   const [firstAction, secondAction] = orderedReadinessActions;
   if (
     firstAction.action_type !== "unity_scene_object_creation"
-    || secondAction.action_type !== "unity_scene_object_rollback"
+    || (secondAction.action_type !== "unity_scene_object_creation" && secondAction.action_type !== "unity_scene_object_rollback")
     || secondAction.depends_on.length !== 1
     || secondAction.depends_on[0] !== firstAction.action_id
+    || (secondAction.action_type === "unity_scene_object_creation" && secondAction.target_object_name.trim() === firstAction.target_object_name.trim())
   ) {
     return buildChainExecutionBlockedResult(
       input,
       readinessResult,
-      "Controlled Unity chain execution requires an exact create-then-rollback dependency pair.",
+      "Controlled Unity chain execution requires a bounded two-action dependency pair with a leading creation action and distinct controlled object targets.",
       "unsupported_action",
     );
   }
@@ -4886,6 +4976,8 @@ export async function executeUnityMutationExecutionChain(
       );
     }
 
+    const dependencyActions = plannedAction.depends_on.map((dependencyId) => actionInputsById.get(dependencyId)).filter(Boolean) as UnityMutationExecutionChainReadinessActionInput[];
+    const dependencyResults = plannedAction.depends_on.map((dependencyId) => actionResults.find((entry) => entry.action_id === dependencyId)).filter(Boolean) as UnityMutationExecutionChainExecutionActionResult[];
     const unsatisfiedDependencies = plannedAction.depends_on.filter((dependencyId) => {
       const dependencyResult = actionResults.find((entry) => entry.action_id === dependencyId);
       return !dependencyResult || dependencyResult.status !== "executed";
@@ -4934,10 +5026,24 @@ export async function executeUnityMutationExecutionChain(
       trackedObjectNames,
     });
     if (!beforeSnapshotCapture.snapshot) {
+      const snapshotBlockedReason = `State gate blocked ${plannedAction.action_id} before mutation because the pre-action state snapshot could not be captured. ${beforeSnapshotCapture.blockedReason ?? ""}`.trim();
+      if (actionResults.some((entry) => entry.executed)) {
+        actionResults.push({
+          action_id: plannedAction.action_id,
+          action_type: plannedAction.action_type,
+          status: "failed",
+          executed: false,
+          dependency_satisfied: unsatisfiedDependencies.length === 0,
+          result: null,
+          failure_reason: snapshotBlockedReason,
+        });
+        break;
+      }
+
       return buildChainExecutionBlockedResult(
         input,
         readinessResult,
-        `State gate blocked ${plannedAction.action_id} before mutation because the pre-action state snapshot could not be captured. ${beforeSnapshotCapture.blockedReason ?? ""}`.trim(),
+        snapshotBlockedReason,
         "state_gate_failed",
         plannedAction.action_id,
         stateSnapshots,
@@ -4954,7 +5060,8 @@ export async function executeUnityMutationExecutionChain(
     const preActionGate = evaluatePreActionStateGate({
       action: actionInput,
       snapshot: beforeSnapshot,
-      dependencyOutputsExist: unsatisfiedDependencies.length === 0,
+      dependencyActions,
+      dependencyResults,
     });
     stateSnapshots.push({
       stage: "before_action",
@@ -4967,11 +5074,33 @@ export async function executeUnityMutationExecutionChain(
     lastObservedSnapshot = beforeSnapshot;
 
     if (!preActionGate.passed) {
+      const preActionBlockedReason = preActionGate.reason ?? `State gate blocked ${plannedAction.action_id}.`;
+      if (actionResults.some((entry) => entry.executed)) {
+        actionResults.push({
+          action_id: plannedAction.action_id,
+          action_type: plannedAction.action_type,
+          status: "failed",
+          executed: false,
+          dependency_satisfied: unsatisfiedDependencies.length === 0,
+          result: null,
+          failure_reason: preActionBlockedReason,
+        });
+        stateSnapshots.push({
+          stage: "failure",
+          action_id: plannedAction.action_id,
+          snapshot: beforeSnapshot,
+          expected: preActionGate.expected,
+          observed: preActionGate.observed,
+          decision: "manual_review_required",
+        });
+        break;
+      }
+
       return buildChainExecutionBlockedResult(
         input,
         readinessResult,
-        preActionGate.reason ?? `State gate blocked ${plannedAction.action_id}.`,
-        "state_gate_failed",
+        preActionBlockedReason,
+        preActionGate.failureClassification ?? "state_gate_failed",
         plannedAction.action_id,
         stateSnapshots,
         buildChainFinalSceneStateFromSnapshot(

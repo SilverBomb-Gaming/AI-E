@@ -15,6 +15,9 @@ import {
 } from "./unityProductionAdapter";
 import type { UnityReadOnlyRuntimeBridge } from "./unityReadOnlyRuntimeBridge";
 
+const PRIMARY_CHAIN_OBJECT_NAME = "AIE_ControlledMutationProbe";
+const COMPANION_CHAIN_OBJECT_NAME = "AIE_ControlledMutationProbe_Companion";
+
 function createSceneObjectCreationPacket() {
   const packet = buildUnityProductionPlanningPacket(
     "prepare a controlled Unity scene object mutation plan for the EnemyAIDemo scene",
@@ -98,10 +101,15 @@ function createLiveValidationResult(
 
 function createTrackedStateSnapshot(input: {
   objectCount: number;
-  targetExists: boolean;
+  targetExists?: boolean;
   missingScripts?: number;
   consoleErrors?: number;
   timestamp?: string;
+  trackedObjects?: Array<{
+    name: string;
+    exists: boolean;
+    type?: string;
+  }>;
 }) {
   return {
     bridge_status: "bridge_ready" as const,
@@ -113,13 +121,17 @@ function createTrackedStateSnapshot(input: {
     console_error_count: input.consoleErrors ?? 0,
     object_count: input.objectCount,
     checked_scene_name: "EnemyAIDemo",
-    tracked_objects: [
+    tracked_objects: (input.trackedObjects ?? [
       {
-        name: "AIE_ControlledMutationProbe",
+        name: PRIMARY_CHAIN_OBJECT_NAME,
         type: "GameObject",
-        exists: input.targetExists,
+        exists: input.targetExists ?? false,
       },
-    ],
+    ]).map((trackedObject) => ({
+      name: trackedObject.name,
+      type: trackedObject.type ?? "GameObject",
+      exists: trackedObject.exists,
+    })),
     evidence_timestamp: input.timestamp ?? "2026-05-05T10:00:00.000Z",
     raw_evidence_summary: null,
     summary: "Tracked state snapshot.",
@@ -359,6 +371,50 @@ function createChainExecutionInput(
   };
 }
 
+function createMultiCreateChainReadinessInput(
+  overrides: Partial<Parameters<typeof evaluateUnityMutationExecutionChainReadiness>[0]> = {},
+): Parameters<typeof evaluateUnityMutationExecutionChainReadiness>[0] {
+  return createChainReadinessInput({
+    actions: [
+      createCreationReadinessAction({
+        action_id: "create-probe",
+        target_object_name: PRIMARY_CHAIN_OBJECT_NAME,
+      }),
+      createCreationReadinessAction({
+        action_id: "create-probe-companion",
+        target_object_name: COMPANION_CHAIN_OBJECT_NAME,
+        depends_on: ["create-probe"],
+      }),
+    ],
+    ...overrides,
+  });
+}
+
+function createMultiCreateChainExecutionInput(
+  overrides: Partial<Parameters<typeof executeUnityMutationExecutionChain>[0]> = {},
+): Parameters<typeof executeUnityMutationExecutionChain>[0] {
+  const readinessInput = createMultiCreateChainReadinessInput(overrides);
+  const readinessResult = overrides.readiness_result ?? evaluateUnityMutationExecutionChainReadiness(readinessInput);
+
+  return {
+    adapter_request_id: "unity-chain-execution-multi-create-1",
+    requested_at: "2026-05-02T10:30:00.000Z",
+    chain_id: "unity-controlled-chain-1",
+    planning_packet: createSceneObjectCreationPacket(),
+    requested_actions: [],
+    review_state: {
+      review_package_id: "chain-review-1",
+      review_completed_at: "2026-05-02T10:00:10.000Z",
+      approved_by_operator: true,
+      operator_approval_id: "chain-approval-1",
+      delivery_package_id: "chain-delivery-1",
+    },
+    actions: readinessInput.actions,
+    readiness_result: readinessResult,
+    ...overrides,
+  };
+}
+
 function createFailureSimulation(
   overrides: Partial<NonNullable<Parameters<typeof executeUnityMutationExecutionChain>[0]["failure_simulation"]>> & {
     target_action_id: string;
@@ -469,6 +525,13 @@ function createPlannedRollbackExecutionInput(
 
 async function createPartialFailureChainExecutionResult() {
   return executeUnityMutationExecutionChain(createChainExecutionInput(), {
+    runtime_bridge: createSequencedRuntimeBridge([
+      createTrackedStateSnapshot({ objectCount: 13, targetExists: false }),
+      createTrackedStateSnapshot({ objectCount: 13, targetExists: false }),
+      createTrackedStateSnapshot({ objectCount: 14, targetExists: true }),
+      createTrackedStateSnapshot({ objectCount: 14, targetExists: true }),
+      createTrackedStateSnapshot({ objectCount: 14, targetExists: true }),
+    ]),
     mutation_bridge: {
       async executeSceneObjectCreation(input) {
         return {
@@ -790,6 +853,231 @@ test("controlled Unity chain execution runs the bounded create then rollback seq
   assert.ok(result.delivery_package?.proof_results.includes("STATE SNAPSHOT CAPTURED"));
   assert.ok(result.delivery_package?.proof_results.includes("PRE-ACTION STATE GATE PASSED"));
   assert.ok(result.delivery_package?.proof_results.includes("POST-ACTION STATE VERIFIED"));
+});
+
+test("controlled Unity chain execution runs the bounded create then create sequence", async () => {
+  const calls: string[] = [];
+  const result = await executeUnityMutationExecutionChain(createMultiCreateChainExecutionInput(), {
+    runtime_bridge: createSequencedRuntimeBridge([
+      createTrackedStateSnapshot({
+        objectCount: 13,
+        trackedObjects: [
+          { name: PRIMARY_CHAIN_OBJECT_NAME, exists: false },
+          { name: COMPANION_CHAIN_OBJECT_NAME, exists: false },
+        ],
+      }),
+      createTrackedStateSnapshot({
+        objectCount: 13,
+        trackedObjects: [
+          { name: PRIMARY_CHAIN_OBJECT_NAME, exists: false },
+          { name: COMPANION_CHAIN_OBJECT_NAME, exists: false },
+        ],
+      }),
+      createTrackedStateSnapshot({
+        objectCount: 14,
+        trackedObjects: [
+          { name: PRIMARY_CHAIN_OBJECT_NAME, exists: true },
+          { name: COMPANION_CHAIN_OBJECT_NAME, exists: false },
+        ],
+      }),
+      createTrackedStateSnapshot({
+        objectCount: 14,
+        trackedObjects: [
+          { name: PRIMARY_CHAIN_OBJECT_NAME, exists: true },
+          { name: COMPANION_CHAIN_OBJECT_NAME, exists: false },
+        ],
+      }),
+      createTrackedStateSnapshot({
+        objectCount: 15,
+        trackedObjects: [
+          { name: PRIMARY_CHAIN_OBJECT_NAME, exists: true },
+          { name: COMPANION_CHAIN_OBJECT_NAME, exists: true },
+        ],
+      }),
+    ]),
+    mutation_bridge: {
+      async executeSceneObjectCreation(input) {
+        calls.push(`create:${input.object_name}`);
+        return {
+          bridge_status: "bridge_ready" as const,
+          source: "command_probe" as const,
+          mutation_status: "mutation_executed" as const,
+          mutation_type: "scene_object_creation_request" as const,
+          target_scene: input.target_scene,
+          object_name: input.object_name,
+          created_object_name: input.object_name,
+          scene_saved: true,
+          duplicate_handling: "created" as const,
+          evidence_timestamp: "2026-05-04T10:01:00.000Z",
+          raw_evidence_summary: `Controlled Unity mutation created ${input.object_name}.`,
+          summary: `Controlled Unity mutation created object ${input.object_name} in EnemyAIDemo with scene_saved true.`,
+          rollback_hint: "Rollback requires separate approval.",
+          recommended_next_operator_action: "Review controlled mutation evidence.",
+        };
+      },
+      async executeSceneObjectRemoval() {
+        throw new Error("should not execute rollback during the bounded create/create sequence");
+      },
+    },
+  });
+
+  assert.deepEqual(calls, [
+    `create:${PRIMARY_CHAIN_OBJECT_NAME}`,
+    `create:${COMPANION_CHAIN_OBJECT_NAME}`,
+  ]);
+  assert.equal(result.execution_status, "success");
+  assert.equal(result.actions_executed_count, 2);
+  assert.equal(result.actions_failed_count, 0);
+  assert.deepEqual(result.successful_action_ids, ["create-probe", "create-probe-companion"]);
+  assert.equal(result.failure_classification, "none");
+  assert.equal(result.rollback_plan_required, false);
+  assert.equal(result.final_scene_state.object_count_before, 13);
+  assert.equal(result.final_scene_state.object_count_after, 15);
+  assert.equal(result.final_scene_state.object_count_delta, 2);
+  assert.equal(result.state_snapshots.filter((snapshot) => snapshot.stage === "after_action").length, 2);
+});
+
+test("dependency failure blocks step 2 when the first create result is missing from live state", async () => {
+  const calls: string[] = [];
+  const result = await executeUnityMutationExecutionChain(createMultiCreateChainExecutionInput(), {
+    runtime_bridge: createSequencedRuntimeBridge([
+      createTrackedStateSnapshot({
+        objectCount: 13,
+        trackedObjects: [
+          { name: PRIMARY_CHAIN_OBJECT_NAME, exists: false },
+          { name: COMPANION_CHAIN_OBJECT_NAME, exists: false },
+        ],
+      }),
+      createTrackedStateSnapshot({
+        objectCount: 13,
+        trackedObjects: [
+          { name: PRIMARY_CHAIN_OBJECT_NAME, exists: false },
+          { name: COMPANION_CHAIN_OBJECT_NAME, exists: false },
+        ],
+      }),
+      createTrackedStateSnapshot({
+        objectCount: 14,
+        trackedObjects: [
+          { name: PRIMARY_CHAIN_OBJECT_NAME, exists: true },
+          { name: COMPANION_CHAIN_OBJECT_NAME, exists: false },
+        ],
+      }),
+      createTrackedStateSnapshot({
+        objectCount: 14,
+        trackedObjects: [
+          { name: PRIMARY_CHAIN_OBJECT_NAME, exists: false },
+          { name: COMPANION_CHAIN_OBJECT_NAME, exists: false },
+        ],
+      }),
+    ]),
+    mutation_bridge: {
+      async executeSceneObjectCreation(input) {
+        calls.push(`create:${input.object_name}`);
+        return {
+          bridge_status: "bridge_ready" as const,
+          source: "command_probe" as const,
+          mutation_status: "mutation_executed" as const,
+          mutation_type: "scene_object_creation_request" as const,
+          target_scene: input.target_scene,
+          object_name: input.object_name,
+          created_object_name: input.object_name,
+          scene_saved: true,
+          duplicate_handling: "created" as const,
+          evidence_timestamp: "2026-05-04T10:02:00.000Z",
+          raw_evidence_summary: `Controlled Unity mutation created ${input.object_name}.`,
+          summary: `Controlled Unity mutation created object ${input.object_name} in EnemyAIDemo with scene_saved true.`,
+          rollback_hint: "Rollback requires separate approval.",
+          recommended_next_operator_action: "Review controlled mutation evidence.",
+        };
+      },
+      async executeSceneObjectRemoval() {
+        throw new Error("should not execute rollback during dependency failure");
+      },
+    },
+  });
+
+  assert.deepEqual(calls, [`create:${PRIMARY_CHAIN_OBJECT_NAME}`]);
+  assert.equal(result.execution_status, "partial_failure");
+  assert.equal(result.actions_executed_count, 1);
+  assert.equal(result.actions_failed_count, 1);
+  assert.equal(result.failed_action_id, "create-probe-companion");
+  assert.equal(result.failure_classification, "dependency_failed");
+  assert.equal(result.rollback_plan_required, true);
+  assert.deepEqual(result.rollback_plan?.rollback_order, ["create-probe"]);
+  assert.equal(result.final_scene_state.object_count_before, 13);
+  assert.equal(result.final_scene_state.object_count_after, 14);
+  assert.match(result.per_action_results[1]?.failure_reason ?? "", /Dependency gate blocked/i);
+});
+
+test("post-action verification holds for both steps in the bounded create/create chain", async () => {
+  const result = await executeUnityMutationExecutionChain(createMultiCreateChainExecutionInput(), {
+    runtime_bridge: createSequencedRuntimeBridge([
+      createTrackedStateSnapshot({
+        objectCount: 13,
+        trackedObjects: [
+          { name: PRIMARY_CHAIN_OBJECT_NAME, exists: false },
+          { name: COMPANION_CHAIN_OBJECT_NAME, exists: false },
+        ],
+      }),
+      createTrackedStateSnapshot({
+        objectCount: 13,
+        trackedObjects: [
+          { name: PRIMARY_CHAIN_OBJECT_NAME, exists: false },
+          { name: COMPANION_CHAIN_OBJECT_NAME, exists: false },
+        ],
+      }),
+      createTrackedStateSnapshot({
+        objectCount: 14,
+        trackedObjects: [
+          { name: PRIMARY_CHAIN_OBJECT_NAME, exists: true },
+          { name: COMPANION_CHAIN_OBJECT_NAME, exists: false },
+        ],
+      }),
+      createTrackedStateSnapshot({
+        objectCount: 14,
+        trackedObjects: [
+          { name: PRIMARY_CHAIN_OBJECT_NAME, exists: true },
+          { name: COMPANION_CHAIN_OBJECT_NAME, exists: false },
+        ],
+      }),
+      createTrackedStateSnapshot({
+        objectCount: 15,
+        trackedObjects: [
+          { name: PRIMARY_CHAIN_OBJECT_NAME, exists: true },
+          { name: COMPANION_CHAIN_OBJECT_NAME, exists: true },
+        ],
+      }),
+    ]),
+    mutation_bridge: {
+      async executeSceneObjectCreation(input) {
+        return {
+          bridge_status: "bridge_ready" as const,
+          source: "command_probe" as const,
+          mutation_status: "mutation_executed" as const,
+          mutation_type: "scene_object_creation_request" as const,
+          target_scene: input.target_scene,
+          object_name: input.object_name,
+          created_object_name: input.object_name,
+          scene_saved: true,
+          duplicate_handling: "created" as const,
+          evidence_timestamp: "2026-05-04T10:03:00.000Z",
+          raw_evidence_summary: `Controlled Unity mutation created ${input.object_name}.`,
+          summary: `Controlled Unity mutation created object ${input.object_name} in EnemyAIDemo with scene_saved true.`,
+          rollback_hint: "Rollback requires separate approval.",
+          recommended_next_operator_action: "Review controlled mutation evidence.",
+        };
+      },
+      async executeSceneObjectRemoval() {
+        throw new Error("should not execute rollback during create/create verification");
+      },
+    },
+  });
+
+  const afterActionSnapshots = result.state_snapshots.filter((snapshot) => snapshot.stage === "after_action");
+  assert.equal(afterActionSnapshots.length, 2);
+  assert.ok(afterActionSnapshots.every((snapshot) => snapshot.decision === "continue"));
+  assert.equal(afterActionSnapshots[0]?.snapshot.objectCount, 14);
+  assert.equal(afterActionSnapshots[1]?.snapshot.objectCount, 15);
 });
 
 test("chain captures baseline state before execution", async () => {
@@ -1232,6 +1520,11 @@ test("controlled Unity chain execution classifies runtime unavailable failures a
 
 test("controlled Unity chain execution classifies real runtime unavailable failures on the mutation lane", async () => {
   const result = await executeUnityMutationExecutionChain(createChainExecutionInput(), {
+    runtime_bridge: createSequencedRuntimeBridge([
+      createTrackedStateSnapshot({ objectCount: 13, targetExists: false }),
+      createTrackedStateSnapshot({ objectCount: 13, targetExists: false }),
+      createTrackedStateSnapshot({ objectCount: 13, targetExists: false }),
+    ]),
     mutation_bridge: {
       async executeSceneObjectCreation() {
         return {
@@ -1268,7 +1561,26 @@ test("controlled Unity chain execution refuses unsupported chain shapes", async 
   });
   const result = await executeUnityMutationExecutionChain(createChainExecutionInput({
     actions: readinessInput.actions,
-    readiness_result: evaluateUnityMutationExecutionChainReadiness(readinessInput),
+    readiness_result: {
+      ...evaluateUnityMutationExecutionChainReadiness(readinessInput),
+      chain_readiness: "ready_for_operator_execution",
+      chain_ready: true,
+      blocked_reason: null,
+      executable_actions: ["create-one"],
+      blocked_actions: [],
+      dependency_blocked_actions: [],
+      missing_gates: [],
+      ordered_actions: [
+        {
+          ...createCreationReadinessAction({
+            action_id: "create-one",
+            target_object_name: "AIE_ControlledMutationProbe",
+          }),
+          ready_for_operator_execution: true,
+          blocked_reason: null,
+        },
+      ],
+    },
   }));
 
   assert.equal(result.execution_kind, "chain_execution_blocked");
@@ -1277,7 +1589,7 @@ test("controlled Unity chain execution refuses unsupported chain shapes", async 
   assert.equal(result.failure_source, "adapter");
   assert.equal(result.failure_handling_status, "manual_review_required");
   assert.equal(result.rollback_plan_required, false);
-  assert.match(result.blocked_reason ?? "", /limited to one creation action followed by one rollback action/i);
+  assert.match(result.blocked_reason ?? "", /bounded two-action dependency pair/i);
 });
 
 test("disabled failure simulation does not alter controlled Unity chain execution", async () => {
@@ -1383,6 +1695,9 @@ test("failure simulation on the first action fails without generating a rollback
       failure_kind: "simulated_action_failure",
     }),
   }), {
+    runtime_bridge: createSequencedRuntimeBridge([
+      createTrackedStateSnapshot({ objectCount: 13, targetExists: false }),
+    ]),
     mutation_bridge: {
       async executeSceneObjectCreation() {
         callCount += 1;
@@ -1567,6 +1882,191 @@ test("simulated second-action failure can feed manual rollback execution and res
   assert.equal(rollbackResult.final_scene_state.object_count_after, 13);
   assert.equal(rollbackResult.final_scene_state.object_count_delta, -1);
   assert.deepEqual(rollbackResult.remaining_actions_not_executed, []);
+  assert.ok(rollbackResult.review_package?.proof_results.includes("MANUAL ROLLBACK EXECUTED"));
+  assert.ok(rollbackResult.delivery_package?.proof_results.includes("MANUAL ROLLBACK EXECUTED"));
+});
+
+test("failure simulation on the second create action generates a rollback plan for the first successful create", async () => {
+  const calls: string[] = [];
+  const result = await executeUnityMutationExecutionChain(createMultiCreateChainExecutionInput({
+    failure_simulation: createFailureSimulation({
+      target_action_id: "create-probe-companion",
+      failure_kind: "simulated_action_failure",
+    }),
+  }), {
+    runtime_bridge: createSequencedRuntimeBridge([
+      createTrackedStateSnapshot({
+        objectCount: 13,
+        trackedObjects: [
+          { name: PRIMARY_CHAIN_OBJECT_NAME, exists: false },
+          { name: COMPANION_CHAIN_OBJECT_NAME, exists: false },
+        ],
+      }),
+      createTrackedStateSnapshot({
+        objectCount: 13,
+        trackedObjects: [
+          { name: PRIMARY_CHAIN_OBJECT_NAME, exists: false },
+          { name: COMPANION_CHAIN_OBJECT_NAME, exists: false },
+        ],
+      }),
+      createTrackedStateSnapshot({
+        objectCount: 14,
+        trackedObjects: [
+          { name: PRIMARY_CHAIN_OBJECT_NAME, exists: true },
+          { name: COMPANION_CHAIN_OBJECT_NAME, exists: false },
+        ],
+      }),
+      createTrackedStateSnapshot({
+        objectCount: 14,
+        trackedObjects: [
+          { name: PRIMARY_CHAIN_OBJECT_NAME, exists: true },
+          { name: COMPANION_CHAIN_OBJECT_NAME, exists: false },
+        ],
+      }),
+    ]),
+    mutation_bridge: {
+      async executeSceneObjectCreation(input) {
+        calls.push(`create:${input.object_name}`);
+        return {
+          bridge_status: "bridge_ready" as const,
+          source: "command_probe" as const,
+          mutation_status: "mutation_executed" as const,
+          mutation_type: "scene_object_creation_request" as const,
+          target_scene: input.target_scene,
+          object_name: input.object_name,
+          created_object_name: input.object_name,
+          scene_saved: true,
+          duplicate_handling: "created" as const,
+          evidence_timestamp: "2026-05-05T10:03:00.000Z",
+          raw_evidence_summary: `Controlled Unity mutation created ${input.object_name}.`,
+          summary: `Controlled Unity mutation created object ${input.object_name} in EnemyAIDemo with scene_saved true.`,
+          rollback_hint: "Rollback requires separate approval.",
+          recommended_next_operator_action: "Review controlled mutation evidence.",
+        };
+      },
+      async executeSceneObjectRemoval() {
+        throw new Error("should not execute rollback when the second create action is simulated");
+      },
+    },
+  });
+
+  assert.deepEqual(calls, [`create:${PRIMARY_CHAIN_OBJECT_NAME}`]);
+  assert.equal(result.execution_status, "partial_failure");
+  assert.equal(result.actions_executed_count, 1);
+  assert.equal(result.actions_failed_count, 1);
+  assert.equal(result.failure_classification, "simulated_action_failure");
+  assert.equal(result.failure_source, "simulation");
+  assert.equal(result.failure_is_simulated, true);
+  assert.equal(result.rollback_plan_required, true);
+  assert.deepEqual(result.rollback_plan?.rollback_order, ["create-probe"]);
+  assert.equal(result.final_scene_state.object_count_before, 13);
+  assert.equal(result.final_scene_state.object_count_after, 14);
+});
+
+test("manual rollback after a two-step create-chain failure restores the clean 13-object baseline", async () => {
+  const sourceResult = await executeUnityMutationExecutionChain(createMultiCreateChainExecutionInput({
+    failure_simulation: createFailureSimulation({
+      target_action_id: "create-probe-companion",
+      failure_kind: "simulated_action_failure",
+    }),
+  }), {
+    runtime_bridge: createSequencedRuntimeBridge([
+      createTrackedStateSnapshot({
+        objectCount: 13,
+        trackedObjects: [
+          { name: PRIMARY_CHAIN_OBJECT_NAME, exists: false },
+          { name: COMPANION_CHAIN_OBJECT_NAME, exists: false },
+        ],
+      }),
+      createTrackedStateSnapshot({
+        objectCount: 13,
+        trackedObjects: [
+          { name: PRIMARY_CHAIN_OBJECT_NAME, exists: false },
+          { name: COMPANION_CHAIN_OBJECT_NAME, exists: false },
+        ],
+      }),
+      createTrackedStateSnapshot({
+        objectCount: 14,
+        trackedObjects: [
+          { name: PRIMARY_CHAIN_OBJECT_NAME, exists: true },
+          { name: COMPANION_CHAIN_OBJECT_NAME, exists: false },
+        ],
+      }),
+      createTrackedStateSnapshot({
+        objectCount: 14,
+        trackedObjects: [
+          { name: PRIMARY_CHAIN_OBJECT_NAME, exists: true },
+          { name: COMPANION_CHAIN_OBJECT_NAME, exists: false },
+        ],
+      }),
+    ]),
+    mutation_bridge: {
+      async executeSceneObjectCreation(input) {
+        return {
+          bridge_status: "bridge_ready" as const,
+          source: "command_probe" as const,
+          mutation_status: "mutation_executed" as const,
+          mutation_type: "scene_object_creation_request" as const,
+          target_scene: input.target_scene,
+          object_name: input.object_name,
+          created_object_name: input.object_name,
+          scene_saved: true,
+          duplicate_handling: "created" as const,
+          evidence_timestamp: "2026-05-05T10:04:00.000Z",
+          raw_evidence_summary: `Controlled Unity mutation created ${input.object_name}.`,
+          summary: `Controlled Unity mutation created object ${input.object_name} in EnemyAIDemo with scene_saved true.`,
+          rollback_hint: "Rollback requires separate approval.",
+          recommended_next_operator_action: "Review controlled mutation evidence.",
+        };
+      },
+      async executeSceneObjectRemoval() {
+        throw new Error("should not execute rollback during the chain run");
+      },
+    },
+  });
+
+  assert.equal(sourceResult.execution_status, "partial_failure");
+  assert.equal(sourceResult.rollback_plan_required, true);
+  assert.deepEqual(sourceResult.rollback_plan?.rollback_order, ["create-probe"]);
+
+  const rollbackCalls: string[] = [];
+  const rollbackResult = await executePlannedUnityRollbackFromChain(
+    createPlannedRollbackExecutionInput(sourceResult),
+    {
+      mutation_bridge: {
+        async executeSceneObjectCreation() {
+          throw new Error("should not execute creation during manual rollback");
+        },
+        async executeSceneObjectRemoval(input) {
+          rollbackCalls.push(`rollback:${input.object_name}`);
+          return {
+            bridge_status: "bridge_ready" as const,
+            source: "command_probe" as const,
+            rollback_status: "rollback_executed" as const,
+            rollback_type: "scene_object_removal" as const,
+            target_scene: input.target_scene,
+            object_name: input.object_name,
+            removed_object_name: input.object_name,
+            scene_saved: true,
+            target_missing_handling: "removed" as const,
+            evidence_timestamp: "2026-05-05T10:06:00.000Z",
+            raw_evidence_summary: `Controlled Unity rollback removed ${input.object_name}.`,
+            summary: `Controlled Unity rollback removed target ${input.object_name} in EnemyAIDemo with scene_saved true.`,
+            recommended_next_operator_action: "Review controlled rollback evidence.",
+          };
+        },
+      },
+    },
+  );
+
+  assert.deepEqual(rollbackCalls, [`rollback:${PRIMARY_CHAIN_OBJECT_NAME}`]);
+  assert.equal(rollbackResult.execution_status, "success");
+  assert.equal(rollbackResult.failure_classification, "none");
+  assert.equal(rollbackResult.actions_executed_count, 1);
+  assert.equal(rollbackResult.actions_failed_count, 0);
+  assert.equal(rollbackResult.final_scene_state.object_count_before, 14);
+  assert.equal(rollbackResult.final_scene_state.object_count_after, 13);
+  assert.equal(rollbackResult.final_scene_state.object_count_delta, -1);
   assert.ok(rollbackResult.review_package?.proof_results.includes("MANUAL ROLLBACK EXECUTED"));
   assert.ok(rollbackResult.delivery_package?.proof_results.includes("MANUAL ROLLBACK EXECUTED"));
 });
@@ -1804,32 +2304,17 @@ test("controlled Unity chain failure evidence classifies dependency failures dis
 });
 
 test("controlled Unity chain execution classifies ambiguous blocked evidence as unknown failure", async () => {
-  const readinessInput = createChainReadinessInput();
-  const readinessResult = evaluateUnityMutationExecutionChainReadiness(readinessInput);
-  const result = await executeUnityMutationExecutionChain(createChainExecutionInput({
-    actions: [],
-    readiness_result: {
-      ...readinessResult,
-      chain_readiness: "ready_for_operator_execution",
-      chain_ready: true,
-      blocked_reason: null,
-      ordered_actions: readinessResult.ordered_actions.map((action) => ({
-        ...action,
-        ready_for_operator_execution: true,
-        blocked_reason: null,
-      })),
-      executable_actions: readinessResult.ordered_actions.map((action) => action.action_id),
-      blocked_actions: [],
-      dependency_blocked_actions: [],
-      missing_gates: [],
-    },
-  }));
+  const evidence = classifyUnityChainFailureEvidence({
+    context: "chain",
+    blockedReason: "Unexpected executor interruption without a classified failure reason.",
+    failedActionResult: null,
+    simulatedFailureKind: null,
+  });
 
-  assert.equal(result.execution_status, "failed");
-  assert.equal(result.failure_classification, "unknown_failure");
-  assert.equal(result.failure_source, "unknown");
-  assert.equal(result.failure_requires_manual_review, true);
-  assert.match(result.failure_evidence_summary, /Ambiguous failure evidence/i);
+  assert.equal(evidence.classification, "unknown_failure");
+  assert.equal(evidence.source, "unknown");
+  assert.equal(evidence.requires_manual_review, true);
+  assert.match(evidence.summary, /Ambiguous failure evidence/i);
 });
 
 test("manual Unity rollback from a reviewed chain plan executes successfully", async () => {

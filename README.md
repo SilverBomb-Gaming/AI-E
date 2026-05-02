@@ -411,16 +411,17 @@ Current Layer 18 status:
 - Step 2 pre-action state gating: implemented
 - Step 3 post-action state verification: implemented
 - Step 4 chain state snapshot capture: implemented
-- supported scope: the existing bounded `create -> rollback` chain for `AIE_ControlledMutationProbe` in `EnemyAIDemo`
+- Step 5 bounded multi-action state-aware chain execution: implemented for reviewed two-step `create -> create` and `create -> rollback` chains
+- supported scope: the reviewed bounded chain lane for `AIE_ControlledMutationProbe` and `AIE_ControlledMutationProbe_Companion` in `EnemyAIDemo`
 - read-only truth source: `UnityValidationProbe.cs` plus `unityReadOnlyRuntimeBridge.ts`
-- new failure classifications surfaced in chain execution: `state_gate_failed` and `state_verification_failed`
+- new failure classifications surfaced in chain execution: `state_gate_failed`, `state_verification_failed`, and `dependency_failed`
 - blocked execution evidence now calls out `PRE-ACTION STATE GATE FAILED` and `CHAIN STOPPED BEFORE MUTATION` when a truthful state gate blocks before mutation
-- focused chain tests: `39/39` passing
+- focused chain tests: `44/44` passing
 - bridge plus evidence tests: `25/25` passing
 - broader regression closeout: `npm run test:trace:safe` passed after Layer 18 changes
 - live Unity validation closeout: passed against the real `EnemyAIDemo` scene with clean baseline `13`
-- live scenario A: bounded create then rollback succeeded with `5` state snapshots and final scene `13 -> 13`
-- live scenario B: duplicate target was blocked before mutation with `state_gate_failed`, `0` actions executed, and cleanup restored final scene `13`
+- live scenario A: bounded create then create succeeded with `5` state snapshots and final scene `13 -> 15`, then reviewed cleanup restored baseline `13`
+- live scenario B: dependency drift after the first create blocked the second create with `dependency_failed`, `1` action executed, and cleanup restored final scene `13`
 - live scenario C: simulated second-action failure produced a reviewed rollback plan, separately approved manual rollback succeeded, and final scene returned `14 -> 13`
 
 Current Layer 18 boundary:
@@ -429,7 +430,7 @@ Current Layer 18 boundary:
 - verification remains bounded to the existing reviewed Layer 15 and Layer 17 Unity bridge lanes
 - chain execution still stops on first failure, preserves evidence, and never auto-executes rollback
 - rollback approval remains separate from mutation approval and cannot reuse the original chain execution approval
-- only the verified bounded `AIE_ControlledMutationProbe` chain in `EnemyAIDemo` is supported
+- only the verified bounded two-step `AIE_ControlledMutationProbe` and `AIE_ControlledMutationProbe_Companion` chain lane in `EnemyAIDemo` is supported
 - broader branching chains, parallel chains, new mutation types, auto-recovery, and chat-triggered execution remain out of scope
 
 ## Safe Runtime Action Bridge
