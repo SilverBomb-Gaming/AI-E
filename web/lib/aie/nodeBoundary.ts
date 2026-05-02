@@ -85,7 +85,11 @@ export type NodeAdvisoryPlanningStage = "strategy" | "planning";
 export type NodePlanAnnotationType = "risk_warning" | "reliability_note" | "pattern_note" | "plan_adjustment";
 
 export type NodePlanAlternative = {
+  plan_id: string;
+  label: string;
   steps: string[];
+  command?: string;
+  validation_gates?: string[];
 };
 
 export type NodePlanAnnotation = {
@@ -106,6 +110,7 @@ export type NodePlanOperatorAcknowledgement = {
 
 export type NodeAdvisoryPlan = {
   plan_id: string;
+  selected_plan_id?: string;
   planning_stage: NodeAdvisoryPlanningStage;
   execution_path: typeof EXECUTION_PATH;
   planning_suggestions: string[];
@@ -185,6 +190,14 @@ export type CoreNodePipelineDraftPlan = CoreNodeTaskTranslationPlan & {
   target_node_role?: NodeDispatchTargetRole;
   target_node_name?: string;
   routing_reason?: string;
+};
+
+export type NodePlanSelectionOption = {
+  plan_id: string;
+  label: string;
+  source: "original" | "alternative";
+  command?: string;
+  steps: string[];
 };
 
 export type NodeDispatchExecutionPayloadDraft = {
@@ -724,6 +737,7 @@ function parseCoreNodeTaskTranslationPlan(plan: unknown): CoreNodeTaskTranslatio
 
   return {
     plan_id: plan.plan_id,
+    selected_plan_id: hasNonEmptyString(plan.selected_plan_id) ? plan.selected_plan_id.trim() : undefined,
     planning_stage: plan.planning_stage,
     execution_path: EXECUTION_PATH,
     planning_suggestions: (plan.planning_suggestions as unknown[]).filter((item): item is string => typeof item === "string"),
@@ -736,6 +750,240 @@ function parseCoreNodeTaskTranslationPlan(plan: unknown): CoreNodeTaskTranslatio
     command: plan.command.trim(),
     requires_sudo: false,
     risk_level: plan.risk_level,
+  };
+}
+
+function uniqueStrings(items: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+
+  for (const item of items) {
+    if (!hasNonEmptyString(item)) {
+      continue;
+    }
+
+    const trimmed = item.trim();
+    const normalized = trimmed.toLowerCase();
+    if (seen.has(normalized)) {
+      continue;
+    }
+
+    seen.add(normalized);
+    result.push(trimmed);
+  }
+
+  return result;
+}
+
+function clonePlanAnnotations(annotations: NodePlanAnnotation[] | undefined): NodePlanAnnotation[] | undefined {
+  if (!Array.isArray(annotations)) {
+    return annotations;
+  }
+
+  return annotations.map((annotation) => ({
+    ...annotation,
+    alternative_plan: annotation.alternative_plan
+      ? {
+        ...annotation.alternative_plan,
+        steps: [...annotation.alternative_plan.steps],
+        validation_gates: annotation.alternative_plan.validation_gates
+          ? [...annotation.alternative_plan.validation_gates]
+          : undefined,
+      }
+      : undefined,
+  }));
+}
+
+function cloneSelectablePlan<T extends NodeAdvisoryPlan | CoreNodeTaskTranslationPlan | CoreNodePipelineDraftPlan>(plan: T): T {
+  const pipelinePlan = plan as CoreNodePipelineDraftPlan;
+
+  return {
+    ...plan,
+    planning_suggestions: [...plan.planning_suggestions],
+    validation_insights: [...plan.validation_insights],
+    dependency_reasoning: [...plan.dependency_reasoning],
+    validation_gates: [...plan.validation_gates],
+    annotations: clonePlanAnnotations(plan.annotations),
+    operator_acknowledgement: plan.operator_acknowledgement ? { ...plan.operator_acknowledgement } : plan.operator_acknowledgement,
+    argv: Array.isArray(pipelinePlan.argv) ? [...pipelinePlan.argv] : pipelinePlan.argv,
+  };
+}
+
+function deriveAlternativeCommand(command: string | undefined, insight: ExecutionInsight): string | undefined {
+  if (!hasNonEmptyString(command)) {
+    return undefined;
+  }
+
+  const normalized = command.trim().toLowerCase();
+  if (normalized === "python validate_runtime.py") {
+    return "python diagnostics_smoke.py";
+  }
+
+  if (normalized === "python diagnostics_smoke.py") {
+    return "python daily_use_smoke.py";
+  }
+
+  if (normalized === "python daily_use_smoke.py" || normalized.startsWith("pytest ")) {
+    return "python diagnostics_smoke.py";
+  }
+
+  if (insight.category === "pattern") {
+    return `review ${command.trim()} in test mode before any full execution decision`;
+  }
+
+  if (insight.category === "risk") {
+    return `review ${command.trim()} with an added validation checkpoint before execution`;
+  }
+
+  return `break ${command.trim()} into smaller reviewed steps before execution`;
+}
+
+function deriveAlternativeValidationGates(insight: ExecutionInsight): string[] {
+  if (insight.category === "risk") {
+    return ["pre-execution validation checkpoint"];
+  }
+
+  if (insight.category === "pattern") {
+    return ["test-mode review checkpoint"];
+  }
+
+  return ["step-by-step environment review checkpoint"];
+}
+
+function getPlanAlternatives(plan: Pick<NodeAdvisoryPlan, "annotations">): NodePlanAlternative[] {
+  if (!Array.isArray(plan.annotations)) {
+    return [];
+  }
+
+  const alternatives: NodePlanAlternative[] = [];
+  for (const annotation of plan.annotations) {
+    if (annotation.type !== "plan_adjustment" || !annotation.alternative_plan) {
+      continue;
+    }
+
+    if (!alternatives.some((candidate) => candidate.plan_id === annotation.alternative_plan?.plan_id)) {
+      alternatives.push({
+        ...annotation.alternative_plan,
+        steps: [...annotation.alternative_plan.steps],
+        validation_gates: annotation.alternative_plan.validation_gates
+          ? [...annotation.alternative_plan.validation_gates]
+          : undefined,
+      });
+    }
+  }
+
+  return alternatives;
+}
+
+export function listPlanSelectionOptions(
+  plan: Pick<NodeAdvisoryPlan, "plan_id" | "planning_suggestions" | "annotations"> & Partial<CoreNodeTaskTranslationPlan>,
+): NodePlanSelectionOption[] {
+  const options: NodePlanSelectionOption[] = [{
+    plan_id: plan.plan_id,
+    label: "Original plan",
+    source: "original",
+    command: "command" in plan && hasNonEmptyString(plan.command) ? plan.command : undefined,
+    steps: "command" in plan && hasNonEmptyString(plan.command)
+      ? [`run ${plan.command}`]
+      : plan.planning_suggestions.length > 0
+        ? [plan.planning_suggestions[0]]
+        : ["review the current bounded plan"],
+  }];
+
+  for (const alternative of getPlanAlternatives(plan)) {
+    options.push({
+      plan_id: alternative.plan_id,
+      label: alternative.label,
+      source: "alternative",
+      command: alternative.command,
+      steps: [...alternative.steps],
+    });
+  }
+
+  return options;
+}
+
+export function selectOperatorPlan<T extends NodeAdvisoryPlan | CoreNodeTaskTranslationPlan | CoreNodePipelineDraftPlan>(
+  plan: T,
+  selectedPlanId: string,
+): T & { selected_plan_id: string } {
+  const normalizedPlanId = hasNonEmptyString(selectedPlanId) ? selectedPlanId.trim() : "";
+  if (!normalizedPlanId) {
+    throw new Error("Operator plan selection requires a non-empty plan id.");
+  }
+
+  const validPlanIds = new Set(listPlanSelectionOptions(plan).map((option) => option.plan_id));
+  if (!validPlanIds.has(normalizedPlanId)) {
+    throw new Error(`Operator plan selection must reference the original plan or a suggested alternative. Received: ${selectedPlanId}`);
+  }
+
+  return {
+    ...cloneSelectablePlan(plan),
+    selected_plan_id: normalizedPlanId,
+  };
+}
+
+function resolveSelectedPlanForExecution<T extends NodeAdvisoryPlan | CoreNodeTaskTranslationPlan | CoreNodePipelineDraftPlan>(
+  plan: T,
+): { ok: true; plan: T } | { ok: false; reason: string } {
+  const selectedPlanId = hasNonEmptyString(plan.selected_plan_id) ? plan.selected_plan_id.trim() : null;
+  const alternatives = getPlanAlternatives(plan);
+
+  if (alternatives.length === 0) {
+    if (selectedPlanId && selectedPlanId !== plan.plan_id) {
+      return {
+        ok: false,
+        reason: "Selected plan id does not match the original plan and no suggested alternatives are available.",
+      };
+    }
+
+    return {
+      ok: true,
+      plan: cloneSelectablePlan({
+        ...plan,
+        selected_plan_id: selectedPlanId ?? plan.selected_plan_id,
+      }),
+    };
+  }
+
+  if (!selectedPlanId) {
+    return {
+      ok: false,
+      reason: "Operator plan selection is required before translation. Choose the original plan or one suggested alternative explicitly.",
+    };
+  }
+
+  if (selectedPlanId === plan.plan_id) {
+    return {
+      ok: true,
+      plan: cloneSelectablePlan({
+        ...plan,
+        selected_plan_id: selectedPlanId,
+      }),
+    };
+  }
+
+  const selectedAlternative = alternatives.find((alternative) => alternative.plan_id === selectedPlanId);
+  if (!selectedAlternative) {
+    return {
+      ok: false,
+      reason: "Selected plan id does not match the original plan or any suggested alternative.",
+    };
+  }
+
+  const resolvedPlan = cloneSelectablePlan(plan);
+  return {
+    ok: true,
+    plan: {
+      ...resolvedPlan,
+      plan_id: selectedAlternative.plan_id,
+      selected_plan_id: selectedPlanId,
+      planning_suggestions: uniqueStrings([...resolvedPlan.planning_suggestions, ...selectedAlternative.steps]),
+      validation_gates: uniqueStrings([...resolvedPlan.validation_gates, ...(selectedAlternative.validation_gates ?? [])]),
+      command: "command" in resolvedPlan && hasNonEmptyString(selectedAlternative.command)
+        ? selectedAlternative.command
+        : (resolvedPlan as CoreNodeTaskTranslationPlan).command,
+    },
   };
 }
 
@@ -1141,7 +1389,24 @@ export function mergeNodePlanningHints(systemPlan: NodeAdvisoryPlan, nodeHints: 
 }
 
 export function translatePlanToNodeTask(plan: unknown): NodeTaskTranslationResult {
-  const parsedPlan = parseCoreNodeTaskTranslationPlan(plan);
+  const resolvedPlan = isRecord(plan)
+    ? resolveSelectedPlanForExecution(plan as CoreNodeTaskTranslationPlan | CoreNodePipelineDraftPlan)
+    : { ok: true as const, plan };
+
+  if (!resolvedPlan.ok) {
+    return {
+      status: "draft_rejected",
+      reason: resolvedPlan.reason,
+      evidence_labels: [],
+      draft: null,
+      stored_as_draft_only: true,
+      submitted_to_node: false,
+      node_intake_triggered: false,
+      execution_triggered: false,
+    };
+  }
+
+  const parsedPlan = parseCoreNodeTaskTranslationPlan(resolvedPlan.plan);
 
   if (!parsedPlan) {
     return {
@@ -1201,7 +1466,26 @@ export async function exportNodeTaskDraftToPipeline(
   plan: unknown,
   options?: { draftDirectory?: string },
 ): Promise<NodeTaskDraftExportResult> {
-  const translation = translatePlanToNodeTask(plan);
+  const resolvedPlan = isRecord(plan)
+    ? resolveSelectedPlanForExecution(plan as CoreNodeTaskTranslationPlan | CoreNodePipelineDraftPlan)
+    : { ok: true as const, plan };
+
+  if (!resolvedPlan.ok) {
+    return {
+      status: "draft_export_rejected",
+      reason: resolvedPlan.reason,
+      evidence_labels: [],
+      draft: null,
+      dispatch_draft: null,
+      draft_file_path: null,
+      stored_as_draft_only: true,
+      submitted_to_node: false,
+      node_intake_triggered: false,
+      execution_triggered: false,
+    };
+  }
+
+  const translation = translatePlanToNodeTask(resolvedPlan.plan);
 
   if (translation.status !== "draft_generated" || !translation.draft) {
     return {
@@ -1218,7 +1502,7 @@ export async function exportNodeTaskDraftToPipeline(
     };
   }
 
-  const pipelinePlan = parseCoreNodePipelineDraftPlan(plan);
+  const pipelinePlan = parseCoreNodePipelineDraftPlan(resolvedPlan.plan);
   if (!pipelinePlan) {
     return {
       status: "draft_export_rejected",
@@ -1380,7 +1664,13 @@ function buildPlanAdjustmentAlternative(
     steps.push("verify the environment before each step");
   }
 
-  return { steps };
+  return {
+    plan_id: `${plan.plan_id}-alternative-${parsedSafeIdentifier(insight.insight_id)}`,
+    label: `${insight.severity.charAt(0).toUpperCase()}${insight.severity.slice(1)} alternative for ${insight.category}`,
+    steps,
+    command: deriveAlternativeCommand("command" in plan && hasNonEmptyString(plan.command) ? plan.command : undefined, insight),
+    validation_gates: deriveAlternativeValidationGates(insight),
+  };
 }
 
 function buildPlanAdjustmentAnnotation(
@@ -1435,6 +1725,7 @@ export function attachInsightsToPlan<T extends NodeAdvisoryPlan | CoreNodeTaskTr
     validation_insights: [...plan.validation_insights],
     dependency_reasoning: [...plan.dependency_reasoning],
     validation_gates: [...plan.validation_gates],
+    selected_plan_id: plan.selected_plan_id,
     annotations: mergedAnnotations,
     operator_acknowledgement: normalizeOperatorAcknowledgement(plan.operator_acknowledgement),
   };
@@ -1454,6 +1745,7 @@ export function acknowledgePlanInsights<T extends NodeAdvisoryPlan | CoreNodeTas
     validation_insights: [...plan.validation_insights],
     dependency_reasoning: [...plan.dependency_reasoning],
     validation_gates: [...plan.validation_gates],
+    selected_plan_id: plan.selected_plan_id,
     annotations: Array.isArray(plan.annotations)
       ? plan.annotations.map((annotation) => ({ ...annotation, informational_only: true as const }))
       : plan.annotations,
@@ -1465,7 +1757,7 @@ export function acknowledgePlanInsights<T extends NodeAdvisoryPlan | CoreNodeTas
 }
 
 export function buildInsightAcknowledgementPrompt(
-  plan: Pick<NodeAdvisoryPlan, "annotations" | "operator_acknowledgement" | "planning_suggestions" | "validation_gates" | "execution_path"> & Partial<CoreNodeTaskTranslationPlan>,
+  plan: Pick<NodeAdvisoryPlan, "plan_id" | "selected_plan_id" | "annotations" | "operator_acknowledgement" | "planning_suggestions" | "validation_gates" | "execution_path"> & Partial<CoreNodeTaskTranslationPlan>,
 ): string | null {
   if (!Array.isArray(plan.annotations) || plan.annotations.length === 0) {
     return null;
@@ -1476,6 +1768,7 @@ export function buildInsightAcknowledgementPrompt(
   }
 
   const lines = ["Original plan:"];
+  lines.push(`- [${plan.plan_id}] ${plan.selected_plan_id === plan.plan_id ? "selected" : "available"}`);
   if ("command" in plan && hasNonEmptyString(plan.command)) {
     lines.push(`- run ${plan.command}`);
   } else if (Array.isArray(plan.planning_suggestions) && plan.planning_suggestions.length > 0) {
@@ -1501,6 +1794,9 @@ export function buildInsightAcknowledgementPrompt(
     lines.push("Suggested alternatives:");
     for (const annotation of adjustmentAnnotations) {
       lines.push(`- [${annotation.severity.toUpperCase()}] ${annotation.message}`);
+      if (annotation.alternative_plan) {
+        lines.push(`  Plan id: ${annotation.alternative_plan.plan_id}${plan.selected_plan_id === annotation.alternative_plan.plan_id ? " (selected)" : ""}`);
+      }
       if (annotation.alternative_plan?.steps.length) {
         lines.push("  Alternative plan:");
         for (const step of annotation.alternative_plan.steps) {
@@ -1510,6 +1806,9 @@ export function buildInsightAcknowledgementPrompt(
     }
   }
   lines.push("");
+  if (adjustmentAnnotations.length > 0) {
+    lines.push("Select plan id before proceeding.");
+  }
   lines.push("Acknowledge before proceeding? (yes/no)");
   return lines.join("\n");
 }

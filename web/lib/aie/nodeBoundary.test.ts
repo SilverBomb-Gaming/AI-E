@@ -9,8 +9,10 @@ import {
   attachInsightsToPlan,
   buildInsightAcknowledgementPrompt,
   exportNodeTaskDraftToPipeline,
+  listPlanSelectionOptions,
   mergeNodePlanningHints,
   receiveNodeIntent,
+  selectOperatorPlan,
   translatePlanToNodeTask,
   validateNodeDispatchDraft,
   validateNodeTaskDraft,
@@ -363,6 +365,7 @@ test("insights attach to plans as non-binding annotations", () => {
   assert.ok(annotated.annotations?.every((annotation) => ["low", "medium", "high", "critical"].includes(annotation.severity)));
   assert.ok(annotated.annotations?.some((annotation) => annotation.suggestion));
   assert.ok(annotated.annotations?.filter((annotation) => annotation.type === "plan_adjustment").every((annotation) => (annotation.alternative_plan?.steps.length ?? 0) > 0));
+  assert.ok(annotated.annotations?.filter((annotation) => annotation.type === "plan_adjustment").every((annotation) => Boolean(annotation.alternative_plan?.plan_id)));
   assert.deepEqual(annotated.operator_acknowledgement, { acknowledged: false });
 });
 
@@ -382,7 +385,7 @@ test("operator acknowledgement is recorded without changing execution behavior",
     }),
   ]));
 
-  const acknowledged = acknowledgePlanInsights(annotated, "2026-05-02T21:05:00.000Z");
+  const acknowledged = acknowledgePlanInsights(selectOperatorPlan(annotated, annotated.plan_id), "2026-05-02T21:05:00.000Z");
   const translated = translatePlanToNodeTask(acknowledged);
 
   assert.deepEqual(acknowledged.operator_acknowledgement, {
@@ -416,10 +419,13 @@ test("acknowledgement prompt is visible but non-blocking", () => {
 
   assert.ok(prompt);
   assert.match(prompt ?? "", /Original plan:/);
+  assert.match(prompt ?? "", /\[system-plan-001\] available/);
   assert.match(prompt ?? "", /Insights detected:/);
   assert.match(prompt ?? "", /\[(LOW|MEDIUM|HIGH|CRITICAL)\]/);
   assert.match(prompt ?? "", /Suggestion:/);
+  assert.match(prompt ?? "", /Plan id:/);
   assert.match(prompt ?? "", /Alternative plan:/);
+  assert.match(prompt ?? "", /Select plan id before proceeding\./);
   assert.match(prompt ?? "", /Acknowledge before proceeding\? \(yes\/no\)/);
 });
 
@@ -478,6 +484,56 @@ test("acknowledgement helpers do not mutate the source plan", () => {
   assert.equal(acknowledged.command, source.command);
 });
 
+test("operator plan selection is recorded explicitly without mutating the source plan", () => {
+  const source = attachInsightsToPlan(createExportableNodeTaskPlan({ risk_level: "high" }), generateExecutionInsights([
+    createExecutionOutcomeRecord({
+      outcome_id: "OUT-0000001010",
+      created_at: "2026-05-02T21:25:00.000Z",
+      risk_level: "high",
+      rollback_required: true,
+      rollback_executed: true,
+      success: false,
+      status: "failed",
+      result_summary: "integration regression failure",
+      error_summary: "integration regression failure",
+      recovery_status: "executed",
+    }),
+  ]));
+  const alternative = source.annotations?.find((annotation) => annotation.type === "plan_adjustment")?.alternative_plan;
+  const before = JSON.stringify(source);
+
+  assert.ok(alternative?.plan_id);
+
+  const selected = selectOperatorPlan(source, alternative?.plan_id ?? "");
+
+  assert.equal(JSON.stringify(source), before);
+  assert.equal(source.selected_plan_id, undefined);
+  assert.equal(selected.selected_plan_id, alternative?.plan_id);
+});
+
+test("plan selection options include the original and suggested alternatives", () => {
+  const annotated = attachInsightsToPlan(createExportableNodeTaskPlan({ risk_level: "high" }), generateExecutionInsights([
+    createExecutionOutcomeRecord({
+      outcome_id: "OUT-0000001011",
+      created_at: "2026-05-02T21:26:00.000Z",
+      risk_level: "high",
+      rollback_required: true,
+      rollback_executed: true,
+      success: false,
+      status: "failed",
+      result_summary: "integration regression failure",
+      error_summary: "integration regression failure",
+      recovery_status: "executed",
+    }),
+  ]));
+
+  const options = listPlanSelectionOptions(annotated);
+
+  assert.equal(options[0]?.plan_id, annotated.plan_id);
+  assert.equal(options[0]?.source, "original");
+  assert.ok(options.some((option) => option.source === "alternative" && option.plan_id !== annotated.plan_id));
+});
+
 test("insight annotations do not change execution path or validation gates", () => {
   const basePlan = createNodeTaskTranslationPlan({ risk_level: "high" });
   const annotated = attachInsightsToPlan(basePlan, generateExecutionInsights([
@@ -518,7 +574,7 @@ test("annotated plans translate without changing submission or execution behavio
     }),
   ]));
 
-  const translated = translatePlanToNodeTask(annotated);
+  const translated = translatePlanToNodeTask(selectOperatorPlan(annotated, annotated.plan_id));
 
   assert.equal(translated.status, "draft_generated");
   assert.equal(translated.submitted_to_node, false);
@@ -526,6 +582,95 @@ test("annotated plans translate without changing submission or execution behavio
   assert.equal(translated.execution_triggered, false);
   assert.equal(translated.draft?.target_node_id, basePlan.target_node_id);
   assert.equal(translated.draft?.command, basePlan.command);
+});
+
+test("translation rejects advisory alternatives until the operator selects a plan", () => {
+  const annotated = attachInsightsToPlan(createExportableNodeTaskPlan({ risk_level: "high" }), generateExecutionInsights([
+    createExecutionOutcomeRecord({
+      outcome_id: "OUT-0000001012",
+      created_at: "2026-05-02T21:27:00.000Z",
+      risk_level: "high",
+      rollback_required: true,
+      rollback_executed: true,
+      success: false,
+      status: "failed",
+      result_summary: "integration regression failure",
+      error_summary: "integration regression failure",
+      recovery_status: "executed",
+    }),
+  ]));
+
+  const result = translatePlanToNodeTask(annotated);
+
+  assert.equal(result.status, "draft_rejected");
+  assert.match(result.reason, /Operator plan selection is required/);
+  assert.equal(result.execution_triggered, false);
+});
+
+test("translation uses the selected alternative plan only", () => {
+  const annotated = attachInsightsToPlan(createExportableNodeTaskPlan({
+    risk_level: "high",
+    command: "python validate_runtime.py",
+  }), generateExecutionInsights([
+    createExecutionOutcomeRecord({
+      outcome_id: "OUT-0000001013",
+      created_at: "2026-05-02T21:28:00.000Z",
+      risk_level: "high",
+      rollback_required: true,
+      rollback_executed: true,
+      success: false,
+      status: "failed",
+      result_summary: "integration regression failure",
+      error_summary: "integration regression failure",
+      recovery_status: "executed",
+    }),
+  ]));
+  const alternative = annotated.annotations?.find((annotation) => annotation.type === "plan_adjustment")?.alternative_plan;
+  const selected = selectOperatorPlan(annotated, alternative?.plan_id ?? "");
+
+  assert.ok(alternative?.command);
+
+  const result = translatePlanToNodeTask(selected);
+
+  assert.equal(result.status, "draft_generated");
+  assert.equal(result.draft?.command, alternative?.command);
+  assert.equal(result.draft?.task_id, `node-task-${alternative?.plan_id}`);
+  assert.notEqual(result.draft?.command, annotated.command);
+});
+
+test("draft export uses the selected alternative plan only", async () => {
+  const draftDirectory = await mkdtemp(path.join(tmpdir(), "aie-node-selection-"));
+
+  try {
+    const annotated = attachInsightsToPlan(createExportableNodeTaskPlan({
+      risk_level: "high",
+      command: "python validate_runtime.py",
+    }), generateExecutionInsights([
+      createExecutionOutcomeRecord({
+        outcome_id: "OUT-0000001014",
+        created_at: "2026-05-02T21:29:00.000Z",
+        risk_level: "high",
+        rollback_required: true,
+        rollback_executed: true,
+        success: false,
+        status: "failed",
+        result_summary: "integration regression failure",
+        error_summary: "integration regression failure",
+        recovery_status: "executed",
+      }),
+    ]));
+    const alternative = annotated.annotations?.find((annotation) => annotation.type === "plan_adjustment")?.alternative_plan;
+    const selected = selectOperatorPlan(annotated, alternative?.plan_id ?? "");
+
+    const result = await exportNodeTaskDraftToPipeline(selected, { draftDirectory });
+
+    assert.equal(result.status, "draft_exported");
+    assert.equal(result.draft?.command, alternative?.command);
+    assert.equal(result.dispatch_draft?.execution_payload.plan_id, alternative?.plan_id);
+    assert.equal(result.execution_triggered, false);
+  } finally {
+    await rm(draftDirectory, { recursive: true, force: true });
+  }
 });
 
 test("valid plan translates into valid Node task JSON draft", () => {

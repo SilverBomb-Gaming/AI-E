@@ -559,6 +559,14 @@ Current Layer 22 Step 1 status:
 - the acknowledgement prompt now shows the original plan plus suggested alternatives in separate sections
 - original plans remain unchanged and alternative plans stay advisory until an operator explicitly chooses them
 
+Current Layer 22 Step 2 status:
+
+- Layer 22 Step 2 - Operator Plan Selection: implemented
+- added explicit `selected_plan_id` recording plus stable ids for the original plan and each suggested alternative in `web/lib/aie/nodeBoundary.ts`
+- operator-facing selection helpers now list the original plan and suggested alternatives without auto-selecting any option
+- translation and draft export now reject annotated alternative-plan flows until the operator explicitly selects either the original plan or one suggested alternative
+- only the operator-selected plan is used for translation, draft generation, and execution metadata, while the source plan remains unchanged
+
 ## Safe Runtime Action Bridge
 
 AI-E can now translate supported live operator actions into safe runtime intents.
