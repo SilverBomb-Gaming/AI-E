@@ -1232,6 +1232,166 @@ test("simulated second-action failure can feed manual rollback execution and res
   assert.ok(rollbackResult.delivery_package?.proof_results.includes("MANUAL ROLLBACK EXECUTED"));
 });
 
+test("simulated recovery loop remains repeatable across two bounded runs", async () => {
+  let objectPresent = false;
+  let objectCount = 13;
+
+  const runRecoveryLoop = async () => {
+    const chainResult = await executeUnityMutationExecutionChain(createChainExecutionInput({
+      failure_simulation: createFailureSimulation({
+        target_action_id: "rollback-probe",
+        failure_kind: "simulated_action_failure",
+      }),
+      actions: [
+        createCreationReadinessAction({
+          action_id: "create-probe",
+          target_object_name: "AIE_ControlledMutationProbe",
+          live_validation_result: createLiveValidationResult({ object_count: objectCount }),
+        }),
+        createRollbackReadinessAction({
+          action_id: "rollback-probe",
+          target_object_name: "AIE_ControlledMutationProbe",
+          depends_on: ["create-probe"],
+          live_validation_result: createLiveValidationResult({ object_count: objectCount + 1 }),
+        }),
+      ],
+    }), {
+      mutation_bridge: {
+        async executeSceneObjectCreation(input) {
+          assert.equal(objectPresent, false);
+          objectPresent = true;
+          objectCount += 1;
+          return {
+            bridge_status: "bridge_ready" as const,
+            source: "command_probe" as const,
+            mutation_status: "mutation_executed" as const,
+            mutation_type: "scene_object_creation_request" as const,
+            target_scene: input.target_scene,
+            object_name: input.object_name,
+            created_object_name: input.object_name,
+            scene_saved: true,
+            duplicate_handling: "created" as const,
+            evidence_timestamp: new Date().toISOString(),
+            raw_evidence_summary: "Controlled Unity mutation created the probe object.",
+            summary: `Controlled Unity mutation created object ${input.object_name} in ${input.target_scene} with scene_saved true.`,
+            rollback_hint: "Rollback requires separate approval.",
+            recommended_next_operator_action: "Review controlled mutation evidence.",
+          };
+        },
+        async executeSceneObjectRemoval() {
+          throw new Error("the simulated second action must not execute during the chain run");
+        },
+      },
+    });
+
+    assert.equal(chainResult.execution_status, "partial_failure");
+    assert.equal(chainResult.final_scene_state.object_count_before, 13);
+    assert.equal(chainResult.final_scene_state.object_count_after, 14);
+    assert.equal(objectCount, 14);
+    assert.equal(objectPresent, true);
+    assert.ok(chainResult.review_package?.risks.includes("SIMULATED FAILURE"));
+    assert.ok(chainResult.review_package?.risks.includes("ROLLBACK PLAN GENERATED"));
+    assert.ok(chainResult.review_package?.risks.includes("ROLLBACK NOT AUTO-EXECUTED"));
+
+    const rollbackResult = await executePlannedUnityRollbackFromChain(
+      createPlannedRollbackExecutionInput(chainResult, {
+        rollback_actions: [
+          createPlannedRollbackActionInput({
+            source_action_id: "create-probe",
+            live_validation_result: createLiveValidationResult({ object_count: objectCount }),
+          }),
+        ],
+      }),
+      {
+        mutation_bridge: {
+          async executeSceneObjectCreation() {
+            throw new Error("should not execute creation during manual rollback");
+          },
+          async executeSceneObjectRemoval(input) {
+            assert.equal(objectPresent, true);
+            objectPresent = false;
+            objectCount -= 1;
+            return {
+              bridge_status: "bridge_ready" as const,
+              source: "command_probe" as const,
+              rollback_status: "rollback_executed" as const,
+              rollback_type: "scene_object_removal" as const,
+              target_scene: input.target_scene,
+              object_name: input.object_name,
+              removed_object_name: input.object_name,
+              scene_saved: true,
+              target_missing_handling: "removed" as const,
+              evidence_timestamp: new Date().toISOString(),
+              raw_evidence_summary: "Controlled Unity rollback removed the probe object.",
+              summary: `Controlled Unity rollback removed target ${input.object_name} in ${input.target_scene} with scene_saved true.`,
+              recommended_next_operator_action: "Review controlled rollback evidence.",
+            };
+          },
+        },
+      },
+    );
+
+    assert.equal(rollbackResult.execution_status, "success");
+    assert.equal(rollbackResult.auto_execute, false);
+    assert.equal(rollbackResult.manual_trigger, true);
+    assert.equal(rollbackResult.final_scene_state.object_count_before, 14);
+    assert.equal(rollbackResult.final_scene_state.object_count_after, 13);
+    assert.equal(objectCount, 13);
+    assert.equal(objectPresent, false);
+    assert.ok(rollbackResult.review_package?.proof_results.includes("MANUAL ROLLBACK EXECUTED"));
+  };
+
+  await runRecoveryLoop();
+  await runRecoveryLoop();
+
+  assert.equal(objectCount, 13);
+  assert.equal(objectPresent, false);
+});
+
+test("manual Unity rollback from a reviewed chain plan reports missing-target idempotency explicitly", async () => {
+  const sourceExecutionResult = await createPartialFailureChainExecutionResult();
+
+  const result = await executePlannedUnityRollbackFromChain(
+    createPlannedRollbackExecutionInput(sourceExecutionResult),
+    {
+      mutation_bridge: {
+        async executeSceneObjectCreation() {
+          throw new Error("should not execute creation during manual rollback");
+        },
+        async executeSceneObjectRemoval(input) {
+          return {
+            bridge_status: "bridge_ready" as const,
+            source: "command_probe" as const,
+            rollback_status: "rollback_idempotent" as const,
+            rollback_type: "scene_object_removal" as const,
+            target_scene: input.target_scene,
+            object_name: input.object_name,
+            removed_object_name: null,
+            scene_saved: true,
+            target_missing_handling: "already_missing_idempotent" as const,
+            evidence_timestamp: "2026-05-06T10:05:00.000Z",
+            raw_evidence_summary: "Controlled Unity rollback confirmed the target was already absent.",
+            summary: "Controlled Unity rollback confirmed the target was already missing in EnemyAIDemo with scene_saved true.",
+            recommended_next_operator_action: "Review controlled rollback idempotency evidence.",
+          };
+        },
+      },
+    },
+  );
+
+  assert.equal(result.execution_status, "success");
+  assert.equal(result.auto_execute, false);
+  assert.equal(result.manual_trigger, true);
+  assert.equal(result.final_scene_state.object_count_before, 14);
+  assert.equal(result.final_scene_state.object_count_after, 14);
+  assert.equal(result.final_scene_state.object_count_delta, 0);
+  assert.equal(result.per_action_results[0]?.result?.execution_kind, "controlled_rollback_idempotent");
+  assert.equal(result.per_action_results[0]?.result?.target_missing_handling, "already_missing_idempotent");
+  assert.ok(result.review_package?.proof_results.includes("Target missing handling: already_missing_idempotent"));
+  assert.ok(result.review_package?.risks.includes("TARGET ALREADY MISSING"));
+  assert.ok(result.delivery_package?.proof_results.includes("TARGET ALREADY MISSING"));
+});
+
 test("simulated runtime unavailable is classified distinctly and rollback remains manual", async () => {
   const result = await executeUnityMutationExecutionChain(createChainExecutionInput({
     failure_simulation: createFailureSimulation({

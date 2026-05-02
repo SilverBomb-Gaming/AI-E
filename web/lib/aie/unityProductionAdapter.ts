@@ -1795,6 +1795,22 @@ function createUnityPlannedChainRollbackExecutionPackages(
   reviewPackage: AutonomousReviewPackage;
   deliveryPackage: AutonomousDeliveryPackage;
 } {
+  const successfulRollbackResults = result.per_action_results
+    .filter((action) => action.status === "executed" && action.result)
+    .map((action) => action.result as UnitySceneObjectCreationRollbackExecutionResult);
+  const removedObjectNames = [...new Set(successfulRollbackResults.map((action) => action.removed_object_name).filter(Boolean))];
+  const targetMissingHandlingValues = [...new Set(successfulRollbackResults.map((action) => action.target_missing_handling).filter(Boolean))];
+  const removedObjectNameSummary = removedObjectNames.join(", ") || "none";
+  const targetMissingHandlingSummary = targetMissingHandlingValues.length === 1
+    ? targetMissingHandlingValues[0]
+    : targetMissingHandlingValues.length > 1
+      ? "mixed"
+      : "none";
+  const rollbackTargetOutcome = targetMissingHandlingSummary === "already_missing_idempotent"
+    ? "TARGET ALREADY MISSING"
+    : targetMissingHandlingSummary === "removed"
+      ? "TARGET REMOVED"
+      : "TARGET NOT REMOVED";
   const summary = `ROLLBACK EXECUTION: Controlled Unity chain rollback plan ${result.rollback_plan_id ?? "unknown"} completed with status ${result.execution_status}.`;
   const proofResults = [
     `Execution kind: ${result.execution_kind}`,
@@ -1806,6 +1822,8 @@ function createUnityPlannedChainRollbackExecutionPackages(
     ...(result.executed && result.execution_status === "success" ? ["MANUAL ROLLBACK EXECUTED"] : []),
     `Actions executed count: ${String(result.actions_executed_count)}`,
     `Actions failed count: ${String(result.actions_failed_count)}`,
+    `Removed object name: ${removedObjectNameSummary}`,
+    `Target missing handling: ${targetMissingHandlingSummary}`,
     `Failure classification: ${result.failure_classification}`,
     `Failure source: ${result.failure_source}`,
     `Failure is simulated: ${String(result.failure_is_simulated)}`,
@@ -1831,7 +1849,7 @@ function createUnityPlannedChainRollbackExecutionPackages(
     tests_run: ["unity mutation execution chain manual rollback execution"],
     proof_results: proofResults,
     risks: result.execution_status === "success"
-      ? ["ROLLBACK EXECUTION", "MANUAL TRIGGER", "MANUAL ROLLBACK EXECUTED", "ROLLBACK NOT AUTO-EXECUTED"]
+      ? ["ROLLBACK EXECUTION", "MANUAL TRIGGER", "MANUAL ROLLBACK EXECUTED", rollbackTargetOutcome, "ROLLBACK NOT AUTO-EXECUTED"]
       : ["ROLLBACK EXECUTION STOPPED", "MANUAL TRIGGER", "ROLLBACK NOT AUTO-EXECUTED"],
     recommended_decision: result.execution_status === "success" ? "approve" : "review_required",
     rollback_notes: `ROLLBACK PLAN ${result.rollback_plan_id ?? "unknown"}: ${result.remaining_actions_not_executed.join(" | ") || "fully executed"}`,
@@ -1856,6 +1874,7 @@ function createUnityPlannedChainRollbackExecutionPackages(
       "ROLLBACK EXECUTION",
       "MANUAL TRIGGER",
       ...(result.executed && result.execution_status === "success" ? ["MANUAL ROLLBACK EXECUTED"] : []),
+      ...(result.execution_status === "success" ? [rollbackTargetOutcome] : []),
       result.execution_status,
       result.final_scene_state.summary,
     ],

@@ -718,9 +718,20 @@ export function UnityValidationEvidencePanel({ evidence }: { evidence: UnityVali
               MANUAL TRIGGER
             </span>
             {evidence.executed && evidence.executionStatus === "success" ? (
-              <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-700">
-                MANUAL ROLLBACK EXECUTED
-              </span>
+              <>
+                <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-700">
+                  MANUAL ROLLBACK EXECUTED
+                </span>
+                {evidence.targetMissingHandling === "already_missing_idempotent" ? (
+                  <span className="inline-flex rounded-full border border-ink/10 bg-white/80 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-ink/75">
+                    TARGET ALREADY MISSING
+                  </span>
+                ) : evidence.targetMissingHandling === "removed" ? (
+                  <span className="inline-flex rounded-full border border-ink/10 bg-white/80 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-ink/75">
+                    TARGET REMOVED
+                  </span>
+                ) : null}
+              </>
             ) : null}
             {evidence.executionStatus === "partial_failure" ? (
               <>
@@ -883,6 +894,8 @@ export function UnityValidationEvidencePanel({ evidence }: { evidence: UnityVali
             <p className="text-xs leading-6 text-slate">Actions executed count: {formatMetric(evidence.actionsExecutedCount)}</p>
             <p className="text-xs leading-6 text-slate">Actions failed count: {formatMetric(evidence.actionsFailedCount)}</p>
             <p className="text-xs leading-6 text-slate">Final scene state: {evidence.finalSceneSummary ?? "none"}</p>
+            <p className="text-xs leading-6 text-slate">Removed object name: {evidence.removedObjectName ?? "none"}</p>
+            <p className="text-xs leading-6 text-slate">Target missing handling: {evidence.targetMissingHandling ?? "none"}</p>
           </div>
           {hasFailureEvidence(evidence) ? (
             <div className="mt-2 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">

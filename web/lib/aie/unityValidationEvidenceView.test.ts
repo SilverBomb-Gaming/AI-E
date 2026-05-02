@@ -607,6 +607,60 @@ test("rollback execution evidence renders manual rollback executed for a clean f
   assert.match(markup, /Scene EnemyAIDemo object count moved from 14 to 13 during manual rollback execution/);
 });
 
+test("rollback execution evidence renders explicit missing-target idempotency", () => {
+  const reviewPackage = createAutonomousReviewPackage({
+    package_id: "unity-chain-rollback-review-idempotent-1",
+    work_item_id: "unity-chain-rollback-unity-chain-rollback-plan-idempotent-1",
+    chain_id: "unity-chain-rollback-chain-idempotent-1",
+    status: "approved",
+    summary: "ROLLBACK EXECUTION: Controlled Unity chain rollback plan unity-chain-rollback-plan-idempotent-1 completed with status success.",
+    files_changed: [],
+    tests_run: ["unity mutation execution chain manual rollback execution"],
+    proof_results: [
+      "Execution kind: planned_chain_rollback_executed",
+      "Chain id: unity-controlled-chain-idempotent-1",
+      "Rollback plan id: unity-chain-rollback-plan-idempotent-1",
+      "Execution status: success",
+      "Manual trigger: true",
+      "Executed: true",
+      "MANUAL ROLLBACK EXECUTED",
+      "Actions executed count: 1",
+      "Actions failed count: 0",
+      "Removed object name: none",
+      "Target missing handling: already_missing_idempotent",
+      "Failure classification: none",
+      "Failure source: unknown",
+      "Failure is simulated: false",
+      "Failure is recoverable: false",
+      "Failure requires manual review: false",
+      "Manual review required: false",
+      "Failure evidence summary: No failure evidence recorded.",
+      "Remaining actions not executed: none",
+      "Final scene state: Scene EnemyAIDemo object count moved from 13 to 13 during manual rollback execution.",
+      "Evidence timestamp: 2026-05-06T10:05:00.000Z",
+      "Action result: create-probe => executed",
+      "Recommended next operator action: Review the rollback execution evidence and rerun read-only validation before any further Unity mutation work.",
+    ],
+    risks: ["ROLLBACK EXECUTION", "MANUAL TRIGGER", "MANUAL ROLLBACK EXECUTED", "TARGET ALREADY MISSING", "ROLLBACK NOT AUTO-EXECUTED"],
+    recommended_decision: "approve",
+    rollback_notes: "ROLLBACK PLAN unity-chain-rollback-plan-idempotent-1: fully executed",
+    operator_actions: ["approve", "archive"],
+  });
+
+  const evidence = extractUnityValidationEvidenceFromReviewPackage(reviewPackage);
+
+  assert.ok(evidence);
+  assert.equal(evidence.kind, "planned_chain_rollback_result");
+  assert.equal(evidence.targetMissingHandling, "already_missing_idempotent");
+  assert.equal(evidence.removedObjectName, "none");
+
+  const markup = renderToStaticMarkup(createElement(UnityValidationEvidencePanel, { evidence }));
+  assert.match(markup, /MANUAL ROLLBACK EXECUTED/);
+  assert.match(markup, /TARGET ALREADY MISSING/);
+  assert.match(markup, /Target missing handling: already_missing_idempotent/);
+  assert.match(markup, /Removed object name: none/);
+});
+
 test("rollback execution evidence renders manual trigger and remaining actions details", () => {
   const reviewPackage = createAutonomousReviewPackage({
     package_id: "unity-chain-rollback-review-1",
