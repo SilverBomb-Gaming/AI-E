@@ -641,6 +641,13 @@ Current Layer 24 Step 3 status:
 - `web/lib/aie/decisionTrace.ts` now persists `recommended_plan_id`, `ranking_score_gap`, and `operator_choice_alignment` inside the append-only `DecisionRecord`
 - captured feedback is non-binding only: it does not auto-adjust rankings, alter execution, or introduce any feedback loop
 
+Current Layer 24 Step 4 status:
+
+- Layer 24 Step 4 - Feedback Visualization: implemented
+- added `queryDecisionAlignmentStats()` in `web/lib/aie/decisionTrace.ts` to aggregate display-only operator alignment trends from append-only decision records
+- added `renderDecisionAlignmentStats()` in `web/lib/aie/decisionTrace.ts` to show alignment rate, average score gap, and mismatched operator-vs-recommendation cases in an operator-readable summary
+- the visualization layer is read-only only: it does not influence ranking, change execution behavior, or introduce learning
+
 ## Safe Runtime Action Bridge
 
 AI-E can now translate supported live operator actions into safe runtime intents.

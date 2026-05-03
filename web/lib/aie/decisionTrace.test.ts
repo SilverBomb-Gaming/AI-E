@@ -14,8 +14,10 @@ import {
 } from "./nodeBoundary";
 import {
   buildDecisionRecord,
+  queryDecisionAlignmentStats,
   queryDecisionRecords,
   recordDecisionTrace,
+  renderDecisionAlignmentStats,
   renderDecisionReplay,
   serializeDecisionRecord,
   validateDecisionRecord,
@@ -234,6 +236,68 @@ test("queryDecisionRecords returns matching records without affecting stored dec
 
     const written = await readFile(path.join(tempRoot, "2026-05-02.jsonl"), "utf-8");
     assert.equal(written.trim().split(/\r?\n/).length, 2);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("queryDecisionAlignmentStats computes alignment rate mismatch rate and average score gap correctly", async () => {
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "aie-decision-alignment-"));
+
+  try {
+    const insights = generateExecutionInsights([createExecutionOutcomeRecord()]);
+    const annotated = attachInsightsToPlan(createNodeTaskPlan(), insights);
+    const recommendedAlternative = annotated.annotations?.find((annotation) => annotation.type === "plan_adjustment")?.alternative_plan;
+
+    assert.ok(recommendedAlternative?.plan_id);
+
+    const alignedRecord = buildDecisionRecord(selectOperatorPlan(annotated, recommendedAlternative.plan_id), "2026-05-02T22:05:00.000Z");
+    const mismatchRecord = buildDecisionRecord(selectOperatorPlan(annotated, annotated.plan_id), "2026-05-02T22:06:00.000Z");
+
+    await recordDecisionTrace(alignedRecord, { outputDirectory: tempRoot });
+    await recordDecisionTrace(mismatchRecord, { outputDirectory: tempRoot });
+
+    const stats = await queryDecisionAlignmentStats({ outputDirectory: tempRoot });
+
+    assert.equal(stats.total_records, 2);
+    assert.equal(stats.aligned_count, 1);
+    assert.equal(stats.mismatch_count, 1);
+    assert.equal(stats.alignment_rate, 0.5);
+    assert.equal(stats.mismatch_rate, 0.5);
+    assert.equal(stats.average_score_gap, Math.round((((alignedRecord.ranking_score_gap + mismatchRecord.ranking_score_gap) / 2) * 1000)) / 1000);
+    assert.equal(stats.mismatch_cases.length, 1);
+    assert.equal(stats.mismatch_cases[0]?.selected_plan_id, mismatchRecord.selected_plan_id);
+    assert.equal(stats.mismatch_cases[0]?.recommended_plan_id, mismatchRecord.recommended_plan_id);
+    assert.equal(stats.execution_triggered, false);
+    assert.equal(stats.autonomy_triggered, false);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("renderDecisionAlignmentStats is display-only and does not change translation behavior", async () => {
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "aie-decision-alignment-render-"));
+
+  try {
+    const insights = generateExecutionInsights([createExecutionOutcomeRecord()]);
+    const annotated = attachInsightsToPlan(createNodeTaskPlan(), insights);
+    const selectedOriginal = selectOperatorPlan(annotated, annotated.plan_id);
+    const record = buildDecisionRecord(selectedOriginal, "2026-05-02T22:05:00.000Z");
+
+    await recordDecisionTrace(record, { outputDirectory: tempRoot });
+
+    const before = translatePlanToNodeTask(selectedOriginal);
+    const stats = await queryDecisionAlignmentStats({ outputDirectory: tempRoot });
+    const rendered = renderDecisionAlignmentStats(stats);
+    const after = translatePlanToNodeTask(selectedOriginal);
+
+    assert.match(rendered, /Alignment rate: 0%/);
+    assert.match(rendered, /Avg score gap:/);
+    assert.match(rendered, /Mismatches: 100%/);
+    assert.match(rendered, /Operator rejected top recommendation:/);
+    assert.match(rendered, /Display only/);
+    assert.deepEqual(after, before);
+    assert.equal(after.execution_triggered, false);
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }

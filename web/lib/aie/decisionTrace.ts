@@ -79,6 +79,27 @@ export type DecisionRecordQueryFilters = {
   limit?: number;
 };
 
+export type DecisionAlignmentMismatchCase = {
+  decision_id: string;
+  timestamp: string;
+  selected_plan_id: string;
+  recommended_plan_id: string;
+  ranking_score_gap: number;
+};
+
+export type DecisionAlignmentStats = {
+  total_records: number;
+  aligned_count: number;
+  mismatch_count: number;
+  alignment_rate: number;
+  mismatch_rate: number;
+  average_score_gap: number;
+  mismatch_cases: DecisionAlignmentMismatchCase[];
+  display_only: true;
+  execution_triggered: false;
+  autonomy_triggered: false;
+};
+
 type SelectablePlan = NodeAdvisoryPlan | CoreNodeTaskTranslationPlan | CoreNodePipelineDraftPlan;
 
 function hasNonEmptyString(value: unknown): value is string {
@@ -301,6 +322,24 @@ function hasSeverityAtOrAbove(
 ): boolean {
   return (Object.keys(summary) as Array<keyof DecisionRecord["severity_summary"]>)
     .some((severity) => summary[severity] > 0 && compareSeverity(severity, minimumSeverity));
+}
+
+function cloneDecisionRecord(record: DecisionRecord): DecisionRecord {
+  return {
+    ...record,
+    available_plan_ids: [...record.available_plan_ids],
+    insight_summary: [...record.insight_summary],
+    severity_summary: { ...record.severity_summary },
+    operator_acknowledgement: { ...record.operator_acknowledgement },
+    decision_context: record.decision_context
+      ? {
+        original_plan: cloneDecisionReplayPlanOption(record.decision_context.original_plan),
+        available_plans: record.decision_context.available_plans.map(cloneDecisionReplayPlanOption),
+        selected_plan: cloneDecisionReplayPlanOption(record.decision_context.selected_plan),
+        insights: record.decision_context.insights.map(cloneDecisionReplayInsight),
+      }
+      : undefined,
+  };
 }
 
 function normalizeRankingScoreGap(value: unknown): number {
@@ -554,27 +593,75 @@ export async function queryDecisionRecords(filters: DecisionRecordQueryFilters =
       filtered = filtered.slice(0, filters.limit);
     }
 
-    return filtered.map((record) => ({
-      ...record,
-      available_plan_ids: [...record.available_plan_ids],
-      insight_summary: [...record.insight_summary],
-      severity_summary: { ...record.severity_summary },
-      operator_acknowledgement: { ...record.operator_acknowledgement },
-      decision_context: record.decision_context
-        ? {
-          original_plan: cloneDecisionReplayPlanOption(record.decision_context.original_plan),
-          available_plans: record.decision_context.available_plans.map(cloneDecisionReplayPlanOption),
-          selected_plan: cloneDecisionReplayPlanOption(record.decision_context.selected_plan),
-          insights: record.decision_context.insights.map(cloneDecisionReplayInsight),
-        }
-        : undefined,
-    }));
+    return filtered.map(cloneDecisionRecord);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       return [];
     }
     throw error;
   }
+}
+
+export async function queryDecisionAlignmentStats(filters: DecisionRecordQueryFilters = {}): Promise<DecisionAlignmentStats> {
+  const records = await queryDecisionRecords(filters);
+  const recordsWithRecommendation = records.filter((record) => hasNonEmptyString(record.recommended_plan_id));
+  const alignedCount = recordsWithRecommendation.filter((record) => record.operator_choice_alignment).length;
+  const mismatchCases = recordsWithRecommendation
+    .filter((record) => !record.operator_choice_alignment && hasNonEmptyString(record.recommended_plan_id))
+    .map((record) => ({
+      decision_id: record.decision_id,
+      timestamp: record.timestamp,
+      selected_plan_id: record.selected_plan_id,
+      recommended_plan_id: record.recommended_plan_id!.trim(),
+      ranking_score_gap: normalizeRankingScoreGap(record.ranking_score_gap),
+    }));
+  const denominator = recordsWithRecommendation.length;
+  const totalScoreGap = recordsWithRecommendation.reduce((total, record) => total + normalizeRankingScoreGap(record.ranking_score_gap), 0);
+
+  return {
+    total_records: denominator,
+    aligned_count: alignedCount,
+    mismatch_count: mismatchCases.length,
+    alignment_rate: denominator === 0 ? 0 : roundToThree(alignedCount / denominator),
+    mismatch_rate: denominator === 0 ? 0 : roundToThree(mismatchCases.length / denominator),
+    average_score_gap: denominator === 0 ? 0 : roundToThree(totalScoreGap / denominator),
+    mismatch_cases: mismatchCases.map((entry) => ({ ...entry })),
+    display_only: true,
+    execution_triggered: false,
+    autonomy_triggered: false,
+  };
+}
+
+function roundToThree(value: number): number {
+  return Math.round(Math.max(0, value) * 1000) / 1000;
+}
+
+function formatPercent(value: number): string {
+  return `${Math.round(Math.max(0, Math.min(1, value)) * 100)}%`;
+}
+
+export function renderDecisionAlignmentStats(stats: DecisionAlignmentStats): string {
+  const lines = [
+    `Alignment rate: ${formatPercent(stats.alignment_rate)}`,
+    `Avg score gap: ${stats.average_score_gap.toFixed(2)}`,
+    `Mismatches: ${formatPercent(stats.mismatch_rate)}`,
+  ];
+
+  if (stats.mismatch_cases.length > 0) {
+    lines.push("");
+    lines.push("Operator rejected top recommendation:");
+    for (const mismatch of stats.mismatch_cases) {
+      lines.push(`- ${mismatch.timestamp}: selected ${mismatch.selected_plan_id} over ${mismatch.recommended_plan_id} (gap ${mismatch.ranking_score_gap.toFixed(2)})`);
+    }
+  } else {
+    lines.push("");
+    lines.push("Operator rejected top recommendation:");
+    lines.push("- none recorded");
+  }
+
+  lines.push("");
+  lines.push("Display only. No ranking adjustment, execution influence, or feedback loop is applied.");
+  return lines.join("\n");
 }
 
 export function renderDecisionReplay(record: DecisionRecord): string {
