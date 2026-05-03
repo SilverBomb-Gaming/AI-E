@@ -1,8 +1,13 @@
-import { resetLearningStabilityGuard } from "./learningStabilityGuard";
+import {
+  getLearningStabilityGuardStatus,
+  resetLearningStabilityGuard,
+  type LearningStabilityGuardStatus,
+} from "./learningStabilityGuard";
 
 export type LearningApplicationScope = "ranking_weight_adjustment";
 
 export type ActiveLearningApplication = {
+  application_id: string;
   scope: LearningApplicationScope;
   reversible: true;
   recommendation_id: string;
@@ -22,10 +27,13 @@ export type LearningApplicationState = {
 
 export type LearningApplicationReversionResult = {
   reverted: boolean;
+  reverted_application_id?: string;
   scope: LearningApplicationScope;
   reversible: true;
   previous_value: number;
-  reverted_value: number;
+  restored_value: number;
+  drift_state_before: LearningStabilityGuardStatus;
+  drift_state_after: LearningStabilityGuardStatus;
   recommendation_id?: string;
   decision_id?: string;
 };
@@ -45,6 +53,14 @@ function normalizeTimestamp(value: string | undefined): string {
   }
 
   return new Date().toISOString();
+}
+
+function buildLearningApplicationId(input: {
+  recommendation_id: string;
+  decision_id: string;
+  applied_at: string;
+}): string {
+  return `learning-application-${input.applied_at.replace(/[:.]/g, "-")}-${input.decision_id}-${input.recommendation_id}`;
 }
 
 export function getLearningApplicationState(): LearningApplicationState {
@@ -74,6 +90,11 @@ export function applyScopedLearningApplication(input: {
 
   rankingWeightAdjustment = appliedValue;
   activeApplication = {
+    application_id: buildLearningApplicationId({
+      recommendation_id: input.recommendation_id,
+      decision_id: input.decision_id,
+      applied_at: appliedAt,
+    }),
     scope: "ranking_weight_adjustment",
     reversible: true,
     recommendation_id: input.recommendation_id,
@@ -87,28 +108,36 @@ export function applyScopedLearningApplication(input: {
 }
 
 export function revertLearningApplication(): LearningApplicationReversionResult {
+  const driftStateBefore = getLearningStabilityGuardStatus();
+
   if (!activeApplication) {
-    resetLearningStabilityGuard();
+    const driftStateAfter = resetLearningStabilityGuard();
     return {
       reverted: false,
       scope: "ranking_weight_adjustment",
       reversible: true,
+      reverted_application_id: undefined,
       previous_value: rankingWeightAdjustment,
-      reverted_value: rankingWeightAdjustment,
+      restored_value: rankingWeightAdjustment,
+      drift_state_before: driftStateBefore,
+      drift_state_after: driftStateAfter,
     };
   }
 
   const previousApplication = activeApplication;
   rankingWeightAdjustment = previousApplication.previous_value;
   activeApplication = null;
-  resetLearningStabilityGuard();
+  const driftStateAfter = resetLearningStabilityGuard();
 
   return {
     reverted: true,
+    reverted_application_id: previousApplication.application_id,
     scope: "ranking_weight_adjustment",
     reversible: true,
     previous_value: previousApplication.applied_value,
-    reverted_value: rankingWeightAdjustment,
+    restored_value: rankingWeightAdjustment,
+    drift_state_before: driftStateBefore,
+    drift_state_after: driftStateAfter,
     recommendation_id: previousApplication.recommendation_id,
     decision_id: previousApplication.decision_id,
   };

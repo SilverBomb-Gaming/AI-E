@@ -307,7 +307,12 @@ test("applied scoped learning is reversible and does not cascade into execution 
     assert.equal(result.scope, "ranking_weight_adjustment");
     assert.equal(result.reversible, true);
     assert.equal(revertResult.reverted, true);
+    assert.match(revertResult.reverted_application_id ?? "", /^learning-application-/);
     assert.equal(revertResult.scope, "ranking_weight_adjustment");
+    assert.equal(revertResult.previous_value, recommendation.confidence);
+    assert.equal(revertResult.restored_value, 0);
+    assert.equal(revertResult.drift_state_before.cumulative_adjustment_magnitude, recommendation.confidence);
+    assert.equal(revertResult.drift_state_after.cumulative_adjustment_magnitude, 0);
     assert.equal(getLearningApplicationState().parameter_value, 0);
     assert.deepEqual(taskAfter, taskBefore);
     assert.equal(taskAfter.execution_triggered, false);

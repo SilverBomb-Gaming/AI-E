@@ -733,6 +733,14 @@ Current Layer 27 Step 3 status:
 - the application gate blocks further scoped learning when the drift threshold is reached
 - reverting the scoped learning application resets drift state and restores bounded behavior
 
+Current Layer 27 Step 4 status:
+
+- Layer 27 Step 4 - Learning Reversion Audit Trail: implemented
+- added append-only audit records for learning reversions
+- captures prior/restored values and drift state before/after revert
+- keeps the existing single learning scope only
+- does not add new learning power, execution behavior, or autonomy
+
 ## Safe Runtime Action Bridge
 
 AI-E can now translate supported live operator actions into safe runtime intents.
