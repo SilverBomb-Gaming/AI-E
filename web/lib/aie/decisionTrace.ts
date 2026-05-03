@@ -39,6 +39,9 @@ export type DecisionRecord = {
   decision_id: string;
   timestamp: string;
   selected_plan_id: string;
+  recommended_plan_id?: string;
+  ranking_score_gap: number;
+  operator_choice_alignment: boolean;
   available_plan_ids: string[];
   insight_summary: string[];
   severity_summary: {
@@ -300,6 +303,38 @@ function hasSeverityAtOrAbove(
     .some((severity) => summary[severity] > 0 && compareSeverity(severity, minimumSeverity));
 }
 
+function normalizeRankingScoreGap(value: unknown): number {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric < 0) {
+    return 0;
+  }
+
+  return Math.round(numeric * 1000) / 1000;
+}
+
+function buildOperatorFeedbackFields(plan: SelectablePlan, selectedPlanId: string): Pick<DecisionRecord, "recommended_plan_id" | "ranking_score_gap" | "operator_choice_alignment"> {
+  if (plan.operator_feedback_capture) {
+    return {
+      recommended_plan_id: hasNonEmptyString(plan.operator_feedback_capture.recommended_plan_id)
+        ? plan.operator_feedback_capture.recommended_plan_id.trim()
+        : undefined,
+      ranking_score_gap: normalizeRankingScoreGap(plan.operator_feedback_capture.ranking_score_gap),
+      operator_choice_alignment: plan.operator_feedback_capture.operator_choice_alignment === true,
+    };
+  }
+
+  const recommended = plan.plan_rankings?.[0];
+  const selectedRanking = plan.plan_rankings?.find((ranking) => ranking.plan_id === selectedPlanId);
+  const selectedScore = selectedRanking?.score ?? 0;
+  const recommendedScore = recommended?.score ?? 0;
+
+  return {
+    recommended_plan_id: hasNonEmptyString(recommended?.plan_id) ? recommended.plan_id.trim() : undefined,
+    ranking_score_gap: normalizeRankingScoreGap(recommendedScore - selectedScore),
+    operator_choice_alignment: recommended?.plan_id === selectedPlanId,
+  };
+}
+
 export function buildDecisionRecord(
   plan: SelectablePlan,
   timestamp?: string,
@@ -309,6 +344,9 @@ export function buildDecisionRecord(
       decision_id: plan.decision_record.decision_id,
       timestamp: plan.decision_record.timestamp,
       selected_plan_id: plan.decision_record.selected_plan_id,
+      recommended_plan_id: plan.decision_record.recommended_plan_id,
+      ranking_score_gap: plan.decision_record.ranking_score_gap,
+      operator_choice_alignment: plan.decision_record.operator_choice_alignment,
       available_plan_ids: [...plan.decision_record.available_plan_ids],
       insight_summary: [...plan.decision_record.insight_summary],
       severity_summary: { ...plan.decision_record.severity_summary },
@@ -346,11 +384,15 @@ export function buildDecisionRecord(
   const normalizedTimestamp = hasNonEmptyString(timestamp) && isIsoLikeTimestamp(timestamp)
     ? timestamp.trim()
     : new Date().toISOString();
+  const operatorFeedback = buildOperatorFeedbackFields(plan, selectedPlanId);
 
   return {
     decision_id: `decision-${sanitizeIdentifier(selectedPlanId)}-${normalizedTimestamp.replace(/[:.]/g, "-")}`,
     timestamp: normalizedTimestamp,
     selected_plan_id: selectedPlanId,
+    recommended_plan_id: operatorFeedback.recommended_plan_id,
+    ranking_score_gap: operatorFeedback.ranking_score_gap,
+    operator_choice_alignment: operatorFeedback.operator_choice_alignment,
     available_plan_ids: availablePlanIds,
     insight_summary: summarizeInsights(plan.annotations),
     severity_summary: summarizeSeverities(plan.annotations),
@@ -392,6 +434,10 @@ export function validateDecisionRecord(record: unknown): DecisionRecordValidatio
     };
   }
 
+  const recommendedPlanId = hasNonEmptyString(candidate.recommended_plan_id) ? candidate.recommended_plan_id.trim() : undefined;
+  const rankingScoreGap = normalizeRankingScoreGap(candidate.ranking_score_gap);
+  const operatorChoiceAlignment = candidate.operator_choice_alignment === true;
+
   const normalizedSeveritySummary = {
     low: Number(severitySummary.low),
     medium: Number(severitySummary.medium),
@@ -414,6 +460,9 @@ export function validateDecisionRecord(record: unknown): DecisionRecordValidatio
       decision_id: candidate.decision_id.trim(),
       timestamp: candidate.timestamp.trim(),
       selected_plan_id: candidate.selected_plan_id.trim(),
+      recommended_plan_id: recommendedPlanId,
+      ranking_score_gap: rankingScoreGap,
+      operator_choice_alignment: operatorChoiceAlignment,
       available_plan_ids: availablePlanIds,
       insight_summary: insightSummary,
       severity_summary: normalizedSeveritySummary,

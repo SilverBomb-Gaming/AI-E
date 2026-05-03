@@ -108,9 +108,36 @@ test("decision record validation accepts an explicit plan selection record", () 
 
   assert.equal(validation.ok, true);
   assert.equal(validation.record?.selected_plan_id, selected.selected_plan_id);
+  assert.equal(validation.record?.recommended_plan_id, selected.operator_feedback_capture?.recommended_plan_id);
+  assert.equal(validation.record?.operator_choice_alignment, selected.operator_feedback_capture?.operator_choice_alignment);
   assert.ok((validation.record?.available_plan_ids.length ?? 0) >= 2);
   assert.ok((validation.record?.insight_summary.length ?? 0) >= 1);
   assert.ok(((validation.record?.severity_summary.high ?? 0) + (validation.record?.severity_summary.critical ?? 0)) >= 1);
+});
+
+test("decision records capture whether the operator followed the top-ranked recommendation", () => {
+  const selected = createSelectedPlan();
+  const record = buildDecisionRecord(selected, "2026-05-02T22:05:00.000Z");
+
+  assert.equal(record.recommended_plan_id, selected.selected_plan_id);
+  assert.equal(record.operator_choice_alignment, true);
+  assert.equal(record.ranking_score_gap, 0);
+});
+
+test("decision records capture non-aligned selections without changing translation behavior", () => {
+  const insights = generateExecutionInsights([createExecutionOutcomeRecord()]);
+  const annotated = attachInsightsToPlan(createNodeTaskPlan(), insights);
+  const selectedOriginal = selectOperatorPlan(annotated, annotated.plan_id);
+
+  const before = translatePlanToNodeTask(selectedOriginal);
+  const record = buildDecisionRecord(selectedOriginal, "2026-05-02T22:05:00.000Z");
+  const after = translatePlanToNodeTask(selectedOriginal);
+
+  assert.equal(record.recommended_plan_id, annotated.plan_rankings?.[0]?.plan_id);
+  assert.equal(record.operator_choice_alignment, false);
+  assert.ok(record.ranking_score_gap > 0);
+  assert.deepEqual(after, before);
+  assert.equal(after.execution_triggered, false);
 });
 
 test("decision record serialization is stable and machine-readable", () => {

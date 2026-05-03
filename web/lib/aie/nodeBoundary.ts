@@ -126,6 +126,12 @@ export type NodePlanExecutionConfirmation = {
   confirmed_at?: string;
 };
 
+export type NodePlanOperatorFeedbackCapture = {
+  recommended_plan_id?: string;
+  ranking_score_gap: number;
+  operator_choice_alignment: boolean;
+};
+
 export type NodeAdvisoryPlan = {
   plan_id: string;
   selected_plan_id?: string;
@@ -139,6 +145,7 @@ export type NodeAdvisoryPlan = {
   annotations?: NodePlanAnnotation[];
   plan_rankings?: NodePlanRanking[];
   operator_acknowledgement?: NodePlanOperatorAcknowledgement;
+  operator_feedback_capture?: NodePlanOperatorFeedbackCapture;
   decision_record?: DecisionRecord;
   execution_confirmation?: NodePlanExecutionConfirmation;
   execution_intent_locked?: true;
@@ -830,6 +837,7 @@ function cloneSelectablePlan<T extends NodeAdvisoryPlan | CoreNodeTaskTranslatio
     annotations: clonePlanAnnotations(plan.annotations),
     plan_rankings: plan.plan_rankings ? plan.plan_rankings.map((ranking) => ({ ...ranking })) : plan.plan_rankings,
     operator_acknowledgement: plan.operator_acknowledgement ? { ...plan.operator_acknowledgement } : plan.operator_acknowledgement,
+    operator_feedback_capture: plan.operator_feedback_capture ? { ...plan.operator_feedback_capture } : plan.operator_feedback_capture,
     decision_record: cloneDecisionRecordSnapshot(plan.decision_record),
     execution_confirmation: plan.execution_confirmation ? { ...plan.execution_confirmation } : plan.execution_confirmation,
     execution_intent_locked: plan.execution_intent_locked,
@@ -846,6 +854,9 @@ function cloneDecisionRecordSnapshot(record: DecisionRecord | undefined): Decisi
     decision_id: record.decision_id,
     timestamp: record.timestamp,
     selected_plan_id: record.selected_plan_id,
+    recommended_plan_id: record.recommended_plan_id,
+    ranking_score_gap: record.ranking_score_gap,
+    operator_choice_alignment: record.operator_choice_alignment,
     available_plan_ids: [...record.available_plan_ids],
     insight_summary: [...record.insight_summary],
     severity_summary: {
@@ -897,6 +908,22 @@ function assertExecutionIntentMutable(
   if (isExecutionIntentLocked(plan)) {
     throw new Error(`Execution intent is locked. ${action} blocked after confirmation.`);
   }
+}
+
+function buildOperatorFeedbackCapture(
+  plan: Pick<NodeAdvisoryPlan, "plan_rankings">,
+  selectedPlanId: string,
+): NodePlanOperatorFeedbackCapture {
+  const recommended = plan.plan_rankings?.[0];
+  const selectedRanking = plan.plan_rankings?.find((ranking) => ranking.plan_id === selectedPlanId);
+  const selectedScore = selectedRanking?.score ?? 0;
+  const recommendedScore = recommended?.score ?? 0;
+
+  return {
+    recommended_plan_id: recommended?.plan_id,
+    ranking_score_gap: Math.round(Math.max(0, recommendedScore - selectedScore) * 1000) / 1000,
+    operator_choice_alignment: recommended?.plan_id === selectedPlanId,
+  };
 }
 
 function deriveAlternativeCommand(command: string | undefined, insight: ExecutionInsight): string | undefined {
@@ -1012,6 +1039,7 @@ export function selectOperatorPlan<T extends NodeAdvisoryPlan | CoreNodeTaskTran
   return {
     ...cloneSelectablePlan(plan),
     selected_plan_id: normalizedPlanId,
+    operator_feedback_capture: buildOperatorFeedbackCapture(plan, normalizedPlanId),
     execution_confirmation: undefined,
   };
 }
@@ -1975,6 +2003,7 @@ export function attachInsightsToPlan<T extends NodeAdvisoryPlan | CoreNodeTaskTr
     annotations: mergedAnnotations,
     plan_rankings: planRankings,
     operator_acknowledgement: normalizeOperatorAcknowledgement(plan.operator_acknowledgement),
+    operator_feedback_capture: plan.operator_feedback_capture ? { ...plan.operator_feedback_capture } : plan.operator_feedback_capture,
     decision_record: normalizeDecisionRecordSnapshot(plan.decision_record),
     execution_confirmation: normalizeExecutionConfirmation(plan.execution_confirmation),
     execution_intent_locked: plan.execution_intent_locked,

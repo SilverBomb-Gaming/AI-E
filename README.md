@@ -634,6 +634,13 @@ Current Layer 24 Step 2 status:
 - the operator-facing acknowledgement prompt now renders those ranking metrics directly so the recommendation is inspectable instead of opaque text
 - ranking explanations remain advisory-only metadata and do not change selection, execution, or plan state
 
+Current Layer 24 Step 3 status:
+
+- Layer 24 Step 3 - Operator Feedback Capture: implemented
+- operator plan selection in `web/lib/aie/nodeBoundary.ts` now snapshots the current top-ranked recommendation, score gap, and alignment flag at selection time without changing plan choice or execution behavior
+- `web/lib/aie/decisionTrace.ts` now persists `recommended_plan_id`, `ranking_score_gap`, and `operator_choice_alignment` inside the append-only `DecisionRecord`
+- captured feedback is non-binding only: it does not auto-adjust rankings, alter execution, or introduce any feedback loop
+
 ## Safe Runtime Action Bridge
 
 AI-E can now translate supported live operator actions into safe runtime intents.
