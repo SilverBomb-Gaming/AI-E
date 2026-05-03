@@ -34,7 +34,8 @@
     "insights": "tsx scripts/showInsights.ts",
     "decisions": "tsx scripts/showDecisions.ts",
     "learning:simulation": "tsx scripts/showLearningSimulation.ts",
-    "learning:audit": "tsx scripts/showLearningAudit.ts"
+    "learning:audit": "tsx scripts/showLearningAudit.ts",
+    "learning:recommendations": "tsx scripts/showLearningRecommendations.ts"
   },
   "dependencies": {
     "@playwright/test": "^1.59.1",

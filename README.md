@@ -680,6 +680,17 @@ Current Layer 25 Step 4 status:
 - added optional read-only CLI support via `web/scripts/showLearningAudit.ts` and `npm run learning:audit`
 - audit artifacts record `frozen: true` and `applied: false` and do not alter rankings, plans, selection, readiness, or execution
 
+## Layer 26 / Learning Recommendation Review
+
+Layer 26 converts frozen passive learning audits into explicit operator-review recommendations without applying any changes to the system.
+
+Current Layer 26 Step 1 status:
+
+- Layer 26 Step 1 - Learning Recommendation Review: implemented
+- added `web/lib/aie/learningRecommendationReview.ts` to generate review-only recommendation candidates from frozen, unapplied audits
+- recommendations can propose ranking adjustment candidates, risk weight reviews, rollback penalty reviews, and insufficient data warnings
+- recommendations require operator review and are never applied automatically; rankings, plans, selection, readiness, and execution remain unchanged
+
 ## Safe Runtime Action Bridge
 
 AI-E can now translate supported live operator actions into safe runtime intents.
