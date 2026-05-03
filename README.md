@@ -673,6 +673,13 @@ Current Layer 25 Step 3 status:
 - added optional read-only CLI support via `web/scripts/showLearningSimulation.ts` and `npm run learning:simulation`
 - the output explicitly states simulation-only and remains unapplied: no rankings, plans, selection, readiness, or execution behavior changed
 
+Current Layer 25 Step 4 status:
+
+- Layer 25 Step 4 - Learning Signal Audit & Freeze: implemented
+- added `web/lib/aie/passiveLearningAudit.ts` with frozen audit artifacts that capture signal and simulation snapshots, source decision counts, and a stable checksum
+- added optional read-only CLI support via `web/scripts/showLearningAudit.ts` and `npm run learning:audit`
+- audit artifacts record `frozen: true` and `applied: false` and do not alter rankings, plans, selection, readiness, or execution
+
 ## Safe Runtime Action Bridge
 
 AI-E can now translate supported live operator actions into safe runtime intents.

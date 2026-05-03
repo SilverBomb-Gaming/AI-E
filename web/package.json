@@ -33,7 +33,8 @@
     "trace:capture": "tsx training_dataset_capture.ts",
     "insights": "tsx scripts/showInsights.ts",
     "decisions": "tsx scripts/showDecisions.ts",
-    "learning:simulation": "tsx scripts/showLearningSimulation.ts"
+    "learning:simulation": "tsx scripts/showLearningSimulation.ts",
+    "learning:audit": "tsx scripts/showLearningAudit.ts"
   },
   "dependencies": {
     "@playwright/test": "^1.59.1",
