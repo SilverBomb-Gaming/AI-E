@@ -602,6 +602,13 @@ Current Layer 23 Step 2 status:
 - readiness review now tracks confirmation separately from acknowledgement and blocks with `blocked_missing_confirmation` until the operator explicitly answers `Confirm execution submission? (yes/no)`
 - confirmation remains non-mutating with respect to plan content and does not auto-submit drafts, bypass readiness, or trigger Node execution
 
+Current Layer 23 Step 3 status:
+
+- Layer 23 Step 3 - Pre-Execution Summary and Final Operator Review: implemented
+- added `web/lib/aie/preExecutionSummary.ts` with `buildPreExecutionSummary(plan, readinessReview)` and `renderPreExecutionSummary(summary)`
+- ready draft export now returns a structured pre-execution summary containing selected plan, alternatives considered, insight summary, severity summary, acknowledgement status, decision record status, confirmation status, and readiness status
+- the pre-execution summary is review-only and does not submit drafts, trigger execution, auto-confirm, or mutate plans
+
 ## Safe Runtime Action Bridge
 
 AI-E can now translate supported live operator actions into safe runtime intents.

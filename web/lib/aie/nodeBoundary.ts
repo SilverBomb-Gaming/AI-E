@@ -5,6 +5,10 @@ import { fileURLToPath } from "node:url";
 import type { DecisionRecord } from "./decisionTrace";
 import type { ExecutionInsight } from "./executionInsight";
 import {
+  buildPreExecutionSummary,
+  type PreExecutionSummary,
+} from "./preExecutionSummary";
+import {
   buildExecutionReadinessReview,
   type ExecutionReadinessReview,
 } from "./executionReadinessReview";
@@ -272,6 +276,7 @@ export type NodeTaskDraftExportResult = {
   reason: string;
   evidence_labels: NodeBoundaryEvidenceLabel[];
   readiness_review: ExecutionReadinessReview;
+  pre_execution_summary: PreExecutionSummary | null;
   draft: NodeTaskDraft | null;
   dispatch_draft: NodeDispatchDraftRecord | null;
   draft_file_path: string | null;
@@ -1516,6 +1521,7 @@ export async function exportNodeTaskDraftToPipeline(
         ?? `Execution readiness review blocked draft export: ${readinessReview.readiness_status}.`,
       evidence_labels: [],
       readiness_review: readinessReview,
+      pre_execution_summary: null,
       draft: null,
       dispatch_draft: null,
       draft_file_path: null,
@@ -1536,6 +1542,7 @@ export async function exportNodeTaskDraftToPipeline(
       reason: resolvedPlan.reason,
       evidence_labels: [],
       readiness_review: readinessReview,
+      pre_execution_summary: null,
       draft: null,
       dispatch_draft: null,
       draft_file_path: null,
@@ -1554,6 +1561,7 @@ export async function exportNodeTaskDraftToPipeline(
       reason: translation.reason,
       evidence_labels: translation.evidence_labels,
       readiness_review: readinessReview,
+      pre_execution_summary: null,
       draft: null,
       dispatch_draft: null,
       draft_file_path: null,
@@ -1571,6 +1579,7 @@ export async function exportNodeTaskDraftToPipeline(
       reason: "Core task draft cannot be exported to the Node draft pipeline because the bounded pipeline metadata is incomplete.",
       evidence_labels: translation.evidence_labels,
       readiness_review: readinessReview,
+      pre_execution_summary: null,
       draft: translation.draft,
       dispatch_draft: null,
       draft_file_path: null,
@@ -1590,6 +1599,7 @@ export async function exportNodeTaskDraftToPipeline(
       reason: dispatchValidation.reason ?? "Core task draft cannot be exported to the Node draft pipeline. Provide a bounded executable command that matches the existing Node dispatch contract.",
       evidence_labels: translation.evidence_labels,
       readiness_review: readinessReview,
+      pre_execution_summary: null,
       draft: translation.draft,
       dispatch_draft: null,
       draft_file_path: null,
@@ -1606,6 +1616,10 @@ export async function exportNodeTaskDraftToPipeline(
   await mkdir(draftDirectory, { recursive: true });
   await writeFile(draftFilePath, `${JSON.stringify(dispatchValidation.draft_record, null, 2)}\n`, "utf-8");
 
+  const preExecutionSummary = isRecord(plan)
+    ? buildPreExecutionSummary(plan as CoreNodeTaskTranslationPlan | CoreNodePipelineDraftPlan, readinessReview)
+    : null;
+
   return {
     status: "draft_exported",
     reason: "Core exported the Node dispatch draft into the operator-reviewed draft folder only. Submission still requires explicit operator confirmation through the Node draft pipeline.",
@@ -1615,6 +1629,7 @@ export async function exportNodeTaskDraftToPipeline(
       "NODE EXECUTION NOT TRIGGERED",
     ]),
     readiness_review: readinessReview,
+    pre_execution_summary: preExecutionSummary,
     draft: translation.draft,
     dispatch_draft: dispatchValidation.draft_record,
     draft_file_path: draftFilePath,

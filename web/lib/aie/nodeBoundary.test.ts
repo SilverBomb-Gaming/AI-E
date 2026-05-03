@@ -674,6 +674,9 @@ test("draft export uses the selected alternative plan only", async () => {
 
     assert.equal(result.status, "draft_exported");
     assert.equal(result.readiness_review.readiness_status, "ready_for_operator_submission");
+    assert.ok(result.pre_execution_summary);
+    assert.equal(result.pre_execution_summary?.readiness_status, "ready_for_operator_submission");
+    assert.equal(result.pre_execution_summary?.confirmation_status, "confirmed");
     assert.equal(result.draft?.command, alternative?.command);
     assert.equal(result.dispatch_draft?.execution_payload.plan_id, alternative?.plan_id);
     assert.equal(result.execution_triggered, false);
@@ -706,6 +709,7 @@ test("draft export is blocked by readiness review when acknowledgement is missin
 
     assert.equal(result.status, "draft_export_rejected");
     assert.equal(result.readiness_review.readiness_status, "blocked_missing_acknowledgement");
+    assert.equal(result.pre_execution_summary, null);
     assert.equal(result.draft, null);
     assert.equal(result.execution_triggered, false);
   } finally {
@@ -738,6 +742,7 @@ test("draft export is blocked by readiness review when decision record is missin
 
     assert.equal(result.status, "draft_export_rejected");
     assert.equal(result.readiness_review.readiness_status, "blocked_missing_decision_record");
+    assert.equal(result.pre_execution_summary, null);
     assert.equal(result.dispatch_draft, null);
     assert.equal(result.execution_triggered, false);
   } finally {
@@ -775,6 +780,7 @@ test("draft export is blocked by readiness review when confirmation is missing",
     assert.equal(result.status, "draft_export_rejected");
     assert.equal(result.readiness_review.readiness_status, "blocked_missing_confirmation");
     assert.equal(result.readiness_review.confirmation_status, "missing");
+    assert.equal(result.pre_execution_summary, null);
     assert.match(result.reason, /Confirm execution submission\? \(yes\/no\)/);
     assert.equal(result.dispatch_draft, null);
     assert.equal(result.execution_triggered, false);
@@ -868,6 +874,8 @@ test("Core draft file is created correctly", async () => {
 
     assert.equal(result.status, "draft_exported");
     assert.equal(result.readiness_review.readiness_status, "ready_for_operator_submission");
+    assert.ok(result.pre_execution_summary);
+    assert.equal(result.pre_execution_summary?.selected_plan_summary, result.readiness_review.selected_plan_summary);
     assert.equal(result.submitted_to_node, false);
     assert.equal(result.node_intake_triggered, false);
     assert.equal(result.execution_triggered, false);
@@ -896,6 +904,7 @@ test("draft matches Node schema", async () => {
     });
 
     assert.equal(result.status, "draft_exported");
+    assert.ok(result.pre_execution_summary);
     const validation = validateNodeDispatchDraft(result.dispatch_draft);
     assert.equal(validation.ok, true);
     assert.equal(validation.draft_record?.requested_capability_id, "core.node.dispatch.run");
@@ -918,6 +927,7 @@ test("draft export does not execute automatically", async () => {
     });
 
     assert.equal(result.status, "draft_exported");
+    assert.ok(result.pre_execution_summary);
     assert.equal(result.stored_as_draft_only, true);
     assert.equal(result.submitted_to_node, false);
     assert.equal(result.node_intake_triggered, false);
