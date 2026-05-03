@@ -425,10 +425,45 @@ test("acknowledgement prompt is visible but non-blocking", () => {
   assert.match(prompt ?? "", /Insights detected:/);
   assert.match(prompt ?? "", /\[(LOW|MEDIUM|HIGH|CRITICAL)\]/);
   assert.match(prompt ?? "", /Suggestion:/);
+  assert.match(prompt ?? "", /Recommended: .* \(score: 0\.[0-9]{2}\)/);
+  assert.match(prompt ?? "", /Reason: /);
   assert.match(prompt ?? "", /Plan id:/);
+  assert.match(prompt ?? "", /Rank score: 0\.[0-9]{2}/);
   assert.match(prompt ?? "", /Alternative plan:/);
   assert.match(prompt ?? "", /Select plan id before proceeding\./);
   assert.match(prompt ?? "", /Acknowledge before proceeding\? \(yes\/no\)/);
+});
+
+test("plan rankings are advisory metadata and do not auto-select or change execution behavior", () => {
+  const basePlan = createExportableNodeTaskPlan({ risk_level: "high" });
+  const annotated = attachInsightsToPlan(basePlan, generateExecutionInsights([
+    createExecutionOutcomeRecord({
+      outcome_id: "OUT-0000001011A",
+      created_at: "2026-05-02T21:26:30.000Z",
+      risk_level: "high",
+      rollback_required: true,
+      rollback_executed: true,
+      success: false,
+      status: "failed",
+      result_summary: "integration regression failure",
+      error_summary: "integration regression failure",
+      recovery_status: "executed",
+    }),
+  ]));
+
+  assert.ok((annotated.plan_rankings?.length ?? 0) >= 1);
+  assert.equal(annotated.selected_plan_id, undefined);
+
+  const rejected = translatePlanToNodeTask(annotated);
+  assert.equal(rejected.status, "draft_rejected");
+  assert.match(rejected.reason, /Operator plan selection is required/);
+  assert.equal(rejected.execution_triggered, false);
+
+  const selectedOriginal = selectOperatorPlan(annotated, annotated.plan_id);
+  const translated = translatePlanToNodeTask(selectedOriginal);
+  assert.equal(translated.status, "draft_generated");
+  assert.equal(translated.draft?.command, basePlan.command);
+  assert.equal(translated.execution_triggered, false);
 });
 
 test("plan adjustment alternatives remain separate from the original plan", () => {

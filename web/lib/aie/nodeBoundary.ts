@@ -5,6 +5,10 @@ import { fileURLToPath } from "node:url";
 import type { DecisionRecord } from "./decisionTrace";
 import type { ExecutionInsight } from "./executionInsight";
 import {
+  rankPlans,
+  type NodePlanRanking,
+} from "./planRanking";
+import {
   buildPreExecutionSummary,
   type PreExecutionSummary,
 } from "./preExecutionSummary";
@@ -133,6 +137,7 @@ export type NodeAdvisoryPlan = {
   validation_gates: string[];
   execution_authority: "system_only";
   annotations?: NodePlanAnnotation[];
+  plan_rankings?: NodePlanRanking[];
   operator_acknowledgement?: NodePlanOperatorAcknowledgement;
   decision_record?: DecisionRecord;
   execution_confirmation?: NodePlanExecutionConfirmation;
@@ -823,6 +828,7 @@ function cloneSelectablePlan<T extends NodeAdvisoryPlan | CoreNodeTaskTranslatio
     dependency_reasoning: [...plan.dependency_reasoning],
     validation_gates: [...plan.validation_gates],
     annotations: clonePlanAnnotations(plan.annotations),
+    plan_rankings: plan.plan_rankings ? plan.plan_rankings.map((ranking) => ({ ...ranking })) : plan.plan_rankings,
     operator_acknowledgement: plan.operator_acknowledgement ? { ...plan.operator_acknowledgement } : plan.operator_acknowledgement,
     decision_record: cloneDecisionRecordSnapshot(plan.decision_record),
     execution_confirmation: plan.execution_confirmation ? { ...plan.execution_confirmation } : plan.execution_confirmation,
@@ -1929,8 +1935,8 @@ export function attachInsightsToPlan<T extends NodeAdvisoryPlan | CoreNodeTaskTr
   const existingAnnotations = Array.isArray(plan.annotations)
     ? plan.annotations.map((annotation) => ({ ...annotation, informational_only: true as const }))
     : [];
-  const matchedInsights = insights
-    .filter((insight) => insightMatchesPlan(plan, insight))
+  const matchingInsights = insights.filter((insight) => insightMatchesPlan(plan, insight));
+  const matchedInsights = matchingInsights
     .flatMap((insight) => {
       const annotations: NodePlanAnnotation[] = [buildPlanAnnotation(insight)];
       const adjustment = buildPlanAdjustmentAnnotation(plan, insight);
@@ -1947,6 +1953,14 @@ export function attachInsightsToPlan<T extends NodeAdvisoryPlan | CoreNodeTaskTr
     }
   }
 
+  const rankingOptions = listPlanSelectionOptions({
+    ...plan,
+    annotations: mergedAnnotations,
+  }).filter((option) => option.source === "alternative");
+  const planRankings = rankingOptions.length > 0
+    ? rankPlans(rankingOptions, matchingInsights, "risk_level" in plan ? plan.risk_level : undefined)
+    : undefined;
+
   return {
     ...plan,
     planning_suggestions: [...plan.planning_suggestions],
@@ -1955,6 +1969,7 @@ export function attachInsightsToPlan<T extends NodeAdvisoryPlan | CoreNodeTaskTr
     validation_gates: [...plan.validation_gates],
     selected_plan_id: plan.selected_plan_id,
     annotations: mergedAnnotations,
+    plan_rankings: planRankings,
     operator_acknowledgement: normalizeOperatorAcknowledgement(plan.operator_acknowledgement),
     decision_record: normalizeDecisionRecordSnapshot(plan.decision_record),
     execution_confirmation: normalizeExecutionConfirmation(plan.execution_confirmation),
@@ -2044,7 +2059,7 @@ export function confirmExecutionSubmission<T extends NodeAdvisoryPlan | CoreNode
 }
 
 export function buildInsightAcknowledgementPrompt(
-  plan: Pick<NodeAdvisoryPlan, "plan_id" | "selected_plan_id" | "annotations" | "operator_acknowledgement" | "planning_suggestions" | "validation_gates" | "execution_path"> & Partial<CoreNodeTaskTranslationPlan>,
+  plan: Pick<NodeAdvisoryPlan, "plan_id" | "selected_plan_id" | "annotations" | "plan_rankings" | "operator_acknowledgement" | "planning_suggestions" | "validation_gates" | "execution_path"> & Partial<CoreNodeTaskTranslationPlan>,
 ): string | null {
   if (!Array.isArray(plan.annotations) || plan.annotations.length === 0) {
     return null;
@@ -2066,6 +2081,7 @@ export function buildInsightAcknowledgementPrompt(
 
   const coreAnnotations = plan.annotations.filter((annotation) => annotation.type !== "plan_adjustment");
   const adjustmentAnnotations = plan.annotations.filter((annotation) => annotation.type === "plan_adjustment");
+  const rankingByPlanId = new Map((plan.plan_rankings ?? []).map((ranking) => [ranking.plan_id, ranking]));
 
   lines.push("");
   lines.push("Insights detected:");
@@ -2078,11 +2094,22 @@ export function buildInsightAcknowledgementPrompt(
 
   if (adjustmentAnnotations.length > 0) {
     lines.push("");
+    const recommended = plan.plan_rankings?.[0];
+    if (recommended) {
+      lines.push(`Recommended: ${recommended.plan_id} (score: ${recommended.score.toFixed(2)})`);
+      lines.push(`Reason: ${recommended.reasoning}`);
+      lines.push("");
+    }
     lines.push("Suggested alternatives:");
     for (const annotation of adjustmentAnnotations) {
       lines.push(`- [${annotation.severity.toUpperCase()}] ${annotation.message}`);
       if (annotation.alternative_plan) {
         lines.push(`  Plan id: ${annotation.alternative_plan.plan_id}${plan.selected_plan_id === annotation.alternative_plan.plan_id ? " (selected)" : ""}`);
+        const ranking = rankingByPlanId.get(annotation.alternative_plan.plan_id);
+        if (ranking) {
+          lines.push(`  Rank score: ${ranking.score.toFixed(2)}`);
+          lines.push(`  Reason: ${ranking.reasoning}`);
+        }
       }
       if (annotation.alternative_plan?.steps.length) {
         lines.push("  Alternative plan:");
