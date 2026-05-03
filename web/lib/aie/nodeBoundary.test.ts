@@ -665,7 +665,7 @@ test("draft export uses the selected alternative plan only", async () => {
     const selected = selectOperatorPlan(annotated, alternative?.plan_id ?? "");
     const acknowledged = acknowledgePlanInsights(selected, "2026-05-02T21:30:00.000Z");
     const decisionRecord = buildDecisionRecord(acknowledged, "2026-05-02T21:31:00.000Z");
-    const confirmed = confirmExecutionSubmission(acknowledged, "2026-05-02T21:31:30.000Z");
+    const confirmed = confirmExecutionSubmission(acknowledged, "2026-05-02T21:31:30.000Z", decisionRecord);
 
     const result = await exportNodeTaskDraftToPipeline(confirmed, {
       draftDirectory,
@@ -866,7 +866,7 @@ test("Core draft file is created correctly", async () => {
   try {
     const selected = selectOperatorPlan(createExportableNodeTaskPlan(), "system-plan-001");
     const decisionRecord = buildDecisionRecord(selected, "2026-05-02T21:40:00.000Z");
-    const confirmed = confirmExecutionSubmission(selected, "2026-05-02T21:40:30.000Z");
+    const confirmed = confirmExecutionSubmission(selected, "2026-05-02T21:40:30.000Z", decisionRecord);
     const result = await exportNodeTaskDraftToPipeline(confirmed, {
       draftDirectory: tempDraftRoot,
       decisionRecord,
@@ -897,7 +897,7 @@ test("draft matches Node schema", async () => {
   try {
     const selected = selectOperatorPlan(createExportableNodeTaskPlan(), "system-plan-001");
     const decisionRecord = buildDecisionRecord(selected, "2026-05-02T21:41:00.000Z");
-    const confirmed = confirmExecutionSubmission(selected, "2026-05-02T21:41:30.000Z");
+    const confirmed = confirmExecutionSubmission(selected, "2026-05-02T21:41:30.000Z", decisionRecord);
     const result = await exportNodeTaskDraftToPipeline(confirmed, {
       draftDirectory: tempDraftRoot,
       decisionRecord,
@@ -920,7 +920,7 @@ test("draft export does not execute automatically", async () => {
   try {
     const selected = selectOperatorPlan(createExportableNodeTaskPlan(), "system-plan-001");
     const decisionRecord = buildDecisionRecord(selected, "2026-05-02T21:42:00.000Z");
-    const confirmed = confirmExecutionSubmission(selected, "2026-05-02T21:42:30.000Z");
+    const confirmed = confirmExecutionSubmission(selected, "2026-05-02T21:42:30.000Z", decisionRecord);
     const result = await exportNodeTaskDraftToPipeline(confirmed, {
       draftDirectory: tempDraftRoot,
       decisionRecord,
@@ -937,14 +937,64 @@ test("draft export does not execute automatically", async () => {
   }
 });
 
-test("plan reselection clears stale execution confirmation", () => {
+test("plan reselection is blocked after execution intent lock", () => {
   const selected = selectOperatorPlan(createExportableNodeTaskPlan(), "system-plan-001");
-  const confirmed = confirmExecutionSubmission(selected, "2026-05-02T21:43:00.000Z");
+  const decisionRecord = buildDecisionRecord(selected, "2026-05-02T21:42:50.000Z");
+  const confirmed = confirmExecutionSubmission(selected, "2026-05-02T21:43:00.000Z", decisionRecord);
 
-  const reselected = selectOperatorPlan(confirmed, "system-plan-001");
+  assert.throws(
+    () => selectOperatorPlan(confirmed, "system-plan-001"),
+    /Execution intent is locked\. Plan reselection blocked after confirmation\./,
+  );
 
   assert.equal(confirmed.execution_confirmation?.confirmed, true);
-  assert.equal(reselected.execution_confirmation, undefined);
+  assert.equal(confirmed.execution_intent_locked, true);
+});
+
+test("acknowledgement changes are blocked after execution intent lock", () => {
+  const selected = selectOperatorPlan(createExportableNodeTaskPlan(), "system-plan-001");
+  const acknowledged = acknowledgePlanInsights(selected, "2026-05-02T21:43:10.000Z");
+  const decisionRecord = buildDecisionRecord(acknowledged, "2026-05-02T21:43:20.000Z");
+  const confirmed = confirmExecutionSubmission(acknowledged, "2026-05-02T21:43:30.000Z", decisionRecord);
+
+  assert.throws(
+    () => acknowledgePlanInsights(confirmed, "2026-05-02T21:44:00.000Z"),
+    /Execution intent is locked\. Acknowledgement changes blocked after confirmation\./,
+  );
+});
+
+test("annotation changes are blocked after execution intent lock", () => {
+  const selected = selectOperatorPlan(createExportableNodeTaskPlan(), "system-plan-001");
+  const decisionRecord = buildDecisionRecord(selected, "2026-05-02T21:44:10.000Z");
+  const confirmed = confirmExecutionSubmission(selected, "2026-05-02T21:44:20.000Z", decisionRecord);
+
+  assert.throws(
+    () => attachInsightsToPlan(confirmed, generateExecutionInsights([createExecutionOutcomeRecord()])),
+    /Execution intent is locked\. Annotation changes blocked after confirmation\./,
+  );
+});
+
+test("locked export rejects decision record overwrite attempts", async () => {
+  const tempDraftRoot = await mkdtemp(path.join(tmpdir(), "aie-core-node-lock-"));
+
+  try {
+    const selected = selectOperatorPlan(createExportableNodeTaskPlan(), "system-plan-001");
+    const lockedDecisionRecord = buildDecisionRecord(selected, "2026-05-02T21:45:00.000Z");
+    const confirmed = confirmExecutionSubmission(selected, "2026-05-02T21:45:10.000Z", lockedDecisionRecord);
+    const replacementDecisionRecord = buildDecisionRecord(selected, "2026-05-02T21:45:20.000Z");
+
+    const result = await exportNodeTaskDraftToPipeline(confirmed, {
+      draftDirectory: tempDraftRoot,
+      decisionRecord: replacementDecisionRecord,
+    });
+
+    assert.equal(result.status, "draft_export_rejected");
+    assert.match(result.reason, /Execution intent is locked\. Decision record changes are blocked after confirmation\./);
+    assert.equal(result.pre_execution_summary, null);
+    assert.equal(result.execution_triggered, false);
+  } finally {
+    await rm(tempDraftRoot, { recursive: true, force: true });
+  }
 });
 
 test("evidence clearly explains accept and reject reason", () => {

@@ -304,6 +304,35 @@ export function buildDecisionRecord(
   plan: SelectablePlan,
   timestamp?: string,
 ): DecisionRecord {
+  if (plan.execution_intent_locked === true && plan.decision_record) {
+    return {
+      decision_id: plan.decision_record.decision_id,
+      timestamp: plan.decision_record.timestamp,
+      selected_plan_id: plan.decision_record.selected_plan_id,
+      available_plan_ids: [...plan.decision_record.available_plan_ids],
+      insight_summary: [...plan.decision_record.insight_summary],
+      severity_summary: { ...plan.decision_record.severity_summary },
+      operator_acknowledgement: { ...plan.decision_record.operator_acknowledgement },
+      decision_context: plan.decision_record.decision_context
+        ? {
+          original_plan: {
+            ...plan.decision_record.decision_context.original_plan,
+            steps: [...plan.decision_record.decision_context.original_plan.steps],
+          },
+          available_plans: plan.decision_record.decision_context.available_plans.map((option) => ({
+            ...option,
+            steps: [...option.steps],
+          })),
+          selected_plan: {
+            ...plan.decision_record.decision_context.selected_plan,
+            steps: [...plan.decision_record.decision_context.selected_plan.steps],
+          },
+          insights: plan.decision_record.decision_context.insights.map((insight) => ({ ...insight })),
+        }
+        : undefined,
+    };
+  }
+
   const selectedPlanId = hasNonEmptyString(plan.selected_plan_id) ? plan.selected_plan_id.trim() : "";
   if (!selectedPlanId) {
     throw new Error("Decision record requires an explicitly selected plan id.");

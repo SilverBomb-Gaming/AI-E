@@ -155,7 +155,7 @@ test("readiness is ready only when selection, acknowledgement, decision record, 
   const selected = selectOperatorPlan(annotated, alternative.plan_id);
   const acknowledged = acknowledgePlanInsights(selected, "2026-05-02T23:05:00.000Z");
   const decisionRecord = buildDecisionRecord(acknowledged, "2026-05-02T23:06:00.000Z");
-  const confirmed = confirmExecutionSubmission(acknowledged, "2026-05-02T23:07:00.000Z");
+  const confirmed = confirmExecutionSubmission(acknowledged, "2026-05-02T23:07:00.000Z", decisionRecord);
 
   const review = buildExecutionReadinessReview(confirmed, {
     decisionRecord,
@@ -177,12 +177,15 @@ test("confirmExecutionSubmission records timestamp without mutating the source p
   const annotated = createAnnotatedPlan();
   const selected = selectOperatorPlan(annotated, annotated.plan_id);
   const acknowledged = acknowledgePlanInsights(selected, "2026-05-02T23:05:00.000Z");
+  const decisionRecord = buildDecisionRecord(acknowledged, "2026-05-02T23:06:00.000Z");
 
-  const confirmed = confirmExecutionSubmission(acknowledged, "2026-05-02T23:07:00.000Z");
+  const confirmed = confirmExecutionSubmission(acknowledged, "2026-05-02T23:07:00.000Z", decisionRecord);
 
   assert.equal(acknowledged.execution_confirmation?.confirmed, undefined);
   assert.equal(confirmed.execution_confirmation.confirmed, true);
   assert.equal(confirmed.execution_confirmation.confirmed_at, "2026-05-02T23:07:00.000Z");
+  assert.equal(confirmed.execution_intent_locked, true);
+  assert.equal(confirmed.decision_record.selected_plan_id, decisionRecord.selected_plan_id);
   assert.equal("submitted_to_node" in (confirmed as Record<string, unknown>), false);
   assert.equal("execution_triggered" in (confirmed as Record<string, unknown>), false);
 });

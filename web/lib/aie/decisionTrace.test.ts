@@ -5,6 +5,8 @@ import path from "node:path";
 import test from "node:test";
 
 import {
+  acknowledgePlanInsights,
+  confirmExecutionSubmission,
   attachInsightsToPlan,
   selectOperatorPlan,
   translatePlanToNodeTask,
@@ -165,6 +167,19 @@ test("building a decision record does not mutate the selected plan", () => {
   assert.equal(JSON.stringify(selected), before);
   assert.equal(record.operator_acknowledgement.acknowledged, false);
   assert.equal(record.selected_plan_id, selected.selected_plan_id);
+});
+
+test("locked plans keep the frozen decision record snapshot", () => {
+  const selected = createSelectedPlan();
+  const acknowledged = acknowledgePlanInsights(selected, "2026-05-02T22:05:00.000Z");
+  const lockedRecord = buildDecisionRecord(acknowledged, "2026-05-02T22:06:00.000Z");
+  const lockedPlan = confirmExecutionSubmission(acknowledged, "2026-05-02T22:07:00.000Z", lockedRecord);
+
+  const rebuilt = buildDecisionRecord(lockedPlan, "2026-05-02T22:08:00.000Z");
+
+  assert.deepEqual(rebuilt, lockedRecord);
+  assert.equal(lockedPlan.execution_intent_locked, true);
+  assert.equal(lockedPlan.decision_record.timestamp, "2026-05-02T22:06:00.000Z");
 });
 
 test("queryDecisionRecords returns matching records without affecting stored decision state", async () => {

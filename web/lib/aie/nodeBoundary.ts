@@ -134,7 +134,9 @@ export type NodeAdvisoryPlan = {
   execution_authority: "system_only";
   annotations?: NodePlanAnnotation[];
   operator_acknowledgement?: NodePlanOperatorAcknowledgement;
+  decision_record?: DecisionRecord;
   execution_confirmation?: NodePlanExecutionConfirmation;
+  execution_intent_locked?: true;
 };
 
 export type NodePlanningMergeResult = {
@@ -822,9 +824,73 @@ function cloneSelectablePlan<T extends NodeAdvisoryPlan | CoreNodeTaskTranslatio
     validation_gates: [...plan.validation_gates],
     annotations: clonePlanAnnotations(plan.annotations),
     operator_acknowledgement: plan.operator_acknowledgement ? { ...plan.operator_acknowledgement } : plan.operator_acknowledgement,
+    decision_record: cloneDecisionRecordSnapshot(plan.decision_record),
     execution_confirmation: plan.execution_confirmation ? { ...plan.execution_confirmation } : plan.execution_confirmation,
+    execution_intent_locked: plan.execution_intent_locked,
     argv: Array.isArray(pipelinePlan.argv) ? [...pipelinePlan.argv] : pipelinePlan.argv,
   };
+}
+
+function cloneDecisionRecordSnapshot(record: DecisionRecord | undefined): DecisionRecord | undefined {
+  if (!record) {
+    return undefined;
+  }
+
+  return {
+    decision_id: record.decision_id,
+    timestamp: record.timestamp,
+    selected_plan_id: record.selected_plan_id,
+    available_plan_ids: [...record.available_plan_ids],
+    insight_summary: [...record.insight_summary],
+    severity_summary: {
+      low: record.severity_summary.low,
+      medium: record.severity_summary.medium,
+      high: record.severity_summary.high,
+      critical: record.severity_summary.critical,
+    },
+    operator_acknowledgement: record.operator_acknowledgement
+      ? {
+        acknowledged: record.operator_acknowledgement.acknowledged,
+        acknowledged_at: record.operator_acknowledgement.acknowledged_at,
+      }
+      : { acknowledged: false },
+    decision_context: record.decision_context
+      ? {
+        original_plan: {
+          ...record.decision_context.original_plan,
+          steps: [...record.decision_context.original_plan.steps],
+        },
+        available_plans: record.decision_context.available_plans.map((option) => ({
+          ...option,
+          steps: [...option.steps],
+        })),
+        selected_plan: {
+          ...record.decision_context.selected_plan,
+          steps: [...record.decision_context.selected_plan.steps],
+        },
+        insights: record.decision_context.insights.map((insight) => ({ ...insight })),
+      }
+      : undefined,
+  };
+}
+
+function serializeDecisionRecordSnapshot(record: DecisionRecord | undefined): string {
+  return JSON.stringify(cloneDecisionRecordSnapshot(record) ?? null);
+}
+
+function isExecutionIntentLocked(
+  plan: Pick<NodeAdvisoryPlan, "execution_intent_locked">,
+): boolean {
+  return plan.execution_intent_locked === true;
+}
+
+function assertExecutionIntentMutable(
+  plan: Pick<NodeAdvisoryPlan, "execution_intent_locked">,
+  action: string,
+): void {
+  if (isExecutionIntentLocked(plan)) {
+    throw new Error(`Execution intent is locked. ${action} blocked after confirmation.`);
+  }
 }
 
 function deriveAlternativeCommand(command: string | undefined, insight: ExecutionInsight): string | undefined {
@@ -925,6 +991,8 @@ export function selectOperatorPlan<T extends NodeAdvisoryPlan | CoreNodeTaskTran
   plan: T,
   selectedPlanId: string,
 ): T & { selected_plan_id: string } {
+  assertExecutionIntentMutable(plan, "Plan reselection");
+
   const normalizedPlanId = hasNonEmptyString(selectedPlanId) ? selectedPlanId.trim() : "";
   if (!normalizedPlanId) {
     throw new Error("Operator plan selection requires a non-empty plan id.");
@@ -1491,9 +1559,60 @@ export async function exportNodeTaskDraftToPipeline(
     requireConfirmation?: boolean;
   },
 ): Promise<NodeTaskDraftExportResult> {
+  const lockedPlan = isRecord(plan) ? plan as CoreNodeTaskTranslationPlan | CoreNodePipelineDraftPlan : null;
+  const lockedDecisionRecord = lockedPlan?.decision_record ? cloneDecisionRecordSnapshot(lockedPlan.decision_record) : null;
+  const providedDecisionRecord = options?.decisionRecord ? cloneDecisionRecordSnapshot(options.decisionRecord) ?? null : null;
+
+  if (lockedPlan?.execution_intent_locked === true) {
+    if (!lockedDecisionRecord) {
+      return {
+        status: "draft_export_rejected",
+        reason: "Execution intent is locked but the frozen decision record is missing.",
+        evidence_labels: [],
+        readiness_review: buildExecutionReadinessReview(lockedPlan, {
+          decisionRecord: undefined,
+          require_acknowledgement: options?.requireAcknowledgement ?? true,
+          require_decision_record: options?.requireDecisionRecord ?? true,
+          require_confirmation: options?.requireConfirmation ?? true,
+        }),
+        pre_execution_summary: null,
+        draft: null,
+        dispatch_draft: null,
+        draft_file_path: null,
+        stored_as_draft_only: true,
+        submitted_to_node: false,
+        node_intake_triggered: false,
+        execution_triggered: false,
+      };
+    }
+
+    if (providedDecisionRecord && serializeDecisionRecordSnapshot(providedDecisionRecord) !== serializeDecisionRecordSnapshot(lockedDecisionRecord)) {
+      return {
+        status: "draft_export_rejected",
+        reason: "Execution intent is locked. Decision record changes are blocked after confirmation.",
+        evidence_labels: [],
+        readiness_review: buildExecutionReadinessReview(lockedPlan, {
+          decisionRecord: lockedDecisionRecord,
+          require_acknowledgement: options?.requireAcknowledgement ?? true,
+          require_decision_record: options?.requireDecisionRecord ?? true,
+          require_confirmation: options?.requireConfirmation ?? true,
+        }),
+        pre_execution_summary: null,
+        draft: null,
+        dispatch_draft: null,
+        draft_file_path: null,
+        stored_as_draft_only: true,
+        submitted_to_node: false,
+        node_intake_triggered: false,
+        execution_triggered: false,
+      };
+    }
+  }
+
+  const effectiveDecisionRecord = lockedDecisionRecord ?? providedDecisionRecord ?? undefined;
   const readinessReview = isRecord(plan)
     ? buildExecutionReadinessReview(plan as CoreNodeTaskTranslationPlan | CoreNodePipelineDraftPlan, {
-      decisionRecord: options?.decisionRecord,
+      decisionRecord: effectiveDecisionRecord,
       require_acknowledgement: options?.requireAcknowledgement ?? true,
       require_decision_record: options?.requireDecisionRecord ?? true,
       require_confirmation: options?.requireConfirmation ?? true,
@@ -1508,7 +1627,7 @@ export async function exportNodeTaskDraftToPipeline(
       validation_gates: [],
       execution_authority: "system_only",
     }, {
-      decisionRecord: options?.decisionRecord,
+      decisionRecord: effectiveDecisionRecord,
       require_acknowledgement: options?.requireAcknowledgement ?? true,
       require_decision_record: options?.requireDecisionRecord ?? true,
       require_confirmation: options?.requireConfirmation ?? true,
@@ -1690,6 +1809,12 @@ function normalizeExecutionConfirmation(
   return { confirmed: true };
 }
 
+function normalizeDecisionRecordSnapshot(
+  value: DecisionRecord | undefined,
+): DecisionRecord | undefined {
+  return cloneDecisionRecordSnapshot(value);
+}
+
 function normalizeCommandTokens(command: string | undefined): string[] {
   if (!hasNonEmptyString(command)) {
     return [];
@@ -1799,6 +1924,8 @@ export function attachInsightsToPlan<T extends NodeAdvisoryPlan | CoreNodeTaskTr
   plan: T,
   insights: readonly ExecutionInsight[],
 ): T & { annotations: NodePlanAnnotation[]; operator_acknowledgement: NodePlanOperatorAcknowledgement } {
+  assertExecutionIntentMutable(plan, "Annotation changes");
+
   const existingAnnotations = Array.isArray(plan.annotations)
     ? plan.annotations.map((annotation) => ({ ...annotation, informational_only: true as const }))
     : [];
@@ -1829,7 +1956,9 @@ export function attachInsightsToPlan<T extends NodeAdvisoryPlan | CoreNodeTaskTr
     selected_plan_id: plan.selected_plan_id,
     annotations: mergedAnnotations,
     operator_acknowledgement: normalizeOperatorAcknowledgement(plan.operator_acknowledgement),
+    decision_record: normalizeDecisionRecordSnapshot(plan.decision_record),
     execution_confirmation: normalizeExecutionConfirmation(plan.execution_confirmation),
+    execution_intent_locked: plan.execution_intent_locked,
   };
 }
 
@@ -1837,6 +1966,8 @@ export function acknowledgePlanInsights<T extends NodeAdvisoryPlan | CoreNodeTas
   plan: T,
   acknowledgedAt?: string,
 ): T & { operator_acknowledgement: NodePlanOperatorAcknowledgement } {
+  assertExecutionIntentMutable(plan, "Acknowledgement changes");
+
   const normalizedTimestamp = hasNonEmptyString(acknowledgedAt) && looksLikeIsoTimestamp(acknowledgedAt)
     ? acknowledgedAt.trim()
     : new Date().toISOString();
@@ -1855,24 +1986,60 @@ export function acknowledgePlanInsights<T extends NodeAdvisoryPlan | CoreNodeTas
       acknowledged: true,
       acknowledged_at: normalizedTimestamp,
     },
+    decision_record: normalizeDecisionRecordSnapshot(plan.decision_record),
     execution_confirmation: normalizeExecutionConfirmation(plan.execution_confirmation),
+    execution_intent_locked: plan.execution_intent_locked,
   };
 }
 
 export function confirmExecutionSubmission<T extends NodeAdvisoryPlan | CoreNodeTaskTranslationPlan | CoreNodePipelineDraftPlan>(
   plan: T,
   confirmedAt?: string,
-): T & { execution_confirmation: NodePlanExecutionConfirmation } {
+  decisionRecord?: DecisionRecord,
+): T & { execution_confirmation: NodePlanExecutionConfirmation; execution_intent_locked: true; decision_record: DecisionRecord } {
+  if (isExecutionIntentLocked(plan)) {
+    const lockedDecisionRecord = cloneDecisionRecordSnapshot(plan.decision_record);
+    if (!lockedDecisionRecord) {
+      throw new Error("Execution intent is locked but the frozen decision record is missing.");
+    }
+
+    if (decisionRecord && serializeDecisionRecordSnapshot(decisionRecord) !== serializeDecisionRecordSnapshot(lockedDecisionRecord)) {
+      throw new Error("Execution intent is locked. Decision record changes are blocked after confirmation.");
+    }
+
+    return {
+      ...cloneSelectablePlan(plan),
+      decision_record: lockedDecisionRecord,
+      execution_confirmation: normalizeExecutionConfirmation(plan.execution_confirmation) ?? { confirmed: true },
+      execution_intent_locked: true,
+    };
+  }
+
   const normalizedTimestamp = hasNonEmptyString(confirmedAt) && looksLikeIsoTimestamp(confirmedAt)
     ? confirmedAt.trim()
     : new Date().toISOString();
+  const normalizedDecisionRecord = cloneDecisionRecordSnapshot(decisionRecord);
+  if (!normalizedDecisionRecord) {
+    throw new Error("Execution confirmation requires a decision record snapshot before the intent can be locked.");
+  }
+
+  const selectedPlanId = hasNonEmptyString(plan.selected_plan_id) ? plan.selected_plan_id.trim() : "";
+  if (!selectedPlanId) {
+    throw new Error("Execution confirmation requires an explicitly selected plan id before the intent can be locked.");
+  }
+
+  if (normalizedDecisionRecord.selected_plan_id !== selectedPlanId) {
+    throw new Error("Execution confirmation decision record must match the selected plan id.");
+  }
 
   return {
     ...cloneSelectablePlan(plan),
+    decision_record: normalizedDecisionRecord,
     execution_confirmation: {
       confirmed: true,
       confirmed_at: normalizedTimestamp,
     },
+    execution_intent_locked: true,
   };
 }
 

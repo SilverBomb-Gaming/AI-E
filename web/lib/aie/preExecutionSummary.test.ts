@@ -95,7 +95,7 @@ function createConfirmedPlan() {
   const selected = selectOperatorPlan(annotated, alternative.plan_id);
   const acknowledged = acknowledgePlanInsights(selected, "2026-05-02T23:11:00.000Z");
   const decisionRecord = buildDecisionRecord(acknowledged, "2026-05-02T23:12:00.000Z");
-  const confirmed = confirmExecutionSubmission(acknowledged, "2026-05-02T23:13:00.000Z");
+  const confirmed = confirmExecutionSubmission(acknowledged, "2026-05-02T23:13:00.000Z", decisionRecord);
   const readinessReview = buildExecutionReadinessReview(confirmed, {
     decisionRecord,
     require_acknowledgement: true,
