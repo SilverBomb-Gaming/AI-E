@@ -4,7 +4,12 @@ import type { NodePlanSelectionOption, NodeTaskRiskLevel } from "./nodeBoundary"
 export type NodePlanRanking = {
   plan_id: string;
   score: number;
-  reasoning: string;
+  reasoning: {
+    failure_rate: number;
+    rollback_rate: number;
+    risk_level: NodeTaskRiskLevel;
+    success_rate: number;
+  };
 };
 
 function roundScore(value: number): number {
@@ -30,6 +35,18 @@ function riskPenaltyForLevel(riskLevel: NodeTaskRiskLevel | undefined): number {
     default:
       return 0.34;
   }
+}
+
+function riskLevelFromPenalty(riskPenalty: number): NodeTaskRiskLevel {
+  if (riskPenalty <= 0.24) {
+    return "low";
+  }
+
+  if (riskPenalty <= 0.46) {
+    return "medium";
+  }
+
+  return "high";
 }
 
 function deriveBaseMetrics(insights: readonly ExecutionInsight[], riskLevel: NodeTaskRiskLevel | undefined): {
@@ -155,9 +172,12 @@ export function rankPlans(
           + ((1 - rollbackRate) * 0.2)
           + ((1 - riskPenalty) * 0.2)
         ),
-        reasoning: mitigation.reasons.length > 0
-          ? [...new Set(mitigation.reasons)].slice(0, 3).join(", ")
-          : "Bounded reviewed alternative",
+        reasoning: {
+          failure_rate: roundScore(failureRate),
+          rollback_rate: roundScore(rollbackRate),
+          risk_level: riskLevelFromPenalty(riskPenalty),
+          success_rate: roundScore(historicalSuccess),
+        },
       };
     })
     .sort((left, right) => right.score - left.score || left.plan_id.localeCompare(right.plan_id));

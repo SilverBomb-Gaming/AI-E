@@ -627,6 +627,13 @@ Current Layer 24 Step 1 status:
 - plans with suggested alternatives now carry advisory `plan_rankings` metadata in `web/lib/aie/nodeBoundary.ts` without changing `selected_plan_id`
 - the operator-facing acknowledgement prompt now shows the top recommendation and per-alternative score/reasoning while leaving plan selection fully explicit and non-binding
 
+Current Layer 24 Step 2 status:
+
+- Layer 24 Step 2 - Ranking Explanation Transparency: implemented
+- expanded `plan_rankings` in `web/lib/aie/planRanking.ts` so each ranked plan now carries structured `reasoning` metrics for `failure_rate`, `rollback_rate`, `risk_level`, and `success_rate`
+- the operator-facing acknowledgement prompt now renders those ranking metrics directly so the recommendation is inspectable instead of opaque text
+- ranking explanations remain advisory-only metadata and do not change selection, execution, or plan state
+
 ## Safe Runtime Action Bridge
 
 AI-E can now translate supported live operator actions into safe runtime intents.
@@ -648,6 +655,53 @@ Safety boundary:
 
 - this layer does not run shell commands, commit, push, deploy, or bypass approvals
 - it does not mutate repo files directly
+- it validates the requested action against the current operator state and only produces safe runtime intents
+
+Input capture is now clamped to the BABYLON foreground window. When **Record Input (BABYLON focus only)** is enabled, any keyboard/mouse events detected while another window is active are suppressed, counted, and surfaced as warnings so "empty" runs are still explainable.
+
+Screenshots rely on Windows desktop capture permissions; if a capture fails the folder now contains a `screenshot_*` reason entry plus an events.log warning. Mic recording is mic-only (no system audio) and can optionally be gated by holding the space bar when Push-to-Talk is enabled. When a recorder is enabled but produces no data, the artifacts include `{ "status": "no_data", "reason": "..." }` blocks so operators never see empty files.
+
+## Building the Windows Executable
+
+```powershell
+cd "E:\AI projects 2025\AI-E"
+.\.venv\Scripts\activate
+./build_scripts/build_windows.ps1
+```
+
+The script installs pinned dependencies, runs PyInstaller with the updated settings, and produces `dist/AI-E.exe`. It also collects the required PySide6 binaries, writes a transcript to `build_artifacts\build_log.txt`, and returns a non-zero exit code if anything fails. Double-clicking the executable shows the same UI with no console window, and assets (icons, future resources) are bundled automatically.
+
+First-launch UX: if the BABYLON path is empty, the UI prompts you to browse. Once selected, the exe path persists via the local runtime state file `app_state.local.json` so subsequent launches auto-fill it. The tracked `app_state.example.json` file is only a sanitized example and is not used for runtime writes. The Run Controls panel now keeps the operator-oriented signals front and center: Target EXE path, detected PID/state, a live duration timer, and the artifacts destination. The typical workflow is **Launch BABYLON** -> **Attach** -> **Start Run** -> interact/gameplay -> **Stop Run** -> **Open Run Folder** / **Open Logs Folder** to inspect the collected screenshots, logs, and summaries.
+
+## Local State Files
+
+- `app_state.example.json` is the tracked, sanitized example for operator profile structure.
+- `app_state.local.json` is created and maintained locally at runtime; the app reads and writes this file only.
+- `project_registry/projects.example.json` is a tracked, sanitized example for optional multi-project registry data.
+- `project_registry/projects.local.json` is reserved for local-only registry data and is ignored by git.
+
+## Usage Expectations
+
+- Operator must pick the BABYLON executable path manually.
+- **Launch BABYLON** starts the executable via subprocess.
+- **Attach** checks whether the BABYLON process is currently running (using `psutil`).
+- **Record Input** writes `input_events.jsonl` with keyboard/mouse telemetry.
+- **Record Mic** captures mic-only audio to `mic.wav` (with optional push-to-talk gating) plus `mic_meta.json`.
+- **Open Last Run Folder** opens the most recent artifacts directory in Windows Explorer.
+- No gameplay logic or Unity assets live in this repository; integration happens through operator-selected paths and generated artifacts only.
+
+## Acceptance Test Checklist
+
+Use **Help > Demo Checklist...** inside the app to run the current quick walkthrough:
+
+1. **A.** Launch `AI-E.exe` (or run from source) and confirm the Home screen and guardrails are visible.
+2. **B.** Confirm a supported project is selected, such as `BABYLON VER 2`.
+3. **C.** Use a direct bounded prompt such as `make zombie more dangerous` and choose `Prepare Request`.
+4. **D.** Run the supported request in sandbox.
+5. **E.** Open `Result Summary` and point out the proof-backed outcome.
+6. **F.** Use `Modify and test again` or `Try a variation` to show the next quick iteration.
+
+The dialog resets each time you open it, so the same checklist can be reused before the next demo or local-user handoff.
 - it validates the requested action against the current operator state and only produces safe runtime intents
 
 Input capture is now clamped to the BABYLON foreground window. When **Record Input (BABYLON focus only)** is enabled, any keyboard/mouse events detected while another window is active are suppressed, counted, and surfaced as warnings so "empty" runs are still explainable.

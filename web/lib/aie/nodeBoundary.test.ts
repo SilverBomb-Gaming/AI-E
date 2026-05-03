@@ -426,9 +426,16 @@ test("acknowledgement prompt is visible but non-blocking", () => {
   assert.match(prompt ?? "", /\[(LOW|MEDIUM|HIGH|CRITICAL)\]/);
   assert.match(prompt ?? "", /Suggestion:/);
   assert.match(prompt ?? "", /Recommended: .* \(score: 0\.[0-9]{2}\)/);
-  assert.match(prompt ?? "", /Reason: /);
+  assert.match(prompt ?? "", /- Failure rate: [0-9]+%/);
+  assert.match(prompt ?? "", /- Rollback rate: [0-9]+%/);
+  assert.match(prompt ?? "", /- Risk level: (low|medium|high)/);
+  assert.match(prompt ?? "", /- Success rate: [0-9]+%/);
   assert.match(prompt ?? "", /Plan id:/);
   assert.match(prompt ?? "", /Rank score: 0\.[0-9]{2}/);
+  assert.match(prompt ?? "", /  Failure rate: [0-9]+%/);
+  assert.match(prompt ?? "", /  Rollback rate: [0-9]+%/);
+  assert.match(prompt ?? "", /  Risk level: (low|medium|high)/);
+  assert.match(prompt ?? "", /  Success rate: [0-9]+%/);
   assert.match(prompt ?? "", /Alternative plan:/);
   assert.match(prompt ?? "", /Select plan id before proceeding\./);
   assert.match(prompt ?? "", /Acknowledge before proceeding\? \(yes\/no\)/);
@@ -452,6 +459,10 @@ test("plan rankings are advisory metadata and do not auto-select or change execu
   ]));
 
   assert.ok((annotated.plan_rankings?.length ?? 0) >= 1);
+  assert.equal(typeof annotated.plan_rankings?.[0]?.reasoning.failure_rate, "number");
+  assert.equal(typeof annotated.plan_rankings?.[0]?.reasoning.rollback_rate, "number");
+  assert.ok(["low", "medium", "high"].includes(annotated.plan_rankings?.[0]?.reasoning.risk_level ?? ""));
+  assert.equal(typeof annotated.plan_rankings?.[0]?.reasoning.success_rate, "number");
   assert.equal(annotated.selected_plan_id, undefined);
 
   const rejected = translatePlanToNodeTask(annotated);

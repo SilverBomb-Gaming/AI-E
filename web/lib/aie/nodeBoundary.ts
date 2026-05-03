@@ -1821,6 +1821,10 @@ function normalizeDecisionRecordSnapshot(
   return cloneDecisionRecordSnapshot(value);
 }
 
+function formatRankingPercent(value: number): string {
+  return `${Math.round(Math.max(0, Math.min(1, value)) * 100)}%`;
+}
+
 function normalizeCommandTokens(command: string | undefined): string[] {
   if (!hasNonEmptyString(command)) {
     return [];
@@ -2097,7 +2101,10 @@ export function buildInsightAcknowledgementPrompt(
     const recommended = plan.plan_rankings?.[0];
     if (recommended) {
       lines.push(`Recommended: ${recommended.plan_id} (score: ${recommended.score.toFixed(2)})`);
-      lines.push(`Reason: ${recommended.reasoning}`);
+      lines.push(`- Failure rate: ${formatRankingPercent(recommended.reasoning.failure_rate)}`);
+      lines.push(`- Rollback rate: ${formatRankingPercent(recommended.reasoning.rollback_rate)}`);
+      lines.push(`- Risk level: ${recommended.reasoning.risk_level}`);
+      lines.push(`- Success rate: ${formatRankingPercent(recommended.reasoning.success_rate)}`);
       lines.push("");
     }
     lines.push("Suggested alternatives:");
@@ -2108,7 +2115,10 @@ export function buildInsightAcknowledgementPrompt(
         const ranking = rankingByPlanId.get(annotation.alternative_plan.plan_id);
         if (ranking) {
           lines.push(`  Rank score: ${ranking.score.toFixed(2)}`);
-          lines.push(`  Reason: ${ranking.reasoning}`);
+          lines.push(`  Failure rate: ${formatRankingPercent(ranking.reasoning.failure_rate)}`);
+          lines.push(`  Rollback rate: ${formatRankingPercent(ranking.reasoning.rollback_rate)}`);
+          lines.push(`  Risk level: ${ranking.reasoning.risk_level}`);
+          lines.push(`  Success rate: ${formatRankingPercent(ranking.reasoning.success_rate)}`);
         }
       }
       if (annotation.alternative_plan?.steps.length) {

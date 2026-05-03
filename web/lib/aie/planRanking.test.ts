@@ -45,5 +45,16 @@ test("rankings prefer alternatives with stronger mitigation signals", () => {
   assert.equal(rankings.length, 2);
   assert.equal(rankings[0]?.plan_id, "plan-a");
   assert.ok((rankings[0]?.score ?? 0) > (rankings[1]?.score ?? 0));
-  assert.match(rankings[0]?.reasoning ?? "", /Lower failure rate|Fewer rollbacks|Lower risk level/);
+  assert.equal(typeof rankings[0]?.reasoning.failure_rate, "number");
+  assert.equal(typeof rankings[0]?.reasoning.rollback_rate, "number");
+  assert.equal(typeof rankings[0]?.reasoning.success_rate, "number");
+  assert.ok(["low", "medium"].includes(rankings[0]?.reasoning.risk_level ?? ""));
+  assert.ok((rankings[0]?.reasoning.failure_rate ?? 1) < (rankings[1]?.reasoning.failure_rate ?? 1));
+  assert.ok((rankings[0]?.reasoning.rollback_rate ?? 1) < (rankings[1]?.reasoning.rollback_rate ?? 1));
+  assert.ok((rankings[0]?.reasoning.success_rate ?? 0) > (rankings[1]?.reasoning.success_rate ?? 0));
+  const riskOrder = { low: 0, medium: 1, high: 2 } as const;
+  assert.ok(
+    riskOrder[(rankings[0]?.reasoning.risk_level ?? "high") as keyof typeof riskOrder]
+    <= riskOrder[(rankings[1]?.reasoning.risk_level ?? "high") as keyof typeof riskOrder],
+  );
 });
