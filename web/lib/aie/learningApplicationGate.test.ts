@@ -125,8 +125,11 @@ test("approved recommendation is still blocked by the disabled gate", async () =
     const result = attemptApplyLearningRecommendation(recommendation, decision.record);
 
     assert.equal(result.enabled, false);
+    assert.equal(result.gate_enabled, false);
+    assert.equal(result.attempted_application, true);
     assert.equal(result.applied, false);
     assert.equal(result.blocked_reason, "learning application disabled");
+    assert.match(result.decision_id, new RegExp(`^${recommendation.recommendation_id}-approved_for_future_application-`));
     assert.equal(result.operator_decision, "approved_for_future_application");
     assert.equal(result.execution_triggered, false);
   } finally {
@@ -146,8 +149,11 @@ test("rejected recommendation remains blocked by the disabled gate", async () =>
     const result = attemptApplyLearningRecommendation(recommendation, decision.record);
 
     assert.equal(result.enabled, false);
+    assert.equal(result.gate_enabled, false);
+    assert.equal(result.attempted_application, true);
     assert.equal(result.applied, false);
     assert.equal(result.blocked_reason, "learning application disabled");
+    assert.match(result.decision_id, new RegExp(`^${recommendation.recommendation_id}-rejected-`));
     assert.equal(result.operator_decision, "rejected");
   } finally {
     await rm(tempRoot, { recursive: true, force: true });

@@ -705,6 +705,13 @@ Current Layer 26 Step 3 status:
 - all learning application attempts are blocked by default with `enabled: false`, `applied: false`, and `blocked_reason: "learning application disabled"`
 - no ranking, plan, execution, or autonomy behavior changes occur from this gate
 
+Current Layer 26 Step 4 status:
+
+- Layer 26 Step 4 - Learning Application Attempt Audit Trail: implemented
+- added `web/lib/aie/learningApplicationAudit.ts` to build and append blocked learning application attempt records under `data/learning_application_attempts/`
+- blocked attempts are recorded with gate-enabled and applied flags plus the preserved blocked reason
+- no learning is enabled or applied, and no ranking, plan, readiness, selection, execution, or autonomy behavior changes occur
+
 ## Safe Runtime Action Bridge
 
 AI-E can now translate supported live operator actions into safe runtime intents.
