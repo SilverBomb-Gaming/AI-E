@@ -698,6 +698,13 @@ Current Layer 26 Step 2 status:
 - approvals are stored for future consideration only and always keep `applied: false`
 - no ranking, plan, readiness, selection, execution, or autonomy behavior changes occur from these records
 
+Current Layer 26 Step 3 status:
+
+- Layer 26 Step 3 - Learning Application Gate: implemented
+- added `web/lib/aie/learningApplicationGate.ts` to expose a controlled learning application entry point that always returns a disabled blocked result
+- all learning application attempts are blocked by default with `enabled: false`, `applied: false`, and `blocked_reason: "learning application disabled"`
+- no ranking, plan, execution, or autonomy behavior changes occur from this gate
+
 ## Safe Runtime Action Bridge
 
 AI-E can now translate supported live operator actions into safe runtime intents.
