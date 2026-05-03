@@ -1,3 +1,5 @@
+import { resetLearningStabilityGuard } from "./learningStabilityGuard";
+
 export type LearningApplicationScope = "ranking_weight_adjustment";
 
 export type ActiveLearningApplication = {
@@ -86,6 +88,7 @@ export function applyScopedLearningApplication(input: {
 
 export function revertLearningApplication(): LearningApplicationReversionResult {
   if (!activeApplication) {
+    resetLearningStabilityGuard();
     return {
       reverted: false,
       scope: "ranking_weight_adjustment",
@@ -98,6 +101,7 @@ export function revertLearningApplication(): LearningApplicationReversionResult 
   const previousApplication = activeApplication;
   rankingWeightAdjustment = previousApplication.previous_value;
   activeApplication = null;
+  resetLearningStabilityGuard();
 
   return {
     reverted: true,
@@ -113,5 +117,6 @@ export function revertLearningApplication(): LearningApplicationReversionResult 
 export function resetLearningApplicationState(): LearningApplicationState {
   rankingWeightAdjustment = DEFAULT_RANKING_WEIGHT_ADJUSTMENT;
   activeApplication = null;
+  resetLearningStabilityGuard();
   return getLearningApplicationState();
 }

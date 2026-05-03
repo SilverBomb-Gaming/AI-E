@@ -1,5 +1,6 @@
 import { getLearningConfig } from "./learningConfig";
-import { applyScopedLearningApplication, type LearningApplicationScope } from "./learningApplicationState";
+import { applyScopedLearningApplication, getLearningApplicationState, type LearningApplicationScope } from "./learningApplicationState";
+import { assessLearningAdjustment, markLearningDriftDetected, recordLearningAdjustment } from "./learningStabilityGuard";
 import type { LearningRecommendationDecisionRecord } from "./learningRecommendationDecision";
 import type { LearningRecommendation } from "./learningRecommendationReview";
 
@@ -8,7 +9,7 @@ export type LearningApplicationAttemptResult = {
   gate_enabled: boolean;
   attempted_application: true;
   applied: boolean;
-  blocked_reason?: "learning disabled globally" | "learning recommendation not approved" | "learning scope not allowed";
+  blocked_reason?: "learning disabled globally" | "learning recommendation not approved" | "learning scope not allowed" | "learning drift detected";
   recommendation_id: string;
   decision_id: string;
   source_audit_id: string;
@@ -98,6 +99,27 @@ export function attemptApplyLearningRecommendation(
     };
   }
 
+  const currentValue = getLearningApplicationState().parameter_value;
+  const stabilityAssessment = assessLearningAdjustment(currentValue, recommendation.confidence);
+
+  if (stabilityAssessment.allowed !== true) {
+    markLearningDriftDetected();
+    return {
+      enabled: false,
+      gate_enabled: false,
+      attempted_application: true,
+      applied: false,
+      blocked_reason: "learning drift detected",
+      recommendation_id: recommendation.recommendation_id,
+      decision_id: buildDecisionId(decision),
+      source_audit_id: recommendation.source_audit_id,
+      operator_decision: decision.operator_decision,
+      scope: "ranking_weight_adjustment",
+      execution_triggered: false,
+      autonomy_triggered: false,
+    };
+  }
+
   const application = applyScopedLearningApplication({
     scope: "ranking_weight_adjustment",
     recommendation_id: recommendation.recommendation_id,
@@ -105,6 +127,7 @@ export function attemptApplyLearningRecommendation(
     appliedValue: recommendation.confidence,
     appliedAt: options?.appliedAt,
   });
+  recordLearningAdjustment(currentValue, application.applied_value);
 
   return {
     enabled: true,

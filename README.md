@@ -726,6 +726,13 @@ Current Layer 27 Step 2 status:
 - applied learning is reversible through `revertLearningApplication()` and recorded through the existing append-only learning application attempt audit trail
 - no cascade effects, execution safety changes, readiness changes, selection changes, or autonomy behavior changes are introduced by this isolated parameter store
 
+Current Layer 27 Step 3 status:
+
+- Layer 27 Step 3 - Learning Stability Guard: implemented
+- added `web/lib/aie/learningStabilityGuard.ts` to bound adjustment range, track cumulative adjustment magnitude, and detect drift
+- the application gate blocks further scoped learning when the drift threshold is reached
+- reverting the scoped learning application resets drift state and restores bounded behavior
+
 ## Safe Runtime Action Bridge
 
 AI-E can now translate supported live operator actions into safe runtime intents.
