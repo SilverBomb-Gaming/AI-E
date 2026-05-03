@@ -691,6 +691,13 @@ Current Layer 26 Step 1 status:
 - recommendations can propose ranking adjustment candidates, risk weight reviews, rollback penalty reviews, and insufficient data warnings
 - recommendations require operator review and are never applied automatically; rankings, plans, selection, readiness, and execution remain unchanged
 
+Current Layer 26 Step 2 status:
+
+- Layer 26 Step 2 - Learning Recommendation Approval Record: implemented
+- added `web/lib/aie/learningRecommendationDecision.ts` to record operator approval or rejection of review-only learning recommendations in append-only decision logs
+- approvals are stored for future consideration only and always keep `applied: false`
+- no ranking, plan, readiness, selection, execution, or autonomy behavior changes occur from these records
+
 ## Safe Runtime Action Bridge
 
 AI-E can now translate supported live operator actions into safe runtime intents.
