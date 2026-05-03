@@ -659,6 +659,13 @@ Current Layer 25 Step 1 status:
 - added optional append-only signal snapshots under `data/learning_signals/` via `recordLearningSignals()` for offline inspection only
 - these signals are data-only: they do not adjust rankings, modify plans, influence execution, or apply any feedback loop
 
+Current Layer 25 Step 2 status:
+
+- Layer 25 Step 2 - Simulated Learning Adjustments: implemented
+- added `web/lib/aie/passiveLearningSimulation.ts` with `simulateRankingAdjustments(signals, rankings)` to compute shadow `{ current_score, simulated_adjusted_score, delta }` results from passive learning signals and current rankings
+- simulated adjustment output is isolated from plan ranking generation, operator prompts, and execution handoff paths
+- the simulation is advisory-only and not applied anywhere: no ranking modification, no plan influence, and no execution change
+
 ## Safe Runtime Action Bridge
 
 AI-E can now translate supported live operator actions into safe runtime intents.
