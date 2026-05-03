@@ -32,7 +32,8 @@
     "trace:readiness": "tsx training_readiness_check.ts",
     "trace:capture": "tsx training_dataset_capture.ts",
     "insights": "tsx scripts/showInsights.ts",
-    "decisions": "tsx scripts/showDecisions.ts"
+    "decisions": "tsx scripts/showDecisions.ts",
+    "learning:simulation": "tsx scripts/showLearningSimulation.ts"
   },
   "dependencies": {
     "@playwright/test": "^1.59.1",

@@ -666,6 +666,13 @@ Current Layer 25 Step 2 status:
 - simulated adjustment output is isolated from plan ranking generation, operator prompts, and execution handoff paths
 - the simulation is advisory-only and not applied anywhere: no ranking modification, no plan influence, and no execution change
 
+Current Layer 25 Step 3 status:
+
+- Layer 25 Step 3 - Shadow Learning Visualization: implemented
+- added `web/lib/aie/passiveLearningSimulationOutput.ts` with `renderSimulatedRankingAdjustments(adjustments)` to show `plan_id`, current score, simulated adjusted score, delta, and a display-only reason for each simulated adjustment
+- added optional read-only CLI support via `web/scripts/showLearningSimulation.ts` and `npm run learning:simulation`
+- the output explicitly states simulation-only and remains unapplied: no rankings, plans, selection, readiness, or execution behavior changed
+
 ## Safe Runtime Action Bridge
 
 AI-E can now translate supported live operator actions into safe runtime intents.
