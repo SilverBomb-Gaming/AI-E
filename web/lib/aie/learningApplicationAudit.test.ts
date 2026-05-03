@@ -13,12 +13,19 @@ import { buildDecisionRecord } from "./decisionTrace";
 import type { ExecutionOutcomeRecord } from "./executionOutcome";
 import { generateExecutionInsights } from "./executionInsight";
 import { buildLearningApplicationAttemptRecord, recordLearningApplicationAttempt, renderLearningApplicationAttempt } from "./learningApplicationAudit";
+import { setLearningEnabled } from "./learningConfig";
 import { attemptApplyLearningRecommendation } from "./learningApplicationGate";
+import { resetLearningApplicationState, revertLearningApplication } from "./learningApplicationState";
 import { recordLearningRecommendationDecision } from "./learningRecommendationDecision";
 import { generateLearningRecommendations, type LearningRecommendation } from "./learningRecommendationReview";
 import { buildPassiveLearningAudit } from "./passiveLearningAudit";
 import { computeLearningSignals } from "./passiveLearningSignals";
 import { simulateRankingAdjustments } from "./passiveLearningSimulation";
+
+test.afterEach(() => {
+  setLearningEnabled(false);
+  resetLearningApplicationState();
+});
 
 function createNodeTaskPlan(overrides: Partial<CoreNodePipelineDraftPlan> = {}): CoreNodePipelineDraftPlan {
   return {
@@ -137,7 +144,7 @@ test("blocked application result creates attempt record", async () => {
 
     assert.match(record.attempt_id, /^learning-application-attempt-/);
     assert.equal(record.attempted_application, true);
-    assert.equal(record.blocked_reason, "learning application disabled");
+    assert.equal(record.blocked_reason, "learning disabled globally");
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }
@@ -165,7 +172,7 @@ test("record keeps gate disabled applied false and blocked reason", async () => 
 
     assert.equal(record.gate_enabled, false);
     assert.equal(record.applied, false);
-    assert.equal(record.blocked_reason, "learning application disabled");
+    assert.equal(record.blocked_reason, "learning disabled globally");
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }
@@ -211,9 +218,42 @@ test("rendering says application was blocked", async () => {
     assert.match(rendered, /Learning application attempt:/);
     assert.match(rendered, /Gate enabled: false/);
     assert.match(rendered, /Applied: false/);
-    assert.match(rendered, /Blocked reason: learning application disabled/);
+    assert.match(rendered, /Reversible: false/);
+    assert.match(rendered, /Blocked reason: learning disabled globally/);
     assert.match(rendered, /Application was blocked\./);
   } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("applied result creates an auditable reversible application record", async () => {
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "aie-learning-app-audit-applied-"));
+  const decisionOutputDirectory = path.join(tempRoot, "decisions");
+  const recommendation = createRecommendation();
+
+  try {
+    setLearningEnabled(true);
+    const decision = await recordLearningRecommendationDecision(recommendation, {
+      operator_decision: "approved_for_future_application",
+      decided_at: "2026-05-03T19:40:00.000Z",
+    }, { outputDirectory: decisionOutputDirectory });
+    const result = attemptApplyLearningRecommendation(recommendation, decision.record, {
+      appliedAt: "2026-05-03T19:41:00.000Z",
+    });
+    const record = buildLearningApplicationAttemptRecord(result, { createdAt: "2026-05-03T19:42:00.000Z" });
+    const writeResult = await recordLearningApplicationAttempt(record, { outputDirectory: tempRoot });
+    const rendered = renderLearningApplicationAttempt(writeResult.record);
+
+    assert.equal(record.gate_enabled, true);
+    assert.equal(record.applied, true);
+    assert.equal(record.scope, "ranking_weight_adjustment");
+    assert.equal(record.reversible, true);
+    assert.equal(record.blocked_reason, undefined);
+    assert.match(rendered, /Applied: true/);
+    assert.match(rendered, /Scope: ranking_weight_adjustment/);
+    assert.match(rendered, /Application was applied in a single reversible scope\./);
+  } finally {
+    revertLearningApplication();
     await rm(tempRoot, { recursive: true, force: true });
   }
 });

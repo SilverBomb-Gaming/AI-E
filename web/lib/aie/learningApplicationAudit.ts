@@ -14,10 +14,12 @@ export type LearningApplicationAttemptRecord = {
   decision_id: string;
   source_audit_id: string;
   operator_decision: LearningApplicationAttemptResult["operator_decision"];
-  gate_enabled: false;
+  gate_enabled: boolean;
   attempted_application: true;
-  applied: false;
-  blocked_reason: "learning application disabled";
+  applied: boolean;
+  blocked_reason?: LearningApplicationAttemptResult["blocked_reason"];
+  scope?: LearningApplicationAttemptResult["scope"];
+  reversible: boolean;
 };
 
 export type LearningApplicationAttemptWriteResult = {
@@ -25,7 +27,7 @@ export type LearningApplicationAttemptWriteResult = {
   record: LearningApplicationAttemptRecord;
   output_path: string;
   append_only: true;
-  applied: false;
+  applied: boolean;
   execution_triggered: false;
   autonomy_triggered: false;
 };
@@ -64,10 +66,12 @@ export function buildLearningApplicationAttemptRecord(
     decision_id: result.decision_id,
     source_audit_id: result.source_audit_id,
     operator_decision: result.operator_decision,
-    gate_enabled: false,
+    gate_enabled: result.gate_enabled,
     attempted_application: true,
-    applied: false,
+    applied: result.applied,
     blocked_reason: result.blocked_reason,
+    scope: result.scope,
+    reversible: result.reversible === true,
   };
 }
 
@@ -86,14 +90,14 @@ export async function recordLearningApplicationAttempt(
     record,
     output_path: outputPath,
     append_only: true,
-    applied: false,
+    applied: record.applied,
     execution_triggered: false,
     autonomy_triggered: false,
   };
 }
 
 export function renderLearningApplicationAttempt(record: LearningApplicationAttemptRecord): string {
-  return [
+  const lines = [
     `Learning application attempt: ${record.attempt_id}`,
     `Created at: ${record.created_at}`,
     `Recommendation id: ${record.recommendation_id}`,
@@ -103,7 +107,20 @@ export function renderLearningApplicationAttempt(record: LearningApplicationAtte
     `Gate enabled: ${record.gate_enabled ? "true" : "false"}`,
     `Attempted application: ${record.attempted_application ? "true" : "false"}`,
     `Applied: ${record.applied ? "true" : "false"}`,
-    `Blocked reason: ${record.blocked_reason}`,
-    "Application was blocked. Audit only. No learning, ranking, plan, readiness, selection, execution, or autonomy behavior changed.",
-  ].join("\n");
+    `Reversible: ${record.reversible ? "true" : "false"}`,
+  ];
+
+  if (record.scope) {
+    lines.push(`Scope: ${record.scope}`);
+  }
+
+  if (record.blocked_reason) {
+    lines.push(`Blocked reason: ${record.blocked_reason}`);
+  }
+
+  lines.push(record.applied
+    ? "Application was applied in a single reversible scope. No execution safety, ranking cascade, plan selection, readiness, or autonomy behavior changed outside the isolated learning parameter store."
+    : "Application was blocked. Audit only. No learning, ranking, plan, readiness, selection, execution, or autonomy behavior changed.");
+
+  return lines.join("\n");
 }

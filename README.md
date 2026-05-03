@@ -712,6 +712,20 @@ Current Layer 26 Step 4 status:
 - blocked attempts are recorded with gate-enabled and applied flags plus the preserved blocked reason
 - no learning is enabled or applied, and no ranking, plan, readiness, selection, execution, or autonomy behavior changes occur
 
+Current Layer 27 Step 1 status:
+
+- Layer 27 Step 1 - Learning Enable Flag: implemented
+- added `web/lib/aie/learningConfig.ts` to expose a global learning flag with `learning_enabled: false` by default
+- the flag does not apply learning and the application gate still blocks all attempts
+- no ranking, plan, execution, or autonomy behavior changes occur from this flag
+
+Current Layer 27 Step 2 status:
+
+- Layer 27 Step 2 - Scoped Learning Application: implemented
+- the application gate now allows only the single `ranking_weight_adjustment` scope when learning is globally enabled and the recommendation decision is approved
+- applied learning is reversible through `revertLearningApplication()` and recorded through the existing append-only learning application attempt audit trail
+- no cascade effects, execution safety changes, readiness changes, selection changes, or autonomy behavior changes are introduced by this isolated parameter store
+
 ## Safe Runtime Action Bridge
 
 AI-E can now translate supported live operator actions into safe runtime intents.

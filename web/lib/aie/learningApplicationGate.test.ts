@@ -13,12 +13,19 @@ import {
 import { buildDecisionRecord } from "./decisionTrace";
 import type { ExecutionOutcomeRecord } from "./executionOutcome";
 import { generateExecutionInsights } from "./executionInsight";
+import { setLearningEnabled } from "./learningConfig";
 import { attemptApplyLearningRecommendation } from "./learningApplicationGate";
+import { getLearningApplicationState, resetLearningApplicationState, revertLearningApplication } from "./learningApplicationState";
 import { recordLearningRecommendationDecision } from "./learningRecommendationDecision";
 import { generateLearningRecommendations, type LearningRecommendation } from "./learningRecommendationReview";
 import { buildPassiveLearningAudit } from "./passiveLearningAudit";
 import { computeLearningSignals } from "./passiveLearningSignals";
 import { simulateRankingAdjustments } from "./passiveLearningSimulation";
+
+test.afterEach(() => {
+  setLearningEnabled(false);
+  resetLearningApplicationState();
+});
 
 function createNodeTaskPlan(overrides: Partial<CoreNodePipelineDraftPlan> = {}): CoreNodePipelineDraftPlan {
   return {
@@ -118,6 +125,7 @@ test("approved recommendation is still blocked by the disabled gate", async () =
   const recommendation = createRecommendation();
 
   try {
+    setLearningEnabled(false);
     const decision = await recordLearningRecommendationDecision(recommendation, {
       operator_decision: "approved_for_future_application",
       decided_at: "2026-05-03T18:20:00.000Z",
@@ -128,7 +136,7 @@ test("approved recommendation is still blocked by the disabled gate", async () =
     assert.equal(result.gate_enabled, false);
     assert.equal(result.attempted_application, true);
     assert.equal(result.applied, false);
-    assert.equal(result.blocked_reason, "learning application disabled");
+    assert.equal(result.blocked_reason, "learning disabled globally");
     assert.match(result.decision_id, new RegExp(`^${recommendation.recommendation_id}-approved_for_future_application-`));
     assert.equal(result.operator_decision, "approved_for_future_application");
     assert.equal(result.execution_triggered, false);
@@ -142,6 +150,7 @@ test("rejected recommendation remains blocked by the disabled gate", async () =>
   const recommendation = createRecommendation();
 
   try {
+    setLearningEnabled(false);
     const decision = await recordLearningRecommendationDecision(recommendation, {
       operator_decision: "rejected",
       decided_at: "2026-05-03T18:21:00.000Z",
@@ -152,9 +161,75 @@ test("rejected recommendation remains blocked by the disabled gate", async () =>
     assert.equal(result.gate_enabled, false);
     assert.equal(result.attempted_application, true);
     assert.equal(result.applied, false);
-    assert.equal(result.blocked_reason, "learning application disabled");
+    assert.equal(result.blocked_reason, "learning disabled globally");
     assert.match(result.decision_id, new RegExp(`^${recommendation.recommendation_id}-rejected-`));
     assert.equal(result.operator_decision, "rejected");
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("enabling the flag still does not apply learning", async () => {
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "aie-learning-app-gate-enabled-"));
+  const recommendation = createRecommendation();
+
+  try {
+    setLearningEnabled(true);
+    const decision = await recordLearningRecommendationDecision(recommendation, {
+      operator_decision: "approved_for_future_application",
+      decided_at: "2026-05-03T18:21:30.000Z",
+    }, { outputDirectory: tempRoot });
+    const result = attemptApplyLearningRecommendation(recommendation, decision.record);
+
+    assert.equal(result.enabled, true);
+    assert.equal(result.gate_enabled, true);
+    assert.equal(result.applied, true);
+    assert.equal(result.scope, "ranking_weight_adjustment");
+    assert.equal(result.reversible, true);
+    assert.equal(result.blocked_reason, undefined);
+    assert.equal(getLearningApplicationState().parameter_value, recommendation.confidence);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("application remains blocked when the recommendation decision is rejected", async () => {
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "aie-learning-app-gate-not-approved-"));
+  const recommendation = createRecommendation();
+
+  try {
+    setLearningEnabled(true);
+    const decision = await recordLearningRecommendationDecision(recommendation, {
+      operator_decision: "rejected",
+      decided_at: "2026-05-03T18:21:45.000Z",
+    }, { outputDirectory: tempRoot });
+    const result = attemptApplyLearningRecommendation(recommendation, decision.record);
+
+    assert.equal(result.applied, false);
+    assert.equal(result.blocked_reason, "learning recommendation not approved");
+    assert.equal(getLearningApplicationState().parameter_value, 0);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("application remains blocked when the requested scope is not allowed", async () => {
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "aie-learning-app-gate-scope-"));
+  const recommendation = createRecommendation();
+
+  try {
+    setLearningEnabled(true);
+    const decision = await recordLearningRecommendationDecision(recommendation, {
+      operator_decision: "approved_for_future_application",
+      decided_at: "2026-05-03T18:21:50.000Z",
+    }, { outputDirectory: tempRoot });
+    const result = attemptApplyLearningRecommendation(recommendation, decision.record, {
+      scope: "risk_weight_adjustment" as never,
+    });
+
+    assert.equal(result.applied, false);
+    assert.equal(result.blocked_reason, "learning scope not allowed");
+    assert.equal(getLearningApplicationState().parameter_value, 0);
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }
@@ -168,6 +243,7 @@ test("disabled learning application gate does not change rankings", async () => 
   const rankingsBefore = JSON.stringify(annotated.plan_rankings ?? []);
 
   try {
+    setLearningEnabled(false);
     const decision = await recordLearningRecommendationDecision(recommendation, {
       operator_decision: "approved_for_future_application",
       decided_at: "2026-05-03T18:22:00.000Z",
@@ -190,6 +266,7 @@ test("disabled learning application gate does not change execution behavior", as
   const taskBefore = translatePlanToNodeTask(selectedPlan);
 
   try {
+    setLearningEnabled(false);
     const decision = await recordLearningRecommendationDecision(recommendation, {
       operator_decision: "approved_for_future_application",
       decided_at: "2026-05-03T18:23:00.000Z",
@@ -201,6 +278,39 @@ test("disabled learning application gate does not change execution behavior", as
     assert.deepEqual(taskAfter, taskBefore);
     assert.equal(taskAfter.execution_triggered, false);
     assert.equal(result.autonomy_triggered, false);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("applied scoped learning is reversible and does not cascade into execution behavior", async () => {
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "aie-learning-app-gate-revert-"));
+  const insights = generateExecutionInsights([createExecutionOutcomeRecord()]);
+  const annotated = attachInsightsToPlan(createNodeTaskPlan(), insights);
+  const selectedPlan = selectOperatorPlan(annotated, annotated.plan_id);
+  const recommendation = createRecommendation();
+  const taskBefore = translatePlanToNodeTask(selectedPlan);
+
+  try {
+    setLearningEnabled(true);
+    const decision = await recordLearningRecommendationDecision(recommendation, {
+      operator_decision: "approved_for_future_application",
+      decided_at: "2026-05-03T18:24:00.000Z",
+    }, { outputDirectory: tempRoot });
+    const result = attemptApplyLearningRecommendation(recommendation, decision.record, {
+      appliedAt: "2026-05-03T18:25:00.000Z",
+    });
+    const revertResult = revertLearningApplication();
+    const taskAfter = translatePlanToNodeTask(selectedPlan);
+
+    assert.equal(result.applied, true);
+    assert.equal(result.scope, "ranking_weight_adjustment");
+    assert.equal(result.reversible, true);
+    assert.equal(revertResult.reverted, true);
+    assert.equal(revertResult.scope, "ranking_weight_adjustment");
+    assert.equal(getLearningApplicationState().parameter_value, 0);
+    assert.deepEqual(taskAfter, taskBefore);
+    assert.equal(taskAfter.execution_triggered, false);
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }
