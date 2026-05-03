@@ -648,6 +648,17 @@ Current Layer 24 Step 4 status:
 - added `renderDecisionAlignmentStats()` in `web/lib/aie/decisionTrace.ts` to show alignment rate, average score gap, and mismatched operator-vs-recommendation cases in an operator-readable summary
 - the visualization layer is read-only only: it does not influence ranking, change execution behavior, or introduce learning
 
+## Layer 25 / Passive Learning Signals
+
+Layer 25 prepares learning-oriented metrics from decision history without applying them to planning, ranking, or execution.
+
+Current Layer 25 Step 1 status:
+
+- Layer 25 Step 1 - Passive Learning Signals: implemented
+- added `web/lib/aie/passiveLearningSignals.ts` with `computeLearningSignals(decisionRecords)` to derive passive `recommendation_accuracy`, `average_error_margin`, and grouped `misalignment_patterns` from append-only decision records
+- added optional append-only signal snapshots under `data/learning_signals/` via `recordLearningSignals()` for offline inspection only
+- these signals are data-only: they do not adjust rankings, modify plans, influence execution, or apply any feedback loop
+
 ## Safe Runtime Action Bridge
 
 AI-E can now translate supported live operator actions into safe runtime intents.
