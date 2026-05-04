@@ -763,6 +763,12 @@ Current Layer 28 Step 3 status:
 - confirms single-item execution only
 - no scheduling or autonomy introduced
 
+Current Layer 28 Step 4 status:
+
+- Layer 28 Step 4 - Queue Ordering Suggestion: implemented
+- added non-executing suggestion system for queue order
+- no execution or reordering occurs automatically
+
 ## Safe Runtime Action Bridge
 
 AI-E can now translate supported live operator actions into safe runtime intents.
