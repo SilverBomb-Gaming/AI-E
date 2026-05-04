@@ -18,6 +18,7 @@ import {
   proposeNextQueueExecution,
   resetLearningQueueExecutionProposal,
 } from "./learningQueueExecutionProposal";
+import { resetLearningExecutionCooldown } from "./learningExecutionCooldown";
 import { resetLearningApplicationState } from "./learningApplicationState";
 import { setLearningEnabled } from "./learningConfig";
 import { recordLearningRecommendationDecision } from "./learningRecommendationDecision";
@@ -30,6 +31,7 @@ test.afterEach(() => {
   setLearningEnabled(false);
   resetLearningApplicationState();
   resetLearningQueueExecutionProposal();
+  resetLearningExecutionCooldown();
 });
 
 function createNodeTaskPlan(overrides: Partial<CoreNodePipelineDraftPlan> = {}): CoreNodePipelineDraftPlan {
@@ -333,6 +335,97 @@ test("execution is blocked if already applied before reconfirmation", async () =
 
     assert.equal(secondAttempt.status, "blocked");
     assert.equal(secondAttempt.reason, "operator confirmation required");
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("execution is blocked within the cooldown window", async () => {
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "aie-learning-proposal-cooldown-blocked-"));
+
+  try {
+    setLearningEnabled(true);
+    const firstRecommendation = createRecommendation(0.18);
+    const secondRecommendation = createRecommendation(0.24);
+    const firstDecision = await recordLearningRecommendationDecision(firstRecommendation, {
+      operator_decision: "approved_for_future_application",
+      decided_at: "2026-05-04T01:00:00.000Z",
+    }, { outputDirectory: tempRoot });
+    const secondDecision = await recordLearningRecommendationDecision(secondRecommendation, {
+      operator_decision: "approved_for_future_application",
+      decided_at: "2026-05-04T01:00:10.000Z",
+    }, { outputDirectory: tempRoot });
+    const firstQueued = await enqueueLearningApplication(firstRecommendation, firstDecision.record, {
+      outputDirectory: tempRoot,
+      createdAt: "2026-05-04T01:00:20.000Z",
+    });
+    const secondQueued = await enqueueLearningApplication(secondRecommendation, secondDecision.record, {
+      outputDirectory: tempRoot,
+      createdAt: "2026-05-04T01:00:30.000Z",
+    });
+
+    proposeNextQueueExecution(await queryLearningApplicationQueue({ outputDirectory: tempRoot }));
+    const firstResult = await confirmAndExecute(firstQueued.record.queue_id, {
+      outputDirectory: tempRoot,
+      executedAt: "2026-05-04T01:01:00.000Z",
+      cooldownWindowMs: 60_000,
+    });
+
+    proposeNextQueueExecution(await queryLearningApplicationQueue({ outputDirectory: tempRoot }));
+    const secondResult = await confirmAndExecute(secondQueued.record.queue_id, {
+      outputDirectory: tempRoot,
+      executedAt: "2026-05-04T01:01:30.000Z",
+      cooldownWindowMs: 60_000,
+    });
+
+    assert.equal(firstResult.status, "applied");
+    assert.equal(secondResult.status, "blocked");
+    assert.equal(secondResult.reason, "execution cooldown active");
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("execution is allowed after the cooldown window elapses", async () => {
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "aie-learning-proposal-cooldown-allowed-"));
+
+  try {
+    setLearningEnabled(true);
+    const firstRecommendation = createRecommendation(0.18);
+    const secondRecommendation = createRecommendation(0.24);
+    const firstDecision = await recordLearningRecommendationDecision(firstRecommendation, {
+      operator_decision: "approved_for_future_application",
+      decided_at: "2026-05-04T01:02:00.000Z",
+    }, { outputDirectory: tempRoot });
+    const secondDecision = await recordLearningRecommendationDecision(secondRecommendation, {
+      operator_decision: "approved_for_future_application",
+      decided_at: "2026-05-04T01:02:10.000Z",
+    }, { outputDirectory: tempRoot });
+    const firstQueued = await enqueueLearningApplication(firstRecommendation, firstDecision.record, {
+      outputDirectory: tempRoot,
+      createdAt: "2026-05-04T01:02:20.000Z",
+    });
+    const secondQueued = await enqueueLearningApplication(secondRecommendation, secondDecision.record, {
+      outputDirectory: tempRoot,
+      createdAt: "2026-05-04T01:02:30.000Z",
+    });
+
+    proposeNextQueueExecution(await queryLearningApplicationQueue({ outputDirectory: tempRoot }));
+    const firstResult = await confirmAndExecute(firstQueued.record.queue_id, {
+      outputDirectory: tempRoot,
+      executedAt: "2026-05-04T01:03:00.000Z",
+      cooldownWindowMs: 60_000,
+    });
+
+    proposeNextQueueExecution(await queryLearningApplicationQueue({ outputDirectory: tempRoot }));
+    const secondResult = await confirmAndExecute(secondQueued.record.queue_id, {
+      outputDirectory: tempRoot,
+      executedAt: "2026-05-04T01:04:10.000Z",
+      cooldownWindowMs: 60_000,
+    });
+
+    assert.equal(firstResult.status, "applied");
+    assert.equal(secondResult.status, "applied");
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }

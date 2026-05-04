@@ -1,4 +1,5 @@
 import { executeQueuedLearningItem, type LearningApplicationQueueExecutionResult, type LearningApplicationQueueRecord } from "./learningApplicationQueue";
+import { getLearningExecutionCooldownStatus, recordLearningExecutionTime } from "./learningExecutionCooldown";
 import { suggestQueueExecutionOrder } from "./learningQueueOrdering";
 
 export type LearningQueueExecutionProposal = {
@@ -52,7 +53,7 @@ export function proposeNextQueueExecution(
 
 export async function confirmAndExecute(
   queueId: string,
-  options?: Parameters<typeof executeQueuedLearningItem>[1],
+  options?: Parameters<typeof executeQueuedLearningItem>[1] & { cooldownWindowMs?: number },
 ): Promise<LearningApplicationQueueExecutionResult> {
   if (!pendingProposal) {
     return {
@@ -101,8 +102,34 @@ export async function confirmAndExecute(
     };
   }
 
+  const cooldownStatus = getLearningExecutionCooldownStatus({
+    attemptedAt: options?.executedAt,
+    cooldownWindowMs: options?.cooldownWindowMs,
+  });
+
+  if (cooldownStatus.blocked) {
+    pendingProposal = null;
+    return {
+      queue_execution_id: "learning-queue-execution-cooldown-active",
+      created_at: options?.executedAt ?? new Date().toISOString(),
+      queue_id: queueId,
+      recommendation_id: currentQueueItem.recommendation_id,
+      decision_id: currentQueueItem.decision_id,
+      status: "blocked",
+      reason: "execution cooldown active" as LearningApplicationQueueExecutionResult["reason"],
+      applied: false,
+      single_item_execution: true,
+    };
+  }
+
   pendingProposal = null;
-  return executeQueuedLearningItem(queueId, options);
+  const result = await executeQueuedLearningItem(queueId, options);
+
+  if (result.applied) {
+    recordLearningExecutionTime(options?.executedAt);
+  }
+
+  return result;
 }
 
 export function resetLearningQueueExecutionProposal(): void {
