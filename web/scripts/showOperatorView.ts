@@ -35,11 +35,16 @@ import { renderOperatorView, renderOperatorViewSummary, type OperatorViewState }
 import type { OperatorViewSnapshot } from "../lib/aie/operatorView.types";
 import {
   applyUnityCameraWiring,
+  applyUnityFallRecovery,
   applyUnityVisualDebugFloor,
   inspectUnityCameraWiringStatus,
+  inspectUnityFallRecoveryStatus,
   inspectUnitySceneWiring,
   inspectUnityVisualDebugStatus,
   repairUnityCameraWiring,
+  renderUnityFallRecoveryApplyResult,
+  renderUnityFallRecoveryRollbackResult,
+  renderUnityFallRecoveryStatus,
   renderUnitySceneWiringApplyResult,
   renderUnitySceneWiringPreview,
   renderUnitySceneWiringRepairResult,
@@ -49,6 +54,7 @@ import {
   renderUnityVisualDebugRollbackResult,
   renderUnityVisualDebugStatus,
   rollbackUnityCameraWiring,
+  rollbackUnityFallRecovery,
   rollbackUnityVisualDebugFloor,
 } from "../lib/aie/unitySceneWiring";
 import { inspectUnityPlaytestRecovery, renderUnityPlaytestRecovery } from "../lib/aie/unityPlaytestRecovery";
@@ -72,6 +78,9 @@ type ShowOperatorViewOptions = {
   applyVisualDebugFloorPath?: string;
   visualDebugStatusPath?: string;
   rollbackVisualDebugPath?: string;
+  applyFallRecoveryPath?: string;
+  fallRecoveryStatusPath?: string;
+  rollbackFallRecoveryPath?: string;
   unityRecoveryPath?: string;
   gamePatchPath?: string;
   gamePatchPreviewPath?: string;
@@ -418,6 +427,21 @@ function parseArgs(argv: string[]): ShowOperatorViewOptions {
       continue;
     }
 
+    if (arg.startsWith("--apply-fall-recovery=")) {
+      options.applyFallRecoveryPath = arg.slice("--apply-fall-recovery=".length).trim() || undefined;
+      continue;
+    }
+
+    if (arg === "--apply-fall-recovery") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("Missing value for --apply-fall-recovery");
+      }
+      options.applyFallRecoveryPath = value.trim();
+      index += 1;
+      continue;
+    }
+
     if (arg.startsWith("--visual-debug-status=")) {
       options.visualDebugStatusPath = arg.slice("--visual-debug-status=".length).trim() || undefined;
       continue;
@@ -433,6 +457,21 @@ function parseArgs(argv: string[]): ShowOperatorViewOptions {
       continue;
     }
 
+    if (arg.startsWith("--fall-recovery-status=")) {
+      options.fallRecoveryStatusPath = arg.slice("--fall-recovery-status=".length).trim() || undefined;
+      continue;
+    }
+
+    if (arg === "--fall-recovery-status") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("Missing value for --fall-recovery-status");
+      }
+      options.fallRecoveryStatusPath = value.trim();
+      index += 1;
+      continue;
+    }
+
     if (arg.startsWith("--rollback-visual-debug=")) {
       options.rollbackVisualDebugPath = arg.slice("--rollback-visual-debug=".length).trim() || undefined;
       continue;
@@ -444,6 +483,21 @@ function parseArgs(argv: string[]): ShowOperatorViewOptions {
         throw new Error("Missing value for --rollback-visual-debug");
       }
       options.rollbackVisualDebugPath = value.trim();
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith("--rollback-fall-recovery=")) {
+      options.rollbackFallRecoveryPath = arg.slice("--rollback-fall-recovery=".length).trim() || undefined;
+      continue;
+    }
+
+    if (arg === "--rollback-fall-recovery") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("Missing value for --rollback-fall-recovery");
+      }
+      options.rollbackFallRecoveryPath = value.trim();
       index += 1;
       continue;
     }
@@ -850,6 +904,9 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       options.applyVisualDebugFloorPath ? "--apply-visual-debug-floor" : null,
       options.visualDebugStatusPath ? "--visual-debug-status" : null,
       options.rollbackVisualDebugPath ? "--rollback-visual-debug" : null,
+      options.applyFallRecoveryPath ? "--apply-fall-recovery" : null,
+      options.fallRecoveryStatusPath ? "--fall-recovery-status" : null,
+      options.rollbackFallRecoveryPath ? "--rollback-fall-recovery" : null,
       options.cameraWiringPreviewPath ? "--camera-wiring-preview" : null,
       options.applyCameraWiringPath ? "--apply-camera-wiring" : null,
       options.cameraWiringStatusPath ? "--camera-wiring-status" : null,
@@ -1012,6 +1069,19 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       return result.applied ? 0 : 1;
     }
 
+    if (options.applyFallRecoveryPath) {
+      const recovery = await inspectUnityPlaytestRecovery(options.applyFallRecoveryPath);
+      const result = await applyUnityFallRecovery(options.applyFallRecoveryPath, buildFollowupPatchRecoverySignal(recovery));
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return result.applied ? 0 : 1;
+      }
+
+      console.log(renderUnityFallRecoveryApplyResult(result));
+      return result.applied ? 0 : 1;
+    }
+
     if (options.repairCameraWiringPath) {
       const recovery = await inspectUnityPlaytestRecovery(options.repairCameraWiringPath);
       const result = await repairUnityCameraWiring(options.repairCameraWiringPath, buildFollowupPatchRecoverySignal(recovery));
@@ -1088,6 +1158,19 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       return 0;
     }
 
+    if (options.fallRecoveryStatusPath) {
+      const recovery = await inspectUnityPlaytestRecovery(options.fallRecoveryStatusPath);
+      const status = await inspectUnityFallRecoveryStatus(options.fallRecoveryStatusPath, buildPatchStatusRecoverySignal(recovery));
+
+      if (options.json) {
+        console.log(JSON.stringify(status, null, 2));
+        return 0;
+      }
+
+      console.log(renderUnityFallRecoveryStatus(status));
+      return 0;
+    }
+
     if (options.rollbackGamePatchPath) {
       const snapshot = await inspectGameProject(options.rollbackGamePatchPath);
       const cameraArtifact = await buildExistingCameraFollowArtifact(snapshot);
@@ -1141,6 +1224,19 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       }
 
       console.log(renderUnityVisualDebugRollbackResult(result));
+      return result.restored ? 0 : 1;
+    }
+
+    if (options.rollbackFallRecoveryPath) {
+      const recovery = await inspectUnityPlaytestRecovery(options.rollbackFallRecoveryPath);
+      const result = await rollbackUnityFallRecovery(options.rollbackFallRecoveryPath, buildPatchStatusRecoverySignal(recovery));
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return result.restored ? 0 : 1;
+      }
+
+      console.log(renderUnityFallRecoveryRollbackResult(result));
       return result.restored ? 0 : 1;
     }
 

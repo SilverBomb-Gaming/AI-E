@@ -132,6 +132,65 @@ export type UnityVisualDebugRollbackResult = {
   };
 };
 
+export type UnityFallRecoveryStatus = {
+  scenePath: string;
+  sceneAbsolutePath: string;
+  playerName: string | null;
+  respawnTargetName: string | null;
+  fallRecoveryScriptExists: boolean;
+  fallRecoveryAttached: boolean;
+  respawnTargetAssigned: boolean;
+  fallThresholdPresent: boolean;
+  backupExists: boolean;
+  safeToOpenUnityForCompileOrPlaytest: boolean;
+  details: string[];
+  safety: {
+    readOnly: true;
+    noUnityExecution: true;
+  };
+};
+
+export type UnityFallRecoveryApplyResult = {
+  applied: boolean;
+  scenePath: string;
+  sceneAbsolutePath: string;
+  playerName: string | null;
+  respawnTargetName: string | null;
+  scriptPath: string;
+  backupPath: string;
+  fallRecoveryScriptExists: boolean;
+  fallRecoveryAttached: boolean;
+  respawnTargetAssigned: boolean;
+  fallThresholdPresent: boolean;
+  safeToOpenUnityForCompileOrPlaytest: boolean;
+  blockedReasons: string[];
+  safety: {
+    noUnityExecution: true;
+    backupCreated: boolean;
+    sceneWritten: boolean;
+  };
+};
+
+export type UnityFallRecoveryRollbackResult = {
+  restored: boolean;
+  scenePath: string;
+  sceneAbsolutePath: string;
+  playerName: string | null;
+  respawnTargetName: string | null;
+  scriptPath: string;
+  backupPath: string;
+  fallRecoveryAttached: boolean;
+  respawnTargetAssigned: boolean;
+  fallRecoveryScriptExists: boolean;
+  safeToOpenUnityForCompileOrPlaytest: boolean;
+  blockedReasons: string[];
+  safety: {
+    noUnityExecution: true;
+    backupRetained: true;
+    scriptRemoved: boolean;
+  };
+};
+
 type SceneBlock = {
   typeId: string;
   fileId: string;
@@ -160,6 +219,18 @@ type FloorRendererDetection = {
   currentMaterial: UnityMaterialReference | null;
 };
 
+type FallRecoveryVerification = {
+  componentFileId: string | null;
+  componentListLinked: boolean;
+  monoBehaviourBlockExists: boolean;
+  scriptGuidMatchesMeta: boolean;
+  respawnTargetAssigned: boolean;
+  fallThresholdPresent: boolean;
+  fallbackSpawnSerialized: boolean;
+  componentVisibleToUnity: boolean;
+  brokenLinks: string[];
+};
+
 type CameraFollowVerification = {
   componentFileId: string | null;
   componentListLinked: boolean;
@@ -186,6 +257,12 @@ type ParsedScene = {
 
 const CAMERA_SCRIPT_PATH = "Assets/Scripts/CameraFollow.cs";
 const CAMERA_META_PATH = `${CAMERA_SCRIPT_PATH}.meta`;
+const FALL_RECOVERY_SCRIPT_PATH = "Assets/Scripts/FallRecovery.cs";
+const FALL_RECOVERY_META_PATH = `${FALL_RECOVERY_SCRIPT_PATH}.meta`;
+const FALL_RECOVERY_SCENE_BACKUP_TAG = "fall-recovery";
+const FALL_RECOVERY_STATE_DIR = ".aie-state/fall-recovery";
+const FALL_RECOVERY_CREATED_SCRIPT_MARKER = `${FALL_RECOVERY_STATE_DIR}/FallRecovery.cs.created`;
+const FALL_RECOVERY_CREATED_META_MARKER = `${FALL_RECOVERY_STATE_DIR}/FallRecovery.cs.meta.created`;
 const VISUAL_DEBUG_MATERIAL_DIR = "Assets/Materials";
 const VISUAL_DEBUG_MATERIAL_PATH = `${VISUAL_DEBUG_MATERIAL_DIR}/AIE_DebugFloor.mat`;
 const VISUAL_DEBUG_SCENE_BACKUP_TAG = "visual-debug-floor";
@@ -230,6 +307,105 @@ async function ensureCameraFollowMeta(projectRoot: string): Promise<string> {
   const guid = buildDeterministicMetaGuid(projectRoot, CAMERA_SCRIPT_PATH);
   await writeFile(metaAbsolutePath, `fileFormatVersion: 2\nguid: ${guid}\n`, "utf-8");
   return guid;
+}
+
+function buildFallRecoverySource(): string {
+  return [
+    "using UnityEngine;",
+    "",
+    "namespace EnemyAIDemo",
+    "{",
+    "    /// <summary>",
+    "    /// Resets the player to a safe point when they fall out of the local playtest area.",
+    "    /// </summary>",
+    "    [DisallowMultipleComponent]",
+    "    public sealed class FallRecovery : MonoBehaviour",
+    "    {",
+    "        [SerializeField] private Transform respawnPoint;",
+    "        [SerializeField] private float fallThresholdY = -10f;",
+    "        [SerializeField] private bool debugRecovery = true;",
+    "        [SerializeField] private Vector3 fallbackSpawnPosition = new Vector3(0f, 1f, -8f);",
+    "",
+    "        private CharacterController characterController;",
+    "        private Rigidbody attachedRigidbody;",
+    "",
+    "        private void Awake()",
+    "        {",
+    "            characterController = GetComponent<CharacterController>();",
+    "            attachedRigidbody = GetComponent<Rigidbody>();",
+    "        }",
+    "",
+    "        private void Update()",
+    "        {",
+    "            if (transform.position.y >= fallThresholdY)",
+    "            {",
+    "                return;",
+    "            }",
+    "",
+    "            RecoverPlayer();",
+    "        }",
+    "",
+    "        private void RecoverPlayer()",
+    "        {",
+    "            Vector3 respawnPosition = respawnPoint != null ? respawnPoint.position : fallbackSpawnPosition;",
+    "",
+    "            if (characterController != null)",
+    "            {",
+    "                characterController.enabled = false;",
+    "            }",
+    "",
+    "            transform.position = respawnPosition;",
+    "",
+    "            if (characterController != null)",
+    "            {",
+    "                characterController.enabled = true;",
+    "            }",
+    "",
+    "            if (attachedRigidbody != null)",
+    "            {",
+    "                attachedRigidbody.velocity = Vector3.zero;",
+    "                attachedRigidbody.angularVelocity = Vector3.zero;",
+    "            }",
+    "",
+    "            if (debugRecovery)",
+    "            {",
+    "                Debug.Log($\"[AIE Fall Recovery] Player reset to {respawnPosition} after crossing Y={fallThresholdY:F2}.\", this);",
+    "            }",
+    "        }",
+    "    }",
+    "}",
+    "",
+  ].join("\n");
+}
+
+async function ensureFallRecoveryScript(projectRoot: string): Promise<{ scriptExisted: boolean; metaExisted: boolean; guid: string; }> {
+  const scriptAbsolutePath = path.join(projectRoot, FALL_RECOVERY_SCRIPT_PATH);
+  const metaAbsolutePath = path.join(projectRoot, FALL_RECOVERY_META_PATH);
+  const stateDirectoryAbsolutePath = path.join(projectRoot, FALL_RECOVERY_STATE_DIR);
+  const scriptExisted = await fileExists(scriptAbsolutePath);
+  const metaExisted = await fileExists(metaAbsolutePath);
+
+  await mkdir(stateDirectoryAbsolutePath, { recursive: true });
+
+  if (!scriptExisted) {
+    await writeFile(scriptAbsolutePath, buildFallRecoverySource(), "utf-8");
+    await writeFile(path.join(projectRoot, FALL_RECOVERY_CREATED_SCRIPT_MARKER), "created\n", "utf-8");
+  }
+
+  let guid = await readGuidFromMeta(metaAbsolutePath);
+  if (!guid) {
+    guid = buildDeterministicMetaGuid(projectRoot, FALL_RECOVERY_SCRIPT_PATH);
+    await writeFile(metaAbsolutePath, `fileFormatVersion: 2\nguid: ${guid}\n`, "utf-8");
+    if (!metaExisted) {
+      await writeFile(path.join(projectRoot, FALL_RECOVERY_CREATED_META_MARKER), "created\n", "utf-8");
+    }
+  }
+
+  return {
+    scriptExisted,
+    metaExisted,
+    guid,
+  };
 }
 
 async function readGuidFromMeta(metaAbsolutePath: string): Promise<string | null> {
@@ -492,6 +668,11 @@ function extractBlockTargetFileId(block: SceneBlock | null): string | null {
   return block?.body.match(/^  target: \{fileID: (\d+)\}$/m)?.[1] ?? null;
 }
 
+function extractNamedTransformFileId(block: SceneBlock | null, fieldName: string): string | null {
+  const escapedFieldName = fieldName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return block?.body.match(new RegExp(`^  ${escapedFieldName}: \\{fileID: (\\d+)\\}$`, "m"))?.[1] ?? null;
+}
+
 function hasExpectedCameraSerializedFields(block: SceneBlock | null): boolean {
   if (!block) {
     return false;
@@ -536,6 +717,27 @@ function isCameraFollowCandidateBlock(block: SceneBlock, mainCameraGameObjectId:
     || /^  lookAtHeight:/m.test(block.body)
     || /^  lookAtTarget:/m.test(block.body)
     || /^  debugFollow:/m.test(block.body);
+}
+
+function isFallRecoveryCandidateBlock(block: SceneBlock, playerGameObjectId: string | null, scriptGuid: string | null): boolean {
+  if (block.typeId !== "114") {
+    return false;
+  }
+
+  if (playerGameObjectId && extractBlockGameObjectFileId(block) !== playerGameObjectId) {
+    return false;
+  }
+
+  const blockScriptGuid = extractBlockScriptGuid(block);
+  if (scriptGuid && blockScriptGuid === scriptGuid) {
+    return true;
+  }
+
+  return /FallRecovery/.test(block.body)
+    || /^  respawnPoint: \{fileID: \d+\}$/m.test(block.body)
+    || /^  fallThresholdY:/m.test(block.body)
+    || /^  debugRecovery:/m.test(block.body)
+    || /^  fallbackSpawnPosition:/m.test(block.body);
 }
 
 function buildCameraFollowVerification(blocks: readonly SceneBlock[], mainCamera: SceneObject | null, playerTransformFileId: string | null, scriptGuid: string | null): CameraFollowVerification {
@@ -597,6 +799,120 @@ function buildCameraFollowVerification(blocks: readonly SceneBlock[], mainCamera
     monoBehaviourBlockExists,
     scriptGuidMatchesMeta,
     playerTargetAssigned,
+    componentVisibleToUnity,
+    brokenLinks,
+  };
+}
+
+function hasExpectedFallRecoverySerializedFields(
+  block: SceneBlock | null,
+  expectedRespawnTargetFileId: string | null,
+  fallbackSpawnPosition: { x: number; y: number; z: number },
+): { respawnTargetAssigned: boolean; fallThresholdPresent: boolean; fallbackSpawnSerialized: boolean } {
+  if (!block) {
+    return {
+      respawnTargetAssigned: false,
+      fallThresholdPresent: false,
+      fallbackSpawnSerialized: false,
+    };
+  }
+
+  const actualRespawnTargetFileId = extractNamedTransformFileId(block, "respawnPoint");
+  const respawnTargetAssigned = expectedRespawnTargetFileId !== null
+    ? actualRespawnTargetFileId === expectedRespawnTargetFileId
+    : /^  respawnPoint: \{fileID: 0\}$/m.test(block.body);
+  const fallThresholdPresent = /^  fallThresholdY: -10$/m.test(block.body);
+  const fallbackSpawnSerialized = new RegExp(
+    `^  fallbackSpawnPosition: \\{x: ${fallbackSpawnPosition.x}, y: ${fallbackSpawnPosition.y}, z: ${fallbackSpawnPosition.z}\\}$`,
+    "m",
+  ).test(block.body);
+
+  return {
+    respawnTargetAssigned,
+    fallThresholdPresent,
+    fallbackSpawnSerialized,
+  };
+}
+
+function buildFallRecoveryVerification(
+  blocks: readonly SceneBlock[],
+  playerCandidate: SceneObject | null,
+  respawnTargetFileId: string | null,
+  scriptGuid: string | null,
+  fallbackSpawnPosition: { x: number; y: number; z: number } | null,
+): FallRecoveryVerification {
+  if (!playerCandidate || !fallbackSpawnPosition) {
+    return {
+      componentFileId: null,
+      componentListLinked: false,
+      monoBehaviourBlockExists: false,
+      scriptGuidMatchesMeta: false,
+      respawnTargetAssigned: false,
+      fallThresholdPresent: false,
+      fallbackSpawnSerialized: false,
+      componentVisibleToUnity: false,
+      brokenLinks: ["Player GameObject or fallback spawn position was not found."],
+    };
+  }
+
+  const brokenLinks: string[] = [];
+  const linkedComponentIds = playerCandidate.componentFileIds.filter((componentFileId) => {
+    const block = findBlock(blocks, componentFileId);
+    return block !== null && isFallRecoveryCandidateBlock(block, playerCandidate.gameObjectFileId, scriptGuid);
+  });
+  const componentFileId = linkedComponentIds[0] ?? null;
+  const linkedComponentBlock = findBlock(blocks, componentFileId);
+  const componentListLinked = componentFileId !== null && isSafeSceneFileId(componentFileId);
+  const monoBehaviourBlockExists = linkedComponentBlock?.typeId === "114" && extractBlockGameObjectFileId(linkedComponentBlock) === playerCandidate.gameObjectFileId;
+  const scriptGuidMatchesMeta = scriptGuid !== null && extractBlockScriptGuid(linkedComponentBlock) === scriptGuid;
+  const serializedFields = hasExpectedFallRecoverySerializedFields(linkedComponentBlock, respawnTargetFileId, fallbackSpawnPosition);
+  const componentVisibleToUnity = componentListLinked
+    && monoBehaviourBlockExists
+    && scriptGuidMatchesMeta
+    && serializedFields.respawnTargetAssigned
+    && serializedFields.fallThresholdPresent
+    && serializedFields.fallbackSpawnSerialized;
+
+  if (linkedComponentIds.length === 0) {
+    brokenLinks.push("Player m_Component list does not link a FallRecovery MonoBehaviour block.");
+  }
+
+  if (componentFileId !== null && !isSafeSceneFileId(componentFileId)) {
+    brokenLinks.push(`Player references FallRecovery with unsafe scene fileID ${componentFileId}.`);
+  }
+
+  if (!monoBehaviourBlockExists) {
+    brokenLinks.push("Referenced FallRecovery MonoBehaviour block is missing or not linked back to Player.");
+  }
+
+  if (scriptGuid === null) {
+    brokenLinks.push("FallRecovery.cs.meta is missing, so Unity cannot resolve the script GUID.");
+  } else if (!scriptGuidMatchesMeta) {
+    brokenLinks.push("FallRecovery MonoBehaviour block does not reference the FallRecovery.cs.meta GUID.");
+  }
+
+  if (!serializedFields.respawnTargetAssigned) {
+    brokenLinks.push(respawnTargetFileId !== null
+      ? "FallRecovery MonoBehaviour block does not assign the FarResetPoint respawn target."
+      : "FallRecovery MonoBehaviour block does not preserve the fallback respawn mode.");
+  }
+
+  if (!serializedFields.fallThresholdPresent) {
+    brokenLinks.push("FallRecovery MonoBehaviour block does not serialize the expected fall threshold.");
+  }
+
+  if (!serializedFields.fallbackSpawnSerialized) {
+    brokenLinks.push("FallRecovery MonoBehaviour block does not serialize the expected fallback spawn position.");
+  }
+
+  return {
+    componentFileId,
+    componentListLinked,
+    monoBehaviourBlockExists,
+    scriptGuidMatchesMeta,
+    respawnTargetAssigned: serializedFields.respawnTargetAssigned,
+    fallThresholdPresent: serializedFields.fallThresholdPresent,
+    fallbackSpawnSerialized: serializedFields.fallbackSpawnSerialized,
     componentVisibleToUnity,
     brokenLinks,
   };
@@ -664,6 +980,370 @@ function buildRecommendedActions(parsedScene: ParsedScene): string[] {
   }
 
   return actions;
+}
+
+function findSceneObjectByName(objects: readonly SceneObject[], name: string): SceneObject | null {
+  return objects.find((sceneObject) => sceneObject.name === name) ?? null;
+}
+
+function parseVector3FromTransformBlock(block: SceneBlock | null): { x: number; y: number; z: number } | null {
+  const match = block?.body.match(/^  m_LocalPosition: \{x: (-?\d+(?:\.\d+)?), y: (-?\d+(?:\.\d+)?), z: (-?\d+(?:\.\d+)?)\}$/m);
+  if (!match) {
+    return null;
+  }
+
+  return {
+    x: Number(match[1]),
+    y: Number(match[2]),
+    z: Number(match[3]),
+  };
+}
+
+function buildFallRecoveryComponentBlock(
+  componentFileId: string,
+  playerGameObjectFileId: string,
+  scriptGuid: string,
+  respawnTargetFileId: string | null,
+  fallbackSpawnPosition: { x: number; y: number; z: number },
+): string {
+  return [
+    `--- !u!114 &${componentFileId}`,
+    "MonoBehaviour:",
+    "  m_ObjectHideFlags: 0",
+    "  m_CorrespondingSourceObject: {fileID: 0}",
+    "  m_PrefabInstance: {fileID: 0}",
+    "  m_PrefabAsset: {fileID: 0}",
+    `  m_GameObject: {fileID: ${playerGameObjectFileId}}`,
+    "  m_Enabled: 1",
+    "  m_EditorHideFlags: 0",
+    `  m_Script: {fileID: 11500000, guid: ${scriptGuid}, type: 3}`,
+    "  m_Name: ",
+    "  m_EditorClassIdentifier:",
+    `  respawnPoint: {fileID: ${respawnTargetFileId ?? "0"}}`,
+    "  fallThresholdY: -10",
+    "  debugRecovery: 1",
+    `  fallbackSpawnPosition: {x: ${fallbackSpawnPosition.x}, y: ${fallbackSpawnPosition.y}, z: ${fallbackSpawnPosition.z}}`,
+    "",
+  ].join("\n");
+}
+
+async function loadFallRecoveryContext(projectPath: string): Promise<{
+  parsedScene: ParsedScene;
+  playerObject: SceneObject | null;
+  playerTransformFileId: string | null;
+  playerSpawnPosition: { x: number; y: number; z: number } | null;
+  farResetPointObject: SceneObject | null;
+  farResetPointTransformFileId: string | null;
+  scriptGuid: string | null;
+  verification: FallRecoveryVerification;
+}> {
+  const parsedScene = await parseProjectScene(projectPath);
+  const playerObject = parsedScene.playerCandidate;
+  const playerTransformFileId = parsedScene.playerTransformFileId;
+  const playerSpawnPosition = parseVector3FromTransformBlock(findBlock(parsedScene.blocks, playerTransformFileId));
+  const farResetPointObject = findSceneObjectByName(parsedScene.objects, "FarResetPoint");
+  const farResetPointTransformFileId = farResetPointObject
+    ? findComponentFileIdByType(parsedScene.blocks, farResetPointObject, "4")
+    : null;
+  const scriptGuid = await readGuidFromMeta(path.join(parsedScene.rootPath, FALL_RECOVERY_META_PATH));
+  const verification = buildFallRecoveryVerification(
+    parsedScene.blocks,
+    playerObject,
+    farResetPointTransformFileId,
+    scriptGuid,
+    playerSpawnPosition,
+  );
+
+  return {
+    parsedScene,
+    playerObject,
+    playerTransformFileId,
+    playerSpawnPosition,
+    farResetPointObject,
+    farResetPointTransformFileId,
+    scriptGuid,
+    verification,
+  };
+}
+
+function collectStaleFallRecoveryComponentIds(
+  parsedScene: ParsedScene,
+  playerObject: SceneObject,
+  scriptGuid: string | null,
+): string[] {
+  const candidateIds = parsedScene.blocks
+    .filter((block) => isFallRecoveryCandidateBlock(block, playerObject.gameObjectFileId, scriptGuid))
+    .map((block) => block.fileId);
+
+  const playerExtraIds = playerObject.componentFileIds.filter((componentFileId) => {
+    const block = findBlock(parsedScene.blocks, componentFileId);
+    if (!block) {
+      return true;
+    }
+
+    return isFallRecoveryCandidateBlock(block, playerObject.gameObjectFileId, scriptGuid);
+  });
+
+  return [...new Set([...candidateIds, ...playerExtraIds])];
+}
+
+export async function inspectUnityFallRecoveryStatus(projectPath: string, recoverySafe: boolean): Promise<UnityFallRecoveryStatus> {
+  const context = await loadFallRecoveryContext(projectPath);
+  const scriptAbsolutePath = path.join(context.parsedScene.rootPath, FALL_RECOVERY_SCRIPT_PATH);
+  const scriptMetaAbsolutePath = path.join(context.parsedScene.rootPath, FALL_RECOVERY_META_PATH);
+  const fallRecoveryScriptExists = await fileExists(scriptAbsolutePath);
+  const fallRecoveryMetaExists = await fileExists(scriptMetaAbsolutePath);
+  const backupPath = sceneBackupPathFor(context.parsedScene.sceneAbsolutePath, FALL_RECOVERY_SCENE_BACKUP_TAG);
+  const backupExists = await fileExists(backupPath);
+  const details: string[] = [];
+
+  if (!context.playerObject) {
+    details.push("No Player object was detected in the selected scene.");
+  } else {
+    details.push(`Detected player object: ${context.playerObject.name}`);
+  }
+
+  if (context.farResetPointObject && context.farResetPointTransformFileId) {
+    details.push(`Using FarResetPoint as respawn target: ${context.farResetPointObject.name}`);
+  } else if (context.playerSpawnPosition) {
+    details.push(`FarResetPoint not found; fallback spawn position will be used: {x: ${context.playerSpawnPosition.x}, y: ${context.playerSpawnPosition.y}, z: ${context.playerSpawnPosition.z}}`);
+  } else {
+    details.push("Neither FarResetPoint nor a fallback player spawn position could be resolved.");
+  }
+
+  if (!fallRecoveryScriptExists) {
+    details.push(`Fall recovery script asset is missing: ${FALL_RECOVERY_SCRIPT_PATH}`);
+  } else if (!fallRecoveryMetaExists) {
+    details.push(`Fall recovery script meta is missing: ${FALL_RECOVERY_META_PATH}`);
+  }
+
+  details.push(`Fall threshold serialized: ${context.verification.fallThresholdPresent ? "YES" : "NO"}`);
+
+  const respawnTargetAssigned = context.verification.respawnTargetAssigned && context.verification.fallbackSpawnSerialized;
+  const safeToOpenUnityForCompileOrPlaytest = recoverySafe
+    && fallRecoveryScriptExists
+    && fallRecoveryMetaExists
+    && context.verification.componentVisibleToUnity;
+
+  return {
+    scenePath: context.parsedScene.scenePath,
+    sceneAbsolutePath: context.parsedScene.sceneAbsolutePath,
+    playerName: context.playerObject?.name ?? null,
+    respawnTargetName: context.farResetPointObject?.name ?? null,
+    fallRecoveryScriptExists,
+    fallRecoveryAttached: context.verification.componentVisibleToUnity,
+    respawnTargetAssigned,
+    fallThresholdPresent: context.verification.fallThresholdPresent,
+    backupExists,
+    safeToOpenUnityForCompileOrPlaytest,
+    details,
+    safety: {
+      readOnly: true,
+      noUnityExecution: true,
+    },
+  };
+}
+
+export async function applyUnityFallRecovery(projectPath: string, recoverySafe: boolean): Promise<UnityFallRecoveryApplyResult> {
+  const contextBefore = await loadFallRecoveryContext(projectPath);
+  const backupPath = sceneBackupPathFor(contextBefore.parsedScene.sceneAbsolutePath, FALL_RECOVERY_SCENE_BACKUP_TAG);
+  const backupExists = await fileExists(backupPath);
+  const blockedReasons: string[] = [];
+
+  if (!recoverySafe) {
+    blockedReasons.push("Unity recovery guard did not report a safe state for fall recovery mutation.");
+  }
+
+  if (!contextBefore.playerObject || !contextBefore.playerTransformFileId || !contextBefore.playerSpawnPosition) {
+    blockedReasons.push("A Player object with a Transform and fallback spawn position was not found in the selected scene.");
+  }
+
+  if (blockedReasons.length > 0) {
+    return {
+      applied: false,
+      scenePath: contextBefore.parsedScene.scenePath,
+      sceneAbsolutePath: contextBefore.parsedScene.sceneAbsolutePath,
+      playerName: contextBefore.playerObject?.name ?? null,
+      respawnTargetName: contextBefore.farResetPointObject?.name ?? null,
+      scriptPath: FALL_RECOVERY_SCRIPT_PATH,
+      backupPath,
+      fallRecoveryScriptExists: await fileExists(path.join(contextBefore.parsedScene.rootPath, FALL_RECOVERY_SCRIPT_PATH)),
+      fallRecoveryAttached: false,
+      respawnTargetAssigned: false,
+      fallThresholdPresent: false,
+      safeToOpenUnityForCompileOrPlaytest: false,
+      blockedReasons,
+      safety: {
+        noUnityExecution: true,
+        backupCreated: backupExists,
+        sceneWritten: false,
+      },
+    };
+  }
+
+  const ensuredScript = await ensureFallRecoveryScript(contextBefore.parsedScene.rootPath);
+  const contextAfterScript = await loadFallRecoveryContext(projectPath);
+  if (contextAfterScript.verification.componentVisibleToUnity) {
+    const status = await inspectUnityFallRecoveryStatus(projectPath, recoverySafe);
+    return {
+      applied: false,
+      scenePath: status.scenePath,
+      sceneAbsolutePath: status.sceneAbsolutePath,
+      playerName: status.playerName,
+      respawnTargetName: status.respawnTargetName,
+      scriptPath: FALL_RECOVERY_SCRIPT_PATH,
+      backupPath,
+      fallRecoveryScriptExists: status.fallRecoveryScriptExists,
+      fallRecoveryAttached: status.fallRecoveryAttached,
+      respawnTargetAssigned: status.respawnTargetAssigned,
+      fallThresholdPresent: status.fallThresholdPresent,
+      safeToOpenUnityForCompileOrPlaytest: status.safeToOpenUnityForCompileOrPlaytest,
+      blockedReasons: ["FallRecovery is already attached to Player with the expected serialized fields."],
+      safety: {
+        noUnityExecution: true,
+        backupCreated: backupExists,
+        sceneWritten: !ensuredScript.scriptExisted || !ensuredScript.metaExisted,
+      },
+    };
+  }
+
+  if (!backupExists) {
+    await copyFile(contextAfterScript.parsedScene.sceneAbsolutePath, backupPath);
+  }
+
+  const playerObject = contextAfterScript.playerObject;
+  const playerSpawnPosition = contextAfterScript.playerSpawnPosition;
+  if (!playerObject || !playerSpawnPosition) {
+    throw new Error("Fall recovery prerequisites were not present during apply.");
+  }
+
+  const playerBlock = findBlock(contextAfterScript.parsedScene.blocks, playerObject.gameObjectFileId);
+  if (!playerBlock) {
+    throw new Error("Player GameObject block was not found during fall recovery apply.");
+  }
+
+  let updatedSource = contextAfterScript.parsedScene.source;
+  const staleComponentIds = collectStaleFallRecoveryComponentIds(contextAfterScript.parsedScene, playerObject, ensuredScript.guid);
+  const filteredComponentIds = playerObject.componentFileIds.filter((componentFileId) => !staleComponentIds.includes(componentFileId));
+  const filteredBlocks = contextAfterScript.parsedScene.blocks.filter((block) => !staleComponentIds.includes(block.fileId));
+  const newComponentFileId = nextSafeSceneFileId(filteredBlocks);
+  const updatedPlayerBlock = replaceGameObjectComponentList(playerBlock, [...filteredComponentIds, newComponentFileId]);
+  updatedSource = updatedSource.replace(playerBlock.raw, updatedPlayerBlock);
+
+  for (const staleComponentId of staleComponentIds) {
+    const staleBlock = findBlock(contextAfterScript.parsedScene.blocks, staleComponentId);
+    if (staleBlock) {
+      updatedSource = updatedSource.replace(staleBlock.raw, "");
+    }
+  }
+
+  updatedSource = `${updatedSource.trimEnd()}\n${buildFallRecoveryComponentBlock(
+    newComponentFileId,
+    playerObject.gameObjectFileId,
+    ensuredScript.guid,
+    contextAfterScript.farResetPointTransformFileId,
+    playerSpawnPosition,
+  )}`;
+  await writeFile(contextAfterScript.parsedScene.sceneAbsolutePath, updatedSource, "utf-8");
+
+  const status = await inspectUnityFallRecoveryStatus(projectPath, recoverySafe);
+  return {
+    applied: status.fallRecoveryAttached,
+    scenePath: status.scenePath,
+    sceneAbsolutePath: status.sceneAbsolutePath,
+    playerName: status.playerName,
+    respawnTargetName: status.respawnTargetName,
+    scriptPath: FALL_RECOVERY_SCRIPT_PATH,
+    backupPath,
+    fallRecoveryScriptExists: status.fallRecoveryScriptExists,
+    fallRecoveryAttached: status.fallRecoveryAttached,
+    respawnTargetAssigned: status.respawnTargetAssigned,
+    fallThresholdPresent: status.fallThresholdPresent,
+    safeToOpenUnityForCompileOrPlaytest: status.safeToOpenUnityForCompileOrPlaytest,
+    blockedReasons: status.fallRecoveryAttached ? [] : ["FallRecovery was not attached to Player with the expected serialized fields."],
+    safety: {
+      noUnityExecution: true,
+      backupCreated: true,
+      sceneWritten: true,
+    },
+  };
+}
+
+export async function rollbackUnityFallRecovery(projectPath: string, recoverySafe: boolean): Promise<UnityFallRecoveryRollbackResult> {
+  const contextBefore = await loadFallRecoveryContext(projectPath);
+  const backupPath = sceneBackupPathFor(contextBefore.parsedScene.sceneAbsolutePath, FALL_RECOVERY_SCENE_BACKUP_TAG);
+  const scriptCreatedMarkerPath = path.join(contextBefore.parsedScene.rootPath, FALL_RECOVERY_CREATED_SCRIPT_MARKER);
+  const metaCreatedMarkerPath = path.join(contextBefore.parsedScene.rootPath, FALL_RECOVERY_CREATED_META_MARKER);
+  const createdScriptByAie = await fileExists(scriptCreatedMarkerPath);
+  const createdMetaByAie = await fileExists(metaCreatedMarkerPath);
+
+  if (!(await fileExists(backupPath))) {
+    const status = await inspectUnityFallRecoveryStatus(projectPath, recoverySafe);
+    return {
+      restored: false,
+      scenePath: status.scenePath,
+      sceneAbsolutePath: status.sceneAbsolutePath,
+      playerName: status.playerName,
+      respawnTargetName: status.respawnTargetName,
+      scriptPath: FALL_RECOVERY_SCRIPT_PATH,
+      backupPath,
+      fallRecoveryAttached: status.fallRecoveryAttached,
+      respawnTargetAssigned: status.respawnTargetAssigned,
+      fallRecoveryScriptExists: status.fallRecoveryScriptExists,
+      safeToOpenUnityForCompileOrPlaytest: status.safeToOpenUnityForCompileOrPlaytest,
+      blockedReasons: ["No fall recovery scene backup was found for rollback."],
+      safety: {
+        noUnityExecution: true,
+        backupRetained: true,
+        scriptRemoved: false,
+      },
+    };
+  }
+
+  const backupSource = await readFile(backupPath, "utf-8");
+  await writeFile(contextBefore.parsedScene.sceneAbsolutePath, backupSource, "utf-8");
+
+  let scriptRemoved = false;
+  if (createdScriptByAie) {
+    const scriptAbsolutePath = path.join(contextBefore.parsedScene.rootPath, FALL_RECOVERY_SCRIPT_PATH);
+    if (await fileExists(scriptAbsolutePath)) {
+      await writeFile(scriptAbsolutePath, "", "utf-8");
+      await stat(scriptAbsolutePath);
+      await import("node:fs/promises").then(({ unlink }) => unlink(scriptAbsolutePath));
+      scriptRemoved = true;
+    }
+    await import("node:fs/promises").then(({ unlink }) => unlink(scriptCreatedMarkerPath));
+  }
+
+  if (createdMetaByAie) {
+    const metaAbsolutePath = path.join(contextBefore.parsedScene.rootPath, FALL_RECOVERY_META_PATH);
+    if (await fileExists(metaAbsolutePath)) {
+      await import("node:fs/promises").then(({ unlink }) => unlink(metaAbsolutePath));
+      scriptRemoved = true;
+    }
+    await import("node:fs/promises").then(({ unlink }) => unlink(metaCreatedMarkerPath));
+  }
+
+  const status = await inspectUnityFallRecoveryStatus(projectPath, recoverySafe);
+  return {
+    restored: true,
+    scenePath: status.scenePath,
+    sceneAbsolutePath: status.sceneAbsolutePath,
+    playerName: status.playerName,
+    respawnTargetName: status.respawnTargetName,
+    scriptPath: FALL_RECOVERY_SCRIPT_PATH,
+    backupPath,
+    fallRecoveryAttached: status.fallRecoveryAttached,
+    respawnTargetAssigned: status.respawnTargetAssigned,
+    fallRecoveryScriptExists: status.fallRecoveryScriptExists,
+    safeToOpenUnityForCompileOrPlaytest: status.safeToOpenUnityForCompileOrPlaytest,
+    blockedReasons: [],
+    safety: {
+      noUnityExecution: true,
+      backupRetained: true,
+      scriptRemoved,
+    },
+  };
 }
 
 export async function inspectUnitySceneWiring(projectPath: string): Promise<UnitySceneWiringSnapshot> {
@@ -1288,5 +1968,88 @@ export function renderUnityVisualDebugRollbackResult(result: UnityVisualDebugRol
     `Material Assigned: ${result.materialAssigned ? "YES" : "NO"}`,
     `Debug Material Present: ${result.debugMaterialPresent ? "YES" : "NO"}`,
     `Safe To Open Unity: ${result.safeToOpenUnityForCompileOrPlaytest ? "YES" : "NO"}`,
+  ].join("\n");
+}
+
+export function renderUnityFallRecoveryStatus(status: UnityFallRecoveryStatus): string {
+  return [
+    "UNITY FALL RECOVERY STATUS",
+    "",
+    `Scene: ${status.scenePath}`,
+    `Scene Path: ${status.sceneAbsolutePath}`,
+    `Player: ${status.playerName ?? "none"}`,
+    `Respawn Target: ${status.respawnTargetName ?? "fallback spawn"}`,
+    `FallRecovery.cs Exists: ${status.fallRecoveryScriptExists ? "YES" : "NO"}`,
+    `FallRecovery Attached: ${status.fallRecoveryAttached ? "YES" : "NO"}`,
+    `Respawn Target Assigned: ${status.respawnTargetAssigned ? "YES" : "NO"}`,
+    `Fall Threshold Present: ${status.fallThresholdPresent ? "YES" : "NO"}`,
+    `Backup Exists: ${status.backupExists ? "YES" : "NO"}`,
+    `Safe To Open Unity/Playtest: ${status.safeToOpenUnityForCompileOrPlaytest ? "YES" : "NO"}`,
+    "",
+    "Details:",
+    ...status.details.map((detail, index) => `${index + 1}. ${detail}`),
+  ].join("\n");
+}
+
+export function renderUnityFallRecoveryApplyResult(result: UnityFallRecoveryApplyResult): string {
+  if (!result.applied) {
+    return [
+      "UNITY FALL RECOVERY APPLY BLOCKED",
+      "",
+      `Scene: ${result.scenePath}`,
+      `Scene Path: ${result.sceneAbsolutePath}`,
+      `Player: ${result.playerName ?? "none"}`,
+      `Respawn Target: ${result.respawnTargetName ?? "fallback spawn"}`,
+      `Script Path: ${result.scriptPath}`,
+      `Backup Path: ${result.backupPath}`,
+      "",
+      "Blocked Reasons:",
+      ...result.blockedReasons.map((reason, index) => `${index + 1}. ${reason}`),
+    ].join("\n");
+  }
+
+  return [
+    "UNITY FALL RECOVERY APPLY COMPLETE",
+    "",
+    `Scene: ${result.scenePath}`,
+    `Scene Path: ${result.sceneAbsolutePath}`,
+    `Player: ${result.playerName ?? "none"}`,
+    `Respawn Target: ${result.respawnTargetName ?? "fallback spawn"}`,
+    `Script Path: ${result.scriptPath}`,
+    `Backup Path: ${result.backupPath}`,
+    `FallRecovery.cs Exists: ${result.fallRecoveryScriptExists ? "YES" : "NO"}`,
+    `FallRecovery Attached: ${result.fallRecoveryAttached ? "YES" : "NO"}`,
+    `Respawn Target Assigned: ${result.respawnTargetAssigned ? "YES" : "NO"}`,
+    `Fall Threshold Present: ${result.fallThresholdPresent ? "YES" : "NO"}`,
+    `Safe To Open Unity/Playtest: ${result.safeToOpenUnityForCompileOrPlaytest ? "YES" : "NO"}`,
+  ].join("\n");
+}
+
+export function renderUnityFallRecoveryRollbackResult(result: UnityFallRecoveryRollbackResult): string {
+  if (!result.restored) {
+    return [
+      "UNITY FALL RECOVERY ROLLBACK BLOCKED",
+      "",
+      `Scene: ${result.scenePath}`,
+      `Scene Path: ${result.sceneAbsolutePath}`,
+      `Script Path: ${result.scriptPath}`,
+      `Backup Path: ${result.backupPath}`,
+      "",
+      "Blocked Reasons:",
+      ...result.blockedReasons.map((reason, index) => `${index + 1}. ${reason}`),
+    ].join("\n");
+  }
+
+  return [
+    "UNITY FALL RECOVERY ROLLBACK COMPLETE",
+    "",
+    `Scene: ${result.scenePath}`,
+    `Scene Path: ${result.sceneAbsolutePath}`,
+    `Script Path: ${result.scriptPath}`,
+    `Backup Path: ${result.backupPath}`,
+    `FallRecovery Attached: ${result.fallRecoveryAttached ? "YES" : "NO"}`,
+    `Respawn Target Assigned: ${result.respawnTargetAssigned ? "YES" : "NO"}`,
+    `FallRecovery.cs Exists: ${result.fallRecoveryScriptExists ? "YES" : "NO"}`,
+    `Safe To Open Unity/Playtest: ${result.safeToOpenUnityForCompileOrPlaytest ? "YES" : "NO"}`,
   ].join("\n");
 }

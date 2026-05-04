@@ -1041,6 +1041,18 @@ Commands:
 - `npm run operator:view -- --visual-debug-status "<project>"`
 - `npm run operator:view -- --rollback-visual-debug "<project>"`
 
+## Fall Recovery
+
+- use the fall recovery layer during local playtests to stop the Player from falling forever after leaving the floor or jumping beyond the safe test area.
+- the workflow creates or reuses `Assets/Scripts/FallRecovery.cs`, attaches it to `Player`, assigns `FarResetPoint` when present, and otherwise preserves the Player's starting position as a serialized fallback respawn point.
+- this is a guarded playtest safety system, not final gameplay logic; rollback restores the previous scene from a dedicated backup and only removes the generated script/meta when the apply command had to create them locally.
+
+Commands:
+
+- `npm run operator:view -- --apply-fall-recovery "<project>"`
+- `npm run operator:view -- --fall-recovery-status "<project>"`
+- `npm run operator:view -- --rollback-fall-recovery "<project>"`
+
 ## Safe Runtime Action Bridge
 
 AI-E can now translate supported live operator actions into safe runtime intents.
