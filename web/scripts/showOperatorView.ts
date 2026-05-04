@@ -4,7 +4,7 @@ import { stdin as input, stdout as output } from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { inspectGameProject, renderGameProjectSummary } from "../lib/aie/gameProjectInspector";
-import { generateGameTask, renderGameTask } from "../lib/aie/gameTaskGenerator";
+import { generateGamePatchPlan, generateGameTask, renderGamePatchPlan, renderGameTask } from "../lib/aie/gameTaskGenerator";
 import { renderOperatorView, renderOperatorViewSummary, type OperatorViewState } from "../lib/aie/operatorView";
 import type { OperatorViewSnapshot } from "../lib/aie/operatorView.types";
 import { inspectUnityPlaytestRecovery, renderUnityPlaytestRecovery } from "../lib/aie/unityPlaytestRecovery";
@@ -15,6 +15,7 @@ type ShowOperatorViewOptions = {
   projectPath?: string;
   gameTaskPath?: string;
   unityRecoveryPath?: string;
+  gamePatchPath?: string;
 };
 
 function isDirectExecution(): boolean {
@@ -85,6 +86,21 @@ function parseArgs(argv: string[]): ShowOperatorViewOptions {
         throw new Error("Missing value for --unity-recovery");
       }
       options.unityRecoveryPath = value.trim();
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith("--game-patch=")) {
+      options.gamePatchPath = arg.slice("--game-patch=".length).trim() || undefined;
+      continue;
+    }
+
+    if (arg === "--game-patch") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("Missing value for --game-patch");
+      }
+      options.gamePatchPath = value.trim();
       index += 1;
       continue;
     }
@@ -285,6 +301,35 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
 
     if (options.unityRecoveryPath && options.gameTaskPath) {
       throw new Error("Use either --unity-recovery or --game-task, not both.");
+    }
+
+    if (options.gamePatchPath && options.interactive) {
+      throw new Error("Use either --game-patch or --interactive, not both.");
+    }
+
+    if (options.gamePatchPath && options.projectPath) {
+      throw new Error("Use either --game-patch or --project, not both.");
+    }
+
+    if (options.gamePatchPath && options.gameTaskPath) {
+      throw new Error("Use either --game-patch or --game-task, not both.");
+    }
+
+    if (options.gamePatchPath && options.unityRecoveryPath) {
+      throw new Error("Use either --game-patch or --unity-recovery, not both.");
+    }
+
+    if (options.gamePatchPath) {
+      const snapshot = await inspectGameProject(options.gamePatchPath);
+      const plan = await generateGamePatchPlan(snapshot);
+
+      if (options.json) {
+        console.log(JSON.stringify(plan, null, 2));
+        return 0;
+      }
+
+      console.log(renderGamePatchPlan(plan));
+      return 0;
     }
 
     if (options.unityRecoveryPath) {

@@ -1,3 +1,6 @@
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+
 import type { GameProjectSnapshot } from "./gameProjectInspector";
 
 export type GameTask = {
@@ -10,6 +13,22 @@ export type GameTask = {
   expectedResult: string;
   safety: {
     outputOnly: true;
+    requiresHumanUnityPlaytest: true;
+  };
+};
+
+export type GamePatchPlan = {
+  targetFile: string;
+  className: string;
+  namespace?: string;
+  changeType: "modify-existing-script";
+  summary: string;
+  exactInstructions: string[];
+  replacementCode?: string;
+  expectedResult: string;
+  safety: {
+    outputOnly: true;
+    noFileWrites: true;
     requiresHumanUnityPlaytest: true;
   };
 };
@@ -236,4 +255,220 @@ export function renderGameTask(task: GameTask): string {
     "- no Unity execution",
   );
   return lines.join("\n");
+}
+
+type ExistingScriptAnalysis = {
+  namespace?: string;
+  className: string;
+  attributeLines: string[];
+  fields: string[];
+  hasAwake: boolean;
+  hasUpdate: boolean;
+  hasMovementLogic: boolean;
+};
+
+function detectNamespace(source: string): string | undefined {
+  const match = source.match(/namespace\s+([A-Za-z_][A-Za-z0-9_.]*)/);
+  return match?.[1];
+}
+
+function detectClassName(source: string): string {
+  const match = source.match(/class\s+([A-Za-z_][A-Za-z0-9_]*)/);
+  if (!match?.[1]) {
+    throw new Error("Unable to detect class name in target script.");
+  }
+
+  return match[1];
+}
+
+function detectAttributeLines(source: string): string[] {
+  return source
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("[") && line.endsWith("]"));
+}
+
+function detectFields(source: string): string[] {
+  return Array.from(source.matchAll(/private\s+[A-Za-z0-9_<>,.?\[\]]+\s+([A-Za-z_][A-Za-z0-9_]*)\s*(=|;)/g), (match) => match[1] ?? "").filter(Boolean);
+}
+
+function analyzeExistingScript(source: string): ExistingScriptAnalysis {
+  return {
+    namespace: detectNamespace(source),
+    className: detectClassName(source),
+    attributeLines: detectAttributeLines(source),
+    fields: detectFields(source),
+    hasAwake: /\bAwake\s*\(/.test(source),
+    hasUpdate: /\bUpdate\s*\(/.test(source),
+    hasMovementLogic: /Input\.GetAxisRaw|CharacterController|Rigidbody|controller\.Move|transform\.rotation/.test(source),
+  };
+}
+
+function uniqueAttributeLines(attributeLines: readonly string[]): string[] {
+  return attributeLines.filter((line, index, lines) => lines.indexOf(line) === index);
+}
+
+function buildSimpleKeyboardMoverReplacement(analysis: ExistingScriptAnalysis): string {
+  const attributes = uniqueAttributeLines(analysis.attributeLines);
+  const indent = "    ";
+  const bodyLines = [
+    "using UnityEngine;",
+    "",
+  ];
+
+  if (analysis.namespace) {
+    bodyLines.push(`namespace ${analysis.namespace}`, "{");
+  }
+
+  bodyLines.push(`${indent}/// <summary>`, `${indent}/// Handles grounded WASD movement and jumping for the playable demo character.`, `${indent}/// </summary>`);
+  for (const attribute of attributes) {
+    bodyLines.push(`${indent}${attribute}`);
+  }
+  bodyLines.push(
+    `${indent}public sealed class ${analysis.className} : MonoBehaviour`,
+    `${indent}{`,
+    `${indent}${indent}[SerializeField] [Min(0.1f)] private float moveSpeed = 5f;`,
+    `${indent}${indent}[SerializeField] [Min(0f)] private float turnSpeed = 720f;`,
+    `${indent}${indent}[SerializeField] [Min(0f)] private float jumpHeight = 1.6f;`,
+    `${indent}${indent}[SerializeField] private float gravity = -20f;`,
+    `${indent}${indent}[SerializeField] private Transform groundCheck;`,
+    `${indent}${indent}[SerializeField] [Min(0.05f)] private float groundCheckRadius = 0.2f;`,
+    `${indent}${indent}[SerializeField] private LayerMask groundLayers = ~0;`,
+    "",
+    `${indent}${indent}private CharacterController controller;`,
+    `${indent}${indent}private Vector3 velocity;`,
+    `${indent}${indent}private bool jumpRequested;`,
+    "",
+    `${indent}${indent}private void Awake()`,
+    `${indent}${indent}{`,
+    `${indent}${indent}${indent}controller = GetComponent<CharacterController>();`,
+    `${indent}${indent}}`,
+    "",
+    `${indent}${indent}private void Update()`,
+    `${indent}${indent}{`,
+    `${indent}${indent}${indent}Vector3 input = new Vector3(Input.GetAxisRaw("Horizontal"), 0f, Input.GetAxisRaw("Vertical"));`,
+    `${indent}${indent}${indent}input = Vector3.ClampMagnitude(input, 1f);`,
+    "",
+    `${indent}${indent}${indent}Vector3 move = input * moveSpeed;`,
+    `${indent}${indent}${indent}bool grounded = IsGrounded();`,
+    "",
+    `${indent}${indent}${indent}if (grounded && velocity.y < 0f)`,
+    `${indent}${indent}${indent}{`,
+    `${indent}${indent}${indent}${indent}velocity.y = -2f;`,
+    `${indent}${indent}${indent}}`,
+    "",
+    `${indent}${indent}${indent}if (grounded && Input.GetButtonDown("Jump"))`,
+    `${indent}${indent}${indent}{`,
+    `${indent}${indent}${indent}${indent}jumpRequested = true;`,
+    `${indent}${indent}${indent}}`,
+    "",
+    `${indent}${indent}${indent}if (jumpRequested)`,
+    `${indent}${indent}${indent}{`,
+    `${indent}${indent}${indent}${indent}velocity.y = Mathf.Sqrt(jumpHeight * -2f * gravity);`,
+    `${indent}${indent}${indent}${indent}jumpRequested = false;`,
+    `${indent}${indent}${indent}}`,
+    "",
+    `${indent}${indent}${indent}velocity.y += gravity * Time.deltaTime;`,
+    `${indent}${indent}${indent}controller.Move((move + new Vector3(0f, velocity.y, 0f)) * Time.deltaTime);`,
+    "",
+    `${indent}${indent}${indent}if (input.sqrMagnitude > 0.001f)`,
+    `${indent}${indent}${indent}{`,
+    `${indent}${indent}${indent}${indent}Quaternion targetRotation = Quaternion.LookRotation(input, Vector3.up);`,
+    `${indent}${indent}${indent}${indent}transform.rotation = Quaternion.RotateTowards(transform.rotation, targetRotation, turnSpeed * Time.deltaTime);`,
+    `${indent}${indent}${indent}}`,
+    `${indent}${indent}}`,
+    "",
+    `${indent}${indent}private bool IsGrounded()`,
+    `${indent}${indent}{`,
+    `${indent}${indent}${indent}Vector3 checkPosition = groundCheck != null ? groundCheck.position : transform.position + Vector3.down * 0.5f;`,
+    `${indent}${indent}${indent}return Physics.CheckSphere(checkPosition, groundCheckRadius, groundLayers, QueryTriggerInteraction.Ignore);`,
+    `${indent}${indent}}`,
+    "",
+    `${indent}${indent}private void OnDrawGizmosSelected()`,
+    `${indent}${indent}{`,
+    `${indent}${indent}${indent}Vector3 checkPosition = groundCheck != null ? groundCheck.position : transform.position + Vector3.down * 0.5f;`,
+    `${indent}${indent}${indent}Gizmos.color = Color.yellow;`,
+    `${indent}${indent}${indent}Gizmos.DrawWireSphere(checkPosition, groundCheckRadius);`,
+    `${indent}${indent}}`,
+    `${indent}}`,
+  );
+
+  if (analysis.namespace) {
+    bodyLines.push("}");
+  }
+
+  return bodyLines.join("\n");
+}
+
+export async function generateGamePatchPlan(snapshot: GameProjectSnapshot): Promise<GamePatchPlan> {
+  if (snapshot.engine !== "unity") {
+    throw new Error("Game patch plans require a Unity project.");
+  }
+
+  const targetFile = snapshot.analysis.scriptSignals.movementScripts[0];
+  if (!targetFile) {
+    throw new Error("No existing movement script was detected for a file-specific patch plan.");
+  }
+
+  const absoluteTargetPath = path.join(snapshot.rootPath, targetFile);
+  const source = await readFile(absoluteTargetPath, "utf-8");
+  const analysis = analyzeExistingScript(source);
+  const replacementCode = buildSimpleKeyboardMoverReplacement(analysis);
+  const summaryParts = [
+    `Patch ${analysis.className} in ${targetFile}`,
+    analysis.namespace ? `preserve namespace ${analysis.namespace}` : "no namespace detected",
+    analysis.attributeLines.length > 0 ? `preserve ${analysis.attributeLines.length} attribute line(s)` : "no attribute lines detected",
+    analysis.hasAwake ? "existing Awake detected" : "Awake missing",
+    analysis.hasUpdate ? "existing Update detected" : "Update missing",
+    analysis.hasMovementLogic ? "movement logic detected" : "movement logic not detected",
+  ];
+
+  return {
+    targetFile,
+    className: analysis.className,
+    namespace: analysis.namespace,
+    changeType: "modify-existing-script",
+    summary: summaryParts.join("; "),
+    exactInstructions: [
+      `Open ${targetFile}.`,
+      "Replace the full file contents with the generated replacement code below.",
+      `Keep the class name as ${analysis.className}.`,
+      analysis.namespace ? `Keep the namespace as ${analysis.namespace}.` : "Do not introduce a new namespace unless the project already requires one.",
+      "Do not rename the script file or create PlayerController.cs.",
+      "After replacing the file, return to Unity and wait for compile to finish before entering Play mode.",
+      "Run a human playtest only after the Unity console shows zero compile errors.",
+    ],
+    replacementCode,
+    expectedResult: "SimpleKeyboardPlayerMover.cs keeps its existing class identity while adding clearer movement and jump behavior without duplicate class or method errors.",
+    safety: {
+      outputOnly: true,
+      noFileWrites: true,
+      requiresHumanUnityPlaytest: true,
+    },
+  };
+}
+
+export function renderGamePatchPlan(plan: GamePatchPlan): string {
+  return [
+    "UNITY FILE PATCH PLAN",
+    "",
+    `Target File: ${plan.targetFile}`,
+    `Detected Class: ${plan.className}`,
+    `Detected Namespace: ${plan.namespace ?? "none"}`,
+    `Change Type: ${plan.changeType}`,
+    `Summary: ${plan.summary}`,
+    "",
+    "Exact Instructions:",
+    ...plan.exactInstructions.map((step, index) => `${index + 1}. ${step}`),
+    "",
+    "Replacement Code:",
+    plan.replacementCode ?? "none",
+    "",
+    `Expected Result: ${plan.expectedResult}`,
+    "",
+    "Safety:",
+    `- output only: ${plan.safety.outputOnly ? "true" : "false"}`,
+    `- no file writes: ${plan.safety.noFileWrites ? "true" : "false"}`,
+    `- requires human Unity playtest: ${plan.safety.requiresHumanUnityPlaytest ? "true" : "false"}`,
+  ].join("\n");
 }

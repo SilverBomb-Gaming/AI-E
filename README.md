@@ -928,6 +928,12 @@ End-User Functionality Step 1 status:
 - prevents repeating manual cleanup mistakes by producing a recovery plan and review-only commands
 - must pass before another Unity playtest resumes
 
+## File-Specific Unity Patch Plans
+
+- AI-E must read the existing movement script before generating a Unity gameplay patch
+- patch plans preserve the detected class name, namespace, and attribute shape instead of proposing generic duplicate scripts
+- human playtesting only starts after the patch is file-specific and Unity compiles cleanly
+
 ## Safe Runtime Action Bridge
 
 AI-E can now translate supported live operator actions into safe runtime intents.
