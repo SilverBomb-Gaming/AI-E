@@ -850,6 +850,15 @@ Node Network Phase Step 2 status:
 - execution_ready remains false
 - no routing, execution, remote mutation, scheduling, or autonomy introduced
 
+Node Network Phase Step 3 status:
+
+- Node Network Phase Step 3 - Node Readiness Evaluation: implemented
+- added read-only readiness evaluation for registered AI-E Nodes
+- combines registry status, health status, warnings, and required capabilities
+- produces ready_candidate only, not execution-ready
+- execution_ready remains false
+- no routing, execution, remote mutation, scheduling, or autonomy introduced
+
 ## Safe Runtime Action Bridge
 
 AI-E can now translate supported live operator actions into safe runtime intents.
