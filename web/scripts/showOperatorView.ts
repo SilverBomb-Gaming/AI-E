@@ -27,6 +27,16 @@ import {
 } from "../lib/aie/gameTaskGenerator";
 import { renderOperatorView, renderOperatorViewSummary, type OperatorViewState } from "../lib/aie/operatorView";
 import type { OperatorViewSnapshot } from "../lib/aie/operatorView.types";
+import {
+  applyUnityCameraWiring,
+  inspectUnityCameraWiringStatus,
+  inspectUnitySceneWiring,
+  renderUnitySceneWiringApplyResult,
+  renderUnitySceneWiringPreview,
+  renderUnitySceneWiringRollbackResult,
+  renderUnitySceneWiringStatus,
+  rollbackUnityCameraWiring,
+} from "../lib/aie/unitySceneWiring";
 import { inspectUnityPlaytestRecovery, renderUnityPlaytestRecovery } from "../lib/aie/unityPlaytestRecovery";
 
 type ShowOperatorViewOptions = {
@@ -36,6 +46,10 @@ type ShowOperatorViewOptions = {
   gameTaskPath?: string;
   nextGameTaskPath?: string;
   executeNextGameTaskPath?: string;
+  cameraWiringPreviewPath?: string;
+  applyCameraWiringPath?: string;
+  cameraWiringStatusPath?: string;
+  rollbackCameraWiringPath?: string;
   unityRecoveryPath?: string;
   gamePatchPath?: string;
   gamePatchPreviewPath?: string;
@@ -165,6 +179,66 @@ function parseArgs(argv: string[]): ShowOperatorViewOptions {
 
     if (arg.startsWith("--unity-recovery=")) {
       options.unityRecoveryPath = arg.slice("--unity-recovery=".length).trim() || undefined;
+      continue;
+    }
+
+    if (arg.startsWith("--camera-wiring-preview=")) {
+      options.cameraWiringPreviewPath = arg.slice("--camera-wiring-preview=".length).trim() || undefined;
+      continue;
+    }
+
+    if (arg === "--camera-wiring-preview") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("Missing value for --camera-wiring-preview");
+      }
+      options.cameraWiringPreviewPath = value.trim();
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith("--apply-camera-wiring=")) {
+      options.applyCameraWiringPath = arg.slice("--apply-camera-wiring=".length).trim() || undefined;
+      continue;
+    }
+
+    if (arg === "--apply-camera-wiring") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("Missing value for --apply-camera-wiring");
+      }
+      options.applyCameraWiringPath = value.trim();
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith("--camera-wiring-status=")) {
+      options.cameraWiringStatusPath = arg.slice("--camera-wiring-status=".length).trim() || undefined;
+      continue;
+    }
+
+    if (arg === "--camera-wiring-status") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("Missing value for --camera-wiring-status");
+      }
+      options.cameraWiringStatusPath = value.trim();
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith("--rollback-camera-wiring=")) {
+      options.rollbackCameraWiringPath = arg.slice("--rollback-camera-wiring=".length).trim() || undefined;
+      continue;
+    }
+
+    if (arg === "--rollback-camera-wiring") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("Missing value for --rollback-camera-wiring");
+      }
+      options.rollbackCameraWiringPath = value.trim();
+      index += 1;
       continue;
     }
 
@@ -488,6 +562,10 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       options.gameTaskPath ? "--game-task" : null,
       options.nextGameTaskPath ? "--next-game-task" : null,
       options.executeNextGameTaskPath ? "--execute-next-game-task" : null,
+      options.cameraWiringPreviewPath ? "--camera-wiring-preview" : null,
+      options.applyCameraWiringPath ? "--apply-camera-wiring" : null,
+      options.cameraWiringStatusPath ? "--camera-wiring-status" : null,
+      options.rollbackCameraWiringPath ? "--rollback-camera-wiring" : null,
       options.unityRecoveryPath ? "--unity-recovery" : null,
       options.gamePatchPath ? "--game-patch" : null,
       options.gamePatchPreviewPath ? "--game-patch-preview" : null,
@@ -532,6 +610,18 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       }
 
       console.log(renderUnityPatchPreview(preview));
+      return 0;
+    }
+
+    if (options.cameraWiringPreviewPath) {
+      const preview = await inspectUnitySceneWiring(options.cameraWiringPreviewPath);
+
+      if (options.json) {
+        console.log(JSON.stringify(preview, null, 2));
+        return 0;
+      }
+
+      console.log(renderUnitySceneWiringPreview(preview));
       return 0;
     }
 
@@ -580,6 +670,19 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       return result.applied ? 0 : 1;
     }
 
+    if (options.applyCameraWiringPath) {
+      const recovery = await inspectUnityPlaytestRecovery(options.applyCameraWiringPath);
+      const result = await applyUnityCameraWiring(options.applyCameraWiringPath, buildFollowupPatchRecoverySignal(recovery));
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return result.applied ? 0 : 1;
+      }
+
+      console.log(renderUnitySceneWiringApplyResult(result));
+      return result.applied ? 0 : 1;
+    }
+
     if (options.gamePatchStatusPath) {
       const snapshot = await inspectGameProject(options.gamePatchStatusPath);
       const artifact = await generateUnityPatchArtifact(snapshot);
@@ -604,6 +707,19 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       return 0;
     }
 
+    if (options.cameraWiringStatusPath) {
+      const recovery = await inspectUnityPlaytestRecovery(options.cameraWiringStatusPath);
+      const status = await inspectUnityCameraWiringStatus(options.cameraWiringStatusPath, buildPatchStatusRecoverySignal(recovery));
+
+      if (options.json) {
+        console.log(JSON.stringify(status, null, 2));
+        return 0;
+      }
+
+      console.log(renderUnitySceneWiringStatus(status));
+      return 0;
+    }
+
     if (options.rollbackGamePatchPath) {
       const snapshot = await inspectGameProject(options.rollbackGamePatchPath);
       const artifact = await generateUnityPatchArtifact(snapshot);
@@ -615,6 +731,18 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       }
 
       console.log(renderUnityPatchRollbackResult(result));
+      return result.restored ? 0 : 1;
+    }
+
+    if (options.rollbackCameraWiringPath) {
+      const result = await rollbackUnityCameraWiring(options.rollbackCameraWiringPath);
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return result.restored ? 0 : 1;
+      }
+
+      console.log(renderUnitySceneWiringRollbackResult(result));
       return result.restored ? 0 : 1;
     }
 

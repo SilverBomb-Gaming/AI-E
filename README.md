@@ -982,6 +982,19 @@ Command:
 - `npm run operator:view -- --next-game-task "<project>"`
 - `npm run operator:view -- --execute-next-game-task "<project>"`
 
+## Guarded Unity Scene Wiring
+
+- AI-E can inspect Unity scene files and wire generated gameplay scripts into the selected scene without requiring manual component attachment.
+- the CameraFollow scene wiring lane detects the selected scene, finds Main Camera, finds a player candidate, checks whether CameraFollow is already attached, and writes only the guarded scene mutation plus the required script meta sidecar when missing.
+- scene mutations always create a local scene backup before write and support a rollback command that restores the previous `.unity` file.
+
+Commands:
+
+- `npm run operator:view -- --camera-wiring-preview "<project>"`
+- `npm run operator:view -- --apply-camera-wiring "<project>"`
+- `npm run operator:view -- --camera-wiring-status "<project>"`
+- `npm run operator:view -- --rollback-camera-wiring "<project>"`
+
 ## Safe Runtime Action Bridge
 
 AI-E can now translate supported live operator actions into safe runtime intents.

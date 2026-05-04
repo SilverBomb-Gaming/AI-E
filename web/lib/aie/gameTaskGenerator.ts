@@ -425,6 +425,28 @@ function backupPathFor(targetPath: string): string {
 
 const MISSING_FILE_BACKUP_MARKER = "__AIE_ORIGINAL_STATE__:missing-file\n";
 
+function metaPathFor(targetPath: string): string {
+  return `${targetPath}.meta`;
+}
+
+function buildDeterministicUnityMetaGuid(targetPath: string): string {
+  return createHash("sha256").update(targetPath.replace(/\\/g, "/").toLowerCase(), "utf-8").digest("hex").slice(0, 32);
+}
+
+async function ensureUnityScriptMeta(targetPath: string): Promise<void> {
+  if (!targetPath.endsWith(".cs")) {
+    return;
+  }
+
+  const metaPath = metaPathFor(targetPath);
+  if (await fileExists(metaPath)) {
+    return;
+  }
+
+  const guid = buildDeterministicUnityMetaGuid(targetPath);
+  await writeFile(metaPath, `fileFormatVersion: 2\nguid: ${guid}\n`, "utf-8");
+}
+
 function countMethodOccurrences(source: string, methodName: string): number {
   return source.match(new RegExp(`\\b${methodName}\\s*\\(`, "g"))?.length ?? 0;
 }
@@ -1190,6 +1212,9 @@ export async function applyUnityPatchArtifact(
     }
   }
   await writeFile(artifact.absoluteTargetPath, artifact.replacementCode, "utf-8");
+  if (artifact.operation === "create-new-script") {
+    await ensureUnityScriptMeta(artifact.absoluteTargetPath);
+  }
 
   return {
     applied: true,
@@ -1338,6 +1363,10 @@ export async function rollbackUnityPatchArtifact(artifact: UnityPatchArtifact): 
   if (backupSource === MISSING_FILE_BACKUP_MARKER) {
     if (await fileExists(artifact.absoluteTargetPath)) {
       await unlink(artifact.absoluteTargetPath);
+    }
+    const metaPath = metaPathFor(artifact.absoluteTargetPath);
+    if (await fileExists(metaPath)) {
+      await unlink(metaPath);
     }
   } else {
     await writeFile(artifact.absoluteTargetPath, backupSource, "utf-8");
