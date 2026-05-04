@@ -65,6 +65,17 @@ test("no execution when autonomy disabled", async () => {
 
     assert.equal(result.executed, false);
     assert.equal(result.reason, "autonomy disabled");
+    assert.deepEqual(result.policy_snapshot, getAutonomyPolicy());
+    assert.deepEqual(result.safety_stack_used, [
+      "policy",
+      "simulation",
+      "proposal",
+      "snapshot",
+      "cooldown",
+      "conflict_lock",
+      "gate",
+      "drift_guard",
+    ]);
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }
