@@ -995,6 +995,16 @@ Commands:
 - `npm run operator:view -- --camera-wiring-status "<project>"`
 - `npm run operator:view -- --rollback-camera-wiring "<project>"`
 
+## One-Command Feature Execution
+
+- AI-E can now execute the full supported camera feature path in one command: decide the next feature, generate `CameraFollow.cs`, ensure `CameraFollow.cs.meta`, wire the scene, validate final status, and report completion.
+- the one-command path is idempotent for the current camera lane: if the script, meta, scene component, and player target are already in place, AI-E reports that the feature is already applied instead of creating duplicates.
+- rollback remains available through the existing guarded commands for the script and scene layers.
+
+Command:
+
+- `npm run operator:view -- --execute-next-game-task "<project>"`
+
 ## Safe Runtime Action Bridge
 
 AI-E can now translate supported live operator actions into safe runtime intents.

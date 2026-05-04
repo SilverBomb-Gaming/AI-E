@@ -1,3 +1,4 @@
+import { stat } from "node:fs/promises";
 import { createInterface } from "node:readline/promises";
 import { resolve } from "node:path";
 import { stdin as input, stdout as output } from "node:process";
@@ -7,6 +8,7 @@ import { inspectGameProject, renderGameProjectSummary } from "../lib/aie/gamePro
 import { determineGameProgression, renderNextGameTask } from "../lib/aie/gameProgression";
 import {
   applyUnityPatchArtifact,
+  buildExistingCameraFollowArtifact,
   generateCameraFollowArtifact,
   generateGamePatchPlan,
   generateGameTask,
@@ -88,6 +90,145 @@ function buildPatchStatusRecoverySignal(snapshot: Awaited<ReturnType<typeof insp
 
 function buildFollowupPatchRecoverySignal(snapshot: Awaited<ReturnType<typeof inspectUnityPlaytestRecovery>>): boolean {
   return buildPatchStatusRecoverySignal(snapshot);
+}
+
+type CameraFeatureExecutionReport = {
+  outcome: "complete" | "already-applied" | "blocked";
+  feature: "Camera Follow";
+  created: string[];
+  wired: string[];
+  backups: string[];
+  safeToOpenUnity: boolean;
+  blockedReasons: string[];
+};
+
+async function pathExists(targetPath: string): Promise<boolean> {
+  try {
+    await stat(targetPath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function renderCameraFeatureExecutionReport(report: CameraFeatureExecutionReport): string {
+  const heading = report.outcome === "blocked"
+    ? "FEATURE EXECUTION BLOCKED"
+    : report.outcome === "already-applied"
+      ? "FEATURE ALREADY APPLIED"
+      : "FEATURE EXECUTION COMPLETE";
+
+  const lines = [
+    heading,
+    "",
+    `Feature: ${report.feature}`,
+    "",
+    "Created:",
+    ...report.created.map((item) => `- ${item}`),
+    "",
+    "Wired:",
+    ...report.wired.map((item) => `- ${item}`),
+    "",
+    "Backups:",
+    ...report.backups.map((item) => `- ${item}`),
+    "",
+    `Safe To Open Unity: ${report.safeToOpenUnity ? "YES" : "NO"}`,
+  ];
+
+  if (report.blockedReasons.length > 0) {
+    lines.push("", "Blocked Reasons:", ...report.blockedReasons.map((reason) => `- ${reason}`));
+  }
+
+  return lines.join("\n");
+}
+
+async function executeCameraFollowFeature(projectPath: string): Promise<CameraFeatureExecutionReport> {
+  const snapshot = await inspectGameProject(projectPath);
+  const recovery = await inspectUnityPlaytestRecovery(projectPath);
+  const recoverySafe = buildFollowupPatchRecoverySignal(recovery);
+  const cameraArtifact = await buildExistingCameraFollowArtifact(snapshot, "Assets/Scripts/CameraFollow.cs");
+  const scriptExists = await pathExists(cameraArtifact.absoluteTargetPath);
+  const metaExists = await pathExists(`${cameraArtifact.absoluteTargetPath}.meta`);
+  const scriptBackupExists = await pathExists(`${cameraArtifact.absoluteTargetPath}.aie-backup`);
+  const wiringStatusBefore = await inspectUnityCameraWiringStatus(projectPath, recoverySafe);
+
+  if (scriptExists && metaExists && wiringStatusBefore.cameraFollowAttached && wiringStatusBefore.targetAssigned) {
+    return {
+      outcome: "already-applied",
+      feature: "Camera Follow",
+      created: [
+        "Assets/Scripts/CameraFollow.cs",
+        "Assets/Scripts/CameraFollow.cs.meta",
+      ],
+      wired: [
+        "CameraFollow attached to Main Camera",
+        "Target assigned to Player",
+      ],
+      backups: [
+        scriptBackupExists ? "CameraFollow rollback marker" : "CameraFollow rollback marker missing",
+        wiringStatusBefore.backupExists ? "Scene backup" : "Scene backup missing",
+      ],
+      safeToOpenUnity: wiringStatusBefore.safeToOpenUnityForCompileOrPlaytest,
+      blockedReasons: [],
+    };
+  }
+
+  const blockedReasons: string[] = [];
+  if (!recoverySafe) {
+    blockedReasons.push("Unity recovery guard did not report a safe state for camera feature execution.");
+  }
+
+  if (!scriptExists) {
+    const generationArtifact = await generateCameraFollowArtifact(snapshot, "Assets/Scripts/CameraFollow.cs");
+    const scriptApplyResult = await applyUnityPatchArtifact(
+      generationArtifact,
+      recoverySafe,
+      buildRecoveryGuidance(recovery),
+      true,
+    );
+
+    if (!scriptApplyResult.applied) {
+      blockedReasons.push(...scriptApplyResult.blockedReasons);
+    }
+  }
+
+  const wiringStatusAfterScript = await inspectUnityCameraWiringStatus(projectPath, recoverySafe);
+  if (!(wiringStatusAfterScript.cameraFollowAttached && wiringStatusAfterScript.targetAssigned)) {
+    const wiringApplyResult = await applyUnityCameraWiring(projectPath, recoverySafe);
+    if (!wiringApplyResult.applied) {
+      blockedReasons.push(...wiringApplyResult.blockedReasons);
+    }
+  }
+
+  const finalWiringStatus = await inspectUnityCameraWiringStatus(projectPath, recoverySafe);
+  const finalScriptExists = await pathExists(cameraArtifact.absoluteTargetPath);
+  const finalMetaExists = await pathExists(`${cameraArtifact.absoluteTargetPath}.meta`);
+  const finalScriptBackupExists = await pathExists(`${cameraArtifact.absoluteTargetPath}.aie-backup`);
+  const finalBlockedReasons = blockedReasons.filter((reason, index, reasons) => reasons.indexOf(reason) === index);
+  const complete = finalBlockedReasons.length === 0
+    && finalScriptExists
+    && finalMetaExists
+    && finalWiringStatus.cameraFollowAttached
+    && finalWiringStatus.targetAssigned;
+
+  return {
+    outcome: complete ? "complete" : "blocked",
+    feature: "Camera Follow",
+    created: [
+      finalScriptExists ? "Assets/Scripts/CameraFollow.cs" : "Assets/Scripts/CameraFollow.cs missing",
+      finalMetaExists ? "Assets/Scripts/CameraFollow.cs.meta" : "Assets/Scripts/CameraFollow.cs.meta missing",
+    ],
+    wired: [
+      finalWiringStatus.cameraFollowAttached ? "CameraFollow attached to Main Camera" : "CameraFollow not attached to Main Camera",
+      finalWiringStatus.targetAssigned ? "Target assigned to Player" : "Target not assigned to Player",
+    ],
+    backups: [
+      finalScriptBackupExists ? "CameraFollow rollback marker" : "CameraFollow rollback marker missing",
+      finalWiringStatus.backupExists ? "Scene backup" : "Scene backup missing",
+    ],
+    safeToOpenUnity: finalWiringStatus.safeToOpenUnityForCompileOrPlaytest,
+    blockedReasons: finalBlockedReasons,
+  };
 }
 
 function isDirectExecution(): boolean {
@@ -722,7 +863,11 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
 
     if (options.rollbackGamePatchPath) {
       const snapshot = await inspectGameProject(options.rollbackGamePatchPath);
-      const artifact = await generateUnityPatchArtifact(snapshot);
+      const cameraArtifact = await buildExistingCameraFollowArtifact(snapshot);
+      const cameraBackupExists = await pathExists(`${cameraArtifact.absoluteTargetPath}.aie-backup`);
+      const artifact = cameraBackupExists
+        ? cameraArtifact
+        : await generateUnityPatchArtifact(snapshot);
       const result = await rollbackUnityPatchArtifact(artifact);
 
       if (options.json) {
@@ -800,9 +945,20 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
     if (options.executeNextGameTaskPath) {
       const snapshot = await inspectGameProject(options.executeNextGameTaskPath);
       const progression = await determineGameProgression(snapshot);
-      const recovery = await inspectUnityPlaytestRecovery(options.executeNextGameTaskPath);
 
       if (progression.nextTask.requiredPatchType !== "camera-follow-script") {
+        if (progression.signals.cameraExists) {
+          const report = await executeCameraFollowFeature(options.executeNextGameTaskPath);
+
+          if (options.json) {
+            console.log(JSON.stringify(report, null, 2));
+            return report.outcome === "blocked" ? 1 : 0;
+          }
+
+          console.log(renderCameraFeatureExecutionReport(report));
+          return report.outcome === "blocked" ? 1 : 0;
+        }
+
         const blockedResult = {
           executed: false,
           stage: progression.nextTask.stage,
@@ -826,34 +982,15 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
         return 1;
       }
 
-      const artifact = await generateCameraFollowArtifact(snapshot, progression.nextTask.targetFile);
-      const applyResult = await applyUnityPatchArtifact(
-        artifact,
-        buildFollowupPatchRecoverySignal(recovery),
-        buildRecoveryGuidance(recovery),
-      );
-
-      const executionResult = {
-        executed: applyResult.applied,
-        stage: progression.nextTask.stage,
-        title: progression.nextTask.title,
-        scriptName: progression.nextTask.scriptName,
-        targetFile: progression.nextTask.targetFile,
-        targetPath: artifact.absoluteTargetPath,
-        patchKind: artifact.patchKind,
-        operation: artifact.operation,
-        backupPath: `${artifact.absoluteTargetPath}.aie-backup`,
-        safeToOpenUnityForCompileOrPlaytest: applyResult.applied && buildPatchStatusRecoverySignal(recovery),
-        blockedReasons: applyResult.blockedReasons,
-      };
+      const report = await executeCameraFollowFeature(options.executeNextGameTaskPath);
 
       if (options.json) {
-        console.log(JSON.stringify(executionResult, null, 2));
-        return executionResult.executed ? 0 : 1;
+        console.log(JSON.stringify(report, null, 2));
+        return report.outcome === "blocked" ? 1 : 0;
       }
 
-      console.log(renderNextGameTaskExecutionResult(executionResult));
-      return executionResult.executed ? 0 : 1;
+      console.log(renderCameraFeatureExecutionReport(report));
+      return report.outcome === "blocked" ? 1 : 0;
     }
 
     if (options.projectPath) {

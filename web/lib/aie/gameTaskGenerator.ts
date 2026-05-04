@@ -991,16 +991,12 @@ export async function generateProductionMovementArtifact(snapshot: GameProjectSn
   };
 }
 
-export async function generateCameraFollowArtifact(snapshot: GameProjectSnapshot, targetFile = "Assets/Scripts/CameraFollow.cs"): Promise<UnityPatchArtifact> {
+async function buildCameraFollowArtifact(snapshot: GameProjectSnapshot, targetFile = "Assets/Scripts/CameraFollow.cs"): Promise<UnityPatchArtifact> {
   if (snapshot.engine !== "unity") {
     throw new Error("Camera follow generation requires a Unity project.");
   }
 
   const absoluteTargetPath = path.join(snapshot.rootPath, targetFile);
-  if (await fileExists(absoluteTargetPath)) {
-    throw new Error(`Camera follow target already exists: ${targetFile}`);
-  }
-
   const replacementCode = buildCameraFollowCode();
   return {
     patchKind: "gameplay-update",
@@ -1022,6 +1018,19 @@ export async function generateCameraFollowArtifact(snapshot: GameProjectSnapshot
       noUnityExecution: true,
     },
   };
+}
+
+export async function generateCameraFollowArtifact(snapshot: GameProjectSnapshot, targetFile = "Assets/Scripts/CameraFollow.cs"): Promise<UnityPatchArtifact> {
+  const artifact = await buildCameraFollowArtifact(snapshot, targetFile);
+  if (await fileExists(artifact.absoluteTargetPath)) {
+    throw new Error(`Camera follow target already exists: ${targetFile}`);
+  }
+
+  return artifact;
+}
+
+export async function buildExistingCameraFollowArtifact(snapshot: GameProjectSnapshot, targetFile = "Assets/Scripts/CameraFollow.cs"): Promise<UnityPatchArtifact> {
+  return buildCameraFollowArtifact(snapshot, targetFile);
 }
 
 export async function generateUnityPatchPreview(snapshot: GameProjectSnapshot): Promise<UnityPatchPreview> {

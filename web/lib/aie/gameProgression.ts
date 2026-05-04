@@ -106,9 +106,11 @@ function buildCameraFollowTask(): NextGameTask {
     requiredPatchType: "camera-follow-script",
     safeImplementationPlan: [
       "Create CameraFollow.cs in Assets/Scripts unless an existing camera follow script is already present.",
+      "Create CameraFollow.cs.meta when the script is first generated so scene references stay stable.",
       "Expose a player target, position offset, and smooth follow speed as serialized fields.",
       "Update the camera transform in LateUpdate so it follows player movement cleanly.",
-      "Attach the script to the main camera and assign the player transform in Unity.",
+      "Attach the script to the main camera and assign the player transform through the guarded scene wiring workflow.",
+      "Use one-command feature execution to generate the script, wire the scene, validate status, and stop if the feature is already applied.",
       "Use the guarded patch workflow if an existing camera script needs modification instead of creating a duplicate camera system.",
     ],
     safety: {
