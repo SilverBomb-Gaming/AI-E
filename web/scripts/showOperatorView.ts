@@ -4,6 +4,7 @@ import { stdin as input, stdout as output } from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { inspectGameProject, renderGameProjectSummary } from "../lib/aie/gameProjectInspector";
+import { determineGameProgression, renderNextGameTask } from "../lib/aie/gameProgression";
 import {
   applyUnityPatchArtifact,
   generateGamePatchPlan,
@@ -31,6 +32,7 @@ type ShowOperatorViewOptions = {
   interactive: boolean;
   projectPath?: string;
   gameTaskPath?: string;
+  nextGameTaskPath?: string;
   unityRecoveryPath?: string;
   gamePatchPath?: string;
   gamePatchPreviewPath?: string;
@@ -124,6 +126,21 @@ function parseArgs(argv: string[]): ShowOperatorViewOptions {
         throw new Error("Missing value for --game-task");
       }
       options.gameTaskPath = value.trim();
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith("--next-game-task=")) {
+      options.nextGameTaskPath = arg.slice("--next-game-task=".length).trim() || undefined;
+      continue;
+    }
+
+    if (arg === "--next-game-task") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("Missing value for --next-game-task");
+      }
+      options.nextGameTaskPath = value.trim();
       index += 1;
       continue;
     }
@@ -451,6 +468,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       options.interactive ? "--interactive" : null,
       options.projectPath ? "--project" : null,
       options.gameTaskPath ? "--game-task" : null,
+      options.nextGameTaskPath ? "--next-game-task" : null,
       options.unityRecoveryPath ? "--unity-recovery" : null,
       options.gamePatchPath ? "--game-patch" : null,
       options.gamePatchPreviewPath ? "--game-patch-preview" : null,
@@ -616,6 +634,19 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       }
 
       console.log(renderGameTask(task));
+      return 0;
+    }
+
+    if (options.nextGameTaskPath) {
+      const snapshot = await inspectGameProject(options.nextGameTaskPath);
+      const progression = await determineGameProgression(snapshot);
+
+      if (options.json) {
+        console.log(JSON.stringify(progression, null, 2));
+        return 0;
+      }
+
+      console.log(renderNextGameTask(progression));
       return 0;
     }
 

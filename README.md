@@ -970,6 +970,16 @@ Commands:
 - `npm run operator:view -- --game-patch-status "<project>"`
 - `npm run operator:view -- --rollback-game-patch "<project>"`
 
+## Game Progression Engine
+
+- AI-E can now decide the next gameplay feature from the current Unity project state instead of waiting for manual direction
+- progression currently advances through movement, camera control, basic enemy, player attack, and game loop stages
+- the engine reuses GameProjectSnapshot plus script signals and checks the player movement script for jump support
+
+Command:
+
+- `npm run operator:view -- --next-game-task "<project>"`
+
 ## Safe Runtime Action Bridge
 
 AI-E can now translate supported live operator actions into safe runtime intents.
