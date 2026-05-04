@@ -191,6 +191,63 @@ export type UnityFallRecoveryRollbackResult = {
   };
 };
 
+export type UnityBasicEnemyStatus = {
+  scenePath: string;
+  sceneAbsolutePath: string;
+  enemyName: string | null;
+  basicEnemyScriptExists: boolean;
+  enemyExists: boolean;
+  scriptAttached: boolean;
+  positionedOnGround: boolean;
+  backupExists: boolean;
+  safeToOpenUnityForCompileOrPlaytest: boolean;
+  details: string[];
+  safety: {
+    readOnly: true;
+    noUnityExecution: true;
+  };
+};
+
+export type UnityBasicEnemyApplyResult = {
+  applied: boolean;
+  scenePath: string;
+  sceneAbsolutePath: string;
+  enemyName: string | null;
+  scriptPath: string;
+  backupPath: string;
+  basicEnemyScriptExists: boolean;
+  enemyExists: boolean;
+  scriptAttached: boolean;
+  positionedOnGround: boolean;
+  safeToOpenUnityForCompileOrPlaytest: boolean;
+  blockedReasons: string[];
+  safety: {
+    noUnityExecution: true;
+    backupCreated: boolean;
+    sceneWritten: boolean;
+  };
+};
+
+export type UnityBasicEnemyRollbackResult = {
+  restored: boolean;
+  scenePath: string;
+  sceneAbsolutePath: string;
+  enemyName: string | null;
+  scriptPath: string;
+  backupPath: string;
+  basicEnemyScriptExists: boolean;
+  enemyExists: boolean;
+  scriptAttached: boolean;
+  positionedOnGround: boolean;
+  safeToOpenUnityForCompileOrPlaytest: boolean;
+  blockedReasons: string[];
+  safety: {
+    noUnityExecution: true;
+    backupRetained: true;
+    scriptRemoved: boolean;
+  };
+};
+
 type SceneBlock = {
   typeId: string;
   fileId: string;
@@ -231,6 +288,17 @@ type FallRecoveryVerification = {
   brokenLinks: string[];
 };
 
+type BasicEnemyVerification = {
+  componentFileId: string | null;
+  componentListLinked: boolean;
+  monoBehaviourBlockExists: boolean;
+  scriptGuidMatchesMeta: boolean;
+  expectedFieldsPresent: boolean;
+  positionedOnGround: boolean;
+  componentVisibleToUnity: boolean;
+  brokenLinks: string[];
+};
+
 type CameraFollowVerification = {
   componentFileId: string | null;
   componentListLinked: boolean;
@@ -263,6 +331,13 @@ const FALL_RECOVERY_SCENE_BACKUP_TAG = "fall-recovery";
 const FALL_RECOVERY_STATE_DIR = ".aie-state/fall-recovery";
 const FALL_RECOVERY_CREATED_SCRIPT_MARKER = `${FALL_RECOVERY_STATE_DIR}/FallRecovery.cs.created`;
 const FALL_RECOVERY_CREATED_META_MARKER = `${FALL_RECOVERY_STATE_DIR}/FallRecovery.cs.meta.created`;
+const BASIC_ENEMY_NAME = "Enemy";
+const BASIC_ENEMY_SCRIPT_PATH = "Assets/Scripts/BasicEnemy.cs";
+const BASIC_ENEMY_META_PATH = `${BASIC_ENEMY_SCRIPT_PATH}.meta`;
+const BASIC_ENEMY_SCENE_BACKUP_TAG = "basic-enemy";
+const BASIC_ENEMY_STATE_DIR = ".aie-state/basic-enemy";
+const BASIC_ENEMY_CREATED_SCRIPT_MARKER = `${BASIC_ENEMY_STATE_DIR}/BasicEnemy.cs.created`;
+const BASIC_ENEMY_CREATED_META_MARKER = `${BASIC_ENEMY_STATE_DIR}/BasicEnemy.cs.meta.created`;
 const VISUAL_DEBUG_MATERIAL_DIR = "Assets/Materials";
 const VISUAL_DEBUG_MATERIAL_PATH = `${VISUAL_DEBUG_MATERIAL_DIR}/AIE_DebugFloor.mat`;
 const VISUAL_DEBUG_SCENE_BACKUP_TAG = "visual-debug-floor";
@@ -398,6 +473,74 @@ async function ensureFallRecoveryScript(projectRoot: string): Promise<{ scriptEx
     await writeFile(metaAbsolutePath, `fileFormatVersion: 2\nguid: ${guid}\n`, "utf-8");
     if (!metaExisted) {
       await writeFile(path.join(projectRoot, FALL_RECOVERY_CREATED_META_MARKER), "created\n", "utf-8");
+    }
+  }
+
+  return {
+    scriptExisted,
+    metaExisted,
+    guid,
+  };
+}
+
+function buildBasicEnemySource(): string {
+  return [
+    "using UnityEngine;",
+    "",
+    "namespace EnemyAIDemo",
+    "{",
+    "    /// <summary>",
+    "    /// Adds a simple visible idle behavior to a scene enemy for local playtests.",
+    "    /// </summary>",
+    "    [DisallowMultipleComponent]",
+    "    public sealed class BasicEnemy : MonoBehaviour",
+    "    {",
+    "        [SerializeField] private float rotationSpeedDegrees = 24f;",
+    "        [SerializeField] private bool debugSpawn = true;",
+    "",
+    "        private void Start()",
+    "        {",
+    "            if (debugSpawn)",
+    "            {",
+    "                Debug.Log($\"[AIE Basic Enemy] Spawned {name} at {transform.position}.\", this);",
+    "            }",
+    "        }",
+    "",
+    "        private void Update()",
+    "        {",
+    "            if (Mathf.Abs(rotationSpeedDegrees) <= Mathf.Epsilon)",
+    "            {",
+    "                return;",
+    "            }",
+    "",
+    "            transform.Rotate(0f, rotationSpeedDegrees * Time.deltaTime, 0f, Space.World);",
+    "        }",
+    "    }",
+    "}",
+    "",
+  ].join("\n");
+}
+
+async function ensureBasicEnemyScript(projectRoot: string): Promise<{ scriptExisted: boolean; metaExisted: boolean; guid: string; }> {
+  const scriptAbsolutePath = path.join(projectRoot, BASIC_ENEMY_SCRIPT_PATH);
+  const metaAbsolutePath = path.join(projectRoot, BASIC_ENEMY_META_PATH);
+  const stateDirectoryAbsolutePath = path.join(projectRoot, BASIC_ENEMY_STATE_DIR);
+  const scriptExisted = await fileExists(scriptAbsolutePath);
+  const metaExisted = await fileExists(metaAbsolutePath);
+
+  await mkdir(stateDirectoryAbsolutePath, { recursive: true });
+
+  if (!scriptExisted) {
+    await writeFile(scriptAbsolutePath, buildBasicEnemySource(), "utf-8");
+    await writeFile(path.join(projectRoot, BASIC_ENEMY_CREATED_SCRIPT_MARKER), "created\n", "utf-8");
+  }
+
+  let guid = await readGuidFromMeta(metaAbsolutePath);
+  if (!guid) {
+    guid = buildDeterministicMetaGuid(projectRoot, BASIC_ENEMY_SCRIPT_PATH);
+    await writeFile(metaAbsolutePath, `fileFormatVersion: 2\nguid: ${guid}\n`, "utf-8");
+    if (!metaExisted) {
+      await writeFile(path.join(projectRoot, BASIC_ENEMY_CREATED_META_MARKER), "created\n", "utf-8");
     }
   }
 
@@ -987,6 +1130,10 @@ function findSceneObjectByName(objects: readonly SceneObject[], name: string): S
 }
 
 function parseVector3FromTransformBlock(block: SceneBlock | null): { x: number; y: number; z: number } | null {
+  return parseNamedVector3FromBlock(block, "m_LocalPosition");
+}
+
+function parseNamedVector3FromBlock(block: SceneBlock | null, fieldName: string): { x: number; y: number; z: number } | null {
   const match = block?.body.match(/^  m_LocalPosition: \{x: (-?\d+(?:\.\d+)?), y: (-?\d+(?:\.\d+)?), z: (-?\d+(?:\.\d+)?)\}$/m);
   if (!match) {
     return null;
@@ -997,6 +1144,39 @@ function parseVector3FromTransformBlock(block: SceneBlock | null): { x: number; 
     y: Number(match[2]),
     z: Number(match[3]),
   };
+}
+
+function parseTransformScaleFromBlock(block: SceneBlock | null): { x: number; y: number; z: number } | null {
+  const match = block?.body.match(/^  m_LocalScale: \{x: (-?\d+(?:\.\d+)?), y: (-?\d+(?:\.\d+)?), z: (-?\d+(?:\.\d+)?)\}$/m);
+  if (!match) {
+    return null;
+  }
+
+  return {
+    x: Number(match[1]),
+    y: Number(match[2]),
+    z: Number(match[3]),
+  };
+}
+
+function replaceNamedVector3(blockRaw: string, fieldName: string, value: { x: number; y: number; z: number }): string {
+  const fieldPattern = new RegExp(`^  ${fieldName}: \\{x: -?\\d+(?:\\.\\d+)?, y: -?\\d+(?:\\.\\d+)?, z: -?\\d+(?:\\.\\d+)?\\}$`, "m");
+  const replacement = `  ${fieldName}: {x: ${value.x}, y: ${value.y}, z: ${value.z}}`;
+  return fieldPattern.test(blockRaw)
+    ? blockRaw.replace(fieldPattern, replacement)
+    : blockRaw;
+}
+
+function isEnemyGrounded(
+  enemyPosition: { x: number; y: number; z: number } | null,
+  enemyScale: { x: number; y: number; z: number } | null,
+  groundPosition: { x: number; y: number; z: number } | null,
+): boolean {
+  if (!enemyPosition || !enemyScale || !groundPosition) {
+    return false;
+  }
+
+  return Math.abs((enemyPosition.y - enemyScale.y) - groundPosition.y) <= 0.35;
 }
 
 function buildFallRecoveryComponentBlock(
@@ -1023,6 +1203,156 @@ function buildFallRecoveryComponentBlock(
     "  fallThresholdY: -10",
     "  debugRecovery: 1",
     `  fallbackSpawnPosition: {x: ${fallbackSpawnPosition.x}, y: ${fallbackSpawnPosition.y}, z: ${fallbackSpawnPosition.z}}`,
+    "",
+  ].join("\n");
+}
+
+function buildBasicEnemyComponentBlock(componentFileId: string, enemyGameObjectFileId: string, scriptGuid: string): string {
+  return [
+    `--- !u!114 &${componentFileId}`,
+    "MonoBehaviour:",
+    "  m_ObjectHideFlags: 0",
+    "  m_CorrespondingSourceObject: {fileID: 0}",
+    "  m_PrefabInstance: {fileID: 0}",
+    "  m_PrefabAsset: {fileID: 0}",
+    `  m_GameObject: {fileID: ${enemyGameObjectFileId}}`,
+    "  m_Enabled: 1",
+    "  m_EditorHideFlags: 0",
+    `  m_Script: {fileID: 11500000, guid: ${scriptGuid}, type: 3}`,
+    "  m_Name: ",
+    "  m_EditorClassIdentifier:",
+    "  rotationSpeedDegrees: 24",
+    "  debugSpawn: 1",
+    "",
+  ].join("\n");
+}
+
+function buildBasicEnemyBlocks(
+  gameObjectFileId: string,
+  transformFileId: string,
+  rendererFileId: string,
+  colliderFileId: string,
+  meshFilterFileId: string,
+  basicEnemyComponentFileId: string,
+  scriptGuid: string,
+  spawnPosition: { x: number; y: number; z: number },
+): string {
+  return [
+    `--- !u!1 &${gameObjectFileId}`,
+    "GameObject:",
+    "  m_ObjectHideFlags: 0",
+    "  m_CorrespondingSourceObject: {fileID: 0}",
+    "  m_PrefabInstance: {fileID: 0}",
+    "  m_PrefabAsset: {fileID: 0}",
+    "  serializedVersion: 6",
+    "  m_Component:",
+    `  - component: {fileID: ${transformFileId}}`,
+    `  - component: {fileID: ${rendererFileId}}`,
+    `  - component: {fileID: ${colliderFileId}}`,
+    `  - component: {fileID: ${meshFilterFileId}}`,
+    `  - component: {fileID: ${basicEnemyComponentFileId}}`,
+    "  m_Layer: 0",
+    `  m_Name: ${BASIC_ENEMY_NAME}`,
+    "  m_TagString: Untagged",
+    "  m_Icon: {fileID: 0}",
+    "  m_NavMeshLayer: 0",
+    "  m_StaticEditorFlags: 0",
+    "  m_IsActive: 1",
+    buildBasicEnemyComponentBlock(basicEnemyComponentFileId, gameObjectFileId, scriptGuid).trimEnd(),
+    `--- !u!23 &${rendererFileId}`,
+    "MeshRenderer:",
+    "  m_ObjectHideFlags: 0",
+    "  m_CorrespondingSourceObject: {fileID: 0}",
+    "  m_PrefabInstance: {fileID: 0}",
+    "  m_PrefabAsset: {fileID: 0}",
+    `  m_GameObject: {fileID: ${gameObjectFileId}}`,
+    "  m_Enabled: 1",
+    "  m_CastShadows: 1",
+    "  m_ReceiveShadows: 1",
+    "  m_DynamicOccludee: 1",
+    "  m_StaticShadowCaster: 0",
+    "  m_MotionVectors: 1",
+    "  m_LightProbeUsage: 1",
+    "  m_ReflectionProbeUsage: 1",
+    "  m_RayTracingMode: 2",
+    "  m_RayTraceProcedural: 0",
+    "  m_RayTracingAccelStructBuildFlagsOverride: 0",
+    "  m_RayTracingAccelStructBuildFlags: 1",
+    "  m_SmallMeshCulling: 1",
+    "  m_ForceMeshLod: -1",
+    "  m_MeshLodSelectionBias: 0",
+    "  m_RenderingLayerMask: 1",
+    "  m_RendererPriority: 0",
+    "  m_Materials:",
+    "  - {fileID: 10303, guid: 0000000000000000f000000000000000, type: 0}",
+    "  m_StaticBatchInfo:",
+    "    firstSubMesh: 0",
+    "    subMeshCount: 0",
+    "  m_StaticBatchRoot: {fileID: 0}",
+    "  m_ProbeAnchor: {fileID: 0}",
+    "  m_LightProbeVolumeOverride: {fileID: 0}",
+    "  m_ScaleInLightmap: 1",
+    "  m_ReceiveGI: 1",
+    "  m_PreserveUVs: 1",
+    "  m_IgnoreNormalsForChartDetection: 0",
+    "  m_ImportantGI: 0",
+    "  m_StitchLightmapSeams: 1",
+    "  m_SelectedEditorRenderState: 3",
+    "  m_MinimumChartSize: 4",
+    "  m_AutoUVMaxDistance: 0.5",
+    "  m_AutoUVMaxAngle: 89",
+    "  m_LightmapParameters: {fileID: 0}",
+    "  m_GlobalIlluminationMeshLod: 0",
+    "  m_SortingLayerID: 0",
+    "  m_SortingLayer: 0",
+    "  m_SortingOrder: 0",
+    "  m_AdditionalVertexStreams: {fileID: 0}",
+    `--- !u!136 &${colliderFileId}`,
+    "CapsuleCollider:",
+    "  m_ObjectHideFlags: 0",
+    "  m_CorrespondingSourceObject: {fileID: 0}",
+    "  m_PrefabInstance: {fileID: 0}",
+    "  m_PrefabAsset: {fileID: 0}",
+    `  m_GameObject: {fileID: ${gameObjectFileId}}`,
+    "  m_Material: {fileID: 0}",
+    "  m_IncludeLayers:",
+    "    serializedVersion: 2",
+    "    m_Bits: 0",
+    "  m_ExcludeLayers:",
+    "    serializedVersion: 2",
+    "    m_Bits: 0",
+    "  m_LayerOverridePriority: 0",
+    "  m_IsTrigger: 0",
+    "  m_ProvidesContacts: 0",
+    "  m_Enabled: 1",
+    "  serializedVersion: 2",
+    "  m_Radius: 0.5",
+    "  m_Height: 2",
+    "  m_Direction: 1",
+    "  m_Center: {x: 0, y: 0, z: 0}",
+    `--- !u!33 &${meshFilterFileId}`,
+    "MeshFilter:",
+    "  m_ObjectHideFlags: 0",
+    "  m_CorrespondingSourceObject: {fileID: 0}",
+    "  m_PrefabInstance: {fileID: 0}",
+    "  m_PrefabAsset: {fileID: 0}",
+    `  m_GameObject: {fileID: ${gameObjectFileId}}`,
+    "  m_Mesh: {fileID: 10208, guid: 0000000000000000e000000000000000, type: 0}",
+    `--- !u!4 &${transformFileId}`,
+    "Transform:",
+    "  m_ObjectHideFlags: 0",
+    "  m_CorrespondingSourceObject: {fileID: 0}",
+    "  m_PrefabInstance: {fileID: 0}",
+    "  m_PrefabAsset: {fileID: 0}",
+    `  m_GameObject: {fileID: ${gameObjectFileId}}`,
+    "  serializedVersion: 2",
+    "  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}",
+    `  m_LocalPosition: {x: ${spawnPosition.x}, y: ${spawnPosition.y}, z: ${spawnPosition.z}}`,
+    "  m_LocalScale: {x: 1.25, y: 1.25, z: 1.25}",
+    "  m_ConstrainProportionsScale: 0",
+    "  m_Children: []",
+    "  m_Father: {fileID: 0}",
+    "  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}",
     "",
   ].join("\n");
 }
@@ -1085,6 +1415,161 @@ function collectStaleFallRecoveryComponentIds(
   });
 
   return [...new Set([...candidateIds, ...playerExtraIds])];
+}
+
+function isBasicEnemyCandidateBlock(block: SceneBlock, enemyGameObjectId: string | null, scriptGuid: string | null): boolean {
+  if (block.typeId !== "114") {
+    return false;
+  }
+
+  if (enemyGameObjectId && extractBlockGameObjectFileId(block) !== enemyGameObjectId) {
+    return false;
+  }
+
+  const blockScriptGuid = extractBlockScriptGuid(block);
+  if (scriptGuid && blockScriptGuid === scriptGuid) {
+    return true;
+  }
+
+  return /BasicEnemy/.test(block.body)
+    || /^  rotationSpeedDegrees:/m.test(block.body)
+    || /^  debugSpawn:/m.test(block.body);
+}
+
+function hasExpectedBasicEnemySerializedFields(block: SceneBlock | null): boolean {
+  if (!block) {
+    return false;
+  }
+
+  return /^  rotationSpeedDegrees: 24$/m.test(block.body)
+    && /^  debugSpawn: 1$/m.test(block.body);
+}
+
+function buildBasicEnemyVerification(
+  blocks: readonly SceneBlock[],
+  enemyObject: SceneObject | null,
+  scriptGuid: string | null,
+  groundPosition: { x: number; y: number; z: number } | null,
+): BasicEnemyVerification {
+  if (!enemyObject) {
+    return {
+      componentFileId: null,
+      componentListLinked: false,
+      monoBehaviourBlockExists: false,
+      scriptGuidMatchesMeta: false,
+      expectedFieldsPresent: false,
+      positionedOnGround: false,
+      componentVisibleToUnity: false,
+      brokenLinks: ["Enemy GameObject was not found."],
+    };
+  }
+
+  const brokenLinks: string[] = [];
+  const transformBlock = findBlock(blocks, findComponentFileIdByType(blocks, enemyObject, "4"));
+  const enemyPosition = parseVector3FromTransformBlock(transformBlock);
+  const enemyScale = parseTransformScaleFromBlock(transformBlock);
+  const positionedOnGround = isEnemyGrounded(enemyPosition, enemyScale, groundPosition);
+  const linkedComponentIds = enemyObject.componentFileIds.filter((componentFileId) => {
+    const block = findBlock(blocks, componentFileId);
+    return block !== null && isBasicEnemyCandidateBlock(block, enemyObject.gameObjectFileId, scriptGuid);
+  });
+  const componentFileId = linkedComponentIds[0] ?? null;
+  const linkedComponentBlock = findBlock(blocks, componentFileId);
+  const componentListLinked = componentFileId !== null && isSafeSceneFileId(componentFileId);
+  const monoBehaviourBlockExists = linkedComponentBlock?.typeId === "114" && extractBlockGameObjectFileId(linkedComponentBlock) === enemyObject.gameObjectFileId;
+  const scriptGuidMatchesMeta = scriptGuid !== null && extractBlockScriptGuid(linkedComponentBlock) === scriptGuid;
+  const expectedFieldsPresent = hasExpectedBasicEnemySerializedFields(linkedComponentBlock);
+  const componentVisibleToUnity = componentListLinked && monoBehaviourBlockExists && scriptGuidMatchesMeta && expectedFieldsPresent;
+
+  if (linkedComponentIds.length === 0) {
+    brokenLinks.push("Enemy m_Component list does not link a BasicEnemy MonoBehaviour block.");
+  }
+
+  if (componentFileId !== null && !isSafeSceneFileId(componentFileId)) {
+    brokenLinks.push(`Enemy references BasicEnemy with unsafe scene fileID ${componentFileId}.`);
+  }
+
+  if (!monoBehaviourBlockExists) {
+    brokenLinks.push("Referenced BasicEnemy MonoBehaviour block is missing or not linked back to Enemy.");
+  }
+
+  if (scriptGuid === null) {
+    brokenLinks.push("BasicEnemy.cs.meta is missing, so Unity cannot resolve the script GUID.");
+  } else if (!scriptGuidMatchesMeta) {
+    brokenLinks.push("BasicEnemy MonoBehaviour block does not reference the BasicEnemy.cs.meta GUID.");
+  }
+
+  if (!expectedFieldsPresent) {
+    brokenLinks.push("BasicEnemy MonoBehaviour block does not serialize the expected rotation/debug fields.");
+  }
+
+  if (!positionedOnGround) {
+    brokenLinks.push("Enemy Transform is not positioned on the detected ground plane.");
+  }
+
+  return {
+    componentFileId,
+    componentListLinked,
+    monoBehaviourBlockExists,
+    scriptGuidMatchesMeta,
+    expectedFieldsPresent,
+    positionedOnGround,
+    componentVisibleToUnity,
+    brokenLinks,
+  };
+}
+
+async function loadBasicEnemyContext(projectPath: string): Promise<{
+  parsedScene: ParsedScene;
+  playerObject: SceneObject | null;
+  playerSpawnPosition: { x: number; y: number; z: number } | null;
+  enemyObject: SceneObject | null;
+  enemyTransformFileId: string | null;
+  groundObject: SceneObject | null;
+  groundPosition: { x: number; y: number; z: number } | null;
+  scriptGuid: string | null;
+  verification: BasicEnemyVerification;
+}> {
+  const parsedScene = await parseProjectScene(projectPath);
+  const playerObject = parsedScene.playerCandidate;
+  const playerSpawnPosition = parseVector3FromTransformBlock(findBlock(parsedScene.blocks, parsedScene.playerTransformFileId));
+  const enemyObject = findSceneObjectByName(parsedScene.objects, BASIC_ENEMY_NAME);
+  const enemyTransformFileId = enemyObject ? findComponentFileIdByType(parsedScene.blocks, enemyObject, "4") : null;
+  const groundDetection = detectPrimaryGroundRenderer(parsedScene.blocks, parsedScene.objects);
+  const groundObject = groundDetection?.sceneObject ?? null;
+  const groundTransformFileId = groundObject ? findComponentFileIdByType(parsedScene.blocks, groundObject, "4") : null;
+  const groundPosition = parseVector3FromTransformBlock(findBlock(parsedScene.blocks, groundTransformFileId));
+  const scriptGuid = await readGuidFromMeta(path.join(parsedScene.rootPath, BASIC_ENEMY_META_PATH));
+  const verification = buildBasicEnemyVerification(parsedScene.blocks, enemyObject, scriptGuid, groundPosition);
+
+  return {
+    parsedScene,
+    playerObject,
+    playerSpawnPosition,
+    enemyObject,
+    enemyTransformFileId,
+    groundObject,
+    groundPosition,
+    scriptGuid,
+    verification,
+  };
+}
+
+function collectStaleBasicEnemyComponentIds(parsedScene: ParsedScene, enemyObject: SceneObject, scriptGuid: string | null): string[] {
+  const candidateIds = parsedScene.blocks
+    .filter((block) => isBasicEnemyCandidateBlock(block, enemyObject.gameObjectFileId, scriptGuid))
+    .map((block) => block.fileId);
+
+  const enemyExtraIds = enemyObject.componentFileIds.filter((componentFileId) => {
+    const block = findBlock(parsedScene.blocks, componentFileId);
+    if (!block) {
+      return true;
+    }
+
+    return isBasicEnemyCandidateBlock(block, enemyObject.gameObjectFileId, scriptGuid);
+  });
+
+  return [...new Set([...candidateIds, ...enemyExtraIds])];
 }
 
 export async function inspectUnityFallRecoveryStatus(projectPath: string, recoverySafe: boolean): Promise<UnityFallRecoveryStatus> {
@@ -1336,6 +1821,287 @@ export async function rollbackUnityFallRecovery(projectPath: string, recoverySaf
     fallRecoveryAttached: status.fallRecoveryAttached,
     respawnTargetAssigned: status.respawnTargetAssigned,
     fallRecoveryScriptExists: status.fallRecoveryScriptExists,
+    safeToOpenUnityForCompileOrPlaytest: status.safeToOpenUnityForCompileOrPlaytest,
+    blockedReasons: [],
+    safety: {
+      noUnityExecution: true,
+      backupRetained: true,
+      scriptRemoved,
+    },
+  };
+}
+
+export async function inspectUnityBasicEnemyStatus(projectPath: string, recoverySafe: boolean): Promise<UnityBasicEnemyStatus> {
+  const context = await loadBasicEnemyContext(projectPath);
+  const scriptAbsolutePath = path.join(context.parsedScene.rootPath, BASIC_ENEMY_SCRIPT_PATH);
+  const scriptMetaAbsolutePath = path.join(context.parsedScene.rootPath, BASIC_ENEMY_META_PATH);
+  const basicEnemyScriptExists = await fileExists(scriptAbsolutePath);
+  const basicEnemyMetaExists = await fileExists(scriptMetaAbsolutePath);
+  const backupPath = sceneBackupPathFor(context.parsedScene.sceneAbsolutePath, BASIC_ENEMY_SCENE_BACKUP_TAG);
+  const backupExists = await fileExists(backupPath);
+  const details: string[] = [];
+
+  if (!context.enemyObject) {
+    details.push("Enemy GameObject was not found in the selected scene.");
+  } else {
+    details.push(`Detected enemy object: ${context.enemyObject.name}`);
+  }
+
+  if (context.playerSpawnPosition) {
+    details.push(`Player spawn reference: {x: ${context.playerSpawnPosition.x}, y: ${context.playerSpawnPosition.y}, z: ${context.playerSpawnPosition.z}}`);
+  } else {
+    details.push("Player spawn reference could not be resolved.");
+  }
+
+  if (context.groundObject && context.groundPosition) {
+    details.push(`Detected ground object: ${context.groundObject.name} at y=${context.groundPosition.y}`);
+  } else {
+    details.push("Ground object could not be resolved for enemy placement verification.");
+  }
+
+  if (!basicEnemyScriptExists) {
+    details.push(`Basic enemy script asset is missing: ${BASIC_ENEMY_SCRIPT_PATH}`);
+  } else if (!basicEnemyMetaExists) {
+    details.push(`Basic enemy script meta is missing: ${BASIC_ENEMY_META_PATH}`);
+  }
+
+  const safeToOpenUnityForCompileOrPlaytest = recoverySafe
+    && basicEnemyScriptExists
+    && basicEnemyMetaExists
+    && context.enemyObject !== null
+    && context.verification.componentVisibleToUnity
+    && context.verification.positionedOnGround;
+
+  return {
+    scenePath: context.parsedScene.scenePath,
+    sceneAbsolutePath: context.parsedScene.sceneAbsolutePath,
+    enemyName: context.enemyObject?.name ?? null,
+    basicEnemyScriptExists,
+    enemyExists: context.enemyObject !== null,
+    scriptAttached: context.verification.componentVisibleToUnity,
+    positionedOnGround: context.verification.positionedOnGround,
+    backupExists,
+    safeToOpenUnityForCompileOrPlaytest,
+    details,
+    safety: {
+      readOnly: true,
+      noUnityExecution: true,
+    },
+  };
+}
+
+export async function applyUnityBasicEnemy(projectPath: string, recoverySafe: boolean): Promise<UnityBasicEnemyApplyResult> {
+  const contextBefore = await loadBasicEnemyContext(projectPath);
+  const backupPath = sceneBackupPathFor(contextBefore.parsedScene.sceneAbsolutePath, BASIC_ENEMY_SCENE_BACKUP_TAG);
+  const backupExists = await fileExists(backupPath);
+  const blockedReasons: string[] = [];
+
+  if (!recoverySafe) {
+    blockedReasons.push("Unity recovery guard did not report a safe state for basic enemy mutation.");
+  }
+
+  if (!contextBefore.playerSpawnPosition) {
+    blockedReasons.push("A Player spawn position was not found in the selected scene.");
+  }
+
+  if (!contextBefore.groundPosition) {
+    blockedReasons.push("A ground object was not detected, so safe enemy placement could not be verified.");
+  }
+
+  if (blockedReasons.length > 0) {
+    return {
+      applied: false,
+      scenePath: contextBefore.parsedScene.scenePath,
+      sceneAbsolutePath: contextBefore.parsedScene.sceneAbsolutePath,
+      enemyName: contextBefore.enemyObject?.name ?? null,
+      scriptPath: BASIC_ENEMY_SCRIPT_PATH,
+      backupPath,
+      basicEnemyScriptExists: await fileExists(path.join(contextBefore.parsedScene.rootPath, BASIC_ENEMY_SCRIPT_PATH)),
+      enemyExists: contextBefore.enemyObject !== null,
+      scriptAttached: false,
+      positionedOnGround: contextBefore.verification.positionedOnGround,
+      safeToOpenUnityForCompileOrPlaytest: false,
+      blockedReasons,
+      safety: {
+        noUnityExecution: true,
+        backupCreated: backupExists,
+        sceneWritten: false,
+      },
+    };
+  }
+
+  const ensuredScript = await ensureBasicEnemyScript(contextBefore.parsedScene.rootPath);
+  const contextAfterScript = await loadBasicEnemyContext(projectPath);
+
+  if (contextAfterScript.enemyObject && contextAfterScript.verification.componentVisibleToUnity && contextAfterScript.verification.positionedOnGround) {
+    const status = await inspectUnityBasicEnemyStatus(projectPath, recoverySafe);
+    return {
+      applied: false,
+      scenePath: status.scenePath,
+      sceneAbsolutePath: status.sceneAbsolutePath,
+      enemyName: status.enemyName,
+      scriptPath: BASIC_ENEMY_SCRIPT_PATH,
+      backupPath,
+      basicEnemyScriptExists: status.basicEnemyScriptExists,
+      enemyExists: status.enemyExists,
+      scriptAttached: status.scriptAttached,
+      positionedOnGround: status.positionedOnGround,
+      safeToOpenUnityForCompileOrPlaytest: status.safeToOpenUnityForCompileOrPlaytest,
+      blockedReasons: ["Enemy already exists with a Unity-visible BasicEnemy component and valid ground placement."],
+      safety: {
+        noUnityExecution: true,
+        backupCreated: backupExists,
+        sceneWritten: !ensuredScript.scriptExisted || !ensuredScript.metaExisted,
+      },
+    };
+  }
+
+  if (!backupExists) {
+    await copyFile(contextAfterScript.parsedScene.sceneAbsolutePath, backupPath);
+  }
+
+  const spawnPosition = {
+    x: contextAfterScript.playerSpawnPosition?.x ?? 0,
+    y: (contextAfterScript.groundPosition?.y ?? 0) + 1.25,
+    z: (contextAfterScript.playerSpawnPosition?.z ?? 0) + 6,
+  };
+
+  let updatedSource = contextAfterScript.parsedScene.source;
+
+  if (contextAfterScript.enemyObject) {
+    const enemyObject = contextAfterScript.enemyObject;
+    const enemyBlock = findBlock(contextAfterScript.parsedScene.blocks, enemyObject.gameObjectFileId);
+    const transformBlock = findBlock(contextAfterScript.parsedScene.blocks, contextAfterScript.enemyTransformFileId);
+    if (!enemyBlock || !transformBlock) {
+      throw new Error("Enemy GameObject or Transform block was not found during basic enemy apply.");
+    }
+
+    const staleComponentIds = collectStaleBasicEnemyComponentIds(contextAfterScript.parsedScene, enemyObject, ensuredScript.guid);
+    const filteredComponentIds = enemyObject.componentFileIds.filter((componentFileId) => !staleComponentIds.includes(componentFileId));
+    const filteredBlocks = contextAfterScript.parsedScene.blocks.filter((block) => !staleComponentIds.includes(block.fileId));
+    const newComponentFileId = nextSafeSceneFileId(filteredBlocks);
+    const updatedEnemyBlock = replaceGameObjectComponentList(enemyBlock, [...filteredComponentIds, newComponentFileId]);
+    updatedSource = updatedSource.replace(enemyBlock.raw, updatedEnemyBlock);
+
+    for (const staleComponentId of staleComponentIds) {
+      const staleBlock = findBlock(contextAfterScript.parsedScene.blocks, staleComponentId);
+      if (staleBlock) {
+        updatedSource = updatedSource.replace(staleBlock.raw, "");
+      }
+    }
+
+    let updatedTransformBlock = replaceNamedVector3(transformBlock.raw, "m_LocalPosition", spawnPosition);
+    updatedTransformBlock = replaceNamedVector3(updatedTransformBlock, "m_LocalScale", { x: 1.25, y: 1.25, z: 1.25 });
+    updatedSource = updatedSource.replace(transformBlock.raw, updatedTransformBlock);
+    updatedSource = `${updatedSource.trimEnd()}\n${buildBasicEnemyComponentBlock(newComponentFileId, enemyObject.gameObjectFileId, ensuredScript.guid)}`;
+  } else {
+    const safeIds = contextAfterScript.parsedScene.blocks
+      .map((block) => Number(block.fileId))
+      .filter((value) => Number.isInteger(value) && value > 0 && value <= MAX_SAFE_UNITY_SCENE_FILE_ID);
+    const nextIdStart = (safeIds.length > 0 ? Math.max(...safeIds) : 0) + 1;
+    updatedSource = `${updatedSource.trimEnd()}\n${buildBasicEnemyBlocks(
+      String(nextIdStart),
+      String(nextIdStart + 1),
+      String(nextIdStart + 2),
+      String(nextIdStart + 3),
+      String(nextIdStart + 4),
+      String(nextIdStart + 5),
+      ensuredScript.guid,
+      spawnPosition,
+    )}`;
+  }
+
+  await writeFile(contextAfterScript.parsedScene.sceneAbsolutePath, updatedSource, "utf-8");
+
+  const status = await inspectUnityBasicEnemyStatus(projectPath, recoverySafe);
+  return {
+    applied: status.scriptAttached && status.positionedOnGround,
+    scenePath: status.scenePath,
+    sceneAbsolutePath: status.sceneAbsolutePath,
+    enemyName: status.enemyName,
+    scriptPath: BASIC_ENEMY_SCRIPT_PATH,
+    backupPath,
+    basicEnemyScriptExists: status.basicEnemyScriptExists,
+    enemyExists: status.enemyExists,
+    scriptAttached: status.scriptAttached,
+    positionedOnGround: status.positionedOnGround,
+    safeToOpenUnityForCompileOrPlaytest: status.safeToOpenUnityForCompileOrPlaytest,
+    blockedReasons: status.scriptAttached && status.positionedOnGround ? [] : ["Basic enemy scene state was not written in the expected Unity-visible shape."],
+    safety: {
+      noUnityExecution: true,
+      backupCreated: true,
+      sceneWritten: true,
+    },
+  };
+}
+
+export async function rollbackUnityBasicEnemy(projectPath: string, recoverySafe: boolean): Promise<UnityBasicEnemyRollbackResult> {
+  const contextBefore = await loadBasicEnemyContext(projectPath);
+  const backupPath = sceneBackupPathFor(contextBefore.parsedScene.sceneAbsolutePath, BASIC_ENEMY_SCENE_BACKUP_TAG);
+  const scriptCreatedMarkerPath = path.join(contextBefore.parsedScene.rootPath, BASIC_ENEMY_CREATED_SCRIPT_MARKER);
+  const metaCreatedMarkerPath = path.join(contextBefore.parsedScene.rootPath, BASIC_ENEMY_CREATED_META_MARKER);
+  const createdScriptByAie = await fileExists(scriptCreatedMarkerPath);
+  const createdMetaByAie = await fileExists(metaCreatedMarkerPath);
+
+  if (!(await fileExists(backupPath))) {
+    const status = await inspectUnityBasicEnemyStatus(projectPath, recoverySafe);
+    return {
+      restored: false,
+      scenePath: status.scenePath,
+      sceneAbsolutePath: status.sceneAbsolutePath,
+      enemyName: status.enemyName,
+      scriptPath: BASIC_ENEMY_SCRIPT_PATH,
+      backupPath,
+      basicEnemyScriptExists: status.basicEnemyScriptExists,
+      enemyExists: status.enemyExists,
+      scriptAttached: status.scriptAttached,
+      positionedOnGround: status.positionedOnGround,
+      safeToOpenUnityForCompileOrPlaytest: status.safeToOpenUnityForCompileOrPlaytest,
+      blockedReasons: ["No basic enemy scene backup was found for rollback."],
+      safety: {
+        noUnityExecution: true,
+        backupRetained: true,
+        scriptRemoved: false,
+      },
+    };
+  }
+
+  const backupSource = await readFile(backupPath, "utf-8");
+  await writeFile(contextBefore.parsedScene.sceneAbsolutePath, backupSource, "utf-8");
+
+  let scriptRemoved = false;
+  if (createdScriptByAie) {
+    const scriptAbsolutePath = path.join(contextBefore.parsedScene.rootPath, BASIC_ENEMY_SCRIPT_PATH);
+    if (await fileExists(scriptAbsolutePath)) {
+      await writeFile(scriptAbsolutePath, "", "utf-8");
+      await stat(scriptAbsolutePath);
+      await import("node:fs/promises").then(({ unlink }) => unlink(scriptAbsolutePath));
+      scriptRemoved = true;
+    }
+    await import("node:fs/promises").then(({ unlink }) => unlink(scriptCreatedMarkerPath));
+  }
+
+  if (createdMetaByAie) {
+    const metaAbsolutePath = path.join(contextBefore.parsedScene.rootPath, BASIC_ENEMY_META_PATH);
+    if (await fileExists(metaAbsolutePath)) {
+      await import("node:fs/promises").then(({ unlink }) => unlink(metaAbsolutePath));
+      scriptRemoved = true;
+    }
+    await import("node:fs/promises").then(({ unlink }) => unlink(metaCreatedMarkerPath));
+  }
+
+  const status = await inspectUnityBasicEnemyStatus(projectPath, recoverySafe);
+  return {
+    restored: true,
+    scenePath: status.scenePath,
+    sceneAbsolutePath: status.sceneAbsolutePath,
+    enemyName: status.enemyName,
+    scriptPath: BASIC_ENEMY_SCRIPT_PATH,
+    backupPath,
+    basicEnemyScriptExists: status.basicEnemyScriptExists,
+    enemyExists: status.enemyExists,
+    scriptAttached: status.scriptAttached,
+    positionedOnGround: status.positionedOnGround,
     safeToOpenUnityForCompileOrPlaytest: status.safeToOpenUnityForCompileOrPlaytest,
     blockedReasons: [],
     safety: {
@@ -2050,6 +2816,87 @@ export function renderUnityFallRecoveryRollbackResult(result: UnityFallRecoveryR
     `FallRecovery Attached: ${result.fallRecoveryAttached ? "YES" : "NO"}`,
     `Respawn Target Assigned: ${result.respawnTargetAssigned ? "YES" : "NO"}`,
     `FallRecovery.cs Exists: ${result.fallRecoveryScriptExists ? "YES" : "NO"}`,
+    `Safe To Open Unity/Playtest: ${result.safeToOpenUnityForCompileOrPlaytest ? "YES" : "NO"}`,
+  ].join("\n");
+}
+
+export function renderUnityBasicEnemyStatus(status: UnityBasicEnemyStatus): string {
+  return [
+    "UNITY BASIC ENEMY STATUS",
+    "",
+    `Scene: ${status.scenePath}`,
+    `Scene Path: ${status.sceneAbsolutePath}`,
+    `Enemy: ${status.enemyName ?? "none"}`,
+    `BasicEnemy.cs Exists: ${status.basicEnemyScriptExists ? "YES" : "NO"}`,
+    `Enemy GameObject Exists: ${status.enemyExists ? "YES" : "NO"}`,
+    `BasicEnemy Attached: ${status.scriptAttached ? "YES" : "NO"}`,
+    `Positioned On Ground: ${status.positionedOnGround ? "YES" : "NO"}`,
+    `Backup Exists: ${status.backupExists ? "YES" : "NO"}`,
+    `Safe To Open Unity/Playtest: ${status.safeToOpenUnityForCompileOrPlaytest ? "YES" : "NO"}`,
+    "",
+    "Details:",
+    ...status.details.map((detail, index) => `${index + 1}. ${detail}`),
+  ].join("\n");
+}
+
+export function renderUnityBasicEnemyApplyResult(result: UnityBasicEnemyApplyResult): string {
+  if (!result.applied) {
+    return [
+      "UNITY BASIC ENEMY APPLY BLOCKED",
+      "",
+      `Scene: ${result.scenePath}`,
+      `Scene Path: ${result.sceneAbsolutePath}`,
+      `Enemy: ${result.enemyName ?? "none"}`,
+      `Script Path: ${result.scriptPath}`,
+      `Backup Path: ${result.backupPath}`,
+      "",
+      "Blocked Reasons:",
+      ...result.blockedReasons.map((reason, index) => `${index + 1}. ${reason}`),
+    ].join("\n");
+  }
+
+  return [
+    "UNITY BASIC ENEMY APPLY COMPLETE",
+    "",
+    `Scene: ${result.scenePath}`,
+    `Scene Path: ${result.sceneAbsolutePath}`,
+    `Enemy: ${result.enemyName ?? "none"}`,
+    `Script Path: ${result.scriptPath}`,
+    `Backup Path: ${result.backupPath}`,
+    `BasicEnemy.cs Exists: ${result.basicEnemyScriptExists ? "YES" : "NO"}`,
+    `Enemy GameObject Exists: ${result.enemyExists ? "YES" : "NO"}`,
+    `BasicEnemy Attached: ${result.scriptAttached ? "YES" : "NO"}`,
+    `Positioned On Ground: ${result.positionedOnGround ? "YES" : "NO"}`,
+    `Safe To Open Unity/Playtest: ${result.safeToOpenUnityForCompileOrPlaytest ? "YES" : "NO"}`,
+  ].join("\n");
+}
+
+export function renderUnityBasicEnemyRollbackResult(result: UnityBasicEnemyRollbackResult): string {
+  if (!result.restored) {
+    return [
+      "UNITY BASIC ENEMY ROLLBACK BLOCKED",
+      "",
+      `Scene: ${result.scenePath}`,
+      `Scene Path: ${result.sceneAbsolutePath}`,
+      `Script Path: ${result.scriptPath}`,
+      `Backup Path: ${result.backupPath}`,
+      "",
+      "Blocked Reasons:",
+      ...result.blockedReasons.map((reason, index) => `${index + 1}. ${reason}`),
+    ].join("\n");
+  }
+
+  return [
+    "UNITY BASIC ENEMY ROLLBACK COMPLETE",
+    "",
+    `Scene: ${result.scenePath}`,
+    `Scene Path: ${result.sceneAbsolutePath}`,
+    `Script Path: ${result.scriptPath}`,
+    `Backup Path: ${result.backupPath}`,
+    `BasicEnemy.cs Exists: ${result.basicEnemyScriptExists ? "YES" : "NO"}`,
+    `Enemy GameObject Exists: ${result.enemyExists ? "YES" : "NO"}`,
+    `BasicEnemy Attached: ${result.scriptAttached ? "YES" : "NO"}`,
+    `Positioned On Ground: ${result.positionedOnGround ? "YES" : "NO"}`,
     `Safe To Open Unity/Playtest: ${result.safeToOpenUnityForCompileOrPlaytest ? "YES" : "NO"}`,
   ].join("\n");
 }

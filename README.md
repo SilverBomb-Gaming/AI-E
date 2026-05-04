@@ -1053,6 +1053,18 @@ Commands:
 - `npm run operator:view -- --fall-recovery-status "<project>"`
 - `npm run operator:view -- --rollback-fall-recovery "<project>"`
 
+## Basic Enemy
+
+- use the basic enemy workflow during local playtests to guarantee there is a visible enemy target in front of the player without launching Unity from the CLI.
+- the workflow creates or reuses `Assets/Scripts/BasicEnemy.cs`, ensures `BasicEnemy.cs.meta` exists, and then either creates a simple capsule `Enemy` or reuses an existing `Enemy` object and attaches a Unity-visible `BasicEnemy` component.
+- the scene mutation is guarded and backup-driven; rollback restores the previous scene and only removes generated script assets when the apply command created them locally.
+
+Commands:
+
+- `npm run operator:view -- --apply-basic-enemy "<project>"`
+- `npm run operator:view -- --enemy-status "<project>"`
+- `npm run operator:view -- --rollback-basic-enemy "<project>"`
+
 ## Safe Runtime Action Bridge
 
 AI-E can now translate supported live operator actions into safe runtime intents.
