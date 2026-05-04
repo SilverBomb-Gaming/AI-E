@@ -20,7 +20,7 @@ export type LearningApplicationQueueRecord = {
   scope: LearningApplicationScope;
   status: LearningApplicationQueueStatus;
   applied: boolean;
-  blocked_reason?: "learning recommendation not approved" | "learning scope not allowed" | "learning disabled globally" | "learning drift detected" | "queue item is not queued";
+  blocked_reason?: "learning recommendation not approved" | "learning scope not allowed" | "learning disabled globally" | "learning drift detected" | "queue item is not queued" | "operator confirmation required" | "proposed queue item mismatch" | "state changed since proposal";
   recommendation_snapshot: LearningRecommendation;
   decision_snapshot: LearningRecommendationDecisionRecord;
 };

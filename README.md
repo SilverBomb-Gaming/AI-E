@@ -776,6 +776,13 @@ Current Layer 29 Step 1 status:
 - operator must confirm execution
 - no automatic execution introduced
 
+Current Layer 29 Step 2 status:
+
+- Layer 29 Step 2 - Confirmation Safety Window: implemented
+- added state validation between proposal and confirmation
+- execution is blocked if state changes
+- no autonomy introduced
+
 ## Safe Runtime Action Bridge
 
 AI-E can now translate supported live operator actions into safe runtime intents.

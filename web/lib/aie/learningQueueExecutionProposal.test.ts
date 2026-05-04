@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { appendFile, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -191,6 +191,148 @@ test("execution cannot run without proposal match", async () => {
     assert.equal(result.status, "blocked");
     assert.equal(result.reason, "proposed queue item mismatch");
     assert.equal(result.applied, false);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("execution succeeds if state is unchanged", async () => {
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "aie-learning-proposal-unchanged-"));
+
+  try {
+    setLearningEnabled(true);
+    const recommendation = createRecommendation(0.28);
+    const decision = await recordLearningRecommendationDecision(recommendation, {
+      operator_decision: "approved_for_future_application",
+      decided_at: "2026-05-04T00:18:00.000Z",
+    }, { outputDirectory: tempRoot });
+    const queued = await enqueueLearningApplication(recommendation, decision.record, {
+      outputDirectory: tempRoot,
+      createdAt: "2026-05-04T00:19:00.000Z",
+    });
+    const items = await queryLearningApplicationQueue({ outputDirectory: tempRoot });
+
+    proposeNextQueueExecution(items);
+    const result = await confirmAndExecute(queued.record.queue_id, {
+      outputDirectory: tempRoot,
+      executedAt: "2026-05-04T00:20:00.000Z",
+    });
+
+    assert.equal(result.status, "applied");
+    assert.equal(result.applied, true);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("execution is blocked if queue state changed since proposal", async () => {
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "aie-learning-proposal-state-changed-"));
+
+  try {
+    const recommendation = createRecommendation(0.32);
+    const decision = await recordLearningRecommendationDecision(recommendation, {
+      operator_decision: "approved_for_future_application",
+      decided_at: "2026-05-04T00:21:00.000Z",
+    }, { outputDirectory: tempRoot });
+    const queued = await enqueueLearningApplication(recommendation, decision.record, {
+      outputDirectory: tempRoot,
+      createdAt: "2026-05-04T00:22:00.000Z",
+    });
+    const items = await queryLearningApplicationQueue({ outputDirectory: tempRoot });
+
+    proposeNextQueueExecution(items);
+    await appendMutatedQueueRecord(tempRoot, {
+      ...queued.record,
+      created_at: "2026-05-04T00:23:00.000Z",
+      status: "applied",
+      applied: true,
+    });
+
+    const result = await confirmAndExecute(queued.record.queue_id, {
+      outputDirectory: tempRoot,
+      executedAt: "2026-05-04T00:24:00.000Z",
+    });
+
+    assert.equal(result.status, "blocked");
+    assert.equal(result.reason, "state changed since proposal");
+    assert.equal(result.applied, false);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("execution is blocked if decision snapshot changed since proposal", async () => {
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "aie-learning-proposal-decision-changed-"));
+
+  try {
+    const recommendation = createRecommendation(0.34);
+    const decision = await recordLearningRecommendationDecision(recommendation, {
+      operator_decision: "approved_for_future_application",
+      decided_at: "2026-05-04T00:25:00.000Z",
+    }, { outputDirectory: tempRoot });
+    const queued = await enqueueLearningApplication(recommendation, decision.record, {
+      outputDirectory: tempRoot,
+      createdAt: "2026-05-04T00:26:00.000Z",
+    });
+    const items = await queryLearningApplicationQueue({ outputDirectory: tempRoot });
+
+    proposeNextQueueExecution(items);
+    await appendMutatedQueueRecord(tempRoot, {
+      ...queued.record,
+      created_at: "2026-05-04T00:27:00.000Z",
+      decision_snapshot: {
+        ...queued.record.decision_snapshot,
+        rationale: "changed after proposal",
+      },
+    });
+
+    const result = await confirmAndExecute(queued.record.queue_id, {
+      outputDirectory: tempRoot,
+      executedAt: "2026-05-04T00:28:00.000Z",
+    });
+
+    assert.equal(result.status, "blocked");
+    assert.equal(result.reason, "state changed since proposal");
+    assert.equal(result.applied, false);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+async function appendMutatedQueueRecord(outputDirectory: string, record: Awaited<ReturnType<typeof queryLearningApplicationQueue>>[number]) {
+  const outputPath = path.join(outputDirectory, `${record.created_at.slice(0, 10)}.jsonl`);
+  await appendFile(outputPath, `${JSON.stringify(record)}\n`, "utf-8");
+}
+
+test("execution is blocked if already applied before reconfirmation", async () => {
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "aie-learning-proposal-applied-before-confirm-"));
+
+  try {
+    setLearningEnabled(true);
+    const recommendation = createRecommendation(0.22);
+    const decision = await recordLearningRecommendationDecision(recommendation, {
+      operator_decision: "approved_for_future_application",
+      decided_at: "2026-05-04T00:29:00.000Z",
+    }, { outputDirectory: tempRoot });
+    const queued = await enqueueLearningApplication(recommendation, decision.record, {
+      outputDirectory: tempRoot,
+      createdAt: "2026-05-04T00:30:00.000Z",
+    });
+    const items = await queryLearningApplicationQueue({ outputDirectory: tempRoot });
+
+    proposeNextQueueExecution(items);
+    await confirmAndExecute(queued.record.queue_id, {
+      outputDirectory: tempRoot,
+      executedAt: "2026-05-04T00:31:00.000Z",
+    });
+    proposeNextQueueExecution(await queryLearningApplicationQueue({ outputDirectory: tempRoot }));
+    const secondAttempt = await confirmAndExecute(queued.record.queue_id, {
+      outputDirectory: tempRoot,
+      executedAt: "2026-05-04T00:32:00.000Z",
+    });
+
+    assert.equal(secondAttempt.status, "blocked");
+    assert.equal(secondAttempt.reason, "operator confirmation required");
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }

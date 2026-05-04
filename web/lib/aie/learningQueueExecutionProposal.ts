@@ -9,15 +9,35 @@ export type LearningQueueExecutionProposal = {
   autonomy_triggered: false;
 };
 
-let pendingProposedQueueId: string | null = null;
+let pendingProposal:
+  | {
+    proposed_queue_id: string;
+    proposal_snapshot_hash: string;
+  }
+  | null = null;
+
+function buildProposalSnapshotHash(queueItem: LearningApplicationQueueRecord): string {
+  return JSON.stringify({
+    queue_id: queueItem.queue_id,
+    status: queueItem.status,
+    recommendation_snapshot: queueItem.recommendation_snapshot,
+    decision_snapshot: queueItem.decision_snapshot,
+  });
+}
 
 export function proposeNextQueueExecution(
   queueItems: readonly LearningApplicationQueueRecord[],
 ): LearningQueueExecutionProposal {
   const suggestion = suggestQueueExecutionOrder(queueItems);
   const nextQueueId = suggestion.suggested_order[0];
+  const proposedItem = queueItems.find((item) => item.queue_id === nextQueueId);
 
-  pendingProposedQueueId = nextQueueId ?? null;
+  pendingProposal = nextQueueId && proposedItem
+    ? {
+      proposed_queue_id: nextQueueId,
+      proposal_snapshot_hash: buildProposalSnapshotHash(proposedItem),
+    }
+    : null;
 
   return {
     next_queue_id: nextQueueId,
@@ -34,7 +54,7 @@ export async function confirmAndExecute(
   queueId: string,
   options?: Parameters<typeof executeQueuedLearningItem>[1],
 ): Promise<LearningApplicationQueueExecutionResult> {
-  if (!pendingProposedQueueId) {
+  if (!pendingProposal) {
     return {
       queue_execution_id: "learning-queue-execution-unconfirmed",
       created_at: options?.executedAt ?? new Date().toISOString(),
@@ -48,7 +68,7 @@ export async function confirmAndExecute(
     };
   }
 
-  if (pendingProposedQueueId !== queueId) {
+  if (pendingProposal.proposed_queue_id !== queueId) {
     return {
       queue_execution_id: "learning-queue-execution-mismatch",
       created_at: options?.executedAt ?? new Date().toISOString(),
@@ -62,10 +82,29 @@ export async function confirmAndExecute(
     };
   }
 
-  pendingProposedQueueId = null;
+  const { queryLearningApplicationQueue } = await import("./learningApplicationQueue");
+  const currentQueueItems = await queryLearningApplicationQueue({ outputDirectory: options?.outputDirectory });
+  const currentQueueItem = currentQueueItems.find((item) => item.queue_id === queueId);
+
+  if (!currentQueueItem || buildProposalSnapshotHash(currentQueueItem) !== pendingProposal.proposal_snapshot_hash) {
+    pendingProposal = null;
+    return {
+      queue_execution_id: "learning-queue-execution-state-changed",
+      created_at: options?.executedAt ?? new Date().toISOString(),
+      queue_id: queueId,
+      recommendation_id: currentQueueItem?.recommendation_id ?? "unknown-recommendation",
+      decision_id: currentQueueItem?.decision_id ?? "unknown-decision",
+      status: "blocked",
+      reason: "state changed since proposal",
+      applied: false,
+      single_item_execution: true,
+    };
+  }
+
+  pendingProposal = null;
   return executeQueuedLearningItem(queueId, options);
 }
 
 export function resetLearningQueueExecutionProposal(): void {
-  pendingProposedQueueId = null;
+  pendingProposal = null;
 }
