@@ -842,6 +842,14 @@ Node Network Phase Step 1 status:
 - nodes expose status and capabilities
 - no routing, execution, remote mutation, or autonomy introduced
 
+Node Network Phase Step 2 status:
+
+- Node Network Phase Step 2 - Node Health Snapshot: implemented
+- added read-only health snapshots for registered AI-E Nodes
+- health includes status, latency/load metadata, and warnings
+- execution_ready remains false
+- no routing, execution, remote mutation, scheduling, or autonomy introduced
+
 ## Safe Runtime Action Bridge
 
 AI-E can now translate supported live operator actions into safe runtime intents.
