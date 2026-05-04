@@ -217,6 +217,7 @@ GameObject:
   - component: {fileID: 620844255}
   - component: {fileID: 620844253}
   - component: {fileID: 2001529178}
+  - component: {fileID: 2001529180}
   m_Layer: 0
   m_Name: Player
   m_TagString: Player
@@ -1077,3 +1078,21 @@ MonoBehaviour:
   m_EditorClassIdentifier:
   rotationSpeedDegrees: 24
   debugSpawn: 1
+--- !u!114 &2001529180
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 620844252}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 1f4eb7ab9cd8c1ecbbbb29f3e870af5d, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier:
+  attackRange: 2.5
+  attackCooldown: 0.35
+  attackRadius: 1.1
+  attackKey: 101
+  allowMouse0: 1
+  debugHits: 1
