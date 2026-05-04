@@ -30,16 +30,21 @@ export type LearningApplicationQueueWriteResult = {
   record: LearningApplicationQueueRecord;
   output_path: string;
   append_only: true;
-  applied: false;
+  applied: boolean;
   execution_triggered: false;
   autonomy_triggered: false;
 };
 
 export type LearningApplicationQueueExecutionResult = {
+  queue_execution_id: string;
+  created_at: string;
   queue_id: string;
+  recommendation_id: string;
+  decision_id: string;
   status: "applied" | "blocked";
   reason?: LearningApplicationQueueRecord["blocked_reason"];
   applied: boolean;
+  single_item_execution: true;
 };
 
 function hasNonEmptyString(value: unknown): value is string {
@@ -88,6 +93,10 @@ function buildQueueId(record: {
   recommendation_id: string;
 }): string {
   return `learning-queue-${record.created_at.replace(/[:.]/g, "-")}-${record.decision_id}-${record.recommendation_id}`;
+}
+
+function buildQueueExecutionId(queueId: string, createdAt: string): string {
+  return `learning-queue-execution-${createdAt.replace(/[:.]/g, "-")}-${queueId}`;
 }
 
 function toQueueRecord(input: {
@@ -237,13 +246,33 @@ export async function executeQueuedLearningItem(
 ): Promise<LearningApplicationQueueExecutionResult> {
   const items = await queryLearningApplicationQueue({ outputDirectory: options?.outputDirectory });
   const queueItem = items.find((item) => item.queue_id === queueId);
+  const createdAt = normalizeCreatedAt(options?.executedAt);
 
-  if (!queueItem || queueItem.status !== "queued") {
+  if (!queueItem) {
     return {
+      queue_execution_id: buildQueueExecutionId(queueId, createdAt),
+      created_at: createdAt,
       queue_id: queueId,
+      recommendation_id: "unknown-recommendation",
+      decision_id: "unknown-decision",
       status: "blocked",
       reason: "queue item is not queued",
       applied: false,
+      single_item_execution: true,
+    };
+  }
+
+  if (queueItem.status !== "queued") {
+    return {
+      queue_execution_id: buildQueueExecutionId(queueId, createdAt),
+      created_at: createdAt,
+      queue_id: queueItem.queue_id,
+      recommendation_id: queueItem.recommendation_id,
+      decision_id: queueItem.decision_id,
+      status: "blocked",
+      reason: "queue item is not queued",
+      applied: false,
+      single_item_execution: true,
     };
   }
 
@@ -257,7 +286,7 @@ export async function executeQueuedLearningItem(
   );
   const updatedRecord: LearningApplicationQueueRecord = {
     ...queueItem,
-    created_at: normalizeCreatedAt(options?.executedAt),
+    created_at: createdAt,
     status: attempt.applied ? "applied" : "blocked",
     applied: attempt.applied,
     blocked_reason: attempt.blocked_reason,
@@ -266,10 +295,15 @@ export async function executeQueuedLearningItem(
   await appendQueueRecord(updatedRecord, options);
 
   return {
+    queue_execution_id: buildQueueExecutionId(queueItem.queue_id, createdAt),
+    created_at: createdAt,
     queue_id: queueItem.queue_id,
+    recommendation_id: queueItem.recommendation_id,
+    decision_id: queueItem.decision_id,
     status: attempt.applied ? "applied" : "blocked",
     reason: attempt.blocked_reason,
     applied: attempt.applied,
+    single_item_execution: true,
   };
 }
 
