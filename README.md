@@ -882,6 +882,14 @@ Node Network Phase Step 6 status:
 - surfaces node + task + routing + dispatch state
 - no execution or autonomy introduced
 
+End-User Functionality Step 1 status:
+
+- End-User Functionality Step 1 - Operator View CLI / Dashboard Preview: implemented
+- added first operator-facing view
+- displays nodes, health, readiness, routing simulations, and dispatch log
+- read-only preview for user navigation
+- no execution, routing, scheduling, mutation, or autonomy introduced
+
 ## Safe Runtime Action Bridge
 
 AI-E can now translate supported live operator actions into safe runtime intents.

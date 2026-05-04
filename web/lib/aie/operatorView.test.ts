@@ -3,7 +3,7 @@ import test from "node:test";
 
 import type { NodeDispatchRecord } from "./nodeDispatch";
 import type { NodeHealthSnapshot } from "./nodeHealth";
-import { renderOperatorView, type OperatorViewState } from "./operatorView";
+import { renderOperatorView, renderOperatorViewSummary, type OperatorViewState } from "./operatorView";
 import type { NodeReadinessEvaluation } from "./nodeReadiness";
 import type { NodeRegistryEntry } from "./nodeRegistry";
 import type { NodeRoutingSimulationResult } from "./nodeRoutingSimulation";
@@ -86,6 +86,25 @@ test("operator view renders all sections", () => {
   assert.equal(Array.isArray(result.dispatch_log), true);
 });
 
+test("summary renderer includes nodes health readiness routing and dispatch sections", () => {
+  const summary = renderOperatorViewSummary(renderOperatorView(createState()));
+
+  assert.match(summary, /^AI-E Operator View/m);
+  assert.match(summary, /^Nodes:/m);
+  assert.match(summary, /^Health:/m);
+  assert.match(summary, /^Readiness:/m);
+  assert.match(summary, /^Routing Simulations:/m);
+  assert.match(summary, /^Dispatch Log:/m);
+});
+
+test("summary renderer includes safety markers", () => {
+  const summary = renderOperatorViewSummary(renderOperatorView(createState()));
+
+  assert.match(summary, /- no execution performed/);
+  assert.match(summary, /- routing_allowed false/);
+  assert.match(summary, /- autonomy unchanged/);
+});
+
 test("data is correctly aggregated", () => {
   const result = renderOperatorView(createState());
 
@@ -125,6 +144,7 @@ test("empty states handled safely", () => {
     routingResults: [],
     dispatchResults: [],
   }));
+  const summary = renderOperatorViewSummary(result);
 
   assert.deepEqual(result, {
     nodes: [],
@@ -133,6 +153,8 @@ test("empty states handled safely", () => {
     routing_simulations: [],
     dispatch_log: [],
   });
+  assert.match(summary, /^Nodes:\n- none/m);
+  assert.match(summary, /^Dispatch Log:\n- none/m);
 });
 
 test("no execution or routing flags are triggered", () => {
@@ -142,4 +164,70 @@ test("no execution or routing flags are triggered", () => {
   assert.equal("routing_triggered" in result, false);
   assert.equal("scheduled" in result, false);
   assert.equal("autonomous" in result, false);
+});
+
+test("json structured output remains stable", () => {
+  const result = renderOperatorView(createState());
+
+  assert.equal(JSON.stringify(result, null, 2), `{
+  "nodes": [
+    {
+      "node_id": "node-01",
+      "hostname": "validator-01",
+      "platform": "windows",
+      "status": "available",
+      "capabilities": [
+        "inspection",
+        "validation-check"
+      ],
+      "last_seen_at": "2026-05-04T18:00:00.000Z"
+    }
+  ],
+  "health": [
+    {
+      "node_id": "node-01",
+      "checked_at": "2026-05-04T18:01:00.000Z",
+      "status": "healthy",
+      "warnings": [],
+      "execution_ready": false
+    }
+  ],
+  "readiness": [
+    {
+      "node_id": "node-01",
+      "evaluated_at": "2026-05-04T18:02:00.000Z",
+      "readiness_status": "ready_candidate",
+      "reasons": [],
+      "required_capabilities": [
+        "inspection"
+      ],
+      "missing_capabilities": [],
+      "health_status": "healthy",
+      "execution_ready": false
+    }
+  ],
+  "routing_simulations": [
+    {
+      "simulated": true,
+      "task_id": "task-01",
+      "required_capabilities": [
+        "inspection"
+      ],
+      "selected_node_id": "node-01",
+      "candidate_nodes": [
+        "node-01"
+      ],
+      "blocked_nodes": [],
+      "routing_allowed": false
+    }
+  ],
+  "dispatch_log": [
+    {
+      "dispatched": true,
+      "node_id": "node-01",
+      "task_id": "task-01",
+      "reason": "dispatch intent recorded"
+    }
+  ]
+}`);
 });

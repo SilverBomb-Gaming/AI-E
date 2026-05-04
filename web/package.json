@@ -33,6 +33,7 @@
     "trace:capture": "tsx training_dataset_capture.ts",
     "insights": "tsx scripts/showInsights.ts",
     "decisions": "tsx scripts/showDecisions.ts",
+    "operator:view": "tsx scripts/showOperatorView.ts",
     "learning:simulation": "tsx scripts/showLearningSimulation.ts",
     "learning:audit": "tsx scripts/showLearningAudit.ts",
     "learning:recommendations": "tsx scripts/showLearningRecommendations.ts"

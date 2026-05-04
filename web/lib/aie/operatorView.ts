@@ -20,6 +20,41 @@ export type OperatorViewResult = {
   dispatch_log: NodeDispatchRecord[];
 };
 
+function renderNodeLine(node: NodeRegistryEntry): string {
+  return `- ${node.node_id} [${node.status}] ${node.platform} capabilities: ${node.capabilities.length ? node.capabilities.join(", ") : "none"}`;
+}
+
+function renderHealthLine(snapshot: NodeHealthSnapshot): string {
+  return `- ${snapshot.node_id} ${snapshot.status} latency: ${snapshot.latency_ms ?? "unknown"}${typeof snapshot.latency_ms === "number" ? "ms" : ""} warnings: ${snapshot.warnings.length ? snapshot.warnings.join(", ") : "none"}`;
+}
+
+function renderReadinessLine(result: NodeReadinessEvaluation): string {
+  return `- ${result.node_id} ${result.readiness_status} execution_ready: ${result.execution_ready ? "true" : "false"}`;
+}
+
+function renderRoutingLine(result: NodeRoutingSimulationResult): string {
+  return `- ${result.task_id} -> ${result.selected_node_id ?? "none"} simulated only routing_allowed: ${result.routing_allowed ? "true" : "false"}`;
+}
+
+function renderDispatchLine(result: NodeDispatchRecord): string {
+  return `- ${result.task_id} -> ${result.node_id} ${result.reason ?? (result.dispatched ? "dispatch intent recorded" : "dispatch blocked")}`;
+}
+
+function renderSection<T>(title: string, values: readonly T[], renderLine: (value: T) => string, emptyLine: string): string[] {
+  const lines = [`${title}:`];
+
+  if (values.length === 0) {
+    lines.push(emptyLine);
+    return lines;
+  }
+
+  for (const value of values) {
+    lines.push(renderLine(value));
+  }
+
+  return lines;
+}
+
 function cloneNodes(nodes: readonly NodeRegistryEntry[]): NodeRegistryEntry[] {
   return nodes.map((node) => ({
     ...node,
@@ -64,4 +99,27 @@ export function renderOperatorView(state: OperatorViewState): OperatorViewResult
     routing_simulations: cloneRoutingResults(state.routingResults),
     dispatch_log: cloneDispatchResults(state.dispatchResults),
   };
+}
+
+export function renderOperatorViewSummary(view: OperatorViewResult): string {
+  const lines = [
+    "AI-E Operator View",
+    "",
+    ...renderSection("Nodes", view.nodes, renderNodeLine, "- none"),
+    "",
+    ...renderSection("Health", view.health, renderHealthLine, "- none"),
+    "",
+    ...renderSection("Readiness", view.readiness, renderReadinessLine, "- none"),
+    "",
+    ...renderSection("Routing Simulations", view.routing_simulations, renderRoutingLine, "- none"),
+    "",
+    ...renderSection("Dispatch Log", view.dispatch_log, renderDispatchLine, "- none"),
+    "",
+    "Safety:",
+    "- no execution performed",
+    "- routing_allowed false",
+    "- autonomy unchanged",
+  ];
+
+  return lines.join("\n");
 }
