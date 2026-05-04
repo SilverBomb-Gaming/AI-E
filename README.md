@@ -835,6 +835,13 @@ Post-Layer 30 validation status:
 - Added traceability checks to confirm autonomous attempts remain auditable with preserved policy and simulation snapshots.
 - No new capabilities, scheduling, loops, multi-item execution, or new learning scope introduced.
 
+Node Network Phase Step 1 status:
+
+- Node Network Phase Step 1 - Node Capability Registry: implemented
+- added read-only registry for available AI-E Nodes
+- nodes expose status and capabilities
+- no routing, execution, remote mutation, or autonomy introduced
+
 ## Safe Runtime Action Bridge
 
 AI-E can now translate supported live operator actions into safe runtime intents.
