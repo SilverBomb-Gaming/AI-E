@@ -908,6 +908,12 @@ End-User Functionality Step 1 status:
 - provides read-only project structure, counts, readiness classification, and a next-step suggestion
 - helps guide development without Unity execution, file writes, automation, or mutation
 
+## Game Task Generator
+
+- AI-E now produces real Unity development tasks from the inspected local project state
+- the loop stays manual: AI-E outputs the task and code, and the human applies it inside Unity
+- task generation remains output-only with no file writes, Unity execution, or automation
+
 ## Safe Runtime Action Bridge
 
 AI-E can now translate supported live operator actions into safe runtime intents.

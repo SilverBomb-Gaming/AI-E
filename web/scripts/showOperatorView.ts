@@ -4,6 +4,7 @@ import { stdin as input, stdout as output } from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { inspectGameProject, renderGameProjectSummary } from "../lib/aie/gameProjectInspector";
+import { generateGameTask, renderGameTask } from "../lib/aie/gameTaskGenerator";
 import { renderOperatorView, renderOperatorViewSummary, type OperatorViewState } from "../lib/aie/operatorView";
 import type { OperatorViewSnapshot } from "../lib/aie/operatorView.types";
 
@@ -11,6 +12,7 @@ type ShowOperatorViewOptions = {
   json: boolean;
   interactive: boolean;
   projectPath?: string;
+  gameTaskPath?: string;
 };
 
 function isDirectExecution(): boolean {
@@ -51,6 +53,21 @@ function parseArgs(argv: string[]): ShowOperatorViewOptions {
         throw new Error("Missing value for --project");
       }
       options.projectPath = value.trim();
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith("--game-task=")) {
+      options.gameTaskPath = arg.slice("--game-task=".length).trim() || undefined;
+      continue;
+    }
+
+    if (arg === "--game-task") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("Missing value for --game-task");
+      }
+      options.gameTaskPath = value.trim();
       index += 1;
       continue;
     }
@@ -231,6 +248,27 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
 
     if (options.projectPath && options.interactive) {
       throw new Error("Use either --project or --interactive, not both.");
+    }
+
+    if (options.gameTaskPath && options.interactive) {
+      throw new Error("Use either --game-task or --interactive, not both.");
+    }
+
+    if (options.gameTaskPath && options.projectPath) {
+      throw new Error("Use either --game-task or --project, not both.");
+    }
+
+    if (options.gameTaskPath) {
+      const snapshot = await inspectGameProject(options.gameTaskPath);
+      const task = generateGameTask(snapshot);
+
+      if (options.json) {
+        console.log(JSON.stringify(task, null, 2));
+        return 0;
+      }
+
+      console.log(renderGameTask(task));
+      return 0;
     }
 
     if (options.projectPath) {
