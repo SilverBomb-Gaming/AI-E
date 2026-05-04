@@ -7,6 +7,7 @@ import { inspectGameProject, renderGameProjectSummary } from "../lib/aie/gamePro
 import { determineGameProgression, renderNextGameTask } from "../lib/aie/gameProgression";
 import {
   applyUnityPatchArtifact,
+  generateCameraFollowArtifact,
   generateGamePatchPlan,
   generateGameTask,
   generateJumpDiagnosticArtifact,
@@ -17,6 +18,7 @@ import {
   inspectUnityPatchStatus,
   renderGamePatchPlan,
   renderGameTask,
+  renderNextGameTaskExecutionResult,
   renderUnityPatchApplyResult,
   renderUnityPatchPreview,
   renderUnityPatchRollbackResult,
@@ -33,6 +35,7 @@ type ShowOperatorViewOptions = {
   projectPath?: string;
   gameTaskPath?: string;
   nextGameTaskPath?: string;
+  executeNextGameTaskPath?: string;
   unityRecoveryPath?: string;
   gamePatchPath?: string;
   gamePatchPreviewPath?: string;
@@ -141,6 +144,21 @@ function parseArgs(argv: string[]): ShowOperatorViewOptions {
         throw new Error("Missing value for --next-game-task");
       }
       options.nextGameTaskPath = value.trim();
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith("--execute-next-game-task=")) {
+      options.executeNextGameTaskPath = arg.slice("--execute-next-game-task=".length).trim() || undefined;
+      continue;
+    }
+
+    if (arg === "--execute-next-game-task") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("Missing value for --execute-next-game-task");
+      }
+      options.executeNextGameTaskPath = value.trim();
       index += 1;
       continue;
     }
@@ -469,6 +487,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       options.projectPath ? "--project" : null,
       options.gameTaskPath ? "--game-task" : null,
       options.nextGameTaskPath ? "--next-game-task" : null,
+      options.executeNextGameTaskPath ? "--execute-next-game-task" : null,
       options.unityRecoveryPath ? "--unity-recovery" : null,
       options.gamePatchPath ? "--game-patch" : null,
       options.gamePatchPreviewPath ? "--game-patch-preview" : null,
@@ -648,6 +667,65 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
 
       console.log(renderNextGameTask(progression));
       return 0;
+    }
+
+    if (options.executeNextGameTaskPath) {
+      const snapshot = await inspectGameProject(options.executeNextGameTaskPath);
+      const progression = await determineGameProgression(snapshot);
+      const recovery = await inspectUnityPlaytestRecovery(options.executeNextGameTaskPath);
+
+      if (progression.nextTask.requiredPatchType !== "camera-follow-script") {
+        const blockedResult = {
+          executed: false,
+          stage: progression.nextTask.stage,
+          title: progression.nextTask.title,
+          scriptName: progression.nextTask.scriptName,
+          targetFile: progression.nextTask.targetFile,
+          targetPath: resolve(snapshot.rootPath, progression.nextTask.targetFile),
+          patchKind: "gameplay-update" as const,
+          operation: progression.nextTask.executionPlan,
+          backupPath: `${resolve(snapshot.rootPath, progression.nextTask.targetFile)}.aie-backup`,
+          safeToOpenUnityForCompileOrPlaytest: false,
+          blockedReasons: [`Automatic execution is not implemented yet for patch type ${progression.nextTask.requiredPatchType}.`],
+        };
+
+        if (options.json) {
+          console.log(JSON.stringify(blockedResult, null, 2));
+          return 1;
+        }
+
+        console.log(renderNextGameTaskExecutionResult(blockedResult));
+        return 1;
+      }
+
+      const artifact = await generateCameraFollowArtifact(snapshot, progression.nextTask.targetFile);
+      const applyResult = await applyUnityPatchArtifact(
+        artifact,
+        buildFollowupPatchRecoverySignal(recovery),
+        buildRecoveryGuidance(recovery),
+      );
+
+      const executionResult = {
+        executed: applyResult.applied,
+        stage: progression.nextTask.stage,
+        title: progression.nextTask.title,
+        scriptName: progression.nextTask.scriptName,
+        targetFile: progression.nextTask.targetFile,
+        targetPath: artifact.absoluteTargetPath,
+        patchKind: artifact.patchKind,
+        operation: artifact.operation,
+        backupPath: `${artifact.absoluteTargetPath}.aie-backup`,
+        safeToOpenUnityForCompileOrPlaytest: applyResult.applied && buildPatchStatusRecoverySignal(recovery),
+        blockedReasons: applyResult.blockedReasons,
+      };
+
+      if (options.json) {
+        console.log(JSON.stringify(executionResult, null, 2));
+        return executionResult.executed ? 0 : 1;
+      }
+
+      console.log(renderNextGameTaskExecutionResult(executionResult));
+      return executionResult.executed ? 0 : 1;
     }
 
     if (options.projectPath) {

@@ -15,8 +15,10 @@ export type NextGameTask = {
   title: string;
   scriptName: string;
   behaviorDescription: string;
+  executionPlan: "create-new-script" | "modify-existing-script";
   implementationMode: "create-new-script" | "modify-existing-script";
   targetFile: string;
+  requiredPatchType: "camera-follow-script" | "basic-enemy-script" | "player-attack-script" | "game-loop-script";
   safeImplementationPlan: string[];
   safety: {
     noDuplicateSystems: true;
@@ -98,8 +100,10 @@ function buildCameraFollowTask(): NextGameTask {
     title: "Add third-person camera follow system",
     scriptName: "CameraFollow.cs",
     behaviorDescription: "Create a lightweight follow camera that tracks the player from behind, keeps a readable offset, and smoothly follows movement without replacing the existing player controller.",
+    executionPlan: "create-new-script",
     implementationMode: "create-new-script",
     targetFile: "Assets/Scripts/CameraFollow.cs",
+    requiredPatchType: "camera-follow-script",
     safeImplementationPlan: [
       "Create CameraFollow.cs in Assets/Scripts unless an existing camera follow script is already present.",
       "Expose a player target, position offset, and smooth follow speed as serialized fields.",
@@ -122,8 +126,14 @@ function buildFallbackTask(stage: NextGameTask["stage"], title: string, scriptNa
     title,
     scriptName,
     behaviorDescription,
+    executionPlan: "create-new-script",
     implementationMode: "create-new-script",
     targetFile,
+    requiredPatchType: stage === "basic-enemy"
+      ? "basic-enemy-script"
+      : stage === "player-attack"
+        ? "player-attack-script"
+        : "game-loop-script",
     safeImplementationPlan: [
       "Inspect existing scripts before creating a new gameplay system.",
       "Prefer modifying existing structure when a related script already exists.",
@@ -189,7 +199,9 @@ export function renderNextGameTask(result: GameProgressionResult): string {
     `Title: ${result.nextTask.title}`,
     `Script Name: ${result.nextTask.scriptName}`,
     `Target File: ${result.nextTask.targetFile}`,
+    `Execution Plan: ${result.nextTask.executionPlan}`,
     `Implementation Mode: ${result.nextTask.implementationMode}`,
+    `Required Patch Type: ${result.nextTask.requiredPatchType}`,
     `Behavior: ${result.nextTask.behaviorDescription}`,
     "",
     "Safe Implementation Plan:",

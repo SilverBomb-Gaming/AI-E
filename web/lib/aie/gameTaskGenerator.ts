@@ -1,4 +1,4 @@
-import { copyFile, readFile, stat, writeFile } from "node:fs/promises";
+import { copyFile, readFile, stat, unlink, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import path from "node:path";
 
@@ -36,6 +36,7 @@ export type GamePatchPlan = {
 
 export type UnityPatchArtifact = {
   patchKind: "gameplay-update" | "jump-diagnostic" | "production-movement";
+  operation: "create-new-script" | "modify-existing-script";
   targetFile: string;
   absoluteTargetPath: string;
   originalSha256: string;
@@ -64,6 +65,7 @@ export type UnityPatchPreview = {
 
 export type UnityPatchApplyResult = {
   applied: boolean;
+  patchKind: UnityPatchArtifact["patchKind"];
   targetFile: string;
   targetPath: string;
   backupPath: string;
@@ -77,6 +79,20 @@ export type UnityPatchApplyResult = {
     backupCreated: boolean;
     targetWritten: boolean;
   };
+};
+
+export type NextGameTaskExecutionResult = {
+  executed: boolean;
+  stage: string;
+  title: string;
+  scriptName: string;
+  targetFile: string;
+  targetPath: string;
+  patchKind: UnityPatchArtifact["patchKind"];
+  operation: UnityPatchArtifact["operation"];
+  backupPath: string;
+  safeToOpenUnityForCompileOrPlaytest: boolean;
+  blockedReasons: string[];
 };
 
 export type UnityPatchStatus = {
@@ -406,6 +422,8 @@ async function fileExists(targetPath: string): Promise<boolean> {
 function backupPathFor(targetPath: string): string {
   return `${targetPath}.aie-backup`;
 }
+
+const MISSING_FILE_BACKUP_MARKER = "__AIE_ORIGINAL_STATE__:missing-file\n";
 
 function countMethodOccurrences(source: string, methodName: string): number {
   return source.match(new RegExp(`\\b${methodName}\\s*\\(`, "g"))?.length ?? 0;
@@ -802,6 +820,44 @@ function buildProductionMovementReplacement(analysis: ExistingScriptAnalysis): s
   return bodyLines.join("\n");
 }
 
+function buildCameraFollowCode(): string {
+  return [
+    "using UnityEngine;",
+    "",
+    "namespace EnemyAIDemo",
+    "{",
+    "    /// <summary>",
+    "    /// Follows the player from a readable third-person offset with light smoothing.",
+    "    /// </summary>",
+    "    public sealed class CameraFollow : MonoBehaviour",
+    "    {",
+    "        [SerializeField] private Transform target;",
+    "        [SerializeField] private Vector3 offset = new(0f, 4f, -6f);",
+    "        [SerializeField] [Min(0.01f)] private float followSmoothTime = 0.15f;",
+    "        [SerializeField] private bool lookAtTarget = true;",
+    "",
+    "        private Vector3 followVelocity;",
+    "",
+    "        private void LateUpdate()",
+    "        {",
+    "            if (target == null)",
+    "            {",
+    "                return;",
+    "            }",
+    "",
+    "            Vector3 desiredPosition = target.position + offset;",
+    "            transform.position = Vector3.SmoothDamp(transform.position, desiredPosition, ref followVelocity, followSmoothTime);",
+    "",
+    "            if (lookAtTarget)",
+    "            {",
+    "                transform.LookAt(target.position + Vector3.up * 1.5f);",
+    "            }",
+    "        }",
+    "    }",
+    "}",
+  ].join("\n");
+}
+
 export async function generateUnityPatchArtifact(snapshot: GameProjectSnapshot): Promise<UnityPatchArtifact> {
   if (snapshot.engine !== "unity") {
     throw new Error("Game patch plans require a Unity project.");
@@ -819,6 +875,7 @@ export async function generateUnityPatchArtifact(snapshot: GameProjectSnapshot):
 
   return {
     patchKind: "gameplay-update",
+    operation: "modify-existing-script",
     targetFile,
     absoluteTargetPath,
     originalSha256: sha256(source),
@@ -855,6 +912,7 @@ export async function generateJumpDiagnosticArtifact(snapshot: GameProjectSnapsh
 
   return {
     patchKind: "jump-diagnostic",
+    operation: "modify-existing-script",
     targetFile,
     absoluteTargetPath,
     originalSha256: sha256(source),
@@ -891,6 +949,7 @@ export async function generateProductionMovementArtifact(snapshot: GameProjectSn
 
   return {
     patchKind: "production-movement",
+    operation: "modify-existing-script",
     targetFile,
     absoluteTargetPath,
     originalSha256: sha256(source),
@@ -899,6 +958,39 @@ export async function generateProductionMovementArtifact(snapshot: GameProjectSn
     validationRules: {
       preserveClassName: analysis.className,
       preserveNamespace: analysis.namespace,
+      forbiddenClassNames: ["PlayerController"],
+      requireNoDuplicateMethods: true,
+    },
+    safety: {
+      requiresCleanRecoveryState: true,
+      createsBackupBeforeApply: true,
+      noUnityExecution: true,
+    },
+  };
+}
+
+export async function generateCameraFollowArtifact(snapshot: GameProjectSnapshot, targetFile = "Assets/Scripts/CameraFollow.cs"): Promise<UnityPatchArtifact> {
+  if (snapshot.engine !== "unity") {
+    throw new Error("Camera follow generation requires a Unity project.");
+  }
+
+  const absoluteTargetPath = path.join(snapshot.rootPath, targetFile);
+  if (await fileExists(absoluteTargetPath)) {
+    throw new Error(`Camera follow target already exists: ${targetFile}`);
+  }
+
+  const replacementCode = buildCameraFollowCode();
+  return {
+    patchKind: "gameplay-update",
+    operation: "create-new-script",
+    targetFile,
+    absoluteTargetPath,
+    originalSha256: "missing-file",
+    replacementSha256: sha256(replacementCode),
+    replacementCode,
+    validationRules: {
+      preserveClassName: "CameraFollow",
+      preserveNamespace: "EnemyAIDemo",
       forbiddenClassNames: ["PlayerController"],
       requireNoDuplicateMethods: true,
     },
@@ -1049,13 +1141,17 @@ export async function applyUnityPatchArtifact(
     blockedReasons.push("Unity recovery guard did not report a clean recovery state.");
   }
 
-  if (!targetExists) {
+  if (artifact.operation === "modify-existing-script" && !targetExists) {
     blockedReasons.push(`Target file does not exist: ${artifact.absoluteTargetPath}`);
+  }
+
+  if (artifact.operation === "create-new-script" && targetExists) {
+    blockedReasons.push(`Target file already exists and will not be overwritten: ${artifact.absoluteTargetPath}`);
   }
 
   const currentSource = targetExists ? await readFile(artifact.absoluteTargetPath, "utf-8") : "";
   const currentSha256 = targetExists ? sha256(currentSource) : undefined;
-  if (currentSha256 && currentSha256 !== artifact.originalSha256) {
+  if (artifact.operation === "modify-existing-script" && currentSha256 && currentSha256 !== artifact.originalSha256) {
     blockedReasons.push(`Current file hash ${currentSha256} did not match expected original hash ${artifact.originalSha256}.`);
   }
 
@@ -1069,6 +1165,7 @@ export async function applyUnityPatchArtifact(
   if (blockedReasons.length > 0) {
     return {
       applied: false,
+      patchKind: artifact.patchKind,
       targetFile: artifact.targetFile,
       targetPath: artifact.absoluteTargetPath,
       backupPath,
@@ -1086,12 +1183,17 @@ export async function applyUnityPatchArtifact(
   }
 
   if (!backupExists) {
-    await copyFile(artifact.absoluteTargetPath, backupPath);
+    if (artifact.operation === "create-new-script") {
+      await writeFile(backupPath, MISSING_FILE_BACKUP_MARKER, "utf-8");
+    } else {
+      await copyFile(artifact.absoluteTargetPath, backupPath);
+    }
   }
   await writeFile(artifact.absoluteTargetPath, artifact.replacementCode, "utf-8");
 
   return {
     applied: true,
+    patchKind: artifact.patchKind,
     targetFile: artifact.targetFile,
     targetPath: artifact.absoluteTargetPath,
     backupPath,
@@ -1233,7 +1335,13 @@ export async function rollbackUnityPatchArtifact(artifact: UnityPatchArtifact): 
   }
 
   const backupSource = await readFile(backupPath, "utf-8");
-  await writeFile(artifact.absoluteTargetPath, backupSource, "utf-8");
+  if (backupSource === MISSING_FILE_BACKUP_MARKER) {
+    if (await fileExists(artifact.absoluteTargetPath)) {
+      await unlink(artifact.absoluteTargetPath);
+    }
+  } else {
+    await writeFile(artifact.absoluteTargetPath, backupSource, "utf-8");
+  }
 
   return {
     restored: true,
@@ -1277,5 +1385,37 @@ export function renderUnityPatchRollbackResult(result: UnityPatchRollbackResult)
     "Safety:",
     `- no Unity execution: ${result.safety.noUnityExecution ? "true" : "false"}`,
     `- backup retained: ${result.safety.backupRetained ? "true" : "false"}`,
+  ].join("\n");
+}
+
+export function renderNextGameTaskExecutionResult(result: NextGameTaskExecutionResult): string {
+  if (!result.executed) {
+    return [
+      "NEXT GAME TASK EXECUTION BLOCKED",
+      "",
+      `Stage: ${result.stage}`,
+      `Title: ${result.title}`,
+      `Target File: ${result.targetFile}`,
+      `Target Path: ${result.targetPath}`,
+      `Patch Kind: ${result.patchKind}`,
+      `Operation: ${result.operation}`,
+      "",
+      "Blocked Reasons:",
+      ...result.blockedReasons.map((reason, index) => `${index + 1}. ${reason}`),
+    ].join("\n");
+  }
+
+  return [
+    "NEXT GAME TASK EXECUTED",
+    "",
+    `Stage: ${result.stage}`,
+    `Title: ${result.title}`,
+    `Script Name: ${result.scriptName}`,
+    `Target File: ${result.targetFile}`,
+    `Target Path: ${result.targetPath}`,
+    `Patch Kind: ${result.patchKind}`,
+    `Operation: ${result.operation}`,
+    `Backup Path: ${result.backupPath}`,
+    `Safe To Open Unity For Compile/Playtest: ${result.safeToOpenUnityForCompileOrPlaytest ? "YES" : "NO"}`,
   ].join("\n");
 }

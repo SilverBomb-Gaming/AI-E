@@ -975,10 +975,12 @@ Commands:
 - AI-E can now decide the next gameplay feature from the current Unity project state instead of waiting for manual direction
 - progression currently advances through movement, camera control, basic enemy, player attack, and game loop stages
 - the engine reuses GameProjectSnapshot plus script signals and checks the player movement script for jump support
+- AI-E can also execute the next supported feature directly through the guarded patch workflow when the required patch type is implemented
 
 Command:
 
 - `npm run operator:view -- --next-game-task "<project>"`
+- `npm run operator:view -- --execute-next-game-task "<project>"`
 
 ## Safe Runtime Action Bridge
 
