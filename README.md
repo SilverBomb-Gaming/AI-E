@@ -875,6 +875,13 @@ Node Network Phase Step 5 status:
 - no remote execution yet
 - no scheduling or autonomy introduced
 
+Node Network Phase Step 6 status:
+
+- Node Network Phase Step 6 - Operator View: implemented
+- added unified read-only operator view
+- surfaces node + task + routing + dispatch state
+- no execution or autonomy introduced
+
 ## Safe Runtime Action Bridge
 
 AI-E can now translate supported live operator actions into safe runtime intents.
