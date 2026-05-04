@@ -186,6 +186,15 @@ export async function enqueueLearningApplication(
   return appendQueueRecord(record, options);
 }
 
+function parseQueueRecordLine(line: string): LearningApplicationQueueRecord | null {
+  try {
+    const parsed = JSON.parse(line);
+    return isQueueRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function queryLearningApplicationQueue(
   filters?: {
     outputDirectory?: string;
@@ -208,8 +217,8 @@ export async function queryLearningApplicationQueue(
     return payload
       .split(/\r?\n/)
       .filter((line) => line.trim().length > 0)
-      .map((line) => JSON.parse(line))
-      .filter(isQueueRecord);
+      .map((line) => parseQueueRecordLine(line))
+      .filter((record): record is LearningApplicationQueueRecord => record !== null);
   }))).flat();
 
   const filteredRecords = records.filter((record) => {

@@ -828,6 +828,13 @@ Current Layer 30 Step 4 status:
 - records both executed and blocked attempts
 - no scheduling, loops, multi-item execution, or new learning scope introduced
 
+Post-Layer 30 validation status:
+
+- Added long-run autonomous validation coverage across 120 bounded attempts.
+- Added failure-injection coverage for gate failure, drift threshold breach, queue corruption, and partial execution.
+- Added traceability checks to confirm autonomous attempts remain auditable with preserved policy and simulation snapshots.
+- No new capabilities, scheduling, loops, multi-item execution, or new learning scope introduced.
+
 ## Safe Runtime Action Bridge
 
 AI-E can now translate supported live operator actions into safe runtime intents.
