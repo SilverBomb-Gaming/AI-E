@@ -769,6 +769,13 @@ Current Layer 28 Step 4 status:
 - added non-executing suggestion system for queue order
 - no execution or reordering occurs automatically
 
+Current Layer 29 Step 1 status:
+
+- Layer 29 Step 1 - Assisted Queue Execution: implemented
+- system can propose next execution
+- operator must confirm execution
+- no automatic execution introduced
+
 ## Safe Runtime Action Bridge
 
 AI-E can now translate supported live operator actions into safe runtime intents.
