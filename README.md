@@ -799,6 +799,13 @@ Current Layer 29 Step 4 status:
 - preserves proposal, snapshot, cooldown, gate, and drift protections
 - no auto-execution, scheduling, loop processing, or autonomy introduced
 
+Current Layer 30 Step 1 status:
+
+- Layer 30 Step 1 - Controlled Autonomy Scope Definition: implemented
+- added disabled autonomy policy
+- defined first possible autonomy lane without enabling it
+- no execution, scheduling, loop processing, or autonomy introduced
+
 ## Safe Runtime Action Bridge
 
 AI-E can now translate supported live operator actions into safe runtime intents.
