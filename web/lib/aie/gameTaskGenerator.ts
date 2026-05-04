@@ -1,4 +1,5 @@
-import { readFile } from "node:fs/promises";
+import { copyFile, readFile, stat, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import path from "node:path";
 
 import type { GameProjectSnapshot } from "./gameProjectInspector";
@@ -24,12 +25,86 @@ export type GamePatchPlan = {
   changeType: "modify-existing-script";
   summary: string;
   exactInstructions: string[];
-  replacementCode?: string;
+  artifact: UnityPatchArtifact;
   expectedResult: string;
   safety: {
     outputOnly: true;
     noFileWrites: true;
     requiresHumanUnityPlaytest: true;
+  };
+};
+
+export type UnityPatchArtifact = {
+  targetFile: string;
+  absoluteTargetPath: string;
+  originalSha256: string;
+  replacementSha256: string;
+  replacementCode: string;
+  validationRules: {
+    preserveClassName: string;
+    preserveNamespace?: string;
+    forbiddenClassNames: string[];
+    requireNoDuplicateMethods: boolean;
+  };
+  safety: {
+    requiresCleanRecoveryState: true;
+    createsBackupBeforeApply: true;
+    noUnityExecution: true;
+  };
+};
+
+export type UnityPatchPreview = {
+  artifact: UnityPatchArtifact;
+  detectedClass: string;
+  detectedNamespace?: string;
+  diffSummary: string[];
+  safetyStatus: string[];
+};
+
+export type UnityPatchApplyResult = {
+  applied: boolean;
+  targetFile: string;
+  targetPath: string;
+  backupPath: string;
+  originalSha256: string;
+  replacementSha256: string;
+  currentSha256?: string;
+  blockedReasons: string[];
+  recoveryGuidance: string[];
+  safety: {
+    noUnityExecution: true;
+    backupCreated: boolean;
+    targetWritten: boolean;
+  };
+};
+
+export type UnityPatchStatus = {
+  targetFile: string;
+  targetPath: string;
+  backupPath: string;
+  backupExists: boolean;
+  currentSha256: string;
+  expectedPatchedSha256: string;
+  currentFileAppearsPatched: boolean;
+  jumpLogicPresent: boolean;
+  rollbackAvailable: boolean;
+  safeToOpenUnityForCompileOrPlaytest: boolean;
+  recoverySafe: boolean;
+  safety: {
+    noUnityExecution: true;
+  };
+};
+
+export type UnityPatchRollbackResult = {
+  restored: boolean;
+  targetFile: string;
+  targetPath: string;
+  backupPath: string;
+  restoredSha256?: string;
+  blockedReasons: string[];
+  safety: {
+    noUnityExecution: true;
+    backupRetained: true;
   };
 };
 
@@ -308,6 +383,94 @@ function uniqueAttributeLines(attributeLines: readonly string[]): string[] {
   return attributeLines.filter((line, index, lines) => lines.indexOf(line) === index);
 }
 
+function sha256(content: string): string {
+  return createHash("sha256").update(content, "utf-8").digest("hex");
+}
+
+async function fileExists(targetPath: string): Promise<boolean> {
+  try {
+    await stat(targetPath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function backupPathFor(targetPath: string): string {
+  return `${targetPath}.aie-backup`;
+}
+
+function countMethodOccurrences(source: string, methodName: string): number {
+  return source.match(new RegExp(`\\b${methodName}\\s*\\(`, "g"))?.length ?? 0;
+}
+
+function containsClassName(source: string, className: string): boolean {
+  return new RegExp(`\\bclass\\s+${className}\\b`).test(source);
+}
+
+function hasJumpLogic(source: string): boolean {
+  return source.includes("Input.GetButtonDown(\"Jump\")")
+    && source.includes("jumpHeight")
+    && source.includes("jumpRequested")
+    && source.includes("Mathf.Sqrt(jumpHeight * -2f * gravity)");
+}
+
+function buildDiffSummary(original: ExistingScriptAnalysis, replacement: ExistingScriptAnalysis): string[] {
+  const summary = [
+    `preserve class ${original.className}`,
+    `preserve namespace ${original.namespace ?? "none"}`,
+    `preserve ${original.attributeLines.length} attribute line(s)`,
+  ];
+
+  const addedFields = replacement.fields.filter((field) => !original.fields.includes(field));
+  if (addedFields.length > 0) {
+    summary.push(`add fields ${addedFields.join(", ")}`);
+  }
+
+  if (!original.fields.includes("jumpRequested") && replacement.fields.includes("jumpRequested")) {
+    summary.push("add grounded jump request state");
+  }
+
+  if (!original.fields.includes("groundCheck") && replacement.fields.includes("groundCheck")) {
+    summary.push("add ground probe support for reliable jump gating");
+  }
+
+  summary.push(original.hasMovementLogic ? "retain movement controller flow while extending jump behavior" : "introduce explicit movement logic");
+  return summary;
+}
+
+function validateReplacementCode(artifact: UnityPatchArtifact): string[] {
+  const blockedReasons: string[] = [];
+  const replacementAnalysis = analyzeExistingScript(artifact.replacementCode);
+
+  if (replacementAnalysis.className !== artifact.validationRules.preserveClassName) {
+    blockedReasons.push(`Replacement class changed from ${artifact.validationRules.preserveClassName} to ${replacementAnalysis.className}.`);
+  }
+
+  if (artifact.validationRules.preserveNamespace !== undefined
+    && replacementAnalysis.namespace !== artifact.validationRules.preserveNamespace) {
+    blockedReasons.push(`Replacement namespace changed from ${artifact.validationRules.preserveNamespace} to ${replacementAnalysis.namespace ?? "none"}.`);
+  }
+
+  for (const forbiddenClassName of artifact.validationRules.forbiddenClassNames) {
+    if (containsClassName(artifact.replacementCode, forbiddenClassName)) {
+      blockedReasons.push(`Replacement contains forbidden class ${forbiddenClassName}.`);
+    }
+  }
+
+  if (artifact.validationRules.requireNoDuplicateMethods) {
+    if (countMethodOccurrences(artifact.replacementCode, "Awake") > 1) {
+      blockedReasons.push("Replacement contains duplicate Awake methods.");
+    }
+
+    if (countMethodOccurrences(artifact.replacementCode, "Update") > 1) {
+      blockedReasons.push("Replacement contains duplicate Update methods.");
+    }
+  }
+
+  return blockedReasons;
+}
+
 function buildSimpleKeyboardMoverReplacement(analysis: ExistingScriptAnalysis): string {
   const attributes = uniqueAttributeLines(analysis.attributeLines);
   const indent = "    ";
@@ -400,7 +563,7 @@ function buildSimpleKeyboardMoverReplacement(analysis: ExistingScriptAnalysis): 
   return bodyLines.join("\n");
 }
 
-export async function generateGamePatchPlan(snapshot: GameProjectSnapshot): Promise<GamePatchPlan> {
+export async function generateUnityPatchArtifact(snapshot: GameProjectSnapshot): Promise<UnityPatchArtifact> {
   if (snapshot.engine !== "unity") {
     throw new Error("Game patch plans require a Unity project.");
   }
@@ -414,31 +577,70 @@ export async function generateGamePatchPlan(snapshot: GameProjectSnapshot): Prom
   const source = await readFile(absoluteTargetPath, "utf-8");
   const analysis = analyzeExistingScript(source);
   const replacementCode = buildSimpleKeyboardMoverReplacement(analysis);
-  const summaryParts = [
-    `Patch ${analysis.className} in ${targetFile}`,
-    analysis.namespace ? `preserve namespace ${analysis.namespace}` : "no namespace detected",
-    analysis.attributeLines.length > 0 ? `preserve ${analysis.attributeLines.length} attribute line(s)` : "no attribute lines detected",
-    analysis.hasAwake ? "existing Awake detected" : "Awake missing",
-    analysis.hasUpdate ? "existing Update detected" : "Update missing",
-    analysis.hasMovementLogic ? "movement logic detected" : "movement logic not detected",
-  ];
 
   return {
     targetFile,
-    className: analysis.className,
-    namespace: analysis.namespace,
+    absoluteTargetPath,
+    originalSha256: sha256(source),
+    replacementSha256: sha256(replacementCode),
+    replacementCode,
+    validationRules: {
+      preserveClassName: analysis.className,
+      preserveNamespace: analysis.namespace,
+      forbiddenClassNames: ["PlayerController"],
+      requireNoDuplicateMethods: true,
+    },
+    safety: {
+      requiresCleanRecoveryState: true,
+      createsBackupBeforeApply: true,
+      noUnityExecution: true,
+    },
+  };
+}
+
+export async function generateUnityPatchPreview(snapshot: GameProjectSnapshot): Promise<UnityPatchPreview> {
+  const artifact = await generateUnityPatchArtifact(snapshot);
+  const originalSource = await readFile(artifact.absoluteTargetPath, "utf-8");
+  const originalAnalysis = analyzeExistingScript(originalSource);
+  const replacementAnalysis = analyzeExistingScript(artifact.replacementCode);
+
+  return {
+    artifact,
+    detectedClass: originalAnalysis.className,
+    detectedNamespace: originalAnalysis.namespace,
+    diffSummary: buildDiffSummary(originalAnalysis, replacementAnalysis),
+    safetyStatus: [
+      "manual full-file copy/paste disabled",
+      `clean recovery state required before apply: ${artifact.safety.requiresCleanRecoveryState ? "yes" : "no"}`,
+      `backup created before write: ${artifact.safety.createsBackupBeforeApply ? "yes" : "no"}`,
+      `Unity execution disabled: ${artifact.safety.noUnityExecution ? "yes" : "no"}`,
+    ],
+  };
+}
+
+export async function generateGamePatchPlan(snapshot: GameProjectSnapshot): Promise<GamePatchPlan> {
+  const preview = await generateUnityPatchPreview(snapshot);
+  const summaryParts = [
+    `Patch ${preview.detectedClass} in ${preview.artifact.targetFile}`,
+    preview.detectedNamespace ? `preserve namespace ${preview.detectedNamespace}` : "no namespace detected",
+    `original sha256 ${preview.artifact.originalSha256}`,
+    `replacement sha256 ${preview.artifact.replacementSha256}`,
+  ];
+
+  return {
+    targetFile: preview.artifact.targetFile,
+    className: preview.detectedClass,
+    namespace: preview.detectedNamespace,
     changeType: "modify-existing-script",
     summary: summaryParts.join("; "),
     exactInstructions: [
-      `Open ${targetFile}.`,
-      "Replace the full file contents with the generated replacement code below.",
-      `Keep the class name as ${analysis.className}.`,
-      analysis.namespace ? `Keep the namespace as ${analysis.namespace}.` : "Do not introduce a new namespace unless the project already requires one.",
-      "Do not rename the script file or create PlayerController.cs.",
-      "After replacing the file, return to Unity and wait for compile to finish before entering Play mode.",
-      "Run a human playtest only after the Unity console shows zero compile errors.",
+      `Run patch preview for ${preview.artifact.targetFile}.`,
+      "Review the hashes, detected class, detected namespace, and diff summary.",
+      "Apply the patch only through the guarded apply command.",
+      "Check patch status before opening Unity.",
+      "Open Unity only after patch status reports safe for compile/playtest.",
     ],
-    replacementCode,
+    artifact: preview.artifact,
     expectedResult: "SimpleKeyboardPlayerMover.cs keeps its existing class identity while adding clearer movement and jump behavior without duplicate class or method errors.",
     safety: {
       outputOnly: true,
@@ -458,11 +660,11 @@ export function renderGamePatchPlan(plan: GamePatchPlan): string {
     `Change Type: ${plan.changeType}`,
     `Summary: ${plan.summary}`,
     "",
+    `Original SHA256: ${plan.artifact.originalSha256}`,
+    `Replacement SHA256: ${plan.artifact.replacementSha256}`,
+    "",
     "Exact Instructions:",
     ...plan.exactInstructions.map((step, index) => `${index + 1}. ${step}`),
-    "",
-    "Replacement Code:",
-    plan.replacementCode ?? "none",
     "",
     `Expected Result: ${plan.expectedResult}`,
     "",
@@ -470,5 +672,248 @@ export function renderGamePatchPlan(plan: GamePatchPlan): string {
     `- output only: ${plan.safety.outputOnly ? "true" : "false"}`,
     `- no file writes: ${plan.safety.noFileWrites ? "true" : "false"}`,
     `- requires human Unity playtest: ${plan.safety.requiresHumanUnityPlaytest ? "true" : "false"}`,
+    "- manual full-file copy/paste disabled",
+  ].join("\n");
+}
+
+export function renderUnityPatchPreview(preview: UnityPatchPreview): string {
+  return [
+    "UNITY PATCH PREVIEW",
+    "",
+    `Target File: ${preview.artifact.targetFile}`,
+    `Absolute Target Path: ${preview.artifact.absoluteTargetPath}`,
+    `Original SHA256: ${preview.artifact.originalSha256}`,
+    `Replacement SHA256: ${preview.artifact.replacementSha256}`,
+    `Detected Class: ${preview.detectedClass}`,
+    `Detected Namespace: ${preview.detectedNamespace ?? "none"}`,
+    "",
+    "Diff Summary:",
+    ...preview.diffSummary.map((line) => `- ${line}`),
+    "",
+    "Safety Status:",
+    ...preview.safetyStatus.map((line) => `- ${line}`),
+  ].join("\n");
+}
+
+export async function applyUnityPatchArtifact(
+  artifact: UnityPatchArtifact,
+  recoverySafe: boolean,
+  recoveryGuidance: string[],
+): Promise<UnityPatchApplyResult> {
+  const blockedReasons: string[] = [];
+  const backupPath = backupPathFor(artifact.absoluteTargetPath);
+
+  if (!recoverySafe) {
+    blockedReasons.push("Unity recovery guard did not report a clean recovery state.");
+  }
+
+  if (!(await fileExists(artifact.absoluteTargetPath))) {
+    blockedReasons.push(`Target file does not exist: ${artifact.absoluteTargetPath}`);
+  }
+
+  const currentSource = await readFile(artifact.absoluteTargetPath, "utf-8");
+  const currentSha256 = sha256(currentSource);
+  if (currentSha256 !== artifact.originalSha256) {
+    blockedReasons.push(`Current file hash ${currentSha256} did not match expected original hash ${artifact.originalSha256}.`);
+  }
+
+  blockedReasons.push(...validateReplacementCode(artifact));
+
+  if (await fileExists(backupPath)) {
+    blockedReasons.push(`Backup already exists and will not be overwritten: ${backupPath}`);
+  }
+
+  if (blockedReasons.length > 0) {
+    return {
+      applied: false,
+      targetFile: artifact.targetFile,
+      targetPath: artifact.absoluteTargetPath,
+      backupPath,
+      originalSha256: artifact.originalSha256,
+      replacementSha256: artifact.replacementSha256,
+      currentSha256,
+      blockedReasons,
+      recoveryGuidance,
+      safety: {
+        noUnityExecution: true,
+        backupCreated: false,
+        targetWritten: false,
+      },
+    };
+  }
+
+  await copyFile(artifact.absoluteTargetPath, backupPath);
+  await writeFile(artifact.absoluteTargetPath, artifact.replacementCode, "utf-8");
+
+  return {
+    applied: true,
+    targetFile: artifact.targetFile,
+    targetPath: artifact.absoluteTargetPath,
+    backupPath,
+    originalSha256: artifact.originalSha256,
+    replacementSha256: artifact.replacementSha256,
+    currentSha256: sha256(artifact.replacementCode),
+    blockedReasons: [],
+    recoveryGuidance: [],
+    safety: {
+      noUnityExecution: true,
+      backupCreated: true,
+      targetWritten: true,
+    },
+  };
+}
+
+export async function inspectUnityPatchStatus(
+  artifact: UnityPatchArtifact,
+  recoverySafe: boolean,
+): Promise<UnityPatchStatus> {
+  const backupPath = backupPathFor(artifact.absoluteTargetPath);
+  const currentSource = await readFile(artifact.absoluteTargetPath, "utf-8");
+  const currentSha256 = sha256(currentSource);
+  const backupExists = await fileExists(backupPath);
+  const currentFileAppearsPatched = currentSha256 === artifact.replacementSha256;
+  const jumpLogicPresent = hasJumpLogic(currentSource);
+
+  return {
+    targetFile: artifact.targetFile,
+    targetPath: artifact.absoluteTargetPath,
+    backupPath,
+    backupExists,
+    currentSha256,
+    expectedPatchedSha256: artifact.replacementSha256,
+    currentFileAppearsPatched,
+    jumpLogicPresent,
+    rollbackAvailable: backupExists,
+    safeToOpenUnityForCompileOrPlaytest: recoverySafe && currentFileAppearsPatched && jumpLogicPresent && backupExists,
+    recoverySafe,
+    safety: {
+      noUnityExecution: true,
+    },
+  };
+}
+
+export function renderUnityPatchStatus(status: UnityPatchStatus): string {
+  return [
+    "UNITY PATCH STATUS",
+    "",
+    `Target File: ${status.targetFile}`,
+    `Target Path: ${status.targetPath}`,
+    `Backup Path: ${status.backupPath}`,
+    `Backup Exists: ${status.backupExists ? "YES" : "NO"}`,
+    `Current SHA256: ${status.currentSha256}`,
+    `Expected Patched SHA256: ${status.expectedPatchedSha256}`,
+    `Current File Appears Patched: ${status.currentFileAppearsPatched ? "YES" : "NO"}`,
+    `Jump Logic Present: ${status.jumpLogicPresent ? "YES" : "NO"}`,
+    `Rollback Available: ${status.rollbackAvailable ? "YES" : "NO"}`,
+    `Recovery Guard Safe: ${status.recoverySafe ? "YES" : "NO"}`,
+    `Safe To Open Unity For Compile/Playtest: ${status.safeToOpenUnityForCompileOrPlaytest ? "YES" : "NO"}`,
+    "",
+    "Safety:",
+    `- no Unity execution: ${status.safety.noUnityExecution ? "true" : "false"}`,
+  ].join("\n");
+}
+
+export function renderUnityPatchApplyResult(result: UnityPatchApplyResult): string {
+  if (!result.applied) {
+    return [
+      "UNITY PATCH APPLY BLOCKED",
+      "",
+      `Target File: ${result.targetFile}`,
+      `Target Path: ${result.targetPath}`,
+      `Backup Path: ${result.backupPath}`,
+      result.currentSha256 ? `Current SHA256: ${result.currentSha256}` : "Current SHA256: unavailable",
+      `Expected Original SHA256: ${result.originalSha256}`,
+      "",
+      "Blocked Reasons:",
+      ...result.blockedReasons.map((reason, index) => `${index + 1}. ${reason}`),
+      "",
+      "Recovery Guidance:",
+      ...(result.recoveryGuidance.length > 0
+        ? result.recoveryGuidance.map((step, index) => `${index + 1}. ${step}`)
+        : ["1. Inspect the target script and local recovery state before trying again."]),
+      "",
+      "Safety:",
+      `- no Unity execution: ${result.safety.noUnityExecution ? "true" : "false"}`,
+      `- backup created: ${result.safety.backupCreated ? "true" : "false"}`,
+      `- target written: ${result.safety.targetWritten ? "true" : "false"}`,
+    ].join("\n");
+  }
+
+  return [
+    "PATCH APPLIED",
+    "",
+    `Backup Path: ${result.backupPath}`,
+    `Target Path: ${result.targetPath}`,
+    `Original SHA256: ${result.originalSha256}`,
+    `New SHA256: ${result.currentSha256 ?? result.replacementSha256}`,
+    "",
+    "Safety:",
+    `- no Unity execution: ${result.safety.noUnityExecution ? "true" : "false"}`,
+    `- backup created: ${result.safety.backupCreated ? "true" : "false"}`,
+    `- target written: ${result.safety.targetWritten ? "true" : "false"}`,
+  ].join("\n");
+}
+
+export async function rollbackUnityPatchArtifact(artifact: UnityPatchArtifact): Promise<UnityPatchRollbackResult> {
+  const backupPath = backupPathFor(artifact.absoluteTargetPath);
+  if (!(await fileExists(backupPath))) {
+    return {
+      restored: false,
+      targetFile: artifact.targetFile,
+      targetPath: artifact.absoluteTargetPath,
+      backupPath,
+      blockedReasons: ["Backup file does not exist, so rollback cannot proceed."],
+      safety: {
+        noUnityExecution: true,
+        backupRetained: true,
+      },
+    };
+  }
+
+  const backupSource = await readFile(backupPath, "utf-8");
+  await writeFile(artifact.absoluteTargetPath, backupSource, "utf-8");
+
+  return {
+    restored: true,
+    targetFile: artifact.targetFile,
+    targetPath: artifact.absoluteTargetPath,
+    backupPath,
+    restoredSha256: sha256(backupSource),
+    blockedReasons: [],
+    safety: {
+      noUnityExecution: true,
+      backupRetained: true,
+    },
+  };
+}
+
+export function renderUnityPatchRollbackResult(result: UnityPatchRollbackResult): string {
+  if (!result.restored) {
+    return [
+      "UNITY PATCH ROLLBACK BLOCKED",
+      "",
+      `Target File: ${result.targetFile}`,
+      `Target Path: ${result.targetPath}`,
+      `Backup Path: ${result.backupPath}`,
+      "",
+      "Blocked Reasons:",
+      ...result.blockedReasons.map((reason, index) => `${index + 1}. ${reason}`),
+      "",
+      "Safety:",
+      `- no Unity execution: ${result.safety.noUnityExecution ? "true" : "false"}`,
+      `- backup retained: ${result.safety.backupRetained ? "true" : "false"}`,
+    ].join("\n");
+  }
+
+  return [
+    "UNITY PATCH RESTORED",
+    "",
+    `Target Path: ${result.targetPath}`,
+    `Backup Path: ${result.backupPath}`,
+    `Restored SHA256: ${result.restoredSha256 ?? "unknown"}`,
+    "",
+    "Safety:",
+    `- no Unity execution: ${result.safety.noUnityExecution ? "true" : "false"}`,
+    `- backup retained: ${result.safety.backupRetained ? "true" : "false"}`,
   ].join("\n");
 }

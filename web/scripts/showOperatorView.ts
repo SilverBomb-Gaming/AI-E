@@ -4,7 +4,21 @@ import { stdin as input, stdout as output } from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { inspectGameProject, renderGameProjectSummary } from "../lib/aie/gameProjectInspector";
-import { generateGamePatchPlan, generateGameTask, renderGamePatchPlan, renderGameTask } from "../lib/aie/gameTaskGenerator";
+import {
+  applyUnityPatchArtifact,
+  generateGamePatchPlan,
+  generateGameTask,
+  generateUnityPatchArtifact,
+  generateUnityPatchPreview,
+  inspectUnityPatchStatus,
+  renderGamePatchPlan,
+  renderGameTask,
+  renderUnityPatchApplyResult,
+  renderUnityPatchPreview,
+  renderUnityPatchRollbackResult,
+  renderUnityPatchStatus,
+  rollbackUnityPatchArtifact,
+} from "../lib/aie/gameTaskGenerator";
 import { renderOperatorView, renderOperatorViewSummary, type OperatorViewState } from "../lib/aie/operatorView";
 import type { OperatorViewSnapshot } from "../lib/aie/operatorView.types";
 import { inspectUnityPlaytestRecovery, renderUnityPlaytestRecovery } from "../lib/aie/unityPlaytestRecovery";
@@ -16,7 +30,35 @@ type ShowOperatorViewOptions = {
   gameTaskPath?: string;
   unityRecoveryPath?: string;
   gamePatchPath?: string;
+  gamePatchPreviewPath?: string;
+  applyGamePatchPath?: string;
+  gamePatchStatusPath?: string;
+  rollbackGamePatchPath?: string;
 };
+
+function buildRecoveryGuidance(snapshot: Awaited<ReturnType<typeof inspectUnityPlaytestRecovery>>): string[] {
+  if (snapshot.recommendedActions.length === 0) {
+    return ["No recovery actions required."];
+  }
+
+  const guidance = snapshot.recommendedActions.map((action) => {
+    const verb = action.action === "delete-file"
+      ? "Delete accidental generated file"
+      : action.action === "restore-file"
+        ? "Restore tracked movement script"
+        : "Inspect movement script";
+    return `${verb}: ${action.path} (${action.reason})`;
+  });
+
+  guidance.push("Wait for Unity compile errors to clear.");
+  guidance.push("Re-run patch preview or patch status after recovery is clean.");
+  return guidance;
+}
+
+function buildPatchStatusRecoverySignal(snapshot: Awaited<ReturnType<typeof inspectUnityPlaytestRecovery>>): boolean {
+  return snapshot.detectedIssues.accidentalGeneratedFiles.length === 0
+    && snapshot.detectedIssues.duplicateClassRisks.length === 0;
+}
 
 function isDirectExecution(): boolean {
   const entry = process.argv[1];
@@ -101,6 +143,66 @@ function parseArgs(argv: string[]): ShowOperatorViewOptions {
         throw new Error("Missing value for --game-patch");
       }
       options.gamePatchPath = value.trim();
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith("--game-patch-preview=")) {
+      options.gamePatchPreviewPath = arg.slice("--game-patch-preview=".length).trim() || undefined;
+      continue;
+    }
+
+    if (arg === "--game-patch-preview") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("Missing value for --game-patch-preview");
+      }
+      options.gamePatchPreviewPath = value.trim();
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith("--apply-game-patch=")) {
+      options.applyGamePatchPath = arg.slice("--apply-game-patch=".length).trim() || undefined;
+      continue;
+    }
+
+    if (arg === "--apply-game-patch") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("Missing value for --apply-game-patch");
+      }
+      options.applyGamePatchPath = value.trim();
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith("--game-patch-status=")) {
+      options.gamePatchStatusPath = arg.slice("--game-patch-status=".length).trim() || undefined;
+      continue;
+    }
+
+    if (arg === "--game-patch-status") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("Missing value for --game-patch-status");
+      }
+      options.gamePatchStatusPath = value.trim();
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith("--rollback-game-patch=")) {
+      options.rollbackGamePatchPath = arg.slice("--rollback-game-patch=".length).trim() || undefined;
+      continue;
+    }
+
+    if (arg === "--rollback-game-patch") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("Missing value for --rollback-game-patch");
+      }
+      options.rollbackGamePatchPath = value.trim();
       index += 1;
       continue;
     }
@@ -274,49 +376,81 @@ function buildDemoOperatorState(): OperatorViewState {
 export async function main(argv: string[] = process.argv.slice(2)): Promise<number> {
   try {
     const options = parseArgs(argv);
+    const activeModes = [
+      options.interactive ? "--interactive" : null,
+      options.projectPath ? "--project" : null,
+      options.gameTaskPath ? "--game-task" : null,
+      options.unityRecoveryPath ? "--unity-recovery" : null,
+      options.gamePatchPath ? "--game-patch" : null,
+      options.gamePatchPreviewPath ? "--game-patch-preview" : null,
+      options.applyGamePatchPath ? "--apply-game-patch" : null,
+      options.gamePatchStatusPath ? "--game-patch-status" : null,
+      options.rollbackGamePatchPath ? "--rollback-game-patch" : null,
+    ].filter((value): value is string => value !== null);
 
     if (options.json && options.interactive) {
       throw new Error("Use either --json or --interactive, not both.");
     }
 
-    if (options.projectPath && options.interactive) {
-      throw new Error("Use either --project or --interactive, not both.");
+    if (activeModes.length > 1) {
+      throw new Error(`Use only one mode at a time: ${activeModes.join(", ")}`);
     }
 
-    if (options.gameTaskPath && options.interactive) {
-      throw new Error("Use either --game-task or --interactive, not both.");
+    if (options.gamePatchPreviewPath) {
+      const snapshot = await inspectGameProject(options.gamePatchPreviewPath);
+      const preview = await generateUnityPatchPreview(snapshot);
+
+      if (options.json) {
+        console.log(JSON.stringify(preview, null, 2));
+        return 0;
+      }
+
+      console.log(renderUnityPatchPreview(preview));
+      return 0;
     }
 
-    if (options.gameTaskPath && options.projectPath) {
-      throw new Error("Use either --game-task or --project, not both.");
+    if (options.applyGamePatchPath) {
+      const snapshot = await inspectGameProject(options.applyGamePatchPath);
+      const artifact = await generateUnityPatchArtifact(snapshot);
+      const recovery = await inspectUnityPlaytestRecovery(options.applyGamePatchPath);
+      const result = await applyUnityPatchArtifact(artifact, recovery.safeToResumePlaytest, buildRecoveryGuidance(recovery));
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return result.applied ? 0 : 1;
+      }
+
+      console.log(renderUnityPatchApplyResult(result));
+      return result.applied ? 0 : 1;
     }
 
-    if (options.unityRecoveryPath && options.interactive) {
-      throw new Error("Use either --unity-recovery or --interactive, not both.");
+    if (options.gamePatchStatusPath) {
+      const snapshot = await inspectGameProject(options.gamePatchStatusPath);
+      const artifact = await generateUnityPatchArtifact(snapshot);
+      const recovery = await inspectUnityPlaytestRecovery(options.gamePatchStatusPath);
+      const status = await inspectUnityPatchStatus(artifact, buildPatchStatusRecoverySignal(recovery));
+
+      if (options.json) {
+        console.log(JSON.stringify(status, null, 2));
+        return 0;
+      }
+
+      console.log(renderUnityPatchStatus(status));
+      return 0;
     }
 
-    if (options.unityRecoveryPath && options.projectPath) {
-      throw new Error("Use either --unity-recovery or --project, not both.");
-    }
+    if (options.rollbackGamePatchPath) {
+      const snapshot = await inspectGameProject(options.rollbackGamePatchPath);
+      const artifact = await generateUnityPatchArtifact(snapshot);
+      const result = await rollbackUnityPatchArtifact(artifact);
 
-    if (options.unityRecoveryPath && options.gameTaskPath) {
-      throw new Error("Use either --unity-recovery or --game-task, not both.");
-    }
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return result.restored ? 0 : 1;
+      }
 
-    if (options.gamePatchPath && options.interactive) {
-      throw new Error("Use either --game-patch or --interactive, not both.");
-    }
-
-    if (options.gamePatchPath && options.projectPath) {
-      throw new Error("Use either --game-patch or --project, not both.");
-    }
-
-    if (options.gamePatchPath && options.gameTaskPath) {
-      throw new Error("Use either --game-patch or --game-task, not both.");
-    }
-
-    if (options.gamePatchPath && options.unityRecoveryPath) {
-      throw new Error("Use either --game-patch or --unity-recovery, not both.");
+      console.log(renderUnityPatchRollbackResult(result));
+      return result.restored ? 0 : 1;
     }
 
     if (options.gamePatchPath) {

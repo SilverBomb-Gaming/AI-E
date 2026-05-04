@@ -934,6 +934,28 @@ End-User Functionality Step 1 status:
 - patch plans preserve the detected class name, namespace, and attribute shape instead of proposing generic duplicate scripts
 - human playtesting only starts after the patch is file-specific and Unity compiles cleanly
 
+## Guarded Unity Patch Workflow
+
+- humans should not manually paste full Unity scripts for file-specific gameplay changes
+- AI-E now generates a guarded local patch artifact and applies it only after recovery checks pass
+- the human only opens Unity after patch status reports safe for compile and playtest
+
+Workflow:
+
+1. Preview the patch artifact.
+2. Apply the guarded patch.
+3. Check patch status.
+4. Open Unity and wait for compile.
+5. Run the human playtest.
+6. Roll back the patch if needed.
+
+Commands:
+
+- `npm run operator:view -- --game-patch-preview "<project>"`
+- `npm run operator:view -- --apply-game-patch "<project>"`
+- `npm run operator:view -- --game-patch-status "<project>"`
+- `npm run operator:view -- --rollback-game-patch "<project>"`
+
 ## Safe Runtime Action Bridge
 
 AI-E can now translate supported live operator actions into safe runtime intents.
