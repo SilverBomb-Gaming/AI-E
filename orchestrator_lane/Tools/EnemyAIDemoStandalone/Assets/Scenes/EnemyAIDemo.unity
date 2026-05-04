@@ -216,6 +216,7 @@ GameObject:
   - component: {fileID: 620844256}
   - component: {fileID: 620844255}
   - component: {fileID: 620844253}
+  - component: {fileID: 2001529178}
   m_Layer: 0
   m_Name: Player
   m_TagString: Player
@@ -1045,3 +1046,19 @@ MonoBehaviour:
   smoothTime: 0.12
   lookAtHeight: 1.5
   debugFollow: 0
+--- !u!114 &2001529178
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 620844252}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 0ca9f4060cefd2fd4ae9410834d5e015, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier:
+  respawnPoint: {fileID: 1442643729}
+  fallThresholdY: -10
+  debugRecovery: 1
+  fallbackSpawnPosition: {x: 0, y: 1, z: -8}
