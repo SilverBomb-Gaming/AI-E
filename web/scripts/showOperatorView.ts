@@ -3,12 +3,14 @@ import { resolve } from "node:path";
 import { stdin as input, stdout as output } from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { inspectGameProject, renderGameProjectSummary } from "../lib/aie/gameProjectInspector";
 import { renderOperatorView, renderOperatorViewSummary, type OperatorViewState } from "../lib/aie/operatorView";
 import type { OperatorViewSnapshot } from "../lib/aie/operatorView.types";
 
 type ShowOperatorViewOptions = {
   json: boolean;
   interactive: boolean;
+  projectPath?: string;
 };
 
 function isDirectExecution(): boolean {
@@ -25,7 +27,9 @@ function parseArgs(argv: string[]): ShowOperatorViewOptions {
     interactive: false,
   };
 
-  for (const arg of argv) {
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+
     if (arg === "--json") {
       options.json = true;
       continue;
@@ -33,6 +37,22 @@ function parseArgs(argv: string[]): ShowOperatorViewOptions {
 
     if (arg === "--interactive") {
       options.interactive = true;
+      continue;
+    }
+
+    if (arg.startsWith("--project=")) {
+      options.projectPath = arg.slice("--project=".length).trim() || undefined;
+      continue;
+    }
+
+    if (arg === "--project") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("Missing value for --project");
+      }
+      options.projectPath = value.trim();
+      index += 1;
+      continue;
     }
   }
 
@@ -207,6 +227,22 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
 
     if (options.json && options.interactive) {
       throw new Error("Use either --json or --interactive, not both.");
+    }
+
+    if (options.projectPath && options.interactive) {
+      throw new Error("Use either --project or --interactive, not both.");
+    }
+
+    if (options.projectPath) {
+      const snapshot = await inspectGameProject(options.projectPath);
+
+      if (options.json) {
+        console.log(JSON.stringify(snapshot, null, 2));
+        return 0;
+      }
+
+      console.log(renderGameProjectSummary(snapshot));
+      return 0;
     }
 
     const state = buildDemoOperatorState();

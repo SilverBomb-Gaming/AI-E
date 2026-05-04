@@ -902,6 +902,12 @@ End-User Functionality Step 1 status:
 - menu-driven flow exposes system status, nodes, routing, and dispatch logs without memorizing commands
 - still read-only and designed for usability, with no execution, mutation, scheduling, or autonomy changes
 
+## Game Project Inspector (Local)
+
+- supports Unity detection through local filesystem inspection of `Assets/`, `ProjectSettings/`, and `Packages/`
+- provides read-only project structure, counts, readiness classification, and a next-step suggestion
+- helps guide development without Unity execution, file writes, automation, or mutation
+
 ## Safe Runtime Action Bridge
 
 AI-E can now translate supported live operator actions into safe runtime intents.
