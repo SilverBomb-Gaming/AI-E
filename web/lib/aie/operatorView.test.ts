@@ -4,6 +4,7 @@ import test from "node:test";
 import type { NodeDispatchRecord } from "./nodeDispatch";
 import type { NodeHealthSnapshot } from "./nodeHealth";
 import { renderOperatorView, renderOperatorViewSummary, type OperatorViewState } from "./operatorView";
+import type { OperatorViewSnapshot } from "./operatorView.types";
 import type { NodeReadinessEvaluation } from "./nodeReadiness";
 import type { NodeRegistryEntry } from "./nodeRegistry";
 import type { NodeRoutingSimulationResult } from "./nodeRoutingSimulation";
@@ -46,11 +47,15 @@ function createReadiness(overrides: Partial<NodeReadinessEvaluation> = {}): Node
 }
 
 function createRouting(overrides: Partial<NodeRoutingSimulationResult> = {}): NodeRoutingSimulationResult {
+  const selectedNodeId = Object.prototype.hasOwnProperty.call(overrides, "selected_node_id")
+    ? overrides.selected_node_id
+    : "node-01";
+
   return {
     simulated: true,
     task_id: overrides.task_id ?? "task-01",
     required_capabilities: overrides.required_capabilities ?? ["inspection"],
-    selected_node_id: overrides.selected_node_id ?? "node-01",
+    selected_node_id: selectedNodeId,
     candidate_nodes: overrides.candidate_nodes ?? ["node-01"],
     blocked_nodes: overrides.blocked_nodes ?? [],
     routing_allowed: false,
@@ -79,11 +84,12 @@ function createState(overrides: Partial<OperatorViewState> = {}): OperatorViewSt
 test("operator view renders all sections", () => {
   const result = renderOperatorView(createState());
 
+  assert.equal(typeof result.timestamp, "string");
   assert.equal(Array.isArray(result.nodes), true);
-  assert.equal(Array.isArray(result.health), true);
-  assert.equal(Array.isArray(result.readiness), true);
-  assert.equal(Array.isArray(result.routing_simulations), true);
-  assert.equal(Array.isArray(result.dispatch_log), true);
+  assert.equal(typeof result.summary, "object");
+  assert.equal(typeof result.routing, "object");
+  assert.equal(typeof result.dispatch, "object");
+  assert.equal(typeof result.safety, "object");
 });
 
 test("summary renderer includes nodes health readiness routing and dispatch sections", () => {
@@ -108,11 +114,14 @@ test("summary renderer includes safety markers", () => {
 test("data is correctly aggregated", () => {
   const result = renderOperatorView(createState());
 
-  assert.equal(result.nodes[0]?.node_id, "node-01");
-  assert.equal(result.health[0]?.status, "healthy");
-  assert.equal(result.readiness[0]?.readiness_status, "ready_candidate");
-  assert.equal(result.routing_simulations[0]?.selected_node_id, "node-01");
-  assert.equal(result.dispatch_log[0]?.reason, "dispatch intent recorded");
+  assert.equal(result.nodes[0]?.id, "node-01");
+  assert.equal(result.nodes[0]?.status, "healthy");
+  assert.equal(result.nodes[0]?.readiness, 1);
+  assert.equal(result.routing.selectedNode, "node-01");
+  assert.equal(result.dispatch.recent[0]?.intent, "dispatch intent recorded");
+  assert.equal(result.summary.totalNodes, 1);
+  assert.equal(result.summary.readyNodes, 1);
+  assert.equal(result.summary.unhealthyNodes, 0);
 });
 
 test("no mutation occurs", () => {
@@ -126,12 +135,9 @@ test("no mutation occurs", () => {
   const stateBefore = JSON.stringify(state);
   const result = renderOperatorView(state);
 
-  result.nodes[0]?.capabilities.push("validation-check");
-  result.health[0]?.warnings.push("late mutation");
-  result.readiness[0]?.reasons.push("late reason");
-  result.routing_simulations[0]?.candidate_nodes.push("node-99");
-  result.routing_simulations[0]?.blocked_nodes.push({ node_id: "node-03", reason: "node unavailable" });
-  result.dispatch_log.push(createDispatch({ node_id: "node-02" }));
+  result.nodes[0]!.status = "unhealthy";
+  result.routing.candidates.push({ nodeId: "node-99", score: 1 });
+  result.dispatch.recent.push({ intent: "late", targetNode: "node-02", result: "blocked", timestamp: result.timestamp });
 
   assert.equal(JSON.stringify(state), stateBefore);
 });
@@ -147,87 +153,99 @@ test("empty states handled safely", () => {
   const summary = renderOperatorViewSummary(result);
 
   assert.deepEqual(result, {
+    timestamp: result.timestamp,
     nodes: [],
-    health: [],
-    readiness: [],
-    routing_simulations: [],
-    dispatch_log: [],
+    summary: {
+      totalNodes: 0,
+      readyNodes: 0,
+      unhealthyNodes: 0,
+    },
+    routing: {
+      lastSimulation: null,
+      candidates: [],
+      selectedNode: null,
+    },
+    dispatch: {
+      recent: [],
+    },
+    safety: {
+      readOnly: true,
+      executionEnabled: false,
+    },
   });
   assert.match(summary, /^Nodes:\n- none/m);
   assert.match(summary, /^Dispatch Log:\n- none/m);
 });
 
-test("no execution or routing flags are triggered", () => {
+test("required fields and safety flags are always present", () => {
   const result = renderOperatorView(createState());
 
+  assert.deepEqual(Object.keys(result).sort(), ["dispatch", "nodes", "routing", "safety", "summary", "timestamp"]);
+  assert.equal(result.safety.readOnly, true);
+  assert.equal(result.safety.executionEnabled, false);
   assert.equal("execution_triggered" in result, false);
   assert.equal("routing_triggered" in result, false);
-  assert.equal("scheduled" in result, false);
-  assert.equal("autonomous" in result, false);
 });
 
-test("json structured output remains stable", () => {
-  const result = renderOperatorView(createState());
+test("schema shape validation matches OperatorViewSnapshot contract", () => {
+  const result: OperatorViewSnapshot = renderOperatorView(createState());
 
   assert.equal(JSON.stringify(result, null, 2), `{
+  "timestamp": "2026-05-04T18:02:00.000Z",
   "nodes": [
     {
-      "node_id": "node-01",
-      "hostname": "validator-01",
-      "platform": "windows",
-      "status": "available",
-      "capabilities": [
-        "inspection",
-        "validation-check"
-      ],
-      "last_seen_at": "2026-05-04T18:00:00.000Z"
-    }
-  ],
-  "health": [
-    {
-      "node_id": "node-01",
-      "checked_at": "2026-05-04T18:01:00.000Z",
+      "id": "node-01",
       "status": "healthy",
-      "warnings": [],
-      "execution_ready": false
+      "readiness": 1,
+      "lastHealthCheck": "2026-05-04T18:01:00.000Z"
     }
   ],
-  "readiness": [
-    {
-      "node_id": "node-01",
-      "evaluated_at": "2026-05-04T18:02:00.000Z",
-      "readiness_status": "ready_candidate",
-      "reasons": [],
-      "required_capabilities": [
-        "inspection"
-      ],
-      "missing_capabilities": [],
-      "health_status": "healthy",
-      "execution_ready": false
-    }
-  ],
-  "routing_simulations": [
-    {
-      "simulated": true,
-      "task_id": "task-01",
-      "required_capabilities": [
-        "inspection"
-      ],
-      "selected_node_id": "node-01",
-      "candidate_nodes": [
-        "node-01"
-      ],
-      "blocked_nodes": [],
-      "routing_allowed": false
-    }
-  ],
-  "dispatch_log": [
-    {
-      "dispatched": true,
-      "node_id": "node-01",
-      "task_id": "task-01",
-      "reason": "dispatch intent recorded"
-    }
-  ]
+  "summary": {
+    "totalNodes": 1,
+    "readyNodes": 1,
+    "unhealthyNodes": 0
+  },
+  "routing": {
+    "lastSimulation": "task-01",
+    "candidates": [
+      {
+        "nodeId": "node-01",
+        "score": 1
+      }
+    ],
+    "selectedNode": "node-01"
+  },
+  "dispatch": {
+    "recent": [
+      {
+        "intent": "dispatch intent recorded",
+        "targetNode": "node-01",
+        "result": "simulated",
+        "timestamp": "2026-05-04T18:02:00.000Z"
+      }
+    ]
+  },
+  "safety": {
+    "readOnly": true,
+    "executionEnabled": false
+  }
 }`);
+});
+
+test("unhealthy and blocked values are reflected in contract fields", () => {
+  const result = renderOperatorView(createState({
+    nodes: [createNode({ node_id: "node-02", status: "offline" })],
+    healthSnapshots: [createHealth({ node_id: "node-02", status: "degraded", checked_at: "2026-05-04T18:03:00.000Z" })],
+    readinessResults: [createReadiness({ node_id: "node-02", readiness_status: "not_ready", evaluated_at: "2026-05-04T18:04:00.000Z" })],
+    routingResults: [createRouting({ task_id: "task-02", selected_node_id: undefined, candidate_nodes: [] })],
+    dispatchResults: [createDispatch({ dispatched: false, node_id: "node-02", reason: "dispatch blocked" })],
+  }));
+
+  assert.equal(result.nodes[0]?.status, "unhealthy");
+  assert.equal(result.nodes[0]?.readiness, 0);
+  assert.equal(result.summary.unhealthyNodes, 1);
+  assert.equal(result.routing.selectedNode, null);
+  assert.equal(result.dispatch.recent[0]?.result, "blocked");
+  assert.equal(result.safety.readOnly, true);
+  assert.equal(result.safety.executionEnabled, false);
 });

@@ -3,6 +3,7 @@ import type { NodeHealthSnapshot } from "./nodeHealth";
 import type { NodeReadinessEvaluation } from "./nodeReadiness";
 import type { NodeRegistryEntry } from "./nodeRegistry";
 import type { NodeRoutingSimulationResult } from "./nodeRoutingSimulation";
+import type { OperatorViewSnapshot } from "./operatorView.types";
 
 export type OperatorViewState = {
   nodes: readonly NodeRegistryEntry[];
@@ -12,32 +13,88 @@ export type OperatorViewState = {
   dispatchResults: readonly NodeDispatchRecord[];
 };
 
-export type OperatorViewResult = {
-  nodes: NodeRegistryEntry[];
-  health: NodeHealthSnapshot[];
-  readiness: NodeReadinessEvaluation[];
-  routing_simulations: NodeRoutingSimulationResult[];
-  dispatch_log: NodeDispatchRecord[];
-};
+export type OperatorViewResult = OperatorViewSnapshot;
 
-function renderNodeLine(node: NodeRegistryEntry): string {
-  return `- ${node.node_id} [${node.status}] ${node.platform} capabilities: ${node.capabilities.length ? node.capabilities.join(", ") : "none"}`;
+function normalizeTimestamp(value: string | undefined): string {
+  if (typeof value === "string" && value.trim().length > 0 && !Number.isNaN(Date.parse(value))) {
+    return value.trim();
+  }
+
+  return new Date().toISOString();
 }
 
-function renderHealthLine(snapshot: NodeHealthSnapshot): string {
-  return `- ${snapshot.node_id} ${snapshot.status} latency: ${snapshot.latency_ms ?? "unknown"}${typeof snapshot.latency_ms === "number" ? "ms" : ""} warnings: ${snapshot.warnings.length ? snapshot.warnings.join(", ") : "none"}`;
+function latestHealthByNode(healthSnapshots: readonly NodeHealthSnapshot[]): Map<string, NodeHealthSnapshot> {
+  const latest = new Map<string, NodeHealthSnapshot>();
+
+  for (const snapshot of [...healthSnapshots].sort((left, right) => left.checked_at.localeCompare(right.checked_at))) {
+    latest.set(snapshot.node_id, {
+      ...snapshot,
+      warnings: [...snapshot.warnings],
+    });
+  }
+
+  return latest;
 }
 
-function renderReadinessLine(result: NodeReadinessEvaluation): string {
-  return `- ${result.node_id} ${result.readiness_status} execution_ready: ${result.execution_ready ? "true" : "false"}`;
+function latestReadinessByNode(readinessResults: readonly NodeReadinessEvaluation[]): Map<string, NodeReadinessEvaluation> {
+  const latest = new Map<string, NodeReadinessEvaluation>();
+
+  for (const result of [...readinessResults].sort((left, right) => left.evaluated_at.localeCompare(right.evaluated_at))) {
+    latest.set(result.node_id, {
+      ...result,
+      reasons: [...result.reasons],
+      required_capabilities: [...result.required_capabilities],
+      missing_capabilities: [...result.missing_capabilities],
+    });
+  }
+
+  return latest;
 }
 
-function renderRoutingLine(result: NodeRoutingSimulationResult): string {
-  return `- ${result.task_id} -> ${result.selected_node_id ?? "none"} simulated only routing_allowed: ${result.routing_allowed ? "true" : "false"}`;
+function buildSnapshotTimestamp(
+  nodes: readonly NodeRegistryEntry[],
+  healthSnapshots: readonly NodeHealthSnapshot[],
+  readinessResults: readonly NodeReadinessEvaluation[],
+): string {
+  const timestamps = [
+    ...nodes.map((node) => node.last_seen_at).filter((value): value is string => typeof value === "string" && value.trim().length > 0),
+    ...healthSnapshots.map((snapshot) => snapshot.checked_at),
+    ...readinessResults.map((result) => result.evaluated_at),
+  ].filter((value) => !Number.isNaN(Date.parse(value)));
+
+  return timestamps.sort().at(-1) ?? new Date().toISOString();
 }
 
-function renderDispatchLine(result: NodeDispatchRecord): string {
-  return `- ${result.task_id} -> ${result.node_id} ${result.reason ?? (result.dispatched ? "dispatch intent recorded" : "dispatch blocked")}`;
+function readinessScore(result: NodeReadinessEvaluation | undefined): number {
+  return result?.readiness_status === "ready_candidate" ? 1 : 0;
+}
+
+function healthStatus(snapshot: NodeHealthSnapshot | undefined): "healthy" | "unhealthy" {
+  return snapshot?.status === "healthy" ? "healthy" : "unhealthy";
+}
+
+function routingScore(rank: number, totalCandidates: number): number {
+  return Math.max(totalCandidates - rank, 1);
+}
+
+function renderNodeLine(node: OperatorViewSnapshot["nodes"][number]): string {
+  return `- ${node.id} [${node.status}] readiness: ${node.readiness} lastHealthCheck: ${node.lastHealthCheck}`;
+}
+
+function renderHealthLine(node: OperatorViewSnapshot["nodes"][number]): string {
+  return `- ${node.id} ${node.status} lastHealthCheck: ${node.lastHealthCheck}`;
+}
+
+function renderReadinessLine(node: OperatorViewSnapshot["nodes"][number]): string {
+  return `- ${node.id} readiness: ${node.readiness}`;
+}
+
+function renderRoutingLine(result: OperatorViewSnapshot["routing"]["candidates"][number], selectedNode: string | null): string {
+  return `- ${result.nodeId} score: ${result.score}${selectedNode === result.nodeId ? " selected" : ""}`;
+}
+
+function renderDispatchLine(result: OperatorViewSnapshot["dispatch"]["recent"][number]): string {
+  return `- ${result.intent} -> ${result.targetNode} ${result.result}`;
 }
 
 function renderSection<T>(title: string, values: readonly T[], renderLine: (value: T) => string, emptyLine: string): string[] {
@@ -55,49 +112,69 @@ function renderSection<T>(title: string, values: readonly T[], renderLine: (valu
   return lines;
 }
 
-function cloneNodes(nodes: readonly NodeRegistryEntry[]): NodeRegistryEntry[] {
-  return nodes.map((node) => ({
-    ...node,
-    capabilities: [...node.capabilities],
-  }));
-}
-
-function cloneHealthSnapshots(healthSnapshots: readonly NodeHealthSnapshot[]): NodeHealthSnapshot[] {
-  return healthSnapshots.map((snapshot) => ({
-    ...snapshot,
-    warnings: [...snapshot.warnings],
-  }));
-}
-
-function cloneReadinessResults(readinessResults: readonly NodeReadinessEvaluation[]): NodeReadinessEvaluation[] {
-  return readinessResults.map((result) => ({
-    ...result,
-    reasons: [...result.reasons],
-    required_capabilities: [...result.required_capabilities],
-    missing_capabilities: [...result.missing_capabilities],
-  }));
-}
-
-function cloneRoutingResults(routingResults: readonly NodeRoutingSimulationResult[]): NodeRoutingSimulationResult[] {
-  return routingResults.map((result) => ({
-    ...result,
-    required_capabilities: [...result.required_capabilities],
-    candidate_nodes: [...result.candidate_nodes],
-    blocked_nodes: result.blocked_nodes.map((node) => ({ ...node })),
-  }));
-}
-
-function cloneDispatchResults(dispatchResults: readonly NodeDispatchRecord[]): NodeDispatchRecord[] {
-  return dispatchResults.map((result) => ({ ...result }));
-}
-
 export function renderOperatorView(state: OperatorViewState): OperatorViewResult {
+  const latestHealth = latestHealthByNode(state.healthSnapshots);
+  const latestReadiness = latestReadinessByNode(state.readinessResults);
+  const timestamp = buildSnapshotTimestamp(state.nodes, state.healthSnapshots, state.readinessResults);
+  const latestRouting = [...state.routingResults]
+    .map((result) => ({
+      ...result,
+      required_capabilities: [...result.required_capabilities],
+      candidate_nodes: [...result.candidate_nodes],
+      blocked_nodes: result.blocked_nodes.map((node) => ({ ...node })),
+    }))
+    .sort((left, right) => left.task_id.localeCompare(right.task_id))
+    .at(-1);
+
+  const nodes = [...state.nodes]
+    .sort((left, right) => left.node_id.localeCompare(right.node_id))
+    .map((node) => {
+      const health = latestHealth.get(node.node_id);
+      const readiness = latestReadiness.get(node.node_id);
+
+      return {
+        id: node.node_id,
+        status: healthStatus(health),
+        readiness: readinessScore(readiness),
+        lastHealthCheck: normalizeTimestamp(health?.checked_at ?? node.last_seen_at),
+      };
+    });
+
+  const routingCandidates = (latestRouting?.candidate_nodes ?? []).map((nodeId, index, allCandidates) => ({
+    nodeId,
+    score: routingScore(index, allCandidates.length),
+  }));
+
+  const dispatchRecent = [...state.dispatchResults].map((result) => ({
+    intent: result.reason ?? (result.dispatched ? "dispatch intent recorded" : "dispatch blocked"),
+    targetNode: result.node_id,
+    result: result.dispatched ? "simulated" : "blocked",
+    timestamp,
+  }));
+
+  const unhealthyNodes = nodes.filter((node) => node.status === "unhealthy").length;
+  const readyNodes = nodes.filter((node) => node.readiness > 0).length;
+
   return {
-    nodes: cloneNodes(state.nodes),
-    health: cloneHealthSnapshots(state.healthSnapshots),
-    readiness: cloneReadinessResults(state.readinessResults),
-    routing_simulations: cloneRoutingResults(state.routingResults),
-    dispatch_log: cloneDispatchResults(state.dispatchResults),
+    timestamp,
+    nodes,
+    summary: {
+      totalNodes: nodes.length,
+      readyNodes,
+      unhealthyNodes,
+    },
+    routing: {
+      lastSimulation: latestRouting?.task_id ?? null,
+      candidates: routingCandidates,
+      selectedNode: latestRouting?.selected_node_id ?? null,
+    },
+    dispatch: {
+      recent: dispatchRecent,
+    },
+    safety: {
+      readOnly: true,
+      executionEnabled: false,
+    },
   };
 }
 
@@ -107,17 +184,20 @@ export function renderOperatorViewSummary(view: OperatorViewResult): string {
     "",
     ...renderSection("Nodes", view.nodes, renderNodeLine, "- none"),
     "",
-    ...renderSection("Health", view.health, renderHealthLine, "- none"),
+    ...renderSection("Health", view.nodes, renderHealthLine, "- none"),
     "",
-    ...renderSection("Readiness", view.readiness, renderReadinessLine, "- none"),
+    ...renderSection("Readiness", view.nodes, renderReadinessLine, "- none"),
     "",
-    ...renderSection("Routing Simulations", view.routing_simulations, renderRoutingLine, "- none"),
+    "Routing Simulations:",
+    `- lastSimulation: ${view.routing.lastSimulation ?? "none"}`,
+    `- selectedNode: ${view.routing.selectedNode ?? "none"}`,
+    ...(view.routing.candidates.length > 0 ? view.routing.candidates.map((candidate) => renderRoutingLine(candidate, view.routing.selectedNode)) : ["- none"]),
     "",
-    ...renderSection("Dispatch Log", view.dispatch_log, renderDispatchLine, "- none"),
+    ...renderSection("Dispatch Log", view.dispatch.recent, renderDispatchLine, "- none"),
     "",
     "Safety:",
     "- no execution performed",
-    "- routing_allowed false",
+    `- routing_allowed ${view.routing.selectedNode ? "false" : "false"}`,
     "- autonomy unchanged",
   ];
 

@@ -1,4 +1,4 @@
-import path, { resolve } from "node:path";
+import { resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { renderOperatorView, renderOperatorViewSummary, type OperatorViewState } from "../lib/aie/operatorView";
@@ -94,11 +94,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
     const view = renderOperatorView(state);
 
     if (options.json) {
-      console.log(JSON.stringify({
-        source: "demo_preview",
-        read_only: true,
-        view,
-      }, null, 2));
+      console.log(JSON.stringify(view, null, 2));
       return 0;
     }
 

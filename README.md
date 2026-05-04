@@ -890,6 +890,12 @@ End-User Functionality Step 1 status:
 - read-only preview for user navigation
 - no execution, routing, scheduling, mutation, or autonomy introduced
 
+## Operator View Output Contract
+
+- JSON structure is stable through `OperatorViewSnapshot` in `web/lib/aie/operatorView.types.ts`
+- intended for CLI consumers now and future UI/dashboard integration later
+- guaranteed read-only with `safety.readOnly = true` and `safety.executionEnabled = false`
+
 ## Safe Runtime Action Bridge
 
 AI-E can now translate supported live operator actions into safe runtime intents.
