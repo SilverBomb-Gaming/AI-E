@@ -14,6 +14,14 @@ export type GameProjectSnapshot = {
     scriptCount: number;
     prefabCount: number;
   };
+  analysis: {
+    scriptSignals: {
+      movementScripts: string[];
+      aiScripts: string[];
+      combatScripts: string[];
+      cameraScripts: string[];
+    };
+  };
   readiness: string;
   nextStep: string;
   safety: {
@@ -146,6 +154,53 @@ function classifyReadiness(sceneCount: number, scriptCount: number): GameProject
   return "unknown";
 }
 
+function movementScriptScore(scriptPath: string): number {
+  const fileName = path.basename(scriptPath).toLowerCase();
+  let score = 0;
+
+  if (fileName.includes("mover")) {
+    score += 8;
+  }
+
+  if (fileName.includes("movement")) {
+    score += 7;
+  }
+
+  if (fileName.includes("keyboard")) {
+    score += 6;
+  }
+
+  if (fileName.includes("input")) {
+    score += 5;
+  }
+
+  if (fileName.includes("player")) {
+    score += 3;
+  }
+
+  if (fileName.includes("controller")) {
+    score += 2;
+  }
+
+  return score;
+}
+
+function classifyScriptSignals(scripts: readonly string[]): GameProjectSnapshot["analysis"]["scriptSignals"] {
+  const movementScripts = scripts
+    .filter((scriptPath) => /player|controller|mover|movement|keyboard|input/i.test(path.basename(scriptPath)))
+    .sort((left, right) => movementScriptScore(right) - movementScriptScore(left) || left.localeCompare(right));
+  const aiScripts = scripts.filter((scriptPath) => /ai|enemy|npc|behavior/i.test(path.basename(scriptPath)));
+  const combatScripts = scripts.filter((scriptPath) => /combat|weapon|attack|damage|health/i.test(path.basename(scriptPath)));
+  const cameraScripts = scripts.filter((scriptPath) => /camera|followcam|cinemachine|look/i.test(path.basename(scriptPath)));
+
+  return {
+    movementScripts,
+    aiScripts,
+    combatScripts,
+    cameraScripts,
+  };
+}
+
 function nextStepForReadiness(readiness: GameProjectSnapshot["readiness"], engine: GameProjectSnapshot["engine"]): string {
   if (engine !== "unity") {
     return "Open a Unity project root";
@@ -184,6 +239,14 @@ export async function inspectGameProject(targetPath: string): Promise<GameProjec
         scriptCount: 0,
         prefabCount: 0,
       },
+      analysis: {
+        scriptSignals: {
+          movementScripts: [],
+          aiScripts: [],
+          combatScripts: [],
+          cameraScripts: [],
+        },
+      },
       readiness: "unknown",
       nextStep: nextStepForReadiness("unknown", engine),
       safety: {
@@ -193,6 +256,7 @@ export async function inspectGameProject(targetPath: string): Promise<GameProjec
   }
 
   const structure = await collectAssetPaths(detectedRoot);
+  const scriptSignals = classifyScriptSignals(structure.scripts);
   const readiness = classifyReadiness(structure.sceneCount, structure.scriptCount);
 
   return {
@@ -207,6 +271,9 @@ export async function inspectGameProject(targetPath: string): Promise<GameProjec
       sceneCount: structure.sceneCount,
       scriptCount: structure.scriptCount,
       prefabCount: structure.prefabCount,
+    },
+    analysis: {
+      scriptSignals,
     },
     readiness,
     nextStep: nextStepForReadiness(readiness, engine),
@@ -227,6 +294,7 @@ export function renderGameProjectSummary(snapshot: GameProjectSnapshot): string 
     `Scenes: ${snapshot.summary.sceneCount}`,
     `Scripts: ${snapshot.summary.scriptCount}`,
     `Prefabs: ${snapshot.summary.prefabCount}`,
+    `Movement scripts: ${snapshot.analysis.scriptSignals.movementScripts.length ? snapshot.analysis.scriptSignals.movementScripts.join(", ") : "none"}`,
     "",
     `Readiness: ${snapshot.readiness}`,
     `Next Step: ${snapshot.nextStep}`,

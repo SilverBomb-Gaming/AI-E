@@ -914,6 +914,13 @@ End-User Functionality Step 1 status:
 - the loop stays manual: AI-E outputs the task and code, and the human applies it inside Unity
 - task generation remains output-only with no file writes, Unity execution, or automation
 
+## Unity Human Playtest Safety
+
+- AI-E must detect existing gameplay scripts before generating new Unity movement tasks
+- existing scripts should be modified intentionally instead of creating duplicate controller classes
+- duplicate class generation is blocked by movement-script detection and modify-existing-script tasks
+- human playtest starts only after Unity has zero compile errors and the affected script is restored cleanly
+
 ## Safe Runtime Action Bridge
 
 AI-E can now translate supported live operator actions into safe runtime intents.
