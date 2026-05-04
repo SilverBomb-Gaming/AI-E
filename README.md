@@ -896,6 +896,12 @@ End-User Functionality Step 1 status:
 - intended for CLI consumers now and future UI/dashboard integration later
 - guaranteed read-only with `safety.readOnly = true` and `safety.executionEnabled = false`
 
+## Interactive Operator CLI
+
+- navigation-based system inspection is available through `npm run operator:view -- --interactive`
+- menu-driven flow exposes system status, nodes, routing, and dispatch logs without memorizing commands
+- still read-only and designed for usability, with no execution, mutation, scheduling, or autonomy changes
+
 ## Safe Runtime Action Bridge
 
 AI-E can now translate supported live operator actions into safe runtime intents.

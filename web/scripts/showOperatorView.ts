@@ -1,10 +1,14 @@
+import { createInterface } from "node:readline/promises";
 import { resolve } from "node:path";
+import { stdin as input, stdout as output } from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { renderOperatorView, renderOperatorViewSummary, type OperatorViewState } from "../lib/aie/operatorView";
+import type { OperatorViewSnapshot } from "../lib/aie/operatorView.types";
 
 type ShowOperatorViewOptions = {
   json: boolean;
+  interactive: boolean;
 };
 
 function isDirectExecution(): boolean {
@@ -18,15 +22,125 @@ function isDirectExecution(): boolean {
 function parseArgs(argv: string[]): ShowOperatorViewOptions {
   const options: ShowOperatorViewOptions = {
     json: false,
+    interactive: false,
   };
 
   for (const arg of argv) {
     if (arg === "--json") {
       options.json = true;
+      continue;
+    }
+
+    if (arg === "--interactive") {
+      options.interactive = true;
     }
   }
 
   return options;
+}
+
+function renderNodesView(view: OperatorViewSnapshot): string {
+  const lines = ["Nodes:"];
+
+  if (view.nodes.length === 0) {
+    lines.push("- none");
+    return lines.join("\n");
+  }
+
+  for (const node of view.nodes) {
+    lines.push(`- ${node.id} [${node.status}] readiness: ${node.readiness} lastHealthCheck: ${node.lastHealthCheck}`);
+  }
+
+  return lines.join("\n");
+}
+
+function renderRoutingView(view: OperatorViewSnapshot): string {
+  const lines = [
+    "Routing:",
+    `- lastSimulation: ${view.routing.lastSimulation ?? "none"}`,
+    `- selectedNode: ${view.routing.selectedNode ?? "none"}`,
+  ];
+
+  if (view.routing.candidates.length === 0) {
+    lines.push("- candidates: none");
+    return lines.join("\n");
+  }
+
+  for (const candidate of view.routing.candidates) {
+    lines.push(`- candidate ${candidate.nodeId} score: ${candidate.score}`);
+  }
+
+  return lines.join("\n");
+}
+
+function renderDispatchView(view: OperatorViewSnapshot): string {
+  const lines = ["Dispatch Logs:"];
+
+  if (view.dispatch.recent.length === 0) {
+    lines.push("- none");
+    return lines.join("\n");
+  }
+
+  for (const entry of view.dispatch.recent) {
+    lines.push(`- ${entry.intent} -> ${entry.targetNode} ${entry.result} at ${entry.timestamp}`);
+  }
+
+  return lines.join("\n");
+}
+
+function renderMenu(): string {
+  return [
+    "Operator View",
+    "",
+    "1. System Status",
+    "2. Nodes",
+    "3. Routing",
+    "4. Dispatch Logs",
+    "5. Exit",
+  ].join("\n");
+}
+
+async function runInteractiveOperatorView(view: OperatorViewSnapshot): Promise<number> {
+  const readline = createInterface({ input, output });
+
+  try {
+    let running = true;
+
+    while (running) {
+      console.log(renderMenu());
+      const selection = (await readline.question("Select an option: ")).trim();
+
+      switch (selection) {
+        case "1":
+          console.log(renderOperatorViewSummary(view));
+          await readline.question("Press Enter to return to menu.");
+          break;
+        case "2":
+          console.log(renderNodesView(view));
+          await readline.question("Press Enter to return to menu.");
+          break;
+        case "3":
+          console.log(renderRoutingView(view));
+          await readline.question("Press Enter to return to menu.");
+          break;
+        case "4":
+          console.log(renderDispatchView(view));
+          await readline.question("Press Enter to return to menu.");
+          break;
+        case "5":
+          running = false;
+          break;
+        default:
+          console.log("Invalid selection. Choose 1-5.");
+          await readline.question("Press Enter to return to menu.");
+          break;
+      }
+    }
+
+    return 0;
+  } finally {
+    readline.close();
+  }
 }
 
 function buildDemoOperatorState(): OperatorViewState {
@@ -90,12 +204,21 @@ function buildDemoOperatorState(): OperatorViewState {
 export async function main(argv: string[] = process.argv.slice(2)): Promise<number> {
   try {
     const options = parseArgs(argv);
+
+    if (options.json && options.interactive) {
+      throw new Error("Use either --json or --interactive, not both.");
+    }
+
     const state = buildDemoOperatorState();
     const view = renderOperatorView(state);
 
     if (options.json) {
       console.log(JSON.stringify(view, null, 2));
       return 0;
+    }
+
+    if (options.interactive) {
+      return runInteractiveOperatorView(view);
     }
 
     console.log(renderOperatorViewSummary(view));
