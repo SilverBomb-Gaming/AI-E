@@ -867,6 +867,14 @@ Node Network Phase Step 4 status:
 - routing_allowed remains false
 - no routing, execution, remote mutation, scheduling, or autonomy introduced
 
+Node Network Phase Step 5 status:
+
+- Node Network Phase Step 5 - Controlled Node Dispatch: implemented
+- added controlled single-task dispatch simulation
+- dispatch requires explicit invocation
+- no remote execution yet
+- no scheduling or autonomy introduced
+
 ## Safe Runtime Action Bridge
 
 AI-E can now translate supported live operator actions into safe runtime intents.
