@@ -35,6 +35,7 @@ export type GamePatchPlan = {
 };
 
 export type UnityPatchArtifact = {
+  patchKind: "gameplay-update" | "jump-diagnostic";
   targetFile: string;
   absoluteTargetPath: string;
   originalSha256: string;
@@ -79,6 +80,7 @@ export type UnityPatchApplyResult = {
 };
 
 export type UnityPatchStatus = {
+  patchKind: "gameplay-update" | "jump-diagnostic";
   targetFile: string;
   targetPath: string;
   backupPath: string;
@@ -86,7 +88,11 @@ export type UnityPatchStatus = {
   currentSha256: string;
   expectedPatchedSha256: string;
   currentFileAppearsPatched: boolean;
+  jumpDiagnosticPatchApplied: boolean;
   jumpLogicPresent: boolean;
+  usesKeyCodeSpace: boolean;
+  usesCharacterControllerGrounded: boolean;
+  debugJumpLogsEnabled: boolean;
   rollbackAvailable: boolean;
   safeToOpenUnityForCompileOrPlaytest: boolean;
   recoverySafe: boolean;
@@ -409,10 +415,24 @@ function containsClassName(source: string, className: string): boolean {
 }
 
 function hasJumpLogic(source: string): boolean {
-  return source.includes("Input.GetButtonDown(\"Jump\")")
+  return (source.includes("Input.GetButtonDown(\"Jump\")") || source.includes("Input.GetKeyDown(KeyCode.Space)"))
     && source.includes("jumpHeight")
     && source.includes("jumpRequested")
     && source.includes("Mathf.Sqrt(jumpHeight * -2f * gravity)");
+}
+
+function usesKeyCodeSpaceForJump(source: string): boolean {
+  return source.includes("Input.GetKeyDown(KeyCode.Space)");
+}
+
+function usesCharacterControllerGroundedSignal(source: string): boolean {
+  return source.includes("controller.isGrounded") || source.includes("CharacterController.isGrounded");
+}
+
+function hasDebugJumpLogs(source: string): boolean {
+  return source.includes("debugJumpLogs")
+    && source.includes("[AIE Jump Diagnostic]")
+    && source.includes("Debug.Log(");
 }
 
 function buildDiffSummary(original: ExistingScriptAnalysis, replacement: ExistingScriptAnalysis): string[] {
@@ -563,6 +583,127 @@ function buildSimpleKeyboardMoverReplacement(analysis: ExistingScriptAnalysis): 
   return bodyLines.join("\n");
 }
 
+function buildJumpDiagnosticMoverReplacement(analysis: ExistingScriptAnalysis): string {
+  const attributes = uniqueAttributeLines(analysis.attributeLines);
+  const indent = "    ";
+  const bodyLines = [
+    "using UnityEngine;",
+    "",
+  ];
+
+  if (analysis.namespace) {
+    bodyLines.push(`namespace ${analysis.namespace}`, "{");
+  }
+
+  bodyLines.push(
+    `${indent}/// <summary>`,
+    `${indent}/// Instruments jump behavior so runtime playtests can distinguish input, grounded state, and jump application.`,
+    `${indent}/// </summary>`,
+  );
+  for (const attribute of attributes) {
+    bodyLines.push(`${indent}${attribute}`);
+  }
+  bodyLines.push(
+    `${indent}public sealed class ${analysis.className} : MonoBehaviour`,
+    `${indent}{`,
+    `${indent}${indent}[SerializeField] [Min(0.1f)] private float moveSpeed = 5f;`,
+    `${indent}${indent}[SerializeField] [Min(0f)] private float turnSpeed = 720f;`,
+    `${indent}${indent}[SerializeField] [Min(0f)] private float jumpHeight = 1.6f;`,
+    `${indent}${indent}[SerializeField] private float gravity = -20f;`,
+    `${indent}${indent}[SerializeField] private bool debugJumpLogs = true;`,
+    `${indent}${indent}[SerializeField] private Transform groundCheck;`,
+    `${indent}${indent}[SerializeField] [Min(0.05f)] private float groundCheckRadius = 0.2f;`,
+    `${indent}${indent}[SerializeField] private LayerMask groundLayers = ~0;`,
+    "",
+    `${indent}${indent}private CharacterController controller;`,
+    `${indent}${indent}private Vector3 velocity;`,
+    `${indent}${indent}private bool jumpRequested;`,
+    "",
+    `${indent}${indent}private void Awake()`,
+    `${indent}${indent}{`,
+    `${indent}${indent}${indent}controller = GetComponent<CharacterController>();`,
+    `${indent}${indent}}`,
+    "",
+    `${indent}${indent}private void Update()`,
+    `${indent}${indent}{`,
+    `${indent}${indent}${indent}Vector3 input = new Vector3(Input.GetAxisRaw("Horizontal"), 0f, Input.GetAxisRaw("Vertical"));`,
+    `${indent}${indent}${indent}input = Vector3.ClampMagnitude(input, 1f);`,
+    `${indent}${indent}${indent}Vector3 move = input * moveSpeed;`,
+    "",
+    `${indent}${indent}${indent}bool controllerGrounded = controller.isGrounded;`,
+    `${indent}${indent}${indent}bool probeGrounded = IsGroundedByProbe();`,
+    `${indent}${indent}${indent}bool grounded = controllerGrounded || probeGrounded;`,
+    `${indent}${indent}${indent}bool spacePressed = Input.GetKeyDown(KeyCode.Space);`,
+    "",
+    `${indent}${indent}${indent}if (spacePressed)`,
+    `${indent}${indent}${indent}{`,
+    `${indent}${indent}${indent}${indent}LogJumpDiagnostic($"Space pressed. grounded={grounded} controllerGrounded={controllerGrounded} probeGrounded={probeGrounded} velocityY={velocity.y:F3}");`,
+    `${indent}${indent}${indent}}`,
+    "",
+    `${indent}${indent}${indent}if (grounded && velocity.y < 0f)`,
+    `${indent}${indent}${indent}{`,
+    `${indent}${indent}${indent}${indent}velocity.y = -2f;`,
+    `${indent}${indent}${indent}}`,
+    "",
+    `${indent}${indent}${indent}if (spacePressed && grounded)`,
+    `${indent}${indent}${indent}{`,
+    `${indent}${indent}${indent}${indent}jumpRequested = true;`,
+    `${indent}${indent}${indent}${indent}LogJumpDiagnostic("Jump trigger accepted.");`,
+    `${indent}${indent}${indent}}`,
+    `${indent}${indent}${indent}else if (spacePressed)`,
+    `${indent}${indent}${indent}{`,
+    `${indent}${indent}${indent}${indent}LogJumpDiagnostic("Jump trigger blocked because grounded was false.");`,
+    `${indent}${indent}${indent}}`,
+    "",
+    `${indent}${indent}${indent}if (jumpRequested)`,
+    `${indent}${indent}${indent}{`,
+    `${indent}${indent}${indent}${indent}velocity.y = Mathf.Sqrt(jumpHeight * -2f * gravity);`,
+    `${indent}${indent}${indent}${indent}jumpRequested = false;`,
+    `${indent}${indent}${indent}${indent}LogJumpDiagnostic($"Jump applied. newVelocityY={velocity.y:F3}");`,
+    `${indent}${indent}${indent}}`,
+    "",
+    `${indent}${indent}${indent}velocity.y += gravity * Time.deltaTime;`,
+    `${indent}${indent}${indent}controller.Move((move + new Vector3(0f, velocity.y, 0f)) * Time.deltaTime);`,
+    "",
+    `${indent}${indent}${indent}if (input.sqrMagnitude > 0.001f)`,
+    `${indent}${indent}${indent}{`,
+    `${indent}${indent}${indent}${indent}Quaternion targetRotation = Quaternion.LookRotation(input, Vector3.up);`,
+    `${indent}${indent}${indent}${indent}transform.rotation = Quaternion.RotateTowards(transform.rotation, targetRotation, turnSpeed * Time.deltaTime);`,
+    `${indent}${indent}${indent}}`,
+    `${indent}${indent}}`,
+    "",
+    `${indent}${indent}private bool IsGroundedByProbe()`,
+    `${indent}${indent}{`,
+    `${indent}${indent}${indent}Vector3 checkPosition = groundCheck != null ? groundCheck.position : transform.position + Vector3.down * 0.5f;`,
+    `${indent}${indent}${indent}return Physics.CheckSphere(checkPosition, groundCheckRadius, groundLayers, QueryTriggerInteraction.Ignore);`,
+    `${indent}${indent}}`,
+    "",
+    `${indent}${indent}private void LogJumpDiagnostic(string message)`,
+    `${indent}${indent}{`,
+    `${indent}${indent}${indent}if (!debugJumpLogs)`,
+    `${indent}${indent}${indent}{`,
+    `${indent}${indent}${indent}${indent}return;`,
+    `${indent}${indent}${indent}}`,
+    "",
+    `${indent}${indent}${indent}Debug.Log($"[AIE Jump Diagnostic] {message}", this);`,
+    `${indent}${indent}}`,
+    "",
+    `${indent}${indent}private void OnDrawGizmosSelected()`,
+    `${indent}${indent}{`,
+    `${indent}${indent}${indent}Vector3 checkPosition = groundCheck != null ? groundCheck.position : transform.position + Vector3.down * 0.5f;`,
+    `${indent}${indent}${indent}Gizmos.color = Color.yellow;`,
+    `${indent}${indent}${indent}Gizmos.DrawWireSphere(checkPosition, groundCheckRadius);`,
+    `${indent}${indent}}`,
+    `${indent}}`,
+  );
+
+  if (analysis.namespace) {
+    bodyLines.push("}");
+  }
+
+  return bodyLines.join("\n");
+}
+
 export async function generateUnityPatchArtifact(snapshot: GameProjectSnapshot): Promise<UnityPatchArtifact> {
   if (snapshot.engine !== "unity") {
     throw new Error("Game patch plans require a Unity project.");
@@ -579,6 +720,43 @@ export async function generateUnityPatchArtifact(snapshot: GameProjectSnapshot):
   const replacementCode = buildSimpleKeyboardMoverReplacement(analysis);
 
   return {
+    patchKind: "gameplay-update",
+    targetFile,
+    absoluteTargetPath,
+    originalSha256: sha256(source),
+    replacementSha256: sha256(replacementCode),
+    replacementCode,
+    validationRules: {
+      preserveClassName: analysis.className,
+      preserveNamespace: analysis.namespace,
+      forbiddenClassNames: ["PlayerController"],
+      requireNoDuplicateMethods: true,
+    },
+    safety: {
+      requiresCleanRecoveryState: true,
+      createsBackupBeforeApply: true,
+      noUnityExecution: true,
+    },
+  };
+}
+
+export async function generateJumpDiagnosticArtifact(snapshot: GameProjectSnapshot): Promise<UnityPatchArtifact> {
+  if (snapshot.engine !== "unity") {
+    throw new Error("Jump diagnostics require a Unity project.");
+  }
+
+  const targetFile = snapshot.analysis.scriptSignals.movementScripts[0];
+  if (!targetFile) {
+    throw new Error("No existing movement script was detected for jump diagnostics.");
+  }
+
+  const absoluteTargetPath = path.join(snapshot.rootPath, targetFile);
+  const source = await readFile(absoluteTargetPath, "utf-8");
+  const analysis = analyzeExistingScript(source);
+  const replacementCode = buildJumpDiagnosticMoverReplacement(analysis);
+
+  return {
+    patchKind: "jump-diagnostic",
     targetFile,
     absoluteTargetPath,
     originalSha256: sha256(source),
@@ -609,6 +787,33 @@ export async function generateUnityPatchPreview(snapshot: GameProjectSnapshot): 
     detectedClass: originalAnalysis.className,
     detectedNamespace: originalAnalysis.namespace,
     diffSummary: buildDiffSummary(originalAnalysis, replacementAnalysis),
+    safetyStatus: [
+      "manual full-file copy/paste disabled",
+      `clean recovery state required before apply: ${artifact.safety.requiresCleanRecoveryState ? "yes" : "no"}`,
+      `backup created before write: ${artifact.safety.createsBackupBeforeApply ? "yes" : "no"}`,
+      `Unity execution disabled: ${artifact.safety.noUnityExecution ? "yes" : "no"}`,
+    ],
+  };
+}
+
+export async function generateJumpDiagnosticPreview(snapshot: GameProjectSnapshot): Promise<UnityPatchPreview> {
+  const artifact = await generateJumpDiagnosticArtifact(snapshot);
+  const originalSource = await readFile(artifact.absoluteTargetPath, "utf-8");
+  const originalAnalysis = analyzeExistingScript(originalSource);
+
+  return {
+    artifact,
+    detectedClass: originalAnalysis.className,
+    detectedNamespace: originalAnalysis.namespace,
+    diffSummary: [
+      `preserve class ${originalAnalysis.className}`,
+      `preserve namespace ${originalAnalysis.namespace ?? "none"}`,
+      "log when Space is pressed",
+      "log grounded state and jump trigger",
+      "use Input.GetKeyDown(KeyCode.Space)",
+      "use CharacterController.isGrounded as the primary grounded signal",
+      "expose debugJumpLogs boolean for runtime inspection",
+    ],
     safetyStatus: [
       "manual full-file copy/paste disabled",
       `clean recovery state required before apply: ${artifact.safety.requiresCleanRecoveryState ? "yes" : "no"}`,
@@ -680,6 +885,7 @@ export function renderUnityPatchPreview(preview: UnityPatchPreview): string {
   return [
     "UNITY PATCH PREVIEW",
     "",
+    `Patch Kind: ${preview.artifact.patchKind}`,
     `Target File: ${preview.artifact.targetFile}`,
     `Absolute Target Path: ${preview.artifact.absoluteTargetPath}`,
     `Original SHA256: ${preview.artifact.originalSha256}`,
@@ -699,27 +905,30 @@ export async function applyUnityPatchArtifact(
   artifact: UnityPatchArtifact,
   recoverySafe: boolean,
   recoveryGuidance: string[],
+  allowExistingBackup = false,
 ): Promise<UnityPatchApplyResult> {
   const blockedReasons: string[] = [];
   const backupPath = backupPathFor(artifact.absoluteTargetPath);
+  const targetExists = await fileExists(artifact.absoluteTargetPath);
 
   if (!recoverySafe) {
     blockedReasons.push("Unity recovery guard did not report a clean recovery state.");
   }
 
-  if (!(await fileExists(artifact.absoluteTargetPath))) {
+  if (!targetExists) {
     blockedReasons.push(`Target file does not exist: ${artifact.absoluteTargetPath}`);
   }
 
-  const currentSource = await readFile(artifact.absoluteTargetPath, "utf-8");
-  const currentSha256 = sha256(currentSource);
-  if (currentSha256 !== artifact.originalSha256) {
+  const currentSource = targetExists ? await readFile(artifact.absoluteTargetPath, "utf-8") : "";
+  const currentSha256 = targetExists ? sha256(currentSource) : undefined;
+  if (currentSha256 && currentSha256 !== artifact.originalSha256) {
     blockedReasons.push(`Current file hash ${currentSha256} did not match expected original hash ${artifact.originalSha256}.`);
   }
 
   blockedReasons.push(...validateReplacementCode(artifact));
 
-  if (await fileExists(backupPath)) {
+  const backupExists = await fileExists(backupPath);
+  if (backupExists && !allowExistingBackup) {
     blockedReasons.push(`Backup already exists and will not be overwritten: ${backupPath}`);
   }
 
@@ -742,7 +951,9 @@ export async function applyUnityPatchArtifact(
     };
   }
 
-  await copyFile(artifact.absoluteTargetPath, backupPath);
+  if (!backupExists) {
+    await copyFile(artifact.absoluteTargetPath, backupPath);
+  }
   await writeFile(artifact.absoluteTargetPath, artifact.replacementCode, "utf-8");
 
   return {
@@ -773,8 +984,13 @@ export async function inspectUnityPatchStatus(
   const backupExists = await fileExists(backupPath);
   const currentFileAppearsPatched = currentSha256 === artifact.replacementSha256;
   const jumpLogicPresent = hasJumpLogic(currentSource);
+  const usesKeyCodeSpace = usesKeyCodeSpaceForJump(currentSource);
+  const usesCharacterControllerGrounded = usesCharacterControllerGroundedSignal(currentSource);
+  const debugJumpLogsEnabled = hasDebugJumpLogs(currentSource);
+  const jumpDiagnosticPatchApplied = currentFileAppearsPatched && usesKeyCodeSpace && usesCharacterControllerGrounded && debugJumpLogsEnabled;
 
   return {
+    patchKind: artifact.patchKind,
     targetFile: artifact.targetFile,
     targetPath: artifact.absoluteTargetPath,
     backupPath,
@@ -782,7 +998,11 @@ export async function inspectUnityPatchStatus(
     currentSha256,
     expectedPatchedSha256: artifact.replacementSha256,
     currentFileAppearsPatched,
+    jumpDiagnosticPatchApplied,
     jumpLogicPresent,
+    usesKeyCodeSpace,
+    usesCharacterControllerGrounded,
+    debugJumpLogsEnabled,
     rollbackAvailable: backupExists,
     safeToOpenUnityForCompileOrPlaytest: recoverySafe && currentFileAppearsPatched && jumpLogicPresent && backupExists,
     recoverySafe,
@@ -796,6 +1016,7 @@ export function renderUnityPatchStatus(status: UnityPatchStatus): string {
   return [
     "UNITY PATCH STATUS",
     "",
+    `Patch Kind: ${status.patchKind}`,
     `Target File: ${status.targetFile}`,
     `Target Path: ${status.targetPath}`,
     `Backup Path: ${status.backupPath}`,
@@ -803,7 +1024,11 @@ export function renderUnityPatchStatus(status: UnityPatchStatus): string {
     `Current SHA256: ${status.currentSha256}`,
     `Expected Patched SHA256: ${status.expectedPatchedSha256}`,
     `Current File Appears Patched: ${status.currentFileAppearsPatched ? "YES" : "NO"}`,
+    `Jump Diagnostic Patch Applied: ${status.jumpDiagnosticPatchApplied ? "YES" : "NO"}`,
     `Jump Logic Present: ${status.jumpLogicPresent ? "YES" : "NO"}`,
+    `Uses KeyCode.Space: ${status.usesKeyCodeSpace ? "YES" : "NO"}`,
+    `Uses CharacterController.isGrounded: ${status.usesCharacterControllerGrounded ? "YES" : "NO"}`,
+    `Debug Jump Logs Enabled: ${status.debugJumpLogsEnabled ? "YES" : "NO"}`,
     `Rollback Available: ${status.rollbackAvailable ? "YES" : "NO"}`,
     `Recovery Guard Safe: ${status.recoverySafe ? "YES" : "NO"}`,
     `Safe To Open Unity For Compile/Playtest: ${status.safeToOpenUnityForCompileOrPlaytest ? "YES" : "NO"}`,

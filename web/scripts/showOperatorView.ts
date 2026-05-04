@@ -8,6 +8,8 @@ import {
   applyUnityPatchArtifact,
   generateGamePatchPlan,
   generateGameTask,
+  generateJumpDiagnosticArtifact,
+  generateJumpDiagnosticPreview,
   generateUnityPatchArtifact,
   generateUnityPatchPreview,
   inspectUnityPatchStatus,
@@ -34,6 +36,9 @@ type ShowOperatorViewOptions = {
   applyGamePatchPath?: string;
   gamePatchStatusPath?: string;
   rollbackGamePatchPath?: string;
+  diagnoseJumpPath?: string;
+  diagnoseJumpPreviewPath?: string;
+  applyDiagnoseJumpPath?: string;
 };
 
 function buildRecoveryGuidance(snapshot: Awaited<ReturnType<typeof inspectUnityPlaytestRecovery>>): string[] {
@@ -58,6 +63,10 @@ function buildRecoveryGuidance(snapshot: Awaited<ReturnType<typeof inspectUnityP
 function buildPatchStatusRecoverySignal(snapshot: Awaited<ReturnType<typeof inspectUnityPlaytestRecovery>>): boolean {
   return snapshot.detectedIssues.accidentalGeneratedFiles.length === 0
     && snapshot.detectedIssues.duplicateClassRisks.length === 0;
+}
+
+function buildFollowupPatchRecoverySignal(snapshot: Awaited<ReturnType<typeof inspectUnityPlaytestRecovery>>): boolean {
+  return buildPatchStatusRecoverySignal(snapshot);
 }
 
 function isDirectExecution(): boolean {
@@ -203,6 +212,51 @@ function parseArgs(argv: string[]): ShowOperatorViewOptions {
         throw new Error("Missing value for --rollback-game-patch");
       }
       options.rollbackGamePatchPath = value.trim();
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith("--diagnose-jump=")) {
+      options.diagnoseJumpPath = arg.slice("--diagnose-jump=".length).trim() || undefined;
+      continue;
+    }
+
+    if (arg === "--diagnose-jump") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("Missing value for --diagnose-jump");
+      }
+      options.diagnoseJumpPath = value.trim();
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith("--diagnose-jump-preview=")) {
+      options.diagnoseJumpPreviewPath = arg.slice("--diagnose-jump-preview=".length).trim() || undefined;
+      continue;
+    }
+
+    if (arg === "--diagnose-jump-preview") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("Missing value for --diagnose-jump-preview");
+      }
+      options.diagnoseJumpPreviewPath = value.trim();
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith("--apply-diagnose-jump=")) {
+      options.applyDiagnoseJumpPath = arg.slice("--apply-diagnose-jump=".length).trim() || undefined;
+      continue;
+    }
+
+    if (arg === "--apply-diagnose-jump") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("Missing value for --apply-diagnose-jump");
+      }
+      options.applyDiagnoseJumpPath = value.trim();
       index += 1;
       continue;
     }
@@ -386,6 +440,9 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       options.applyGamePatchPath ? "--apply-game-patch" : null,
       options.gamePatchStatusPath ? "--game-patch-status" : null,
       options.rollbackGamePatchPath ? "--rollback-game-patch" : null,
+      options.diagnoseJumpPath ? "--diagnose-jump" : null,
+      options.diagnoseJumpPreviewPath ? "--diagnose-jump-preview" : null,
+      options.applyDiagnoseJumpPath ? "--apply-diagnose-jump" : null,
     ].filter((value): value is string => value !== null);
 
     if (options.json && options.interactive) {
@@ -399,6 +456,20 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
     if (options.gamePatchPreviewPath) {
       const snapshot = await inspectGameProject(options.gamePatchPreviewPath);
       const preview = await generateUnityPatchPreview(snapshot);
+
+      if (options.json) {
+        console.log(JSON.stringify(preview, null, 2));
+        return 0;
+      }
+
+      console.log(renderUnityPatchPreview(preview));
+      return 0;
+    }
+
+    if (options.diagnoseJumpPath || options.diagnoseJumpPreviewPath) {
+      const targetPath = options.diagnoseJumpPreviewPath ?? options.diagnoseJumpPath;
+      const snapshot = await inspectGameProject(targetPath);
+      const preview = await generateJumpDiagnosticPreview(snapshot);
 
       if (options.json) {
         console.log(JSON.stringify(preview, null, 2));
@@ -424,11 +495,29 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       return result.applied ? 0 : 1;
     }
 
+    if (options.applyDiagnoseJumpPath) {
+      const snapshot = await inspectGameProject(options.applyDiagnoseJumpPath);
+      const artifact = await generateJumpDiagnosticArtifact(snapshot);
+      const recovery = await inspectUnityPlaytestRecovery(options.applyDiagnoseJumpPath);
+      const result = await applyUnityPatchArtifact(artifact, buildFollowupPatchRecoverySignal(recovery), buildRecoveryGuidance(recovery), true);
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return result.applied ? 0 : 1;
+      }
+
+      console.log(renderUnityPatchApplyResult(result));
+      return result.applied ? 0 : 1;
+    }
+
     if (options.gamePatchStatusPath) {
       const snapshot = await inspectGameProject(options.gamePatchStatusPath);
       const artifact = await generateUnityPatchArtifact(snapshot);
+      const diagnosticArtifact = await generateJumpDiagnosticArtifact(snapshot);
       const recovery = await inspectUnityPlaytestRecovery(options.gamePatchStatusPath);
-      const status = await inspectUnityPatchStatus(artifact, buildPatchStatusRecoverySignal(recovery));
+      const gameplayStatus = await inspectUnityPatchStatus(artifact, buildPatchStatusRecoverySignal(recovery));
+      const diagnosticStatus = await inspectUnityPatchStatus(diagnosticArtifact, buildPatchStatusRecoverySignal(recovery));
+      const status = diagnosticStatus.currentFileAppearsPatched ? diagnosticStatus : gameplayStatus;
 
       if (options.json) {
         console.log(JSON.stringify(status, null, 2));

@@ -956,6 +956,20 @@ Commands:
 - `npm run operator:view -- --game-patch-status "<project>"`
 - `npm run operator:view -- --rollback-game-patch "<project>"`
 
+## Unity Runtime Diagnostics
+
+- use this workflow when a generated Unity feature compiles but fails during playtest
+- AI-E creates a guarded diagnostic patch instead of asking the human to guess why behavior failed
+- the human opens Unity after apply, reproduces the issue, and reports the observed Console logs back to AI-E
+
+Commands:
+
+- `npm run operator:view -- --diagnose-jump "<project>"`
+- `npm run operator:view -- --diagnose-jump-preview "<project>"`
+- `npm run operator:view -- --apply-diagnose-jump "<project>"`
+- `npm run operator:view -- --game-patch-status "<project>"`
+- `npm run operator:view -- --rollback-game-patch "<project>"`
+
 ## Safe Runtime Action Bridge
 
 AI-E can now translate supported live operator actions into safe runtime intents.
