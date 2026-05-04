@@ -741,6 +741,13 @@ Current Layer 27 Step 4 status:
 - keeps the existing single learning scope only
 - does not add new learning power, execution behavior, or autonomy
 
+Current Layer 28 Step 1 status:
+
+- Layer 28 Step 1 - Multi-Application Learning Queue: implemented
+- added queue for approved learning applications
+- queue is non-executing and non-autonomous
+- queued items remain unapplied until explicit gate call
+
 ## Safe Runtime Action Bridge
 
 AI-E can now translate supported live operator actions into safe runtime intents.
