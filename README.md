@@ -859,6 +859,14 @@ Node Network Phase Step 3 status:
 - execution_ready remains false
 - no routing, execution, remote mutation, scheduling, or autonomy introduced
 
+Node Network Phase Step 4 status:
+
+- Node Network Phase Step 4 - Node Routing Simulation: implemented
+- added read-only routing simulation for node candidates
+- selects a simulated node recommendation from readiness data
+- routing_allowed remains false
+- no routing, execution, remote mutation, scheduling, or autonomy introduced
+
 ## Safe Runtime Action Bridge
 
 AI-E can now translate supported live operator actions into safe runtime intents.
