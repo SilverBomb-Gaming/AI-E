@@ -790,6 +790,15 @@ Current Layer 29 Step 3 status:
 - adds time-based safety constraint
 - no autonomy introduced
 
+Current Layer 29 Step 4 status:
+
+- Layer 29 Step 4 - Execution Conflict Guard: implemented
+- added assisted-execution conflict lock
+- blocks execution when another execution is in progress
+- releases lock after applied or blocked execution
+- preserves proposal, snapshot, cooldown, gate, and drift protections
+- no auto-execution, scheduling, loop processing, or autonomy introduced
+
 ## Safe Runtime Action Bridge
 
 AI-E can now translate supported live operator actions into safe runtime intents.

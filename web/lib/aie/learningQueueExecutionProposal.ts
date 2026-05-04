@@ -1,5 +1,6 @@
 import { executeQueuedLearningItem, type LearningApplicationQueueExecutionResult, type LearningApplicationQueueRecord } from "./learningApplicationQueue";
 import { getLearningExecutionCooldownStatus, recordLearningExecutionTime } from "./learningExecutionCooldown";
+import { beginExecutionLock, isExecutionInProgress, releaseExecutionLock } from "./learningExecutionLock";
 import { suggestQueueExecutionOrder } from "./learningQueueOrdering";
 
 export type LearningQueueExecutionProposal = {
@@ -122,14 +123,52 @@ export async function confirmAndExecute(
     };
   }
 
-  pendingProposal = null;
-  const result = await executeQueuedLearningItem(queueId, options);
+  const lockStatus = isExecutionInProgress();
 
-  if (result.applied) {
-    recordLearningExecutionTime(options?.executedAt);
+  if (lockStatus.execution_in_progress) {
+    pendingProposal = null;
+    return {
+      queue_execution_id: "learning-queue-execution-conflict-active",
+      created_at: options?.executedAt ?? new Date().toISOString(),
+      queue_id: queueId,
+      recommendation_id: currentQueueItem.recommendation_id,
+      decision_id: currentQueueItem.decision_id,
+      status: "blocked",
+      reason: "execution already in progress" as LearningApplicationQueueExecutionResult["reason"],
+      applied: false,
+      single_item_execution: true,
+    };
   }
 
-  return result;
+  const beginStatus = beginExecutionLock();
+
+  if (beginStatus.conflict_detected) {
+    pendingProposal = null;
+    return {
+      queue_execution_id: "learning-queue-execution-conflict-begin",
+      created_at: options?.executedAt ?? new Date().toISOString(),
+      queue_id: queueId,
+      recommendation_id: currentQueueItem.recommendation_id,
+      decision_id: currentQueueItem.decision_id,
+      status: "blocked",
+      reason: "execution already in progress" as LearningApplicationQueueExecutionResult["reason"],
+      applied: false,
+      single_item_execution: true,
+    };
+  }
+
+  pendingProposal = null;
+  try {
+    const result = await executeQueuedLearningItem(queueId, options);
+
+    if (result.applied) {
+      recordLearningExecutionTime(options?.executedAt);
+    }
+
+    return result;
+  } finally {
+    releaseExecutionLock();
+  }
 }
 
 export function resetLearningQueueExecutionProposal(): void {

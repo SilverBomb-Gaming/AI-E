@@ -19,6 +19,7 @@ import {
   resetLearningQueueExecutionProposal,
 } from "./learningQueueExecutionProposal";
 import { resetLearningExecutionCooldown } from "./learningExecutionCooldown";
+import { beginExecutionLock, isExecutionInProgress, resetExecutionLockForTests } from "./learningExecutionLock";
 import { resetLearningApplicationState } from "./learningApplicationState";
 import { setLearningEnabled } from "./learningConfig";
 import { recordLearningRecommendationDecision } from "./learningRecommendationDecision";
@@ -32,6 +33,7 @@ test.afterEach(() => {
   resetLearningApplicationState();
   resetLearningQueueExecutionProposal();
   resetLearningExecutionCooldown();
+  resetExecutionLockForTests();
 });
 
 function createNodeTaskPlan(overrides: Partial<CoreNodePipelineDraftPlan> = {}): CoreNodePipelineDraftPlan {
@@ -381,6 +383,124 @@ test("execution is blocked within the cooldown window", async () => {
     assert.equal(firstResult.status, "applied");
     assert.equal(secondResult.status, "blocked");
     assert.equal(secondResult.reason, "execution cooldown active");
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("confirmAndExecute blocks when execution lock is active", async () => {
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "aie-learning-proposal-conflict-active-"));
+
+  try {
+    const recommendation = createRecommendation(0.2);
+    const decision = await recordLearningRecommendationDecision(recommendation, {
+      operator_decision: "approved_for_future_application",
+      decided_at: "2026-05-04T01:05:00.000Z",
+    }, { outputDirectory: tempRoot });
+    const queued = await enqueueLearningApplication(recommendation, decision.record, {
+      outputDirectory: tempRoot,
+      createdAt: "2026-05-04T01:05:10.000Z",
+    });
+
+    proposeNextQueueExecution(await queryLearningApplicationQueue({ outputDirectory: tempRoot }));
+    beginExecutionLock();
+    const result = await confirmAndExecute(queued.record.queue_id, {
+      outputDirectory: tempRoot,
+      executedAt: "2026-05-04T01:05:20.000Z",
+    });
+
+    assert.equal(result.status, "blocked");
+    assert.equal(result.reason, "execution already in progress");
+    assert.equal(result.applied, false);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("blocked conflict does not execute queue item", async () => {
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "aie-learning-proposal-conflict-no-execute-"));
+
+  try {
+    setLearningEnabled(true);
+    const recommendation = createRecommendation(0.26);
+    const decision = await recordLearningRecommendationDecision(recommendation, {
+      operator_decision: "approved_for_future_application",
+      decided_at: "2026-05-04T01:05:30.000Z",
+    }, { outputDirectory: tempRoot });
+    const queued = await enqueueLearningApplication(recommendation, decision.record, {
+      outputDirectory: tempRoot,
+      createdAt: "2026-05-04T01:05:40.000Z",
+    });
+
+    proposeNextQueueExecution(await queryLearningApplicationQueue({ outputDirectory: tempRoot }));
+    beginExecutionLock();
+    await confirmAndExecute(queued.record.queue_id, {
+      outputDirectory: tempRoot,
+      executedAt: "2026-05-04T01:05:50.000Z",
+    });
+    const items = await queryLearningApplicationQueue({ outputDirectory: tempRoot });
+    const item = items.find((entry) => entry.queue_id === queued.record.queue_id);
+
+    assert.equal(item?.status, "queued");
+    assert.equal(item?.applied, false);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("lock is released after successful execution", async () => {
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "aie-learning-proposal-lock-release-success-"));
+
+  try {
+    setLearningEnabled(true);
+    const recommendation = createRecommendation(0.2);
+    const decision = await recordLearningRecommendationDecision(recommendation, {
+      operator_decision: "approved_for_future_application",
+      decided_at: "2026-05-04T01:06:00.000Z",
+    }, { outputDirectory: tempRoot });
+    const queued = await enqueueLearningApplication(recommendation, decision.record, {
+      outputDirectory: tempRoot,
+      createdAt: "2026-05-04T01:06:10.000Z",
+    });
+
+    proposeNextQueueExecution(await queryLearningApplicationQueue({ outputDirectory: tempRoot }));
+    const result = await confirmAndExecute(queued.record.queue_id, {
+      outputDirectory: tempRoot,
+      executedAt: "2026-05-04T01:06:20.000Z",
+      cooldownWindowMs: 60_000,
+    });
+
+    assert.equal(result.status, "applied");
+    assert.equal(isExecutionInProgress().execution_in_progress, false);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("lock is released after blocked inner execution", async () => {
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "aie-learning-proposal-lock-release-blocked-"));
+
+  try {
+    const recommendation = createRecommendation(0.2);
+    const decision = await recordLearningRecommendationDecision(recommendation, {
+      operator_decision: "approved_for_future_application",
+      decided_at: "2026-05-04T01:06:30.000Z",
+    }, { outputDirectory: tempRoot });
+    const queued = await enqueueLearningApplication(recommendation, decision.record, {
+      outputDirectory: tempRoot,
+      createdAt: "2026-05-04T01:06:40.000Z",
+    });
+
+    proposeNextQueueExecution(await queryLearningApplicationQueue({ outputDirectory: tempRoot }));
+    const result = await confirmAndExecute(queued.record.queue_id, {
+      outputDirectory: tempRoot,
+      executedAt: "2026-05-04T01:06:50.000Z",
+      cooldownWindowMs: 60_000,
+    });
+
+    assert.equal(result.status, "blocked");
+    assert.equal(result.reason, "learning disabled globally");
+    assert.equal(isExecutionInProgress().execution_in_progress, false);
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }
