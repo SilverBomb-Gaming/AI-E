@@ -9,6 +9,8 @@ import { determineGameProgression, renderNextGameTask } from "../lib/aie/gamePro
 import {
   applyUnityPatchArtifact,
   buildExistingCameraFollowArtifact,
+  generateCameraTuningArtifact,
+  generateCameraTuningPreview,
   generateCameraFollowArtifact,
   generateGamePatchPlan,
   generateGameTask,
@@ -17,7 +19,9 @@ import {
   generateProductionMovementArtifact,
   generateUnityPatchArtifact,
   generateUnityPatchPreview,
+  inspectCameraTuningStatus,
   inspectUnityPatchStatus,
+  renderCameraTuningStatus,
   renderGamePatchPlan,
   renderGameTask,
   renderNextGameTaskExecutionResult,
@@ -52,6 +56,10 @@ type ShowOperatorViewOptions = {
   applyCameraWiringPath?: string;
   cameraWiringStatusPath?: string;
   rollbackCameraWiringPath?: string;
+  cameraTuningPreviewPath?: string;
+  applyCameraTuningPath?: string;
+  cameraTuningStatusPath?: string;
+  rollbackCameraTuningPath?: string;
   unityRecoveryPath?: string;
   gamePatchPath?: string;
   gamePatchPreviewPath?: string;
@@ -320,6 +328,66 @@ function parseArgs(argv: string[]): ShowOperatorViewOptions {
 
     if (arg.startsWith("--unity-recovery=")) {
       options.unityRecoveryPath = arg.slice("--unity-recovery=".length).trim() || undefined;
+      continue;
+    }
+
+    if (arg.startsWith("--camera-tuning-preview=")) {
+      options.cameraTuningPreviewPath = arg.slice("--camera-tuning-preview=".length).trim() || undefined;
+      continue;
+    }
+
+    if (arg === "--camera-tuning-preview") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("Missing value for --camera-tuning-preview");
+      }
+      options.cameraTuningPreviewPath = value.trim();
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith("--apply-camera-tuning=")) {
+      options.applyCameraTuningPath = arg.slice("--apply-camera-tuning=".length).trim() || undefined;
+      continue;
+    }
+
+    if (arg === "--apply-camera-tuning") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("Missing value for --apply-camera-tuning");
+      }
+      options.applyCameraTuningPath = value.trim();
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith("--camera-tuning-status=")) {
+      options.cameraTuningStatusPath = arg.slice("--camera-tuning-status=".length).trim() || undefined;
+      continue;
+    }
+
+    if (arg === "--camera-tuning-status") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("Missing value for --camera-tuning-status");
+      }
+      options.cameraTuningStatusPath = value.trim();
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith("--rollback-camera-tuning=")) {
+      options.rollbackCameraTuningPath = arg.slice("--rollback-camera-tuning=".length).trim() || undefined;
+      continue;
+    }
+
+    if (arg === "--rollback-camera-tuning") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("Missing value for --rollback-camera-tuning");
+      }
+      options.rollbackCameraTuningPath = value.trim();
+      index += 1;
       continue;
     }
 
@@ -703,6 +771,10 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       options.gameTaskPath ? "--game-task" : null,
       options.nextGameTaskPath ? "--next-game-task" : null,
       options.executeNextGameTaskPath ? "--execute-next-game-task" : null,
+      options.cameraTuningPreviewPath ? "--camera-tuning-preview" : null,
+      options.applyCameraTuningPath ? "--apply-camera-tuning" : null,
+      options.cameraTuningStatusPath ? "--camera-tuning-status" : null,
+      options.rollbackCameraTuningPath ? "--rollback-camera-tuning" : null,
       options.cameraWiringPreviewPath ? "--camera-wiring-preview" : null,
       options.applyCameraWiringPath ? "--apply-camera-wiring" : null,
       options.cameraWiringStatusPath ? "--camera-wiring-status" : null,
@@ -754,6 +826,19 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       return 0;
     }
 
+    if (options.cameraTuningPreviewPath) {
+      const snapshot = await inspectGameProject(options.cameraTuningPreviewPath);
+      const preview = await generateCameraTuningPreview(snapshot);
+
+      if (options.json) {
+        console.log(JSON.stringify(preview, null, 2));
+        return 0;
+      }
+
+      console.log(renderUnityPatchPreview(preview));
+      return 0;
+    }
+
     if (options.cameraWiringPreviewPath) {
       const preview = await inspectUnitySceneWiring(options.cameraWiringPreviewPath);
 
@@ -785,6 +870,21 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       const snapshot = await inspectGameProject(options.applyDiagnoseJumpPath);
       const artifact = await generateJumpDiagnosticArtifact(snapshot);
       const recovery = await inspectUnityPlaytestRecovery(options.applyDiagnoseJumpPath);
+      const result = await applyUnityPatchArtifact(artifact, buildFollowupPatchRecoverySignal(recovery), buildRecoveryGuidance(recovery), true);
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return result.applied ? 0 : 1;
+      }
+
+      console.log(renderUnityPatchApplyResult(result));
+      return result.applied ? 0 : 1;
+    }
+
+    if (options.applyCameraTuningPath) {
+      const snapshot = await inspectGameProject(options.applyCameraTuningPath);
+      const artifact = await generateCameraTuningArtifact(snapshot);
+      const recovery = await inspectUnityPlaytestRecovery(options.applyCameraTuningPath);
       const result = await applyUnityPatchArtifact(artifact, buildFollowupPatchRecoverySignal(recovery), buildRecoveryGuidance(recovery), true);
 
       if (options.json) {
@@ -848,6 +948,20 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       return 0;
     }
 
+    if (options.cameraTuningStatusPath) {
+      const snapshot = await inspectGameProject(options.cameraTuningStatusPath);
+      const recovery = await inspectUnityPlaytestRecovery(options.cameraTuningStatusPath);
+      const status = await inspectCameraTuningStatus(snapshot, buildPatchStatusRecoverySignal(recovery));
+
+      if (options.json) {
+        console.log(JSON.stringify(status, null, 2));
+        return 0;
+      }
+
+      console.log(renderCameraTuningStatus(status));
+      return 0;
+    }
+
     if (options.cameraWiringStatusPath) {
       const recovery = await inspectUnityPlaytestRecovery(options.cameraWiringStatusPath);
       const status = await inspectUnityCameraWiringStatus(options.cameraWiringStatusPath, buildPatchStatusRecoverySignal(recovery));
@@ -868,6 +982,20 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       const artifact = cameraBackupExists
         ? cameraArtifact
         : await generateUnityPatchArtifact(snapshot);
+      const result = await rollbackUnityPatchArtifact(artifact);
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return result.restored ? 0 : 1;
+      }
+
+      console.log(renderUnityPatchRollbackResult(result));
+      return result.restored ? 0 : 1;
+    }
+
+    if (options.rollbackCameraTuningPath) {
+      const snapshot = await inspectGameProject(options.rollbackCameraTuningPath);
+      const artifact = await generateCameraTuningArtifact(snapshot);
       const result = await rollbackUnityPatchArtifact(artifact);
 
       if (options.json) {

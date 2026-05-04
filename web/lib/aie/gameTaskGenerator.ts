@@ -35,10 +35,11 @@ export type GamePatchPlan = {
 };
 
 export type UnityPatchArtifact = {
-  patchKind: "gameplay-update" | "jump-diagnostic" | "production-movement";
+  patchKind: "gameplay-update" | "jump-diagnostic" | "production-movement" | "camera-tuning";
   operation: "create-new-script" | "modify-existing-script";
   targetFile: string;
   absoluteTargetPath: string;
+  backupTag?: string;
   originalSha256: string;
   replacementSha256: string;
   replacementCode: string;
@@ -96,7 +97,7 @@ export type NextGameTaskExecutionResult = {
 };
 
 export type UnityPatchStatus = {
-  patchKind: "gameplay-update" | "jump-diagnostic" | "production-movement";
+  patchKind: "gameplay-update" | "jump-diagnostic" | "production-movement" | "camera-tuning";
   targetFile: string;
   targetPath: string;
   backupPath: string;
@@ -128,6 +129,24 @@ export type UnityPatchRollbackResult = {
   safety: {
     noUnityExecution: true;
     backupRetained: true;
+  };
+};
+
+export type CameraTuningStatus = {
+  targetFile: string;
+  targetPath: string;
+  backupPath: string;
+  backupExists: boolean;
+  cameraFollowExists: boolean;
+  targetFieldPresent: boolean;
+  offsetFieldPresent: boolean;
+  lateUpdatePresent: boolean;
+  lookAtPresent: boolean;
+  debugFollowPresent: boolean;
+  safeToOpenUnityForCompileOrPlaytest: boolean;
+  recoverySafe: boolean;
+  safety: {
+    noUnityExecution: true;
   };
 };
 
@@ -419,8 +438,12 @@ async function fileExists(targetPath: string): Promise<boolean> {
   }
 }
 
-function backupPathFor(targetPath: string): string {
-  return `${targetPath}.aie-backup`;
+function backupPathFor(targetPath: string, backupTag?: string): string {
+  return backupTag ? `${targetPath}.aie-backup-${backupTag}` : `${targetPath}.aie-backup`;
+}
+
+function backupPathForArtifact(artifact: UnityPatchArtifact): string {
+  return backupPathFor(artifact.absoluteTargetPath, artifact.backupTag);
 }
 
 const MISSING_FILE_BACKUP_MARKER = "__AIE_ORIGINAL_STATE__:missing-file\n";
@@ -474,6 +497,28 @@ function hasDebugJumpLogs(source: string): boolean {
   return source.includes("debugJumpLogs")
     && source.includes("[AIE Jump Diagnostic]")
     && source.includes("Debug.Log(");
+}
+
+function hasCameraTargetField(source: string): boolean {
+  return /\[SerializeField\]\s+private\s+Transform\s+target\s*;/.test(source);
+}
+
+function hasCameraOffsetField(source: string): boolean {
+  return /\[SerializeField\]\s+private\s+Vector3\s+offset\s*=\s*new\s+Vector3\(0f,\s*4f,\s*-7f\)\s*;/.test(source);
+}
+
+function hasCameraLateUpdate(source: string): boolean {
+  return /\bLateUpdate\s*\(/.test(source);
+}
+
+function hasCameraLookAt(source: string): boolean {
+  return source.includes("transform.LookAt(target.position + Vector3.up * lookAtHeight)");
+}
+
+function hasCameraDebugFollow(source: string): boolean {
+  return source.includes("debugFollow")
+    && source.includes("[AIE Camera Follow]")
+    && source.includes("distanceToTarget");
 }
 
 function buildDiffSummary(original: ExistingScriptAnalysis, replacement: ExistingScriptAnalysis): string[] {
@@ -849,16 +894,19 @@ function buildCameraFollowCode(): string {
     "namespace EnemyAIDemo",
     "{",
     "    /// <summary>",
-    "    /// Follows the player from a readable third-person offset with light smoothing.",
+    "    /// Follows the player from an obvious third-person angle so playtests can confirm camera motion clearly.",
     "    /// </summary>",
+    "    [DisallowMultipleComponent]",
     "    public sealed class CameraFollow : MonoBehaviour",
     "    {",
     "        [SerializeField] private Transform target;",
-    "        [SerializeField] private Vector3 offset = new(0f, 4f, -6f);",
-    "        [SerializeField] [Min(0.01f)] private float followSmoothTime = 0.15f;",
-    "        [SerializeField] private bool lookAtTarget = true;",
+    "        [SerializeField] private Vector3 offset = new Vector3(0f, 4f, -7f);",
+    "        [SerializeField] [Min(0.01f)] private float smoothTime = 0.12f;",
+    "        [SerializeField] private float lookAtHeight = 1.5f;",
+    "        [SerializeField] private bool debugFollow = false;",
     "",
     "        private Vector3 followVelocity;",
+    "        private float debugLogTimer;",
     "",
     "        private void LateUpdate()",
     "        {",
@@ -868,16 +916,91 @@ function buildCameraFollowCode(): string {
     "            }",
     "",
     "            Vector3 desiredPosition = target.position + offset;",
-    "            transform.position = Vector3.SmoothDamp(transform.position, desiredPosition, ref followVelocity, followSmoothTime);",
+    "            transform.position = Vector3.SmoothDamp(transform.position, desiredPosition, ref followVelocity, smoothTime);",
     "",
-    "            if (lookAtTarget)",
+    "            transform.LookAt(target.position + Vector3.up * lookAtHeight);",
+    "",
+    "            if (!debugFollow)",
     "            {",
-    "                transform.LookAt(target.position + Vector3.up * 1.5f);",
+    "                return;",
     "            }",
+    "",
+    "            debugLogTimer += Time.deltaTime;",
+    "            if (debugLogTimer < 1f)",
+    "            {",
+    "                return;",
+    "            }",
+    "",
+    "            debugLogTimer = 0f;",
+    "            float distanceToTarget = Vector3.Distance(transform.position, target.position);",
+    "            Debug.Log($\"[AIE Camera Follow] distanceToTarget={distanceToTarget:F2} desiredPosition={desiredPosition}\", this);",
     "        }",
     "    }",
     "}",
   ].join("\n");
+}
+
+function buildCameraTuningReplacement(analysis: ExistingScriptAnalysis): string {
+  const indent = "    ";
+  const bodyLines = [
+    "using UnityEngine;",
+    "",
+  ];
+
+  if (analysis.namespace) {
+    bodyLines.push(`namespace ${analysis.namespace}`, "{");
+  }
+
+  bodyLines.push(
+    `${indent}/// <summary>`,
+    `${indent}/// Follows the player from an obvious third-person angle so playtests can confirm camera motion clearly.`,
+    `${indent}/// </summary>`,
+    `${indent}[DisallowMultipleComponent]`,
+    `${indent}public sealed class ${analysis.className} : MonoBehaviour`,
+    `${indent}{`,
+    `${indent}${indent}[SerializeField] private Transform target;`,
+    `${indent}${indent}[SerializeField] private Vector3 offset = new Vector3(0f, 4f, -7f);`,
+    `${indent}${indent}[SerializeField] [Min(0.01f)] private float smoothTime = 0.12f;`,
+    `${indent}${indent}[SerializeField] private float lookAtHeight = 1.5f;`,
+    `${indent}${indent}[SerializeField] private bool debugFollow;`,
+    "",
+    `${indent}${indent}private Vector3 followVelocity;`,
+    `${indent}${indent}private float debugLogTimer;`,
+    "",
+    `${indent}${indent}private void LateUpdate()`,
+    `${indent}${indent}{`,
+    `${indent}${indent}${indent}if (target == null)`,
+    `${indent}${indent}${indent}{`,
+    `${indent}${indent}${indent}${indent}return;`,
+    `${indent}${indent}${indent}}`,
+    "",
+    `${indent}${indent}${indent}Vector3 desiredPosition = target.position + offset;`,
+    `${indent}${indent}${indent}transform.position = Vector3.SmoothDamp(transform.position, desiredPosition, ref followVelocity, smoothTime);`,
+    `${indent}${indent}${indent}transform.LookAt(target.position + Vector3.up * lookAtHeight);`,
+    "",
+    `${indent}${indent}${indent}if (!debugFollow)`,
+    `${indent}${indent}${indent}{`,
+    `${indent}${indent}${indent}${indent}return;`,
+    `${indent}${indent}${indent}}`,
+    "",
+    `${indent}${indent}${indent}debugLogTimer += Time.deltaTime;`,
+    `${indent}${indent}${indent}if (debugLogTimer < 1f)`,
+    `${indent}${indent}${indent}{`,
+    `${indent}${indent}${indent}${indent}return;`,
+    `${indent}${indent}${indent}}`,
+    "",
+    `${indent}${indent}${indent}debugLogTimer = 0f;`,
+    `${indent}${indent}${indent}float distanceToTarget = Vector3.Distance(transform.position, target.position);`,
+    `${indent}${indent}${indent}Debug.Log($"[AIE Camera Follow] distanceToTarget={distanceToTarget:F2} desiredPosition={desiredPosition}", this);`,
+    `${indent}${indent}}`,
+    `${indent}}`,
+  );
+
+  if (analysis.namespace) {
+    bodyLines.push("}");
+  }
+
+  return bodyLines.join("\n");
 }
 
 export async function generateUnityPatchArtifact(snapshot: GameProjectSnapshot): Promise<UnityPatchArtifact> {
@@ -1033,6 +1156,42 @@ export async function buildExistingCameraFollowArtifact(snapshot: GameProjectSna
   return buildCameraFollowArtifact(snapshot, targetFile);
 }
 
+export async function generateCameraTuningArtifact(snapshot: GameProjectSnapshot, targetFile = "Assets/Scripts/CameraFollow.cs"): Promise<UnityPatchArtifact> {
+  if (snapshot.engine !== "unity") {
+    throw new Error("Camera tuning requires a Unity project.");
+  }
+
+  const absoluteTargetPath = path.join(snapshot.rootPath, targetFile);
+  if (!(await fileExists(absoluteTargetPath))) {
+    throw new Error(`Camera tuning target does not exist: ${targetFile}`);
+  }
+
+  const source = await readFile(absoluteTargetPath, "utf-8");
+  const analysis = analyzeExistingScript(source);
+  const replacementCode = buildCameraTuningReplacement(analysis);
+  return {
+    patchKind: "camera-tuning",
+    operation: "modify-existing-script",
+    targetFile,
+    absoluteTargetPath,
+    backupTag: "camera-tuning",
+    originalSha256: sha256(source),
+    replacementSha256: sha256(replacementCode),
+    replacementCode,
+    validationRules: {
+      preserveClassName: analysis.className,
+      preserveNamespace: analysis.namespace,
+      forbiddenClassNames: ["PlayerController"],
+      requireNoDuplicateMethods: true,
+    },
+    safety: {
+      requiresCleanRecoveryState: true,
+      createsBackupBeforeApply: true,
+      noUnityExecution: true,
+    },
+  };
+}
+
 export async function generateUnityPatchPreview(snapshot: GameProjectSnapshot): Promise<UnityPatchPreview> {
   const artifact = await generateUnityPatchArtifact(snapshot);
   const originalSource = await readFile(artifact.absoluteTargetPath, "utf-8");
@@ -1070,6 +1229,32 @@ export async function generateJumpDiagnosticPreview(snapshot: GameProjectSnapsho
       "use Input.GetKeyDown(KeyCode.Space)",
       "use CharacterController.isGrounded as the primary grounded signal",
       "expose debugJumpLogs boolean for runtime inspection",
+    ],
+    safetyStatus: [
+      "manual full-file copy/paste disabled",
+      `clean recovery state required before apply: ${artifact.safety.requiresCleanRecoveryState ? "yes" : "no"}`,
+      `backup created before write: ${artifact.safety.createsBackupBeforeApply ? "yes" : "no"}`,
+      `Unity execution disabled: ${artifact.safety.noUnityExecution ? "yes" : "no"}`,
+    ],
+  };
+}
+
+export async function generateCameraTuningPreview(snapshot: GameProjectSnapshot): Promise<UnityPatchPreview> {
+  const artifact = await generateCameraTuningArtifact(snapshot);
+  const originalSource = await readFile(artifact.absoluteTargetPath, "utf-8");
+  const originalAnalysis = analyzeExistingScript(originalSource);
+
+  return {
+    artifact,
+    detectedClass: originalAnalysis.className,
+    detectedNamespace: originalAnalysis.namespace,
+    diffSummary: [
+      `preserve class ${originalAnalysis.className}`,
+      `preserve namespace ${originalAnalysis.namespace ?? "none"}`,
+      "use a closer third-person offset for clearer follow motion",
+      "always look at the player using lookAtHeight",
+      "log follow distance roughly once per second when debugFollow is enabled",
+      "expose target, offset, smoothTime, lookAtHeight, and debugFollow in the Inspector",
     ],
     safetyStatus: [
       "manual full-file copy/paste disabled",
@@ -1165,7 +1350,7 @@ export async function applyUnityPatchArtifact(
   allowExistingBackup = false,
 ): Promise<UnityPatchApplyResult> {
   const blockedReasons: string[] = [];
-  const backupPath = backupPathFor(artifact.absoluteTargetPath);
+  const backupPath = backupPathForArtifact(artifact);
   const targetExists = await fileExists(artifact.absoluteTargetPath);
 
   if (!recoverySafe) {
@@ -1248,17 +1433,22 @@ export async function inspectUnityPatchStatus(
   artifact: UnityPatchArtifact,
   recoverySafe: boolean,
 ): Promise<UnityPatchStatus> {
-  const backupPath = backupPathFor(artifact.absoluteTargetPath);
+  const backupPath = backupPathForArtifact(artifact);
   const currentSource = await readFile(artifact.absoluteTargetPath, "utf-8");
   const currentSha256 = sha256(currentSource);
   const backupExists = await fileExists(backupPath);
   const currentFileAppearsPatched = currentSha256 === artifact.replacementSha256;
-  const jumpLogicPresent = hasJumpLogic(currentSource);
   const usesKeyCodeSpace = usesKeyCodeSpaceForJump(currentSource);
   const usesCharacterControllerGrounded = usesCharacterControllerGroundedSignal(currentSource);
   const debugJumpLogsEnabled = hasDebugJumpLogs(currentSource);
   const diagnosticLogsPresent = debugJumpLogsEnabled;
   const jumpDiagnosticPatchApplied = currentFileAppearsPatched && usesKeyCodeSpace && usesCharacterControllerGrounded && debugJumpLogsEnabled;
+  const jumpLogicPresent = artifact.patchKind === "camera-tuning"
+    ? hasCameraTargetField(currentSource) && hasCameraOffsetField(currentSource) && hasCameraLateUpdate(currentSource)
+    : hasJumpLogic(currentSource);
+  const safeToOpenUnityForCompileOrPlaytest = artifact.patchKind === "camera-tuning"
+    ? recoverySafe && currentFileAppearsPatched && hasCameraLookAt(currentSource) && backupExists
+    : recoverySafe && currentFileAppearsPatched && jumpLogicPresent && backupExists;
 
   return {
     patchKind: artifact.patchKind,
@@ -1276,7 +1466,42 @@ export async function inspectUnityPatchStatus(
     diagnosticLogsPresent,
     debugJumpLogsEnabled,
     rollbackAvailable: backupExists,
-    safeToOpenUnityForCompileOrPlaytest: recoverySafe && currentFileAppearsPatched && jumpLogicPresent && backupExists,
+    safeToOpenUnityForCompileOrPlaytest,
+    recoverySafe,
+    safety: {
+      noUnityExecution: true,
+    },
+  };
+}
+
+export async function inspectCameraTuningStatus(snapshot: GameProjectSnapshot, recoverySafe: boolean, targetFile = "Assets/Scripts/CameraFollow.cs"): Promise<CameraTuningStatus> {
+  if (snapshot.engine !== "unity") {
+    throw new Error("Camera tuning status requires a Unity project.");
+  }
+
+  const absoluteTargetPath = path.join(snapshot.rootPath, targetFile);
+  const backupPath = backupPathFor(absoluteTargetPath, "camera-tuning");
+  const cameraFollowExists = await fileExists(absoluteTargetPath);
+  const backupExists = await fileExists(backupPath);
+  const source = cameraFollowExists ? await readFile(absoluteTargetPath, "utf-8") : "";
+  const targetFieldPresent = cameraFollowExists && hasCameraTargetField(source);
+  const offsetFieldPresent = cameraFollowExists && hasCameraOffsetField(source);
+  const lateUpdatePresent = cameraFollowExists && hasCameraLateUpdate(source);
+  const lookAtPresent = cameraFollowExists && hasCameraLookAt(source);
+  const debugFollowPresent = cameraFollowExists && hasCameraDebugFollow(source);
+
+  return {
+    targetFile,
+    targetPath: absoluteTargetPath,
+    backupPath,
+    backupExists,
+    cameraFollowExists,
+    targetFieldPresent,
+    offsetFieldPresent,
+    lateUpdatePresent,
+    lookAtPresent,
+    debugFollowPresent,
+    safeToOpenUnityForCompileOrPlaytest: recoverySafe && cameraFollowExists && targetFieldPresent && offsetFieldPresent && lateUpdatePresent && lookAtPresent && debugFollowPresent && backupExists,
     recoverySafe,
     safety: {
       noUnityExecution: true,
@@ -1303,6 +1528,28 @@ export function renderUnityPatchStatus(status: UnityPatchStatus): string {
     `Diagnostic Logs Present: ${status.diagnosticLogsPresent ? "YES" : "NO"}`,
     `Debug Jump Logs Enabled: ${status.debugJumpLogsEnabled ? "YES" : "NO"}`,
     `Rollback Available: ${status.rollbackAvailable ? "YES" : "NO"}`,
+    `Recovery Guard Safe: ${status.recoverySafe ? "YES" : "NO"}`,
+    `Safe To Open Unity For Compile/Playtest: ${status.safeToOpenUnityForCompileOrPlaytest ? "YES" : "NO"}`,
+    "",
+    "Safety:",
+    `- no Unity execution: ${status.safety.noUnityExecution ? "true" : "false"}`,
+  ].join("\n");
+}
+
+export function renderCameraTuningStatus(status: CameraTuningStatus): string {
+  return [
+    "CAMERA TUNING STATUS",
+    "",
+    `Target File: ${status.targetFile}`,
+    `Target Path: ${status.targetPath}`,
+    `Backup Path: ${status.backupPath}`,
+    `CameraFollow.cs Exists: ${status.cameraFollowExists ? "YES" : "NO"}`,
+    `Target Field Present: ${status.targetFieldPresent ? "YES" : "NO"}`,
+    `Offset Field Present: ${status.offsetFieldPresent ? "YES" : "NO"}`,
+    `LateUpdate Present: ${status.lateUpdatePresent ? "YES" : "NO"}`,
+    `LookAt Present: ${status.lookAtPresent ? "YES" : "NO"}`,
+    `DebugFollow Present: ${status.debugFollowPresent ? "YES" : "NO"}`,
+    `Backup Exists: ${status.backupExists ? "YES" : "NO"}`,
     `Recovery Guard Safe: ${status.recoverySafe ? "YES" : "NO"}`,
     `Safe To Open Unity For Compile/Playtest: ${status.safeToOpenUnityForCompileOrPlaytest ? "YES" : "NO"}`,
     "",
@@ -1353,7 +1600,7 @@ export function renderUnityPatchApplyResult(result: UnityPatchApplyResult): stri
 }
 
 export async function rollbackUnityPatchArtifact(artifact: UnityPatchArtifact): Promise<UnityPatchRollbackResult> {
-  const backupPath = backupPathFor(artifact.absoluteTargetPath);
+  const backupPath = backupPathForArtifact(artifact);
   if (!(await fileExists(backupPath))) {
     return {
       restored: false,

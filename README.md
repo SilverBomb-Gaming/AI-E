@@ -1005,6 +1005,19 @@ Command:
 
 - `npm run operator:view -- --execute-next-game-task "<project>"`
 
+## Camera Follow Tuning
+
+- use the camera tuning workflow when CameraFollow is wired but the follow behavior is not visually obvious enough to trust playtest feedback.
+- the tuning patch keeps the workflow guarded and rollbackable while making follow motion clearer with a closer offset, forced look-at behavior, and optional follow-distance debug logs.
+- the tuning status command reports whether the expected follow fields and LateUpdate/LookAt behavior markers are present before opening Unity.
+
+Commands:
+
+- `npm run operator:view -- --camera-tuning-preview "<project>"`
+- `npm run operator:view -- --apply-camera-tuning "<project>"`
+- `npm run operator:view -- --camera-tuning-status "<project>"`
+- `npm run operator:view -- --rollback-camera-tuning "<project>"`
+
 ## Safe Runtime Action Bridge
 
 AI-E can now translate supported live operator actions into safe runtime intents.
