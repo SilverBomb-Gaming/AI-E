@@ -995,6 +995,17 @@ Commands:
 - `npm run operator:view -- --camera-wiring-status "<project>"`
 - `npm run operator:view -- --rollback-camera-wiring "<project>"`
 
+## Strict Unity Scene Wiring Verification
+
+- CameraFollow scene wiring is only considered successful when the Main Camera component list, the linked MonoBehaviour block, the `CameraFollow.cs.meta` GUID, and the Player transform target all agree in the Unity scene YAML.
+- text presence alone is not enough: the status command now reports `CameraFollow Component Visible To Unity: NO` when the scene contains a stale CameraFollow block, an unsafe scene-local component fileID, or mismatched serialized fields.
+- the repair command removes stale CameraFollow component links and blocks, allocates a safe scene-local component fileID, rewrites the expected serialized fields, and then re-runs strict status checks before reporting success.
+
+Commands:
+
+- `npm run operator:view -- --camera-wiring-status "<project>"`
+- `npm run operator:view -- --repair-camera-wiring "<project>"`
+
 ## One-Command Feature Execution
 
 - AI-E can now execute the full supported camera feature path in one command: decide the next feature, generate `CameraFollow.cs`, ensure `CameraFollow.cs.meta`, wire the scene, validate final status, and report completion.
@@ -1017,6 +1028,18 @@ Commands:
 - `npm run operator:view -- --apply-camera-tuning "<project>"`
 - `npm run operator:view -- --camera-tuning-status "<project>"`
 - `npm run operator:view -- --rollback-camera-tuning "<project>"`
+
+## Visual Debug Layer
+
+- use the visual debug layer during development to improve floor contrast so movement, jumping, collisions, and future interactions are easier to observe.
+- the workflow detects the primary floor object and its Renderer, creates or reuses `Assets/Materials/AIE_DebugFloor.mat`, and applies that material to the detected floor only.
+- this is a gameplay-visibility aid, not final art; rollback restores the previous scene material assignment from a dedicated scene backup without touching other objects.
+
+Commands:
+
+- `npm run operator:view -- --apply-visual-debug-floor "<project>"`
+- `npm run operator:view -- --visual-debug-status "<project>"`
+- `npm run operator:view -- --rollback-visual-debug "<project>"`
 
 ## Safe Runtime Action Bridge
 

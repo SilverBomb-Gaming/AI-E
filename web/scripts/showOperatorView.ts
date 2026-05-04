@@ -35,13 +35,21 @@ import { renderOperatorView, renderOperatorViewSummary, type OperatorViewState }
 import type { OperatorViewSnapshot } from "../lib/aie/operatorView.types";
 import {
   applyUnityCameraWiring,
+  applyUnityVisualDebugFloor,
   inspectUnityCameraWiringStatus,
   inspectUnitySceneWiring,
+  inspectUnityVisualDebugStatus,
+  repairUnityCameraWiring,
   renderUnitySceneWiringApplyResult,
   renderUnitySceneWiringPreview,
+  renderUnitySceneWiringRepairResult,
   renderUnitySceneWiringRollbackResult,
   renderUnitySceneWiringStatus,
+  renderUnityVisualDebugApplyResult,
+  renderUnityVisualDebugRollbackResult,
+  renderUnityVisualDebugStatus,
   rollbackUnityCameraWiring,
+  rollbackUnityVisualDebugFloor,
 } from "../lib/aie/unitySceneWiring";
 import { inspectUnityPlaytestRecovery, renderUnityPlaytestRecovery } from "../lib/aie/unityPlaytestRecovery";
 
@@ -55,11 +63,15 @@ type ShowOperatorViewOptions = {
   cameraWiringPreviewPath?: string;
   applyCameraWiringPath?: string;
   cameraWiringStatusPath?: string;
+  repairCameraWiringPath?: string;
   rollbackCameraWiringPath?: string;
   cameraTuningPreviewPath?: string;
   applyCameraTuningPath?: string;
   cameraTuningStatusPath?: string;
   rollbackCameraTuningPath?: string;
+  applyVisualDebugFloorPath?: string;
+  visualDebugStatusPath?: string;
+  rollbackVisualDebugPath?: string;
   unityRecoveryPath?: string;
   gamePatchPath?: string;
   gamePatchPreviewPath?: string;
@@ -391,6 +403,51 @@ function parseArgs(argv: string[]): ShowOperatorViewOptions {
       continue;
     }
 
+    if (arg.startsWith("--apply-visual-debug-floor=")) {
+      options.applyVisualDebugFloorPath = arg.slice("--apply-visual-debug-floor=".length).trim() || undefined;
+      continue;
+    }
+
+    if (arg === "--apply-visual-debug-floor") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("Missing value for --apply-visual-debug-floor");
+      }
+      options.applyVisualDebugFloorPath = value.trim();
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith("--visual-debug-status=")) {
+      options.visualDebugStatusPath = arg.slice("--visual-debug-status=".length).trim() || undefined;
+      continue;
+    }
+
+    if (arg === "--visual-debug-status") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("Missing value for --visual-debug-status");
+      }
+      options.visualDebugStatusPath = value.trim();
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith("--rollback-visual-debug=")) {
+      options.rollbackVisualDebugPath = arg.slice("--rollback-visual-debug=".length).trim() || undefined;
+      continue;
+    }
+
+    if (arg === "--rollback-visual-debug") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("Missing value for --rollback-visual-debug");
+      }
+      options.rollbackVisualDebugPath = value.trim();
+      index += 1;
+      continue;
+    }
+
     if (arg.startsWith("--camera-wiring-preview=")) {
       options.cameraWiringPreviewPath = arg.slice("--camera-wiring-preview=".length).trim() || undefined;
       continue;
@@ -432,6 +489,21 @@ function parseArgs(argv: string[]): ShowOperatorViewOptions {
         throw new Error("Missing value for --camera-wiring-status");
       }
       options.cameraWiringStatusPath = value.trim();
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith("--repair-camera-wiring=")) {
+      options.repairCameraWiringPath = arg.slice("--repair-camera-wiring=".length).trim() || undefined;
+      continue;
+    }
+
+    if (arg === "--repair-camera-wiring") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("Missing value for --repair-camera-wiring");
+      }
+      options.repairCameraWiringPath = value.trim();
       index += 1;
       continue;
     }
@@ -775,9 +847,13 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       options.applyCameraTuningPath ? "--apply-camera-tuning" : null,
       options.cameraTuningStatusPath ? "--camera-tuning-status" : null,
       options.rollbackCameraTuningPath ? "--rollback-camera-tuning" : null,
+      options.applyVisualDebugFloorPath ? "--apply-visual-debug-floor" : null,
+      options.visualDebugStatusPath ? "--visual-debug-status" : null,
+      options.rollbackVisualDebugPath ? "--rollback-visual-debug" : null,
       options.cameraWiringPreviewPath ? "--camera-wiring-preview" : null,
       options.applyCameraWiringPath ? "--apply-camera-wiring" : null,
       options.cameraWiringStatusPath ? "--camera-wiring-status" : null,
+      options.repairCameraWiringPath ? "--repair-camera-wiring" : null,
       options.rollbackCameraWiringPath ? "--rollback-camera-wiring" : null,
       options.unityRecoveryPath ? "--unity-recovery" : null,
       options.gamePatchPath ? "--game-patch" : null,
@@ -924,6 +1000,31 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       return result.applied ? 0 : 1;
     }
 
+    if (options.applyVisualDebugFloorPath) {
+      const result = await applyUnityVisualDebugFloor(options.applyVisualDebugFloorPath);
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return result.applied ? 0 : 1;
+      }
+
+      console.log(renderUnityVisualDebugApplyResult(result));
+      return result.applied ? 0 : 1;
+    }
+
+    if (options.repairCameraWiringPath) {
+      const recovery = await inspectUnityPlaytestRecovery(options.repairCameraWiringPath);
+      const result = await repairUnityCameraWiring(options.repairCameraWiringPath, buildFollowupPatchRecoverySignal(recovery));
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return result.repaired ? 0 : 1;
+      }
+
+      console.log(renderUnitySceneWiringRepairResult(result));
+      return result.repaired ? 0 : 1;
+    }
+
     if (options.gamePatchStatusPath) {
       const snapshot = await inspectGameProject(options.gamePatchStatusPath);
       const artifact = await generateUnityPatchArtifact(snapshot);
@@ -975,6 +1076,18 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       return 0;
     }
 
+    if (options.visualDebugStatusPath) {
+      const status = await inspectUnityVisualDebugStatus(options.visualDebugStatusPath);
+
+      if (options.json) {
+        console.log(JSON.stringify(status, null, 2));
+        return 0;
+      }
+
+      console.log(renderUnityVisualDebugStatus(status));
+      return 0;
+    }
+
     if (options.rollbackGamePatchPath) {
       const snapshot = await inspectGameProject(options.rollbackGamePatchPath);
       const cameraArtifact = await buildExistingCameraFollowArtifact(snapshot);
@@ -1016,6 +1129,18 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       }
 
       console.log(renderUnitySceneWiringRollbackResult(result));
+      return result.restored ? 0 : 1;
+    }
+
+    if (options.rollbackVisualDebugPath) {
+      const result = await rollbackUnityVisualDebugFloor(options.rollbackVisualDebugPath);
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return result.restored ? 0 : 1;
+      }
+
+      console.log(renderUnityVisualDebugRollbackResult(result));
       return result.restored ? 0 : 1;
     }
 
