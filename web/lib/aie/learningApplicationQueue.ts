@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type { LearningApplicationScope } from "./learningApplicationState";
+import { attemptApplyLearningRecommendation } from "./learningApplicationGate";
 import type { LearningRecommendationDecisionRecord } from "./learningRecommendationDecision";
 import type { LearningRecommendation } from "./learningRecommendationReview";
 
@@ -18,8 +19,10 @@ export type LearningApplicationQueueRecord = {
   decision_id: string;
   scope: LearningApplicationScope;
   status: LearningApplicationQueueStatus;
-  applied: false;
-  blocked_reason?: "learning recommendation not approved" | "learning scope not allowed";
+  applied: boolean;
+  blocked_reason?: "learning recommendation not approved" | "learning scope not allowed" | "learning disabled globally" | "learning drift detected" | "queue item is not queued";
+  recommendation_snapshot: LearningRecommendation;
+  decision_snapshot: LearningRecommendationDecisionRecord;
 };
 
 export type LearningApplicationQueueWriteResult = {
@@ -30,6 +33,13 @@ export type LearningApplicationQueueWriteResult = {
   applied: false;
   execution_triggered: false;
   autonomy_triggered: false;
+};
+
+export type LearningApplicationQueueExecutionResult = {
+  queue_id: string;
+  status: "applied" | "blocked";
+  reason?: LearningApplicationQueueRecord["blocked_reason"];
+  applied: boolean;
 };
 
 function hasNonEmptyString(value: unknown): value is string {
@@ -51,7 +61,9 @@ function isQueueRecord(value: unknown): value is LearningApplicationQueueRecord 
       || candidate.status === "blocked"
       || candidate.status === "applied"
       || candidate.status === "reverted")
-    && candidate.applied === false;
+    && typeof candidate.applied === "boolean"
+    && !!candidate.recommendation_snapshot
+    && !!candidate.decision_snapshot;
 }
 
 function looksLikeIsoTimestamp(value: string): boolean {
@@ -107,6 +119,29 @@ function toQueueRecord(input: {
     status,
     applied: false,
     blocked_reason: blockedReason,
+    recommendation_snapshot: input.recommendation,
+    decision_snapshot: input.decision,
+  };
+}
+
+async function appendQueueRecord(
+  record: LearningApplicationQueueRecord,
+  options?: { outputDirectory?: string },
+): Promise<LearningApplicationQueueWriteResult> {
+  const outputDirectory = options?.outputDirectory?.trim() || DEFAULT_LEARNING_APPLICATION_QUEUE_DIRECTORY;
+  const outputPath = path.join(outputDirectory, `${record.created_at.slice(0, 10) || "unknown-date"}.jsonl`);
+
+  await mkdir(outputDirectory, { recursive: true });
+  await appendFile(outputPath, `${JSON.stringify(record)}\n`, "utf-8");
+
+  return {
+    status: "recorded",
+    record,
+    output_path: outputPath,
+    append_only: true,
+    applied: record.applied,
+    execution_triggered: false,
+    autonomy_triggered: false,
   };
 }
 
@@ -139,21 +174,7 @@ export async function enqueueLearningApplication(
     createdAt,
     scope,
   });
-  const outputDirectory = options?.outputDirectory?.trim() || DEFAULT_LEARNING_APPLICATION_QUEUE_DIRECTORY;
-  const outputPath = path.join(outputDirectory, `${record.created_at.slice(0, 10) || "unknown-date"}.jsonl`);
-
-  await mkdir(outputDirectory, { recursive: true });
-  await appendFile(outputPath, `${JSON.stringify(record)}\n`, "utf-8");
-
-  return {
-    status: "recorded",
-    record,
-    output_path: outputPath,
-    append_only: true,
-    applied: false,
-    execution_triggered: false,
-    autonomy_triggered: false,
-  };
+  return appendQueueRecord(record, options);
 }
 
 export async function queryLearningApplicationQueue(
@@ -182,7 +203,7 @@ export async function queryLearningApplicationQueue(
       .filter(isQueueRecord);
   }))).flat();
 
-  return records.filter((record) => {
+  const filteredRecords = records.filter((record) => {
     if (filters?.status && record.status !== filters.status) {
       return false;
     }
@@ -197,6 +218,59 @@ export async function queryLearningApplicationQueue(
 
     return true;
   });
+
+  const latestByQueueId = new Map<string, LearningApplicationQueueRecord>();
+
+  for (const record of filteredRecords) {
+    const existing = latestByQueueId.get(record.queue_id);
+    if (!existing || existing.created_at <= record.created_at) {
+      latestByQueueId.set(record.queue_id, record);
+    }
+  }
+
+  return Array.from(latestByQueueId.values()).sort((left, right) => left.created_at.localeCompare(right.created_at));
+}
+
+export async function executeQueuedLearningItem(
+  queueId: string,
+  options?: { outputDirectory?: string; executedAt?: string },
+): Promise<LearningApplicationQueueExecutionResult> {
+  const items = await queryLearningApplicationQueue({ outputDirectory: options?.outputDirectory });
+  const queueItem = items.find((item) => item.queue_id === queueId);
+
+  if (!queueItem || queueItem.status !== "queued") {
+    return {
+      queue_id: queueId,
+      status: "blocked",
+      reason: "queue item is not queued",
+      applied: false,
+    };
+  }
+
+  const attempt = attemptApplyLearningRecommendation(
+    queueItem.recommendation_snapshot,
+    queueItem.decision_snapshot,
+    {
+      scope: queueItem.scope,
+      appliedAt: options?.executedAt,
+    },
+  );
+  const updatedRecord: LearningApplicationQueueRecord = {
+    ...queueItem,
+    created_at: normalizeCreatedAt(options?.executedAt),
+    status: attempt.applied ? "applied" : "blocked",
+    applied: attempt.applied,
+    blocked_reason: attempt.blocked_reason,
+  };
+
+  await appendQueueRecord(updatedRecord, options);
+
+  return {
+    queue_id: queueItem.queue_id,
+    status: attempt.applied ? "applied" : "blocked",
+    reason: attempt.blocked_reason,
+    applied: attempt.applied,
+  };
 }
 
 export function renderLearningApplicationQueue(items: readonly LearningApplicationQueueRecord[]): string {

@@ -748,6 +748,13 @@ Current Layer 28 Step 1 status:
 - queue is non-executing and non-autonomous
 - queued items remain unapplied until explicit gate call
 
+Current Layer 28 Step 2 status:
+
+- Layer 28 Step 2 - Manual Queue Execution: implemented
+- added manual execution of single queued learning item
+- execution remains fully gated and controlled
+- no automatic execution
+
 ## Safe Runtime Action Bridge
 
 AI-E can now translate supported live operator actions into safe runtime intents.

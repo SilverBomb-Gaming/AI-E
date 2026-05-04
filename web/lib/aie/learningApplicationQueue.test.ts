@@ -15,6 +15,7 @@ import { generateExecutionInsights } from "./executionInsight";
 import { getLearningApplicationState, resetLearningApplicationState } from "./learningApplicationState";
 import {
   enqueueLearningApplication,
+  executeQueuedLearningItem,
   queryLearningApplicationQueue,
   renderLearningApplicationQueue,
 } from "./learningApplicationQueue";
@@ -241,6 +242,137 @@ test("queue records are append-only and readable", async () => {
     assert.match(rendered, /queued:/);
     assert.match(rendered, /blocked:/);
     assert.match(rendered, /Queued items remain unapplied until an explicit learning application gate call/);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("queued item can be executed manually", async () => {
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "aie-learning-queue-execute-"));
+  const recommendation = createRecommendation();
+
+  try {
+    setLearningEnabled(true);
+    const decision = await recordLearningRecommendationDecision(recommendation, {
+      operator_decision: "approved_for_future_application",
+      decided_at: "2026-05-03T22:32:00.000Z",
+    }, { outputDirectory: tempRoot });
+    const queued = await enqueueLearningApplication(recommendation, decision.record, {
+      outputDirectory: tempRoot,
+      createdAt: "2026-05-03T22:33:00.000Z",
+    });
+
+    const result = await executeQueuedLearningItem(queued.record.queue_id, {
+      outputDirectory: tempRoot,
+      executedAt: "2026-05-03T22:34:00.000Z",
+    });
+    const items = await queryLearningApplicationQueue({ outputDirectory: tempRoot });
+
+    assert.equal(result.status, "applied");
+    assert.equal(result.applied, true);
+    assert.equal(items.length, 1);
+    assert.equal(items[0]?.status, "applied");
+    assert.equal(items[0]?.applied, true);
+    assert.equal(getLearningApplicationState().parameter_value, recommendation.confidence);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("blocked item remains blocked when executed", async () => {
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "aie-learning-queue-blocked-run-"));
+  const recommendation = createRecommendation();
+
+  try {
+    const decision = await recordLearningRecommendationDecision(recommendation, {
+      operator_decision: "rejected",
+      decided_at: "2026-05-03T22:35:00.000Z",
+    }, { outputDirectory: tempRoot });
+    const queued = await enqueueLearningApplication(recommendation, decision.record, {
+      outputDirectory: tempRoot,
+      createdAt: "2026-05-03T22:36:00.000Z",
+    });
+
+    const result = await executeQueuedLearningItem(queued.record.queue_id, {
+      outputDirectory: tempRoot,
+      executedAt: "2026-05-03T22:37:00.000Z",
+    });
+
+    assert.equal(result.status, "blocked");
+    assert.equal(result.reason, "queue item is not queued");
+    assert.equal(result.applied, false);
+    assert.equal(getLearningApplicationState().parameter_value, 0);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("applied item cannot re-run", async () => {
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "aie-learning-queue-rerun-"));
+  const recommendation = createRecommendation();
+
+  try {
+    setLearningEnabled(true);
+    const decision = await recordLearningRecommendationDecision(recommendation, {
+      operator_decision: "approved_for_future_application",
+      decided_at: "2026-05-03T22:38:00.000Z",
+    }, { outputDirectory: tempRoot });
+    const queued = await enqueueLearningApplication(recommendation, decision.record, {
+      outputDirectory: tempRoot,
+      createdAt: "2026-05-03T22:39:00.000Z",
+    });
+
+    const firstResult = await executeQueuedLearningItem(queued.record.queue_id, {
+      outputDirectory: tempRoot,
+      executedAt: "2026-05-03T22:40:00.000Z",
+    });
+    const secondResult = await executeQueuedLearningItem(queued.record.queue_id, {
+      outputDirectory: tempRoot,
+      executedAt: "2026-05-03T22:41:00.000Z",
+    });
+
+    assert.equal(firstResult.status, "applied");
+    assert.equal(secondResult.status, "blocked");
+    assert.equal(secondResult.reason, "queue item is not queued");
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("manual execution stays single-item and does not process multiple queue entries", async () => {
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "aie-learning-queue-single-run-"));
+  const recommendation = createRecommendation();
+
+  try {
+    setLearningEnabled(true);
+    const firstDecision = await recordLearningRecommendationDecision(recommendation, {
+      operator_decision: "approved_for_future_application",
+      decided_at: "2026-05-03T22:42:00.000Z",
+    }, { outputDirectory: tempRoot });
+    const firstQueued = await enqueueLearningApplication(recommendation, firstDecision.record, {
+      outputDirectory: tempRoot,
+      createdAt: "2026-05-03T22:43:00.000Z",
+    });
+    const secondDecision = await recordLearningRecommendationDecision(recommendation, {
+      operator_decision: "approved_for_future_application",
+      decided_at: "2026-05-03T22:44:00.000Z",
+    }, { outputDirectory: tempRoot });
+    const secondQueued = await enqueueLearningApplication(recommendation, secondDecision.record, {
+      outputDirectory: tempRoot,
+      createdAt: "2026-05-03T22:45:00.000Z",
+    });
+
+    const result = await executeQueuedLearningItem(firstQueued.record.queue_id, {
+      outputDirectory: tempRoot,
+      executedAt: "2026-05-03T22:46:00.000Z",
+    });
+    const items = await queryLearningApplicationQueue({ outputDirectory: tempRoot });
+    const firstItem = items.find((item) => item.queue_id === firstQueued.record.queue_id);
+    const secondItem = items.find((item) => item.queue_id === secondQueued.record.queue_id);
+
+    assert.equal(result.status, "applied");
+    assert.equal(firstItem?.status, "applied");
+    assert.equal(secondItem?.status, "queued");
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }
