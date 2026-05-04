@@ -1065,6 +1065,18 @@ Commands:
 - `npm run operator:view -- --enemy-status "<project>"`
 - `npm run operator:view -- --rollback-basic-enemy "<project>"`
 
+## Player Attack
+
+- use the player attack workflow during local playtests to give `Player` one simple interaction that can affect the scene enemy without launching Unity from the CLI.
+- the workflow creates or reuses `Assets/Scripts/PlayerAttack.cs`, attaches it to `Player`, ensures only one `PlayerAttack` component remains linked in the scene, and preserves a Mouse0-or-E attack configuration suitable for short-range hit testing.
+- enemy reaction stays minimal and local: `BasicEnemy` logs `Enemy hit` and plays a small scale pulse when struck, while rollback restores the prior scene and removes generated attack assets only when the apply command created them locally.
+
+Commands:
+
+- `npm run operator:view -- --apply-player-attack "<project>"`
+- `npm run operator:view -- --attack-status "<project>"`
+- `npm run operator:view -- --rollback-player-attack "<project>"`
+
 ## Safe Runtime Action Bridge
 
 AI-E can now translate supported live operator actions into safe runtime intents.

@@ -37,10 +37,12 @@ import {
   applyUnityCameraWiring,
   applyUnityBasicEnemy,
   applyUnityFallRecovery,
+  applyUnityPlayerAttack,
   applyUnityVisualDebugFloor,
   inspectUnityBasicEnemyStatus,
   inspectUnityCameraWiringStatus,
   inspectUnityFallRecoveryStatus,
+  inspectUnityPlayerAttackStatus,
   inspectUnitySceneWiring,
   inspectUnityVisualDebugStatus,
   repairUnityCameraWiring,
@@ -50,6 +52,9 @@ import {
   renderUnityFallRecoveryApplyResult,
   renderUnityFallRecoveryRollbackResult,
   renderUnityFallRecoveryStatus,
+  renderUnityPlayerAttackApplyResult,
+  renderUnityPlayerAttackRollbackResult,
+  renderUnityPlayerAttackStatus,
   renderUnitySceneWiringApplyResult,
   renderUnitySceneWiringPreview,
   renderUnitySceneWiringRepairResult,
@@ -61,6 +66,7 @@ import {
   rollbackUnityBasicEnemy,
   rollbackUnityCameraWiring,
   rollbackUnityFallRecovery,
+  rollbackUnityPlayerAttack,
   rollbackUnityVisualDebugFloor,
 } from "../lib/aie/unitySceneWiring";
 import { inspectUnityPlaytestRecovery, renderUnityPlaytestRecovery } from "../lib/aie/unityPlaytestRecovery";
@@ -90,6 +96,9 @@ type ShowOperatorViewOptions = {
   applyBasicEnemyPath?: string;
   enemyStatusPath?: string;
   rollbackBasicEnemyPath?: string;
+  applyPlayerAttackPath?: string;
+  attackStatusPath?: string;
+  rollbackPlayerAttackPath?: string;
   unityRecoveryPath?: string;
   gamePatchPath?: string;
   gamePatchPreviewPath?: string;
@@ -446,6 +455,11 @@ function parseArgs(argv: string[]): ShowOperatorViewOptions {
       continue;
     }
 
+    if (arg.startsWith("--apply-player-attack=")) {
+      options.applyPlayerAttackPath = arg.slice("--apply-player-attack=".length).trim() || undefined;
+      continue;
+    }
+
     if (arg === "--apply-fall-recovery") {
       const value = argv[index + 1];
       if (!value) {
@@ -462,6 +476,16 @@ function parseArgs(argv: string[]): ShowOperatorViewOptions {
         throw new Error("Missing value for --apply-basic-enemy");
       }
       options.applyBasicEnemyPath = value.trim();
+      index += 1;
+      continue;
+    }
+
+    if (arg === "--apply-player-attack") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("Missing value for --apply-player-attack");
+      }
+      options.applyPlayerAttackPath = value.trim();
       index += 1;
       continue;
     }
@@ -491,6 +515,11 @@ function parseArgs(argv: string[]): ShowOperatorViewOptions {
       continue;
     }
 
+    if (arg.startsWith("--attack-status=")) {
+      options.attackStatusPath = arg.slice("--attack-status=".length).trim() || undefined;
+      continue;
+    }
+
     if (arg === "--fall-recovery-status") {
       const value = argv[index + 1];
       if (!value) {
@@ -507,6 +536,16 @@ function parseArgs(argv: string[]): ShowOperatorViewOptions {
         throw new Error("Missing value for --enemy-status");
       }
       options.enemyStatusPath = value.trim();
+      index += 1;
+      continue;
+    }
+
+    if (arg === "--attack-status") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("Missing value for --attack-status");
+      }
+      options.attackStatusPath = value.trim();
       index += 1;
       continue;
     }
@@ -536,6 +575,11 @@ function parseArgs(argv: string[]): ShowOperatorViewOptions {
       continue;
     }
 
+    if (arg.startsWith("--rollback-player-attack=")) {
+      options.rollbackPlayerAttackPath = arg.slice("--rollback-player-attack=".length).trim() || undefined;
+      continue;
+    }
+
     if (arg === "--rollback-fall-recovery") {
       const value = argv[index + 1];
       if (!value) {
@@ -552,6 +596,16 @@ function parseArgs(argv: string[]): ShowOperatorViewOptions {
         throw new Error("Missing value for --rollback-basic-enemy");
       }
       options.rollbackBasicEnemyPath = value.trim();
+      index += 1;
+      continue;
+    }
+
+    if (arg === "--rollback-player-attack") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("Missing value for --rollback-player-attack");
+      }
+      options.rollbackPlayerAttackPath = value.trim();
       index += 1;
       continue;
     }
@@ -964,6 +1018,9 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       options.applyBasicEnemyPath ? "--apply-basic-enemy" : null,
       options.enemyStatusPath ? "--enemy-status" : null,
       options.rollbackBasicEnemyPath ? "--rollback-basic-enemy" : null,
+      options.applyPlayerAttackPath ? "--apply-player-attack" : null,
+      options.attackStatusPath ? "--attack-status" : null,
+      options.rollbackPlayerAttackPath ? "--rollback-player-attack" : null,
       options.cameraWiringPreviewPath ? "--camera-wiring-preview" : null,
       options.applyCameraWiringPath ? "--apply-camera-wiring" : null,
       options.cameraWiringStatusPath ? "--camera-wiring-status" : null,
@@ -1152,6 +1209,19 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       return result.applied ? 0 : 1;
     }
 
+    if (options.applyPlayerAttackPath) {
+      const recovery = await inspectUnityPlaytestRecovery(options.applyPlayerAttackPath);
+      const result = await applyUnityPlayerAttack(options.applyPlayerAttackPath, buildFollowupPatchRecoverySignal(recovery));
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return result.applied ? 0 : 1;
+      }
+
+      console.log(renderUnityPlayerAttackApplyResult(result));
+      return result.applied ? 0 : 1;
+    }
+
     if (options.repairCameraWiringPath) {
       const recovery = await inspectUnityPlaytestRecovery(options.repairCameraWiringPath);
       const result = await repairUnityCameraWiring(options.repairCameraWiringPath, buildFollowupPatchRecoverySignal(recovery));
@@ -1254,6 +1324,19 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       return 0;
     }
 
+    if (options.attackStatusPath) {
+      const recovery = await inspectUnityPlaytestRecovery(options.attackStatusPath);
+      const status = await inspectUnityPlayerAttackStatus(options.attackStatusPath, buildPatchStatusRecoverySignal(recovery));
+
+      if (options.json) {
+        console.log(JSON.stringify(status, null, 2));
+        return 0;
+      }
+
+      console.log(renderUnityPlayerAttackStatus(status));
+      return 0;
+    }
+
     if (options.rollbackGamePatchPath) {
       const snapshot = await inspectGameProject(options.rollbackGamePatchPath);
       const cameraArtifact = await buildExistingCameraFollowArtifact(snapshot);
@@ -1333,6 +1416,19 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       }
 
       console.log(renderUnityBasicEnemyRollbackResult(result));
+      return result.restored ? 0 : 1;
+    }
+
+    if (options.rollbackPlayerAttackPath) {
+      const recovery = await inspectUnityPlaytestRecovery(options.rollbackPlayerAttackPath);
+      const result = await rollbackUnityPlayerAttack(options.rollbackPlayerAttackPath, buildPatchStatusRecoverySignal(recovery));
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return result.restored ? 0 : 1;
+      }
+
+      console.log(renderUnityPlayerAttackRollbackResult(result));
       return result.restored ? 0 : 1;
     }
 

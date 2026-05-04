@@ -248,6 +248,63 @@ export type UnityBasicEnemyRollbackResult = {
   };
 };
 
+export type UnityPlayerAttackStatus = {
+  scenePath: string;
+  sceneAbsolutePath: string;
+  playerName: string | null;
+  enemyName: string | null;
+  playerAttackScriptExists: boolean;
+  playerAttackAttached: boolean;
+  attackKeyConfigured: boolean;
+  backupExists: boolean;
+  safeToOpenUnityForCompileOrPlaytest: boolean;
+  details: string[];
+  safety: {
+    readOnly: true;
+    noUnityExecution: true;
+  };
+};
+
+export type UnityPlayerAttackApplyResult = {
+  applied: boolean;
+  scenePath: string;
+  sceneAbsolutePath: string;
+  playerName: string | null;
+  enemyName: string | null;
+  scriptPath: string;
+  backupPath: string;
+  playerAttackScriptExists: boolean;
+  playerAttackAttached: boolean;
+  attackKeyConfigured: boolean;
+  safeToOpenUnityForCompileOrPlaytest: boolean;
+  blockedReasons: string[];
+  safety: {
+    noUnityExecution: true;
+    backupCreated: boolean;
+    sceneWritten: boolean;
+  };
+};
+
+export type UnityPlayerAttackRollbackResult = {
+  restored: boolean;
+  scenePath: string;
+  sceneAbsolutePath: string;
+  playerName: string | null;
+  enemyName: string | null;
+  scriptPath: string;
+  backupPath: string;
+  playerAttackScriptExists: boolean;
+  playerAttackAttached: boolean;
+  attackKeyConfigured: boolean;
+  safeToOpenUnityForCompileOrPlaytest: boolean;
+  blockedReasons: string[];
+  safety: {
+    noUnityExecution: true;
+    backupRetained: true;
+    scriptRemoved: boolean;
+  };
+};
+
 type SceneBlock = {
   typeId: string;
   fileId: string;
@@ -299,6 +356,17 @@ type BasicEnemyVerification = {
   brokenLinks: string[];
 };
 
+type PlayerAttackVerification = {
+  componentFileId: string | null;
+  componentListLinked: boolean;
+  monoBehaviourBlockExists: boolean;
+  scriptGuidMatchesMeta: boolean;
+  attackKeyConfigured: boolean;
+  expectedFieldsPresent: boolean;
+  componentVisibleToUnity: boolean;
+  brokenLinks: string[];
+};
+
 type CameraFollowVerification = {
   componentFileId: string | null;
   componentListLinked: boolean;
@@ -338,6 +406,12 @@ const BASIC_ENEMY_SCENE_BACKUP_TAG = "basic-enemy";
 const BASIC_ENEMY_STATE_DIR = ".aie-state/basic-enemy";
 const BASIC_ENEMY_CREATED_SCRIPT_MARKER = `${BASIC_ENEMY_STATE_DIR}/BasicEnemy.cs.created`;
 const BASIC_ENEMY_CREATED_META_MARKER = `${BASIC_ENEMY_STATE_DIR}/BasicEnemy.cs.meta.created`;
+const PLAYER_ATTACK_SCRIPT_PATH = "Assets/Scripts/PlayerAttack.cs";
+const PLAYER_ATTACK_META_PATH = `${PLAYER_ATTACK_SCRIPT_PATH}.meta`;
+const PLAYER_ATTACK_SCENE_BACKUP_TAG = "player-attack";
+const PLAYER_ATTACK_STATE_DIR = ".aie-state/player-attack";
+const PLAYER_ATTACK_CREATED_SCRIPT_MARKER = `${PLAYER_ATTACK_STATE_DIR}/PlayerAttack.cs.created`;
+const PLAYER_ATTACK_CREATED_META_MARKER = `${PLAYER_ATTACK_STATE_DIR}/PlayerAttack.cs.meta.created`;
 const VISUAL_DEBUG_MATERIAL_DIR = "Assets/Materials";
 const VISUAL_DEBUG_MATERIAL_PATH = `${VISUAL_DEBUG_MATERIAL_DIR}/AIE_DebugFloor.mat`;
 const VISUAL_DEBUG_SCENE_BACKUP_TAG = "visual-debug-floor";
@@ -497,6 +571,16 @@ function buildBasicEnemySource(): string {
     "    {",
     "        [SerializeField] private float rotationSpeedDegrees = 24f;",
     "        [SerializeField] private bool debugSpawn = true;",
+    "        [SerializeField] private float hitPulseScale = 1.12f;",
+    "        [SerializeField] private float hitPulseDuration = 0.12f;",
+    "",
+    "        private Vector3 baseScale;",
+    "        private Coroutine hitPulseRoutine;",
+    "",
+    "        private void Awake()",
+    "        {",
+    "            baseScale = transform.localScale;",
+    "        }",
     "",
     "        private void Start()",
     "        {",
@@ -514,6 +598,37 @@ function buildBasicEnemySource(): string {
     "            }",
     "",
     "            transform.Rotate(0f, rotationSpeedDegrees * Time.deltaTime, 0f, Space.World);",
+    "        }",
+    "",
+    "        public void ReceiveHit()",
+    "        {",
+    "            Debug.Log(\"Enemy hit\", this);",
+    "",
+    "            if (hitPulseRoutine != null)",
+    "            {",
+    "                StopCoroutine(hitPulseRoutine);",
+    "            }",
+    "",
+    "            hitPulseRoutine = StartCoroutine(PlayHitPulse());",
+    "        }",
+    "",
+    "        private System.Collections.IEnumerator PlayHitPulse()",
+    "        {",
+    "            float duration = Mathf.Max(0.01f, hitPulseDuration);",
+    "            Vector3 pulseScale = baseScale * Mathf.Max(1f, hitPulseScale);",
+    "            float elapsed = 0f;",
+    "",
+    "            while (elapsed < duration)",
+    "            {",
+    "                elapsed += Time.deltaTime;",
+    "                float progress = Mathf.Clamp01(elapsed / duration);",
+    "                float blend = progress < 0.5f ? progress / 0.5f : 1f - ((progress - 0.5f) / 0.5f);",
+    "                transform.localScale = Vector3.Lerp(baseScale, pulseScale, blend);",
+    "                yield return null;",
+    "            }",
+    "",
+    "            transform.localScale = baseScale;",
+    "            hitPulseRoutine = null;",
     "        }",
     "    }",
     "}",
@@ -541,6 +656,121 @@ async function ensureBasicEnemyScript(projectRoot: string): Promise<{ scriptExis
     await writeFile(metaAbsolutePath, `fileFormatVersion: 2\nguid: ${guid}\n`, "utf-8");
     if (!metaExisted) {
       await writeFile(path.join(projectRoot, BASIC_ENEMY_CREATED_META_MARKER), "created\n", "utf-8");
+    }
+  }
+
+  return {
+    scriptExisted,
+    metaExisted,
+    guid,
+  };
+}
+
+function buildPlayerAttackSource(): string {
+  return [
+    "using System.Collections.Generic;",
+    "using UnityEngine;",
+    "",
+    "namespace EnemyAIDemo",
+    "{",
+    "    /// <summary>",
+    "    /// Performs a simple short-range attack against nearby enemies during local playtests.",
+    "    /// </summary>",
+    "    [DisallowMultipleComponent]",
+    "    public sealed class PlayerAttack : MonoBehaviour",
+    "    {",
+    "        [SerializeField] private float attackRange = 2.5f;",
+    "        [SerializeField] private float attackCooldown = 0.35f;",
+    "        [SerializeField] private float attackRadius = 1.1f;",
+    "        [SerializeField] private KeyCode attackKey = KeyCode.E;",
+    "        [SerializeField] private bool allowMouse0 = true;",
+    "        [SerializeField] private bool debugHits = true;",
+    "",
+    "        private float nextAttackTime;",
+    "",
+    "        private void Update()",
+    "        {",
+    "            if (!ShouldAttack() || Time.time < nextAttackTime)",
+    "            {",
+    "                return;",
+    "            }",
+    "",
+    "            nextAttackTime = Time.time + attackCooldown;",
+    "            PerformAttack();",
+    "        }",
+    "",
+    "        private bool ShouldAttack()",
+    "        {",
+    "            return Input.GetKeyDown(attackKey) || (allowMouse0 && Input.GetMouseButtonDown(0));",
+    "        }",
+    "",
+    "        private void PerformAttack()",
+    "        {",
+    "            Vector3 attackOrigin = transform.position + Vector3.up + (transform.forward * Mathf.Min(attackRange * 0.6f, 1.5f));",
+    "            Collider[] hits = Physics.OverlapSphere(attackOrigin, attackRadius, ~0, QueryTriggerInteraction.Ignore);",
+    "            HashSet<BasicEnemy> hitEnemies = new HashSet<BasicEnemy>();",
+    "            bool hitAny = false;",
+    "",
+    "            foreach (Collider hit in hits)",
+    "            {",
+    "                BasicEnemy enemy = hit.GetComponentInParent<BasicEnemy>();",
+    "                if (enemy == null || !hitEnemies.Add(enemy))",
+    "                {",
+    "                    continue;",
+    "                }",
+    "",
+    "                if (Vector3.Distance(transform.position, enemy.transform.position) > attackRange + 0.75f)",
+    "                {",
+    "                    continue;",
+    "                }",
+    "",
+    "                enemy.ReceiveHit();",
+    "                hitAny = true;",
+    "",
+    "                if (debugHits)",
+    "                {",
+    "                    Debug.Log($\"[AIE Player Attack] Hit {enemy.name}.\", enemy);",
+    "                }",
+    "            }",
+    "",
+    "            if (!hitAny && debugHits)",
+    "            {",
+    "                Debug.Log(\"[AIE Player Attack] Attack missed.\", this);",
+    "            }",
+    "        }",
+    "",
+    "        private void OnDrawGizmosSelected()",
+    "        {",
+    "            Vector3 attackOrigin = transform.position + Vector3.up + (transform.forward * Mathf.Min(attackRange * 0.6f, 1.5f));",
+    "            Gizmos.color = Color.red;",
+    "            Gizmos.DrawWireSphere(attackOrigin, attackRadius);",
+    "        }",
+    "    }",
+    "}",
+    "",
+  ].join("\n");
+}
+
+async function ensurePlayerAttackScript(projectRoot: string): Promise<{ scriptExisted: boolean; metaExisted: boolean; guid: string; }> {
+  const scriptAbsolutePath = path.join(projectRoot, PLAYER_ATTACK_SCRIPT_PATH);
+  const metaAbsolutePath = path.join(projectRoot, PLAYER_ATTACK_META_PATH);
+  const stateDirectoryAbsolutePath = path.join(projectRoot, PLAYER_ATTACK_STATE_DIR);
+  const scriptExisted = await fileExists(scriptAbsolutePath);
+  const metaExisted = await fileExists(metaAbsolutePath);
+
+  await mkdir(stateDirectoryAbsolutePath, { recursive: true });
+
+  if (!scriptExisted) {
+    await writeFile(scriptAbsolutePath, buildPlayerAttackSource(), "utf-8");
+    await writeFile(path.join(projectRoot, PLAYER_ATTACK_CREATED_SCRIPT_MARKER), "created\n", "utf-8");
+  }
+
+  let guid = await readGuidFromMeta(metaAbsolutePath);
+  if (!guid) {
+    guid = buildDeterministicMetaGuid(projectRoot, PLAYER_ATTACK_SCRIPT_PATH);
+    await writeFile(metaAbsolutePath, `fileFormatVersion: 2\nguid: ${guid}\n`, "utf-8");
+    if (!metaExisted) {
+      await writeFile(path.join(projectRoot, PLAYER_ATTACK_CREATED_META_MARKER), "created\n", "utf-8");
     }
   }
 
@@ -1572,6 +1802,185 @@ function collectStaleBasicEnemyComponentIds(parsedScene: ParsedScene, enemyObjec
   return [...new Set([...candidateIds, ...enemyExtraIds])];
 }
 
+function isPlayerAttackCandidateBlock(block: SceneBlock, playerGameObjectId: string | null, scriptGuid: string | null): boolean {
+  if (block.typeId !== "114") {
+    return false;
+  }
+
+  if (playerGameObjectId && extractBlockGameObjectFileId(block) !== playerGameObjectId) {
+    return false;
+  }
+
+  const blockScriptGuid = extractBlockScriptGuid(block);
+  if (scriptGuid && blockScriptGuid === scriptGuid) {
+    return true;
+  }
+
+  return /PlayerAttack/.test(block.body)
+    || /^  attackRange:/m.test(block.body)
+    || /^  attackCooldown:/m.test(block.body)
+    || /^  attackRadius:/m.test(block.body)
+    || /^  attackKey:/m.test(block.body)
+    || /^  allowMouse0:/m.test(block.body)
+    || /^  debugHits:/m.test(block.body);
+}
+
+function hasExpectedPlayerAttackSerializedFields(block: SceneBlock | null): {
+  attackKeyConfigured: boolean;
+  expectedFieldsPresent: boolean;
+} {
+  if (!block) {
+    return {
+      attackKeyConfigured: false,
+      expectedFieldsPresent: false,
+    };
+  }
+
+  const attackKeyConfigured = /^  attackKey: \d+$/m.test(block.body) && /^  allowMouse0: 1$/m.test(block.body);
+  const expectedFieldsPresent = /^  attackRange: 2.5$/m.test(block.body)
+    && /^  attackCooldown: 0.35$/m.test(block.body)
+    && /^  attackRadius: 1.1$/m.test(block.body)
+    && /^  debugHits: 1$/m.test(block.body)
+    && attackKeyConfigured;
+
+  return {
+    attackKeyConfigured,
+    expectedFieldsPresent,
+  };
+}
+
+function buildPlayerAttackVerification(
+  blocks: readonly SceneBlock[],
+  playerObject: SceneObject | null,
+  scriptGuid: string | null,
+): PlayerAttackVerification {
+  if (!playerObject) {
+    return {
+      componentFileId: null,
+      componentListLinked: false,
+      monoBehaviourBlockExists: false,
+      scriptGuidMatchesMeta: false,
+      attackKeyConfigured: false,
+      expectedFieldsPresent: false,
+      componentVisibleToUnity: false,
+      brokenLinks: ["Player GameObject was not found."],
+    };
+  }
+
+  const brokenLinks: string[] = [];
+  const linkedComponentIds = playerObject.componentFileIds.filter((componentFileId) => {
+    const block = findBlock(blocks, componentFileId);
+    return block !== null && isPlayerAttackCandidateBlock(block, playerObject.gameObjectFileId, scriptGuid);
+  });
+  const componentFileId = linkedComponentIds[0] ?? null;
+  const linkedComponentBlock = findBlock(blocks, componentFileId);
+  const componentListLinked = componentFileId !== null && isSafeSceneFileId(componentFileId);
+  const monoBehaviourBlockExists = linkedComponentBlock?.typeId === "114" && extractBlockGameObjectFileId(linkedComponentBlock) === playerObject.gameObjectFileId;
+  const scriptGuidMatchesMeta = scriptGuid !== null && extractBlockScriptGuid(linkedComponentBlock) === scriptGuid;
+  const serializedFields = hasExpectedPlayerAttackSerializedFields(linkedComponentBlock);
+  const componentVisibleToUnity = componentListLinked && monoBehaviourBlockExists && scriptGuidMatchesMeta && serializedFields.expectedFieldsPresent;
+
+  if (linkedComponentIds.length === 0) {
+    brokenLinks.push("Player m_Component list does not link a PlayerAttack MonoBehaviour block.");
+  }
+
+  if (componentFileId !== null && !isSafeSceneFileId(componentFileId)) {
+    brokenLinks.push(`Player references PlayerAttack with unsafe scene fileID ${componentFileId}.`);
+  }
+
+  if (!monoBehaviourBlockExists) {
+    brokenLinks.push("Referenced PlayerAttack MonoBehaviour block is missing or not linked back to Player.");
+  }
+
+  if (scriptGuid === null) {
+    brokenLinks.push("PlayerAttack.cs.meta is missing, so Unity cannot resolve the script GUID.");
+  } else if (!scriptGuidMatchesMeta) {
+    brokenLinks.push("PlayerAttack MonoBehaviour block does not reference the PlayerAttack.cs.meta GUID.");
+  }
+
+  if (!serializedFields.attackKeyConfigured) {
+    brokenLinks.push("PlayerAttack MonoBehaviour block does not serialize the expected Mouse0/E attack key configuration.");
+  }
+
+  if (!serializedFields.expectedFieldsPresent) {
+    brokenLinks.push("PlayerAttack MonoBehaviour block does not serialize the expected attack range/cooldown fields.");
+  }
+
+  return {
+    componentFileId,
+    componentListLinked,
+    monoBehaviourBlockExists,
+    scriptGuidMatchesMeta,
+    attackKeyConfigured: serializedFields.attackKeyConfigured,
+    expectedFieldsPresent: serializedFields.expectedFieldsPresent,
+    componentVisibleToUnity,
+    brokenLinks,
+  };
+}
+
+function buildPlayerAttackComponentBlock(componentFileId: string, playerGameObjectFileId: string, scriptGuid: string): string {
+  return [
+    `--- !u!114 &${componentFileId}`,
+    "MonoBehaviour:",
+    "  m_ObjectHideFlags: 0",
+    "  m_CorrespondingSourceObject: {fileID: 0}",
+    "  m_PrefabInstance: {fileID: 0}",
+    "  m_PrefabAsset: {fileID: 0}",
+    `  m_GameObject: {fileID: ${playerGameObjectFileId}}`,
+    "  m_Enabled: 1",
+    "  m_EditorHideFlags: 0",
+    `  m_Script: {fileID: 11500000, guid: ${scriptGuid}, type: 3}`,
+    "  m_Name: ",
+    "  m_EditorClassIdentifier:",
+    "  attackRange: 2.5",
+    "  attackCooldown: 0.35",
+    "  attackRadius: 1.1",
+    "  attackKey: 101",
+    "  allowMouse0: 1",
+    "  debugHits: 1",
+    "",
+  ].join("\n");
+}
+
+async function loadPlayerAttackContext(projectPath: string): Promise<{
+  parsedScene: ParsedScene;
+  playerObject: SceneObject | null;
+  enemyObject: SceneObject | null;
+  scriptGuid: string | null;
+  verification: PlayerAttackVerification;
+}> {
+  const parsedScene = await parseProjectScene(projectPath);
+  const playerObject = parsedScene.playerCandidate;
+  const enemyObject = findSceneObjectByName(parsedScene.objects, BASIC_ENEMY_NAME);
+  const scriptGuid = await readGuidFromMeta(path.join(parsedScene.rootPath, PLAYER_ATTACK_META_PATH));
+  const verification = buildPlayerAttackVerification(parsedScene.blocks, playerObject, scriptGuid);
+
+  return {
+    parsedScene,
+    playerObject,
+    enemyObject,
+    scriptGuid,
+    verification,
+  };
+}
+
+function collectStalePlayerAttackComponentIds(parsedScene: ParsedScene, playerObject: SceneObject, scriptGuid: string | null): string[] {
+  const candidateIds = parsedScene.blocks
+    .filter((block) => isPlayerAttackCandidateBlock(block, playerObject.gameObjectFileId, scriptGuid))
+    .map((block) => block.fileId);
+
+  const playerExtraIds = playerObject.componentFileIds.filter((componentFileId) => {
+    const block = findBlock(parsedScene.blocks, componentFileId);
+    if (!block) {
+      return true;
+    }
+
+    return isPlayerAttackCandidateBlock(block, playerObject.gameObjectFileId, scriptGuid);
+  });
+
+  return [...new Set([...candidateIds, ...playerExtraIds])];
+}
+
 export async function inspectUnityFallRecoveryStatus(projectPath: string, recoverySafe: boolean): Promise<UnityFallRecoveryStatus> {
   const context = await loadFallRecoveryContext(projectPath);
   const scriptAbsolutePath = path.join(context.parsedScene.rootPath, FALL_RECOVERY_SCRIPT_PATH);
@@ -2102,6 +2511,251 @@ export async function rollbackUnityBasicEnemy(projectPath: string, recoverySafe:
     enemyExists: status.enemyExists,
     scriptAttached: status.scriptAttached,
     positionedOnGround: status.positionedOnGround,
+    safeToOpenUnityForCompileOrPlaytest: status.safeToOpenUnityForCompileOrPlaytest,
+    blockedReasons: [],
+    safety: {
+      noUnityExecution: true,
+      backupRetained: true,
+      scriptRemoved,
+    },
+  };
+}
+
+export async function inspectUnityPlayerAttackStatus(projectPath: string, recoverySafe: boolean): Promise<UnityPlayerAttackStatus> {
+  const context = await loadPlayerAttackContext(projectPath);
+  const scriptAbsolutePath = path.join(context.parsedScene.rootPath, PLAYER_ATTACK_SCRIPT_PATH);
+  const scriptMetaAbsolutePath = path.join(context.parsedScene.rootPath, PLAYER_ATTACK_META_PATH);
+  const playerAttackScriptExists = await fileExists(scriptAbsolutePath);
+  const playerAttackMetaExists = await fileExists(scriptMetaAbsolutePath);
+  const backupPath = sceneBackupPathFor(context.parsedScene.sceneAbsolutePath, PLAYER_ATTACK_SCENE_BACKUP_TAG);
+  const backupExists = await fileExists(backupPath);
+  const details: string[] = [];
+
+  if (!context.playerObject) {
+    details.push("Player GameObject was not found in the selected scene.");
+  } else {
+    details.push(`Detected player object: ${context.playerObject.name}`);
+  }
+
+  if (context.enemyObject) {
+    details.push(`Detected enemy object: ${context.enemyObject.name}`);
+  } else {
+    details.push("Enemy GameObject was not found; attacks will compile but cannot affect an enemy in playtest.");
+  }
+
+  if (!playerAttackScriptExists) {
+    details.push(`Player attack script asset is missing: ${PLAYER_ATTACK_SCRIPT_PATH}`);
+  } else if (!playerAttackMetaExists) {
+    details.push(`Player attack script meta is missing: ${PLAYER_ATTACK_META_PATH}`);
+  }
+
+  const safeToOpenUnityForCompileOrPlaytest = recoverySafe
+    && playerAttackScriptExists
+    && playerAttackMetaExists
+    && context.enemyObject !== null
+    && context.verification.componentVisibleToUnity;
+
+  return {
+    scenePath: context.parsedScene.scenePath,
+    sceneAbsolutePath: context.parsedScene.sceneAbsolutePath,
+    playerName: context.playerObject?.name ?? null,
+    enemyName: context.enemyObject?.name ?? null,
+    playerAttackScriptExists,
+    playerAttackAttached: context.verification.componentVisibleToUnity,
+    attackKeyConfigured: context.verification.attackKeyConfigured,
+    backupExists,
+    safeToOpenUnityForCompileOrPlaytest,
+    details,
+    safety: {
+      readOnly: true,
+      noUnityExecution: true,
+    },
+  };
+}
+
+export async function applyUnityPlayerAttack(projectPath: string, recoverySafe: boolean): Promise<UnityPlayerAttackApplyResult> {
+  const contextBefore = await loadPlayerAttackContext(projectPath);
+  const backupPath = sceneBackupPathFor(contextBefore.parsedScene.sceneAbsolutePath, PLAYER_ATTACK_SCENE_BACKUP_TAG);
+  const backupExists = await fileExists(backupPath);
+  const blockedReasons: string[] = [];
+
+  if (!recoverySafe) {
+    blockedReasons.push("Unity recovery guard did not report a safe state for player attack mutation.");
+  }
+
+  if (!contextBefore.playerObject) {
+    blockedReasons.push("A Player object was not found in the selected scene.");
+  }
+
+  if (blockedReasons.length > 0) {
+    return {
+      applied: false,
+      scenePath: contextBefore.parsedScene.scenePath,
+      sceneAbsolutePath: contextBefore.parsedScene.sceneAbsolutePath,
+      playerName: contextBefore.playerObject?.name ?? null,
+      enemyName: contextBefore.enemyObject?.name ?? null,
+      scriptPath: PLAYER_ATTACK_SCRIPT_PATH,
+      backupPath,
+      playerAttackScriptExists: await fileExists(path.join(contextBefore.parsedScene.rootPath, PLAYER_ATTACK_SCRIPT_PATH)),
+      playerAttackAttached: false,
+      attackKeyConfigured: false,
+      safeToOpenUnityForCompileOrPlaytest: false,
+      blockedReasons,
+      safety: {
+        noUnityExecution: true,
+        backupCreated: backupExists,
+        sceneWritten: false,
+      },
+    };
+  }
+
+  const ensuredScript = await ensurePlayerAttackScript(contextBefore.parsedScene.rootPath);
+  const contextAfterScript = await loadPlayerAttackContext(projectPath);
+
+  if (contextAfterScript.verification.componentVisibleToUnity && contextAfterScript.verification.attackKeyConfigured) {
+    const status = await inspectUnityPlayerAttackStatus(projectPath, recoverySafe);
+    return {
+      applied: false,
+      scenePath: status.scenePath,
+      sceneAbsolutePath: status.sceneAbsolutePath,
+      playerName: status.playerName,
+      enemyName: status.enemyName,
+      scriptPath: PLAYER_ATTACK_SCRIPT_PATH,
+      backupPath,
+      playerAttackScriptExists: status.playerAttackScriptExists,
+      playerAttackAttached: status.playerAttackAttached,
+      attackKeyConfigured: status.attackKeyConfigured,
+      safeToOpenUnityForCompileOrPlaytest: status.safeToOpenUnityForCompileOrPlaytest,
+      blockedReasons: ["PlayerAttack is already attached to Player with the expected serialized fields."],
+      safety: {
+        noUnityExecution: true,
+        backupCreated: backupExists,
+        sceneWritten: !ensuredScript.scriptExisted || !ensuredScript.metaExisted,
+      },
+    };
+  }
+
+  if (!backupExists) {
+    await copyFile(contextAfterScript.parsedScene.sceneAbsolutePath, backupPath);
+  }
+
+  const playerObject = contextAfterScript.playerObject;
+  if (!playerObject) {
+    throw new Error("Player attack prerequisites were not present during apply.");
+  }
+
+  const playerBlock = findBlock(contextAfterScript.parsedScene.blocks, playerObject.gameObjectFileId);
+  if (!playerBlock) {
+    throw new Error("Player GameObject block was not found during player attack apply.");
+  }
+
+  let updatedSource = contextAfterScript.parsedScene.source;
+  const staleComponentIds = collectStalePlayerAttackComponentIds(contextAfterScript.parsedScene, playerObject, ensuredScript.guid);
+  const filteredComponentIds = playerObject.componentFileIds.filter((componentFileId) => !staleComponentIds.includes(componentFileId));
+  const filteredBlocks = contextAfterScript.parsedScene.blocks.filter((block) => !staleComponentIds.includes(block.fileId));
+  const newComponentFileId = nextSafeSceneFileId(filteredBlocks);
+  const updatedPlayerBlock = replaceGameObjectComponentList(playerBlock, [...filteredComponentIds, newComponentFileId]);
+  updatedSource = updatedSource.replace(playerBlock.raw, updatedPlayerBlock);
+
+  for (const staleComponentId of staleComponentIds) {
+    const staleBlock = findBlock(contextAfterScript.parsedScene.blocks, staleComponentId);
+    if (staleBlock) {
+      updatedSource = updatedSource.replace(staleBlock.raw, "");
+    }
+  }
+
+  updatedSource = `${updatedSource.trimEnd()}\n${buildPlayerAttackComponentBlock(newComponentFileId, playerObject.gameObjectFileId, ensuredScript.guid)}`;
+  await writeFile(contextAfterScript.parsedScene.sceneAbsolutePath, updatedSource, "utf-8");
+
+  const status = await inspectUnityPlayerAttackStatus(projectPath, recoverySafe);
+  return {
+    applied: status.playerAttackAttached,
+    scenePath: status.scenePath,
+    sceneAbsolutePath: status.sceneAbsolutePath,
+    playerName: status.playerName,
+    enemyName: status.enemyName,
+    scriptPath: PLAYER_ATTACK_SCRIPT_PATH,
+    backupPath,
+    playerAttackScriptExists: status.playerAttackScriptExists,
+    playerAttackAttached: status.playerAttackAttached,
+    attackKeyConfigured: status.attackKeyConfigured,
+    safeToOpenUnityForCompileOrPlaytest: status.safeToOpenUnityForCompileOrPlaytest,
+    blockedReasons: status.playerAttackAttached ? [] : ["PlayerAttack was not attached to Player with the expected serialized fields."],
+    safety: {
+      noUnityExecution: true,
+      backupCreated: true,
+      sceneWritten: true,
+    },
+  };
+}
+
+export async function rollbackUnityPlayerAttack(projectPath: string, recoverySafe: boolean): Promise<UnityPlayerAttackRollbackResult> {
+  const contextBefore = await loadPlayerAttackContext(projectPath);
+  const backupPath = sceneBackupPathFor(contextBefore.parsedScene.sceneAbsolutePath, PLAYER_ATTACK_SCENE_BACKUP_TAG);
+  const scriptCreatedMarkerPath = path.join(contextBefore.parsedScene.rootPath, PLAYER_ATTACK_CREATED_SCRIPT_MARKER);
+  const metaCreatedMarkerPath = path.join(contextBefore.parsedScene.rootPath, PLAYER_ATTACK_CREATED_META_MARKER);
+  const createdScriptByAie = await fileExists(scriptCreatedMarkerPath);
+  const createdMetaByAie = await fileExists(metaCreatedMarkerPath);
+
+  if (!(await fileExists(backupPath))) {
+    const status = await inspectUnityPlayerAttackStatus(projectPath, recoverySafe);
+    return {
+      restored: false,
+      scenePath: status.scenePath,
+      sceneAbsolutePath: status.sceneAbsolutePath,
+      playerName: status.playerName,
+      enemyName: status.enemyName,
+      scriptPath: PLAYER_ATTACK_SCRIPT_PATH,
+      backupPath,
+      playerAttackScriptExists: status.playerAttackScriptExists,
+      playerAttackAttached: status.playerAttackAttached,
+      attackKeyConfigured: status.attackKeyConfigured,
+      safeToOpenUnityForCompileOrPlaytest: status.safeToOpenUnityForCompileOrPlaytest,
+      blockedReasons: ["No player attack scene backup was found for rollback."],
+      safety: {
+        noUnityExecution: true,
+        backupRetained: true,
+        scriptRemoved: false,
+      },
+    };
+  }
+
+  const backupSource = await readFile(backupPath, "utf-8");
+  await writeFile(contextBefore.parsedScene.sceneAbsolutePath, backupSource, "utf-8");
+
+  let scriptRemoved = false;
+  if (createdScriptByAie) {
+    const scriptAbsolutePath = path.join(contextBefore.parsedScene.rootPath, PLAYER_ATTACK_SCRIPT_PATH);
+    if (await fileExists(scriptAbsolutePath)) {
+      await writeFile(scriptAbsolutePath, "", "utf-8");
+      await stat(scriptAbsolutePath);
+      await import("node:fs/promises").then(({ unlink }) => unlink(scriptAbsolutePath));
+      scriptRemoved = true;
+    }
+    await import("node:fs/promises").then(({ unlink }) => unlink(scriptCreatedMarkerPath));
+  }
+
+  if (createdMetaByAie) {
+    const metaAbsolutePath = path.join(contextBefore.parsedScene.rootPath, PLAYER_ATTACK_META_PATH);
+    if (await fileExists(metaAbsolutePath)) {
+      await import("node:fs/promises").then(({ unlink }) => unlink(metaAbsolutePath));
+      scriptRemoved = true;
+    }
+    await import("node:fs/promises").then(({ unlink }) => unlink(metaCreatedMarkerPath));
+  }
+
+  const status = await inspectUnityPlayerAttackStatus(projectPath, recoverySafe);
+  return {
+    restored: true,
+    scenePath: status.scenePath,
+    sceneAbsolutePath: status.sceneAbsolutePath,
+    playerName: status.playerName,
+    enemyName: status.enemyName,
+    scriptPath: PLAYER_ATTACK_SCRIPT_PATH,
+    backupPath,
+    playerAttackScriptExists: status.playerAttackScriptExists,
+    playerAttackAttached: status.playerAttackAttached,
+    attackKeyConfigured: status.attackKeyConfigured,
     safeToOpenUnityForCompileOrPlaytest: status.safeToOpenUnityForCompileOrPlaytest,
     blockedReasons: [],
     safety: {
@@ -2897,6 +3551,87 @@ export function renderUnityBasicEnemyRollbackResult(result: UnityBasicEnemyRollb
     `Enemy GameObject Exists: ${result.enemyExists ? "YES" : "NO"}`,
     `BasicEnemy Attached: ${result.scriptAttached ? "YES" : "NO"}`,
     `Positioned On Ground: ${result.positionedOnGround ? "YES" : "NO"}`,
+    `Safe To Open Unity/Playtest: ${result.safeToOpenUnityForCompileOrPlaytest ? "YES" : "NO"}`,
+  ].join("\n");
+}
+
+export function renderUnityPlayerAttackStatus(status: UnityPlayerAttackStatus): string {
+  return [
+    "UNITY PLAYER ATTACK STATUS",
+    "",
+    `Scene: ${status.scenePath}`,
+    `Scene Path: ${status.sceneAbsolutePath}`,
+    `Player: ${status.playerName ?? "none"}`,
+    `Enemy: ${status.enemyName ?? "none"}`,
+    `PlayerAttack.cs Exists: ${status.playerAttackScriptExists ? "YES" : "NO"}`,
+    `PlayerAttack Attached: ${status.playerAttackAttached ? "YES" : "NO"}`,
+    `Attack Key Configured: ${status.attackKeyConfigured ? "YES" : "NO"}`,
+    `Backup Exists: ${status.backupExists ? "YES" : "NO"}`,
+    `Safe To Open Unity/Playtest: ${status.safeToOpenUnityForCompileOrPlaytest ? "YES" : "NO"}`,
+    "",
+    "Details:",
+    ...status.details.map((detail, index) => `${index + 1}. ${detail}`),
+  ].join("\n");
+}
+
+export function renderUnityPlayerAttackApplyResult(result: UnityPlayerAttackApplyResult): string {
+  if (!result.applied) {
+    return [
+      "UNITY PLAYER ATTACK APPLY BLOCKED",
+      "",
+      `Scene: ${result.scenePath}`,
+      `Scene Path: ${result.sceneAbsolutePath}`,
+      `Player: ${result.playerName ?? "none"}`,
+      `Enemy: ${result.enemyName ?? "none"}`,
+      `Script Path: ${result.scriptPath}`,
+      `Backup Path: ${result.backupPath}`,
+      "",
+      "Blocked Reasons:",
+      ...result.blockedReasons.map((reason, index) => `${index + 1}. ${reason}`),
+    ].join("\n");
+  }
+
+  return [
+    "UNITY PLAYER ATTACK APPLY COMPLETE",
+    "",
+    `Scene: ${result.scenePath}`,
+    `Scene Path: ${result.sceneAbsolutePath}`,
+    `Player: ${result.playerName ?? "none"}`,
+    `Enemy: ${result.enemyName ?? "none"}`,
+    `Script Path: ${result.scriptPath}`,
+    `Backup Path: ${result.backupPath}`,
+    `PlayerAttack.cs Exists: ${result.playerAttackScriptExists ? "YES" : "NO"}`,
+    `PlayerAttack Attached: ${result.playerAttackAttached ? "YES" : "NO"}`,
+    `Attack Key Configured: ${result.attackKeyConfigured ? "YES" : "NO"}`,
+    `Safe To Open Unity/Playtest: ${result.safeToOpenUnityForCompileOrPlaytest ? "YES" : "NO"}`,
+  ].join("\n");
+}
+
+export function renderUnityPlayerAttackRollbackResult(result: UnityPlayerAttackRollbackResult): string {
+  if (!result.restored) {
+    return [
+      "UNITY PLAYER ATTACK ROLLBACK BLOCKED",
+      "",
+      `Scene: ${result.scenePath}`,
+      `Scene Path: ${result.sceneAbsolutePath}`,
+      `Script Path: ${result.scriptPath}`,
+      `Backup Path: ${result.backupPath}`,
+      "",
+      "Blocked Reasons:",
+      ...result.blockedReasons.map((reason, index) => `${index + 1}. ${reason}`),
+    ].join("\n");
+  }
+
+  return [
+    "UNITY PLAYER ATTACK ROLLBACK COMPLETE",
+    "",
+    `Scene: ${result.scenePath}`,
+    `Scene Path: ${result.sceneAbsolutePath}`,
+    `Script Path: ${result.scriptPath}`,
+    `Backup Path: ${result.backupPath}`,
+    `PlayerAttack.cs Exists: ${result.playerAttackScriptExists ? "YES" : "NO"}`,
+    `PlayerAttack Attached: ${result.playerAttackAttached ? "YES" : "NO"}`,
+    `Attack Key Configured: ${result.attackKeyConfigured ? "YES" : "NO"}`,
     `Safe To Open Unity/Playtest: ${result.safeToOpenUnityForCompileOrPlaytest ? "YES" : "NO"}`,
   ].join("\n");
 }
