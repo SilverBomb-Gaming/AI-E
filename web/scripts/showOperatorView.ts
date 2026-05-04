@@ -7,12 +7,14 @@ import { inspectGameProject, renderGameProjectSummary } from "../lib/aie/gamePro
 import { generateGameTask, renderGameTask } from "../lib/aie/gameTaskGenerator";
 import { renderOperatorView, renderOperatorViewSummary, type OperatorViewState } from "../lib/aie/operatorView";
 import type { OperatorViewSnapshot } from "../lib/aie/operatorView.types";
+import { inspectUnityPlaytestRecovery, renderUnityPlaytestRecovery } from "../lib/aie/unityPlaytestRecovery";
 
 type ShowOperatorViewOptions = {
   json: boolean;
   interactive: boolean;
   projectPath?: string;
   gameTaskPath?: string;
+  unityRecoveryPath?: string;
 };
 
 function isDirectExecution(): boolean {
@@ -68,6 +70,21 @@ function parseArgs(argv: string[]): ShowOperatorViewOptions {
         throw new Error("Missing value for --game-task");
       }
       options.gameTaskPath = value.trim();
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith("--unity-recovery=")) {
+      options.unityRecoveryPath = arg.slice("--unity-recovery=".length).trim() || undefined;
+      continue;
+    }
+
+    if (arg === "--unity-recovery") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("Missing value for --unity-recovery");
+      }
+      options.unityRecoveryPath = value.trim();
       index += 1;
       continue;
     }
@@ -256,6 +273,30 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
 
     if (options.gameTaskPath && options.projectPath) {
       throw new Error("Use either --game-task or --project, not both.");
+    }
+
+    if (options.unityRecoveryPath && options.interactive) {
+      throw new Error("Use either --unity-recovery or --interactive, not both.");
+    }
+
+    if (options.unityRecoveryPath && options.projectPath) {
+      throw new Error("Use either --unity-recovery or --project, not both.");
+    }
+
+    if (options.unityRecoveryPath && options.gameTaskPath) {
+      throw new Error("Use either --unity-recovery or --game-task, not both.");
+    }
+
+    if (options.unityRecoveryPath) {
+      const snapshot = await inspectUnityPlaytestRecovery(options.unityRecoveryPath);
+
+      if (options.json) {
+        console.log(JSON.stringify(snapshot, null, 2));
+        return 0;
+      }
+
+      console.log(renderUnityPlaytestRecovery(snapshot, resolve(fileURLToPath(import.meta.url), "..", "..", "..")));
+      return 0;
     }
 
     if (options.gameTaskPath) {

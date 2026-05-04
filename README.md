@@ -921,6 +921,13 @@ End-User Functionality Step 1 status:
 - duplicate class generation is blocked by movement-script detection and modify-existing-script tasks
 - human playtest starts only after Unity has zero compile errors and the affected script is restored cleanly
 
+## Unity Playtest Recovery Guard
+
+- used after failed human Unity playtests to inspect bad local state safely before another run
+- detects accidental generated scripts, compile-risk duplicates, and movement scripts that may need restore or inspection
+- prevents repeating manual cleanup mistakes by producing a recovery plan and review-only commands
+- must pass before another Unity playtest resumes
+
 ## Safe Runtime Action Bridge
 
 AI-E can now translate supported live operator actions into safe runtime intents.
