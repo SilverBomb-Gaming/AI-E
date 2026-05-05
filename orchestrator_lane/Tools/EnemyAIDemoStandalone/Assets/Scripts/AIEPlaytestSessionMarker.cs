@@ -11,6 +11,7 @@ namespace EnemyAIDemo
     {
         [SerializeField] private bool logSessionLifecycle = true;
 
+        // AIE guarded act proof: validated safe comment-only patch v2.
         private bool sessionStarted;
         private bool sessionEnded;
         private string sessionId = string.Empty;

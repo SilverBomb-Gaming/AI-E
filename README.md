@@ -231,6 +231,8 @@ Current Layer 14 status:
 - Unity validation evidence handoff into review and delivery packages: complete for read-only bridge and unavailable-bridge results
 - Unity validation evidence visibility in the operator dashboard review and delivery surfaces: complete
 - live Unity endpoint verification through the reviewed path: complete
+- Unity bridge preflight command for local readiness and blocker diagnosis: complete
+- reviewed Unity post-playtest `act -> validate -> learn` loop: proven live for one bounded single-file guarded script update after lock release
 - playtest-ready: yes for reviewed read-only validation only
 
 Layer 14 roadmap:
@@ -279,8 +281,13 @@ Unity read-only runtime bridge:
 - successful bridge results are marked as `real_bridge_read_only` and include evidence such as scene validation status, missing script count, console error count, object count, checked scene name, evidence timestamp, and raw evidence summary
 - read-only and unavailable bridge results now attach evidence to the existing review and delivery package model for operator-facing handoff
 - the operator dashboard now renders those review and delivery packages with explicit Unity validation evidence, clearly distinguishing adapter preview, bridge unavailable, and real read-only bridge states
+- `npm run unity:bridge:preflight` now verifies editor path, project path, scene path, selected bridge mode, probe runnability, and the exact blocked reason before a reviewed validation run
+- after releasing a concurrent Unity project lock, the local command-probe bridge was verified live on Windows with `bridge_status: bridge_ready` and `bridge_probe_runnable: true`
+- the reviewed read-only validation path was then re-run live on Windows and returned `execution_kind: real_bridge_read_only`, `scene_validation_status: checked_clean`, `missing_script_count: 0`, `console_error_count: 0`, `object_count: 13`, and `checked_scene_name: EnemyAIDemo`
+- the next reviewed post-playtest step is now also proven live for one bounded guarded executor pass: a failure-marked session produced `retry_recommended -> fix_plan_ready -> execution_ready`, one approved comment-only script update was applied to `AIEPlaytestSessionMarker.cs`, one reviewed Unity validation rerun completed cleanly, and follow-up learning recorded a success that returned the feature to `ready_for_next_feature`
+- rollback remains covered by the focused executor tests; a separate live rollback was not re-run for this proof because the bounded forward execution path already validated `act -> validate -> learn`
 - chat still cannot invoke the Unity bridge directly; conversational intake remains planning-only with `safe_to_execute: false`
-- Layer 14 is complete for reviewed read-only Unity validation through the gated path; chat still cannot invoke Unity directly and no mutation path was added in this layer
+- Layer 14 is complete for reviewed read-only Unity validation through the gated path, and the bounded reviewed post-playtest Act proof is now complete for the single-file guarded script lane after lock release; chat still cannot invoke Unity directly and no broad mutation path was added in this layer
 
 ## Layer 15 / Controlled Unity Mutation Path
 
