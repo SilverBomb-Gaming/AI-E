@@ -1205,8 +1205,26 @@ Live bridge status on 2026-05-05:
 
 - read-only reviewed Unity bridge check returned `execution_kind: real_bridge_unavailable`
 - `bridge_status: bridge_unavailable`
-- exact blocker: `No Unity read-only runtime endpoint is configured for validation probes.`
+- refined blocker after direct command-probe verification: `Unity command probe failed` because another Unity instance already had `E:/AI projects 2025/AI-E/orchestrator_lane/Tools/EnemyAIDemoStandalone` open
 - no guarded mutation was executed because the live bridge check failed before the act step
+
+Bridge configuration requirements:
+
+- `AIE_UNITY_EDITOR_PATH` must point to a real Unity editor executable
+- `AIE_UNITY_PROJECT_PATH` must point to the target Unity project root
+- `AIE_UNITY_SCENE_PATH` must point to the reviewed scene, usually `Assets/Scenes/EnemyAIDemo.unity`
+- `AIE_UNITY_TIMEOUT_MS` should be long enough for the batch probe to finish
+- run `npm run unity:bridge:preflight` from `web/` to print path existence, bridge mode, and whether the probe is runnable
+
+Latest preflight result on 2026-05-05:
+
+- `unity_editor_exists: true`
+- `unity_project_exists: true`
+- `unity_scene_exists: true`
+- `bridge_endpoint_configured: true`
+- `bridge_mode: command_probe`
+- `bridge_probe_runnable: false`
+- exact blocker: another Unity instance already has `E:/AI projects 2025/AI-E/orchestrator_lane/Tools/EnemyAIDemoStandalone` open, so the batch probe exits before returning validation JSON
 
 Proof status on 2026-05-05:
 
@@ -1258,6 +1276,7 @@ Remaining before Act = 100%:
 
 Commands:
 
+- `npm run unity:bridge:preflight`
 - `npm run operator:view -- --discover-runtime-logs "<project>"`
 - `npm run operator:view -- --auto-evaluate "<project>"`
 - `npm run operator:view -- --auto-evaluate "<project>" --runtime-log "<path-to-log>"`

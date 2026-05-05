@@ -34,6 +34,7 @@
     "insights": "tsx scripts/showInsights.ts",
     "decisions": "tsx scripts/showDecisions.ts",
     "operator:view": "tsx scripts/showOperatorView.ts",
+    "unity:bridge:preflight": "tsx scripts/unityBridgePreflight.ts",
     "learning:simulation": "tsx scripts/showLearningSimulation.ts",
     "learning:audit": "tsx scripts/showLearningAudit.ts",
     "learning:recommendations": "tsx scripts/showLearningRecommendations.ts"
