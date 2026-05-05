@@ -1201,6 +1201,18 @@ Current loop:
 
 - playtest -> learn -> decide -> plan -> act -> validate -> learn
 
+Live bridge status on 2026-05-05:
+
+- read-only reviewed Unity bridge check returned `execution_kind: real_bridge_unavailable`
+- `bridge_status: bridge_unavailable`
+- exact blocker: `No Unity read-only runtime endpoint is configured for validation probes.`
+- no guarded mutation was executed because the live bridge check failed before the act step
+
+Proof status on 2026-05-05:
+
+- `act -> validate -> learn` is not yet proven live in this environment
+- ACT remains NOT 100% complete until the Unity bridge is available and one approved guarded mutation completes the full loop
+
 ACT LAYER reaches 100% only if all are true:
 
 - approved guarded fix is applied
@@ -1237,6 +1249,7 @@ Remaining before Act = 100%:
 - retry budget enforcement
 - rollback / stop conditions
 - post-action learning loop confirmation
+- live Unity bridge availability for one approved guarded `act -> validate -> learn` proof run
 
 - AI-E now checks both Unity Editor and Player log locations automatically before falling back to project-local log files.
 - `--auto-evaluate` no longer depends on a single hard-coded `Player.log` path when no override is supplied.
