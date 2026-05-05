@@ -10,15 +10,32 @@ namespace EnemyAIDemo
     {
         [SerializeField] private float rotationSpeedDegrees = 24f;
         [SerializeField] private bool debugSpawn = true;
-        [SerializeField] private float hitPulseScale = 1.12f;
-        [SerializeField] private float hitPulseDuration = 0.12f;
+        [SerializeField] private Color hitFlashColor = new Color(1f, 0.2f, 0.1f, 1f);
+        [SerializeField] private float hitFlashDuration = 0.28f;
+        [SerializeField] private float hitPulseScale = 1.35f;
+        [SerializeField] private float hitPulseDuration = 0.28f;
 
+        private Renderer cachedRenderer;
+        private Material runtimeMaterialInstance;
+        private bool hasColorProperty;
+        private Color baseColor = Color.white;
         private Vector3 baseScale;
-        private Coroutine hitPulseRoutine;
+        private Coroutine hitFeedbackRoutine;
 
         private void Awake()
         {
             baseScale = transform.localScale;
+            cachedRenderer = GetComponent<Renderer>();
+
+            if (cachedRenderer != null)
+            {
+                runtimeMaterialInstance = cachedRenderer.material;
+                hasColorProperty = runtimeMaterialInstance != null && runtimeMaterialInstance.HasProperty("_Color");
+                if (hasColorProperty)
+                {
+                    baseColor = runtimeMaterialInstance.color;
+                }
+            }
         }
 
         private void Start()
@@ -43,17 +60,18 @@ namespace EnemyAIDemo
         {
             Debug.Log("Enemy hit", this);
 
-            if (hitPulseRoutine != null)
+            if (hitFeedbackRoutine != null)
             {
-                StopCoroutine(hitPulseRoutine);
+                StopCoroutine(hitFeedbackRoutine);
             }
 
-            hitPulseRoutine = StartCoroutine(PlayHitPulse());
+            ResetVisualState();
+            hitFeedbackRoutine = StartCoroutine(PlayHitFeedback());
         }
 
-        private System.Collections.IEnumerator PlayHitPulse()
+        private System.Collections.IEnumerator PlayHitFeedback()
         {
-            float duration = Mathf.Max(0.01f, hitPulseDuration);
+            float duration = Mathf.Max(0.05f, Mathf.Max(hitFlashDuration, hitPulseDuration));
             Vector3 pulseScale = baseScale * Mathf.Max(1f, hitPulseScale);
             float elapsed = 0f;
 
@@ -61,13 +79,29 @@ namespace EnemyAIDemo
             {
                 elapsed += Time.deltaTime;
                 float progress = Mathf.Clamp01(elapsed / duration);
-                float blend = progress < 0.5f ? progress / 0.5f : 1f - ((progress - 0.5f) / 0.5f);
+                float blend = Mathf.Sin(progress * Mathf.PI);
                 transform.localScale = Vector3.Lerp(baseScale, pulseScale, blend);
+
+                if (hasColorProperty && runtimeMaterialInstance != null)
+                {
+                    runtimeMaterialInstance.color = Color.Lerp(baseColor, hitFlashColor, blend);
+                }
+
                 yield return null;
             }
 
+            ResetVisualState();
+            hitFeedbackRoutine = null;
+        }
+
+        private void ResetVisualState()
+        {
             transform.localScale = baseScale;
-            hitPulseRoutine = null;
+
+            if (hasColorProperty && runtimeMaterialInstance != null)
+            {
+                runtimeMaterialInstance.color = baseColor;
+            }
         }
     }
 }

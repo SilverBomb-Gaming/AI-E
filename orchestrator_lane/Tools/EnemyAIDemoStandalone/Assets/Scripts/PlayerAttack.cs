@@ -15,6 +15,7 @@ namespace EnemyAIDemo
         [SerializeField] private KeyCode attackKey = KeyCode.E;
         [SerializeField] private bool allowMouse0 = true;
         [SerializeField] private bool debugHits = true;
+        [SerializeField] private bool debugAttackRange = true;
 
         private float nextAttackTime;
 
@@ -36,7 +37,7 @@ namespace EnemyAIDemo
 
         private void PerformAttack()
         {
-            Vector3 attackOrigin = transform.position + Vector3.up + (transform.forward * Mathf.Min(attackRange * 0.6f, 1.5f));
+            Vector3 attackOrigin = GetAttackOrigin();
             Collider[] hits = Physics.OverlapSphere(attackOrigin, attackRadius, ~0, QueryTriggerInteraction.Ignore);
             HashSet<BasicEnemy> hitEnemies = new HashSet<BasicEnemy>();
             bool hitAny = false;
@@ -59,7 +60,8 @@ namespace EnemyAIDemo
 
                 if (debugHits)
                 {
-                    Debug.Log($"[AIE Player Attack] Hit {enemy.name}.", enemy);
+                    float hitDistance = Vector3.Distance(transform.position, enemy.transform.position);
+                    Debug.Log($"[AIE Player Attack] Hit {enemy.name} at {hitDistance:F2}m.", enemy);
                 }
             }
 
@@ -71,9 +73,19 @@ namespace EnemyAIDemo
 
         private void OnDrawGizmosSelected()
         {
-            Vector3 attackOrigin = transform.position + Vector3.up + (transform.forward * Mathf.Min(attackRange * 0.6f, 1.5f));
-            Gizmos.color = Color.red;
+            if (!debugAttackRange)
+            {
+                return;
+            }
+
+            Vector3 attackOrigin = GetAttackOrigin();
+            Gizmos.color = new Color(1f, 0.15f, 0.15f, 0.9f);
             Gizmos.DrawWireSphere(attackOrigin, attackRadius);
+        }
+
+        private Vector3 GetAttackOrigin()
+        {
+            return transform.position + Vector3.up + (transform.forward * Mathf.Min(attackRange * 0.6f, 1.5f));
         }
     }
 }
