@@ -128,6 +128,7 @@ test("success after 1 iteration", async () => {
   assert.equal(result.status, "loop_stopped_success");
   assert.equal(result.iterations_completed, 1);
   assert.equal(result.rollback_events.length, 0);
+  assert.equal(result.selected_strategies[0], "iteration 1: minimal_code_patch (Minimal code patch)");
   assert.equal(executeCalls, 1);
 });
 
@@ -155,6 +156,10 @@ test("retry then success after 2 iterations", async () => {
   assert.equal(result.status, "loop_completed");
   assert.equal(result.iterations_completed, 2);
   assert.equal(iterationCalls, 2);
+  assert.deepEqual(result.selected_strategies, [
+    "iteration 1: minimal_code_patch (Minimal code patch)",
+    "iteration 2: test_or_marker_adjustment (Test or marker adjustment)",
+  ]);
   assert.equal(result.executed_actions.length, 2);
 });
 
@@ -248,4 +253,51 @@ test("operator approval required", async () => {
   assert.equal(result.status, "loop_blocked");
   assert.equal(result.iterations_completed, 0);
   assert.equal(executeCalls, 0);
+});
+
+test("loop controller records selected strategies per iteration", async () => {
+  const result = await runPostPlaytestLoop({
+    operator_approval: true,
+    max_iterations: 2,
+    initial_learning: createOutcome("fail", "enemy-health", "initial-fail-strategy-recording"),
+    create_iteration: async ({ iteration, strategy_selection }) => createIteration(
+      `orchestrator_lane/Tools/EnemyAIDemoStandalone/Assets/Scripts/AIEPlaytestSessionMarker.strategy-${iteration}.cs`,
+      async () => iteration === 1
+        ? createOutcome("fail", "enemy-health", "followup-fail-strategy-recording")
+        : createOutcome("pass", "enemy-health", "followup-pass-strategy-recording"),
+    ),
+    execute_fix: async (input) => createExecutionResult("executed", {
+      modified_files: input.file_changes.map((change) => change.file_path),
+    }),
+  });
+
+  assert.equal(result.selected_strategies.length, 2);
+  assert.match(result.selected_strategies[0] ?? "", /minimal_code_patch/);
+  assert.match(result.selected_strategies[1] ?? "", /test_or_marker_adjustment/);
+});
+
+test("no repeated failed strategy within same bounded loop", async () => {
+  const seenStrategies: string[] = [];
+
+  const result = await runPostPlaytestLoop({
+    operator_approval: true,
+    max_iterations: 2,
+    initial_learning: createOutcome("fail", "enemy-health", "initial-fail-no-repeat-strategy"),
+    create_iteration: async ({ iteration, strategy_selection }) => {
+      seenStrategies.push(strategy_selection.selected_strategy_id ?? "none");
+
+      return createIteration(
+        `orchestrator_lane/Tools/EnemyAIDemoStandalone/Assets/Scripts/AIEPlaytestSessionMarker.no-repeat-${iteration}.cs`,
+        async () => iteration === 1
+          ? createOutcome("fail", "enemy-health", "followup-fail-no-repeat")
+          : createOutcome("pass", "enemy-health", "followup-pass-no-repeat"),
+      );
+    },
+    execute_fix: async (input) => createExecutionResult("executed", {
+      modified_files: input.file_changes.map((change) => change.file_path),
+    }),
+  });
+
+  assert.deepEqual(seenStrategies, ["minimal_code_patch", "test_or_marker_adjustment"]);
+  assert.equal(result.status, "loop_completed");
 });

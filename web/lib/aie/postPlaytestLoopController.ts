@@ -19,6 +19,10 @@ import {
   buildPostPlaytestFixPlan,
   type PostPlaytestFixPlanResult,
 } from "./postPlaytestFixPlanner";
+import {
+  selectPostPlaytestStrategy,
+  type PostPlaytestStrategySelectorResult,
+} from "./postPlaytestStrategySelector";
 
 export type PostPlaytestLoopControllerStatus =
   | "loop_completed"
@@ -31,6 +35,7 @@ export type PostPlaytestLoopControllerResult = {
   status: PostPlaytestLoopControllerStatus;
   iterations_completed: number;
   max_iterations: number;
+  selected_strategies: string[];
   executed_actions: string[];
   validation_results: string[];
   learning_results: string[];
@@ -52,8 +57,10 @@ export type PostPlaytestLoopIterationContext = {
   max_iterations: number;
   learning: AutoRecordOutcomeResult | null;
   decision: PostPlaytestDecisionResult;
+  strategy_selection: PostPlaytestStrategySelectorResult;
   fix_plan: PostPlaytestFixPlanResult;
   execution_plan: PostPlaytestExecutionPlanResult;
+  selected_strategies: string[];
   executed_actions: string[];
   validation_results: string[];
   learning_results: string[];
@@ -73,6 +80,11 @@ export type PostPlaytestLoopControllerInput = {
 };
 
 const HARD_MAX_ITERATIONS = 2;
+const LOOP_ALLOWED_FILE_SCOPES = [
+  "orchestrator_lane/Tools/EnemyAIDemoStandalone/Assets/Scripts",
+  "orchestrator_lane/Tools/EnemyAIDemoStandalone/ProjectSettings",
+  "web/scripts",
+];
 const FORBIDDEN_PATH_SEGMENT_PATTERN = /(^|[\\/])(node_modules|Library|Temp|Logs|\.aie|\.aie-state)([\\/]|$)/i;
 const GENERATED_FILE_PATTERN = /(\.aie-backup(?:-[^\\/]+)?$|\.bak$|\.tmp$|\.log$|\.jsonl$|\.tsbuildinfo$)/i;
 
@@ -93,6 +105,7 @@ function createResult(
     status,
     iterations_completed: overrides.iterations_completed ?? 0,
     max_iterations: overrides.max_iterations ?? HARD_MAX_ITERATIONS,
+    selected_strategies: overrides.selected_strategies ?? [],
     executed_actions: overrides.executed_actions ?? [],
     validation_results: overrides.validation_results ?? [],
     learning_results: overrides.learning_results ?? [],
@@ -130,6 +143,14 @@ function summarizeValidation(iteration: number, executionResult: PostPlaytestExe
   return `iteration ${iteration}: rerun requested=${executionResult.validation_rerun_requested ? "yes" : "no"}, completed=${executionResult.validation_rerun_completed ? "yes" : "no"} - ${executionResult.reason}`;
 }
 
+function summarizeStrategy(iteration: number, strategy: PostPlaytestStrategySelectorResult): string {
+  if (!strategy.selected_strategy_id || !strategy.selected_strategy_label) {
+    return `iteration ${iteration}: no strategy selected`;
+  }
+
+  return `iteration ${iteration}: ${strategy.selected_strategy_id} (${strategy.selected_strategy_label})`;
+}
+
 function normalizeLoopPath(value: string): string {
   return value.replace(/\\/g, "/").trim();
 }
@@ -154,6 +175,8 @@ function validateLoopFileChange(change: ControlledExecutionDiff): string | null 
 
 function validateIterationInput(
   iterationInput: PostPlaytestLoopIterationInput,
+  strategySelection: PostPlaytestStrategySelectorResult,
+  executionPlan: PostPlaytestExecutionPlanResult,
 ): string | null {
   if (!Array.isArray(iterationInput.file_changes) || iterationInput.file_changes.length === 0) {
     return "The bounded loop requires explicit guarded file changes before each iteration can execute.";
@@ -167,6 +190,21 @@ function validateIterationInput(
     const blocker = validateLoopFileChange(change);
     if (blocker) {
       return blocker;
+    }
+
+    const normalizedPath = normalizeLoopPath(change.file_path);
+    const strategyScopes = strategySelection.candidate_strategies
+      .find((candidate) => candidate.strategy_id === strategySelection.selected_strategy_id)
+      ?.allowed_file_scopes
+      .map(normalizeLoopPath) ?? [];
+    const executionScopes = executionPlan.allowed_file_scopes.map(normalizeLoopPath);
+
+    if (strategyScopes.length > 0 && !strategyScopes.some((scope) => normalizedPath === scope || normalizedPath.startsWith(`${scope}/`))) {
+      return `The bounded loop target ${normalizedPath} falls outside the selected strategy scope ${strategySelection.selected_strategy_id}.`;
+    }
+
+    if (executionScopes.length > 0 && !executionScopes.some((scope) => normalizedPath === scope || normalizedPath.startsWith(`${scope}/`))) {
+      return `The bounded loop target ${normalizedPath} falls outside the controlled execution envelope for this iteration.`;
     }
   }
 
@@ -197,6 +235,7 @@ export async function runPostPlaytestLoop(
 ): Promise<PostPlaytestLoopControllerResult> {
   const maxIterations = clampMaxIterations(input.max_iterations);
   const executedActions: string[] = [];
+  const selectedStrategies: string[] = [];
   const validationResults: string[] = [];
   const learningResults: string[] = [
     summarizeLearningResult("initial learning", input.initial_learning),
@@ -204,6 +243,7 @@ export async function runPostPlaytestLoop(
   const rollbackEvents: string[] = [];
   let confidence: "low" | "medium" | "high" = "high";
   let currentLearning = input.initial_learning;
+  const failedStrategyIds = new Set<string>();
   const executeFix = input.execute_fix ?? executePostPlaytestFix;
 
   if (!input.operator_approval) {
@@ -212,6 +252,7 @@ export async function runPostPlaytestLoop(
       "The bounded autonomous loop requires explicit operator approval before the first guarded iteration can begin.",
       {
         max_iterations: maxIterations,
+        selected_strategies: selectedStrategies,
         learning_results: learningResults,
         confidence: "high",
       },
@@ -220,7 +261,48 @@ export async function runPostPlaytestLoop(
 
   for (let iteration = 1; iteration <= maxIterations; iteration += 1) {
     const decision = decidePostPlaytestNextAction(currentLearning);
-    const fixPlan = buildPostPlaytestFixPlan(decision);
+    const strategySelection = selectPostPlaytestStrategy({
+      decision,
+      allowed_file_scopes: LOOP_ALLOWED_FILE_SCOPES,
+      failed_strategy_ids: Array.from(failedStrategyIds),
+    });
+    confidence = mergeConfidence(confidence, strategySelection.confidence);
+
+    if (strategySelection.status === "operator_review_required") {
+      return createResult(
+        "loop_blocked",
+        strategySelection.reason,
+        {
+          iterations_completed: iteration - 1,
+          max_iterations: maxIterations,
+          selected_strategies: selectedStrategies,
+          executed_actions: executedActions,
+          validation_results: validationResults,
+          learning_results: learningResults,
+          rollback_events: rollbackEvents,
+          confidence,
+        },
+      );
+    }
+
+    if (strategySelection.status === "strategy_blocked") {
+      return createResult(
+        "loop_blocked",
+        strategySelection.reason,
+        {
+          iterations_completed: iteration - 1,
+          max_iterations: maxIterations,
+          selected_strategies: selectedStrategies,
+          executed_actions: executedActions,
+          validation_results: validationResults,
+          learning_results: learningResults,
+          rollback_events: rollbackEvents,
+          confidence,
+        },
+      );
+    }
+
+    const fixPlan = buildPostPlaytestFixPlan(decision, strategySelection);
     const executionPlan = buildPostPlaytestExecutionPlan(fixPlan);
     confidence = mergeConfidence(confidence, executionPlan.confidence);
 
@@ -233,6 +315,7 @@ export async function runPostPlaytestLoop(
         {
           iterations_completed: iteration - 1,
           max_iterations: maxIterations,
+          selected_strategies: selectedStrategies,
           executed_actions: executedActions,
           validation_results: validationResults,
           learning_results: learningResults,
@@ -263,8 +346,10 @@ export async function runPostPlaytestLoop(
       max_iterations: maxIterations,
       learning: currentLearning,
       decision,
+      strategy_selection: strategySelection,
       fix_plan: fixPlan,
       execution_plan: executionPlan,
+      selected_strategies: selectedStrategies.slice(),
       executed_actions: executedActions.slice(),
       validation_results: validationResults.slice(),
       learning_results: learningResults.slice(),
@@ -278,6 +363,7 @@ export async function runPostPlaytestLoop(
         {
           iterations_completed: iteration - 1,
           max_iterations: maxIterations,
+          selected_strategies: selectedStrategies,
           executed_actions: executedActions,
           validation_results: validationResults,
           learning_results: learningResults,
@@ -287,7 +373,7 @@ export async function runPostPlaytestLoop(
       );
     }
 
-    const iterationBlocker = validateIterationInput(iterationInput);
+    const iterationBlocker = validateIterationInput(iterationInput, strategySelection, executionPlan);
     if (iterationBlocker) {
       return createResult(
         "loop_blocked",
@@ -295,6 +381,7 @@ export async function runPostPlaytestLoop(
         {
           iterations_completed: iteration - 1,
           max_iterations: maxIterations,
+          selected_strategies: selectedStrategies,
           executed_actions: executedActions,
           validation_results: validationResults,
           learning_results: learningResults,
@@ -314,6 +401,7 @@ export async function runPostPlaytestLoop(
       rerun_validation: iterationInput.rerun_validation,
     });
 
+    selectedStrategies.push(summarizeStrategy(iteration, strategySelection));
     executedActions.push(summarizeAction(iteration, executionResult));
     validationResults.push(summarizeValidation(iteration, executionResult));
     confidence = mergeConfidence(confidence, executionResult.confidence);
@@ -326,6 +414,7 @@ export async function runPostPlaytestLoop(
         {
           iterations_completed: iteration,
           max_iterations: maxIterations,
+          selected_strategies: selectedStrategies,
           executed_actions: executedActions,
           validation_results: validationResults,
           learning_results: learningResults,
@@ -342,6 +431,7 @@ export async function runPostPlaytestLoop(
         {
           iterations_completed: iteration - 1,
           max_iterations: maxIterations,
+          selected_strategies: selectedStrategies,
           executed_actions: executedActions,
           validation_results: validationResults,
           learning_results: learningResults,
@@ -358,6 +448,7 @@ export async function runPostPlaytestLoop(
         {
           iterations_completed: iteration - 1,
           max_iterations: maxIterations,
+          selected_strategies: selectedStrategies,
           executed_actions: executedActions,
           validation_results: validationResults,
           learning_results: learningResults,
@@ -374,6 +465,7 @@ export async function runPostPlaytestLoop(
         {
           iterations_completed: iteration,
           max_iterations: maxIterations,
+          selected_strategies: selectedStrategies,
           executed_actions: executedActions,
           validation_results: validationResults,
           learning_results: learningResults,
@@ -390,6 +482,7 @@ export async function runPostPlaytestLoop(
         {
           iterations_completed: iteration,
           max_iterations: maxIterations,
+          selected_strategies: selectedStrategies,
           executed_actions: executedActions,
           validation_results: validationResults,
           learning_results: learningResults,
@@ -402,6 +495,15 @@ export async function runPostPlaytestLoop(
     currentLearning = await iterationInput.followup_learning();
     learningResults.push(summarizeLearningResult(`iteration ${iteration} follow-up learning`, currentLearning));
 
+    if (
+      strategySelection.selected_strategy_id
+      && currentLearning
+      && currentLearning.status !== "blocked"
+      && currentLearning.evaluation.parsedResult.inferredResult === "fail"
+    ) {
+      failedStrategyIds.add(strategySelection.selected_strategy_id);
+    }
+
     const nextDecision = decidePostPlaytestNextAction(currentLearning);
     confidence = mergeConfidence(confidence, nextDecision.confidence);
 
@@ -412,6 +514,7 @@ export async function runPostPlaytestLoop(
         {
           iterations_completed: iteration,
           max_iterations: maxIterations,
+          selected_strategies: selectedStrategies,
           executed_actions: executedActions,
           validation_results: validationResults,
           learning_results: learningResults,
@@ -429,6 +532,7 @@ export async function runPostPlaytestLoop(
           {
             iterations_completed: iteration,
             max_iterations: maxIterations,
+            selected_strategies: selectedStrategies,
             executed_actions: executedActions,
             validation_results: validationResults,
             learning_results: learningResults,
@@ -447,6 +551,7 @@ export async function runPostPlaytestLoop(
       {
         iterations_completed: iteration,
         max_iterations: maxIterations,
+        selected_strategies: selectedStrategies,
         executed_actions: executedActions,
         validation_results: validationResults,
         learning_results: learningResults,
@@ -462,6 +567,7 @@ export async function runPostPlaytestLoop(
     {
       iterations_completed: maxIterations,
       max_iterations: maxIterations,
+      selected_strategies: selectedStrategies,
       executed_actions: executedActions,
       validation_results: validationResults,
       learning_results: learningResults,
