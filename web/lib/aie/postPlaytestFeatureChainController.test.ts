@@ -129,7 +129,7 @@ function createFeatureLoop(
 test("completes feature A then feature B", async () => {
   const result = await runPostPlaytestFeatureChain({
     operator_approval: true,
-    feature_queue: ["feature-a", "feature-b"],
+    feature_pool: ["feature-a", "feature-b"],
     max_features: 2,
     max_iterations_per_feature: 2,
     create_feature_loop: async ({ feature }) => createFeatureLoop(feature, "pass"),
@@ -146,7 +146,7 @@ test("completes feature A then feature B", async () => {
 test("stops when queue exhausted", async () => {
   const result = await runPostPlaytestFeatureChain({
     operator_approval: true,
-    feature_queue: ["feature-a"],
+    feature_pool: ["feature-a"],
     max_features: 2,
     max_iterations_per_feature: 2,
     create_feature_loop: async ({ feature }) => createFeatureLoop(feature, "pass"),
@@ -155,13 +155,13 @@ test("stops when queue exhausted", async () => {
   assert.equal(result.status, "chain_stopped_success");
   assert.deepEqual(result.features_attempted, ["feature-a"]);
   assert.deepEqual(result.features_completed, ["feature-a"]);
-  assert.match(result.stop_reason, /queue was exhausted/i);
+  assert.match(result.stop_reason, /explicit pool/i);
 });
 
 test("stops when feature A fails", async () => {
   const result = await runPostPlaytestFeatureChain({
     operator_approval: true,
-    feature_queue: ["feature-a", "feature-b"],
+    feature_pool: ["feature-a", "feature-b"],
     max_features: 2,
     max_iterations_per_feature: 2,
     create_feature_loop: async ({ feature }) => createFeatureLoop(feature, "fail"),
@@ -179,7 +179,7 @@ test("blocks without operator approval", async () => {
 
   const result = await runPostPlaytestFeatureChain({
     operator_approval: false,
-    feature_queue: ["feature-a", "feature-b"],
+    feature_pool: ["feature-a", "feature-b"],
     max_features: 2,
     max_iterations_per_feature: 2,
     create_feature_loop: async () => {
@@ -195,7 +195,7 @@ test("blocks without operator approval", async () => {
 test("never exceeds max_features", async () => {
   const result = await runPostPlaytestFeatureChain({
     operator_approval: true,
-    feature_queue: ["feature-a", "feature-b", "feature-c"],
+    feature_pool: ["feature-a", "feature-b", "feature-c"],
     max_features: 99,
     max_iterations_per_feature: 2,
     create_feature_loop: async ({ feature }) => createFeatureLoop(feature, "pass"),
@@ -211,11 +211,16 @@ test("preserves feature order", async () => {
 
   const result = await runPostPlaytestFeatureChain({
     operator_approval: true,
-    feature_queue: ["feature-a", "feature-b"],
+    feature_pool: ["feature-a", "feature-b"],
     max_features: 2,
     max_iterations_per_feature: 2,
-    create_feature_loop: async ({ feature }) => {
+    feature_evidence: [
+      { feature: "feature-a", latest_outcome: createOutcome("fail", "feature-a", "feature-a-fail") },
+      { feature: "feature-b", latest_outcome: null },
+    ],
+    create_feature_loop: async ({ feature, selection }) => {
       orderSeen.push(feature);
+      assert.equal(selection.selected_feature, feature);
       return createFeatureLoop(feature, "pass");
     },
   });
@@ -227,7 +232,7 @@ test("preserves feature order", async () => {
 test("records feature-local loop summaries", async () => {
   const result = await runPostPlaytestFeatureChain({
     operator_approval: true,
-    feature_queue: ["feature-a", "feature-b"],
+    feature_pool: ["feature-a", "feature-b"],
     max_features: 2,
     max_iterations_per_feature: 2,
     create_feature_loop: async ({ feature, previous_feature_learning_summary }) => {
@@ -244,4 +249,26 @@ test("records feature-local loop summaries", async () => {
   assert.ok(result.loop_results[0]?.result.learning_results.some((entry) => /feature-a/i.test(entry)));
   assert.equal(result.loop_results[1]?.feature, "feature-b");
   assert.ok(result.loop_results[1]?.result.learning_results.some((entry) => /feature-b/i.test(entry)));
+});
+
+test("chain controller uses selector instead of fixed order", async () => {
+  const chosenFeatures: string[] = [];
+
+  const result = await runPostPlaytestFeatureChain({
+    operator_approval: true,
+    feature_pool: ["feature-pass", "feature-fail", "feature-unseen"],
+    max_features: 2,
+    max_iterations_per_feature: 2,
+    feature_evidence: [
+      { feature: "feature-pass", latest_outcome: createOutcome("pass", "feature-pass", "feature-pass-pass") },
+      { feature: "feature-fail", latest_outcome: createOutcome("fail", "feature-fail", "feature-fail-fail") },
+    ],
+    create_feature_loop: async ({ feature }) => {
+      chosenFeatures.push(feature);
+      return createFeatureLoop(feature, "pass");
+    },
+  });
+
+  assert.equal(result.status, "chain_completed");
+  assert.deepEqual(chosenFeatures, ["feature-fail", "feature-unseen"]);
 });
