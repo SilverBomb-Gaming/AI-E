@@ -156,3 +156,31 @@ test("outcome learning summary includes runtime-auto and manual counts", async (
     await rm(tempRoot, { recursive: true, force: true });
   }
 });
+
+test("outcome learning tracks retry count per feature", async () => {
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "aie-outcome-retry-count-"));
+
+  try {
+    const first = await recordOutcome(tempRoot, {
+      feature: "enemy-health",
+      result: "fail",
+      observation: "first failure",
+    });
+    const second = await recordOutcome(tempRoot, {
+      feature: "enemy-health",
+      result: "partial",
+      observation: "partial follow-up",
+    });
+    const third = await recordOutcome(tempRoot, {
+      feature: "enemy-health",
+      result: "pass",
+      observation: "fixed",
+    });
+
+    assert.equal(first.record.retryCount, 1);
+    assert.equal(second.record.retryCount, 2);
+    assert.equal(third.record.retryCount, 0);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});

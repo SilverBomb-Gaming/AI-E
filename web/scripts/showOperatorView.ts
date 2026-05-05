@@ -7,16 +7,38 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { inspectGameProject, renderGameProjectSummary } from "../lib/aie/gameProjectInspector";
 import { determineGameProgression, renderNextGameTask } from "../lib/aie/gameProgression";
 import {
+  executeNextAutonomousAction,
+  renderActionExecutionResult,
+} from "../lib/aie/actionExecutor";
+import {
   autoRecordOutcomeForFeature,
   renderAutoRecordOutcome,
 } from "../lib/aie/autoOutcomeRecording";
 import {
+  renderAutonomousExecutionLoop,
+  runAutonomousExecutionLoop,
+} from "../lib/aie/executionLoop";
+import {
+  generateAutoRetryTask,
+  renderAutoRetryResult,
+  renderRetrySuggestion,
+  suggestRetryForLatestOutcome,
+} from "../lib/aie/retryEngine";
+import {
   recordOutcome,
+  readOutcomeRecords,
   renderOutcomeRecord,
   renderOutcomeSummary,
   summarizeOutcomeLearning,
   type OutcomeResult,
+  type OutcomeRecord,
 } from "../lib/aie/outcomeLearning";
+import {
+  renderPostPlaytestFeatureSelectionReport,
+  selectPostPlaytestFeature,
+  type PostPlaytestFeatureEvidenceSnapshot,
+  type PostPlaytestFeatureKnownOutcomeState,
+} from "../lib/aie/postPlaytestFeatureSelector";
 import {
   autoEvaluateUnityRuntime,
   discoverUnityLogCandidates,
@@ -107,11 +129,18 @@ type ShowOperatorViewOptions = {
   gameTaskPath?: string;
   nextGameTaskPath?: string;
   executeNextGameTaskPath?: string;
+  executeNextActionPath?: string;
   recordOutcomePath?: string;
   autoRecordOutcomePath?: string;
+  suggestRetryPath?: string;
+  autoRetryPath?: string;
+  runAutonomousLoopPath?: string;
+  allowExecution?: boolean;
   autoEvaluatePath?: string;
   discoverRuntimeLogsPath?: string;
   learningSummaryPath?: string;
+  featureSelectionReportPath?: string;
+  featurePool?: string[];
   outcomeFeature?: string;
   outcomeResult?: OutcomeResult;
   outcomeObservation?: string;
@@ -180,8 +209,54 @@ function buildPatchStatusRecoverySignal(snapshot: Awaited<ReturnType<typeof insp
     && snapshot.detectedIssues.duplicateClassRisks.length === 0;
 }
 
+function parseBooleanFlagValue(value: string, flagName: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "true") {
+    return true;
+  }
+
+  if (normalized === "false") {
+    return false;
+  }
+
+  throw new Error(`${flagName} expects true or false.`);
+}
+
 function buildFollowupPatchRecoverySignal(snapshot: Awaited<ReturnType<typeof inspectUnityPlaytestRecovery>>): boolean {
   return buildPatchStatusRecoverySignal(snapshot);
+}
+
+function mapOutcomeRecordState(record: OutcomeRecord | undefined): PostPlaytestFeatureKnownOutcomeState {
+  if (!record) {
+    return "unseen";
+  }
+
+  if (record.result === "fail") {
+    return "failing";
+  }
+
+  if (record.result === "pass") {
+    return "passing";
+  }
+
+  return "unstable";
+}
+
+async function buildFeatureSelectionEvidenceSnapshots(
+  projectPath: string,
+  featurePool: string[],
+): Promise<PostPlaytestFeatureEvidenceSnapshot[]> {
+  const records = await readOutcomeRecords(projectPath);
+  const reverseRecords = [...records].reverse();
+
+  return featurePool.map((feature) => {
+    const latestRecord = reverseRecords.find((record) => record.feature === feature);
+    return {
+      feature,
+      latest_outcome: null,
+      known_outcome_state: mapOutcomeRecordState(latestRecord),
+    };
+  });
 }
 
 type CameraFeatureExecutionReport = {
@@ -387,6 +462,11 @@ function parseArgs(argv: string[]): ShowOperatorViewOptions {
       continue;
     }
 
+    if (arg.startsWith("--execute-next-action=")) {
+      options.executeNextActionPath = arg.slice("--execute-next-action=".length).trim() || undefined;
+      continue;
+    }
+
     if (arg.startsWith("--record-outcome=")) {
       options.recordOutcomePath = arg.slice("--record-outcome=".length).trim() || undefined;
       continue;
@@ -394,6 +474,21 @@ function parseArgs(argv: string[]): ShowOperatorViewOptions {
 
     if (arg.startsWith("--auto-record-outcome=")) {
       options.autoRecordOutcomePath = arg.slice("--auto-record-outcome=".length).trim() || undefined;
+      continue;
+    }
+
+    if (arg.startsWith("--suggest-retry=")) {
+      options.suggestRetryPath = arg.slice("--suggest-retry=".length).trim() || undefined;
+      continue;
+    }
+
+    if (arg.startsWith("--auto-retry=")) {
+      options.autoRetryPath = arg.slice("--auto-retry=".length).trim() || undefined;
+      continue;
+    }
+
+    if (arg.startsWith("--run-autonomous-loop=")) {
+      options.runAutonomousLoopPath = arg.slice("--run-autonomous-loop=".length).trim() || undefined;
       continue;
     }
 
@@ -412,13 +507,42 @@ function parseArgs(argv: string[]): ShowOperatorViewOptions {
       continue;
     }
 
+    if (arg.startsWith("--feature-selection-report=")) {
+      options.featureSelectionReportPath = arg.slice("--feature-selection-report=".length).trim() || undefined;
+      continue;
+    }
+
+    if (arg.startsWith("--feature-pool=")) {
+      options.featurePool = arg.slice("--feature-pool=".length)
+        .split(",")
+        .map((value) => value.trim())
+        .filter((value) => value.length > 0);
+      continue;
+    }
+
     if (arg.startsWith("--runtime-log=")) {
       options.runtimeLogPath = arg.slice("--runtime-log=".length).trim() || undefined;
       continue;
     }
 
+    if (arg.startsWith("--allow-execution=")) {
+      options.allowExecution = parseBooleanFlagValue(arg.slice("--allow-execution=".length), "--allow-execution");
+      continue;
+    }
+
     if (arg === "--auto") {
       options.autoRecord = true;
+      continue;
+    }
+
+    if (arg === "--allow-execution") {
+      const value = argv[index + 1];
+      if (value && !value.startsWith("--")) {
+        options.allowExecution = parseBooleanFlagValue(value, "--allow-execution");
+        index += 1;
+      } else {
+        options.allowExecution = true;
+      }
       continue;
     }
 
@@ -448,6 +572,16 @@ function parseArgs(argv: string[]): ShowOperatorViewOptions {
       continue;
     }
 
+    if (arg === "--execute-next-action") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("Missing value for --execute-next-action");
+      }
+      options.executeNextActionPath = value.trim();
+      index += 1;
+      continue;
+    }
+
     if (arg === "--record-outcome") {
       const value = argv[index + 1];
       if (!value) {
@@ -464,6 +598,36 @@ function parseArgs(argv: string[]): ShowOperatorViewOptions {
         throw new Error("Missing value for --auto-record-outcome");
       }
       options.autoRecordOutcomePath = value.trim();
+      index += 1;
+      continue;
+    }
+
+    if (arg === "--suggest-retry") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("Missing value for --suggest-retry");
+      }
+      options.suggestRetryPath = value.trim();
+      index += 1;
+      continue;
+    }
+
+    if (arg === "--auto-retry") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("Missing value for --auto-retry");
+      }
+      options.autoRetryPath = value.trim();
+      index += 1;
+      continue;
+    }
+
+    if (arg === "--run-autonomous-loop") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("Missing value for --run-autonomous-loop");
+      }
+      options.runAutonomousLoopPath = value.trim();
       index += 1;
       continue;
     }
@@ -494,6 +658,29 @@ function parseArgs(argv: string[]): ShowOperatorViewOptions {
         throw new Error("Missing value for --learning-summary");
       }
       options.learningSummaryPath = value.trim();
+      index += 1;
+      continue;
+    }
+
+    if (arg === "--feature-selection-report") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("Missing value for --feature-selection-report");
+      }
+      options.featureSelectionReportPath = value.trim();
+      index += 1;
+      continue;
+    }
+
+    if (arg === "--feature-pool") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("Missing value for --feature-pool");
+      }
+      options.featurePool = value
+        .split(",")
+        .map((entry) => entry.trim())
+        .filter((entry) => entry.length > 0);
       index += 1;
       continue;
     }
@@ -1282,11 +1469,16 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       options.projectPath ? "--project" : null,
       options.gameTaskPath ? "--game-task" : null,
       options.nextGameTaskPath ? "--next-game-task" : null,
+      options.executeNextActionPath ? "--execute-next-action" : null,
       options.recordOutcomePath ? "--record-outcome" : null,
       options.autoRecordOutcomePath ? "--auto-record-outcome" : null,
+      options.suggestRetryPath ? "--suggest-retry" : null,
+      options.autoRetryPath ? "--auto-retry" : null,
+      options.runAutonomousLoopPath ? "--run-autonomous-loop" : null,
       options.autoEvaluatePath ? "--auto-evaluate" : null,
       options.discoverRuntimeLogsPath ? "--discover-runtime-logs" : null,
       options.learningSummaryPath ? "--learning-summary" : null,
+      options.featureSelectionReportPath ? "--feature-selection-report" : null,
       options.executeNextGameTaskPath ? "--execute-next-game-task" : null,
       options.cameraTuningPreviewPath ? "--camera-tuning-preview" : null,
       options.applyCameraTuningPath ? "--apply-camera-tuning" : null,
@@ -1873,6 +2065,42 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       return result.status === "recorded" ? 0 : 1;
     }
 
+    if (options.suggestRetryPath) {
+      const result = await suggestRetryForLatestOutcome(options.suggestRetryPath);
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return 0;
+      }
+
+      console.log(renderRetrySuggestion(result));
+      return 0;
+    }
+
+    if (options.autoRetryPath) {
+      const result = await generateAutoRetryTask(options.autoRetryPath);
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return 0;
+      }
+
+      console.log(renderAutoRetryResult(result));
+      return 0;
+    }
+
+    if (options.runAutonomousLoopPath) {
+      const result = await runAutonomousExecutionLoop(options.runAutonomousLoopPath, options.outcomeFeature, options.runtimeLogPath);
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return result.status === "completed" ? 0 : 1;
+      }
+
+      console.log(renderAutonomousExecutionLoop(result));
+      return result.status === "completed" ? 0 : 1;
+    }
+
     if (options.recordOutcomePath) {
       if (!options.outcomeFeature) {
         throw new Error("--record-outcome requires --feature");
@@ -1944,6 +2172,26 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       return 0;
     }
 
+    if (options.featureSelectionReportPath) {
+      if (!options.featurePool || options.featurePool.length === 0) {
+        throw new Error("--feature-selection-report requires --feature-pool with at least one feature.");
+      }
+
+      const evidence = await buildFeatureSelectionEvidenceSnapshots(options.featureSelectionReportPath, options.featurePool);
+      const selection = selectPostPlaytestFeature({
+        feature_pool: options.featurePool,
+        feature_evidence: evidence,
+      });
+
+      if (options.json) {
+        console.log(JSON.stringify(selection, null, 2));
+        return 0;
+      }
+
+      console.log(renderPostPlaytestFeatureSelectionReport(selection));
+      return 0;
+    }
+
     if (options.nextGameTaskPath) {
       const snapshot = await inspectGameProject(options.nextGameTaskPath);
       const progression = await determineGameProgression(snapshot);
@@ -1955,6 +2203,18 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
 
       console.log(renderNextGameTask(progression));
       return 0;
+    }
+
+    if (options.executeNextActionPath) {
+      const result = await executeNextAutonomousAction(options.executeNextActionPath, options.allowExecution === true);
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return result.status === "executed" || result.status === "preview" || result.status === "already-applied" ? 0 : 1;
+      }
+
+      console.log(renderActionExecutionResult(result));
+      return result.status === "executed" || result.status === "preview" || result.status === "already-applied" ? 0 : 1;
     }
 
     if (options.executeNextGameTaskPath) {

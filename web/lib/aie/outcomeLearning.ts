@@ -25,6 +25,7 @@ export type OutcomeRecord = {
   inferredResult?: OutcomeResult;
   gameplayEvents?: string[];
   errors?: string[];
+  retryCount?: number;
   learnedPattern?: string;
 };
 
@@ -61,6 +62,7 @@ export type RecordOutcomeInput = {
   inferredResult?: OutcomeResult;
   gameplayEvents?: string[];
   errors?: string[];
+  retryCount?: number;
 };
 
 export type RecordOutcomeResult = {
@@ -79,6 +81,46 @@ function getOutcomeLogPath(projectPath: string): string {
 
 function normalizeList(values: string[] | undefined): string[] {
   return (values ?? []).map((value) => value.trim()).filter((value) => value.length > 0);
+}
+
+function normalizeFeatureKey(feature: string): string {
+  return feature.trim().toLowerCase();
+}
+
+function isRetryableResult(result: OutcomeResult): result is "fail" | "partial" {
+  return result === "fail" || result === "partial";
+}
+
+function inferLatestRetryCount(records: OutcomeRecord[], feature: string): number {
+  const normalizedFeature = normalizeFeatureKey(feature);
+  let count = 0;
+
+  for (let index = records.length - 1; index >= 0; index -= 1) {
+    const record = records[index];
+    if (normalizeFeatureKey(record.feature) !== normalizedFeature) {
+      continue;
+    }
+
+    if (!isRetryableResult(record.result)) {
+      break;
+    }
+
+    count += 1;
+  }
+
+  return count;
+}
+
+function computeRetryCount(existingRecords: OutcomeRecord[], feature: string, result: OutcomeResult, explicitRetryCount?: number): number {
+  if (typeof explicitRetryCount === "number") {
+    return explicitRetryCount;
+  }
+
+  if (!isRetryableResult(result)) {
+    return 0;
+  }
+
+  return inferLatestRetryCount(existingRecords, feature) + 1;
 }
 
 export function buildOutcomeSessionKey(input: {
@@ -139,6 +181,7 @@ function parseOutcomeRecord(rawLine: string): OutcomeRecord | null {
       : undefined,
     gameplayEvents: normalizeList(parsed.gameplayEvents),
     errors: normalizeList(parsed.errors),
+    retryCount: typeof parsed.retryCount === "number" ? parsed.retryCount : undefined,
     learnedPattern: parsed.learnedPattern,
   };
 }
@@ -202,6 +245,7 @@ export async function recordOutcome(projectPath: string, input: RecordOutcomeInp
     inferredResult: input.inferredResult,
     gameplayEvents: normalizeList(input.gameplayEvents),
     errors: normalizeList(input.errors),
+    retryCount: computeRetryCount(existingRecords, input.feature.trim(), input.result, input.retryCount),
     learnedPattern: buildLearnedPattern(input.feature.trim(), action, input.result, observation),
   };
 
@@ -253,6 +297,7 @@ export function renderOutcomeRecord(result: RecordOutcomeResult): string {
     `Inferred Result: ${result.record.inferredResult ?? "n/a"}`,
     `Errors: ${result.record.errors?.length ?? 0}`,
     `Gameplay Events: ${result.record.gameplayEvents?.length ?? 0}`,
+    `Retry Count: ${typeof result.record.retryCount === "number" ? result.record.retryCount : 0}`,
     `Observation: ${result.record.userObservation}`,
     `Rollback Used: ${result.record.rollbackUsed ? "YES" : "NO"}`,
     `Learned Pattern: ${result.record.learnedPattern ?? "none"}`,

@@ -3,6 +3,7 @@ import path from "node:path";
 
 import type { GameProjectSnapshot } from "./gameProjectInspector";
 import { readOutcomeRecords, type OutcomeRecord } from "./outcomeLearning";
+import { buildRetrySuggestionFromRecords } from "./retryEngine";
 
 export type GameProgressionStage = {
   id: "movement" | "camera-control" | "basic-enemy" | "player-attack" | "game-loop";
@@ -190,6 +191,7 @@ function isOutcomeRelevant(stage: GameProgressionStage["id"], record: OutcomeRec
 function buildOutcomeGuidance(stage: GameProgressionStage["id"], records: OutcomeRecord[]): OutcomeGuidance {
   const recentRecords = records.slice(-10).reverse();
   const relevantRecords = recentRecords.filter((record) => isOutcomeRelevant(stage, record));
+  const latestRelevantRecord = relevantRecords[0] ?? recentRecords[0];
   const prioritizedRelevantRecords = [...relevantRecords].sort((left, right) => getOutcomeSourcePriority(right) - getOutcomeSourcePriority(left));
   const prioritizedRecentRecords = [...recentRecords].sort((left, right) => getOutcomeSourcePriority(right) - getOutcomeSourcePriority(left));
   const runtimeAutoExists = prioritizedRecentRecords.some((record) => record.evaluationSource === "runtime-auto");
@@ -197,6 +199,9 @@ function buildOutcomeGuidance(stage: GameProgressionStage["id"], records: Outcom
     ?? prioritizedRecentRecords.find((record) => record.result === "pass");
   const latestFailure = prioritizedRelevantRecords.find((record) => record.result === "fail")
     ?? prioritizedRecentRecords.find((record) => record.result === "fail");
+  const retrySuggestion = latestRelevantRecord
+    ? buildRetrySuggestionFromRecords("", records.filter((record) => normalizeFeature(record.feature) === normalizeFeature(latestRelevantRecord.feature)))
+    : undefined;
   const guidanceSteps: string[] = [];
   const reasonParts: string[] = [];
 
@@ -213,6 +218,18 @@ function buildOutcomeGuidance(stage: GameProgressionStage["id"], records: Outcom
   if (latestFailure) {
     guidanceSteps.push(`Avoid the recent failed approach: ${describeOutcomeReason(latestFailure)}.`);
     reasonParts.push(`recent failure to avoid: ${describeOutcomeReason(latestFailure)}`);
+  }
+
+  if (retrySuggestion?.decision) {
+    if (retrySuggestion.decision.retryRecommended) {
+      const strategyAdjustment = retrySuggestion.decision.strategyAdjustment ?? "Retry with a guarded adjustment";
+      const retryVerb = retrySuggestion.decision.lastResult === "fail" ? "failed" : "was partial";
+      guidanceSteps.push(`Retry guidance: ${strategyAdjustment}.`);
+      reasonParts.push(`Previous attempt ${retryVerb} due to ${retrySuggestion.decision.reason.replace(/\.$/, "")}, retrying with ${strategyAdjustment}`);
+    } else {
+      guidanceSteps.push(`Retry limit reached for ${retrySuggestion.decision.feature}; require a new approach before another loop.`);
+      reasonParts.push(retrySuggestion.decision.reason);
+    }
   }
 
   if (reasonParts.length === 0) {
