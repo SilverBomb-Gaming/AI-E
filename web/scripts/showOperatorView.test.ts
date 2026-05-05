@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { autoRecordOutcomeForFeature } from "./showOperatorView";
+import { recordOutcome } from "../lib/aie/outcomeLearning";
+import { autoRecordOutcomeForFeature, main } from "./showOperatorView";
 
 test("auto-record writes runtime-auto outcome with latest session provenance", async () => {
   const tempRoot = await mkdtemp(path.join(tmpdir(), "aie-auto-record-"));
@@ -60,6 +61,77 @@ test("auto-record blocks when feature is missing", async () => {
     assert.equal(result.status, "blocked");
     assert.equal(result.reason, "--feature is required so the outcome can be tied to a specific game feature.");
   } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("operator view prints retry suggestion for latest failed outcome", async () => {
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "aie-retry-suggestion-cli-"));
+  const captured: string[] = [];
+  const originalLog = console.log;
+
+  try {
+    await recordOutcome(tempRoot, {
+      feature: "enemy-health",
+      result: "fail",
+      observation: "runtime error during health update",
+      evaluationSource: "runtime-auto",
+      errors: ["NullReferenceException"],
+    });
+
+    console.log = (...args: unknown[]) => {
+      captured.push(args.join(" "));
+    };
+
+    const exitCode = await main([
+      "--suggest-retry",
+      tempRoot,
+    ]);
+
+    assert.equal(exitCode, 0);
+    const rendered = captured.join("\n");
+    assert.match(rendered, /RETRY SUGGESTION/i);
+    assert.match(rendered, /Feature: enemy-health/i);
+    assert.match(rendered, /Last Result: fail/i);
+    assert.match(rendered, /Retry Recommended: YES/i);
+    assert.match(rendered, /Fix runtime errors before retry/i);
+  } finally {
+    console.log = originalLog;
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("operator view prints auto retry task for latest partial outcome", async () => {
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "aie-auto-retry-cli-"));
+  const captured: string[] = [];
+  const originalLog = console.log;
+
+  try {
+    await recordOutcome(tempRoot, {
+      feature: "attack-feedback",
+      result: "partial",
+      observation: "attack pulse too weak",
+      evaluationSource: "runtime-auto",
+      gameplayEvents: ["PlayerAttack: swing started"],
+    });
+
+    console.log = (...args: unknown[]) => {
+      captured.push(args.join(" "));
+    };
+
+    const exitCode = await main([
+      "--auto-retry",
+      tempRoot,
+    ]);
+
+    assert.equal(exitCode, 0);
+    const rendered = captured.join("\n");
+    assert.match(rendered, /AUTO RETRY TASK/i);
+    assert.match(rendered, /Feature: attack-feedback/i);
+    assert.match(rendered, /Strategy Adjustment: Refine feature behavior, not structure/i);
+    assert.match(rendered, /Retry attack-feedback with adjusted strategy/i);
+  } finally {
+    console.log = originalLog;
     await rm(tempRoot, { recursive: true, force: true });
   }
 });

@@ -89,3 +89,25 @@ test("game progression includes outcome-based reason for the next task", async (
     await rm(tempRoot, { recursive: true, force: true });
   }
 });
+
+test("game progression includes retry reasoning for failed outcomes", async () => {
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "aie-game-progression-retry-"));
+
+  try {
+    const snapshot = await createSnapshot(tempRoot);
+    await recordOutcome(tempRoot, {
+      feature: "enemy-health",
+      result: "fail",
+      observation: "NullReferenceException during enemy health update.",
+      evaluationSource: "runtime-auto",
+      errors: ["NullReferenceException"],
+    });
+
+    const progression = await determineGameProgression(snapshot);
+    assert.match(progression.nextTask.reasonBasedOnOutcomes, /Previous attempt failed/i);
+    assert.match(progression.nextTask.reasonBasedOnOutcomes, /retrying with Fix runtime errors before retry/i);
+    assert.match(progression.nextTask.safeImplementationPlan.join("\n"), /Retry guidance: Fix runtime errors before retry\./i);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});

@@ -11,6 +11,12 @@ import {
   renderAutoRecordOutcome,
 } from "../lib/aie/autoOutcomeRecording";
 import {
+  generateAutoRetryTask,
+  renderAutoRetryResult,
+  renderRetrySuggestion,
+  suggestRetryForLatestOutcome,
+} from "../lib/aie/retryEngine";
+import {
   recordOutcome,
   renderOutcomeRecord,
   renderOutcomeSummary,
@@ -109,6 +115,8 @@ type ShowOperatorViewOptions = {
   executeNextGameTaskPath?: string;
   recordOutcomePath?: string;
   autoRecordOutcomePath?: string;
+  suggestRetryPath?: string;
+  autoRetryPath?: string;
   autoEvaluatePath?: string;
   discoverRuntimeLogsPath?: string;
   learningSummaryPath?: string;
@@ -397,6 +405,16 @@ function parseArgs(argv: string[]): ShowOperatorViewOptions {
       continue;
     }
 
+    if (arg.startsWith("--suggest-retry=")) {
+      options.suggestRetryPath = arg.slice("--suggest-retry=".length).trim() || undefined;
+      continue;
+    }
+
+    if (arg.startsWith("--auto-retry=")) {
+      options.autoRetryPath = arg.slice("--auto-retry=".length).trim() || undefined;
+      continue;
+    }
+
     if (arg.startsWith("--auto-evaluate=")) {
       options.autoEvaluatePath = arg.slice("--auto-evaluate=".length).trim() || undefined;
       continue;
@@ -464,6 +482,26 @@ function parseArgs(argv: string[]): ShowOperatorViewOptions {
         throw new Error("Missing value for --auto-record-outcome");
       }
       options.autoRecordOutcomePath = value.trim();
+      index += 1;
+      continue;
+    }
+
+    if (arg === "--suggest-retry") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("Missing value for --suggest-retry");
+      }
+      options.suggestRetryPath = value.trim();
+      index += 1;
+      continue;
+    }
+
+    if (arg === "--auto-retry") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("Missing value for --auto-retry");
+      }
+      options.autoRetryPath = value.trim();
       index += 1;
       continue;
     }
@@ -1284,6 +1322,8 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       options.nextGameTaskPath ? "--next-game-task" : null,
       options.recordOutcomePath ? "--record-outcome" : null,
       options.autoRecordOutcomePath ? "--auto-record-outcome" : null,
+      options.suggestRetryPath ? "--suggest-retry" : null,
+      options.autoRetryPath ? "--auto-retry" : null,
       options.autoEvaluatePath ? "--auto-evaluate" : null,
       options.discoverRuntimeLogsPath ? "--discover-runtime-logs" : null,
       options.learningSummaryPath ? "--learning-summary" : null,
@@ -1871,6 +1911,30 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
 
       console.log(renderAutoRecordOutcome(result));
       return result.status === "recorded" ? 0 : 1;
+    }
+
+    if (options.suggestRetryPath) {
+      const result = await suggestRetryForLatestOutcome(options.suggestRetryPath);
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return 0;
+      }
+
+      console.log(renderRetrySuggestion(result));
+      return 0;
+    }
+
+    if (options.autoRetryPath) {
+      const result = await generateAutoRetryTask(options.autoRetryPath);
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return 0;
+      }
+
+      console.log(renderAutoRetryResult(result));
+      return 0;
     }
 
     if (options.recordOutcomePath) {
