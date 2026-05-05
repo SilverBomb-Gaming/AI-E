@@ -1077,6 +1077,18 @@ Commands:
 - `npm run operator:view -- --attack-status "<project>"`
 - `npm run operator:view -- --rollback-player-attack "<project>"`
 
+## Attack Feedback
+
+- use the attack feedback workflow during local playtests to make attack hits visually obvious without relying only on console output.
+- the workflow patches `Assets/Scripts/BasicEnemy.cs` and `Assets/Scripts/PlayerAttack.cs`, backing up both source files before writing the canonical feedback version.
+- `BasicEnemy` now flashes bright red and plays a larger pulse on hit, while `PlayerAttack` exposes a `debugAttackRange` gizmo toggle and includes hit-distance logging for quick verification.
+
+Commands:
+
+- `npm run operator:view -- --apply-attack-feedback "<project>"`
+- `npm run operator:view -- --attack-feedback-status "<project>"`
+- `npm run operator:view -- --rollback-attack-feedback "<project>"`
+
 ## Safe Runtime Action Bridge
 
 AI-E can now translate supported live operator actions into safe runtime intents.

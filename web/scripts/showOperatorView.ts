@@ -36,9 +36,11 @@ import type { OperatorViewSnapshot } from "../lib/aie/operatorView.types";
 import {
   applyUnityCameraWiring,
   applyUnityBasicEnemy,
+  applyUnityAttackFeedback,
   applyUnityFallRecovery,
   applyUnityPlayerAttack,
   applyUnityVisualDebugFloor,
+  inspectUnityAttackFeedbackStatus,
   inspectUnityBasicEnemyStatus,
   inspectUnityCameraWiringStatus,
   inspectUnityFallRecoveryStatus,
@@ -46,6 +48,9 @@ import {
   inspectUnitySceneWiring,
   inspectUnityVisualDebugStatus,
   repairUnityCameraWiring,
+  renderUnityAttackFeedbackApplyResult,
+  renderUnityAttackFeedbackRollbackResult,
+  renderUnityAttackFeedbackStatus,
   renderUnityBasicEnemyApplyResult,
   renderUnityBasicEnemyRollbackResult,
   renderUnityBasicEnemyStatus,
@@ -63,6 +68,7 @@ import {
   renderUnityVisualDebugApplyResult,
   renderUnityVisualDebugRollbackResult,
   renderUnityVisualDebugStatus,
+  rollbackUnityAttackFeedback,
   rollbackUnityBasicEnemy,
   rollbackUnityCameraWiring,
   rollbackUnityFallRecovery,
@@ -99,6 +105,9 @@ type ShowOperatorViewOptions = {
   applyPlayerAttackPath?: string;
   attackStatusPath?: string;
   rollbackPlayerAttackPath?: string;
+  applyAttackFeedbackPath?: string;
+  attackFeedbackStatusPath?: string;
+  rollbackAttackFeedbackPath?: string;
   unityRecoveryPath?: string;
   gamePatchPath?: string;
   gamePatchPreviewPath?: string;
@@ -460,6 +469,11 @@ function parseArgs(argv: string[]): ShowOperatorViewOptions {
       continue;
     }
 
+    if (arg.startsWith("--apply-attack-feedback=")) {
+      options.applyAttackFeedbackPath = arg.slice("--apply-attack-feedback=".length).trim() || undefined;
+      continue;
+    }
+
     if (arg === "--apply-fall-recovery") {
       const value = argv[index + 1];
       if (!value) {
@@ -486,6 +500,16 @@ function parseArgs(argv: string[]): ShowOperatorViewOptions {
         throw new Error("Missing value for --apply-player-attack");
       }
       options.applyPlayerAttackPath = value.trim();
+      index += 1;
+      continue;
+    }
+
+    if (arg === "--apply-attack-feedback") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("Missing value for --apply-attack-feedback");
+      }
+      options.applyAttackFeedbackPath = value.trim();
       index += 1;
       continue;
     }
@@ -520,6 +544,11 @@ function parseArgs(argv: string[]): ShowOperatorViewOptions {
       continue;
     }
 
+    if (arg.startsWith("--attack-feedback-status=")) {
+      options.attackFeedbackStatusPath = arg.slice("--attack-feedback-status=".length).trim() || undefined;
+      continue;
+    }
+
     if (arg === "--fall-recovery-status") {
       const value = argv[index + 1];
       if (!value) {
@@ -546,6 +575,16 @@ function parseArgs(argv: string[]): ShowOperatorViewOptions {
         throw new Error("Missing value for --attack-status");
       }
       options.attackStatusPath = value.trim();
+      index += 1;
+      continue;
+    }
+
+    if (arg === "--attack-feedback-status") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("Missing value for --attack-feedback-status");
+      }
+      options.attackFeedbackStatusPath = value.trim();
       index += 1;
       continue;
     }
@@ -580,6 +619,11 @@ function parseArgs(argv: string[]): ShowOperatorViewOptions {
       continue;
     }
 
+    if (arg.startsWith("--rollback-attack-feedback=")) {
+      options.rollbackAttackFeedbackPath = arg.slice("--rollback-attack-feedback=".length).trim() || undefined;
+      continue;
+    }
+
     if (arg === "--rollback-fall-recovery") {
       const value = argv[index + 1];
       if (!value) {
@@ -606,6 +650,16 @@ function parseArgs(argv: string[]): ShowOperatorViewOptions {
         throw new Error("Missing value for --rollback-player-attack");
       }
       options.rollbackPlayerAttackPath = value.trim();
+      index += 1;
+      continue;
+    }
+
+    if (arg === "--rollback-attack-feedback") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("Missing value for --rollback-attack-feedback");
+      }
+      options.rollbackAttackFeedbackPath = value.trim();
       index += 1;
       continue;
     }
@@ -1021,6 +1075,9 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       options.applyPlayerAttackPath ? "--apply-player-attack" : null,
       options.attackStatusPath ? "--attack-status" : null,
       options.rollbackPlayerAttackPath ? "--rollback-player-attack" : null,
+      options.applyAttackFeedbackPath ? "--apply-attack-feedback" : null,
+      options.attackFeedbackStatusPath ? "--attack-feedback-status" : null,
+      options.rollbackAttackFeedbackPath ? "--rollback-attack-feedback" : null,
       options.cameraWiringPreviewPath ? "--camera-wiring-preview" : null,
       options.applyCameraWiringPath ? "--apply-camera-wiring" : null,
       options.cameraWiringStatusPath ? "--camera-wiring-status" : null,
@@ -1222,6 +1279,19 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       return result.applied ? 0 : 1;
     }
 
+    if (options.applyAttackFeedbackPath) {
+      const recovery = await inspectUnityPlaytestRecovery(options.applyAttackFeedbackPath);
+      const result = await applyUnityAttackFeedback(options.applyAttackFeedbackPath, buildFollowupPatchRecoverySignal(recovery));
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return result.applied ? 0 : 1;
+      }
+
+      console.log(renderUnityAttackFeedbackApplyResult(result));
+      return result.applied ? 0 : 1;
+    }
+
     if (options.repairCameraWiringPath) {
       const recovery = await inspectUnityPlaytestRecovery(options.repairCameraWiringPath);
       const result = await repairUnityCameraWiring(options.repairCameraWiringPath, buildFollowupPatchRecoverySignal(recovery));
@@ -1337,6 +1407,19 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       return 0;
     }
 
+    if (options.attackFeedbackStatusPath) {
+      const recovery = await inspectUnityPlaytestRecovery(options.attackFeedbackStatusPath);
+      const status = await inspectUnityAttackFeedbackStatus(options.attackFeedbackStatusPath, buildPatchStatusRecoverySignal(recovery));
+
+      if (options.json) {
+        console.log(JSON.stringify(status, null, 2));
+        return 0;
+      }
+
+      console.log(renderUnityAttackFeedbackStatus(status));
+      return 0;
+    }
+
     if (options.rollbackGamePatchPath) {
       const snapshot = await inspectGameProject(options.rollbackGamePatchPath);
       const cameraArtifact = await buildExistingCameraFollowArtifact(snapshot);
@@ -1429,6 +1512,19 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       }
 
       console.log(renderUnityPlayerAttackRollbackResult(result));
+      return result.restored ? 0 : 1;
+    }
+
+    if (options.rollbackAttackFeedbackPath) {
+      const recovery = await inspectUnityPlaytestRecovery(options.rollbackAttackFeedbackPath);
+      const result = await rollbackUnityAttackFeedback(options.rollbackAttackFeedbackPath, buildPatchStatusRecoverySignal(recovery));
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return result.restored ? 0 : 1;
+      }
+
+      console.log(renderUnityAttackFeedbackRollbackResult(result));
       return result.restored ? 0 : 1;
     }
 

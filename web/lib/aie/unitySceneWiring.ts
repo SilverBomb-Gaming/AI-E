@@ -305,6 +305,66 @@ export type UnityPlayerAttackRollbackResult = {
   };
 };
 
+export type UnityAttackFeedbackStatus = {
+  scenePath: string;
+  sceneAbsolutePath: string;
+  basicEnemyPath: string;
+  playerAttackPath: string;
+  basicEnemyVisualFeedbackPresent: boolean;
+  playerAttackRangeGizmoPresent: boolean;
+  hitFlashPresent: boolean;
+  hitPulsePresent: boolean;
+  basicEnemyBackupExists: boolean;
+  playerAttackBackupExists: boolean;
+  safeToOpenUnityForCompileOrPlaytest: boolean;
+  details: string[];
+  safety: {
+    readOnly: true;
+    noUnityExecution: true;
+  };
+};
+
+export type UnityAttackFeedbackApplyResult = {
+  applied: boolean;
+  scenePath: string;
+  sceneAbsolutePath: string;
+  basicEnemyPath: string;
+  playerAttackPath: string;
+  basicEnemyBackupPath: string;
+  playerAttackBackupPath: string;
+  basicEnemyVisualFeedbackPresent: boolean;
+  playerAttackRangeGizmoPresent: boolean;
+  hitFlashPresent: boolean;
+  hitPulsePresent: boolean;
+  safeToOpenUnityForCompileOrPlaytest: boolean;
+  blockedReasons: string[];
+  safety: {
+    noUnityExecution: true;
+    backupCreated: boolean;
+    filesWritten: boolean;
+  };
+};
+
+export type UnityAttackFeedbackRollbackResult = {
+  restored: boolean;
+  scenePath: string;
+  sceneAbsolutePath: string;
+  basicEnemyPath: string;
+  playerAttackPath: string;
+  basicEnemyBackupPath: string;
+  playerAttackBackupPath: string;
+  basicEnemyVisualFeedbackPresent: boolean;
+  playerAttackRangeGizmoPresent: boolean;
+  hitFlashPresent: boolean;
+  hitPulsePresent: boolean;
+  safeToOpenUnityForCompileOrPlaytest: boolean;
+  blockedReasons: string[];
+  safety: {
+    noUnityExecution: true;
+    backupRetained: true;
+  };
+};
+
 type SceneBlock = {
   typeId: string;
   fileId: string;
@@ -412,13 +472,19 @@ const PLAYER_ATTACK_SCENE_BACKUP_TAG = "player-attack";
 const PLAYER_ATTACK_STATE_DIR = ".aie-state/player-attack";
 const PLAYER_ATTACK_CREATED_SCRIPT_MARKER = `${PLAYER_ATTACK_STATE_DIR}/PlayerAttack.cs.created`;
 const PLAYER_ATTACK_CREATED_META_MARKER = `${PLAYER_ATTACK_STATE_DIR}/PlayerAttack.cs.meta.created`;
+const ATTACK_FEEDBACK_BACKUP_TAG = "attack-feedback";
 const VISUAL_DEBUG_MATERIAL_DIR = "Assets/Materials";
 const VISUAL_DEBUG_MATERIAL_PATH = `${VISUAL_DEBUG_MATERIAL_DIR}/AIE_DebugFloor.mat`;
 const VISUAL_DEBUG_SCENE_BACKUP_TAG = "visual-debug-floor";
 const MAX_SAFE_UNITY_SCENE_FILE_ID = 2147483647;
+const MISSING_FILE_BACKUP_MARKER = "__AIE_ORIGINAL_STATE__:missing-file\n";
 
 function sceneBackupPathFor(sceneAbsolutePath: string, backupTag?: string): string {
   return backupTag ? `${sceneAbsolutePath}.aie-backup-${backupTag}` : `${sceneAbsolutePath}.aie-backup`;
+}
+
+function fileBackupPathFor(targetPath: string, backupTag?: string): string {
+  return backupTag ? `${targetPath}.aie-backup-${backupTag}` : `${targetPath}.aie-backup`;
 }
 
 async function fileExists(targetPath: string): Promise<boolean> {
@@ -436,6 +502,59 @@ function normalizeGuidSource(value: string): string {
 
 function buildDeterministicMetaGuid(projectRoot: string, targetFile: string): string {
   return createHash("sha256").update(normalizeGuidSource(path.join(projectRoot, targetFile))).digest("hex").slice(0, 32);
+}
+
+async function ensureScriptMeta(projectRoot: string, targetFile: string): Promise<string> {
+  const scriptAbsolutePath = path.join(projectRoot, targetFile);
+  if (!(await fileExists(scriptAbsolutePath))) {
+    throw new Error(`Script does not exist: ${targetFile}`);
+  }
+
+  const metaAbsolutePath = path.join(projectRoot, `${targetFile}.meta`);
+  const existingGuid = await readGuidFromMeta(metaAbsolutePath);
+  if (existingGuid) {
+    return existingGuid;
+  }
+
+  const guid = buildDeterministicMetaGuid(projectRoot, targetFile);
+  await writeFile(metaAbsolutePath, `fileFormatVersion: 2\nguid: ${guid}\n`, "utf-8");
+  return guid;
+}
+
+async function ensureFileBackup(targetPath: string, backupTag: string): Promise<string> {
+  const backupPath = fileBackupPathFor(targetPath, backupTag);
+  if (await fileExists(backupPath)) {
+    return backupPath;
+  }
+
+  if (await fileExists(targetPath)) {
+    await copyFile(targetPath, backupPath);
+  } else {
+    await writeFile(backupPath, MISSING_FILE_BACKUP_MARKER, "utf-8");
+  }
+
+  return backupPath;
+}
+
+async function restoreFileBackup(targetPath: string, backupPath: string): Promise<boolean> {
+  if (!(await fileExists(backupPath))) {
+    return false;
+  }
+
+  const backupSource = await readFile(backupPath, "utf-8");
+  if (backupSource === MISSING_FILE_BACKUP_MARKER) {
+    if (await fileExists(targetPath)) {
+      await import("node:fs/promises").then(({ unlink }) => unlink(targetPath));
+    }
+    const metaPath = `${targetPath}.meta`;
+    if (await fileExists(metaPath)) {
+      await import("node:fs/promises").then(({ unlink }) => unlink(metaPath));
+    }
+    return true;
+  }
+
+  await writeFile(targetPath, backupSource, "utf-8");
+  return true;
 }
 
 async function ensureCameraFollowMeta(projectRoot: string): Promise<string> {
@@ -571,15 +690,32 @@ function buildBasicEnemySource(): string {
     "    {",
     "        [SerializeField] private float rotationSpeedDegrees = 24f;",
     "        [SerializeField] private bool debugSpawn = true;",
-    "        [SerializeField] private float hitPulseScale = 1.12f;",
-    "        [SerializeField] private float hitPulseDuration = 0.12f;",
+    "        [SerializeField] private Color hitFlashColor = new Color(1f, 0.2f, 0.1f, 1f);",
+    "        [SerializeField] private float hitFlashDuration = 0.28f;",
+    "        [SerializeField] private float hitPulseScale = 1.35f;",
+    "        [SerializeField] private float hitPulseDuration = 0.28f;",
     "",
+    "        private Renderer cachedRenderer;",
+    "        private Material runtimeMaterialInstance;",
+    "        private bool hasColorProperty;",
+    "        private Color baseColor = Color.white;",
     "        private Vector3 baseScale;",
-    "        private Coroutine hitPulseRoutine;",
+    "        private Coroutine hitFeedbackRoutine;",
     "",
     "        private void Awake()",
     "        {",
     "            baseScale = transform.localScale;",
+    "            cachedRenderer = GetComponent<Renderer>();",
+    "",
+    "            if (cachedRenderer != null)",
+    "            {",
+    "                runtimeMaterialInstance = cachedRenderer.material;",
+    "                hasColorProperty = runtimeMaterialInstance != null && runtimeMaterialInstance.HasProperty(\"_Color\");",
+    "                if (hasColorProperty)",
+    "                {",
+    "                    baseColor = runtimeMaterialInstance.color;",
+    "                }",
+    "            }",
     "        }",
     "",
     "        private void Start()",
@@ -604,17 +740,18 @@ function buildBasicEnemySource(): string {
     "        {",
     "            Debug.Log(\"Enemy hit\", this);",
     "",
-    "            if (hitPulseRoutine != null)",
+    "            if (hitFeedbackRoutine != null)",
     "            {",
-    "                StopCoroutine(hitPulseRoutine);",
+    "                StopCoroutine(hitFeedbackRoutine);",
     "            }",
     "",
-    "            hitPulseRoutine = StartCoroutine(PlayHitPulse());",
+    "            ResetVisualState();",
+    "            hitFeedbackRoutine = StartCoroutine(PlayHitFeedback());",
     "        }",
     "",
-    "        private System.Collections.IEnumerator PlayHitPulse()",
+    "        private System.Collections.IEnumerator PlayHitFeedback()",
     "        {",
-    "            float duration = Mathf.Max(0.01f, hitPulseDuration);",
+    "            float duration = Mathf.Max(0.05f, Mathf.Max(hitFlashDuration, hitPulseDuration));",
     "            Vector3 pulseScale = baseScale * Mathf.Max(1f, hitPulseScale);",
     "            float elapsed = 0f;",
     "",
@@ -622,13 +759,28 @@ function buildBasicEnemySource(): string {
     "            {",
     "                elapsed += Time.deltaTime;",
     "                float progress = Mathf.Clamp01(elapsed / duration);",
-    "                float blend = progress < 0.5f ? progress / 0.5f : 1f - ((progress - 0.5f) / 0.5f);",
+    "                float blend = Mathf.Sin(progress * Mathf.PI);",
     "                transform.localScale = Vector3.Lerp(baseScale, pulseScale, blend);",
+    "",
+    "                if (hasColorProperty && runtimeMaterialInstance != null)",
+    "                {",
+    "                    runtimeMaterialInstance.color = Color.Lerp(baseColor, hitFlashColor, blend);",
+    "                }",
     "                yield return null;",
     "            }",
     "",
+    "            ResetVisualState();",
+    "            hitFeedbackRoutine = null;",
+    "        }",
+    "",
+    "        private void ResetVisualState()",
+    "        {",
     "            transform.localScale = baseScale;",
-    "            hitPulseRoutine = null;",
+    "",
+    "            if (hasColorProperty && runtimeMaterialInstance != null)",
+    "            {",
+    "                runtimeMaterialInstance.color = baseColor;",
+    "            }",
     "        }",
     "    }",
     "}",
@@ -685,6 +837,7 @@ function buildPlayerAttackSource(): string {
     "        [SerializeField] private KeyCode attackKey = KeyCode.E;",
     "        [SerializeField] private bool allowMouse0 = true;",
     "        [SerializeField] private bool debugHits = true;",
+    "        [SerializeField] private bool debugAttackRange = true;",
     "",
     "        private float nextAttackTime;",
     "",
@@ -706,7 +859,7 @@ function buildPlayerAttackSource(): string {
     "",
     "        private void PerformAttack()",
     "        {",
-    "            Vector3 attackOrigin = transform.position + Vector3.up + (transform.forward * Mathf.Min(attackRange * 0.6f, 1.5f));",
+    "            Vector3 attackOrigin = GetAttackOrigin();",
     "            Collider[] hits = Physics.OverlapSphere(attackOrigin, attackRadius, ~0, QueryTriggerInteraction.Ignore);",
     "            HashSet<BasicEnemy> hitEnemies = new HashSet<BasicEnemy>();",
     "            bool hitAny = false;",
@@ -729,7 +882,8 @@ function buildPlayerAttackSource(): string {
     "",
     "                if (debugHits)",
     "                {",
-    "                    Debug.Log($\"[AIE Player Attack] Hit {enemy.name}.\", enemy);",
+    "                    float hitDistance = Vector3.Distance(transform.position, enemy.transform.position);",
+    "                    Debug.Log($\"[AIE Player Attack] Hit {enemy.name} at {hitDistance:F2}m.\", enemy);",
     "                }",
     "            }",
     "",
@@ -741,9 +895,19 @@ function buildPlayerAttackSource(): string {
     "",
     "        private void OnDrawGizmosSelected()",
     "        {",
-    "            Vector3 attackOrigin = transform.position + Vector3.up + (transform.forward * Mathf.Min(attackRange * 0.6f, 1.5f));",
-    "            Gizmos.color = Color.red;",
+    "            if (!debugAttackRange)",
+    "            {",
+    "                return;",
+    "            }",
+    "",
+    "            Vector3 attackOrigin = GetAttackOrigin();",
+    "            Gizmos.color = new Color(1f, 0.15f, 0.15f, 0.9f);",
     "            Gizmos.DrawWireSphere(attackOrigin, attackRadius);",
+    "        }",
+    "",
+    "        private Vector3 GetAttackOrigin()",
+    "        {",
+    "            return transform.position + Vector3.up + (transform.forward * Mathf.Min(attackRange * 0.6f, 1.5f));",
     "        }",
     "    }",
     "}",
@@ -2766,6 +2930,225 @@ export async function rollbackUnityPlayerAttack(projectPath: string, recoverySaf
   };
 }
 
+function inspectBasicEnemyFeedbackSource(source: string): {
+  basicEnemyVisualFeedbackPresent: boolean;
+  hitFlashPresent: boolean;
+  hitPulsePresent: boolean;
+} {
+  const hitFlashPresent = /hitFlashColor/.test(source)
+    && /hitFlashDuration/.test(source)
+    && /runtimeMaterialInstance = cachedRenderer\.material/.test(source)
+    && /runtimeMaterialInstance\.color = Color\.Lerp\(baseColor, hitFlashColor, blend\)/.test(source)
+    && /ResetVisualState\(\)/.test(source);
+  const hitPulsePresent = /hitPulseScale = 1\.35f/.test(source)
+    && /hitPulseDuration = 0\.28f/.test(source)
+    && /transform\.localScale = Vector3\.Lerp\(baseScale, pulseScale, blend\)/.test(source)
+    && /Mathf\.Sin\(progress \* Mathf\.PI\)/.test(source);
+
+  return {
+    basicEnemyVisualFeedbackPresent: /ReceiveHit\(\)/.test(source) && hitFlashPresent && hitPulsePresent,
+    hitFlashPresent,
+    hitPulsePresent,
+  };
+}
+
+function inspectPlayerAttackFeedbackSource(source: string): {
+  playerAttackRangeGizmoPresent: boolean;
+} {
+  return {
+    playerAttackRangeGizmoPresent: /debugAttackRange = true/.test(source)
+      && /if \(!debugAttackRange\)/.test(source)
+      && /Gizmos\.DrawWireSphere/.test(source)
+      && /GetAttackOrigin\(\)/.test(source),
+  };
+}
+
+export async function inspectUnityAttackFeedbackStatus(projectPath: string, recoverySafe: boolean): Promise<UnityAttackFeedbackStatus> {
+  const parsedScene = await parseProjectScene(projectPath);
+  const basicEnemyAbsolutePath = path.join(parsedScene.rootPath, BASIC_ENEMY_SCRIPT_PATH);
+  const playerAttackAbsolutePath = path.join(parsedScene.rootPath, PLAYER_ATTACK_SCRIPT_PATH);
+  const basicEnemyMetaExists = await fileExists(path.join(parsedScene.rootPath, BASIC_ENEMY_META_PATH));
+  const playerAttackMetaExists = await fileExists(path.join(parsedScene.rootPath, PLAYER_ATTACK_META_PATH));
+  const basicEnemyScriptExists = await fileExists(basicEnemyAbsolutePath);
+  const playerAttackScriptExists = await fileExists(playerAttackAbsolutePath);
+  const basicEnemyBackupPath = fileBackupPathFor(basicEnemyAbsolutePath, ATTACK_FEEDBACK_BACKUP_TAG);
+  const playerAttackBackupPath = fileBackupPathFor(playerAttackAbsolutePath, ATTACK_FEEDBACK_BACKUP_TAG);
+  const basicEnemyBackupExists = await fileExists(basicEnemyBackupPath);
+  const playerAttackBackupExists = await fileExists(playerAttackBackupPath);
+  const basicEnemyStatus = await inspectUnityBasicEnemyStatus(projectPath, recoverySafe);
+  const playerAttackStatus = await inspectUnityPlayerAttackStatus(projectPath, recoverySafe);
+  const details: string[] = [];
+
+  const basicEnemySource = basicEnemyScriptExists ? await readFile(basicEnemyAbsolutePath, "utf-8") : "";
+  const playerAttackSource = playerAttackScriptExists ? await readFile(playerAttackAbsolutePath, "utf-8") : "";
+  const basicEnemyFeedback = inspectBasicEnemyFeedbackSource(basicEnemySource);
+  const playerAttackFeedback = inspectPlayerAttackFeedbackSource(playerAttackSource);
+
+  if (!basicEnemyScriptExists) {
+    details.push(`Basic enemy script asset is missing: ${BASIC_ENEMY_SCRIPT_PATH}`);
+  }
+  if (!playerAttackScriptExists) {
+    details.push(`Player attack script asset is missing: ${PLAYER_ATTACK_SCRIPT_PATH}`);
+  }
+  if (basicEnemyScriptExists && !basicEnemyMetaExists) {
+    details.push(`Basic enemy script meta is missing: ${BASIC_ENEMY_META_PATH}`);
+  }
+  if (playerAttackScriptExists && !playerAttackMetaExists) {
+    details.push(`Player attack script meta is missing: ${PLAYER_ATTACK_META_PATH}`);
+  }
+
+  details.push(`BasicEnemy attached in scene: ${basicEnemyStatus.scriptAttached ? "YES" : "NO"}`);
+  details.push(`PlayerAttack attached in scene: ${playerAttackStatus.playerAttackAttached ? "YES" : "NO"}`);
+  details.push(`Attack key configured in scene: ${playerAttackStatus.attackKeyConfigured ? "YES" : "NO"}`);
+
+  const safeToOpenUnityForCompileOrPlaytest = recoverySafe
+    && basicEnemyScriptExists
+    && playerAttackScriptExists
+    && basicEnemyMetaExists
+    && playerAttackMetaExists
+    && basicEnemyStatus.scriptAttached
+    && playerAttackStatus.playerAttackAttached
+    && playerAttackStatus.attackKeyConfigured
+    && basicEnemyFeedback.basicEnemyVisualFeedbackPresent
+    && playerAttackFeedback.playerAttackRangeGizmoPresent;
+
+  return {
+    scenePath: parsedScene.scenePath,
+    sceneAbsolutePath: parsedScene.sceneAbsolutePath,
+    basicEnemyPath: BASIC_ENEMY_SCRIPT_PATH,
+    playerAttackPath: PLAYER_ATTACK_SCRIPT_PATH,
+    basicEnemyVisualFeedbackPresent: basicEnemyFeedback.basicEnemyVisualFeedbackPresent,
+    playerAttackRangeGizmoPresent: playerAttackFeedback.playerAttackRangeGizmoPresent,
+    hitFlashPresent: basicEnemyFeedback.hitFlashPresent,
+    hitPulsePresent: basicEnemyFeedback.hitPulsePresent,
+    basicEnemyBackupExists,
+    playerAttackBackupExists,
+    safeToOpenUnityForCompileOrPlaytest,
+    details,
+    safety: {
+      readOnly: true,
+      noUnityExecution: true,
+    },
+  };
+}
+
+export async function applyUnityAttackFeedback(projectPath: string, recoverySafe: boolean): Promise<UnityAttackFeedbackApplyResult> {
+  const parsedScene = await parseProjectScene(projectPath);
+  const basicEnemyAbsolutePath = path.join(parsedScene.rootPath, BASIC_ENEMY_SCRIPT_PATH);
+  const playerAttackAbsolutePath = path.join(parsedScene.rootPath, PLAYER_ATTACK_SCRIPT_PATH);
+  const blockedReasons: string[] = [];
+
+  if (!recoverySafe) {
+    blockedReasons.push("Unity recovery guard did not report a safe state for attack feedback patching.");
+  }
+
+  if (blockedReasons.length > 0) {
+    return {
+      applied: false,
+      scenePath: parsedScene.scenePath,
+      sceneAbsolutePath: parsedScene.sceneAbsolutePath,
+      basicEnemyPath: BASIC_ENEMY_SCRIPT_PATH,
+      playerAttackPath: PLAYER_ATTACK_SCRIPT_PATH,
+      basicEnemyBackupPath: fileBackupPathFor(basicEnemyAbsolutePath, ATTACK_FEEDBACK_BACKUP_TAG),
+      playerAttackBackupPath: fileBackupPathFor(playerAttackAbsolutePath, ATTACK_FEEDBACK_BACKUP_TAG),
+      basicEnemyVisualFeedbackPresent: false,
+      playerAttackRangeGizmoPresent: false,
+      hitFlashPresent: false,
+      hitPulsePresent: false,
+      safeToOpenUnityForCompileOrPlaytest: false,
+      blockedReasons,
+      safety: {
+        noUnityExecution: true,
+        backupCreated: false,
+        filesWritten: false,
+      },
+    };
+  }
+
+  const basicEnemyBackupPath = await ensureFileBackup(basicEnemyAbsolutePath, ATTACK_FEEDBACK_BACKUP_TAG);
+  const playerAttackBackupPath = await ensureFileBackup(playerAttackAbsolutePath, ATTACK_FEEDBACK_BACKUP_TAG);
+  await writeFile(basicEnemyAbsolutePath, buildBasicEnemySource(), "utf-8");
+  await writeFile(playerAttackAbsolutePath, buildPlayerAttackSource(), "utf-8");
+  await ensureScriptMeta(parsedScene.rootPath, BASIC_ENEMY_SCRIPT_PATH);
+  await ensureScriptMeta(parsedScene.rootPath, PLAYER_ATTACK_SCRIPT_PATH);
+
+  const status = await inspectUnityAttackFeedbackStatus(projectPath, recoverySafe);
+  return {
+    applied: status.safeToOpenUnityForCompileOrPlaytest,
+    scenePath: status.scenePath,
+    sceneAbsolutePath: status.sceneAbsolutePath,
+    basicEnemyPath: status.basicEnemyPath,
+    playerAttackPath: status.playerAttackPath,
+    basicEnemyBackupPath,
+    playerAttackBackupPath,
+    basicEnemyVisualFeedbackPresent: status.basicEnemyVisualFeedbackPresent,
+    playerAttackRangeGizmoPresent: status.playerAttackRangeGizmoPresent,
+    hitFlashPresent: status.hitFlashPresent,
+    hitPulsePresent: status.hitPulsePresent,
+    safeToOpenUnityForCompileOrPlaytest: status.safeToOpenUnityForCompileOrPlaytest,
+    blockedReasons: status.safeToOpenUnityForCompileOrPlaytest ? [] : ["Attack feedback files were written but the expected feedback markers were not all detected afterward."],
+    safety: {
+      noUnityExecution: true,
+      backupCreated: (await fileExists(basicEnemyBackupPath)) && (await fileExists(playerAttackBackupPath)),
+      filesWritten: true,
+    },
+  };
+}
+
+export async function rollbackUnityAttackFeedback(projectPath: string, recoverySafe: boolean): Promise<UnityAttackFeedbackRollbackResult> {
+  const parsedScene = await parseProjectScene(projectPath);
+  const basicEnemyAbsolutePath = path.join(parsedScene.rootPath, BASIC_ENEMY_SCRIPT_PATH);
+  const playerAttackAbsolutePath = path.join(parsedScene.rootPath, PLAYER_ATTACK_SCRIPT_PATH);
+  const basicEnemyBackupPath = fileBackupPathFor(basicEnemyAbsolutePath, ATTACK_FEEDBACK_BACKUP_TAG);
+  const playerAttackBackupPath = fileBackupPathFor(playerAttackAbsolutePath, ATTACK_FEEDBACK_BACKUP_TAG);
+
+  const basicEnemyRestored = await restoreFileBackup(basicEnemyAbsolutePath, basicEnemyBackupPath);
+  const playerAttackRestored = await restoreFileBackup(playerAttackAbsolutePath, playerAttackBackupPath);
+  if (!basicEnemyRestored || !playerAttackRestored) {
+    const status = await inspectUnityAttackFeedbackStatus(projectPath, recoverySafe);
+    return {
+      restored: false,
+      scenePath: status.scenePath,
+      sceneAbsolutePath: status.sceneAbsolutePath,
+      basicEnemyPath: status.basicEnemyPath,
+      playerAttackPath: status.playerAttackPath,
+      basicEnemyBackupPath,
+      playerAttackBackupPath,
+      basicEnemyVisualFeedbackPresent: status.basicEnemyVisualFeedbackPresent,
+      playerAttackRangeGizmoPresent: status.playerAttackRangeGizmoPresent,
+      hitFlashPresent: status.hitFlashPresent,
+      hitPulsePresent: status.hitPulsePresent,
+      safeToOpenUnityForCompileOrPlaytest: status.safeToOpenUnityForCompileOrPlaytest,
+      blockedReasons: ["One or more attack feedback backups did not exist, so rollback could not proceed."],
+      safety: {
+        noUnityExecution: true,
+        backupRetained: true,
+      },
+    };
+  }
+
+  const status = await inspectUnityAttackFeedbackStatus(projectPath, recoverySafe);
+  return {
+    restored: true,
+    scenePath: status.scenePath,
+    sceneAbsolutePath: status.sceneAbsolutePath,
+    basicEnemyPath: status.basicEnemyPath,
+    playerAttackPath: status.playerAttackPath,
+    basicEnemyBackupPath,
+    playerAttackBackupPath,
+    basicEnemyVisualFeedbackPresent: status.basicEnemyVisualFeedbackPresent,
+    playerAttackRangeGizmoPresent: status.playerAttackRangeGizmoPresent,
+    hitFlashPresent: status.hitFlashPresent,
+    hitPulsePresent: status.hitPulsePresent,
+    safeToOpenUnityForCompileOrPlaytest: status.safeToOpenUnityForCompileOrPlaytest,
+    blockedReasons: [],
+    safety: {
+      noUnityExecution: true,
+      backupRetained: true,
+    },
+  };
+}
+
 export async function inspectUnitySceneWiring(projectPath: string): Promise<UnitySceneWiringSnapshot> {
   const parsedScene = await parseProjectScene(projectPath);
   const mainCameraFound = parsedScene.mainCamera !== null;
@@ -3632,6 +4015,89 @@ export function renderUnityPlayerAttackRollbackResult(result: UnityPlayerAttackR
     `PlayerAttack.cs Exists: ${result.playerAttackScriptExists ? "YES" : "NO"}`,
     `PlayerAttack Attached: ${result.playerAttackAttached ? "YES" : "NO"}`,
     `Attack Key Configured: ${result.attackKeyConfigured ? "YES" : "NO"}`,
+    `Safe To Open Unity/Playtest: ${result.safeToOpenUnityForCompileOrPlaytest ? "YES" : "NO"}`,
+  ].join("\n");
+}
+
+export function renderUnityAttackFeedbackStatus(status: UnityAttackFeedbackStatus): string {
+  return [
+    "UNITY ATTACK FEEDBACK STATUS",
+    "",
+    `Scene: ${status.scenePath}`,
+    `Scene Path: ${status.sceneAbsolutePath}`,
+    `BasicEnemy Visual Feedback Present: ${status.basicEnemyVisualFeedbackPresent ? "YES" : "NO"}`,
+    `PlayerAttack Range Gizmo Present: ${status.playerAttackRangeGizmoPresent ? "YES" : "NO"}`,
+    `Hit Flash Present: ${status.hitFlashPresent ? "YES" : "NO"}`,
+    `Hit Pulse Present: ${status.hitPulsePresent ? "YES" : "NO"}`,
+    `BasicEnemy Backup Exists: ${status.basicEnemyBackupExists ? "YES" : "NO"}`,
+    `PlayerAttack Backup Exists: ${status.playerAttackBackupExists ? "YES" : "NO"}`,
+    `Safe To Open Unity/Playtest: ${status.safeToOpenUnityForCompileOrPlaytest ? "YES" : "NO"}`,
+    "",
+    "Details:",
+    ...status.details.map((detail, index) => `${index + 1}. ${detail}`),
+  ].join("\n");
+}
+
+export function renderUnityAttackFeedbackApplyResult(result: UnityAttackFeedbackApplyResult): string {
+  if (!result.applied) {
+    return [
+      "UNITY ATTACK FEEDBACK APPLY BLOCKED",
+      "",
+      `Scene: ${result.scenePath}`,
+      `Scene Path: ${result.sceneAbsolutePath}`,
+      `BasicEnemy Path: ${result.basicEnemyPath}`,
+      `PlayerAttack Path: ${result.playerAttackPath}`,
+      `BasicEnemy Backup Path: ${result.basicEnemyBackupPath}`,
+      `PlayerAttack Backup Path: ${result.playerAttackBackupPath}`,
+      "",
+      "Blocked Reasons:",
+      ...result.blockedReasons.map((reason, index) => `${index + 1}. ${reason}`),
+    ].join("\n");
+  }
+
+  return [
+    "UNITY ATTACK FEEDBACK APPLY COMPLETE",
+    "",
+    `Scene: ${result.scenePath}`,
+    `Scene Path: ${result.sceneAbsolutePath}`,
+    `BasicEnemy Path: ${result.basicEnemyPath}`,
+    `PlayerAttack Path: ${result.playerAttackPath}`,
+    `BasicEnemy Backup Path: ${result.basicEnemyBackupPath}`,
+    `PlayerAttack Backup Path: ${result.playerAttackBackupPath}`,
+    `BasicEnemy Visual Feedback Present: ${result.basicEnemyVisualFeedbackPresent ? "YES" : "NO"}`,
+    `PlayerAttack Range Gizmo Present: ${result.playerAttackRangeGizmoPresent ? "YES" : "NO"}`,
+    `Hit Flash Present: ${result.hitFlashPresent ? "YES" : "NO"}`,
+    `Hit Pulse Present: ${result.hitPulsePresent ? "YES" : "NO"}`,
+    `Safe To Open Unity/Playtest: ${result.safeToOpenUnityForCompileOrPlaytest ? "YES" : "NO"}`,
+  ].join("\n");
+}
+
+export function renderUnityAttackFeedbackRollbackResult(result: UnityAttackFeedbackRollbackResult): string {
+  if (!result.restored) {
+    return [
+      "UNITY ATTACK FEEDBACK ROLLBACK BLOCKED",
+      "",
+      `Scene: ${result.scenePath}`,
+      `Scene Path: ${result.sceneAbsolutePath}`,
+      `BasicEnemy Backup Path: ${result.basicEnemyBackupPath}`,
+      `PlayerAttack Backup Path: ${result.playerAttackBackupPath}`,
+      "",
+      "Blocked Reasons:",
+      ...result.blockedReasons.map((reason, index) => `${index + 1}. ${reason}`),
+    ].join("\n");
+  }
+
+  return [
+    "UNITY ATTACK FEEDBACK ROLLBACK COMPLETE",
+    "",
+    `Scene: ${result.scenePath}`,
+    `Scene Path: ${result.sceneAbsolutePath}`,
+    `BasicEnemy Backup Path: ${result.basicEnemyBackupPath}`,
+    `PlayerAttack Backup Path: ${result.playerAttackBackupPath}`,
+    `BasicEnemy Visual Feedback Present: ${result.basicEnemyVisualFeedbackPresent ? "YES" : "NO"}`,
+    `PlayerAttack Range Gizmo Present: ${result.playerAttackRangeGizmoPresent ? "YES" : "NO"}`,
+    `Hit Flash Present: ${result.hitFlashPresent ? "YES" : "NO"}`,
+    `Hit Pulse Present: ${result.hitPulsePresent ? "YES" : "NO"}`,
     `Safe To Open Unity/Playtest: ${result.safeToOpenUnityForCompileOrPlaytest ? "YES" : "NO"}`,
   ].join("\n");
 }
