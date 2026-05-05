@@ -350,10 +350,12 @@ test("successful read-only bridge returns real bridge validation result", async 
   assert.equal(result.post_playtest_decision?.status, "blocked");
   assert.equal(result.post_playtest_fix_plan?.status, "blocked");
   assert.equal(result.post_playtest_execution_plan?.status, "execution_blocked");
+  assert.equal(result.post_playtest_execution_result?.status, "blocked");
   assert.match(result.delivery_summary, /Post-playtest learning blocked/i);
   assert.match(result.delivery_summary, /Post-playtest decision status: blocked/i);
   assert.match(result.delivery_summary, /Post-playtest fix plan status: blocked/i);
   assert.match(result.delivery_summary, /Post-playtest execution plan status: execution_blocked/i);
+  assert.match(result.delivery_summary, /Post-playtest execution result status: blocked/i);
 });
 
 test("successful reviewed Unity playtest records a runtime-auto outcome when feature context is provided", async () => {
@@ -399,14 +401,17 @@ test("successful reviewed Unity playtest records a runtime-auto outcome when fea
     assert.equal(result.post_playtest_decision?.status, "ready_for_next_feature");
     assert.equal(result.post_playtest_fix_plan?.status, "no_fix_needed");
     assert.equal(result.post_playtest_execution_plan?.status, "no_action_needed");
+    assert.equal(result.post_playtest_execution_result?.status, "no_action_needed");
     assert.match(result.delivery_summary, /Post-playtest learning recorded a runtime-auto outcome/i);
     assert.match(result.delivery_summary, /Post-playtest decision status: ready_for_next_feature/i);
     assert.match(result.delivery_summary, /Post-playtest fix plan status: no_fix_needed/i);
     assert.match(result.delivery_summary, /Post-playtest execution plan status: no_action_needed/i);
+    assert.match(result.delivery_summary, /Post-playtest execution result status: no_action_needed/i);
     assert.ok(result.delivery_package?.validation_results.some((entry) => /Post-playtest learning status: recorded/i.test(entry)));
     assert.ok(result.delivery_package?.validation_results.some((entry) => /Post-playtest decision recommendation: Mark the feature stable and select the next validation target\./i.test(entry)));
     assert.ok(result.delivery_package?.validation_results.some((entry) => /Post-playtest fix step: Mark current feature stable and select next validation target\./i.test(entry)));
     assert.ok(result.delivery_package?.validation_results.some((entry) => /Post-playtest execution plan status: no_action_needed/i.test(entry)));
+    assert.ok(result.delivery_package?.validation_results.some((entry) => /Post-playtest execution result status: no_action_needed/i.test(entry)));
     assert.equal(await readOutcomeCount(harness.tempRoot), 1);
   } finally {
     await harness.cleanup();
@@ -459,10 +464,12 @@ test("successful reviewed Unity playtest does not append a duplicate runtime-aut
     assert.equal(first.post_playtest_decision?.status, "ready_for_next_feature");
     assert.equal(first.post_playtest_fix_plan?.status, "no_fix_needed");
     assert.equal(first.post_playtest_execution_plan?.status, "no_action_needed");
+    assert.equal(first.post_playtest_execution_result?.status, "no_action_needed");
     assert.equal(second.post_playtest_learning?.status, "duplicate");
     assert.equal(second.post_playtest_decision?.status, "escalation_recommended");
     assert.equal(second.post_playtest_fix_plan?.status, "needs_operator_review");
     assert.equal(second.post_playtest_execution_plan?.status, "operator_approval_required");
+    assert.equal(second.post_playtest_execution_result?.status, "operator_approval_required");
     assert.match(second.delivery_summary, /skipped duplicate outcome recording/i);
     assert.equal(await readOutcomeCount(harness.tempRoot), 1);
   } finally {
@@ -512,11 +519,13 @@ test("successful reviewed Unity playtest surfaces a blocked learning message whe
     assert.equal(result.post_playtest_decision?.status, "blocked");
     assert.equal(result.post_playtest_fix_plan?.status, "blocked");
     assert.equal(result.post_playtest_execution_plan?.status, "execution_blocked");
+    assert.equal(result.post_playtest_execution_result?.status, "blocked");
     assert.match(result.delivery_summary, /Post-playtest learning blocked/i);
     assert.ok(result.delivery_package?.validation_results.some((entry) => /Post-playtest learning reason: --feature is required/i.test(entry)));
     assert.ok(result.delivery_package?.validation_results.some((entry) => /Post-playtest decision status: blocked/i.test(entry)));
     assert.ok(result.delivery_package?.validation_results.some((entry) => /Post-playtest fix plan status: blocked/i.test(entry)));
     assert.ok(result.delivery_package?.validation_results.some((entry) => /Post-playtest execution plan status: execution_blocked/i.test(entry)));
+    assert.ok(result.delivery_package?.validation_results.some((entry) => /Post-playtest execution result status: blocked/i.test(entry)));
   } finally {
     await harness.cleanup();
   }
@@ -569,11 +578,13 @@ test("successful reviewed Unity playtest recommends retry when the recorded runt
     assert.equal(result.post_playtest_decision?.status, "retry_recommended");
     assert.equal(result.post_playtest_fix_plan?.status, "fix_plan_ready");
     assert.equal(result.post_playtest_execution_plan?.status, "execution_ready");
+    assert.equal(result.post_playtest_execution_result?.status, "operator_approval_required");
     assert.ok(result.delivery_package?.validation_results.some((entry) => /Post-playtest decision recommendation: Review failure evidence, apply the smallest safe fix, then rerun the reviewed Unity playtest\./i.test(entry)));
     assert.ok(result.delivery_package?.validation_results.some((entry) => /Post-playtest fix step: Inspect failure evidence from the reviewed Unity playtest\./i.test(entry)));
     assert.ok(result.delivery_package?.validation_results.some((entry) => /Post-playtest execution max changed files: 2/i.test(entry)));
     assert.ok(result.delivery_package?.validation_results.some((entry) => /Post-playtest execution max retry count: 1/i.test(entry)));
     assert.ok(result.delivery_package?.validation_results.some((entry) => /Post-playtest execution action: Inspect failure evidence from the reviewed Unity playtest\./i.test(entry)));
+    assert.ok(result.delivery_package?.validation_results.some((entry) => /Post-playtest execution result status: operator_approval_required/i.test(entry)));
   } finally {
     await harness.cleanup();
   }

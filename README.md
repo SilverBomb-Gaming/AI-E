@@ -1192,16 +1192,23 @@ Reviewed playtest integration:
 - if feature context is missing, the reviewed validation result stays successful but includes a clear `Post-playtest learning blocked` message so the operator can use the manual fallback command
 - after that automatic learning step, AI-E now runs a bounded post-playtest decision engine that recommends the next safe action without executing it
 - after the decision step, AI-E now produces a bounded safe fix plan when the decision recommends retry or operator review
-- after the fix-plan step, AI-E now prepares a controlled execution envelope without applying edits, rerunning Unity, or committing changes automatically
+- after the fix-plan step, AI-E now prepares a controlled execution envelope and can run a guarded post-playtest executor that applies only the smallest approved fix, reruns reviewed Unity validation, and feeds the result back into learning
 - recorded `pass` outcomes recommend stabilizing the feature and selecting the next validation target
 - recorded `fail` outcomes recommend the smallest safe fix followed by another reviewed playtest
 - blocked, duplicate, partial, or otherwise ambiguous outcomes escalate back to operator inspection instead of advancing automatically
 
-Current supervised loop:
+Current loop:
 
-- playtest -> learn -> decide -> plan -> prepare controlled act
+- playtest -> learn -> decide -> plan -> act -> validate -> learn
 
-Act is NOT 100% complete yet.
+ACT LAYER reaches 100% only if all are true:
+
+- approved guarded fix is applied
+- retry limit is enforced
+- rollback works
+- Unity validation reruns
+- result feeds back into learning
+- no infinite loops are possible
 
 Duplicate protection:
 

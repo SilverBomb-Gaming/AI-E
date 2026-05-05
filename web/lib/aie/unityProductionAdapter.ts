@@ -16,6 +16,11 @@ import {
   type PostPlaytestExecutionPlanResult,
 } from "./postPlaytestExecutionEngine";
 import {
+  executePostPlaytestFix,
+  type PostPlaytestExecutionCheckResult,
+  type PostPlaytestExecutionResult,
+} from "./postPlaytestExecutor";
+import {
   buildPostPlaytestFixPlan,
   type PostPlaytestFixPlanResult,
 } from "./postPlaytestFixPlanner";
@@ -33,6 +38,7 @@ import {
   createConfiguredUnityMutationRuntimeBridge,
   type UnityMutationRuntimeBridge,
 } from "./unityMutationRuntimeBridge";
+import type { ControlledExecutionDiff } from "./controlledPatchExecutor";
 
 export type UnityProductionAdapterAction =
   | "scene_plan_review"
@@ -87,6 +93,17 @@ export type UnityValidationExecutionOptions = {
     feature?: string | null;
     projectPath?: string | null;
     runtimeLogPath?: string | null;
+  };
+  post_playtest_executor?: {
+    operator_approval?: boolean;
+    retry_count?: number;
+    file_changes?: ControlledExecutionDiff[];
+    post_execution_check?: () => Promise<PostPlaytestExecutionCheckResult>;
+    followup_learning?: {
+      feature?: string | null;
+      projectPath?: string | null;
+      runtimeLogPath?: string | null;
+    };
   };
 };
 
@@ -4247,6 +4264,7 @@ function buildBlockedValidationResult(
     post_playtest_decision: null,
     post_playtest_fix_plan: null,
     post_playtest_execution_plan: null,
+    post_playtest_execution_result: null,
     mutating: false,
   };
 }
@@ -4377,18 +4395,94 @@ function buildPostPlaytestExecutionPlanValidationLines(result: PostPlaytestExecu
   ];
 }
 
-async function runPostPlaytestLearningHook(
-  options: UnityValidationExecutionOptions | undefined,
+function buildPostPlaytestExecutionResultSummary(result: PostPlaytestExecutionResult | null): string | null {
+  if (!result) {
+    return null;
+  }
+
+  return `Post-playtest execution result status: ${result.status}. ${result.reason}`;
+}
+
+function buildPostPlaytestExecutionResultValidationLines(result: PostPlaytestExecutionResult | null): string[] {
+  if (!result) {
+    return [];
+  }
+
+  return [
+    `Post-playtest execution result status: ${result.status}`,
+    `Post-playtest execution result reason: ${result.reason}`,
+    `Post-playtest execution result confidence: ${result.confidence}`,
+    `Post-playtest execution retry count: ${result.retry_count}`,
+    `Post-playtest execution max retry count: ${result.max_retry_count}`,
+    `Post-playtest execution rollback available: ${result.rollback_available ? "yes" : "no"}`,
+    `Post-playtest execution validation rerun requested: ${result.validation_rerun_requested ? "yes" : "no"}`,
+    `Post-playtest execution validation rerun completed: ${result.validation_rerun_completed ? "yes" : "no"}`,
+    `Post-playtest execution follow-up learning required: ${result.followup_learning_required ? "yes" : "no"}`,
+    ...(result.source_feature ? [`Post-playtest execution result feature: ${result.source_feature}`] : []),
+    ...(result.source_outcome_session_key
+      ? [`Post-playtest execution result session key: ${result.source_outcome_session_key}`]
+      : []),
+    ...result.modified_files.map((filePath) => `Post-playtest execution modified file: ${filePath}`),
+  ];
+}
+
+type PostPlaytestFollowupLoopResult = {
+  learning: AutoRecordOutcomeResult;
+  decision: PostPlaytestDecisionResult;
+  fixPlan: PostPlaytestFixPlanResult;
+  executionPlan: PostPlaytestExecutionPlanResult;
+};
+
+function buildPostPlaytestFollowupSummary(result: PostPlaytestFollowupLoopResult | null): string | null {
+  if (!result) {
+    return null;
+  }
+
+  return [
+    `Post-playtest follow-up learning status: ${result.learning.status}.`,
+    `Post-playtest follow-up decision status: ${result.decision.status}.`,
+    `Post-playtest follow-up fix plan status: ${result.fixPlan.status}.`,
+    `Post-playtest follow-up execution plan status: ${result.executionPlan.status}.`,
+  ].join(" ");
+}
+
+function buildPostPlaytestFollowupValidationLines(result: PostPlaytestFollowupLoopResult | null): string[] {
+  if (!result) {
+    return [];
+  }
+
+  return [
+    `Post-playtest follow-up learning status: ${result.learning.status}`,
+    `Post-playtest follow-up decision status: ${result.decision.status}`,
+    `Post-playtest follow-up fix plan status: ${result.fixPlan.status}`,
+    `Post-playtest follow-up execution plan status: ${result.executionPlan.status}`,
+  ];
+}
+
+async function runOutcomeLearningConfig(
+  config:
+    | {
+      feature?: string | null;
+      projectPath?: string | null;
+      runtimeLogPath?: string | null;
+    }
+    | undefined,
 ): Promise<AutoRecordOutcomeResult> {
-  const projectPath = options?.post_playtest_learning?.projectPath?.trim()
+  const projectPath = config?.projectPath?.trim()
     || process.env.AIE_UNITY_PROJECT_PATH?.trim()
     || "";
 
   return autoRecordOutcomeForFeature(
     projectPath,
-    options?.post_playtest_learning?.feature ?? undefined,
-    options?.post_playtest_learning?.runtimeLogPath ?? undefined,
+    config?.feature ?? undefined,
+    config?.runtimeLogPath ?? undefined,
   );
+}
+
+async function runPostPlaytestLearningHook(
+  options: UnityValidationExecutionOptions | undefined,
+): Promise<AutoRecordOutcomeResult> {
+  return runOutcomeLearningConfig(options?.post_playtest_learning);
 }
 
 function createUnityValidationEvidencePackages(
@@ -4411,6 +4505,7 @@ function createUnityValidationEvidencePackages(
     | "post_playtest_decision"
     | "post_playtest_fix_plan"
     | "post_playtest_execution_plan"
+    | "post_playtest_execution_result"
   >,
 ): {
   reviewPackage: AutonomousReviewPackage;
@@ -4443,6 +4538,7 @@ function createUnityValidationEvidencePackages(
       ...buildPostPlaytestDecisionValidationLines(result.post_playtest_decision),
       ...buildPostPlaytestFixPlanValidationLines(result.post_playtest_fix_plan),
       ...buildPostPlaytestExecutionPlanValidationLines(result.post_playtest_execution_plan),
+      ...buildPostPlaytestExecutionResultValidationLines(result.post_playtest_execution_result),
     ],
     risks: ["No Unity or project mutation path enabled."],
     recommended_decision: "approve",
@@ -4475,6 +4571,7 @@ function createUnityValidationEvidencePackages(
       ...buildPostPlaytestDecisionValidationLines(result.post_playtest_decision),
       ...buildPostPlaytestFixPlanValidationLines(result.post_playtest_fix_plan),
       ...buildPostPlaytestExecutionPlanValidationLines(result.post_playtest_execution_plan),
+      ...buildPostPlaytestExecutionResultValidationLines(result.post_playtest_execution_result),
       ...(result.raw_evidence_summary ? [`Raw evidence summary: ${result.raw_evidence_summary}`] : []),
       ...result.validation_checklist,
     ],
@@ -4642,6 +4739,8 @@ export async function executeReviewedUnityValidation(
       post_playtest_decision: null,
       post_playtest_fix_plan: null,
       post_playtest_execution_plan: null,
+      post_playtest_execution_result: null,
+      post_playtest_execution_result: null,
       mutating: false,
     };
 
@@ -4662,6 +4761,60 @@ export async function executeReviewedUnityValidation(
   const postPlaytestFixPlanSummary = buildPostPlaytestFixPlanSummary(postPlaytestFixPlan);
   const postPlaytestExecutionPlan = buildPostPlaytestExecutionPlan(postPlaytestFixPlan);
   const postPlaytestExecutionPlanSummary = buildPostPlaytestExecutionPlanSummary(postPlaytestExecutionPlan);
+  const postPlaytestExecutionResult = await executePostPlaytestFix({
+    execution_plan: postPlaytestExecutionPlan,
+    operator_approval: options?.post_playtest_executor?.operator_approval === true,
+    retry_count: options?.post_playtest_executor?.retry_count ?? 0,
+    file_changes: options?.post_playtest_executor?.file_changes ?? [],
+    post_execution_check: options?.post_playtest_executor?.post_execution_check,
+    rerun_validation: async () => {
+      const rerunResult = await runtimeBridge.probeValidation({
+        request_id: `${input.adapter_request_id}-post-playtest-rerun`,
+        requested_at: new Date().toISOString(),
+        scene_name_hint: extractSceneNameHint(input.planning_packet),
+      });
+
+      if (rerunResult.bridge_status === "bridge_unavailable") {
+        return {
+          completed: false,
+          succeeded: false,
+          reason: rerunResult.reason,
+        };
+      }
+
+      const rerunPassed = rerunResult.scene_validation_status === "checked_clean"
+        && (rerunResult.missing_script_count ?? 0) === 0
+        && (rerunResult.console_error_count ?? 0) === 0;
+
+      return {
+        completed: true,
+        succeeded: rerunPassed,
+        reason: rerunPassed
+          ? "The reviewed Unity validation rerun completed cleanly after the guarded fix."
+          : rerunResult.summary,
+      };
+    },
+  });
+  const postPlaytestExecutionResultSummary = buildPostPlaytestExecutionResultSummary(postPlaytestExecutionResult);
+  const postPlaytestFollowupLoop = postPlaytestExecutionResult.followup_learning_required
+    ? (() => null as PostPlaytestFollowupLoopResult | null)()
+    : null;
+  let resolvedPostPlaytestFollowupLoop: PostPlaytestFollowupLoopResult | null = postPlaytestFollowupLoop;
+
+  if (postPlaytestExecutionResult.followup_learning_required && options?.post_playtest_executor?.followup_learning) {
+    const followupLearning = await runOutcomeLearningConfig(options.post_playtest_executor.followup_learning);
+    const followupDecision = decidePostPlaytestNextAction(followupLearning);
+    const followupFixPlan = buildPostPlaytestFixPlan(followupDecision);
+    const followupExecutionPlan = buildPostPlaytestExecutionPlan(followupFixPlan);
+
+    resolvedPostPlaytestFollowupLoop = {
+      learning: followupLearning,
+      decision: followupDecision,
+      fixPlan: followupFixPlan,
+      executionPlan: followupExecutionPlan,
+    };
+  }
+  const postPlaytestFollowupSummary = buildPostPlaytestFollowupSummary(resolvedPostPlaytestFollowupLoop);
 
   const baseResult: UnityValidationExecutionResult = {
     request_id: input.adapter_request_id,
@@ -4690,6 +4843,8 @@ export async function executeReviewedUnityValidation(
       postPlaytestDecisionSummary,
       postPlaytestFixPlanSummary,
       postPlaytestExecutionPlanSummary,
+      postPlaytestExecutionResultSummary,
+      postPlaytestFollowupSummary,
     ].filter((value): value is string => Boolean(value)).join(" "),
     recommended_next_operator_action: bridgeResult.recommended_next_operator_action,
     artifact_label: "unity_read_only_validation_report",
@@ -4699,10 +4854,16 @@ export async function executeReviewedUnityValidation(
     post_playtest_decision: postPlaytestDecision,
     post_playtest_fix_plan: postPlaytestFixPlan,
     post_playtest_execution_plan: postPlaytestExecutionPlan,
+    post_playtest_execution_result: postPlaytestExecutionResult,
     mutating: false,
   };
 
   const evidencePackages = createUnityValidationEvidencePackages(input, baseResult);
+
+  if (resolvedPostPlaytestFollowupLoop) {
+    evidencePackages.reviewPackage.proof_results.push(...buildPostPlaytestFollowupValidationLines(resolvedPostPlaytestFollowupLoop));
+    evidencePackages.deliveryPackage.validation_results.push(...buildPostPlaytestFollowupValidationLines(resolvedPostPlaytestFollowupLoop));
+  }
 
   return {
     ...baseResult,
