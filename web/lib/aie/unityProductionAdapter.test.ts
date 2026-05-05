@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import test from "node:test";
 
 import { buildUnityProductionPlanningPacket } from "./productionPipelineFoundation";
@@ -57,6 +60,30 @@ function createCountingBridge(result: Awaited<ReturnType<UnityReadOnlyRuntimeBri
     bridge,
     getCallCount: () => callCount,
   };
+}
+
+async function createPlaytestLog(prefix: string, sessionId: string) {
+  const tempRoot = await mkdtemp(path.join(tmpdir(), prefix));
+  const logPath = path.join(tempRoot, "Editor.log");
+  await writeFile(logPath, [
+    `[AIE Playtest Session] START id=${sessionId}`,
+    "Enemy defeated",
+    `[AIE Playtest Session] END id=${sessionId}`,
+  ].join("\n"), "utf-8");
+
+  return {
+    tempRoot,
+    logPath,
+    async cleanup() {
+      await rm(tempRoot, { recursive: true, force: true });
+    },
+  };
+}
+
+async function readOutcomeCount(projectPath: string) {
+  const outcomePath = path.join(projectPath, ".aie", "outcomes.jsonl");
+  const content = await readFile(outcomePath, "utf-8");
+  return content.split(/\r?\n/).filter((line) => line.trim().length > 0).length;
 }
 
 test("Unity adapter output remains reviewed-execution only", () => {
@@ -319,4 +346,211 @@ test("successful read-only bridge returns real bridge validation result", async 
   assert.ok(result.delivery_package);
   assert.match(result.delivery_package?.release_notes ?? "", /read-only validation probe completed/i);
   assert.ok(result.delivery_package?.validation_results.some((entry) => /Bridge status: bridge_ready/i.test(entry)));
+  assert.equal(result.post_playtest_learning?.status, "blocked");
+  assert.equal(result.post_playtest_decision?.status, "blocked");
+  assert.match(result.delivery_summary, /Post-playtest learning blocked/i);
+  assert.match(result.delivery_summary, /Post-playtest decision status: blocked/i);
+});
+
+test("successful reviewed Unity playtest records a runtime-auto outcome when feature context is provided", async () => {
+  const harness = await createPlaytestLog("aie-post-playtest-record-", "session-record-1");
+  const countingBridge = createCountingBridge({
+    bridge_status: "bridge_ready",
+    source: "http_endpoint",
+    scene_validation_status: "checked_clean",
+    missing_script_count: 0,
+    console_error_count: 0,
+    object_count: 487,
+    checked_scene_name: "CastleHub",
+    evidence_timestamp: "2026-04-30T13:07:30.000Z",
+    raw_evidence_summary: "No bridge findings were reported.",
+    summary: "Unity read-only validation probe completed cleanly for CastleHub.",
+    recommended_next_operator_action: "Review the clean bridge evidence and continue supervised delivery.",
+  });
+
+  try {
+    const result = await executeReviewedUnityValidation({
+      adapter_request_id: "unity-validation-6",
+      requested_at: "2026-04-30T13:07:00.000Z",
+      planning_packet: createValidationOnlyPacket(),
+      requested_actions: [],
+      review_state: {
+        review_package_id: "review-11",
+        review_completed_at: "2026-04-30T13:07:10.000Z",
+        approved_by_operator: true,
+        operator_approval_id: "approval-11",
+        delivery_package_id: "delivery-11",
+      },
+    }, {
+      runtime_bridge: countingBridge.bridge,
+      post_playtest_learning: {
+        projectPath: harness.tempRoot,
+        feature: "enemy-health",
+        runtimeLogPath: harness.logPath,
+      },
+    });
+
+    assert.equal(result.executed, true);
+    assert.equal(result.post_playtest_learning?.status, "recorded");
+    assert.equal(result.post_playtest_decision?.status, "ready_for_next_feature");
+    assert.match(result.delivery_summary, /Post-playtest learning recorded a runtime-auto outcome/i);
+    assert.match(result.delivery_summary, /Post-playtest decision status: ready_for_next_feature/i);
+    assert.ok(result.delivery_package?.validation_results.some((entry) => /Post-playtest learning status: recorded/i.test(entry)));
+    assert.ok(result.delivery_package?.validation_results.some((entry) => /Post-playtest decision recommendation: Mark the feature stable and select the next validation target\./i.test(entry)));
+    assert.equal(await readOutcomeCount(harness.tempRoot), 1);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("successful reviewed Unity playtest does not append a duplicate runtime-auto outcome", async () => {
+  const harness = await createPlaytestLog("aie-post-playtest-duplicate-", "session-duplicate-1");
+  const countingBridge = createCountingBridge({
+    bridge_status: "bridge_ready",
+    source: "http_endpoint",
+    scene_validation_status: "checked_clean",
+    missing_script_count: 0,
+    console_error_count: 0,
+    object_count: 487,
+    checked_scene_name: "CastleHub",
+    evidence_timestamp: "2026-04-30T13:08:30.000Z",
+    raw_evidence_summary: "No bridge findings were reported.",
+    summary: "Unity read-only validation probe completed cleanly for CastleHub.",
+    recommended_next_operator_action: "Review the clean bridge evidence and continue supervised delivery.",
+  });
+
+  try {
+    const input = {
+      adapter_request_id: "unity-validation-7",
+      requested_at: "2026-04-30T13:08:00.000Z",
+      planning_packet: createValidationOnlyPacket(),
+      requested_actions: [],
+      review_state: {
+        review_package_id: "review-12",
+        review_completed_at: "2026-04-30T13:08:10.000Z",
+        approved_by_operator: true,
+        operator_approval_id: "approval-12",
+        delivery_package_id: "delivery-12",
+      },
+    };
+    const options = {
+      runtime_bridge: countingBridge.bridge,
+      post_playtest_learning: {
+        projectPath: harness.tempRoot,
+        feature: "enemy-health",
+        runtimeLogPath: harness.logPath,
+      },
+    };
+
+    const first = await executeReviewedUnityValidation(input, options);
+    const second = await executeReviewedUnityValidation(input, options);
+
+    assert.equal(first.post_playtest_learning?.status, "recorded");
+    assert.equal(first.post_playtest_decision?.status, "ready_for_next_feature");
+    assert.equal(second.post_playtest_learning?.status, "duplicate");
+    assert.equal(second.post_playtest_decision?.status, "escalation_recommended");
+    assert.match(second.delivery_summary, /skipped duplicate outcome recording/i);
+    assert.equal(await readOutcomeCount(harness.tempRoot), 1);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("successful reviewed Unity playtest surfaces a blocked learning message when feature context is missing", async () => {
+  const harness = await createPlaytestLog("aie-post-playtest-blocked-", "session-blocked-1");
+  const countingBridge = createCountingBridge({
+    bridge_status: "bridge_ready",
+    source: "http_endpoint",
+    scene_validation_status: "checked_clean",
+    missing_script_count: 0,
+    console_error_count: 0,
+    object_count: 487,
+    checked_scene_name: "CastleHub",
+    evidence_timestamp: "2026-04-30T13:09:30.000Z",
+    raw_evidence_summary: "No bridge findings were reported.",
+    summary: "Unity read-only validation probe completed cleanly for CastleHub.",
+    recommended_next_operator_action: "Review the clean bridge evidence and continue supervised delivery.",
+  });
+
+  try {
+    const result = await executeReviewedUnityValidation({
+      adapter_request_id: "unity-validation-8",
+      requested_at: "2026-04-30T13:09:00.000Z",
+      planning_packet: createValidationOnlyPacket(),
+      requested_actions: [],
+      review_state: {
+        review_package_id: "review-13",
+        review_completed_at: "2026-04-30T13:09:10.000Z",
+        approved_by_operator: true,
+        operator_approval_id: "approval-13",
+        delivery_package_id: "delivery-13",
+      },
+    }, {
+      runtime_bridge: countingBridge.bridge,
+      post_playtest_learning: {
+        projectPath: harness.tempRoot,
+        runtimeLogPath: harness.logPath,
+      },
+    });
+
+    assert.equal(result.executed, true);
+    assert.equal(result.post_playtest_learning?.status, "blocked");
+    assert.equal(result.post_playtest_decision?.status, "blocked");
+    assert.match(result.delivery_summary, /Post-playtest learning blocked/i);
+    assert.ok(result.delivery_package?.validation_results.some((entry) => /Post-playtest learning reason: --feature is required/i.test(entry)));
+    assert.ok(result.delivery_package?.validation_results.some((entry) => /Post-playtest decision status: blocked/i.test(entry)));
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("successful reviewed Unity playtest recommends retry when the recorded runtime-auto outcome fails", async () => {
+  const harness = await createPlaytestLog("aie-post-playtest-fail-", "session-fail-1");
+  const countingBridge = createCountingBridge({
+    bridge_status: "bridge_ready",
+    source: "http_endpoint",
+    scene_validation_status: "checked_with_findings",
+    missing_script_count: 1,
+    console_error_count: 1,
+    object_count: 487,
+    checked_scene_name: "CastleHub",
+    evidence_timestamp: "2026-04-30T13:10:30.000Z",
+    raw_evidence_summary: "One failure signal was reported.",
+    summary: "Unity read-only validation probe completed with findings for CastleHub.",
+    recommended_next_operator_action: "Review the bridge findings before taking another supervised step.",
+  });
+  await writeFile(harness.logPath, [
+    "[AIE Playtest Session] START id=session-fail-1",
+    "NullReferenceException: test failure",
+    "[AIE Playtest Session] END id=session-fail-1",
+  ].join("\n"), "utf-8");
+
+  try {
+    const result = await executeReviewedUnityValidation({
+      adapter_request_id: "unity-validation-9",
+      requested_at: "2026-04-30T13:10:00.000Z",
+      planning_packet: createValidationOnlyPacket(),
+      requested_actions: [],
+      review_state: {
+        review_package_id: "review-14",
+        review_completed_at: "2026-04-30T13:10:10.000Z",
+        approved_by_operator: true,
+        operator_approval_id: "approval-14",
+        delivery_package_id: "delivery-14",
+      },
+    }, {
+      runtime_bridge: countingBridge.bridge,
+      post_playtest_learning: {
+        projectPath: harness.tempRoot,
+        feature: "enemy-health",
+        runtimeLogPath: harness.logPath,
+      },
+    });
+
+    assert.equal(result.post_playtest_learning?.status, "recorded");
+    assert.equal(result.post_playtest_decision?.status, "retry_recommended");
+    assert.ok(result.delivery_package?.validation_results.some((entry) => /Post-playtest decision recommendation: Review failure evidence, apply the smallest safe fix, then rerun the reviewed Unity playtest\./i.test(entry)));
+  } finally {
+    await harness.cleanup();
+  }
 });

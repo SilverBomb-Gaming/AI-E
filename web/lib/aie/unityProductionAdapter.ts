@@ -4,6 +4,14 @@ import type {
   UnityValidationExecutionResult,
 } from "./productionPipelineFoundation";
 import {
+  autoRecordOutcomeForFeature,
+  type AutoRecordOutcomeResult,
+} from "./autoOutcomeRecording";
+import {
+  decidePostPlaytestNextAction,
+  type PostPlaytestDecisionResult,
+} from "./postPlaytestDecisionEngine";
+import {
   createAutonomousDeliveryPackage,
   createAutonomousReviewPackage,
   type AutonomousDeliveryPackage,
@@ -67,6 +75,11 @@ export type UnityValidationExecutionInput = UnityProductionAdapterInput;
 
 export type UnityValidationExecutionOptions = {
   runtime_bridge?: UnityReadOnlyRuntimeBridge;
+  post_playtest_learning?: {
+    feature?: string | null;
+    projectPath?: string | null;
+    runtimeLogPath?: string | null;
+  };
 };
 
 export type UnitySceneObjectCreationMutationExecutionOptions = {
@@ -4222,8 +4235,87 @@ function buildBlockedValidationResult(
     artifact_label: "adapter_level_validation_preview",
     review_package: null,
     delivery_package: null,
+    post_playtest_learning: null,
+    post_playtest_decision: null,
     mutating: false,
   };
+}
+
+function buildPostPlaytestLearningSummary(result: AutoRecordOutcomeResult | null): string | null {
+  if (!result) {
+    return null;
+  }
+
+  switch (result.status) {
+    case "blocked":
+      return `Post-playtest learning blocked: ${result.reason}`;
+    case "duplicate":
+      return `Post-playtest learning skipped duplicate outcome recording for feature ${result.feature}.`;
+    case "recorded":
+      return `Post-playtest learning recorded a runtime-auto outcome for feature ${result.feature}.`;
+    default:
+      return null;
+  }
+}
+
+function buildPostPlaytestLearningValidationLines(result: AutoRecordOutcomeResult | null): string[] {
+  if (!result) {
+    return [];
+  }
+
+  if (result.status === "blocked") {
+    return [
+      "Post-playtest learning status: blocked",
+      `Post-playtest learning reason: ${result.reason}`,
+    ];
+  }
+
+  return [
+    `Post-playtest learning status: ${result.status}`,
+    `Post-playtest learning feature: ${result.feature}`,
+    `Post-playtest learning inferred result: ${result.evaluation.parsedResult.inferredResult}`,
+    `Post-playtest learning session mode: ${result.evaluation.session.mode}`,
+    `Post-playtest learning evaluated lines: ${result.evaluation.evaluatedLineCount}`,
+  ];
+}
+
+function buildPostPlaytestDecisionSummary(result: PostPlaytestDecisionResult | null): string | null {
+  if (!result) {
+    return null;
+  }
+
+  return `Post-playtest decision status: ${result.status}. ${result.recommended_next_action}`;
+}
+
+function buildPostPlaytestDecisionValidationLines(result: PostPlaytestDecisionResult | null): string[] {
+  if (!result) {
+    return [];
+  }
+
+  return [
+    `Post-playtest decision status: ${result.status}`,
+    `Post-playtest decision reason: ${result.reason}`,
+    `Post-playtest decision recommendation: ${result.recommended_next_action}`,
+    `Post-playtest decision confidence: ${result.confidence}`,
+    ...(result.source_feature ? [`Post-playtest decision feature: ${result.source_feature}`] : []),
+    ...(result.source_outcome_session_key
+      ? [`Post-playtest decision session key: ${result.source_outcome_session_key}`]
+      : []),
+  ];
+}
+
+async function runPostPlaytestLearningHook(
+  options: UnityValidationExecutionOptions | undefined,
+): Promise<AutoRecordOutcomeResult> {
+  const projectPath = options?.post_playtest_learning?.projectPath?.trim()
+    || process.env.AIE_UNITY_PROJECT_PATH?.trim()
+    || "";
+
+  return autoRecordOutcomeForFeature(
+    projectPath,
+    options?.post_playtest_learning?.feature ?? undefined,
+    options?.post_playtest_learning?.runtimeLogPath ?? undefined,
+  );
 }
 
 function createUnityValidationEvidencePackages(
@@ -4242,6 +4334,8 @@ function createUnityValidationEvidencePackages(
     | "validation_checklist"
     | "raw_evidence_summary"
     | "evidence_timestamp"
+    | "post_playtest_learning"
+    | "post_playtest_decision"
   >,
 ): {
   reviewPackage: AutonomousReviewPackage;
@@ -4270,6 +4364,8 @@ function createUnityValidationEvidencePackages(
       `Object count: ${result.object_count ?? "unknown"}`,
       `Evidence timestamp: ${result.evidence_timestamp}`,
       `Recommended next operator action: ${result.recommended_next_operator_action}`,
+      ...buildPostPlaytestLearningValidationLines(result.post_playtest_learning),
+      ...buildPostPlaytestDecisionValidationLines(result.post_playtest_decision),
     ],
     risks: ["No Unity or project mutation path enabled."],
     recommended_decision: "approve",
@@ -4298,6 +4394,8 @@ function createUnityValidationEvidencePackages(
       `Object count: ${result.object_count ?? "unknown"}`,
       `Evidence timestamp: ${result.evidence_timestamp}`,
       `Recommended next operator action: ${result.recommended_next_operator_action}`,
+      ...buildPostPlaytestLearningValidationLines(result.post_playtest_learning),
+      ...buildPostPlaytestDecisionValidationLines(result.post_playtest_decision),
       ...(result.raw_evidence_summary ? [`Raw evidence summary: ${result.raw_evidence_summary}`] : []),
       ...result.validation_checklist,
     ],
@@ -4461,6 +4559,8 @@ export async function executeReviewedUnityValidation(
       artifact_label: "unity_bridge_unavailable_report",
       review_package: null,
       delivery_package: null,
+      post_playtest_learning: null,
+      post_playtest_decision: null,
       mutating: false,
     };
 
@@ -4472,6 +4572,11 @@ export async function executeReviewedUnityValidation(
       delivery_package: evidencePackages.deliveryPackage,
     };
   }
+
+  const postPlaytestLearning = await runPostPlaytestLearningHook(options);
+  const postPlaytestLearningSummary = buildPostPlaytestLearningSummary(postPlaytestLearning);
+  const postPlaytestDecision = decidePostPlaytestNextAction(postPlaytestLearning);
+  const postPlaytestDecisionSummary = buildPostPlaytestDecisionSummary(postPlaytestDecision);
 
   const baseResult: UnityValidationExecutionResult = {
     request_id: input.adapter_request_id,
@@ -4494,11 +4599,17 @@ export async function executeReviewedUnityValidation(
     evidence_timestamp: bridgeResult.evidence_timestamp,
     raw_evidence_summary: bridgeResult.raw_evidence_summary,
     validation_checklist: buildValidationChecklist(input.planning_packet),
-    delivery_summary: bridgeResult.summary,
+    delivery_summary: [
+      bridgeResult.summary,
+      postPlaytestLearningSummary,
+      postPlaytestDecisionSummary,
+    ].filter((value): value is string => Boolean(value)).join(" "),
     recommended_next_operator_action: bridgeResult.recommended_next_operator_action,
     artifact_label: "unity_read_only_validation_report",
     review_package: null,
     delivery_package: null,
+    post_playtest_learning: postPlaytestLearning,
+    post_playtest_decision: postPlaytestDecision,
     mutating: false,
   };
 

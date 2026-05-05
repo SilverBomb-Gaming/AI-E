@@ -2,6 +2,8 @@ import type {
   AutonomousDeliveryPackage,
   AutonomousReviewPackage,
 } from "./autonomousWorkPlanning";
+import type { AutoRecordOutcomeResult } from "./autoOutcomeRecording";
+import type { PostPlaytestDecisionResult } from "./postPlaytestDecisionEngine";
 
 export type ProductionPipelineDomain = "assets" | "art" | "audio" | "unity-integration";
 
@@ -92,6 +94,8 @@ export type UnityValidationExecutionResult = {
   artifact_label: "adapter_level_validation_preview" | "unity_bridge_unavailable_report" | "unity_read_only_validation_report";
   review_package: AutonomousReviewPackage | null;
   delivery_package: AutonomousDeliveryPackage | null;
+  post_playtest_learning: AutoRecordOutcomeResult | null;
+  post_playtest_decision: PostPlaytestDecisionResult | null;
   mutating: false;
 };
 

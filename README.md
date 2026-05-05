@@ -1164,8 +1164,9 @@ Recommended operator flow:
 
 1. Apply the playtest session marker once.
 2. Open Unity, enter Play Mode, run the test, then exit Play Mode.
-3. Run `npm run operator:view -- --auto-evaluate "<unity-project-path>"`.
-4. Optionally run `npm run operator:view -- --record-outcome "<unity-project-path>" --feature "<feature-name>" --auto` to append the filtered outcome to `.aie/outcomes.jsonl`.
+3. If the reviewed Unity validation flow knows the feature name, AI-E now automatically tries to evaluate the newest session and append a `runtime-auto` learning outcome right after the read-only playtest validation completes.
+4. If the reviewed flow does not have feature context yet, AI-E reports `Post-playtest learning blocked` with the explicit `--feature is required` reason instead of guessing from the objective.
+5. The manual bounded fallback remains `npm run operator:view -- --auto-record-outcome "<unity-project-path>" --feature "<feature-name>"`.
 
 ## Auto-Evaluate and Record
 
@@ -1184,6 +1185,16 @@ What it does:
 - prevents duplicate records for the same feature and playtest session
 - prints the updated learning counts immediately after a successful write
 
+Reviewed playtest integration:
+
+- after a successful reviewed Unity playtest validation, AI-E now runs the same bounded auto-recording path automatically
+- the reviewed path uses explicit feature context only; it does not infer a feature name from the planning objective
+- if feature context is missing, the reviewed validation result stays successful but includes a clear `Post-playtest learning blocked` message so the operator can use the manual fallback command
+- after that automatic learning step, AI-E now runs a bounded post-playtest decision engine that recommends the next safe action without executing it
+- recorded `pass` outcomes recommend stabilizing the feature and selecting the next validation target
+- recorded `fail` outcomes recommend the smallest safe fix followed by another reviewed playtest
+- blocked, duplicate, partial, or otherwise ambiguous outcomes escalate back to operator inspection instead of advancing automatically
+
 Duplicate protection:
 
 - AI-E builds a bounded session key from the selected log path, latest session start marker, evaluated line count, and feature name
@@ -1193,6 +1204,13 @@ Planning impact:
 
 - runtime-auto outcomes are preferred over manual outcomes when AI-E builds next-task decision context
 - this lets recent real playtest evidence feed future guidance more directly than operator-only notes
+
+What still remains before full hands-off autonomy:
+
+- automatic safe fix application
+- retry execution after a reviewed failure
+- explicit loop limits and execution budgets for repeated playtest or fix cycles
+- operator override controls for pausing, rejecting, or forcing the recommended next step
 
 - AI-E now checks both Unity Editor and Player log locations automatically before falling back to project-local log files.
 - `--auto-evaluate` no longer depends on a single hard-coded `Player.log` path when no override is supplied.
