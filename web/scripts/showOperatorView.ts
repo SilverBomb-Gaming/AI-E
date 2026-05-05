@@ -2004,11 +2004,11 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
 
       if (options.json) {
         console.log(JSON.stringify(result, null, 2));
-        return result.status === "recorded" ? 0 : 1;
+          return result.status === "blocked" ? 1 : 0;
       }
 
       console.log(renderAutoRecordOutcome(result));
-      return result.status === "recorded" ? 0 : 1;
+        return result.status === "blocked" ? 1 : 0;
     }
 
     if (options.recordOutcomePath) {

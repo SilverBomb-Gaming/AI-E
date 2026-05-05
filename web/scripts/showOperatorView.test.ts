@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { autoRecordOutcomeForFeature } from "./showOperatorView";
+import { main } from "./showOperatorView";
 
 test("auto-record writes runtime-auto outcome with latest session provenance", async () => {
   const tempRoot = await mkdtemp(path.join(tmpdir(), "aie-auto-record-"));
@@ -59,6 +60,41 @@ test("auto-record blocks when feature is missing", async () => {
     const result = await autoRecordOutcomeForFeature(tempRoot, undefined);
     assert.equal(result.status, "blocked");
     assert.equal(result.reason, "--feature is required so the outcome can be tied to a specific game feature.");
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("operator view returns success for duplicate auto-record no-op", async () => {
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "aie-auto-record-cli-dup-"));
+  const logPath = path.join(tempRoot, "Editor.log");
+
+  try {
+    await writeFile(logPath, [
+      "[AIE Playtest Session] START id=session-cli-dup",
+      "Enemy defeated",
+      "[AIE Playtest Session] END id=session-cli-dup",
+    ].join("\n"), "utf-8");
+
+    const firstExitCode = await main([
+      "--auto-record-outcome",
+      tempRoot,
+      "--feature",
+      "enemy-health",
+      "--runtime-log",
+      logPath,
+    ]);
+    const secondExitCode = await main([
+      "--auto-record-outcome",
+      tempRoot,
+      "--feature",
+      "enemy-health",
+      "--runtime-log",
+      logPath,
+    ]);
+
+    assert.equal(firstExitCode, 0);
+    assert.equal(secondExitCode, 0);
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }
