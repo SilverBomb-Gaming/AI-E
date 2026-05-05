@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
 import {
   autoEvaluateUnityRuntime,
+  discoverUnityLogCandidates,
+  findBestUnityRuntimeLog,
   inferRuntimeResult,
   parseRuntimeSignals,
 } from "./runtimeSignals";
@@ -63,6 +65,47 @@ test("runtime signal auto evaluation reads an override log path", async () => {
     assert.equal(result.parsedResult.inferredResult, "pass");
     assert.match(result.reason.join(" "), /Enemy defeated/);
   } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("runtime log discovery reports editor and project candidates and selects gameplay log", async () => {
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "aie-runtime-discovery-"));
+  const localAppData = path.join(tempRoot, "LocalAppData");
+  const userProfile = path.join(tempRoot, "UserProfile");
+  const projectPath = path.join(tempRoot, "EnemyAIDemoStandalone");
+  const editorLogPath = path.join(localAppData, "Unity", "Editor", "Editor.log");
+  const playerLogPath = path.join(userProfile, "AppData", "LocalLow", "DefaultCompany", "EnemyAIDemoStandalone", "Player.log");
+  const projectLogPath = path.join(projectPath, "Library", "Logs", "playtest.log");
+
+  process.env.LOCALAPPDATA = localAppData;
+  process.env.USERPROFILE = userProfile;
+
+  try {
+    await mkdir(path.dirname(editorLogPath), { recursive: true });
+    await mkdir(path.dirname(playerLogPath), { recursive: true });
+    await mkdir(path.dirname(projectLogPath), { recursive: true });
+    await writeFile(editorLogPath, "Editor started", "utf-8");
+    await writeFile(playerLogPath, "No gameplay signals yet", "utf-8");
+    await writeFile(projectLogPath, [
+      "Enemy hit",
+      "Enemy defeated",
+      "AIE runtime verification",
+    ].join("\n"), "utf-8");
+
+    const discovery = await discoverUnityLogCandidates(projectPath);
+    assert.ok(discovery.candidates.some((candidate) => candidate.path === editorLogPath && candidate.kind === "editor"));
+    assert.ok(discovery.candidates.some((candidate) => candidate.path === projectLogPath && candidate.kind === "project" && candidate.containsGameplaySignals));
+
+    const bestLog = await findBestUnityRuntimeLog(projectPath);
+    assert.equal(bestLog.selectedPath, projectLogPath);
+
+    const evaluation = await autoEvaluateUnityRuntime(projectPath);
+    assert.equal(evaluation.logPath, projectLogPath);
+    assert.equal(evaluation.parsedResult.inferredResult, "pass");
+  } finally {
+    delete process.env.LOCALAPPDATA;
+    delete process.env.USERPROFILE;
     await rm(tempRoot, { recursive: true, force: true });
   }
 });

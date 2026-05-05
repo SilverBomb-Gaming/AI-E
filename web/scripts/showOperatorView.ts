@@ -16,7 +16,9 @@ import {
 import {
   autoEvaluateUnityRuntime,
   buildAutoOutcomeObservation,
+  discoverUnityLogCandidates,
   renderAutoEvaluation,
+  renderUnityLogDiscovery,
 } from "../lib/aie/runtimeSignals";
 import {
   applyUnityPatchArtifact,
@@ -98,6 +100,7 @@ type ShowOperatorViewOptions = {
   executeNextGameTaskPath?: string;
   recordOutcomePath?: string;
   autoEvaluatePath?: string;
+  discoverRuntimeLogsPath?: string;
   learningSummaryPath?: string;
   outcomeFeature?: string;
   outcomeResult?: OutcomeResult;
@@ -379,6 +382,11 @@ function parseArgs(argv: string[]): ShowOperatorViewOptions {
       continue;
     }
 
+    if (arg.startsWith("--discover-runtime-logs=")) {
+      options.discoverRuntimeLogsPath = arg.slice("--discover-runtime-logs=".length).trim() || undefined;
+      continue;
+    }
+
     if (arg.startsWith("--learning-summary=")) {
       options.learningSummaryPath = arg.slice("--learning-summary=".length).trim() || undefined;
       continue;
@@ -436,6 +444,16 @@ function parseArgs(argv: string[]): ShowOperatorViewOptions {
         throw new Error("Missing value for --auto-evaluate");
       }
       options.autoEvaluatePath = value.trim();
+      index += 1;
+      continue;
+    }
+
+    if (arg === "--discover-runtime-logs") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("Missing value for --discover-runtime-logs");
+      }
+      options.discoverRuntimeLogsPath = value.trim();
       index += 1;
       continue;
     }
@@ -1191,6 +1209,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       options.nextGameTaskPath ? "--next-game-task" : null,
       options.recordOutcomePath ? "--record-outcome" : null,
       options.autoEvaluatePath ? "--auto-evaluate" : null,
+      options.discoverRuntimeLogsPath ? "--discover-runtime-logs" : null,
       options.learningSummaryPath ? "--learning-summary" : null,
       options.executeNextGameTaskPath ? "--execute-next-game-task" : null,
       options.cameraTuningPreviewPath ? "--camera-tuning-preview" : null,
@@ -1697,6 +1716,18 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       }
 
       console.log(renderGameTask(task));
+      return 0;
+    }
+
+    if (options.discoverRuntimeLogsPath) {
+      const discovery = await discoverUnityLogCandidates(options.discoverRuntimeLogsPath);
+
+      if (options.json) {
+        console.log(JSON.stringify(discovery, null, 2));
+        return 0;
+      }
+
+      console.log(renderUnityLogDiscovery(discovery));
       return 0;
     }
 

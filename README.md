@@ -1118,6 +1118,19 @@ Commands:
 - `npm run operator:view -- --auto-evaluate "<project>" --runtime-log "<path-to-log>"`
 - `npm run operator:view -- --record-outcome "<project>" --feature "enemy-health" --auto`
 
+## Unity Log Discovery
+
+- AI-E now checks both Unity Editor and Player log locations automatically before falling back to project-local log files.
+- `--auto-evaluate` no longer depends on a single hard-coded `Player.log` path when no override is supplied.
+- log discovery checks the Windows Unity Editor log, the LocalLow Player log, and likely project log locations under `Logs` and `Library`.
+- `--runtime-log` remains available as an explicit override when Unity writes to a custom or unexpected location.
+
+Commands:
+
+- `npm run operator:view -- --discover-runtime-logs "<project>"`
+- `npm run operator:view -- --auto-evaluate "<project>"`
+- `npm run operator:view -- --auto-evaluate "<project>" --runtime-log "<path-to-log>"`
+
 ## Safe Runtime Action Bridge
 
 AI-E can now translate supported live operator actions into safe runtime intents.
