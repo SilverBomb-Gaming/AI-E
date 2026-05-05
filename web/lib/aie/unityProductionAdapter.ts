@@ -25,6 +25,10 @@ import {
   type PostPlaytestFixPlanResult,
 } from "./postPlaytestFixPlanner";
 import {
+  selectPostPlaytestStrategy,
+  type PostPlaytestStrategySelectorResult,
+} from "./postPlaytestStrategySelector";
+import {
   createAutonomousDeliveryPackage,
   createAutonomousReviewPackage,
   type AutonomousDeliveryPackage,
@@ -4332,6 +4336,41 @@ function buildPostPlaytestDecisionValidationLines(result: PostPlaytestDecisionRe
   ];
 }
 
+function buildPostPlaytestStrategySelectionSummary(result: PostPlaytestStrategySelectorResult | null): string | null {
+  if (!result) {
+    return null;
+  }
+
+  if (result.status === "strategy_selected") {
+    return `Post-playtest strategy selection status: ${result.status}. Selected ${result.selected_strategy_id ?? "unknown"}${result.selected_strategy_label ? ` (${result.selected_strategy_label})` : ""}.`;
+  }
+
+  return `Post-playtest strategy selection status: ${result.status}. ${result.reason}`;
+}
+
+function buildPostPlaytestStrategySelectionValidationLines(result: PostPlaytestStrategySelectorResult | null): string[] {
+  if (!result) {
+    return [];
+  }
+
+  return [
+    `Post-playtest strategy selection status: ${result.status}`,
+    `Post-playtest strategy selection reason: ${result.reason}`,
+    `Post-playtest strategy selection confidence: ${result.confidence}`,
+    ...(result.selected_strategy_id
+      ? [`Post-playtest strategy selection id: ${result.selected_strategy_id}`]
+      : []),
+    ...(result.selected_strategy_label
+      ? [`Post-playtest strategy selection label: ${result.selected_strategy_label}`]
+      : []),
+    ...(result.source_feature ? [`Post-playtest strategy selection feature: ${result.source_feature}`] : []),
+    ...(result.source_outcome_session_key
+      ? [`Post-playtest strategy selection session key: ${result.source_outcome_session_key}`]
+      : []),
+    ...result.rejection_reasons.map((reason) => `Post-playtest strategy rejection: ${reason}`),
+  ];
+}
+
 function buildPostPlaytestFixPlanSummary(result: PostPlaytestFixPlanResult | null): string | null {
   if (!result) {
     return null;
@@ -4429,6 +4468,7 @@ function buildPostPlaytestExecutionResultValidationLines(result: PostPlaytestExe
 type PostPlaytestFollowupLoopResult = {
   learning: AutoRecordOutcomeResult;
   decision: PostPlaytestDecisionResult;
+  strategySelection: PostPlaytestStrategySelectorResult;
   fixPlan: PostPlaytestFixPlanResult;
   executionPlan: PostPlaytestExecutionPlanResult;
 };
@@ -4441,6 +4481,7 @@ function buildPostPlaytestFollowupSummary(result: PostPlaytestFollowupLoopResult
   return [
     `Post-playtest follow-up learning status: ${result.learning.status}.`,
     `Post-playtest follow-up decision status: ${result.decision.status}.`,
+    `Post-playtest follow-up strategy selection status: ${result.strategySelection.status}.`,
     `Post-playtest follow-up fix plan status: ${result.fixPlan.status}.`,
     `Post-playtest follow-up execution plan status: ${result.executionPlan.status}.`,
   ].join(" ");
@@ -4454,6 +4495,7 @@ function buildPostPlaytestFollowupValidationLines(result: PostPlaytestFollowupLo
   return [
     `Post-playtest follow-up learning status: ${result.learning.status}`,
     `Post-playtest follow-up decision status: ${result.decision.status}`,
+    `Post-playtest follow-up strategy selection status: ${result.strategySelection.status}`,
     `Post-playtest follow-up fix plan status: ${result.fixPlan.status}`,
     `Post-playtest follow-up execution plan status: ${result.executionPlan.status}`,
   ];
@@ -4503,6 +4545,7 @@ function createUnityValidationEvidencePackages(
     | "evidence_timestamp"
     | "post_playtest_learning"
     | "post_playtest_decision"
+    | "post_playtest_strategy_selection"
     | "post_playtest_fix_plan"
     | "post_playtest_execution_plan"
     | "post_playtest_execution_result"
@@ -4536,6 +4579,7 @@ function createUnityValidationEvidencePackages(
       `Recommended next operator action: ${result.recommended_next_operator_action}`,
       ...buildPostPlaytestLearningValidationLines(result.post_playtest_learning),
       ...buildPostPlaytestDecisionValidationLines(result.post_playtest_decision),
+      ...buildPostPlaytestStrategySelectionValidationLines(result.post_playtest_strategy_selection),
       ...buildPostPlaytestFixPlanValidationLines(result.post_playtest_fix_plan),
       ...buildPostPlaytestExecutionPlanValidationLines(result.post_playtest_execution_plan),
       ...buildPostPlaytestExecutionResultValidationLines(result.post_playtest_execution_result),
@@ -4569,6 +4613,7 @@ function createUnityValidationEvidencePackages(
       `Recommended next operator action: ${result.recommended_next_operator_action}`,
       ...buildPostPlaytestLearningValidationLines(result.post_playtest_learning),
       ...buildPostPlaytestDecisionValidationLines(result.post_playtest_decision),
+      ...buildPostPlaytestStrategySelectionValidationLines(result.post_playtest_strategy_selection),
       ...buildPostPlaytestFixPlanValidationLines(result.post_playtest_fix_plan),
       ...buildPostPlaytestExecutionPlanValidationLines(result.post_playtest_execution_plan),
       ...buildPostPlaytestExecutionResultValidationLines(result.post_playtest_execution_result),
@@ -4737,6 +4782,7 @@ export async function executeReviewedUnityValidation(
       delivery_package: null,
       post_playtest_learning: null,
       post_playtest_decision: null,
+      post_playtest_strategy_selection: null,
       post_playtest_fix_plan: null,
       post_playtest_execution_plan: null,
       post_playtest_execution_result: null,
@@ -4757,7 +4803,15 @@ export async function executeReviewedUnityValidation(
   const postPlaytestLearningSummary = buildPostPlaytestLearningSummary(postPlaytestLearning);
   const postPlaytestDecision = decidePostPlaytestNextAction(postPlaytestLearning);
   const postPlaytestDecisionSummary = buildPostPlaytestDecisionSummary(postPlaytestDecision);
-  const postPlaytestFixPlan = buildPostPlaytestFixPlan(postPlaytestDecision);
+  const postPlaytestStrategySelection = selectPostPlaytestStrategy({
+    decision: postPlaytestDecision,
+    allowed_file_scopes: [
+      "orchestrator_lane/Tools/EnemyAIDemoStandalone/Assets/Scripts",
+      "orchestrator_lane/Tools/EnemyAIDemoStandalone/ProjectSettings",
+    ],
+  });
+  const postPlaytestStrategySelectionSummary = buildPostPlaytestStrategySelectionSummary(postPlaytestStrategySelection);
+  const postPlaytestFixPlan = buildPostPlaytestFixPlan(postPlaytestDecision, postPlaytestStrategySelection);
   const postPlaytestFixPlanSummary = buildPostPlaytestFixPlanSummary(postPlaytestFixPlan);
   const postPlaytestExecutionPlan = buildPostPlaytestExecutionPlan(postPlaytestFixPlan);
   const postPlaytestExecutionPlanSummary = buildPostPlaytestExecutionPlanSummary(postPlaytestExecutionPlan);
@@ -4804,12 +4858,20 @@ export async function executeReviewedUnityValidation(
   if (postPlaytestExecutionResult.followup_learning_required && options?.post_playtest_executor?.followup_learning) {
     const followupLearning = await runOutcomeLearningConfig(options.post_playtest_executor.followup_learning);
     const followupDecision = decidePostPlaytestNextAction(followupLearning);
-    const followupFixPlan = buildPostPlaytestFixPlan(followupDecision);
+    const followupStrategySelection = selectPostPlaytestStrategy({
+      decision: followupDecision,
+      allowed_file_scopes: [
+        "orchestrator_lane/Tools/EnemyAIDemoStandalone/Assets/Scripts",
+        "orchestrator_lane/Tools/EnemyAIDemoStandalone/ProjectSettings",
+      ],
+    });
+    const followupFixPlan = buildPostPlaytestFixPlan(followupDecision, followupStrategySelection);
     const followupExecutionPlan = buildPostPlaytestExecutionPlan(followupFixPlan);
 
     resolvedPostPlaytestFollowupLoop = {
       learning: followupLearning,
       decision: followupDecision,
+      strategySelection: followupStrategySelection,
       fixPlan: followupFixPlan,
       executionPlan: followupExecutionPlan,
     };
@@ -4841,6 +4903,7 @@ export async function executeReviewedUnityValidation(
       bridgeResult.summary,
       postPlaytestLearningSummary,
       postPlaytestDecisionSummary,
+      postPlaytestStrategySelectionSummary,
       postPlaytestFixPlanSummary,
       postPlaytestExecutionPlanSummary,
       postPlaytestExecutionResultSummary,
@@ -4852,6 +4915,7 @@ export async function executeReviewedUnityValidation(
     delivery_package: null,
     post_playtest_learning: postPlaytestLearning,
     post_playtest_decision: postPlaytestDecision,
+    post_playtest_strategy_selection: postPlaytestStrategySelection,
     post_playtest_fix_plan: postPlaytestFixPlan,
     post_playtest_execution_plan: postPlaytestExecutionPlan,
     post_playtest_execution_result: postPlaytestExecutionResult,

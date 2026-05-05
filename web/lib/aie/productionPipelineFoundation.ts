@@ -7,6 +7,7 @@ import type { PostPlaytestDecisionResult } from "./postPlaytestDecisionEngine";
 import type { PostPlaytestExecutionPlanResult } from "./postPlaytestExecutionEngine";
 import type { PostPlaytestExecutionResult } from "./postPlaytestExecutor";
 import type { PostPlaytestFixPlanResult } from "./postPlaytestFixPlanner";
+import type { PostPlaytestStrategySelectorResult } from "./postPlaytestStrategySelector";
 
 export type ProductionPipelineDomain = "assets" | "art" | "audio" | "unity-integration";
 
@@ -99,6 +100,7 @@ export type UnityValidationExecutionResult = {
   delivery_package: AutonomousDeliveryPackage | null;
   post_playtest_learning: AutoRecordOutcomeResult | null;
   post_playtest_decision: PostPlaytestDecisionResult | null;
+  post_playtest_strategy_selection: PostPlaytestStrategySelectorResult | null;
   post_playtest_fix_plan: PostPlaytestFixPlanResult | null;
   post_playtest_execution_plan: PostPlaytestExecutionPlanResult | null;
   post_playtest_execution_result: PostPlaytestExecutionResult | null;
