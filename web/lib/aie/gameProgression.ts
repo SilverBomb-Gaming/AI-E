@@ -171,6 +171,17 @@ function normalizeFeature(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 }
 
+function getOutcomeSourcePriority(record: OutcomeRecord): number {
+  return record.evaluationSource === "runtime-auto" ? 1 : 0;
+}
+
+function describeOutcomeReason(record: OutcomeRecord): string {
+  const pattern = record.learnedPattern ?? `Feature ${record.feature} returned ${record.result}`;
+  return record.evaluationSource === "runtime-auto"
+    ? `auto-detected ${record.result}: ${pattern}`
+    : `${record.result}: ${pattern}`;
+}
+
 function isOutcomeRelevant(stage: GameProgressionStage["id"], record: OutcomeRecord): boolean {
   const normalizedFeature = normalizeFeature(record.feature);
   return STAGE_FEATURE_HINTS[stage].some((hint) => normalizedFeature.includes(hint));
@@ -179,21 +190,23 @@ function isOutcomeRelevant(stage: GameProgressionStage["id"], record: OutcomeRec
 function buildOutcomeGuidance(stage: GameProgressionStage["id"], records: OutcomeRecord[]): OutcomeGuidance {
   const recentRecords = records.slice(-10).reverse();
   const relevantRecords = recentRecords.filter((record) => isOutcomeRelevant(stage, record));
-  const latestSuccess = relevantRecords.find((record) => record.result === "pass")
-    ?? recentRecords.find((record) => record.result === "pass");
-  const latestFailure = relevantRecords.find((record) => record.result === "fail")
-    ?? recentRecords.find((record) => record.result === "fail");
+  const prioritizedRelevantRecords = [...relevantRecords].sort((left, right) => getOutcomeSourcePriority(right) - getOutcomeSourcePriority(left));
+  const prioritizedRecentRecords = [...recentRecords].sort((left, right) => getOutcomeSourcePriority(right) - getOutcomeSourcePriority(left));
+  const latestSuccess = prioritizedRelevantRecords.find((record) => record.result === "pass")
+    ?? prioritizedRecentRecords.find((record) => record.result === "pass");
+  const latestFailure = prioritizedRelevantRecords.find((record) => record.result === "fail")
+    ?? prioritizedRecentRecords.find((record) => record.result === "fail");
   const guidanceSteps: string[] = [];
   const reasonParts: string[] = [];
 
-  if (latestSuccess?.learnedPattern) {
-    guidanceSteps.push(`Reuse the recent successful pattern: ${latestSuccess.learnedPattern}.`);
-    reasonParts.push(`recent success: ${latestSuccess.learnedPattern}`);
+  if (latestSuccess) {
+    guidanceSteps.push(`Reuse the recent successful pattern: ${describeOutcomeReason(latestSuccess)}.`);
+    reasonParts.push(`recent success: ${describeOutcomeReason(latestSuccess)}`);
   }
 
-  if (latestFailure?.learnedPattern) {
-    guidanceSteps.push(`Avoid the recent failed approach: ${latestFailure.learnedPattern}.`);
-    reasonParts.push(`recent failure to avoid: ${latestFailure.learnedPattern}`);
+  if (latestFailure) {
+    guidanceSteps.push(`Avoid the recent failed approach: ${describeOutcomeReason(latestFailure)}.`);
+    reasonParts.push(`recent failure to avoid: ${describeOutcomeReason(latestFailure)}`);
   }
 
   if (reasonParts.length === 0) {

@@ -1100,8 +1100,23 @@ Commands:
 Commands:
 
 - `npm run operator:view -- --record-outcome "<project>" --feature "attack-feedback" --result "pass" --observation "Enemy visibly flashes red and pulses on hit."`
+- `npm run operator:view -- --record-outcome "<project>" --feature "attack-feedback" --auto`
 - `npm run operator:view -- --learning-summary "<project>"`
 - `npm run operator:view -- --next-game-task "<project>"`
+
+## Runtime Signal Extraction
+
+- AI-E can read Unity runtime logs from `Player.log` and detect gameplay success or failure signals automatically.
+- the runtime signal extractor reads `AppData/LocalLow/DefaultCompany/EnemyAIDemoStandalone/Player.log` on Windows by default and also allows a log override path.
+- detected runtime errors, warnings, and gameplay events now support bounded automatic evaluation instead of relying entirely on manual reporting.
+- `--auto-evaluate` summarizes the current runtime log, and `--record-outcome --auto` stores the inferred result into the existing append-only learning log.
+- this reduces manual reporting while keeping evaluation deterministic, read-only, and operator-visible.
+
+Commands:
+
+- `npm run operator:view -- --auto-evaluate "<project>"`
+- `npm run operator:view -- --auto-evaluate "<project>" --runtime-log "<path-to-log>"`
+- `npm run operator:view -- --record-outcome "<project>" --feature "enemy-health" --auto`
 
 ## Safe Runtime Action Bridge
 

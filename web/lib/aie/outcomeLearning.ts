@@ -4,6 +4,8 @@ import { randomUUID } from "node:crypto";
 
 export type OutcomeResult = "pass" | "fail" | "partial";
 
+export type OutcomeEvaluationSource = "manual" | "runtime-auto";
+
 export type OutcomeRecord = {
   id: string;
   timestamp: string;
@@ -15,6 +17,7 @@ export type OutcomeRecord = {
   consoleSignals: string[];
   filesChanged: string[];
   rollbackUsed: boolean;
+  evaluationSource: OutcomeEvaluationSource;
   learnedPattern?: string;
 };
 
@@ -40,6 +43,7 @@ export type RecordOutcomeInput = {
   filesChanged?: string[];
   rollbackUsed?: boolean;
   timestamp?: string;
+  evaluationSource?: OutcomeEvaluationSource;
 };
 
 const OUTCOME_DIRECTORY = ".aie";
@@ -76,8 +80,21 @@ function parseOutcomeRecord(rawLine: string): OutcomeRecord | null {
     return null;
   }
 
-  const parsed = JSON.parse(trimmed) as OutcomeRecord;
-  return parsed;
+  const parsed = JSON.parse(trimmed) as Partial<OutcomeRecord>;
+  return {
+    id: parsed.id ?? "",
+    timestamp: parsed.timestamp ?? "",
+    projectPath: parsed.projectPath ?? "",
+    feature: parsed.feature ?? "",
+    action: parsed.action ?? DEFAULT_ACTION,
+    result: parsed.result ?? "partial",
+    userObservation: parsed.userObservation ?? "",
+    consoleSignals: normalizeList(parsed.consoleSignals),
+    filesChanged: normalizeList(parsed.filesChanged),
+    rollbackUsed: parsed.rollbackUsed ?? false,
+    evaluationSource: parsed.evaluationSource === "runtime-auto" ? "runtime-auto" : "manual",
+    learnedPattern: parsed.learnedPattern,
+  };
 }
 
 export async function readOutcomeRecords(projectPath: string): Promise<OutcomeRecord[]> {
@@ -117,6 +134,7 @@ export async function recordOutcome(projectPath: string, input: RecordOutcomeInp
     consoleSignals: normalizeList(input.consoleSignals),
     filesChanged: normalizeList(input.filesChanged),
     rollbackUsed: input.rollbackUsed ?? false,
+    evaluationSource: input.evaluationSource ?? "manual",
     learnedPattern: buildLearnedPattern(input.feature.trim(), action, input.result, observation),
   };
 
@@ -155,6 +173,7 @@ export function renderOutcomeRecord(result: { record: OutcomeRecord; logPath: st
     `Feature: ${result.record.feature}`,
     `Action: ${result.record.action}`,
     `Result: ${result.record.result}`,
+    `Source: ${result.record.evaluationSource}`,
     `Observation: ${result.record.userObservation}`,
     `Rollback Used: ${result.record.rollbackUsed ? "YES" : "NO"}`,
     `Learned Pattern: ${result.record.learnedPattern ?? "none"}`,

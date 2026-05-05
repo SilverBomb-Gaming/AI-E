@@ -14,6 +14,11 @@ import {
   type OutcomeResult,
 } from "../lib/aie/outcomeLearning";
 import {
+  autoEvaluateUnityRuntime,
+  buildAutoOutcomeObservation,
+  renderAutoEvaluation,
+} from "../lib/aie/runtimeSignals";
+import {
   applyUnityPatchArtifact,
   buildExistingCameraFollowArtifact,
   generateCameraTuningArtifact,
@@ -92,10 +97,13 @@ type ShowOperatorViewOptions = {
   nextGameTaskPath?: string;
   executeNextGameTaskPath?: string;
   recordOutcomePath?: string;
+  autoEvaluatePath?: string;
   learningSummaryPath?: string;
   outcomeFeature?: string;
   outcomeResult?: OutcomeResult;
   outcomeObservation?: string;
+  runtimeLogPath?: string;
+  autoRecord?: boolean;
   cameraWiringPreviewPath?: string;
   applyCameraWiringPath?: string;
   cameraWiringStatusPath?: string;
@@ -366,8 +374,23 @@ function parseArgs(argv: string[]): ShowOperatorViewOptions {
       continue;
     }
 
+    if (arg.startsWith("--auto-evaluate=")) {
+      options.autoEvaluatePath = arg.slice("--auto-evaluate=".length).trim() || undefined;
+      continue;
+    }
+
     if (arg.startsWith("--learning-summary=")) {
       options.learningSummaryPath = arg.slice("--learning-summary=".length).trim() || undefined;
+      continue;
+    }
+
+    if (arg.startsWith("--runtime-log=")) {
+      options.runtimeLogPath = arg.slice("--runtime-log=".length).trim() || undefined;
+      continue;
+    }
+
+    if (arg === "--auto") {
+      options.autoRecord = true;
       continue;
     }
 
@@ -407,12 +430,32 @@ function parseArgs(argv: string[]): ShowOperatorViewOptions {
       continue;
     }
 
+    if (arg === "--auto-evaluate") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("Missing value for --auto-evaluate");
+      }
+      options.autoEvaluatePath = value.trim();
+      index += 1;
+      continue;
+    }
+
     if (arg === "--learning-summary") {
       const value = argv[index + 1];
       if (!value) {
         throw new Error("Missing value for --learning-summary");
       }
       options.learningSummaryPath = value.trim();
+      index += 1;
+      continue;
+    }
+
+    if (arg === "--runtime-log") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("Missing value for --runtime-log");
+      }
+      options.runtimeLogPath = value.trim();
       index += 1;
       continue;
     }
@@ -1147,6 +1190,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       options.gameTaskPath ? "--game-task" : null,
       options.nextGameTaskPath ? "--next-game-task" : null,
       options.recordOutcomePath ? "--record-outcome" : null,
+      options.autoEvaluatePath ? "--auto-evaluate" : null,
       options.learningSummaryPath ? "--learning-summary" : null,
       options.executeNextGameTaskPath ? "--execute-next-game-task" : null,
       options.cameraTuningPreviewPath ? "--camera-tuning-preview" : null,
@@ -1656,17 +1700,53 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       return 0;
     }
 
+    if (options.autoEvaluatePath) {
+      const evaluation = await autoEvaluateUnityRuntime(options.autoEvaluatePath, options.runtimeLogPath);
+
+      if (options.json) {
+        console.log(JSON.stringify(evaluation, null, 2));
+        return 0;
+      }
+
+      console.log(renderAutoEvaluation(evaluation));
+      return 0;
+    }
+
     if (options.recordOutcomePath) {
       if (!options.outcomeFeature) {
         throw new Error("--record-outcome requires --feature");
       }
 
-      if (!options.outcomeResult || !["pass", "fail", "partial"].includes(options.outcomeResult)) {
+      if (!options.autoRecord && (!options.outcomeResult || !["pass", "fail", "partial"].includes(options.outcomeResult))) {
         throw new Error("--record-outcome requires --result pass|fail|partial");
       }
 
-      if (!options.outcomeObservation) {
+      if (!options.autoRecord && !options.outcomeObservation) {
         throw new Error("--record-outcome requires --observation");
+      }
+
+      if (options.autoRecord) {
+        const evaluation = await autoEvaluateUnityRuntime(options.recordOutcomePath, options.runtimeLogPath);
+        const recorded = await recordOutcome(options.recordOutcomePath, {
+          feature: options.outcomeFeature,
+          action: "runtime signal extraction",
+          result: evaluation.parsedResult.inferredResult,
+          observation: buildAutoOutcomeObservation(evaluation),
+          consoleSignals: [
+            ...evaluation.parsedResult.errors,
+            ...evaluation.parsedResult.warnings,
+            ...evaluation.parsedResult.gameplayEvents,
+          ],
+          evaluationSource: "runtime-auto",
+        });
+
+        if (options.json) {
+          console.log(JSON.stringify(recorded, null, 2));
+          return 0;
+        }
+
+        console.log(renderOutcomeRecord(recorded));
+        return 0;
       }
 
       const recorded = await recordOutcome(options.recordOutcomePath, {

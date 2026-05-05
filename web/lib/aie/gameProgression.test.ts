@@ -69,12 +69,19 @@ test("game progression includes outcome-based reason for the next task", async (
     const snapshot = await createSnapshot(tempRoot);
     await recordOutcome(tempRoot, {
       feature: "attack-feedback",
+      result: "fail",
+      observation: "Manual note said the enemy flash was hard to see.",
+    });
+    await recordOutcome(tempRoot, {
+      feature: "attack-feedback",
       result: "pass",
       observation: "Mouse0 and E both hit; enemy flashes red and pulses visibly.",
+      evaluationSource: "runtime-auto",
     });
 
     const progression = await determineGameProgression(snapshot);
     assert.match(progression.nextTask.reasonBasedOnOutcomes, /stored outcomes/i);
+    assert.match(progression.nextTask.reasonBasedOnOutcomes, /auto-detected pass/i);
     assert.match(progression.nextTask.reasonBasedOnOutcomes, /attack-feedback/i);
     assert.match(progression.nextTask.safeImplementationPlan[0], /recent successful pattern/i);
   } finally {

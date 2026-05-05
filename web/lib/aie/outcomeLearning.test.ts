@@ -26,6 +26,7 @@ test("outcome learning records append-only JSONL entries", async () => {
     assert.equal(lines.length, 2);
     assert.equal((JSON.parse(lines[0]) as { id: string; }).id, first.record.id);
     assert.equal((JSON.parse(lines[1]) as { id: string; }).id, second.record.id);
+    assert.equal((JSON.parse(lines[0]) as { evaluationSource: string; }).evaluationSource, "manual");
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }
