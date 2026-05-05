@@ -7,6 +7,13 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { inspectGameProject, renderGameProjectSummary } from "../lib/aie/gameProjectInspector";
 import { determineGameProgression, renderNextGameTask } from "../lib/aie/gameProgression";
 import {
+  recordOutcome,
+  renderOutcomeRecord,
+  renderOutcomeSummary,
+  summarizeOutcomeLearning,
+  type OutcomeResult,
+} from "../lib/aie/outcomeLearning";
+import {
   applyUnityPatchArtifact,
   buildExistingCameraFollowArtifact,
   generateCameraTuningArtifact,
@@ -84,6 +91,11 @@ type ShowOperatorViewOptions = {
   gameTaskPath?: string;
   nextGameTaskPath?: string;
   executeNextGameTaskPath?: string;
+  recordOutcomePath?: string;
+  learningSummaryPath?: string;
+  outcomeFeature?: string;
+  outcomeResult?: OutcomeResult;
+  outcomeObservation?: string;
   cameraWiringPreviewPath?: string;
   applyCameraWiringPath?: string;
   cameraWiringStatusPath?: string;
@@ -349,12 +361,88 @@ function parseArgs(argv: string[]): ShowOperatorViewOptions {
       continue;
     }
 
+    if (arg.startsWith("--record-outcome=")) {
+      options.recordOutcomePath = arg.slice("--record-outcome=".length).trim() || undefined;
+      continue;
+    }
+
+    if (arg.startsWith("--learning-summary=")) {
+      options.learningSummaryPath = arg.slice("--learning-summary=".length).trim() || undefined;
+      continue;
+    }
+
+    if (arg.startsWith("--feature=")) {
+      options.outcomeFeature = arg.slice("--feature=".length).trim() || undefined;
+      continue;
+    }
+
+    if (arg.startsWith("--result=")) {
+      const value = arg.slice("--result=".length).trim();
+      options.outcomeResult = value ? value as OutcomeResult : undefined;
+      continue;
+    }
+
+    if (arg.startsWith("--observation=")) {
+      options.outcomeObservation = arg.slice("--observation=".length).trim() || undefined;
+      continue;
+    }
+
     if (arg === "--next-game-task") {
       const value = argv[index + 1];
       if (!value) {
         throw new Error("Missing value for --next-game-task");
       }
       options.nextGameTaskPath = value.trim();
+      index += 1;
+      continue;
+    }
+
+    if (arg === "--record-outcome") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("Missing value for --record-outcome");
+      }
+      options.recordOutcomePath = value.trim();
+      index += 1;
+      continue;
+    }
+
+    if (arg === "--learning-summary") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("Missing value for --learning-summary");
+      }
+      options.learningSummaryPath = value.trim();
+      index += 1;
+      continue;
+    }
+
+    if (arg === "--feature") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("Missing value for --feature");
+      }
+      options.outcomeFeature = value.trim();
+      index += 1;
+      continue;
+    }
+
+    if (arg === "--result") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("Missing value for --result");
+      }
+      options.outcomeResult = value.trim() as OutcomeResult;
+      index += 1;
+      continue;
+    }
+
+    if (arg === "--observation") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("Missing value for --observation");
+      }
+      options.outcomeObservation = value.trim();
       index += 1;
       continue;
     }
@@ -1058,6 +1146,8 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       options.projectPath ? "--project" : null,
       options.gameTaskPath ? "--game-task" : null,
       options.nextGameTaskPath ? "--next-game-task" : null,
+      options.recordOutcomePath ? "--record-outcome" : null,
+      options.learningSummaryPath ? "--learning-summary" : null,
       options.executeNextGameTaskPath ? "--execute-next-game-task" : null,
       options.cameraTuningPreviewPath ? "--camera-tuning-preview" : null,
       options.applyCameraTuningPath ? "--apply-camera-tuning" : null,
@@ -1563,6 +1653,46 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       }
 
       console.log(renderGameTask(task));
+      return 0;
+    }
+
+    if (options.recordOutcomePath) {
+      if (!options.outcomeFeature) {
+        throw new Error("--record-outcome requires --feature");
+      }
+
+      if (!options.outcomeResult || !["pass", "fail", "partial"].includes(options.outcomeResult)) {
+        throw new Error("--record-outcome requires --result pass|fail|partial");
+      }
+
+      if (!options.outcomeObservation) {
+        throw new Error("--record-outcome requires --observation");
+      }
+
+      const recorded = await recordOutcome(options.recordOutcomePath, {
+        feature: options.outcomeFeature,
+        result: options.outcomeResult,
+        observation: options.outcomeObservation,
+      });
+
+      if (options.json) {
+        console.log(JSON.stringify(recorded, null, 2));
+        return 0;
+      }
+
+      console.log(renderOutcomeRecord(recorded));
+      return 0;
+    }
+
+    if (options.learningSummaryPath) {
+      const summary = await summarizeOutcomeLearning(options.learningSummaryPath);
+
+      if (options.json) {
+        console.log(JSON.stringify(summary, null, 2));
+        return 0;
+      }
+
+      console.log(renderOutcomeSummary(summary));
       return 0;
     }
 

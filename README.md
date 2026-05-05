@@ -1089,6 +1089,20 @@ Commands:
 - `npm run operator:view -- --attack-feedback-status "<project>"`
 - `npm run operator:view -- --rollback-attack-feedback "<project>"`
 
+## Outcome Learning Layer
+
+- AI-E can now record operator-reported playtest results into a local append-only `.aie/outcomes.jsonl` file for each project.
+- recorded outcomes store pass, fail, or partial results plus the user observation and a deterministic learned pattern.
+- the learning summary command reports total outcomes, success and failure counts, recent learned patterns, and rollback frequency.
+- next-task recommendations now read recent stored outcomes and include a reason based on those outcomes so successful approaches are reused and recent failures are avoided.
+- this is the first step toward autonomous learning; the logic is still deterministic and bounded to recording, summarizing, and influencing recommendations.
+
+Commands:
+
+- `npm run operator:view -- --record-outcome "<project>" --feature "attack-feedback" --result "pass" --observation "Enemy visibly flashes red and pulses on hit."`
+- `npm run operator:view -- --learning-summary "<project>"`
+- `npm run operator:view -- --next-game-task "<project>"`
+
 ## Safe Runtime Action Bridge
 
 AI-E can now translate supported live operator actions into safe runtime intents.

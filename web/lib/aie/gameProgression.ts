@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 
 import type { GameProjectSnapshot } from "./gameProjectInspector";
+import { readOutcomeRecords, type OutcomeRecord } from "./outcomeLearning";
 
 export type GameProgressionStage = {
   id: "movement" | "camera-control" | "basic-enemy" | "player-attack" | "game-loop";
@@ -19,6 +20,7 @@ export type NextGameTask = {
   implementationMode: "create-new-script" | "modify-existing-script";
   targetFile: string;
   requiredPatchType: "camera-follow-script" | "basic-enemy-script" | "player-attack-script" | "game-loop-script";
+  reasonBasedOnOutcomes: string;
   safeImplementationPlan: string[];
   safety: {
     noDuplicateSystems: true;
@@ -38,6 +40,19 @@ export type GameProgressionResult = {
     cameraExists: boolean;
   };
   nextTask: NextGameTask;
+};
+
+type OutcomeGuidance = {
+  reasonBasedOnOutcomes: string;
+  guidanceSteps: string[];
+};
+
+const STAGE_FEATURE_HINTS: Record<GameProgressionStage["id"], string[]> = {
+  movement: ["movement", "jump", "player", "controller"],
+  "camera-control": ["camera", "camera control", "camera follow"],
+  "basic-enemy": ["enemy", "basic enemy"],
+  "player-attack": ["attack", "player attack", "attack feedback", "enemy health"],
+  "game-loop": ["game loop", "loop", "win", "lose"],
 };
 
 async function detectJumpExists(snapshot: GameProjectSnapshot): Promise<boolean> {
@@ -104,6 +119,7 @@ function buildCameraFollowTask(): NextGameTask {
     implementationMode: "create-new-script",
     targetFile: "Assets/Scripts/CameraFollow.cs",
     requiredPatchType: "camera-follow-script",
+    reasonBasedOnOutcomes: "No stored outcomes yet; continue with the guarded incremental workflow.",
     safeImplementationPlan: [
       "Create CameraFollow.cs in Assets/Scripts unless an existing camera follow script is already present.",
       "Create CameraFollow.cs.meta when the script is first generated so scene references stay stable.",
@@ -136,6 +152,7 @@ function buildFallbackTask(stage: NextGameTask["stage"], title: string, scriptNa
       : stage === "player-attack"
         ? "player-attack-script"
         : "game-loop-script",
+    reasonBasedOnOutcomes: "No stored outcomes yet; continue with the guarded incremental workflow.",
     safeImplementationPlan: [
       "Inspect existing scripts before creating a new gameplay system.",
       "Prefer modifying existing structure when a related script already exists.",
@@ -150,24 +167,74 @@ function buildFallbackTask(stage: NextGameTask["stage"], title: string, scriptNa
   };
 }
 
-function determineNextTask(stages: GameProgressionStage[]): NextGameTask {
+function normalizeFeature(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function isOutcomeRelevant(stage: GameProgressionStage["id"], record: OutcomeRecord): boolean {
+  const normalizedFeature = normalizeFeature(record.feature);
+  return STAGE_FEATURE_HINTS[stage].some((hint) => normalizedFeature.includes(hint));
+}
+
+function buildOutcomeGuidance(stage: GameProgressionStage["id"], records: OutcomeRecord[]): OutcomeGuidance {
+  const recentRecords = records.slice(-10).reverse();
+  const relevantRecords = recentRecords.filter((record) => isOutcomeRelevant(stage, record));
+  const latestSuccess = relevantRecords.find((record) => record.result === "pass")
+    ?? recentRecords.find((record) => record.result === "pass");
+  const latestFailure = relevantRecords.find((record) => record.result === "fail")
+    ?? recentRecords.find((record) => record.result === "fail");
+  const guidanceSteps: string[] = [];
+  const reasonParts: string[] = [];
+
+  if (latestSuccess?.learnedPattern) {
+    guidanceSteps.push(`Reuse the recent successful pattern: ${latestSuccess.learnedPattern}.`);
+    reasonParts.push(`recent success: ${latestSuccess.learnedPattern}`);
+  }
+
+  if (latestFailure?.learnedPattern) {
+    guidanceSteps.push(`Avoid the recent failed approach: ${latestFailure.learnedPattern}.`);
+    reasonParts.push(`recent failure to avoid: ${latestFailure.learnedPattern}`);
+  }
+
+  if (reasonParts.length === 0) {
+    return {
+      reasonBasedOnOutcomes: "No stored outcomes yet; continue with the guarded incremental workflow.",
+      guidanceSteps: [],
+    };
+  }
+
+  return {
+    reasonBasedOnOutcomes: `Next task guidance uses stored outcomes: ${reasonParts.join("; ")}.`,
+    guidanceSteps,
+  };
+}
+
+function determineNextTask(stages: GameProgressionStage[], records: OutcomeRecord[]): NextGameTask {
   const nextStage = stages.find((stage) => !stage.complete)?.id ?? "game-loop";
+  const outcomeGuidance = buildOutcomeGuidance(nextStage, records);
+
+  const applyOutcomeGuidance = (task: NextGameTask): NextGameTask => ({
+    ...task,
+    reasonBasedOnOutcomes: outcomeGuidance.reasonBasedOnOutcomes,
+    safeImplementationPlan: [...outcomeGuidance.guidanceSteps, ...task.safeImplementationPlan],
+  });
 
   switch (nextStage) {
     case "camera-control":
-      return buildCameraFollowTask();
+      return applyOutcomeGuidance(buildCameraFollowTask());
     case "basic-enemy":
-      return buildFallbackTask("basic-enemy", "Add basic enemy", "BasicEnemy.cs", "Assets/Scripts/BasicEnemy.cs", "Introduce a simple enemy that can be placed in the scene and react to the player.");
+      return applyOutcomeGuidance(buildFallbackTask("basic-enemy", "Add basic enemy", "BasicEnemy.cs", "Assets/Scripts/BasicEnemy.cs", "Introduce a simple enemy that can be placed in the scene and react to the player."));
     case "player-attack":
-      return buildFallbackTask("player-attack", "Add player attack", "PlayerAttack.cs", "Assets/Scripts/PlayerAttack.cs", "Allow the player to trigger a simple attack against nearby enemies.");
+      return applyOutcomeGuidance(buildFallbackTask("player-attack", "Add player attack", "PlayerAttack.cs", "Assets/Scripts/PlayerAttack.cs", "Allow the player to trigger a simple attack against nearby enemies."));
     case "game-loop":
-      return buildFallbackTask("game-loop", "Add win/lose loop", "GameLoopController.cs", "Assets/Scripts/GameLoopController.cs", "Define a minimal win/lose loop and restart flow for the current prototype.");
+      return applyOutcomeGuidance(buildFallbackTask("game-loop", "Add win/lose loop", "GameLoopController.cs", "Assets/Scripts/GameLoopController.cs", "Define a minimal win/lose loop and restart flow for the current prototype."));
     default:
-      return buildCameraFollowTask();
+      return applyOutcomeGuidance(buildCameraFollowTask());
   }
 }
 
 export async function determineGameProgression(snapshot: GameProjectSnapshot): Promise<GameProgressionResult> {
+  const outcomeRecords = await readOutcomeRecords(snapshot.rootPath);
   const signals = {
     movementExists: snapshot.analysis.scriptSignals.movementScripts.length > 0,
     jumpExists: await detectJumpExists(snapshot),
@@ -181,7 +248,7 @@ export async function determineGameProgression(snapshot: GameProjectSnapshot): P
     currentStage: determineCurrentStage(stages),
     stages,
     signals,
-    nextTask: determineNextTask(stages),
+    nextTask: determineNextTask(stages, outcomeRecords),
   };
 }
 
@@ -205,6 +272,7 @@ export function renderNextGameTask(result: GameProgressionResult): string {
     `Implementation Mode: ${result.nextTask.implementationMode}`,
     `Required Patch Type: ${result.nextTask.requiredPatchType}`,
     `Behavior: ${result.nextTask.behaviorDescription}`,
+    `Reason Based On Outcomes: ${result.nextTask.reasonBasedOnOutcomes}`,
     "",
     "Safe Implementation Plan:",
     ...result.nextTask.safeImplementationPlan.map((step, index) => `${index + 1}. ${step}`),
