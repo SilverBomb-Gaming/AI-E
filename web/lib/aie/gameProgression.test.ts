@@ -81,9 +81,10 @@ test("game progression includes outcome-based reason for the next task", async (
 
     const progression = await determineGameProgression(snapshot);
     assert.match(progression.nextTask.reasonBasedOnOutcomes, /stored outcomes/i);
+    assert.match(progression.nextTask.reasonBasedOnOutcomes, /Using latest runtime-auto outcome for decision context\./i);
     assert.match(progression.nextTask.reasonBasedOnOutcomes, /auto-detected pass/i);
     assert.match(progression.nextTask.reasonBasedOnOutcomes, /attack-feedback/i);
-    assert.match(progression.nextTask.safeImplementationPlan[0], /recent successful pattern/i);
+    assert.match(progression.nextTask.safeImplementationPlan[0], /runtime-auto outcome/i);
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }

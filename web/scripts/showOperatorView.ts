@@ -7,7 +7,9 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { inspectGameProject, renderGameProjectSummary } from "../lib/aie/gameProjectInspector";
 import { determineGameProgression, renderNextGameTask } from "../lib/aie/gameProgression";
 import {
+  buildOutcomeSessionKey,
   recordOutcome,
+  type RecordOutcomeResult,
   renderOutcomeRecord,
   renderOutcomeSummary,
   summarizeOutcomeLearning,
@@ -52,12 +54,14 @@ import {
   applyUnityBasicEnemy,
   applyUnityAttackFeedback,
   applyUnityFallRecovery,
+  applyUnityPlaytestSessionMarker,
   applyUnityPlayerAttack,
   applyUnityVisualDebugFloor,
   inspectUnityAttackFeedbackStatus,
   inspectUnityBasicEnemyStatus,
   inspectUnityCameraWiringStatus,
   inspectUnityFallRecoveryStatus,
+  inspectUnityPlaytestSessionMarkerStatus,
   inspectUnityPlayerAttackStatus,
   inspectUnitySceneWiring,
   inspectUnityVisualDebugStatus,
@@ -71,6 +75,9 @@ import {
   renderUnityFallRecoveryApplyResult,
   renderUnityFallRecoveryRollbackResult,
   renderUnityFallRecoveryStatus,
+  renderUnityPlaytestSessionMarkerApplyResult,
+  renderUnityPlaytestSessionMarkerRollbackResult,
+  renderUnityPlaytestSessionMarkerStatus,
   renderUnityPlayerAttackApplyResult,
   renderUnityPlayerAttackRollbackResult,
   renderUnityPlayerAttackStatus,
@@ -86,6 +93,7 @@ import {
   rollbackUnityBasicEnemy,
   rollbackUnityCameraWiring,
   rollbackUnityFallRecovery,
+  rollbackUnityPlaytestSessionMarker,
   rollbackUnityPlayerAttack,
   rollbackUnityVisualDebugFloor,
 } from "../lib/aie/unitySceneWiring";
@@ -99,6 +107,7 @@ type ShowOperatorViewOptions = {
   nextGameTaskPath?: string;
   executeNextGameTaskPath?: string;
   recordOutcomePath?: string;
+  autoRecordOutcomePath?: string;
   autoEvaluatePath?: string;
   discoverRuntimeLogsPath?: string;
   learningSummaryPath?: string;
@@ -122,6 +131,9 @@ type ShowOperatorViewOptions = {
   applyFallRecoveryPath?: string;
   fallRecoveryStatusPath?: string;
   rollbackFallRecoveryPath?: string;
+  applyPlaytestSessionMarkerPath?: string;
+  playtestSessionMarkerStatusPath?: string;
+  rollbackPlaytestSessionMarkerPath?: string;
   applyBasicEnemyPath?: string;
   enemyStatusPath?: string;
   rollbackBasicEnemyPath?: string;
@@ -180,6 +192,147 @@ type CameraFeatureExecutionReport = {
   safeToOpenUnity: boolean;
   blockedReasons: string[];
 };
+
+export type AutoRecordOutcomeBlockedResult = {
+  status: "blocked";
+  projectPath: string;
+  reason: string;
+};
+
+export type AutoRecordOutcomeDuplicateResult = {
+  status: "duplicate";
+  projectPath: string;
+  feature: string;
+  message: string;
+  evaluation: Awaited<ReturnType<typeof autoEvaluateUnityRuntime>>;
+  recorded: RecordOutcomeResult;
+  summary: Awaited<ReturnType<typeof summarizeOutcomeLearning>>;
+};
+
+export type AutoRecordOutcomeSuccessResult = {
+  status: "recorded";
+  projectPath: string;
+  feature: string;
+  evaluation: Awaited<ReturnType<typeof autoEvaluateUnityRuntime>>;
+  recorded: RecordOutcomeResult;
+  summary: Awaited<ReturnType<typeof summarizeOutcomeLearning>>;
+};
+
+export type AutoRecordOutcomeResult = AutoRecordOutcomeBlockedResult | AutoRecordOutcomeDuplicateResult | AutoRecordOutcomeSuccessResult;
+
+function buildRuntimeAutoSessionKey(feature: string, evaluation: Awaited<ReturnType<typeof autoEvaluateUnityRuntime>>): string | undefined {
+  if (!evaluation.session.startMarker || !evaluation.logPath || evaluation.evaluatedLineCount <= 0) {
+    return undefined;
+  }
+
+  return buildOutcomeSessionKey({
+    feature,
+    selectedLogPath: evaluation.logPath,
+    sessionStartMarker: evaluation.session.startMarker,
+    evaluatedLineCount: evaluation.evaluatedLineCount,
+  });
+}
+
+export async function autoRecordOutcomeForFeature(projectPath: string, feature?: string, runtimeLogPath?: string): Promise<AutoRecordOutcomeResult> {
+  const normalizedFeature = feature?.trim() ?? "";
+  if (!normalizedFeature) {
+    return {
+      status: "blocked",
+      projectPath,
+      reason: "--feature is required so the outcome can be tied to a specific game feature.",
+    };
+  }
+
+  const evaluation = await autoEvaluateUnityRuntime(projectPath, runtimeLogPath);
+  const recorded = await recordOutcome(projectPath, {
+    feature: normalizedFeature,
+    action: "runtime signal extraction",
+    result: evaluation.parsedResult.inferredResult,
+    inferredResult: evaluation.parsedResult.inferredResult,
+    observation: buildAutoOutcomeObservation(evaluation),
+    consoleSignals: [
+      ...evaluation.parsedResult.errors,
+      ...evaluation.parsedResult.warnings,
+      ...evaluation.parsedResult.gameplayEvents,
+    ],
+    evaluationSource: "runtime-auto",
+    sessionKey: buildRuntimeAutoSessionKey(normalizedFeature, evaluation),
+    sessionMode: evaluation.session.mode,
+    selectedLogPath: evaluation.logPath,
+    evaluatedLineCount: evaluation.evaluatedLineCount,
+    gameplayEvents: evaluation.parsedResult.gameplayEvents,
+    errors: evaluation.parsedResult.errors,
+  });
+  const summary = await summarizeOutcomeLearning(projectPath);
+
+  if (recorded.duplicate) {
+    return {
+      status: "duplicate",
+      projectPath,
+      feature: normalizedFeature,
+      message: "Outcome already recorded for this session.",
+      evaluation,
+      recorded,
+      summary,
+    };
+  }
+
+  return {
+    status: "recorded",
+    projectPath,
+    feature: normalizedFeature,
+    evaluation,
+    recorded,
+    summary,
+  };
+}
+
+export function renderAutoRecordOutcome(result: AutoRecordOutcomeResult): string {
+  if (result.status === "blocked") {
+    return [
+      "AUTO RECORD BLOCKED",
+      `Reason: ${result.reason}`,
+    ].join("\n");
+  }
+
+  const summaryLines = [
+    `Total Outcomes: ${result.summary.totalOutcomes}`,
+    `Pass Count: ${result.summary.passCount}`,
+    `Fail Count: ${result.summary.failCount}`,
+    `Partial Count: ${result.summary.partialCount}`,
+  ];
+
+  if (result.status === "duplicate") {
+    return [
+      "AUTO OUTCOME NOT RECORDED",
+      result.message,
+      "",
+      `Feature: ${result.feature}`,
+      `Result: ${result.evaluation.parsedResult.inferredResult}`,
+      `Session Mode: ${result.evaluation.session.mode}`,
+      `Evaluated Lines: ${result.evaluation.evaluatedLineCount}`,
+      `Errors: ${result.evaluation.parsedResult.errors.length}`,
+      `Gameplay Events: ${result.evaluation.parsedResult.gameplayEvents.length}`,
+      "",
+      "Learning Summary:",
+      ...summaryLines,
+    ].join("\n");
+  }
+
+  return [
+    "AUTO OUTCOME RECORDED",
+    "",
+    `Feature: ${result.feature}`,
+    `Result: ${result.evaluation.parsedResult.inferredResult}`,
+    `Session Mode: ${result.evaluation.session.mode}`,
+    `Evaluated Lines: ${result.evaluation.evaluatedLineCount}`,
+    `Errors: ${result.evaluation.parsedResult.errors.length}`,
+    `Gameplay Events: ${result.evaluation.parsedResult.gameplayEvents.length}`,
+    "",
+    "Learning Summary:",
+    ...summaryLines,
+  ].join("\n");
+}
 
 async function pathExists(targetPath: string): Promise<boolean> {
   try {
@@ -377,6 +530,11 @@ function parseArgs(argv: string[]): ShowOperatorViewOptions {
       continue;
     }
 
+    if (arg.startsWith("--auto-record-outcome=")) {
+      options.autoRecordOutcomePath = arg.slice("--auto-record-outcome=".length).trim() || undefined;
+      continue;
+    }
+
     if (arg.startsWith("--auto-evaluate=")) {
       options.autoEvaluatePath = arg.slice("--auto-evaluate=".length).trim() || undefined;
       continue;
@@ -434,6 +592,16 @@ function parseArgs(argv: string[]): ShowOperatorViewOptions {
         throw new Error("Missing value for --record-outcome");
       }
       options.recordOutcomePath = value.trim();
+      index += 1;
+      continue;
+    }
+
+    if (arg === "--auto-record-outcome") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("Missing value for --auto-record-outcome");
+      }
+      options.autoRecordOutcomePath = value.trim();
       index += 1;
       continue;
     }
@@ -608,6 +776,11 @@ function parseArgs(argv: string[]): ShowOperatorViewOptions {
       continue;
     }
 
+    if (arg.startsWith("--apply-playtest-session-marker=")) {
+      options.applyPlaytestSessionMarkerPath = arg.slice("--apply-playtest-session-marker=".length).trim() || undefined;
+      continue;
+    }
+
     if (arg.startsWith("--apply-basic-enemy=")) {
       options.applyBasicEnemyPath = arg.slice("--apply-basic-enemy=".length).trim() || undefined;
       continue;
@@ -629,6 +802,16 @@ function parseArgs(argv: string[]): ShowOperatorViewOptions {
         throw new Error("Missing value for --apply-fall-recovery");
       }
       options.applyFallRecoveryPath = value.trim();
+      index += 1;
+      continue;
+    }
+
+    if (arg === "--apply-playtest-session-marker") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("Missing value for --apply-playtest-session-marker");
+      }
+      options.applyPlaytestSessionMarkerPath = value.trim();
       index += 1;
       continue;
     }
@@ -683,6 +866,11 @@ function parseArgs(argv: string[]): ShowOperatorViewOptions {
       continue;
     }
 
+    if (arg.startsWith("--playtest-session-status=")) {
+      options.playtestSessionMarkerStatusPath = arg.slice("--playtest-session-status=".length).trim() || undefined;
+      continue;
+    }
+
     if (arg.startsWith("--enemy-status=")) {
       options.enemyStatusPath = arg.slice("--enemy-status=".length).trim() || undefined;
       continue;
@@ -704,6 +892,16 @@ function parseArgs(argv: string[]): ShowOperatorViewOptions {
         throw new Error("Missing value for --fall-recovery-status");
       }
       options.fallRecoveryStatusPath = value.trim();
+      index += 1;
+      continue;
+    }
+
+    if (arg === "--playtest-session-status") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("Missing value for --playtest-session-status");
+      }
+      options.playtestSessionMarkerStatusPath = value.trim();
       index += 1;
       continue;
     }
@@ -758,6 +956,11 @@ function parseArgs(argv: string[]): ShowOperatorViewOptions {
       continue;
     }
 
+    if (arg.startsWith("--rollback-playtest-session-marker=")) {
+      options.rollbackPlaytestSessionMarkerPath = arg.slice("--rollback-playtest-session-marker=".length).trim() || undefined;
+      continue;
+    }
+
     if (arg.startsWith("--rollback-basic-enemy=")) {
       options.rollbackBasicEnemyPath = arg.slice("--rollback-basic-enemy=".length).trim() || undefined;
       continue;
@@ -779,6 +982,16 @@ function parseArgs(argv: string[]): ShowOperatorViewOptions {
         throw new Error("Missing value for --rollback-fall-recovery");
       }
       options.rollbackFallRecoveryPath = value.trim();
+      index += 1;
+      continue;
+    }
+
+    if (arg === "--rollback-playtest-session-marker") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("Missing value for --rollback-playtest-session-marker");
+      }
+      options.rollbackPlaytestSessionMarkerPath = value.trim();
       index += 1;
       continue;
     }
@@ -1208,6 +1421,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       options.gameTaskPath ? "--game-task" : null,
       options.nextGameTaskPath ? "--next-game-task" : null,
       options.recordOutcomePath ? "--record-outcome" : null,
+      options.autoRecordOutcomePath ? "--auto-record-outcome" : null,
       options.autoEvaluatePath ? "--auto-evaluate" : null,
       options.discoverRuntimeLogsPath ? "--discover-runtime-logs" : null,
       options.learningSummaryPath ? "--learning-summary" : null,
@@ -1222,6 +1436,9 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       options.applyFallRecoveryPath ? "--apply-fall-recovery" : null,
       options.fallRecoveryStatusPath ? "--fall-recovery-status" : null,
       options.rollbackFallRecoveryPath ? "--rollback-fall-recovery" : null,
+      options.applyPlaytestSessionMarkerPath ? "--apply-playtest-session-marker" : null,
+      options.playtestSessionMarkerStatusPath ? "--playtest-session-status" : null,
+      options.rollbackPlaytestSessionMarkerPath ? "--rollback-playtest-session-marker" : null,
       options.applyBasicEnemyPath ? "--apply-basic-enemy" : null,
       options.enemyStatusPath ? "--enemy-status" : null,
       options.rollbackBasicEnemyPath ? "--rollback-basic-enemy" : null,
@@ -1406,6 +1623,19 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       return result.applied ? 0 : 1;
     }
 
+    if (options.applyPlaytestSessionMarkerPath) {
+      const recovery = await inspectUnityPlaytestRecovery(options.applyPlaytestSessionMarkerPath);
+      const result = await applyUnityPlaytestSessionMarker(options.applyPlaytestSessionMarkerPath, buildFollowupPatchRecoverySignal(recovery));
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return result.applied ? 0 : 1;
+      }
+
+      console.log(renderUnityPlaytestSessionMarkerApplyResult(result));
+      return result.applied ? 0 : 1;
+    }
+
     if (options.applyBasicEnemyPath) {
       const recovery = await inspectUnityPlaytestRecovery(options.applyBasicEnemyPath);
       const result = await applyUnityBasicEnemy(options.applyBasicEnemyPath, buildFollowupPatchRecoverySignal(recovery));
@@ -1534,6 +1764,19 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       return 0;
     }
 
+    if (options.playtestSessionMarkerStatusPath) {
+      const recovery = await inspectUnityPlaytestRecovery(options.playtestSessionMarkerStatusPath);
+      const status = await inspectUnityPlaytestSessionMarkerStatus(options.playtestSessionMarkerStatusPath, buildPatchStatusRecoverySignal(recovery));
+
+      if (options.json) {
+        console.log(JSON.stringify(status, null, 2));
+        return 0;
+      }
+
+      console.log(renderUnityPlaytestSessionMarkerStatus(status));
+      return 0;
+    }
+
     if (options.enemyStatusPath) {
       const recovery = await inspectUnityPlaytestRecovery(options.enemyStatusPath);
       const status = await inspectUnityBasicEnemyStatus(options.enemyStatusPath, buildPatchStatusRecoverySignal(recovery));
@@ -1642,6 +1885,19 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       return result.restored ? 0 : 1;
     }
 
+    if (options.rollbackPlaytestSessionMarkerPath) {
+      const recovery = await inspectUnityPlaytestRecovery(options.rollbackPlaytestSessionMarkerPath);
+      const result = await rollbackUnityPlaytestSessionMarker(options.rollbackPlaytestSessionMarkerPath, buildPatchStatusRecoverySignal(recovery));
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return result.restored ? 0 : 1;
+      }
+
+      console.log(renderUnityPlaytestSessionMarkerRollbackResult(result));
+      return result.restored ? 0 : 1;
+    }
+
     if (options.rollbackBasicEnemyPath) {
       const recovery = await inspectUnityPlaytestRecovery(options.rollbackBasicEnemyPath);
       const result = await rollbackUnityBasicEnemy(options.rollbackBasicEnemyPath, buildPatchStatusRecoverySignal(recovery));
@@ -1743,6 +1999,18 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       return 0;
     }
 
+    if (options.autoRecordOutcomePath) {
+      const result = await autoRecordOutcomeForFeature(options.autoRecordOutcomePath, options.outcomeFeature, options.runtimeLogPath);
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return result.status === "recorded" ? 0 : 1;
+      }
+
+      console.log(renderAutoRecordOutcome(result));
+      return result.status === "recorded" ? 0 : 1;
+    }
+
     if (options.recordOutcomePath) {
       if (!options.outcomeFeature) {
         throw new Error("--record-outcome requires --feature");
@@ -1762,6 +2030,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
           feature: options.outcomeFeature,
           action: "runtime signal extraction",
           result: evaluation.parsedResult.inferredResult,
+          inferredResult: evaluation.parsedResult.inferredResult,
           observation: buildAutoOutcomeObservation(evaluation),
           consoleSignals: [
             ...evaluation.parsedResult.errors,
@@ -1769,6 +2038,12 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
             ...evaluation.parsedResult.gameplayEvents,
           ],
           evaluationSource: "runtime-auto",
+          sessionKey: buildRuntimeAutoSessionKey(options.outcomeFeature, evaluation),
+          sessionMode: evaluation.session.mode,
+          selectedLogPath: evaluation.logPath,
+          evaluatedLineCount: evaluation.evaluatedLineCount,
+          gameplayEvents: evaluation.parsedResult.gameplayEvents,
+          errors: evaluation.parsedResult.errors,
         });
 
         if (options.json) {

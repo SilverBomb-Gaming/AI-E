@@ -191,6 +191,61 @@ export type UnityFallRecoveryRollbackResult = {
   };
 };
 
+export type UnityPlaytestSessionMarkerStatus = {
+  scenePath: string;
+  sceneAbsolutePath: string;
+  playerName: string | null;
+  playtestSessionMarkerScriptExists: boolean;
+  playtestSessionMarkerAttached: boolean;
+  startLogPresent: boolean;
+  endLogPresent: boolean;
+  backupExists: boolean;
+  safeToOpenUnityForCompileOrPlaytest: boolean;
+  details: string[];
+  safety: {
+    readOnly: true;
+    noUnityExecution: true;
+  };
+};
+
+export type UnityPlaytestSessionMarkerApplyResult = {
+  applied: boolean;
+  scenePath: string;
+  sceneAbsolutePath: string;
+  playerName: string | null;
+  scriptPath: string;
+  backupPath: string;
+  playtestSessionMarkerScriptExists: boolean;
+  playtestSessionMarkerAttached: boolean;
+  startLogPresent: boolean;
+  endLogPresent: boolean;
+  safeToOpenUnityForCompileOrPlaytest: boolean;
+  blockedReasons: string[];
+  safety: {
+    noUnityExecution: true;
+    backupCreated: boolean;
+    sceneWritten: boolean;
+  };
+};
+
+export type UnityPlaytestSessionMarkerRollbackResult = {
+  restored: boolean;
+  scenePath: string;
+  sceneAbsolutePath: string;
+  playerName: string | null;
+  scriptPath: string;
+  backupPath: string;
+  playtestSessionMarkerAttached: boolean;
+  playtestSessionMarkerScriptExists: boolean;
+  safeToOpenUnityForCompileOrPlaytest: boolean;
+  blockedReasons: string[];
+  safety: {
+    noUnityExecution: true;
+    backupRetained: true;
+    scriptRemoved: boolean;
+  };
+};
+
 export type UnityBasicEnemyStatus = {
   scenePath: string;
   sceneAbsolutePath: string;
@@ -365,6 +420,57 @@ export type UnityAttackFeedbackRollbackResult = {
   };
 };
 
+export type UnityEnemyHealthStatus = {
+  scenePath: string;
+  sceneAbsolutePath: string;
+  basicEnemyPath: string;
+  healthFieldsPresent: boolean;
+  damageLogicPresent: boolean;
+  deathLogicPresent: boolean;
+  backupExists: boolean;
+  safeToOpenUnityForCompileOrPlaytest: boolean;
+  details: string[];
+  safety: {
+    readOnly: true;
+    noUnityExecution: true;
+  };
+};
+
+export type UnityEnemyHealthApplyResult = {
+  applied: boolean;
+  scenePath: string;
+  sceneAbsolutePath: string;
+  basicEnemyPath: string;
+  backupPath: string;
+  healthFieldsPresent: boolean;
+  damageLogicPresent: boolean;
+  deathLogicPresent: boolean;
+  safeToOpenUnityForCompileOrPlaytest: boolean;
+  blockedReasons: string[];
+  safety: {
+    noUnityExecution: true;
+    backupCreated: boolean;
+    fileWritten: boolean;
+  };
+};
+
+export type UnityEnemyHealthRollbackResult = {
+  restored: boolean;
+  scenePath: string;
+  sceneAbsolutePath: string;
+  basicEnemyPath: string;
+  backupPath: string;
+  healthFieldsPresent: boolean;
+  damageLogicPresent: boolean;
+  deathLogicPresent: boolean;
+  safeToOpenUnityForCompileOrPlaytest: boolean;
+  blockedReasons: string[];
+  safety: {
+    noUnityExecution: true;
+    backupRetained: true;
+  };
+};
+
 type SceneBlock = {
   typeId: string;
   fileId: string;
@@ -401,6 +507,16 @@ type FallRecoveryVerification = {
   respawnTargetAssigned: boolean;
   fallThresholdPresent: boolean;
   fallbackSpawnSerialized: boolean;
+  componentVisibleToUnity: boolean;
+  brokenLinks: string[];
+};
+
+type PlaytestSessionMarkerVerification = {
+  componentFileId: string | null;
+  componentListLinked: boolean;
+  monoBehaviourBlockExists: boolean;
+  scriptGuidMatchesMeta: boolean;
+  lifecycleLoggingPresent: boolean;
   componentVisibleToUnity: boolean;
   brokenLinks: string[];
 };
@@ -459,6 +575,12 @@ const FALL_RECOVERY_SCENE_BACKUP_TAG = "fall-recovery";
 const FALL_RECOVERY_STATE_DIR = ".aie-state/fall-recovery";
 const FALL_RECOVERY_CREATED_SCRIPT_MARKER = `${FALL_RECOVERY_STATE_DIR}/FallRecovery.cs.created`;
 const FALL_RECOVERY_CREATED_META_MARKER = `${FALL_RECOVERY_STATE_DIR}/FallRecovery.cs.meta.created`;
+const PLAYTEST_SESSION_MARKER_SCRIPT_PATH = "Assets/Scripts/AIEPlaytestSessionMarker.cs";
+const PLAYTEST_SESSION_MARKER_META_PATH = `${PLAYTEST_SESSION_MARKER_SCRIPT_PATH}.meta`;
+const PLAYTEST_SESSION_MARKER_SCENE_BACKUP_TAG = "playtest-session-marker";
+const PLAYTEST_SESSION_MARKER_STATE_DIR = ".aie-state/playtest-session-marker";
+const PLAYTEST_SESSION_MARKER_CREATED_SCRIPT_MARKER = `${PLAYTEST_SESSION_MARKER_STATE_DIR}/AIEPlaytestSessionMarker.cs.created`;
+const PLAYTEST_SESSION_MARKER_CREATED_META_MARKER = `${PLAYTEST_SESSION_MARKER_STATE_DIR}/AIEPlaytestSessionMarker.cs.meta.created`;
 const BASIC_ENEMY_NAME = "Enemy";
 const BASIC_ENEMY_SCRIPT_PATH = "Assets/Scripts/BasicEnemy.cs";
 const BASIC_ENEMY_META_PATH = `${BASIC_ENEMY_SCRIPT_PATH}.meta`;
@@ -473,6 +595,7 @@ const PLAYER_ATTACK_STATE_DIR = ".aie-state/player-attack";
 const PLAYER_ATTACK_CREATED_SCRIPT_MARKER = `${PLAYER_ATTACK_STATE_DIR}/PlayerAttack.cs.created`;
 const PLAYER_ATTACK_CREATED_META_MARKER = `${PLAYER_ATTACK_STATE_DIR}/PlayerAttack.cs.meta.created`;
 const ATTACK_FEEDBACK_BACKUP_TAG = "attack-feedback";
+const ENEMY_HEALTH_BACKUP_TAG = "enemy-health";
 const VISUAL_DEBUG_MATERIAL_DIR = "Assets/Materials";
 const VISUAL_DEBUG_MATERIAL_PATH = `${VISUAL_DEBUG_MATERIAL_DIR}/AIE_DebugFloor.mat`;
 const VISUAL_DEBUG_SCENE_BACKUP_TAG = "visual-debug-floor";
@@ -676,6 +799,97 @@ async function ensureFallRecoveryScript(projectRoot: string): Promise<{ scriptEx
   };
 }
 
+function buildPlaytestSessionMarkerSource(): string {
+  return [
+    "using System;",
+    "using UnityEngine;",
+    "",
+    "namespace EnemyAIDemo",
+    "{",
+    "    /// <summary>",
+    "    /// Emits bounded playtest session markers into the Unity runtime log so AI-E can isolate the latest run.",
+    "    /// </summary>",
+    "    [DisallowMultipleComponent]",
+    "    public sealed class AIEPlaytestSessionMarker : MonoBehaviour",
+    "    {",
+    "        [SerializeField] private bool logSessionLifecycle = true;",
+    "",
+    "        private bool sessionStarted;",
+    "        private bool sessionEnded;",
+    "        private string sessionId = string.Empty;",
+    "",
+    "        private void Awake()",
+    "        {",
+    "            if (!Application.isPlaying)",
+    "            {",
+    "                return;",
+    "            }",
+    "",
+    "            sessionId = $\"{DateTime.UtcNow:O}|{name}|{GetInstanceID()}\";",
+    "            sessionStarted = true;",
+    "",
+    "            if (logSessionLifecycle)",
+    "            {",
+    "                Debug.Log($\"[AIE Playtest Session] START id={sessionId} object={name}\", this);",
+    "            }",
+    "        }",
+    "",
+    "        private void OnApplicationQuit()",
+    "        {",
+    "            TryLogSessionEnd(\"application-quit\");",
+    "        }",
+    "",
+    "        private void OnDestroy()",
+    "        {",
+    "            TryLogSessionEnd(\"destroy\");",
+    "        }",
+    "",
+    "        private void TryLogSessionEnd(string reason)",
+    "        {",
+    "            if (!logSessionLifecycle || !sessionStarted || sessionEnded)",
+    "            {",
+    "                return;",
+    "            }",
+    "",
+    "            sessionEnded = true;",
+    "            Debug.Log($\"[AIE Playtest Session] END id={sessionId} reason={reason} object={name}\", this);",
+    "        }",
+    "    }",
+    "}",
+    "",
+  ].join("\n");
+}
+
+async function ensurePlaytestSessionMarkerScript(projectRoot: string): Promise<{ scriptExisted: boolean; metaExisted: boolean; guid: string; }> {
+  const scriptAbsolutePath = path.join(projectRoot, PLAYTEST_SESSION_MARKER_SCRIPT_PATH);
+  const metaAbsolutePath = path.join(projectRoot, PLAYTEST_SESSION_MARKER_META_PATH);
+  const stateDirectoryAbsolutePath = path.join(projectRoot, PLAYTEST_SESSION_MARKER_STATE_DIR);
+  const scriptExisted = await fileExists(scriptAbsolutePath);
+  const metaExisted = await fileExists(metaAbsolutePath);
+
+  await mkdir(stateDirectoryAbsolutePath, { recursive: true });
+
+  if (!scriptExisted) {
+    await writeFile(scriptAbsolutePath, buildPlaytestSessionMarkerSource(), "utf-8");
+    await writeFile(path.join(projectRoot, PLAYTEST_SESSION_MARKER_CREATED_SCRIPT_MARKER), "created\n", "utf-8");
+  }
+
+  let guid = await readGuidFromMeta(metaAbsolutePath);
+  if (!guid) {
+    guid = buildDeterministicMetaGuid(projectRoot, PLAYTEST_SESSION_MARKER_SCRIPT_PATH);
+    await writeFile(metaAbsolutePath, `fileFormatVersion: 2\nguid: ${guid}\n`, "utf-8");
+    if (!metaExisted) {
+      await writeFile(path.join(projectRoot, PLAYTEST_SESSION_MARKER_CREATED_META_MARKER), "created\n", "utf-8");
+    }
+  }
+
+  return {
+    scriptExisted,
+    metaExisted,
+    guid,
+  };
+}
+
 function buildBasicEnemySource(): string {
   return [
     "using UnityEngine;",
@@ -690,11 +904,13 @@ function buildBasicEnemySource(): string {
     "    {",
     "        [SerializeField] private float rotationSpeedDegrees = 24f;",
     "        [SerializeField] private bool debugSpawn = true;",
+    "        [SerializeField] private int maxHealth = 3;",
     "        [SerializeField] private Color hitFlashColor = new Color(1f, 0.2f, 0.1f, 1f);",
     "        [SerializeField] private float hitFlashDuration = 0.28f;",
     "        [SerializeField] private float hitPulseScale = 1.35f;",
     "        [SerializeField] private float hitPulseDuration = 0.28f;",
     "",
+    "        private int currentHealth;",
     "        private Renderer cachedRenderer;",
     "        private Material runtimeMaterialInstance;",
     "        private bool hasColorProperty;",
@@ -720,9 +936,11 @@ function buildBasicEnemySource(): string {
     "",
     "        private void Start()",
     "        {",
+    "            currentHealth = Mathf.Max(1, maxHealth);",
+    "",
     "            if (debugSpawn)",
     "            {",
-    "                Debug.Log($\"[AIE Basic Enemy] Spawned {name} at {transform.position}.\", this);",
+    "                Debug.Log($\"[AIE Basic Enemy] Spawned {name} at {transform.position} with {currentHealth} health.\", this);",
     "            }",
     "        }",
     "",
@@ -738,7 +956,13 @@ function buildBasicEnemySource(): string {
     "",
     "        public void ReceiveHit()",
     "        {",
-    "            Debug.Log(\"Enemy hit\", this);",
+    "            if (!gameObject.activeSelf)",
+    "            {",
+    "                return;",
+    "            }",
+    "",
+    "            currentHealth = Mathf.Max(0, currentHealth - 1);",
+    "            Debug.Log($\"Enemy hit. Health: {currentHealth}\", this);",
     "",
     "            if (hitFeedbackRoutine != null)",
     "            {",
@@ -747,6 +971,11 @@ function buildBasicEnemySource(): string {
     "",
     "            ResetVisualState();",
     "            hitFeedbackRoutine = StartCoroutine(PlayHitFeedback());",
+    "",
+    "            if (currentHealth <= 0)",
+    "            {",
+    "                StartCoroutine(HandleDefeat());",
+    "            }",
     "        }",
     "",
     "        private System.Collections.IEnumerator PlayHitFeedback()",
@@ -771,6 +1000,33 @@ function buildBasicEnemySource(): string {
     "",
     "            ResetVisualState();",
     "            hitFeedbackRoutine = null;",
+    "        }",
+    "",
+    "        private System.Collections.IEnumerator HandleDefeat()",
+    "        {",
+    "            Debug.Log(\"Enemy defeated\", this);",
+    "",
+    "            float defeatDuration = Mathf.Max(0.08f, hitPulseDuration * 1.5f);",
+    "            float elapsed = 0f;",
+    "            Vector3 defeatScale = baseScale * 1.55f;",
+    "            Color defeatColor = new Color(1f, 0.9f, 0.2f, 1f);",
+    "",
+    "            while (elapsed < defeatDuration)",
+    "            {",
+    "                elapsed += Time.deltaTime;",
+    "                float progress = Mathf.Clamp01(elapsed / defeatDuration);",
+    "                transform.localScale = Vector3.Lerp(baseScale, defeatScale, progress);",
+    "",
+    "                if (hasColorProperty && runtimeMaterialInstance != null)",
+    "                {",
+    "                    runtimeMaterialInstance.color = Color.Lerp(hitFlashColor, defeatColor, progress);",
+    "                }",
+    "",
+    "                yield return null;",
+    "            }",
+    "",
+    "            ResetVisualState();",
+    "            gameObject.SetActive(false);",
     "        }",
     "",
     "        private void ResetVisualState()",
@@ -1277,6 +1533,24 @@ function isFallRecoveryCandidateBlock(block: SceneBlock, playerGameObjectId: str
     || /^  fallbackSpawnPosition:/m.test(block.body);
 }
 
+function isPlaytestSessionMarkerCandidateBlock(block: SceneBlock, playerGameObjectId: string | null, scriptGuid: string | null): boolean {
+  if (block.typeId !== "114") {
+    return false;
+  }
+
+  if (playerGameObjectId && extractBlockGameObjectFileId(block) !== playerGameObjectId) {
+    return false;
+  }
+
+  const blockScriptGuid = extractBlockScriptGuid(block);
+  if (scriptGuid && blockScriptGuid === scriptGuid) {
+    return true;
+  }
+
+  return /AIEPlaytestSessionMarker/.test(block.body)
+    || /^  logSessionLifecycle:/m.test(block.body);
+}
+
 function buildCameraFollowVerification(blocks: readonly SceneBlock[], mainCamera: SceneObject | null, playerTransformFileId: string | null, scriptGuid: string | null): CameraFollowVerification {
   if (!mainCamera) {
     return {
@@ -1450,6 +1724,81 @@ function buildFallRecoveryVerification(
     respawnTargetAssigned: serializedFields.respawnTargetAssigned,
     fallThresholdPresent: serializedFields.fallThresholdPresent,
     fallbackSpawnSerialized: serializedFields.fallbackSpawnSerialized,
+    componentVisibleToUnity,
+    brokenLinks,
+  };
+}
+
+function hasExpectedPlaytestSessionMarkerSerializedFields(block: SceneBlock | null): { lifecycleLoggingPresent: boolean } {
+  if (!block) {
+    return {
+      lifecycleLoggingPresent: false,
+    };
+  }
+
+  return {
+    lifecycleLoggingPresent: /^  logSessionLifecycle: 1$/m.test(block.body),
+  };
+}
+
+function buildPlaytestSessionMarkerVerification(
+  blocks: readonly SceneBlock[],
+  playerCandidate: SceneObject | null,
+  scriptGuid: string | null,
+): PlaytestSessionMarkerVerification {
+  if (!playerCandidate) {
+    return {
+      componentFileId: null,
+      componentListLinked: false,
+      monoBehaviourBlockExists: false,
+      scriptGuidMatchesMeta: false,
+      lifecycleLoggingPresent: false,
+      componentVisibleToUnity: false,
+      brokenLinks: ["Player GameObject was not found."],
+    };
+  }
+
+  const brokenLinks: string[] = [];
+  const linkedComponentIds = playerCandidate.componentFileIds.filter((componentFileId) => {
+    const block = findBlock(blocks, componentFileId);
+    return block !== null && isPlaytestSessionMarkerCandidateBlock(block, playerCandidate.gameObjectFileId, scriptGuid);
+  });
+  const componentFileId = linkedComponentIds[0] ?? null;
+  const linkedComponentBlock = findBlock(blocks, componentFileId);
+  const componentListLinked = componentFileId !== null && isSafeSceneFileId(componentFileId);
+  const monoBehaviourBlockExists = linkedComponentBlock?.typeId === "114" && extractBlockGameObjectFileId(linkedComponentBlock) === playerCandidate.gameObjectFileId;
+  const scriptGuidMatchesMeta = scriptGuid !== null && extractBlockScriptGuid(linkedComponentBlock) === scriptGuid;
+  const serializedFields = hasExpectedPlaytestSessionMarkerSerializedFields(linkedComponentBlock);
+  const componentVisibleToUnity = componentListLinked && monoBehaviourBlockExists && scriptGuidMatchesMeta && serializedFields.lifecycleLoggingPresent;
+
+  if (linkedComponentIds.length === 0) {
+    brokenLinks.push("Player m_Component list does not link an AIEPlaytestSessionMarker MonoBehaviour block.");
+  }
+
+  if (componentFileId !== null && !isSafeSceneFileId(componentFileId)) {
+    brokenLinks.push(`Player references AIEPlaytestSessionMarker with unsafe scene fileID ${componentFileId}.`);
+  }
+
+  if (!monoBehaviourBlockExists) {
+    brokenLinks.push("Referenced AIEPlaytestSessionMarker MonoBehaviour block is missing or not linked back to Player.");
+  }
+
+  if (scriptGuid === null) {
+    brokenLinks.push("AIEPlaytestSessionMarker.cs.meta is missing, so Unity cannot resolve the script GUID.");
+  } else if (!scriptGuidMatchesMeta) {
+    brokenLinks.push("AIEPlaytestSessionMarker MonoBehaviour block does not reference the AIEPlaytestSessionMarker.cs.meta GUID.");
+  }
+
+  if (!serializedFields.lifecycleLoggingPresent) {
+    brokenLinks.push("AIEPlaytestSessionMarker MonoBehaviour block does not serialize the expected lifecycle logging field.");
+  }
+
+  return {
+    componentFileId,
+    componentListLinked,
+    monoBehaviourBlockExists,
+    scriptGuidMatchesMeta,
+    lifecycleLoggingPresent: serializedFields.lifecycleLoggingPresent,
     componentVisibleToUnity,
     brokenLinks,
   };
@@ -1806,6 +2155,72 @@ function collectStaleFallRecoveryComponentIds(
     }
 
     return isFallRecoveryCandidateBlock(block, playerObject.gameObjectFileId, scriptGuid);
+  });
+
+  return [...new Set([...candidateIds, ...playerExtraIds])];
+}
+
+function inspectPlaytestSessionMarkerSource(source: string): { startLogPresent: boolean; endLogPresent: boolean } {
+  return {
+    startLogPresent: source.includes("[AIE Playtest Session] START"),
+    endLogPresent: source.includes("[AIE Playtest Session] END"),
+  };
+}
+
+function buildPlaytestSessionMarkerComponentBlock(componentFileId: string, playerGameObjectFileId: string, scriptGuid: string): string {
+  return [
+    `--- !u!114 &${componentFileId}`,
+    "MonoBehaviour:",
+    "  m_ObjectHideFlags: 0",
+    "  m_CorrespondingSourceObject: {fileID: 0}",
+    "  m_PrefabInstance: {fileID: 0}",
+    "  m_PrefabAsset: {fileID: 0}",
+    `  m_GameObject: {fileID: ${playerGameObjectFileId}}`,
+    "  m_Enabled: 1",
+    "  m_EditorHideFlags: 0",
+    `  m_Script: {fileID: 11500000, guid: ${scriptGuid}, type: 3}`,
+    "  m_Name: ",
+    "  m_EditorClassIdentifier:",
+    "  logSessionLifecycle: 1",
+    "",
+  ].join("\n");
+}
+
+async function loadPlaytestSessionMarkerContext(projectPath: string): Promise<{
+  parsedScene: ParsedScene;
+  playerObject: SceneObject | null;
+  scriptGuid: string | null;
+  verification: PlaytestSessionMarkerVerification;
+}> {
+  const parsedScene = await parseProjectScene(projectPath);
+  const playerObject = parsedScene.playerCandidate;
+  const scriptGuid = await readGuidFromMeta(path.join(parsedScene.rootPath, PLAYTEST_SESSION_MARKER_META_PATH));
+  const verification = buildPlaytestSessionMarkerVerification(parsedScene.blocks, playerObject, scriptGuid);
+
+  return {
+    parsedScene,
+    playerObject,
+    scriptGuid,
+    verification,
+  };
+}
+
+function collectStalePlaytestSessionMarkerComponentIds(
+  parsedScene: ParsedScene,
+  playerObject: SceneObject,
+  scriptGuid: string | null,
+): string[] {
+  const candidateIds = parsedScene.blocks
+    .filter((block) => isPlaytestSessionMarkerCandidateBlock(block, playerObject.gameObjectFileId, scriptGuid))
+    .map((block) => block.fileId);
+
+  const playerExtraIds = playerObject.componentFileIds.filter((componentFileId) => {
+    const block = findBlock(parsedScene.blocks, componentFileId);
+    if (!block) {
+      return true;
+    }
+
+    return isPlaytestSessionMarkerCandidateBlock(block, playerObject.gameObjectFileId, scriptGuid);
   });
 
   return [...new Set([...candidateIds, ...playerExtraIds])];
@@ -2404,6 +2819,253 @@ export async function rollbackUnityFallRecovery(projectPath: string, recoverySaf
   };
 }
 
+export async function inspectUnityPlaytestSessionMarkerStatus(projectPath: string, recoverySafe: boolean): Promise<UnityPlaytestSessionMarkerStatus> {
+  const context = await loadPlaytestSessionMarkerContext(projectPath);
+  const scriptAbsolutePath = path.join(context.parsedScene.rootPath, PLAYTEST_SESSION_MARKER_SCRIPT_PATH);
+  const scriptMetaAbsolutePath = path.join(context.parsedScene.rootPath, PLAYTEST_SESSION_MARKER_META_PATH);
+  const playtestSessionMarkerScriptExists = await fileExists(scriptAbsolutePath);
+  const playtestSessionMarkerMetaExists = await fileExists(scriptMetaAbsolutePath);
+  const backupPath = sceneBackupPathFor(context.parsedScene.sceneAbsolutePath, PLAYTEST_SESSION_MARKER_SCENE_BACKUP_TAG);
+  const backupExists = await fileExists(backupPath);
+  const details: string[] = [];
+  const source = playtestSessionMarkerScriptExists ? await readFile(scriptAbsolutePath, "utf-8") : "";
+  const markerSourceStatus = inspectPlaytestSessionMarkerSource(source);
+
+  if (!context.playerObject) {
+    details.push("No Player object was detected in the selected scene.");
+  } else {
+    details.push(`Detected player object: ${context.playerObject.name}`);
+  }
+
+  if (!playtestSessionMarkerScriptExists) {
+    details.push(`Playtest session marker script asset is missing: ${PLAYTEST_SESSION_MARKER_SCRIPT_PATH}`);
+  } else if (!playtestSessionMarkerMetaExists) {
+    details.push(`Playtest session marker script meta is missing: ${PLAYTEST_SESSION_MARKER_META_PATH}`);
+  }
+
+  details.push(`Session START log present: ${markerSourceStatus.startLogPresent ? "YES" : "NO"}`);
+  details.push(`Session END log present: ${markerSourceStatus.endLogPresent ? "YES" : "NO"}`);
+
+  const safeToOpenUnityForCompileOrPlaytest = recoverySafe
+    && playtestSessionMarkerScriptExists
+    && playtestSessionMarkerMetaExists
+    && context.verification.componentVisibleToUnity
+    && markerSourceStatus.startLogPresent
+    && markerSourceStatus.endLogPresent;
+
+  return {
+    scenePath: context.parsedScene.scenePath,
+    sceneAbsolutePath: context.parsedScene.sceneAbsolutePath,
+    playerName: context.playerObject?.name ?? null,
+    playtestSessionMarkerScriptExists,
+    playtestSessionMarkerAttached: context.verification.componentVisibleToUnity,
+    startLogPresent: markerSourceStatus.startLogPresent,
+    endLogPresent: markerSourceStatus.endLogPresent,
+    backupExists,
+    safeToOpenUnityForCompileOrPlaytest,
+    details,
+    safety: {
+      readOnly: true,
+      noUnityExecution: true,
+    },
+  };
+}
+
+export async function applyUnityPlaytestSessionMarker(projectPath: string, recoverySafe: boolean): Promise<UnityPlaytestSessionMarkerApplyResult> {
+  const contextBefore = await loadPlaytestSessionMarkerContext(projectPath);
+  const backupPath = sceneBackupPathFor(contextBefore.parsedScene.sceneAbsolutePath, PLAYTEST_SESSION_MARKER_SCENE_BACKUP_TAG);
+  const backupExists = await fileExists(backupPath);
+  const blockedReasons: string[] = [];
+
+  if (!recoverySafe) {
+    blockedReasons.push("Unity recovery guard did not report a safe state for playtest session marker mutation.");
+  }
+
+  if (!contextBefore.playerObject) {
+    blockedReasons.push("A Player object was not found in the selected scene.");
+  }
+
+  if (blockedReasons.length > 0) {
+    return {
+      applied: false,
+      scenePath: contextBefore.parsedScene.scenePath,
+      sceneAbsolutePath: contextBefore.parsedScene.sceneAbsolutePath,
+      playerName: contextBefore.playerObject?.name ?? null,
+      scriptPath: PLAYTEST_SESSION_MARKER_SCRIPT_PATH,
+      backupPath,
+      playtestSessionMarkerScriptExists: await fileExists(path.join(contextBefore.parsedScene.rootPath, PLAYTEST_SESSION_MARKER_SCRIPT_PATH)),
+      playtestSessionMarkerAttached: false,
+      startLogPresent: false,
+      endLogPresent: false,
+      safeToOpenUnityForCompileOrPlaytest: false,
+      blockedReasons,
+      safety: {
+        noUnityExecution: true,
+        backupCreated: backupExists,
+        sceneWritten: false,
+      },
+    };
+  }
+
+  const ensuredScript = await ensurePlaytestSessionMarkerScript(contextBefore.parsedScene.rootPath);
+  const contextAfterScript = await loadPlaytestSessionMarkerContext(projectPath);
+  const source = await readFile(path.join(contextAfterScript.parsedScene.rootPath, PLAYTEST_SESSION_MARKER_SCRIPT_PATH), "utf-8");
+  const markerSourceStatus = inspectPlaytestSessionMarkerSource(source);
+
+  if (contextAfterScript.verification.componentVisibleToUnity && markerSourceStatus.startLogPresent && markerSourceStatus.endLogPresent) {
+    const status = await inspectUnityPlaytestSessionMarkerStatus(projectPath, recoverySafe);
+    return {
+      applied: false,
+      scenePath: status.scenePath,
+      sceneAbsolutePath: status.sceneAbsolutePath,
+      playerName: status.playerName,
+      scriptPath: PLAYTEST_SESSION_MARKER_SCRIPT_PATH,
+      backupPath,
+      playtestSessionMarkerScriptExists: status.playtestSessionMarkerScriptExists,
+      playtestSessionMarkerAttached: status.playtestSessionMarkerAttached,
+      startLogPresent: status.startLogPresent,
+      endLogPresent: status.endLogPresent,
+      safeToOpenUnityForCompileOrPlaytest: status.safeToOpenUnityForCompileOrPlaytest,
+      blockedReasons: ["AIEPlaytestSessionMarker is already attached to Player with the expected session markers."],
+      safety: {
+        noUnityExecution: true,
+        backupCreated: backupExists,
+        sceneWritten: !ensuredScript.scriptExisted || !ensuredScript.metaExisted,
+      },
+    };
+  }
+
+  if (!backupExists) {
+    await copyFile(contextAfterScript.parsedScene.sceneAbsolutePath, backupPath);
+  }
+
+  const playerObject = contextAfterScript.playerObject;
+  if (!playerObject) {
+    throw new Error("Playtest session marker prerequisites were not present during apply.");
+  }
+
+  const playerBlock = findBlock(contextAfterScript.parsedScene.blocks, playerObject.gameObjectFileId);
+  if (!playerBlock) {
+    throw new Error("Player GameObject block was not found during playtest session marker apply.");
+  }
+
+  let updatedSource = contextAfterScript.parsedScene.source;
+  const staleComponentIds = collectStalePlaytestSessionMarkerComponentIds(contextAfterScript.parsedScene, playerObject, ensuredScript.guid);
+  const filteredComponentIds = playerObject.componentFileIds.filter((componentFileId) => !staleComponentIds.includes(componentFileId));
+  const filteredBlocks = contextAfterScript.parsedScene.blocks.filter((block) => !staleComponentIds.includes(block.fileId));
+  const newComponentFileId = nextSafeSceneFileId(filteredBlocks);
+  const updatedPlayerBlock = replaceGameObjectComponentList(playerBlock, [...filteredComponentIds, newComponentFileId]);
+  updatedSource = updatedSource.replace(playerBlock.raw, updatedPlayerBlock);
+
+  for (const staleComponentId of staleComponentIds) {
+    const staleBlock = findBlock(contextAfterScript.parsedScene.blocks, staleComponentId);
+    if (staleBlock) {
+      updatedSource = updatedSource.replace(staleBlock.raw, "");
+    }
+  }
+
+  updatedSource = `${updatedSource.trimEnd()}\n${buildPlaytestSessionMarkerComponentBlock(
+    newComponentFileId,
+    playerObject.gameObjectFileId,
+    ensuredScript.guid,
+  )}`;
+  await writeFile(contextAfterScript.parsedScene.sceneAbsolutePath, updatedSource, "utf-8");
+
+  const status = await inspectUnityPlaytestSessionMarkerStatus(projectPath, recoverySafe);
+  return {
+    applied: status.playtestSessionMarkerAttached && status.startLogPresent && status.endLogPresent,
+    scenePath: status.scenePath,
+    sceneAbsolutePath: status.sceneAbsolutePath,
+    playerName: status.playerName,
+    scriptPath: PLAYTEST_SESSION_MARKER_SCRIPT_PATH,
+    backupPath,
+    playtestSessionMarkerScriptExists: status.playtestSessionMarkerScriptExists,
+    playtestSessionMarkerAttached: status.playtestSessionMarkerAttached,
+    startLogPresent: status.startLogPresent,
+    endLogPresent: status.endLogPresent,
+    safeToOpenUnityForCompileOrPlaytest: status.safeToOpenUnityForCompileOrPlaytest,
+    blockedReasons: status.playtestSessionMarkerAttached && status.startLogPresent && status.endLogPresent ? [] : ["AIEPlaytestSessionMarker was not attached to Player with the expected session marker logs."],
+    safety: {
+      noUnityExecution: true,
+      backupCreated: true,
+      sceneWritten: true,
+    },
+  };
+}
+
+export async function rollbackUnityPlaytestSessionMarker(projectPath: string, recoverySafe: boolean): Promise<UnityPlaytestSessionMarkerRollbackResult> {
+  const contextBefore = await loadPlaytestSessionMarkerContext(projectPath);
+  const backupPath = sceneBackupPathFor(contextBefore.parsedScene.sceneAbsolutePath, PLAYTEST_SESSION_MARKER_SCENE_BACKUP_TAG);
+  const scriptCreatedMarkerPath = path.join(contextBefore.parsedScene.rootPath, PLAYTEST_SESSION_MARKER_CREATED_SCRIPT_MARKER);
+  const metaCreatedMarkerPath = path.join(contextBefore.parsedScene.rootPath, PLAYTEST_SESSION_MARKER_CREATED_META_MARKER);
+  const createdScriptByAie = await fileExists(scriptCreatedMarkerPath);
+  const createdMetaByAie = await fileExists(metaCreatedMarkerPath);
+
+  if (!(await fileExists(backupPath))) {
+    const status = await inspectUnityPlaytestSessionMarkerStatus(projectPath, recoverySafe);
+    return {
+      restored: false,
+      scenePath: status.scenePath,
+      sceneAbsolutePath: status.sceneAbsolutePath,
+      playerName: status.playerName,
+      scriptPath: PLAYTEST_SESSION_MARKER_SCRIPT_PATH,
+      backupPath,
+      playtestSessionMarkerAttached: status.playtestSessionMarkerAttached,
+      playtestSessionMarkerScriptExists: status.playtestSessionMarkerScriptExists,
+      safeToOpenUnityForCompileOrPlaytest: status.safeToOpenUnityForCompileOrPlaytest,
+      blockedReasons: ["No playtest session marker scene backup was found for rollback."],
+      safety: {
+        noUnityExecution: true,
+        backupRetained: true,
+        scriptRemoved: false,
+      },
+    };
+  }
+
+  const backupSource = await readFile(backupPath, "utf-8");
+  await writeFile(contextBefore.parsedScene.sceneAbsolutePath, backupSource, "utf-8");
+
+  let scriptRemoved = false;
+  if (createdScriptByAie) {
+    const scriptAbsolutePath = path.join(contextBefore.parsedScene.rootPath, PLAYTEST_SESSION_MARKER_SCRIPT_PATH);
+    if (await fileExists(scriptAbsolutePath)) {
+      await writeFile(scriptAbsolutePath, "", "utf-8");
+      await stat(scriptAbsolutePath);
+      await import("node:fs/promises").then(({ unlink }) => unlink(scriptAbsolutePath));
+      scriptRemoved = true;
+    }
+    await import("node:fs/promises").then(({ unlink }) => unlink(scriptCreatedMarkerPath));
+  }
+
+  if (createdMetaByAie) {
+    const metaAbsolutePath = path.join(contextBefore.parsedScene.rootPath, PLAYTEST_SESSION_MARKER_META_PATH);
+    if (await fileExists(metaAbsolutePath)) {
+      await import("node:fs/promises").then(({ unlink }) => unlink(metaAbsolutePath));
+      scriptRemoved = true;
+    }
+    await import("node:fs/promises").then(({ unlink }) => unlink(metaCreatedMarkerPath));
+  }
+
+  const status = await inspectUnityPlaytestSessionMarkerStatus(projectPath, recoverySafe);
+  return {
+    restored: true,
+    scenePath: status.scenePath,
+    sceneAbsolutePath: status.sceneAbsolutePath,
+    playerName: status.playerName,
+    scriptPath: PLAYTEST_SESSION_MARKER_SCRIPT_PATH,
+    backupPath,
+    playtestSessionMarkerAttached: status.playtestSessionMarkerAttached,
+    playtestSessionMarkerScriptExists: status.playtestSessionMarkerScriptExists,
+    safeToOpenUnityForCompileOrPlaytest: status.safeToOpenUnityForCompileOrPlaytest,
+    blockedReasons: [],
+    safety: {
+      noUnityExecution: true,
+      backupRetained: true,
+      scriptRemoved,
+    },
+  };
+}
+
 export async function inspectUnityBasicEnemyStatus(projectPath: string, recoverySafe: boolean): Promise<UnityBasicEnemyStatus> {
   const context = await loadBasicEnemyContext(projectPath);
   const scriptAbsolutePath = path.join(context.parsedScene.rootPath, BASIC_ENEMY_SCRIPT_PATH);
@@ -2963,6 +3625,28 @@ function inspectPlayerAttackFeedbackSource(source: string): {
   };
 }
 
+function inspectBasicEnemyHealthSource(source: string): {
+  healthFieldsPresent: boolean;
+  damageLogicPresent: boolean;
+  deathLogicPresent: boolean;
+} {
+  const healthFieldsPresent = /maxHealth = 3/.test(source)
+    && /private int currentHealth;/.test(source)
+    && /currentHealth = Mathf\.Max\(1, maxHealth\)/.test(source);
+  const damageLogicPresent = /currentHealth = Mathf\.Max\(0, currentHealth - 1\)/.test(source)
+    && /Enemy hit\. Health: \{currentHealth\}/.test(source);
+  const deathLogicPresent = /if \(currentHealth <= 0\)/.test(source)
+    && /HandleDefeat\(\)/.test(source)
+    && /Enemy defeated/.test(source)
+    && /gameObject\.SetActive\(false\)/.test(source);
+
+  return {
+    healthFieldsPresent,
+    damageLogicPresent,
+    deathLogicPresent,
+  };
+}
+
 export async function inspectUnityAttackFeedbackStatus(projectPath: string, recoverySafe: boolean): Promise<UnityAttackFeedbackStatus> {
   const parsedScene = await parseProjectScene(projectPath);
   const basicEnemyAbsolutePath = path.join(parsedScene.rootPath, BASIC_ENEMY_SCRIPT_PATH);
@@ -3140,6 +3824,150 @@ export async function rollbackUnityAttackFeedback(projectPath: string, recoveryS
     playerAttackRangeGizmoPresent: status.playerAttackRangeGizmoPresent,
     hitFlashPresent: status.hitFlashPresent,
     hitPulsePresent: status.hitPulsePresent,
+    safeToOpenUnityForCompileOrPlaytest: status.safeToOpenUnityForCompileOrPlaytest,
+    blockedReasons: [],
+    safety: {
+      noUnityExecution: true,
+      backupRetained: true,
+    },
+  };
+}
+
+export async function inspectUnityEnemyHealthStatus(projectPath: string, recoverySafe: boolean): Promise<UnityEnemyHealthStatus> {
+  const parsedScene = await parseProjectScene(projectPath);
+  const basicEnemyAbsolutePath = path.join(parsedScene.rootPath, BASIC_ENEMY_SCRIPT_PATH);
+  const backupPath = fileBackupPathFor(basicEnemyAbsolutePath, ENEMY_HEALTH_BACKUP_TAG);
+  const backupExists = await fileExists(backupPath);
+  const basicEnemyScriptExists = await fileExists(basicEnemyAbsolutePath);
+  const basicEnemyMetaExists = await fileExists(path.join(parsedScene.rootPath, BASIC_ENEMY_META_PATH));
+  const basicEnemyStatus = await inspectUnityBasicEnemyStatus(projectPath, recoverySafe);
+  const details: string[] = [];
+  const source = basicEnemyScriptExists ? await readFile(basicEnemyAbsolutePath, "utf-8") : "";
+  const healthStatus = inspectBasicEnemyHealthSource(source);
+
+  if (!basicEnemyScriptExists) {
+    details.push(`Basic enemy script asset is missing: ${BASIC_ENEMY_SCRIPT_PATH}`);
+  } else if (!basicEnemyMetaExists) {
+    details.push(`Basic enemy script meta is missing: ${BASIC_ENEMY_META_PATH}`);
+  }
+
+  details.push(`BasicEnemy attached in scene: ${basicEnemyStatus.scriptAttached ? "YES" : "NO"}`);
+  details.push(`BasicEnemy visual feedback present: ${inspectBasicEnemyFeedbackSource(source).basicEnemyVisualFeedbackPresent ? "YES" : "NO"}`);
+
+  const safeToOpenUnityForCompileOrPlaytest = recoverySafe
+    && basicEnemyScriptExists
+    && basicEnemyMetaExists
+    && basicEnemyStatus.scriptAttached
+    && healthStatus.healthFieldsPresent
+    && healthStatus.damageLogicPresent
+    && healthStatus.deathLogicPresent;
+
+  return {
+    scenePath: parsedScene.scenePath,
+    sceneAbsolutePath: parsedScene.sceneAbsolutePath,
+    basicEnemyPath: BASIC_ENEMY_SCRIPT_PATH,
+    healthFieldsPresent: healthStatus.healthFieldsPresent,
+    damageLogicPresent: healthStatus.damageLogicPresent,
+    deathLogicPresent: healthStatus.deathLogicPresent,
+    backupExists,
+    safeToOpenUnityForCompileOrPlaytest,
+    details,
+    safety: {
+      readOnly: true,
+      noUnityExecution: true,
+    },
+  };
+}
+
+export async function applyUnityEnemyHealth(projectPath: string, recoverySafe: boolean): Promise<UnityEnemyHealthApplyResult> {
+  const parsedScene = await parseProjectScene(projectPath);
+  const basicEnemyAbsolutePath = path.join(parsedScene.rootPath, BASIC_ENEMY_SCRIPT_PATH);
+  const blockedReasons: string[] = [];
+
+  if (!recoverySafe) {
+    blockedReasons.push("Unity recovery guard did not report a safe state for enemy health patching.");
+  }
+
+  if (blockedReasons.length > 0) {
+    return {
+      applied: false,
+      scenePath: parsedScene.scenePath,
+      sceneAbsolutePath: parsedScene.sceneAbsolutePath,
+      basicEnemyPath: BASIC_ENEMY_SCRIPT_PATH,
+      backupPath: fileBackupPathFor(basicEnemyAbsolutePath, ENEMY_HEALTH_BACKUP_TAG),
+      healthFieldsPresent: false,
+      damageLogicPresent: false,
+      deathLogicPresent: false,
+      safeToOpenUnityForCompileOrPlaytest: false,
+      blockedReasons,
+      safety: {
+        noUnityExecution: true,
+        backupCreated: false,
+        fileWritten: false,
+      },
+    };
+  }
+
+  const backupPath = await ensureFileBackup(basicEnemyAbsolutePath, ENEMY_HEALTH_BACKUP_TAG);
+  await writeFile(basicEnemyAbsolutePath, buildBasicEnemySource(), "utf-8");
+  await ensureScriptMeta(parsedScene.rootPath, BASIC_ENEMY_SCRIPT_PATH);
+
+  const status = await inspectUnityEnemyHealthStatus(projectPath, recoverySafe);
+  return {
+    applied: status.safeToOpenUnityForCompileOrPlaytest,
+    scenePath: status.scenePath,
+    sceneAbsolutePath: status.sceneAbsolutePath,
+    basicEnemyPath: status.basicEnemyPath,
+    backupPath,
+    healthFieldsPresent: status.healthFieldsPresent,
+    damageLogicPresent: status.damageLogicPresent,
+    deathLogicPresent: status.deathLogicPresent,
+    safeToOpenUnityForCompileOrPlaytest: status.safeToOpenUnityForCompileOrPlaytest,
+    blockedReasons: status.safeToOpenUnityForCompileOrPlaytest ? [] : ["Enemy health file was written but the expected health/death markers were not all detected afterward."],
+    safety: {
+      noUnityExecution: true,
+      backupCreated: await fileExists(backupPath),
+      fileWritten: true,
+    },
+  };
+}
+
+export async function rollbackUnityEnemyHealth(projectPath: string, recoverySafe: boolean): Promise<UnityEnemyHealthRollbackResult> {
+  const parsedScene = await parseProjectScene(projectPath);
+  const basicEnemyAbsolutePath = path.join(parsedScene.rootPath, BASIC_ENEMY_SCRIPT_PATH);
+  const backupPath = fileBackupPathFor(basicEnemyAbsolutePath, ENEMY_HEALTH_BACKUP_TAG);
+  const restored = await restoreFileBackup(basicEnemyAbsolutePath, backupPath);
+
+  if (!restored) {
+    const status = await inspectUnityEnemyHealthStatus(projectPath, recoverySafe);
+    return {
+      restored: false,
+      scenePath: status.scenePath,
+      sceneAbsolutePath: status.sceneAbsolutePath,
+      basicEnemyPath: status.basicEnemyPath,
+      backupPath,
+      healthFieldsPresent: status.healthFieldsPresent,
+      damageLogicPresent: status.damageLogicPresent,
+      deathLogicPresent: status.deathLogicPresent,
+      safeToOpenUnityForCompileOrPlaytest: status.safeToOpenUnityForCompileOrPlaytest,
+      blockedReasons: ["Enemy health backup did not exist, so rollback could not proceed."],
+      safety: {
+        noUnityExecution: true,
+        backupRetained: true,
+      },
+    };
+  }
+
+  const status = await inspectUnityEnemyHealthStatus(projectPath, recoverySafe);
+  return {
+    restored: true,
+    scenePath: status.scenePath,
+    sceneAbsolutePath: status.sceneAbsolutePath,
+    basicEnemyPath: status.basicEnemyPath,
+    backupPath,
+    healthFieldsPresent: status.healthFieldsPresent,
+    damageLogicPresent: status.damageLogicPresent,
+    deathLogicPresent: status.deathLogicPresent,
     safeToOpenUnityForCompileOrPlaytest: status.safeToOpenUnityForCompileOrPlaytest,
     blockedReasons: [],
     safety: {
@@ -3857,6 +4685,85 @@ export function renderUnityFallRecoveryRollbackResult(result: UnityFallRecoveryR
   ].join("\n");
 }
 
+export function renderUnityPlaytestSessionMarkerStatus(status: UnityPlaytestSessionMarkerStatus): string {
+  return [
+    "UNITY PLAYTEST SESSION MARKER STATUS",
+    "",
+    `Scene: ${status.scenePath}`,
+    `Scene Path: ${status.sceneAbsolutePath}`,
+    `Player: ${status.playerName ?? "none"}`,
+    `AIEPlaytestSessionMarker.cs Exists: ${status.playtestSessionMarkerScriptExists ? "YES" : "NO"}`,
+    `Marker Attached: ${status.playtestSessionMarkerAttached ? "YES" : "NO"}`,
+    `START Log Present: ${status.startLogPresent ? "YES" : "NO"}`,
+    `END Log Present: ${status.endLogPresent ? "YES" : "NO"}`,
+    `Backup Exists: ${status.backupExists ? "YES" : "NO"}`,
+    `Safe To Open Unity/Playtest: ${status.safeToOpenUnityForCompileOrPlaytest ? "YES" : "NO"}`,
+    "",
+    "Details:",
+    ...status.details.map((detail, index) => `${index + 1}. ${detail}`),
+  ].join("\n");
+}
+
+export function renderUnityPlaytestSessionMarkerApplyResult(result: UnityPlaytestSessionMarkerApplyResult): string {
+  if (!result.applied) {
+    return [
+      "UNITY PLAYTEST SESSION MARKER APPLY BLOCKED",
+      "",
+      `Scene: ${result.scenePath}`,
+      `Scene Path: ${result.sceneAbsolutePath}`,
+      `Player: ${result.playerName ?? "none"}`,
+      `Script Path: ${result.scriptPath}`,
+      `Backup Path: ${result.backupPath}`,
+      "",
+      "Blocked Reasons:",
+      ...result.blockedReasons.map((reason, index) => `${index + 1}. ${reason}`),
+    ].join("\n");
+  }
+
+  return [
+    "UNITY PLAYTEST SESSION MARKER APPLY COMPLETE",
+    "",
+    `Scene: ${result.scenePath}`,
+    `Scene Path: ${result.sceneAbsolutePath}`,
+    `Player: ${result.playerName ?? "none"}`,
+    `Script Path: ${result.scriptPath}`,
+    `Backup Path: ${result.backupPath}`,
+    `AIEPlaytestSessionMarker.cs Exists: ${result.playtestSessionMarkerScriptExists ? "YES" : "NO"}`,
+    `Marker Attached: ${result.playtestSessionMarkerAttached ? "YES" : "NO"}`,
+    `START Log Present: ${result.startLogPresent ? "YES" : "NO"}`,
+    `END Log Present: ${result.endLogPresent ? "YES" : "NO"}`,
+    `Safe To Open Unity/Playtest: ${result.safeToOpenUnityForCompileOrPlaytest ? "YES" : "NO"}`,
+  ].join("\n");
+}
+
+export function renderUnityPlaytestSessionMarkerRollbackResult(result: UnityPlaytestSessionMarkerRollbackResult): string {
+  if (!result.restored) {
+    return [
+      "UNITY PLAYTEST SESSION MARKER ROLLBACK BLOCKED",
+      "",
+      `Scene: ${result.scenePath}`,
+      `Scene Path: ${result.sceneAbsolutePath}`,
+      `Script Path: ${result.scriptPath}`,
+      `Backup Path: ${result.backupPath}`,
+      "",
+      "Blocked Reasons:",
+      ...result.blockedReasons.map((reason, index) => `${index + 1}. ${reason}`),
+    ].join("\n");
+  }
+
+  return [
+    "UNITY PLAYTEST SESSION MARKER ROLLBACK COMPLETE",
+    "",
+    `Scene: ${result.scenePath}`,
+    `Scene Path: ${result.sceneAbsolutePath}`,
+    `Script Path: ${result.scriptPath}`,
+    `Backup Path: ${result.backupPath}`,
+    `Marker Attached: ${result.playtestSessionMarkerAttached ? "YES" : "NO"}`,
+    `AIEPlaytestSessionMarker.cs Exists: ${result.playtestSessionMarkerScriptExists ? "YES" : "NO"}`,
+    `Safe To Open Unity/Playtest: ${result.safeToOpenUnityForCompileOrPlaytest ? "YES" : "NO"}`,
+  ].join("\n");
+}
+
 export function renderUnityBasicEnemyStatus(status: UnityBasicEnemyStatus): string {
   return [
     "UNITY BASIC ENEMY STATUS",
@@ -4098,6 +5005,82 @@ export function renderUnityAttackFeedbackRollbackResult(result: UnityAttackFeedb
     `PlayerAttack Range Gizmo Present: ${result.playerAttackRangeGizmoPresent ? "YES" : "NO"}`,
     `Hit Flash Present: ${result.hitFlashPresent ? "YES" : "NO"}`,
     `Hit Pulse Present: ${result.hitPulsePresent ? "YES" : "NO"}`,
+    `Safe To Open Unity/Playtest: ${result.safeToOpenUnityForCompileOrPlaytest ? "YES" : "NO"}`,
+  ].join("\n");
+}
+
+export function renderUnityEnemyHealthStatus(status: UnityEnemyHealthStatus): string {
+  return [
+    "UNITY ENEMY HEALTH STATUS",
+    "",
+    `Scene: ${status.scenePath}`,
+    `Scene Path: ${status.sceneAbsolutePath}`,
+    `BasicEnemy Path: ${status.basicEnemyPath}`,
+    `Health Fields Present: ${status.healthFieldsPresent ? "YES" : "NO"}`,
+    `Damage Logic Present: ${status.damageLogicPresent ? "YES" : "NO"}`,
+    `Death Logic Present: ${status.deathLogicPresent ? "YES" : "NO"}`,
+    `Backup Exists: ${status.backupExists ? "YES" : "NO"}`,
+    `Safe To Open Unity/Playtest: ${status.safeToOpenUnityForCompileOrPlaytest ? "YES" : "NO"}`,
+    "",
+    "Details:",
+    ...status.details.map((detail, index) => `${index + 1}. ${detail}`),
+  ].join("\n");
+}
+
+export function renderUnityEnemyHealthApplyResult(result: UnityEnemyHealthApplyResult): string {
+  if (!result.applied) {
+    return [
+      "UNITY ENEMY HEALTH APPLY BLOCKED",
+      "",
+      `Scene: ${result.scenePath}`,
+      `Scene Path: ${result.sceneAbsolutePath}`,
+      `BasicEnemy Path: ${result.basicEnemyPath}`,
+      `Backup Path: ${result.backupPath}`,
+      "",
+      "Blocked Reasons:",
+      ...result.blockedReasons.map((reason, index) => `${index + 1}. ${reason}`),
+    ].join("\n");
+  }
+
+  return [
+    "UNITY ENEMY HEALTH APPLY COMPLETE",
+    "",
+    `Scene: ${result.scenePath}`,
+    `Scene Path: ${result.sceneAbsolutePath}`,
+    `BasicEnemy Path: ${result.basicEnemyPath}`,
+    `Backup Path: ${result.backupPath}`,
+    `Health Fields Present: ${result.healthFieldsPresent ? "YES" : "NO"}`,
+    `Damage Logic Present: ${result.damageLogicPresent ? "YES" : "NO"}`,
+    `Death Logic Present: ${result.deathLogicPresent ? "YES" : "NO"}`,
+    `Safe To Open Unity/Playtest: ${result.safeToOpenUnityForCompileOrPlaytest ? "YES" : "NO"}`,
+  ].join("\n");
+}
+
+export function renderUnityEnemyHealthRollbackResult(result: UnityEnemyHealthRollbackResult): string {
+  if (!result.restored) {
+    return [
+      "UNITY ENEMY HEALTH ROLLBACK BLOCKED",
+      "",
+      `Scene: ${result.scenePath}`,
+      `Scene Path: ${result.sceneAbsolutePath}`,
+      `BasicEnemy Path: ${result.basicEnemyPath}`,
+      `Backup Path: ${result.backupPath}`,
+      "",
+      "Blocked Reasons:",
+      ...result.blockedReasons.map((reason, index) => `${index + 1}. ${reason}`),
+    ].join("\n");
+  }
+
+  return [
+    "UNITY ENEMY HEALTH ROLLBACK COMPLETE",
+    "",
+    `Scene: ${result.scenePath}`,
+    `Scene Path: ${result.sceneAbsolutePath}`,
+    `BasicEnemy Path: ${result.basicEnemyPath}`,
+    `Backup Path: ${result.backupPath}`,
+    `Health Fields Present: ${result.healthFieldsPresent ? "YES" : "NO"}`,
+    `Damage Logic Present: ${result.damageLogicPresent ? "YES" : "NO"}`,
+    `Death Logic Present: ${result.deathLogicPresent ? "YES" : "NO"}`,
     `Safe To Open Unity/Playtest: ${result.safeToOpenUnityForCompileOrPlaytest ? "YES" : "NO"}`,
   ].join("\n");
 }

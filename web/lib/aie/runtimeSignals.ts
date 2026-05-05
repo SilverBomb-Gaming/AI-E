@@ -15,9 +15,23 @@ export type ParsedRuntimeResult = {
   inferredResult: "pass" | "fail" | "partial";
 };
 
+export type RuntimeSessionMode = "marker-session" | "recent-window" | "full-log-fallback";
+
+export type RuntimeSession = {
+  mode: RuntimeSessionMode;
+  startMarker: string | null;
+  endMarker: string | null;
+  startedAt: string | null;
+  endedAt: string | null;
+  sourceLogPath: string;
+  lines: string[];
+};
+
 export type AutoEvaluationResult = {
   projectPath: string;
   logPath: string;
+  session: RuntimeSession;
+  evaluatedLineCount: number;
   signals: RuntimeSignal[];
   parsedResult: ParsedRuntimeResult;
   reason: string[];
@@ -49,6 +63,9 @@ const GAMEPLAY_PATTERNS = [
 
 const DEFAULT_COMPANY_NAME = "DefaultCompany";
 const DEFAULT_PRODUCT_NAME = "EnemyAIDemoStandalone";
+const PLAYTEST_SESSION_START_MARKER = "[AIE Playtest Session] START";
+const PLAYTEST_SESSION_END_MARKER = "[AIE Playtest Session] END";
+const RECENT_WINDOW_LINE_COUNT = 400;
 
 function extractTimestamp(line: string): string {
   const match = line.match(/^(\d{4}-\d{2}-\d{2}T[^\s]+|\[\d{2}:\d{2}:\d{2}(?:\.\d+)?\])/);
@@ -57,6 +74,10 @@ function extractTimestamp(line: string): string {
 
 function classifySignal(line: string): RuntimeSignal["type"] {
   const normalized = line.toLowerCase();
+
+  if (normalized.includes("[aie playtest session] start") || normalized.includes("[aie playtest session] end")) {
+    return "info";
+  }
 
   if (/exception/i.test(line) || /\berror\b/i.test(line)) {
     return "error";
@@ -271,6 +292,87 @@ export function parseRuntimeSignals(content: string): RuntimeSignal[] {
     }));
 }
 
+function splitRuntimeLogLines(content: string): string[] {
+  return content
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+}
+
+function findLastIndex(lines: readonly string[], predicate: (line: string) => boolean): number {
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    if (predicate(lines[index])) {
+      return index;
+    }
+  }
+
+  return -1;
+}
+
+function buildMarkerSession(lines: readonly string[], logPath: string, startIndex: number): RuntimeSession {
+  const startLine = lines[startIndex] ?? null;
+  const endIndex = lines.findIndex((line, index) => index > startIndex && line.includes(PLAYTEST_SESSION_END_MARKER));
+  const boundedEndIndex = endIndex >= 0 ? endIndex : lines.length - 1;
+  const sessionLines = lines.slice(startIndex, boundedEndIndex + 1);
+  const endLine = endIndex >= 0 ? lines[endIndex] : null;
+
+  return {
+    mode: "marker-session",
+    startMarker: startLine,
+    endMarker: endLine,
+    startedAt: startLine ? extractTimestamp(startLine) || null : null,
+    endedAt: endLine ? extractTimestamp(endLine) || null : null,
+    sourceLogPath: logPath,
+    lines: sessionLines,
+  };
+}
+
+function buildRecentWindowSession(lines: readonly string[], logPath: string): RuntimeSession {
+  const windowLines = lines.slice(-RECENT_WINDOW_LINE_COUNT);
+  const firstLine = windowLines[0] ?? null;
+  const lastLine = windowLines.at(-1) ?? null;
+
+  return {
+    mode: "recent-window",
+    startMarker: null,
+    endMarker: null,
+    startedAt: firstLine ? extractTimestamp(firstLine) || null : null,
+    endedAt: lastLine ? extractTimestamp(lastLine) || null : null,
+    sourceLogPath: logPath,
+    lines: windowLines,
+  };
+}
+
+function buildFullLogFallbackSession(lines: readonly string[], logPath: string): RuntimeSession {
+  const firstLine = lines[0] ?? null;
+  const lastLine = lines.at(-1) ?? null;
+
+  return {
+    mode: "full-log-fallback",
+    startMarker: null,
+    endMarker: null,
+    startedAt: firstLine ? extractTimestamp(firstLine) || null : null,
+    endedAt: lastLine ? extractTimestamp(lastLine) || null : null,
+    sourceLogPath: logPath,
+    lines: [...lines],
+  };
+}
+
+export function selectRuntimeSession(content: string, logPath: string): RuntimeSession {
+  const lines = splitRuntimeLogLines(content);
+  const latestStartIndex = findLastIndex(lines, (line) => line.includes(PLAYTEST_SESSION_START_MARKER));
+
+  if (latestStartIndex >= 0) {
+    return buildMarkerSession(lines, logPath, latestStartIndex);
+  }
+
+  if (lines.length > RECENT_WINDOW_LINE_COUNT) {
+    return buildRecentWindowSession(lines, logPath);
+  }
+
+  return buildFullLogFallbackSession(lines, logPath);
+}
+
 export function inferRuntimeResult(signals: RuntimeSignal[]): ParsedRuntimeResult {
   const errors = signals.filter((signal) => signal.type === "error").map((signal) => signal.message);
   const warnings = signals.filter((signal) => signal.type === "warning").map((signal) => signal.message);
@@ -326,12 +428,15 @@ export function buildRuntimeEvaluationReason(parsedResult: ParsedRuntimeResult):
 
 export async function autoEvaluateUnityRuntime(projectPath: string, overrideLogPath?: string): Promise<AutoEvaluationResult> {
   const { logPath, content } = await readUnityRuntimeLog(projectPath, overrideLogPath);
-  const signals = parseRuntimeSignals(content);
+  const session = selectRuntimeSession(content, logPath);
+  const signals = parseRuntimeSignals(session.lines.join("\n"));
   const parsedResult = inferRuntimeResult(signals);
 
   return {
     projectPath,
     logPath,
+    session,
+    evaluatedLineCount: session.lines.length,
     signals,
     parsedResult,
     reason: buildRuntimeEvaluationReason(parsedResult),
@@ -348,6 +453,8 @@ export function renderAutoEvaluation(result: AutoEvaluationResult): string {
     "",
     `Project: ${result.projectPath}`,
     `Log Path: ${result.logPath}`,
+    `Session Mode: ${result.session.mode}`,
+    `Evaluated Lines: ${result.evaluatedLineCount}`,
     `Errors: ${result.parsedResult.errors.length}`,
     `Gameplay Events: ${result.parsedResult.gameplayEvents.length}`,
     `Result: ${result.parsedResult.inferredResult}`,

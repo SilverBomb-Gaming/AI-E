@@ -192,12 +192,18 @@ function buildOutcomeGuidance(stage: GameProgressionStage["id"], records: Outcom
   const relevantRecords = recentRecords.filter((record) => isOutcomeRelevant(stage, record));
   const prioritizedRelevantRecords = [...relevantRecords].sort((left, right) => getOutcomeSourcePriority(right) - getOutcomeSourcePriority(left));
   const prioritizedRecentRecords = [...recentRecords].sort((left, right) => getOutcomeSourcePriority(right) - getOutcomeSourcePriority(left));
+  const runtimeAutoExists = prioritizedRecentRecords.some((record) => record.evaluationSource === "runtime-auto");
   const latestSuccess = prioritizedRelevantRecords.find((record) => record.result === "pass")
     ?? prioritizedRecentRecords.find((record) => record.result === "pass");
   const latestFailure = prioritizedRelevantRecords.find((record) => record.result === "fail")
     ?? prioritizedRecentRecords.find((record) => record.result === "fail");
   const guidanceSteps: string[] = [];
   const reasonParts: string[] = [];
+
+  if (runtimeAutoExists) {
+    guidanceSteps.push("Using latest runtime-auto outcome for decision context.");
+    reasonParts.push("Using latest runtime-auto outcome for decision context.");
+  }
 
   if (latestSuccess) {
     guidanceSteps.push(`Reuse the recent successful pattern: ${describeOutcomeReason(latestSuccess)}.`);

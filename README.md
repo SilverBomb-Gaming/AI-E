@@ -1120,6 +1120,80 @@ Commands:
 
 ## Unity Log Discovery
 
+AI-E can now discover likely Unity Editor, Player, and project-local log files automatically before runtime evaluation. This removes the requirement for the operator to know the exact `Editor.log` or `Player.log` location ahead of time.
+
+Operator commands:
+
+- `npm run operator:view -- --discover-runtime-logs "<unity-project-path>"`
+- `npm run operator:view -- --auto-evaluate "<unity-project-path>"`
+- `npm run operator:view -- --auto-evaluate "<unity-project-path>" --runtime-log "<explicit-log-path>"`
+
+Selection behavior:
+
+- discovery checks the default Unity Editor log, the default Player log, and project-local `Library` / `Logs` candidates
+- candidates are ranked by existence, gameplay-signal content, and recency
+- `--auto-evaluate` uses the best discovered log automatically when no override path is supplied
+
+This keeps runtime inference bounded and deterministic while making the operator workflow simpler on Windows machines where Unity may write to different default locations.
+
+## Playtest Session Markers
+
+AI-E can now bracket Unity play sessions with explicit runtime log markers so automatic evaluation only reads the most recent playtest run instead of the entire `Editor.log` history.
+
+Operator commands:
+
+- `npm run operator:view -- --apply-playtest-session-marker "<unity-project-path>"`
+- `npm run operator:view -- --playtest-session-status "<unity-project-path>"`
+- `npm run operator:view -- --rollback-playtest-session-marker "<unity-project-path>"`
+
+What the marker lane does:
+
+- ensures `Assets/Scripts/AIEPlaytestSessionMarker.cs` exists with START and END log markers
+- attaches the marker to the scene `Player` object with the same guarded backup/rollback pattern as the other Unity feature lanes
+- keeps a scene backup before mutation and restores that backup on rollback
+- removes the generated script and meta only when the apply step created them for a project that did not already have them
+
+How runtime evaluation behaves now:
+
+- if playtest markers exist in the selected log, AI-E evaluates only the newest `START` to `END` span
+- if the latest `START` has no matching `END`, AI-E evaluates from that `START` through end-of-file
+- if no markers exist, AI-E falls back to a bounded recent log window instead of the full historical log whenever the log is large
+- recorded runtime-auto outcomes now store the selected log path, session mode, and evaluated line count for provenance
+
+Recommended operator flow:
+
+1. Apply the playtest session marker once.
+2. Open Unity, enter Play Mode, run the test, then exit Play Mode.
+3. Run `npm run operator:view -- --auto-evaluate "<unity-project-path>"`.
+4. Optionally run `npm run operator:view -- --record-outcome "<unity-project-path>" --feature "<feature-name>" --auto` to append the filtered outcome to `.aie/outcomes.jsonl`.
+
+## Auto-Evaluate and Record
+
+AI-E can now evaluate the latest Unity playtest session and store that result in learning memory with one command.
+
+Operator command:
+
+- `npm run operator:view -- --auto-record-outcome "<unity-project-path>" --feature "<feature-name>"`
+
+What it does:
+
+- discovers the best Unity runtime log automatically unless `--runtime-log` is supplied
+- isolates the latest marked playtest session when markers exist
+- infers `pass`, `fail`, or `partial` from the filtered runtime evidence
+- stores the result as a `runtime-auto` outcome with session provenance and signal details
+- prevents duplicate records for the same feature and playtest session
+- prints the updated learning counts immediately after a successful write
+
+Duplicate protection:
+
+- AI-E builds a bounded session key from the selected log path, latest session start marker, evaluated line count, and feature name
+- if that same feature/session combination was already recorded, AI-E does not append a second record and reports that the outcome was already recorded for that session
+
+Planning impact:
+
+- runtime-auto outcomes are preferred over manual outcomes when AI-E builds next-task decision context
+- this lets recent real playtest evidence feed future guidance more directly than operator-only notes
+
 - AI-E now checks both Unity Editor and Player log locations automatically before falling back to project-local log files.
 - `--auto-evaluate` no longer depends on a single hard-coded `Player.log` path when no override is supplied.
 - log discovery checks the Windows Unity Editor log, the LocalLow Player log, and likely project log locations under `Logs` and `Library`.

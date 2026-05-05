@@ -10,6 +10,7 @@ import {
   findBestUnityRuntimeLog,
   inferRuntimeResult,
   parseRuntimeSignals,
+  selectRuntimeSession,
 } from "./runtimeSignals";
 
 test("runtime signal extraction infers pass from gameplay events without errors", () => {
@@ -106,6 +107,96 @@ test("runtime log discovery reports editor and project candidates and selects ga
   } finally {
     delete process.env.LOCALAPPDATA;
     delete process.env.USERPROFILE;
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("runtime session selection prefers the latest marked playtest session", () => {
+  const session = selectRuntimeSession([
+    "[AIE Playtest Session] START old-session",
+    "Enemy defeated",
+    "[AIE Playtest Session] END old-session",
+    "[AIE Playtest Session] START latest-session",
+    "Enemy hit",
+    "Enemy defeated",
+    "[AIE Playtest Session] END latest-session",
+  ].join("\n"), "Editor.log");
+
+  assert.equal(session.mode, "marker-session");
+  assert.deepEqual(session.lines, [
+    "[AIE Playtest Session] START latest-session",
+    "Enemy hit",
+    "Enemy defeated",
+    "[AIE Playtest Session] END latest-session",
+  ]);
+});
+
+test("runtime auto evaluation ignores stale errors before the latest playtest marker", async () => {
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "aie-runtime-session-"));
+  const logPath = path.join(tempRoot, "Editor.log");
+
+  try {
+    await writeFile(logPath, [
+      "NullReferenceException: stale startup failure",
+      "[AIE Playtest Session] START current-session",
+      "Enemy defeated",
+      "[AIE Playtest Session] END current-session",
+    ].join("\n"), "utf-8");
+
+    const result = await autoEvaluateUnityRuntime(tempRoot, logPath);
+    assert.equal(result.session.mode, "marker-session");
+    assert.equal(result.parsedResult.errors.length, 0);
+    assert.equal(result.parsedResult.inferredResult, "pass");
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("runtime session selection reads from the latest marker through EOF when end marker is missing", () => {
+  const session = selectRuntimeSession([
+    "[AIE Playtest Session] START current-session",
+    "Enemy hit",
+    "Enemy defeated",
+  ].join("\n"), "Editor.log");
+
+  assert.equal(session.mode, "marker-session");
+  assert.equal(session.endMarker, null);
+  assert.deepEqual(session.lines, [
+    "[AIE Playtest Session] START current-session",
+    "Enemy hit",
+    "Enemy defeated",
+  ]);
+});
+
+test("runtime session selection falls back to a recent log window when no markers exist", () => {
+  const lines = Array.from({ length: 450 }, (_, index) => `line-${index + 1}`);
+  const session = selectRuntimeSession(lines.join("\n"), "Editor.log");
+
+  assert.equal(session.mode, "recent-window");
+  assert.equal(session.lines.length, 400);
+  assert.equal(session.lines[0], "line-51");
+  assert.equal(session.lines.at(-1), "line-450");
+});
+
+test("runtime auto evaluation passes when the latest marked session has defeat signals without errors", async () => {
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "aie-runtime-session-pass-"));
+  const logPath = path.join(tempRoot, "Editor.log");
+
+  try {
+    await writeFile(logPath, [
+      "[AIE Playtest Session] START prior-session",
+      "Exception: prior failure",
+      "[AIE Playtest Session] END prior-session",
+      "[AIE Playtest Session] START clean-session",
+      "Enemy defeated",
+      "[AIE Playtest Session] END clean-session",
+    ].join("\n"), "utf-8");
+
+    const result = await autoEvaluateUnityRuntime(tempRoot, logPath);
+    assert.equal(result.session.mode, "marker-session");
+    assert.equal(result.parsedResult.inferredResult, "pass");
+    assert.equal(result.evaluatedLineCount, 3);
+  } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }
 });
