@@ -11,6 +11,10 @@ import {
   renderAutoRecordOutcome,
 } from "../lib/aie/autoOutcomeRecording";
 import {
+  renderAutonomousExecutionLoop,
+  runAutonomousExecutionLoop,
+} from "../lib/aie/executionLoop";
+import {
   generateAutoRetryTask,
   renderAutoRetryResult,
   renderRetrySuggestion,
@@ -117,6 +121,7 @@ type ShowOperatorViewOptions = {
   autoRecordOutcomePath?: string;
   suggestRetryPath?: string;
   autoRetryPath?: string;
+  runAutonomousLoopPath?: string;
   autoEvaluatePath?: string;
   discoverRuntimeLogsPath?: string;
   learningSummaryPath?: string;
@@ -415,6 +420,11 @@ function parseArgs(argv: string[]): ShowOperatorViewOptions {
       continue;
     }
 
+    if (arg.startsWith("--run-autonomous-loop=")) {
+      options.runAutonomousLoopPath = arg.slice("--run-autonomous-loop=".length).trim() || undefined;
+      continue;
+    }
+
     if (arg.startsWith("--auto-evaluate=")) {
       options.autoEvaluatePath = arg.slice("--auto-evaluate=".length).trim() || undefined;
       continue;
@@ -502,6 +512,16 @@ function parseArgs(argv: string[]): ShowOperatorViewOptions {
         throw new Error("Missing value for --auto-retry");
       }
       options.autoRetryPath = value.trim();
+      index += 1;
+      continue;
+    }
+
+    if (arg === "--run-autonomous-loop") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("Missing value for --run-autonomous-loop");
+      }
+      options.runAutonomousLoopPath = value.trim();
       index += 1;
       continue;
     }
@@ -1324,6 +1344,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       options.autoRecordOutcomePath ? "--auto-record-outcome" : null,
       options.suggestRetryPath ? "--suggest-retry" : null,
       options.autoRetryPath ? "--auto-retry" : null,
+      options.runAutonomousLoopPath ? "--run-autonomous-loop" : null,
       options.autoEvaluatePath ? "--auto-evaluate" : null,
       options.discoverRuntimeLogsPath ? "--discover-runtime-logs" : null,
       options.learningSummaryPath ? "--learning-summary" : null,
@@ -1935,6 +1956,18 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
 
       console.log(renderAutoRetryResult(result));
       return 0;
+    }
+
+    if (options.runAutonomousLoopPath) {
+      const result = await runAutonomousExecutionLoop(options.runAutonomousLoopPath, options.outcomeFeature, options.runtimeLogPath);
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return result.status === "completed" ? 0 : 1;
+      }
+
+      console.log(renderAutonomousExecutionLoop(result));
+      return result.status === "completed" ? 0 : 1;
     }
 
     if (options.recordOutcomePath) {

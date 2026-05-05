@@ -135,3 +135,48 @@ test("operator view prints auto retry task for latest partial outcome", async ()
     await rm(tempRoot, { recursive: true, force: true });
   }
 });
+
+test("operator view runs autonomous execution loop in dry-run mode", async () => {
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "aie-autonomous-loop-cli-"));
+  const logPath = path.join(tempRoot, "Editor.log");
+  const captured: string[] = [];
+  const originalLog = console.log;
+
+  try {
+    await writeFile(logPath, [
+      "[AIE Playtest Session] START id=session-loop-cli",
+      "NullReferenceException: EnemyHealth update failed",
+      "[AIE Playtest Session] END id=session-loop-cli",
+    ].join("\n"), "utf-8");
+    await recordOutcome(tempRoot, {
+      feature: "enemy-health",
+      result: "fail",
+      observation: "prior outcome establishes feature context",
+      evaluationSource: "runtime-auto",
+      errors: ["NullReferenceException"],
+    });
+
+    console.log = (...args: unknown[]) => {
+      captured.push(args.join(" "));
+    };
+
+    const exitCode = await main([
+      "--run-autonomous-loop",
+      tempRoot,
+      "--runtime-log",
+      logPath,
+    ]);
+
+    assert.equal(exitCode, 0);
+    const rendered = captured.join("\n");
+    assert.match(rendered, /AUTONOMOUS LOOP/i);
+    assert.match(rendered, /DRY-RUN ONLY \(v1\)/i);
+    assert.match(rendered, /Iteration: 1/i);
+    assert.match(rendered, /Action: retry/i);
+    assert.match(rendered, /Iteration: 3/i);
+    assert.match(rendered, /Action: stop/i);
+  } finally {
+    console.log = originalLog;
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
