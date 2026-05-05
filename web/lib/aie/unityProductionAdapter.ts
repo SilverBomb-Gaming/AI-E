@@ -12,6 +12,10 @@ import {
   type PostPlaytestDecisionResult,
 } from "./postPlaytestDecisionEngine";
 import {
+  buildPostPlaytestFixPlan,
+  type PostPlaytestFixPlanResult,
+} from "./postPlaytestFixPlanner";
+import {
   createAutonomousDeliveryPackage,
   createAutonomousReviewPackage,
   type AutonomousDeliveryPackage,
@@ -4237,6 +4241,7 @@ function buildBlockedValidationResult(
     delivery_package: null,
     post_playtest_learning: null,
     post_playtest_decision: null,
+    post_playtest_fix_plan: null,
     mutating: false,
   };
 }
@@ -4304,6 +4309,36 @@ function buildPostPlaytestDecisionValidationLines(result: PostPlaytestDecisionRe
   ];
 }
 
+function buildPostPlaytestFixPlanSummary(result: PostPlaytestFixPlanResult | null): string | null {
+  if (!result) {
+    return null;
+  }
+
+  const firstStep = result.recommended_fix_steps[0];
+  return firstStep
+    ? `Post-playtest fix plan status: ${result.status}. ${firstStep}`
+    : `Post-playtest fix plan status: ${result.status}.`;
+}
+
+function buildPostPlaytestFixPlanValidationLines(result: PostPlaytestFixPlanResult | null): string[] {
+  if (!result) {
+    return [];
+  }
+
+  return [
+    `Post-playtest fix plan status: ${result.status}`,
+    `Post-playtest fix plan reason: ${result.reason}`,
+    `Post-playtest fix plan confidence: ${result.confidence}`,
+    ...(result.source_decision_status ? [`Post-playtest fix plan source decision: ${result.source_decision_status}`] : []),
+    ...(result.source_feature ? [`Post-playtest fix plan feature: ${result.source_feature}`] : []),
+    ...(result.source_outcome_session_key
+      ? [`Post-playtest fix plan session key: ${result.source_outcome_session_key}`]
+      : []),
+    ...result.recommended_fix_steps.map((step) => `Post-playtest fix step: ${step}`),
+    ...result.safety_constraints.map((constraint) => `Post-playtest fix safety constraint: ${constraint}`),
+  ];
+}
+
 async function runPostPlaytestLearningHook(
   options: UnityValidationExecutionOptions | undefined,
 ): Promise<AutoRecordOutcomeResult> {
@@ -4336,6 +4371,7 @@ function createUnityValidationEvidencePackages(
     | "evidence_timestamp"
     | "post_playtest_learning"
     | "post_playtest_decision"
+    | "post_playtest_fix_plan"
   >,
 ): {
   reviewPackage: AutonomousReviewPackage;
@@ -4366,6 +4402,7 @@ function createUnityValidationEvidencePackages(
       `Recommended next operator action: ${result.recommended_next_operator_action}`,
       ...buildPostPlaytestLearningValidationLines(result.post_playtest_learning),
       ...buildPostPlaytestDecisionValidationLines(result.post_playtest_decision),
+      ...buildPostPlaytestFixPlanValidationLines(result.post_playtest_fix_plan),
     ],
     risks: ["No Unity or project mutation path enabled."],
     recommended_decision: "approve",
@@ -4396,6 +4433,7 @@ function createUnityValidationEvidencePackages(
       `Recommended next operator action: ${result.recommended_next_operator_action}`,
       ...buildPostPlaytestLearningValidationLines(result.post_playtest_learning),
       ...buildPostPlaytestDecisionValidationLines(result.post_playtest_decision),
+      ...buildPostPlaytestFixPlanValidationLines(result.post_playtest_fix_plan),
       ...(result.raw_evidence_summary ? [`Raw evidence summary: ${result.raw_evidence_summary}`] : []),
       ...result.validation_checklist,
     ],
@@ -4561,6 +4599,7 @@ export async function executeReviewedUnityValidation(
       delivery_package: null,
       post_playtest_learning: null,
       post_playtest_decision: null,
+      post_playtest_fix_plan: null,
       mutating: false,
     };
 
@@ -4577,6 +4616,8 @@ export async function executeReviewedUnityValidation(
   const postPlaytestLearningSummary = buildPostPlaytestLearningSummary(postPlaytestLearning);
   const postPlaytestDecision = decidePostPlaytestNextAction(postPlaytestLearning);
   const postPlaytestDecisionSummary = buildPostPlaytestDecisionSummary(postPlaytestDecision);
+  const postPlaytestFixPlan = buildPostPlaytestFixPlan(postPlaytestDecision);
+  const postPlaytestFixPlanSummary = buildPostPlaytestFixPlanSummary(postPlaytestFixPlan);
 
   const baseResult: UnityValidationExecutionResult = {
     request_id: input.adapter_request_id,
@@ -4603,6 +4644,7 @@ export async function executeReviewedUnityValidation(
       bridgeResult.summary,
       postPlaytestLearningSummary,
       postPlaytestDecisionSummary,
+      postPlaytestFixPlanSummary,
     ].filter((value): value is string => Boolean(value)).join(" "),
     recommended_next_operator_action: bridgeResult.recommended_next_operator_action,
     artifact_label: "unity_read_only_validation_report",
@@ -4610,6 +4652,7 @@ export async function executeReviewedUnityValidation(
     delivery_package: null,
     post_playtest_learning: postPlaytestLearning,
     post_playtest_decision: postPlaytestDecision,
+    post_playtest_fix_plan: postPlaytestFixPlan,
     mutating: false,
   };
 

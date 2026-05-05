@@ -1191,9 +1191,14 @@ Reviewed playtest integration:
 - the reviewed path uses explicit feature context only; it does not infer a feature name from the planning objective
 - if feature context is missing, the reviewed validation result stays successful but includes a clear `Post-playtest learning blocked` message so the operator can use the manual fallback command
 - after that automatic learning step, AI-E now runs a bounded post-playtest decision engine that recommends the next safe action without executing it
+- after the decision step, AI-E now produces a bounded safe fix plan when the decision recommends retry or operator review
 - recorded `pass` outcomes recommend stabilizing the feature and selecting the next validation target
 - recorded `fail` outcomes recommend the smallest safe fix followed by another reviewed playtest
 - blocked, duplicate, partial, or otherwise ambiguous outcomes escalate back to operator inspection instead of advancing automatically
+
+Current supervised loop:
+
+- playtest -> learn -> decide -> plan
 
 Duplicate protection:
 
@@ -1207,10 +1212,12 @@ Planning impact:
 
 What still remains before full hands-off autonomy:
 
-- automatic safe fix application
-- retry execution after a reviewed failure
-- explicit loop limits and execution budgets for repeated playtest or fix cycles
-- operator override controls for pausing, rejecting, or forcing the recommended next step
+- auto-apply safe fix
+- commit guarded fix
+- rerun playtest
+- loop budget
+- rollback or stop conditions
+- operator override
 
 - AI-E now checks both Unity Editor and Player log locations automatically before falling back to project-local log files.
 - `--auto-evaluate` no longer depends on a single hard-coded `Player.log` path when no override is supplied.

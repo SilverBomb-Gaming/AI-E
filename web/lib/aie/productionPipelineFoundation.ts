@@ -4,6 +4,7 @@ import type {
 } from "./autonomousWorkPlanning";
 import type { AutoRecordOutcomeResult } from "./autoOutcomeRecording";
 import type { PostPlaytestDecisionResult } from "./postPlaytestDecisionEngine";
+import type { PostPlaytestFixPlanResult } from "./postPlaytestFixPlanner";
 
 export type ProductionPipelineDomain = "assets" | "art" | "audio" | "unity-integration";
 
@@ -96,6 +97,7 @@ export type UnityValidationExecutionResult = {
   delivery_package: AutonomousDeliveryPackage | null;
   post_playtest_learning: AutoRecordOutcomeResult | null;
   post_playtest_decision: PostPlaytestDecisionResult | null;
+  post_playtest_fix_plan: PostPlaytestFixPlanResult | null;
   mutating: false;
 };
 
