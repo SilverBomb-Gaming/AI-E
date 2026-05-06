@@ -1,0 +1,206 @@
+{
+  "schema_version": 1,
+  "created_at": "2026-05-06T00:00:00.000Z",
+  "updated_at": "2026-05-06T00:00:00.000Z",
+  "current_project_key": "babylon-2026",
+  "sections": {
+    "working_memory": {
+      "current_task_state": "BABYLON 2026 is stable after Phase 10 and AI-E focus has shifted to second-brain continuity work.",
+      "active_files": [
+        "web/lib/aie/secondBrainMemory.ts",
+        "data/second_brain/brain.json",
+        "data/second_brain/case-studies/babylon-2026.md"
+      ],
+      "active_repo_project": "AI-E",
+      "current_objective": "Build a persistent second-brain foundation that preserves project context, outcomes, architecture rules, and fallback continuity.",
+      "recent_errors_fixes": [
+        "BABYLON 2026 wave startup regression fixed by restoring guaranteed SimpleWaveController bootstrap in WeaponPrototype.",
+        "BABYLON 2026 combat pacing polished with bounded countdowns, recovery windows, and clearer restart messaging."
+      ],
+      "resume_checkpoint": "Resume from AI-E second-brain foundation work; BABYLON 2026 is paused in a known-good playable state."
+    },
+    "outcome_memory": {
+      "latest_outcomes": [
+        {
+          "outcome_id": "outcome-2026-05-06-babylon-phase-10",
+          "recorded_at": "2026-05-06T00:00:00.000Z",
+          "project_key": "babylon-2026",
+          "task_source": "copilot",
+          "task_title": "BABYLON 2026 Phase 10 combat pacing + recovery polish",
+          "attempted": "Added bounded between-wave countdown, recovery, stronger HUD feedback, and clearer death restart messaging.",
+          "status": "passed",
+          "validation_result": "Static validation clean across touched Unity scripts and full 1 -> 2 -> 3 wave loop manually verified by user as stable foundation.",
+          "should_never_repeat": false
+        }
+      ],
+      "what_passed": [
+        "Clean ownership boundaries in BABYLON 2026 survived wave, enemy, health, and pacing phases.",
+        "Bounded commits plus focused compile checks prevented architecture drift during repeated Unity slices."
+      ],
+      "what_failed": [
+        "Old BABYLON iterations collapsed when single owners mixed spawn, combat, UI, and runtime repair responsibilities."
+      ],
+      "exact_validation_results": [
+        "BABYLON 2026 current verified status: KBM, gamepad, pause/menu, weapon firing, pursuit, steering, separation, enemy attacks, player health/death, multi-enemy spawning, wave progression, wave cleanup, full 1 -> 2 -> 3 wave loop, and final completion loop all pass."
+      ],
+      "should_never_be_repeated": [
+        "Do not reintroduce hidden global repair loops or singleton-style fixers to compensate for ownership mistakes.",
+        "Do not collapse weapon, enemy spawning, and wave state into one owner again."
+      ]
+    },
+    "architecture_memory": {
+      "ownership_rules": [
+        "SimpleWaveController owns timing, wave progression, and countdown/recovery pacing only.",
+        "SimpleEnemySpawner owns enemy creation and alive-count tracking only.",
+        "SimpleEnemy owns enemy health, death, and visuals only.",
+        "SimpleEnemyPursuit owns movement, obstacle steering, and crowd separation only.",
+        "SimpleEnemyAttack owns enemy attack timing and damage only.",
+        "PlayerHealth owns player health, death, HUD, and restart only.",
+        "WeaponPrototype owns firing, hit detection, and weapon HUD only.",
+        "ControlBaselineController owns controls, camera, pause, and runtime player setup only."
+      ],
+      "anti_patterns": [
+        "Do not copy old BABYLON patterns that relied on emergency fallback overlays, hidden repair loops, global repair chains, or hidden bootstrap behavior.",
+        "Do not let one script directly own spawning, combat resolution, progression, and UI feedback together.",
+        "Do not use random or procedural recovery tricks to hide unstable control flow."
+      ],
+      "project_specific_constraints": [
+        "Keep BABYLON 2026 deterministic, local, and bounded; no endless loops, navmesh, giant managers, or fake intelligence layers.",
+        "For AI-E autonomy work, preserve approval gates and avoid unvalidated autonomous mutation loops."
+      ],
+      "babylon2026_clean_architecture_rules": [
+        "Make the smallest possible owner-local change and validate immediately.",
+        "Prefer deterministic spawn/layout and bounded wave logic over generalized systems.",
+        "Keep runtime fixes reversible and tied to a known owner."
+      ]
+    },
+    "strategy_memory": {
+      "roadmap": [
+        "Pause BABYLON 2026 feature expansion while the current playable foundation remains stable.",
+        "Build AI-E second-brain persistence for restart continuity, outcome recall, and resource-aware fallback decisions.",
+        "Feed second-brain context into safe supervised autonomy surfaces after the storage and summary layer is validated."
+      ],
+      "current_layer_percentages": {
+        "decision_making": 94,
+        "learning": 81,
+        "full_hands_off_production": 77
+      },
+      "next_milestone": "Second-brain persistence validated as a bounded continuity layer with BABYLON 2026 as the first case study.",
+      "long_term_goals": [
+        "Sustain AI-E across restarts, hardware shortages, and model/API outages with minimal human context reload.",
+        "Push supervised production autonomy upward without bypassing validation and approval boundaries."
+      ],
+      "hands_off_readiness": {
+        "decision_making_target_percent": 97,
+        "learning_target_percent": 88,
+        "current_full_hands_off_percent": 77,
+        "next_full_hands_off_target_percent": 82
+      }
+    },
+    "resource_memory": {
+      "available_hardware": [
+        "Windows development workstation",
+        "Local filesystem persistence",
+        "Node/TypeScript runtime inside AI-E web workspace"
+      ],
+      "unavailable_hardware": [
+        "Assume premium GPU or uninterrupted high-throughput model access is not guaranteed."
+      ],
+      "model_api_limits": [
+        "External APIs and premium models can become rate-limited or unavailable.",
+        "Human validation is still required for real runtime mutations and production-side effects."
+      ],
+      "local_offline_fallback_options": [
+        "local_memory_only_mode",
+        "checkpoint_and_summary_mode",
+        "offline_planning_and_review_mode"
+      ],
+      "preferred_fallback_mode": "local_memory_only_mode"
+    },
+    "recovery_memory": {
+      "rollback_points": [
+        {
+          "project_key": "babylon-2026",
+          "commit": "b431138",
+          "reason": "Phase 10 combat pacing + recovery polish is the current known-good gameplay checkpoint."
+        },
+        {
+          "project_key": "babylon-2026",
+          "commit": "790b204",
+          "reason": "Wave startup regression hotfix restored guaranteed wave bootstrap."
+        }
+      ],
+      "known_good_commits": [
+        "e05df96",
+        "7a7ec16",
+        "ab54efa",
+        "077f459",
+        "faecac2",
+        "73051c3",
+        "790b204",
+        "b431138"
+      ],
+      "failed_commits": [],
+      "emergency_recovery_procedures": [
+        "Return to the latest known-good BABYLON 2026 commit before expanding feature scope.",
+        "Use second-brain summaries to rebuild context before resuming AI-E work after restart.",
+        "Prefer bounded replay from recorded outcomes over speculative retries."
+      ]
+    },
+    "agent_coordination_memory": {
+      "copilot_capabilities": [
+        "Bounded repo edits, focused validation, and narrow architectural slices.",
+        "Fast continuity restoration from persisted summaries and case studies."
+      ],
+      "ai_e_capabilities": [
+        "Persistent context recall, structured outcome logging, resource-aware fallback decisions, and long-horizon planning support.",
+        "Cross-session continuity with restart-safe summaries and project checkpoints."
+      ],
+      "human_validation_required": [
+        "Unity Play Mode validation and subjective gameplay feel checks.",
+        "Approval for autonomous mutations with external side effects or production impact."
+      ],
+      "safe_task_boundaries": [
+        "Persist summaries, outcomes, constraints, and fallback plans locally.",
+        "Do not treat second-brain memory as approval to execute uncontrolled loops."
+      ]
+    }
+  },
+  "projects": {
+    "babylon-2026": {
+      "project_key": "babylon-2026",
+      "title": "BABYLON 2026",
+      "summary": "Clean Unity combat sandbox with deterministic waves and stable owner boundaries; safe to pause as a case study while AI-E core memory work resumes.",
+      "status": "stable_paused_case_study",
+      "current_state": [
+        "KBM, gamepad, pause/menu, and weapon firing are stable.",
+        "Enemy pursuit, obstacle steering, crowd separation, attacks, and player health/death all work.",
+        "Deterministic 1 -> 2 -> 3 wave loop, cleanup, countdown, and final completion feedback pass."
+      ],
+      "next_safe_task": "Integrate second-brain context retrieval into higher-level AI-E continuity and planning surfaces without changing approval boundaries.",
+      "anti_patterns": [
+        "Do not copy legacy BABYLON repair-loop habits, hidden fallbacks, or owner-collapse patches.",
+        "Do not mix wave state, spawning, and weapon logic into one controller."
+      ],
+      "positive_patterns": [
+        "Use local ownership boundaries and validate each bounded slice immediately.",
+        "Use deterministic layouts, bounded wave logic, and commit-per-phase recovery points."
+      ],
+      "validation_status": [
+        "User-verified stable sandbox after Phase 10.",
+        "No red console errors accepted as closure criteria."
+      ],
+      "continuation_context": "BABYLON 2026 can be resumed later from known-good commits; no urgent gameplay repair remains before AI-E core evolution continues.",
+      "known_good_commits": [
+        "e05df96",
+        "7a7ec16",
+        "ab54efa",
+        "077f459",
+        "faecac2",
+        "73051c3",
+        "790b204",
+        "b431138"
+      ]
+    }
+  }
+}
