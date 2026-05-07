@@ -1,6 +1,6 @@
 ---
 project_key: babylon-2026
-updated_at: 2026-05-07T20:05:21.785Z
+updated_at: 2026-05-07T20:26:31.842Z
 session_id: phase7c-skip-task-session
 status: generated_dry_runtime_bootstrap
 tags:
@@ -28,7 +28,7 @@ tags:
 - model-directory-visibility: passed=no | detected=none
 - dependency-file-visibility: passed=yes | detected=E:\AI projects 2025\AI-E\requirements.txt, E:\AI projects 2025\AI-E\web\package.json
 - storage-readiness: passed=yes | detected=stored-hardware-estimate
-- writable-cache-locations: passed=yes | detected=E:\AI projects 2025\AI-E\runner_artifacts
+- writable-cache-locations: passed=yes | detected=E:\AI projects 2025\AI-E\.aie, E:\AI projects 2025\AI-E\runner_artifacts
 
 ## Related
 - [[Execution Boundary Status]]

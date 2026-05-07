@@ -1,6 +1,6 @@
 ---
 project_key: babylon-2026
-updated_at: 2026-05-07T20:05:21.785Z
+updated_at: 2026-05-07T20:26:31.842Z
 session_id: phase7c-skip-task-session
 status: generated_runtime_probe_results
 tags:
@@ -20,8 +20,8 @@ tags:
 - Python hints: .venv/Scripts/python.exe, C:/Python312/python.exe, C:/Python311/python.exe
 
 ## Latest Snapshot
-- Snapshot: runtime-probe-20260507200521
-- Recorded at: 2026-05-07T20:05:21.671Z
+- Snapshot: runtime-probe-20260507202631
+- Recorded at: 2026-05-07T20:26:31.697Z
 - GPU vendor: windows-gpu-visible
 - Storage estimate: 180GB
 

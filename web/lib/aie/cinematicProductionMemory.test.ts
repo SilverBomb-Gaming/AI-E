@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -774,7 +775,7 @@ test("controlled local inference bootstrap persists execution boundaries while k
     const afterRecord = await readCinematicProductionMemory({ root: tempRoot });
 
     assert.equal(validation.execution_enabled, false);
-    assert.equal(validation.readiness_delta.source, "governed-single-frame-synthesis-preparation");
+    assert.equal(validation.readiness_delta.source, "governed-low-resolution-frame-synthesis-sandbox");
     assert.equal(validation.dry_runtime_bootstrap.valid, true);
     assert.ok(validation.dry_runtime_bootstrap.checks.some((entry) => entry.check === "runtime-binary-presence" && entry.passed));
     assert.ok(validation.execution_boundary_state.tracked_statuses.includes("simulated"));
@@ -814,9 +815,20 @@ test("controlled local inference bootstrap persists execution boundaries while k
     assert.ok(validation.contained_escalation_modeling.scenarios.some((entry) => entry.escalation === "blocked-output-escalation"));
     assert.equal(validation.future_low_resolution_output.milestone_unlocks_governed_output, "reviewed-governed-low-resolution-output-bridge");
     assert.ok(validation.governed_rollback_ledger.entries.length >= 1);
+    assert.ok(validation.real_output_authorization_registry.some((entry) => entry.authorization_id === "authorization-governed-low-res-single-frame"));
+    assert.equal(validation.governed_low_resolution_sandbox.real_output_written, true);
+    assert.ok(validation.first_real_synthesis_path.stages.some((entry) => entry.stage === "single_frame_synthesis" && entry.status === "completed"));
+    assert.ok(validation.output_containment_validation.checks.some((entry) => entry.check === "authorization-validity" && entry.passed));
+    assert.ok(validation.real_output_rollback.actions.some((entry) => entry.action === "rollback-authority-enforcement" && entry.triggered));
+    assert.equal(validation.future_renderer_escalation.milestone_unlocks_renderer_escalation, "reviewed-governed-renderer-escalation-bridge");
+    const outputFilePath = path.join(tempRoot, validation.governed_low_resolution_sandbox.output_file_path ?? "");
+    assert.ok(existsSync(outputFilePath));
+    assert.match(await readFile(outputFilePath, "utf8"), /^P3/m);
+    const sandboxFiles = await readdir(path.join(tempRoot, ".aie", "governed_low_res_frame_sandbox"));
+    assert.equal(sandboxFiles.filter((entry) => entry.endsWith(".ppm")).length, 1);
 
     assert.equal(simulation.validation.execution_enabled, false);
-    assert.equal(simulation.simulation.sandbox_kind, "governed-single-frame-synthesis-preparation");
+    assert.equal(simulation.simulation.sandbox_kind, "governed-low-resolution-frame-synthesis-sandbox");
     assert.equal(simulation.simulation.execution_enabled, false);
     assert.ok(simulation.simulation.dry_runtime_bootstrap);
     assert.ok(simulation.simulation.execution_boundary_status);
@@ -848,6 +860,12 @@ test("controlled local inference bootstrap persists execution boundaries while k
     assert.ok(simulation.simulation.contained_escalation_modeling);
     assert.ok(simulation.simulation.future_low_resolution_output);
     assert.ok(simulation.simulation.governed_rollback_ledger);
+    assert.ok(simulation.simulation.real_output_authorization_registry);
+    assert.ok(simulation.simulation.governed_low_resolution_sandbox);
+    assert.ok(simulation.simulation.first_real_synthesis_path);
+    assert.ok(simulation.simulation.output_containment_validation);
+    assert.ok(simulation.simulation.real_output_rollback);
+    assert.ok(simulation.simulation.future_renderer_escalation);
     assert.equal(simulation.simulation.readiness_tracking_id, afterRecord.readiness_delta_tracking_history[0]?.tracking_id ?? null);
     assert.ok(afterRecord.execution_boundary_status_history.length >= 2);
     assert.ok(afterRecord.activation_authority_registry.length > 0);
@@ -874,7 +892,13 @@ test("controlled local inference bootstrap persists execution boundaries while k
     assert.ok(afterRecord.contained_escalation_modeling_history.length >= 1);
     assert.ok(afterRecord.future_low_resolution_output_history.length >= 1);
     assert.ok(afterRecord.governed_rollback_ledger_history.length >= 1);
-    assert.ok(afterRecord.sandbox_simulations.some((entry) => entry.sandbox_kind === "governed-single-frame-synthesis-preparation"));
+    assert.ok(afterRecord.real_output_authorization_registry_history.length >= 1);
+    assert.ok(afterRecord.governed_low_resolution_sandbox_history.length >= 1);
+    assert.ok(afterRecord.first_real_synthesis_path_history.length >= 1);
+    assert.ok(afterRecord.output_containment_validation_history.length >= 1);
+    assert.ok(afterRecord.real_output_rollback_history.length >= 1);
+    assert.ok(afterRecord.future_renderer_escalation_history.length >= 1);
+    assert.ok(afterRecord.sandbox_simulations.some((entry) => entry.sandbox_kind === "governed-low-resolution-frame-synthesis-sandbox"));
     assert.deepEqual(afterRecord.approval_audit_trail, beforeRecord.approval_audit_trail);
   } finally {
     await rm(tempRoot, { recursive: true, force: true });

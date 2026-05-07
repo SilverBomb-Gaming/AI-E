@@ -2574,7 +2574,7 @@ function buildUpdatedReadinessProgressNote(input: {
 
 function latestControlledBootstrapSimulation(production: CinematicProductionMemoryRecord): CinematicProductionMemoryRecord["sandbox_simulations"][number] | null {
   return [...production.sandbox_simulations]
-    .filter((entry) => entry.sandbox_kind === "controlled-local-inference-bootstrap" || entry.sandbox_kind === "gated-inference-activation-precursor" || entry.sandbox_kind === "dry-inference-warmup-single-frame-precursor" || entry.sandbox_kind === "gated-single-frame-dry-execution-path" || entry.sandbox_kind === "governed-single-frame-synthesis-preparation")
+    .filter((entry) => entry.sandbox_kind === "controlled-local-inference-bootstrap" || entry.sandbox_kind === "gated-inference-activation-precursor" || entry.sandbox_kind === "dry-inference-warmup-single-frame-precursor" || entry.sandbox_kind === "gated-single-frame-dry-execution-path" || entry.sandbox_kind === "governed-single-frame-synthesis-preparation" || entry.sandbox_kind === "governed-low-resolution-frame-synthesis-sandbox")
     .sort((left, right) => right.recorded_at.localeCompare(left.recorded_at))[0] ?? null;
 }
 
@@ -3780,6 +3780,252 @@ function buildGovernedRollbackLedgerNote(input: {
   };
 }
 
+function buildRealOutputAuthorizationRegistryNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const latestBootstrap = latestControlledBootstrapSimulation(production);
+  const registry = latestBootstrap?.real_output_authorization_registry ?? production.real_output_authorization_registry_history[0] ?? [];
+  return {
+    title: "Real Output Authorization Registry",
+    directory: "Architecture",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_real_output_authorization_registry",
+      tags: ["second-brain", "real-output-authorization", "governance", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Authorization Summary",
+      registry.length > 0
+        ? asBulletList([
+          `Authorization count: ${registry.length}`,
+          `Output targets: ${[...new Set(registry.flatMap((entry) => entry.allowed_output_targets))].join(", ")}`,
+          `Rollback authorities: ${[...new Set(registry.map((entry) => entry.rollback_authority))].join(", ")}`,
+        ])
+        : "- No real output authorization registry recorded yet.",
+      "",
+      "## Authorizations",
+      registry.length > 0
+        ? asBulletList(registry.map((entry) => `${entry.authorization_id}: scope=${entry.authorized_output_scope} | resolution=${entry.maximum_resolution} | frames=${entry.maximum_frame_count} | retention=${entry.output_retention_policy}`))
+        : "- No real output authorizations recorded yet.",
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Governed Low Resolution Sandbox"),
+        toLink("Output Containment Validation"),
+        toLink("Real Output Rollback"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildGovernedLowResolutionSandboxNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const latestBootstrap = latestControlledBootstrapSimulation(production);
+  const sandbox = latestBootstrap?.governed_low_resolution_sandbox ?? production.governed_low_resolution_sandbox_history[0] ?? null;
+  return {
+    title: "Governed Low Resolution Sandbox",
+    directory: "Strategy",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_governed_low_resolution_sandbox",
+      tags: ["second-brain", "low-resolution-sandbox", "real-output", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Sandbox Summary",
+      sandbox
+        ? asBulletList([
+          `Authorization id: ${sandbox.authorization_id ?? "none"}`,
+          `Output written: ${sandbox.real_output_written ? "yes" : "no"}`,
+          `Output path: ${sandbox.output_file_path ?? "none"}`,
+        ])
+        : "- No governed low resolution sandbox recorded yet.",
+      "",
+      "## Sandbox Controls",
+      sandbox
+        ? asBulletList([
+          `Retry limit: ${sandbox.bounded_retry_limit}`,
+          `Rollback enabled: ${sandbox.rollback_enabled ? "yes" : "no"}`,
+          `Retention: ${sandbox.output_retention_policy}`,
+        ])
+        : "- No governed low resolution sandbox controls recorded yet.",
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Real Output Authorization Registry"),
+        toLink("First Real Synthesis Path"),
+        toLink("Real Output Rollback"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildFirstRealSynthesisPathNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const latestBootstrap = latestControlledBootstrapSimulation(production);
+  const pathState = latestBootstrap?.first_real_synthesis_path ?? production.first_real_synthesis_path_history[0] ?? null;
+  return {
+    title: "First Real Synthesis Path",
+    directory: "Strategy",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_first_real_synthesis_path",
+      tags: ["second-brain", "first-real-synthesis", "real-output", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Path Summary",
+      pathState
+        ? asBulletList([
+          `Authorization id: ${pathState.authorization_id ?? "none"}`,
+          `Next stage: ${pathState.next_stage ?? "none"}`,
+          `Output path: ${pathState.output_file_path ?? "none"}`,
+        ])
+        : "- No first real synthesis path recorded yet.",
+      "",
+      "## Synthesis Stages",
+      pathState?.stages?.length
+        ? asBulletList(pathState.stages.map((entry) => `${entry.order}. ${entry.stage}: status=${entry.status} | blockers=${entry.blockers.join(", ") || "none"}`))
+        : "- No first real synthesis stages recorded yet.",
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Governed Low Resolution Sandbox"),
+        toLink("Output Containment Validation"),
+        toLink("Future Renderer Escalation"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildOutputContainmentValidationNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const latestBootstrap = latestControlledBootstrapSimulation(production);
+  const validation = latestBootstrap?.output_containment_validation ?? production.output_containment_validation_history[0] ?? null;
+  return {
+    title: "Output Containment Validation",
+    directory: "Architecture",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_output_containment_validation",
+      tags: ["second-brain", "output-containment", "real-output", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Validation Summary",
+      validation
+        ? asBulletList([
+          `Valid: ${validation.valid ? "yes" : "no"}`,
+          `Next unlock condition: ${validation.next_unlock_condition}`,
+          `Blocked transitions: ${validation.blocked_transitions.join(", ") || "none"}`,
+        ])
+        : "- No output containment validation recorded yet.",
+      "",
+      "## Validation Checks",
+      validation?.checks?.length
+        ? asBulletList(validation.checks.map((entry) => `${entry.check}: passed=${entry.passed ? "yes" : "no"} | blockers=${entry.blockers.join(", ") || "none"}`))
+        : "- No output containment checks recorded yet.",
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Real Output Authorization Registry"),
+        toLink("Governed Low Resolution Sandbox"),
+        toLink("Real Output Rollback"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildRealOutputRollbackNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const latestBootstrap = latestControlledBootstrapSimulation(production);
+  const rollback = latestBootstrap?.real_output_rollback ?? production.real_output_rollback_history[0] ?? null;
+  return {
+    title: "Real Output Rollback",
+    directory: "Outcomes",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_real_output_rollback",
+      tags: ["second-brain", "real-output-rollback", "real-output", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Rollback Actions",
+      rollback?.actions?.length
+        ? asBulletList(rollback.actions.map((entry) => `${entry.action}: triggered=${entry.triggered ? "yes" : "no"} | targets=${entry.affected_output_targets.join(", ") || "none"}`))
+        : "- No real output rollback recorded yet.",
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Governed Low Resolution Sandbox"),
+        toLink("Output Containment Validation"),
+        toLink("Future Renderer Escalation"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildFutureRendererEscalationNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const latestBootstrap = latestControlledBootstrapSimulation(production);
+  const future = latestBootstrap?.future_renderer_escalation ?? production.future_renderer_escalation_history[0] ?? null;
+  return {
+    title: "Future Renderer Escalation",
+    directory: "Strategy",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_future_renderer_escalation",
+      tags: ["second-brain", "renderer-escalation", "real-output", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Escalation Summary",
+      future
+        ? asBulletList([
+          `Milestone unlocking renderer escalation: ${future.milestone_unlocks_renderer_escalation}`,
+          `Entry count: ${future.entries.length}`,
+        ])
+        : "- No future renderer escalation recorded yet.",
+      "",
+      "## Escalation Scaffolds",
+      future?.entries?.length
+        ? asBulletList(future.entries.map((entry) => `${entry.escalation_id}: unlocked=no | prerequisites=${entry.prerequisites.join(", ")}`))
+        : "- No future renderer escalation scaffolds recorded yet.",
+      "",
+      "## Related",
+      asBulletList([
+        toLink("First Real Synthesis Path"),
+        toLink("Real Output Rollback"),
+        toLink("Governed Low Resolution Sandbox"),
+      ]),
+    ].join("\n"),
+  };
+}
+
 function buildCinematicExecutionLifecycleNote(input: {
   productionMemory: CinematicProductionMemoryRecord;
   latestSessionId: string;
@@ -4296,6 +4542,12 @@ export async function exportSecondBrainToObsidian(input?: {
     buildContainedEscalationModelingNote({ productionMemory, latestSessionId }),
     buildFutureLowResolutionOutputNote({ productionMemory, latestSessionId }),
     buildGovernedRollbackLedgerNote({ productionMemory, latestSessionId }),
+    buildRealOutputAuthorizationRegistryNote({ productionMemory, latestSessionId }),
+    buildGovernedLowResolutionSandboxNote({ productionMemory, latestSessionId }),
+    buildFirstRealSynthesisPathNote({ productionMemory, latestSessionId }),
+    buildOutputContainmentValidationNote({ productionMemory, latestSessionId }),
+    buildRealOutputRollbackNote({ productionMemory, latestSessionId }),
+    buildFutureRendererEscalationNote({ productionMemory, latestSessionId }),
     buildCinematicExecutionLifecycleNote({ productionMemory, latestSessionId }),
     buildContinuityReviewNotesNote({ productionMemory, latestSessionId }),
     buildRetryPlanningRulesNote({ productionMemory, latestSessionId }),
