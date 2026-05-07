@@ -1660,6 +1660,198 @@ function buildProviderComparisonNotesNote(input: {
   };
 }
 
+function buildLocalModelRegistryNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  return {
+    title: "Local Model Registry",
+    directory: "Architecture",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_local_model_registry",
+      tags: ["second-brain", "local-models", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Registered Local Candidates",
+      asBulletList(production.local_model_registry.map((entry) => `${entry.display_name}: status=${entry.status} | mode=${entry.generation_mode} | resolutions=${entry.supported_resolutions.join(",")} | duration<=${entry.max_duration_seconds}s | continuity=${entry.continuity_support} | vram>=${entry.vram_requirement_gb}GB`)),
+      "",
+      "## Quantization And Storage",
+      asBulletList(production.local_model_registry.map((entry) => `${entry.model_id}: quantization=${entry.quantization_profiles.join(",")} | storage>=${entry.storage_requirement_gb}GB`)),
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Local Runtime Readiness"),
+        toLink("Hardware Capability Planning"),
+        toLink("Future Local Inference Notes"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildLocalRuntimeReadinessNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  return {
+    title: "Local Runtime Readiness",
+    directory: "Architecture",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_local_runtime_readiness",
+      tags: ["second-brain", "local-runtime", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Runtime Registry",
+      asBulletList(production.local_runtime_capability_registry.map((entry) => `${entry.display_name}: status=${entry.status} | family=${entry.runtime_family} | backends=${entry.supported_backends.join(",")} | cache=${entry.supports_asset_cache ? "yes" : "no"}`)),
+      "",
+      "## Readiness Rules",
+      asBulletList(production.local_runtime_readiness_rules),
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Local Model Registry"),
+        toLink("Hardware Capability Planning"),
+        toLink("Local-vs-Cloud Routing"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildHardwareCapabilityPlanningNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  return {
+    title: "Hardware Capability Planning",
+    directory: "Architecture",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_hardware_capability_planning",
+      tags: ["second-brain", "hardware-planning", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Hardware Profiles",
+      asBulletList(production.local_hardware_profiles.map((entry) => `${entry.display_name}: status=${entry.status} | backend=${entry.accelerator_backend} | vram=${entry.gpu_vram_gb}GB | ram=${entry.system_ram_gb}GB | storage=${entry.storage_free_gb}GB | max=${entry.recommended_max_resolution}/${entry.recommended_max_duration_seconds}s`)),
+      "",
+      "## Encoder Support",
+      asBulletList(production.local_hardware_profiles.map((entry) => `${entry.profile_id}: encoders=${entry.encoder_support.join(",")}`)),
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Local Runtime Readiness"),
+        toLink("Local Model Registry"),
+        toLink("Local Asset Cache Strategy"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildLocalVsCloudRoutingNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  return {
+    title: "Local-vs-Cloud Routing",
+    directory: "Architecture",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_local_vs_cloud_routing",
+      tags: ["second-brain", "routing", "local-cloud", "obsidian-export"],
+    },
+    body: [
+      "## Local Routing Rules",
+      asBulletList(production.local_provider_routing_rules),
+      "",
+      "## Existing Global Routing Rules",
+      asBulletList(production.provider_routing_rules.filter((entry) => /local|offline|cloud|provider/i.test(entry))),
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Local Runtime Readiness"),
+        toLink("Provider Routing Rules"),
+        toLink("Provider Comparison Notes"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildFutureLocalInferenceNotes(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  return {
+    title: "Future Local Inference Notes",
+    directory: "Strategy",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_future_local_inference_notes",
+      tags: ["second-brain", "local-inference", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Planning Notes",
+      asBulletList(production.local_inference_notes),
+      "",
+      "## Governance Guardrails",
+      asBulletList(production.local_inference_governance_rules),
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Local Model Registry"),
+        toLink("Local Runtime Readiness"),
+        toLink("Execution Readiness Checklist"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildLocalAssetCacheStrategyNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  return {
+    title: "Local Asset Cache Strategy",
+    directory: "Resources",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_local_asset_cache_strategy",
+      tags: ["second-brain", "local-cache", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Cache Strategy",
+      asBulletList(production.local_asset_cache_strategy),
+      "",
+      "## Runtime Support",
+      asBulletList(production.local_runtime_capability_registry.map((entry) => `${entry.display_name}: asset cache ${entry.supports_asset_cache ? "supported" : "not supported"}`)),
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Hardware Capability Planning"),
+        toLink("Future Local Inference Notes"),
+        toLink("Asset Reuse Decisions"),
+      ]),
+    ].join("\n"),
+  };
+}
+
 function buildCinematicExecutionLifecycleNote(input: {
   productionMemory: CinematicProductionMemoryRecord;
   latestSessionId: string;
@@ -2121,6 +2313,12 @@ export async function exportSecondBrainToObsidian(input?: {
     buildManualApprovalWorkflowNote({ productionMemory, latestSessionId }),
     buildExecutionReadinessChecklistNote({ productionMemory, latestSessionId }),
     buildExecutionManifestExamplesNote({ productionMemory, latestSessionId }),
+    buildLocalModelRegistryNote({ productionMemory, latestSessionId }),
+    buildLocalRuntimeReadinessNote({ productionMemory, latestSessionId }),
+    buildHardwareCapabilityPlanningNote({ productionMemory, latestSessionId }),
+    buildLocalVsCloudRoutingNote({ productionMemory, latestSessionId }),
+    buildFutureLocalInferenceNotes({ productionMemory, latestSessionId }),
+    buildLocalAssetCacheStrategyNote({ productionMemory, latestSessionId }),
     buildCinematicExecutionLifecycleNote({ productionMemory, latestSessionId }),
     buildContinuityReviewNotesNote({ productionMemory, latestSessionId }),
     buildRetryPlanningRulesNote({ productionMemory, latestSessionId }),

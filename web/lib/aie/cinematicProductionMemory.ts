@@ -681,6 +681,118 @@ export type CinematicProviderReadinessComparison = {
   issues: string[];
 };
 
+export type CinematicLocalVideoModelStatus = "candidate" | "download-planned" | "validated";
+
+export type CinematicLocalVideoGenerationMode = "text-to-video" | "image-to-video" | "video-to-video";
+
+export type CinematicLocalVideoModelProfile = {
+  model_id: string;
+  display_name: string;
+  backend_family: "wan" | "ltx-video" | "hunyuan-video" | "cogvideo" | "generic-open-source";
+  generation_mode: CinematicLocalVideoGenerationMode;
+  status: CinematicLocalVideoModelStatus;
+  supported_resolutions: CinematicVideoResolution[];
+  max_duration_seconds: number;
+  continuity_support: "limited" | "partial" | "full";
+  vram_requirement_gb: number;
+  storage_requirement_gb: number;
+  quantization_profiles: string[];
+  notes: string[];
+};
+
+export type CinematicLocalRuntimeStatus = "candidate" | "configured" | "detected";
+
+export type CinematicLocalRuntimeCapability = {
+  runtime_id: string;
+  display_name: string;
+  runtime_family: "comfyui" | "diffusers" | "custom-wrapper";
+  status: CinematicLocalRuntimeStatus;
+  detection_method: "manual-registration" | "path-config" | "future-runtime-probe";
+  supported_backends: Array<"cuda" | "directml" | "rocm" | "cpu">;
+  concurrent_job_limit: number;
+  supports_asset_cache: boolean;
+  supports_operator_review_handoff: boolean;
+  notes: string[];
+};
+
+export type CinematicLocalHardwareProfileStatus = "planned" | "profiled" | "validated";
+
+export type CinematicLocalHardwareProfile = {
+  profile_id: string;
+  display_name: string;
+  status: CinematicLocalHardwareProfileStatus;
+  accelerator_backend: "cuda" | "directml" | "rocm" | "cpu";
+  gpu_name: string;
+  gpu_vram_gb: number;
+  system_ram_gb: number;
+  storage_free_gb: number;
+  encoder_support: string[];
+  recommended_max_resolution: CinematicVideoResolution;
+  recommended_max_duration_seconds: number;
+  notes: string[];
+};
+
+export type CinematicLocalReadinessCheckName =
+  | "model-registry-populated"
+  | "runtime-detection-configured"
+  | "hardware-profile-recorded"
+  | "routing-rules-defined"
+  | "governance-guardrails-preserved"
+  | "cache-strategy-defined";
+
+export type CinematicLocalReadinessCheck = {
+  check: CinematicLocalReadinessCheckName;
+  passed: boolean;
+  detail: string;
+};
+
+export type CinematicLocalInferenceReadinessReport = {
+  foundation_ready: boolean;
+  local_provider_available: boolean;
+  ready_for_manual_local_execution: boolean;
+  preferred_model_id: string | null;
+  preferred_runtime_id: string | null;
+  preferred_hardware_profile_id: string | null;
+  recommended_routing_mode: CinematicProviderRoutingMode;
+  checks: CinematicLocalReadinessCheck[];
+  blocked_reasons: string[];
+  planning_notes: string[];
+};
+
+export type CinematicLocalHardwareEstimate = {
+  model_id: string;
+  runtime_id: string | null;
+  hardware_profile_id: string;
+  supported: boolean;
+  estimated_generation_minutes: number;
+  estimated_cache_gb: number;
+  limiting_factors: string[];
+};
+
+export type CinematicLocalProviderRoutingPlan = {
+  selected_provider: CinematicGenerationProvider;
+  routing_mode: CinematicProviderRoutingMode;
+  local_provider_ready: boolean;
+  fallback_provider: Exclude<CinematicGenerationProvider, "LocalFutureProvider">;
+  recommended_model_id: string | null;
+  recommended_runtime_id: string | null;
+  recommended_hardware_profile_id: string | null;
+  reasons: string[];
+  cache_strategy: string[];
+  governance_requirements: string[];
+};
+
+export type CinematicLocalExecutionPlan = {
+  planned_job_ids: string[];
+  routing: CinematicLocalProviderRoutingPlan;
+  readiness: CinematicLocalInferenceReadinessReport;
+  hardware_estimate: CinematicLocalHardwareEstimate | null;
+  manual_execution_only: true;
+  execution_enabled: false;
+  steps: string[];
+  blocked_reasons: string[];
+};
+
 export type CinematicSandboxSimulationResult = {
   simulation: CinematicSandboxSimulationRecord;
   jobs: CinematicGenerationJob[];
@@ -719,6 +831,14 @@ export type CinematicProductionMemoryRecord = {
   continuity_review_notes: CinematicContinuityReviewNote[];
   deferred_execution_plans: CinematicDeferredExecutionPlan[];
   provider_capability_registry: CinematicProviderCapability[];
+  local_model_registry: CinematicLocalVideoModelProfile[];
+  local_runtime_capability_registry: CinematicLocalRuntimeCapability[];
+  local_hardware_profiles: CinematicLocalHardwareProfile[];
+  local_runtime_readiness_rules: string[];
+  local_provider_routing_rules: string[];
+  local_inference_governance_rules: string[];
+  local_asset_cache_strategy: string[];
+  local_inference_notes: string[];
   provider_routing_rules: string[];
   prompt_normalization_rules: string[];
   provider_validation_rules: string[];
@@ -1189,6 +1309,148 @@ const DEFAULT_PRODUCTION_MEMORY_RECORD: CinematicProductionMemoryRecord = {
       retry_recommendation: "Use only after provider payloads are validated and manual approval is explicit.",
     },
   ],
+  local_model_registry: [
+    {
+      model_id: "wan-2.1-t2v-q8",
+      display_name: "Wan 2.1 Text-to-Video Q8",
+      backend_family: "wan",
+      generation_mode: "text-to-video",
+      status: "candidate",
+      supported_resolutions: ["720p", "1080p"],
+      max_duration_seconds: 6,
+      continuity_support: "partial",
+      vram_requirement_gb: 12,
+      storage_requirement_gb: 28,
+      quantization_profiles: ["q8", "q6"],
+      notes: [
+        "Primary local candidate for future Windows-friendly text-to-video trials.",
+        "Requires explicit operator review before any future runtime binding is considered.",
+      ],
+    },
+    {
+      model_id: "ltx-video-img2vid-int8",
+      display_name: "LTX Video Image-to-Video INT8",
+      backend_family: "ltx-video",
+      generation_mode: "image-to-video",
+      status: "candidate",
+      supported_resolutions: ["720p", "1080p"],
+      max_duration_seconds: 8,
+      continuity_support: "limited",
+      vram_requirement_gb: 10,
+      storage_requirement_gb: 24,
+      quantization_profiles: ["int8", "fp16"],
+      notes: [
+        "Useful for reference-driven motion continuation once local cache strategy is mature.",
+        "Treat as advisory only until runtime detection and hardware profiling are both stable.",
+      ],
+    },
+    {
+      model_id: "hunyuan-video-13b-planned",
+      display_name: "Hunyuan Video 13B Planned Slot",
+      backend_family: "hunyuan-video",
+      generation_mode: "text-to-video",
+      status: "download-planned",
+      supported_resolutions: ["720p"],
+      max_duration_seconds: 5,
+      continuity_support: "partial",
+      vram_requirement_gb: 16,
+      storage_requirement_gb: 42,
+      quantization_profiles: ["fp16"],
+      notes: [
+        "Reserved as a higher-memory future candidate rather than an immediate local target.",
+      ],
+    },
+  ],
+  local_runtime_capability_registry: [
+    {
+      runtime_id: "comfyui-local-video-lane",
+      display_name: "ComfyUI Local Video Lane",
+      runtime_family: "comfyui",
+      status: "configured",
+      detection_method: "path-config",
+      supported_backends: ["cuda", "directml"],
+      concurrent_job_limit: 1,
+      supports_asset_cache: true,
+      supports_operator_review_handoff: true,
+      notes: [
+        "Configured as a future manual bridge target only.",
+        "Readiness helpers must not launch or probe this runtime automatically.",
+      ],
+    },
+    {
+      runtime_id: "diffusers-python-pipeline",
+      display_name: "Diffusers Python Pipeline",
+      runtime_family: "diffusers",
+      status: "candidate",
+      detection_method: "future-runtime-probe",
+      supported_backends: ["cuda", "cpu"],
+      concurrent_job_limit: 1,
+      supports_asset_cache: true,
+      supports_operator_review_handoff: true,
+      notes: [
+        "Kept as a secondary compatibility path for scripted local backend experiments.",
+      ],
+    },
+  ],
+  local_hardware_profiles: [
+    {
+      profile_id: "windows-directml-baseline",
+      display_name: "Windows DirectML Baseline",
+      status: "profiled",
+      accelerator_backend: "directml",
+      gpu_name: "Planned workstation GPU",
+      gpu_vram_gb: 12,
+      system_ram_gb: 32,
+      storage_free_gb: 180,
+      encoder_support: ["h264", "h265"],
+      recommended_max_resolution: "1080p",
+      recommended_max_duration_seconds: 6,
+      notes: [
+        "Targets the first Windows-native local backend lane without assuming CUDA exclusivity.",
+      ],
+    },
+    {
+      profile_id: "cpu-fallback-planning",
+      display_name: "CPU Fallback Planning",
+      status: "planned",
+      accelerator_backend: "cpu",
+      gpu_name: "none",
+      gpu_vram_gb: 0,
+      system_ram_gb: 32,
+      storage_free_gb: 120,
+      encoder_support: ["h264"],
+      recommended_max_resolution: "720p",
+      recommended_max_duration_seconds: 3,
+      notes: [
+        "Fallback planning profile only; not suitable for primary local render expectations.",
+      ],
+    },
+  ],
+  local_runtime_readiness_rules: [
+    "Local runtime detection remains advisory and must not launch external runtimes automatically.",
+    "At least one configured or detected runtime, one profiled hardware target, and one candidate model must exist before local bridge review.",
+    "Readiness reports must preserve sandbox-only mode until an operator explicitly authorizes a future local execution bridge.",
+  ],
+  local_provider_routing_rules: [
+    "Prefer LocalFutureProvider only when runtime, model, and hardware checks pass for the requested shot profile.",
+    "Fall back to offline-planning-mode or cloud provider comparison when local readiness is incomplete.",
+    "High continuity or long-duration shots should prefer cloud review until local model support is explicitly profiled.",
+  ],
+  local_inference_governance_rules: [
+    "Local execution planning remains manual-only and non-autonomous.",
+    "No runtime launch, model download, or render job may happen from readiness helpers.",
+    "Append-only approval and continuity governance must remain unchanged before any future local bridge is considered.",
+  ],
+  local_asset_cache_strategy: [
+    "Cache model weights and VAE assets separately from generated outputs.",
+    "Store reusable reference frames and conditioning assets with deterministic fingerprints.",
+    "Treat local cache eviction as an operator-reviewed storage decision, not an automatic background process.",
+  ],
+  local_inference_notes: [
+    "Use LocalFutureProvider as a stable abstraction over future open-source backends.",
+    "Keep runtime detection, hardware profiling, and model registry decoupled so routing stays provider-agnostic.",
+    "Plan for Windows-friendly backends first, with DirectML and CUDA both representable in the readiness layer.",
+  ],
   provider_routing_rules: [
     "Cheap draft routing should prefer Seedance for low-cost storyboard-grade passes.",
     "Premium cinematic routing should prefer Sora when fidelity matters more than cost.",
@@ -1332,6 +1594,14 @@ function hydrateProductionMemoryRecord(record: Partial<CinematicProductionMemory
     continuity_review_notes: nextRecord.continuity_review_notes ?? defaults.continuity_review_notes,
     deferred_execution_plans: nextRecord.deferred_execution_plans ?? defaults.deferred_execution_plans,
     provider_capability_registry: nextRecord.provider_capability_registry ?? defaults.provider_capability_registry,
+    local_model_registry: nextRecord.local_model_registry ?? defaults.local_model_registry,
+    local_runtime_capability_registry: nextRecord.local_runtime_capability_registry ?? defaults.local_runtime_capability_registry,
+    local_hardware_profiles: nextRecord.local_hardware_profiles ?? defaults.local_hardware_profiles,
+    local_runtime_readiness_rules: nextRecord.local_runtime_readiness_rules ?? defaults.local_runtime_readiness_rules,
+    local_provider_routing_rules: nextRecord.local_provider_routing_rules ?? defaults.local_provider_routing_rules,
+    local_inference_governance_rules: nextRecord.local_inference_governance_rules ?? defaults.local_inference_governance_rules,
+    local_asset_cache_strategy: nextRecord.local_asset_cache_strategy ?? defaults.local_asset_cache_strategy,
+    local_inference_notes: nextRecord.local_inference_notes ?? defaults.local_inference_notes,
     provider_routing_rules: nextRecord.provider_routing_rules ?? defaults.provider_routing_rules,
     prompt_normalization_rules: nextRecord.prompt_normalization_rules ?? defaults.prompt_normalization_rules,
     provider_validation_rules: nextRecord.provider_validation_rules ?? defaults.provider_validation_rules,
@@ -1873,6 +2143,258 @@ function getRoutingModeCostTier(routingMode: CinematicProviderRoutingMode): Cost
   }
 }
 
+function videoResolutionRank(resolution: CinematicVideoResolution): number {
+  switch (resolution) {
+    case "720p":
+      return 1;
+    case "1080p":
+      return 2;
+    case "1440p":
+      return 3;
+    case "4k":
+      return 4;
+  }
+}
+
+function localModelStatusWeight(status: CinematicLocalVideoModelStatus): number {
+  switch (status) {
+    case "validated":
+      return 3;
+    case "download-planned":
+      return 2;
+    case "candidate":
+      return 1;
+  }
+}
+
+function localRuntimeStatusWeight(status: CinematicLocalRuntimeStatus): number {
+  switch (status) {
+    case "detected":
+      return 3;
+    case "configured":
+      return 2;
+    case "candidate":
+      return 1;
+  }
+}
+
+function localHardwareStatusWeight(status: CinematicLocalHardwareProfileStatus): number {
+  switch (status) {
+    case "validated":
+      return 3;
+    case "profiled":
+      return 2;
+    case "planned":
+      return 1;
+  }
+}
+
+function localContinuityWeight(support: CinematicLocalVideoModelProfile["continuity_support"]): number {
+  switch (support) {
+    case "full":
+      return 3;
+    case "partial":
+      return 2;
+    case "limited":
+      return 1;
+  }
+}
+
+function supportsRequestedVideoProfile(input: {
+  model: CinematicLocalVideoModelProfile;
+  hardware: CinematicLocalHardwareProfile;
+  desiredResolution: CinematicVideoResolution;
+  desiredDurationSeconds: number;
+}): boolean {
+  return input.model.supported_resolutions.includes(input.desiredResolution)
+    && input.model.max_duration_seconds >= input.desiredDurationSeconds
+    && videoResolutionRank(input.hardware.recommended_max_resolution) >= videoResolutionRank(input.desiredResolution)
+    && input.hardware.recommended_max_duration_seconds >= input.desiredDurationSeconds;
+}
+
+function resolvePreferredLocalModel(input: {
+  record: CinematicProductionMemoryRecord;
+  desiredResolution: CinematicVideoResolution;
+  desiredDurationSeconds: number;
+  continuityPriority: "low" | "medium" | "high";
+}): CinematicLocalVideoModelProfile | null {
+  const ranked = input.record.local_model_registry
+    .filter((entry) => entry.supported_resolutions.includes(input.desiredResolution) && entry.max_duration_seconds >= input.desiredDurationSeconds)
+    .filter((entry) => input.continuityPriority !== "high" || localContinuityWeight(entry.continuity_support) >= 2)
+    .sort((left, right) => {
+      const weightDelta = localModelStatusWeight(right.status) - localModelStatusWeight(left.status);
+      if (weightDelta !== 0) {
+        return weightDelta;
+      }
+      const continuityDelta = localContinuityWeight(right.continuity_support) - localContinuityWeight(left.continuity_support);
+      if (continuityDelta !== 0) {
+        return continuityDelta;
+      }
+      return left.vram_requirement_gb - right.vram_requirement_gb;
+    });
+  return ranked[0] ?? null;
+}
+
+function resolvePreferredLocalHardware(input: {
+  record: CinematicProductionMemoryRecord;
+  model: CinematicLocalVideoModelProfile | null;
+  desiredResolution: CinematicVideoResolution;
+  desiredDurationSeconds: number;
+}): CinematicLocalHardwareProfile | null {
+  const ranked = input.record.local_hardware_profiles
+    .filter((entry) => !input.model || supportsRequestedVideoProfile({
+      model: input.model,
+      hardware: entry,
+      desiredResolution: input.desiredResolution,
+      desiredDurationSeconds: input.desiredDurationSeconds,
+    }))
+    .sort((left, right) => {
+      const weightDelta = localHardwareStatusWeight(right.status) - localHardwareStatusWeight(left.status);
+      if (weightDelta !== 0) {
+        return weightDelta;
+      }
+      return right.gpu_vram_gb - left.gpu_vram_gb;
+    });
+  return ranked[0] ?? null;
+}
+
+function resolvePreferredLocalRuntime(input: {
+  record: CinematicProductionMemoryRecord;
+  hardware: CinematicLocalHardwareProfile | null;
+}): CinematicLocalRuntimeCapability | null {
+  const ranked = input.record.local_runtime_capability_registry
+    .filter((entry) => !input.hardware || entry.supported_backends.includes(input.hardware.accelerator_backend))
+    .sort((left, right) => localRuntimeStatusWeight(right.status) - localRuntimeStatusWeight(left.status));
+  return ranked[0] ?? null;
+}
+
+function summarizeLocalReadiness(input: {
+  record: CinematicProductionMemoryRecord;
+  desiredResolution: CinematicVideoResolution;
+  desiredDurationSeconds: number;
+  continuityPriority: "low" | "medium" | "high";
+}): CinematicLocalInferenceReadinessReport {
+  const preferredModel = resolvePreferredLocalModel(input);
+  const preferredHardware = resolvePreferredLocalHardware({
+    record: input.record,
+    model: preferredModel,
+    desiredResolution: input.desiredResolution,
+    desiredDurationSeconds: input.desiredDurationSeconds,
+  });
+  const preferredRuntime = resolvePreferredLocalRuntime({
+    record: input.record,
+    hardware: preferredHardware,
+  });
+  const checks: CinematicLocalReadinessCheck[] = [
+    {
+      check: "model-registry-populated",
+      passed: input.record.local_model_registry.length > 0,
+      detail: input.record.local_model_registry.length > 0
+        ? `${input.record.local_model_registry.length} local model candidates are registered.`
+        : "No local video model candidates are registered.",
+    },
+    {
+      check: "runtime-detection-configured",
+      passed: input.record.local_runtime_capability_registry.some((entry) => entry.status === "configured" || entry.status === "detected"),
+      detail: input.record.local_runtime_capability_registry.some((entry) => entry.status === "configured" || entry.status === "detected")
+        ? "At least one local runtime is configured for future detection review."
+        : "No local runtime is configured or detected yet.",
+    },
+    {
+      check: "hardware-profile-recorded",
+      passed: input.record.local_hardware_profiles.some((entry) => entry.status === "profiled" || entry.status === "validated"),
+      detail: input.record.local_hardware_profiles.some((entry) => entry.status === "profiled" || entry.status === "validated")
+        ? "At least one local hardware profile has been recorded."
+        : "No profiled local hardware target is recorded yet.",
+    },
+    {
+      check: "routing-rules-defined",
+      passed: input.record.local_provider_routing_rules.length > 0,
+      detail: input.record.local_provider_routing_rules.length > 0
+        ? "Local-vs-cloud routing rules are defined."
+        : "Local-vs-cloud routing rules are missing.",
+    },
+    {
+      check: "governance-guardrails-preserved",
+      passed: input.record.local_inference_governance_rules.some((entry) => /manual-only|non-autonomous/i.test(entry))
+        && input.record.generation_budget_policy.manual_approval_required,
+      detail: input.record.generation_budget_policy.manual_approval_required
+        ? "Manual governance remains preserved for future local inference planning."
+        : "Manual approval guardrails are not present.",
+    },
+    {
+      check: "cache-strategy-defined",
+      passed: input.record.local_asset_cache_strategy.length > 0,
+      detail: input.record.local_asset_cache_strategy.length > 0
+        ? "Local asset cache strategy is defined."
+        : "Local asset cache strategy is missing.",
+    },
+  ];
+  const candidateSupport = Boolean(preferredModel && preferredHardware && preferredRuntime);
+  const localProviderAvailable = candidateSupport
+    && localRuntimeStatusWeight(preferredRuntime.status) >= 2
+    && localHardwareStatusWeight(preferredHardware.status) >= 2
+    && preferredHardware.gpu_vram_gb >= preferredModel.vram_requirement_gb
+    && preferredHardware.storage_free_gb >= preferredModel.storage_requirement_gb;
+  const blockedReasons = [
+    ...checks.filter((entry) => !entry.passed).map((entry) => entry.detail),
+    ...(preferredModel ? [] : [`No local model currently satisfies ${input.desiredResolution} at ${input.desiredDurationSeconds}s.`]),
+    ...(preferredRuntime ? [] : ["No local runtime matches the preferred hardware backend."]),
+    ...(preferredHardware ? [] : ["No local hardware profile can satisfy the requested video profile."]),
+    ...(localProviderAvailable ? [] : ["Preferred local model/runtime/hardware tuple is not yet ready for a manual bridge review."]),
+    ...(input.record.generation_budget_policy.sandbox_only_mode ? ["Sandbox-only mode still blocks any future local execution handoff."] : []),
+  ];
+  return {
+    foundation_ready: checks.every((entry) => entry.passed),
+    local_provider_available: localProviderAvailable,
+    ready_for_manual_local_execution: localProviderAvailable && !input.record.generation_budget_policy.sandbox_only_mode,
+    preferred_model_id: preferredModel?.model_id ?? null,
+    preferred_runtime_id: preferredRuntime?.runtime_id ?? null,
+    preferred_hardware_profile_id: preferredHardware?.profile_id ?? null,
+    recommended_routing_mode: localProviderAvailable ? "future-local-inference-mode" : "offline-planning-mode",
+    checks,
+    blocked_reasons: blockedReasons,
+    planning_notes: input.record.local_inference_notes,
+  };
+}
+
+function buildLocalHardwareEstimate(input: {
+  model: CinematicLocalVideoModelProfile;
+  runtime: CinematicLocalRuntimeCapability | null;
+  hardware: CinematicLocalHardwareProfile;
+  desiredResolution: CinematicVideoResolution;
+  desiredDurationSeconds: number;
+}): CinematicLocalHardwareEstimate {
+  const limitingFactors: string[] = [];
+  if (input.hardware.gpu_vram_gb < input.model.vram_requirement_gb) {
+    limitingFactors.push(`VRAM ${input.hardware.gpu_vram_gb}GB is below the model requirement of ${input.model.vram_requirement_gb}GB.`);
+  }
+  if (input.hardware.storage_free_gb < input.model.storage_requirement_gb) {
+    limitingFactors.push(`Free storage ${input.hardware.storage_free_gb}GB is below the model requirement of ${input.model.storage_requirement_gb}GB.`);
+  }
+  if (input.runtime && !input.runtime.supported_backends.includes(input.hardware.accelerator_backend)) {
+    limitingFactors.push(`${input.runtime.display_name} does not support ${input.hardware.accelerator_backend}.`);
+  }
+  if (videoResolutionRank(input.hardware.recommended_max_resolution) < videoResolutionRank(input.desiredResolution)) {
+    limitingFactors.push(`Hardware profile is only recommended up to ${input.hardware.recommended_max_resolution}.`);
+  }
+  if (input.hardware.recommended_max_duration_seconds < input.desiredDurationSeconds) {
+    limitingFactors.push(`Hardware profile is only recommended up to ${input.hardware.recommended_max_duration_seconds}s.`);
+  }
+  const resolutionFactor = videoResolutionRank(input.desiredResolution);
+  const backendFactor = input.hardware.accelerator_backend === "cpu" ? 4 : 2;
+  const vramFactor = Math.max(1, Math.ceil(input.model.vram_requirement_gb / Math.max(1, input.hardware.gpu_vram_gb)));
+  return {
+    model_id: input.model.model_id,
+    runtime_id: input.runtime?.runtime_id ?? null,
+    hardware_profile_id: input.hardware.profile_id,
+    supported: limitingFactors.length === 0,
+    estimated_generation_minutes: Math.max(2, Math.ceil((input.desiredDurationSeconds * resolutionFactor * backendFactor * vramFactor) / 3)),
+    estimated_cache_gb: input.model.storage_requirement_gb + Math.max(6, resolutionFactor * input.desiredDurationSeconds),
+    limiting_factors: limitingFactors,
+  };
+}
+
 function resolveProviderCapability(record: CinematicProductionMemoryRecord, provider: CinematicGenerationProvider): CinematicProviderCapability {
   const capability = record.provider_capability_registry.find((entry) => entry.provider === provider);
   if (!capability) {
@@ -2140,6 +2662,188 @@ export async function getCinematicProviderCapability(input: {
 }): Promise<CinematicProviderCapability> {
   const record = await readCinematicProductionMemory({ root: input.root });
   return resolveProviderCapability(record, input.provider);
+}
+
+export function getCinematicLocalModelRegistry(input?: {
+  record?: CinematicProductionMemoryRecord;
+}): CinematicLocalVideoModelProfile[] {
+  return (input?.record ?? cloneDefaultRecord()).local_model_registry;
+}
+
+export function getCinematicLocalRuntimeCapabilityRegistry(input?: {
+  record?: CinematicProductionMemoryRecord;
+}): CinematicLocalRuntimeCapability[] {
+  return (input?.record ?? cloneDefaultRecord()).local_runtime_capability_registry;
+}
+
+export function getCinematicLocalHardwareProfiles(input?: {
+  record?: CinematicProductionMemoryRecord;
+}): CinematicLocalHardwareProfile[] {
+  return (input?.record ?? cloneDefaultRecord()).local_hardware_profiles;
+}
+
+export async function assessCinematicLocalInferenceReadiness(input?: {
+  root?: string;
+  desiredResolution?: CinematicVideoResolution;
+  desiredDurationSeconds?: number;
+  continuityPriority?: "low" | "medium" | "high";
+}): Promise<CinematicLocalInferenceReadinessReport> {
+  const record = await readCinematicProductionMemory({ root: input?.root });
+  return summarizeLocalReadiness({
+    record,
+    desiredResolution: input?.desiredResolution ?? DEFAULT_TARGET_RESOLUTION,
+    desiredDurationSeconds: input?.desiredDurationSeconds ?? DEFAULT_TARGET_DURATION_SECONDS,
+    continuityPriority: input?.continuityPriority ?? "medium",
+  });
+}
+
+export async function estimateCinematicLocalHardware(input?: {
+  root?: string;
+  modelId?: string;
+  hardwareProfileId?: string;
+  desiredResolution?: CinematicVideoResolution;
+  desiredDurationSeconds?: number;
+  continuityPriority?: "low" | "medium" | "high";
+}): Promise<CinematicLocalHardwareEstimate | null> {
+  const record = await readCinematicProductionMemory({ root: input?.root });
+  const desiredResolution = input?.desiredResolution ?? DEFAULT_TARGET_RESOLUTION;
+  const desiredDurationSeconds = input?.desiredDurationSeconds ?? DEFAULT_TARGET_DURATION_SECONDS;
+  const preferredModel = input?.modelId
+    ? record.local_model_registry.find((entry) => entry.model_id === input.modelId) ?? null
+    : resolvePreferredLocalModel({
+      record,
+      desiredResolution,
+      desiredDurationSeconds,
+      continuityPriority: input?.continuityPriority ?? "medium",
+    });
+  if (!preferredModel) {
+    return null;
+  }
+  const preferredHardware = input?.hardwareProfileId
+    ? record.local_hardware_profiles.find((entry) => entry.profile_id === input.hardwareProfileId) ?? null
+    : resolvePreferredLocalHardware({
+      record,
+      model: preferredModel,
+      desiredResolution,
+      desiredDurationSeconds,
+    });
+  if (!preferredHardware) {
+    return null;
+  }
+  const preferredRuntime = resolvePreferredLocalRuntime({ record, hardware: preferredHardware });
+  return buildLocalHardwareEstimate({
+    model: preferredModel,
+    runtime: preferredRuntime,
+    hardware: preferredHardware,
+    desiredResolution,
+    desiredDurationSeconds,
+  });
+}
+
+export async function planCinematicLocalProviderRouting(input?: {
+  root?: string;
+  desiredResolution?: CinematicVideoResolution;
+  desiredDurationSeconds?: number;
+  continuityPriority?: "low" | "medium" | "high";
+  requireOfflinePlanning?: boolean;
+}): Promise<CinematicLocalProviderRoutingPlan> {
+  const record = await readCinematicProductionMemory({ root: input?.root });
+  const readiness = summarizeLocalReadiness({
+    record,
+    desiredResolution: input?.desiredResolution ?? DEFAULT_TARGET_RESOLUTION,
+    desiredDurationSeconds: input?.desiredDurationSeconds ?? DEFAULT_TARGET_DURATION_SECONDS,
+    continuityPriority: input?.continuityPriority ?? "medium",
+  });
+  const fallbackProvider: Exclude<CinematicGenerationProvider, "LocalFutureProvider"> = input?.continuityPriority === "high"
+    ? "Sora"
+    : input?.desiredDurationSeconds && input.desiredDurationSeconds <= 8
+      ? "Seedance"
+      : "Veo";
+  const offline = Boolean(input?.requireOfflinePlanning);
+  const selectedProvider = offline || readiness.local_provider_available ? "LocalFutureProvider" : fallbackProvider;
+  const routingMode: CinematicProviderRoutingMode = offline
+    ? "offline-planning-mode"
+    : readiness.local_provider_available
+      ? "future-local-inference-mode"
+      : fallbackProvider === "Seedance"
+        ? "cheap-draft-provider"
+        : fallbackProvider === "Sora"
+          ? "premium-cinematic-provider"
+          : "balanced-comparison-mode";
+  const reasons = offline
+    ? [
+      "Offline planning was explicitly requested.",
+      ...record.local_provider_routing_rules,
+    ]
+    : readiness.local_provider_available
+      ? [
+        "Local model/runtime/hardware tuple is sufficiently prepared for future manual bridge review.",
+        ...record.local_provider_routing_rules,
+      ]
+      : [
+        ...readiness.blocked_reasons,
+        `Fallback provider ${fallbackProvider} remains the safer near-term advisory route.`,
+      ];
+  return {
+    selected_provider: selectedProvider,
+    routing_mode: routingMode,
+    local_provider_ready: readiness.local_provider_available,
+    fallback_provider: fallbackProvider,
+    recommended_model_id: readiness.preferred_model_id,
+    recommended_runtime_id: readiness.preferred_runtime_id,
+    recommended_hardware_profile_id: readiness.preferred_hardware_profile_id,
+    reasons,
+    cache_strategy: record.local_asset_cache_strategy,
+    governance_requirements: record.local_inference_governance_rules,
+  };
+}
+
+export async function buildCinematicLocalExecutionPlan(input?: {
+  root?: string;
+  sequenceId?: string;
+  jobIds?: string[];
+  desiredResolution?: CinematicVideoResolution;
+  desiredDurationSeconds?: number;
+  continuityPriority?: "low" | "medium" | "high";
+}): Promise<CinematicLocalExecutionPlan> {
+  const record = await readCinematicProductionMemory({ root: input?.root });
+  const readiness = summarizeLocalReadiness({
+    record,
+    desiredResolution: input?.desiredResolution ?? DEFAULT_TARGET_RESOLUTION,
+    desiredDurationSeconds: input?.desiredDurationSeconds ?? DEFAULT_TARGET_DURATION_SECONDS,
+    continuityPriority: input?.continuityPriority ?? "medium",
+  });
+  const routing = await planCinematicLocalProviderRouting(input);
+  const plannedJobIds = input?.jobIds
+    ?? (input?.sequenceId
+      ? record.generation_jobs.filter((entry) => entry.sequence_id === input.sequenceId).map((entry) => entry.job_id)
+      : []);
+  const hardwareEstimate = readiness.preferred_model_id && readiness.preferred_hardware_profile_id
+    ? await estimateCinematicLocalHardware({
+      root: input?.root,
+      modelId: readiness.preferred_model_id,
+      hardwareProfileId: readiness.preferred_hardware_profile_id,
+      desiredResolution: input?.desiredResolution,
+      desiredDurationSeconds: input?.desiredDurationSeconds,
+      continuityPriority: input?.continuityPriority,
+    })
+    : null;
+  return {
+    planned_job_ids: plannedJobIds,
+    routing,
+    readiness,
+    hardware_estimate: hardwareEstimate,
+    manual_execution_only: true,
+    execution_enabled: false,
+    steps: [
+      "Review the preferred local model, runtime, and hardware tuple with an operator before any bridge work.",
+      "Keep sandbox-only mode enabled while local runtime detection and cache layout stay advisory.",
+      "Prepare LocalFutureProvider payloads and asset references without launching a runtime or downloading models.",
+      "Confirm cache directories, weight storage, and reference assets as a separate manual operational task.",
+      "If future policy changes permit it, introduce a separate manual-only local execution bridge rather than widening this readiness layer.",
+    ],
+    blocked_reasons: readiness.blocked_reasons,
+  };
 }
 
 export function selectCinematicGenerationProviderRoute(input: {

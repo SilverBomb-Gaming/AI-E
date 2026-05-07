@@ -5,17 +5,24 @@ import path from "node:path";
 import test from "node:test";
 
 import {
+  assessCinematicLocalInferenceReadiness,
+  buildCinematicLocalExecutionPlan,
   compareCinematicProviderOutputs,
   compileCinematicProviderPayload,
   compileCinematicProviderPayloadVariants,
   compileCinematicShotPrompt,
+  estimateCinematicLocalHardware,
   enforceCinematicGenerationBudget,
   ensureCinematicProductionMemoryInitialized,
+  getCinematicLocalHardwareProfiles,
+  getCinematicLocalModelRegistry,
+  getCinematicLocalRuntimeCapabilityRegistry,
   forecastCinematicSequenceCost,
   getCinematicProviderCapability,
   getCinematicProviderCapabilityRegistry,
   listCinematicProviderAdapters,
   planCinematicGenerationJobs,
+  planCinematicLocalProviderRouting,
   planCinematicSequence,
   planFailedShotRegeneration,
   prepareCinematicManualTriggerBridge,
@@ -169,6 +176,96 @@ test("cinematic production memory evolves into continuity-aware shot planning in
     assert.match(compiled.prior_shot_context ?? "", /reveal-subject/);
     assert.ok(compiled.gameplay_transition_context.length > 0);
     assert.match(compiled.estimated_cost_tier, /low|medium|high/);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("local video inference readiness stays planning-only while exposing model, runtime, hardware, and routing preparation", async () => {
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "aie-local-video-readiness-"));
+
+  try {
+    await ensureCinematicProductionMemoryInitialized(tempRoot);
+
+    const models = getCinematicLocalModelRegistry();
+    const runtimes = getCinematicLocalRuntimeCapabilityRegistry();
+    const hardwareProfiles = getCinematicLocalHardwareProfiles();
+    const readiness = await assessCinematicLocalInferenceReadiness({
+      root: tempRoot,
+      desiredResolution: "1080p",
+      desiredDurationSeconds: 6,
+      continuityPriority: "high",
+    });
+    const hardwareEstimate = await estimateCinematicLocalHardware({
+      root: tempRoot,
+      desiredResolution: "1080p",
+      desiredDurationSeconds: 6,
+      continuityPriority: "high",
+    });
+    const routing = await planCinematicLocalProviderRouting({
+      root: tempRoot,
+      desiredResolution: "1080p",
+      desiredDurationSeconds: 6,
+      continuityPriority: "high",
+    });
+    const beforePlanRecord = await readCinematicProductionMemory({ root: tempRoot });
+    const localPlan = await buildCinematicLocalExecutionPlan({
+      root: tempRoot,
+      desiredResolution: "1080p",
+      desiredDurationSeconds: 6,
+      continuityPriority: "high",
+    });
+    const afterPlanRecord = await readCinematicProductionMemory({ root: tempRoot });
+
+    assert.ok(models.length >= 2);
+    assert.ok(runtimes.length >= 1);
+    assert.ok(hardwareProfiles.length >= 1);
+    assert.equal(readiness.foundation_ready, true);
+    assert.equal(readiness.local_provider_available, true);
+    assert.equal(readiness.ready_for_manual_local_execution, false);
+    assert.equal(readiness.recommended_routing_mode, "future-local-inference-mode");
+    assert.ok(readiness.blocked_reasons.some((entry) => /sandbox-only mode/i.test(entry)));
+    assert.ok(hardwareEstimate);
+    assert.equal(hardwareEstimate?.supported, true);
+    assert.ok((hardwareEstimate?.estimated_generation_minutes ?? 0) >= 2);
+    assert.equal(routing.selected_provider, "LocalFutureProvider");
+    assert.equal(routing.routing_mode, "future-local-inference-mode");
+    assert.equal(localPlan.manual_execution_only, true);
+    assert.equal(localPlan.execution_enabled, false);
+    assert.ok(localPlan.steps.some((entry) => /sandbox-only mode/i.test(entry)));
+    assert.deepEqual(afterPlanRecord.approval_audit_trail, beforePlanRecord.approval_audit_trail);
+
+    await writeCinematicProductionMemory({
+      root: tempRoot,
+      value: {
+        local_runtime_capability_registry: beforePlanRecord.local_runtime_capability_registry.map((entry) => ({
+          ...entry,
+          status: "candidate",
+        })),
+        local_hardware_profiles: beforePlanRecord.local_hardware_profiles.map((entry) => ({
+          ...entry,
+          status: "planned",
+        })),
+      },
+    });
+
+    const blockedReadiness = await assessCinematicLocalInferenceReadiness({
+      root: tempRoot,
+      desiredResolution: "1080p",
+      desiredDurationSeconds: 6,
+      continuityPriority: "high",
+    });
+    const blockedRouting = await planCinematicLocalProviderRouting({
+      root: tempRoot,
+      desiredResolution: "1080p",
+      desiredDurationSeconds: 6,
+      continuityPriority: "high",
+    });
+
+    assert.equal(blockedReadiness.local_provider_available, false);
+    assert.equal(blockedRouting.selected_provider, "Sora");
+    assert.equal(blockedRouting.routing_mode, "premium-cinematic-provider");
+    assert.ok(blockedRouting.reasons.some((entry) => /fallback provider sora/i.test(entry)));
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }
