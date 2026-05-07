@@ -1,6 +1,6 @@
 ---
 project_key: babylon-2026
-updated_at: 2026-05-07T17:12:24.817Z
+updated_at: 2026-05-07T18:27:21.457Z
 session_id: phase7c-skip-task-session
 status: generated_asset_reuse_log
 tags:
@@ -23,6 +23,13 @@ tags:
 ## Asset Reuse Decisions
 - Preserve the approved wave reveal prompt when only the escalation insert fails.
 - Reuse environment-establishing shots before generating new geography coverage.
+- Preserve continuity context for sequence-wave-transition-001-intro while keeping local execution disabled.
+- Preserve continuity context for sequence-wave-transition-001-establish while keeping local execution disabled.
+- Preserve continuity context for sequence-wave-transition-001-reveal while keeping local execution disabled.
+- Preserve continuity context for sequence-wave-transition-001-escalation while keeping local execution disabled.
+- Preserve continuity context for sequence-wave-transition-001-emotional while keeping local execution disabled.
+- Preserve continuity context for sequence-wave-transition-001-transition while keeping local execution disabled.
+- Preserve continuity context for sequence-wave-transition-001-return while keeping local execution disabled.
 
 ## Related
 - [[Successful Generations]]

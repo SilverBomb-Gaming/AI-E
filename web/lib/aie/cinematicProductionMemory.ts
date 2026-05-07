@@ -503,15 +503,23 @@ export type CinematicGenerationJobHistoryEntry = {
 
 export type CinematicSandboxSimulationRecord = {
   simulation_id: string;
+  sandbox_kind: "provider-execution-sandbox" | "local-inference-execution-sandbox";
   sequence_id: string;
   routing_mode: CinematicProviderRoutingMode;
   provider: CinematicGenerationProvider;
+  execution_enabled: false;
   queued_job_ids: string[];
   approved_job_ids: string[];
   failed_job_ids: string[];
   retry_job_ids: string[];
   continuity_issue_count: number;
   asset_reuse_decisions: string[];
+  renderer_lifecycle_states?: CinematicLocalRendererLifecycleState[];
+  gpu_allocation?: CinematicGpuAllocationModel;
+  queue_plan?: CinematicLocalQueueSimulationPlan;
+  recovery_plan?: CinematicRendererRecoveryPlan;
+  readiness_tracking_id?: string | null;
+  hybrid_escalation?: CinematicHybridEscalationSimulation | null;
   recorded_at: string;
 };
 
@@ -936,6 +944,130 @@ export type CinematicReadinessMilestoneProgress = {
   missing_dependencies: string[];
 };
 
+export type CinematicReadinessConfidenceTrend = "up" | "flat" | "down" | "new";
+
+export type CinematicReadinessMilestoneDelta = {
+  milestone: CinematicReadinessMilestoneKey;
+  previous_percentage: number | null;
+  current_percentage: number;
+  delta: number;
+  previous_confidence: CinematicReadinessConfidence | null;
+  current_confidence: CinematicReadinessConfidence;
+  blockers_cleared: string[];
+  blockers_introduced: string[];
+  confidence_trend: CinematicReadinessConfidenceTrend;
+  architectural_readiness_notes: string[];
+};
+
+export type CinematicReadinessDeltaTrackingRecord = {
+  tracking_id: string;
+  source: "local-readiness-validation" | "local-execution-sandbox";
+  recorded_at: string;
+  milestones: CinematicReadinessMilestoneDelta[];
+};
+
+export type CinematicLocalRendererLifecycleStateName =
+  | "runtime_idle"
+  | "runtime_preparing"
+  | "model_loading"
+  | "resource_allocating"
+  | "frame_pipeline_ready"
+  | "rendering_simulated"
+  | "packaging_simulated"
+  | "archival_ready"
+  | "runtime_recovering"
+  | "runtime_blocked";
+
+export type CinematicLocalRendererLifecycleState = {
+  state: CinematicLocalRendererLifecycleStateName;
+  order: number;
+  simulated: true;
+  detail: string;
+  blockers: string[];
+};
+
+export type CinematicGpuPressureLevel = "low" | "medium" | "high" | "critical";
+
+export type CinematicGpuAllocationModel = {
+  estimated_vram_required_gb: number;
+  available_vram_gb: number;
+  vram_pressure: CinematicGpuPressureLevel;
+  render_concurrency_viable: boolean;
+  max_safe_concurrency: number;
+  queue_starvation_risk: "low" | "medium" | "high";
+  low_vram_fallback_viable: boolean;
+  local_cache_pressure: CinematicGpuPressureLevel;
+  storage_expansion_risk: "low" | "medium" | "high";
+  notes: string[];
+};
+
+export type CinematicLocalQueueSimulationState = "queued" | "blocked" | "ready" | "retry-isolated" | "completed-simulated";
+
+export type CinematicLocalQueueSimulationJob = {
+  job_id: string;
+  shot_id: string;
+  state: CinematicLocalQueueSimulationState;
+  dependency_job_ids: string[];
+  continuity_priority: "low" | "medium" | "high";
+  retry_isolated: boolean;
+  blocked_reason: string | null;
+};
+
+export type CinematicLocalQueueSimulationPlan = {
+  queued_jobs: CinematicLocalQueueSimulationJob[];
+  dependency_order_job_ids: string[];
+  continuity_priority_job_ids: string[];
+  blocked_job_ids: string[];
+  recovery_sequence_job_ids: string[];
+};
+
+export type CinematicRendererRecoveryCause =
+  | "failed-render-stage"
+  | "insufficient-vram"
+  | "dependency-mismatch"
+  | "storage-exhaustion"
+  | "runtime-corruption"
+  | "continuity-state-recovery";
+
+export type CinematicRendererRecoveryStep = {
+  cause: CinematicRendererRecoveryCause;
+  detail: string;
+  sequence_order: number;
+};
+
+export type CinematicRendererRecoveryPlan = {
+  blocked: boolean;
+  causes: CinematicRendererRecoveryCause[];
+  steps: CinematicRendererRecoveryStep[];
+};
+
+export type CinematicHybridEscalationSimulation = {
+  local_first_rendering: boolean;
+  cloud_escalation_fallback: boolean;
+  offline_safe_execution: boolean;
+  premium_provider_escalation: boolean;
+  continuity_preserving_escalation: boolean;
+  selected_strategy_id: CinematicHybridStrategyId | null;
+  selected_routing_mode: CinematicProviderRoutingMode;
+  reasons: string[];
+};
+
+export type CinematicLocalExecutionSandboxValidation = {
+  readiness: CinematicLocalInferenceReadinessReport;
+  readiness_delta: CinematicReadinessDeltaTrackingRecord;
+  renderer_lifecycle_states: CinematicLocalRendererLifecycleState[];
+  gpu_allocation: CinematicGpuAllocationModel;
+  queue_plan: CinematicLocalQueueSimulationPlan;
+  recovery_plan: CinematicRendererRecoveryPlan;
+  hybrid_escalation: CinematicHybridEscalationSimulation;
+  execution_enabled: false;
+};
+
+export type CinematicLocalInferenceExecutionSandboxResult = {
+  validation: CinematicLocalExecutionSandboxValidation;
+  simulation: CinematicSandboxSimulationRecord;
+};
+
 export type CinematicFrameGenerationPipelinePlan = {
   stages: CinematicFrameGenerationStage[];
   blocked_stage_ids: string[];
@@ -1013,6 +1145,7 @@ export type CinematicProductionMemoryRecord = {
   renderer_capability_roadmap: CinematicRendererCapabilityRoadmapEntry[];
   runtime_constraint_models: CinematicRuntimeConstraintModel[];
   hybrid_local_cloud_strategies: CinematicHybridLocalCloudStrategy[];
+  readiness_delta_tracking_history: CinematicReadinessDeltaTrackingRecord[];
   provider_routing_rules: string[];
   prompt_normalization_rules: string[];
   provider_validation_rules: string[];
@@ -1855,6 +1988,7 @@ const DEFAULT_PRODUCTION_MEMORY_RECORD: CinematicProductionMemoryRecord = {
       escalation_conditions: ["low VRAM", "missing ffmpeg", "local runtime not detected"],
     },
   ],
+  readiness_delta_tracking_history: [],
   provider_routing_rules: [
     "Cheap draft routing should prefer Seedance for low-cost storyboard-grade passes.",
     "Premium cinematic routing should prefer Sora when fidelity matters more than cost.",
@@ -2012,6 +2146,7 @@ function hydrateProductionMemoryRecord(record: Partial<CinematicProductionMemory
     renderer_capability_roadmap: nextRecord.renderer_capability_roadmap ?? defaults.renderer_capability_roadmap,
     runtime_constraint_models: nextRecord.runtime_constraint_models ?? defaults.runtime_constraint_models,
     hybrid_local_cloud_strategies: nextRecord.hybrid_local_cloud_strategies ?? defaults.hybrid_local_cloud_strategies,
+    readiness_delta_tracking_history: nextRecord.readiness_delta_tracking_history ?? defaults.readiness_delta_tracking_history,
     provider_routing_rules: nextRecord.provider_routing_rules ?? defaults.provider_routing_rules,
     prompt_normalization_rules: nextRecord.prompt_normalization_rules ?? defaults.prompt_normalization_rules,
     provider_validation_rules: nextRecord.provider_validation_rules ?? defaults.provider_validation_rules,
@@ -3787,6 +3922,497 @@ export async function assessCinematicLocalInferenceReadiness(input?: {
   });
 }
 
+function confidenceTrend(input: {
+  previous: CinematicReadinessConfidence | null;
+  current: CinematicReadinessConfidence;
+}): CinematicReadinessConfidenceTrend {
+  if (!input.previous) {
+    return "new";
+  }
+  const rank: Record<CinematicReadinessConfidence, number> = {
+    low: 1,
+    medium: 2,
+    high: 3,
+  };
+  if (rank[input.current] > rank[input.previous]) {
+    return "up";
+  }
+  if (rank[input.current] < rank[input.previous]) {
+    return "down";
+  }
+  return "flat";
+}
+
+function appendReadinessDeltaTracking(input: {
+  record: CinematicProductionMemoryRecord;
+  readiness: CinematicLocalInferenceReadinessReport;
+  source: CinematicReadinessDeltaTrackingRecord["source"];
+}): {
+  tracking: CinematicReadinessDeltaTrackingRecord;
+  record: CinematicProductionMemoryRecord;
+} {
+  const previous = input.record.readiness_delta_tracking_history[0] ?? null;
+  const previousMilestones = new Map(previous?.milestones.map((entry) => [entry.milestone, entry]));
+  const tracking: CinematicReadinessDeltaTrackingRecord = {
+    tracking_id: `readiness-delta-${new Date().toISOString().replace(/[^0-9]/g, "").slice(0, 14)}`,
+    source: input.source,
+    recorded_at: new Date().toISOString(),
+    milestones: input.readiness.milestone_progress.map((milestone) => {
+      const previousMilestone = previousMilestones.get(milestone.milestone);
+      const blockersCleared = previousMilestone
+        ? previousMilestone.blockers_introduced.filter((entry) => !milestone.missing_dependencies.includes(entry))
+        : [];
+      const blockersIntroduced = milestone.missing_dependencies.filter((entry) => !previousMilestone?.blockers_introduced.includes(entry));
+      return {
+        milestone: milestone.milestone,
+        previous_percentage: previousMilestone?.current_percentage ?? null,
+        current_percentage: milestone.percentage,
+        delta: milestone.percentage - (previousMilestone?.current_percentage ?? 0),
+        previous_confidence: previousMilestone?.current_confidence ?? null,
+        current_confidence: milestone.confidence,
+        blockers_cleared: blockersCleared,
+        blockers_introduced: blockersIntroduced,
+        confidence_trend: confidenceTrend({ previous: previousMilestone?.current_confidence ?? null, current: milestone.confidence }),
+        architectural_readiness_notes: uniqueNormalizedStrings([
+          milestone.estimated_architectural_dependency,
+          `Next milestone: ${milestone.next_milestone}`,
+          milestone.missing_dependencies.length > 0
+            ? `Missing dependencies: ${milestone.missing_dependencies.join(", ")}`
+            : "No missing dependencies currently recorded.",
+        ]),
+      } satisfies CinematicReadinessMilestoneDelta;
+    }),
+  };
+  const nextRecord: CinematicProductionMemoryRecord = {
+    ...input.record,
+    readiness_delta_tracking_history: [tracking, ...input.record.readiness_delta_tracking_history].slice(0, 24),
+  };
+  return {
+    tracking,
+    record: nextRecord,
+  };
+}
+
+function resolveSandboxSequence(input: {
+  record: CinematicProductionMemoryRecord;
+  sequenceId?: string;
+}): CinematicSceneSequence | null {
+  if (input.sequenceId) {
+    return input.record.scene_sequences.find((entry) => entry.sequence_id === input.sequenceId) ?? null;
+  }
+  return input.record.scene_sequences[0] ?? null;
+}
+
+function buildCinematicGpuAllocationModel(input: {
+  record: CinematicProductionMemoryRecord;
+  readiness: CinematicLocalInferenceReadinessReport;
+  hardwareEstimate: CinematicLocalHardwareEstimate | null;
+  desiredDurationSeconds: number;
+  queueDepth: number;
+}): CinematicGpuAllocationModel {
+  const preferredHardware = input.readiness.preferred_hardware_profile_id
+    ? input.record.local_hardware_profiles.find((entry) => entry.profile_id === input.readiness.preferred_hardware_profile_id) ?? null
+    : null;
+  const selectedConstraintModel = input.record.runtime_constraint_models[0] ?? null;
+  const availableVram = preferredHardware?.gpu_vram_gb ?? 0;
+  const estimatedRequiredVram = Math.max(6, Math.round((((input.hardwareEstimate?.estimated_generation_minutes ?? 8) / 4) + (input.desiredDurationSeconds / 6)) * 10) / 10);
+  const pressureRatio = availableVram > 0 ? estimatedRequiredVram / availableVram : Number.POSITIVE_INFINITY;
+  const pressure: CinematicGpuPressureLevel = pressureRatio <= 0.55
+    ? "low"
+    : pressureRatio <= 0.8
+      ? "medium"
+      : pressureRatio <= 1
+        ? "high"
+        : "critical";
+  const storageRatio = preferredHardware && input.hardwareEstimate
+    ? input.hardwareEstimate.estimated_cache_gb / Math.max(preferredHardware.storage_free_gb, 1)
+    : Number.POSITIVE_INFINITY;
+  const localCachePressure: CinematicGpuPressureLevel = storageRatio <= 0.25
+    ? "low"
+    : storageRatio <= 0.5
+      ? "medium"
+      : storageRatio <= 0.75
+        ? "high"
+        : "critical";
+  const maxSafeConcurrency = pressure === "critical"
+    ? 0
+    : Math.max(1, Math.floor(Math.max(availableVram, 0) / Math.max(estimatedRequiredVram, 1)));
+  return {
+    estimated_vram_required_gb: estimatedRequiredVram,
+    available_vram_gb: availableVram,
+    vram_pressure: pressure,
+    render_concurrency_viable: maxSafeConcurrency >= 1 && input.readiness.foundation_ready,
+    max_safe_concurrency: maxSafeConcurrency,
+    queue_starvation_risk: pressure === "critical" || input.queueDepth > 4
+      ? "high"
+      : pressure === "high" || input.queueDepth > 2
+        ? "medium"
+        : "low",
+    low_vram_fallback_viable: selectedConstraintModel?.low_vram_fallback_viable ?? false,
+    local_cache_pressure: localCachePressure,
+    storage_expansion_risk: localCachePressure === "critical"
+      ? "high"
+      : localCachePressure === "high"
+        ? "medium"
+        : "low",
+    notes: uniqueNormalizedStrings([
+      ...(input.hardwareEstimate?.limiting_factors ?? []),
+      ...selectedConstraintModel?.local_queue_pressure ?? [],
+      pressure === "critical"
+        ? "VRAM headroom is insufficient for even single-job local execution simulation."
+        : "Simulation assumes serialized local queue ownership rather than uncontrolled parallel rendering.",
+    ]),
+  };
+}
+
+function buildLocalQueueSimulationPlan(input: {
+  record: CinematicProductionMemoryRecord;
+  sequence: CinematicSceneSequence | null;
+  readiness: CinematicLocalInferenceReadinessReport;
+  gpuAllocation: CinematicGpuAllocationModel;
+  continuityPriority: "low" | "medium" | "high";
+}): CinematicLocalQueueSimulationPlan {
+  const shots = input.sequence
+    ? [...input.sequence.shots].sort((left, right) => left.shot_order - right.shot_order)
+    : [];
+  const failedShotIds = new Set(input.record.failed_generations.map((entry) => entry.shot_id));
+  const queuedJobs = shots.map((shot, index) => {
+    const dependencyJobIds = index > 0 ? [`local-sandbox-${input.sequence!.sequence_id}-${shots[index - 1]!.shot_id}`] : [];
+    const jobId = `local-sandbox-${input.sequence!.sequence_id}-${shot.shot_id}`;
+    const retryIsolated = failedShotIds.has(shot.shot_id);
+    const blockedReason = !input.readiness.local_provider_available
+      ? input.readiness.blocked_reasons[0] ?? "Local provider readiness is incomplete."
+      : input.gpuAllocation.vram_pressure === "critical"
+        ? "GPU allocation model predicts critical VRAM pressure."
+        : null;
+    const state: CinematicLocalQueueSimulationState = blockedReason
+      ? "blocked"
+      : retryIsolated
+        ? "retry-isolated"
+        : index === 0
+          ? "ready"
+          : "queued";
+    return {
+      job_id: jobId,
+      shot_id: shot.shot_id,
+      state,
+      dependency_job_ids: dependencyJobIds,
+      continuity_priority: input.continuityPriority,
+      retry_isolated: retryIsolated,
+      blocked_reason: blockedReason,
+    } satisfies CinematicLocalQueueSimulationJob;
+  });
+  return {
+    queued_jobs: queuedJobs,
+    dependency_order_job_ids: queuedJobs.map((entry) => entry.job_id),
+    continuity_priority_job_ids: queuedJobs.filter((entry) => entry.continuity_priority === "high").map((entry) => entry.job_id),
+    blocked_job_ids: queuedJobs.filter((entry) => entry.state === "blocked").map((entry) => entry.job_id),
+    recovery_sequence_job_ids: queuedJobs.filter((entry) => entry.retry_isolated || entry.state === "blocked").map((entry) => entry.job_id),
+  };
+}
+
+function buildRendererLifecycleStates(input: {
+  readiness: CinematicLocalInferenceReadinessReport;
+  queuePlan: CinematicLocalQueueSimulationPlan;
+  gpuAllocation: CinematicGpuAllocationModel;
+}): CinematicLocalRendererLifecycleState[] {
+  const blocked = !input.readiness.local_provider_available || input.gpuAllocation.vram_pressure === "critical";
+  const baseStates: Array<Omit<CinematicLocalRendererLifecycleState, "order">> = [
+    {
+      state: "runtime_idle",
+      simulated: true,
+      detail: "Renderer remains idle until a manual bridge exists.",
+      blockers: [],
+    },
+    {
+      state: "runtime_preparing",
+      simulated: true,
+      detail: "Sandbox validates runtime prerequisites without launching anything.",
+      blockers: input.readiness.blocked_reasons,
+    },
+    {
+      state: "model_loading",
+      simulated: true,
+      detail: "Model load is simulated from stored registry and runtime probe evidence.",
+      blockers: input.readiness.preferred_model_id ? [] : ["No preferred local model is currently ready."],
+    },
+    {
+      state: "resource_allocating",
+      simulated: true,
+      detail: "GPU, storage, and queue ownership are modeled without allocating resources.",
+      blockers: input.gpuAllocation.vram_pressure === "critical" ? ["Critical VRAM pressure predicted."] : [],
+    },
+    {
+      state: blocked ? "runtime_blocked" : "frame_pipeline_ready",
+      simulated: true,
+      detail: blocked
+        ? "Renderer lifecycle pauses before frame pipeline entry because readiness remains incomplete."
+        : "Frame pipeline is considered ready for future manual-only bridge work.",
+      blockers: blocked ? input.readiness.blocked_reasons : [],
+    },
+    {
+      state: blocked ? "runtime_recovering" : "rendering_simulated",
+      simulated: true,
+      detail: blocked
+        ? "Recovery planning is generated instead of running a render stage."
+        : "Rendering remains simulated and bounded by queue orchestration rules.",
+      blockers: blocked ? input.queuePlan.blocked_job_ids : [],
+    },
+    {
+      state: blocked ? "runtime_blocked" : "packaging_simulated",
+      simulated: true,
+      detail: blocked
+        ? "Packaging stays blocked until lifecycle blockers are cleared."
+        : "Packaging and archival steps remain simulated only.",
+      blockers: blocked ? input.readiness.blocked_reasons : [],
+    },
+    {
+      state: blocked ? "runtime_blocked" : "archival_ready",
+      simulated: true,
+      detail: blocked
+        ? "Archival readiness is deferred behind blocked lifecycle prerequisites."
+        : "Archival manifests can be prepared without enabling rendering.",
+      blockers: blocked ? input.readiness.blocked_reasons : [],
+    },
+  ];
+  return baseStates.map((entry, index) => ({
+    ...entry,
+    order: index + 1,
+  }));
+}
+
+function buildRendererRecoveryPlan(input: {
+  readiness: CinematicLocalInferenceReadinessReport;
+  gpuAllocation: CinematicGpuAllocationModel;
+  queuePlan: CinematicLocalQueueSimulationPlan;
+}): CinematicRendererRecoveryPlan {
+  const causes: CinematicRendererRecoveryCause[] = [];
+  if (!input.readiness.local_provider_available) {
+    causes.push("dependency-mismatch");
+  }
+  if (input.gpuAllocation.vram_pressure === "critical") {
+    causes.push("insufficient-vram");
+  }
+  if (input.gpuAllocation.storage_expansion_risk === "high") {
+    causes.push("storage-exhaustion");
+  }
+  if (input.queuePlan.recovery_sequence_job_ids.length > 0) {
+    causes.push("continuity-state-recovery");
+  }
+  const uniqueCauses = [...new Set(causes)];
+  const steps = uniqueCauses.map((cause, index) => ({
+    cause,
+    sequence_order: index + 1,
+    detail: (() => {
+      switch (cause) {
+        case "dependency-mismatch":
+          return "Clear missing runtime/model dependencies before any manual bridge review.";
+        case "insufficient-vram":
+          return "Downgrade resolution or keep queue serialized until VRAM headroom improves.";
+        case "storage-exhaustion":
+          return "Reserve additional cache/storage headroom before simulating packaging-heavy workloads.";
+        case "continuity-state-recovery":
+          return "Replay retry-isolated shots after preserving successful neighboring continuity context.";
+        case "failed-render-stage":
+          return "Re-enter the last validated lifecycle checkpoint rather than widening execution scope.";
+        case "runtime-corruption":
+          return "Reset the future bridge environment manually outside this planning layer.";
+      }
+    })(),
+  }));
+  return {
+    blocked: uniqueCauses.length > 0,
+    causes: uniqueCauses,
+    steps,
+  };
+}
+
+function buildHybridEscalationSimulation(input: {
+  record: CinematicProductionMemoryRecord;
+  readiness: CinematicLocalInferenceReadinessReport;
+  continuityPriority: "low" | "medium" | "high";
+  desiredDurationSeconds: number;
+}): CinematicHybridEscalationSimulation {
+  const strategyIds = selectHybridStrategyIds({
+    record: input.record,
+    readiness: input.readiness,
+    continuityPriority: input.continuityPriority,
+    desiredDurationSeconds: input.desiredDurationSeconds,
+    offline: !input.readiness.local_provider_available,
+  });
+  const selectedStrategy = strategyIds[0] ?? null;
+  const strategyRecord = selectedStrategy
+    ? input.record.hybrid_local_cloud_strategies.find((entry) => entry.strategy_id === selectedStrategy) ?? null
+    : null;
+  const selectedRoutingMode = strategyRecord?.preferred_provider_mode
+    ?? input.readiness.recommended_routing_mode;
+  return {
+    local_first_rendering: input.readiness.local_provider_available,
+    cloud_escalation_fallback: !input.readiness.local_provider_available,
+    offline_safe_execution: selectedRoutingMode === "offline-planning-mode",
+    premium_provider_escalation: selectedRoutingMode === "premium-cinematic-provider",
+    continuity_preserving_escalation: input.continuityPriority === "high" || selectedStrategy === "continuity-first-routing",
+    selected_strategy_id: selectedStrategy,
+    selected_routing_mode: selectedRoutingMode,
+    reasons: uniqueNormalizedStrings([
+      ...input.readiness.blocked_reasons,
+      ...strategyRecord?.escalation_conditions ?? [],
+      selectedStrategy ? `Selected hybrid strategy ${selectedStrategy}.` : "No hybrid escalation strategy selected.",
+    ]),
+  };
+}
+
+export async function getCinematicReadinessDeltaTrackingHistory(input?: {
+  root?: string;
+}): Promise<CinematicReadinessDeltaTrackingRecord[]> {
+  const record = await readCinematicProductionMemory({ root: input?.root });
+  return record.readiness_delta_tracking_history;
+}
+
+export async function validateCinematicLocalExecutionSandbox(input?: {
+  root?: string;
+  sequenceId?: string;
+  desiredResolution?: CinematicVideoResolution;
+  desiredDurationSeconds?: number;
+  continuityPriority?: "low" | "medium" | "high";
+}): Promise<CinematicLocalExecutionSandboxValidation> {
+  const initialization = await loadProductionMemory(input?.root);
+  const record = initialization.record;
+  const desiredResolution = input?.desiredResolution ?? DEFAULT_TARGET_RESOLUTION;
+  const desiredDurationSeconds = input?.desiredDurationSeconds ?? DEFAULT_TARGET_DURATION_SECONDS;
+  const continuityPriority = input?.continuityPriority ?? "medium";
+  const readiness = summarizeLocalReadiness({
+    record,
+    desiredResolution,
+    desiredDurationSeconds,
+    continuityPriority,
+  });
+  const preferredModel = readiness.preferred_model_id
+    ? record.local_model_registry.find((entry) => entry.model_id === readiness.preferred_model_id) ?? null
+    : null;
+  const preferredHardware = preferredModel && readiness.preferred_hardware_profile_id
+    ? record.local_hardware_profiles.find((entry) => entry.profile_id === readiness.preferred_hardware_profile_id) ?? null
+    : null;
+  const preferredRuntime = preferredHardware
+    ? resolvePreferredLocalRuntime({ record, hardware: preferredHardware })
+    : null;
+  const hardwareEstimate = preferredModel && preferredHardware
+    ? buildLocalHardwareEstimate({
+      model: preferredModel,
+      runtime: preferredRuntime,
+      hardware: preferredHardware,
+      desiredResolution,
+      desiredDurationSeconds,
+    })
+    : null;
+  const sequence = resolveSandboxSequence({ record, sequenceId: input?.sequenceId });
+  const queuePlan = buildLocalQueueSimulationPlan({
+    record,
+    sequence,
+    readiness,
+    gpuAllocation: buildCinematicGpuAllocationModel({
+      record,
+      readiness,
+      hardwareEstimate,
+      desiredDurationSeconds,
+      queueDepth: sequence?.shots.length ?? 0,
+    }),
+    continuityPriority,
+  });
+  const gpuAllocation = buildCinematicGpuAllocationModel({
+    record,
+    readiness,
+    hardwareEstimate,
+    desiredDurationSeconds,
+    queueDepth: queuePlan.queued_jobs.length,
+  });
+  const normalizedQueuePlan = buildLocalQueueSimulationPlan({
+    record,
+    sequence,
+    readiness,
+    gpuAllocation,
+    continuityPriority,
+  });
+  const rendererLifecycleStates = buildRendererLifecycleStates({
+    readiness,
+    queuePlan: normalizedQueuePlan,
+    gpuAllocation,
+  });
+  const recoveryPlan = buildRendererRecoveryPlan({
+    readiness,
+    gpuAllocation,
+    queuePlan: normalizedQueuePlan,
+  });
+  const hybridEscalation = buildHybridEscalationSimulation({
+    record,
+    readiness,
+    continuityPriority,
+    desiredDurationSeconds,
+  });
+  const trackingUpdate = appendReadinessDeltaTracking({
+    record,
+    readiness,
+    source: "local-readiness-validation",
+  });
+  await writeProductionMemoryRecord(initialization.productionMemoryPath, trackingUpdate.record);
+  return {
+    readiness,
+    readiness_delta: trackingUpdate.tracking,
+    renderer_lifecycle_states: rendererLifecycleStates,
+    gpu_allocation: gpuAllocation,
+    queue_plan: normalizedQueuePlan,
+    recovery_plan: recoveryPlan,
+    hybrid_escalation: hybridEscalation,
+    execution_enabled: false,
+  };
+}
+
+export async function simulateCinematicLocalInferenceExecutionSandbox(input?: {
+  root?: string;
+  sequenceId?: string;
+  desiredResolution?: CinematicVideoResolution;
+  desiredDurationSeconds?: number;
+  continuityPriority?: "low" | "medium" | "high";
+}): Promise<CinematicLocalInferenceExecutionSandboxResult> {
+  const validation = await validateCinematicLocalExecutionSandbox(input);
+  const record = await readCinematicProductionMemory({ root: input?.root });
+  const sequence = resolveSandboxSequence({ record, sequenceId: input?.sequenceId });
+  const simulation: CinematicSandboxSimulationRecord = {
+    simulation_id: `local-sandbox-${(sequence?.sequence_id ?? "planning").toLowerCase()}-${Date.now()}`,
+    sandbox_kind: "local-inference-execution-sandbox",
+    sequence_id: sequence?.sequence_id ?? "planning-only-local-sandbox",
+    routing_mode: validation.hybrid_escalation.selected_routing_mode,
+    provider: "LocalFutureProvider",
+    execution_enabled: false,
+    queued_job_ids: validation.queue_plan.dependency_order_job_ids,
+    approved_job_ids: validation.queue_plan.queued_jobs
+      .filter((entry) => entry.state === "ready" || entry.state === "completed-simulated")
+      .map((entry) => entry.job_id),
+    failed_job_ids: validation.queue_plan.blocked_job_ids,
+    retry_job_ids: validation.queue_plan.queued_jobs.filter((entry) => entry.retry_isolated).map((entry) => entry.job_id),
+    continuity_issue_count: validation.queue_plan.blocked_job_ids.length,
+    asset_reuse_decisions: validation.queue_plan.queued_jobs.map((entry) => `Preserve continuity context for ${entry.shot_id} while keeping local execution disabled.`),
+    renderer_lifecycle_states: validation.renderer_lifecycle_states,
+    gpu_allocation: validation.gpu_allocation,
+    queue_plan: validation.queue_plan,
+    recovery_plan: validation.recovery_plan,
+    readiness_tracking_id: validation.readiness_delta.tracking_id,
+    hybrid_escalation: validation.hybrid_escalation,
+    recorded_at: new Date().toISOString(),
+  };
+  await writeCinematicProductionMemory({
+    root: input?.root,
+    value: {
+      sandbox_simulations: [...record.sandbox_simulations, simulation].slice(-40),
+      asset_reuse_decisions: [...record.asset_reuse_decisions, ...simulation.asset_reuse_decisions].slice(-40),
+    },
+  });
+  return {
+    validation,
+    simulation,
+  };
+}
+
 export async function estimateCinematicLocalHardware(input?: {
   root?: string;
   modelId?: string;
@@ -5478,15 +6104,19 @@ export async function simulateCinematicExecutionSandbox(input: {
 
   const simulation: CinematicSandboxSimulationRecord = {
     simulation_id: `simulation-${planned.routing.provider.toLowerCase()}-${planned.validation.sequence_id}-${Date.now()}`,
+    sandbox_kind: "provider-execution-sandbox",
     sequence_id: planned.validation.sequence_id,
     routing_mode: input.routingMode,
     provider: planned.routing.provider,
+    execution_enabled: false,
     queued_job_ids: planned.jobs.map((entry) => entry.job_id),
     approved_job_ids: approvedJobIds,
     failed_job_ids: failedJobIds,
     retry_job_ids: retryJobIds,
     continuity_issue_count: planned.validation.issues.length,
     asset_reuse_decisions: assetReuseDecisions,
+    readiness_tracking_id: null,
+    hybrid_escalation: null,
     recorded_at: new Date().toISOString(),
   };
 

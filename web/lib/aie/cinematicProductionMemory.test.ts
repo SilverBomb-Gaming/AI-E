@@ -20,6 +20,7 @@ import {
   getCinematicLocalRuntimeCapabilityRegistry,
   getCinematicReadinessMilestoneProgress,
   getCinematicRuntimeProbeAdapters,
+  getCinematicReadinessDeltaTrackingHistory,
   forecastCinematicSequenceCost,
   getCinematicProviderCapability,
   getCinematicProviderCapabilityRegistry,
@@ -37,6 +38,8 @@ import {
   recordCinematicShotHistory,
   selectCinematicGenerationProviderRoute,
   simulateCinematicExecutionSandbox,
+  simulateCinematicLocalInferenceExecutionSandbox,
+  validateCinematicLocalExecutionSandbox,
   validateCinematicProviderPayload,
   validateCinematicExecutionPlan,
   validateCinematicSequenceContinuity,
@@ -557,6 +560,93 @@ test("safe provider bridge compiles payloads, validates providers, enforces budg
     assert.match(costForecast.draft_vs_premium_tradeoff, /draft-to-premium delta/i);
     assert.ok(costForecast.provider_forecasts.some((entry) => entry.provider === "Seedance"));
     assert.ok(recordAfterGate.generation_job_history.length > historyBeforeGate);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("local execution sandbox validation persists readiness deltas while keeping execution disabled", async () => {
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "aie-local-execution-sandbox-"));
+
+  try {
+    await ensureCinematicProductionMemoryInitialized(tempRoot);
+    await mkdir(path.join(tempRoot, ".venv", "Scripts"), { recursive: true });
+    await mkdir(path.join(tempRoot, "ComfyUI"), { recursive: true });
+    await mkdir(path.join(tempRoot, "models"), { recursive: true });
+    await mkdir(path.join(tempRoot, "tools", "ffmpeg"), { recursive: true });
+    await writeFile(path.join(tempRoot, ".venv", "Scripts", "python.exe"), "", "utf8");
+    await writeFile(path.join(tempRoot, "tools", "ffmpeg", "ffmpeg.exe"), "", "utf8");
+
+    const sequencePlan = await planCinematicSequence({
+      root: tempRoot,
+      sequenceId: "sequence-local-sandbox-001",
+      title: "Local Sandbox Sequence",
+    });
+    await inspectCinematicLocalRuntimeEnvironment({
+      root: tempRoot,
+      persist: true,
+      pathHints: {
+        ffmpeg_paths: ["tools/ffmpeg/ffmpeg.exe"],
+      },
+    });
+    await recordCinematicGenerationOutcome({
+      root: tempRoot,
+      entry: {
+        generation_id: "failed-local-sandbox-pass-001",
+        recorded_at: "2026-05-07T15:00:00.000Z",
+        shot_id: "sequence-local-sandbox-001-reveal-subject",
+        status: "failed",
+        prompt_summary: "Local sandbox retry isolation proof.",
+        engine: "prompt-compiler-stub",
+        cost_tier: "low",
+        asset_ids: [],
+        notes: ["Keep continuity preserved while isolating retry planning."],
+      },
+    });
+
+    const beforeRecord = await readCinematicProductionMemory({ root: tempRoot });
+    const validation = await validateCinematicLocalExecutionSandbox({
+      root: tempRoot,
+      sequenceId: sequencePlan.sequence.sequence_id,
+      desiredResolution: "1080p",
+      desiredDurationSeconds: 6,
+      continuityPriority: "high",
+    });
+    const historyAfterValidation = await getCinematicReadinessDeltaTrackingHistory({ root: tempRoot });
+    const simulation = await simulateCinematicLocalInferenceExecutionSandbox({
+      root: tempRoot,
+      sequenceId: sequencePlan.sequence.sequence_id,
+      desiredResolution: "1080p",
+      desiredDurationSeconds: 6,
+      continuityPriority: "high",
+    });
+    const afterRecord = await readCinematicProductionMemory({ root: tempRoot });
+
+    assert.equal(validation.execution_enabled, false);
+    assert.equal(validation.readiness_delta.source, "local-readiness-validation");
+    assert.equal(historyAfterValidation.length, 1);
+    assert.ok(historyAfterValidation[0]?.milestones.every((entry) => entry.previous_percentage === null));
+    assert.ok(validation.renderer_lifecycle_states.some((entry) => entry.state === "runtime_preparing"));
+    assert.ok(validation.renderer_lifecycle_states.some((entry) => entry.state === "rendering_simulated"));
+    assert.ok(validation.gpu_allocation.estimated_vram_required_gb > 0);
+    assert.ok(validation.gpu_allocation.max_safe_concurrency >= 1);
+    assert.equal(validation.queue_plan.dependency_order_job_ids.length, sequencePlan.sequence.shots.length);
+    assert.equal(validation.queue_plan.queued_jobs[0]?.state, "ready");
+    assert.ok(validation.queue_plan.queued_jobs.some((entry) => entry.retry_isolated && entry.shot_id === "sequence-local-sandbox-001-reveal-subject"));
+    assert.ok(validation.recovery_plan.causes.includes("continuity-state-recovery"));
+    assert.ok(validation.hybrid_escalation.selected_strategy_id);
+
+    assert.equal(simulation.validation.execution_enabled, false);
+    assert.equal(simulation.simulation.sandbox_kind, "local-inference-execution-sandbox");
+    assert.equal(simulation.simulation.execution_enabled, false);
+    assert.equal(simulation.simulation.sequence_id, sequencePlan.sequence.sequence_id);
+    assert.equal(simulation.simulation.readiness_tracking_id, afterRecord.readiness_delta_tracking_history[0]?.tracking_id ?? null);
+    assert.ok(simulation.simulation.queue_plan);
+    assert.ok(simulation.simulation.gpu_allocation);
+    assert.ok(simulation.simulation.recovery_plan);
+    assert.ok(afterRecord.readiness_delta_tracking_history.length >= 2);
+    assert.ok(afterRecord.sandbox_simulations.some((entry) => entry.sandbox_kind === "local-inference-execution-sandbox"));
+    assert.deepEqual(afterRecord.approval_audit_trail, beforeRecord.approval_audit_trail);
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }

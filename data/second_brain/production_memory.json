@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "created_at": "2026-05-07T00:00:00.000Z",
-  "updated_at": "2026-05-07T17:12:24.817Z",
+  "updated_at": "2026-05-07T18:27:21.457Z",
   "project_key": "babylon-2026",
   "mission_layer": "Persistent Production Memory + Cinematic Video Intelligence",
   "roadmap_systems": [
@@ -401,7 +401,14 @@
   ],
   "asset_reuse_decisions": [
     "Preserve the approved wave reveal prompt when only the escalation insert fails.",
-    "Reuse environment-establishing shots before generating new geography coverage."
+    "Reuse environment-establishing shots before generating new geography coverage.",
+    "Preserve continuity context for sequence-wave-transition-001-intro while keeping local execution disabled.",
+    "Preserve continuity context for sequence-wave-transition-001-establish while keeping local execution disabled.",
+    "Preserve continuity context for sequence-wave-transition-001-reveal while keeping local execution disabled.",
+    "Preserve continuity context for sequence-wave-transition-001-escalation while keeping local execution disabled.",
+    "Preserve continuity context for sequence-wave-transition-001-emotional while keeping local execution disabled.",
+    "Preserve continuity context for sequence-wave-transition-001-transition while keeping local execution disabled.",
+    "Preserve continuity context for sequence-wave-transition-001-return while keeping local execution disabled."
   ],
   "generation_jobs": [],
   "generation_job_history": [],
@@ -531,6 +538,774 @@
       "retry_recommendation": "Use only after provider payloads are validated and manual approval is explicit."
     }
   ],
+  "local_model_registry": [
+    {
+      "model_id": "wan-2.1-t2v-q8",
+      "display_name": "Wan 2.1 Text-to-Video Q8",
+      "backend_family": "wan",
+      "generation_mode": "text-to-video",
+      "status": "candidate",
+      "supported_resolutions": [
+        "720p",
+        "1080p"
+      ],
+      "max_duration_seconds": 6,
+      "continuity_support": "partial",
+      "vram_requirement_gb": 12,
+      "storage_requirement_gb": 28,
+      "quantization_profiles": [
+        "q8",
+        "q6"
+      ],
+      "notes": [
+        "Primary local candidate for future Windows-friendly text-to-video trials.",
+        "Requires explicit operator review before any future runtime binding is considered."
+      ]
+    },
+    {
+      "model_id": "ltx-video-img2vid-int8",
+      "display_name": "LTX Video Image-to-Video INT8",
+      "backend_family": "ltx-video",
+      "generation_mode": "image-to-video",
+      "status": "candidate",
+      "supported_resolutions": [
+        "720p",
+        "1080p"
+      ],
+      "max_duration_seconds": 8,
+      "continuity_support": "limited",
+      "vram_requirement_gb": 10,
+      "storage_requirement_gb": 24,
+      "quantization_profiles": [
+        "int8",
+        "fp16"
+      ],
+      "notes": [
+        "Useful for reference-driven motion continuation once local cache strategy is mature.",
+        "Treat as advisory only until runtime detection and hardware profiling are both stable."
+      ]
+    },
+    {
+      "model_id": "hunyuan-video-13b-planned",
+      "display_name": "Hunyuan Video 13B Planned Slot",
+      "backend_family": "hunyuan-video",
+      "generation_mode": "text-to-video",
+      "status": "download-planned",
+      "supported_resolutions": [
+        "720p"
+      ],
+      "max_duration_seconds": 5,
+      "continuity_support": "partial",
+      "vram_requirement_gb": 16,
+      "storage_requirement_gb": 42,
+      "quantization_profiles": [
+        "fp16"
+      ],
+      "notes": [
+        "Reserved as a higher-memory future candidate rather than an immediate local target."
+      ]
+    }
+  ],
+  "local_runtime_capability_registry": [
+    {
+      "runtime_id": "comfyui-local-video-lane",
+      "display_name": "ComfyUI Local Video Lane",
+      "runtime_family": "comfyui",
+      "status": "configured",
+      "detection_method": "path-config",
+      "supported_backends": [
+        "cuda",
+        "directml"
+      ],
+      "concurrent_job_limit": 1,
+      "supports_asset_cache": true,
+      "supports_operator_review_handoff": true,
+      "notes": [
+        "Configured as a future manual bridge target only.",
+        "Readiness helpers must not launch or probe this runtime automatically."
+      ]
+    },
+    {
+      "runtime_id": "diffusers-python-pipeline",
+      "display_name": "Diffusers Python Pipeline",
+      "runtime_family": "diffusers",
+      "status": "candidate",
+      "detection_method": "future-runtime-probe",
+      "supported_backends": [
+        "cuda",
+        "cpu"
+      ],
+      "concurrent_job_limit": 1,
+      "supports_asset_cache": true,
+      "supports_operator_review_handoff": true,
+      "notes": [
+        "Kept as a secondary compatibility path for scripted local backend experiments."
+      ]
+    }
+  ],
+  "local_hardware_profiles": [
+    {
+      "profile_id": "windows-directml-baseline",
+      "display_name": "Windows DirectML Baseline",
+      "status": "profiled",
+      "accelerator_backend": "directml",
+      "gpu_name": "Planned workstation GPU",
+      "gpu_vram_gb": 12,
+      "system_ram_gb": 32,
+      "storage_free_gb": 180,
+      "encoder_support": [
+        "h264",
+        "h265"
+      ],
+      "recommended_max_resolution": "1080p",
+      "recommended_max_duration_seconds": 6,
+      "notes": [
+        "Targets the first Windows-native local backend lane without assuming CUDA exclusivity."
+      ]
+    },
+    {
+      "profile_id": "cpu-fallback-planning",
+      "display_name": "CPU Fallback Planning",
+      "status": "planned",
+      "accelerator_backend": "cpu",
+      "gpu_name": "none",
+      "gpu_vram_gb": 0,
+      "system_ram_gb": 32,
+      "storage_free_gb": 120,
+      "encoder_support": [
+        "h264"
+      ],
+      "recommended_max_resolution": "720p",
+      "recommended_max_duration_seconds": 3,
+      "notes": [
+        "Fallback planning profile only; not suitable for primary local render expectations."
+      ]
+    }
+  ],
+  "local_runtime_readiness_rules": [
+    "Local runtime detection remains advisory and must not launch external runtimes automatically.",
+    "At least one configured or detected runtime, one profiled hardware target, and one candidate model must exist before local bridge review.",
+    "Readiness reports must preserve sandbox-only mode until an operator explicitly authorizes a future local execution bridge."
+  ],
+  "local_provider_routing_rules": [
+    "Prefer LocalFutureProvider only when runtime, model, and hardware checks pass for the requested shot profile.",
+    "Fall back to offline-planning-mode or cloud provider comparison when local readiness is incomplete.",
+    "High continuity or long-duration shots should prefer cloud review until local model support is explicitly profiled."
+  ],
+  "local_inference_governance_rules": [
+    "Local execution planning remains manual-only and non-autonomous.",
+    "No runtime launch, model download, or render job may happen from readiness helpers.",
+    "Append-only approval and continuity governance must remain unchanged before any future local bridge is considered."
+  ],
+  "local_asset_cache_strategy": [
+    "Cache model weights and VAE assets separately from generated outputs.",
+    "Store reusable reference frames and conditioning assets with deterministic fingerprints.",
+    "Treat local cache eviction as an operator-reviewed storage decision, not an automatic background process."
+  ],
+  "local_inference_notes": [
+    "Use LocalFutureProvider as a stable abstraction over future open-source backends.",
+    "Keep runtime detection, hardware profiling, and model registry decoupled so routing stays provider-agnostic.",
+    "Plan for Windows-friendly backends first, with DirectML and CUDA both representable in the readiness layer."
+  ],
+  "local_runtime_probe_path_hints": {
+    "cuda_paths": [
+      "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA",
+      "C:/Program Files/NVIDIA GPU Computing Toolkit"
+    ],
+    "ffmpeg_paths": [
+      "C:/ffmpeg/bin/ffmpeg.exe",
+      "C:/Program Files/ffmpeg/bin/ffmpeg.exe"
+    ],
+    "python_paths": [
+      ".venv/Scripts/python.exe",
+      "C:/Python312/python.exe",
+      "C:/Python311/python.exe"
+    ],
+    "inference_runtime_paths": [
+      "ComfyUI",
+      ".venv/Lib/site-packages/diffusers",
+      ".venv/Lib/site-packages/torch"
+    ],
+    "local_model_paths": [
+      "models",
+      "data/models",
+      "runner_artifacts/models"
+    ]
+  },
+  "local_runtime_probe_snapshots": [],
+  "frame_generation_stage_registry": [
+    {
+      "stage_id": "prompt-compilation",
+      "display_name": "Prompt Compilation",
+      "status": "foundation",
+      "description": "Compile bounded cinematic intent into a future local frame-generation payload.",
+      "dependencies": [
+        "cinematic production memory",
+        "provider payload normalization"
+      ],
+      "continuity_critical": true,
+      "notes": [
+        "Already aligned with LocalFutureProvider planning payload preparation."
+      ]
+    },
+    {
+      "stage_id": "latent-preparation",
+      "display_name": "Latent Preparation",
+      "status": "modeled",
+      "description": "Reserve a future stage for seed selection, conditioning tensors, and reusable latent context.",
+      "dependencies": [
+        "runtime probe results",
+        "model registry"
+      ],
+      "continuity_critical": true,
+      "notes": [
+        "Modeled only; no latent generation or runtime execution occurs in this phase."
+      ]
+    },
+    {
+      "stage_id": "frame-synthesis",
+      "display_name": "Frame Synthesis",
+      "status": "planned",
+      "description": "Future synthesis stage for local frame generation once a manual-only execution bridge exists.",
+      "dependencies": [
+        "local runtime readiness",
+        "manual approval bridge"
+      ],
+      "continuity_critical": true,
+      "notes": [
+        "Explicitly blocked from execution in this milestone."
+      ]
+    },
+    {
+      "stage_id": "frame-interpolation",
+      "display_name": "Frame Interpolation",
+      "status": "planned",
+      "description": "Future optional stage for smoothing sparse local frame sequences.",
+      "dependencies": [
+        "renderer capability roadmap",
+        "runtime constraint models"
+      ],
+      "continuity_critical": false,
+      "notes": [
+        "Planning-only interpolation lane."
+      ]
+    },
+    {
+      "stage_id": "temporal-continuity",
+      "display_name": "Temporal Continuity",
+      "status": "modeled",
+      "description": "Model the continuity-state handoff required to keep local sequences coherent across frames and shots.",
+      "dependencies": [
+        "continuity rules",
+        "renderer continuity-state reuse"
+      ],
+      "continuity_critical": true,
+      "notes": [
+        "Critical to any future local generation lane."
+      ]
+    },
+    {
+      "stage_id": "upscale-stage",
+      "display_name": "Upscale Stage",
+      "status": "planned",
+      "description": "Future local upscale planning for draft-to-review quality transitions.",
+      "dependencies": [
+        "renderer capability roadmap",
+        "runtime probe ffmpeg/python support"
+      ],
+      "continuity_critical": false,
+      "notes": [
+        "No upscaling runtime is launched in this phase."
+      ]
+    },
+    {
+      "stage_id": "render-packaging",
+      "display_name": "Render Packaging",
+      "status": "modeled",
+      "description": "Package future image sequences, sidecar metadata, and continuity notes into reviewable outputs.",
+      "dependencies": [
+        "ffmpeg availability",
+        "offline packaging roadmap"
+      ],
+      "continuity_critical": false,
+      "notes": [
+        "Covers non-executing packaging metadata only."
+      ]
+    },
+    {
+      "stage_id": "output-archival",
+      "display_name": "Output Archival",
+      "status": "foundation",
+      "description": "Reuse append-only governance and asset archival rules for any future local outputs.",
+      "dependencies": [
+        "approval audit trail",
+        "asset cache strategy"
+      ],
+      "continuity_critical": true,
+      "notes": [
+        "Archival remains append-only and operator-governed."
+      ]
+    }
+  ],
+  "renderer_capability_roadmap": [
+    {
+      "capability_id": "image-sequence-rendering",
+      "display_name": "Image Sequence Rendering",
+      "status": "modeled",
+      "description": "Plan future image-sequence assembly from locally generated frame sets.",
+      "dependencies": [
+        "frame synthesis",
+        "render packaging"
+      ],
+      "notes": [
+        "No renderer execution is enabled."
+      ]
+    },
+    {
+      "capability_id": "frame-interpolation",
+      "display_name": "Frame Interpolation",
+      "status": "planned",
+      "description": "Future interpolation lane for smoothing sparse local frame outputs.",
+      "dependencies": [
+        "frame interpolation",
+        "runtime constraints"
+      ],
+      "notes": [
+        "Planning-only stage."
+      ]
+    },
+    {
+      "capability_id": "temporal-coherence",
+      "display_name": "Temporal Coherence",
+      "status": "modeled",
+      "description": "Preserve consistent visual state across successive frames and shots.",
+      "dependencies": [
+        "temporal continuity",
+        "continuity validation"
+      ],
+      "notes": [
+        "Continuity-first requirement."
+      ]
+    },
+    {
+      "capability_id": "continuity-state-reuse",
+      "display_name": "Continuity-State Reuse",
+      "status": "modeled",
+      "description": "Reuse bounded state between local draft passes and premium cloud escalation.",
+      "dependencies": [
+        "asset reuse tracker",
+        "continuity notes"
+      ],
+      "notes": [
+        "Remains non-executing."
+      ]
+    },
+    {
+      "capability_id": "local-upscaling",
+      "display_name": "Local Upscaling",
+      "status": "planned",
+      "description": "Future operator-approved upscale stage for local draft outputs.",
+      "dependencies": [
+        "upscale stage",
+        "runtime probe ffmpeg/python support"
+      ],
+      "notes": [
+        "No upscale runtime activation in this phase."
+      ]
+    },
+    {
+      "capability_id": "offline-packaging",
+      "display_name": "Offline Packaging",
+      "status": "foundation",
+      "description": "Prepare non-executing packaging rules for outputs, metadata, and archival manifests.",
+      "dependencies": [
+        "render packaging",
+        "output archival"
+      ],
+      "notes": [
+        "Packaging plans stay offline-safe."
+      ]
+    }
+  ],
+  "runtime_constraint_models": [
+    {
+      "model_id": "windows-local-runtime-baseline",
+      "title": "Windows Local Runtime Baseline",
+      "minimum_vram_tiers_gb": [
+        8,
+        12,
+        16
+      ],
+      "low_vram_fallback_viable": true,
+      "storage_scaling": [
+        "Draft local lanes should reserve at least 24GB for weights and cache.",
+        "Higher-continuity models should reserve 40GB+ once multi-stage packaging is introduced."
+      ],
+      "render_time_scaling": [
+        "720p draft passes should be treated as the baseline timing tier.",
+        "1080p multi-stage passes may take roughly 2x the baseline planning estimate."
+      ],
+      "local_queue_pressure": [
+        "Single-job local queues remain the default assumption.",
+        "Queued local packaging and upscale stages should be serialized until runtime evidence improves."
+      ],
+      "hybrid_offload_recommendations": [
+        "Offload premium or long-duration shots to cloud providers when local VRAM or storage is tight.",
+        "Use local draft previews first when budget pressure is higher than fidelity pressure."
+      ]
+    }
+  ],
+  "hybrid_local_cloud_strategies": [
+    {
+      "strategy_id": "local-draft-rendering",
+      "display_name": "Local Draft Rendering",
+      "status": "foundation",
+      "summary": "Reserve local inference for future low-cost draft passes after runtime readiness improves.",
+      "preferred_provider_mode": "future-local-inference-mode",
+      "governance_requirements": [
+        "manual approval",
+        "sandbox-only until bridge approval"
+      ],
+      "escalation_conditions": [
+        "runtime readiness incomplete",
+        "continuity pressure exceeds local support"
+      ]
+    },
+    {
+      "strategy_id": "cloud-premium-rendering",
+      "display_name": "Cloud Premium Rendering",
+      "status": "foundation",
+      "summary": "Use cloud providers for premium fidelity and longer continuity-sensitive renders.",
+      "preferred_provider_mode": "premium-cinematic-provider",
+      "governance_requirements": [
+        "manual approval",
+        "budget governance"
+      ],
+      "escalation_conditions": [
+        "premium fidelity required",
+        "local hardware below model thresholds"
+      ]
+    },
+    {
+      "strategy_id": "offline-safe-mode",
+      "display_name": "Offline Safe Mode",
+      "status": "foundation",
+      "summary": "Keep orchestration and planning provider-agnostic without invoking any runtime or provider execution.",
+      "preferred_provider_mode": "offline-planning-mode",
+      "governance_requirements": [
+        "sandbox-only mode",
+        "no runtime launch"
+      ],
+      "escalation_conditions": [
+        "runtime probes missing",
+        "operator requests planning-only review"
+      ]
+    },
+    {
+      "strategy_id": "continuity-first-routing",
+      "display_name": "Continuity-First Routing",
+      "status": "modeled",
+      "summary": "Escalate to the highest continuity-preserving lane when sequence coherence is at risk.",
+      "preferred_provider_mode": "premium-cinematic-provider",
+      "governance_requirements": [
+        "continuity validation",
+        "operator review"
+      ],
+      "escalation_conditions": [
+        "temporal continuity stage incomplete",
+        "local model continuity support limited"
+      ]
+    },
+    {
+      "strategy_id": "budget-first-routing",
+      "display_name": "Budget-First Routing",
+      "status": "modeled",
+      "summary": "Prefer cheaper local or draft-capable lanes when cost pressure dominates fidelity pressure.",
+      "preferred_provider_mode": "cheap-draft-provider",
+      "governance_requirements": [
+        "budget governance",
+        "manual approval"
+      ],
+      "escalation_conditions": [
+        "budget cap exceeded",
+        "storage or queue pressure rises"
+      ]
+    },
+    {
+      "strategy_id": "hardware-aware-escalation",
+      "display_name": "Hardware-Aware Escalation",
+      "status": "modeled",
+      "summary": "Escalate from local to cloud when hardware evidence cannot support the requested render profile.",
+      "preferred_provider_mode": "balanced-comparison-mode",
+      "governance_requirements": [
+        "runtime constraint review",
+        "manual escalation"
+      ],
+      "escalation_conditions": [
+        "low VRAM",
+        "missing ffmpeg",
+        "local runtime not detected"
+      ]
+    }
+  ],
+  "readiness_delta_tracking_history": [
+    {
+      "tracking_id": "readiness-delta-20260507182721",
+      "source": "local-readiness-validation",
+      "recorded_at": "2026-05-07T18:27:21.451Z",
+      "milestones": [
+        {
+          "milestone": "local-inference-readiness",
+          "previous_percentage": 60,
+          "current_percentage": 60,
+          "delta": 0,
+          "previous_confidence": "medium",
+          "current_confidence": "medium",
+          "blockers_cleared": [],
+          "blockers_introduced": [],
+          "confidence_trend": "flat",
+          "architectural_readiness_notes": [
+            "runtime probe normalization -> local readiness gate -> manual local bridge preview",
+            "Next milestone: undefined",
+            "Missing dependencies: python runtime detection, inference runtime detection, local model directory detection"
+          ]
+        },
+        {
+          "milestone": "local-runtime-readiness",
+          "previous_percentage": 0,
+          "current_percentage": 0,
+          "delta": 0,
+          "previous_confidence": "low",
+          "current_confidence": "low",
+          "blockers_cleared": [],
+          "blockers_introduced": [],
+          "confidence_trend": "flat",
+          "architectural_readiness_notes": [
+            "path hints -> runtime probe snapshot -> constraint modeling",
+            "Next milestone: undefined",
+            "Missing dependencies: VRAM reporting evidence, storage estimate evidence"
+          ]
+        },
+        {
+          "milestone": "local-frame-generation-readiness",
+          "previous_percentage": 63,
+          "current_percentage": 63,
+          "delta": 0,
+          "previous_confidence": "medium",
+          "current_confidence": "medium",
+          "blockers_cleared": [],
+          "blockers_introduced": [],
+          "confidence_trend": "flat",
+          "architectural_readiness_notes": [
+            "frame stage registry -> runtime constraints -> manual-only frame bridge",
+            "Next milestone: undefined",
+            "Missing dependencies: frame synthesis contract, frame interpolation contract"
+          ]
+        },
+        {
+          "milestone": "local-renderer-readiness",
+          "previous_percentage": 54,
+          "current_percentage": 54,
+          "delta": 0,
+          "previous_confidence": "medium",
+          "current_confidence": "medium",
+          "blockers_cleared": [],
+          "blockers_introduced": [],
+          "confidence_trend": "flat",
+          "architectural_readiness_notes": [
+            "renderer roadmap -> ffmpeg evidence -> offline packaging manifest",
+            "Next milestone: undefined",
+            "Missing dependencies: local upscaling scaffold"
+          ]
+        },
+        {
+          "milestone": "continuity-preserving-local-generation",
+          "previous_percentage": 73,
+          "current_percentage": 73,
+          "delta": 0,
+          "previous_confidence": "high",
+          "current_confidence": "high",
+          "blockers_cleared": [],
+          "blockers_introduced": [],
+          "confidence_trend": "flat",
+          "architectural_readiness_notes": [
+            "continuity rules -> temporal stage registry -> continuity-state reuse roadmap",
+            "Next milestone: undefined",
+            "No missing dependencies currently recorded."
+          ]
+        },
+        {
+          "milestone": "hybrid-local-cloud-orchestration",
+          "previous_percentage": 81,
+          "current_percentage": 81,
+          "delta": 0,
+          "previous_confidence": "high",
+          "current_confidence": "high",
+          "blockers_cleared": [],
+          "blockers_introduced": [],
+          "confidence_trend": "flat",
+          "architectural_readiness_notes": [
+            "runtime probes -> constraints -> hybrid routing plans -> governed escalation",
+            "Next milestone: undefined",
+            "Missing dependencies: verified local provider evidence"
+          ]
+        },
+        {
+          "milestone": "self-sustaining-generation-readiness",
+          "previous_percentage": 40,
+          "current_percentage": 40,
+          "delta": 0,
+          "previous_confidence": "low",
+          "current_confidence": "low",
+          "blockers_cleared": [],
+          "blockers_introduced": [],
+          "confidence_trend": "flat",
+          "architectural_readiness_notes": [
+            "manual-only local bridge -> reviewed execution receipts -> separate policy approval",
+            "Next milestone: undefined",
+            "Missing dependencies: policy approval for autonomy, reviewed execution bridge, governed recovery loop"
+          ]
+        }
+      ]
+    },
+    {
+      "tracking_id": "readiness-delta-20260507182721",
+      "source": "local-readiness-validation",
+      "recorded_at": "2026-05-07T18:27:21.445Z",
+      "milestones": [
+        {
+          "milestone": "local-inference-readiness",
+          "previous_percentage": null,
+          "current_percentage": 60,
+          "delta": 60,
+          "previous_confidence": null,
+          "current_confidence": "medium",
+          "blockers_cleared": [],
+          "blockers_introduced": [
+            "python runtime detection",
+            "inference runtime detection",
+            "local model directory detection"
+          ],
+          "confidence_trend": "new",
+          "architectural_readiness_notes": [
+            "runtime probe normalization -> local readiness gate -> manual local bridge preview",
+            "Next milestone: undefined",
+            "Missing dependencies: python runtime detection, inference runtime detection, local model directory detection"
+          ]
+        },
+        {
+          "milestone": "local-runtime-readiness",
+          "previous_percentage": null,
+          "current_percentage": 0,
+          "delta": 0,
+          "previous_confidence": null,
+          "current_confidence": "low",
+          "blockers_cleared": [],
+          "blockers_introduced": [
+            "VRAM reporting evidence",
+            "storage estimate evidence"
+          ],
+          "confidence_trend": "new",
+          "architectural_readiness_notes": [
+            "path hints -> runtime probe snapshot -> constraint modeling",
+            "Next milestone: undefined",
+            "Missing dependencies: VRAM reporting evidence, storage estimate evidence"
+          ]
+        },
+        {
+          "milestone": "local-frame-generation-readiness",
+          "previous_percentage": null,
+          "current_percentage": 63,
+          "delta": 63,
+          "previous_confidence": null,
+          "current_confidence": "medium",
+          "blockers_cleared": [],
+          "blockers_introduced": [
+            "frame synthesis contract",
+            "frame interpolation contract"
+          ],
+          "confidence_trend": "new",
+          "architectural_readiness_notes": [
+            "frame stage registry -> runtime constraints -> manual-only frame bridge",
+            "Next milestone: undefined",
+            "Missing dependencies: frame synthesis contract, frame interpolation contract"
+          ]
+        },
+        {
+          "milestone": "local-renderer-readiness",
+          "previous_percentage": null,
+          "current_percentage": 54,
+          "delta": 54,
+          "previous_confidence": null,
+          "current_confidence": "medium",
+          "blockers_cleared": [],
+          "blockers_introduced": [
+            "local upscaling scaffold"
+          ],
+          "confidence_trend": "new",
+          "architectural_readiness_notes": [
+            "renderer roadmap -> ffmpeg evidence -> offline packaging manifest",
+            "Next milestone: undefined",
+            "Missing dependencies: local upscaling scaffold"
+          ]
+        },
+        {
+          "milestone": "continuity-preserving-local-generation",
+          "previous_percentage": null,
+          "current_percentage": 73,
+          "delta": 73,
+          "previous_confidence": null,
+          "current_confidence": "high",
+          "blockers_cleared": [],
+          "blockers_introduced": [],
+          "confidence_trend": "new",
+          "architectural_readiness_notes": [
+            "continuity rules -> temporal stage registry -> continuity-state reuse roadmap",
+            "Next milestone: undefined",
+            "No missing dependencies currently recorded."
+          ]
+        },
+        {
+          "milestone": "hybrid-local-cloud-orchestration",
+          "previous_percentage": null,
+          "current_percentage": 81,
+          "delta": 81,
+          "previous_confidence": null,
+          "current_confidence": "high",
+          "blockers_cleared": [],
+          "blockers_introduced": [
+            "verified local provider evidence"
+          ],
+          "confidence_trend": "new",
+          "architectural_readiness_notes": [
+            "runtime probes -> constraints -> hybrid routing plans -> governed escalation",
+            "Next milestone: undefined",
+            "Missing dependencies: verified local provider evidence"
+          ]
+        },
+        {
+          "milestone": "self-sustaining-generation-readiness",
+          "previous_percentage": null,
+          "current_percentage": 40,
+          "delta": 40,
+          "previous_confidence": null,
+          "current_confidence": "low",
+          "blockers_cleared": [],
+          "blockers_introduced": [
+            "policy approval for autonomy",
+            "reviewed execution bridge",
+            "governed recovery loop"
+          ],
+          "confidence_trend": "new",
+          "architectural_readiness_notes": [
+            "manual-only local bridge -> reviewed execution receipts -> separate policy approval",
+            "Next milestone: undefined",
+            "Missing dependencies: policy approval for autonomy, reviewed execution bridge, governed recovery loop"
+          ]
+        }
+      ]
+    }
+  ],
   "provider_routing_rules": [
     "Cheap draft routing should prefer Seedance for low-cost storyboard-grade passes.",
     "Premium cinematic routing should prefer Sora when fidelity matters more than cost.",
@@ -592,7 +1367,317 @@
     "Seedance-ready payloads should stay compressed and storyboard-focused.",
     "Veo and Runway payloads should preserve references, camera instructions, and duration targets."
   ],
-  "sandbox_simulations": [],
+  "sandbox_simulations": [
+    {
+      "simulation_id": "local-sandbox-sequence-wave-transition-001-1778178441455",
+      "sandbox_kind": "local-inference-execution-sandbox",
+      "sequence_id": "sequence-wave-transition-001",
+      "routing_mode": "offline-planning-mode",
+      "provider": "LocalFutureProvider",
+      "execution_enabled": false,
+      "queued_job_ids": [
+        "local-sandbox-sequence-wave-transition-001-sequence-wave-transition-001-intro",
+        "local-sandbox-sequence-wave-transition-001-sequence-wave-transition-001-establish",
+        "local-sandbox-sequence-wave-transition-001-sequence-wave-transition-001-reveal",
+        "local-sandbox-sequence-wave-transition-001-sequence-wave-transition-001-escalation",
+        "local-sandbox-sequence-wave-transition-001-sequence-wave-transition-001-emotional",
+        "local-sandbox-sequence-wave-transition-001-sequence-wave-transition-001-transition",
+        "local-sandbox-sequence-wave-transition-001-sequence-wave-transition-001-return"
+      ],
+      "approved_job_ids": [],
+      "failed_job_ids": [
+        "local-sandbox-sequence-wave-transition-001-sequence-wave-transition-001-intro",
+        "local-sandbox-sequence-wave-transition-001-sequence-wave-transition-001-establish",
+        "local-sandbox-sequence-wave-transition-001-sequence-wave-transition-001-reveal",
+        "local-sandbox-sequence-wave-transition-001-sequence-wave-transition-001-escalation",
+        "local-sandbox-sequence-wave-transition-001-sequence-wave-transition-001-emotional",
+        "local-sandbox-sequence-wave-transition-001-sequence-wave-transition-001-transition",
+        "local-sandbox-sequence-wave-transition-001-sequence-wave-transition-001-return"
+      ],
+      "retry_job_ids": [],
+      "continuity_issue_count": 7,
+      "asset_reuse_decisions": [
+        "Preserve continuity context for sequence-wave-transition-001-intro while keeping local execution disabled.",
+        "Preserve continuity context for sequence-wave-transition-001-establish while keeping local execution disabled.",
+        "Preserve continuity context for sequence-wave-transition-001-reveal while keeping local execution disabled.",
+        "Preserve continuity context for sequence-wave-transition-001-escalation while keeping local execution disabled.",
+        "Preserve continuity context for sequence-wave-transition-001-emotional while keeping local execution disabled.",
+        "Preserve continuity context for sequence-wave-transition-001-transition while keeping local execution disabled.",
+        "Preserve continuity context for sequence-wave-transition-001-return while keeping local execution disabled."
+      ],
+      "renderer_lifecycle_states": [
+        {
+          "state": "runtime_idle",
+          "simulated": true,
+          "detail": "Renderer remains idle until a manual bridge exists.",
+          "blockers": [],
+          "order": 1
+        },
+        {
+          "state": "runtime_preparing",
+          "simulated": true,
+          "detail": "Sandbox validates runtime prerequisites without launching anything.",
+          "blockers": [
+            "No runtime probe snapshot has been recorded yet.",
+            "Python runtime presence is not yet confirmed by a runtime probe snapshot.",
+            "No inference runtime path is confirmed by the current runtime probe snapshot.",
+            "No local model directory is confirmed by the current runtime probe snapshot.",
+            "FFmpeg has not been detected yet, so future renderer packaging remains incomplete.",
+            "Preferred local model/runtime/hardware tuple is not yet ready for a manual bridge review.",
+            "Sandbox-only mode still blocks any future local execution handoff."
+          ],
+          "order": 2
+        },
+        {
+          "state": "model_loading",
+          "simulated": true,
+          "detail": "Model load is simulated from stored registry and runtime probe evidence.",
+          "blockers": [],
+          "order": 3
+        },
+        {
+          "state": "resource_allocating",
+          "simulated": true,
+          "detail": "GPU, storage, and queue ownership are modeled without allocating resources.",
+          "blockers": [],
+          "order": 4
+        },
+        {
+          "state": "runtime_blocked",
+          "simulated": true,
+          "detail": "Renderer lifecycle pauses before frame pipeline entry because readiness remains incomplete.",
+          "blockers": [
+            "No runtime probe snapshot has been recorded yet.",
+            "Python runtime presence is not yet confirmed by a runtime probe snapshot.",
+            "No inference runtime path is confirmed by the current runtime probe snapshot.",
+            "No local model directory is confirmed by the current runtime probe snapshot.",
+            "FFmpeg has not been detected yet, so future renderer packaging remains incomplete.",
+            "Preferred local model/runtime/hardware tuple is not yet ready for a manual bridge review.",
+            "Sandbox-only mode still blocks any future local execution handoff."
+          ],
+          "order": 5
+        },
+        {
+          "state": "runtime_recovering",
+          "simulated": true,
+          "detail": "Recovery planning is generated instead of running a render stage.",
+          "blockers": [
+            "local-sandbox-sequence-wave-transition-001-sequence-wave-transition-001-intro",
+            "local-sandbox-sequence-wave-transition-001-sequence-wave-transition-001-establish",
+            "local-sandbox-sequence-wave-transition-001-sequence-wave-transition-001-reveal",
+            "local-sandbox-sequence-wave-transition-001-sequence-wave-transition-001-escalation",
+            "local-sandbox-sequence-wave-transition-001-sequence-wave-transition-001-emotional",
+            "local-sandbox-sequence-wave-transition-001-sequence-wave-transition-001-transition",
+            "local-sandbox-sequence-wave-transition-001-sequence-wave-transition-001-return"
+          ],
+          "order": 6
+        },
+        {
+          "state": "runtime_blocked",
+          "simulated": true,
+          "detail": "Packaging stays blocked until lifecycle blockers are cleared.",
+          "blockers": [
+            "No runtime probe snapshot has been recorded yet.",
+            "Python runtime presence is not yet confirmed by a runtime probe snapshot.",
+            "No inference runtime path is confirmed by the current runtime probe snapshot.",
+            "No local model directory is confirmed by the current runtime probe snapshot.",
+            "FFmpeg has not been detected yet, so future renderer packaging remains incomplete.",
+            "Preferred local model/runtime/hardware tuple is not yet ready for a manual bridge review.",
+            "Sandbox-only mode still blocks any future local execution handoff."
+          ],
+          "order": 7
+        },
+        {
+          "state": "runtime_blocked",
+          "simulated": true,
+          "detail": "Archival readiness is deferred behind blocked lifecycle prerequisites.",
+          "blockers": [
+            "No runtime probe snapshot has been recorded yet.",
+            "Python runtime presence is not yet confirmed by a runtime probe snapshot.",
+            "No inference runtime path is confirmed by the current runtime probe snapshot.",
+            "No local model directory is confirmed by the current runtime probe snapshot.",
+            "FFmpeg has not been detected yet, so future renderer packaging remains incomplete.",
+            "Preferred local model/runtime/hardware tuple is not yet ready for a manual bridge review.",
+            "Sandbox-only mode still blocks any future local execution handoff."
+          ],
+          "order": 8
+        }
+      ],
+      "gpu_allocation": {
+        "estimated_vram_required_gb": 6,
+        "available_vram_gb": 12,
+        "vram_pressure": "low",
+        "render_concurrency_viable": false,
+        "max_safe_concurrency": 2,
+        "queue_starvation_risk": "high",
+        "low_vram_fallback_viable": true,
+        "local_cache_pressure": "low",
+        "storage_expansion_risk": "low",
+        "notes": [
+          "Single-job local queues remain the default assumption.",
+          "Queued local packaging and upscale stages should be serialized until runtime evidence improves.",
+          "Simulation assumes serialized local queue ownership rather than uncontrolled parallel rendering."
+        ]
+      },
+      "queue_plan": {
+        "queued_jobs": [
+          {
+            "job_id": "local-sandbox-sequence-wave-transition-001-sequence-wave-transition-001-intro",
+            "shot_id": "sequence-wave-transition-001-intro",
+            "state": "blocked",
+            "dependency_job_ids": [],
+            "continuity_priority": "high",
+            "retry_isolated": false,
+            "blocked_reason": "No runtime probe snapshot has been recorded yet."
+          },
+          {
+            "job_id": "local-sandbox-sequence-wave-transition-001-sequence-wave-transition-001-establish",
+            "shot_id": "sequence-wave-transition-001-establish",
+            "state": "blocked",
+            "dependency_job_ids": [
+              "local-sandbox-sequence-wave-transition-001-sequence-wave-transition-001-intro"
+            ],
+            "continuity_priority": "high",
+            "retry_isolated": false,
+            "blocked_reason": "No runtime probe snapshot has been recorded yet."
+          },
+          {
+            "job_id": "local-sandbox-sequence-wave-transition-001-sequence-wave-transition-001-reveal",
+            "shot_id": "sequence-wave-transition-001-reveal",
+            "state": "blocked",
+            "dependency_job_ids": [
+              "local-sandbox-sequence-wave-transition-001-sequence-wave-transition-001-establish"
+            ],
+            "continuity_priority": "high",
+            "retry_isolated": false,
+            "blocked_reason": "No runtime probe snapshot has been recorded yet."
+          },
+          {
+            "job_id": "local-sandbox-sequence-wave-transition-001-sequence-wave-transition-001-escalation",
+            "shot_id": "sequence-wave-transition-001-escalation",
+            "state": "blocked",
+            "dependency_job_ids": [
+              "local-sandbox-sequence-wave-transition-001-sequence-wave-transition-001-reveal"
+            ],
+            "continuity_priority": "high",
+            "retry_isolated": false,
+            "blocked_reason": "No runtime probe snapshot has been recorded yet."
+          },
+          {
+            "job_id": "local-sandbox-sequence-wave-transition-001-sequence-wave-transition-001-emotional",
+            "shot_id": "sequence-wave-transition-001-emotional",
+            "state": "blocked",
+            "dependency_job_ids": [
+              "local-sandbox-sequence-wave-transition-001-sequence-wave-transition-001-escalation"
+            ],
+            "continuity_priority": "high",
+            "retry_isolated": false,
+            "blocked_reason": "No runtime probe snapshot has been recorded yet."
+          },
+          {
+            "job_id": "local-sandbox-sequence-wave-transition-001-sequence-wave-transition-001-transition",
+            "shot_id": "sequence-wave-transition-001-transition",
+            "state": "blocked",
+            "dependency_job_ids": [
+              "local-sandbox-sequence-wave-transition-001-sequence-wave-transition-001-emotional"
+            ],
+            "continuity_priority": "high",
+            "retry_isolated": false,
+            "blocked_reason": "No runtime probe snapshot has been recorded yet."
+          },
+          {
+            "job_id": "local-sandbox-sequence-wave-transition-001-sequence-wave-transition-001-return",
+            "shot_id": "sequence-wave-transition-001-return",
+            "state": "blocked",
+            "dependency_job_ids": [
+              "local-sandbox-sequence-wave-transition-001-sequence-wave-transition-001-transition"
+            ],
+            "continuity_priority": "high",
+            "retry_isolated": false,
+            "blocked_reason": "No runtime probe snapshot has been recorded yet."
+          }
+        ],
+        "dependency_order_job_ids": [
+          "local-sandbox-sequence-wave-transition-001-sequence-wave-transition-001-intro",
+          "local-sandbox-sequence-wave-transition-001-sequence-wave-transition-001-establish",
+          "local-sandbox-sequence-wave-transition-001-sequence-wave-transition-001-reveal",
+          "local-sandbox-sequence-wave-transition-001-sequence-wave-transition-001-escalation",
+          "local-sandbox-sequence-wave-transition-001-sequence-wave-transition-001-emotional",
+          "local-sandbox-sequence-wave-transition-001-sequence-wave-transition-001-transition",
+          "local-sandbox-sequence-wave-transition-001-sequence-wave-transition-001-return"
+        ],
+        "continuity_priority_job_ids": [
+          "local-sandbox-sequence-wave-transition-001-sequence-wave-transition-001-intro",
+          "local-sandbox-sequence-wave-transition-001-sequence-wave-transition-001-establish",
+          "local-sandbox-sequence-wave-transition-001-sequence-wave-transition-001-reveal",
+          "local-sandbox-sequence-wave-transition-001-sequence-wave-transition-001-escalation",
+          "local-sandbox-sequence-wave-transition-001-sequence-wave-transition-001-emotional",
+          "local-sandbox-sequence-wave-transition-001-sequence-wave-transition-001-transition",
+          "local-sandbox-sequence-wave-transition-001-sequence-wave-transition-001-return"
+        ],
+        "blocked_job_ids": [
+          "local-sandbox-sequence-wave-transition-001-sequence-wave-transition-001-intro",
+          "local-sandbox-sequence-wave-transition-001-sequence-wave-transition-001-establish",
+          "local-sandbox-sequence-wave-transition-001-sequence-wave-transition-001-reveal",
+          "local-sandbox-sequence-wave-transition-001-sequence-wave-transition-001-escalation",
+          "local-sandbox-sequence-wave-transition-001-sequence-wave-transition-001-emotional",
+          "local-sandbox-sequence-wave-transition-001-sequence-wave-transition-001-transition",
+          "local-sandbox-sequence-wave-transition-001-sequence-wave-transition-001-return"
+        ],
+        "recovery_sequence_job_ids": [
+          "local-sandbox-sequence-wave-transition-001-sequence-wave-transition-001-intro",
+          "local-sandbox-sequence-wave-transition-001-sequence-wave-transition-001-establish",
+          "local-sandbox-sequence-wave-transition-001-sequence-wave-transition-001-reveal",
+          "local-sandbox-sequence-wave-transition-001-sequence-wave-transition-001-escalation",
+          "local-sandbox-sequence-wave-transition-001-sequence-wave-transition-001-emotional",
+          "local-sandbox-sequence-wave-transition-001-sequence-wave-transition-001-transition",
+          "local-sandbox-sequence-wave-transition-001-sequence-wave-transition-001-return"
+        ]
+      },
+      "recovery_plan": {
+        "blocked": true,
+        "causes": [
+          "dependency-mismatch",
+          "continuity-state-recovery"
+        ],
+        "steps": [
+          {
+            "cause": "dependency-mismatch",
+            "sequence_order": 1,
+            "detail": "Clear missing runtime/model dependencies before any manual bridge review."
+          },
+          {
+            "cause": "continuity-state-recovery",
+            "sequence_order": 2,
+            "detail": "Replay retry-isolated shots after preserving successful neighboring continuity context."
+          }
+        ]
+      },
+      "readiness_tracking_id": "readiness-delta-20260507182721",
+      "hybrid_escalation": {
+        "local_first_rendering": false,
+        "cloud_escalation_fallback": true,
+        "offline_safe_execution": true,
+        "premium_provider_escalation": false,
+        "continuity_preserving_escalation": true,
+        "selected_strategy_id": "offline-safe-mode",
+        "selected_routing_mode": "offline-planning-mode",
+        "reasons": [
+          "No runtime probe snapshot has been recorded yet.",
+          "Python runtime presence is not yet confirmed by a runtime probe snapshot.",
+          "No inference runtime path is confirmed by the current runtime probe snapshot.",
+          "No local model directory is confirmed by the current runtime probe snapshot.",
+          "FFmpeg has not been detected yet, so future renderer packaging remains incomplete.",
+          "Preferred local model/runtime/hardware tuple is not yet ready for a manual bridge review.",
+          "Sandbox-only mode still blocks any future local execution handoff.",
+          "runtime probes missing",
+          "operator requests planning-only review",
+          "Selected hybrid strategy offline-safe-mode."
+        ]
+      },
+      "recorded_at": "2026-05-07T18:27:21.455Z"
+    }
+  ],
   "failed_generations": [
     {
       "generation_id": "failed-wave-overstyle-001",

@@ -2073,6 +2073,258 @@ function buildHybridLocalCloudStrategyNote(input: {
   };
 }
 
+function buildLocalExecutionSandboxNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const latestSandbox = [...production.sandbox_simulations]
+    .filter((entry) => entry.sandbox_kind === "local-inference-execution-sandbox")
+    .sort((left, right) => right.recorded_at.localeCompare(left.recorded_at))[0] ?? null;
+  return {
+    title: "Local Execution Sandbox",
+    directory: "Strategy",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_local_execution_sandbox",
+      tags: ["second-brain", "local-sandbox", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Sandbox Status",
+      latestSandbox
+        ? asBulletList([
+          `Sequence: ${latestSandbox.sequence_id}`,
+          `Routing mode: ${latestSandbox.routing_mode}`,
+          `Provider abstraction: ${latestSandbox.provider}`,
+          `Execution enabled: ${latestSandbox.execution_enabled ? "yes" : "no"}`,
+          `Readiness tracking id: ${latestSandbox.readiness_tracking_id ?? "none"}`,
+        ])
+        : "- No local execution sandbox simulations recorded yet.",
+      "",
+      "## Governance Guardrails",
+      asBulletList(production.local_inference_governance_rules),
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Renderer Lifecycle Simulation"),
+        toLink("Queue Orchestration Planning"),
+        toLink("Readiness Delta Tracking"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildRendererLifecycleSimulationNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const latestSandbox = [...production.sandbox_simulations]
+    .filter((entry) => entry.sandbox_kind === "local-inference-execution-sandbox")
+    .sort((left, right) => right.recorded_at.localeCompare(left.recorded_at))[0] ?? null;
+  return {
+    title: "Renderer Lifecycle Simulation",
+    directory: "Strategy",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_renderer_lifecycle_simulation",
+      tags: ["second-brain", "renderer", "lifecycle", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Lifecycle States",
+      latestSandbox?.renderer_lifecycle_states?.length
+        ? asBulletList(latestSandbox.renderer_lifecycle_states.map((entry) => `${entry.order}. ${entry.state}: ${entry.detail} | blockers=${entry.blockers.join(", ") || "none"}`))
+        : "- No renderer lifecycle simulations recorded yet.",
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Local Execution Sandbox"),
+        toLink("GPU Allocation Modeling"),
+        toLink("Renderer Recovery Planning"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildGpuAllocationModelingNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const latestSandbox = [...production.sandbox_simulations]
+    .filter((entry) => entry.sandbox_kind === "local-inference-execution-sandbox")
+    .sort((left, right) => right.recorded_at.localeCompare(left.recorded_at))[0] ?? null;
+  const allocation = latestSandbox?.gpu_allocation ?? null;
+  return {
+    title: "GPU Allocation Modeling",
+    directory: "Architecture",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_gpu_allocation_modeling",
+      tags: ["second-brain", "gpu", "allocation", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Allocation Summary",
+      allocation
+        ? asBulletList([
+          `Estimated VRAM required: ${allocation.estimated_vram_required_gb}GB`,
+          `Available VRAM: ${allocation.available_vram_gb}GB`,
+          `VRAM pressure: ${allocation.vram_pressure}`,
+          `Max safe concurrency: ${allocation.max_safe_concurrency}`,
+          `Queue starvation risk: ${allocation.queue_starvation_risk}`,
+          `Low-VRAM fallback viable: ${allocation.low_vram_fallback_viable ? "yes" : "no"}`,
+        ])
+        : "- No GPU allocation models recorded yet.",
+      "",
+      "## Allocation Notes",
+      allocation ? asBulletList(allocation.notes) : "- No GPU allocation notes recorded yet.",
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Runtime Constraint Modeling"),
+        toLink("Queue Orchestration Planning"),
+        toLink("Renderer Lifecycle Simulation"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildQueueOrchestrationPlanningNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const latestSandbox = [...production.sandbox_simulations]
+    .filter((entry) => entry.sandbox_kind === "local-inference-execution-sandbox")
+    .sort((left, right) => right.recorded_at.localeCompare(left.recorded_at))[0] ?? null;
+  const queuePlan = latestSandbox?.queue_plan ?? null;
+  return {
+    title: "Queue Orchestration Planning",
+    directory: "Strategy",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_queue_orchestration_planning",
+      tags: ["second-brain", "queue", "orchestration", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Queue Summary",
+      queuePlan
+        ? asBulletList([
+          `Dependency order: ${queuePlan.dependency_order_job_ids.join(", ") || "none"}`,
+          `Blocked jobs: ${queuePlan.blocked_job_ids.join(", ") || "none"}`,
+          `Recovery sequence: ${queuePlan.recovery_sequence_job_ids.join(", ") || "none"}`,
+        ])
+        : "- No queue orchestration plans recorded yet.",
+      "",
+      "## Simulated Queue Jobs",
+      queuePlan?.queued_jobs?.length
+        ? asBulletList(queuePlan.queued_jobs.map((entry) => `${entry.job_id}: state=${entry.state} | dependencies=${entry.dependency_job_ids.join(", ") || "none"} | blocked=${entry.blocked_reason ?? "no"}`))
+        : "- No simulated queue jobs recorded yet.",
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Local Execution Sandbox"),
+        toLink("GPU Allocation Modeling"),
+        toLink("Renderer Recovery Planning"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildRendererRecoveryPlanningNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const latestSandbox = [...production.sandbox_simulations]
+    .filter((entry) => entry.sandbox_kind === "local-inference-execution-sandbox")
+    .sort((left, right) => right.recorded_at.localeCompare(left.recorded_at))[0] ?? null;
+  const recoveryPlan = latestSandbox?.recovery_plan ?? null;
+  return {
+    title: "Renderer Recovery Planning",
+    directory: "Recovery",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_renderer_recovery_planning",
+      tags: ["second-brain", "renderer", "recovery", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Recovery Causes",
+      recoveryPlan?.causes?.length
+        ? asBulletList(recoveryPlan.causes.map((entry) => `${entry}`))
+        : "- No renderer recovery causes recorded yet.",
+      "",
+      "## Recovery Steps",
+      recoveryPlan?.steps?.length
+        ? asBulletList(recoveryPlan.steps.map((entry) => `${entry.sequence_order}. ${entry.cause}: ${entry.detail}`))
+        : "- No renderer recovery steps recorded yet.",
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Renderer Lifecycle Simulation"),
+        toLink("Queue Orchestration Planning"),
+        toLink("Local Execution Sandbox"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildReadinessDeltaTrackingNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const latestTracking = production.readiness_delta_tracking_history[0] ?? null;
+  return {
+    title: "Readiness Delta Tracking",
+    directory: "Architecture",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_readiness_delta_tracking",
+      tags: ["second-brain", "readiness", "delta-tracking", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Latest Delta Run",
+      latestTracking
+        ? asBulletList([
+          `Tracking id: ${latestTracking.tracking_id}`,
+          `Recorded at: ${latestTracking.recorded_at}`,
+          `Source: ${latestTracking.source}`,
+        ])
+        : "- No readiness delta tracking entries recorded yet.",
+      "",
+      "## Milestone Deltas",
+      latestTracking?.milestones?.length
+        ? asBulletList(latestTracking.milestones.map((entry) => `${humanizeReadinessMilestone(entry.milestone)}: prev=${entry.previous_percentage ?? "n/a"}% current=${entry.current_percentage}% delta=${entry.delta}% trend=${entry.confidence_trend} | cleared=${entry.blockers_cleared.join(", ") || "none"} | introduced=${entry.blockers_introduced.join(", ") || "none"}`))
+        : "- No milestone deltas recorded yet.",
+      "",
+      "## Architectural Notes",
+      latestTracking?.milestones?.length
+        ? asBulletList(latestTracking.milestones.flatMap((entry) => entry.architectural_readiness_notes.map((note) => `${humanizeReadinessMilestone(entry.milestone)}: ${note}`)))
+        : "- No readiness architecture notes recorded yet.",
+      "",
+      "## Related",
+      asBulletList([
+        toLink("AI-E Readiness Percentages"),
+        toLink("Local Execution Sandbox"),
+        toLink("Hybrid Local Cloud Strategy"),
+      ]),
+    ].join("\n"),
+  };
+}
+
 function buildCinematicExecutionLifecycleNote(input: {
   productionMemory: CinematicProductionMemoryRecord;
   latestSessionId: string;
@@ -2547,6 +2799,12 @@ export async function exportSecondBrainToObsidian(input?: {
     buildRendererCapabilityRoadmapNote({ productionMemory, latestSessionId }),
     buildRuntimeConstraintModelingNote({ productionMemory, latestSessionId }),
     buildHybridLocalCloudStrategyNote({ productionMemory, latestSessionId }),
+    buildLocalExecutionSandboxNote({ productionMemory, latestSessionId }),
+    buildRendererLifecycleSimulationNote({ productionMemory, latestSessionId }),
+    buildGpuAllocationModelingNote({ productionMemory, latestSessionId }),
+    buildQueueOrchestrationPlanningNote({ productionMemory, latestSessionId }),
+    buildRendererRecoveryPlanningNote({ productionMemory, latestSessionId }),
+    buildReadinessDeltaTrackingNote({ productionMemory, latestSessionId }),
     buildCinematicExecutionLifecycleNote({ productionMemory, latestSessionId }),
     buildContinuityReviewNotesNote({ productionMemory, latestSessionId }),
     buildRetryPlanningRulesNote({ productionMemory, latestSessionId }),
